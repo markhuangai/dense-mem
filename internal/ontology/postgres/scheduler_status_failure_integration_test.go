@@ -61,8 +61,11 @@ func TestOntologySchedulerStatusFailurePreservesRealOrganizationTurns(t *testing
 			projections := communityapp.New(communityapp.Dependencies{Store: communityStore, AppConfig: config})
 			var calls []*atomic.Int32
 			service := organization.NewMaintenanceService(organization.MaintenanceDependencies{Repository: f.store, Config: config, Projections: projections, DefaultModel: "fixture-model",
-				Organizer: func(model string, accounting assessment.AttemptAccounting) *organization.Service {
-					organizer, counter := organizationFixtureServiceWithAccounting(t, f, nil, nil, model, maintenanceFixtureLimits(), accounting)
+				Organizer: func(model string, contextWindowTokens int64, accounting assessment.AttemptAccounting) *organization.Service {
+					if accounting == nil {
+						return organization.NewService(nil, assessment.NewProvider(nil, model, maintenanceFixtureLimits(), int(contextWindowTokens)))
+					}
+					organizer, counter := organizationFixtureServiceWithAccounting(t, f, nil, nil, model, maintenanceFixtureLimits(), accounting, int(contextWindowTokens))
 					calls = append(calls, counter)
 					return organizer
 				},

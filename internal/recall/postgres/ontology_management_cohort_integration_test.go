@@ -106,11 +106,11 @@ func TestRecallOntologyManagementLockedCohort(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, priorCalls, calls.Load(), "manager operation called provider")
 			config := settings.NewAppConfigService(settingspg.NewAppConfigRepository(f.app, f.rls), nil)
-			_, err = config.UpdateOntologyMaintenanceSettings(context.Background(), map[string]string{domain.AppConfigOntologyEnabled: "true", domain.AppConfigOntologyModel: "fixture-model", domain.AppConfigOntologyStartTime: time.Now().UTC().Format("15:04")}, "control", "", "")
+			_, err = config.UpdateOntologyMaintenanceSettings(context.Background(), map[string]string{domain.AppConfigOntologyEnabled: "true", domain.AppConfigOntologyContextWindow: "300000", domain.AppConfigOntologyModel: "fixture-model", domain.AppConfigOntologyStartTime: time.Now().UTC().Format("15:04")}, "control", "", "")
 			require.NoError(t, err)
 			_, err = config.UpdateGeneralSettings(context.Background(), map[string]string{domain.AppConfigTimezone: "UTC"}, "control", "", "")
 			require.NoError(t, err)
-			worker := application.NewMaintenanceService(application.MaintenanceDependencies{Repository: f.ontology, Config: config, Organizer: func(_ string, accounting assessment.AttemptAccounting) *application.Service {
+			worker := application.NewMaintenanceService(application.MaintenanceDependencies{Repository: f.ontology, Config: config, Organizer: func(_ string, _ int64, accounting assessment.AttemptAccounting) *application.Service {
 				provider, _ := f.organizerWithAccounting(t, groups, forceDistinct, accounting)
 				return provider
 			}})

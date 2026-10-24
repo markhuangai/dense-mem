@@ -112,7 +112,7 @@ func TestOntologyMaintenanceFinalizationReceiptsAndAccounting(t *testing.T) {
 				if mode == "failed_receipt" {
 					edit = func(_ assessment.Request, result *assessment.Response) { result.RequestID = "invalid" }
 				}
-				x.organizer, x.calls = organizationFixtureServiceWithAccounting(t, x.f, nil, edit, "fixture-model", maintenanceFixtureLimits(), finalizationAccounting{x.f.store, *x.claim})
+				x.organizer, x.calls = organizationFixtureServiceWithAccounting(t, x.f, nil, edit, "fixture-model", maintenanceFixtureLimits(), finalizationAccounting{x.f.store, *x.claim}, 300000)
 			}
 			if mode == "failed_receipt" {
 				_, err := x.organizer.Organize(ontology.WithMaintenanceClaim(ctx, *x.claim), x.f.team, ontology.OrganizationInput{OperationKey: "maintenance:" + x.claim.ID, Sources: x.claim.Sources})
@@ -121,7 +121,7 @@ func TestOntologyMaintenanceFinalizationReceiptsAndAccounting(t *testing.T) {
 				x.stage(t)
 			}
 			if mode == "unreconciled" {
-				require.NoError(t, x.f.store.ReserveMaintenanceAttempt(ctx, *x.claim, uuid.NewString(), 1, 10, 10, time.Now()))
+				require.NoError(t, x.f.store.AdmitMaintenanceAttempt(ctx, *x.claim, uuid.NewString(), 1, 10, 10, time.Now()))
 			}
 			before := x.f.canonicalSnapshot(t)
 			statusBefore, err := x.f.store.MaintenanceStatus(ctx, time.Now())
@@ -139,12 +139,12 @@ func TestOntologyMaintenanceFinalizationReceiptsAndAccounting(t *testing.T) {
 			if mode == "zero_attempts" {
 				require.Zero(t, calls)
 			} else if mode == "unknown_usage" {
-				require.Positive(t, statusAfter.Window.ReservedInput)
-				require.Positive(t, statusAfter.Window.ChargedInput)
+				require.Positive(t, statusAfter.Usage.UnavailableUsageAttempts)
+				require.Zero(t, statusAfter.Usage.UnreconciledAttempts)
 			} else if mode == "reported" {
-				require.EqualValues(t, 17, statusAfter.Window.ChargedInput)
-				require.EqualValues(t, 9, statusAfter.Window.ChargedOutput)
-				require.Zero(t, statusAfter.Window.ReservedInput)
+				require.EqualValues(t, 17, statusAfter.Window.Usage.ReportedInputTokens)
+				require.EqualValues(t, 9, statusAfter.Window.Usage.ReportedOutputTokens)
+				require.Zero(t, statusAfter.Usage.UnreconciledAttempts)
 				require.EqualValues(t, len(x.claim.Sources), statusAfter.Counts.Organized)
 			}
 			require.Equal(t, calls, x.calls.Load())
@@ -175,7 +175,7 @@ func TestOntologyMaintenanceFinalizationRacesAndFences(t *testing.T) {
 	workers.Add(1)
 	go func() {
 		defer workers.Done()
-		_, err := f.store.MaintenanceCommand(ctx, domain.OntologyMaintenanceCommand{Action: "allowance", OperationKey: "finalization-allowance", WindowID: x.window.ID, InputTokens: 100, OutputTokens: 100}, time.Now(), nil)
+		_, err := f.store.MaintenanceStatus(ctx, time.Now())
 		errs <- err
 	}()
 	workers.Wait()
@@ -186,7 +186,7 @@ func TestOntologyMaintenanceFinalizationRacesAndFences(t *testing.T) {
 	x.recover(t)
 	require.Equal(t, 1, maintenanceRunByID(t, f, x.claim.RunID).CompletedBatches)
 	require.Equal(t, "completed", x.batchStatus(t))
-	require.ErrorIs(t, f.store.ReserveMaintenanceAttempt(ctx, *x.claim, uuid.NewString(), 1, 1, 1, time.Now()), ontology.ErrLeaseLost)
+	require.ErrorIs(t, f.store.AdmitMaintenanceAttempt(ctx, *x.claim, uuid.NewString(), 1, 1, 1, time.Now()), ontology.ErrLeaseLost)
 	_, err := f.store.SeedDefinitions(ontology.WithMaintenanceClaim(ctx, *x.claim), f.team, ontology.SeedInput{OperationKey: "stale-finalization", Limit: 1})
 	require.ErrorIs(t, err, ontology.ErrLeaseLost)
 	forged := *x.claim
@@ -198,7 +198,7 @@ func TestOntologyMaintenanceFinalizationRacesAndFences(t *testing.T) {
 }
 
 func TestOntologyMaintenanceFinalizationAdmissionAndIsolation(t *testing.T) {
-	for _, mode := range []string{"paused", "disabled", "overrun", "expired", "new_generation", "revision", "actor"} {
+	for _, mode := range []string{"paused", "disabled", "expired", "new_generation", "revision", "actor"} {
 		t.Run(mode, func(t *testing.T) {
 			x := newFinalizationFixture(t)
 			x.stage(t)
@@ -211,9 +211,6 @@ func TestOntologyMaintenanceFinalizationAdmissionAndIsolation(t *testing.T) {
 			case "disabled":
 				require.NoError(t, f.admin.Exec(`UPDATE app_config SET value='false' WHERE key=?`, domain.AppConfigOntologyEnabled).Error)
 				expected = ontology.ErrMaintenanceDisabled
-			case "overrun":
-				require.NoError(t, f.admin.Exec(`UPDATE ontology_maintenance_windows SET overrun=true WHERE window_id=?::uuid`, x.window.ID).Error)
-				expected = ontology.ErrBudgetDeferred
 			case "expired":
 				require.NoError(t, f.admin.Exec(`UPDATE ontology_maintenance_batches SET lease_until=clock_timestamp()-interval '1 second' WHERE batch_id=?::uuid`, x.claim.ID).Error)
 			case "new_generation":

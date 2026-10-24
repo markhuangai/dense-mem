@@ -24,7 +24,7 @@ func TestOntologyMaintenanceInvalidationFamilies(t *testing.T) {
 			f := newOrganizationFixture(t)
 			ctx := context.Background()
 			config := maintenanceSettings(t, f)
-			_, err := config.UpdateOntologyMaintenanceSettings(ctx, map[string]string{domain.AppConfigOntologyInputTokens: "1000000000", domain.AppConfigOntologyOutputTokens: "1000000000"}, "control", "", "")
+			_, err := config.UpdateOntologyMaintenanceSettings(ctx, map[string]string{domain.AppConfigOntologyContextWindow: "300000"}, "control", "", "")
 			require.NoError(t, err)
 			var target ontology.SourceHandle
 			var mutation func()

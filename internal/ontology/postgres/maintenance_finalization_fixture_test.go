@@ -32,7 +32,7 @@ type finalizationAccounting struct {
 
 func (a finalizationAccounting) BeforeAttempt(ctx context.Context, id string, number, input, output int) (context.Context, error) {
 	return modelprovider.WithAdmissionCallback(ctx, func(dispatch context.Context) error {
-		return a.store.ReserveMaintenanceAttempt(dispatch, a.claim, id, number, input, output, time.Now().UTC())
+		return a.store.AdmitMaintenanceAttempt(dispatch, a.claim, id, number, input, output, time.Now().UTC())
 	}), nil
 }
 
@@ -54,7 +54,7 @@ func newFinalizationFixture(t *testing.T, texts ...string) *finalizationFixture 
 	_, err := f.store.MaintenanceCommand(context.Background(), domain.OntologyMaintenanceCommand{Action: "run", OperationKey: uuid.NewString(), MaxBatches: 1}, time.Now().UTC(), nil)
 	require.NoError(t, err)
 	_, claim := maintenanceClaim(t, f, window)
-	organizer, calls := organizationFixtureServiceWithAccounting(t, f, nil, nil, "fixture-model", maintenanceFixtureLimits(), finalizationAccounting{f.store, *claim}, map[string]int{"prompt_tokens": 17, "completion_tokens": 9, "total_tokens": 26})
+	organizer, calls := organizationFixtureServiceWithAccounting(t, f, nil, nil, "fixture-model", maintenanceFixtureLimits(), finalizationAccounting{f.store, *claim}, 300000, map[string]int{"prompt_tokens": 17, "completion_tokens": 9, "total_tokens": 26})
 	return &finalizationFixture{f: f, window: window, claim: claim, organizer: organizer, calls: calls}
 }
 

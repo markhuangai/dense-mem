@@ -169,7 +169,7 @@ export function OntologyPanel({ api, session }: { api: UserApi; session: UserSes
     {coverage && <section className="ontology-team-coverage" aria-label="Team ontology coverage">
       <SectionHeading title="Team processing coverage" actions={<span className={`status-pill ${coverage.coverage_complete ? "success" : "warning"}`}>{coverage.coverage_complete ? "Current" : "Reassessment pending"}</span>} />
       <UsageMeter label="Organized / eligible" value={coverage.counts.organized} limit={coverage.counts.eligible} detail={`Revision ${coverage.revision} · ${coverage.counts.eligible ? "discovered shared records" : "no eligible shared records discovered"}`} />
-      <dl className="summary-grid"><div><dt>Pending</dt><dd>{coverage.counts.pending.toLocaleString()}</dd></div><div><dt>Failed</dt><dd>{coverage.counts.failed.toLocaleString()}</dd></div><div><dt>Ambiguous</dt><dd>{coverage.counts.ambiguous.toLocaleString()}</dd></div><div><dt>Budget deferred</dt><dd>{coverage.counts.budget_deferred.toLocaleString()}</dd></div></dl>
+      <dl className="summary-grid"><div><dt>Pending</dt><dd>{coverage.counts.pending.toLocaleString()}</dd></div><div><dt>Failed</dt><dd>{coverage.counts.failed.toLocaleString()}</dd></div><div><dt>Ambiguous</dt><dd>{coverage.counts.ambiguous.toLocaleString()}</dd></div></dl>
       {!coverage.discovery_complete && <p className="banner warning">Discovery is in progress. Counts cover discovered shared records.</p>}
       <p className="form-meta">Processing runs under the operator’s maintenance schedule. Refresh to check progress.</p>
     </section>}

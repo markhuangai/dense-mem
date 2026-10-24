@@ -685,3 +685,30 @@ three quality repetitions, paired controls, approved fixture corrections and
 unavailable embedding usage. Its `current_validation_status` records the later
 runtime source and outstanding gates; historical metrics certify only their
 recorded source. Raw run outputs remain ignored.
+
+## Ontology readiness after budget retirement (#617)
+
+For releases implementing ADR 0014, configure the selected model's explicit
+context-window size before dispatch. No allowance grants or cumulative funding
+preflight are required. Live ontology cohort runs require an explicit
+`ONTOLOGY_MAINTENANCE_CONTEXT_WINDOW_TOKENS` environment value for the selected
+model; they do not infer capacity from its alias. Capture requires completed discovery, no pending source
+work, no actual active preparation/batch/projection work, no unreconciled attempts,
+and converged search and topic projections. Use durable attempt and batch
+identities, including the full team/shared-space/generation/operation-key receipt
+identity when joining assessments. Token reservations are historical accounting,
+not a readiness gate for these releases.
+
+Keep terminal failures, ambiguity, partial usage, unavailable usage, measured
+progress, and elapsed time in the report. Reported usage remains a lower bound
+when usage is unavailable. Do not equate configured concurrency with measured
+provider-call overlap or claim a speedup without a completed measurement.
+Previously pinned release comparisons keep their recorded protocol. Issue #605
+owns resumable evaluation orchestration; this change does not rewrite that run.
+
+The maintainer waived #617's deterministic 1k comparison before implementation
+in [the issue approval record](https://github.com/markhuangai/dense-mem/issues/617#issuecomment-6372012498).
+The replacement gates are real PostgreSQL retirement/history/restart/isolation
+and A/B/C concurrency regressions, context-boundary and regeneration tests,
+registered positive/adverse production-entry E2E, complete local checks,
+independent plan audit, and successful final-head full CI/production-image E2E.

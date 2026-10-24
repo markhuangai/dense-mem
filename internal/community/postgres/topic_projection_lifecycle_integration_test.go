@@ -121,7 +121,9 @@ func TestCommunityTopicWithdrawQuarantineAndGeneration(t *testing.T) {
 }
 
 func TestCommunityTopicForcedRLSAndRollbackBoundary(t *testing.T) {
-	f := newTopicProjectionFixture(t)
+	f := newTopicProjectionFixture(t, func(f *topicProjectionFixture) {
+		rollbackMigrationsAfterTopicProjection(t, topicMigrationProvider(t, f.adminDB))
+	})
 	require.NoError(t, f.rls.WithTeamTx(f.actor(f.reader), f.appDB, f.teamID, func(tx *gorm.DB) error {
 		var enabled bool
 		if err := tx.Raw(`SELECT value='true' FROM app_config WHERE key='ONTOLOGY_MAINTENANCE_ENABLED'`).Row().Scan(&enabled); err != nil {
@@ -153,7 +155,6 @@ func TestCommunityTopicForcedRLSAndRollbackBoundary(t *testing.T) {
 		return nil
 	}))
 	migrator := topicMigrationProvider(t, f.adminDB)
-	rollbackMigrationsAfterTopicProjection(t, migrator)
 	_, err = migrator.ApplyVersion(context.Background(), 20261011125000, false)
 	require.ErrorContains(t, err, "ontology community projection history is populated; recover by rolling forward")
 	require.Equal(t, before, f.currentIDs(t))
@@ -163,7 +164,7 @@ func TestCommunityTopicSchedulerRunsWithoutOrganizationBudget(t *testing.T) {
 	f := newTopicProjectionFixture(t)
 	f.seedCohort(t)
 	config := settings.NewAppConfigService(settingspg.NewAppConfigRepository(f.appDB, f.rls), nil)
-	_, err := config.UpdateOntologyMaintenanceSettings(context.Background(), map[string]string{domain.AppConfigOntologyEnabled: "true", domain.AppConfigOntologyModel: "fixture-model"}, "control", "", "")
+	_, err := config.UpdateOntologyMaintenanceSettings(context.Background(), map[string]string{domain.AppConfigOntologyEnabled: "true", domain.AppConfigOntologyContextWindow: "300000", domain.AppConfigOntologyModel: "fixture-model"}, "control", "", "")
 	require.NoError(t, err)
 	_, err = config.UpdateGeneralSettings(context.Background(), map[string]string{domain.AppConfigTimezone: "UTC"}, "control", "", "")
 	require.NoError(t, err)
@@ -172,12 +173,9 @@ func TestCommunityTopicSchedulerRunsWithoutOrganizationBudget(t *testing.T) {
 	window, err := f.ontology.EnsureMaintenanceWindow(context.Background(), policy, time.Now().UTC())
 	require.NoError(t, err)
 	require.NotNil(t, window)
-	require.NoError(t, f.rls.WithSystemTx(context.Background(), f.adminDB, func(tx *gorm.DB) error {
-		return tx.Exec(`UPDATE ontology_maintenance_windows SET charged_input=?,charged_output=? WHERE window_id=?::uuid`, policy.InputTokens, policy.OutputTokens, window.ID).Error
-	}))
 	maintenance := organization.NewMaintenanceService(organization.MaintenanceDependencies{Repository: f.ontology, Config: config, Projections: f.service,
-		Organizer: func(model string, accounting assessment.AttemptAccounting) *organization.Service {
-			return organization.NewService(f.ontology, assessment.NewProviderWithAccounting(nil, model, assessor.DefaultSemanticAssessmentLimits(), accounting))
+		Organizer: func(model string, contextWindowTokens int64, accounting assessment.AttemptAccounting) *organization.Service {
+			return organization.NewService(f.ontology, assessment.NewProviderWithAccounting(nil, model, assessor.DefaultSemanticAssessmentLimits(), accounting, int(contextWindowTokens)))
 		},
 	})
 	ctx, cancel := context.WithCancel(context.Background())
@@ -196,16 +194,19 @@ func TestCommunityTopicSchedulerRunsWithoutOrganizationBudget(t *testing.T) {
 	stop()
 	status, err := f.ontology.MaintenanceStatus(context.Background(), time.Now())
 	require.NoError(t, err)
-	require.Equal(t, policy.InputTokens, status.Window.ChargedInput)
-	require.Equal(t, policy.OutputTokens, status.Window.ChargedOutput)
+	require.Equal(t, window.ID, status.Window.ID)
+	require.Equal(t, policy, status.Window.Policy)
+	require.Zero(t, status.ActiveWork)
+	require.Zero(t, status.Usage.UnreconciledAttempts)
 }
 
 func TestCommunityTopicMigrationUsesNonSuperuserWithForcedRLS(t *testing.T) {
-	f := newTopicProjectionFixture(t)
+	f := newTopicProjectionFixture(t, func(f *topicProjectionFixture) {
+		rollbackMigrationsAfterTopicProjection(t, topicMigrationProvider(t, f.adminDB))
+	})
 	ctx := context.Background()
 	before := f.canonicalSnapshot(t)
 	adminMigrator := topicMigrationProvider(t, f.adminDB)
-	rollbackMigrationsAfterTopicProjection(t, adminMigrator)
 	_, err := adminMigrator.ApplyVersion(ctx, 20261011125000, false)
 	require.NoError(t, err)
 	var projectionTable *string
@@ -230,7 +231,7 @@ func TestCommunityTopicMigrationUsesNonSuperuserWithForcedRLS(t *testing.T) {
 	require.False(t, superuser)
 	require.False(t, bypass)
 	migrator := topicMigrationProvider(t, f.appDB)
-	_, err = migrator.Up(ctx)
+	_, err = migrator.ApplyVersion(ctx, 20261011125000, true)
 	require.NoError(t, err)
 	require.Equal(t, before, f.canonicalSnapshot(t))
 	require.NoError(t, f.rls.WithTeamTx(f.actor(f.reader), f.appDB, f.teamID, func(tx *gorm.DB) error {

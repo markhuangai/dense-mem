@@ -15,8 +15,140 @@ import (
 
 type fixtureTransport func(context.Context, modelprovider.StructuredRequest) (modelprovider.StructuredResult, error)
 
+func TestOrganizationExplicitContextWindow(t *testing.T) {
+	request, response := assessmentFixture()
+	limits := assessor.DefaultSemanticAssessmentLimits()
+	limits.MaxOutputTokens = 512
+	limits.MaxInputTokens = 16000
+	valid, err := json.Marshal(response)
+	require.NoError(t, err)
+	calls := 0
+	transport := fixtureTransport(func(_ context.Context, req modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
+		calls++
+		input, err := NewProvider(nil, "model", limits, 300000).messageTokens(req.Messages)
+		require.NoError(t, err)
+		require.LessOrEqual(t, input+req.MaxOutputTokens, req.MaxInputTokens+req.MaxOutputTokens)
+		return modelprovider.StructuredResult{Content: string(valid)}, nil
+	})
+	probe := NewProvider(transport, "model", limits, 300000)
+	measured, err := probe.Measure(request)
+	require.NoError(t, err)
+	headroom := limits.MaxInputTokens - assessor.SemanticAssessmentConversationInputLimit(limits)
+	capacity := measured + headroom + limits.MaxOutputTokens
+	for _, contextWindow := range []int{0, -1, 1, limits.MaxOutputTokens, 1000000001} {
+		provider := NewProvider(transport, "model", limits, contextWindow)
+		_, attempts, err := provider.Assess(context.Background(), request)
+		require.ErrorIs(t, err, ontology.ErrConfiguration)
+		require.Empty(t, attempts)
+	}
+	require.Zero(t, calls)
+	provider := NewProvider(transport, "model", limits, capacity)
+	require.NoError(t, provider.ConfigurationError())
+	require.Equal(t, measured, provider.MaxInitialInputTokens())
+	_, attempts, err := provider.Assess(context.Background(), request)
+	require.NoError(t, err)
+	require.Len(t, attempts, 1)
+	require.Equal(t, 1, calls)
+	provider = NewProvider(transport, "model", limits, capacity-1)
+	_, attempts, err = provider.Assess(context.Background(), request)
+	require.Error(t, err)
+	require.Empty(t, attempts)
+	require.Equal(t, 1, calls)
+	require.NotEqual(t, probe.Identity(), provider.Identity())
+	inputOnly, err := assessor.CountTokens(request.Items[0].Text+request.Items[1].Text, limits.Tokenizer)
+	require.NoError(t, err)
+	require.Greater(t, measured, inputOnly, "complete schema and message framing must be counted")
+}
+
 func (f fixtureTransport) Complete(ctx context.Context, request modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
 	return f(ctx, request)
+}
+
+func TestOrganizationValidResponseOutputLimits(t *testing.T) {
+	request, response := assessmentFixture()
+	require.NoError(t, Validate(request, response))
+	encoded, err := json.Marshal(response)
+	require.NoError(t, err)
+	limits := assessor.DefaultSemanticAssessmentLimits()
+	measured, err := assessor.CountTokens(string(encoded), limits.Tokenizer)
+	require.NoError(t, err)
+	for _, testCase := range []struct {
+		name     string
+		maximum  int
+		reported int
+		fail     bool
+	}{
+		{"exact_fit", measured, measured, false},
+		{"measured_overflow", measured - 1, 0, true},
+		{"reported_overflow", measured, measured + 1, true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			limits.MaxOutputTokens = testCase.maximum
+			calls := 0
+			provider := NewProvider(fixtureTransport(func(_ context.Context, outbound modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
+				calls++
+				require.Equal(t, testCase.maximum, outbound.MaxOutputTokens)
+				return modelprovider.StructuredResult{Content: string(encoded), CompletionTokens: testCase.reported}, nil
+			}), "model", limits, 300000)
+			require.NoError(t, provider.ConfigurationError())
+			result, attempts, err := provider.Assess(context.Background(), request)
+			if testCase.fail {
+				require.ErrorIs(t, err, modelprovider.ErrVerifierMalformedResponse)
+				require.Empty(t, result.Items)
+				require.Len(t, attempts, 3)
+				require.Equal(t, 3, calls)
+				for _, attempt := range attempts {
+					require.Equal(t, "response_invalid", attempt.FailureCode)
+				}
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, response, result)
+				require.Len(t, attempts, 1)
+				require.Equal(t, 1, calls)
+			}
+		})
+	}
+}
+
+func TestOrganizationContextWindowIncludesRegenerationHistory(t *testing.T) {
+	request, response := assessmentFixture()
+	valid, err := json.Marshal(response)
+	require.NoError(t, err)
+	limits := assessor.DefaultSemanticAssessmentLimits()
+	limits.MaxOutputTokens = 1024
+	measurement, err := NewProvider(nil, "model", limits, 300000).Measure(request)
+	require.NoError(t, err)
+	headroom := limits.MaxInputTokens - assessor.SemanticAssessmentConversationInputLimit(limits)
+	capacity := measurement + headroom + limits.MaxOutputTokens
+	for _, overflow := range []bool{false, true} {
+		calls := 0
+		provider := NewProvider(fixtureTransport(func(_ context.Context, req modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
+			calls++
+			tokens, err := NewProvider(nil, "model", limits, 300000).messageTokens(req.Messages)
+			require.NoError(t, err)
+			require.LessOrEqual(t, tokens+req.MaxOutputTokens, capacity)
+			if overflow {
+				return modelprovider.StructuredResult{Content: strings.Repeat("invalid ", capacity)}, nil
+			}
+			if calls < 3 {
+				return modelprovider.StructuredResult{Content: "{}"}, nil
+			}
+			return modelprovider.StructuredResult{Content: string(valid)}, nil
+		}), "model", limits, capacity)
+		result, attempts, err := provider.Assess(context.Background(), request)
+		if overflow {
+			require.Error(t, err)
+			require.Equal(t, 1, calls, "oversized regeneration history must stop before a second dispatch")
+			require.Len(t, attempts, 1)
+			require.Empty(t, result.Items)
+		} else {
+			require.NoError(t, err)
+			require.Equal(t, response, result)
+			require.Equal(t, 3, calls)
+			require.Len(t, attempts, 3)
+			require.Greater(t, attempts[2].EstimatedInputTokens, attempts[0].EstimatedInputTokens)
+		}
+	}
 }
 
 func assessmentFixture() (Request, Response) {
@@ -108,7 +240,7 @@ func TestOrganizationEchoCorrectionRegeneratesCompleteResponses(t *testing.T) {
 		require.NoError(t, err)
 		calls++
 		return modelprovider.StructuredResult{Content: string(encoded)}, nil
-	}), "model", assessor.DefaultSemanticAssessmentLimits())
+	}), "model", assessor.DefaultSemanticAssessmentLimits(), 300000)
 	result, attempts, err := provider.Assess(context.Background(), request)
 	require.NoError(t, err)
 	require.Equal(t, response, result)
@@ -135,7 +267,7 @@ func TestOrganizationCompleteRegenerationAndTokenAccounting(t *testing.T) {
 		require.Contains(t, req.Messages[3].Content, "validation_errors")
 		return modelprovider.StructuredResult{Content: string(valid), PromptTokens: 500, CompletionTokens: 100}, nil
 	})
-	provider := NewProvider(transport, "model", assessor.DefaultSemanticAssessmentLimits())
+	provider := NewProvider(transport, "model", assessor.DefaultSemanticAssessmentLimits(), 300000)
 	result, attempts, err := provider.Assess(context.Background(), request)
 	require.NoError(t, err)
 	require.Equal(t, response, result)
@@ -149,7 +281,7 @@ func TestOrganizationCompleteRegenerationAndTokenAccounting(t *testing.T) {
 	provider = NewProvider(fixtureTransport(func(context.Context, modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
 		calls++
 		return modelprovider.StructuredResult{Content: "{}"}, nil
-	}), "model", assessor.DefaultSemanticAssessmentLimits())
+	}), "model", assessor.DefaultSemanticAssessmentLimits(), 300000)
 	_, attempts, err = provider.Assess(context.Background(), request)
 	require.ErrorIs(t, err, modelprovider.ErrVerifierMalformedResponse)
 	require.Equal(t, 3, calls)
@@ -162,7 +294,7 @@ func TestOrganizationInitialBudgetAllowsBothCompleteRegenerations(t *testing.T) 
 	limits := assessor.DefaultSemanticAssessmentLimits()
 	limits.MaxOutputTokens = 2048
 	headroom := limits.MaxInputTokens - assessor.SemanticAssessmentConversationInputLimit(limits)
-	measurement, err := NewProvider(nil, "model", limits).Measure(request)
+	measurement, err := NewProvider(nil, "model", limits, 300000).Measure(request)
 	require.NoError(t, err)
 	limits.MaxInputTokens = measurement + headroom
 	valid, err := json.Marshal(response)
@@ -184,7 +316,7 @@ func TestOrganizationInitialBudgetAllowsBothCompleteRegenerations(t *testing.T) 
 			content = string(valid)
 		}
 		return modelprovider.StructuredResult{Content: content}, nil
-	}), "model", limits)
+	}), "model", limits, 300000)
 	require.Equal(t, measurement, provider.MaxInitialInputTokens())
 	result, attempts, err := provider.Assess(context.Background(), request)
 	require.NoError(t, err)
@@ -210,7 +342,7 @@ func TestOrganizationLargeDiagnosticsDoNotConsumeRepairHeadroom(t *testing.T) {
 	limits := assessor.DefaultSemanticAssessmentLimits()
 	limits.MaxOutputTokens = 16384
 	headroom := limits.MaxInputTokens - assessor.SemanticAssessmentConversationInputLimit(limits)
-	measurement, err := NewProvider(nil, "model", limits).Measure(request)
+	measurement, err := NewProvider(nil, "model", limits, 300000).Measure(request)
 	require.NoError(t, err)
 	limits.MaxInputTokens = measurement + headroom
 	invalid := `{"雪` + strings.Repeat("invalid ", limits.MaxOutputTokens-100) + `":true}`
@@ -239,7 +371,7 @@ func TestOrganizationLargeDiagnosticsDoNotConsumeRepairHeadroom(t *testing.T) {
 			return modelprovider.StructuredResult{Content: invalid}, nil
 		}
 		return modelprovider.StructuredResult{Content: string(valid)}, nil
-	}), "model", limits)
+	}), "model", limits, 300000)
 	result, attempts, err := provider.Assess(context.Background(), request)
 	require.NoError(t, err)
 	require.Equal(t, response, result)
@@ -259,7 +391,7 @@ func TestOrganizationProviderFailuresBudgetsAndCancellation(t *testing.T) {
 		calls++
 		return modelprovider.StructuredResult{}, &modelprovider.ProviderError{Provider: "fixture", Message: "failed"}
 	})
-	provider := NewProvider(transport, "model", limits)
+	provider := NewProvider(transport, "model", limits, 300000)
 	_, attempts, err := provider.Assess(context.Background(), request)
 	require.ErrorIs(t, err, modelprovider.ErrVerifierProvider)
 	require.Len(t, attempts, 1)
@@ -270,23 +402,23 @@ func TestOrganizationProviderFailuresBudgetsAndCancellation(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 	require.Equal(t, 1, calls)
 	limits.MaxInputTokens = 1
-	provider = NewProvider(transport, "model", limits)
+	provider = NewProvider(transport, "model", limits, 300000)
 	_, _, err = provider.Assess(context.Background(), request)
-	require.ErrorIs(t, err, modelprovider.ErrVerifierMalformedResponse)
+	require.ErrorIs(t, err, ontology.ErrConfiguration)
 	require.Equal(t, 1, calls)
 	limits = assessor.DefaultSemanticAssessmentLimits()
 	limits.Tokenizer = "unknown"
-	provider = NewProvider(transport, "model", limits)
+	provider = NewProvider(transport, "model", limits, 300000)
 	_, _, err = provider.Assess(context.Background(), request)
 	require.Error(t, err)
 	require.Equal(t, 1, calls)
 	limits = assessor.DefaultSemanticAssessmentLimits()
-	provider = NewProvider(nil, "model", limits)
+	provider = NewProvider(nil, "model", limits, 300000)
 	_, _, err = provider.Assess(context.Background(), request)
 	require.ErrorIs(t, err, modelprovider.ErrVerifierProvider)
 	provider = NewProvider(fixtureTransport(func(context.Context, modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
 		return modelprovider.StructuredResult{Content: "{}", PromptTokens: limits.MaxInputTokens + 1}, nil
-	}), "model", limits)
+	}), "model", limits, 300000)
 	_, attempts, err = provider.Assess(context.Background(), request)
 	require.True(t, errors.Is(err, modelprovider.ErrVerifierMalformedResponse))
 	require.Len(t, attempts, 1)
@@ -338,7 +470,7 @@ func TestOrganizationPairCoverageRegenerationAcceptsCompleteNegativeResults(t *t
 		encoded, err := json.Marshal(result)
 		require.NoError(t, err)
 		return modelprovider.StructuredResult{Content: string(encoded)}, nil
-	}), "model", assessor.DefaultSemanticAssessmentLimits())
+	}), "model", assessor.DefaultSemanticAssessmentLimits(), 300000)
 	result, attempts, err := provider.Assess(context.Background(), request)
 	require.NoError(t, err)
 	require.Equal(t, response, result)
@@ -390,7 +522,7 @@ func TestOrganizationMissingDefinitionCorrectionPreservesLockedReuse(t *testing.
 		require.NoError(t, err)
 		calls++
 		return modelprovider.StructuredResult{Content: string(encoded)}, nil
-	}), "model", assessor.DefaultSemanticAssessmentLimits())
+	}), "model", assessor.DefaultSemanticAssessmentLimits(), 300000)
 	result, attempts, err := provider.Assess(context.Background(), request)
 	require.NoError(t, err)
 	require.Equal(t, valid, result)

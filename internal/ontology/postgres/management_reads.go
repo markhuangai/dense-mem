@@ -103,10 +103,10 @@ func (s *Store) TeamOntologyStatus(ctx context.Context, teamID string) (ontology
 			return err
 		}
 		result.DiscoveryComplete = result.DiscoveryComplete && result.PendingMarkers == 0
-		if err := tx.Raw(`SELECT count(*) FILTER(WHERE eligible),count(*) FILTER(WHERE eligible AND status='organized'),count(*) FILTER(WHERE eligible AND status='pending'),count(*) FILTER(WHERE eligible AND status='ambiguous'),count(*) FILTER(WHERE eligible AND status='failed'),count(*) FILTER(WHERE eligible AND status='budget_deferred') FROM ontology_maintenance_sources WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=?`, fence.TeamID, fence.SpaceID, fence.Generation).Row().Scan(&result.Counts.Eligible, &result.Counts.Organized, &result.Counts.Pending, &result.Counts.Ambiguous, &result.Counts.Failed, &result.Counts.BudgetDeferred); err != nil {
+		if err := tx.Raw(`SELECT count(*) FILTER(WHERE eligible),count(*) FILTER(WHERE eligible AND status='organized'),count(*) FILTER(WHERE eligible AND status='pending'),count(*) FILTER(WHERE eligible AND status='ambiguous'),count(*) FILTER(WHERE eligible AND status='failed') FROM ontology_maintenance_sources WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=?`, fence.TeamID, fence.SpaceID, fence.Generation).Row().Scan(&result.Counts.Eligible, &result.Counts.Organized, &result.Counts.Pending, &result.Counts.Ambiguous, &result.Counts.Failed); err != nil {
 			return err
 		}
-		result.CoverageComplete = result.DiscoveryComplete && result.Counts.Pending == 0 && result.Counts.Ambiguous == 0 && result.Counts.Failed == 0 && result.Counts.BudgetDeferred == 0
+		result.CoverageComplete = result.DiscoveryComplete && result.Counts.Pending == 0 && result.Counts.Ambiguous == 0 && result.Counts.Failed == 0
 		return nil
 	})
 	return result, err

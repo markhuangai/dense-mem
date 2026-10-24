@@ -19,14 +19,33 @@ const SystemPrompt = `Organize the supplied existing source records as derived m
 const maxCorrectionErrorRunes = 256
 
 type Provider struct {
-	transport  modelprovider.StructuredTransport
-	model      string
-	limits     assessor.SemanticAssessmentLimits
-	accounting AttemptAccounting
+	transport           modelprovider.StructuredTransport
+	model               string
+	limits              assessor.SemanticAssessmentLimits
+	accounting          AttemptAccounting
+	contextWindowTokens int
+	configurationError  error
 }
 
-func NewProvider(transport modelprovider.StructuredTransport, model string, limits assessor.SemanticAssessmentLimits) *Provider {
-	return &Provider{transport: transport, model: model, limits: assessor.NormalizeSemanticAssessmentLimits(limits)}
+func NewProvider(transport modelprovider.StructuredTransport, model string, limits assessor.SemanticAssessmentLimits, contextWindowTokens int) *Provider {
+	p := &Provider{transport: transport, model: model, limits: assessor.NormalizeSemanticAssessmentLimits(limits), contextWindowTokens: contextWindowTokens}
+	if contextWindowTokens < 1 || contextWindowTokens > 1000000000 || contextWindowTokens <= p.limits.MaxOutputTokens {
+		p.configurationError = fmt.Errorf("%w: explicit model context window must exceed output capacity", ontology.ErrConfiguration)
+		return p
+	}
+	p.limits.MaxInputTokens = min(p.limits.MaxInputTokens, contextWindowTokens-p.limits.MaxOutputTokens)
+	framing, err := p.messageTokens([]modelprovider.Message{{Role: "system", Content: SystemPrompt}, {Role: "user", Content: "{}"}})
+	if err != nil || p.MaxInitialInputTokens() <= framing {
+		p.configurationError = fmt.Errorf("%w: context window leaves no request capacity after output and regeneration headroom: %v", ontology.ErrConfiguration, err)
+	}
+	return p
+}
+
+func (p *Provider) ConfigurationError() error {
+	if p == nil {
+		return ontology.ErrConfiguration
+	}
+	return p.configurationError
 }
 
 func (p *Provider) Identity() string {
@@ -35,12 +54,16 @@ func (p *Provider) Identity() string {
 		Limits                assessor.SemanticAssessmentLimits
 		InitialInputTokens    int
 		CorrectionErrorRunes  int
-	}{p.model, SystemPrompt, SchemaName, p.limits, p.MaxInitialInputTokens(), maxCorrectionErrorRunes})
+		ContextWindowTokens   int
+	}{p.model, SystemPrompt, SchemaName, p.limits, p.MaxInitialInputTokens(), maxCorrectionErrorRunes, p.contextWindowTokens})
 	digest := sha256.Sum256(encoded)
 	return "sha256:" + hex.EncodeToString(digest[:])
 }
 
 func (p *Provider) MaxInitialInputTokens() int {
+	if p.ConfigurationError() != nil {
+		return 0
+	}
 	return assessor.SemanticAssessmentConversationInputLimit(p.limits)
 }
 
@@ -62,6 +85,9 @@ func (p *Provider) Measure(request Request) (int, error) {
 }
 
 func (p *Provider) Assess(ctx context.Context, request Request) (Response, []ontology.AssessmentAttempt, error) {
+	if err := p.ConfigurationError(); err != nil {
+		return Response{}, nil, err
+	}
 	if p == nil || p.transport == nil || p.model == "" {
 		return Response{}, nil, &modelprovider.ProviderError{Provider: "ontology", Message: "organization transport is unavailable", FailureClass: modelprovider.ProviderFailureClassProviderUnavailable}
 	}

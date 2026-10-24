@@ -733,15 +733,17 @@ async function mockApi(page: Page, state: { teams: TestProfile[]; keys: TestKey[
   let teams = [...state.teams];
   let keys = [...state.keys];
   let bans = [...(state.bans ?? [])];
-  const ontologyPolicy = { enabled: true, cadence_hours: 12 as const, start_time_local: "03:00", timezone: "UTC", model: "maintenance-model", max_concurrency: 1, input_tokens: 250000, output_tokens: 100000, settings_version: "1" };
+  const ontologyPolicy = { enabled: true, cadence_hours: 12 as const, start_time_local: "03:00", timezone: "UTC", model: "maintenance-model", max_concurrency: 1, context_window_tokens: 300000, settings_version: "1" };
   let ontologyConfig: OntologyMaintenanceConfig = {
     update_time: "2026-10-18T12:00:00Z", effective: ontologyPolicy,
-    items: Object.entries({ ONTOLOGY_MAINTENANCE_ENABLED: "true", ONTOLOGY_MAINTENANCE_CADENCE_HOURS: "12", ONTOLOGY_MAINTENANCE_START_TIME_LOCAL: "03:00", ONTOLOGY_MAINTENANCE_MODEL: "maintenance-model", ONTOLOGY_MAINTENANCE_MAX_CONCURRENCY: "1", ONTOLOGY_MAINTENANCE_INPUT_TOKENS: "250000", ONTOLOGY_MAINTENANCE_OUTPUT_TOKENS: "100000" }).map(([key, value]) => ({ key, value, effective_value: value, updated_at: "2026-10-18T12:00:00Z" })),
+    items: Object.entries({ ONTOLOGY_MAINTENANCE_ENABLED: "true", ONTOLOGY_MAINTENANCE_CADENCE_HOURS: "12", ONTOLOGY_MAINTENANCE_START_TIME_LOCAL: "03:00", ONTOLOGY_MAINTENANCE_MODEL: "maintenance-model", ONTOLOGY_MAINTENANCE_MAX_CONCURRENCY: "1", ONTOLOGY_MAINTENANCE_CONTEXT_WINDOW_TOKENS: "300000" }).map(([key, value]) => ({ key, value, effective_value: value, updated_at: "2026-10-18T12:00:00Z" })),
   };
+  const ontologyUsage = { attempts: 10, unreconciled_attempts: 1, unavailable_usage_attempts: 1, partial_usage_attempts: 0, reported_input_tokens: 144000, reported_output_tokens: 34000, reported_total_tokens: 178000 };
   const ontologyStatus: OntologyMaintenanceStatus = {
+    active_work: 1, usage: ontologyUsage, historical_usage: ontologyUsage,
     observed_at: "2026-10-18T12:00:00Z", enabled: true, paused: false, discovery_complete: false, coverage_complete: false,
-    counts: { eligible: 1024, organized: 842, pending: 112, failed: 8, ambiguous: 18, budget_deferred: 44 }, pending_policy: ontologyPolicy,
-    window: { id: "window-a", starts_at: "2026-10-18T03:00:00Z", ends_at: "2026-10-18T15:00:00Z", policy: ontologyPolicy, charged_input_tokens: 160000, charged_output_tokens: 38000, reported_input_tokens: 144000, reported_output_tokens: 34000, reserved_input_tokens: 16000, reserved_output_tokens: 4000, additional_input_tokens: 1000, additional_output_tokens: 0, overrun: false },
+    counts: { eligible: 1024, organized: 842, pending: 112, failed: 8, ambiguous: 18 }, pending_policy: ontologyPolicy,
+    window: { id: "window-a", starts_at: "2026-10-18T03:00:00Z", ends_at: "2026-10-18T15:00:00Z", policy: ontologyPolicy, usage: ontologyUsage },
   };
   let recallFeedbackConfig = {
     update_time: "2026-06-16T12:00:00Z",

@@ -16,8 +16,6 @@ import (
 
 const DefaultOntologyCadenceHours = 12
 const DefaultOntologyStartTime = "03:00"
-const DefaultOntologyInputTokens = 250000
-const DefaultOntologyOutputTokens = 100000
 
 func (s *AppConfigServiceImpl) GetOntologyMaintenanceSettings(ctx context.Context) (*domain.OntologyMaintenanceSettings, error) {
 	entries, err := s.repo.List(ctx)
@@ -66,7 +64,7 @@ func (s *AppConfigServiceImpl) UpdateOntologyMaintenanceSettings(ctx context.Con
 }
 
 func editableOntologyConfigKeys() []string {
-	return []string{domain.AppConfigOntologyEnabled, domain.AppConfigOntologyCadenceHours, domain.AppConfigOntologyStartTime, domain.AppConfigOntologyModel, domain.AppConfigOntologyConcurrency, domain.AppConfigOntologyTeamConcurrency, domain.AppConfigOntologyTeamOverrides, domain.AppConfigOntologyInputTokens, domain.AppConfigOntologyOutputTokens}
+	return []string{domain.AppConfigOntologyEnabled, domain.AppConfigOntologyCadenceHours, domain.AppConfigOntologyStartTime, domain.AppConfigOntologyModel, domain.AppConfigOntologyConcurrency, domain.AppConfigOntologyTeamConcurrency, domain.AppConfigOntologyTeamOverrides, domain.AppConfigOntologyContextWindow}
 }
 
 func normalizeOntologyConfigValues(values map[string]string) (map[string]string, error) {
@@ -109,6 +107,14 @@ func normalizeOntologyConfigValues(values map[string]string) (map[string]string,
 			if err != nil {
 				return nil, err
 			}
+		case domain.AppConfigOntologyContextWindow:
+			if value != "" {
+				parsed, err := strconv.ParseInt(value, 10, 64)
+				if err != nil || parsed < 1 || parsed > 1000000000 {
+					return nil, fmt.Errorf("%w: context window must be 1..1000000000 tokens", ErrInvalidAppConfig)
+				}
+				value = strconv.FormatInt(parsed, 10)
+			}
 		case domain.AppConfigOntologyModel:
 			if len(value) > 128 || strings.ContainsAny(value, "\x00\r\n") {
 				return nil, fmt.Errorf("%w: invalid maintenance model", ErrInvalidAppConfig)
@@ -120,10 +126,6 @@ func normalizeOntologyConfigValues(values map[string]string) (map[string]string,
 				fallback = domain.DefaultOntologyTeamConcurrency
 			case domain.AppConfigOntologyCadenceHours:
 				fallback, maximum = DefaultOntologyCadenceHours, 24
-			case domain.AppConfigOntologyInputTokens:
-				fallback, maximum = DefaultOntologyInputTokens, 1000000000
-			case domain.AppConfigOntologyOutputTokens:
-				fallback, maximum = DefaultOntologyOutputTokens, 1000000000
 			}
 			if value == "" {
 				value = strconv.FormatInt(fallback, 10)
@@ -150,7 +152,7 @@ func ontologyRuntimeConfigFromEntries(entries map[string]domain.AppConfigEntry, 
 	}
 	integer := func(key string) int { n, _ := strconv.Atoi(values[key]); return n }
 	enabled, _ := strconv.ParseBool(values[domain.AppConfigOntologyEnabled])
-	policy := domain.OntologyMaintenanceConfig{Enabled: enabled, CadenceHours: integer(domain.AppConfigOntologyCadenceHours), StartTimeLocal: values[domain.AppConfigOntologyStartTime], Timezone: timezone, Model: values[domain.AppConfigOntologyModel], MaxConcurrency: integer(domain.AppConfigOntologyConcurrency), InputTokens: int64(integer(domain.AppConfigOntologyInputTokens)), OutputTokens: int64(integer(domain.AppConfigOntologyOutputTokens)), SettingsVersion: entries[domain.AppConfigUpdateTimeKey].Value}
+	policy := domain.OntologyMaintenanceConfig{Enabled: enabled, CadenceHours: integer(domain.AppConfigOntologyCadenceHours), StartTimeLocal: values[domain.AppConfigOntologyStartTime], Timezone: timezone, Model: values[domain.AppConfigOntologyModel], MaxConcurrency: integer(domain.AppConfigOntologyConcurrency), ContextWindowTokens: int64(integer(domain.AppConfigOntologyContextWindow)), SettingsVersion: entries[domain.AppConfigUpdateTimeKey].Value}
 	policy.TeamMaxConcurrency = integer(domain.AppConfigOntologyTeamConcurrency)
 	policy.TeamConcurrencyOverrides, err = parseOntologyTeamOverrides(values[domain.AppConfigOntologyTeamOverrides])
 	if err != nil {

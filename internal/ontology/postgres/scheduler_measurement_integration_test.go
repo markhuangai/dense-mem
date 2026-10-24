@@ -120,7 +120,10 @@ func TestOntologyMaintenanceParallelSchedulerMeasurement(t *testing.T) {
 			}
 			status, err := f.store.MaintenanceStatus(context.Background(), time.Now())
 			require.NoError(t, err)
-			m.ChargedInput, m.ChargedOutput = status.Window.ChargedInput-initial.Window.ChargedInput, status.Window.ChargedOutput-initial.Window.ChargedOutput
+			m.ReportedInput = status.Usage.ReportedInputTokens - initial.Usage.ReportedInputTokens
+			m.ReportedOutput = status.Usage.ReportedOutputTokens - initial.Usage.ReportedOutputTokens
+			m.UnavailableUsageAttempts = status.Usage.UnavailableUsageAttempts - initial.Usage.UnavailableUsageAttempts
+			m.PartialUsageAttempts = status.Usage.PartialUsageAttempts - initial.Usage.PartialUsageAttempts
 			if mixed {
 				m.ProjectionCoverage, err = store.TopicProjectionCoverage(f.actor(1, "member"), f.team)
 				require.NoError(t, err)

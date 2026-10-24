@@ -145,7 +145,7 @@ func TestOrganizationDiagnosticCaptureUsesRealProviderValidation(t *testing.T) {
 	defer server.Close()
 	cfg.AIVerifierAPIURL = server.URL
 	limits := assessorprovider.SemanticAssessmentLimitsForConfig(&cfg)
-	provider := assessment.NewProvider(assessorprovider.NewOpenAIAssessorWithAssessmentLimits(&cfg, server.Client(), limits), cfg.AIVerifierModel, limits)
+	provider := assessment.NewProvider(assessorprovider.NewOpenAIAssessorWithAssessmentLimits(&cfg, server.Client(), limits), cfg.AIVerifierModel, limits, 300000)
 	directory := t.TempDir()
 	recorder := newOrganizationDiagnosticRecorder(t, directory, "manager-separation", cfg)
 	request := assessment.Request{RequestID: "diagnostic-fixture", Definitions: []assessment.Definition{}, Items: []assessment.Item{{Ref: "a", Kind: ontology.EvidenceSource, Text: "Atlas uses PostgreSQL."}, {Ref: "b", Kind: ontology.EvidenceSource, Text: "Atlas uses PostgreSQL."}}, Pairs: []assessment.Pair{{Ref: "pair", LeftRef: "a", RightRef: "b", RequiredRelation: "distinct"}}}

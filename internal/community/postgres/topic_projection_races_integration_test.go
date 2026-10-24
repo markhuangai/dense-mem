@@ -278,13 +278,14 @@ func TestCommunityTopicPublicationUsesAdmissionLockOrder(t *testing.T) {
 }
 
 func TestCommunityTopicCapacityIsSharedWithMaintenance(t *testing.T) {
-	f := newTopicProjectionFixture(t)
+	f := newTopicProjectionFixture(t, func(f *topicProjectionFixture) {
+		config := settings.NewAppConfigService(settingspg.NewAppConfigRepository(f.appDB, f.rls), nil)
+		_, err := config.UpdateOntologyMaintenanceSettings(context.Background(), map[string]string{domain.AppConfigOntologyConcurrency: "1"}, "control", "", "")
+		require.NoError(t, err)
+	})
 	f.seedCohort(t)
 	_, err := f.ontology.PublishAutomatic(context.Background(), f.otherTeam, ontology.Publication{OperationKey: uuid.NewString(), Reason: "second-instance capacity fixture", Changes: []ontology.Change{{Record: ontology.Record{ID: uuid.NewString(), Kind: ontology.Topic, Definition: &ontology.Definition{Key: "foreign-capacity", Label: "Foreign capacity"}}}}})
 	require.NoError(t, err)
-	require.NoError(t, f.rls.WithSystemTx(context.Background(), f.adminDB, func(tx *gorm.DB) error {
-		return tx.Exec(`UPDATE ontology_maintenance_windows SET policy=jsonb_set(policy,'{max_concurrency}','1') WHERE window_id=?::uuid`, f.windowID).Error
-	}))
 	instanceB := NewStore(f.appDB.Session(&gorm.Session{NewDB: true}), f.rls).WithTopics(f.ontology.NewTopicCatalogReader(), f.ontology.NewTopicMembershipReader(), f.ontology.NewTopicProjectionAdmission(), f.ontology.NewTopicProjectionRelease())
 	work, _, err := f.store.ClaimTopicProjection(context.Background(), time.Now())
 	require.NoError(t, err)
@@ -303,12 +304,12 @@ func TestCommunityTopicCapacityIsSharedWithMaintenance(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, other, "projection overlapped an admitted organization turn")
 	require.NoError(t, f.ontology.ReleaseMaintenanceTurn(context.Background(), *turn))
-	require.NoError(t, f.rls.WithSystemTx(context.Background(), f.adminDB, func(tx *gorm.DB) error {
+	require.ErrorContains(t, f.rls.WithSystemTx(context.Background(), f.adminDB, func(tx *gorm.DB) error {
 		return tx.Exec(`UPDATE ontology_maintenance_windows SET overrun=true WHERE window_id=?::uuid`, f.windowID).Error
-	}))
+	}), "ontology window identity, policy and historical accounting are immutable")
 	other, _, err = instanceB.ClaimTopicProjection(context.Background(), time.Now())
 	require.NoError(t, err)
-	require.NotNil(t, other, "model budget overrun blocked independent projection work")
+	require.NotNil(t, other, "rejected spending write blocked independent projection work")
 	f.expireLease(t, other.CommunityID)
 	recovered, _, err := f.store.ClaimTopicProjection(context.Background(), time.Now())
 	require.NoError(t, err)

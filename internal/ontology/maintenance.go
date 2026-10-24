@@ -28,7 +28,7 @@ type MaintenanceAuditPreparer interface {
 type MaintenanceDependencies struct {
 	Repository      contract.MaintenanceRepository
 	Config          MaintenanceConfigSource
-	Organizer       func(string, assessment.AttemptAccounting) *Service
+	Organizer       func(string, int64, assessment.AttemptAccounting) *Service
 	DefaultModel    string
 	ProviderTimeout time.Duration
 	Audit           MaintenanceAuditPreparer
@@ -80,6 +80,14 @@ func (s *MaintenanceService) Status(ctx context.Context) (contract.MaintenanceSt
 	}
 	status, err := s.deps.Repository.MaintenanceStatus(ctx, s.deps.Now())
 	status.PendingPolicy = policy
+	active := policy
+	if status.Window != nil && status.ObservedAt.Before(status.Window.EndsAt) {
+		active = status.Window.Policy
+	}
+	if s.validatePolicy(active) != nil {
+		status.ConfigurationError = "configuration_invalid"
+		status.CoverageComplete = false
+	}
 	return status, err
 }
 
@@ -118,12 +126,12 @@ func (s *MaintenanceService) Command(ctx context.Context, input domain.OntologyM
 		return contract.MaintenanceRun{}, &OrganizationError{Code: "audit_unavailable"}
 	}
 	if input.Action == "run" || input.Action == "retry" {
-		if _, err := s.deps.Repository.EnsureMaintenanceWindow(ctx, policy, s.deps.Now()); err != nil {
+		if _, err := s.ensureWindow(ctx, policy, s.deps.Now()); err != nil {
 			return contract.MaintenanceRun{}, err
 		}
 	}
 	result, err := s.deps.Repository.MaintenanceCommand(ctx, input, s.deps.Now(), func(result contract.MaintenanceRun) (audit.Entry, error) {
-		return s.deps.Audit.Prepare(ctx, access.AuditLogEntry{Operation: "ONTOLOGY_MAINTENANCE_COMMAND", EntityType: "ontology_maintenance", EntityID: result.ID, ActorRole: "control", ClientIP: clientIP, CorrelationID: correlationID, Metadata: map[string]any{"action": input.Action, "operation_key": input.OperationKey, "window_id": result.WindowID, "max_batches": result.MaxBatches, "input_tokens": input.InputTokens, "output_tokens": input.OutputTokens}})
+		return s.deps.Audit.Prepare(ctx, access.AuditLogEntry{Operation: "ONTOLOGY_MAINTENANCE_COMMAND", EntityType: "ontology_maintenance", EntityID: result.ID, ActorRole: "control", ClientIP: clientIP, CorrelationID: correlationID, Metadata: map[string]any{"action": input.Action, "operation_key": input.OperationKey, "window_id": result.WindowID, "max_batches": result.MaxBatches}})
 	})
 	if errors.Is(err, contract.ErrAuditUnavailable) {
 		return result, &OrganizationError{Code: "audit_unavailable", Cause: err}
@@ -131,9 +139,35 @@ func (s *MaintenanceService) Command(ctx context.Context, input domain.OntologyM
 	return result, err
 }
 
+func (s *MaintenanceService) validatePolicy(policy domain.OntologyMaintenanceConfig) error {
+	if s.deps.Organizer == nil || policy.Model == "" {
+		return contract.ErrConfiguration
+	}
+	organizer := s.deps.Organizer(policy.Model, policy.ContextWindowTokens, nil)
+	if organizer == nil {
+		return contract.ErrConfiguration
+	}
+	return organizer.provider.ConfigurationError()
+}
+
+func (s *MaintenanceService) ensureWindow(ctx context.Context, policy domain.OntologyMaintenanceConfig, now time.Time) (*contract.MaintenanceWindow, error) {
+	current, err := s.deps.Repository.CurrentMaintenanceWindow(ctx, now)
+	if err != nil {
+		return nil, err
+	}
+	if current != nil {
+		if err := s.validatePolicy(current.Policy); err != nil {
+			return nil, err
+		}
+	} else if err := s.validatePolicy(policy); err != nil {
+		return nil, err
+	}
+	return s.deps.Repository.EnsureMaintenanceWindow(ctx, policy, now)
+}
+
 type maintenanceWork struct {
-	claim contract.MaintenanceClaim
-	model string
+	claim  contract.MaintenanceClaim
+	policy domain.OntologyMaintenanceConfig
 }
 
 func (s *MaintenanceService) RunTurn(ctx context.Context) (bool, error) {
@@ -155,7 +189,7 @@ func (s *MaintenanceService) prepareTurn(ctx context.Context) (work *maintenance
 	if s.deps.Organizer == nil || policy.Model == "" {
 		return nil, false, &OrganizationError{Code: "configuration_invalid"}
 	}
-	window, err := s.deps.Repository.EnsureMaintenanceWindow(ctx, policy, s.deps.Now())
+	window, err := s.ensureWindow(ctx, policy, s.deps.Now())
 	if err != nil {
 		return nil, false, err
 	}
@@ -204,7 +238,7 @@ func (s *MaintenanceService) prepareTurn(ctx context.Context) (work *maintenance
 	if err != nil || claim == nil {
 		return nil, true, err
 	}
-	return &maintenanceWork{claim: *claim, model: window.Policy.Model}, true, nil
+	return &maintenanceWork{claim: *claim, policy: window.Policy}, true, nil
 }
 
 func (s *MaintenanceService) executeBatch(ctx context.Context, work maintenanceWork) (runErr error) {
@@ -232,7 +266,7 @@ func (s *MaintenanceService) executeBatch(ctx context.Context, work maintenanceW
 		}
 	}()
 	accounting := &maintenanceAttemptAccounting{repository: s.deps.Repository, claim: claim, now: s.deps.Now, admitted: map[int]bool{}}
-	organizer := s.deps.Organizer(work.model, accounting)
+	organizer := s.deps.Organizer(work.policy.Model, work.policy.ContextWindowTokens, accounting)
 	assessmentCtx := observability.WithAIOperation(claimCtx, observability.AIOperationOntologyOrganization, len(claim.Sources))
 	result, runErr = organizer.Organize(assessmentCtx, claim.TeamID, contract.OrganizationInput{OperationKey: "maintenance:" + claim.ID, Sources: claim.Sources})
 	return runErr
@@ -248,7 +282,7 @@ type maintenanceAttemptAccounting struct {
 
 func (a *maintenanceAttemptAccounting) BeforeAttempt(ctx context.Context, id string, number, input, output int) (context.Context, error) {
 	return modelprovider.WithAdmissionCallback(ctx, func(dispatchCtx context.Context) error {
-		if err := a.repository.ReserveMaintenanceAttempt(dispatchCtx, a.claim, id, number, input, output, a.now()); err != nil {
+		if err := a.repository.AdmitMaintenanceAttempt(dispatchCtx, a.claim, id, number, input, output, a.now()); err != nil {
 			return err
 		}
 		a.mu.Lock()

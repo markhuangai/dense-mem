@@ -542,13 +542,21 @@ Temporal requests omit current-only organization and report that degradation.
 Disabling ontology maintenance restores ordinary retrieval; pausing it retains
 current published organization.
 
-Operators can use **Operations → Ontology maintenance → Add allowance now** to authorize extra
-input/output tokens for the active maintenance window. The additions are shared
-across teams and expire at the window's original end. Original policy, charged
-usage and outstanding reservations remain visible; each grant has an immutable
-receipt and audit. Budget-deferred work resumes through normal automatic
-maintenance on its next minute tick. Pause, disable and provider-overrun stops
-still apply. Schedule and model settings continue to apply at the next window.
+Operators configure the ontology model and its **Model context window (tokens)** in
+**Operations → Ontology maintenance**. This is the selected model’s capacity for
+one complete request and response, including regeneration history. No capacity
+is inferred from the model name. Missing or unusable capacity blocks model calls
+and is reported in the portal; pause and configuration controls remain available.
+Model, context, and concurrency changes activate together in the next window.
+
+Ontology has no cumulative token-spending budgets or allowance grants. The
+portal reports active work, unfinished attempts, reported tokens, and partial or
+unavailable usage. Unavailable usage does not mean zero consumption. Historical
+grants remain readable in run history, and historical budget accounting is
+preserved unchanged. Pause or disable, drain, and stop old workers before the
+budget-retirement migration. The first configured post-retirement window opens
+immediately and retains the existing scheduling boundary. See the
+[migration notes](migrations/postgres/v2_6/README.md) for recovery constraints.
 
 When recall feedback is enabled and a snapshot is stored, clients may voluntarily
 call `submit_recall_session_feedback` with `recall_id`; Recall does not prompt for
