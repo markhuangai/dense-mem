@@ -27,11 +27,12 @@ func submissionInstructionIsData(text string, location []int, rule string) bool 
 	start, end := location[0], location[1]
 	clauseStart := strings.LastIndexAny(text[:start], ".!?;\r\n") + 1
 	prefix := strings.TrimLeft(text[clauseStart:start], " \t>#:*-\\\"'`([{<‘’“”")
-	if len(prefix) <= 256 && (prohibitionPrefixPattern.MatchString(prefix) ||
-		prohibitionClausePattern.MatchString(prefix) && prohibitionJoinPattern.MatchString(prefix) && !prohibitionBreakPattern.MatchString(prefix)) {
+	if len(prefix) <= 256 && !prohibitionBreakPattern.MatchString(text[start:end]) && (prohibitionPrefixPattern.MatchString(prefix) ||
+		prohibitionClausePattern.MatchString(prefix) && prohibitionJoinPattern.MatchString(prefix) && !prohibitionBreakPattern.MatchString(prefix) &&
+			(secretExtractionPattern.MatchString(prefix) || toolExfiltrationPattern.MatchString(prefix) || overridePattern.MatchString(prefix))) {
 		return true
 	}
-	if reportedInstructionIsData(prefix, text[end:], text[:clauseStart]) {
+	if reportedInstructionIsData(prefix, text[start:end], text[end:], text[:clauseStart]) {
 		return true
 	}
 	if rule == "prompt_secret_extraction" && outputTokenNounPattern.MatchString(text[start:end]) {
@@ -41,7 +42,7 @@ func submissionInstructionIsData(text string, location []int, rule string) bool 
 	return false
 }
 
-func reportedInstructionIsData(prefix, suffix, preceding string) bool {
+func reportedInstructionIsData(prefix, matched, suffix, preceding string) bool {
 	frame := reportedInstructionPattern.FindStringIndex(prefix)
 	if frame == nil {
 		return false
@@ -50,7 +51,7 @@ func reportedInstructionIsData(prefix, suffix, preceding string) bool {
 	for _, pair := range [][2]string{{`"`, `"`}, {"'", "'"}, {"`", "`"}, {"‘", "’"}, {"“", "”"}} {
 		if strings.HasPrefix(tail, pair[0]) {
 			closeAt := strings.Index(suffix, pair[1])
-			return !strings.Contains(strings.TrimPrefix(tail, pair[0]), pair[1]) && closeAt >= 0 &&
+			return !strings.Contains(strings.TrimPrefix(tail, pair[0]), pair[1]) && !strings.Contains(matched, pair[1]) && closeAt >= 0 &&
 				!reportedExecutionIsDirective(preceding+prefix[:frame[1]]+suffix[closeAt+len(pair[1]):])
 		}
 	}

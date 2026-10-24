@@ -19,8 +19,8 @@
     "cohort_sha256": "4e049ae0edcbd91b56ea6ab2a26d5dd55d8209021d1b8ef31a7c8bed52fd1d8c",
     "model": "dense-mem-testing",
     "base_source_sha": "0cf9e1520039b52477f247399056ec95e539170d",
-    "candidate_source_sha": "0cf9e1520039b52477f247399056ec95e539170d",
-    "candidate_source_state_sha256": "5b75f64f28ee9e7d2f6c4fb5a690011ae63a67d9b6080d343764d39f22e5b577",
+    "candidate_source_sha": "a0f60596a1c04370536808f1b43f7daf7424fbc2",
+    "candidate_source_state_sha256": "77153b03cbf2f48af14f8f059d5e525f77978a85fdaa750607e70b05de510af3",
     "repetitions": 3,
     "cases_per_repetition": 20,
     "base_passed": [
@@ -38,20 +38,22 @@
   "source_binding": {
     "base_source_state_sha256": "76d63f977850a5f2da176faef8c99c96a886de120714438fb8d4e789cab44f6a",
     "candidate_built_from_uncommitted_source": true,
-    "candidate_parent_sha": "0cf9e1520039b52477f247399056ec95e539170d",
-    "candidate_source_state_sha256": "5b75f64f28ee9e7d2f6c4fb5a690011ae63a67d9b6080d343764d39f22e5b577",
-    "first_bound_commit_sha": "1e756ae0f70f3fcb7201e33a724e9fdc309ee215",
-    "publication_fence": "All 2,123 tested manifest files matched the first bound commit. Later publication preserves all production and quality-runner blobs; compact evidence and the identified test-only correction are subsequent changes.",
+    "candidate_parent_sha": "a0f60596a1c04370536808f1b43f7daf7424fbc2",
+    "candidate_source_state_sha256": "77153b03cbf2f48af14f8f059d5e525f77978a85fdaa750607e70b05de510af3",
+    "tested_manifest_files": 2124,
+    "publication_fence": "The tested manifest is retained for publication verification; only this compact evidence metadata is changed after the successful run. The final commit binding is verified in the delivery receipt.",
     "post_comparison_changes": [
       {
-        "path": "tests/uat/ontology_organization_e2e.mjs",
-        "reason": "The first exact-source remote run exposed an overly strict assertion requiring HTTP timing after admission failed before dispatch; require only reached phases and require unreached phases to remain absent."
+        "path": "tests/eval/baselines/contextual_intake_v1_evidence.json",
+        "reason": "Refresh compact provenance with the successful review-fix comparison and preserve historical and incomplete attempts."
       }
     ],
     "production_images": {
       "base": "sha256:4b2e9169bcaed735cedbcf19498d3f50aae07f6efadd2922cfd4d04c05efbc23",
-      "candidate": "sha256:1b779a9269a33794db3bc066006f058c6630bfb5068272ad7366d30e822da1fc"
-    }
+      "candidate": "sha256:2c83ce7cd3b131c30412df5c93f57ea7dca3ad13955bd6d8dfefb8388e4dbcdd"
+    },
+    "immutable_baseline_reused": true,
+    "review_regressions": "Quotation-boundary and unrelated-negation scanner fixes are included in the tested source; additional Go and production-entry regressions cover those witnesses without changing the frozen cohort."
   },
   "providers": {
     "assessment_model": "dense-mem-testing",
@@ -115,8 +117,8 @@
   },
   "successful_report_sha256": {
     "base.json": "c3228bf5f0e8ea84f82e6b2df745ac825b92b41de908e6430f838193997f3e84",
-    "candidate.json": "3009480b0c84a2b2799897bb5c3f594769b17be505beea5c462a570fe925a134",
-    "comparison.json": "f2806f8d3524e3d1a2d5a170e1b8138078efe1e1e202362f8572e47df8aceb36"
+    "candidate-review3.json": "3f99099c36b614a20914e1730c4d0f9c437ab4664fd443cfa52bf8b9056929b8",
+    "comparison-review3.json": "413a90a9d076bff6064705097d93e6c4760390c0812a82021fa70f4c0b2b10d3"
   },
   "retained_incomplete_attempts": [
     {
@@ -136,12 +138,71 @@
       "sha256": "7897dc9492a0401748b59ca0f5fa8012ffd5f4150a6d39063fa4affef38851b2",
       "complete": false,
       "failure": "unexpected required failure for same_observation_contradiction: request_timeout"
+    },
+    {
+      "report": "candidate-review1-incomplete-request-timeout",
+      "sha256": "48d95804b33a97eec9b9a9015a4746f9131f4773ebf7b2c1c30f14b948aca8d7",
+      "complete": false,
+      "failure": "unexpected required failure for identifiers_generic: request_timeout"
+    },
+    {
+      "report": "candidate-review2-incomplete-embedding-unavailable",
+      "sha256": "d6283db8293a42fe827c513af1115fa427de54501700decfffced91af72c5f25",
+      "complete": false,
+      "failure": "unexpected required failure for distinct_subjects: embedding_unavailable"
     }
   ],
-  "recovery": "The first Cloudflare attempt stopped on the existing 10-second embedding-phase limit in both roles. Three subsequent probes passed in 66\u2013267 ms. One fresh paired attempt ran sequentially and completed all repetitions without changing inputs, judgments, limits or runtime retries.",
+  "recovery": "Renewed review-fix attempts stopped on an assessment timeout after three passing samples and an embedding network EOF after sixteen. Zero server/proxy restarts or OOM events and three passing probes through the same Cloudflare route supported one fresh bounded attempt for the latter failure. It completed all 60 samples with inputs, judgments, source image, provider limits and runtime retries unchanged. The immutable complete baseline report was reused; all incomplete attempts remain failed.",
   "remaining_delivery_gates_at_evidence_creation": [
-    "Complete local CI coverage",
-    "Exact-source Development E2E and all PostgreSQL shards",
-    "Current-head reviews and full PR CI/production-image E2E"
-  ]
+    "Complete review-fix local CI and strict coverage",
+    "Renewed exact-source Development E2E and all PostgreSQL shards",
+    "New-head reviews, complete dispositions, and full PR CI/production-image E2E"
+  ],
+  "historical_comparison_before_review_fixes": {
+    "comparison": {
+      "cohort": "contextual_intake_v1",
+      "cohort_sha256": "4e049ae0edcbd91b56ea6ab2a26d5dd55d8209021d1b8ef31a7c8bed52fd1d8c",
+      "model": "dense-mem-testing",
+      "base_source_sha": "0cf9e1520039b52477f247399056ec95e539170d",
+      "candidate_source_sha": "0cf9e1520039b52477f247399056ec95e539170d",
+      "candidate_source_state_sha256": "5b75f64f28ee9e7d2f6c4fb5a690011ae63a67d9b6080d343764d39f22e5b577",
+      "repetitions": 3,
+      "cases_per_repetition": 20,
+      "base_passed": [
+        10,
+        11,
+        12
+      ],
+      "candidate_passed": [
+        20,
+        20,
+        20
+      ],
+      "passed": true
+    },
+    "source_binding": {
+      "base_source_state_sha256": "76d63f977850a5f2da176faef8c99c96a886de120714438fb8d4e789cab44f6a",
+      "candidate_built_from_uncommitted_source": true,
+      "candidate_parent_sha": "0cf9e1520039b52477f247399056ec95e539170d",
+      "candidate_source_state_sha256": "5b75f64f28ee9e7d2f6c4fb5a690011ae63a67d9b6080d343764d39f22e5b577",
+      "first_bound_commit_sha": "1e756ae0f70f3fcb7201e33a724e9fdc309ee215",
+      "publication_fence": "All 2,123 tested manifest files matched the first bound commit. Later publication preserves all production and quality-runner blobs; compact evidence and the identified test-only correction are subsequent changes.",
+      "post_comparison_changes": [
+        {
+          "path": "tests/uat/ontology_organization_e2e.mjs",
+          "reason": "The first exact-source remote run exposed an overly strict assertion requiring HTTP timing after admission failed before dispatch; require only reached phases and require unreached phases to remain absent."
+        }
+      ],
+      "production_images": {
+        "base": "sha256:4b2e9169bcaed735cedbcf19498d3f50aae07f6efadd2922cfd4d04c05efbc23",
+        "candidate": "sha256:1b779a9269a33794db3bc066006f058c6630bfb5068272ad7366d30e822da1fc"
+      }
+    },
+    "successful_report_sha256": {
+      "base.json": "c3228bf5f0e8ea84f82e6b2df745ac825b92b41de908e6430f838193997f3e84",
+      "candidate.json": "3009480b0c84a2b2799897bb5c3f594769b17be505beea5c462a570fe925a134",
+      "comparison.json": "f2806f8d3524e3d1a2d5a170e1b8138078efe1e1e202362f8572e47df8aceb36"
+    },
+    "recovery": "The first Cloudflare attempt stopped on the existing 10-second embedding-phase limit in both roles. Three subsequent probes passed in 66\u2013267 ms. One fresh paired attempt ran sequentially and completed all repetitions without changing inputs, judgments, limits or runtime retries."
+  }
 }
