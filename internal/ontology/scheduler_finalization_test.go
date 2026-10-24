@@ -15,7 +15,7 @@ import (
 )
 
 func TestMaintenanceFinalizationDiagnosticsSurviveCancellation(t *testing.T) {
-	for _, parent := range []error{nil, context.Canceled, contract.ErrMaintenancePaused, contract.ErrBudgetDeferred} {
+	for _, parent := range []error{nil, context.Canceled, contract.ErrMaintenancePaused, contract.ErrWindowClosed} {
 		var output bytes.Buffer
 		scheduler := NewMaintenanceScheduler(nil, slog.New(slog.NewJSONHandler(&output, nil)))
 		failure := &contract.MaintenanceFinalizationError{BatchID: "batch", RunID: "run", Phase: "source_updates", Duration: 5 * time.Second,
@@ -55,7 +55,7 @@ func TestMaintenanceFinalizationDiagnosticsBoundCauses(t *testing.T) {
 	}
 	var output bytes.Buffer
 	scheduler := NewMaintenanceScheduler(nil, slog.New(slog.NewTextHandler(&output, nil)))
-	for _, err := range []error{nil, context.Canceled, contract.ErrMaintenanceDisabled, contract.ErrMaintenancePaused, contract.ErrBudgetDeferred} {
+	for _, err := range []error{nil, context.Canceled, contract.ErrMaintenanceDisabled, contract.ErrMaintenancePaused, contract.ErrWindowClosed} {
 		scheduler.logTurnFailure(err)
 	}
 	require.Empty(t, output.String())

@@ -54,7 +54,7 @@ func TestOntologyMaintenanceIndexMigrationRestoresLockTimeout(t *testing.T) {
 }
 
 func TestOntologyMaintenanceRunCompletionUsesActiveScope(t *testing.T) {
-	for _, failedStatus := range []string{"failed", "ambiguous", "budget_deferred"} {
+	for _, failedStatus := range []string{"failed", "ambiguous"} {
 		t.Run(failedStatus, func(t *testing.T) {
 			f := newOrganizationFixture(t)
 			f.organizationEvidence(t, 0, "Historical generation evidence.", nil)
@@ -272,14 +272,14 @@ func TestOntologyMaintenanceControlInterruptionResumesSameWindow(t *testing.T) {
 				require.NoError(t, err)
 				failure = "maintenance_disabled"
 			}
-			err := f.store.ReserveMaintenanceAttempt(ctx, *claim, uuid.NewString(), 1, 100, 100, time.Now().UTC())
+			err := f.store.AdmitMaintenanceAttempt(ctx, *claim, uuid.NewString(), 1, 100, 100, time.Now().UTC())
 			require.Error(t, err)
 			require.NoError(t, f.store.CompleteMaintenanceBatch(ctx, *claim, ontology.OrganizationResult{}, failure, time.Now().UTC()))
 			require.NoError(t, f.store.ReleaseMaintenanceTurn(ctx, *turn))
 			status, err := f.store.MaintenanceStatus(ctx, time.Now().UTC())
 			require.NoError(t, err)
 			require.EqualValues(t, 1, status.Counts.Pending)
-			require.Zero(t, status.Window.ChargedInput)
+			require.Zero(t, status.Usage.ReportedInputTokens)
 			if action == "pause" {
 				_, err = f.store.MaintenanceCommand(ctx, domain.OntologyMaintenanceCommand{Action: "resume", OperationKey: "resume-same-window"}, time.Now().UTC(), nil)
 			} else {
@@ -303,7 +303,7 @@ func TestOntologyMaintenanceRetryDoesNotReleaseUnselectedFailures(t *testing.T) 
 		f.organizationEvidence(t, 0, text, nil)
 	}
 	config := maintenanceSettings(t, f)
-	_, err := config.UpdateOntologyMaintenanceSettings(context.Background(), map[string]string{domain.AppConfigOntologyInputTokens: "1000000000", domain.AppConfigOntologyOutputTokens: "1000000000"}, "control", "", "")
+	_, err := config.UpdateOntologyMaintenanceSettings(context.Background(), map[string]string{domain.AppConfigOntologyContextWindow: "300000"}, "control", "", "")
 	require.NoError(t, err)
 	window := maintenanceWindow(t, f, config)
 	var originalRun string
@@ -381,7 +381,7 @@ func TestOntologyMaintenanceCompetingAdmissionAndCrashRecovery(t *testing.T) {
 	f.organizationEvidence(t, 0, "Atlas storage.", nil)
 	other.organizationEvidence(t, 0, "Beacon storage.", nil)
 	config := maintenanceSettings(t, f)
-	_, err := config.UpdateOntologyMaintenanceSettings(context.Background(), map[string]string{domain.AppConfigOntologyConcurrency: "2", domain.AppConfigOntologyInputTokens: "100", domain.AppConfigOntologyOutputTokens: "100"}, "control", "", "")
+	_, err := config.UpdateOntologyMaintenanceSettings(context.Background(), map[string]string{domain.AppConfigOntologyConcurrency: "2"}, "control", "", "")
 	require.NoError(t, err)
 	window := maintenanceWindow(t, f, config)
 	_, a := maintenanceClaim(t, f, window)
@@ -393,7 +393,7 @@ func TestOntologyMaintenanceCompetingAdmissionAndCrashRecovery(t *testing.T) {
 		workers.Add(1)
 		go func() {
 			defer workers.Done()
-			results <- NewStore(f.app, f.rls).ReserveMaintenanceAttempt(context.Background(), *claim, uuid.NewString(), 1, 80, 80, time.Now().UTC())
+			results <- NewStore(f.app, f.rls).AdmitMaintenanceAttempt(context.Background(), *claim, uuid.NewString(), 1, 80, 80, time.Now().UTC())
 		}()
 	}
 	workers.Wait()
@@ -403,12 +403,12 @@ func TestOntologyMaintenanceCompetingAdmissionAndCrashRecovery(t *testing.T) {
 		if err == nil {
 			admitted++
 		} else {
-			require.ErrorIs(t, err, ontology.ErrBudgetDeferred)
+			require.ErrorIs(t, err, ontology.ErrWindowClosed)
 			deferred++
 		}
 	}
-	require.Equal(t, 1, admitted)
-	require.Equal(t, 1, deferred)
+	require.Equal(t, 2, admitted)
+	require.Zero(t, deferred)
 	require.NoError(t, f.rls.WithSystemTx(context.Background(), f.app, func(tx *gorm.DB) error {
 		if err := tx.Exec(`UPDATE ontology_maintenance_teams SET lease_until=clock_timestamp()-interval '1 second' WHERE lease_token IS NOT NULL`).Error; err != nil {
 			return err
@@ -421,15 +421,15 @@ func TestOntologyMaintenanceCompetingAdmissionAndCrashRecovery(t *testing.T) {
 	require.NotNil(t, next)
 	status, err := restarted.MaintenanceStatus(context.Background(), time.Now().UTC())
 	require.NoError(t, err)
-	require.EqualValues(t, 80, status.Window.ChargedInput)
-	require.EqualValues(t, 80, status.Window.ReservedOutput)
+	require.EqualValues(t, 2, status.Usage.UnreconciledAttempts)
+	require.False(t, status.CoverageComplete)
 	var lost int
 	require.NoError(t, f.admin.Raw(`SELECT count(*) FROM ontology_maintenance_batches WHERE status='lost'`).Row().Scan(&lost))
 	require.Equal(t, 2, lost)
 	claim, err := restarted.ClaimMaintenanceBatch(context.Background(), *next, window.ID, time.Now().UTC())
 	require.NoError(t, err)
 	require.NotNil(t, claim)
-	require.ErrorIs(t, restarted.ReserveMaintenanceAttempt(context.Background(), *claim, uuid.NewString(), 1, 30, 30, time.Now().UTC()), ontology.ErrBudgetDeferred)
+	require.NoError(t, restarted.AdmitMaintenanceAttempt(context.Background(), *claim, uuid.NewString(), 1, 30, 30, time.Now().UTC()))
 	require.NoError(t, restarted.ReleaseMaintenanceTurn(context.Background(), *next))
 }
 

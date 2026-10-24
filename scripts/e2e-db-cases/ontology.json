@@ -262,13 +262,6 @@
       "source": "internal/ontology/postgres/maintenance_service_integration_test.go"
     },
     {
-      "id": "repository/TestOntologyMaintenanceBudgetDeferralAndManualReuse",
-      "package": "./internal/ontology/postgres",
-      "run": "^TestOntologyMaintenanceBudgetDeferralAndManualReuse$",
-      "phase": "precheck",
-      "source": "internal/ontology/postgres/maintenance_service_integration_test.go"
-    },
-    {
       "id": "repository/TestOntologyMaintenanceTransitiveInvalidation",
       "package": "./internal/ontology/postgres",
       "run": "^TestOntologyMaintenanceTransitiveInvalidation$",
@@ -638,34 +631,6 @@
       "source": "internal/ontology/postgres/scheduler_status_failure_integration_test.go"
     },
     {
-      "id": "repository/TestOntologyMaintenanceAllowancePreservesAccountingAndWindowFences",
-      "package": "./internal/ontology/postgres",
-      "run": "^TestOntologyMaintenanceAllowancePreservesAccountingAndWindowFences$",
-      "phase": "precheck",
-      "source": "internal/ontology/postgres/maintenance_integration_test.go"
-    },
-    {
-      "id": "repository/TestOntologyMaintenanceAllowanceMigrationRetainsGrantHistory",
-      "package": "./internal/ontology/postgres",
-      "run": "^TestOntologyMaintenanceAllowanceMigrationRetainsGrantHistory$",
-      "phase": "precheck",
-      "source": "internal/ontology/postgres/maintenance_integration_test.go"
-    },
-    {
-      "id": "repository/TestOntologyMaintenanceAllowanceRacesDeferredCompletion",
-      "package": "./internal/ontology/postgres",
-      "run": "^TestOntologyMaintenanceAllowanceRacesDeferredCompletion$",
-      "phase": "precheck",
-      "source": "internal/ontology/postgres/maintenance_integration_test.go"
-    },
-    {
-      "id": "repository/TestOntologyMaintenanceAllowanceResumesAutomaticWork",
-      "package": "./internal/ontology/postgres",
-      "run": "^TestOntologyMaintenanceAllowanceResumesAutomaticWork$",
-      "phase": "precheck",
-      "source": "internal/ontology/postgres/maintenance_service_integration_test.go"
-    },
-    {
       "id": "repository/TestOntologyMaintenanceParallelClaimsAndLimits",
       "package": "./internal/ontology/postgres",
       "run": "^TestOntologyMaintenanceParallelClaimsAndLimits$",
@@ -804,6 +769,69 @@
       "run": "^TestOntologyMaintenanceParallelSchedulerMeasurement$",
       "phase": "precheck",
       "source": "internal/ontology/postgres/scheduler_measurement_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceContextConfigurationAndManualReuse",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceContextConfigurationAndManualReuse$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_service_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceLeaseInterruptionReturnsPending",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceLeaseInterruptionReturnsPending$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceProgressBeyondFormerBudgets",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceProgressBeyondFormerBudgets$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_concurrency_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceBudgetRetirementHistoryAndRequeue",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceBudgetRetirementHistoryAndRequeue$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_retirement_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceBudgetRetirementRejectsUnfinishedWork",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceBudgetRetirementRejectsUnfinishedWork$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_retirement_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceBudgetRetirementRejectsLegacyWriters",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceBudgetRetirementRejectsLegacyWriters$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_retirement_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceProviderFailureReleasesCapacity",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceProviderFailureReleasesCapacity$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_service_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceDirectOrganizationRejectsMissingContext",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceDirectOrganizationRejectsMissingContext$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_service_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceBudgetRetirementExpiredWindowActivatesImmediately",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceBudgetRetirementExpiredWindowActivatesImmediately$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_retirement_integration_test.go"
     },
     {
       "id": "repository/TestOntologyOrganizationBatchedSources",

@@ -80,3 +80,37 @@ index build requires separately authorized removal of its invalid derived index
 before retrying. Down refuses any topic projection history, including incomplete
 builds. Production recovery preserves that history and rolls forward; an empty
 test installation can use Down.
+
+## Ontology budget retirement (#617)
+
+`20261023020000_ontology_budget_retirement.sql` requires old application instances
+to be paused or disabled, drained, and stopped. Running batches, live preparation
+or projection leases, and unreconciled attempts block the migration. Recover
+unfinished work before retrying; a timeout with durably recorded unavailable
+usage is terminal and does not require inventing usage or clearing reservations.
+
+The migration adds nullable per-call sizing observations without rewriting the
+attempt heap. Constraint validation scans operational tables; lock acquisition
+is bounded to five seconds. Existing forced RLS remains in force, and migration
+authority is transaction-local. It requeues budget-deferred coordination records
+without changing eligibility, pending order, canonical Knowledge, semantic
+failures, ambiguity, immutable assessments, historical windows, grants, or usage.
+Legacy pending/running scheduling commands close with an audit record. All
+changes commit together; a failed migration rolls back and can be retried.
+
+New writers record durable attempt identity, input estimates, and output capacity,
+then record terminal reported usage once. They create no spending reservations.
+Database guards reject legacy grants, reservations, budget windows, and deferred
+states. Existing startup schema validation rejects older binaries after cutover.
+Old spending-setting rows remain inert and unchanged. New model dispatch requires
+an explicitly configured `ONTOLOGY_MAINTENANCE_CONTEXT_WINDOW_TOKENS` value.
+
+The first valid window uses saved model/context/concurrency settings immediately
+and ends at the retained schedule boundary; ordinary next-window activation then
+continues. Historical conservative reservations never fund or block new work.
+Missing configuration leaves control status and configuration available.
+
+Down is supported only while the operational installation remains empty.
+Populated retirement requires disabling or pausing maintenance and rolling
+forward. Never restart an incompatible binary or rewrite historical accounting
+to make rollback appear safe.

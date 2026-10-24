@@ -172,7 +172,7 @@ func (f *recallOntologyFixture) organizerWithAccounting(t testing.TB, meanings m
 	limits := assessor.DefaultSemanticAssessmentLimits()
 	cfg := &config.Config{AIVerifierAPIURL: server.URL, AIVerifierAPIKey: "synthetic-provider-key", AIVerifierModel: "fixture-model"}
 	transport := assessorprovider.NewOpenAIAssessorWithAssessmentLimits(cfg, server.Client(), limits)
-	return organization.NewService(f.ontology, assessment.NewProviderWithAccounting(transport, "fixture-model", limits, accounting)), calls
+	return organization.NewService(f.ontology, assessment.NewProviderWithAccounting(transport, "fixture-model", limits, accounting, 300000)), calls
 }
 
 func (f *recallOntologyFixture) assignment(t testing.TB, definitionID string, handle ontology.SourceHandle) ontology.Record {

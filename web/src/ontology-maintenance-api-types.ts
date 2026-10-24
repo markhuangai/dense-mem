@@ -9,8 +9,7 @@ export type OntologyMaintenancePolicy = {
   max_concurrency: number;
   team_max_concurrency?: number;
   team_concurrency_overrides?: Array<{ team_id: string; max_concurrency: number }>;
-  input_tokens: number;
-  output_tokens: number;
+  context_window_tokens: number;
   settings_version: string;
 };
 export type OntologyMaintenanceConfig = {
@@ -39,7 +38,7 @@ export type OntologyMaintenanceStatus = {
   enabled: boolean;
   discovery_complete: boolean;
   coverage_complete: boolean;
-  counts: Record<"eligible" | "organized" | "pending" | "ambiguous" | "failed" | "budget_deferred", number>;
+  counts: Record<"eligible" | "organized" | "pending" | "ambiguous" | "failed", number>;
   oldest_pending_at?: string;
   last_successful_progress?: string;
   pending_policy: OntologyMaintenancePolicy;
@@ -48,16 +47,22 @@ export type OntologyMaintenanceStatus = {
     starts_at: string;
     ends_at: string;
     policy: OntologyMaintenancePolicy;
-    charged_input_tokens: number;
-    charged_output_tokens: number;
-    reported_input_tokens: number;
-    reported_output_tokens: number;
-    reserved_input_tokens: number;
-    reserved_output_tokens: number;
-    overrun: boolean;
-    additional_input_tokens?: number;
-    additional_output_tokens?: number;
+    usage: OntologyMaintenanceUsage;
   };
+  configuration_error?: string;
+  active_work: number;
+  usage: OntologyMaintenanceUsage;
+  historical_usage: OntologyMaintenanceUsage;
   latest_run?: OntologyMaintenanceRun;
 };
 export type OntologyMaintenanceRunPage = { runs: OntologyMaintenanceRun[]; next_cursor?: string };
+
+export type OntologyMaintenanceUsage = {
+  attempts: number;
+  unreconciled_attempts: number;
+  unavailable_usage_attempts: number;
+  partial_usage_attempts: number;
+  reported_input_tokens: number;
+  reported_output_tokens: number;
+  reported_total_tokens: number;
+};

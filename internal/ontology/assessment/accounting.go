@@ -13,8 +13,8 @@ type AttemptAccounting interface {
 	AfterAttempt(context.Context, string, ontology.AssessmentAttempt, bool) error
 }
 
-func NewProviderWithAccounting(transport modelprovider.StructuredTransport, model string, limits assessor.SemanticAssessmentLimits, accounting AttemptAccounting) *Provider {
-	provider := NewProvider(transport, model, limits)
+func NewProviderWithAccounting(transport modelprovider.StructuredTransport, model string, limits assessor.SemanticAssessmentLimits, accounting AttemptAccounting, contextWindowTokens int) *Provider {
+	provider := NewProvider(transport, model, limits, contextWindowTokens)
 	provider.accounting = accounting
 	return provider
 }

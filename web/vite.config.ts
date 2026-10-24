@@ -38,6 +38,7 @@ export default defineConfig({
     exclude: ["tests/**", "node_modules/**", "dist/**"],
     setupFiles: ["./src/test/setup.ts"],
     globals: true,
+    maxWorkers: 2,
     coverage: {
       provider: "v8",
       // @ts-expect-error Vitest 4 omits the complete-inventory option from its type.

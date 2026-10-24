@@ -37,7 +37,7 @@ func TestOrganizationRequestUsesBoundedContextAndManagerRules(t *testing.T) {
 	separate := contract.Record{ID: uuid.NewString(), Kind: contract.OverrideKind, Override: &contract.Override{Action: contract.KeepSeparate, Members: []contract.SourceHandle{a.SourceHandle, b.SourceHandle}}}
 	pin := contract.Record{ID: uuid.NewString(), Kind: contract.OverrideKind, Override: &contract.Override{Action: contract.SetClassification, DefinitionID: topic.ID, Members: []contract.SourceHandle{a.SourceHandle}}}
 	ctx := contract.OrganizationContext{Sources: []contract.SourceSnapshot{a, b}, Records: []contract.RecordView{{Record: separate, Current: true}, {Record: pin, Current: true}}, Candidates: []contract.RecordView{{Record: topic, Current: true}}}
-	service := NewService(nil, assessment.NewProvider(nil, "model", assessor.DefaultSemanticAssessmentLimits()))
+	service := NewService(nil, assessment.NewProvider(nil, "model", assessor.DefaultSemanticAssessmentLimits(), 300000))
 	receipt := unitReceipt(t, ctx.Sources)
 	request, binding, err := service.request(ctx, &receipt)
 	require.NoError(t, err)
@@ -69,7 +69,7 @@ func TestOrganizationRequestUsesBoundedContextAndManagerRules(t *testing.T) {
 	limits := assessor.DefaultSemanticAssessmentLimits()
 	limits.MaxInputTokens = 20000
 	limits.MaxOutputTokens = 1024
-	service = NewService(nil, assessment.NewProvider(nil, "model", limits))
+	service = NewService(nil, assessment.NewProvider(nil, "model", limits, 300000))
 	receipt = unitReceipt(t, ctx.Sources)
 	request, _, err = service.request(ctx, &receipt)
 	require.NoError(t, err)
@@ -97,7 +97,7 @@ func TestOrganizationRejectsConflictingDefinitionIdentities(t *testing.T) {
 	} {
 		ctx := contract.OrganizationContext{Sources: []contract.SourceSnapshot{source}, Records: views}
 		receipt := unitReceipt(t, ctx.Sources)
-		request, binding, err := NewService(nil, assessment.NewProvider(nil, "model", assessor.DefaultSemanticAssessmentLimits())).request(ctx, &receipt)
+		request, binding, err := NewService(nil, assessment.NewProvider(nil, "model", assessor.DefaultSemanticAssessmentLimits(), 300000)).request(ctx, &receipt)
 		require.NoError(t, err)
 		response := assessment.Response{RequestID: request.RequestID, Definitions: []assessment.Definition{{Ref: "new", Kind: contract.Topic, Key: "alpha", Label: "Beta", Aliases: []string{}}}, Items: []assessment.Decision{{Ref: "s0", Status: "classified", DefinitionRef: "new"}}, Equivalence: []assessment.Equivalence{}}
 		require.NoError(t, assessment.Validate(request, response))
@@ -119,7 +119,7 @@ func TestOrganizationRejectsDuplicateResolvedDefinitionWrites(t *testing.T) {
 		for _, reversed := range []bool{false, true} {
 			ctx := contract.OrganizationContext{Sources: []contract.SourceSnapshot{a, b}, Records: []contract.RecordView{{Record: old, Current: current}}}
 			receipt := unitReceipt(t, ctx.Sources)
-			request, binding, err := NewService(nil, assessment.NewProvider(nil, "model", assessor.DefaultSemanticAssessmentLimits())).request(ctx, &receipt)
+			request, binding, err := NewService(nil, assessment.NewProvider(nil, "model", assessor.DefaultSemanticAssessmentLimits(), 300000)).request(ctx, &receipt)
 			require.NoError(t, err)
 			require.Empty(t, request.Definitions)
 			response := assessment.Response{RequestID: request.RequestID, Definitions: []assessment.Definition{
@@ -186,7 +186,7 @@ func TestOrganizationRequestTrimsParentRefsWithoutChangingStoredHierarchy(t *tes
 				limits.MaxCandidateContextTokens, err = assessor.CountTokens(string(encoded), limits.Tokenizer)
 				require.NoError(t, err)
 			}
-			service := NewService(nil, assessment.NewProvider(nil, "model", limits))
+			service := NewService(nil, assessment.NewProvider(nil, "model", limits, 300000))
 			receipt := unitReceipt(t, ctx.Sources)
 			request, binding, err := service.request(ctx, &receipt)
 			require.NoError(t, err)
@@ -213,7 +213,7 @@ func TestOrganizationRequestTrimsParentRefsWithoutChangingStoredHierarchy(t *tes
 func TestOrganizationRequestReservesRepairBudgetForAdmittedSources(t *testing.T) {
 	ctx := contract.OrganizationContext{Sources: []contract.SourceSnapshot{unitSource("large", strings.Repeat("large evidence ", 6000)), unitSource("small", "Atlas uses PostgreSQL.")}}
 	limits := assessor.DefaultSemanticAssessmentLimits()
-	initialProvider := assessment.NewProvider(nil, "model", limits)
+	initialProvider := assessment.NewProvider(nil, "model", limits, 300000)
 	receipt := unitReceipt(t, ctx.Sources)
 	full, _, err := NewService(nil, initialProvider).request(ctx, &receipt)
 	require.NoError(t, err)
@@ -221,7 +221,7 @@ func TestOrganizationRequestReservesRepairBudgetForAdmittedSources(t *testing.T)
 	require.NoError(t, err)
 	limits.MaxInputTokens = measurement + 50
 	limits.MaxOutputTokens = 1024
-	provider := assessment.NewProvider(nil, "model", limits)
+	provider := assessment.NewProvider(nil, "model", limits, 300000)
 	receipt = unitReceipt(t, ctx.Sources)
 	request, _, err := NewService(nil, provider).request(ctx, &receipt)
 	require.NoError(t, err)
@@ -256,7 +256,7 @@ func TestOrganizationFailurePreservesOnlyPreflightAmbiguity(t *testing.T) {
 func TestOrganizationPublicationPreservesOriginalSourcesAndStableIDs(t *testing.T) {
 	a, b := unitSource("a", "Atlas stores data in PostgreSQL."), unitSource("b", "PostgreSQL is Atlas's data store.")
 	ctx := contract.OrganizationContext{Sources: []contract.SourceSnapshot{a, b}}
-	service := NewService(nil, assessment.NewProvider(nil, "model", assessor.DefaultSemanticAssessmentLimits()))
+	service := NewService(nil, assessment.NewProvider(nil, "model", assessor.DefaultSemanticAssessmentLimits(), 300000))
 	receipt := unitReceipt(t, ctx.Sources)
 	request, binding, err := service.request(ctx, &receipt)
 	require.NoError(t, err)

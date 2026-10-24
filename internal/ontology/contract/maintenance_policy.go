@@ -16,7 +16,7 @@ func MaintenanceCompletion(unresolved bool, failure string) (string, string) {
 }
 
 func MaintenanceWindowBounds(policy domain.OntologyMaintenanceConfig, now time.Time, previous *MaintenanceWindow) (time.Time, time.Time, error) {
-	if (policy.CadenceHours != 12 && policy.CadenceHours != 24) || policy.MaxConcurrency < 1 || policy.MaxConcurrency > 8 || policy.InputTokens < 1 || policy.OutputTokens < 1 {
+	if (policy.CadenceHours != 12 && policy.CadenceHours != 24) || policy.MaxConcurrency < 1 || policy.MaxConcurrency > 8 {
 		return time.Time{}, time.Time{}, fmt.Errorf("%w: invalid maintenance policy", ErrInvalid)
 	}
 	clock, err := time.Parse("15:04", policy.StartTimeLocal)
@@ -26,6 +26,10 @@ func MaintenanceWindowBounds(policy domain.OntologyMaintenanceConfig, now time.T
 	location, err := time.LoadLocation(policy.Timezone)
 	if err != nil {
 		return time.Time{}, time.Time{}, fmt.Errorf("%w: invalid maintenance timezone", ErrInvalid)
+	}
+	retiring := previous != nil && previous.Policy.ContextWindowTokens == 0
+	if retiring && now.Before(previous.EndsAt) {
+		return now, previous.EndsAt, nil
 	}
 	local := now.In(location)
 	var slots []time.Time
@@ -38,7 +42,7 @@ func MaintenanceWindowBounds(policy domain.OntologyMaintenanceConfig, now time.T
 	sort.Slice(slots, func(i, j int) bool { return slots[i].Before(slots[j]) })
 	var start, end time.Time
 	for _, slot := range slots {
-		if !slot.After(now) && (previous == nil || !slot.Before(previous.EndsAt)) {
+		if !slot.After(now) && (previous == nil || retiring || !slot.Before(previous.EndsAt)) {
 			start = slot
 		}
 	}
@@ -54,6 +58,9 @@ func MaintenanceWindowBounds(policy domain.OntologyMaintenanceConfig, now time.T
 	if end.IsZero() {
 		return start, end, fmt.Errorf("%w: maintenance window end unavailable", ErrInvalid)
 	}
+	if retiring {
+		start = now
+	}
 	return start, end, nil
 }
 
@@ -61,15 +68,7 @@ func PrepareMaintenanceCommand(input domain.OntologyMaintenanceCommand) (domain.
 	if !boundedText(input.OperationKey, 128) {
 		return input, fmt.Errorf("%w: operation key required", ErrInvalid)
 	}
-	if input.Action != "allowance" && (input.WindowID != "" || input.InputTokens != 0 || input.OutputTokens != 0) {
-		return input, ErrInvalid
-	}
 	switch input.Action {
-	case "allowance":
-		if !validID(input.WindowID) || input.MaxBatches != 0 || input.RetryRunID != "" || input.InputTokens < 0 || input.OutputTokens < 0 ||
-			input.InputTokens > MaxAdditionalTokens || input.OutputTokens > MaxAdditionalTokens || (input.InputTokens == 0 && input.OutputTokens == 0) {
-			return input, ErrInvalid
-		}
 	case "run", "retry":
 		if input.MaxBatches == 0 {
 			input.MaxBatches = 1

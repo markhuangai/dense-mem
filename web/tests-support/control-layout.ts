@@ -43,10 +43,10 @@ export async function checkControlLayout(page: Page, testInfo: TestInfo, width: 
   await navigate(page, "Ontology maintenance");
   await expect(page.getByRole("group", { name: "Schedule", exact: true })).toBeVisible();
   await expect(page.getByRole("group", { name: "Processing", exact: true })).toBeVisible();
-  await expect(page.getByRole("group", { name: "Allowance per window", exact: true })).toBeVisible();
+  await expect(page.getByRole("group", { name: "Model capacity", exact: true })).toBeVisible();
   await expectCompactNumberField(page, "Cadence (hours)");
   await expectCompactNumberField(page, "Concurrent assessments");
-  await expectCompactNumberField(page, "Input tokens per window");
+  await expectCompactNumberField(page, "Model context window (tokens)");
   const timeWidth = (await page.getByLabel("Window start time", { exact: true }).boundingBox())!.width;
   expect(timeWidth).toBeGreaterThanOrEqual(80);
   expect(timeWidth).toBeLessThanOrEqual(136);
@@ -57,7 +57,8 @@ export async function checkControlLayout(page: Page, testInfo: TestInfo, width: 
   await expect(coverage.getByRole("progressbar")).toHaveAttribute("aria-valuetext", "842 of 1,024");
   await expect(coverage).toContainText("Discovery in progress");
   await expect(coverage).toContainText("Eligible counts cover discovered records");
-  await expect(page.getByRole("progressbar", { name: "Input tokens", exact: true })).toHaveAttribute("aria-valuetext", "160,000 of 251,000");
+  await expect(page.getByRole("progressbar", { name: "Input tokens", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "Current ontology window", exact: true })).toContainText("144,000");
   await page.getByLabel("Cadence (hours)", { exact: true }).fill("24");
   await page.getByRole("button", { name: "Save config", exact: true }).click();
   await expect(page.getByRole("status")).toContainText("Changes saved");

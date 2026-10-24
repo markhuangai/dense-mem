@@ -238,7 +238,7 @@ func TestOntologyManagementStatusCountsOnlyAuthenticatedTeam(t *testing.T) {
 	other := maintenanceOtherTeam(t, f)
 	manager := managementService(f)
 	for _, team := range []*ontologyFixture{f, other} {
-		statuses := []string{"organized", "pending", "ambiguous", "failed", "budget_deferred"}
+		statuses := []string{"organized", "pending", "ambiguous", "failed", "pending"}
 		if team == other {
 			statuses = []string{"failed", "failed", "failed", "failed", "failed"}
 		}
@@ -257,7 +257,7 @@ func TestOntologyManagementStatusCountsOnlyAuthenticatedTeam(t *testing.T) {
 	}
 	status, err := manager.Status(f.actor(0, "manager"))
 	require.NoError(t, err)
-	require.Equal(t, ontology.MaintenanceCounts{Eligible: 5, Organized: 1, Pending: 1, Ambiguous: 1, Failed: 1, BudgetDeferred: 1}, status.Counts)
+	require.Equal(t, ontology.MaintenanceCounts{Eligible: 5, Organized: 1, Pending: 2, Ambiguous: 1, Failed: 1}, status.Counts)
 	require.True(t, status.DiscoveryComplete)
 	require.False(t, status.CoverageComplete)
 	foreign, err := manager.Status(other.actor(0, "manager"))

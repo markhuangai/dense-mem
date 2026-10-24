@@ -96,10 +96,10 @@ func organizationFixtureService(t *testing.T, f *ontologyFixture, equivalent fun
 }
 
 func organizationFixtureServiceWithIdentity(t *testing.T, f *ontologyFixture, equivalent func(assessment.Item, assessment.Item) bool, edit func(assessment.Request, *assessment.Response), model string, limits assessor.SemanticAssessmentLimits) (*organization.Service, *atomic.Int32) {
-	return organizationFixtureServiceWithAccounting(t, f, equivalent, edit, model, limits, nil)
+	return organizationFixtureServiceWithAccounting(t, f, equivalent, edit, model, limits, nil, 300000)
 }
 
-func organizationFixtureServiceWithAccounting(t *testing.T, f *ontologyFixture, equivalent func(assessment.Item, assessment.Item) bool, edit func(assessment.Request, *assessment.Response), model string, limits assessor.SemanticAssessmentLimits, accounting assessment.AttemptAccounting, usage ...map[string]int) (*organization.Service, *atomic.Int32) {
+func organizationFixtureServiceWithAccounting(t *testing.T, f *ontologyFixture, equivalent func(assessment.Item, assessment.Item) bool, edit func(assessment.Request, *assessment.Response), model string, limits assessor.SemanticAssessmentLimits, accounting assessment.AttemptAccounting, contextWindowTokens int, usage ...map[string]int) (*organization.Service, *atomic.Int32) {
 	t.Helper()
 	calls := &atomic.Int32{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -153,7 +153,7 @@ func organizationFixtureServiceWithAccounting(t *testing.T, f *ontologyFixture, 
 	t.Cleanup(server.Close)
 	cfg := &config.Config{AIVerifierAPIURL: server.URL, AIVerifierAPIKey: "synthetic-provider-key", AIVerifierModel: model}
 	transport := assessorprovider.NewOpenAIAssessorWithAssessmentLimits(cfg, server.Client(), limits)
-	provider := assessment.NewProviderWithAccounting(transport, cfg.AIVerifierModel, limits, accounting)
+	provider := assessment.NewProviderWithAccounting(transport, cfg.AIVerifierModel, limits, accounting, contextWindowTokens)
 	return organization.NewService(f.store, provider), calls
 }
 

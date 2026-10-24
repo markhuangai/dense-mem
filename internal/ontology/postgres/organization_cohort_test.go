@@ -139,15 +139,19 @@ func testOntologyCohort(t *testing.T, maintenance bool, supplements ...[]evalhar
 				model = cfg.GetAIVerifierModel()
 				limits := assessorprovider.SemanticAssessmentLimitsForConfig(&cfg)
 				transport := assessorprovider.NewOpenAIAssessorWithAssessmentLimits(&cfg, nil, limits)
-				provider := assessment.NewProvider(transport, model, limits)
+				settings := maintenanceSettings(t, f)
+				configured, err := settings.UpdateOntologyMaintenanceSettings(ctx, map[string]string{
+					domain.AppConfigOntologyModel:         model,
+					domain.AppConfigOntologyContextWindow: os.Getenv(domain.AppConfigOntologyContextWindow),
+				}, "control", "", "")
+				require.NoError(t, err)
+				provider := assessment.NewProvider(transport, model, limits, int(configured.Effective.ContextWindowTokens))
+				require.NoError(t, provider.ConfigurationError(), "live ontology evaluation requires explicit ONTOLOGY_MAINTENANCE_CONTEXT_WINDOW_TOKENS")
 				identity = provider.Identity()
 				service = organization.NewService(f.store, provider)
 				if maintenance {
-					settings := maintenanceSettings(t, f)
-					_, err := settings.UpdateOntologyMaintenanceSettings(ctx, map[string]string{domain.AppConfigOntologyModel: model}, "control", "", "")
-					require.NoError(t, err)
-					maintained = organization.NewMaintenanceService(organization.MaintenanceDependencies{Repository: f.store, Config: settings, DefaultModel: model, ProviderTimeout: time.Duration(cfg.GetAIVerifierTimeoutSeconds()) * time.Second, Organizer: func(model string, accounting assessment.AttemptAccounting) *organization.Service {
-						return organization.NewService(f.store, assessment.NewProviderWithAccounting(transport, model, limits, accounting))
+					maintained = organization.NewMaintenanceService(organization.MaintenanceDependencies{Repository: f.store, Config: settings, DefaultModel: model, ProviderTimeout: time.Duration(cfg.GetAIVerifierTimeoutSeconds()) * time.Second, Organizer: func(model string, contextWindowTokens int64, accounting assessment.AttemptAccounting) *organization.Service {
+						return organization.NewService(f.store, assessment.NewProviderWithAccounting(transport, model, limits, accounting, int(contextWindowTokens)))
 					}})
 				}
 				if directory != "" {
@@ -161,8 +165,8 @@ func testOntologyCohort(t *testing.T, maintenance bool, supplements ...[]evalhar
 				callCount = calls.Load
 				if maintenance {
 					var counters []*atomic.Int32
-					maintained = organization.NewMaintenanceService(organization.MaintenanceDependencies{Repository: f.store, Config: maintenanceSettings(t, f), DefaultModel: model, ProviderTimeout: time.Minute, Organizer: func(model string, accounting assessment.AttemptAccounting) *organization.Service {
-						service, count := organizationFixtureServiceWithAccounting(t, f, func(a, b assessment.Item) bool { return byText[a.Text] == byText[b.Text] }, nil, model, assessor.DefaultSemanticAssessmentLimits(), accounting)
+					maintained = organization.NewMaintenanceService(organization.MaintenanceDependencies{Repository: f.store, Config: maintenanceSettings(t, f), DefaultModel: model, ProviderTimeout: time.Minute, Organizer: func(model string, contextWindowTokens int64, accounting assessment.AttemptAccounting) *organization.Service {
+						service, count := organizationFixtureServiceWithAccounting(t, f, func(a, b assessment.Item) bool { return byText[a.Text] == byText[b.Text] }, nil, model, assessor.DefaultSemanticAssessmentLimits(), accounting, int(contextWindowTokens))
 						counters = append(counters, count)
 						return service
 					}})
@@ -193,7 +197,6 @@ func testOntologyCohort(t *testing.T, maintenance bool, supplements ...[]evalhar
 				require.True(t, status.DiscoveryComplete)
 				require.Zero(t, status.Counts.Pending)
 				require.Zero(t, status.Counts.Failed)
-				require.Zero(t, status.Counts.BudgetDeferred)
 				rows, err := f.admin.Raw(`SELECT body FROM ontology_assessments WHERE team_id=?::uuid ORDER BY created_at`, f.team).Rows()
 				require.NoError(t, err)
 				for rows.Next() {

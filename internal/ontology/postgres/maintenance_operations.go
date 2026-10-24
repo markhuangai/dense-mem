@@ -80,32 +80,15 @@ func (s *Store) MaintenanceCommand(ctx context.Context, input domain.OntologyMai
 			if !enabled {
 				return ontology.ErrMaintenanceDisabled
 			}
-			window, err := scanMaintenanceWindow(tx.Raw(`SELECT `+maintenanceWindowColumns+` FROM ontology_maintenance_windows WHERE starts_at<=? AND ends_at>? ORDER BY starts_at DESC LIMIT 1`, now, now).Row())
+			window, err := currentMaintenanceWindow(tx, now)
 			if err != nil {
 				return err
 			}
-			if window == nil || window.Overrun {
-				return ontology.ErrBudgetDeferred
+			if window == nil {
+				return ontology.ErrWindowClosed
 			}
 			result.WindowID = window.ID
-			if input.Action == "allowance" {
-				if input.WindowID != window.ID {
-					return ontology.ErrConflict
-				}
-				if window.AdditionalInput+input.InputTokens > ontology.MaxAdditionalTokens || window.AdditionalOutput+input.OutputTokens > ontology.MaxAdditionalTokens {
-					return ontology.ErrInvalid
-				}
-				if err := tx.Exec(`UPDATE ontology_maintenance_windows SET additional_input=additional_input+?,additional_output=additional_output+? WHERE window_id=?::uuid`, input.InputTokens, input.OutputTokens, window.ID).Error; err != nil {
-					return err
-				}
-				if err := tx.Exec(`UPDATE ontology_maintenance_sources AS source SET status='pending',updated_at=?
-				 WHERE source.eligible AND source.status='budget_deferred' AND EXISTS(
-				 SELECT 1 FROM ontology_maintenance_runs AS run WHERE run.run_id=source.last_run_id AND run.window_id=?::uuid)`, now, window.ID).Error; err != nil {
-					return err
-				}
-			} else {
-				result.Status = "pending"
-			}
+			result.Status = "pending"
 			if input.Action == "retry" {
 				var exists bool
 				if err := tx.Raw(`SELECT EXISTS(SELECT 1 FROM ontology_maintenance_runs WHERE run_id=?::uuid AND kind IN ('scheduled','run','retry'))`, input.RetryRunID).Row().Scan(&exists); err != nil {
@@ -150,7 +133,7 @@ const maintenanceActiveSourceJoin = ` FROM ontology_maintenance_sources AS sourc
 func completeMaintenanceRun(tx *gorm.DB, runID, retryRunID string, allSources bool, requiredFailure string, now time.Time) error {
 	var unresolved bool
 	if err := tx.Raw(`SELECT EXISTS(SELECT 1`+maintenanceActiveSourceJoin+`
-	 WHERE source.eligible AND (source.status IN ('failed','ambiguous','budget_deferred') OR (NOT ? AND source.status='pending'))
+	 WHERE source.eligible AND (source.status IN ('failed','ambiguous') OR (NOT ? AND source.status='pending'))
 	 AND (? OR source.last_run_id IN (?::uuid,NULLIF(?,'')::uuid)))`, allSources, allSources, runID, retryRunID).Row().Scan(&unresolved); err != nil {
 		return err
 	}
@@ -202,8 +185,8 @@ func (s *Store) MaintenanceStatus(ctx context.Context, now time.Time) (ontology.
 		}
 		result.Enabled = enabled == "true"
 		if err := tx.Raw(`SELECT count(*) FILTER(WHERE source.eligible),count(*) FILTER(WHERE source.eligible AND source.status='organized'),count(*) FILTER(WHERE source.eligible AND source.status='pending'),
-		 count(*) FILTER(WHERE source.eligible AND source.status='ambiguous'),count(*) FILTER(WHERE source.eligible AND source.status='failed'),count(*) FILTER(WHERE source.eligible AND source.status='budget_deferred'),
-		 min(source.pending_at) FILTER(WHERE source.eligible AND source.status IN ('pending','budget_deferred'))`+maintenanceActiveSourceJoin).Row().Scan(&result.Counts.Eligible, &result.Counts.Organized, &result.Counts.Pending, &result.Counts.Ambiguous, &result.Counts.Failed, &result.Counts.BudgetDeferred, &result.OldestPendingAt); err != nil {
+		 count(*) FILTER(WHERE source.eligible AND source.status='ambiguous'),count(*) FILTER(WHERE source.eligible AND source.status='failed'),
+		 min(source.pending_at) FILTER(WHERE source.eligible AND source.status='pending')`+maintenanceActiveSourceJoin).Row().Scan(&result.Counts.Eligible, &result.Counts.Organized, &result.Counts.Pending, &result.Counts.Ambiguous, &result.Counts.Failed, &result.OldestPendingAt); err != nil {
 			return err
 		}
 		if err := tx.Raw(`SELECT NOT EXISTS(SELECT 1 FROM teams AS team JOIN memory_spaces AS space ON space.team_id=team.id AND space.kind='team_shared' AND space.lifecycle_state='active'
@@ -212,14 +195,31 @@ func (s *Store) MaintenanceStatus(ctx context.Context, now time.Time) (ontology.
 		 SELECT 1 FROM ontology_maintenance_markers AS marker WHERE marker.team_id=team.id AND marker.shared_space_id=space.id AND marker.space_generation=space.generation)))`).Row().Scan(&result.DiscoveryComplete); err != nil {
 			return err
 		}
-		result.CoverageComplete = result.DiscoveryComplete && result.Counts.Pending == 0 && result.Counts.BudgetDeferred == 0 && result.Counts.Failed == 0 && result.Counts.Ambiguous == 0
-		result.Window, err = scanMaintenanceWindow(tx.Raw(`SELECT ` + maintenanceWindowColumns + ` FROM ontology_maintenance_windows ORDER BY starts_at DESC LIMIT 1`).Row())
+		result.CoverageComplete = result.DiscoveryComplete && result.Counts.Pending == 0 && result.Counts.Failed == 0 && result.Counts.Ambiguous == 0
+		result.Window, err = currentMaintenanceWindow(tx, now)
 		if err != nil {
 			return err
 		}
-		if result.Window != nil && (result.Window.Overrun || result.Window.ChargedInput >= result.Window.InputAllowance() || result.Window.ChargedOutput >= result.Window.OutputAllowance()) {
-			result.CoverageComplete = false
+		result.ActiveWork, err = activeMaintenanceWork(tx, now)
+		if err != nil {
+			return err
 		}
+		result.Usage, err = maintenanceUsage(tx, "", false)
+		if err != nil {
+			return err
+		}
+		result.HistoricalUsage, err = maintenanceUsage(tx, "", true)
+		if err != nil {
+			return err
+		}
+		if result.Window != nil {
+			result.Window.Usage, err = maintenanceUsage(tx, result.Window.ID, false)
+			if err != nil {
+				return err
+			}
+		}
+		result.CoverageComplete = result.CoverageComplete && result.ActiveWork == 0 && result.Usage.UnreconciledAttempts == 0
+
 		run, err := scanMaintenanceRun(tx.Raw(`SELECT ` + maintenanceRunColumns + ` FROM ontology_maintenance_runs ORDER BY created_at DESC,run_id DESC LIMIT 1`).Row())
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
@@ -234,6 +234,17 @@ func (s *Store) MaintenanceStatus(ctx context.Context, now time.Time) (ontology.
 		}
 		return nil
 	})
+	return result, err
+}
+
+func maintenanceUsage(tx *gorm.DB, windowID string, historical bool) (ontology.MaintenanceUsage, error) {
+	var result ontology.MaintenanceUsage
+	err := tx.Raw(`SELECT count(*),count(*) FILTER(WHERE reconciled_at IS NULL),
+	 count(*) FILTER(WHERE reconciled_at IS NOT NULL AND COALESCE(reported_input,0)=0 AND COALESCE(reported_output,0)=0 AND COALESCE(reported_total,0)=0),
+	 count(*) FILTER(WHERE reconciled_at IS NOT NULL AND (COALESCE(reported_input,0)>0 OR COALESCE(reported_output,0)>0 OR COALESCE(reported_total,0)>0) AND (COALESCE(reported_input,0)=0 OR COALESCE(reported_output,0)=0)),
+	 COALESCE(sum(reported_input),0),COALESCE(sum(reported_output),0),COALESCE(sum(reported_total),0)
+	 FROM ontology_maintenance_attempts WHERE (?='' OR window_id=NULLIF(?,'')::uuid) AND (NOT ? OR estimated_input_tokens IS NULL)`, windowID, windowID, historical).Row().Scan(
+		&result.Attempts, &result.UnreconciledAttempts, &result.UnavailableUsageAttempts, &result.PartialUsageAttempts, &result.ReportedInputTokens, &result.ReportedOutputTokens, &result.ReportedTotalTokens)
 	return result, err
 }
 

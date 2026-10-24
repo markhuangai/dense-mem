@@ -14,7 +14,7 @@ const initial = await control("/ontology/status");
 
 try {
   await control("/ontology/pause", { operation_key: randomUUID() });
-  await control("/config/ontology-maintenance", { items: [{ key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "true" }] }, "PATCH");
+  await control("/config/ontology-maintenance", { items: [{ key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "true" }, { key: "ONTOLOGY_MAINTENANCE_CONTEXT_WINDOW_TOKENS", value: "300000" }] }, "PATCH");
   const shared = await credential(teamID, "manager", ["read", "write"]);
   assert.equal(shared.credential.memory_access.team_shared.write, true);
   manager = shared.api_key;

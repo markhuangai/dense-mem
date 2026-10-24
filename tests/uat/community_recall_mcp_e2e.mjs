@@ -7,7 +7,7 @@ const controlURL = required("DENSE_MEM_CONTROL_URL").replace(/\/$/, "");
 const teamID = required("DENSE_MEM_E2E_TEAM_ID");
 const key = required("DENSE_MEM_E2E_API_KEY");
 await control("/ontology/pause", { operation_key: randomUUID() });
-await control("/config/ontology-maintenance", { items: [{ key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "true" }] }, "PATCH");
+await control("/config/ontology-maintenance", { items: [{ key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "true" }, { key: "ONTOLOGY_MAINTENANCE_CONTEXT_WINDOW_TOKENS", value: "300000" }] }, "PATCH");
 const shared = await control(`/teams/${teamID}/credentials`, { name: "Community browser fixture", scopes: ["read", "write"], rate_limit: 300 });
 assert.equal(shared.credential.memory_access.team_shared.write, true);
 const subjects = Array.from({ length: 16 }, (_, index) => `Atlas coordination shard ${index + 1}`);

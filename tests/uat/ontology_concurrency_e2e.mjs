@@ -13,6 +13,14 @@ const teams = [];
 let failure;
 try {
   assert.equal((await control("/ontology/status")).window, undefined, "concurrency acceptance configures the fresh stack before its first window");
+  assert.equal(original.effective.context_window_tokens, 0, "a fresh deployment must not invent a model context capacity");
+  await control("/config/ontology-maintenance", { items: [{ key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "true" }] }, "PATCH");
+  const missing = await control("/ontology/status");
+  assert.equal(missing.configuration_error, "configuration_invalid");
+  const rejected = await request("/ontology/runs", { operation_key: randomUUID() });
+  assert.equal(rejected.status, 409);
+  assert.equal((await control("/ontology/status")).window, undefined);
+  assert.equal((await providerHealth()).active_ontology_requests, 0);
   await control("/ontology/pause", { operation_key: randomUUID() });
   for (const name of ["parallel", "serial"]) {
     const team = await control("/teams", { name: `ontology-${name}-${randomUUID()}` });
@@ -21,12 +29,10 @@ try {
   }
   const overrides = [{ team_id: teams[0].id, max_concurrency: 2 }];
   await control("/config/ontology-maintenance", { items: [
-    { key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "true" },
+    { key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "true" }, { key: "ONTOLOGY_MAINTENANCE_CONTEXT_WINDOW_TOKENS", value: "300000" },
     { key: "ONTOLOGY_MAINTENANCE_MAX_CONCURRENCY", value: "3" },
     { key: "ONTOLOGY_MAINTENANCE_TEAM_MAX_CONCURRENCY", value: "1" },
     { key: "ONTOLOGY_MAINTENANCE_TEAM_OVERRIDES_JSON", value: JSON.stringify(overrides) },
-    { key: "ONTOLOGY_MAINTENANCE_INPUT_TOKENS", value: "10000000" },
-    { key: "ONTOLOGY_MAINTENANCE_OUTPUT_TOKENS", value: "10000000" },
   ] }, "PATCH");
   for (const [teamIndex, team] of teams.entries()) {
     for (let index = 0; index < (teamIndex === 0 ? 25 : 3); index++) await remember(team.credential.api_key, `Atlas uses PostgreSQL. Concurrency sample ${teamIndex}-${index}.`);

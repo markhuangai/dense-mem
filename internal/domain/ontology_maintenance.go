@@ -10,6 +10,7 @@ const (
 	AppConfigOntologyConcurrency     = "ONTOLOGY_MAINTENANCE_MAX_CONCURRENCY"
 	AppConfigOntologyTeamConcurrency = "ONTOLOGY_MAINTENANCE_TEAM_MAX_CONCURRENCY"
 	AppConfigOntologyTeamOverrides   = "ONTOLOGY_MAINTENANCE_TEAM_OVERRIDES_JSON"
+	AppConfigOntologyContextWindow   = "ONTOLOGY_MAINTENANCE_CONTEXT_WINDOW_TOKENS"
 	AppConfigOntologyInputTokens     = "ONTOLOGY_MAINTENANCE_INPUT_TOKENS"
 	AppConfigOntologyOutputTokens    = "ONTOLOGY_MAINTENANCE_OUTPUT_TOKENS"
 )
@@ -30,8 +31,7 @@ type OntologyMaintenanceConfig struct {
 	MaxConcurrency           int                               `json:"max_concurrency"`
 	TeamMaxConcurrency       int                               `json:"team_max_concurrency"`
 	TeamConcurrencyOverrides []OntologyTeamConcurrencyOverride `json:"team_concurrency_overrides"`
-	InputTokens              int64                             `json:"input_tokens"`
-	OutputTokens             int64                             `json:"output_tokens"`
+	ContextWindowTokens      int64                             `json:"context_window_tokens"`
 	SettingsVersion          string                            `json:"settings_version"`
 }
 
@@ -67,7 +67,4 @@ type OntologyMaintenanceCommand struct {
 	Action       string `json:"action"`
 	MaxBatches   int    `json:"max_batches"`
 	RetryRunID   string `json:"retry_run_id,omitempty"`
-	WindowID     string `json:"window_id,omitempty"`
-	InputTokens  int64  `json:"input_tokens,omitempty"`
-	OutputTokens int64  `json:"output_tokens,omitempty"`
 }

@@ -23,10 +23,9 @@ const CONFIG_LABELS: Record<string, string> = {
   ONTOLOGY_MAINTENANCE_CADENCE_HOURS: "Cadence (hours)",
   ONTOLOGY_MAINTENANCE_START_TIME_LOCAL: "Window start time",
   ONTOLOGY_MAINTENANCE_MODEL: "Maintenance model",
+  ONTOLOGY_MAINTENANCE_CONTEXT_WINDOW_TOKENS: "Model context window (tokens)",
   ONTOLOGY_MAINTENANCE_MAX_CONCURRENCY: "Concurrent assessments",
   ONTOLOGY_MAINTENANCE_TEAM_MAX_CONCURRENCY: "Default concurrency per team",
-  ONTOLOGY_MAINTENANCE_INPUT_TOKENS: "Input tokens per window",
-  ONTOLOGY_MAINTENANCE_OUTPUT_TOKENS: "Output tokens per window",
 	SSO_PUBLIC_BASE_URL: "Public base URL",
 	MCP_PUBLIC_BASE_URL: "MCP public base URL",
   SCIM_PUBLIC_BASE_URL: "SCIM ingress URL",
@@ -50,10 +49,9 @@ const CONFIG_DESCRIPTIONS: Record<string, string> = {
   ONTOLOGY_MAINTENANCE_CADENCE_HOURS: "Hours between maintenance windows.",
   ONTOLOGY_MAINTENANCE_START_TIME_LOCAL: "Start time in the service timezone.",
   ONTOLOGY_MAINTENANCE_MODEL: "Leave blank to use the semantic assessor model.",
+  ONTOLOGY_MAINTENANCE_CONTEXT_WINDOW_TOKENS: "Capacity for one complete request and response. Set the selected model’s supported context size before processing.",
   ONTOLOGY_MAINTENANCE_MAX_CONCURRENCY: "Assessments that can run at the same time.",
   ONTOLOGY_MAINTENANCE_TEAM_MAX_CONCURRENCY: "Work slots per team (1–8), bounded by global capacity. Applies at the next window.",
-  ONTOLOGY_MAINTENANCE_INPUT_TOKENS: "Input allowance for each window.",
-  ONTOLOGY_MAINTENANCE_OUTPUT_TOKENS: "Output allowance for each window.",
   APP_TIMEZONE: "Timezone used to display service activity.",
   OPERATION_LOG_RETENTION_DAYS: "Days to retain operational records.",
   RECALL_FEEDBACK_RETENTION_DAYS: "Days to retain recall investigations.",
@@ -64,10 +62,9 @@ const CONFIG_PLACEHOLDERS: Record<string, string> = {
   ONTOLOGY_MAINTENANCE_CADENCE_HOURS: "12",
   ONTOLOGY_MAINTENANCE_START_TIME_LOCAL: "03:00",
   ONTOLOGY_MAINTENANCE_MODEL: "Use the semantic assessor model",
+  ONTOLOGY_MAINTENANCE_CONTEXT_WINDOW_TOKENS: "Required before model processing",
   ONTOLOGY_MAINTENANCE_MAX_CONCURRENCY: "1",
   ONTOLOGY_MAINTENANCE_TEAM_MAX_CONCURRENCY: "1",
-  ONTOLOGY_MAINTENANCE_INPUT_TOKENS: "250000",
-  ONTOLOGY_MAINTENANCE_OUTPUT_TOKENS: "100000",
 	MCP_PUBLIC_BASE_URL: "https://memory.example.com",
   SCIM_PUBLIC_BASE_URL: "https://memory.example.com",
   CONTROL_PUBLIC_BASE_URL: "https://control.example.com",
@@ -143,7 +140,7 @@ type RuntimeConfigInput = {
 export function OntologyConfigPanel({ api }: { api: ControlApi }) {
   const load = useCallback(() => api.getOntologyMaintenanceConfig(), [api]);
   const [status, setStatus] = useState<OntologyMaintenanceStatus | null>(null);
-  return <><div className="page-intro"><h1>Ontology maintenance</h1><p>Organize shared knowledge and keep processing within its allowance.</p></div><div className="ontology-maintenance-layout"><div className="ontology-policy">
+  return <><div className="page-intro"><h1>Ontology maintenance</h1><p>Organize shared knowledge within the model’s context capacity.</p></div><div className="ontology-maintenance-layout"><div className="ontology-policy">
     <RuntimeConfigPanel title="Maintenance policy" refreshLabel="Refresh ontology config" load={load} save={(input) => api.updateOntologyMaintenanceConfig(input)} detail={() => <p>Policy changes apply at the next window. Disabling stops new work immediately.</p>}
       renderItem={(item, value, onChange) => item.key === "ONTOLOGY_MAINTENANCE_TEAM_OVERRIDES_JSON" ? <OntologyTeamConcurrencyField api={api} value={value} onChange={onChange} status={status} /> : undefined} />
     </div><OntologyMaintenancePanel api={api} onStatus={setStatus} /></div>
@@ -324,7 +321,7 @@ function RuntimeConfigPanel<T extends RuntimeConfig>({
 function configGroup(key: string): string {
   if (key.startsWith("ONTOLOGY_MAINTENANCE_")) {
     if (key === "ONTOLOGY_MAINTENANCE_TEAM_OVERRIDES_JSON") return "Team overrides";
-    if (key.endsWith("_TOKENS")) return "Allowance per window";
+    if (key.endsWith("_TOKENS")) return "Model capacity";
     return key.endsWith("_MODEL") || key.endsWith("_CONCURRENCY") ? "Processing" : "Schedule";
   }
   if (key.endsWith("BASE_URL")) return "Public endpoints";
@@ -427,7 +424,7 @@ function ConfigField({
   }
 
   const pricing = item.key.startsWith("TELEMETRY_COST_");
-  const ontologyNumber = ["ONTOLOGY_MAINTENANCE_CADENCE_HOURS", "ONTOLOGY_MAINTENANCE_MAX_CONCURRENCY", "ONTOLOGY_MAINTENANCE_TEAM_MAX_CONCURRENCY", "ONTOLOGY_MAINTENANCE_INPUT_TOKENS", "ONTOLOGY_MAINTENANCE_OUTPUT_TOKENS"].includes(item.key);
+  const ontologyNumber = ["ONTOLOGY_MAINTENANCE_CADENCE_HOURS", "ONTOLOGY_MAINTENANCE_MAX_CONCURRENCY", "ONTOLOGY_MAINTENANCE_TEAM_MAX_CONCURRENCY", "ONTOLOGY_MAINTENANCE_CONTEXT_WINDOW_TOKENS"].includes(item.key);
   const numeric = pricing || item.key.endsWith("_SECONDS") || item.key === "DREAMING_MAX_OUTPUTS" || item.key === "COMMUNITY_DETECTION_MAX_CONCURRENCY" || item.key === "OPERATION_LOG_RETENTION_DAYS" || item.key === "RECALL_FEEDBACK_RETENTION_DAYS";
   const time = item.key === "DREAMING_START_TIME_LOCAL" || item.key === "COMMUNITY_DETECTION_START_TIME_LOCAL";
   const min = item.key === "COMMUNITY_DETECTION_JITTER_SECONDS" ? 0 : numeric && !pricing ? 1 : undefined;

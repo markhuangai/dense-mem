@@ -31,12 +31,6 @@ type controlOntologyRunRequest struct {
 type controlOntologyPauseRequest struct {
 	OperationKey string `json:"operation_key" validate:"required,max=128"`
 }
-type controlOntologyAllowanceRequest struct {
-	OperationKey string `json:"operation_key" validate:"required,max=128"`
-	WindowID     string `json:"window_id" validate:"required,uuid"`
-	InputTokens  int64  `json:"input_tokens" validate:"min=0"`
-	OutputTokens int64  `json:"output_tokens" validate:"min=0"`
-}
 
 func registerOntologyMaintenanceRoutes(api *echo.Group, h *controlPortalHandler) {
 	if h.appConfig != nil {
@@ -48,16 +42,10 @@ func registerOntologyMaintenanceRoutes(api *echo.Group, h *controlPortalHandler)
 	}
 	api.GET("/ontology/status", h.getOntologyMaintenanceStatus)
 	api.GET("/ontology/runs", h.listOntologyMaintenanceRuns)
-	api.POST("/ontology/allowances", h.addOntologyMaintenanceAllowance, middleware.BindAndValidateStrict[controlOntologyAllowanceRequest](ontologyCommandBodyKey))
 	api.POST("/ontology/runs", h.runOntologyMaintenance, middleware.BindAndValidateStrict[controlOntologyRunRequest](ontologyCommandBodyKey))
 	api.POST("/ontology/runs/:runId/retry", h.retryOntologyMaintenance, middleware.BindAndValidateStrict[controlOntologyRunRequest](ontologyCommandBodyKey))
 	api.POST("/ontology/pause", h.pauseOntologyMaintenance, middleware.BindAndValidateStrict[controlOntologyPauseRequest](ontologyPauseBodyKey))
 	api.POST("/ontology/resume", h.resumeOntologyMaintenance, middleware.BindAndValidateStrict[controlOntologyPauseRequest](ontologyPauseBodyKey))
-}
-
-func (h *controlPortalHandler) addOntologyMaintenanceAllowance(c echo.Context) error {
-	body := middleware.MustGetValidatedBody[controlOntologyAllowanceRequest](c.Request().Context(), ontologyCommandBodyKey)
-	return h.ontologyCommand(c, domain.OntologyMaintenanceCommand{OperationKey: body.OperationKey, Action: "allowance", WindowID: body.WindowID, InputTokens: body.InputTokens, OutputTokens: body.OutputTokens})
 }
 
 func (h *controlPortalHandler) getOntologyMaintenanceConfig(c echo.Context) error {
@@ -160,8 +148,10 @@ func ontologyControlError(err error) error {
 		return httperr.New(httperr.CONFLICT, "ontology maintenance is paused")
 	case code == "maintenance_disabled":
 		return httperr.New(httperr.CONFLICT, "ontology maintenance is disabled")
-	case code == "budget_deferred":
-		return httperr.New(httperr.CONFLICT, "ontology work is deferred by its window budget")
+	case code == "window_closed":
+		return httperr.New(httperr.CONFLICT, "ontology maintenance window is closed")
+	case code == "configuration_invalid":
+		return httperr.New(httperr.CONFLICT, "configure an ontology context window with sufficient request and response capacity")
 	default:
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "ontology maintenance unavailable")
 	}

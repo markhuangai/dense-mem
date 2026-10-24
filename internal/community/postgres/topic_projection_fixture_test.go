@@ -41,7 +41,7 @@ func (topicFixtureConfig) OntologyMaintenanceRuntimeConfig(context.Context) (dom
 	return domain.OntologyMaintenanceConfig{Enabled: true}, nil
 }
 
-func newTopicProjectionFixture(t testing.TB) *topicProjectionFixture {
+func newTopicProjectionFixture(t testing.TB, beforeWindow ...func(*topicProjectionFixture)) *topicProjectionFixture {
 	t.Helper()
 	base := newCommunityOwnershipFixture(t)
 	f := &topicProjectionFixture{communityOwnershipFixture: base, ontology: ontologypg.NewStore(base.appDB, base.rls), topics: map[string]string{}}
@@ -58,9 +58,12 @@ func newTopicProjectionFixture(t testing.TB) *topicProjectionFixture {
 	}
 	f.store = NewStore(f.appDB, f.rls).WithTopics(f.ontology.NewTopicCatalogReader(), f.ontology.NewTopicMembershipReader(), f.ontology.NewTopicProjectionAdmission(), f.ontology.NewTopicProjectionRelease())
 	f.service = communityapp.New(communityapp.Dependencies{Store: f.store, AppConfig: topicFixtureConfig{}})
+	for _, prepare := range beforeWindow {
+		prepare(f)
+	}
 	f.setMode(t, true)
 	config := settings.NewAppConfigService(settingspg.NewAppConfigRepository(f.appDB, f.rls), nil)
-	_, err := config.UpdateOntologyMaintenanceSettings(context.Background(), map[string]string{domain.AppConfigOntologyEnabled: "true", domain.AppConfigOntologyModel: "fixture-model", domain.AppConfigOntologyStartTime: "00:00"}, "control", "", "")
+	_, err := config.UpdateOntologyMaintenanceSettings(context.Background(), map[string]string{domain.AppConfigOntologyEnabled: "true", domain.AppConfigOntologyContextWindow: "300000", domain.AppConfigOntologyModel: "fixture-model", domain.AppConfigOntologyStartTime: "00:00"}, "control", "", "")
 	require.NoError(t, err)
 	_, err = config.UpdateGeneralSettings(context.Background(), map[string]string{domain.AppConfigTimezone: "UTC"}, "control", "", "")
 	require.NoError(t, err)

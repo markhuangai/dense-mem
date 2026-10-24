@@ -31,7 +31,7 @@ export type OntologyPreview = {
 };
 export type OntologyCoverage = {
   observed_at: string; revision: number; discovery_complete: boolean; coverage_complete: boolean; pending_markers: number;
-  counts: { eligible: number; organized: number; pending: number; ambiguous: number; failed: number; budget_deferred: number };
+  counts: { eligible: number; organized: number; pending: number; ambiguous: number; failed: number };
 };
 export type OntologyRecordPage = { records: OntologyRecord[]; revision: number; next_cursor?: string };
 export type OntologySourcePage = { sources: OntologySource[]; revision: number; next_cursor?: string };

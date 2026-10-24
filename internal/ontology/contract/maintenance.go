@@ -11,35 +11,34 @@ import (
 
 const MaintenancePageSize = 100
 const MaxManualBatches = 100
-const MaxAdditionalTokens int64 = 1000000000
 
 var (
 	ErrMaintenancePaused   = errors.New("ontology maintenance paused")
 	ErrMaintenanceDisabled = errors.New("ontology maintenance disabled")
-	ErrBudgetDeferred      = errors.New("ontology maintenance budget deferred")
+	ErrWindowClosed        = errors.New("ontology maintenance window closed")
+	ErrConfiguration       = errors.New("ontology maintenance configuration invalid")
 	ErrLeaseLost           = errors.New("ontology maintenance lease lost")
 	ErrAccounting          = errors.New("ontology maintenance accounting unavailable")
 	ErrAuditUnavailable    = errors.New("ontology maintenance audit unavailable")
 )
 
 type MaintenanceWindow struct {
-	ID               string                           `json:"id"`
-	StartsAt         time.Time                        `json:"starts_at"`
-	EndsAt           time.Time                        `json:"ends_at"`
-	Policy           domain.OntologyMaintenanceConfig `json:"policy"`
-	ChargedInput     int64                            `json:"charged_input_tokens"`
-	ChargedOutput    int64                            `json:"charged_output_tokens"`
-	ReportedInput    int64                            `json:"reported_input_tokens"`
-	ReportedOutput   int64                            `json:"reported_output_tokens"`
-	ReservedInput    int64                            `json:"reserved_input_tokens"`
-	ReservedOutput   int64                            `json:"reserved_output_tokens"`
-	Overrun          bool                             `json:"overrun"`
-	AdditionalInput  int64                            `json:"additional_input_tokens"`
-	AdditionalOutput int64                            `json:"additional_output_tokens"`
+	ID       string                           `json:"id"`
+	StartsAt time.Time                        `json:"starts_at"`
+	EndsAt   time.Time                        `json:"ends_at"`
+	Policy   domain.OntologyMaintenanceConfig `json:"policy"`
+	Usage    MaintenanceUsage                 `json:"usage"`
 }
 
-func (w MaintenanceWindow) InputAllowance() int64  { return w.Policy.InputTokens + w.AdditionalInput }
-func (w MaintenanceWindow) OutputAllowance() int64 { return w.Policy.OutputTokens + w.AdditionalOutput }
+type MaintenanceUsage struct {
+	Attempts                 int64 `json:"attempts"`
+	UnreconciledAttempts     int64 `json:"unreconciled_attempts"`
+	UnavailableUsageAttempts int64 `json:"unavailable_usage_attempts"`
+	PartialUsageAttempts     int64 `json:"partial_usage_attempts"`
+	ReportedInputTokens      int64 `json:"reported_input_tokens"`
+	ReportedOutputTokens     int64 `json:"reported_output_tokens"`
+	ReportedTotalTokens      int64 `json:"reported_total_tokens"`
+}
 
 type MaintenanceRun struct {
 	ID               string    `json:"id"`
@@ -61,18 +60,16 @@ type MaintenanceRun struct {
 type MaintenanceAudit func(MaintenanceRun) (audit.Entry, error)
 
 type MaintenanceClaim struct {
-	ID               string
-	RunID            string
-	WindowID         string
-	TeamID           string
-	SpaceID          string
-	Generation       int64
-	LeaseToken       string
-	LeaseUntil       time.Time
-	Sources          []SourceHandle
-	Revisions        map[string]int64
-	AdditionalInput  int64
-	AdditionalOutput int64
+	ID         string
+	RunID      string
+	WindowID   string
+	TeamID     string
+	SpaceID    string
+	Generation int64
+	LeaseToken string
+	LeaseUntil time.Time
+	Sources    []SourceHandle
+	Revisions  map[string]int64
 }
 
 type MaintenanceTurn struct {
@@ -86,12 +83,11 @@ type MaintenanceTurn struct {
 }
 
 type MaintenanceCounts struct {
-	Eligible       int64 `json:"eligible"`
-	Organized      int64 `json:"organized"`
-	Pending        int64 `json:"pending"`
-	Ambiguous      int64 `json:"ambiguous"`
-	Failed         int64 `json:"failed"`
-	BudgetDeferred int64 `json:"budget_deferred"`
+	Eligible  int64 `json:"eligible"`
+	Organized int64 `json:"organized"`
+	Pending   int64 `json:"pending"`
+	Ambiguous int64 `json:"ambiguous"`
+	Failed    int64 `json:"failed"`
 }
 
 type MaintenanceStatus struct {
@@ -106,6 +102,10 @@ type MaintenanceStatus struct {
 	Window                 *MaintenanceWindow               `json:"window,omitempty"`
 	LatestRun              *MaintenanceRun                  `json:"latest_run,omitempty"`
 	PendingPolicy          domain.OntologyMaintenanceConfig `json:"pending_policy"`
+	ConfigurationError     string                           `json:"configuration_error,omitempty"`
+	ActiveWork             int                              `json:"active_work"`
+	Usage                  MaintenanceUsage                 `json:"usage"`
+	HistoricalUsage        MaintenanceUsage                 `json:"historical_usage"`
 }
 
 type MaintenanceRunPage struct {
@@ -117,12 +117,13 @@ type MaintenanceRepository interface {
 	SeedDefinitions(context.Context, string, SeedInput) (SeedResult, error)
 	ListRecords(context.Context, string, Kind, string, int) (Page, error)
 	EnsureMaintenanceWindow(context.Context, domain.OntologyMaintenanceConfig, time.Time) (*MaintenanceWindow, error)
+	CurrentMaintenanceWindow(context.Context, time.Time) (*MaintenanceWindow, error)
 	ClaimMaintenanceTurn(context.Context, string, time.Time, time.Duration) (*MaintenanceTurn, error)
 	DiscoverMaintenance(context.Context, MaintenanceTurn, int) error
 	ClaimMaintenanceBatch(context.Context, MaintenanceTurn, string, time.Time) (*MaintenanceClaim, error)
 	ReleaseMaintenanceTurn(context.Context, MaintenanceTurn) error
 	RecordMaintenanceFailure(context.Context, string, string, time.Time) error
-	ReserveMaintenanceAttempt(context.Context, MaintenanceClaim, string, int, int, int, time.Time) error
+	AdmitMaintenanceAttempt(context.Context, MaintenanceClaim, string, int, int, int, time.Time) error
 	ReconcileMaintenanceAttempt(context.Context, MaintenanceClaim, string, AssessmentAttempt) error
 	CompleteMaintenanceBatch(context.Context, MaintenanceClaim, OrganizationResult, string, time.Time) error
 	MaintenanceCommand(context.Context, domain.OntologyMaintenanceCommand, time.Time, MaintenanceAudit) (MaintenanceRun, error)
@@ -147,8 +148,10 @@ func MaintenanceFailureCode(err error) string {
 		return "maintenance_paused"
 	case errors.Is(err, ErrMaintenanceDisabled):
 		return "maintenance_disabled"
-	case errors.Is(err, ErrBudgetDeferred):
-		return "budget_deferred"
+	case errors.Is(err, ErrWindowClosed):
+		return "window_closed"
+	case errors.Is(err, ErrConfiguration):
+		return "configuration_invalid"
 	case errors.Is(err, ErrLeaseLost):
 		return "lease_lost"
 	case errors.Is(err, ErrAccounting):
@@ -159,15 +162,9 @@ func MaintenanceFailureCode(err error) string {
 	return ""
 }
 
-func MaintenanceOutcomeState(outcome OrganizationOutcome, result OrganizationResult, failure string, allowanceChanged bool) string {
-	if failure == "maintenance_paused" || failure == "maintenance_disabled" {
+func MaintenanceOutcomeState(outcome OrganizationOutcome, result OrganizationResult, failure string) string {
+	if failure == "maintenance_paused" || failure == "maintenance_disabled" || failure == "lease_lost" || failure == "window_closed" || failure == "configuration_invalid" {
 		return "pending"
-	}
-	if failure == "budget_deferred" && allowanceChanged {
-		return "pending"
-	}
-	if failure == "budget_deferred" || failure == "lease_lost" {
-		return "budget_deferred"
 	}
 	if failure != "" || result.FailureCode != "" {
 		return "failed"

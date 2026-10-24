@@ -40,7 +40,7 @@ export function OntologyTeamConcurrencyField({ api, value, onChange, status }: {
     && (overrides.length < 128 || overrides.some((item) => item.team_id === team));
   const teams = [...new Set([...overrides.map((item) => item.team_id), ...(status?.window?.policy.team_concurrency_overrides ?? []).map((item) => item.team_id), ...(status?.pending_policy.team_concurrency_overrides ?? []).map((item) => item.team_id)])];
   return <div className="stack">
-    <p className="form-meta">Choose a team and stage its limit, then save config. Overrides take effect at the next window and share the global allowance.</p>
+    <p className="form-meta">Choose a team and stage its limit, then save config. Overrides take effect at the next window and share the global work capacity.</p>
     {error && <p role="alert" className="banner error">{error}</p>}
     <div className="setting-row"><Label htmlFor="ontology-override-team">Team for override</Label>
       <NativeSelect id="ontology-override-team" disabled={loading} value={team} onChange={(event) => { setTeam(event.target.value); setLimit(String(overrides.find((item) => item.team_id === event.target.value)?.max_concurrency ?? 1)); }}>

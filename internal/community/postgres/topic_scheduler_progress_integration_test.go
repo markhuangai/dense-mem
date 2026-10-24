@@ -52,17 +52,14 @@ func startObservedTopicScheduler(t *testing.T, f *topicProjectionFixture, now ti
 	config := settings.NewAppConfigService(settingspg.NewAppConfigRepository(f.appDB, f.rls), nil)
 	policy, err := config.OntologyMaintenanceRuntimeConfig(context.Background())
 	require.NoError(t, err)
-	require.NoError(t, f.rls.WithSystemTx(context.Background(), f.adminDB, func(tx *gorm.DB) error {
-		return tx.Exec(`UPDATE ontology_maintenance_windows SET charged_input=?,charged_output=? WHERE window_id=?::uuid`, policy.InputTokens, policy.OutputTokens, f.windowID).Error
-	}))
 	real := communityapp.New(communityapp.Dependencies{Store: f.store, AppConfig: config, Now: func() time.Time { return now }})
 	observer := &observedTopicTurns{Service: real, stopped: make(chan struct{}, policy.MaxConcurrency)}
 	if len(afterTurn) > 0 {
 		observer.afterTurn = afterTurn[0]
 	}
 	maintenance := organization.NewMaintenanceService(organization.MaintenanceDependencies{Repository: f.ontology, Config: config, Projections: observer, Now: func() time.Time { return now },
-		Organizer: func(model string, accounting assessment.AttemptAccounting) *organization.Service {
-			return organization.NewService(f.ontology, assessment.NewProviderWithAccounting(nil, model, assessor.DefaultSemanticAssessmentLimits(), accounting))
+		Organizer: func(model string, contextWindowTokens int64, accounting assessment.AttemptAccounting) *organization.Service {
+			return organization.NewService(f.ontology, assessment.NewProviderWithAccounting(nil, model, assessor.DefaultSemanticAssessmentLimits(), accounting, int(contextWindowTokens)))
 		},
 	})
 	ctx, cancel := context.WithCancel(context.Background())

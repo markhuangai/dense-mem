@@ -29,8 +29,8 @@ func TestOntologyMaintenanceAttemptDiagnosticsOperatorLogIsBounded(t *testing.T)
 	settings := maintenanceSettings(t, f)
 	var output bytes.Buffer
 	service := organization.NewMaintenanceService(organization.MaintenanceDependencies{Repository: f.store, Config: settings, DefaultModel: "fixture-model", ProviderTimeout: time.Minute,
-		Logger: slog.New(slog.NewJSONHandler(&output, nil)), Organizer: func(model string, accounting assessment.AttemptAccounting) *organization.Service {
-			organizer, _ := organizationFixtureServiceWithAccounting(t, f, nil, nil, model, maintenanceFixtureLimits(), accounting)
+		Logger: slog.New(slog.NewJSONHandler(&output, nil)), Organizer: func(model string, contextWindowTokens int64, accounting assessment.AttemptAccounting) *organization.Service {
+			organizer, _ := organizationFixtureServiceWithAccounting(t, f, nil, nil, model, maintenanceFixtureLimits(), accounting, int(contextWindowTokens))
 			return organizer
 		}})
 	for range 8 {
@@ -121,7 +121,7 @@ func TestOntologyMaintenanceAttemptDiagnosticsPersistenceAndFailureBoundaries(t 
 			}
 			limits := maintenanceFixtureLimits()
 			transport := assessorprovider.NewOpenAIAssessorWithAssessmentLimits(&config.Config{AIVerifierAPIURL: server.URL, AIVerifierModel: "fixture-model"}, client, limits)
-			provider := assessment.NewProviderWithAccounting(transport, "fixture-model", limits, finalizationAccounting{f.store, *x.claim})
+			provider := assessment.NewProviderWithAccounting(transport, "fixture-model", limits, finalizationAccounting{f.store, *x.claim}, int(x.window.Policy.ContextWindowTokens))
 			service := organization.NewService(f.store, provider)
 			ctx, cancel := context.WithCancel(ontology.WithMaintenanceClaim(context.Background(), *x.claim))
 			defer cancel()
