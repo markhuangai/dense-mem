@@ -92,7 +92,7 @@ func refreshMaintenanceSource(tx *gorm.DB, fence scope, handle ontology.SourceHa
 		var body []byte
 		err := tx.Raw(`SELECT assessment.body FROM ontology_maintenance_sources AS source
 		 JOIN ontology_assessments AS assessment ON assessment.team_id=source.team_id AND assessment.shared_space_id=source.shared_space_id AND assessment.space_generation=source.space_generation AND assessment.assessment_id=source.assessment_id
-		 WHERE source.team_id=?::uuid AND source.shared_space_id=?::uuid AND source.space_generation=? AND source.source_kind=? AND source.source_id=? AND source.status IN ('organized','failed','ambiguous','budget_deferred') LIMIT 1`, fence.TeamID, fence.SpaceID, fence.Generation, handle.Kind, handle.ID).Row().Scan(&body)
+		 WHERE source.team_id=?::uuid AND source.shared_space_id=?::uuid AND source.space_generation=? AND source.source_kind=? AND source.source_id=? AND source.status IN ('organized','failed','ambiguous') LIMIT 1`, fence.TeamID, fence.SpaceID, fence.Generation, handle.Kind, handle.ID).Row().Scan(&body)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
@@ -143,7 +143,7 @@ func refreshMaintenanceSource(tx *gorm.DB, fence scope, handle ontology.SourceHa
 	 ON CONFLICT(team_id,shared_space_id,space_generation,source_kind,source_id) DO UPDATE SET
 	 source_version=EXCLUDED.source_version,fingerprint=EXCLUDED.fingerprint,meaning_key=EXCLUDED.meaning_key,search_tsv=EXCLUDED.search_tsv,vocabulary_words=EXCLUDED.vocabulary_words,eligible=EXCLUDED.eligible,
 	 revision=ontology_maintenance_sources.revision+1,status=EXCLUDED.status,reason=EXCLUDED.reason,
-	 pending_at=CASE WHEN ontology_maintenance_sources.status IN ('pending','budget_deferred') THEN ontology_maintenance_sources.pending_at ELSE clock_timestamp() END,
+	 pending_at=CASE WHEN ontology_maintenance_sources.status='pending' THEN ontology_maintenance_sources.pending_at ELSE clock_timestamp() END,
 	 updated_at=clock_timestamp() WHERE ontology_maintenance_sources.fingerprint<>EXCLUDED.fingerprint OR ?`, fence.TeamID, fence.SpaceID, fence.Generation, handle.Kind, handle.ID, handle.Version, fingerprint, snapshot.MeaningKey, string(text), pq.Array(vocabularyWords), snapshot.Eligible, status, reason, force).Error
 }
 

@@ -9,7 +9,7 @@ const session = { team: { id: "team-a" }, membership: { role: "manager", grants:
 const edit = { action: "define" as const, expected_version: 0, kind: "topic" as const, definition: { key: "storage", label: "Storage", description: "Durable storage" } };
 const draft: OntologyDraft = { id: "draft-a", version: 1, state: "open", base_revision: 1, reason: "Storage correction", edits: [edit], updated_at: "2026-10-11T00:00:00Z" };
 
-const coverage: OntologyCoverage = { observed_at: "2026-10-18T12:00:00Z", revision: 1, discovery_complete: false, coverage_complete: false, pending_markers: 0, counts: { eligible: 2, organized: 0, pending: 2, ambiguous: 0, failed: 0, budget_deferred: 0 } };
+const coverage: OntologyCoverage = { observed_at: "2026-10-18T12:00:00Z", revision: 1, discovery_complete: false, coverage_complete: false, pending_markers: 0, counts: { eligible: 2, organized: 0, pending: 2, ambiguous: 0, failed: 0 } };
 
 function install(saved: OntologyDraft[] = [], mutation?: (url: string, body: Record<string, unknown>) => Response, coverageStatus = coverage) {
   const response = (data: unknown) => new Response(JSON.stringify({ data }), { status: 200 });
@@ -31,7 +31,7 @@ describe("OntologyPanel", () => {
   beforeEach(() => { vi.restoreAllMocks(); vi.spyOn(window, "confirm").mockReturnValue(true); });
 
   it.each([false, true])("shows zero-record coverage without a percentage (discovery complete: %s)", async (complete) => {
-    install([], undefined, { ...coverage, discovery_complete: complete, coverage_complete: complete, counts: { eligible: 0, organized: 0, pending: 0, ambiguous: 0, failed: 0, budget_deferred: 0 } });
+    install([], undefined, { ...coverage, discovery_complete: complete, coverage_complete: complete, counts: { eligible: 0, organized: 0, pending: 0, ambiguous: 0, failed: 0 } });
     render(<OntologyPanel api={new UserApi("key")} session={session} />);
     const summary = await screen.findByRole("region", { name: "Team ontology coverage" });
     expect(within(summary).queryByRole("progressbar")).not.toBeInTheDocument();
@@ -281,7 +281,7 @@ describe("OntologyPanel", () => {
         if(path.pathname.endsWith("/publish")){published=true;revision++;saved={...saved!,state:"published",version:2,publication:{id:"publication-a",revision,existing:false,records:[{id:"override-a",version:1}]}};return response(saved);}
         saved={...draft,id:"saved-group",reason:body.reason,edits:body.edits,base_revision:revision};return response(saved);
       }
-      if(path.pathname.endsWith("/status"))return response({...coverage,revision,counts:{eligible:3,organized:2,pending:1,ambiguous:0,failed:0,budget_deferred:0}});
+      if(path.pathname.endsWith("/status"))return response({...coverage,revision,counts:{eligible:3,organized:2,pending:1,ambiguous:0,failed:0}});
       if(path.pathname.endsWith("/sources"))return response({sources:path.searchParams.get("cursor")?[{...handles[1],id:"source-c",text:"Additional shared source",truncated:false}]:handles.map((source)=>({...source,text:source.id,truncated:false})),next_cursor:path.searchParams.get("cursor")?undefined:"source-b"});
       if(path.pathname.endsWith("/records"))return response({records:[group],revision,next_cursor:path.searchParams.get("cursor")?undefined:"group-a"});
       if(path.pathname.endsWith("/drafts"))return response({drafts:saved?[saved]:[],next_cursor:path.searchParams.get("cursor")?undefined:"draft-cursor"});

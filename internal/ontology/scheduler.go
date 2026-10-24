@@ -40,7 +40,7 @@ func (s *MaintenanceScheduler) run(ctx context.Context) {
 	if !policy.Enabled {
 		return
 	}
-	window, err := s.service.deps.Repository.EnsureMaintenanceWindow(ctx, policy, s.service.deps.Now())
+	window, err := s.service.ensureWindow(ctx, policy, s.service.deps.Now())
 	if err != nil {
 		s.logFailure("window_unavailable")
 		return
@@ -141,7 +141,7 @@ func (s *MaintenanceScheduler) logTurnFailure(err error) {
 		}
 		return
 	}
-	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, contract.ErrMaintenanceDisabled) || errors.Is(err, contract.ErrMaintenancePaused) || errors.Is(err, contract.ErrBudgetDeferred) {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, contract.ErrMaintenanceDisabled) || errors.Is(err, contract.ErrMaintenancePaused) || errors.Is(err, contract.ErrWindowClosed) {
 		return
 	}
 	s.logFailure("maintenance_turn_failed")

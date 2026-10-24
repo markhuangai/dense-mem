@@ -5,8 +5,9 @@ import { generalConfigSnapshot, jsonResponse } from "../App.test-helpers";
 import { OntologyConfigPanel } from "./ConfigPanel";
 import { OntologyMaintenancePanel } from "./OntologyMaintenancePanel";
 
-const policy = { enabled: true, cadence_hours: 12 as const, start_time_local: "03:00", timezone: "UTC", model: "configured-model", max_concurrency: 1, input_tokens: 250000, output_tokens: 100000, settings_version: "version" };
-const status: OntologyMaintenanceStatus = { observed_at: "2026-10-06T12:00:00Z", enabled: true, paused: false, discovery_complete: false, coverage_complete: false, counts: { eligible: 4, organized: 1, pending: 1, failed: 1, ambiguous: 0, budget_deferred: 1 }, pending_policy: { ...policy, model: "pending-model" }, window: { id: "window", starts_at: "2026-10-06T03:00:00Z", ends_at: "2026-10-06T15:00:00Z", policy, charged_input_tokens: 100, charged_output_tokens: 200, reported_input_tokens: 60, reported_output_tokens: 0, reserved_input_tokens: 40, reserved_output_tokens: 200, overrun: false } };
+const policy = { enabled: true, cadence_hours: 12 as const, start_time_local: "03:00", timezone: "UTC", model: "configured-model", max_concurrency: 1, context_window_tokens: 300000, settings_version: "version" };
+const usage = { attempts: 3, unreconciled_attempts: 1, unavailable_usage_attempts: 1, partial_usage_attempts: 1, reported_input_tokens: 60, reported_output_tokens: 0, reported_total_tokens: 60 };
+const status: OntologyMaintenanceStatus = { observed_at: "2026-10-06T12:00:00Z", enabled: true, paused: false, discovery_complete: false, coverage_complete: false, active_work: 1, usage, historical_usage: { ...usage, unreconciled_attempts: 0 }, counts: { eligible: 3, organized: 1, pending: 1, failed: 1, ambiguous: 0 }, pending_policy: { ...policy, model: "pending-model" }, window: { id: "window", starts_at: "2026-10-06T03:00:00Z", ends_at: "2026-10-06T15:00:00Z", policy, usage } };
 const run = { id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", window_id: "window", kind: "run", status: "incomplete", retryable: true, max_batches: 1, completed_batches: 1, failure_code: "provider_unavailable", created_at: status.observed_at, updated_at: status.observed_at };
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
@@ -21,7 +22,7 @@ function fixture() {
 describe("Ontology maintenance controls", () => {
   it("keeps empty discovery distinct from completed coverage", async () => {
     const api = fixture();
-    vi.mocked(api.getOntologyMaintenanceStatus).mockResolvedValue({ ...status, window: undefined, counts: { eligible: 0, organized: 0, pending: 0, failed: 0, ambiguous: 0, budget_deferred: 0 } });
+    vi.mocked(api.getOntologyMaintenanceStatus).mockResolvedValue({ ...status, window: undefined, counts: { eligible: 0, organized: 0, pending: 0, failed: 0, ambiguous: 0 } });
     render(<OntologyMaintenancePanel api={api} />);
     const coverage = await screen.findByRole("region", { name: "Ontology coverage" });
     expect(within(coverage).getByText("Discovery in progress")).toBeVisible();
@@ -30,78 +31,44 @@ describe("Ontology maintenance controls", () => {
     expect(screen.getByText("No maintenance window has opened.")).toBeVisible();
   });
 
-  it("counts added allowance and retains charged, reported and reserved usage", async () => {
+  it("reports unavailable usage independently from work still in flight", async () => {
+    render(<OntologyMaintenancePanel api={fixture()} />);
+    const current = await screen.findByRole("region", { name: "Current ontology window" });
+    expect(within(current).getByText("Reported token totals exclude unavailable usage.")).toBeVisible();
+    expect(within(current).queryByRole("progressbar")).not.toBeInTheDocument();
+    const coverage = screen.getByRole("region", { name: "Ontology coverage" });
+    expect(within(coverage).getByText("Active work")).toBeVisible();
+    expect(within(coverage).getByText("Unfinished attempts")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Add allowance now" })).not.toBeInTheDocument();
+  });
+
+  it("blocks model commands when context capacity needs configuration and keeps pause available", async () => {
     const api = fixture();
-    vi.mocked(api.getOntologyMaintenanceStatus).mockResolvedValue({ ...status, window: { ...status.window!, policy: { ...policy, input_tokens: 100, output_tokens: 200 }, additional_input_tokens: 50, additional_output_tokens: 100 } });
+    vi.mocked(api.getOntologyMaintenanceStatus).mockResolvedValue({ ...status, configuration_error: "configuration_invalid", window: undefined, pending_policy: { ...policy, context_window_tokens: 0 } });
     render(<OntologyMaintenancePanel api={api} />);
-    const input = await screen.findByRole("progressbar", { name: "Input tokens" });
-    expect(input).toHaveAttribute("aria-valuetext", "100 of 150");
-    expect(screen.getByRole("progressbar", { name: "Output tokens" })).toHaveAttribute("aria-valuetext", "200 of 300");
-    expect(screen.getByText("60 reported · 40 reserved")).toBeVisible();
-    expect(screen.queryByText(/Current window allowance is exhausted/)).not.toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Model processing is blocked");
+    expect(screen.getByText("Not configured")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Run bounded maintenance" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Retry failed work" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Pause maintenance" })).toBeEnabled();
   });
 
-  it.each([false, true])("keeps exhausted allowance distinct from provider overrun (%s)", async (overrun) => {
+  it("retains historical allowance amounts without offering a grant action", async () => {
     const api = fixture();
-    vi.mocked(api.getOntologyMaintenanceStatus).mockResolvedValue({ ...status, window: { ...status.window!, policy: { ...policy, input_tokens: 50 }, overrun } });
+    vi.mocked(api.listOntologyMaintenanceRuns).mockResolvedValue({ runs: [{ ...run, kind: "allowance", status: "completed", retryable: false, input_tokens: 1000, output_tokens: 2000 }] });
     render(<OntologyMaintenancePanel api={api} />);
-    expect(await screen.findByRole("progressbar", { name: "Input tokens" })).toHaveAttribute("aria-valuetext", "100 of 50");
-    expect(screen.getByRole("progressbar", { name: "Input tokens" })).toHaveAttribute("aria-valuenow", "100");
-    if (overrun) {
-      expect(screen.getByRole("alert")).toHaveTextContent("Provider usage exceeded a reservation");
-      expect(screen.queryByText(/Current window allowance is exhausted/)).not.toBeInTheDocument();
-    } else expect(screen.getByText(/Current window allowance is exhausted/)).toBeVisible();
+    expect(await screen.findByText("Historical allowance")).toBeVisible();
+    expect(screen.getByText("1,000 input / 2,000 output")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Add allowance now" })).not.toBeInTheDocument();
   });
 
-  it("funds the displayed window with a stable retry key and clears a successful grant", async () => {
-    const grants: Array<Record<string, unknown>> = [];
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      if (url.endsWith("/ontology/status")) return jsonResponse({ data: status });
-      if (url.includes("/ontology/runs?")) return jsonResponse({ data: { runs: [run] } });
-      if (url.endsWith("/ontology/allowances")) {
-        grants.push(JSON.parse(String(init?.body)));
-        if (grants.length === 1) return jsonResponse({ message: "audit unavailable" }, 503);
-        return jsonResponse({ data: { ...run, kind: "allowance", status: "completed", retryable: false, input_tokens: 1000, output_tokens: 2000 } });
-      }
-      throw new Error(`Unexpected request ${url}`);
-    });
-    vi.stubGlobal("fetch", fetchMock);
-    render(<OntologyMaintenancePanel api={new ControlApi("http://localhost", "synthetic-control")} />);
-    const button = await screen.findByRole("button", { name: "Add allowance now" });
-    expect(button).toBeDisabled();
-    fireEvent.change(screen.getByLabelText("Additional input tokens"), { target: { value: "1000" } });
-    fireEvent.change(screen.getByLabelText("Additional output tokens"), { target: { value: "2000" } });
-    fireEvent.click(button);
-    expect(await screen.findByRole("alert")).toHaveTextContent("audit unavailable");
-    fireEvent.click(button);
-    expect(await screen.findByRole("status")).toHaveTextContent("Allowance added to this window");
-    expect(grants).toHaveLength(2);
-    expect(grants[1]).toEqual(grants[0]);
-    expect(grants[0]).toMatchObject({ window_id: status.window!.id, input_tokens: 1000, output_tokens: 2000 });
-    expect(screen.getByLabelText("Additional input tokens")).toHaveValue(0);
-    expect(button).toBeDisabled();
-  });
-
-  it.each(["paused", "overrun", "expired", "disabled"])("does not offer extra spending while %s", async (condition) => {
-    const api = fixture();
-    vi.mocked(api.getOntologyMaintenanceStatus).mockResolvedValue({ ...status,
-      paused: condition === "paused", enabled: condition !== "disabled",
-      window: { ...status.window!, overrun: condition === "overrun", ...(condition === "expired" ? { ends_at: status.observed_at } : {}) },
-    });
-    render(<OntologyMaintenancePanel api={api} />);
-    const button = await screen.findByRole("button", { name: "Add allowance now" });
-    fireEvent.change(screen.getByLabelText("Additional output tokens"), { target: { value: "50000" } });
-    expect(button).toBeDisabled();
-  });
-
-  it("shows incomplete coverage, active policy, pending policy, and retained reservations", async () => {
+  it("shows incomplete coverage, active policy, pending policy, and unknown usage", async () => {
     render(<OntologyMaintenancePanel api={fixture()} />);
     expect(await screen.findByText(/Coverage incomplete/)).toBeVisible();
     expect(screen.getByText(/Eligible counts cover discovered records/)).toBeVisible();
     expect(screen.getByText(/configured-model/)).toBeVisible();
-    expect(screen.getByText(/Charged totals include reported usage and unreported reservations/)).toBeVisible();
-    expect(screen.getByText(/250,000 input/)).toBeVisible();
+    expect(screen.getByText(/Reported token totals exclude unavailable usage/)).toBeVisible();
+    expect(screen.getAllByText(/300,000 tokens per call/)).toHaveLength(2);
     expect(screen.getByText("provider_unavailable")).toBeVisible();
   });
 
@@ -247,6 +214,7 @@ describe("Ontology maintenance controls", () => {
       { key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "false", effective_value: "false" },
       { key: "ONTOLOGY_MAINTENANCE_CADENCE_HOURS", value: "12", effective_value: "12" },
       { key: "ONTOLOGY_MAINTENANCE_MODEL", value: "", effective_value: policy.model },
+      { key: "ONTOLOGY_MAINTENANCE_CONTEXT_WINDOW_TOKENS", value: "", effective_value: "" },
     ].map((item) => ({ ...item, updated_at: status.observed_at }));
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -268,6 +236,7 @@ describe("Ontology maintenance controls", () => {
     fireEvent.click(enabled);
     fireEvent.change(screen.getByLabelText("Cadence (hours)"), { target: { value: "24" } });
     fireEvent.change(screen.getByLabelText("Maintenance model"), { target: { value: "operator-model" } });
+    fireEvent.change(screen.getByLabelText("Model context window (tokens)"), { target: { value: "262144" } });
     fireEvent.click(screen.getByRole("button", { name: "Save config" }));
     await screen.findByText("Changes saved");
     expect(enabled).toBeChecked();
@@ -279,6 +248,7 @@ describe("Ontology maintenance controls", () => {
       { key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "true" },
       { key: "ONTOLOGY_MAINTENANCE_CADENCE_HOURS", value: "24" },
       { key: "ONTOLOGY_MAINTENANCE_MODEL", value: "operator-model" },
+      { key: "ONTOLOGY_MAINTENANCE_CONTEXT_WINDOW_TOKENS", value: "262144" },
     ] });
     expect(screen.getByText(/Policy changes apply at the next window/)).toBeVisible();
   });

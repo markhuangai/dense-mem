@@ -182,7 +182,7 @@ for (const width of [1440, 900, 390]) for (const theme of ["light", "dark"] as c
     await mockUserApi(page, { key: managerKey, canManageTeam: true, credentials: [memberCredential] });
     await page.route("**/ui/api/ontology/**", async (route) => {
       const url = new URL(route.request().url());
-      const data = url.pathname.endsWith("/status") ? { observed_at: "2026-10-18T12:00:00Z", revision: 1, coverage_complete: true, discovery_complete: true, pending_markers: 0, counts: { eligible: 0, organized: 0, pending: 0, ambiguous: 0, failed: 0, budget_deferred: 0 } } : { records: [], sources: [], drafts: [], publications: [] };
+      const data = url.pathname.endsWith("/status") ? { observed_at: "2026-10-18T12:00:00Z", revision: 1, coverage_complete: true, discovery_complete: true, pending_markers: 0, counts: { eligible: 0, organized: 0, pending: 0, ambiguous: 0, failed: 0 } } : { records: [], sources: [], drafts: [], publications: [] };
       await route.fulfill({ json: { data } });
     });
     await page.goto("/ui/");
@@ -262,7 +262,7 @@ for (const theme of ["light", "dark"] as const) {
         await route.fulfill({ json: { data: draft } });
         return;
       }
-      const data = path.endsWith("/status") ? { observed_at: "2026-10-18T12:00:00Z", revision: 1, coverage_complete: true, discovery_complete: true, pending_markers: 0, counts: { eligible: 0, organized: 0, pending: 0, ambiguous: 0, failed: 0, budget_deferred: 0 } }
+      const data = path.endsWith("/status") ? { observed_at: "2026-10-18T12:00:00Z", revision: 1, coverage_complete: true, discovery_complete: true, pending_markers: 0, counts: { eligible: 0, organized: 0, pending: 0, ambiguous: 0, failed: 0 } }
         : path.endsWith("/publications/publication-long") ? publication
           : path.endsWith("/publications/publication-other") ? otherPublication
           : { records: [], sources: [], drafts: draft ? [draft] : [], publications: [publication, otherPublication] };

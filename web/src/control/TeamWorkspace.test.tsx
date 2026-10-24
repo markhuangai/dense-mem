@@ -6,7 +6,7 @@ import { metricsSnapshot, profileA } from "../App.test-helpers";
 import { TeamOverviewPanel } from "./TeamWorkspace";
 
 const status: CommunityStatus = {
-  effective_config: { enabled: true, cadence_hours: 24, start_time_local: "00:00", timezone: "UTC", model: "", max_concurrency: 1, input_tokens: 0, output_tokens: 0, settings_version: "1" },
+  effective_config: { enabled: true, cadence_hours: 24, start_time_local: "00:00", timezone: "UTC", model: "", max_concurrency: 1, context_window_tokens: 0, settings_version: "1" },
   legacy_processing_retired: true,
   current_community_count: 3,
   projection_coverage: { total_topics: 3, current_topics: 3, pending_topics: 0, stale_topics: 0, failed_topics: 0, coverage_complete: true },

@@ -2227,8 +2227,8 @@
       "phase": "precheck"
     },
     {
-      "id": "repository/TestOntologyMaintenanceBudgetDeferralAndManualReuse",
-      "run": "^TestOntologyMaintenanceBudgetDeferralAndManualReuse$",
+      "id": "repository/TestOntologyMaintenanceContextConfigurationAndManualReuse",
+      "run": "^TestOntologyMaintenanceContextConfigurationAndManualReuse$",
       "phase": "precheck"
     },
     {

@@ -17,10 +17,10 @@ type ontologyMaintenanceStore interface {
 
 func buildOntologyMaintenance(store ontologyMaintenanceStore, config ontology.MaintenanceConfigSource, transport modelprovider.StructuredTransport, limits assessor.SemanticAssessmentLimits, model string, timeout time.Duration, audit ontology.MaintenanceAuditPreparer) *ontology.MaintenanceService {
 	return ontology.NewMaintenanceService(ontology.MaintenanceDependencies{Repository: store, Config: config, DefaultModel: model, ProviderTimeout: timeout, Audit: audit,
-		Organizer: func(model string, accounting assessment.AttemptAccounting) *ontology.Service {
+		Organizer: func(model string, contextWindowTokens int64, accounting assessment.AttemptAccounting) *ontology.Service {
 			configured := limits
 			configured.ProviderModel = model
-			return ontology.NewService(store, assessment.NewProviderWithAccounting(transport, model, configured, accounting))
+			return ontology.NewService(store, assessment.NewProviderWithAccounting(transport, model, configured, accounting, int(contextWindowTokens)))
 		},
 	})
 }

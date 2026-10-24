@@ -35,8 +35,8 @@ func (s *Store) ClaimMaintenanceBatch(ctx context.Context, turn ontology.Mainten
 		rows, err := tx.Raw(`SELECT source_kind,source_id,source_version FROM ontology_maintenance_sources AS source WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND eligible AND
          NOT (source_kind || ':' || source_id=ANY(?::text[])) AND
          ((?<>'' AND source.last_run_id=NULLIF(?,'')::uuid AND status='failed') OR
-         (?='' AND (status='pending' OR (status='budget_deferred' AND NOT EXISTS(SELECT 1 FROM ontology_maintenance_batches AS batch WHERE batch.run_id=source.last_run_id AND batch.window_id=?::uuid)))))
-         ORDER BY pending_at,source_kind,source_id LIMIT ?`, fence.TeamID, fence.SpaceID, fence.Generation, pq.Array(keys), turn.RetryRunID, turn.RetryRunID, turn.RetryRunID, windowID, ontology.MaintenancePageSize).Rows()
+         (?='' AND status='pending'))
+         ORDER BY pending_at,source_kind,source_id LIMIT ?`, fence.TeamID, fence.SpaceID, fence.Generation, pq.Array(keys), turn.RetryRunID, turn.RetryRunID, turn.RetryRunID, ontology.MaintenancePageSize).Rows()
 		if err != nil {
 			return err
 		}
@@ -138,9 +138,7 @@ func (s *Store) ClaimMaintenanceBatch(ctx context.Context, turn ontology.Mainten
 			return err
 		}
 		claim.RunID = runID
-		if err := tx.Raw(`SELECT additional_input,additional_output FROM ontology_maintenance_windows WHERE window_id=?::uuid`, windowID).Row().Scan(&claim.AdditionalInput, &claim.AdditionalOutput); err != nil {
-			return err
-		}
+
 		sources, err := json.Marshal(claim.Sources)
 		if err != nil {
 			return err
@@ -309,13 +307,7 @@ func completeMaintenanceBatch(tx *gorm.DB, claim ontology.MaintenanceClaim, resu
 	if status != "running" || !live || !now.Before(claim.LeaseUntil) {
 		return ontology.ErrLeaseLost
 	}
-	*phase = "allowance"
-	allowanceChanged := false
-	if failure == "budget_deferred" {
-		if err := tx.Raw(`SELECT additional_input>? OR additional_output>? FROM ontology_maintenance_windows WHERE window_id=?::uuid`, claim.AdditionalInput, claim.AdditionalOutput, claim.WindowID).Row().Scan(&allowanceChanged); err != nil {
-			return err
-		}
-	}
+
 	progress := false
 	outcomes := map[string]ontology.OrganizationOutcome{}
 	for _, outcome := range result.Outcomes {
@@ -327,7 +319,7 @@ func completeMaintenanceBatch(tx *gorm.DB, claim ontology.MaintenanceClaim, resu
 		if !exists {
 			outcome = ontology.OrganizationOutcome{Source: source, Status: "failed", Reason: failure}
 		}
-		state := ontology.MaintenanceOutcomeState(outcome, result, failure, allowanceChanged)
+		state := ontology.MaintenanceOutcomeState(outcome, result, failure)
 		reason := outcome.Reason
 		if failure != "" {
 			reason = failure

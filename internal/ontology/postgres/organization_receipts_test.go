@@ -491,7 +491,7 @@ func testOntologyOrganizationCancellationReceipt(t *testing.T) {
 			defer server.Close()
 			cfg := &config.Config{AIVerifierAPIURL: server.URL, AIVerifierAPIKey: "synthetic-provider-key", AIVerifierModel: "fixture-model"}
 			limits := assessorprovider.SemanticAssessmentLimitsForConfig(cfg)
-			provider := assessment.NewProvider(assessorprovider.NewOpenAIAssessorWithAssessmentLimits(cfg, server.Client(), limits), cfg.AIVerifierModel, limits)
+			provider := assessment.NewProvider(assessorprovider.NewOpenAIAssessorWithAssessmentLimits(cfg, server.Client(), limits), cfg.AIVerifierModel, limits, 300000)
 			service := organization.NewService(f.store, provider)
 			ctx, cancel := context.WithCancel(context.Background())
 			if timeout {

@@ -53,7 +53,7 @@ PY
 cmp "$OUTPUT"/dist/*.whl "$WORK"/from-sdist/*.whl
 "$PYTHON" -m venv "$WORK/installed"
 INSTALLED="$WORK/installed/bin/python"
-"$INSTALLED" -m pip install 'pip==26.2.1' 'setuptools==84.0.0'
+"$INSTALLED" -m pip install 'pip==26.2.1' 'setuptools==84.1.0'
 "$INSTALLED" -m pip install "$OUTPUT"/dist/*.whl
 if [[ "$SDK" == minimum ]]; then "$INSTALLED" -m pip install 'mcp==1.30.0'; fi
 "$INSTALLED" -m pip check
@@ -108,7 +108,7 @@ cd "$WORK"
 for extra in adk langchain; do
 "$PYTHON" -m venv "$WORK/$extra"
 EXTRA_PYTHON="$WORK/$extra/bin/python"
-"$EXTRA_PYTHON" -m pip install 'pip==26.2.1' 'setuptools==84.0.0'
+"$EXTRA_PYTHON" -m pip install 'pip==26.2.1' 'setuptools==84.1.0'
 "$EXTRA_PYTHON" -m pip install "$(find "$OUTPUT/dist" -name '*.whl' -print -quit)[$extra]"
 if [[ "$SDK" == minimum ]]; then "$EXTRA_PYTHON" -m pip install 'mcp==1.30.0'; fi
 "$EXTRA_PYTHON" -m pip check

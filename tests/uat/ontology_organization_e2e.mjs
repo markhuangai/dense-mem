@@ -16,7 +16,7 @@ try {
   const initial = (await control("/ontology/status")).data;
   await control("/ontology/pause", { operation_key: randomUUID() });
   paused = true;
-  await control("/config/ontology-maintenance", { items: [{ key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "true" }] }, "PATCH");
+  await control("/config/ontology-maintenance", { items: [{ key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "true" }, { key: "ONTOLOGY_MAINTENANCE_CONTEXT_WINDOW_TOKENS", value: "300000" }] }, "PATCH");
   assert.equal((await control("/ontology/status")).data.paused, true);
   const shared = (await control(`/teams/${teamID}/credentials`, { name: "Ontology shared acceptance", scopes: ["read", "write"], rate_limit: 300 })).data;
   assert.equal(shared.credential.memory_access.team_shared.write, true);
@@ -40,7 +40,7 @@ try {
   await remember("Atlas uses SQLite for backup storage.", second.api_key, relationshipIDs);
   await expectStatus("/ontology/runs", { operation_key: randomUUID(), max_batches: 101 }, 422);
   await expectStatus("/ontology/runs", { operation_key: randomUUID(), team_id: "untrusted" }, 422);
-  await expectStatus("/config/ontology-maintenance", { items: [{ key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "true" }, { key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "false" }] }, 422, "PATCH");
+  await expectStatus("/config/ontology-maintenance", { items: [{ key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "true" }, { key: "ONTOLOGY_MAINTENANCE_CONTEXT_WINDOW_TOKENS", value: "300000" }, { key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "false" }] }, 422, "PATCH");
   await expectStatus("/ontology/runs", { operation_key: randomUUID() }, 409);
   const denied = await fetch(`${controlURL}/control/api/ontology/status`, { headers: { Authorization: `Bearer ${apiKey}` } });
   assert.equal(denied.status, 401, "MCP credentials must not authorize policy controls");
@@ -65,10 +65,10 @@ try {
   assert.equal(status.discovery_complete, true);
   assert.equal(status.counts.pending, 0);
   assert.equal(status.counts.failed, 0);
-  assert.equal(status.counts.budget_deferred, 0);
   assert(status.counts.organized > initial.counts.organized);
   assert(projectionCoverage?.coverage_complete && projectionCoverage.current_topics >= 2, "alias discovery must exercise current topic projections");
-  assert(status.window.charged_input_tokens > 0, "assessment attempts must debit the global window");
+  assert(status.usage.attempts > 0, "provider dispatches must have durable attempt identities");
+  assert.equal(status.usage.unreconciled_attempts, 0);
   const runs = (await control("/ontology/runs?limit=1")).data;
   assert.equal(runs.runs.length, 1);
   assert(runs.next_cursor, "run inspection must paginate");
@@ -119,8 +119,8 @@ try {
   assert(combinedFallback.degradations.some((item) => item.frontier === "relationships" && item.code === "relationship_vector_warming"), "relationship recall must report its vector fallback");
   assert(combinedFallback.degradations.some((item) => item.frontier === "relationships" && item.code === "ontology_temporal_not_supported"), "the vector fallback must retain the independent ontology omission");
   const accountingAfterOntologyRecall = (await control("/ontology/status")).data.window;
-  assert.equal(accountingAfterOntologyRecall.charged_input_tokens, accountingBefore.charged_input_tokens, "Recall added organization provider input tokens");
-  assert.equal(accountingAfterOntologyRecall.charged_output_tokens, accountingBefore.charged_output_tokens, "Recall added organization provider output tokens");
+  assert.equal(accountingAfterOntologyRecall.usage.reported_input_tokens, accountingBefore.usage.reported_input_tokens, "Recall added organization provider input tokens");
+  assert.equal(accountingAfterOntologyRecall.usage.reported_output_tokens, accountingBefore.usage.reported_output_tokens, "Recall added organization provider output tokens");
   const historicalRunID = randomUUID();
   postgresQuery(`INSERT INTO community_snapshot_runs(team_id,space_id,space_generation,run_id,window_key,algorithm_kind,status,error)
     VALUES(${sqlLiteral(teamID)}::uuid,dense_mem_team_shared_space(${sqlLiteral(teamID)}::uuid),dense_mem_team_shared_generation(${sqlLiteral(teamID)}::uuid),
@@ -189,7 +189,7 @@ try {
   const ordinary = await mcp("recall_memory", args, reader.api_key);
   assert.equal(ordinary.results.filter((item) => sourceIDs.includes(item.evidence_id)).length, 3);
   assert(ordinary.results.every((item) => item.equivalent_evidence_ids.length === 0 && !item.equivalents_truncated));
-  await control("/config/ontology-maintenance", { items: [{ key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "true" }] }, "PATCH");
+  await control("/config/ontology-maintenance", { items: [{ key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "true" }, { key: "ONTOLOGY_MAINTENANCE_CONTEXT_WINDOW_TOKENS", value: "300000" }] }, "PATCH");
   const deniedRetraction = await rpc("retract_evidence", { evidence_ids: [sourceIDs[0]], reason: "wrong owner regression", idempotency_key: randomUUID() }, reader.api_key);
   assert(deniedRetraction.error || deniedRetraction.result?.isError, "reader C must not mutate owner A's source");
   const retracted = await mcp("retract_evidence", { evidence_ids: [sourceIDs[0]], reason: "withdraw grouping source", idempotency_key: randomUUID() }, shared.api_key);
@@ -214,8 +214,8 @@ try {
     assert(!item.evidence_ids.includes(foreignID));
   }
   const accountingAfter = (await control("/ontology/status")).data.window;
-  assert.equal(accountingAfter.charged_input_tokens, accountingBeforeCommunityRecall.charged_input_tokens, "Recall added organization provider input tokens");
-  assert.equal(accountingAfter.charged_output_tokens, accountingBeforeCommunityRecall.charged_output_tokens, "Recall added organization provider output tokens");
+  assert.equal(accountingAfter.usage.reported_input_tokens, accountingBeforeCommunityRecall.usage.reported_input_tokens, "Recall added organization provider input tokens");
+  assert.equal(accountingAfter.usage.reported_output_tokens, accountingBeforeCommunityRecall.usage.reported_output_tokens, "Recall added organization provider output tokens");
   await control("/ontology/pause", { operation_key: randomUUID() });
   paused = true;
   await fixtureMode("ambiguous");

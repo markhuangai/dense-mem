@@ -13,15 +13,14 @@ import (
 
 func TestOntologySettingsNumericProjectionPreservesBounds(t *testing.T) {
 	entries := map[string]domain.AppConfigEntry{}
-	for key, value := range map[string]string{domain.AppConfigOntologyCadenceHours: "24", domain.AppConfigOntologyConcurrency: "8", domain.AppConfigOntologyInputTokens: "1000000000", domain.AppConfigOntologyOutputTokens: "1000000000"} {
+	for key, value := range map[string]string{domain.AppConfigOntologyCadenceHours: "24", domain.AppConfigOntologyConcurrency: "8", domain.AppConfigOntologyContextWindow: "1000000000"} {
 		entries[key] = domain.AppConfigEntry{Value: value}
 	}
 	settings, err := ontologyRuntimeConfigFromEntries(entries, "UTC")
 	require.NoError(t, err)
 	require.Equal(t, 24, settings.Effective.CadenceHours)
 	require.Equal(t, 8, settings.Effective.MaxConcurrency)
-	require.EqualValues(t, 1000000000, settings.Effective.InputTokens)
-	require.EqualValues(t, 1000000000, settings.Effective.OutputTokens)
+	require.EqualValues(t, 1000000000, settings.Effective.ContextWindowTokens)
 	for _, key := range []string{domain.AppConfigOntologyCadenceHours, domain.AppConfigOntologyConcurrency} {
 		before := entries[key]
 		entries[key] = domain.AppConfigEntry{Value: "4294967320"}
@@ -69,10 +68,9 @@ func TestOntologySettingsDefaultsValidationAndFreshReads(t *testing.T) {
 	require.False(t, initial.Enabled)
 	require.Equal(t, 12, initial.CadenceHours)
 	require.Equal(t, "03:00", initial.StartTimeLocal)
-	require.EqualValues(t, 250000, initial.InputTokens)
-	require.EqualValues(t, 100000, initial.OutputTokens)
+	require.Zero(t, initial.ContextWindowTokens)
 	require.Equal(t, 1, initial.MaxConcurrency)
-	for key, value := range map[string]string{domain.AppConfigOntologyCadenceHours: "18", domain.AppConfigOntologyStartTime: "25:00", domain.AppConfigOntologyConcurrency: "9", domain.AppConfigOntologyInputTokens: "0", domain.AppConfigOntologyOutputTokens: "-1", domain.AppConfigOntologyModel: "model\nheader", "unknown": "true"} {
+	for key, value := range map[string]string{domain.AppConfigOntologyCadenceHours: "18", domain.AppConfigOntologyStartTime: "25:00", domain.AppConfigOntologyConcurrency: "9", domain.AppConfigOntologyContextWindow: "0", domain.AppConfigOntologyInputTokens: "250000", domain.AppConfigOntologyOutputTokens: "100000", domain.AppConfigOntologyModel: "model\nheader", "unknown": "true"} {
 		_, err := service.UpdateOntologyMaintenanceSettings(ctx, map[string]string{key: value}, "control", "", "")
 		require.ErrorIs(t, err, ErrInvalidAppConfig)
 	}
@@ -92,4 +90,25 @@ func TestOntologySettingsDefaultsValidationAndFreshReads(t *testing.T) {
 	updated, err = service.OntologyMaintenanceRuntimeConfig(ctx)
 	require.NoError(t, err)
 	require.False(t, updated.Enabled, "disable must bypass the settings cache")
+}
+
+func TestOntologyContextSettingsPreserveRetiredSavedValues(t *testing.T) {
+	entries := map[string]domain.AppConfigEntry{
+		domain.AppConfigOntologyInputTokens:  {Value: "invalid historical input"},
+		domain.AppConfigOntologyOutputTokens: {Value: "100"},
+	}
+	settings, err := ontologyRuntimeConfigFromEntries(entries, "UTC")
+	require.NoError(t, err)
+	require.Zero(t, settings.Effective.ContextWindowTokens)
+	for _, item := range settings.Items {
+		require.NotEqual(t, domain.AppConfigOntologyInputTokens, item.Key)
+		require.NotEqual(t, domain.AppConfigOntologyOutputTokens, item.Key)
+	}
+	for _, raw := range []string{"0", "-1", "1.5", "1000000001", "9223372036854775808"} {
+		_, err := normalizeOntologyConfigValues(map[string]string{domain.AppConfigOntologyContextWindow: raw})
+		require.ErrorIs(t, err, ErrInvalidAppConfig)
+	}
+	values, err := normalizeOntologyConfigValues(map[string]string{domain.AppConfigOntologyContextWindow: " 262144 "})
+	require.NoError(t, err)
+	require.Equal(t, "262144", values[domain.AppConfigOntologyContextWindow])
 }

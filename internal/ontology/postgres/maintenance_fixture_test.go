@@ -39,7 +39,7 @@ func maintenanceEntity(t *testing.T, f *ontologyFixture, name string) ontology.S
 func maintenanceSettings(t *testing.T, f *ontologyFixture) *settings.AppConfigServiceImpl {
 	t.Helper()
 	service := settings.NewAppConfigService(settingspostgres.NewAppConfigRepository(f.app, f.rls), nil)
-	_, err := service.UpdateOntologyMaintenanceSettings(context.Background(), map[string]string{domain.AppConfigOntologyEnabled: "true", domain.AppConfigOntologyModel: "fixture-model"}, "control", "", "")
+	_, err := service.UpdateOntologyMaintenanceSettings(context.Background(), map[string]string{domain.AppConfigOntologyEnabled: "true", domain.AppConfigOntologyModel: "fixture-model", domain.AppConfigOntologyContextWindow: "300000"}, "control", "", "")
 	require.NoError(t, err)
 	_, err = service.UpdateGeneralSettings(context.Background(), map[string]string{domain.AppConfigTimezone: "UTC"}, "control", "", "")
 	require.NoError(t, err)

@@ -16,7 +16,6 @@ import (
 	community "github.com/markhuangai/dense-mem/internal/community/contract"
 	communitypg "github.com/markhuangai/dense-mem/internal/community/postgres"
 	communityapp "github.com/markhuangai/dense-mem/internal/community/service"
-	"github.com/markhuangai/dense-mem/internal/domain"
 	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	organization "github.com/markhuangai/dense-mem/internal/ontology"
 	"github.com/markhuangai/dense-mem/internal/ontology/assessment"
@@ -64,29 +63,31 @@ func (s *schedulerProjectionObserver) RunProjectionTurn(ctx context.Context) (bo
 }
 
 type schedulerMeasurement struct {
-	mu                 sync.Mutex
-	started            time.Time
-	Fixture            string         `json:"fixture"`
-	Configuration      map[string]int `json:"configuration"`
-	FirstDispatchMS    float64        `json:"first_dispatch_ms"`
-	FirstProjectionMS  float64        `json:"first_projection_publish_return_ms"`
-	CompletionMS       float64        `json:"completion_ms"`
-	ProviderCalls      int            `json:"provider_calls"`
-	MaxProviderOverlap int            `json:"max_provider_overlap"`
-	MixedOverlap       bool           `json:"mixed_overlap"`
-	MaxAdmitted        int            `json:"max_admitted"`
-	MaxTeamAdmitted    map[string]int `json:"max_team_admitted"`
-	ProjectionTurnsMS  []float64      `json:"projection_turns_ms"`
-	PreparationTurnsMS []float64      `json:"preparation_lease_ms"`
-	TerminalOutcomes   map[string]int `json:"terminal_outcomes"`
-	ChargedInput       int64          `json:"charged_input"`
-	ChargedOutput      int64          `json:"charged_output"`
-	CanonicalBefore    string         `json:"canonical_before"`
-	CanonicalAfter     string         `json:"canonical_after"`
-	ProjectionCoverage any            `json:"projection_coverage"`
-	Errors             []string       `json:"errors,omitempty"`
-	providers          int
-	projections        int
+	mu                       sync.Mutex
+	started                  time.Time
+	Fixture                  string         `json:"fixture"`
+	Configuration            map[string]int `json:"configuration"`
+	FirstDispatchMS          float64        `json:"first_dispatch_ms"`
+	FirstProjectionMS        float64        `json:"first_projection_publish_return_ms"`
+	CompletionMS             float64        `json:"completion_ms"`
+	ProviderCalls            int            `json:"provider_calls"`
+	MaxProviderOverlap       int            `json:"max_provider_overlap"`
+	MixedOverlap             bool           `json:"mixed_overlap"`
+	MaxAdmitted              int            `json:"max_admitted"`
+	MaxTeamAdmitted          map[string]int `json:"max_team_admitted"`
+	ProjectionTurnsMS        []float64      `json:"projection_turns_ms"`
+	PreparationTurnsMS       []float64      `json:"preparation_lease_ms"`
+	TerminalOutcomes         map[string]int `json:"terminal_outcomes"`
+	ReportedInput            int64          `json:"reported_input"`
+	ReportedOutput           int64          `json:"reported_output"`
+	UnavailableUsageAttempts int64          `json:"unavailable_usage_attempts"`
+	PartialUsageAttempts     int64          `json:"partial_usage_attempts"`
+	CanonicalBefore          string         `json:"canonical_before"`
+	CanonicalAfter           string         `json:"canonical_after"`
+	ProjectionCoverage       any            `json:"projection_coverage"`
+	Errors                   []string       `json:"errors,omitempty"`
+	providers                int
+	projections              int
 }
 
 type schedulerPreparationObserver struct {
@@ -188,12 +189,7 @@ func schedulerTopic(t *testing.T, f *ontologyFixture) ontology.Record {
 
 func schedulerConfig(t *testing.T, f *ontologyFixture, global, team int) *settings.AppConfigServiceImpl {
 	t.Helper()
-	config := concurrencyConfig(t, f, global, team)
-	_, err := config.UpdateOntologyMaintenanceSettings(context.Background(), map[string]string{
-		domain.AppConfigOntologyInputTokens: "100000000", domain.AppConfigOntologyOutputTokens: "100000000",
-	}, "control", "", "")
-	require.NoError(t, err)
-	return config
+	return concurrencyConfig(t, f, global, team)
 }
 
 func schedulerFixtureService(t *testing.T, f *ontologyFixture, config *settings.AppConfigServiceImpl, edit func(assessment.Request, *assessment.Response), repositories ...ontology.MaintenanceRepository) (*organization.MaintenanceService, func() int32) {
@@ -204,7 +200,10 @@ func schedulerFixtureService(t *testing.T, f *ontologyFixture, config *settings.
 		repository = repositories[0]
 	}
 	service := organization.NewMaintenanceService(organization.MaintenanceDependencies{Repository: repository, Config: config, DefaultModel: "fixture-model", ProviderTimeout: time.Minute,
-		Organizer: func(model string, accounting assessment.AttemptAccounting) *organization.Service {
+		Organizer: func(model string, contextWindowTokens int64, accounting assessment.AttemptAccounting) *organization.Service {
+			if accounting == nil {
+				return organization.NewService(f.store, assessment.NewProvider(nil, model, maintenanceFixtureLimits(), int(contextWindowTokens)))
+			}
 			organizer, _ := organizationFixtureServiceWithAccounting(t, f, nil, func(request assessment.Request, response *assessment.Response) {
 				calls.Add(1)
 				for i := range response.Definitions {
@@ -214,7 +213,7 @@ func schedulerFixtureService(t *testing.T, f *ontologyFixture, config *settings.
 				if edit != nil {
 					edit(request, response)
 				}
-			}, model, maintenanceFixtureLimits(), accounting, map[string]int{"prompt_tokens": 40, "completion_tokens": 20, "total_tokens": 60})
+			}, model, maintenanceFixtureLimits(), accounting, int(contextWindowTokens), map[string]int{"prompt_tokens": 40, "completion_tokens": 20, "total_tokens": 60})
 			return organizer
 		},
 	})
@@ -279,14 +278,11 @@ func schedulerAssertDrained(t *testing.T, f *ontologyFixture) {
 	require.Zero(t, projections)
 	status, err := f.store.MaintenanceStatus(context.Background(), time.Now())
 	require.NoError(t, err)
-	var pending, reservedInput, reservedOutput int64
-	require.NoError(t, f.admin.Raw(`SELECT count(*) FILTER (WHERE reconciled_at IS NULL),
-		COALESCE(sum(CASE WHEN COALESCE(reported_input,0)=0 THEN reserved_input ELSE 0 END),0),
-		COALESCE(sum(CASE WHEN COALESCE(reported_output,0)=0 THEN reserved_output ELSE 0 END),0)
-		FROM ontology_maintenance_attempts`).Row().Scan(&pending, &reservedInput, &reservedOutput))
+	var pending int64
+	require.NoError(t, f.admin.Raw(`SELECT count(*) FROM ontology_maintenance_attempts WHERE reconciled_at IS NULL`).Row().Scan(&pending))
 	require.Zero(t, pending)
-	require.Equal(t, reservedInput, status.Window.ReservedInput, "unreported usage keeps its conservative reservation")
-	require.Equal(t, reservedOutput, status.Window.ReservedOutput)
+	require.Equal(t, pending, status.Usage.UnreconciledAttempts)
+	require.Zero(t, status.ActiveWork)
 }
 
 func schedulerProvider(m *schedulerMeasurement, f *ontologyFixture, entered chan<- struct{}, gate <-chan struct{}) func(assessment.Request, *assessment.Response) {

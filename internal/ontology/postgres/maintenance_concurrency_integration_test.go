@@ -54,6 +54,78 @@ func assertDisjointClaims(t *testing.T, claims ...*ontology.MaintenanceClaim) {
 	}
 }
 
+func TestOntologyMaintenanceProgressBeyondFormerBudgets(t *testing.T) {
+	started := time.Now()
+	f := newOrganizationFixture(t)
+	teams := []*ontologyFixture{f, maintenanceOtherTeam(t, f), maintenanceOtherTeam(t, f)}
+	for index, team := range teams {
+		for i := range 60 {
+			team.organizationEvidence(t, i%len(team.owners), fmt.Sprintf("Independent backlog %d sample %d.", index, i), nil)
+		}
+	}
+	config := concurrencyConfig(t, f, 8, 3)
+	window := maintenanceWindow(t, f, config)
+	before := map[string]map[string]string{}
+	for _, team := range teams {
+		before[team.team] = team.canonicalSnapshot(t)
+	}
+	ctx := context.Background()
+	var claims []*ontology.MaintenanceClaim
+	var ids []string
+	seen := map[string]bool{}
+	for range 8 {
+		turn, err := f.store.ClaimMaintenanceTurn(ctx, window.ID, time.Now(), 3*time.Minute)
+		require.NoError(t, err)
+		require.NotNil(t, turn)
+		for range 8 {
+			require.NoError(t, f.store.DiscoverMaintenance(ctx, *turn, ontology.MaintenancePageSize))
+		}
+		claim, err := f.store.ClaimMaintenanceBatch(ctx, *turn, window.ID, time.Now())
+		require.NoError(t, err)
+		require.NotNil(t, claim)
+		id := uuid.NewString()
+		require.NoError(t, NewStore(f.app, f.rls).AdmitMaintenanceAttempt(ctx, *claim, id, 1, 50000, 65536, time.Now()))
+		claims = append(claims, claim)
+		ids = append(ids, id)
+		seen[claim.TeamID] = true
+	}
+	require.Len(t, seen, 3)
+	assertDisjointClaims(t, claims...)
+	blocked, err := f.store.ClaimMaintenanceTurn(ctx, window.ID, time.Now(), time.Minute)
+	require.NoError(t, err)
+	require.Nil(t, blocked)
+	status, err := f.store.MaintenanceStatus(ctx, time.Now())
+	require.NoError(t, err)
+	require.Equal(t, 8, status.ActiveWork)
+	require.EqualValues(t, 8, status.Usage.UnreconciledAttempts)
+	var outputCapacity int64
+	require.NoError(t, f.admin.Raw(`SELECT sum(max_output_tokens) FROM ontology_maintenance_attempts WHERE window_id=?::uuid`, window.ID).Row().Scan(&outputCapacity))
+	require.Greater(t, outputCapacity, int64(500000), "per-call response capacity is not an aggregate allowance")
+	for i, claim := range claims {
+		attempt := ontology.AssessmentAttempt{Number: 1, ReportedInputTokens: 40000, ReportedOutputTokens: 20000, ReportedTotalTokens: 60000}
+		if i == 0 {
+			attempt = ontology.AssessmentAttempt{Number: 1}
+		}
+		require.NoError(t, f.store.ReconcileMaintenanceAttempt(ctx, *claim, ids[i], attempt))
+		require.NoError(t, f.store.CompleteMaintenanceBatch(ctx, *claim, ontology.OrganizationResult{}, "maintenance_paused", time.Now()))
+	}
+	status, err = f.store.MaintenanceStatus(ctx, time.Now())
+	require.NoError(t, err)
+	require.Greater(t, status.Usage.ReportedInputTokens, int64(250000))
+	require.Greater(t, status.Usage.ReportedOutputTokens, int64(100000))
+	require.EqualValues(t, 1, status.Usage.UnavailableUsageAttempts)
+	require.Zero(t, status.Usage.UnreconciledAttempts)
+	require.Zero(t, status.ActiveWork)
+	for _, team := range teams {
+		require.Equal(t, before[team.team], team.canonicalSnapshot(t))
+	}
+	next, err := NewStore(f.app, f.rls).ClaimMaintenanceTurn(ctx, window.ID, time.Now(), time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, next, "reported totals and completed unknown usage must not stop future work")
+	require.NoError(t, f.store.ReleaseMaintenanceTurn(ctx, *next))
+	t.Logf("teams=%d admitted_attempts=%d reported_input=%d reported_output=%d unavailable_usage=%d elapsed=%s", len(seen), len(claims), status.Usage.ReportedInputTokens, status.Usage.ReportedOutputTokens, status.Usage.UnavailableUsageAttempts, time.Since(started))
+}
+
 func TestOntologyMaintenanceParallelClaimsAndLimits(t *testing.T) {
 	f := newOrganizationFixture(t)
 	concurrencySources(t, f)
@@ -219,7 +291,7 @@ func TestOntologyMaintenanceParallelClosureAndLeaseRecovery(t *testing.T) {
 	assertDisjointClaims(t, second, reclaimed)
 	require.ElementsMatch(t, []ontology.SourceHandle{a, b}, reclaimed.Sources)
 	require.ErrorIs(t, f.store.CompleteMaintenanceBatch(ctx, *first, ontology.OrganizationResult{}, "", time.Now()), ontology.ErrLeaseLost)
-	require.ErrorIs(t, f.store.ReserveMaintenanceAttempt(ctx, *first, uuid.NewString(), 1, 1, 1, time.Now()), ontology.ErrLeaseLost)
+	require.ErrorIs(t, f.store.AdmitMaintenanceAttempt(ctx, *first, uuid.NewString(), 1, 1, 1, time.Now()), ontology.ErrLeaseLost)
 	var status string
 	require.NoError(t, f.admin.Raw(`SELECT status FROM ontology_maintenance_batches WHERE batch_id=?::uuid`, first.ID).Row().Scan(&status))
 	require.Equal(t, "lost", status)
@@ -230,8 +302,7 @@ func TestOntologyMaintenanceParallelTokenAdmissionAndDrain(t *testing.T) {
 	f := newOrganizationFixture(t)
 	concurrencySources(t, f)
 	config := concurrencyConfig(t, f, 2, 2)
-	_, err := config.UpdateOntologyMaintenanceSettings(context.Background(), map[string]string{domain.AppConfigOntologyInputTokens: "100", domain.AppConfigOntologyOutputTokens: "100"}, "control", "", "")
-	require.NoError(t, err)
+	var err error
 	window := maintenanceWindow(t, f, config)
 	_, a := maintenanceClaim(t, f, window)
 	_, b := maintenanceClaim(t, f, window)
@@ -244,19 +315,17 @@ func TestOntologyMaintenanceParallelTokenAdmissionAndDrain(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			errs[i] = NewStore(f.app, f.rls).ReserveMaintenanceAttempt(ctx, *claims[i], ids[i], 1, 80, 80, time.Now())
+			errs[i] = NewStore(f.app, f.rls).AdmitMaintenanceAttempt(ctx, *claims[i], ids[i], 1, 80, 80, time.Now())
 		}()
 	}
 	wg.Wait()
-	winner, loser := 0, 1
-	if errs[0] != nil {
-		winner, loser = 1, 0
+	for _, err := range errs {
+		require.NoError(t, err)
 	}
-	require.NoError(t, errs[winner])
-	require.ErrorIs(t, errs[loser], ontology.ErrBudgetDeferred)
-	_, err = f.store.MaintenanceCommand(ctx, domain.OntologyMaintenanceCommand{OperationKey: uuid.NewString(), Action: "allowance", WindowID: window.ID, InputTokens: 100, OutputTokens: 100}, time.Now(), nil)
+	status, err := f.store.MaintenanceStatus(ctx, time.Now())
 	require.NoError(t, err)
-	require.NoError(t, f.store.ReserveMaintenanceAttempt(ctx, *claims[loser], ids[loser], 1, 80, 80, time.Now()))
+	require.EqualValues(t, 2, status.Usage.UnreconciledAttempts)
+
 	for _, action := range []string{"pause", "disable"} {
 		if action == "pause" {
 			_, err = f.store.MaintenanceCommand(ctx, domain.OntologyMaintenanceCommand{OperationKey: uuid.NewString(), Action: "pause"}, time.Now(), nil)
@@ -270,7 +339,7 @@ func TestOntologyMaintenanceParallelTokenAdmissionAndDrain(t *testing.T) {
 		if action == "disable" {
 			expected = ontology.ErrMaintenanceDisabled
 		}
-		require.ErrorIs(t, f.store.ReserveMaintenanceAttempt(ctx, *a, ids[0], 2, 1, 1, time.Now()), expected)
+		require.ErrorIs(t, f.store.AdmitMaintenanceAttempt(ctx, *a, ids[0], 2, 1, 1, time.Now()), expected)
 		_, err = f.store.ClaimMaintenanceTurn(ctx, window.ID, time.Now(), time.Minute)
 		require.ErrorIs(t, err, expected)
 	}
@@ -279,12 +348,12 @@ func TestOntologyMaintenanceParallelTokenAdmissionAndDrain(t *testing.T) {
 		require.NoError(t, f.store.ReconcileMaintenanceAttempt(ctx, *claim, ids[i], ontology.AssessmentAttempt{Number: 1, ReportedInputTokens: 60, ReportedOutputTokens: 30}))
 		require.NoError(t, f.store.CompleteMaintenanceBatch(ctx, *claim, ontology.OrganizationResult{}, "maintenance_disabled", time.Now()))
 	}
-	status, err := f.store.MaintenanceStatus(ctx, time.Now())
+	status, err = f.store.MaintenanceStatus(ctx, time.Now())
 	require.NoError(t, err)
-	require.EqualValues(t, 120, status.Window.ChargedInput)
-	require.EqualValues(t, 60, status.Window.ChargedOutput)
-	require.Zero(t, status.Window.ReservedInput)
-	require.Zero(t, status.Window.ReservedOutput)
+	require.EqualValues(t, 120, status.Window.Usage.ReportedInputTokens)
+	require.EqualValues(t, 60, status.Window.Usage.ReportedOutputTokens)
+	require.Zero(t, status.Usage.UnreconciledAttempts)
+	require.Zero(t, status.ActiveWork)
 	require.Equal(t, before, f.canonicalSnapshot(t))
 }
 
@@ -292,8 +361,6 @@ func TestOntologyMaintenanceParallelSchedulerExecution(t *testing.T) {
 	f := newOrganizationFixture(t)
 	concurrencySources(t, f)
 	config := concurrencyConfig(t, f, 2, 2)
-	_, err := config.UpdateOntologyMaintenanceSettings(context.Background(), map[string]string{domain.AppConfigOntologyInputTokens: "10000000", domain.AppConfigOntologyOutputTokens: "10000000"}, "control", "", "")
-	require.NoError(t, err)
 	arrived := make(chan struct{}, 100)
 	release := make(chan struct{})
 	var once sync.Once

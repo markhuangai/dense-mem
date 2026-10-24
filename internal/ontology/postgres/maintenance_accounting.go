@@ -11,7 +11,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func (s *Store) ReserveMaintenanceAttempt(ctx context.Context, claim ontology.MaintenanceClaim, assessmentID string, number, input, output int, now time.Time) error {
+func (s *Store) AdmitMaintenanceAttempt(ctx context.Context, claim ontology.MaintenanceClaim, assessmentID string, number, input, output int, now time.Time) error {
 	if _, err := uuid.Parse(assessmentID); err != nil || number < 1 || number > 3 || input < 1 || output < 1 {
 		return ontology.ErrInvalid
 	}
@@ -34,14 +34,14 @@ func (s *Store) ReserveMaintenanceAttempt(ctx context.Context, claim ontology.Ma
 		if err != nil {
 			return err
 		}
-		if window == nil || now.Before(window.StartsAt) || !now.Before(window.EndsAt) || window.Overrun {
-			return ontology.ErrBudgetDeferred
+		if window == nil || now.Before(window.StartsAt) || !now.Before(window.EndsAt) || window.Policy.ContextWindowTokens == 0 {
+			return ontology.ErrWindowClosed
 		}
 		if err := maintenancePublicationFence(ontology.WithMaintenanceClaim(ctx, claim), tx, scope{TeamID: claim.TeamID, SpaceID: claim.SpaceID, Generation: claim.Generation}); err != nil {
 			return err
 		}
 		var reservedInput, reservedOutput int
-		err = tx.Raw(`SELECT reserved_input,reserved_output FROM ontology_maintenance_attempts WHERE batch_id=?::uuid AND assessment_id=?::uuid AND attempt=?`, claim.ID, assessmentID, number).Row().Scan(&reservedInput, &reservedOutput)
+		err = tx.Raw(`SELECT estimated_input_tokens,max_output_tokens FROM ontology_maintenance_attempts WHERE batch_id=?::uuid AND assessment_id=?::uuid AND attempt=?`, claim.ID, assessmentID, number).Row().Scan(&reservedInput, &reservedOutput)
 		if err == nil {
 			if reservedInput != input || reservedOutput != output {
 				return ontology.ErrConflict
@@ -51,13 +51,11 @@ func (s *Store) ReserveMaintenanceAttempt(ctx context.Context, claim ontology.Ma
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-		if int64(input) > window.InputAllowance()-window.ChargedInput || int64(output) > window.OutputAllowance()-window.ChargedOutput {
-			return ontology.ErrBudgetDeferred
+		if int64(input)+int64(output) > window.Policy.ContextWindowTokens {
+			return ontology.ErrConfiguration
 		}
-		if err := tx.Exec(`INSERT INTO ontology_maintenance_attempts(batch_id,assessment_id,attempt,window_id,reserved_input,reserved_output,admitted_at) VALUES(?::uuid,?::uuid,?,?::uuid,?,?,?)`, claim.ID, assessmentID, number, claim.WindowID, input, output, now).Error; err != nil {
-			return err
-		}
-		return tx.Exec(`UPDATE ontology_maintenance_windows SET charged_input=charged_input+?,charged_output=charged_output+?,reserved_input=reserved_input+?,reserved_output=reserved_output+? WHERE window_id=?::uuid`, input, output, input, output, claim.WindowID).Error
+		return tx.Exec(`INSERT INTO ontology_maintenance_attempts(batch_id,assessment_id,attempt,window_id,reserved_input,reserved_output,estimated_input_tokens,max_output_tokens,admitted_at)
+		 VALUES(?::uuid,?::uuid,?,?::uuid,0,0,?,?,?)`, claim.ID, assessmentID, number, claim.WindowID, input, output, now).Error
 	})
 }
 
@@ -76,10 +74,9 @@ func (s *Store) ReconcileMaintenanceAttempt(ctx context.Context, claim ontology.
 		if window == nil {
 			return ontology.ErrAccounting
 		}
-		var input, output int64
 		var reportedInput, reportedOutput, reportedTotal sql.NullInt64
 		var reconciled sql.NullTime
-		err = tx.Raw(`SELECT reserved_input,reserved_output,reported_input,reported_output,reported_total,reconciled_at FROM ontology_maintenance_attempts WHERE batch_id=?::uuid AND assessment_id=?::uuid AND attempt=? AND window_id=?::uuid FOR UPDATE`, claim.ID, assessmentID, attempt.Number, claim.WindowID).Row().Scan(&input, &output, &reportedInput, &reportedOutput, &reportedTotal, &reconciled)
+		err = tx.Raw(`SELECT reported_input,reported_output,reported_total,reconciled_at FROM ontology_maintenance_attempts WHERE batch_id=?::uuid AND assessment_id=?::uuid AND attempt=? AND window_id=?::uuid FOR UPDATE`, claim.ID, assessmentID, attempt.Number, claim.WindowID).Row().Scan(&reportedInput, &reportedOutput, &reportedTotal, &reconciled)
 		if err != nil {
 			return err
 		}
@@ -89,23 +86,7 @@ func (s *Store) ReconcileMaintenanceAttempt(ctx context.Context, claim ontology.
 			}
 			return nil
 		}
-		chargedInput, chargedOutput := input, output
-		releaseInput, releaseOutput := int64(0), int64(0)
-		if attempt.ReportedInputTokens > 0 {
-			chargedInput = int64(attempt.ReportedInputTokens)
-			releaseInput = input
-		}
-		if attempt.ReportedOutputTokens > 0 {
-			chargedOutput = int64(attempt.ReportedOutputTokens)
-			releaseOutput = output
-		}
-		if total := int64(attempt.ReportedTotalTokens); total > chargedInput+chargedOutput {
-			chargedOutput = total - chargedInput
-		}
-		overrun := chargedInput > input || chargedOutput > output || window.ChargedInput-input+chargedInput > window.InputAllowance() || window.ChargedOutput-output+chargedOutput > window.OutputAllowance()
-		if err := tx.Exec(`UPDATE ontology_maintenance_attempts SET reported_input=?,reported_output=?,reported_total=?,reconciled_at=clock_timestamp() WHERE batch_id=?::uuid AND assessment_id=?::uuid AND attempt=?`, attempt.ReportedInputTokens, attempt.ReportedOutputTokens, attempt.ReportedTotalTokens, claim.ID, assessmentID, attempt.Number).Error; err != nil {
-			return err
-		}
-		return tx.Exec(`UPDATE ontology_maintenance_windows SET charged_input=charged_input+?,charged_output=charged_output+?,reported_input=reported_input+?,reported_output=reported_output+?,reserved_input=reserved_input-?,reserved_output=reserved_output-?,overrun=overrun OR ? WHERE window_id=?::uuid`, chargedInput-input, chargedOutput-output, attempt.ReportedInputTokens, attempt.ReportedOutputTokens, releaseInput, releaseOutput, overrun, claim.WindowID).Error
+		return tx.Exec(`UPDATE ontology_maintenance_attempts SET reported_input=?,reported_output=?,reported_total=?,reconciled_at=clock_timestamp()
+		 WHERE batch_id=?::uuid AND assessment_id=?::uuid AND attempt=? AND window_id=?::uuid`, attempt.ReportedInputTokens, attempt.ReportedOutputTokens, attempt.ReportedTotalTokens, claim.ID, assessmentID, attempt.Number, claim.WindowID).Error
 	})
 }

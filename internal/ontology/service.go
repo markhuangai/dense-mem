@@ -37,6 +37,9 @@ func (s *Service) Organize(ctx context.Context, teamID string, input contract.Or
 	if s == nil || s.repository == nil || s.provider == nil {
 		return contract.OrganizationResult{}, &OrganizationError{Code: "configuration_invalid"}
 	}
+	if err := s.provider.ConfigurationError(); err != nil {
+		return contract.OrganizationResult{}, &OrganizationError{Code: "configuration_invalid", Cause: err}
+	}
 	input, err := contract.PrepareOrganizationInput(input)
 	if err != nil {
 		return contract.OrganizationResult{}, err

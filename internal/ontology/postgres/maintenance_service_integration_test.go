@@ -5,6 +5,7 @@ package postgres
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -21,9 +22,11 @@ import (
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	densehttp "github.com/markhuangai/dense-mem/internal/http"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	organization "github.com/markhuangai/dense-mem/internal/ontology"
 	"github.com/markhuangai/dense-mem/internal/ontology/assessment"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
+	assessorprovider "github.com/markhuangai/dense-mem/internal/provider/assessor"
 	"github.com/markhuangai/dense-mem/internal/settings"
 	"github.com/stretchr/testify/require"
 )
@@ -36,8 +39,11 @@ func maintenanceServiceFixture(t *testing.T, f *ontologyFixture, config *setting
 	}
 	var counters []*atomic.Int32
 	var countersMu sync.Mutex
-	service := organization.NewMaintenanceService(organization.MaintenanceDependencies{Repository: f.store, Config: config, Audit: audit, DefaultModel: "fixture-model", ProviderTimeout: time.Minute, Organizer: func(model string, accounting assessment.AttemptAccounting) *organization.Service {
-		organizer, calls := organizationFixtureServiceWithAccounting(t, f, nil, edit, model, maintenanceFixtureLimits(), accounting)
+	service := organization.NewMaintenanceService(organization.MaintenanceDependencies{Repository: f.store, Config: config, Audit: audit, DefaultModel: "fixture-model", ProviderTimeout: time.Minute, Organizer: func(model string, contextWindowTokens int64, accounting assessment.AttemptAccounting) *organization.Service {
+		if accounting == nil {
+			return organization.NewService(nil, assessment.NewProvider(nil, model, maintenanceFixtureLimits(), int(contextWindowTokens)))
+		}
+		organizer, calls := organizationFixtureServiceWithAccounting(t, f, nil, edit, model, maintenanceFixtureLimits(), accounting, int(contextWindowTokens))
 		countersMu.Lock()
 		counters = append(counters, calls)
 		countersMu.Unlock()
@@ -111,15 +117,9 @@ func TestOntologyMaintenanceOperatorHTTPAndScheduler(t *testing.T) {
 	decode(request(http.MethodPost, "/ontology/runs", `{"operation_key":"http-run","max_batches":1}`), &replay)
 	require.Equal(t, command, replay)
 	decode(request(http.MethodGet, "/ontology/status", ""), &status)
-	body := `{"operation_key":"http-allowance","window_id":"` + status.Window.ID + `","input_tokens":100,"output_tokens":200}`
-	decode(request(http.MethodPost, "/ontology/allowances", body), &command)
-	require.Equal(t, "allowance", command.Kind)
-	require.EqualValues(t, 200, command.OutputTokens)
-	decode(request(http.MethodPost, "/ontology/allowances", body), &replay)
-	require.Equal(t, command, replay)
-	require.Equal(t, http.StatusUnprocessableEntity, request(http.MethodPost, "/ontology/allowances", `{"operation_key":"unknown-grant-field","window_id":"`+status.Window.ID+`","output_tokens":1,"team_id":"untrusted"}`).Code)
-	require.Equal(t, http.StatusUnprocessableEntity, request(http.MethodPost, "/ontology/allowances", `{"operation_key":"empty-grant","window_id":"`+status.Window.ID+`"}`).Code)
-	require.Equal(t, http.StatusNotFound, request(http.MethodPost, "/ontology/runs/"+uuid.NewString()+"/retry", `{"operation_key":"missing-run"}`).Code)
+	require.Equal(t, http.StatusNotFound, request(http.MethodPost, "/ontology/allowances", `{"operation_key":"retired"}`).Code)
+	require.Equal(t, http.StatusUnprocessableEntity, request(http.MethodPatch, "/config/ontology-maintenance", `{"items":[{"key":"ONTOLOGY_MAINTENANCE_INPUT_TOKENS","value":"1"}]}`).Code)
+
 	var runs ontology.MaintenanceRunPage
 	decode(request(http.MethodGet, "/ontology/runs?limit=1", ""), &runs)
 	require.Len(t, runs.Runs, 1)
@@ -145,7 +145,7 @@ func TestOntologyMaintenanceOperatorHTTPAndScheduler(t *testing.T) {
 	}
 	require.Positive(t, calls())
 	decode(request(http.MethodGet, "/ontology/status", ""), &status)
-	require.Greater(t, status.Window.ChargedInput, int64(0))
+	require.Greater(t, status.Usage.UnavailableUsageAttempts, int64(0))
 	require.Equal(t, before, f.canonicalSnapshot(t))
 	var auditCount int
 	require.NoError(t, f.admin.Raw(`SELECT count(*) FROM audit_log WHERE operation='ONTOLOGY_MAINTENANCE_COMMAND'`).Row().Scan(&auditCount))
@@ -181,15 +181,12 @@ func TestOntologyMaintenanceCommandAuditIsAtomic(t *testing.T) {
 		defer func() {
 			require.NoError(t, f.admin.Exec(`DROP TRIGGER reject_maintenance_audit ON audit_log; DROP FUNCTION reject_maintenance_audit()`).Error)
 		}()
-		window := maintenanceWindow(t, f, config)
-		for _, action := range []string{"pause", "resume", "run", "allowance"} {
+		maintenanceWindow(t, f, config)
+		for _, action := range []string{"pause", "resume", "run"} {
 			paused := action == "resume"
 			require.NoError(t, f.admin.Exec(`UPDATE ontology_maintenance_state SET paused=? WHERE singleton`, paused).Error)
 			key := "audit-failure-" + action
 			command := domain.OntologyMaintenanceCommand{Action: action, OperationKey: key}
-			if action == "allowance" {
-				command.WindowID, command.InputTokens, command.OutputTokens = window.ID, 100, 100
-			}
 			_, err := service.Command(ctx, command, "192.0.2.20", "atomic-audit")
 			require.Error(t, err)
 			var auditFailure *organization.OrganizationError
@@ -198,8 +195,7 @@ func TestOntologyMaintenanceCommandAuditIsAtomic(t *testing.T) {
 			assertRolledBack(t, key, paused)
 			status, err := service.Status(ctx)
 			require.NoError(t, err)
-			require.Zero(t, status.Window.AdditionalInput)
-			require.Zero(t, status.Window.AdditionalOutput)
+			require.Zero(t, status.Usage.Attempts)
 		}
 	})
 	t.Run("cancellation_during_audit", func(t *testing.T) {
@@ -260,6 +256,102 @@ func maintenanceFixtureLimits() assessor.SemanticAssessmentLimits {
 	return limits
 }
 
+func TestOntologyMaintenanceProviderFailureReleasesCapacity(t *testing.T) {
+	for _, mode := range []string{"throttled", "cancelled"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newOrganizationFixture(t)
+			f.organizationEvidence(t, 0, "Atlas uses PostgreSQL.", nil)
+			configured := maintenanceSettings(t, f)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			var failed atomic.Bool
+			failed.Store(true)
+			var calls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				if failed.Load() {
+					if mode == "cancelled" {
+						// HTTP/1 observes client disconnects after the request body has been consumed.
+						_, err := io.Copy(io.Discard, r.Body)
+						require.NoError(t, err)
+						cancel()
+						<-r.Context().Done()
+						return
+					}
+					w.Header().Set("Retry-After", "1")
+					w.WriteHeader(http.StatusTooManyRequests)
+					return
+				}
+				var envelope struct {
+					Messages []struct{ Role, Content string }
+				}
+				require.NoError(t, json.NewDecoder(r.Body).Decode(&envelope))
+				var input assessment.Request
+				require.NoError(t, json.Unmarshal([]byte(envelope.Messages[1].Content), &input))
+				body, err := json.Marshal(organizationFixtureResponse(input, nil))
+				require.NoError(t, err)
+				w.Header().Set("Content-Type", "application/json")
+				require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": string(body)}}}}))
+			}))
+			t.Cleanup(server.Close)
+			limits := maintenanceFixtureLimits()
+			cfg := &config.Config{AIVerifierAPIURL: server.URL, AIVerifierAPIKey: "synthetic-provider-key", AIVerifierModel: "fixture-model"}
+			transport := assessorprovider.NewOpenAIAssessorWithAssessmentLimits(cfg, server.Client(), limits)
+			service := organization.NewMaintenanceService(organization.MaintenanceDependencies{Repository: f.store, Config: configured, ProviderTimeout: time.Minute,
+				Organizer: func(model string, capacity int64, accounting assessment.AttemptAccounting) *organization.Service {
+					return organization.NewService(f.store, assessment.NewProviderWithAccounting(transport, model, limits, accounting, int(capacity)))
+				}})
+			before := f.canonicalSnapshot(t)
+			var failure error
+			for range 10 {
+				_, failure = service.RunTurn(ctx)
+				if failure != nil {
+					break
+				}
+			}
+			require.Error(t, failure)
+			if mode == "cancelled" {
+				require.ErrorIs(t, failure, context.Canceled)
+			} else {
+				require.Equal(t, modelprovider.ProviderFailureClassRateLimited, modelprovider.ProviderFailureDetails(failure).Class)
+			}
+			require.EqualValues(t, 1, calls.Load())
+			status, err := service.Status(context.Background())
+			require.NoError(t, err)
+			require.Zero(t, status.ActiveWork)
+			require.Zero(t, status.Usage.UnreconciledAttempts)
+			require.EqualValues(t, 1, status.Usage.UnavailableUsageAttempts)
+			require.EqualValues(t, 1, status.Counts.Failed)
+			require.Equal(t, before, f.canonicalSnapshot(t))
+			failed.Store(false)
+			other := maintenanceOtherTeam(t, f)
+			other.organizationEvidence(t, 0, "Beacon uses SQLite.", nil)
+			otherBefore := other.canonicalSnapshot(t)
+			drainMaintenance(t, service)
+			status, err = service.Status(context.Background())
+			require.NoError(t, err)
+			require.EqualValues(t, 1, status.Counts.Failed)
+			require.Positive(t, status.Counts.Organized)
+			require.Greater(t, calls.Load(), int32(1))
+			require.Equal(t, before, f.canonicalSnapshot(t))
+			require.Equal(t, otherBefore, other.canonicalSnapshot(t))
+		})
+	}
+}
+
+func TestOntologyMaintenanceDirectOrganizationRejectsMissingContext(t *testing.T) {
+	f := newOrganizationFixture(t)
+	source := f.organizationEvidence(t, 0, "Atlas uses PostgreSQL.", nil)
+	before := f.canonicalSnapshot(t)
+	for _, capacity := range []int{0, 1} {
+		service := organization.NewService(f.store, assessment.NewProvider(nil, "fixture-model", maintenanceFixtureLimits(), capacity))
+		_, err := service.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: uuid.NewString(), Sources: []ontology.SourceHandle{source}})
+		require.ErrorIs(t, err, ontology.ErrConfiguration)
+		require.Zero(t, receiptCount(t, f))
+		require.Equal(t, before, f.canonicalSnapshot(t))
+	}
+}
+
 func drainMaintenance(t *testing.T, service *organization.MaintenanceService) {
 	t.Helper()
 	for range 30 {
@@ -300,7 +392,7 @@ func TestOntologyMaintenanceRegenerationFailureRetry(t *testing.T) {
 	var count int
 	require.NoError(t, f.admin.Raw(`SELECT count(*) FROM ontology_maintenance_attempts`).Row().Scan(&count))
 	require.Equal(t, 3, count)
-	require.Greater(t, status.Window.ReservedOutput, int64(0))
+	require.Greater(t, status.Usage.UnavailableUsageAttempts, int64(0))
 	for range 8 {
 		_, err := service.RunTurn(ctx)
 		require.NoError(t, err)
@@ -321,7 +413,7 @@ func TestOntologyMaintenanceRegenerationFailureRetry(t *testing.T) {
 	require.EqualValues(t, 1, status.Counts.Organized)
 	require.Zero(t, status.Counts.Failed)
 	require.Equal(t, run.WindowID, status.Window.ID)
-	require.Greater(t, status.Window.ChargedOutput, int64(3*maintenanceFixtureLimits().MaxOutputTokens))
+	require.EqualValues(t, 4, status.Usage.UnavailableUsageAttempts)
 }
 
 func TestOntologyMaintenanceProviderPauseDrain(t *testing.T) {
@@ -406,68 +498,43 @@ func TestOntologyMaintenanceAccountingFailurePreventsPublication(t *testing.T) {
 	status, err := service.Status(context.Background())
 	require.NoError(t, err)
 	require.EqualValues(t, 1, status.Counts.Failed)
-	require.Greater(t, status.Window.ReservedInput, int64(0))
+	require.Greater(t, status.Usage.UnreconciledAttempts, int64(0))
 	require.False(t, status.CoverageComplete)
 }
 
-func TestOntologyMaintenanceBudgetDeferralAndManualReuse(t *testing.T) {
-	f := newOrganizationFixture(t)
-	f.organizationEvidence(t, 0, "Atlas uses PostgreSQL.", nil)
-	config := maintenanceSettings(t, f)
-	_, err := config.UpdateOntologyMaintenanceSettings(context.Background(), map[string]string{domain.AppConfigOntologyOutputTokens: "1"}, "control", "", "")
-	require.NoError(t, err)
-	window := maintenanceWindow(t, f, config)
-	manual, err := f.store.MaintenanceCommand(context.Background(), domain.OntologyMaintenanceCommand{Action: "run", OperationKey: uuid.NewString()}, time.Now().UTC(), nil)
-	require.NoError(t, err)
-	require.Equal(t, window.ID, manual.WindowID)
-	service, calls := maintenanceServiceFixture(t, f, config, nil)
-	for range 10 {
-		_, err := service.RunTurn(context.Background())
-		if err != nil {
-			require.ErrorIs(t, err, ontology.ErrBudgetDeferred)
-			break
-		}
-	}
-	status, err := service.Status(context.Background())
-	require.NoError(t, err)
-	require.EqualValues(t, 1, status.Counts.BudgetDeferred)
-	require.False(t, status.LatestRun.Retryable)
-	require.Zero(t, calls())
-	require.False(t, status.CoverageComplete)
-	for range 8 {
-		_, err := service.RunTurn(context.Background())
-		require.NoError(t, err)
-	}
-	require.Zero(t, calls())
-}
-
-func TestOntologyMaintenanceAllowanceResumesAutomaticWork(t *testing.T) {
+func TestOntologyMaintenanceContextConfigurationAndManualReuse(t *testing.T) {
 	f := newOrganizationFixture(t)
 	f.organizationEvidence(t, 0, "Atlas uses PostgreSQL.", nil)
 	config := maintenanceSettings(t, f)
 	ctx := context.Background()
-	_, err := config.UpdateOntologyMaintenanceSettings(ctx, map[string]string{domain.AppConfigOntologyOutputTokens: "1"}, "control", "", "")
+	_, err := config.UpdateOntologyMaintenanceSettings(ctx, map[string]string{domain.AppConfigOntologyContextWindow: ""}, "control", "", "")
 	require.NoError(t, err)
-	window := maintenanceWindow(t, f, config)
 	service, calls := maintenanceServiceFixture(t, f, config, nil, auditapp.New(auditpostgres.NewStore(f.app, f.rls)))
-	for range 10 {
-		_, err = service.RunTurn(ctx)
-		if err != nil {
-			require.ErrorIs(t, err, ontology.ErrBudgetDeferred)
-			break
-		}
+	for _, value := range []string{"", "1"} {
+		_, err := config.UpdateOntologyMaintenanceSettings(ctx, map[string]string{domain.AppConfigOntologyContextWindow: value}, "control", "", "")
+		require.NoError(t, err)
+		progress, err := service.RunTurn(ctx)
+		require.ErrorIs(t, err, ontology.ErrConfiguration)
+		require.False(t, progress)
+		_, err = service.Command(ctx, domain.OntologyMaintenanceCommand{OperationKey: uuid.NewString(), Action: "run"}, "", "")
+		require.ErrorIs(t, err, ontology.ErrConfiguration)
+		status, err := service.Status(ctx)
+		require.NoError(t, err)
+		require.Equal(t, "configuration_invalid", status.ConfigurationError)
+		require.Nil(t, status.Window)
+		require.Zero(t, status.Counts.Failed)
+		require.Zero(t, status.Usage.Attempts)
+		require.Zero(t, calls())
 	}
-	require.Zero(t, calls())
-	grant, err := service.Command(ctx, domain.OntologyMaintenanceCommand{OperationKey: "fund-automatic", Action: "allowance", WindowID: window.ID, OutputTokens: 100000}, "192.0.2.20", "automatic")
+	_, err = config.UpdateOntologyMaintenanceSettings(ctx, map[string]string{domain.AppConfigOntologyContextWindow: "300000"}, "control", "", "")
+	require.NoError(t, err)
+	manual, err := service.Command(ctx, domain.OntologyMaintenanceCommand{OperationKey: uuid.NewString(), Action: "run"}, "", "")
 	require.NoError(t, err)
 	drainMaintenance(t, service)
 	status, err := service.Status(ctx)
 	require.NoError(t, err)
+	require.Empty(t, status.ConfigurationError)
+	require.Equal(t, manual.WindowID, status.Window.ID)
 	require.EqualValues(t, 1, status.Counts.Organized)
 	require.Positive(t, calls())
-	require.Equal(t, window.Policy, status.Window.Policy)
-	require.False(t, status.Window.Overrun)
-	var auditCount int
-	require.NoError(t, f.admin.Raw(`SELECT count(*) FROM audit_log WHERE entity_id=? AND metadata->>'output_tokens'='100000'`, grant.ID).Row().Scan(&auditCount))
-	require.Equal(t, 1, auditCount)
 }

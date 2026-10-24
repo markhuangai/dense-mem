@@ -179,7 +179,7 @@ func TestOrganizationServiceWithPostgres(t *testing.T) {
 	t.Cleanup(server.Close)
 	cfg := &config.Config{AIVerifierAPIURL: server.URL, AIVerifierAPIKey: "synthetic-provider-key", AIVerifierModel: "service-fixture"}
 	limits := assessorprovider.SemanticAssessmentLimitsForConfig(cfg)
-	provider := assessment.NewProvider(assessorprovider.NewOpenAIAssessorWithAssessmentLimits(cfg, server.Client(), limits), cfg.AIVerifierModel, limits)
+	provider := assessment.NewProvider(assessorprovider.NewOpenAIAssessorWithAssessmentLimits(cfg, server.Client(), limits), cfg.AIVerifierModel, limits, 300000)
 	service := NewService(repository, provider)
 	a, b := source("Atlas uses PostgreSQL."), source("Atlas uses PostgreSQL.")
 	input := contract.OrganizationInput{OperationKey: "service-success", Sources: []contract.SourceHandle{a, b}}
@@ -199,7 +199,7 @@ func TestOrganizationServiceWithPostgres(t *testing.T) {
 	require.True(t, replay.Existing)
 	require.Equal(t, result.AssessmentID, replay.AssessmentID)
 	require.Equal(t, int32(1), calls.Load())
-	reuseProvider := assessment.NewProvider(assessorprovider.NewOpenAIAssessorWithAssessmentLimits(cfg, server.Client(), limits), "service-fixture-v2", limits)
+	reuseProvider := assessment.NewProvider(assessorprovider.NewOpenAIAssessorWithAssessmentLimits(cfg, server.Client(), limits), "service-fixture-v2", limits, 300000)
 	reused, err := NewService(repository, reuseProvider).Organize(context.Background(), team.ID.String(), contract.OrganizationInput{OperationKey: "service-deterministic-reuse", Sources: input.Sources})
 	require.NoError(t, err)
 	require.NotEqual(t, result.AssessmentID, reused.AssessmentID)

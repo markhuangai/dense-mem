@@ -31,6 +31,7 @@ func maintenanceRelationship(t *testing.T, f *ontologyFixture) ontology.SourceHa
 }
 
 func TestOntologyMaintenanceLargeBacklogAndFairTurns(t *testing.T) {
+	started := time.Now()
 	f := newOrganizationFixture(t)
 	ctx := context.Background()
 	relationship := maintenanceRelationship(t, f)
@@ -90,6 +91,8 @@ func TestOntologyMaintenanceLargeBacklogAndFairTurns(t *testing.T) {
 	}))
 	other := maintenanceOtherTeam(t, f)
 	other.organizationEvidence(t, 0, "Small team's pending work.", nil)
+	third := maintenanceOtherTeam(t, f)
+	third.organizationEvidence(t, 0, "Third team's pending work.", nil)
 	config := maintenanceSettings(t, f)
 	_, err := config.UpdateOntologyMaintenanceSettings(ctx, map[string]string{domain.AppConfigOntologyStartTime: time.Now().UTC().Format("15:04")}, "control", "", "")
 	require.NoError(t, err)
@@ -173,7 +176,7 @@ func TestOntologyMaintenanceLargeBacklogAndFairTurns(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, claim)
 	require.LessOrEqual(t, len(claim.Sources), 20)
-	require.NoError(t, f.store.CompleteMaintenanceBatch(ctx, *claim, ontology.OrganizationResult{}, "budget_deferred", time.Now().UTC()))
+	require.NoError(t, f.store.CompleteMaintenanceBatch(ctx, *claim, ontology.OrganizationResult{}, "window_closed", time.Now().UTC()))
 	require.NoError(t, f.store.ReleaseMaintenanceTurn(ctx, *big))
 	restarted := NewStore(f.app, f.rls)
 	next, err := restarted.ClaimMaintenanceTurn(ctx, window.ID, time.Now().UTC(), time.Minute)
@@ -182,12 +185,14 @@ func TestOntologyMaintenanceLargeBacklogAndFairTurns(t *testing.T) {
 	require.NotEqual(t, f.team, next.TeamID)
 	require.NoError(t, restarted.ReleaseMaintenanceTurn(ctx, *next))
 	service, calls := maintenanceServiceFixture(t, f, config, nil)
-	for range 8 {
+	for range 16 {
 		_, err := service.RunTurn(ctx)
 		require.NoError(t, err)
 		var organized int
 		require.NoError(t, f.admin.Raw(`SELECT count(*) FROM ontology_maintenance_sources WHERE team_id=?::uuid AND status='organized'`, other.team).Row().Scan(&organized))
-		if organized > 0 {
+		var thirdOrganized int
+		require.NoError(t, f.admin.Raw(`SELECT count(*) FROM ontology_maintenance_sources WHERE team_id=?::uuid AND status='organized'`, third.team).Row().Scan(&thirdOrganized))
+		if organized > 0 && thirdOrganized > 0 {
 			break
 		}
 	}
@@ -197,6 +202,10 @@ func TestOntologyMaintenanceLargeBacklogAndFairTurns(t *testing.T) {
 	require.Greater(t, organized, 0)
 	require.Greater(t, pending, 20000)
 	require.Greater(t, calls(), int32(0))
+	var thirdOrganized int
+	require.NoError(t, f.admin.Raw(`SELECT count(*) FROM ontology_maintenance_sources WHERE team_id=?::uuid AND status='organized'`, third.team).Row().Scan(&thirdOrganized))
+	require.Greater(t, thirdOrganized, 0)
+	t.Logf("A/B/C backlog progress: pending=%d small_teams_organized=%d elapsed=%s", pending, organized+thirdOrganized, time.Since(started))
 }
 
 func TestOntologyMaintenanceOversizedGroupClosure(t *testing.T) {

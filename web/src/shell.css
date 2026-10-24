@@ -271,8 +271,6 @@ label[data-slot=label]:has(> [data-slot=input], > [data-slot=textarea], > [data-
 .ontology-window .section-heading { align-items: start; }
 .ontology-window .window-policy { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 20px; }
 .ontology-window .window-policy > span { padding: 5px 8px; border-radius: 5px; background: var(--panel-strong); color: var(--muted); font-size: 12px; }
-.ontology-window .allowance-form { margin-top: 20px; padding-top: 6px; border-top: 1px solid var(--border); }
-.ontology-window .allowance-form > .button-row { margin-top: 14px; justify-content: flex-end; }
 .ontology-manual { display: flex; align-items: center; flex-wrap: wrap; justify-content: space-between; gap: 18px; }
 .ontology-manual .section-heading { margin: 0; }
 .ontology-manual .button-row { gap: 12px; }

@@ -34,7 +34,7 @@ func (s *Store) readMaintenanceSystem(ctx context.Context, fn func(*gorm.DB) err
 	return s.rls.WithSystemReadOnlyRepeatableTx(ctx, s.db, fn)
 }
 
-const maintenanceWindowColumns = `window_id::text,starts_at,ends_at,policy,charged_input,charged_output,reported_input,reported_output,reserved_input,reserved_output,overrun,additional_input,additional_output`
+const maintenanceWindowColumns = `window_id::text,starts_at,ends_at,policy`
 const maintenanceRunColumns = `run_id::text,COALESCE(window_id::text,''),kind,status,operation_key,max_batches,completed_batches,failure_code,created_at,updated_at,COALESCE((command->>'input_tokens')::bigint,0),COALESCE((command->>'output_tokens')::bigint,0)`
 
 type maintenanceScanner interface{ Scan(...any) error }
@@ -42,7 +42,7 @@ type maintenanceScanner interface{ Scan(...any) error }
 func scanMaintenanceWindow(row maintenanceScanner) (*ontology.MaintenanceWindow, error) {
 	result := &ontology.MaintenanceWindow{}
 	var policy []byte
-	err := row.Scan(&result.ID, &result.StartsAt, &result.EndsAt, &policy, &result.ChargedInput, &result.ChargedOutput, &result.ReportedInput, &result.ReportedOutput, &result.ReservedInput, &result.ReservedOutput, &result.Overrun, &result.AdditionalInput, &result.AdditionalOutput)
+	err := row.Scan(&result.ID, &result.StartsAt, &result.EndsAt, &policy)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -87,6 +87,21 @@ func maintenanceState(tx *gorm.DB) (bool, error) {
 	return paused, err
 }
 
+func currentMaintenanceWindow(tx *gorm.DB, now time.Time) (*ontology.MaintenanceWindow, error) {
+	return scanMaintenanceWindow(tx.Raw(`SELECT `+maintenanceWindowColumns+` FROM ontology_maintenance_windows
+	 WHERE starts_at<=? AND ends_at>? AND jsonb_exists(policy,'context_window_tokens') ORDER BY starts_at DESC LIMIT 1`, now, now).Row())
+}
+
+func (s *Store) CurrentMaintenanceWindow(ctx context.Context, now time.Time) (*ontology.MaintenanceWindow, error) {
+	var result *ontology.MaintenanceWindow
+	err := s.readMaintenanceSystem(ctx, func(tx *gorm.DB) error {
+		var err error
+		result, err = currentMaintenanceWindow(tx, now)
+		return err
+	})
+	return result, err
+}
+
 func (s *Store) EnsureMaintenanceWindow(ctx context.Context, policy domain.OntologyMaintenanceConfig, now time.Time) (*ontology.MaintenanceWindow, error) {
 	policy = maintenanceWindowPolicy(policy)
 	var result *ontology.MaintenanceWindow
@@ -105,12 +120,15 @@ func (s *Store) EnsureMaintenanceWindow(ctx context.Context, policy domain.Ontol
 		if err != nil {
 			return err
 		}
-		if previous != nil && now.Before(previous.EndsAt) {
+		if previous != nil && previous.Policy.ContextWindowTokens > 0 && now.Before(previous.EndsAt) {
 			result = previous
 			return nil
 		}
 		if !policy.Enabled {
 			return nil
+		}
+		if policy.ContextWindowTokens < 1 || policy.ContextWindowTokens > 1000000000 {
+			return ontology.ErrConfiguration
 		}
 		start, end, err := ontology.MaintenanceWindowBounds(policy, now, previous)
 		if err != nil {
@@ -173,10 +191,7 @@ func (s *Store) ClaimMaintenanceTurn(ctx context.Context, windowID string, now t
 			return err
 		}
 		if window == nil || !now.Before(window.EndsAt) {
-			return ontology.ErrBudgetDeferred
-		}
-		if window.Overrun {
-			return ontology.ErrBudgetDeferred
+			return ontology.ErrWindowClosed
 		}
 		if err = seedMaintenanceTeams(tx); err != nil {
 			return err
@@ -222,8 +237,8 @@ func (s *Store) ClaimMaintenanceTurn(ctx context.Context, windowID string, now t
 		 AND (?<>'' OR state.discovery_kind<4 OR EXISTS(
 		 SELECT 1 FROM ontology_maintenance_markers AS marker WHERE marker.team_id=state.team_id AND marker.shared_space_id=state.shared_space_id AND marker.space_generation=state.space_generation)
 		 OR EXISTS(SELECT 1 FROM ontology_maintenance_sources AS source WHERE source.team_id=state.team_id AND source.shared_space_id=state.shared_space_id AND source.space_generation=state.space_generation AND source.eligible AND
-		 (source.status='pending' OR (source.status='budget_deferred' AND NOT EXISTS(SELECT 1 FROM ontology_maintenance_runs AS run WHERE run.run_id=source.last_run_id AND run.window_id=?::uuid)))))
-		 ORDER BY state.last_turn,state.team_id LIMIT 1 FOR UPDATE OF state SKIP LOCKED`, now, now, limits, window.Policy.TeamConcurrency(""), candidate.RetryRunID, candidate.RetryRunID, candidate.RetryRunID, windowID).Row().Scan(&candidate.TeamID, &candidate.SpaceID, &candidate.Generation)
+		 source.status='pending'))
+		 ORDER BY state.last_turn,state.team_id LIMIT 1 FOR UPDATE OF state SKIP LOCKED`, now, now, limits, window.Policy.TeamConcurrency(""), candidate.RetryRunID, candidate.RetryRunID, candidate.RetryRunID).Row().Scan(&candidate.TeamID, &candidate.SpaceID, &candidate.Generation)
 		if errors.Is(err, sql.ErrNoRows) {
 			if active > 0 {
 				return nil
