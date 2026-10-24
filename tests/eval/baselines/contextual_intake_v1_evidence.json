@@ -40,7 +40,14 @@
     "candidate_built_from_uncommitted_source": true,
     "candidate_parent_sha": "0cf9e1520039b52477f247399056ec95e539170d",
     "candidate_source_state_sha256": "5b75f64f28ee9e7d2f6c4fb5a690011ae63a67d9b6080d343764d39f22e5b577",
-    "publication_fence": "All files in the tested candidate source manifest must match committed blobs; this compact evidence file is generated afterward.",
+    "first_bound_commit_sha": "1e756ae0f70f3fcb7201e33a724e9fdc309ee215",
+    "publication_fence": "All 2,123 tested manifest files matched the first bound commit. Later publication preserves all production and quality-runner blobs; compact evidence and the identified test-only correction are subsequent changes.",
+    "post_comparison_changes": [
+      {
+        "path": "tests/uat/ontology_organization_e2e.mjs",
+        "reason": "The first exact-source remote run exposed an overly strict assertion requiring HTTP timing after admission failed before dispatch; require only reached phases and require unreached phases to remain absent."
+      }
+    ],
     "production_images": {
       "base": "sha256:4b2e9169bcaed735cedbcf19498d3f50aae07f6efadd2922cfd4d04c05efbc23",
       "candidate": "sha256:1b779a9269a33794db3bc066006f058c6630bfb5068272ad7366d30e822da1fc"

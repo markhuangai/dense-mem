@@ -251,7 +251,17 @@ try {
   assert(diagnosticAttempts.length > 0, "ontology must retain actual provider attempt diagnostics");
   assert(diagnosticAttempts.some((attempt) => attempt.failure_code === "response_invalid"), "the adverse path must retain validation failure diagnostics");
   for (const attempt of diagnosticAttempts) {
-    for (const phase of ["queue_ms", "admission_ms", "http_ms", "reconciliation_ms"]) assert(Number.isInteger(attempt.diagnostics?.[phase]) && attempt.diagnostics[phase] >= 0, `missing measured ${phase}`);
+    const diagnostics = attempt.diagnostics;
+    assert(diagnostics, "every actual transport attempt must retain diagnostics");
+    const beforeAdmission = ["queue", "prepare"].includes(diagnostics.failure_phase);
+    const beforeHTTP = beforeAdmission || diagnostics.failure_phase === "admission";
+    for (const phase of ["queue_ms", "admission_ms", "http_ms", "reconciliation_ms"]) {
+      if ((phase === "admission_ms" && beforeAdmission) || (phase === "http_ms" && beforeHTTP)) {
+        assert(!Object.hasOwn(diagnostics, phase), `unreached ${phase} must remain absent`);
+      } else {
+        assert(Number.isInteger(diagnostics[phase]) && diagnostics[phase] >= 0, `missing measured ${phase}`);
+      }
+    }
     if (attempt.failure_code === "response_invalid") assert.equal(attempt.diagnostics.failure_phase, "validation");
   }
   console.log(JSON.stringify({ status: "ok", scenario: "ontology_organization", window_id: status.window.id, counts: status.counts, durable_command_replay: true, operator_isolation: true, grouped_recall: true, original_sources_retained: true, private_and_foreign_isolation: true, stale_group_fallback: true, recall_organization_provider_tokens: 0, bounded_ambiguity_run: ambiguousRun.id, retryable_failure_run: failedRun.id }));
