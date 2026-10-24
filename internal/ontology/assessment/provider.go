@@ -107,11 +107,22 @@ func (p *Provider) Assess(ctx context.Context, request Request) (Response, []ont
 		attempt.ReportedOutputTokens = result.CompletionTokens
 		attempt.ReportedTotalTokens = result.TotalTokens
 		attempt.ReportedUsageAvailable = result.PromptTokens > 0 || result.CompletionTokens > 0 || result.TotalTokens > 0
+		attempt.Diagnostics = result.Diagnostics
 		if p.accounting != nil {
+			if attempt.Diagnostics == nil {
+				attempt.Diagnostics = &modelprovider.CallDiagnostics{}
+			}
 			recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			reconcileStarted := time.Now()
 			accountingErr := p.accounting.AfterAttempt(recordCtx, request.RequestID, attempt, err == nil)
+			reconciliationMS := time.Since(reconcileStarted).Milliseconds()
+			attempt.Diagnostics.ReconciliationMS = &reconciliationMS
 			cancel()
 			if accountingErr != nil {
+				attempt.Diagnostics.ReconciliationFailed = true
+				if err == nil {
+					attempt.Diagnostics.FailurePhase = "reconciliation"
+				}
 				err = errors.Join(err, fmt.Errorf("%w: %w", ontology.ErrAccounting, accountingErr))
 			}
 		}
@@ -123,6 +134,7 @@ func (p *Provider) Assess(ctx context.Context, request Request) (Response, []ont
 		outputTokens, countErr := assessor.CountTokens(result.Content, p.limits.Tokenizer)
 		attempt.EstimatedOutputTokens = outputTokens
 		if countErr != nil {
+			setAttemptValidationFailure(&attempt)
 			attempt.FailureCode = "tokenizer_failure"
 			attempts = append(attempts, attempt)
 			return Response{}, attempts, countErr
@@ -132,6 +144,7 @@ func (p *Provider) Assess(ctx context.Context, request Request) (Response, []ont
 			validationErr = Validate(request, response)
 		}
 		if result.PromptTokens > p.limits.MaxInputTokens {
+			setAttemptValidationFailure(&attempt)
 			attempt.FailureCode = "input_budget"
 			attempts = append(attempts, attempt)
 			return Response{}, attempts, &modelprovider.MalformedResponseError{Provider: "ontology", Message: "provider reported input beyond token budget", FailureClass: "input_budget", Attempts: turn}
@@ -144,6 +157,7 @@ func (p *Provider) Assess(ctx context.Context, request Request) (Response, []ont
 			return response, attempts, nil
 		}
 		attempt.FailureCode = "response_invalid"
+		setAttemptValidationFailure(&attempt)
 		attempts = append(attempts, attempt)
 		if turn == 3 {
 			return Response{}, attempts, &modelprovider.MalformedResponseError{Provider: "ontology", Message: "organization response remained invalid after complete regeneration", FailureClass: "malformed_exhausted", Attempts: turn}
@@ -157,6 +171,13 @@ func (p *Provider) Assess(ctx context.Context, request Request) (Response, []ont
 		messages = append(messages, modelprovider.Message{Role: "assistant", Content: result.Content}, modelprovider.Message{Role: "user", Content: string(correction)})
 	}
 	return Response{}, attempts, fmt.Errorf("organization regeneration exhausted")
+}
+
+func setAttemptValidationFailure(attempt *ontology.AssessmentAttempt) {
+	if attempt.Diagnostics == nil {
+		attempt.Diagnostics = &modelprovider.CallDiagnostics{}
+	}
+	attempt.Diagnostics.FailurePhase = "validation"
 }
 
 func (p *Provider) messageTokens(messages []modelprovider.Message) (int, error) {

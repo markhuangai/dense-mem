@@ -32,6 +32,7 @@ type StructuredResult struct {
 	PromptTokens     int
 	CompletionTokens int
 	TotalTokens      int
+	Diagnostics      *CallDiagnostics
 }
 
 // StructuredTransport is the shared transport seam for model-backed

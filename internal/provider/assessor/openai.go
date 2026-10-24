@@ -125,10 +125,10 @@ func (v *OpenAIAssessor) Complete(
 	result, err := v.openAIStructuredChatMessagesJSONWithUsage(
 		ctx, request.Model, request.SchemaName, request.Schema, messages,
 	)
+	structured := modelprovider.StructuredResult{Content: result.Content, Diagnostics: result.Diagnostics}
 	if err != nil {
-		return modelprovider.StructuredResult{}, err
+		return structured, err
 	}
-	structured := modelprovider.StructuredResult{Content: result.Content}
 	if result.ReportedUsage != nil {
 		structured.PromptTokens = int(result.ReportedUsage.PromptTokens)
 		structured.CompletionTokens = int(result.ReportedUsage.CompletionTokens)
@@ -432,11 +432,24 @@ func (v *OpenAIAssessor) openAIStructuredChatMessagesJSONWithUsage(
 	schemaName string,
 	schema map[string]any,
 	messages []openAIVerifierMessage,
-) (openAIStructuredChatResult, error) {
-	if err := v.acquire(ctx); err != nil {
-		return openAIStructuredChatResult{}, err
+) (reply openAIStructuredChatResult, err error) {
+	timeoutMS := v.httpClient.Timeout.Milliseconds()
+	diagnostics := &modelprovider.CallDiagnostics{HTTPTimeoutMS: &timeoutMS, FailurePhase: "queue"}
+	defer func() {
+		if err == nil {
+			diagnostics.FailurePhase = ""
+		}
+		reply.Diagnostics = diagnostics
+	}()
+	queueStarted := time.Now()
+	acquireErr := v.acquire(ctx)
+	queueMS := time.Since(queueStarted).Milliseconds()
+	diagnostics.QueueMS = &queueMS
+	if acquireErr != nil {
+		return openAIStructuredChatResult{}, acquireErr
 	}
 	defer func() { <-v.sem }()
+	diagnostics.FailurePhase = "prepare"
 
 	started := time.Now()
 	latencyOutcome := "error"
@@ -478,12 +491,21 @@ func (v *OpenAIAssessor) openAIStructuredChatMessagesJSONWithUsage(
 	}
 	httpReq.Header.Set("Authorization", "Bearer "+v.apiKey)
 	httpReq.Header.Set("Content-Type", "application/json")
-	if err := modelprovider.NotifyAdmission(ctx); err != nil {
-		return openAIStructuredChatResult{}, err
+	diagnostics.FailurePhase = "admission"
+	admissionStarted := time.Now()
+	admissionErr := modelprovider.NotifyAdmission(ctx)
+	admissionMS := time.Since(admissionStarted).Milliseconds()
+	diagnostics.AdmissionMS = &admissionMS
+	if admissionErr != nil {
+		return openAIStructuredChatResult{}, admissionErr
 	}
 
+	diagnostics.FailurePhase = "request"
+	httpStarted := time.Now()
 	httpResp, err := v.httpClient.Do(httpReq)
 	if err != nil {
+		httpMS := time.Since(httpStarted).Milliseconds()
+		diagnostics.HTTPMS = &httpMS
 		recordOpenAIExchange(ctx, "assessor", model, bodyBytes, nil, "", 0, "no_response", started)
 		if openAIRequestTimedOutOrCanceled(ctx, err) {
 			latencyOutcome = "timeout"
@@ -499,9 +521,16 @@ func (v *OpenAIAssessor) openAIStructuredChatMessagesJSONWithUsage(
 		}
 	}
 	defer func() { _ = httpResp.Body.Close() }()
+	diagnostics.FailurePhase = "response_body"
 	rawResponse, readErr := io.ReadAll(io.LimitReader(httpResp.Body, openAIVerifierMaxResponseBytes+1))
+	httpMS := time.Since(httpStarted).Milliseconds()
+	diagnostics.HTTPMS = &httpMS
 	if readErr != nil {
 		recordOpenAIExchange(ctx, "assessor", model, bodyBytes, rawResponse, httpResp.Header.Get("Content-Type"), httpResp.StatusCode, "response_read_failed", started)
+		if openAIRequestTimedOutOrCanceled(ctx, readErr) {
+			latencyOutcome = "timeout"
+			return openAIStructuredChatResult{}, &TimeoutError{Provider: openAIVerifierProvider, Message: "provider response timed out or was canceled"}
+		}
 		return openAIStructuredChatResult{}, &ProviderError{Provider: openAIVerifierProvider, Message: "failed to read provider response", FailureClass: ProviderFailureClassProtocol}
 	}
 	if len(rawResponse) > openAIVerifierMaxResponseBytes {
@@ -510,6 +539,7 @@ func (v *OpenAIAssessor) openAIStructuredChatMessagesJSONWithUsage(
 	}
 	recordOpenAIExchange(ctx, "assessor", model, bodyBytes, rawResponse, httpResp.Header.Get("Content-Type"), httpResp.StatusCode, "captured", started)
 
+	diagnostics.FailurePhase = "response_status"
 	if httpResp.StatusCode == http.StatusTooManyRequests {
 		latencyOutcome = "rate_limited"
 		return openAIStructuredChatResult{}, &RateLimitError{
@@ -528,6 +558,7 @@ func (v *OpenAIAssessor) openAIStructuredChatMessagesJSONWithUsage(
 		}
 	}
 
+	diagnostics.FailurePhase = "response_decode"
 	apiResp, err := decodeOpenAIVerifierAPIResponse(bytes.NewReader(rawResponse))
 	if err != nil {
 		if httpResp.StatusCode == http.StatusOK {

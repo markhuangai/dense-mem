@@ -171,7 +171,7 @@ jobs:
         run: node --test tests/uat/embedding_upstream.test.mjs
 
       - name: Run ontology cleanup and session provider proxy regressions
-        run: node --test tests/uat/ontology_organization_cleanup.test.mjs tests/eval/scripts/session_provider_proxy.test.mjs
+        run: node --test tests/uat/ontology_organization_cleanup.test.mjs tests/eval/scripts/session_provider_proxy.test.mjs tests/eval/scripts/contextual_intake_v1.test.mjs
 
       - name: Run E2E scenario-registry tests
         run: node --test tests/uat/e2e_scenario_registry.test.mjs

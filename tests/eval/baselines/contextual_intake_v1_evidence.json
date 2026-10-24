@@ -1,0 +1,140 @@
+{
+  "schema_version": "dense-mem.contextual_intake.evidence.v1",
+  "date": "2026-10-24",
+  "issues": [
+    592,
+    598,
+    606,
+    609
+  ],
+  "scope": "Maintainer-approved deterministic 1k waiver replacement for contextual intake, conflict assessment and ontology timeout diagnostics; no general retrieval-quality or performance equivalence claim.",
+  "waiver_comments": [
+    "https://github.com/markhuangai/dense-mem/issues/592#issuecomment-6382922369",
+    "https://github.com/markhuangai/dense-mem/issues/598#issuecomment-6382922575",
+    "https://github.com/markhuangai/dense-mem/issues/606#issuecomment-6382922866",
+    "https://github.com/markhuangai/dense-mem/issues/609#issuecomment-6382923147"
+  ],
+  "comparison": {
+    "cohort": "contextual_intake_v1",
+    "cohort_sha256": "4e049ae0edcbd91b56ea6ab2a26d5dd55d8209021d1b8ef31a7c8bed52fd1d8c",
+    "model": "dense-mem-testing",
+    "base_source_sha": "0cf9e1520039b52477f247399056ec95e539170d",
+    "candidate_source_sha": "0cf9e1520039b52477f247399056ec95e539170d",
+    "candidate_source_state_sha256": "5b75f64f28ee9e7d2f6c4fb5a690011ae63a67d9b6080d343764d39f22e5b577",
+    "repetitions": 3,
+    "cases_per_repetition": 20,
+    "base_passed": [
+      10,
+      11,
+      12
+    ],
+    "candidate_passed": [
+      20,
+      20,
+      20
+    ],
+    "passed": true
+  },
+  "source_binding": {
+    "base_source_state_sha256": "76d63f977850a5f2da176faef8c99c96a886de120714438fb8d4e789cab44f6a",
+    "candidate_built_from_uncommitted_source": true,
+    "candidate_parent_sha": "0cf9e1520039b52477f247399056ec95e539170d",
+    "candidate_source_state_sha256": "5b75f64f28ee9e7d2f6c4fb5a690011ae63a67d9b6080d343764d39f22e5b577",
+    "publication_fence": "All files in the tested candidate source manifest must match committed blobs; this compact evidence file is generated afterward.",
+    "production_images": {
+      "base": "sha256:4b2e9169bcaed735cedbcf19498d3f50aae07f6efadd2922cfd4d04c05efbc23",
+      "candidate": "sha256:1b779a9269a33794db3bc066006f058c6630bfb5068272ad7366d30e822da1fc"
+    }
+  },
+  "providers": {
+    "assessment_model": "dense-mem-testing",
+    "embedding_provider": "Cloudflare Workers AI",
+    "embedding_model": "@cf/baai/bge-m3",
+    "embedding_dimensions": 1024,
+    "embedding_direction": "Maintainer directed use of the existing CI configuration for both disposable stacks.",
+    "limits_and_runtime_retries": "Unchanged",
+    "embedding_usage": "Provider token usage was unavailable; proxy counters preserve that state."
+  },
+  "frozen_inputs": {
+    "source_lock": "tests/eval/source_locks/contextual_intake_v1.json",
+    "cohort_sha256": "4e049ae0edcbd91b56ea6ab2a26d5dd55d8209021d1b8ef31a7c8bed52fd1d8c",
+    "generator_sha256": "3993f411dee9427e4a8f1a48da8ad53f33c61ba2bca0deca3a7a4bda8d0672de",
+    "catalog_sha256": "5900aeb353c1ceeff0cf3512672007309bf2ea11aa0e25655d89e1e6ce799b3e",
+    "fixture_adaptations": "The identifier witness omits its two production-only Entity identity hints while retaining exact evidence and proposed names."
+  },
+  "candidate_verification": {
+    "samples": 60,
+    "stored_batches_with_exact_content": 48,
+    "unsafe_batches_without_stored_evidence_or_provider_dispatch": 12,
+    "matching_and_changed_request_checks": 48,
+    "cross_team_isolation_checks": 48,
+    "genuine_conflicts_with_exact_opposing_citations": 9,
+    "all_judgments_passed": true
+  },
+  "baseline_failed_case_ids": {
+    "1": [
+      "quota_original",
+      "quota_accounting",
+      "identifiers_original",
+      "identifiers_generic",
+      "reported_override",
+      "reported_secret",
+      "prohibition",
+      "reported_exfiltration",
+      "pending_contradiction",
+      "same_observation_contradiction"
+    ],
+    "2": [
+      "quota_original",
+      "quota_accounting",
+      "identifiers_original",
+      "identifiers_generic",
+      "reported_override",
+      "reported_secret",
+      "prohibition",
+      "reported_exfiltration",
+      "pending_contradiction"
+    ],
+    "3": [
+      "quota_original",
+      "quota_accounting",
+      "identifiers_original",
+      "identifiers_generic",
+      "reported_override",
+      "reported_secret",
+      "prohibition",
+      "reported_exfiltration"
+    ]
+  },
+  "successful_report_sha256": {
+    "base.json": "c3228bf5f0e8ea84f82e6b2df745ac825b92b41de908e6430f838193997f3e84",
+    "candidate.json": "3009480b0c84a2b2799897bb5c3f594769b17be505beea5c462a570fe925a134",
+    "comparison.json": "f2806f8d3524e3d1a2d5a170e1b8138078efe1e1e202362f8572e47df8aceb36"
+  },
+  "retained_incomplete_attempts": [
+    {
+      "report": "base-incomplete-embedding-unavailable",
+      "sha256": "dd7ba44fa6812f87986a74db0e12754eadfefa7ba8dce88631996a3bc2d24bce",
+      "complete": false,
+      "failure": "unexpected required failure for reported_exfiltration: embedding_unavailable"
+    },
+    {
+      "report": "base-cf-incomplete-request-timeout",
+      "sha256": "c595595f5c067789ac5c331e21f9fda554737562f1c7cfcc080342b0f0dac577",
+      "complete": false,
+      "failure": "unexpected required failure for time_transition: request_timeout"
+    },
+    {
+      "report": "candidate-cf-incomplete-request-timeout",
+      "sha256": "7897dc9492a0401748b59ca0f5fa8012ffd5f4150a6d39063fa4affef38851b2",
+      "complete": false,
+      "failure": "unexpected required failure for same_observation_contradiction: request_timeout"
+    }
+  ],
+  "recovery": "The first Cloudflare attempt stopped on the existing 10-second embedding-phase limit in both roles. Three subsequent probes passed in 66\u2013267 ms. One fresh paired attempt ran sequentially and completed all repetitions without changing inputs, judgments, limits or runtime retries.",
+  "remaining_delivery_gates_at_evidence_creation": [
+    "Complete local CI coverage",
+    "Exact-source Development E2E and all PostgreSQL shards",
+    "Current-head reviews and full PR CI/production-image E2E"
+  ]
+}

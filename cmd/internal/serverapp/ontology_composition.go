@@ -1,6 +1,7 @@
 package serverapp
 
 import (
+	"log/slog"
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
@@ -15,8 +16,8 @@ type ontologyMaintenanceStore interface {
 	contract.OrganizationRepository
 }
 
-func buildOntologyMaintenance(store ontologyMaintenanceStore, config ontology.MaintenanceConfigSource, transport modelprovider.StructuredTransport, limits assessor.SemanticAssessmentLimits, model string, timeout time.Duration, audit ontology.MaintenanceAuditPreparer) *ontology.MaintenanceService {
-	return ontology.NewMaintenanceService(ontology.MaintenanceDependencies{Repository: store, Config: config, DefaultModel: model, ProviderTimeout: timeout, Audit: audit,
+func buildOntologyMaintenance(store ontologyMaintenanceStore, config ontology.MaintenanceConfigSource, transport modelprovider.StructuredTransport, limits assessor.SemanticAssessmentLimits, model string, timeout time.Duration, audit ontology.MaintenanceAuditPreparer, logger *slog.Logger) *ontology.MaintenanceService {
+	return ontology.NewMaintenanceService(ontology.MaintenanceDependencies{Repository: store, Config: config, DefaultModel: model, ProviderTimeout: timeout, Audit: audit, Logger: logger,
 		Organizer: func(model string, accounting assessment.AttemptAccounting) *ontology.Service {
 			configured := limits
 			configured.ProviderModel = model

@@ -685,3 +685,75 @@ three quality repetitions, paired controls, approved fixture corrections and
 unavailable embedding usage. Its `current_validation_status` records the later
 runtime source and outstanding gates; historical metrics certify only their
 recorded source. Raw run outputs remain ignored.
+# Contextual intake and evidence-conflict replacement cohort
+
+Issues #592, #598, #606 and #609 record the maintainer-approved deterministic
+1k waiver and replacement verification. `contextual_intake_v1` freezes twelve
+security cases and eight conflict cases, including the retained quota,
+slash-separated identifier and active/pending observations. The original request
+hashes identify retained witnesses; runtime operation keys are fresh and all
+actors and databases are disposable. The identifier request omits its two
+production-only Entity identity hints while retaining exact evidence and names
+for fresh-team resolution; the frozen cohort records those fixture adaptations.
+
+Generate and lock the cohort before the first candidate model run:
+
+```bash
+node tests/eval/scripts/contextual_intake_v1.mjs generate \
+  --out tmp/contextual-intake-v1/cohort.json \
+  --lock tests/eval/source_locks/contextual_intake_v1.json
+```
+
+Use isolated production stacks for the recorded base and candidate, with the
+same configured `dense-mem-testing` alias and embedding contract. Reuse
+`session_provider_proxy.mjs` for real-provider request and usage accounting.
+Supply `DENSE_MEM_USER_URL`, `DENSE_MEM_CONTROL_URL`, `DENSE_MEM_CONTROL_TOKEN`,
+`DENSE_MEM_EVAL_POSTGRES_CONTAINER`, `DENSE_MEM_EVAL_PROXY_URL`,
+`DENSE_MEM_EVAL_SOURCE_SHA`, `DENSE_MEM_EVAL_SOURCE_STATE_SHA256`, and
+`AI_VERIFIER_MODEL`. The source-state hash identifies the exact tested source
+manifest, including uncommitted candidate code; its base SHA alone does not
+claim that uncommitted changes were tested as a published commit. Supply
+`POSTGRES_USER` and `POSTGRES_DB` for a nondefault disposable database.
+
+Run each command against its corresponding stack:
+
+```bash
+node tests/eval/scripts/contextual_intake_v1.mjs run --role base \
+  --cohort tmp/contextual-intake-v1/cohort.json --out tmp/contextual-intake-v1/base.json
+node tests/eval/scripts/contextual_intake_v1.mjs run --role candidate \
+  --cohort tmp/contextual-intake-v1/cohort.json --out tmp/contextual-intake-v1/candidate.json
+node tests/eval/scripts/contextual_intake_v1.mjs compare \
+  --base tmp/contextual-intake-v1/base.json \
+  --candidate tmp/contextual-intake-v1/candidate.json \
+  --out tmp/contextual-intake-v1/comparison.json
+```
+
+Each role runs three fresh repetitions. Every candidate judgment must pass:
+safe evidence remains exact, unsafe batches commit no evidence, coexisting
+settings produce no conflict, and genuine same-window contradictions retain
+their cases and exact Unicode citations through Recall. Frozen opposing-fact
+judgments require each genuine position to identify its expected capacity and
+state; exact unrelated substrings and positions containing both alternatives
+do not pass. Matching retries reuse
+the receipt without another assessment; changed requests conflict. Cross-team
+Recall must not expose any evidence, Relationships or conflict cases. The
+production-entry synchronous-write scenario additionally proves same-team
+private-owner A/B/C isolation. Known baseline rejections remain visible;
+unexpected provider failures stop the run and retain the incomplete report.
+Missing usage remains explicitly unavailable through proxy counters rather
+than becoming estimated or zero consumption. This cohort does not establish
+general retrieval-quality or performance equivalence.
+
+Ontology attempt receipts optionally contain `diagnostics` with measured
+`queue_ms`, `admission_ms`, `http_ms`, `reconciliation_ms`, the configured
+`http_timeout_ms`, and a closed `failure_phase`. Absent timings were not observed;
+zero is an observed duration below one millisecond. HTTP timing includes body
+reads. `reconciliation_failed` can accompany an earlier transport failure.
+Historical receipts remain unchanged and need not contain these fields.
+
+Raw cohorts, reports, source manifests and stack resources stay ignored and
+are cleaned only after final delivery validation. Commit the generator, source
+lock and compact comparison evidence. The waiver does not alter the pinned
+release evaluation, provider timeouts/retries, ontology budget transition or
+historical conflict cases. Real PostgreSQL regressions, local checks and final
+current-head production-image E2E remain required.
