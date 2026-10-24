@@ -1,8 +1,8 @@
 -- Lock/rewrite impact: five-second lock acquisition bound; nullable attempt columns avoid a heap rewrite.
 -- Backfill: operational deferred-source updates only, atomically resumable by retrying this migration.
 -- RLS impact: existing forced system/shared-space policies remain unchanged; migration authority is transaction-local.
--- Compatibility: pause or disable, drain, and stop old instances before applying; newer schema rejects old startup.
--- Recovery: history and conservative charges remain exact; populated retirement is irreversible and must roll forward.
+-- Backward compatibility: pause or disable, drain, and stop old instances before applying; newer schema rejects old startup.
+-- Rollback: history and conservative charges remain exact; populated retirement is irreversible and must roll forward.
 
 -- +goose Up
 SET LOCAL lock_timeout = '5s';

@@ -36,22 +36,38 @@ func TestOntologyMaintenanceLargeBacklogAndFairTurns(t *testing.T) {
 	ctx := context.Background()
 	relationship := maintenanceRelationship(t, f)
 	require.NoError(t, f.rls.WithSystemTx(ctx, f.app, func(tx *gorm.DB) error {
-		if err := tx.Exec(`INSERT INTO entity_records SELECT (jsonb_populate_record(NULL::entity_records,to_jsonb(template)||jsonb_build_object('entity_id',gen_random_uuid(),'identity_context',jsonb_build_object('backlog',index)))).*
-		 FROM (SELECT * FROM entity_records WHERE team_id=?::uuid LIMIT 1) AS template CROSS JOIN generate_series(1,5001) AS index`, f.team).Error; err != nil {
+		return tx.Exec(`INSERT INTO entity_records SELECT (jsonb_populate_record(NULL::entity_records,to_jsonb(template)||jsonb_build_object('entity_id',gen_random_uuid(),'identity_context',jsonb_build_object('backlog',index)))).*
+		 FROM (SELECT * FROM entity_records WHERE team_id=?::uuid LIMIT 1) AS template CROSS JOIN generate_series(1,5001) AS index`, f.team).Error
+	}))
+	// A single seed transaction can consume the deadline before backlog behavior runs.
+	for first := 1; first <= 20001; first += 1000 {
+		last := min(first+999, 20001)
+		require.NoError(t, f.rls.WithSystemTx(ctx, f.app, func(tx *gorm.DB) error {
+			if err := tx.Exec(`INSERT INTO relationship_records SELECT (jsonb_populate_record(NULL::relationship_records,to_jsonb(template)||jsonb_build_object('relationship_id',gen_random_uuid(),'scope_key','backlog:'||index,'semantic_group_key','backlog:'||index))).*
+			 FROM relationship_records AS template CROSS JOIN generate_series(?::int,?::int) AS index WHERE template.team_id=?::uuid AND template.relationship_id=?::uuid`, first, last, f.team, relationship.ID).Error; err != nil {
+				return err
+			}
+			if err := tx.Exec(`INSERT INTO relationship_evidence_supports SELECT (jsonb_populate_record(NULL::relationship_evidence_supports,to_jsonb(template)||jsonb_build_object('support_id',gen_random_uuid(),'relationship_id',relationship.relationship_id))).*
+			 FROM relationship_evidence_supports AS template JOIN relationship_records AS relationship ON relationship.team_id=template.team_id AND relationship.scope_key IN (SELECT 'backlog:'||index FROM generate_series(?::int,?::int) AS index)
+			 WHERE template.team_id=?::uuid AND template.relationship_id=?::uuid`, first, last, f.team, relationship.ID).Error; err != nil {
+				return err
+			}
+			return tx.Exec(`INSERT INTO relationship_support_decision_events SELECT (jsonb_populate_record(NULL::relationship_support_decision_events,to_jsonb(template)||jsonb_build_object('support_decision_id',gen_random_uuid(),'support_id',support.support_id,'relationship_id',support.relationship_id,'idempotency_key',gen_random_uuid()::text))).*
+			 FROM relationship_support_decision_events AS template JOIN relationship_evidence_supports AS support ON support.team_id=template.team_id AND support.relationship_id<>template.relationship_id
+			 JOIN relationship_records AS relationship ON relationship.team_id=support.team_id AND relationship.relationship_id=support.relationship_id
+			 WHERE template.team_id=?::uuid AND template.relationship_id=?::uuid AND template.decision='grant' AND relationship.scope_key IN (SELECT 'backlog:'||index FROM generate_series(?::int,?::int) AS index)`, f.team, relationship.ID, first, last).Error
+		}))
+	}
+	require.NoError(t, f.rls.WithSystemTx(ctx, f.app, func(tx *gorm.DB) error {
+		var supported int
+		if err := tx.Raw(`SELECT count(DISTINCT relationship.relationship_id) FROM relationship_records AS relationship
+		 JOIN relationship_evidence_supports AS support ON support.team_id=relationship.team_id AND support.relationship_id=relationship.relationship_id
+		 JOIN relationship_support_decision_events AS decision ON decision.team_id=support.team_id AND decision.support_id=support.support_id AND decision.relationship_id=relationship.relationship_id
+		 WHERE relationship.team_id=?::uuid AND relationship.scope_key LIKE 'backlog:%' AND decision.decision='grant'`, f.team).Row().Scan(&supported); err != nil {
 			return err
 		}
-		if err := tx.Exec(`INSERT INTO relationship_records SELECT (jsonb_populate_record(NULL::relationship_records,to_jsonb(template)||jsonb_build_object('relationship_id',gen_random_uuid(),'scope_key','backlog:'||index,'semantic_group_key','backlog:'||index))).*
-		 FROM relationship_records AS template CROSS JOIN generate_series(1,20001) AS index WHERE template.team_id=?::uuid AND template.relationship_id=?::uuid`, f.team, relationship.ID).Error; err != nil {
-			return err
-		}
-		if err := tx.Exec(`INSERT INTO relationship_evidence_supports SELECT (jsonb_populate_record(NULL::relationship_evidence_supports,to_jsonb(template)||jsonb_build_object('support_id',gen_random_uuid(),'relationship_id',relationship.relationship_id))).*
-		 FROM relationship_evidence_supports AS template JOIN relationship_records AS relationship ON relationship.team_id=template.team_id AND relationship.scope_key LIKE 'backlog:%'
-		 WHERE template.team_id=?::uuid AND template.relationship_id=?::uuid`, f.team, relationship.ID).Error; err != nil {
-			return err
-		}
-		return tx.Exec(`INSERT INTO relationship_support_decision_events SELECT (jsonb_populate_record(NULL::relationship_support_decision_events,to_jsonb(template)||jsonb_build_object('support_decision_id',gen_random_uuid(),'support_id',support.support_id,'relationship_id',support.relationship_id,'idempotency_key',gen_random_uuid()::text))).*
-		 FROM relationship_support_decision_events AS template JOIN relationship_evidence_supports AS support ON support.team_id=template.team_id AND support.relationship_id<>template.relationship_id
-		 WHERE template.team_id=?::uuid AND template.relationship_id=?::uuid AND template.decision='grant'`, f.team, relationship.ID).Error
+		require.Equal(t, 20001, supported)
+		return nil
 	}))
 	require.NoError(t, f.rls.WithTeamTx(ctx, f.app, f.team, func(tx *gorm.DB) error {
 		var key string

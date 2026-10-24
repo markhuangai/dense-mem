@@ -48,17 +48,15 @@ func (s *Store) ReadDefinitionHeads(ctx context.Context, teamID string, definiti
 		if err != nil {
 			return err
 		}
+		var records []ontology.Record
 		for _, record := range heads {
 			if record.Definition == nil || record.Retired || record.Kind != definition.Kind {
 				continue
 			}
-			view, err := s.currentView(tx, fence, record)
-			if err != nil {
-				return err
-			}
-			result = append(result, view)
+			records = append(records, record)
 		}
-		return nil
+		result, err = s.organizationViews(tx, fence, records)
+		return err
 	})
 	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
 	return result, err
@@ -115,18 +113,17 @@ func (s *Store) organizationContext(tx *gorm.DB, fence scope, handles []ontology
 	if len(records) > ontology.MaxDependencyRecords {
 		return result, ontology.ErrContextBound
 	}
+	result.Records, err = s.organizationViews(tx, fence, records)
+	if err != nil {
+		return result, err
+	}
 	forced := []string{}
-	for _, record := range records {
-		view, err := s.currentView(tx, fence, record)
-		if err != nil {
-			return result, err
+	for _, view := range result.Records {
+		if view.Current && view.Assignment != nil {
+			forced = append(forced, view.Assignment.DefinitionID)
 		}
-		result.Records = append(result.Records, view)
-		if view.Current && record.Assignment != nil {
-			forced = append(forced, record.Assignment.DefinitionID)
-		}
-		if record.Override != nil && record.Override.DefinitionID != "" {
-			forced = append(forced, record.Override.DefinitionID)
+		if view.Override != nil && view.Override.DefinitionID != "" {
+			forced = append(forced, view.Override.DefinitionID)
 		}
 	}
 	result.Candidates, err = s.organizationVocabulary(tx, fence, result.Sources, forced)
@@ -138,13 +135,15 @@ func (s *Store) organizationContext(tx *gorm.DB, fence scope, handles []ontology
 }
 
 func organizationSources(tx *gorm.DB, fence scope, handles []ontology.SourceHandle) ([]ontology.SourceSnapshot, error) {
+	snapshots, err := readSources(tx, fence, handles)
+	if err != nil {
+		return nil, err
+	}
 	result := make([]ontology.SourceSnapshot, 0, len(handles))
 	for _, handle := range handles {
-		snapshot, err := readSource(tx, fence, handle)
-		if errors.Is(err, ontology.ErrSourceStale) {
+		snapshot := snapshots[handle]
+		if !snapshot.Eligible || snapshot.SourceHandle != handle {
 			snapshot = ontology.SourceSnapshot{SourceHandle: handle, TeamID: fence.TeamID, SpaceID: fence.SpaceID, Generation: fence.Generation, State: map[string]string{}}
-		} else if err != nil {
-			return nil, err
 		}
 		result = append(result, snapshot)
 	}
@@ -211,22 +210,30 @@ func (s *Store) organizationVocabulary(tx *gorm.DB, fence scope, sources []ontol
 		if closeErr != nil {
 			return nil, closeErr
 		}
-		for _, candidate := range candidates {
+		for offset := 0; offset < len(candidates); {
 			if examined == ontology.MaxDependencyRecords {
 				return nil, ontology.ErrContextBound
 			}
-			examined++
-			after = candidate
-			view, err := s.currentView(tx, fence, candidate.record)
+			end := min(len(candidates), offset+ontology.MaxVocabularyCandidates-len(result), offset+ontology.MaxDependencyRecords-examined)
+			records := make([]ontology.Record, 0, end-offset)
+			for _, candidate := range candidates[offset:end] {
+				records = append(records, candidate.record)
+			}
+			views, err := s.organizationViews(tx, fence, records)
 			if err != nil {
 				return nil, err
 			}
-			if view.Current {
-				result = append(result, view)
-				if len(result) == ontology.MaxVocabularyCandidates {
-					return result, nil
+			for i, view := range views {
+				examined++
+				after = candidates[offset+i]
+				if view.Current {
+					result = append(result, view)
+					if len(result) == ontology.MaxVocabularyCandidates {
+						return result, nil
+					}
 				}
 			}
+			offset = end
 		}
 		if len(candidates) < limit {
 			return result, nil
@@ -374,12 +381,16 @@ func (s *Store) organizationCurrent(tx *gorm.DB, fence scope, receipt ontology.O
 }
 
 func (s *Store) organizationInputsCurrent(tx *gorm.DB, fence scope, receipt ontology.OrganizationReceipt) (bool, error) {
+	handles := make([]ontology.SourceHandle, 0, len(receipt.Sources))
 	for _, dependency := range receipt.Sources {
-		sources, err := organizationSources(tx, fence, []ontology.SourceHandle{dependency.SourceHandle})
-		if err != nil {
-			return false, err
-		}
-		fingerprint, err := ontology.SourceFingerprint(sources[0])
+		handles = append(handles, dependency.SourceHandle)
+	}
+	sources, err := organizationSources(tx, fence, handles)
+	if err != nil {
+		return false, err
+	}
+	for i, dependency := range receipt.Sources {
+		fingerprint, err := ontology.SourceFingerprint(sources[i])
 		if err != nil {
 			return false, err
 		}
@@ -398,25 +409,25 @@ func (s *Store) organizationInputsCurrent(tx *gorm.DB, fence scope, receipt onto
 	if err != nil {
 		return false, err
 	}
+	var records []ontology.Record
 	for _, dependency := range receipt.Dependencies {
 		record, ok := catalog[dependency.ID]
 		if !ok || record.Version != dependency.Version || record.Retired {
 			return false, nil
 		}
-		view, err := s.currentView(tx, fence, record)
-		if errors.Is(err, ontology.ErrContextBound) {
-			return false, nil
-		}
-		if err != nil {
-			return false, err
-		}
+		records = append(records, record)
+	}
+	views, err := s.organizationViews(tx, fence, records)
+	if errors.Is(err, ontology.ErrContextBound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	for _, view := range views {
 		if !view.Current {
 			return false, nil
 		}
-	}
-	handles := []ontology.SourceHandle{}
-	for _, source := range receipt.Sources {
-		handles = append(handles, source.SourceHandle)
 	}
 	contextData, err := s.organizationContext(tx, fence, handles)
 	if errors.Is(err, ontology.ErrContextBound) {
