@@ -40,10 +40,16 @@ func TestOntologyMaintenanceParallelSchedulerMixedTurns(t *testing.T) {
 				var releaseOnce, firstOnce sync.Once
 				release := func() { releaseOnce.Do(func() { close(gate) }) }
 				entered := make(chan struct{}, 100)
-				provider := schedulerProvider(m, f, entered, gate)
+				provider := schedulerProvider(m, f, entered, nil)
+				blockedProvider := schedulerProvider(m, f, entered, gate)
 				service, _ := schedulerFixtureService(t, f, config, func(request assessment.Request, response *assessment.Response) {
-					firstOnce.Do(func() { close(firstProvider) })
-					provider(request, response)
+					first := false
+					firstOnce.Do(func() { first = true; close(firstProvider) })
+					if first {
+						blockedProvider(request, response)
+					} else {
+						provider(request, response)
+					}
 				})
 				projectionEntered := make(chan struct{}, 1)
 				projections, _ := schedulerProjections(f, config, func(ctx context.Context, _ community.TopicProjectionBatch) error {
