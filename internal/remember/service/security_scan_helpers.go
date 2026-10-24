@@ -16,7 +16,8 @@ var (
 	prohibitionBreakPattern        = regexp.MustCompile(`(?i)\b(?:but|instead|then|however|except|unless|nevertheless)\b`)
 	reportedInstructionPattern     = regexp.MustCompile(`(?is)^[[:alpha:]][[:alpha:]'[:space:]-]{1,100}[[:space:]]+(?:quoted|quotes|reported|reports|described|describes|cited|cites|gives|gave|uses|used)\b[[:space:]]*`)
 	attackExamplePattern           = regexp.MustCompile(`(?is)^[^,.!?;\n]{0,80}\bas[[:space:]]+(?:an?[[:space:]]+)?(?:example|attack|malicious|prohibited)\b`)
-	reportedExecutionTargetPattern = regexp.MustCompile(`(?i)^[a-z][a-z-]{1,30}[[:space:]]+(?:(?:to|on|with|out|according|as|what)[[:space:]]+){0,3}(?:(?:the|these|those|that|this|above|below|quoted|reported|its)[[:space:]]+)*(?:instructions?|commands?|steps?|requests?|directions?|it|them|this|that)\b`)
+	reportedExecutionClausePattern = regexp.MustCompile(`(?i)[.!?;,\r\n]|\b(?:and|or|so|but|then|however|instead)\b`)
+	reportedExecutionTargetPattern = regexp.MustCompile(`(?i)^[a-z][a-z-]{1,30}[[:space:]]+(?:(?:to|on|with|out|according|as|what)[[:space:]]+){0,3}(?:(?:the|these|those|that|this|above|below|quoted|reported|its)[[:space:]]+)*(?:instructions?|commands?|steps?|requests?|directions?|(?:quoted|reported)[[:space:]]+(?:text|content)|it|them|this|that)\b`)
 	outputMetricPrefixPattern      = regexp.MustCompile(`(?i)(?:[0-9][0-9,.]*|\b(?:input|generation|completion|response|budget|allowance|quota|count|counts|usage|includes|included|measures|measured|consumed|remaining|available))[[:space:]]+$`)
 	outputMetricSuffixPattern      = regexp.MustCompile(`(?i)^output[[:space:]]+tokens?\b(?:[[:space:]]+(?:are|were|is|was|cost|costs|remain|count|measure)\b|[[:space:]]*:[[:space:]]*[0-9])`)
 	outputTokenNounPattern         = regexp.MustCompile(`(?i)^output[[:space:]]+tokens?$`)
@@ -27,7 +28,7 @@ func submissionInstructionIsData(text string, location []int, rule string) bool 
 	start, end := location[0], location[1]
 	clauseStart := strings.LastIndexAny(text[:start], ".!?;\r\n") + 1
 	prefix := strings.TrimLeft(text[clauseStart:start], " \t>#:*-\\\"'`([{<‘’“”")
-	if len(prefix) <= 256 && !prohibitionBreakPattern.MatchString(text[start:end]) && (prohibitionPrefixPattern.MatchString(prefix) ||
+	if len(prefix) <= 256 && !strings.ContainsAny(text[start:end], ".!?;\r\n") && !prohibitionBreakPattern.MatchString(text[start:end]) && (prohibitionPrefixPattern.MatchString(prefix) ||
 		prohibitionClausePattern.MatchString(prefix) && prohibitionJoinPattern.MatchString(prefix) && !prohibitionBreakPattern.MatchString(prefix) &&
 			(secretExtractionPattern.MatchString(prefix) || toolExfiltrationPattern.MatchString(prefix) || overridePattern.MatchString(prefix))) {
 		return true
@@ -60,7 +61,7 @@ func reportedInstructionIsData(prefix, matched, suffix, preceding string) bool {
 }
 
 func reportedExecutionIsDirective(text string) bool {
-	for _, clause := range strings.FieldsFunc(text, func(value rune) bool { return strings.ContainsRune(".!?;,\r\n", value) }) {
+	for _, clause := range reportedExecutionClausePattern.Split(text, -1) {
 		clause = strings.Trim(strings.ToLower(clause), " \t>#:*-\\\"'`([{<‘’“”")
 		words := strings.Fields(clause)
 		for len(words) > 0 && (words[0] == "please" || words[0] == "kindly" || words[0] == "now" || words[0] == "then" || words[0] == "instead") {
