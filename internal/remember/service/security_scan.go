@@ -40,8 +40,8 @@ var (
 	markupPattern      = regexp.MustCompile(`(?is)<!--|<\s*(?:script|iframe|object|embed|meta|svg)\b|\bon[a-z]{3,32}\s*=`)
 	controlRolePattern = regexp.MustCompile(`(?im)(?:^|[\r\n])[[:space:]]*(?:system|developer)[[:space:]]*:|<\|[[:space:]]*(?:system|developer)[[:space:]]*\|>|<<[[:space:]]*(?:sys|system|developer)[[:space:]]*>>`)
 
-	secretExtractionPattern    = regexp.MustCompile(`(?is)\b(?:reveal|show|send|dump|print|exfiltrate|return)\b.{0,100}\b(?:system[[:space:]_-]*prompt|hidden[[:space:]_-]*instructions?|environment[[:space:]_-]*variables?|env|api[[:space:]_-]*keys?|credentials?|secrets?|cookies?|tokens?|passwords?|passcodes?|private[[:space:]_-]*keys?|authorization[[:space:]_-]*headers?)\b|\b(?:please[[:space:]_-]+)?output\b[[:space:]_-]+(?:(?:all|the|your|any|raw|secret|hidden|system|environment|api|access|auth|session|credential|cookie|token)[[:space:]_-]+)*(?:system[[:space:]_-]*prompt|hidden[[:space:]_-]*instructions?|environment[[:space:]_-]*variables?|env|api[[:space:]_-]*keys?|credentials?|secrets?|cookies?|tokens?|passwords?|passcodes?|private[[:space:]_-]*keys?|authorization[[:space:]_-]*headers?)\b`)
-	toolExfiltrationPattern    = regexp.MustCompile(`(?is)\b(?:use[[:space:]_-]*(?:your[[:space:]_-]*)?tools?|curl|wget|fetch|post|send|upload|exfiltrate|transmit|make[[:space:]_-]*(?:an[[:space:]_-]*)?(?:http[[:space:]_-]*|network[[:space:]_-]*)?request|call[[:space:]_-]*(?:an[[:space:]_-]*)?api)\b.{0,180}(?:https?://|webhook|endpoint|external|environment[[:space:]_-]*variables?|env|api[[:space:]_-]*keys?|credentials?|secrets?|cookies?|tokens?)`)
+	secretExtractionPattern    = regexp.MustCompile(`(?is)\b(?:reveal|show|send|dump|print|exfiltrate|return)\b.{0,100}?\b(?:system[[:space:]_-]*prompt|hidden[[:space:]_-]*instructions?|environment[[:space:]_-]*variables?|env|api[[:space:]_-]*keys?|credentials?|secrets?|cookies?|tokens?|passwords?|passcodes?|private[[:space:]_-]*keys?|authorization[[:space:]_-]*headers?)\b|\b(?:please[[:space:]_-]+)?output\b[[:space:]_-]+(?:(?:all|the|your|any|raw|secret|hidden|system|environment|api|access|auth|session|credential|cookie|token)[[:space:]_-]+)*(?:system[[:space:]_-]*prompt|hidden[[:space:]_-]*instructions?|environment[[:space:]_-]*variables?|env|api[[:space:]_-]*keys?|credentials?|secrets?|cookies?|tokens?|passwords?|passcodes?|private[[:space:]_-]*keys?|authorization[[:space:]_-]*headers?)\b`)
+	toolExfiltrationPattern    = regexp.MustCompile(`(?is)\b(?:use[[:space:]_-]*(?:your[[:space:]_-]*)?tools?|curl|wget|fetch|post|send|upload|exfiltrate|transmit|make[[:space:]_-]*(?:an[[:space:]_-]*)?(?:http[[:space:]_-]*|network[[:space:]_-]*)?request|call[[:space:]_-]*(?:an[[:space:]_-]*)?api)\b.{0,180}?(?:https?://|webhook|endpoint|external|environment[[:space:]_-]*variables?|env|api[[:space:]_-]*keys?|credentials?|secrets?|cookies?|tokens?)`)
 	toolDirectiveSuffixPattern = regexp.MustCompile(`(?is)(?:\b(?:please|kindly)|\b(?:can|could|would|will|shall|may)[[:space:]]+you|\byou[[:space:]]+(?:must|should|need(?:[[:space:]]+to)?|are[[:space:]]+to)|\b(?:i|we)[[:space:]]+(?:need|want|require)[[:space:]]+you(?:[[:space:]]+to)?|\b(?:try|attempt)[[:space:]]+to|\bassistant[,:]?)\s*$`)
 	toolDirectiveStartPattern  = regexp.MustCompile(`(?is)(?:^|[\r\n.!?])[[:space:]>#*\-]*$`)
 	identifierHexPattern       = regexp.MustCompile(`(?i)^(?:sha(?:1|224|256|384|512):)?(?:[0-9a-f]{32}|[0-9a-f]{40}|[0-9a-f]{56}|[0-9a-f]{64}|[0-9a-f]{96}|[0-9a-f]{128})$`)
@@ -502,7 +502,7 @@ func encodedEvidenceSignals(view securityView) []SubmissionSecuritySignal {
 		if commonIdentifierCandidate(candidate) {
 			continue
 		}
-		if looksLikeNaturalEvidenceToken(candidate) {
+		if looksLikeNaturalEvidenceToken(candidate) || readableTechnicalIdentifierCandidate(candidate) {
 			continue
 		}
 		candidateCount++
@@ -681,7 +681,7 @@ func foldedBase64Location(content string) []int {
 			}
 		}
 		part := content[match[0]:match[1]]
-		if len(part) >= submissionSecurityMinFoldedBase64Part && !commonIdentifierCandidate(part) && !looksLikeNaturalEvidenceToken(part) {
+		if len(part) >= submissionSecurityMinFoldedBase64Part && !commonIdentifierCandidate(part) && !looksLikeNaturalEvidenceToken(part) && !readableTechnicalIdentifierCandidate(part) {
 			if len(parts) == 0 {
 				start = match[0]
 			}
@@ -840,6 +840,21 @@ func looksLikeTechnicalEvidenceToken(value string) bool {
 	return hasDigit || hasUpper && hasLower
 }
 
+func securityMatchHasNoHiddenControls(view, normalized securityView, location []int) bool {
+	start := utf8.RuneCountInString(normalized.text[:location[0]])
+	end := utf8.RuneCountInString(normalized.text[:location[1]])
+	if start >= len(normalized.spans) || end <= start || end > len(normalized.spans) {
+		return false
+	}
+	runes := []rune(view.text)
+	for _, value := range runes[normalized.spans[start].start:normalized.spans[end-1].end] {
+		if hiddenControlRune(value) {
+			return false
+		}
+	}
+	return true
+}
+
 func dangerousSubmissionSignals(view securityView, decoded bool) []SubmissionSecuritySignal {
 	if view.text == "" {
 		return nil
@@ -859,7 +874,12 @@ func dangerousSubmissionSignals(view securityView, decoded bool) []SubmissionSec
 		{toolExfiltrationPattern, "tool_exfiltration", "tool_exfiltration", "critical"},
 	} {
 		for _, location := range pattern.pattern.FindAllStringIndex(normalized.text, -1) {
-			if pattern.rule == "tool_exfiltration" && !toolExfiltrationIsDirective(normalized.text, location[0]) {
+			if !decoded && securityMatchHasNoHiddenControls(view, normalized, location) &&
+				(pattern.rule == "instruction_override" || pattern.rule == "prompt_secret_extraction" || pattern.rule == "tool_exfiltration") &&
+				submissionInstructionIsData(normalized.text, location, pattern.rule) {
+				continue
+			}
+			if pattern.rule == "tool_exfiltration" && !toolExfiltrationIsDirective(normalized.text, location[0]) && !reportedExecutionIsDirective(normalized.text) {
 				continue
 			}
 			kind := pattern.kind

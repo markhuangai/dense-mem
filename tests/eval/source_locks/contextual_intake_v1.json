@@ -1,0 +1,22 @@
+{
+  "version": "contextual_intake_v1",
+  "cases": 20,
+  "security_cases": 12,
+  "conflict_cases": 8,
+  "repetitions": 3,
+  "model": "dense-mem-testing",
+  "generator_sha256": "3993f411dee9427e4a8f1a48da8ad53f33c61ba2bca0deca3a7a4bda8d0672de",
+  "catalog_sha256": "5900aeb353c1ceeff0cf3512672007309bf2ea11aa0e25655d89e1e6ce799b3e",
+  "cohort_sha256": "4e049ae0edcbd91b56ea6ab2a26d5dd55d8209021d1b8ef31a7c8bed52fd1d8c",
+  "witness_provenance": {
+    "quota_request_sha256": "2ea015c44be211b7e31354aa0370217e0254216eac251ebcc993a3cb31c43ab9",
+    "identifier_request_sha256": "f7e987b863ad26f3209622589cb73ba105edff2f7a5c969c0099639439926258",
+    "observation_sha256": "53ec2c3eddd7c89c2a8b9e6e9dfecc77c3575ba7335405a8e1fff1014e7556d0",
+    "issues": [
+      592,
+      598,
+      606,
+      609
+    ]
+  }
+}

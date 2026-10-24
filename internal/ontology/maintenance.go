@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -34,6 +35,7 @@ type MaintenanceDependencies struct {
 	Audit           MaintenanceAuditPreparer
 	Now             func() time.Time
 	Projections     ProjectionRunner
+	Logger          *slog.Logger
 }
 
 type ProjectionRunner interface {
@@ -235,6 +237,19 @@ func (s *MaintenanceService) executeBatch(ctx context.Context, work maintenanceW
 	organizer := s.deps.Organizer(work.model, accounting)
 	assessmentCtx := observability.WithAIOperation(claimCtx, observability.AIOperationOntologyOrganization, len(claim.Sources))
 	result, runErr = organizer.Organize(assessmentCtx, claim.TeamID, contract.OrganizationInput{OperationKey: "maintenance:" + claim.ID, Sources: claim.Sources})
+	if s.deps.Logger != nil {
+		for _, attempt := range result.Attempts {
+			fields := []slog.Attr{slog.String("batch_id", claim.ID), slog.String("run_id", claim.RunID),
+				slog.String("assessment_id", result.AssessmentID), slog.Int("attempt", attempt.Number),
+				slog.String("failure_code", attempt.FailureCode), slog.Bool("reported_usage_available", attempt.ReportedUsageAvailable)}
+			if attempt.Diagnostics.Valid() {
+				fields = append(fields, slog.Any("diagnostics", attempt.Diagnostics))
+			} else {
+				fields = append(fields, slog.Bool("diagnostics_invalid", true))
+			}
+			s.deps.Logger.LogAttrs(ctx, slog.LevelInfo, "ontology maintenance assessment attempt", fields...)
+		}
+	}
 	return runErr
 }
 

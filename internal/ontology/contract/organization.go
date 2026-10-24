@@ -8,6 +8,7 @@ import (
 	"unicode"
 
 	"github.com/google/uuid"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
 )
 
 const (
@@ -42,14 +43,15 @@ type AmbiguousComparison struct {
 }
 
 type AssessmentAttempt struct {
-	Number                 int    `json:"number"`
-	EstimatedInputTokens   int    `json:"estimated_input_tokens"`
-	EstimatedOutputTokens  int    `json:"estimated_output_tokens"`
-	ReportedInputTokens    int    `json:"reported_input_tokens"`
-	ReportedOutputTokens   int    `json:"reported_output_tokens"`
-	ReportedTotalTokens    int    `json:"reported_total_tokens"`
-	ReportedUsageAvailable bool   `json:"reported_usage_available"`
-	FailureCode            string `json:"failure_code,omitempty"`
+	Number                 int                            `json:"number"`
+	EstimatedInputTokens   int                            `json:"estimated_input_tokens"`
+	EstimatedOutputTokens  int                            `json:"estimated_output_tokens"`
+	ReportedInputTokens    int                            `json:"reported_input_tokens"`
+	ReportedOutputTokens   int                            `json:"reported_output_tokens"`
+	ReportedTotalTokens    int                            `json:"reported_total_tokens"`
+	ReportedUsageAvailable bool                           `json:"reported_usage_available"`
+	FailureCode            string                         `json:"failure_code,omitempty"`
+	Diagnostics            *modelprovider.CallDiagnostics `json:"diagnostics,omitempty"`
 }
 
 type OrganizationResult struct {
@@ -204,7 +206,7 @@ func ValidateOrganizationReceipt(receipt OrganizationReceipt) error {
 		}
 	}
 	for i, attempt := range receipt.Result.Attempts {
-		if attempt.Number != i+1 || attempt.EstimatedInputTokens < 0 || attempt.EstimatedOutputTokens < 0 || attempt.ReportedInputTokens < 0 || attempt.ReportedOutputTokens < 0 || attempt.ReportedTotalTokens < 0 || len(attempt.FailureCode) > 128 {
+		if attempt.Number != i+1 || attempt.EstimatedInputTokens < 0 || attempt.EstimatedOutputTokens < 0 || attempt.ReportedInputTokens < 0 || attempt.ReportedOutputTokens < 0 || attempt.ReportedTotalTokens < 0 || len(attempt.FailureCode) > 128 || !attempt.Diagnostics.Valid() {
 			return ErrInvalid
 		}
 	}

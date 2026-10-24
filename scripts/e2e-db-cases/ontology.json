@@ -846,6 +846,20 @@
       "run": "^TestOntologyMaintenanceReadMeasurement$",
       "phase": "precheck",
       "source": "internal/ontology/postgres/organization_read_measurement_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceAttemptDiagnosticsPersistenceAndFailureBoundaries",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceAttemptDiagnosticsPersistenceAndFailureBoundaries$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_diagnostics_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceAttemptDiagnosticsOperatorLogIsBounded",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceAttemptDiagnosticsOperatorLogIsBounded$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_diagnostics_integration_test.go"
     }
   ]
 }

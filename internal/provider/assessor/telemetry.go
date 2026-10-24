@@ -3,6 +3,8 @@ package assessorprovider
 import (
 	"context"
 
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
+
 	"github.com/markhuangai/dense-mem/internal/observability"
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
@@ -14,6 +16,7 @@ type openAIStructuredChatResult struct {
 	Usage *openAIVerifierUsage
 	// ReportedUsage retains raw provider values for token-budget enforcement.
 	ReportedUsage *openAIVerifierUsage
+	Diagnostics   *modelprovider.CallDiagnostics
 }
 
 func openAIVerifierUsageSupportsPricing(usage *openAIVerifierUsage) bool {
