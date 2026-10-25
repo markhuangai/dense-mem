@@ -44,7 +44,8 @@ func (s *Store) recoverMaintenanceBatches(ctx context.Context, now time.Time) er
 		 JOIN memory_spaces AS space ON space.team_id=batch.team_id AND space.id=batch.shared_space_id AND space.generation=batch.space_generation AND space.lifecycle_state='active'
 		 JOIN teams AS team ON team.id=batch.team_id AND team.status='active' AND team.deleted_at IS NULL
 		 WHERE batch.status='running' AND batch.lease_until>? AND batch.lease_until>clock_timestamp()
-		 AND COALESCE(assessment.body->'result'->>'failure_code','')='' AND assessment.body->'result'->>'current'='true'
+		 AND ((COALESCE(assessment.body->'result'->>'failure_code','')='' AND assessment.body->'result'->>'current'='true')
+		 OR (COALESCE(assessment.body->'result'->>'failure_code','')<>'' AND assessment.body->'result'->>'current'='false'))
 		 AND NOT EXISTS(SELECT 1 FROM ontology_maintenance_attempts AS attempt WHERE attempt.batch_id=batch.batch_id AND attempt.reconciled_at IS NULL)
 		 ORDER BY batch.created_at,batch.batch_id LIMIT ? FOR UPDATE OF batch SKIP LOCKED`, now, ontology.MaintenancePageSize).Scan(&batches).Error; err != nil {
 			return err
@@ -74,7 +75,7 @@ func (s *Store) recoverMaintenanceBatches(ctx context.Context, now time.Time) er
 			if !locked {
 				continue
 			}
-			if err := completeMaintenanceBatch(tx, claim, receipt.Result, "", now, &phase); err != nil {
+			if err := completeMaintenanceBatch(tx, claim, receipt.Result, receipt.Result.FailureCode, now, &phase); err != nil {
 				return err
 			}
 		}
