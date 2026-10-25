@@ -19,8 +19,8 @@
     "cohort_sha256": "4e049ae0edcbd91b56ea6ab2a26d5dd55d8209021d1b8ef31a7c8bed52fd1d8c",
     "model": "dense-mem-testing",
     "base_source_sha": "41b920ccbf24686b46180437de6e0f3b2fdc5250",
-    "candidate_source_sha": "9faf40a51a520ef85b6e66b2747db685c3e6607b",
-    "candidate_source_state_sha256": "0855a7ab803dd9c58bc1110518e151ddfdf224b79281b49af4b83ad52a92b49a",
+    "candidate_source_sha": "c0331d4a944f3f4392fef90d6e0ea0e54ba8f6f1",
+    "candidate_source_state_sha256": "5bad9582ddd480c82085eeaeda39958dc43f7e5f9c7134d362fa3d8161c49f2f",
     "repetitions": 3,
     "cases_per_repetition": 20,
     "base_passed": [
@@ -38,8 +38,8 @@
   "source_binding": {
     "base_source_state_sha256": "e608eb31a3c1b8da19de53db4bec52a2df06e61af444653b2f487ffadd92194e",
     "candidate_built_from_uncommitted_source": true,
-    "candidate_parent_sha": "9faf40a51a520ef85b6e66b2747db685c3e6607b",
-    "candidate_source_state_sha256": "0855a7ab803dd9c58bc1110518e151ddfdf224b79281b49af4b83ad52a92b49a",
+    "candidate_parent_sha": "c0331d4a944f3f4392fef90d6e0ea0e54ba8f6f1",
+    "candidate_source_state_sha256": "5bad9582ddd480c82085eeaeda39958dc43f7e5f9c7134d362fa3d8161c49f2f",
     "tested_manifest_files": 2126,
     "publication_fence": "The tested manifest is retained for publication verification; only this compact evidence metadata is changed after the successful run. The final commit binding is verified in the delivery receipt.",
     "post_comparison_changes": [
@@ -50,10 +50,10 @@
     ],
     "production_images": {
       "base": "sha256:a9fe17d68d3a54343887bdfb5e8662546372974fb3b866f2fb51b6400aa24677",
-      "candidate": "sha256:534cc8332c418ae193ce3ea84ec60584b53dd17e64232d8b1a1a2702b807de67"
+      "candidate": "sha256:cd0a540fd4b747dcdda44ff8f17004d7e90d913d1ecd3de9d823801a75547390"
     },
     "immutable_baseline_reused": true,
-    "review_regressions": "Complete archiving statements stay data; quoted execution references with trailing modifiers or embedded documentation execution remain rejected. Removed combining marks retain obfuscation rejection. Scanner, batch/proposal and production-entry regressions cover these witnesses without changing the frozen cohort."
+    "review_regressions": "Unquoted reported spans use the existing clause grammar for punctuation, conjunction and contrastive boundaries without losing source word boundaries. Single-clause unquoted reports and compound quoted reports remain data. Scanner, batch/proposal and production-entry regressions cover these witnesses without changing the frozen cohort."
   },
   "providers": {
     "assessment_model": "dense-mem-testing",
@@ -117,8 +117,8 @@
   },
   "successful_report_sha256": {
     "base-durable-complete.json": "4b852e5f4e867303e044e27eb852c8c1a01d7f4528624675b7ccb22a2ed03c28",
-    "candidate-storagefix-20261025-complete.json": "3145f3e5aa553cf786405aecba05690f5702d76a40cf5406897e31036d98f893",
-    "comparison-storagefix-20261025.json": "552ec7490b6ee8137f6a7378cc387bebb66c67211a4d76293988ed8f47843166"
+    "candidate-unquotedfix-20261025-complete.json": "70d9a53d373f6384de46742e8da636abde0c790e7da6ea7ded99c007e3a3632c",
+    "comparison-unquotedfix-20261025.json": "adf94f84b36bbc4637714deb13d571346cddc9b907a135ed25753b9c284c85db"
   },
   "retained_incomplete_attempts": [
     {
@@ -164,9 +164,9 @@
       "failure": "Embedding phase reached the existing 10-second bound after 43 passing judgments; request_timeout, not assessment timeout."
     }
   ],
-  "recovery": "The storage-reference-fix candidate completed all 60 frozen judgments on a fresh disposable database. The immutable complete updated-main baseline was reused. Inputs, judgments, model/provider limits and runtime retries were unchanged. The same local fresh-connection preload added no HTTP retries. Historical successful comparisons and all incomplete attempts remain separately retained.",
+  "recovery": "The unquoted-clause-fix candidate completed all 60 frozen judgments on a fresh disposable database. The immutable complete updated-main baseline was reused. Inputs, judgments, model/provider limits and runtime retries were unchanged. The same local fresh-connection preload added no HTTP retries. Historical successful comparisons and all incomplete attempts remain separately retained.",
   "remaining_delivery_gates_at_evidence_creation": [
-    "Publish tested scanner/storage-reference fixes and verify exact tree binding",
+    "Publish tested scanner/unquoted-clause fixes and verify exact tree binding",
     "Renew exact-pushed-source Development E2E for all five scenarios and six PostgreSQL shards",
     "New-head automated reviews and full Repository CI including strict coverage and Production image E2E"
   ],
@@ -547,5 +547,63 @@
       "comparison-reviewfix-20261025.json": "b7cb194e20fed0d974b70dd0d52f3d46cc764bfde35621e60a6cadd1e7ef1351"
     },
     "recovery": "The reference-fix candidate completed all 60 frozen judgments on a fresh disposable database. The immutable complete updated-main baseline was reused. Inputs, judgments, model/provider limits and runtime retries were unchanged. The same local fresh-connection preload added no HTTP retries. Historical successful comparisons and all incomplete attempts remain separately retained."
+  },
+  "historical_comparison_before_unquoted_fixes": {
+    "comparison": {
+      "cohort": "contextual_intake_v1",
+      "cohort_sha256": "4e049ae0edcbd91b56ea6ab2a26d5dd55d8209021d1b8ef31a7c8bed52fd1d8c",
+      "model": "dense-mem-testing",
+      "base_source_sha": "41b920ccbf24686b46180437de6e0f3b2fdc5250",
+      "candidate_source_sha": "9faf40a51a520ef85b6e66b2747db685c3e6607b",
+      "candidate_source_state_sha256": "0855a7ab803dd9c58bc1110518e151ddfdf224b79281b49af4b83ad52a92b49a",
+      "repetitions": 3,
+      "cases_per_repetition": 20,
+      "base_passed": [
+        10,
+        10,
+        13
+      ],
+      "candidate_passed": [
+        20,
+        20,
+        20
+      ],
+      "passed": true
+    },
+    "source_binding": {
+      "base_source_state_sha256": "e608eb31a3c1b8da19de53db4bec52a2df06e61af444653b2f487ffadd92194e",
+      "candidate_built_from_uncommitted_source": true,
+      "candidate_parent_sha": "9faf40a51a520ef85b6e66b2747db685c3e6607b",
+      "candidate_source_state_sha256": "0855a7ab803dd9c58bc1110518e151ddfdf224b79281b49af4b83ad52a92b49a",
+      "tested_manifest_files": 2126,
+      "publication_fence": "The tested manifest is retained for publication verification; only this compact evidence metadata is changed after the successful run. The final commit binding is verified in the delivery receipt.",
+      "post_comparison_changes": [
+        {
+          "path": "tests/eval/baselines/contextual_intake_v1_evidence.json",
+          "reason": "Record complete reference-fix comparison and preserve previous and incomplete attempts."
+        }
+      ],
+      "production_images": {
+        "base": "sha256:a9fe17d68d3a54343887bdfb5e8662546372974fb3b866f2fb51b6400aa24677",
+        "candidate": "sha256:534cc8332c418ae193ce3ea84ec60584b53dd17e64232d8b1a1a2702b807de67"
+      },
+      "immutable_baseline_reused": true,
+      "review_regressions": "Complete archiving statements stay data; quoted execution references with trailing modifiers or embedded documentation execution remain rejected. Removed combining marks retain obfuscation rejection. Scanner, batch/proposal and production-entry regressions cover these witnesses without changing the frozen cohort."
+    },
+    "candidate_verification": {
+      "samples": 60,
+      "stored_batches_with_exact_content": 48,
+      "unsafe_batches_without_stored_evidence_or_provider_dispatch": 12,
+      "matching_and_changed_request_checks": 48,
+      "cross_team_isolation_checks": 48,
+      "genuine_conflicts_with_exact_opposing_citations": 9,
+      "all_judgments_passed": true
+    },
+    "successful_report_sha256": {
+      "base-durable-complete.json": "4b852e5f4e867303e044e27eb852c8c1a01d7f4528624675b7ccb22a2ed03c28",
+      "candidate-storagefix-20261025-complete.json": "3145f3e5aa553cf786405aecba05690f5702d76a40cf5406897e31036d98f893",
+      "comparison-storagefix-20261025.json": "552ec7490b6ee8137f6a7378cc387bebb66c67211a4d76293988ed8f47843166"
+    },
+    "recovery": "The storage-reference-fix candidate completed all 60 frozen judgments on a fresh disposable database. The immutable complete updated-main baseline was reused. Inputs, judgments, model/provider limits and runtime retries were unchanged. The same local fresh-connection preload added no HTTP retries. Historical successful comparisons and all incomplete attempts remain separately retained."
   }
 }

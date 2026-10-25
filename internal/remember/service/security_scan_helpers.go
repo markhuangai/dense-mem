@@ -58,7 +58,8 @@ func reportedInstructionIsData(prefix, matched, suffix, preceding string) bool {
 				!reportedExecutionIsDirective(preceding+prefix[:frame[1]]+suffix[closeAt+len(pair[1]):])
 		}
 	}
-	return !strings.ContainsAny(tail, ",;:") && !prohibitionBreakPattern.MatchString(tail) && attackExamplePattern.MatchString(suffix) &&
+	reported := prefix[frame[1]:] + matched
+	return !strings.Contains(reported, ":") && !reportedExecutionClausePattern.MatchString(reported) && !prohibitionBreakPattern.MatchString(reported) && attackExamplePattern.MatchString(suffix) &&
 		!reportedExecutionIsDirective(preceding+prefix[:frame[1]]+suffix)
 }
 
