@@ -267,6 +267,7 @@ try {
     if (run.status === "completed") assert.equal(run.failure_code || "", "", "completed runs must have no current failure reason");
   }
   await finalizationRecovery(shared.api_key);
+  await finalizationRecovery(shared.api_key, "provider_response_invalid");
   const diagnosticAttempts = JSON.parse(postgresQuery(`SELECT COALESCE(jsonb_agg(attempt),'[]')::text FROM ontology_assessments AS assessment CROSS JOIN LATERAL jsonb_array_elements(assessment.body->'result'->'attempts') AS attempt WHERE assessment.team_id=${sqlLiteral(teamID)}::uuid`));
   assert(diagnosticAttempts.length > 0, "ontology must retain actual provider attempt diagnostics");
   assert(diagnosticAttempts.some((attempt) => attempt.failure_code === "response_invalid"), "the adverse path must retain validation failure diagnostics");
@@ -372,11 +373,12 @@ async function terminalRun(id) {
   assert.fail(`maintenance run ${id} did not finish`);
 }
 
-async function finalizationRecovery(key) {
+async function finalizationRecovery(key, failureCode = "") {
   await control("/ontology/pause", { operation_key: randomUUID() });
   paused = true;
   await pollFinalization(() => postgresQuery(`SELECT count(*) FROM ontology_maintenance_batches WHERE team_id=${sqlLiteral(teamID)}::uuid AND status='running'`) === "0", "drain before finalization fixture");
   const evidenceID = await remember(`Atlas uses PostgreSQL for finalization recovery ${randomUUID()}.`, key);
+  await fixtureMode(failureCode ? "fail-three-then-success" : "normal");
   const canonicalBefore = canonicalFingerprints();
   const release = await finalizationBlocker();
   try {
@@ -393,7 +395,7 @@ async function finalizationRecovery(key) {
         ON assessment.team_id=batch.team_id AND assessment.shared_space_id=batch.shared_space_id AND assessment.space_generation=batch.space_generation AND assessment.operation_key='maintenance:'||batch.batch_id::text
         JOIN pg_stat_activity AS activity ON activity.datname=current_database() AND activity.wait_event='advisory' AND activity.query LIKE '%UPDATE ontology_maintenance_sources SET status=%'
         WHERE batch.team_id=${sqlLiteral(teamID)}::uuid AND batch.status='running'
-        AND COALESCE(assessment.body->'result'->>'failure_code','')='' AND assessment.body->'result'->>'current'='true'
+        AND COALESCE(assessment.body->'result'->>'failure_code','')=${sqlLiteral(failureCode)} AND assessment.body->'result'->>'current'=${sqlLiteral(String(!failureCode))}
         AND EXISTS(SELECT 1 FROM jsonb_array_elements(batch.sources) AS source WHERE source->>'id'=${sqlLiteral(evidenceID)}) LIMIT 1`);
       if (body) receipt = JSON.parse(body);
       return Boolean(receipt);
@@ -402,17 +404,28 @@ async function finalizationRecovery(key) {
     const cancellationMS = Date.now() - Date.parse(receipt.query_started_at);
     assert(cancellationMS >= 4000, "the adverse case must exercise the finalization deadline");
     assert.equal(postgresQuery(`SELECT status FROM ontology_maintenance_batches WHERE batch_id=${sqlLiteral(receipt.id)}::uuid`), "running");
-    const attempts = postgresQuery(`SELECT COALESCE(jsonb_agg(to_jsonb(attempt) ORDER BY assessment_id,attempt)::text,'[]') FROM ontology_maintenance_attempts AS attempt WHERE batch_id=${sqlLiteral(receipt.id)}::uuid`);
+    const attempts = postgresQuery(`SELECT COALESCE(jsonb_agg(to_jsonb(attempt_record) ORDER BY assessment_id,attempt)::text,'[]') FROM ontology_maintenance_attempts AS attempt_record WHERE batch_id=${sqlLiteral(receipt.id)}::uuid`);
+    const admitted = JSON.parse(attempts);
+    assert(admitted.every((attempt) => attempt.reconciled_at), "active attempts cannot be recovered");
+    if (failureCode) assert.equal(admitted.length, 3, "the failed receipt must exhaust complete-response regeneration");
+    const completedBefore = Number(postgresQuery(`SELECT completed_batches FROM ontology_maintenance_runs WHERE run_id=${sqlLiteral(receipt.run_id)}::uuid`));
     const receiptBody = postgresQuery(`SELECT md5(body::text) FROM ontology_assessments WHERE operation_key=${sqlLiteral(`maintenance:${receipt.id}`)}`);
     const started = Date.now();
     await release();
     await pollFinalization(() => postgresQuery(`SELECT status FROM ontology_maintenance_batches WHERE batch_id=${sqlLiteral(receipt.id)}::uuid`) === "completed", "automatic receipt recovery");
     assert(Date.now() < Date.parse(receipt.lease_until), "recovery must precede native lease expiry");
+    assert.equal(postgresQuery(`SELECT failure_code FROM ontology_maintenance_batches WHERE batch_id=${sqlLiteral(receipt.id)}::uuid`), failureCode);
+    assert(Number(postgresQuery(`SELECT completed_batches FROM ontology_maintenance_runs WHERE run_id=${sqlLiteral(receipt.run_id)}::uuid`)) > completedBefore, "recovery must count the completed batch");
+    if (failureCode) {
+      const outcomes = JSON.parse(postgresQuery(`SELECT jsonb_agg(jsonb_build_object('status',status,'reason',reason))::text FROM ontology_maintenance_sources WHERE team_id=${sqlLiteral(teamID)}::uuid AND assessment_id=(SELECT assessment_id FROM ontology_assessments WHERE operation_key=${sqlLiteral(`maintenance:${receipt.id}`)})`));
+      assert(outcomes?.length > 0, "failed receipt must finalize its unchanged sources");
+      assert(outcomes.every((outcome) => outcome.status === "failed" && outcome.reason === failureCode));
+    }
     assert.equal(postgresQuery(`SELECT count(*) FROM ontology_assessments WHERE operation_key=${sqlLiteral(`maintenance:${receipt.id}`)}`), "1");
     assert.equal(postgresQuery(`SELECT md5(body::text) FROM ontology_assessments WHERE operation_key=${sqlLiteral(`maintenance:${receipt.id}`)}`), receiptBody);
-    assert.equal(postgresQuery(`SELECT COALESCE(jsonb_agg(to_jsonb(attempt) ORDER BY assessment_id,attempt)::text,'[]') FROM ontology_maintenance_attempts AS attempt WHERE batch_id=${sqlLiteral(receipt.id)}::uuid`), attempts, "recovery must not dispatch or alter provider attempts");
+    assert.equal(postgresQuery(`SELECT COALESCE(jsonb_agg(to_jsonb(attempt_record) ORDER BY assessment_id,attempt)::text,'[]') FROM ontology_maintenance_attempts AS attempt_record WHERE batch_id=${sqlLiteral(receipt.id)}::uuid`), attempts, "recovery must not dispatch or alter provider attempts");
     assert.equal(canonicalFingerprints(), canonicalBefore, "ontology recovery changed canonical Knowledge");
-    console.log(JSON.stringify({ scenario: "ontology_finalization_recovery", batch_id: receipt.id, cancellation_ms: cancellationMS, recovery_ms: Date.now() - started, recovered_before_expiry: true, receipt_and_attempts_preserved: true, canonical_preserved: true }));
+    console.log(JSON.stringify({ scenario: "ontology_finalization_recovery", batch_id: receipt.id, failure_code: failureCode, cancellation_ms: cancellationMS, recovery_ms: Date.now() - started, recovered_before_expiry: true, receipt_and_attempts_preserved: true, canonical_preserved: true }));
   } finally {
     await release();
     postgresQuery("DROP TRIGGER IF EXISTS ontology_e2e_finalization_barrier ON ontology_maintenance_sources; DROP FUNCTION IF EXISTS ontology_e2e_finalization_barrier()");
