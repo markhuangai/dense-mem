@@ -2,6 +2,7 @@ package assessment
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -108,21 +109,21 @@ func Decode(raw string) (Response, error) {
 func Validate(request Request, response Response) error {
 	const shapeError = "response identity, arrays, or coverage is invalid"
 	if response.RequestID != request.RequestID {
-		return validationFailure("validate", "request_id_mismatch", "request_id", fmt.Errorf(shapeError))
+		return validationFailure("validate", "request_id_mismatch", "request_id", errors.New(shapeError))
 	}
 	for _, section := range []struct {
 		name    string
 		missing bool
 	}{{"definitions", response.Definitions == nil}, {"items", response.Items == nil}, {"equivalence", response.Equivalence == nil}} {
 		if section.missing {
-			return validationFailure("validate", "missing_array", section.name, fmt.Errorf(shapeError))
+			return validationFailure("validate", "missing_array", section.name, errors.New(shapeError))
 		}
 	}
 	if len(response.Definitions) > ontology.MaxVocabularyCandidates {
-		return validationCountFailure("validate", "definition_limit", "definitions", ontology.MaxVocabularyCandidates, len(response.Definitions), fmt.Errorf(shapeError))
+		return validationCountFailure("validate", "definition_limit", "definitions", ontology.MaxVocabularyCandidates, len(response.Definitions), errors.New(shapeError))
 	}
 	if len(response.Items) != len(request.Items) {
-		return validationCountFailure("validate", "item_count_mismatch", "items", len(request.Items), len(response.Items), fmt.Errorf(shapeError))
+		return validationCountFailure("validate", "item_count_mismatch", "items", len(request.Items), len(response.Items), errors.New(shapeError))
 	}
 	definitions := map[string]Definition{}
 	catalog := map[string]ontology.Record{}
@@ -170,13 +171,13 @@ func Validate(request Request, response Response) error {
 		item, ok := items[decision.Ref]
 		const itemError = "item ref, reason, or coverage is invalid"
 		if !ok {
-			return validationFailure("validate", "item_ref_unknown", "items", fmt.Errorf(itemError))
+			return validationFailure("validate", "item_ref_unknown", "items", errors.New(itemError))
 		}
 		if seen[decision.Ref] {
-			return validationFailure("validate", "item_ref_duplicate", "items", fmt.Errorf(itemError))
+			return validationFailure("validate", "item_ref_duplicate", "items", errors.New(itemError))
 		}
 		if len(decision.Reason) > 128 {
-			return validationFailure("validate", "item_reason_limit", "items", fmt.Errorf(itemError))
+			return validationFailure("validate", "item_reason_limit", "items", errors.New(itemError))
 		}
 		seen[decision.Ref] = true
 		switch decision.Status {
