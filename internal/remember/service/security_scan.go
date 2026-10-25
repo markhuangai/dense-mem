@@ -879,7 +879,7 @@ func dangerousSubmissionSignals(view securityView, decoded bool) []SubmissionSec
 				submissionInstructionIsData(normalized.text, location, pattern.rule) {
 				continue
 			}
-			if pattern.rule == "tool_exfiltration" && !toolExfiltrationIsDirective(normalized.text, location[0]) && !reportedExecutionIsDirective(normalized.text) {
+			if pattern.rule == "tool_exfiltration" && !toolExfiltrationIsDirective(normalized.text, location[0]) {
 				continue
 			}
 			kind := pattern.kind

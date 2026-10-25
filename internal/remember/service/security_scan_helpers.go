@@ -17,7 +17,7 @@ var (
 	reportedInstructionPattern     = regexp.MustCompile(`(?is)^[[:alpha:]][[:alpha:]'[:space:]-]{1,100}[[:space:]]+(?:quoted|quotes|reported|reports|described|describes|cited|cites|gives|gave|uses|used)\b[[:space:]]*`)
 	attackExamplePattern           = regexp.MustCompile(`(?is)^[^,.!?;\n]{0,80}\bas[[:space:]]+(?:an?[[:space:]]+)?(?:example|attack|malicious|prohibited)\b`)
 	reportedExecutionClausePattern = regexp.MustCompile(`(?i)[.!?;,\r\n]|\b(?:and|or|so|but|then|however|instead)\b`)
-	reportedExecutionTargetPattern = regexp.MustCompile(`(?i)^[a-z][a-z-]{1,30}[[:space:]]+(?:(?:to|on|with|out|according|as|what)[[:space:]]+){0,3}(?:(?:the|these|those|that|this|above|below|quoted|reported|its)[[:space:]]+)*(?:instructions?|commands?|steps?|requests?|directions?|(?:quoted|reported)[[:space:]]+(?:text|content)|it|them|this|that)\b`)
+	reportedExecutionTargetPattern = regexp.MustCompile(`(?i)^[a-z][a-z-]{1,30}[[:space:]]+(?:(?:to|on|with|out|according|as|what)[[:space:]]+){0,3}(?:(?:the|these|those|that|this|above|below|quoted|reported|its)[[:space:]]+)*(?:instructions?|commands?|steps?|requests?|directions?|(?:quoted|reported)[[:space:]]+(?:text|content|string|message|line|sentence|phrase|payload|prompt|snippet|passage)|quot(?:e|es|ation|ations)|report[[:space:]]+says?|it|them|(?:this|that)(?:[[:space:]]+(?:now|please|immediately|right[[:space:]]+now))?$)\b`)
 	outputMetricPrefixPattern      = regexp.MustCompile(`(?i)(?:[0-9][0-9,.]*|\b(?:input|generation|completion|response|budget|allowance|quota|count|counts|usage|includes|included|measures|measured|consumed|remaining|available))[[:space:]]+$`)
 	outputMetricSuffixPattern      = regexp.MustCompile(`(?i)^output[[:space:]]+tokens?\b(?:[[:space:]]+(?:are|were|is|was|cost|costs|remain|count|measure)\b|[[:space:]]*:[[:space:]]*[0-9])`)
 	outputTokenNounPattern         = regexp.MustCompile(`(?i)^output[[:space:]]+tokens?$`)
@@ -93,7 +93,7 @@ func reportedExecutionIsDirective(text string) bool {
 			continue
 		}
 		switch words[0] {
-		case "the", "a", "an", "this", "that", "these", "those", "i", "we", "they", "it", "never", "not":
+		case "the", "a", "an", "this", "that", "these", "those", "i", "we", "they", "it", "never", "not", "document":
 			continue
 		}
 		if reportedExecutionTargetPattern.MatchString(strings.Join(words, " ")) {
@@ -145,7 +145,9 @@ func toolExfiltrationIsDirective(text string, start int) bool {
 	if toolDirectiveStartPattern.MatchString(prefix) || toolDirectiveSuffixPattern.MatchString(prefix) {
 		return true
 	}
-	return false
+	clauseStart := strings.LastIndexAny(text[:start], ".!?;\r\n") + 1
+	report := strings.TrimLeft(text[clauseStart:start], " \t>#:*-\\\"'`([{<‘’“”")
+	return reportedInstructionPattern.MatchString(report) && reportedExecutionIsDirective(text)
 }
 
 func hiddenControlRune(value rune) bool {
