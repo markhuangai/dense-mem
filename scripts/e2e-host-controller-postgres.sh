@@ -135,8 +135,8 @@ load_identity_postgres_config() {
 }
 
 reset_identity_cleanup_database() {
-  ci_compose down -v --remove-orphans >/dev/null
-  ci_compose up -d --wait --wait-timeout 300 postgres >/dev/null
+  ci_compose down -v --remove-orphans >/dev/null || fail "failed to reset the fixture database"
+  ci_compose up -d --wait --wait-timeout 300 postgres >/dev/null || fail "fixture PostgreSQL failed to start"
   wait_for_postgres_service
   provision_postgres_runtime_role
   load_identity_postgres_config
@@ -527,4 +527,108 @@ run_identity_cleanup_startup_matrix() {
   ci_compose up -d --wait --wait-timeout 300 redis prometheus server >/dev/null
   verify_postgres_runtime_migration_state
   verify_identity_cleanup_seed_upgrade bridge
+}
+
+seed_ontology_upgrade_database() {
+  local source_dir="$1" project="$2" variant="$3" go_image database_url
+  go_image="$(env_value DENSE_MEM_CI_GO_TEST_IMAGE 2>/dev/null || printf '%s' golang:1.26.9-bookworm)"
+  database_url="$(node - "$DENSE_MEM_CI_IDENTITY_POSTGRES_USER" "$DENSE_MEM_CI_IDENTITY_POSTGRES_PASSWORD" "$DENSE_MEM_CI_IDENTITY_POSTGRES_DATABASE" <<'NODE'
+const [user, password, database] = process.argv.slice(2);
+const url = new URL("postgresql://postgres:5432");
+url.username = user;
+url.password = password;
+url.pathname = `/${database}`;
+url.searchParams.set("sslmode", "disable");
+process.stdout.write(url.toString());
+NODE
+)"
+  run_go_source_container \
+    "$source_dir" "$go_image" "$project" "$DENSE_MEM_CI_RUN_ID" "$DENSE_MEM_CI_RUN_ATTEMPT" \
+    "$DENSE_MEM_CI_PHASE" "$DENSE_MEM_CI_SCENARIO" "$DENSE_MEM_CI_IMAGE_DIGEST" "${project}_ci" "" "$ENV_FILE" \
+    "$DENSE_MEM_CI_IDENTITY_POSTGRES_PASSWORD" -- \
+    "DENSE_MEM_E2E_ONTOLOGY_UPGRADE_VARIANT=${variant}" "DATABASE_URL=${database_url}" \
+    "DENSE_MEM_REQUIRE_POSTGRES_TESTS=1" -- \
+    go -C cmd/e2e run . --root /workspace --phase scenario --scenario ontology_upgrade \
+      --timeout 10m --total-timeout 12m >&2
+}
+
+ontology_upgrade_fingerprints() {
+  local table
+  for table in entity_records value_records relationship_records evidence_fragments relationship_evidence_supports ontology_maintenance_windows ontology_maintenance_attempts ontology_assessments; do
+    identity_postgres_scalar "SELECT '${table}:'||md5(COALESCE(jsonb_agg(to_jsonb(row)-'estimated_input_tokens'-'max_output_tokens' ORDER BY to_jsonb(row)::text)::text,'[]')) FROM ${table} AS row" || return
+  done
+}
+
+assert_ontology_upgrade_blocked() {
+  local state
+  state="$(identity_postgres_scalar "SELECT concat(paused,'|',
+    NOT EXISTS(SELECT 1 FROM goose_db_version WHERE version_id=20261023020000 AND is_applied),'|',
+    EXISTS(SELECT 1 FROM ontology_maintenance_batches WHERE status='running'),'|',
+    EXISTS(SELECT 1 FROM ontology_maintenance_runs WHERE operation_key='ontology-upgrade-fixture' AND status='pending'),'|',
+    NOT EXISTS(SELECT 1 FROM audit_log WHERE operation='ONTOLOGY_BUDGET_RETIREMENT')) FROM ontology_maintenance_state")"
+  [[ "$state" == "true|true|true|true|true" || "$state" == "t|t|t|t|t" ]] || fail "ontology upgrade did not preserve its blocked state: ${state}"
+}
+
+run_ontology_upgrade_startup_matrix() {
+  local source_dir="$1" project="$2" variant before state observed
+  for variant in expired unreconciled live; do
+    reset_identity_cleanup_database
+    seed_ontology_upgrade_database "$source_dir" "$project" "$variant" || fail "ontology upgrade fixture seed failed"
+    before="$(ontology_upgrade_fingerprints)" || fail "ontology upgrade history snapshot failed"
+    if [[ "$variant" == "unreconciled" ]]; then
+      ci_compose --profile verifier up -d redis prometheus synchronous-write-provider >/dev/null || fail "ontology upgrade helpers failed to start"
+      for _ in 1 2; do
+        ci_compose --profile verifier up -d --no-deps --force-recreate server >/dev/null || fail "ontology upgrade refusal probe failed to start"
+        observed=0
+        for _ in $(seq 1 60); do
+          if ci_compose logs --no-color server 2>&1 | grep -F 'unreconciled attempts require terminal evidence' >/dev/null; then
+            observed=1
+            break
+          fi
+          sleep 1
+        done
+        ((observed == 1)) || fail "ontology upgrade did not report unreconciled attempts"
+        ci_compose stop server >/dev/null || fail "ontology upgrade refusal probe failed to stop"
+        assert_ontology_upgrade_blocked
+        [[ "$(ontology_upgrade_fingerprints)" == "$before" ]] || fail "blocked ontology upgrade changed history"
+      done
+      state="$(identity_postgres_scalar "SELECT count(*) FROM audit_log WHERE operation='ONTOLOGY_UPGRADE_COMMAND'")"
+      [[ "$state" == "1" ]] || fail "blocked startup repeated the automatic pause audit"
+      continue
+    fi
+    if [[ "$variant" == "live" ]]; then
+      ci_compose --profile verifier up -d >/dev/null || fail "ontology upgrade interruption probe failed to start"
+      observed=0
+      for _ in $(seq 1 20); do
+        state="$(identity_postgres_scalar "SELECT paused AND EXISTS(SELECT 1 FROM ontology_maintenance_batches WHERE status='running' AND lease_until>clock_timestamp()) FROM ontology_maintenance_state")"
+        if [[ "$state" == "t" ]]; then observed=1; break; fi
+        sleep 1
+      done
+      ((observed == 1)) || fail "ontology upgrade did not wait for its live lease"
+      ci_compose stop server >/dev/null || fail "ontology upgrade interruption probe failed to stop"
+      assert_ontology_upgrade_blocked
+      [[ "$(ontology_upgrade_fingerprints)" == "$before" ]] || fail "interrupted ontology upgrade changed history"
+      observed=0
+      for _ in $(seq 1 40); do
+        state="$(identity_postgres_scalar "SELECT count(*) FROM ontology_maintenance_batches WHERE status='running' AND lease_until>clock_timestamp()")"
+        if [[ "$state" == "0" ]]; then observed=1; break; fi
+        sleep 1
+      done
+      ((observed == 1)) || fail "ontology fixture lease did not expire naturally"
+    fi
+    if ! ci_compose --profile verifier up -d --wait --wait-timeout 300 >/dev/null; then
+      ci_compose logs --no-color --tail 100 server 2>&1 |
+        redact_diagnostics "$ENV_FILE" "$DENSE_MEM_CI_IDENTITY_POSTGRES_PASSWORD" >&2 || fail "ontology upgrade diagnostics failed"
+      fail "ontology upgrade fixture startup failed"
+    fi
+    verify_postgres_runtime_migration_state
+    state="$(identity_postgres_scalar "SELECT concat(paused,'|',
+      NOT EXISTS(SELECT 1 FROM ontology_maintenance_batches WHERE status='running'),'|',
+      (SELECT count(*) FROM audit_log WHERE operation='ONTOLOGY_UPGRADE_COMMAND'),'|',
+      (SELECT count(*) FROM audit_log WHERE operation='ONTOLOGY_BUDGET_RETIREMENT'),'|',
+      EXISTS(SELECT 1 FROM ontology_maintenance_runs WHERE operation_key='ontology-upgrade-fixture' AND status='incomplete' AND failure_code='window_closed')) FROM ontology_maintenance_state")"
+    [[ "$state" == "false|true|2|1|true" || "$state" == "f|t|2|1|t" ]] || fail "ontology upgrade did not restore its admission state: ${state}"
+    [[ "$(ontology_upgrade_fingerprints)" == "$before" ]] || fail "automatic ontology upgrade changed canonical or historical rows"
+  done
+  printf '%s\n' '{"scenario":"ontology_upgrade","expired_recovered":true,"unreconciled_refused":true,"interrupted_restart_resumed":true,"history_preserved":true}' >&2
 }

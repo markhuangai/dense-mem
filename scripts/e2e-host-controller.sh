@@ -771,6 +771,8 @@ start_stack() {
       ci_compose down --volumes --remove-orphans >/dev/null 2>&1 || true
       fail "identity cleanup provider helper failed to start"
     fi
+  elif [[ "$scenario" == "ontology_upgrade" ]]; then
+    run_ontology_upgrade_startup_matrix "$source_dir" "$project"
   elif ! ci_compose "${profiles[@]}" up -d --wait --wait-timeout 300 >/dev/null; then
     ci_compose down --volumes --remove-orphans >/dev/null 2>&1 || true
     fail "Compose stack failed to start"

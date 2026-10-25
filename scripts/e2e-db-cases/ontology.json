@@ -890,6 +890,48 @@
       "source": "internal/ontology/postgres/maintenance_diagnostics_integration_test.go"
     },
     {
+      "id": "repository/TestOntologyMaintenanceUpgradePreservesHistoryAndAdmission",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceUpgradePreservesHistoryAndAdmission$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_upgrade_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceUpgradeWaitCancellationAndUnreconciledRefusal",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceUpgradeWaitCancellationAndUnreconciledRefusal$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_upgrade_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceUpgradeAuditRollbackAndConcurrentReplay",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceUpgradeAuditRollbackAndConcurrentReplay$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_upgrade_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceUpgradeRetirementAuditRollback",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceUpgradeRetirementAuditRollback$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_upgrade_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceUpgradeRejectsRequestActorsAndReceiptSpoofing",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceUpgradeRejectsRequestActorsAndReceiptSpoofing$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_upgrade_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceUpgradePreservesPrivateAndGenerationFences",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceUpgradePreservesPrivateAndGenerationFences$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_upgrade_integration_test.go"
+    },
+    {
       "id": "repository/TestOntologyMaintenanceRevalidationMeasurement",
       "package": "./internal/ontology/postgres",
       "run": "^TestOntologyMaintenanceRevalidationMeasurement$",

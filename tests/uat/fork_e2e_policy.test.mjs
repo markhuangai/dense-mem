@@ -27,7 +27,7 @@ test("fork receipt binds approved source, image, preview attempt, workflow revis
   assert.equal(receipt.fork_run_id, "200");
   assert.equal(receipt.trusted_revision, approved.trusted_revision);
   assert.deepEqual(receipt.postgres_prechecks, Array(6).fill("success"));
-  assert.equal(receipt.scenarios.length, 31);
+  assert.equal(receipt.scenarios.length, 32);
   assert.ok(receipt.scenarios.every((entry) => entry.result === "success" && entry.cleanup === "success"));
 });
 
@@ -48,8 +48,8 @@ test("every scenario, PostgreSQL shard, rootless precheck, and signer job is man
     }
   }
   assert.throws(() => policy.requireCompleteForkJobs([...jobs, jobs[0]], scenarios), /ambiguous/);
-  assert.throws(() => policy.successReceipt(approved, run, scenarios.slice(1)), /all 31/);
-  assert.throws(() => policy.successReceipt(approved, run, [...scenarios.slice(1), scenarios[1]]), /all 31/);
+  assert.throws(() => policy.successReceipt(approved, run, scenarios.slice(1)), /all 32/);
+  assert.throws(() => policy.successReceipt(approved, run, [...scenarios.slice(1), scenarios[1]]), /all 32/);
 });
 
 test("attestation verification constrains signer, source, repository, and hosted runner identity", () => {

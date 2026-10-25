@@ -27,7 +27,9 @@ func WithTimeout(parent context.Context, timeout time.Duration) (context.Context
 }
 
 func RunUp(parent context.Context, db *gorm.DB, timeout time.Duration, logger infoLogger) error {
-	return run(parent, db, timeout, "up", logger, runUpMigrations)
+	return run(parent, db, timeout, "up", logger, func(ctx context.Context, db *gorm.DB) error {
+		return RunPrivateMemoryMigration(ctx, db, "", logger)
+	})
 }
 
 func RunMigrationControlRetirement(parent context.Context, db *gorm.DB, timeout time.Duration, logger infoLogger) error {

@@ -38,7 +38,7 @@ func RunPrivateMemoryMigration(ctx context.Context, args []string, output io.Wri
 		return err
 	}
 	defer db.Close()
-	if err := migrationapp.RunPrivateMemoryMigration(ctx, db.GetDB(), *fingerprint); err != nil {
+	if err := migrationapp.RunPrivateMemoryMigration(ctx, db.GetDB(), *fingerprint, logger.Slog()); err != nil {
 		return err
 	}
 	_, err = fmt.Fprintln(output, `{"planner_version":"private-memory.v2.7.0.1","status":"complete"}`)

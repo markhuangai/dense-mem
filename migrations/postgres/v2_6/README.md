@@ -89,6 +89,30 @@ or projection leases, and unreconciled attempts block the migration. Recover
 unfinished work before retrying; a timeout with durably recorded unavailable
 usage is terminal and does not require inventing usage or clearing reservations.
 
+Normal server startup prepares this boundary automatically while every old
+instance remains stopped. It records an audited, migration-specific pause only
+when admission was enabled and unpaused. Live leases are allowed to expire within
+a five-minute preparation limit, or an earlier configured migration timeout or
+cancellation. Unreconciled attempts remain explicit blockers, including after
+lease expiry. Startup does not dispatch models, retry semantic failures, or
+reinterpret legacy budget-deferred receipts during preparation.
+
+Expired batches use the existing lease-loss transition without changing source
+outcomes or history. Preparation also closes drained legacy scheduled/run/retry
+runs as `incomplete/window_closed`, atomically recording each retirement audit
+through the existing system transaction. This allows the unchanged migration to
+run under the runtime database role, whose audit policy excludes migration mode.
+The closure and audit remain durable if a later migration fails; restart selects
+only unfinished runs, so it does not repeat them. The migration retains its
+pause/drain guard and performs
+its existing deferred-source requeue. After migration and compatibility checks
+succeed, startup restores only its own pause using the retained command identity.
+An interruption before or after migration resumes from those receipts on the
+next startup. A pre-existing operator pause or disabled setting is preserved;
+restarting after completed recovery never undoes a later operator pause. No
+separate upgrade command is required. Missing model context capacity continues
+to block model calls while the control portal remains available.
+
 The migration adds nullable per-call sizing observations without rewriting the
 attempt heap. Constraint validation scans operational tables; lock acquisition
 is bounded to five seconds. Existing forced RLS remains in force, and migration

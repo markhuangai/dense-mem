@@ -21,25 +21,22 @@ func (s *Store) MaintenanceCommand(ctx context.Context, input domain.OntologyMai
 	if err != nil {
 		return ontology.MaintenanceRun{}, err
 	}
+	var result ontology.MaintenanceRun
+	err = s.withMaintenanceSystem(ctx, func(tx *gorm.DB) error {
+		var err error
+		result, err = maintenanceCommandTx(ctx, tx, input, now, prepareAudit)
+		return err
+	})
+	return result, err
+}
+
+func maintenanceCommandTx(ctx context.Context, tx *gorm.DB, input domain.OntologyMaintenanceCommand, now time.Time, prepareAudit ontology.MaintenanceAudit) (ontology.MaintenanceRun, error) {
 	hash, err := ontology.MaintenanceCommandHash(input)
 	if err != nil {
 		return ontology.MaintenanceRun{}, err
 	}
 	var result ontology.MaintenanceRun
-	appendAudit := func(tx *gorm.DB) error {
-		if prepareAudit == nil {
-			return nil
-		}
-		entry, err := prepareAudit(result)
-		if err == nil {
-			err = storagepostgres.InsertAuditEntryTx(ctx, tx, entry)
-		}
-		if err != nil {
-			return fmt.Errorf("%w: %w", ontology.ErrAuditUnavailable, err)
-		}
-		return nil
-	}
-	err = s.withMaintenanceSystem(ctx, func(tx *gorm.DB) error {
+	err = func() error {
 		paused, err := maintenanceState(tx)
 		if err != nil {
 			return err
@@ -59,7 +56,7 @@ func (s *Store) MaintenanceCommand(ctx context.Context, input domain.OntologyMai
 			if err != nil {
 				return err
 			}
-			return appendAudit(tx)
+			return appendMaintenanceAuditTx(ctx, tx, result, prepareAudit)
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
@@ -121,9 +118,23 @@ func (s *Store) MaintenanceCommand(ctx context.Context, input domain.OntologyMai
 		if err != nil {
 			return err
 		}
-		return appendAudit(tx)
-	})
+		return appendMaintenanceAuditTx(ctx, tx, result, prepareAudit)
+	}()
 	return result, err
+}
+
+func appendMaintenanceAuditTx(ctx context.Context, tx *gorm.DB, run ontology.MaintenanceRun, prepareAudit ontology.MaintenanceAudit) error {
+	if prepareAudit == nil {
+		return nil
+	}
+	entry, err := prepareAudit(run)
+	if err == nil {
+		err = storagepostgres.InsertAuditEntryTx(ctx, tx, entry)
+	}
+	if err != nil {
+		return fmt.Errorf("%w: %w", ontology.ErrAuditUnavailable, err)
+	}
+	return nil
 }
 
 const maintenanceActiveSourceJoin = ` FROM ontology_maintenance_sources AS source
@@ -168,8 +179,12 @@ func (s *Store) RecordMaintenanceFailure(ctx context.Context, runID, code string
 		return ontology.ErrInvalid
 	}
 	return s.withMaintenanceSystem(ctx, func(tx *gorm.DB) error {
-		return tx.Exec(`UPDATE ontology_maintenance_runs SET status='incomplete',failure_code=?,updated_at=? WHERE run_id=?::uuid`, code, now, runID).Error
+		return recordMaintenanceFailureTx(tx, runID, code, now)
 	})
+}
+
+func recordMaintenanceFailureTx(tx *gorm.DB, runID, code string, now time.Time) error {
+	return tx.Exec(`UPDATE ontology_maintenance_runs SET status='incomplete',failure_code=?,updated_at=? WHERE run_id=?::uuid`, code, now, runID).Error
 }
 
 func (s *Store) MaintenanceStatus(ctx context.Context, now time.Time) (ontology.MaintenanceStatus, error) {

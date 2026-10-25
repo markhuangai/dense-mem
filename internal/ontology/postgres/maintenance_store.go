@@ -196,7 +196,7 @@ func (s *Store) ClaimMaintenanceTurn(ctx context.Context, windowID string, now t
 		if err = seedMaintenanceTeams(tx); err != nil {
 			return err
 		}
-		if err = tx.Exec(`UPDATE ontology_maintenance_batches SET status='lost',failure_code='lease_lost' WHERE status='running' AND lease_until<=?`, now).Error; err != nil {
+		if _, err = expireMaintenanceBatches(tx, now); err != nil {
 			return err
 		}
 		active, err := activeMaintenanceWork(tx, now)
@@ -314,3 +314,8 @@ func maintenancePublicationFence(ctx context.Context, tx *gorm.DB, fence scope) 
 }
 
 var _ ontology.MaintenanceRepository = (*Store)(nil)
+
+func expireMaintenanceBatches(tx *gorm.DB, now time.Time) (int64, error) {
+	result := tx.Exec(`UPDATE ontology_maintenance_batches SET status='lost',failure_code='lease_lost' WHERE status='running' AND lease_until<=?`, now)
+	return result.RowsAffected, result.Error
+}
