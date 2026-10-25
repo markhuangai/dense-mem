@@ -383,13 +383,18 @@ async function finalizationRecovery(key, failureCode = "") {
   await control("/ontology/pause", { operation_key: randomUUID() });
   paused = true;
   await pollFinalization(() => postgresQuery(`SELECT count(*) FROM ontology_maintenance_batches WHERE team_id=${sqlLiteral(teamID)}::uuid AND status='running'`) === "0", "drain before finalization fixture");
-  const evidenceID = await remember(`Atlas uses PostgreSQL for finalization recovery ${randomUUID()}.`, key);
+  await remember(`Atlas uses PostgreSQL for finalization recovery ${randomUUID()}.`, key);
   await fixtureMode(failureCode ? "fail-three-then-success" : "normal");
   const canonicalBefore = canonicalFingerprints();
   const release = await finalizationBlocker();
   try {
     postgresQuery(`CREATE FUNCTION ontology_e2e_finalization_barrier() RETURNS trigger LANGUAGE plpgsql AS $$
-      BEGIN IF NEW.team_id=${sqlLiteral(teamID)}::uuid AND NEW.source_kind='evidence' AND NEW.source_id=${sqlLiteral(evidenceID)} AND NEW.assessment_id IS NOT NULL THEN PERFORM pg_advisory_xact_lock(603002); END IF; RETURN NEW; END $$;
+      BEGIN IF NEW.team_id=${sqlLiteral(teamID)}::uuid AND NEW.assessment_id IS NOT NULL AND NEW.assessment_id IS DISTINCT FROM OLD.assessment_id AND EXISTS(
+        SELECT 1 FROM ontology_assessments AS assessment WHERE assessment.team_id=NEW.team_id
+        AND assessment.shared_space_id=NEW.shared_space_id AND assessment.space_generation=NEW.space_generation AND assessment.assessment_id=NEW.assessment_id
+        AND COALESCE(assessment.body->'result'->>'failure_code','')=${sqlLiteral(failureCode)}
+        AND assessment.body->'result'->>'current'=${sqlLiteral(String(!failureCode))})
+        THEN PERFORM pg_advisory_xact_lock(603002); END IF; RETURN NEW; END $$;
       CREATE TRIGGER ontology_e2e_finalization_barrier BEFORE UPDATE OF status ON ontology_maintenance_sources FOR EACH ROW EXECUTE FUNCTION ontology_e2e_finalization_barrier()`);
     await control("/ontology/resume", { operation_key: randomUUID() });
     paused = false;
@@ -401,8 +406,7 @@ async function finalizationRecovery(key, failureCode = "") {
         ON assessment.team_id=batch.team_id AND assessment.shared_space_id=batch.shared_space_id AND assessment.space_generation=batch.space_generation AND assessment.operation_key='maintenance:'||batch.batch_id::text
         JOIN pg_stat_activity AS activity ON activity.datname=current_database() AND activity.wait_event='advisory' AND activity.query LIKE '%UPDATE ontology_maintenance_sources SET status=%'
         WHERE batch.team_id=${sqlLiteral(teamID)}::uuid AND batch.status='running'
-        AND COALESCE(assessment.body->'result'->>'failure_code','')=${sqlLiteral(failureCode)} AND assessment.body->'result'->>'current'=${sqlLiteral(String(!failureCode))}
-        AND EXISTS(SELECT 1 FROM jsonb_array_elements(batch.sources) AS source WHERE source->>'id'=${sqlLiteral(evidenceID)}) LIMIT 1`);
+        AND COALESCE(assessment.body->'result'->>'failure_code','')=${sqlLiteral(failureCode)} AND assessment.body->'result'->>'current'=${sqlLiteral(String(!failureCode))} LIMIT 1`);
       if (body) receipt = JSON.parse(body);
       return Boolean(receipt);
     }, "durable receipt followed by blocked completion");
