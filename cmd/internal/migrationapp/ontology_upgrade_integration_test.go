@@ -14,6 +14,7 @@ import (
 	ontologypostgres "github.com/markhuangai/dense-mem/internal/ontology/postgres"
 	storage "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func TestRunUpAutomaticallyRecoversStoppedOntology(t *testing.T) {
@@ -57,10 +58,13 @@ func TestRunUpOntologyWaitAndConcurrentStarters(t *testing.T) {
 	db, admin := openOntologyUpgradeRuntimeDB(t)
 	batch := seedOntologyUpgrade(t, db)
 	before := ontologyUpgradeSnapshot(t, db)
-	require.NoError(t, admin.Exec(`UPDATE ontology_maintenance_batches SET lease_until=clock_timestamp()+interval '1 hour' WHERE batch_id=?::uuid`, batch).Error)
-	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	ctx := context.Background()
+	require.NoError(t, storage.NewRLS().WithSystemTx(ctx, db, func(tx *gorm.DB) error {
+		return tx.Exec(`UPDATE ontology_maintenance_batches SET lease_until=clock_timestamp()+interval '1 hour' WHERE batch_id=?::uuid`, batch).Error
+	}))
+	waitCtx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
 	defer cancel()
-	err := RunUp(ctx, db, 0, newRecordingLogger())
+	err := RunUp(waitCtx, db, 0, newRecordingLogger())
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	var applied bool
 	require.NoError(t, db.Raw(`SELECT EXISTS(SELECT 1 FROM goose_db_version WHERE version_id=? AND is_applied)`, contract.OntologyBudgetRetirementVersion).Row().Scan(&applied))
@@ -69,7 +73,9 @@ func TestRunUpOntologyWaitAndConcurrentStarters(t *testing.T) {
 	var retired int
 	require.NoError(t, admin.Raw(`SELECT count(*) FROM audit_log WHERE operation=?`, contract.OntologyBudgetRetirementAuditOperation).Row().Scan(&retired))
 	require.Zero(t, retired)
-	require.NoError(t, admin.Exec(`UPDATE ontology_maintenance_batches SET lease_until=clock_timestamp()+interval '2 seconds' WHERE batch_id=?::uuid`, batch).Error)
+	require.NoError(t, storage.NewRLS().WithSystemTx(ctx, db, func(tx *gorm.DB) error {
+		return tx.Exec(`UPDATE ontology_maintenance_batches SET lease_until=clock_timestamp()+interval '2 seconds' WHERE batch_id=?::uuid`, batch).Error
+	}))
 	errs := make(chan error, 2)
 	for range 2 {
 		go func() { errs <- RunUp(context.Background(), db, time.Minute, newRecordingLogger()) }()
