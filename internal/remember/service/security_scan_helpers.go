@@ -19,6 +19,7 @@ var (
 	prohibitionBreakPattern         = regexp.MustCompile(`(?i)\b(?:but|instead|then|however|except|unless|nevertheless)\b`)
 	prohibitionContextPattern       = regexp.MustCompile(prohibitionURLPattern.String() + "|" + prohibitionEllipsisPattern.String() + "|" + prohibitionClauseEndPattern.String() + "|" + prohibitionBreakPattern.String())
 	reportedInstructionPattern      = regexp.MustCompile(`(?is)^[[:alpha:]][[:alpha:]'[:space:]-]{1,100}[[:space:]]+(?:quoted|quotes|reported|reports|described|describes|cited|cites|gives|gave|uses|used)\b[[:space:]]*`)
+	reportedReferencePattern        = regexp.MustCompile("(?U)" + reportedInstructionPattern.String())
 	attackExamplePattern            = regexp.MustCompile(`(?is)^[^,.!?;\n]{0,80}\bas[[:space:]]+(?:an?[[:space:]]+)?(?:example|attack|malicious|prohibited)\b`)
 	reportedDirectivePrefixPattern  = regexp.MustCompile(`(?is)^(?:(?:never|do[[:space:]]+not|don't)[[:space:]]+(?:ever[[:space:]]+)?(?:forget|hesitate|refuse|fail)[[:space:]]+to\b|(?:you\b[[:space:]]+|assistant\b[,:]?[[:space:]]*)(?:can|could|would|will|shall|may)\b|` + directivePrefixExpression + `|you\b|(?:now|then|instead|just|simply|also|always|immediately|quickly)\b)\s*`)
 	reportedExecutionClausePattern  = regexp.MustCompile(`(?i)[.!?;,\r\n]|\b(?:and|or|so|but|then|however|instead)\b`)
@@ -115,6 +116,12 @@ func reportedExecutionIsDirective(text string) bool {
 			continue
 		}
 		normalized := strings.Join(words, " ")
+		if len(words) > 2 && (words[1] == "what" || words[1] == "whatever") {
+			reference := strings.Join(words[2:], " ")
+			if frame := reportedReferencePattern.FindStringIndex(reference); frame != nil {
+				normalized = strings.TrimSpace(words[0] + " it " + reference[frame[1]:])
+			}
+		}
 		if reportedExecutionTargetPattern.MatchString(normalized) && !reportedStorageStatementPattern.MatchString(normalized) {
 			return true
 		}
