@@ -40,3 +40,27 @@ the separately locked manager correction cohort, and the registered exclusive
 `ontology_management` production scenario with desktop/mobile browser checks.
 Detailed reports remain in ignored paths. Verified compact evidence belongs in
 `tests/eval/baselines/`; full final-head CI and production-image E2E remain gates.
+
+## Operator assessment diagnostics
+
+Ontology assessment receipts and maintenance attempt logs retain an optional
+`validation` object for rejected provider responses. Its stage, rule code and
+field family are server-owned identifiers; expected and actual counts appear
+only for coverage or limit checks. Strict JSON decoding and delegated definition
+validation identify the rejecting boundary without copying provider field names,
+references, prose or the correction prompt into diagnostics. The existing
+failure code, complete-response regeneration bound and usage accounting remain
+unchanged. A successful attempt omits the object, including after earlier failed
+attempts in the same assessment.
+
+Historical receipts without this object remain readable and immutable. Absence
+means no validation detail was recorded; it does not imply successful validation.
+The historical receipts inspected for #588 cannot establish their original
+validation cause and do not identify a model or prompt defect.
+
+Older binaries strictly decode assessment receipts and may reject the additional
+field. Drain in-flight work and stop older readers and writers before deploying
+the new binary. After new receipts exist, recover by rolling forward with a
+compatible reader; do not rewrite history to support an older binary. Issue #588
+records the maintainer-approved 1k evaluation waiver and mandatory focused,
+PostgreSQL, production-entry E2E, audit and final CI/E2E replacement checks.

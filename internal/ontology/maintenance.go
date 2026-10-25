@@ -281,6 +281,13 @@ func (s *MaintenanceService) executeBatch(ctx context.Context, work maintenanceW
 			} else {
 				fields = append(fields, slog.Bool("diagnostics_invalid", true))
 			}
+			if attempt.Validation != nil {
+				if attempt.Validation.Valid() && attempt.FailureCode == "response_invalid" {
+					fields = append(fields, slog.Any("validation", attempt.Validation))
+				} else {
+					fields = append(fields, slog.Bool("validation_invalid", true))
+				}
+			}
 			s.deps.Logger.LogAttrs(ctx, slog.LevelInfo, "ontology maintenance assessment attempt", fields...)
 		}
 	}

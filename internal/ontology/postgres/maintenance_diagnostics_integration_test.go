@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -24,43 +25,72 @@ import (
 )
 
 func TestOntologyMaintenanceAttemptDiagnosticsOperatorLogIsBounded(t *testing.T) {
-	f := newOrganizationFixture(t)
-	f.organizationEvidence(t, 0, "Atlas uses PostgreSQL. raw-source-canary", nil)
-	settings := maintenanceSettings(t, f)
-	var output bytes.Buffer
-	service := organization.NewMaintenanceService(organization.MaintenanceDependencies{Repository: f.store, Config: settings, DefaultModel: "fixture-model", ProviderTimeout: time.Minute,
-		Logger: slog.New(slog.NewJSONHandler(&output, nil)), Organizer: func(model string, contextWindowTokens int64, accounting assessment.AttemptAccounting) *organization.Service {
-			organizer, _ := organizationFixtureServiceWithAccounting(t, f, nil, nil, model, maintenanceFixtureLimits(), accounting, int(contextWindowTokens))
-			return organizer
-		}})
-	for range 8 {
-		_, err := service.RunTurn(context.Background())
-		require.NoError(t, err)
-		if output.Len() > 0 {
-			break
-		}
-	}
-	require.NotEmpty(t, output.String())
-	require.NotContains(t, output.String(), "raw-source-canary")
-	require.NotContains(t, output.String(), "synthetic-provider-key")
-	var fields map[string]any
-	require.NoError(t, json.Unmarshal(bytes.Split(output.Bytes(), []byte("\n"))[0], &fields))
-	require.Equal(t, "ontology maintenance assessment attempt", fields["msg"])
-	require.Equal(t, false, fields["reported_usage_available"])
-	diagnostics, ok := fields["diagnostics"].(map[string]any)
-	require.True(t, ok)
-	for _, field := range []string{"queue_ms", "admission_ms", "http_ms", "reconciliation_ms"} {
-		require.Contains(t, diagnostics, field)
+	for _, invalid := range []bool{false, true} {
+		t.Run(fmt.Sprint(invalid), func(t *testing.T) {
+			f := newOrganizationFixture(t)
+			f.organizationEvidence(t, 0, "Atlas uses PostgreSQL. raw-source-canary", nil)
+			settings := maintenanceSettings(t, f)
+			var output bytes.Buffer
+			service := organization.NewMaintenanceService(organization.MaintenanceDependencies{Repository: f.store, Config: settings, DefaultModel: "fixture-model", ProviderTimeout: time.Minute,
+				Logger: slog.New(slog.NewJSONHandler(&output, nil)), Organizer: func(model string, contextWindowTokens int64, accounting assessment.AttemptAccounting) *organization.Service {
+					edit := func(_ assessment.Request, response *assessment.Response) {
+						if invalid {
+							response.Items[0].DefinitionRef = "synthetic-provider-key"
+						}
+					}
+					organizer, _ := organizationFixtureServiceWithAccounting(t, f, nil, edit, model, maintenanceFixtureLimits(), accounting, int(contextWindowTokens))
+					return organizer
+				}})
+			for range 8 {
+				_, err := service.RunTurn(context.Background())
+				if output.Len() > 0 {
+					if invalid {
+						require.ErrorContains(t, err, "provider_response_invalid")
+					} else {
+						require.NoError(t, err)
+					}
+					break
+				}
+				require.NoError(t, err)
+			}
+			require.NotEmpty(t, output.String())
+			require.NotContains(t, output.String(), "raw-source-canary")
+			require.NotContains(t, output.String(), "synthetic-provider-key")
+			lines := bytes.Split(bytes.TrimSpace(output.Bytes()), []byte("\n"))
+			attemptCount := 1
+			if invalid {
+				attemptCount = 3
+			}
+			require.Len(t, lines, attemptCount)
+			for _, line := range lines {
+				var fields map[string]any
+				require.NoError(t, json.Unmarshal(line, &fields))
+				require.Equal(t, "ontology maintenance assessment attempt", fields["msg"])
+				require.Equal(t, false, fields["reported_usage_available"])
+				diagnostics, ok := fields["diagnostics"].(map[string]any)
+				require.True(t, ok)
+				for _, field := range []string{"queue_ms", "admission_ms", "http_ms", "reconciliation_ms"} {
+					require.Contains(t, diagnostics, field)
+				}
+				if invalid {
+					require.Equal(t, map[string]any{"stage": "validate", "code": "item_definition_ref", "field_family": "items"}, fields["validation"])
+				} else {
+					require.NotContains(t, fields, "validation")
+				}
+			}
+		})
 	}
 }
 
 func TestOntologyMaintenanceAttemptDiagnosticsPersistenceAndFailureBoundaries(t *testing.T) {
-	for _, mode := range []string{"reported", "unknown_usage", "timeout", "canceled", "reconciliation_failure"} {
+	for _, mode := range []string{"reported", "unknown_usage", "timeout", "canceled", "reconciliation_failure", "decode_invalid", "validate_invalid", "repaired"} {
 		t.Run(mode, func(t *testing.T) {
 			x := newFinalizationFixture(t)
 			f := x.f
 			other := maintenanceOtherTeam(t, f)
 			before := f.canonicalSnapshot(t)
+			var publicationsBefore int
+			require.NoError(t, f.admin.Raw(`SELECT count(*) FROM ontology_publications WHERE team_id=?::uuid`, f.team).Row().Scan(&publicationsBefore))
 			if mode == "reconciliation_failure" {
 				require.NoError(t, f.admin.Exec(`CREATE FUNCTION reject_diagnostic_reconciliation() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic reconciliation failure' USING ERRCODE='P0001'; END $$;
 				 CREATE TRIGGER reject_diagnostic_reconciliation BEFORE UPDATE OF reconciled_at ON ontology_maintenance_attempts FOR EACH ROW EXECUTE FUNCTION reject_diagnostic_reconciliation()`).Error)
@@ -68,7 +98,7 @@ func TestOntologyMaintenanceAttemptDiagnosticsPersistenceAndFailureBoundaries(t 
 			var calls atomic.Int32
 			bodyRead := make(chan struct{})
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				calls.Add(1)
+				call := calls.Add(1)
 				var envelope struct {
 					Messages []struct{ Role, Content string }
 				}
@@ -92,12 +122,20 @@ func TestOntologyMaintenanceAttemptDiagnosticsPersistenceAndFailureBoundaries(t 
 					t.Error(err)
 					return
 				}
-				encoded, err := json.Marshal(organizationFixtureResponse(request, nil))
+				response := organizationFixtureResponse(request, nil)
+				if mode == "validate_invalid" || (mode == "repaired" && call == 2) {
+					response.Items = []assessment.Decision{}
+				}
+				encoded, err := json.Marshal(response)
 				if err != nil {
 					t.Error(err)
 					return
 				}
-				body := map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": string(encoded)}}}}
+				content := string(encoded)
+				if mode == "decode_invalid" || (mode == "repaired" && call == 1) {
+					content = `{"synthetic-provider-secret raw-source-canary":true}`
+				}
+				body := map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": content}}}}
 				if mode != "unknown_usage" {
 					body["usage"] = map[string]int{"prompt_tokens": 17, "completion_tokens": 9, "total_tokens": 26}
 				}
@@ -136,7 +174,8 @@ func TestOntologyMaintenanceAttemptDiagnosticsPersistenceAndFailureBoundaries(t 
 			}
 			input := ontology.OrganizationInput{OperationKey: "maintenance:" + x.claim.ID, Sources: x.claim.Sources}
 			result, err := service.Organize(ctx, f.team, input)
-			failed := mode == "timeout" || mode == "canceled" || mode == "reconciliation_failure"
+			invalid := mode == "decode_invalid" || mode == "validate_invalid"
+			failed := invalid || mode == "timeout" || mode == "canceled" || mode == "reconciliation_failure"
 			if failed {
 				require.Error(t, err)
 				require.Nil(t, result.Publication)
@@ -144,7 +183,48 @@ func TestOntologyMaintenanceAttemptDiagnosticsPersistenceAndFailureBoundaries(t 
 			} else {
 				require.NoError(t, err)
 			}
-			require.Len(t, result.Attempts, 1)
+			attemptCount := 1
+			if invalid || mode == "repaired" {
+				attemptCount = 3
+			}
+			require.Len(t, result.Attempts, attemptCount)
+			for i, attempt := range result.Attempts {
+				require.True(t, attempt.Validation.Valid())
+				if invalid || (mode == "repaired" && i < 2) {
+					require.NotNil(t, attempt.Validation)
+					require.Equal(t, "response_invalid", attempt.FailureCode)
+					if mode == "decode_invalid" || (mode == "repaired" && i == 0) {
+						require.Equal(t, &ontology.AssessmentValidation{Stage: "decode", Code: "strict_json", FieldFamily: "response"}, attempt.Validation)
+					} else {
+						require.Equal(t, "validate", attempt.Validation.Stage)
+						require.Equal(t, "item_count_mismatch", attempt.Validation.Code)
+						require.Equal(t, "items", attempt.Validation.FieldFamily)
+						require.Equal(t, len(x.claim.Sources), *attempt.Validation.ExpectedCount)
+						require.Zero(t, *attempt.Validation.ActualCount)
+					}
+				} else {
+					require.Nil(t, attempt.Validation)
+				}
+			}
+			if invalid || mode == "repaired" {
+				var count, reconciled, inputTokens, outputTokens, totalTokens int
+				require.NoError(t, f.admin.Raw(`SELECT count(*),count(reconciled_at),sum(reported_input),sum(reported_output),sum(reported_total)
+				 FROM ontology_maintenance_attempts WHERE batch_id=?::uuid AND assessment_id=?::uuid`, x.claim.ID, result.AssessmentID).
+					Row().Scan(&count, &reconciled, &inputTokens, &outputTokens, &totalTokens))
+				require.Equal(t, 3, count)
+				require.Equal(t, count, reconciled)
+				require.Equal(t, 51, inputTokens)
+				require.Equal(t, 27, outputTokens)
+				require.Equal(t, 78, totalTokens)
+				if invalid {
+					require.Equal(t, "provider_response_invalid", result.FailureCode)
+					var publications int
+					require.NoError(t, f.admin.Raw(`SELECT count(*) FROM ontology_publications WHERE team_id=?::uuid`, f.team).Row().Scan(&publications))
+					require.Equal(t, publicationsBefore, publications)
+				} else {
+					require.NotNil(t, result.Publication)
+				}
+			}
 			attempt := result.Attempts[0]
 			require.True(t, attempt.Diagnostics.Valid())
 			require.NotNil(t, attempt.Diagnostics.QueueMS)
@@ -172,7 +252,9 @@ func TestOntologyMaintenanceAttemptDiagnosticsPersistenceAndFailureBoundaries(t 
 			var receipt ontology.OrganizationReceipt
 			require.NoError(t, json.Unmarshal(body, &receipt))
 			require.NoError(t, ontology.ValidateOrganizationReceipt(receipt))
-			require.Equal(t, attempt.Diagnostics, receipt.Result.Attempts[0].Diagnostics)
+			require.Equal(t, result.Attempts, receipt.Result.Attempts)
+			require.NotContains(t, string(body), "synthetic-provider-secret")
+			require.NotContains(t, string(body), "raw-source-canary")
 			if failed {
 				for _, outcome := range receipt.Result.Outcomes {
 					require.Equal(t, "failed", outcome.Status)
@@ -188,7 +270,7 @@ func TestOntologyMaintenanceAttemptDiagnosticsPersistenceAndFailureBoundaries(t 
 			input.Sources = x.claim.Sources
 			_, found, foreignErr := f.store.FindOrganization(stable, other.team, input, provider.Identity())
 			require.True(t, foreignErr != nil || !found)
-			require.EqualValues(t, 1, calls.Load())
+			require.EqualValues(t, attemptCount, calls.Load())
 			require.Equal(t, before, f.canonicalSnapshot(t))
 		})
 	}

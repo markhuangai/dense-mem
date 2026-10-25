@@ -241,6 +241,26 @@ try {
   assert.equal(failedRun.status, "incomplete");
   assert(failedRun.failure_code, "required failure remains visible");
   assert.equal(failedRun.retryable, true);
+  const failedAssessments = JSON.parse(postgresQuery(`SELECT COALESCE(jsonb_agg(assessment.body->'result'),'[]')::text
+    FROM ontology_maintenance_batches AS batch JOIN ontology_assessments AS assessment
+      ON assessment.team_id=batch.team_id AND assessment.shared_space_id=batch.shared_space_id
+      AND assessment.space_generation=batch.space_generation AND assessment.operation_key='maintenance:'||batch.batch_id::text
+    WHERE batch.team_id=${sqlLiteral(teamID)}::uuid AND batch.run_id=${sqlLiteral(failedRun.id)}::uuid`));
+  assert.equal(failedAssessments.length, 1);
+  const rejected = failedAssessments[0];
+  assert.equal(rejected.failure_code, "provider_response_invalid");
+  assert(!rejected.publication, "exhausted validation must publish no subset");
+  assert(rejected.outcomes.every((outcome) => outcome.status === "failed" && !outcome.record_ids?.length));
+  assert.equal(rejected.attempts.length, 3);
+  for (const attempt of rejected.attempts) {
+    assert.equal(attempt.failure_code, "response_invalid");
+    assert.deepEqual(Object.keys(attempt.validation).sort(), ["actual_count", "code", "expected_count", "field_family", "stage"]);
+    assert.equal(attempt.validation.stage, "validate");
+    assert.equal(attempt.validation.code, "item_count_mismatch");
+    assert.equal(attempt.validation.field_family, "items");
+    assert(Number.isInteger(attempt.validation.expected_count) && attempt.validation.expected_count > 0);
+    assert.equal(attempt.validation.actual_count, 0);
+  }
   await fixtureMode("normal");
   const history = (await control("/ontology/runs?limit=200")).data;
   for (const run of history.runs) {
@@ -262,7 +282,12 @@ try {
         assert(Number.isInteger(diagnostics[phase]) && diagnostics[phase] >= 0, `missing measured ${phase}`);
       }
     }
-    if (attempt.failure_code === "response_invalid") assert.equal(attempt.diagnostics.failure_phase, "validation");
+    if (attempt.failure_code === "response_invalid") {
+      assert.equal(attempt.diagnostics.failure_phase, "validation");
+      assert(attempt.validation, "rejected responses must retain validation details");
+    } else {
+      assert(!Object.hasOwn(attempt, "validation"), "successful and transport-failed attempts must omit validation rejection details");
+    }
   }
   console.log(JSON.stringify({ status: "ok", scenario: "ontology_organization", window_id: status.window.id, counts: status.counts, durable_command_replay: true, operator_isolation: true, grouped_recall: true, original_sources_retained: true, private_and_foreign_isolation: true, stale_group_fallback: true, recall_organization_provider_tokens: 0, bounded_ambiguity_run: ambiguousRun.id, retryable_failure_run: failedRun.id }));
 } catch (error) {

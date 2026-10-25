@@ -176,13 +176,17 @@ func (p *Provider) Assess(ctx context.Context, request Request) (Response, []ont
 			return Response{}, attempts, &modelprovider.MalformedResponseError{Provider: "ontology", Message: "provider reported input beyond token budget", FailureClass: "input_budget", Attempts: turn}
 		}
 		if outputTokens > p.limits.MaxOutputTokens || result.CompletionTokens > p.limits.MaxOutputTokens {
-			validationErr = fmt.Errorf("output exceeds token budget")
+			validationErr = validationCountFailure("limits", "output_limit", "output_tokens", p.limits.MaxOutputTokens, max(outputTokens, result.CompletionTokens), fmt.Errorf("output exceeds token budget"))
 		}
 		if validationErr == nil {
 			attempts = append(attempts, attempt)
 			return response, attempts, nil
 		}
 		attempt.FailureCode = "response_invalid"
+		var rejected *validationError
+		if errors.As(validationErr, &rejected) {
+			attempt.Validation = &rejected.diagnostic
+		}
 		setAttemptValidationFailure(&attempt)
 		attempts = append(attempts, attempt)
 		if turn == 3 {

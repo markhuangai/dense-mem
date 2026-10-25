@@ -185,7 +185,9 @@ func TestOrganizationEquivalenceRejectsInconsistentChains(t *testing.T) {
 	request.Pairs = append(request.Pairs, Pair{Ref: "bc", LeftRef: "b", RightRef: "c"}, Pair{Ref: "ac", LeftRef: "a", RightRef: "c"})
 	response.Items = append(response.Items, Decision{Ref: "c", Status: "classified", DefinitionRef: "new-topic"})
 	response.Equivalence = append(response.Equivalence, Equivalence{Ref: "bc", Relation: "equivalent"}, Equivalence{Ref: "ac", Relation: "distinct"})
-	require.ErrorContains(t, Validate(request, response), "not transitive")
+	err := Validate(request, response)
+	require.ErrorContains(t, err, "not transitive")
+	requireValidation(t, err, "validate", "equivalence_transitivity", "equivalence")
 }
 
 func TestOrganizationSuppliedDefinitionsAreReusedWithoutEchoes(t *testing.T) {

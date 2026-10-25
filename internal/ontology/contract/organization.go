@@ -52,6 +52,7 @@ type AssessmentAttempt struct {
 	ReportedUsageAvailable bool                           `json:"reported_usage_available"`
 	FailureCode            string                         `json:"failure_code,omitempty"`
 	Diagnostics            *modelprovider.CallDiagnostics `json:"diagnostics,omitempty"`
+	Validation             *AssessmentValidation          `json:"validation,omitempty"`
 }
 
 type OrganizationResult struct {
@@ -207,6 +208,9 @@ func ValidateOrganizationReceipt(receipt OrganizationReceipt) error {
 	}
 	for i, attempt := range receipt.Result.Attempts {
 		if attempt.Number != i+1 || attempt.EstimatedInputTokens < 0 || attempt.EstimatedOutputTokens < 0 || attempt.ReportedInputTokens < 0 || attempt.ReportedOutputTokens < 0 || attempt.ReportedTotalTokens < 0 || len(attempt.FailureCode) > 128 || !attempt.Diagnostics.Valid() {
+			return ErrInvalid
+		}
+		if !attempt.Validation.Valid() || (attempt.Validation != nil && attempt.FailureCode != "response_invalid") {
 			return ErrInvalid
 		}
 	}
