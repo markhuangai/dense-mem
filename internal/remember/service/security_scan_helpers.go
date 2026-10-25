@@ -12,11 +12,15 @@ import (
 var (
 	prohibitionPrefixPattern        = regexp.MustCompile(`(?is)^(?:please[[:space:]]+)?(?:never|do[[:space:]]+not|don't|must[[:space:]]+not|should[[:space:]]+not)[[:space:]]+(?:ever[[:space:]]+)?$`)
 	prohibitionClausePattern        = regexp.MustCompile(`(?is)^(?:please[[:space:]]+)?(?:never|do[[:space:]]+not|don't|must[[:space:]]+not|should[[:space:]]+not)[[:space:]]+(?:ever[[:space:]]+)?(?:reveal|show|send|dump|print|exfiltrate|return|output|transmit|upload|post|ignore|disregard|forget|override)\b`)
+	prohibitionURLPattern           = regexp.MustCompile(`(?i)\bhttps?://[^[:space:]"'<>]+`)
+	prohibitionClauseEndPattern     = regexp.MustCompile(`[;\r\n]|[.!?]["'\x60’”)\]}>]*(?:[[:space:]]|$)`)
+	prohibitionEllipsisPattern      = regexp.MustCompile(`\.{2,}`)
 	prohibitionJoinPattern          = regexp.MustCompile(`(?is)\b(?:and|or|nor)[[:space:]]+$`)
 	prohibitionBreakPattern         = regexp.MustCompile(`(?i)\b(?:but|instead|then|however|except|unless|nevertheless)\b`)
+	prohibitionContextPattern       = regexp.MustCompile(prohibitionURLPattern.String() + "|" + prohibitionEllipsisPattern.String() + "|" + prohibitionClauseEndPattern.String() + "|" + prohibitionBreakPattern.String())
 	reportedInstructionPattern      = regexp.MustCompile(`(?is)^[[:alpha:]][[:alpha:]'[:space:]-]{1,100}[[:space:]]+(?:quoted|quotes|reported|reports|described|describes|cited|cites|gives|gave|uses|used)\b[[:space:]]*`)
 	attackExamplePattern            = regexp.MustCompile(`(?is)^[^,.!?;\n]{0,80}\bas[[:space:]]+(?:an?[[:space:]]+)?(?:example|attack|malicious|prohibited)\b`)
-	reportedDirectivePrefixPattern  = regexp.MustCompile(`(?is)^(?:` + directivePrefixExpression + `|you\b|(?:now|then|instead)\b)\s*`)
+	reportedDirectivePrefixPattern  = regexp.MustCompile(`(?is)^(?:(?:never|do[[:space:]]+not|don't)[[:space:]]+(?:ever[[:space:]]+)?(?:forget|hesitate|refuse|fail)[[:space:]]+to\b|(?:you\b[[:space:]]+|assistant\b[,:]?[[:space:]]*)(?:can|could|would|will|shall|may)\b|` + directivePrefixExpression + `|you\b|(?:now|then|instead|just|simply|also|always|immediately|quickly)\b)\s*`)
 	reportedExecutionClausePattern  = regexp.MustCompile(`(?i)[.!?;,\r\n]|\b(?:and|or|so|but|then|however|instead)\b`)
 	reportedExecutionTargetPattern  = regexp.MustCompile(`(?i)^[a-z][a-z-]{1,30}[[:space:]]+(?:(?:to|on|with|out|according|as|what)[[:space:]]+){0,3}(?:(?:the|these|those|that|this|above|below|quoted|reported|its)[[:space:]]+)*(?:instructions?|commands?|steps?|requests?|directions?|(?:quoted|reported)[[:space:]]+(?:text|content|string|message|line|sentence|phrase|payload|prompt|snippet|passage)|quot(?:e|es|ation|ations)|report[[:space:]]+says?|it|them|this|that)\b`)
 	reportedStorageStatementPattern = regexp.MustCompile(`(?i)^(?:store|archive|record|document)[[:space:]]+(?:it|this|that|them|the[[:space:]]+(?:quote|quoted[[:space:]]+(?:text|content|string|message)|report))(?:[[:space:]]+(?:in|into)[[:space:]]+(?:(?:the|an?|my|our|your)[[:space:]]+)?(?:[a-z-]+[[:space:]]+)?(?:archive|runbook|report|notes|record|database|file))?$`)
@@ -33,7 +37,9 @@ func submissionInstructionIsData(text string, location []int, rule string) bool 
 	if len(prefix) <= 256 && !strings.ContainsAny(text[start:end], ".!?;\r\n") && !prohibitionBreakPattern.MatchString(text[start:end]) && (prohibitionPrefixPattern.MatchString(prefix) ||
 		prohibitionClausePattern.MatchString(prefix) && prohibitionJoinPattern.MatchString(prefix) && !prohibitionBreakPattern.MatchString(prefix) &&
 			(secretExtractionPattern.MatchString(prefix) || toolExfiltrationPattern.MatchString(prefix) || overridePattern.MatchString(prefix))) {
-		return true
+		if !prohibitionHasTrailingException(text[end:]) {
+			return true
+		}
 	}
 	if reportedInstructionIsData(prefix, text[start:end], text[end:], text[:clauseStart]) {
 		return true
@@ -43,6 +49,26 @@ func submissionInstructionIsData(text string, location []int, rule string) bool 
 			outputMetricSuffixPattern.MatchString(text[start:])
 	}
 	return false
+}
+
+func prohibitionHasTrailingException(trailing string) bool {
+	for {
+		location := prohibitionContextPattern.FindStringIndex(trailing)
+		if location == nil {
+			return false
+		}
+		token := trailing[location[0]:location[1]]
+		// URL paths can contain both sentence punctuation and exception words.
+		if strings.Contains(token, "://") {
+			ending := strings.TrimRight(token, "\"'`’”)]}>")
+			if !strings.HasSuffix(ending, "..") && strings.ContainsRune(".!?;", rune(ending[len(ending)-1])) {
+				return false
+			}
+		} else if !prohibitionEllipsisPattern.MatchString(token) {
+			return prohibitionBreakPattern.MatchString(token)
+		}
+		trailing = trailing[location[1]:]
+	}
 }
 
 func reportedInstructionIsData(prefix, matched, suffix, preceding string) bool {
@@ -75,9 +101,6 @@ func reportedExecutionIsDirective(text string) bool {
 			clause = strings.TrimSpace(clause[prefix[1]:])
 		}
 		words := strings.Fields(clause)
-		if len(words) >= 4 && words[0] == "never" && (words[1] == "forget" || words[1] == "hesitate" || words[1] == "refuse" || words[1] == "fail") && words[2] == "to" {
-			words = words[3:]
-		}
 		if len(words) < 2 {
 			continue
 		}
