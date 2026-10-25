@@ -60,6 +60,19 @@ func TestMaintenanceCommandsAndOutcomes(t *testing.T) {
 	require.Equal(t, "pending", MaintenanceOutcomeState(OrganizationOutcome{}, OrganizationResult{}, "lease_lost"))
 	require.Equal(t, "pending", MaintenanceOutcomeState(OrganizationOutcome{}, OrganizationResult{}, "window_closed"))
 	require.Equal(t, "failed", MaintenanceOutcomeState(OrganizationOutcome{}, OrganizationResult{}, "accounting_unavailable"))
+	for _, failure := range []string{"stale_input", "provider_response_invalid", "provider_unavailable", "request_cancelled", "request_timeout", "accounting_unavailable"} {
+		t.Run(failure, func(t *testing.T) {
+			for _, status := range []string{"organized", "ambiguous", "oversized", "unavailable", "failed"} {
+				outcome := OrganizationOutcome{Source: source, Status: status}
+				require.Equal(t, "failed", MaintenanceOutcomeState(outcome, OrganizationResult{FailureCode: failure}, failure))
+			}
+		})
+	}
+	for _, failure := range []string{"maintenance_paused", "maintenance_disabled", "lease_lost", "window_closed", "configuration_invalid"} {
+		t.Run(failure, func(t *testing.T) {
+			require.Equal(t, "pending", MaintenanceOutcomeState(OrganizationOutcome{Status: "failed"}, OrganizationResult{FailureCode: failure}, failure))
+		})
+	}
 }
 
 func TestMaintenanceRetiredAllowanceAndHistoricalHash(t *testing.T) {
