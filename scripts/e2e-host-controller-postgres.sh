@@ -135,8 +135,8 @@ load_identity_postgres_config() {
 }
 
 reset_identity_cleanup_database() {
-  ci_compose down -v --remove-orphans >/dev/null
-  ci_compose up -d --wait --wait-timeout 300 postgres >/dev/null
+  ci_compose down -v --remove-orphans >/dev/null || fail "failed to reset the fixture database"
+  ci_compose up -d --wait --wait-timeout 300 postgres >/dev/null || fail "fixture PostgreSQL failed to start"
   wait_for_postgres_service
   provision_postgres_runtime_role
   load_identity_postgres_config
@@ -555,7 +555,7 @@ NODE
 ontology_upgrade_fingerprints() {
   local table
   for table in entity_records value_records relationship_records evidence_fragments relationship_evidence_supports ontology_maintenance_windows ontology_maintenance_attempts ontology_assessments; do
-    identity_postgres_scalar "SELECT '${table}:'||md5(COALESCE(jsonb_agg(to_jsonb(row)-'estimated_input_tokens'-'max_output_tokens' ORDER BY to_jsonb(row)::text)::text,'[]')) FROM ${table} AS row"
+    identity_postgres_scalar "SELECT '${table}:'||md5(COALESCE(jsonb_agg(to_jsonb(row)-'estimated_input_tokens'-'max_output_tokens' ORDER BY to_jsonb(row)::text)::text,'[]')) FROM ${table} AS row" || return
   done
 }
 
@@ -571,12 +571,12 @@ run_ontology_upgrade_startup_matrix() {
   local source_dir="$1" project="$2" variant before state observed
   for variant in expired unreconciled live; do
     reset_identity_cleanup_database
-    seed_ontology_upgrade_database "$source_dir" "$project" "$variant"
-    before="$(ontology_upgrade_fingerprints)"
+    seed_ontology_upgrade_database "$source_dir" "$project" "$variant" || fail "ontology upgrade fixture seed failed"
+    before="$(ontology_upgrade_fingerprints)" || fail "ontology upgrade history snapshot failed"
     if [[ "$variant" == "unreconciled" ]]; then
-      ci_compose --profile verifier up -d redis prometheus synchronous-write-provider >/dev/null
+      ci_compose --profile verifier up -d redis prometheus synchronous-write-provider >/dev/null || fail "ontology upgrade helpers failed to start"
       for _ in 1 2; do
-        ci_compose --profile verifier up -d --no-deps --force-recreate server >/dev/null
+        ci_compose --profile verifier up -d --no-deps --force-recreate server >/dev/null || fail "ontology upgrade refusal probe failed to start"
         observed=0
         for _ in $(seq 1 60); do
           if ci_compose logs --no-color server 2>&1 | grep -F 'unreconciled attempts require terminal evidence' >/dev/null; then
@@ -586,7 +586,7 @@ run_ontology_upgrade_startup_matrix() {
           sleep 1
         done
         ((observed == 1)) || fail "ontology upgrade did not report unreconciled attempts"
-        ci_compose stop server >/dev/null
+        ci_compose stop server >/dev/null || fail "ontology upgrade refusal probe failed to stop"
         assert_ontology_upgrade_blocked
         [[ "$(ontology_upgrade_fingerprints)" == "$before" ]] || fail "blocked ontology upgrade changed history"
       done
@@ -595,7 +595,7 @@ run_ontology_upgrade_startup_matrix() {
       continue
     fi
     if [[ "$variant" == "live" ]]; then
-      ci_compose --profile verifier up -d >/dev/null
+      ci_compose --profile verifier up -d >/dev/null || fail "ontology upgrade interruption probe failed to start"
       observed=0
       for _ in $(seq 1 20); do
         state="$(identity_postgres_scalar "SELECT paused AND EXISTS(SELECT 1 FROM ontology_maintenance_batches WHERE status='running' AND lease_until>clock_timestamp()) FROM ontology_maintenance_state")"
@@ -603,7 +603,7 @@ run_ontology_upgrade_startup_matrix() {
         sleep 1
       done
       ((observed == 1)) || fail "ontology upgrade did not wait for its live lease"
-      ci_compose stop server >/dev/null
+      ci_compose stop server >/dev/null || fail "ontology upgrade interruption probe failed to stop"
       assert_ontology_upgrade_blocked
       [[ "$(ontology_upgrade_fingerprints)" == "$before" ]] || fail "interrupted ontology upgrade changed history"
       observed=0
@@ -614,7 +614,11 @@ run_ontology_upgrade_startup_matrix() {
       done
       ((observed == 1)) || fail "ontology fixture lease did not expire naturally"
     fi
-    ci_compose --profile verifier up -d --wait --wait-timeout 300 >/dev/null
+    if ! ci_compose --profile verifier up -d --wait --wait-timeout 300 >/dev/null; then
+      ci_compose logs --no-color --tail 100 server 2>&1 |
+        redact_diagnostics "$ENV_FILE" "$DENSE_MEM_CI_IDENTITY_POSTGRES_PASSWORD" >&2 || fail "ontology upgrade diagnostics failed"
+      fail "ontology upgrade fixture startup failed"
+    fi
     verify_postgres_runtime_migration_state
     state="$(identity_postgres_scalar "SELECT concat(paused,'|',
       NOT EXISTS(SELECT 1 FROM ontology_maintenance_batches WHERE status='running'),'|',
