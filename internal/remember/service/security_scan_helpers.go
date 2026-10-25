@@ -45,8 +45,8 @@ func submissionInstructionIsData(text string, location []int, rule string) bool 
 		return true
 	}
 	if rule == "prompt_secret_extraction" && outputTokenNounPattern.MatchString(text[start:end]) {
-		return outputMetricPrefixPattern.MatchString(prefix) && !toolDirectiveSuffixPattern.MatchString(prefix) ||
-			outputMetricSuffixPattern.MatchString(text[start:])
+		return !toolDirectiveSuffixPattern.MatchString(prefix) &&
+			(outputMetricPrefixPattern.MatchString(prefix) || outputMetricSuffixPattern.MatchString(text[start:]))
 	}
 	return false
 }
@@ -60,7 +60,13 @@ func prohibitionHasTrailingException(trailing string) bool {
 		token := trailing[location[0]:location[1]]
 		// URL paths can contain both sentence punctuation and exception words.
 		if strings.Contains(token, "://") {
-			ending := strings.TrimRight(token, "\"'`’”)]}>")
+			ending := strings.TrimRight(token, "\"'`’”)]}>,")
+			if boundary := strings.LastIndexAny(ending, ",;"); boundary >= 0 {
+				exception := strings.TrimRight(ending[boundary+1:], ".!?")
+				if match := prohibitionBreakPattern.FindStringIndex(exception); match != nil && match[0] == 0 && match[1] == len(exception) {
+					return true
+				}
+			}
 			if !strings.HasSuffix(ending, "..") && strings.ContainsRune(".!?;", rune(ending[len(ending)-1])) {
 				return false
 			}
