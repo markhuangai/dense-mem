@@ -122,6 +122,53 @@ func OrganizationRecordID(teamID string, kind Kind, key string) string {
 	return uuid.NewSHA1(uuid.NameSpaceURL, []byte("dense-mem:organization:"+teamID+":"+string(kind)+":"+key)).String()
 }
 
+func OrganizationClassification(source SourceSnapshot, records, candidates []RecordView) (string, bool) {
+	key := SourceKey(source.SourceHandle)
+	for _, view := range records {
+		if view.Override != nil && view.Override.Action == SetClassification && SourceKey(view.Override.Members[0]) == key {
+			return view.Override.DefinitionID, true
+		}
+	}
+	for _, view := range records {
+		if view.Current && view.Assignment != nil && SourceKey(view.Assignment.Source) == key {
+			return view.Assignment.DefinitionID, true
+		}
+	}
+	name := ""
+	if source.Kind == PredicateSource {
+		name = NormalizeName(source.ID)
+	}
+	if source.Kind == EntitySource {
+		name = NormalizeName(source.EntityKind)
+	}
+	if name != "" {
+		for _, view := range candidates {
+			for _, candidate := range DefinitionNames(view.Record) {
+				if candidate == name && ((source.Kind == EntitySource && view.Kind == EntityClass && view.Definition.BaseEntityKind == source.EntityKind) || (source.Kind == PredicateSource && view.Kind == PredicateConcept)) {
+					return view.ID, true
+				}
+			}
+		}
+	}
+	return "", false
+}
+
+func OrganizationDependencies(context OrganizationContext) ([]RevisionRef, error) {
+	var result []RevisionRef
+	seen := map[string]bool{}
+	for _, view := range append(append([]RecordView(nil), context.Records...), context.Candidates...) {
+		if !view.Current || seen[view.ID] {
+			continue
+		}
+		if len(result) == MaxDependencyRecords {
+			return nil, fmt.Errorf("%w: organization dependency context exceeds bound", ErrInvalid)
+		}
+		seen[view.ID] = true
+		result = append(result, RevisionRef{ID: view.ID, Version: view.Version})
+	}
+	return result, nil
+}
+
 func OrganizationContextHash(context OrganizationContext) (string, error) {
 	type revision struct {
 		ID      string

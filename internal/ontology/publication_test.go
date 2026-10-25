@@ -159,14 +159,14 @@ func TestOrganizationDependenciesHonorTheirBound(t *testing.T) {
 	}
 	ctx.Candidates = append(ctx.Candidates, ctx.Records[:contract.MaxVocabularyCandidates]...)
 	ctx.Records = append(ctx.Records, contract.RecordView{Record: contract.Record{ID: uuid.NewString(), Version: 1}})
-	dependencies, err := organizationDependencies(ctx)
+	dependencies, err := contract.OrganizationDependencies(ctx)
 	require.NoError(t, err)
 	require.Len(t, dependencies, contract.MaxDependencyRecords)
 	for i, dependency := range dependencies {
 		require.Equal(t, contract.RevisionRef{ID: ctx.Records[i].ID, Version: 1}, dependency)
 	}
 	ctx.Candidates = append(ctx.Candidates, contract.RecordView{Record: contract.Record{ID: uuid.NewString(), Version: 1}, Current: true})
-	dependencies, err = organizationDependencies(ctx)
+	dependencies, err = contract.OrganizationDependencies(ctx)
 	require.ErrorIs(t, err, contract.ErrInvalid)
 	require.Empty(t, dependencies)
 }

@@ -150,6 +150,60 @@ comparison run must set `ALLOW_UNGATED_EVALUATION=1` and omit
 `RELEASE_GATE_POLICY`; this records ordinary candidate metrics without
 presenting the result as a release-gate decision.
 
+## Repaired 1k v3 seed generator
+
+`public_6axis_1k_v3` retains the locked 991-document, 204-case cohort from
+issue #149. The dataset revision still uses `dense-mem.eval.seed.v2`. It
+repairs 26 reversible UTF-8-as-Latin-1 sequences in 12 evidence records and
+regenerates flat relationship proposals with `evidence_indices`. Cases,
+queries, judgments, ordering, and the nine original exclusions stay fixed.
+The historical V1 release-gate artifact and policy remain separate.
+
+Restore the original local artifacts, then derive into a new directory:
+
+```bash
+go run ./cmd/eval-runner \
+  --mode derive-v3 \
+  --parent-v1-seed tests/eval/seeds/public_6axis_1k_v1/seed_manifest.json \
+  --parent-v1-suite tests/eval/suites/public_6axis_1k_v1.jsonl \
+  --filtered-v1-seed tests/eval/runtime/issue149-v1-filtered-seed/seed_manifest.json \
+  --filtered-v1-suite tests/eval/runtime/issue149-v1-filtered-seed/suite.jsonl \
+  --relationship-ledger tests/eval/runtime/issue149-v2-ledger/relationship_ledger.jsonl \
+  --cohort-lock tests/eval/source_locks/public_6axis_1k_v2_cohort.json \
+  --repair-lock tests/eval/source_locks/public_6axis_1k_v3_repairs.json \
+  --out tests/eval/seeds/public_6axis_1k_v3
+```
+
+Derivation verifies the parent, filtered cohort, original ledger, exact repair
+counts, and before/after content hashes. The historical ledger's `modality`
+property is recorded and removed from client proposals; it is no longer part
+of the public relationship contract. The locked input contains 182 such fields.
+The existing V2 conversion records eight sentence-bounded proposal fallbacks.
+Every completed row passes current
+contract validation and the production evidence/proposal admission scanner
+before the output directory is installed. The seed contains the repaired
+source pack, normalized ledger, repair lock, and `v3_derivation_report.json`.
+
+The frozen output contains 21 files and has seed hash
+`sha256:0923aa14109291e5d5cf24fe419f0b6fc229823bf3dd4292e17d45447365e675`.
+Verify every generated filename and byte against the frozen seed before using
+it. An existing output path is rejected; failed derivation leaves inputs and
+existing output untouched. Keep generated seeds and full run outputs ignored.
+
+The paired release comparison remains separate work under issue #584.
+Publishing this generator does not establish a completed comparison or
+retrieval-quality equivalence. Use each pinned release's native runner to
+validate the frozen seed before import and retain its recorded readiness
+protocol, terminal outcomes, and usage limitations. Capture the same 204 cases,
+then replay both trace sets with one pinned prerelease scorer using `--traces`
+and `--mapping` to preserve grouped evidence coverage consistently.
+Compare the rescored directories with ordinary `--mode compare`, which requires
+identical seed hashes. Use `ALLOW_UNGATED_EVALUATION=1` for this diagnostic
+workflow and omit the historical release-gate policy. Complete comparison
+evidence requires all 991 imports accounted for, 204 scored cases per release,
+complete mappings, and disclosed ontology readiness. The pair describes the
+two release configurations; it does not isolate ontology's contribution.
+
 ## Use the approved local seed
 
 The hard gate consumes the existing approved `public_6axis_1k_v1` seed and

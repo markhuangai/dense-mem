@@ -1,0 +1,172 @@
+{
+  "schema_version": "dense-mem.eval.encoding_repairs.v1",
+  "seed_id": "public_6axis_1k_v3",
+  "filtered_seed_hash": "sha256:51a38b8f62b536414d15bd857a59d15017a21de5747fc391d351c6ac1e9a9643",
+  "relationship_ledger_sha256": "sha256:4d6ca954419f6ebec6bf768bf9fba973f2f7078ff08683681bede1c39c389050",
+  "repairs": [
+    {
+      "source_doc_id": "public_6axis_v1:msmarco_passage:doc:2252797",
+      "before_content_sha256": "sha256:59c18b513788c92adb1ef30a24e54dcbefdc358a105ffc17b36bf1578667aeba",
+      "after_content_sha256": "sha256:0943292bb0804d496490cbffd341c7e3d60e165a2471c5d84f46691d837ddfd2",
+      "replacements": [
+        {
+          "before": "\u00e2\u0080\u0099",
+          "after": "\u2019",
+          "count": 1
+        },
+        {
+          "before": "\u00e2\u0080\u009c",
+          "after": "\u201c",
+          "count": 1
+        },
+        {
+          "before": "\u00e2\u0080\u009d",
+          "after": "\u201d",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "source_doc_id": "public_6axis_v1:msmarco_passage:doc:2803186",
+      "before_content_sha256": "sha256:8448e7cfc70094abb1d8b99d9179f9a0d96159ebace07882d80ffe2ba735710b",
+      "after_content_sha256": "sha256:42c32f5ce95499492872af47c7591a7297990082a33290a5593d3ee48d4cbe24",
+      "replacements": [
+        {
+          "before": "\u00e2\u0080\u0099",
+          "after": "\u2019",
+          "count": 2
+        }
+      ]
+    },
+    {
+      "source_doc_id": "public_6axis_v1:msmarco_passage:doc:2953794",
+      "before_content_sha256": "sha256:aa925e50571aac610d660ee11205d1ffc9240d9668c134f78f8310e265c25eb6",
+      "after_content_sha256": "sha256:2a6fe035cc2e3e68bd97fda0b47c7d859a4f2bf7229a2953598c4abfe9e5484b",
+      "replacements": [
+        {
+          "before": "\u00e2\u0080\u00a6",
+          "after": "\u2026",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "source_doc_id": "public_6axis_v1:msmarco_passage:doc:3387113",
+      "before_content_sha256": "sha256:0cf298a3c7578beb3254e756092f18aa83094320ddf6e827ea486c495c827993",
+      "after_content_sha256": "sha256:d0272512ca66dce00d5a14da4c6a7769b9ba41f212985d08fa4d62318cb0b30c",
+      "replacements": [
+        {
+          "before": "\u00e2\u0080\u009c",
+          "after": "\u201c",
+          "count": 2
+        },
+        {
+          "before": "\u00e2\u0080\u009d",
+          "after": "\u201d",
+          "count": 2
+        }
+      ]
+    },
+    {
+      "source_doc_id": "public_6axis_v1:msmarco_passage:doc:3698827",
+      "before_content_sha256": "sha256:5dbf05d2f4c60e1f740401ffa1de24d14c75864191f8948e1b88d9ca34716042",
+      "after_content_sha256": "sha256:939dcc773130ed7fa4df797c98c9244a598b8d0c211b07bd0b4ea68be6a9f62d",
+      "replacements": [
+        {
+          "before": "\u00e2\u0080\u0099",
+          "after": "\u2019",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "source_doc_id": "public_6axis_v1:msmarco_passage:doc:3838733",
+      "before_content_sha256": "sha256:746b8ce91e18a1ccd2c44cafc706804ce63a480519179c5d5145d981e8b0fa80",
+      "after_content_sha256": "sha256:9c74f274d2806385b0e9a1dd69a4618b259bf6c1b85e58d7718d5a550bcb0a1d",
+      "replacements": [
+        {
+          "before": "\u00e2\u0080\u009c",
+          "after": "\u201c",
+          "count": 3
+        },
+        {
+          "before": "\u00e2\u0080\u009d",
+          "after": "\u201d",
+          "count": 3
+        }
+      ]
+    },
+    {
+      "source_doc_id": "public_6axis_v1:msmarco_passage:doc:4787234",
+      "before_content_sha256": "sha256:1769e547f6ed2571ede83713d6f167c6743dd2b573a3c4668b01d9973ddc8a17",
+      "after_content_sha256": "sha256:bf58345fdefb984de737799931d208bfbcc9a42d2b8237785f640a6ce08b81de",
+      "replacements": [
+        {
+          "before": "\u00e2\u0080\u009c",
+          "after": "\u201c",
+          "count": 2
+        }
+      ]
+    },
+    {
+      "source_doc_id": "public_6axis_v1:msmarco_passage:doc:52862",
+      "before_content_sha256": "sha256:212156ba45fffb66bf95a823c194b58d33be0d717f58f15135ff09dcfb27cb14",
+      "after_content_sha256": "sha256:efc980257c6cb2fc8d3a2eb4372bf17f7bb5339b3ef37b5050a149f5f9932785",
+      "replacements": [
+        {
+          "before": "\u00e2\u0082\u00ac",
+          "after": "\u20ac",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "source_doc_id": "public_6axis_v1:msmarco_passage:doc:7216281",
+      "before_content_sha256": "sha256:07b6780e34296e699d75110245ee2bcc8a09626b29c43006e973c7b820b109da",
+      "after_content_sha256": "sha256:dafa2cdbb16d6ddf6f726a2b278dfd58a92818cc3aea9f548fc9bfac8cb29ecd",
+      "replacements": [
+        {
+          "before": "\u00e2\u0080\u00a6",
+          "after": "\u2026",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "source_doc_id": "public_6axis_v1:msmarco_passage:doc:7219338",
+      "before_content_sha256": "sha256:99d3f32cd03929fcde6cc57cf5b4eb778390838ef0176392bb01438be1bce6f1",
+      "after_content_sha256": "sha256:5b26ebfd14267e29466eabd5e0427923e3ef127bd694e702c1a077dbae236902",
+      "replacements": [
+        {
+          "before": "\u00e2\u0080\u0099",
+          "after": "\u2019",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "source_doc_id": "public_6axis_v1:msmarco_passage:doc:7219802",
+      "before_content_sha256": "sha256:12fb4df28ef08c4890912e90ed179d1f30088fc3de790cf53ab69a7279570ae6",
+      "after_content_sha256": "sha256:cf7d92e80a64befe36b9715280c90a56e48d10dc31463f51a968ac5b26878ec8",
+      "replacements": [
+        {
+          "before": "\u00c5\u008d",
+          "after": "\u014d",
+          "count": 2
+        }
+      ]
+    },
+    {
+      "source_doc_id": "public_6axis_v1:msmarco_passage:doc:7221033",
+      "before_content_sha256": "sha256:d25875665d47c6a6ecad5c47c6fab5c7ed96e4f594fe14ab4ad6f11c216b300f",
+      "after_content_sha256": "sha256:9428e298f7e2c167605b48f68098309355b75d0e5b1015de5bdd4251e7097cf7",
+      "replacements": [
+        {
+          "before": "\u00e2\u0080\u0099",
+          "after": "\u2019",
+          "count": 2
+        }
+      ]
+    }
+  ]
+}

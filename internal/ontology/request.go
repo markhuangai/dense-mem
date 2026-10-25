@@ -67,7 +67,7 @@ func (s *Service) request(context contract.OrganizationContext, receipt *contrac
 		}
 		ref := fmt.Sprintf("s%d", i)
 		item := assessment.Item{Ref: ref, Kind: source.Kind, Text: contract.SourceDisplayText(source), OwnerRef: owners[source.OwnerID], EntityKind: source.EntityKind, Context: contract.SourceDisplayContext(source)}
-		locked, required := classificationFor(source, context.Records, context.Candidates)
+		locked, required := contract.OrganizationClassification(source, context.Records, context.Candidates)
 		item.LockedDefinitionRef = definitionRefs[locked]
 		if required && item.LockedDefinitionRef == "" {
 			outcome.Status = "ambiguous"
@@ -116,37 +116,6 @@ func incompleteGroup(source contract.SourceSnapshot, records []contract.RecordVi
 		}
 	}
 	return false
-}
-
-func classificationFor(source contract.SourceSnapshot, records, candidates []contract.RecordView) (string, bool) {
-	key := contract.SourceKey(source.SourceHandle)
-	for _, view := range records {
-		if view.Override != nil && view.Override.Action == contract.SetClassification && contract.SourceKey(view.Override.Members[0]) == key {
-			return view.Override.DefinitionID, true
-		}
-	}
-	for _, view := range records {
-		if view.Current && view.Assignment != nil && contract.SourceKey(view.Assignment.Source) == key {
-			return view.Assignment.DefinitionID, true
-		}
-	}
-	name := ""
-	if source.Kind == contract.PredicateSource {
-		name = contract.NormalizeName(source.ID)
-	}
-	if source.Kind == contract.EntitySource {
-		name = contract.NormalizeName(source.EntityKind)
-	}
-	if name != "" {
-		for _, view := range candidates {
-			for _, candidate := range contract.DefinitionNames(view.Record) {
-				if candidate == name && ((source.Kind == contract.EntitySource && view.Kind == contract.EntityClass && view.Definition.BaseEntityKind == source.EntityKind) || (source.Kind == contract.PredicateSource && view.Kind == contract.PredicateConcept)) {
-					return view.ID, true
-				}
-			}
-		}
-	}
-	return "", false
 }
 
 func organizationPairs(items []assessment.Item, sources map[string]contract.SourceSnapshot, extra contract.SourceSnapshot, records []contract.RecordView) []assessment.Pair {

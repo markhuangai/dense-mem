@@ -129,3 +129,23 @@ func TestCrossOwnerRelativeTimeRequiresResolvedCalendarContext(t *testing.T) {
 		})
 	}
 }
+
+func TestOrganizationClassificationPreservesOverrideAndAssignmentPrecedence(t *testing.T) {
+	for _, kind := range []SourceKind{EntitySource, PredicateSource, EvidenceSource, RelationshipSource} {
+		t.Run(string(kind), func(t *testing.T) {
+			source := policySnapshot("fixed-source", kind, "fixed meaning")
+			assignment := RecordView{Record: Record{ID: policyID("assignment"), Assignment: &Assignment{Source: source.SourceHandle, DefinitionID: policyID("assigned")}}, Current: true}
+			override := RecordView{Record: Record{ID: policyID("override"), Override: &Override{Action: SetClassification, DefinitionID: policyID("chosen"), Members: []SourceHandle{source.SourceHandle}}}}
+			id, fixed := OrganizationClassification(source, []RecordView{assignment, override}, nil)
+			require.True(t, fixed)
+			require.Equal(t, override.Override.DefinitionID, id)
+			id, fixed = OrganizationClassification(source, []RecordView{assignment}, nil)
+			require.True(t, fixed)
+			require.Equal(t, assignment.Assignment.DefinitionID, id)
+			assignment.Current = false
+			id, fixed = OrganizationClassification(source, []RecordView{assignment}, nil)
+			require.False(t, fixed)
+			require.Empty(t, id)
+		})
+	}
+}

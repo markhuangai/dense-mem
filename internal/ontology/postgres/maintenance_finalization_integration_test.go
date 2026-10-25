@@ -345,9 +345,16 @@ func TestOntologyMaintenanceFinalizationAdmissionAndIsolation(t *testing.T) {
 						x.assertCompletedOutcome(t)
 					}
 					if mode == "revision" {
-						var after string
-						require.NoError(t, f.admin.Raw(`SELECT to_jsonb(source)::text FROM ontology_maintenance_sources AS source WHERE team_id=?::uuid AND source_id=?`, f.team, x.claim.Sources[0].ID).Row().Scan(&after))
-						require.Equal(t, revisedSource, after)
+						if receiptMode == "reported" {
+							state := revalidationQueue(t, f, x.claim.Sources[0])
+							require.Equal(t, "organized", state.Status)
+							require.Equal(t, x.result.AssessmentID, state.AssessmentID)
+							require.Equal(t, x.claim.Revisions[ontology.SourceKey(x.claim.Sources[0])]+1, state.Revision)
+						} else {
+							var after string
+							require.NoError(t, f.admin.Raw(`SELECT to_jsonb(source)::text FROM ontology_maintenance_sources AS source WHERE team_id=?::uuid AND source_id=?`, f.team, x.claim.Sources[0].ID).Row().Scan(&after))
+							require.Equal(t, revisedSource, after)
+						}
 					}
 					if mode == "actor" {
 						other := maintenanceOtherTeam(t, f)
@@ -382,16 +389,16 @@ func TestOntologyMaintenanceFinalizationRejectsMismatchedReceipt(t *testing.T) {
 			claim := *x.claim
 			claim.Sources = append([]ontology.SourceHandle(nil), claim.Sources...)
 			claim.Sources[0].Version++
-			require.ErrorIs(t, validateMaintenanceRecovery(claim, receipt), ontology.ErrInvalid)
+			require.ErrorIs(t, validateMaintenanceReceipt(claim, receipt), ontology.ErrInvalid)
 			claim = *x.claim
 			claim.Revisions = map[string]int64{}
-			require.ErrorIs(t, validateMaintenanceRecovery(claim, receipt), ontology.ErrInvalid)
+			require.ErrorIs(t, validateMaintenanceReceipt(claim, receipt), ontology.ErrInvalid)
 			receipt.OperationKey = "different-batch"
 			encoded, err := json.Marshal(receipt)
 			require.NoError(t, err)
 			decoded, err := decodeOrganization(encoded)
 			require.NoError(t, err)
-			require.ErrorIs(t, validateMaintenanceRecovery(*x.claim, decoded), ontology.ErrInvalid)
+			require.ErrorIs(t, validateMaintenanceReceipt(*x.claim, decoded), ontology.ErrInvalid)
 		})
 	}
 }
