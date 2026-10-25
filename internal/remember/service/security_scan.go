@@ -27,6 +27,7 @@ const (
 	submissionSecurityMinBase64TokenLength = 16
 	submissionSecurityMinFoldedBase64Part  = 4
 	submissionSecurityHiddenControlFlood   = 4
+	directivePrefixExpression              = `(?:\b(?:please|kindly)|\b(?:can|could|would|will|shall|may)[[:space:]]+you|\b(?:you|assistant[,:]?)[[:space:]]+(?:must|should|need(?:[[:space:]]+to)?|(?:are|have)[[:space:]]+to)|\b(?:i|we)[[:space:]]+(?:need|want|require)[[:space:]]+you(?:[[:space:]]+to)?|\b(?:try|attempt)[[:space:]]+to|\bassistant[,:]?)`
 )
 
 var (
@@ -42,7 +43,7 @@ var (
 
 	secretExtractionPattern    = regexp.MustCompile(`(?is)\b(?:reveal|show|send|dump|print|exfiltrate|return)\b.{0,100}?\b(?:system[[:space:]_-]*prompt|hidden[[:space:]_-]*instructions?|environment[[:space:]_-]*variables?|env|api[[:space:]_-]*keys?|credentials?|secrets?|cookies?|tokens?|passwords?|passcodes?|private[[:space:]_-]*keys?|authorization[[:space:]_-]*headers?)\b|\b(?:please[[:space:]_-]+)?output\b[[:space:]_-]+(?:(?:all|the|your|any|raw|secret|hidden|system|environment|api|access|auth|session|credential|cookie|token)[[:space:]_-]+)*(?:system[[:space:]_-]*prompt|hidden[[:space:]_-]*instructions?|environment[[:space:]_-]*variables?|env|api[[:space:]_-]*keys?|credentials?|secrets?|cookies?|tokens?|passwords?|passcodes?|private[[:space:]_-]*keys?|authorization[[:space:]_-]*headers?)\b`)
 	toolExfiltrationPattern    = regexp.MustCompile(`(?is)\b(?:use[[:space:]_-]*(?:your[[:space:]_-]*)?tools?|curl|wget|fetch|post|send|upload|exfiltrate|transmit|make[[:space:]_-]*(?:an[[:space:]_-]*)?(?:http[[:space:]_-]*|network[[:space:]_-]*)?request|call[[:space:]_-]*(?:an[[:space:]_-]*)?api)\b.{0,180}?(?:https?://|webhook|endpoint|external|environment[[:space:]_-]*variables?|env|api[[:space:]_-]*keys?|credentials?|secrets?|cookies?|tokens?)`)
-	toolDirectiveSuffixPattern = regexp.MustCompile(`(?is)(?:\b(?:please|kindly)|\b(?:can|could|would|will|shall|may)[[:space:]]+you|\byou[[:space:]]+(?:must|should|need(?:[[:space:]]+to)?|are[[:space:]]+to)|\b(?:i|we)[[:space:]]+(?:need|want|require)[[:space:]]+you(?:[[:space:]]+to)?|\b(?:try|attempt)[[:space:]]+to|\bassistant[,:]?)\s*$`)
+	toolDirectiveSuffixPattern = regexp.MustCompile(`(?is)` + directivePrefixExpression + `\s*$`)
 	toolDirectiveStartPattern  = regexp.MustCompile(`(?is)(?:^|[\r\n.!?])[[:space:]>#*\-]*$`)
 	identifierHexPattern       = regexp.MustCompile(`(?i)^(?:sha(?:1|224|256|384|512):)?(?:[0-9a-f]{32}|[0-9a-f]{40}|[0-9a-f]{56}|[0-9a-f]{64}|[0-9a-f]{96}|[0-9a-f]{128})$`)
 	uuidPattern                = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
@@ -848,7 +849,7 @@ func securityMatchHasNoHiddenControls(view, normalized securityView, location []
 	}
 	runes := []rune(view.text)
 	for _, value := range runes[normalized.spans[start].start:normalized.spans[end-1].end] {
-		if hiddenControlRune(value) {
+		if hiddenControlRune(value) || unicode.Is(unicode.Mn, value) {
 			return false
 		}
 	}
