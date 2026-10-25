@@ -64,11 +64,11 @@ func (s *Store) recoverMaintenanceBatches(ctx context.Context, now time.Time) er
 			if err != nil {
 				return err
 			}
-			if err := validateMaintenanceRecovery(claim, receipt); err != nil {
+			if err := validateMaintenanceReceipt(claim, receipt); err != nil {
 				return err
 			}
-			phase = "recovery_source_locks"
-			locked, err := lockMaintenanceRecoverySources(tx, claim)
+			phase = "recovery_input_locks"
+			locked, err := lockMaintenanceRecoveryInputs(tx, claim)
 			if err != nil {
 				return err
 			}
@@ -85,7 +85,7 @@ func (s *Store) recoverMaintenanceBatches(ctx context.Context, now time.Time) er
 	return maintenanceFinalizationError(ctx, claim, phase, started, err)
 }
 
-func validateMaintenanceRecovery(claim ontology.MaintenanceClaim, receipt ontology.OrganizationReceipt) error {
+func validateMaintenanceReceipt(claim ontology.MaintenanceClaim, receipt ontology.OrganizationReceipt) error {
 	input, err := ontology.PrepareOrganizationInput(ontology.OrganizationInput{OperationKey: "maintenance:" + claim.ID, Sources: claim.Sources})
 	if err != nil {
 		return err
@@ -106,12 +106,17 @@ func validateMaintenanceRecovery(claim ontology.MaintenanceClaim, receipt ontolo
 	return nil
 }
 
-func lockMaintenanceRecoverySources(tx *gorm.DB, claim ontology.MaintenanceClaim) (bool, error) {
+func lockMaintenanceRecoveryInputs(tx *gorm.DB, claim ontology.MaintenanceClaim) (bool, error) {
+	var locked bool
+	// Receipt revalidation takes the catalog lock before any queue-row locks.
+	if err := tx.Raw(`SELECT EXISTS(SELECT 1 FROM ontology_catalog_heads
+	 WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? FOR UPDATE SKIP LOCKED)`, claim.TeamID, claim.SpaceID, claim.Generation).Row().Scan(&locked); err != nil || !locked {
+		return locked, err
+	}
 	keys := make([]string, 0, len(claim.Sources))
 	for _, source := range claim.Sources {
 		keys = append(keys, ontology.SourceKey(source))
 	}
-	var locked bool
 	err := tx.Raw(`WITH wanted AS MATERIALIZED (
 	 SELECT source_kind,source_id FROM ontology_maintenance_sources WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND source_kind||':'||source_id=ANY(?::text[])
 	), acquired AS (

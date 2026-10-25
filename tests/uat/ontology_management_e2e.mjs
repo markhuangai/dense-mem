@@ -46,6 +46,13 @@ try {
   }
   await settle();
   assert.equal((await recall()).length, 1, "initial paraphrases should share a slot");
+  const fixedReceipts = sourceAssessments(ids);
+  const callsBeforeVocabulary = await providerCalls();
+  const unusedKey = `atlas-postgresql-alternative-${randomUUID()}`;
+  await saveAndPublish([{ action: "define", expected_version: 0, kind: "topic", definition: { key: unusedKey, label: "Atlas PostgreSQL alternative vocabulary", description: "Unused storage vocabulary matching already classified Atlas sources", aliases: [] } }]);
+  await settle();
+  assert.deepEqual(sourceAssessments(ids), fixedReceipts, "unused matching vocabulary must preserve each fixed source assessment");
+  assert.deepEqual(await providerCalls(), callsBeforeVocabulary, "unused vocabulary must not trigger provider work");
   const revision = (await ui("/status")).revision;
   const input = { operation_key: randomUUID(), expected_version: 0, expected_revision: revision, reason: "Separate manager-selected paraphrases", edits: [{ action: "keep_separate", expected_version: 0, members: sources }] };
   const beforeCalls = await providerCalls();
@@ -82,6 +89,19 @@ try {
   assert(pin, "definition edit must create a persistent pin");
   await saveAndPublish([{ action: "remove_override", record_id: pin.id, expected_version: pin.version }]);
   assert((await ui(`/records/${pin.id}`)).retired, "explicit unpin retires pin override");
+  const replacement = (await ui("/records?kind=topic&limit=200")).records.find((record) => record.definition?.key === unusedKey);
+  assert(replacement, "manager vocabulary must remain available for an explicit correction");
+  const beforeCorrection = sourceAssessments(ids);
+  const correction = await saveAndPublish([{ action: "classify", expected_version: 0, source: sources[0], definition_id: replacement.id }]);
+  await settle();
+  const corrected = (await ui("/records?kind=assignment&limit=200")).records.find((record) => record.current && record.assignment?.source.id === ids[0]);
+  assert.equal(corrected?.assignment.definition_id, replacement.id, "a relevant manager correction must replace the fixed classification");
+  assert.notEqual(sourceAssessments(ids).find((source) => source.source === ids[0]).assessment, beforeCorrection.find((source) => source.source === ids[0]).assessment, "relevant correction must reassess the affected source");
+  const classification = (await ui("/records?kind=override&limit=200")).records.find((record) => record.override?.action === "set_classification" && correction.publication.records.some((ref) => ref.id === record.id));
+  assert(classification, "classification correction must have a durable override");
+  // The browser suite reuses these sources and creates its own classification override.
+  await saveAndPublish([{ action: "remove_override", record_id: classification.id, expected_version: classification.version }]);
+  assert((await ui(`/records/${classification.id}`)).retired, "the fixture correction must be removed before browser checks");
   assert.deepEqual(snapshot(), canonical, "corrections and rollback changed canonical facts or provenance");
   console.log("ontology management production HTTP/MCP: permissions, isolation, replay, stale conflicts, provider-free preview, split persistence, pin/unpin and rollback passed");
 } finally {
@@ -121,6 +141,14 @@ async function providerCalls() { const response = await fetch(`${required("DENSE
 async function saveAndPublish(edits) {
   const draft = await ui("/drafts", { operation_key: randomUUID(), expected_version: 0, expected_revision: (await ui("/status")).revision, reason: "Definition pin lifecycle", edits });
   return ui(`/drafts/${draft.id}/publish`, { operation_key: randomUUID(), expected_version: draft.version, expected_revision: draft.base_revision, reason: draft.reason });
+}
+function sourceAssessments(ids) {
+  for (const id of ids) assert.match(id, /^[0-9a-f-]{36}$/);
+  const sql = `SELECT COALESCE(jsonb_agg(jsonb_build_object('source',source_id,'assessment',assessment_id,'status',status) ORDER BY source_id),'[]') FROM ontology_maintenance_sources WHERE team_id='${teamID}'::uuid AND source_kind='evidence' AND source_id IN (${ids.map((id) => `'${id}'`).join(",")})`;
+  const result = JSON.parse(executeFixtureSQL(`BEGIN; SET LOCAL app.tx_mode='system'; ${sql}; COMMIT;`));
+  assert.equal(result.length, ids.length);
+  for (const source of result) { assert.equal(source.status, "organized"); assert(source.assessment); }
+  return result;
 }
 function snapshot() {
   const tables = ["evidence_fragments", "evidence_occurrences", "evidence_sources", "evidence_source_revisions", "entity_records", "entity_names", "value_records", "relationship_records", "relationship_evidence_supports", "relationship_support_decision_events", "evidence_lifecycle_events", "evidence_quarantines"];

@@ -888,6 +888,34 @@
       "run": "^TestOntologyMaintenanceAttemptDiagnosticsOperatorLogIsBounded$",
       "phase": "precheck",
       "source": "internal/ontology/postgres/maintenance_diagnostics_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceRevalidationMeasurement",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceRevalidationMeasurement$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_revalidation_measurement_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceRevalidationChurn",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceRevalidationChurn$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_revalidation_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceCurrentReceiptCompletion",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceCurrentReceiptCompletion$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_completion_revalidation_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceRevalidationRecovery",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceRevalidationRecovery$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_revalidation_recovery_integration_test.go"
     }
   ]
 }

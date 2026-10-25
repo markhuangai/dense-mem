@@ -83,7 +83,7 @@ func (s *Service) Organize(ctx context.Context, teamID string, input contract.Or
 	if err != nil {
 		return s.finish(ctx, teamID, receipt, contract.Publication{}, err)
 	}
-	receipt.Dependencies, err = organizationDependencies(sourceContext)
+	receipt.Dependencies, err = contract.OrganizationDependencies(sourceContext)
 	if err != nil {
 		return s.finish(ctx, teamID, receipt, contract.Publication{}, err)
 	}
@@ -120,22 +120,6 @@ func (s *Service) Organize(ctx context.Context, teamID string, input contract.Or
 	}
 	publication, err := buildPublication(teamID, sourceContext, request, response, binding, &receipt)
 	return s.finish(ctx, teamID, receipt, publication, err)
-}
-
-func organizationDependencies(context contract.OrganizationContext) ([]contract.RevisionRef, error) {
-	var result []contract.RevisionRef
-	seen := map[string]bool{}
-	for _, view := range append(append([]contract.RecordView(nil), context.Records...), context.Candidates...) {
-		if !view.Current || seen[view.ID] {
-			continue
-		}
-		if len(result) == contract.MaxDependencyRecords {
-			return nil, fmt.Errorf("%w: organization dependency context exceeds bound", contract.ErrInvalid)
-		}
-		seen[view.ID] = true
-		result = append(result, contract.RevisionRef{ID: view.ID, Version: view.Version})
-	}
-	return result, nil
 }
 
 func (s *Service) finish(ctx context.Context, teamID string, receipt contract.OrganizationReceipt, publication contract.Publication, cause error) (contract.OrganizationResult, error) {
