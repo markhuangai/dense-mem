@@ -424,8 +424,9 @@ func currentMaintenanceCompletion(tx *gorm.DB, claim ontology.MaintenanceClaim, 
 		return nil, nil, nil
 	}
 	fence := scope{TeamID: claim.TeamID, SpaceID: claim.SpaceID, Generation: claim.Generation}
-	// Lock the catalog before any source updates, matching publication's lock order.
-	if err := lockOrganizationCatalog(tx, fence); err != nil {
+	// A successful assessment already has a catalog; inserting it can reject historical generations before their fence check.
+	var catalogVersion int64
+	if err := tx.Raw(`SELECT revision FROM ontology_catalog_heads WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? FOR UPDATE`, fence.TeamID, fence.SpaceID, fence.Generation).Row().Scan(&catalogVersion); err != nil {
 		return nil, nil, err
 	}
 	var active bool

@@ -92,11 +92,16 @@ try {
   const replacement = (await ui("/records?kind=topic&limit=200")).records.find((record) => record.definition?.key === unusedKey);
   assert(replacement, "manager vocabulary must remain available for an explicit correction");
   const beforeCorrection = sourceAssessments(ids);
-  await saveAndPublish([{ action: "classify", expected_version: 0, source: sources[0], definition_id: replacement.id }]);
+  const correction = await saveAndPublish([{ action: "classify", expected_version: 0, source: sources[0], definition_id: replacement.id }]);
   await settle();
   const corrected = (await ui("/records?kind=assignment&limit=200")).records.find((record) => record.current && record.assignment?.source.id === ids[0]);
   assert.equal(corrected?.assignment.definition_id, replacement.id, "a relevant manager correction must replace the fixed classification");
   assert.notEqual(sourceAssessments(ids).find((source) => source.source === ids[0]).assessment, beforeCorrection.find((source) => source.source === ids[0]).assessment, "relevant correction must reassess the affected source");
+  const classification = (await ui("/records?kind=override&limit=200")).records.find((record) => record.override?.action === "set_classification" && correction.publication.records.some((ref) => ref.id === record.id));
+  assert(classification, "classification correction must have a durable override");
+  // The browser suite reuses these sources and creates its own classification override.
+  await saveAndPublish([{ action: "remove_override", record_id: classification.id, expected_version: classification.version }]);
+  assert((await ui(`/records/${classification.id}`)).retired, "the fixture correction must be removed before browser checks");
   assert.deepEqual(snapshot(), canonical, "corrections and rollback changed canonical facts or provenance");
   console.log("ontology management production HTTP/MCP: permissions, isolation, replay, stale conflicts, provider-free preview, split persistence, pin/unpin and rollback passed");
 } finally {
