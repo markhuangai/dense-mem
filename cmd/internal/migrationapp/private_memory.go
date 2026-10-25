@@ -13,12 +13,8 @@ import (
 	"gorm.io/gorm"
 )
 
-func runUpMigrations(ctx context.Context, db *gorm.DB) error {
-	return RunPrivateMemoryMigration(ctx, db, "")
-}
-
 // RunPrivateMemoryMigration upgrades schema and private history before the runtime starts.
-func RunPrivateMemoryMigration(ctx context.Context, db *gorm.DB, expectedFingerprint string) error {
+func RunPrivateMemoryMigration(ctx context.Context, db *gorm.DB, expectedFingerprint string, logger infoLogger) error {
 	migrator, err := postgres.NewMigrator(db)
 	if err != nil {
 		return err
@@ -29,7 +25,7 @@ func RunPrivateMemoryMigration(ctx context.Context, db *gorm.DB, expectedFingerp
 	if err := migratePrivateMemory(ctx, db, expectedFingerprint); err != nil {
 		return fmt.Errorf("migrate private memory: %w", err)
 	}
-	return migrator.RunUp(ctx)
+	return migrateOntology(ctx, db, migrator, logger)
 }
 
 func migratePrivateMemory(ctx context.Context, db *gorm.DB, expectedFingerprint string) (err error) {

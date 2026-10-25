@@ -260,6 +260,16 @@
       ],
       "timeout_minutes": 45,
       "playwright": true
+    },
+    {
+      "name": "ontology_upgrade",
+      "isolation": "exclusive",
+      "runtime": "production",
+      "helper_profiles": [
+        "verifier"
+      ],
+      "timeout_minutes": 30,
+      "playwright": false
     }
   ]
 }

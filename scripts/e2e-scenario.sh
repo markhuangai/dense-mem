@@ -171,6 +171,7 @@ run_playwright() {
 case "$SCENARIO" in
   langchain_retriever) bash "${ROOT_DIR}/packages/python/scripts/e2e.sh" langchain_retriever ;;
   ontology_management) run_node_case tests/uat/ontology_management_e2e.mjs ;;
+  ontology_upgrade) run_node_case tests/uat/ontology_upgrade_e2e.mjs ;;
   google_adk_memory) bash "${ROOT_DIR}/packages/python/scripts/e2e.sh" google_adk_memory ;;
   python_client) bash "${ROOT_DIR}/packages/python/scripts/e2e.sh" ;;
   ontology_organization)

@@ -21,6 +21,16 @@ func (s *Store) MaintenanceCommand(ctx context.Context, input domain.OntologyMai
 	if err != nil {
 		return ontology.MaintenanceRun{}, err
 	}
+	var result ontology.MaintenanceRun
+	err = s.withMaintenanceSystem(ctx, func(tx *gorm.DB) error {
+		var err error
+		result, err = maintenanceCommandTx(ctx, tx, input, now, prepareAudit)
+		return err
+	})
+	return result, err
+}
+
+func maintenanceCommandTx(ctx context.Context, tx *gorm.DB, input domain.OntologyMaintenanceCommand, now time.Time, prepareAudit ontology.MaintenanceAudit) (ontology.MaintenanceRun, error) {
 	hash, err := ontology.MaintenanceCommandHash(input)
 	if err != nil {
 		return ontology.MaintenanceRun{}, err
@@ -39,7 +49,7 @@ func (s *Store) MaintenanceCommand(ctx context.Context, input domain.OntologyMai
 		}
 		return nil
 	}
-	err = s.withMaintenanceSystem(ctx, func(tx *gorm.DB) error {
+	err = func() error {
 		paused, err := maintenanceState(tx)
 		if err != nil {
 			return err
@@ -122,7 +132,7 @@ func (s *Store) MaintenanceCommand(ctx context.Context, input domain.OntologyMai
 			return err
 		}
 		return appendAudit(tx)
-	})
+	}()
 	return result, err
 }
 

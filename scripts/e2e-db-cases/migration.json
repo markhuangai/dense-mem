@@ -36,6 +36,28 @@
       "run": "^TestRunUpTimeoutRollsBackBlockedMigrationAndReleasesLock$",
       "phase": "precheck",
       "source": "cmd/internal/migrationapp/migration_integration_test.go"
+    },
+    {
+      "id": "migration/TestRunUpAutomaticallyRecoversStoppedOntology",
+      "package": "./cmd/internal/migrationapp",
+      "run": "^TestRunUpAutomaticallyRecoversStoppedOntology$",
+      "phase": "precheck",
+      "source": "cmd/internal/migrationapp/ontology_upgrade_integration_test.go"
+    },
+    {
+      "id": "migration/TestRunUpOntologyWaitAndConcurrentStarters",
+      "package": "./cmd/internal/migrationapp",
+      "run": "^TestRunUpOntologyWaitAndConcurrentStarters$",
+      "phase": "precheck",
+      "source": "cmd/internal/migrationapp/ontology_upgrade_integration_test.go"
+    },
+    {
+      "id": "migration/TestOntologyUpgradeComposeSeed",
+      "package": "./cmd/internal/migrationapp",
+      "run": "^TestOntologyUpgradeComposeSeed$",
+      "phase": "scenario",
+      "scenario": "ontology_upgrade",
+      "source": "cmd/internal/migrationapp/ontology_upgrade_compose_integration_test.go"
     }
   ]
 }
