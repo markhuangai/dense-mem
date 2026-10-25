@@ -379,7 +379,7 @@ async function finalizationRecovery(key, failureCode = "") {
     const cancellationMS = Date.now() - Date.parse(receipt.query_started_at);
     assert(cancellationMS >= 4000, "the adverse case must exercise the finalization deadline");
     assert.equal(postgresQuery(`SELECT status FROM ontology_maintenance_batches WHERE batch_id=${sqlLiteral(receipt.id)}::uuid`), "running");
-    const attempts = postgresQuery(`SELECT COALESCE(jsonb_agg(to_jsonb(attempt) ORDER BY assessment_id,attempt)::text,'[]') FROM ontology_maintenance_attempts AS attempt WHERE batch_id=${sqlLiteral(receipt.id)}::uuid`);
+    const attempts = postgresQuery(`SELECT COALESCE(jsonb_agg(to_jsonb(attempt_record) ORDER BY assessment_id,attempt)::text,'[]') FROM ontology_maintenance_attempts AS attempt_record WHERE batch_id=${sqlLiteral(receipt.id)}::uuid`);
     const admitted = JSON.parse(attempts);
     assert(admitted.every((attempt) => attempt.reconciled_at), "active attempts cannot be recovered");
     if (failureCode) assert.equal(admitted.length, 3, "the failed receipt must exhaust complete-response regeneration");
@@ -398,7 +398,7 @@ async function finalizationRecovery(key, failureCode = "") {
     }
     assert.equal(postgresQuery(`SELECT count(*) FROM ontology_assessments WHERE operation_key=${sqlLiteral(`maintenance:${receipt.id}`)}`), "1");
     assert.equal(postgresQuery(`SELECT md5(body::text) FROM ontology_assessments WHERE operation_key=${sqlLiteral(`maintenance:${receipt.id}`)}`), receiptBody);
-    assert.equal(postgresQuery(`SELECT COALESCE(jsonb_agg(to_jsonb(attempt) ORDER BY assessment_id,attempt)::text,'[]') FROM ontology_maintenance_attempts AS attempt WHERE batch_id=${sqlLiteral(receipt.id)}::uuid`), attempts, "recovery must not dispatch or alter provider attempts");
+    assert.equal(postgresQuery(`SELECT COALESCE(jsonb_agg(to_jsonb(attempt_record) ORDER BY assessment_id,attempt)::text,'[]') FROM ontology_maintenance_attempts AS attempt_record WHERE batch_id=${sqlLiteral(receipt.id)}::uuid`), attempts, "recovery must not dispatch or alter provider attempts");
     assert.equal(canonicalFingerprints(), canonicalBefore, "ontology recovery changed canonical Knowledge");
     console.log(JSON.stringify({ scenario: "ontology_finalization_recovery", batch_id: receipt.id, failure_code: failureCode, cancellation_ms: cancellationMS, recovery_ms: Date.now() - started, recovered_before_expiry: true, receipt_and_attempts_preserved: true, canonical_preserved: true }));
   } finally {

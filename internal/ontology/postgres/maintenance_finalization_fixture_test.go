@@ -137,7 +137,7 @@ func (x *finalizationFixture) history(t *testing.T) map[string]string {
 	result := map[string]string{}
 	for name, query := range map[string]string{
 		"receipt":  `SELECT COALESCE(jsonb_agg(to_jsonb(receipt) ORDER BY assessment_id)::text,'[]') FROM ontology_assessments AS receipt WHERE operation_key=?`,
-		"attempts": `SELECT COALESCE(jsonb_agg(to_jsonb(attempt) ORDER BY assessment_id,attempt)::text,'[]') FROM ontology_maintenance_attempts AS attempt WHERE batch_id=?::uuid`,
+		"attempts": `SELECT COALESCE(jsonb_agg(to_jsonb(attempt_record) ORDER BY assessment_id,attempt)::text,'[]') FROM ontology_maintenance_attempts AS attempt_record WHERE batch_id=?::uuid`,
 		"window":   `SELECT to_jsonb(window_row)::text FROM ontology_maintenance_windows AS window_row WHERE window_id=?::uuid`,
 	} {
 		id := x.claim.ID
