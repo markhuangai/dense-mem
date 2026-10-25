@@ -69,6 +69,12 @@ try {
   assert(projectionCoverage?.coverage_complete && projectionCoverage.current_topics >= 2, "alias discovery must exercise current topic projections");
   assert(status.usage.attempts > 0, "provider dispatches must have durable attempt identities");
   assert.equal(status.usage.unreconciled_attempts, 0);
+  const currentReceipts = JSON.parse(postgresQuery(`SELECT COALESCE(jsonb_agg(jsonb_build_object('source',source.source_id,'status',source.status,'assessment',source.assessment_id,'failure',assessment.body->'result'->>'failure_code')),'[]')
+    FROM ontology_maintenance_sources AS source JOIN LATERAL (SELECT body FROM ontology_assessments WHERE team_id=source.team_id AND shared_space_id=source.shared_space_id AND space_generation=source.space_generation AND assessment_id=source.assessment_id LIMIT 1) AS assessment ON true
+    WHERE source.team_id=${sqlLiteral(teamID)}::uuid AND source.source_kind='evidence' AND source.source_id IN (${sourceIDs.map(sqlLiteral).join(",")})`));
+  assert.equal(currentReceipts.length, sourceIDs.length, "completed sources must reference durable assessments in their own scope");
+  for (const receipt of currentReceipts) { assert.equal(receipt.status, "organized"); assert(receipt.assessment); assert(!receipt.failure); }
+
   const runs = (await control("/ontology/runs?limit=1")).data;
   assert.equal(runs.runs.length, 1);
   assert(runs.next_cursor, "run inspection must paginate");

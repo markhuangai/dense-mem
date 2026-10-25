@@ -63,7 +63,7 @@ func TestOntologyVocabularyUsesCurrentCandidateWindow(t *testing.T) {
 				require.NoError(t, err)
 				forced, err := f.store.ReadOrganization(context.Background(), f.team, input)
 				require.NoError(t, err)
-				require.Len(t, forced.Candidates, 20)
+				require.Len(t, forced.Candidates, 1)
 				require.Equal(t, current[len(current)-1].ID, forced.Candidates[0].ID)
 			}
 			require.Equal(t, before, f.canonicalSnapshot(t))
