@@ -36,19 +36,6 @@ func maintenanceCommandTx(ctx context.Context, tx *gorm.DB, input domain.Ontolog
 		return ontology.MaintenanceRun{}, err
 	}
 	var result ontology.MaintenanceRun
-	appendAudit := func(tx *gorm.DB) error {
-		if prepareAudit == nil {
-			return nil
-		}
-		entry, err := prepareAudit(result)
-		if err == nil {
-			err = storagepostgres.InsertAuditEntryTx(ctx, tx, entry)
-		}
-		if err != nil {
-			return fmt.Errorf("%w: %w", ontology.ErrAuditUnavailable, err)
-		}
-		return nil
-	}
 	err = func() error {
 		paused, err := maintenanceState(tx)
 		if err != nil {
@@ -69,7 +56,7 @@ func maintenanceCommandTx(ctx context.Context, tx *gorm.DB, input domain.Ontolog
 			if err != nil {
 				return err
 			}
-			return appendAudit(tx)
+			return appendMaintenanceAuditTx(ctx, tx, result, prepareAudit)
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
@@ -131,9 +118,23 @@ func maintenanceCommandTx(ctx context.Context, tx *gorm.DB, input domain.Ontolog
 		if err != nil {
 			return err
 		}
-		return appendAudit(tx)
+		return appendMaintenanceAuditTx(ctx, tx, result, prepareAudit)
 	}()
 	return result, err
+}
+
+func appendMaintenanceAuditTx(ctx context.Context, tx *gorm.DB, run ontology.MaintenanceRun, prepareAudit ontology.MaintenanceAudit) error {
+	if prepareAudit == nil {
+		return nil
+	}
+	entry, err := prepareAudit(run)
+	if err == nil {
+		err = storagepostgres.InsertAuditEntryTx(ctx, tx, entry)
+	}
+	if err != nil {
+		return fmt.Errorf("%w: %w", ontology.ErrAuditUnavailable, err)
+	}
+	return nil
 }
 
 const maintenanceActiveSourceJoin = ` FROM ontology_maintenance_sources AS source
@@ -178,8 +179,12 @@ func (s *Store) RecordMaintenanceFailure(ctx context.Context, runID, code string
 		return ontology.ErrInvalid
 	}
 	return s.withMaintenanceSystem(ctx, func(tx *gorm.DB) error {
-		return tx.Exec(`UPDATE ontology_maintenance_runs SET status='incomplete',failure_code=?,updated_at=? WHERE run_id=?::uuid`, code, now, runID).Error
+		return recordMaintenanceFailureTx(tx, runID, code, now)
 	})
+}
+
+func recordMaintenanceFailureTx(tx *gorm.DB, runID, code string, now time.Time) error {
+	return tx.Exec(`UPDATE ontology_maintenance_runs SET status='incomplete',failure_code=?,updated_at=? WHERE run_id=?::uuid`, code, now, runID).Error
 }
 
 func (s *Store) MaintenanceStatus(ctx context.Context, now time.Time) (ontology.MaintenanceStatus, error) {

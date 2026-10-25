@@ -38,9 +38,15 @@ func (s *MaintenanceUpgradeService) validate(ctx context.Context) error {
 
 func (s *MaintenanceUpgradeService) prepareAudit(ctx context.Context) contract.MaintenanceAudit {
 	return func(run contract.MaintenanceRun) (audit.Entry, error) {
+		operation := contract.OntologyUpgradeAuditOperation
+		metadata := map[string]any{"action": run.Kind, "operation_key": run.OperationKey, "migration_version": contract.OntologyBudgetRetirementVersion}
+		if run.FailureCode == "window_closed" {
+			operation = contract.OntologyBudgetRetirementAuditOperation
+			metadata = map[string]any{"migration_version": contract.OntologyBudgetRetirementVersion, "outcome": run.FailureCode}
+		}
 		return s.audit.Prepare(ctx, access.AuditLogEntry{
-			Operation: contract.OntologyUpgradeAuditOperation, EntityType: "ontology_maintenance", EntityID: run.ID,
-			ActorRole: "system", Metadata: map[string]any{"action": run.Kind, "operation_key": run.OperationKey, "migration_version": contract.OntologyBudgetRetirementVersion},
+			Operation: operation, EntityType: "ontology_maintenance", EntityID: run.ID,
+			ActorRole: "system", Metadata: metadata,
 		})
 	}
 }

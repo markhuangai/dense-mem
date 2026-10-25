@@ -71,12 +71,18 @@ func TestOntologyMaintenanceUpgradePreservesHistoryAndAdmission(t *testing.T) {
 			var report ontology.MaintenanceUpgradeState
 			require.NoError(t, service.Prepare(ctx, func(_ string, state ontology.MaintenanceUpgradeState) { report = state }))
 			require.EqualValues(t, 1, report.RecoveredBatches)
+			require.EqualValues(t, 1, report.ClosedRuns)
 			require.Equal(t, mode == "enabled", report.OwnsPause)
 			var status, sourceStatus string
 			require.NoError(t, f.admin.Raw(`SELECT status FROM ontology_maintenance_batches WHERE batch_id=?::uuid`, batch).Row().Scan(&status))
 			require.Equal(t, "lost", status)
 			require.NoError(t, f.admin.Raw(`SELECT status FROM ontology_maintenance_sources WHERE source_id=?`, x.deferred.ID).Row().Scan(&sourceStatus))
 			require.Equal(t, "budget_deferred", sourceStatus)
+			var closed, retired int
+			require.NoError(t, f.admin.Raw(`SELECT count(*) FROM ontology_maintenance_runs WHERE run_id=?::uuid AND status='incomplete' AND failure_code='window_closed'`, x.run).Row().Scan(&closed))
+			require.Equal(t, 1, closed)
+			require.NoError(t, f.admin.Raw(`SELECT count(*) FROM audit_log WHERE operation=? AND entity_id=?`, ontology.OntologyBudgetRetirementAuditOperation, x.run).Row().Scan(&retired))
+			require.Equal(t, 1, retired)
 			require.Equal(t, before, upgradeSnapshot(t, x))
 			require.NoError(t, upgradeService(f).Prepare(ctx, nil))
 			_, err = service.Complete(ctx)
@@ -138,6 +144,11 @@ func TestOntologyMaintenanceUpgradeWaitCancellationAndUnreconciledRefusal(t *tes
 			var status string
 			require.NoError(t, f.admin.Raw(`SELECT status FROM ontology_maintenance_batches WHERE batch_id=?::uuid`, batch).Row().Scan(&status))
 			require.Equal(t, "running", status)
+			var pending, retired int
+			require.NoError(t, f.admin.Raw(`SELECT count(*) FROM ontology_maintenance_runs WHERE run_id=?::uuid AND status='pending'`, x.run).Row().Scan(&pending))
+			require.Equal(t, 1, pending)
+			require.NoError(t, f.admin.Raw(`SELECT count(*) FROM audit_log WHERE operation=?`, ontology.OntologyBudgetRetirementAuditOperation).Row().Scan(&retired))
+			require.Zero(t, retired)
 			require.Equal(t, before, upgradeSnapshot(t, x))
 			require.Equal(t, canonical, f.canonicalSnapshot(t))
 			if mode == "unreconciled" {
@@ -189,6 +200,35 @@ func TestOntologyMaintenanceUpgradeAuditRollbackAndConcurrentReplay(t *testing.T
 	}
 	require.NoError(t, f.admin.Raw(`SELECT count(*) FROM audit_log WHERE operation=?`, ontology.OntologyUpgradeAuditOperation).Row().Scan(&commands))
 	require.Equal(t, 2, commands)
+	require.NoError(t, f.admin.Raw(`SELECT count(*) FROM audit_log WHERE operation=? AND entity_id=?`, ontology.OntologyBudgetRetirementAuditOperation, x.run).Row().Scan(&commands))
+	require.Equal(t, 1, commands)
+}
+
+func TestOntologyMaintenanceUpgradeRetirementAuditRollback(t *testing.T) {
+	x := legacyMaintenanceFixture(t)
+	f, ctx := x.f, context.Background()
+	maintenanceSettings(t, f)
+	batch := upgradeInterruptedBatch(t, x, -time.Minute)
+	before, canonical := upgradeSnapshot(t, x), f.canonicalSnapshot(t)
+	require.NoError(t, f.admin.Exec(`CREATE FUNCTION reject_retirement_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+	 IF NEW.operation='ONTOLOGY_BUDGET_RETIREMENT' THEN RAISE EXCEPTION 'retirement audit unavailable'; END IF; RETURN NEW; END $$;
+	 CREATE TRIGGER reject_retirement_audit BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION reject_retirement_audit()`).Error)
+	require.ErrorIs(t, upgradeService(f).Prepare(ctx, nil), ontology.ErrAuditUnavailable)
+	var paused bool
+	var status string
+	var commands int
+	require.NoError(t, f.admin.Raw(`SELECT paused FROM ontology_maintenance_state`).Row().Scan(&paused))
+	require.False(t, paused)
+	require.NoError(t, f.admin.Raw(`SELECT status FROM ontology_maintenance_batches WHERE batch_id=?::uuid`, batch).Row().Scan(&status))
+	require.Equal(t, "running", status)
+	require.NoError(t, f.admin.Raw(`SELECT status FROM ontology_maintenance_runs WHERE run_id=?::uuid`, x.run).Row().Scan(&status))
+	require.Equal(t, "pending", status)
+	require.NoError(t, f.admin.Raw(`SELECT count(*) FROM ontology_maintenance_runs WHERE operation_key=?`, ontology.OntologyUpgradePauseKey).Row().Scan(&commands))
+	require.Zero(t, commands)
+	require.NoError(t, f.admin.Raw(`SELECT count(*) FROM audit_log WHERE operation IN (?,?)`, ontology.OntologyUpgradeAuditOperation, ontology.OntologyBudgetRetirementAuditOperation).Row().Scan(&commands))
+	require.Zero(t, commands)
+	require.Equal(t, before, upgradeSnapshot(t, x))
+	require.Equal(t, canonical, f.canonicalSnapshot(t))
 }
 
 func TestOntologyMaintenanceUpgradeRejectsRequestActorsAndReceiptSpoofing(t *testing.T) {

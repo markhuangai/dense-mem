@@ -104,9 +104,31 @@ func (s *Store) PrepareMaintenanceUpgrade(ctx context.Context, prepareAudit onto
 			return nil
 		}
 		state.RecoveredBatches, err = expireMaintenanceBatches(tx, now)
+		if err != nil {
+			return err
+		}
+		state.ClosedRuns, err = closeMaintenanceUpgradeRuns(ctx, tx, now, prepareAudit)
 		return err
 	})
 	return state, err
+}
+
+func closeMaintenanceUpgradeRuns(ctx context.Context, tx *gorm.DB, now time.Time, prepareAudit ontology.MaintenanceAudit) (int64, error) {
+	var runs []ontology.MaintenanceRun
+	if err := tx.Raw(`SELECT run_id::text AS id,kind,operation_key FROM ontology_maintenance_runs
+	 WHERE kind IN ('scheduled','run','retry') AND status IN ('pending','running') ORDER BY run_id`).Scan(&runs).Error; err != nil {
+		return 0, err
+	}
+	for _, run := range runs {
+		if err := recordMaintenanceFailureTx(tx, run.ID, "window_closed", now); err != nil {
+			return 0, err
+		}
+		run.Status, run.FailureCode, run.UpdatedAt = "incomplete", "window_closed", now
+		if err := appendMaintenanceAuditTx(ctx, tx, run, prepareAudit); err != nil {
+			return 0, err
+		}
+	}
+	return int64(len(runs)), nil
 }
 
 func (s *Store) CompleteMaintenanceUpgrade(ctx context.Context, prepareAudit ontology.MaintenanceAudit) (state ontology.MaintenanceUpgradeState, err error) {

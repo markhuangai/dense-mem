@@ -563,8 +563,10 @@ assert_ontology_upgrade_blocked() {
   local state
   state="$(identity_postgres_scalar "SELECT concat(paused,'|',
     NOT EXISTS(SELECT 1 FROM goose_db_version WHERE version_id=20261023020000 AND is_applied),'|',
-    EXISTS(SELECT 1 FROM ontology_maintenance_batches WHERE status='running')) FROM ontology_maintenance_state")"
-  [[ "$state" == "true|true|true" || "$state" == "t|t|t" ]] || fail "ontology upgrade did not preserve its blocked state: ${state}"
+    EXISTS(SELECT 1 FROM ontology_maintenance_batches WHERE status='running'),'|',
+    EXISTS(SELECT 1 FROM ontology_maintenance_runs WHERE operation_key='ontology-upgrade-fixture' AND status='pending'),'|',
+    NOT EXISTS(SELECT 1 FROM audit_log WHERE operation='ONTOLOGY_BUDGET_RETIREMENT')) FROM ontology_maintenance_state")"
+  [[ "$state" == "true|true|true|true|true" || "$state" == "t|t|t|t|t" ]] || fail "ontology upgrade did not preserve its blocked state: ${state}"
 }
 
 run_ontology_upgrade_startup_matrix() {
@@ -622,8 +624,10 @@ run_ontology_upgrade_startup_matrix() {
     verify_postgres_runtime_migration_state
     state="$(identity_postgres_scalar "SELECT concat(paused,'|',
       NOT EXISTS(SELECT 1 FROM ontology_maintenance_batches WHERE status='running'),'|',
-      (SELECT count(*) FROM audit_log WHERE operation='ONTOLOGY_UPGRADE_COMMAND')) FROM ontology_maintenance_state")"
-    [[ "$state" == "false|true|2" || "$state" == "f|t|2" ]] || fail "ontology upgrade did not restore its admission state: ${state}"
+      (SELECT count(*) FROM audit_log WHERE operation='ONTOLOGY_UPGRADE_COMMAND'),'|',
+      (SELECT count(*) FROM audit_log WHERE operation='ONTOLOGY_BUDGET_RETIREMENT'),'|',
+      EXISTS(SELECT 1 FROM ontology_maintenance_runs WHERE operation_key='ontology-upgrade-fixture' AND status='incomplete' AND failure_code='window_closed')) FROM ontology_maintenance_state")"
+    [[ "$state" == "false|true|2|1|true" || "$state" == "f|t|2|1|t" ]] || fail "ontology upgrade did not restore its admission state: ${state}"
     [[ "$(ontology_upgrade_fingerprints)" == "$before" ]] || fail "automatic ontology upgrade changed canonical or historical rows"
   done
   printf '%s\n' '{"scenario":"ontology_upgrade","expired_recovered":true,"unreconciled_refused":true,"interrupted_restart_resumed":true,"history_preserved":true}' >&2

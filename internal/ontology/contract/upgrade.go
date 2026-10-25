@@ -10,6 +10,7 @@ const OntologyBudgetRetirementVersion int64 = 20261023020000
 const OntologyUpgradePauseKey = "ontology-upgrade:20261023020000:pause"
 const OntologyUpgradeResumeKey = "ontology-upgrade:20261023020000:resume"
 const OntologyUpgradeAuditOperation = "ONTOLOGY_UPGRADE_COMMAND"
+const OntologyBudgetRetirementAuditOperation = "ONTOLOGY_BUDGET_RETIREMENT"
 
 var ErrMaintenanceUpgradeBlocked = errors.New("ontology upgrade blocked")
 
@@ -22,6 +23,7 @@ type MaintenanceUpgradeState struct {
 	LiveTeamLeases       int64
 	UnreconciledAttempts int64
 	RecoveredBatches     int64
+	ClosedRuns           int64
 }
 
 func (s MaintenanceUpgradeState) Disposition() string {

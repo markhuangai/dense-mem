@@ -4,6 +4,7 @@ package migrationapp
 
 import (
 	"context"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,8 +18,34 @@ import (
 	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 	storage "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"github.com/stretchr/testify/require"
+	gormpostgres "gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
+
+func openOntologyUpgradeRuntimeDB(t *testing.T) (*gorm.DB, *gorm.DB) {
+	t.Helper()
+	admin := openMigrationIntegrationDB(t)
+	require.NoError(t, admin.Exec(`CREATE EXTENSION IF NOT EXISTS pgcrypto;
+	 CREATE EXTENSION IF NOT EXISTS vector;
+	 CREATE ROLE ontology_upgrade_runtime LOGIN PASSWORD 'ontology-upgrade-fixture'
+	 NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+	 GRANT CONNECT,CREATE,TEMPORARY ON DATABASE testdb TO ontology_upgrade_runtime;
+	 GRANT USAGE,CREATE ON SCHEMA public TO ontology_upgrade_runtime`).Error)
+	dsn, err := url.Parse(admin.Dialector.(*gormpostgres.Dialector).DSN)
+	require.NoError(t, err)
+	dsn.User = url.UserPassword("ontology_upgrade_runtime", "ontology-upgrade-fixture")
+	db, err := gorm.Open(gormpostgres.Open(dsn.String()), &gorm.Config{})
+	require.NoError(t, err)
+	pool, err := db.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, pool.Close()) })
+	var restricted bool
+	require.NoError(t, db.Raw(`SELECT NOT (rolsuper OR rolcreatedb OR rolcreaterole OR rolreplication OR rolbypassrls)
+	 AND pg_get_userbyid(database.datdba)<>current_user FROM pg_roles AS role
+	 JOIN pg_database AS database ON database.datname=current_database() WHERE role.rolname=current_user`).Row().Scan(&restricted))
+	require.True(t, restricted)
+	return db, admin
+}
 
 func seedOntologyUpgrade(t *testing.T, db *gorm.DB) string {
 	t.Helper()

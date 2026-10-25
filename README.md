@@ -556,7 +556,8 @@ grants remain readable in run history, and historical budget accounting is
 preserved unchanged. Stop every old application instance before upgrading.
 Normal startup prepares budget retirement automatically: it durably pauses new
 admission when needed, waits up to five minutes for live leases, recovers expired
-coordination, and runs the unchanged migration. Unreconciled attempts block the
+coordination, closes drained legacy runs with an atomic retirement audit, and
+runs the unchanged migration. Unreconciled attempts block the
 upgrade without inventing usage. A successful upgrade restores only its own
 pause; deliberate operator pauses and disabled settings remain intact. An
 interrupted preparation resumes on the next startup. The first configured

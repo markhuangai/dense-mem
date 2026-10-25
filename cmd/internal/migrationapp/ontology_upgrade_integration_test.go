@@ -19,13 +19,16 @@ import (
 func TestRunUpAutomaticallyRecoversStoppedOntology(t *testing.T) {
 	for _, interrupted := range []string{"before_pause", "after_pause", "after_migration"} {
 		t.Run(interrupted, func(t *testing.T) {
-			db := openMigrationIntegrationDB(t)
+			db, admin := openOntologyUpgradeRuntimeDB(t)
 			seedOntologyUpgrade(t, db)
 			before := ontologyUpgradeSnapshot(t, db)
 			ctx := context.Background()
 			if interrupted != "before_pause" {
 				service := ontology.NewMaintenanceUpgradeService(ontologypostgres.NewStore(db, storage.NewRLS()), auditapp.New(auditpostgres.NewStore(db)))
 				require.NoError(t, service.Prepare(ctx, nil))
+				var sourceStatus string
+				require.NoError(t, admin.Raw(`SELECT status FROM ontology_maintenance_sources WHERE last_run_id=(SELECT run_id FROM ontology_maintenance_runs WHERE operation_key='ontology-upgrade-fixture')`).Row().Scan(&sourceStatus))
+				require.Equal(t, "budget_deferred", sourceStatus)
 			}
 			if interrupted == "after_migration" {
 				require.NoError(t, storage.RunUp(ctx, db))
@@ -33,24 +36,28 @@ func TestRunUpAutomaticallyRecoversStoppedOntology(t *testing.T) {
 			require.NoError(t, RunUp(ctx, db, time.Minute, newRecordingLogger()))
 			require.Equal(t, before, ontologyUpgradeSnapshot(t, db))
 			var paused bool
-			var commands, running int
-			require.NoError(t, db.Raw(`SELECT paused FROM ontology_maintenance_state`).Row().Scan(&paused))
+			var commands, running, retired int
+			require.NoError(t, admin.Raw(`SELECT paused FROM ontology_maintenance_state`).Row().Scan(&paused))
 			require.False(t, paused)
-			require.NoError(t, db.Raw(`SELECT count(*) FROM ontology_maintenance_runs WHERE operation_key IN (?,?)`, contract.OntologyUpgradePauseKey, contract.OntologyUpgradeResumeKey).Row().Scan(&commands))
+			require.NoError(t, admin.Raw(`SELECT count(*) FROM ontology_maintenance_runs WHERE operation_key IN (?,?)`, contract.OntologyUpgradePauseKey, contract.OntologyUpgradeResumeKey).Row().Scan(&commands))
 			require.Equal(t, 2, commands)
-			require.NoError(t, db.Raw(`SELECT count(*) FROM ontology_maintenance_batches WHERE status='running'`).Row().Scan(&running))
+			require.NoError(t, admin.Raw(`SELECT count(*) FROM ontology_maintenance_batches WHERE status='running'`).Row().Scan(&running))
 			require.Zero(t, running)
+			require.NoError(t, admin.Raw(`SELECT count(*) FROM audit_log WHERE operation=? AND metadata->>'migration_version'=? AND metadata->>'outcome'='window_closed'`, contract.OntologyBudgetRetirementAuditOperation, "20261023020000").Row().Scan(&retired))
+			require.Equal(t, 1, retired)
 			require.NoError(t, RunUp(ctx, db, time.Minute, newRecordingLogger()))
+			require.NoError(t, admin.Raw(`SELECT count(*) FROM audit_log WHERE operation=?`, contract.OntologyBudgetRetirementAuditOperation).Row().Scan(&retired))
+			require.Equal(t, 1, retired)
 			require.Equal(t, before, ontologyUpgradeSnapshot(t, db))
 		})
 	}
 }
 
 func TestRunUpOntologyWaitAndConcurrentStarters(t *testing.T) {
-	db := openMigrationIntegrationDB(t)
+	db, admin := openOntologyUpgradeRuntimeDB(t)
 	batch := seedOntologyUpgrade(t, db)
 	before := ontologyUpgradeSnapshot(t, db)
-	require.NoError(t, db.Exec(`UPDATE ontology_maintenance_batches SET lease_until=clock_timestamp()+interval '1 hour' WHERE batch_id=?::uuid`, batch).Error)
+	require.NoError(t, admin.Exec(`UPDATE ontology_maintenance_batches SET lease_until=clock_timestamp()+interval '1 hour' WHERE batch_id=?::uuid`, batch).Error)
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
 	err := RunUp(ctx, db, 0, newRecordingLogger())
@@ -59,7 +66,10 @@ func TestRunUpOntologyWaitAndConcurrentStarters(t *testing.T) {
 	require.NoError(t, db.Raw(`SELECT EXISTS(SELECT 1 FROM goose_db_version WHERE version_id=? AND is_applied)`, contract.OntologyBudgetRetirementVersion).Row().Scan(&applied))
 	require.False(t, applied)
 	require.Equal(t, before, ontologyUpgradeSnapshot(t, db))
-	require.NoError(t, db.Exec(`UPDATE ontology_maintenance_batches SET lease_until=clock_timestamp()+interval '2 seconds' WHERE batch_id=?::uuid`, batch).Error)
+	var retired int
+	require.NoError(t, admin.Raw(`SELECT count(*) FROM audit_log WHERE operation=?`, contract.OntologyBudgetRetirementAuditOperation).Row().Scan(&retired))
+	require.Zero(t, retired)
+	require.NoError(t, admin.Exec(`UPDATE ontology_maintenance_batches SET lease_until=clock_timestamp()+interval '2 seconds' WHERE batch_id=?::uuid`, batch).Error)
 	errs := make(chan error, 2)
 	for range 2 {
 		go func() { errs <- RunUp(context.Background(), db, time.Minute, newRecordingLogger()) }()
@@ -68,4 +78,6 @@ func TestRunUpOntologyWaitAndConcurrentStarters(t *testing.T) {
 		require.NoError(t, <-errs)
 	}
 	require.Equal(t, before, ontologyUpgradeSnapshot(t, db))
+	require.NoError(t, admin.Raw(`SELECT count(*) FROM audit_log WHERE operation=?`, contract.OntologyBudgetRetirementAuditOperation).Row().Scan(&retired))
+	require.Equal(t, 1, retired)
 }

@@ -911,6 +911,13 @@
       "source": "internal/ontology/postgres/maintenance_upgrade_integration_test.go"
     },
     {
+      "id": "repository/TestOntologyMaintenanceUpgradeRetirementAuditRollback",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceUpgradeRetirementAuditRollback$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_upgrade_integration_test.go"
+    },
+    {
       "id": "repository/TestOntologyMaintenanceUpgradeRejectsRequestActorsAndReceiptSpoofing",
       "package": "./internal/ontology/postgres",
       "run": "^TestOntologyMaintenanceUpgradeRejectsRequestActorsAndReceiptSpoofing$",

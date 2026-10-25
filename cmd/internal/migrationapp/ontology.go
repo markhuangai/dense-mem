@@ -21,7 +21,7 @@ func migrateOntology(ctx context.Context, db *gorm.DB, migrator *postgres.Migrat
 		logInfo(ctx, logger, "ontology upgrade preparation", "phase", phase,
 			"migration_version", contract.OntologyBudgetRetirementVersion, "paused", state.Paused, "upgrade_owned_pause", state.OwnsPause,
 			"live_batches", state.LiveBatches, "live_team_leases", state.LiveTeamLeases,
-			"unreconciled_attempts", state.UnreconciledAttempts, "recovered_batches", state.RecoveredBatches)
+			"unreconciled_attempts", state.UnreconciledAttempts, "recovered_batches", state.RecoveredBatches, "closed_runs", state.ClosedRuns)
 	}
 	if err := service.Prepare(ctx, observe); err != nil {
 		return fmt.Errorf("prepare ontology upgrade: %w", err)

@@ -98,7 +98,13 @@ lease expiry. Startup does not dispatch models, retry semantic failures, or
 reinterpret legacy budget-deferred receipts during preparation.
 
 Expired batches use the existing lease-loss transition without changing source
-outcomes or history. The migration retains its pause/drain guard and performs
+outcomes or history. Preparation also closes drained legacy scheduled/run/retry
+runs as `incomplete/window_closed`, atomically recording each retirement audit
+through the existing system transaction. This allows the unchanged migration to
+run under the runtime database role, whose audit policy excludes migration mode.
+The closure and audit remain durable if a later migration fails; restart selects
+only unfinished runs, so it does not repeat them. The migration retains its
+pause/drain guard and performs
 its existing deferred-source requeue. After migration and compatibility checks
 succeed, startup restores only its own pause using the retained command identity.
 An interruption before or after migration resumes from those receipts on the
