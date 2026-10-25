@@ -404,6 +404,9 @@ async function finalizationRecovery(key, failureCode = "") {
     const cancellationMS = Date.now() - Date.parse(receipt.query_started_at);
     assert(cancellationMS >= 4000, "the adverse case must exercise the finalization deadline");
     assert.equal(postgresQuery(`SELECT status FROM ontology_maintenance_batches WHERE batch_id=${sqlLiteral(receipt.id)}::uuid`), "running");
+    // Stop later batches from changing recovered rows before inspection.
+    await control("/ontology/pause", { operation_key: randomUUID() });
+    paused = true;
     const attempts = postgresQuery(`SELECT COALESCE(jsonb_agg(to_jsonb(attempt_record) ORDER BY assessment_id,attempt)::text,'[]') FROM ontology_maintenance_attempts AS attempt_record WHERE batch_id=${sqlLiteral(receipt.id)}::uuid`);
     const admitted = JSON.parse(attempts);
     assert(admitted.every((attempt) => attempt.reconciled_at), "active attempts cannot be recovered");
