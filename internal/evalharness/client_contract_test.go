@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -12,6 +13,48 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 )
+
+func TestCorpusImportPayloadAndPreflightUseRememberContract(t *testing.T) {
+	item := CorpusItem{SourceDocID: "optional-labels", Content: "Project Alpha stores memory in PostgreSQL.", Relationships: []any{map[string]any{
+		"ref": "storage", "subject": map[string]any{"name": "Project Alpha", "entity_kind": "project"},
+		"predicate": map[string]any{"proposed_key": "stores_memory"}, "object": map[string]any{"value": map[string]any{"type": "string", "value": "PostgreSQL"}},
+		"polarity": "+", "evidence_indices": []int{0},
+	}}}
+	tool, ok := contractTool(registry.ToolRemember)
+	require.True(t, ok)
+	withoutLabels, err := pairRequestHash(item)
+	require.NoError(t, err)
+	for _, test := range []struct {
+		name   string
+		labels []string
+		valid  bool
+	}{
+		{"absent", nil, true}, {"empty", []string{}, true}, {"present", []string{"storage"}, true}, {"too long", []string{strings.Repeat("x", 65)}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			row := item
+			row.Labels = test.labels
+			encoded, err := json.Marshal(corpusRememberInput(row))
+			require.NoError(t, err)
+			var wire map[string]any
+			require.NoError(t, json.Unmarshal(encoded, &wire))
+			wireErr := registry.ValidateContractInput(tool, wire, []string{"read", "write"})
+			preflightErr := validateV2CorpusRelationships(&SeedManifest{SchemaVersion: SeedSchemaVersionV2}, []CorpusItem{row})
+			if test.valid {
+				require.NoError(t, wireErr)
+				require.NoError(t, preflightErr)
+			} else {
+				require.Error(t, wireErr)
+				require.Error(t, preflightErr)
+			}
+			if len(test.labels) == 0 {
+				hash, err := pairRequestHash(row)
+				require.NoError(t, err)
+				require.Equal(t, withoutLabels, hash)
+			}
+		})
+	}
+}
 
 func TestHTTPClientTargetContractDoesNotPollSubmissionStatus(t *testing.T) {
 	var statusCalls int32

@@ -296,11 +296,13 @@ func validateV2CorpusRelationships(manifest *SeedManifest, corpus []CorpusItem) 
 		if len(item.Relationships) == 0 {
 			return fmt.Errorf("V2 corpus row %d (%s) has no relationships", index+1, item.SourceDocID)
 		}
-		input := map[string]any{
-			"target_space":    "team_shared",
-			"idempotency_key": "validate:" + item.SourceDocID,
-			"evidence":        []any{map[string]any{"content": item.Content}},
-			"relationships":   item.Relationships,
+		encoded, err := json.Marshal(corpusRememberInput(item))
+		if err != nil {
+			return fmt.Errorf("V2 corpus row %d (%s) import payload: %w", index+1, item.SourceDocID, err)
+		}
+		var input map[string]any
+		if err := json.Unmarshal(encoded, &input); err != nil {
+			return fmt.Errorf("V2 corpus row %d (%s) import payload: %w", index+1, item.SourceDocID, err)
 		}
 		if err := registry.ValidateContractInput(remember, input, []string{"read", "write"}); err != nil {
 			return fmt.Errorf("V2 corpus row %d (%s) relationship contract: %w", index+1, item.SourceDocID, err)
