@@ -69,6 +69,8 @@ async function runCases(args) {
   let registry = "";
   const projects = new Set();
   const acquiredImages = new Set();
+  const builtImage = `densemem-ci-${prefix}-${attempt}-local-helper:built`;
+  let builtImageID;
   const repository = process.env.DENSE_MEM_CI_REPOSITORY;
   const protectedIDs = await docker("ps", "-q", "--filter", `label=com.docker.compose.project=${protectedProject}`);
   assert.ok(protectedIDs);
@@ -104,6 +106,9 @@ async function runCases(args) {
     return { ...result, stdout: stdout.trim(), stderr };
   }
   try {
+    await docker("image", "tag", "alpine:3.24", builtImage);
+    acquiredImages.add(builtImage);
+    builtImageID = await docker("image", "inspect", "--format", "{{.Id}}", builtImage);
     registry = await docker("create", "--network", "host", ...labels, "node:22-alpine", "node", "/fixture/server.mjs", "serve", "/fixture");
     await docker("cp", `${directory}/.`, `${registry}:/fixture`);
     await docker("start", registry);
@@ -121,6 +126,7 @@ async function runCases(args) {
       acquiredImages.add(reference);
       let compose = originalCompose.replace("  redis:\n    image: alpine:3.24", `  redis:\n    image: ${reference}`);
       assert.notEqual(compose, originalCompose);
+      compose = compose.replace("  prometheus:\n", `  local-built-helper:\n    image: ${builtImage}\n    command: ["sh", "-c", "sleep infinity"]\n    networks: [ci]\n    labels: *ci_labels\n  prometheus:\n`);
       if (mode === "partial") compose = compose.replace('  server:\n    image: alpine:3.24\n    command: ["sh","-c","while :; do sleep 3600; done"]', '  server:\n    image: alpine:3.24\n    command: ["sh","-c","exit 1"]');
       await writeFile(composePath, compose, { mode: 0o600 });
       await setStatus(mode === "denied" ? 401 : ["recover", "exhaust"].includes(mode) ? 500 : 200);
@@ -167,6 +173,7 @@ async function runCases(args) {
         if (mode === "signal") assert.equal(signalled, true);
       }
       await assertClean(runID);
+      assert.equal(await docker("image", "inspect", "--format", "{{.Id}}", builtImage), builtImageID);
       assert.equal(await docker("ps", "-q", "--filter", `label=com.docker.compose.project=${protectedProject}`), protectedIDs);
       process.stdout.write(`${JSON.stringify({ case: mode, elapsed_ms: Date.now() - started, pull_attempts: acquisition.length, cleanup: "passed", protected_project: "unchanged" })}\n`);
     }

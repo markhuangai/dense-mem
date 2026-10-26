@@ -217,7 +217,7 @@ NODE
       "$oauth_token" > "${DENSE_MEM_CI_HELPER_DIR}/runtime.env"
     if has_helper "$helpers" oauth_compatibility; then
       require_command docker
-      harness_image="${project}-oauth-compat-harness:latest"
+      harness_image="${project}-oauth-compat-harness:built"
       docker build --label "io.dense-mem.ci.contract=${CONTRACT_VERSION}" \
         --label "io.dense-mem.ci.repository=${REPOSITORY}" \
         --label "io.dense-mem.ci.run-id=${run_id}" \
