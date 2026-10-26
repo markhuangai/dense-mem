@@ -1,0 +1,133 @@
+{
+  "issue": 586,
+  "scope": "Historical investigation evidence; not a candidate reliability or quality comparison.",
+  "approval": "https://github.com/markhuangai/dense-mem/issues/586#issuecomment-6406649345",
+  "observations": [
+    {
+      "release": "v2.6.5",
+      "source_sha": null,
+      "artifact": "import-final-outcomes.json",
+      "artifact_sha256": "a7954b092ce3d6a94e519ad4d142b03f80af18f13f323a1686b19f233d2da3ce",
+      "completed_sources": 991,
+      "failed_attempts": [
+        {
+          "failed_phase": "assessment",
+          "error_code": "request_timeout",
+          "retryable": true,
+          "count": 286
+        },
+        {
+          "failed_phase": "assessment",
+          "error_code": "provider_response_invalid",
+          "retryable": true,
+          "count": 10
+        },
+        {
+          "failed_phase": "assessment",
+          "error_code": "provider_unavailable",
+          "retryable": true,
+          "count": 6
+        }
+      ],
+      "completed_durations_ms": {
+        "completed_mean": 85647.96367305751,
+        "completed_p50": 88142,
+        "completed_p95": 149185.5
+      },
+      "concurrency": "mixed initial 10 and later 4"
+    },
+    {
+      "release": "v2.6.6-rc.17",
+      "source_sha": null,
+      "artifact": "import-final-outcomes.json",
+      "artifact_sha256": "ccf8e6471c2f2dc5aac7c7ee811f939824c0bbb4b0d60ad974179eb405f2c85d",
+      "completed_sources": 991,
+      "failed_attempts": [
+        {
+          "failed_phase": "assessment",
+          "error_code": "request_timeout",
+          "retryable": true,
+          "count": 274
+        },
+        {
+          "failed_phase": "assessment",
+          "error_code": "provider_response_invalid",
+          "retryable": true,
+          "count": 4
+        },
+        {
+          "failed_phase": "assessment",
+          "error_code": "provider_unavailable",
+          "retryable": true,
+          "count": 1
+        }
+      ],
+      "completed_durations_ms": {
+        "completed_mean": 84580.78708375378,
+        "completed_p50": 88427,
+        "completed_p95": 152710.5
+      },
+      "concurrency": "mixed initial 10 and later 4"
+    },
+    {
+      "release": "v2.6.6-rc.18",
+      "source_sha": "81ae4331ebea62300bb6991b8d29786ccf5f496f",
+      "artifact": "import-final-outcomes.json",
+      "artifact_sha256": "db41360b0f38ee5d28cbef786566fe7c21c98b9a469a09fe2c1fd583b895216d",
+      "completed_sources": 991,
+      "failed_attempts": [
+        {
+          "failed_phase": "assessment",
+          "error_code": "request_timeout",
+          "retryable": true,
+          "count": 21
+        },
+        {
+          "failed_phase": "assessment",
+          "error_code": "provider_response_invalid",
+          "retryable": true,
+          "count": 10
+        }
+      ],
+      "completed_durations_ms": {
+        "completed_mean": 15817.618567103935,
+        "completed_p50": 14676,
+        "completed_p95": 27822.5
+      },
+      "concurrency": "4 throughout"
+    },
+    {
+      "release": "v2.6.6-rc.20",
+      "source_sha": "71fe0be91e85ae8124f58366f251ef439345db44",
+      "artifact": "import-final-outcomes.json",
+      "artifact_sha256": "416aa36e2727a10c6015893ce19b57bdceb8b3e28fd0249c26f5aaa6f3111a46",
+      "completed_sources": 991,
+      "failed_attempts": [
+        {
+          "failed_phase": "assessment",
+          "error_code": "request_timeout",
+          "retryable": true,
+          "count": 23
+        },
+        {
+          "failed_phase": "assessment",
+          "error_code": "provider_response_invalid",
+          "retryable": true,
+          "count": 7
+        }
+      ],
+      "completed_durations_ms": {
+        "completed_mean": 23041.97275479314,
+        "completed_p50": 22252,
+        "completed_p95": 40400
+      },
+      "concurrency": "4 throughout"
+    }
+  ],
+  "limitations": [
+    "Failed attempts are not permanently lost documents.",
+    "The original rc.20 assessor request bodies inspected during planning were unavailable; exact historical prompt replay is incomplete.",
+    "No provider, prompt, queue or transport root cause is established.",
+    "Existing evaluation resources and raw evidence are preserved; no new live 1k run is part of this diagnostic-only delivery."
+  ]
+}

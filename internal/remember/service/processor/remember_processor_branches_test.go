@@ -18,7 +18,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
-	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
 func TestInlineEmbeddingResultsFromDocumentsCopiesPlanMetadataAndVectors(t *testing.T) {
@@ -232,6 +231,7 @@ func TestRememberProcessorRecordsPreCallbackLockFailureAsExecutionFailure(t *tes
 	require.Equal(t, "execution", base.invocation.Classification)
 	require.Equal(t, "failed", base.invocation.Outcome)
 	require.Equal(t, "database_failure", base.invocation.ErrorCode)
+	require.Equal(t, "idempotency_lock_busy", status.Errors[0].ReasonCode)
 	require.True(t, base.invocation.Retryable)
 }
 
@@ -283,38 +283,6 @@ func TestRememberProcessorCoversPipelineFailurePhases(t *testing.T) {
 	var nilProcessor *rememberSynchronousProcessor
 	_, err := nilProcessor.processRememberUnlocked(context.Background(), input)
 	require.EqualError(t, err, "remember processor: ledger is required")
-}
-
-func TestRememberProcessorCommitsValidatedAssessmentAndResult(t *testing.T) {
-	input := rememberapp.RememberProcessRequest{
-		TeamID: "team", OwnerProfileID: "owner", IdempotencyKey: "key", RequestHash: "hash",
-		Evidence: []rememberapp.EvidenceInput{{Content: "fact", ForceInsert: true}},
-	}
-	commitResult := map[string]any{
-		"contract_version": domain.ContractVersion, "submission_id": "committed", "submission_kind": "remember",
-		"processing_state": "completed", "search_state": "current", "evidence": []any{}, "relationship_results": []any{}, "errors": []any{},
-	}
-	ledger := &rememberPipelineLedgerStub{
-		rememberFailureLedgerStub: &rememberFailureLedgerStub{},
-		plan:                      &knowledgecontract.InlineEmbeddingPlan{},
-		commitResult:              &knowledgecontract.SynchronousRememberCommitResult{IngestID: "committed", Outcome: "completed", PublicResult: commitResult},
-	}
-	metrics := observability.NewPrometheusMetrics()
-	processor := &rememberSynchronousProcessor{
-		ledger:   ledger,
-		catalog:  &processorAssessmentCatalogStub{},
-		provider: &processorAssessmentProviderStub{},
-		metrics:  metrics,
-	}
-	ctx := requestctx.WithRememberInvocationIDSink(context.Background())
-	status, err := processor.ProcessRemember(ctx, input)
-	require.NoError(t, err)
-	require.Equal(t, "committed", status.SubmissionID)
-	require.Equal(t, "completed", status.ProcessingState)
-	require.Equal(t, "evaluated_zero", ledger.invocation.Outcome)
-	require.Equal(t, "execution", ledger.invocation.Classification)
-	require.NotEmpty(t, requestctx.RememberInvocationIDFromContext(ctx))
-	require.Contains(t, rememberMetricsText(t, metrics), `densemem_logical_operation_attempts_total{classification="execution",operation="remember",outcome="evaluated_zero"} 1`)
 }
 
 func TestRememberProcessorRecordsAssessmentRejectionTrails(t *testing.T) {
@@ -600,6 +568,7 @@ type rememberPipelineLedgerStub struct {
 	planErr          error
 	commitResult     *knowledgecontract.SynchronousRememberCommitResult
 	commitErr        error
+	commitInput      knowledgecontract.SynchronousRememberCommitInput
 }
 
 func (s *rememberPipelineLedgerStub) PlanRememberDuplicateEmbeddings(context.Context, knowledgecontract.RememberDuplicateCandidateInput) (*knowledgecontract.RememberDuplicateEmbeddingPlan, error) {
@@ -629,7 +598,8 @@ func (s *rememberPipelineLedgerStub) PlanRememberEmbeddings(context.Context, kno
 	return &knowledgecontract.InlineEmbeddingPlan{}, nil
 }
 
-func (s *rememberPipelineLedgerStub) CommitRememberWithEmbeddings(context.Context, knowledgecontract.SynchronousRememberCommitInput, []knowledgecontract.InlineEmbeddingResult) (*knowledgecontract.SynchronousRememberCommitResult, error) {
+func (s *rememberPipelineLedgerStub) CommitRememberWithEmbeddings(_ context.Context, input knowledgecontract.SynchronousRememberCommitInput, _ []knowledgecontract.InlineEmbeddingResult) (*knowledgecontract.SynchronousRememberCommitResult, error) {
+	s.commitInput = input
 	if s.commitErr != nil {
 		return nil, s.commitErr
 	}

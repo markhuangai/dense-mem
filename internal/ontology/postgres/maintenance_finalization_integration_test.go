@@ -182,6 +182,42 @@ func TestOntologyMaintenanceFinalizationReceiptsAndAccounting(t *testing.T) {
 }
 
 func TestOntologyMaintenanceFinalizationRacesAndFences(t *testing.T) {
+	for _, failure := range []string{"sql", "canceled"} {
+		t.Run("recovery_rollback_"+failure, func(t *testing.T) {
+			x, healthy, pending := newFinalizationRecoveryCohort(t, "reported", true)
+			history, healthyHistory := x.history(t), healthy.history(t)
+			queued, healthyQueued := x.queuedSources(t), healthy.queuedSources(t)
+			before, healthyBefore, pendingBefore := x.f.canonicalSnapshot(t), healthy.f.canonicalSnapshot(t), pending.canonicalSnapshot(t)
+			calls, healthyCalls := x.calls.Load(), healthy.calls.Load()
+			turn, err := x.recoverAfterExpiry(t, "source_updates", failure)
+			require.Nil(t, turn)
+			var diagnostic *ontology.MaintenanceFinalizationError
+			require.ErrorAs(t, err, &diagnostic)
+			require.Equal(t, "recovery_rollback", diagnostic.Phase)
+			require.Equal(t, x.claim.ID, diagnostic.BatchID)
+			if failure == "sql" {
+				require.Equal(t, "3B001", diagnostic.SQLState())
+				require.Equal(t, "postgres", diagnostic.FailureClass())
+			} else {
+				require.ErrorIs(t, err, context.Canceled)
+				require.Equal(t, "canceled", diagnostic.FailureClass())
+			}
+			require.NotErrorIs(t, err, ontology.ErrLeaseLost)
+			for _, candidate := range []*finalizationFixture{x, healthy} {
+				require.Equal(t, "running", candidate.batchStatus(t))
+				require.Zero(t, maintenanceRunByID(t, candidate.f, candidate.claim.RunID).CompletedBatches)
+			}
+			require.Equal(t, queued, x.queuedSources(t))
+			require.Equal(t, healthyQueued, healthy.queuedSources(t))
+			require.Equal(t, history, x.history(t))
+			require.Equal(t, healthyHistory, healthy.history(t))
+			require.Equal(t, calls, x.calls.Load())
+			require.Equal(t, healthyCalls, healthy.calls.Load())
+			require.Equal(t, before, x.f.canonicalSnapshot(t))
+			require.Equal(t, healthyBefore, healthy.f.canonicalSnapshot(t))
+			require.Equal(t, pendingBefore, pending.canonicalSnapshot(t))
+		})
+	}
 	for _, mode := range []string{"reported", "failed_unknown_usage"} {
 		t.Run(mode, func(t *testing.T) {
 			x := newFinalizationFixture(t)
@@ -232,6 +268,52 @@ func TestOntologyMaintenanceFinalizationRacesAndFences(t *testing.T) {
 }
 
 func TestOntologyMaintenanceFinalizationAdmissionAndIsolation(t *testing.T) {
+	for _, receiptMode := range []string{"reported", "failed_unknown_usage"} {
+		for _, boundary := range []string{"selection", "source_updates"} {
+			t.Run("expiry_during_recovery/"+receiptMode+"/"+boundary, func(t *testing.T) {
+				x, healthy, pending := newFinalizationRecoveryCohort(t, receiptMode, boundary == "source_updates")
+				history, healthyHistory := x.history(t), healthy.history(t)
+				queued := x.queuedSources(t)
+				before, healthyBefore, pendingBefore := x.f.canonicalSnapshot(t), healthy.f.canonicalSnapshot(t), pending.canonicalSnapshot(t)
+				calls, healthyCalls := x.calls.Load(), healthy.calls.Load()
+				turn, err := x.recoverAfterExpiry(t, boundary, "")
+				require.NoError(t, err)
+				require.NotNil(t, turn, "expiry cannot abort admission after healthy recovery releases capacity")
+				require.Equal(t, pending.team, turn.TeamID)
+				require.Equal(t, "completed", healthy.batchStatus(t))
+				healthy.assertCompletedOutcome(t)
+				var finalized int
+				require.NoError(t, x.f.admin.Raw(`SELECT count(*) FROM ontology_maintenance_sources WHERE team_id=?::uuid AND assessment_id=?::uuid`, healthy.f.team, healthy.result.AssessmentID).Row().Scan(&finalized))
+				require.Equal(t, len(healthy.claim.Sources), finalized)
+				require.Equal(t, "running", x.batchStatus(t), "admission retains its original observation time")
+				require.Zero(t, maintenanceRunByID(t, x.f, x.claim.RunID).CompletedBatches)
+				require.Equal(t, queued, x.queuedSources(t), "expired completion must not commit any source writes")
+				ctx := context.Background()
+				for range 8 {
+					require.NoError(t, pending.store.DiscoverMaintenance(ctx, *turn, ontology.MaintenancePageSize))
+				}
+				claim, err := pending.store.ClaimMaintenanceBatch(ctx, *turn, x.window.ID, time.Now())
+				require.NoError(t, err)
+				require.NotNil(t, claim)
+				require.Equal(t, pending.team, claim.TeamID)
+				require.NotEmpty(t, claim.Sources)
+				assertDisjointClaims(t, x.claim, healthy.claim, claim)
+				x.recover(t)
+				require.Equal(t, "lost", x.batchStatus(t))
+				require.Zero(t, maintenanceRunByID(t, x.f, x.claim.RunID).CompletedBatches)
+				healthy.assertCompletedOutcome(t)
+				require.ErrorIs(t, x.f.store.CompleteMaintenanceBatch(ctx, *x.claim, x.result, x.result.FailureCode, time.Now()), ontology.ErrLeaseLost)
+				require.Equal(t, queued, x.queuedSources(t))
+				require.Equal(t, history, x.history(t))
+				require.Equal(t, healthyHistory, healthy.history(t))
+				require.Equal(t, calls, x.calls.Load())
+				require.Equal(t, healthyCalls, healthy.calls.Load())
+				require.Equal(t, before, x.f.canonicalSnapshot(t))
+				require.Equal(t, healthyBefore, healthy.f.canonicalSnapshot(t))
+				require.Equal(t, pendingBefore, pending.canonicalSnapshot(t))
+			})
+		}
+	}
 	for _, global := range []int{1, 4} {
 		t.Run(fmt.Sprintf("recovered_capacity_global_%d_team_1", global), func(t *testing.T) {
 			x := newFinalizationFixtureWithConcurrency(t, global, 1)

@@ -217,7 +217,7 @@ NODE
       "$oauth_token" > "${DENSE_MEM_CI_HELPER_DIR}/runtime.env"
     if has_helper "$helpers" oauth_compatibility; then
       require_command docker
-      harness_image="${project}-oauth-compat-harness:latest"
+      harness_image="${project}-oauth-compat-harness:built"
       docker build --label "io.dense-mem.ci.contract=${CONTRACT_VERSION}" \
         --label "io.dense-mem.ci.repository=${REPOSITORY}" \
         --label "io.dense-mem.ci.run-id=${run_id}" \
@@ -517,6 +517,9 @@ start_stack_helpers() {
 
 seed_stack_inputs() {
   local project="$1" run_id="$2" attempt="$3" phase="$4" scenario="$5" source_dir="$6"
+  if ! docker image inspect alpine:3.24 >/dev/null 2>&1; then
+    pull_images docker pull alpine:3.24
+  fi
   local created_at
   created_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   local -a labels=(

@@ -353,8 +353,9 @@ go run ./cmd/eval-seedgen \
 ```
 
 `local_eval_100_v2` 包含 100 条 corpus 与 25 个评分 case。它只用于检查评估镜像和
-harness plumbing，不能替代已批准的确定性 1k release gate。此 smoke 建议使用
-`IMPORT_CONCURRENCY=5`；完整评估仍可在 harness 的上限 10 内配置。
+harness plumbing，不能替代已批准的确定性 1k release gate。导入默认并发数为 4，
+可通过 `IMPORT_CONCURRENCY` 将 monitor 的并发数配置为 1 至 30。
+服务端仍按数据库连接池容量限制准入；若 Remember 返回 `idempotency_lock_busy`，请降低并发数。
 
 memory-pack 仅导出当前的 `dense-mem.memory-pack.v2.4` artifact。导入和候选发现
 流程不属于公共契约。

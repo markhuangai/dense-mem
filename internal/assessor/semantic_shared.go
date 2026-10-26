@@ -53,6 +53,7 @@ type SemanticValueObservation struct {
 type SemanticValidationError struct {
 	Field   string `json:"field"`
 	Message string `json:"message"`
+	Code    string `json:"-"`
 }
 
 func semanticEvidenceByID(evidence []SemanticReviewEvidence) map[string]SemanticReviewEvidence {
@@ -166,4 +167,8 @@ func semanticOneOf(value string, allowed ...string) bool {
 
 func semanticErr(field string, message string) SemanticValidationError {
 	return SemanticValidationError{Field: field, Message: message}
+}
+
+func semanticCodedErr(field, message, code string) SemanticValidationError {
+	return SemanticValidationError{Field: field, Message: message, Code: code}
 }

@@ -75,7 +75,7 @@ func (r *Store) ValidateSubmissionPredicateRegistrations(
 			canonicalKey := knowledgecontract.CanonicalGeneratedPredicateKey(registration.PredicateKey)
 			persisted, err := knowledgecontract.SelectSubmissionPredicateCandidate(matches[index], registration.PredicateKey, canonicalKey)
 			if errors.Is(err, ErrSubmissionPredicateRegistrationHeld) {
-				issues = append(issues, SubmissionPredicateRegistrationIssue{index, "predicate_key", "matches ambiguous predicate aliases"})
+				issues = append(issues, SubmissionPredicateRegistrationIssue{RegistrationIndex: index, Field: "predicate_key", Message: "matches ambiguous predicate aliases", Code: "predicate_alias_ambiguous"})
 				continue
 			}
 			if err != nil {
@@ -86,7 +86,7 @@ func (r *Store) ValidateSubmissionPredicateRegistrations(
 				candidates := append(append([]SemanticReviewPredicateCandidate(nil), matches[index]...), virtual)
 				resolved, err = knowledgecontract.SelectSubmissionPredicateCandidate(candidates, registration.PredicateKey, canonicalKey)
 				if errors.Is(err, ErrSubmissionPredicateRegistrationHeld) {
-					issues = append(issues, SubmissionPredicateRegistrationIssue{index, "predicate_key", "matches ambiguous predicate aliases"})
+					issues = append(issues, SubmissionPredicateRegistrationIssue{RegistrationIndex: index, Field: "predicate_key", Message: "matches ambiguous predicate aliases", Code: "predicate_alias_ambiguous"})
 					continue
 				}
 				if err != nil {
@@ -94,13 +94,13 @@ func (r *Store) ValidateSubmissionPredicateRegistrations(
 				}
 				// A virtual key must not change how preview resolves an existing alias.
 				if persisted != nil && resolved != nil && persisted.PredicateKey != resolved.PredicateKey {
-					issues = append(issues, SubmissionPredicateRegistrationIssue{index, "predicate_key", "collides with an existing predicate alias"})
+					issues = append(issues, SubmissionPredicateRegistrationIssue{RegistrationIndex: index, Field: "predicate_key", Message: "collides with an existing predicate alias", Code: "predicate_alias_collision"})
 					continue
 				}
 			}
 			if resolved != nil {
-				if field, message := knowledgecontract.SubmissionPredicateRegistrationCompatibility(*resolved, registration); field != "" {
-					issues = append(issues, SubmissionPredicateRegistrationIssue{index, field, message})
+				if field, message, code := knowledgecontract.SubmissionPredicateRegistrationCompatibility(*resolved, registration); field != "" {
+					issues = append(issues, SubmissionPredicateRegistrationIssue{RegistrationIndex: index, Field: field, Message: message, Code: code})
 				}
 			} else {
 				virtualDefinitions[canonicalKey] = SemanticReviewPredicateCandidate{

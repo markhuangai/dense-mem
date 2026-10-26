@@ -403,6 +403,9 @@ func insertRememberAttemptInTx(ctx context.Context, tx *gorm.DB, input RememberA
 	if input.AssessorValidation != nil {
 		metadataValues["assessor_validation"] = input.AssessorValidation
 	}
+	if input.AssessorDiagnostics != nil {
+		metadataValues["assessor_diagnostics"] = input.AssessorDiagnostics
+	}
 	metadata, err := json.Marshal(metadataValues)
 	if err != nil {
 		return err

@@ -1,6 +1,9 @@
 package assessor
 
-import "context"
+import (
+	"context"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
+)
 
 // SemanticAssessmentSession is an opaque provider-owned conversation handle.
 // The application passes it back to Repair without inspecting provider state.
@@ -19,6 +22,8 @@ type SemanticAssessmentTurn struct {
 	InputTokens      int
 	OutputTokens     int
 	Turn             int
+	Diagnostics      *modelprovider.CallDiagnostics
+	ValidationMS     *int64
 }
 
 // SemanticAssessmentRepairRequest carries refreshed server-owned context and

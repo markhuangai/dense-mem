@@ -18,6 +18,9 @@
       "path": "cmd/internal/serverapp/remember_processor_integration_test.go"
     },
     {
+      "path": "cmd/internal/serverapp/evaluation_import_admission_integration_test.go"
+    },
+    {
       "path": "internal/knowledge/postgres/remember_attempt_diagnostics_repository_integration_test.go"
     },
     {

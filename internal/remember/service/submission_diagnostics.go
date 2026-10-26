@@ -72,6 +72,9 @@ func applySubmissionDiagnosticGuidance(result *SubmissionStatusError) {
 		}
 	}
 	switch result.ReasonCode {
+	case "idempotency_lock_busy":
+		result.Message = "Remember execution capacity is busy. Reduce concurrent requests and retry after current work finishes."
+		result.Remediation = "Retry the exact original request with the same idempotency_key. If lower concurrency still fails, ask an operator to check database pool capacity with submission_id and correlation_id."
 	case "security_rejection":
 		issues, _ := boundedSubmissionDiagnosticIssues(result.Details["issues"])
 		if len(issues) == 0 {

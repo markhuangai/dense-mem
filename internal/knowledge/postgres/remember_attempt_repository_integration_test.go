@@ -59,6 +59,7 @@ func TestRecordRememberFailurePreservesUnavailableCaptureStateAfterAttemptBudget
 			IdempotencyKey: "remember-attempt-diagnostic-budget", RequestHash: "remember-attempt-diagnostic-budget-hash",
 			ContractVersion: domain.ContractVersion, SubmissionKind: "remember", Outcome: "failed",
 			FailedPhase: "embedding", ErrorCode: "embedding_unavailable", PublicResult: map[string]any{},
+			AssessorDiagnostics: map[string]any{"preparation_ms": 0, "turns": []any{}},
 		},
 		Diagnostics: diagnostics,
 	}))
@@ -69,4 +70,5 @@ func TestRecordRememberFailurePreservesUnavailableCaptureStateAfterAttemptBudget
 	require.Equal(t, "unavailable", detail.Diagnostics[4].CaptureState)
 	require.Equal(t, "provider_not_called", detail.Diagnostics[4].Outcome)
 	require.Empty(t, detail.Diagnostics[4].ResponseBody)
+	require.EqualValues(t, 0, detail.Events[0].Metadata["assessor_diagnostics"].(map[string]any)["preparation_ms"])
 }

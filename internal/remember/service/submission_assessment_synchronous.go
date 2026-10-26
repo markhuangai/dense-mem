@@ -70,10 +70,11 @@ type SynchronousAssessmentInput struct {
 // prepared request. The private plan is intentionally retained here so the
 // existing deterministic commit-input builder remains the only policy path.
 type SynchronousAssessmentResult struct {
-	Response   assessor.SemanticAssessmentResponse
-	Request    assessor.SemanticAssessmentRequest
-	Plan       submissionAssessmentPlan
-	Assessment repository.SubmissionAssessment
+	Response    assessor.SemanticAssessmentResponse
+	Request     assessor.SemanticAssessmentRequest
+	Plan        submissionAssessmentPlan
+	Assessment  repository.SubmissionAssessment
+	Diagnostics map[string]any
 }
 
 // SynchronousRememberCommitRequest contains the request-owned values needed
@@ -133,7 +134,8 @@ func BuildSynchronousRememberCommitInput(input SynchronousRememberCommitRequest)
 		CandidateContextOmittedCandidates:       assessment.CandidateContextOmittedCandidates,
 		CandidateContextOmittedPredicateOptions: assessment.CandidateContextOmittedPredicateOptions,
 		AssessorTurns:                           providerTurns, Duration: input.Duration,
-		Commit: commit,
+		AssessorDiagnostics: input.Assessment.Diagnostics,
+		Commit:              commit,
 	}, nil
 }
 
@@ -199,10 +201,18 @@ func AssessSynchronousRemember(
 	ctx context.Context,
 	deps SynchronousAssessmentDependencies,
 	input SynchronousAssessmentInput,
-) (*SynchronousAssessmentResult, error) {
+) (result *SynchronousAssessmentResult, resultErr error) {
 	assessmentCtx, cancel := ContextForPhase(ctx, RememberPhaseAssessment)
 	defer cancel()
 	ctx = assessmentCtx
+	diagnostics := &assessmentDiagnostics{started: time.Now(), remainingMS: remainingAssessmentBudget(ctx)}
+	defer func() {
+		data := diagnostics.snapshot()
+		if result != nil {
+			result.Diagnostics = data
+		}
+		resultErr = WithSynchronousAssessmentDiagnostics(resultErr, data)
+	}()
 	if deps.Catalog == nil {
 		return nil, errors.New("synchronous assessment: catalog is required")
 	}
@@ -217,6 +227,7 @@ func AssessSynchronousRemember(
 		return nil, err
 	}
 	concrete := newSynchronousAssessmentEngine(deps, input.Scope.TeamID, input.Scope.OwnerProfileID)
+	concrete.diagnostics = diagnostics
 	if err := concrete.loadKnownEvidence(ctx, input.Scope, &plan); err != nil {
 		return nil, normalizeSynchronousAssessmentPreflightError(err)
 	}
@@ -265,7 +276,7 @@ func AssessSynchronousRemember(
 				return nil, fmt.Errorf("%w: predicate catalog returned an invalid registration field", ErrRememberDatabaseFailure)
 			}
 			validationErrors = append(validationErrors, assessor.SemanticValidationError{
-				Field: paths[issue.RegistrationIndex] + "." + field, Message: issue.Message,
+				Field: paths[issue.RegistrationIndex] + "." + field, Message: issue.Message, Code: issue.Code,
 			})
 		}
 		return validationErrors, nil

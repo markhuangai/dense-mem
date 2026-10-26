@@ -22,7 +22,7 @@ func TestSynchronousAssessmentRepairsPredicateCatalogConflict(t *testing.T) {
 				PredicateKey: "late_option", Version: 1, AllowedSubjectKinds: []string{"concept"},
 				AllowedObjectKinds: []string{"concept"}, RelationshipKind: "state", CurrentCardinality: "many", LifecycleState: "active",
 			}}
-			return []repository.SubmissionPredicateRegistrationIssue{{RegistrationIndex: 0, Field: "subject_kind", Message: "is incompatible with the existing predicate"}}, nil
+			return []repository.SubmissionPredicateRegistrationIssue{{RegistrationIndex: 0, Field: "subject_kind", Message: "is incompatible with the existing predicate", Code: "predicate_subject_kind_mismatch"}}, nil
 		}
 		return nil, nil
 	}
@@ -51,6 +51,8 @@ func TestSynchronousAssessmentRepairsPredicateCatalogConflict(t *testing.T) {
 	require.Equal(t, "late_option", fixture.catalog.predicateOptions[0].PredicateKey)
 	require.Equal(t, fixture.provider.assessRequest, fixture.provider.repairRequest)
 	require.Equal(t, "relationship_results[0].splits[0].predicate_registration.predicate_key", fixture.provider.repairErrors[0].Field)
+	require.Equal(t, "predicate_subject_kind_mismatch", fixture.provider.repairErrors[0].Code)
+	require.Contains(t, prepared.Diagnostics["turns"].([]map[string]any)[0]["issues"], map[string]any{"field": "relationship_results[].splits[].predicate_registration.predicate_key", "code": "predicate_subject_kind_mismatch"})
 	for _, option := range prepared.Request.PredicateOptions {
 		require.NotEqual(t, "retired_key", option.PredicateKey)
 	}

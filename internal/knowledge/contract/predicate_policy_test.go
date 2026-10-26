@@ -75,11 +75,11 @@ func TestPredicateRegistrationValidationAndCompatibility(t *testing.T) {
 		RelationshipKind: "wrong", CurrentCardinality: "wrong",
 	}
 	require.Equal(t, []SubmissionPredicateRegistrationIssue{
-		{RegistrationIndex: 2, Field: "predicate_key", Message: "is required and must be bounded"},
-		{RegistrationIndex: 2, Field: "subject_kind", Message: "is unsupported"},
-		{RegistrationIndex: 2, Field: "object_kind", Message: "is unsupported"},
-		{RegistrationIndex: 2, Field: "relationship_kind", Message: "is unsupported"},
-		{RegistrationIndex: 2, Field: "current_cardinality", Message: "is unsupported"},
+		{RegistrationIndex: 2, Code: "predicate_key_invalid", Field: "predicate_key", Message: "is required and must be bounded"},
+		{RegistrationIndex: 2, Code: "predicate_subject_kind_invalid", Field: "subject_kind", Message: "is unsupported"},
+		{RegistrationIndex: 2, Code: "predicate_object_kind_invalid", Field: "object_kind", Message: "is unsupported"},
+		{RegistrationIndex: 2, Code: "predicate_relationship_kind_invalid", Field: "relationship_kind", Message: "is unsupported"},
+		{RegistrationIndex: 2, Code: "predicate_cardinality_invalid", Field: "current_cardinality", Message: "is unsupported"},
 	}, ValidateSubmissionPredicateRegistrationFields(2, invalid))
 
 	registration.RelationshipRef = "r1"
@@ -97,23 +97,27 @@ func TestPredicateRegistrationValidationAndCompatibility(t *testing.T) {
 		PredicateKey: "works_on", AllowedSubjectKinds: []string{"person"}, AllowedObjectKinds: []string{"project"},
 		RelationshipKind: "state", CurrentCardinality: "many", LifecycleState: "active",
 	}
-	field, message := SubmissionPredicateRegistrationCompatibility(loaded, registration)
+	field, message, code := SubmissionPredicateRegistrationCompatibility(loaded, registration)
 	require.Empty(t, field)
 	require.Empty(t, message)
+	require.Empty(t, code)
 	loaded.AllowedSubjectKinds = nil
 	loaded.AllowedObjectKinds = nil
-	field, message = SubmissionPredicateRegistrationCompatibility(loaded, registration)
+	field, message, code = SubmissionPredicateRegistrationCompatibility(loaded, registration)
 	require.Empty(t, field)
 	require.Empty(t, message)
+	require.Empty(t, code)
 	loaded.LifecycleState = "retired"
-	field, message = SubmissionPredicateRegistrationCompatibility(loaded, registration)
+	field, message, code = SubmissionPredicateRegistrationCompatibility(loaded, registration)
 	require.Equal(t, "predicate_key", field)
 	require.Equal(t, "resolves to a predicate that is not active", message)
+	require.Equal(t, "predicate_inactive", code)
 	loaded.LifecycleState = "active"
 	loaded.AllowedSubjectKinds = []string{"organization"}
-	field, message = SubmissionPredicateRegistrationCompatibility(loaded, registration)
+	field, message, code = SubmissionPredicateRegistrationCompatibility(loaded, registration)
 	require.Equal(t, "subject_kind", field)
 	require.Equal(t, "is incompatible with the existing predicate", message)
+	require.Equal(t, "predicate_subject_kind_mismatch", code)
 }
 
 func TestGeneratedPredicateInputDefaultsAndValidation(t *testing.T) {

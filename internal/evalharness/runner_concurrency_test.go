@@ -8,8 +8,11 @@ func TestNormalizeImportConcurrency(t *testing.T) {
 		want    int
 		wantErr bool
 	}{
-		{input: 0, want: DefaultImportConcurrency},
+		{input: 0, want: 4},
+		{input: -1, want: 4},
 		{input: 1, want: 1},
+		{input: 4, want: 4},
+		{input: 10, want: 10},
 		{input: 30, want: 30},
 		{input: 31, wantErr: true},
 	}

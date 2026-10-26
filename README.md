@@ -586,8 +586,10 @@ go run ./cmd/eval-seedgen \
 The `local_eval_100` CLI preset emits the versioned `local_eval_100_v2` seed
 identity with 100 corpus rows and 25 scored cases. It is a smoke check for the
 evaluation image and harness plumbing, not a replacement for the approved
-deterministic 1k release gate. Use `IMPORT_CONCURRENCY=5` for this smoke; the
-full evaluation remains configurable up to the harness limit of 10.
+deterministic 1k release gate. Imports default to four concurrent requests;
+`IMPORT_CONCURRENCY` can override the monitor setting from 1 through 30.
+The server still enforces its pool-dependent admission capacity, so lower the
+setting if Remember reports `idempotency_lock_busy`.
 
 Memory-pack export emits the current `dense-mem.memory-pack.v2.4` artifact. Import
 and candidate-discovery workflows are not part of the public contract.

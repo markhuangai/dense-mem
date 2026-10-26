@@ -67,23 +67,23 @@ func NormalizeSubmissionPredicateRegistration(input SubmissionPredicateRegistrat
 
 func ValidateSubmissionPredicateRegistrationFields(index int, registration SubmissionPredicateRegistrationInput) []SubmissionPredicateRegistrationIssue {
 	var issues []SubmissionPredicateRegistrationIssue
-	add := func(field, message string) {
-		issues = append(issues, SubmissionPredicateRegistrationIssue{index, field, message})
+	add := func(field, message, code string) {
+		issues = append(issues, SubmissionPredicateRegistrationIssue{RegistrationIndex: index, Field: field, Message: message, Code: code})
 	}
 	if registration.PredicateKey == "" || len([]rune(registration.PredicateKey)) > 128 {
-		add("predicate_key", "is required and must be bounded")
+		add("predicate_key", "is required and must be bounded", "predicate_key_invalid")
 	}
 	if !slices.Contains(domain.EntityKinds(), registration.SubjectKind) {
-		add("subject_kind", "is unsupported")
+		add("subject_kind", "is unsupported", "predicate_subject_kind_invalid")
 	}
 	if !slices.Contains(append(domain.EntityKinds(), domain.ValueTypes()...), registration.ObjectKind) {
-		add("object_kind", "is unsupported")
+		add("object_kind", "is unsupported", "predicate_object_kind_invalid")
 	}
 	if !slices.Contains(domain.RelationshipKinds(), registration.RelationshipKind) {
-		add("relationship_kind", "is unsupported")
+		add("relationship_kind", "is unsupported", "predicate_relationship_kind_invalid")
 	}
 	if !slices.Contains(domain.CurrentCardinalities(), registration.CurrentCardinality) {
-		add("current_cardinality", "is unsupported")
+		add("current_cardinality", "is unsupported", "predicate_cardinality_invalid")
 	}
 	return issues
 }
@@ -108,23 +108,23 @@ func ValidateCommitSubmissionPredicateRegistration(registration SubmissionPredic
 func SubmissionPredicateRegistrationCompatibility(
 	loaded SemanticReviewPredicateCandidate,
 	registration SubmissionPredicateRegistrationInput,
-) (string, string) {
+) (field, message, code string) {
 	if loaded.LifecycleState != string(domain.PredicateLifecycleActive) {
-		return "predicate_key", "resolves to a predicate that is not active"
+		return "predicate_key", "resolves to a predicate that is not active", "predicate_inactive"
 	}
 	if !SemanticPredicateKindAllowed(loaded.AllowedSubjectKinds, registration.SubjectKind) {
-		return "subject_kind", "is incompatible with the existing predicate"
+		return "subject_kind", "is incompatible with the existing predicate", "predicate_subject_kind_mismatch"
 	}
 	if !SemanticPredicateKindAllowed(loaded.AllowedObjectKinds, registration.ObjectKind) {
-		return "object_kind", "is incompatible with the existing predicate"
+		return "object_kind", "is incompatible with the existing predicate", "predicate_object_kind_mismatch"
 	}
 	if loaded.RelationshipKind != registration.RelationshipKind {
-		return "relationship_kind", "is incompatible with the existing predicate"
+		return "relationship_kind", "is incompatible with the existing predicate", "predicate_relationship_kind_mismatch"
 	}
 	if loaded.CurrentCardinality != registration.CurrentCardinality {
-		return "current_cardinality", "is incompatible with the existing predicate"
+		return "current_cardinality", "is incompatible with the existing predicate", "predicate_cardinality_mismatch"
 	}
-	return "", ""
+	return "", "", ""
 }
 
 func SemanticPredicateKindAllowed(allowed []string, actual string) bool {

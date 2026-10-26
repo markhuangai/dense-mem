@@ -54,6 +54,7 @@ type RememberAttemptRecordInput struct {
 	DocumentCount, AssessorTurns     int
 	Duration                         time.Duration
 	AssessorValidation               map[string]any
+	AssessorDiagnostics              map[string]any
 }
 
 type RememberAttempt struct {

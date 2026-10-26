@@ -21,6 +21,7 @@ type assessmentEngine struct {
 	logger                observability.LogProvider
 	completedInputTokens  int
 	completedOutputTokens int
+	diagnostics           *assessmentDiagnostics
 }
 
 func newAssessmentEngine(deps SynchronousAssessmentDependencies, teamID, ownerID string) *assessmentEngine {

@@ -98,7 +98,7 @@ func previewSubmissionPredicateKey(ctx context.Context, tx *gorm.DB, input Commi
 	canonicalKey := knowledgecontract.CanonicalGeneratedPredicateKey(requestedKey)
 	loaded, err := loadLatestSubmissionPredicate(ctx, tx, input.TeamID, requestedKey, canonicalKey)
 	if err == nil && loaded != nil {
-		if field, _ := knowledgecontract.SubmissionPredicateRegistrationCompatibility(*loaded, registration); field != "" {
+		if field, _, _ := knowledgecontract.SubmissionPredicateRegistrationCompatibility(*loaded, registration); field != "" {
 			return "", ErrSubmissionPredicateRegistrationHeld
 		}
 		return loaded.PredicateKey, nil

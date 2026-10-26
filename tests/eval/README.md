@@ -254,7 +254,7 @@ go run ./cmd/eval-seedgen \
 export SEED=tests/eval/seeds/local_eval_100/seed_manifest.json
 export SUITE=tests/eval/suites/local_eval_100.jsonl
 export ALLOW_UNGATED_EVALUATION=1
-export IMPORT_CONCURRENCY=5
+export IMPORT_CONCURRENCY=4
 export MIN_RECALL_AT_K=0.8429611650485437
 export MIN_REQUIRED_RANK1_RATE=0.7621359223300971
 export MAX_AVERAGE_BAD_AT_K=0
@@ -355,13 +355,23 @@ terminal result:
 SEED="${SEED}" \
 SUITE="${SUITE}" \
 RELEASE_GATE_POLICY="${RELEASE_GATE}" \
-IMPORT_CONCURRENCY=10 \
 tests/eval/scripts/run_full_public_rag_eval_until_done.sh
 ```
 
-The runner and monitor default to 10 concurrent import requests and reject a
-higher value. The eval-only Compose overlay also limits embedding requests to
-10.
+The runner defaults to four concurrent import requests and supports explicit
+settings from 1 through 30. Use `--import-concurrency` or
+`DENSE_MEM_EVAL_IMPORT_CONCURRENCY` for the runner. The monitor inherits that
+default or environment setting unless `IMPORT_CONCURRENCY` supplies an explicit
+override. The CLI flag takes precedence over the runner environment setting.
+
+Concurrency is a client workload setting, not a reservation of server capacity.
+Remember admission allows at most four users per database pool and may allow
+fewer for smaller or occupied pools. On `idempotency_lock_busy`, lower concurrency
+and retry the exact request with its original idempotency key. If even one
+request cannot start, ask an operator to check pool capacity. Preserve completed
+source checkpoints and mappings when resuming; do not change evidence or keys
+to bypass admission. The eval-only Compose overlay separately limits embedding
+requests to 10.
 
 The monitor polls every 60 seconds by default. `SLEEP_SECONDS` changes only
 the monitor cadence; it does not control terminal Remember processing.
@@ -798,6 +808,47 @@ unexpected provider failures stop the run and retain the incomplete report.
 Missing usage remains explicitly unavailable through proxy counters rather
 than becoming estimated or zero consumption. This cohort does not establish
 general retrieval-quality or performance equivalence.
+
+Remember assessment diagnosis for #586 uses the existing private control detail
+route `/control/api/teams/{team_id}/remember-attempts/{attempt_id}`. Its event
+metadata can contain `assessor_diagnostics` on successful and failed attempts,
+including the rejected turns preceding a successful repair. Historical records
+without the field remain readable; absence means unobserved, not zero.
+
+`preparation_ms` measures catalog/request preparation before the first provider
+turn. `elapsed_ms` is the inclusive assessment duration. Each of at most three
+`turns` records an attempted provider turn, its inclusive `elapsed_ms`, remaining
+assessment budget at entry, and the existing provider `queue_ms`, `admission_ms`,
+`http_ms`, configured `http_timeout_ms`, and failure phase when observed. HTTP time
+includes body reads. A failed first call can have one diagnostic turn while
+`assessor_turns` remains zero: that counter still counts completed responses.
+Configured HTTP timeout is not the remaining request deadline.
+
+Per-turn `validation_ms` includes provider response validation and application
+validation, including predicate-catalog checks. It overlaps the inclusive turn
+duration; do not add the two. Provider time overlaps that duration too.
+`issues` holds at most twenty normalized field paths and server-owned codes;
+`truncated` and the bounded error count describe omitted detail. Predicate codes
+distinguish allowlist, nullability, endpoint-kind, inactive-catalog and alias
+conflicts. Evidence codes distinguish required, unknown, duplicate and missing
+results. Unclassified reasons use `other`. Provider messages and submitted text
+are excluded even when raw diagnostic capture is unavailable. These internal
+codes are never serialized into repair feedback or public memory results.
+
+Correlate `remember_phase_completed` structured logs by team, owner, attempt and
+correlation IDs. The phases are `duplicate_embedding`, `assessment`, `embedding`
+and `commit`. Commit duration is measured after the transaction returns and is
+therefore log-only; it is not appended to the already committed attempt event.
+These logs and durable assessment diagnostics do not depend on optional metrics.
+Absent measurements are omitted; observed sub-millisecond durations are zero.
+
+`baselines/issue_586_remember_diagnostics.json` records the retained import counts
+and source-artifact hashes. Failed attempts are not lost documents. Missing
+historical prompts prevent exact replay, and no historical root cause or measured
+reliability improvement is claimed. The maintainer-approved diagnostic-only 1k
+waiver is recorded on #586; replacement checks use deterministic HTTP providers,
+real PostgreSQL, synchronous-write production E2E with metrics enabled and
+disabled, and session ingestion. Full current-head CI and E2E remain mandatory.
 
 Ontology attempt receipts optionally contain `diagnostics` with measured
 `queue_ms`, `admission_ms`, `http_ms`, `reconciliation_ms`, the configured

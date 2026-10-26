@@ -304,6 +304,9 @@ func TestRememberAttemptDiagnosticsPaginatesOrdersAndIsolatesABC(t *testing.T) {
 			CorrelationID: fmt.Sprintf("diagnostics-pagination-correlation-%d", index), PublicResult: map[string]any{"processing_state": "completed", "sequence": index},
 			EvidenceCount: index, RelationshipCount: index + 1, DocumentCount: index + 2, AssessorTurns: index + 3, Duration: time.Duration(index+1) * time.Millisecond,
 		}
+		if index == 0 || index == 3 {
+			attempt.AssessorDiagnostics = map[string]any{"preparation_ms": 0, "elapsed_ms": 4, "turns": []any{map[string]any{"attempt": 1, "elapsed_ms": 4}}}
+		}
 		if attempt.Outcome == "failed" {
 			attempt.FailedPhase, attempt.ErrorCode = "assessment", "provider_unavailable"
 			require.NoError(t, repo.RecordRememberFailure(ctx, RememberFailureRecordInput{
@@ -384,6 +387,23 @@ func TestRememberAttemptDiagnosticsPaginatesOrdersAndIsolatesABC(t *testing.T) {
 	require.Len(t, detail.Events, 3)
 	require.Equal(t, []int{1, 2, 3}, []int{detail.Events[0].SequenceNo, detail.Events[1].SequenceNo, detail.Events[2].SequenceNo})
 	require.Equal(t, "<script>bad()</script>", detail.Events[1].Metadata["markup"])
+	require.EqualValues(t, 4, detail.Events[0].Metadata["assessor_diagnostics"].(map[string]any)["elapsed_ms"])
+	for _, index := range []int{0, 1} {
+		record, err := repo.GetRememberAttemptDiagnostic(ctx, teamA, attemptIDs[index])
+		require.NoError(t, err)
+		if index == 0 {
+			require.Contains(t, record.Events[0].Metadata, "assessor_diagnostics")
+		} else {
+			require.NotContains(t, record.Events[0].Metadata, "assessor_diagnostics")
+		}
+	}
+	for _, actor := range []struct{ team, owner string }{{teamA, ownerB}, {teamC, ownerC}} {
+		var visible int64
+		require.NoError(t, rls.WithTeamProfileReadOnlyRepeatableTx(ctx, appDB, actor.team, actor.owner, func(tx *gorm.DB) error {
+			return tx.Raw(`SELECT count(*) FROM remember_attempt_events WHERE team_id = ?::uuid AND attempt_id = ?::uuid AND metadata ? 'assessor_diagnostics'`, teamA, attemptIDs[3]).Scan(&visible).Error
+		}))
+		require.Zero(t, visible)
+	}
 	require.Len(t, detail.Diagnostics, 1)
 
 	_, err = repo.GetRememberAttemptDiagnostic(ctx, teamC, attemptIDs[3])
@@ -400,6 +420,38 @@ func TestRememberAttemptDiagnosticsPaginatesOrdersAndIsolatesABC(t *testing.T) {
 		return tx.Raw(`SELECT count(*) FROM remember_attempts WHERE team_id = ?::uuid`, teamA).Scan(&crossTeamVisible).Error
 	}))
 	require.Zero(t, crossTeamVisible)
+	t.Run("commit replay and rollback retain diagnostic boundaries", func(t *testing.T) {
+		insertSearchTestContract(t, adminDB, rls, "diagnostic-commit", 3, "exact", "")
+		input := evidenceOnlyRememberInput(teamA, ownerA, "diagnostic-commit")
+		input.AssessorDiagnostics = map[string]any{"preparation_ms": 0, "elapsed_ms": 7, "turns": []any{map[string]any{"attempt": 1, "elapsed_ms": 7}}}
+		plan, err := repo.PlanRememberEmbeddings(ctx, input)
+		require.NoError(t, err)
+		_, err = repo.CommitRememberWithEmbeddings(ctx, input, rememberTestEmbeddings(plan, false))
+		require.NoError(t, err)
+		stored, err := repo.GetRememberAttemptDiagnostic(ctx, teamA, input.IngestID)
+		require.NoError(t, err)
+		require.EqualValues(t, 7, stored.Events[0].Metadata["assessor_diagnostics"].(map[string]any)["elapsed_ms"])
+		require.NotContains(t, stored.PublicResult, "assessor_diagnostics")
+		input.AssessorDiagnostics = map[string]any{"elapsed_ms": 999}
+		_, err = repo.CommitRememberWithEmbeddings(ctx, input, rememberTestEmbeddings(plan, false))
+		require.ErrorIs(t, err, ErrRememberReplay)
+		replayed, err := repo.GetRememberAttemptDiagnostic(ctx, teamA, input.IngestID)
+		require.NoError(t, err)
+		require.Equal(t, stored.Events, replayed.Events)
+		rollback := evidenceOnlyRememberInput(teamA, ownerA, "diagnostic-rollback")
+		rollback.AssessorDiagnostics = input.AssessorDiagnostics
+		rollbackPlan, err := repo.PlanRememberEmbeddings(ctx, rollback)
+		require.NoError(t, err)
+		_, err = repo.CommitRememberWithEmbeddings(ctx, rollback, rememberTestEmbeddings(rollbackPlan, true))
+		require.Error(t, err)
+		for _, count := range rememberPrimitiveCounts(t, ctx, adminDB, rls, teamA, rollback.IngestID) {
+			require.Zero(t, count)
+		}
+		var eventCount int64
+		require.NoError(t, adminDB.Raw(`SELECT count(*) FROM remember_attempt_events WHERE team_id = ?::uuid AND attempt_id = ?::uuid`, teamA, rollback.IngestID).Scan(&eventCount).Error)
+		require.Zero(t, eventCount)
+	})
+
 }
 
 type rememberAttemptDiagnosticPurger interface {

@@ -8,7 +8,6 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	repository "github.com/markhuangai/dense-mem/internal/knowledge/contract"
-	"github.com/markhuangai/dense-mem/internal/observability"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 	session "github.com/markhuangai/dense-mem/internal/session/contract"
 )
@@ -32,7 +31,9 @@ func (e *rememberPreparationError) Unwrap() error { return e.Cause }
 func (p *rememberSynchronousProcessor) prepareRemember(ctx context.Context, input rememberapp.RememberProcessRequest, snapshot rememberapp.RememberAssessmentSnapshot, scope rememberapp.RememberAssessmentScope, started time.Time) (*preparedRemember, error) {
 	ingestID := scope.IngestID
 	assessorTurns := 0
+	var assessorDiagnostics map[string]any
 	fail := func(err error, phase string) (*preparedRemember, error) {
+		err = rememberapp.WithSynchronousAssessmentDiagnostics(err, assessorDiagnostics)
 		return nil, &rememberPreparationError{Phase: phase, AssessorTurns: assessorTurns, AssessorSecurityRejected: input.AssessorSecurityRejected, Cause: err}
 	}
 	var handleErr error
@@ -51,7 +52,7 @@ func (p *rememberSynchronousProcessor) prepareRemember(ctx context.Context, inpu
 	duplicatePlan, err := p.ledger.PlanRememberDuplicateEmbeddings(duplicateEmbeddingCtx, duplicateInput)
 	if err != nil {
 		duplicateEmbeddingCancel()
-		observability.RecordRememberPhase(p.metrics, "embedding", rememberMetricPhaseOutcome(err), time.Since(embeddingStarted))
+		p.observeRememberPhase(ctx, input, ingestID, "duplicate_embedding", err, embeddingStarted, nil)
 		return fail(&rememberEmbeddingPlanFailure{cause: err}, "embedding")
 	}
 	duplicateDocuments, err := p.embedSearchDocumentBatch(
@@ -60,12 +61,12 @@ func (p *rememberSynchronousProcessor) prepareRemember(ctx context.Context, inpu
 	)
 	duplicateEmbeddingCancel()
 	if err != nil {
-		observability.RecordRememberPhase(p.metrics, "embedding", rememberMetricPhaseOutcome(err), time.Since(embeddingStarted))
+		p.observeRememberPhase(ctx, input, ingestID, "duplicate_embedding", err, embeddingStarted, nil)
 		return fail(err, "embedding")
 	}
 	duplicateEmbeddings := inlineEmbeddingResultsFromDuplicateDocuments(duplicateDocuments, duplicatePlan)
 	duplicateResolution, err := p.ledger.ResolveRememberDuplicateCandidates(ctx, duplicateInput, duplicateEmbeddings)
-	observability.RecordRememberPhase(p.metrics, "embedding", rememberMetricPhaseOutcome(err), time.Since(embeddingStarted))
+	p.observeRememberPhase(ctx, input, ingestID, "duplicate_embedding", err, embeddingStarted, nil)
 	if err != nil {
 		return fail(&rememberEmbeddingPlanFailure{cause: err}, "embedding")
 	}
@@ -80,11 +81,16 @@ func (p *rememberSynchronousProcessor) prepareRemember(ctx context.Context, inpu
 	prepared, err := rememberapp.AssessSynchronousRemember(ctx, rememberapp.SynchronousAssessmentDependencies{
 		Catalog: p.catalog, Provider: p.provider, Limits: p.limits, Metrics: p.metrics, Logger: p.logger,
 	}, rememberapp.SynchronousAssessmentInput{Scope: scope, Snapshot: snapshot})
-	observability.RecordRememberPhase(p.metrics, "assessment", rememberMetricPhaseOutcome(err), time.Since(assessmentStarted))
+	assessorDiagnostics = rememberapp.SynchronousAssessmentDiagnostics(err)
+	if prepared != nil {
+		assessorDiagnostics = prepared.Diagnostics
+	}
+	p.observeRememberPhase(ctx, input, ingestID, "assessment", err, assessmentStarted, assessorDiagnostics)
 	if err != nil {
 		assessorTurns = rememberapp.SynchronousAssessmentProviderTurns(err)
 		return fail(err, "assessment")
 	}
+	assessorDiagnostics = prepared.Diagnostics
 	assessorTurns = prepared.Assessment.ProviderTurns
 	commitInput, buildErr := rememberapp.BuildSynchronousRememberCommitInput(rememberapp.SynchronousRememberCommitRequest{
 		TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IngestID: ingestID,
@@ -110,7 +116,7 @@ func (p *rememberSynchronousProcessor) prepareRemember(ctx context.Context, inpu
 	defer embeddingCancel()
 	plan, err := p.ledger.PlanRememberEmbeddings(embeddingCtx, commitInput)
 	if err != nil {
-		observability.RecordRememberPhase(p.metrics, "embedding", rememberMetricPhaseOutcome(err), time.Since(embeddingStarted))
+		p.observeRememberPhase(ctx, input, ingestID, "embedding", err, embeddingStarted, nil)
 		if errors.Is(err, repository.ErrSubmissionPredicateRegistrationHeld) && len(commitInput.Commit.PredicateRegistrations) > 0 {
 			err = fmt.Errorf("%w: predicate catalog changed before embedding planning: %w", rememberapp.ErrRememberCommitConflict, err)
 		}
@@ -123,7 +129,7 @@ func (p *rememberSynchronousProcessor) prepareRemember(ctx context.Context, inpu
 		plan.EmbeddingModel,
 		plan.Documents,
 	)
-	observability.RecordRememberPhase(p.metrics, "embedding", rememberMetricPhaseOutcome(err), time.Since(embeddingStarted))
+	p.observeRememberPhase(ctx, input, ingestID, "embedding", err, embeddingStarted, nil)
 	if err != nil {
 		return fail(err, "embedding")
 	}
