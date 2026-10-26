@@ -17,6 +17,8 @@ let ontologyFailuresRemaining = 0;
 let activeOntologyRequests = 0;
 let maxActiveOntologyRequests = 0;
 const heldOntologyRequests = new Set();
+let holdAdmissionRequests = false;
+const heldAdmissionRequests = new Set();
 let assessmentCalls = 0;
 let embeddingCalls = 0;
 const chatRequests = [];
@@ -29,7 +31,7 @@ function sendJSON(response, status, payload) {
 
 const server = createServer(async (request, response) => {
   if (request.method === "GET" && request.url === "/health") {
-    sendJSON(response, 200, { status: "ok", fault, assessment_calls: assessmentCalls, embedding_calls: embeddingCalls, chat_requests: chatRequests, active_ontology_requests: activeOntologyRequests, max_active_ontology_requests: maxActiveOntologyRequests });
+    sendJSON(response, 200, { status: "ok", fault, assessment_calls: assessmentCalls, embedding_calls: embeddingCalls, chat_requests: chatRequests, active_ontology_requests: activeOntologyRequests, max_active_ontology_requests: maxActiveOntologyRequests, held_admission_requests: heldAdmissionRequests.size });
     return;
   }
   let body = "";
@@ -39,6 +41,17 @@ const server = createServer(async (request, response) => {
     payload = body ? JSON.parse(body) : {};
   } catch {
     sendJSON(response, 400, { error: { message: "invalid fixture request" } });
+    return;
+  }
+
+  if (request.method === "POST" && request.url === "/admission-fixture") {
+    if (!["normal", "hold"].includes(payload.mode)) {
+      sendJSON(response, 400, { error: "invalid admission fixture mode" });
+      return;
+    }
+    holdAdmissionRequests = payload.mode === "hold";
+    if (!holdAdmissionRequests) for (const release of heldAdmissionRequests) release();
+    sendJSON(response, 200, { mode: payload.mode });
     return;
   }
 
@@ -122,6 +135,20 @@ const server = createServer(async (request, response) => {
   }
 
   if (request.url?.endsWith("/chat/completions")) {
+    if (holdAdmissionRequests && routeFault === "admission-hold") {
+      await new Promise((resolve) => {
+        const release = () => {
+          clearTimeout(timer);
+          response.off("close", release);
+          heldAdmissionRequests.delete(release);
+          resolve();
+        };
+        const timer = setTimeout(release, 30_000);
+        heldAdmissionRequests.add(release);
+        response.once("close", release);
+      });
+      if (response.destroyed) return;
+    }
     assessmentCalls += 1;
     const assessmentRequest = assessmentInput(payload);
     const assessmentFault = routeFault;

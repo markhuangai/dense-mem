@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 )
 
@@ -125,6 +126,8 @@ func rememberPreLockProcessError(
 	} else if errors.Is(cause, context.Canceled) {
 		code = rememberapp.TerminalErrorRequestCancelled
 		reasonCode = "idempotency_lock_cancelled"
+	} else if errors.Is(cause, knowledgecontract.ErrRememberIdempotencyBusy) {
+		reasonCode = "idempotency_lock_busy"
 	}
 	processErr := rememberFailureProcessErrorWithStatus(input, submissionID, cause, code, reasonCode, "remember.idempotency_lock")
 	processErr.Err = cause

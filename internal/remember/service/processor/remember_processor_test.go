@@ -22,6 +22,42 @@ import (
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 )
 
+func TestRememberPreLockAdmissionDiagnostics(t *testing.T) {
+	for _, test := range []struct {
+		name, code, reason string
+		cause              error
+	}{
+		{"busy", "database_failure", "idempotency_lock_busy", knowledgecontract.ErrRememberIdempotencyBusy},
+		{"wrapped busy", "database_failure", "idempotency_lock_busy", errors.Join(errors.New("private detail"), knowledgecontract.ErrRememberIdempotencyBusy)},
+		{"database", "database_failure", "idempotency_lock", errors.New("private database detail")},
+		{"lookalike message", "database_failure", "idempotency_lock", errors.New(knowledgecontract.ErrRememberIdempotencyBusy.Error())},
+		{"cancelled", "request_cancelled", "idempotency_lock_cancelled", context.Canceled},
+		{"timeout", "request_timeout", "idempotency_lock_timeout", context.DeadlineExceeded},
+		{"cancelled busy", "request_cancelled", "idempotency_lock_cancelled", errors.Join(context.Canceled, knowledgecontract.ErrRememberIdempotencyBusy)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result := rememberPreLockProcessError(rememberapp.RememberProcessRequest{SpaceKind: "team_shared"}, uuid.NewString(), test.cause)
+			require.ErrorIs(t, result, test.cause)
+			require.Equal(t, "failed", result.Status.ProcessingState)
+			require.Len(t, result.Status.Errors, 1)
+			public := result.Status.Errors[0]
+			require.Equal(t, test.code, public.Code)
+			require.Equal(t, test.reason, public.ReasonCode)
+			require.True(t, public.Retryable)
+			require.Equal(t, "retry_same_request", public.NextAction)
+			require.NotContains(t, public.Message, "private")
+			require.NoError(t, rememberapp.ValidateTerminalStatusError(public))
+			if test.reason == "idempotency_lock_busy" {
+				require.Contains(t, public.Message, "Reduce concurrent requests")
+				require.Contains(t, public.Remediation, "same idempotency_key")
+				require.Contains(t, public.Remediation, "database pool capacity")
+			} else {
+				require.NotContains(t, public.Message, "capacity is busy")
+			}
+		})
+	}
+}
+
 func TestRememberFailureCodeMapsEmbeddingProviderResponseInvalid(t *testing.T) {
 	failure := &rememberEmbeddingProviderFailure{cause: &embeddingcontract.ProviderError{
 		FailureCode:  "provider_response_invalid",

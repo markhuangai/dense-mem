@@ -52,7 +52,7 @@ BASELINE_DIR="${BASELINE_DIR:-${V1_DATA_DIR}/runs/baseline}"
 MONITOR_DIR="${MONITOR_DIR:-${V1_DATA_DIR}/monitor}"
 CREDENTIAL_PATH="${CREDENTIAL_PATH:-${V1_DATA_DIR}/eval_credential.json}"
 RUNNER="${RUNNER:-${V1_DATA_DIR}/tools/eval-runner}"
-IMPORT_CONCURRENCY="${IMPORT_CONCURRENCY:-10}"
+IMPORT_CONCURRENCY="${IMPORT_CONCURRENCY:-}"
 SLEEP_SECONDS="${SLEEP_SECONDS:-60}"
 MAX_IMPORT_RESTARTS="${MAX_IMPORT_RESTARTS:-100}"
 MAX_COUNT_FAILURES="${MAX_COUNT_FAILURES:-12}"
@@ -608,12 +608,14 @@ start_import() {
     --suite "${SUITE}"
     --out "${IMPORT_DIR}"
     --import-seed
-    --import-concurrency "${IMPORT_CONCURRENCY}"
     --resume-source-doc-ids "${RESUME_SOURCE_DOC_IDS}"
     --max-page-size 500
   )
+  if [[ -n "${IMPORT_CONCURRENCY}" ]]; then
+    args+=(--import-concurrency "${IMPORT_CONCURRENCY}")
+  fi
   printf '\nresume remember import with concurrency=%s at %s\n' \
-    "${IMPORT_CONCURRENCY}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "${IMPORT_DIR}/import.log"
+    "${IMPORT_CONCURRENCY:-${DENSE_MEM_EVAL_IMPORT_CONCURRENCY:-runner-default}}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "${IMPORT_DIR}/import.log"
   setsid "${args[@]}" 9>&- >> "${IMPORT_DIR}/import.log" 2>&1 < /dev/null &
   printf '%s\n' "$!" > "${IMPORT_DIR}/import.pid"
   log "started_import pid=$(cat "${IMPORT_DIR}/import.pid") route=remember"

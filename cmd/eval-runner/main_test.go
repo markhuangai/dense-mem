@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"math"
 	"os"
@@ -18,9 +19,14 @@ func TestImportConcurrencyDefault(t *testing.T) {
 }
 
 func TestImportConcurrencyDefaultUsesEnvironment(t *testing.T) {
-	t.Setenv("DENSE_MEM_EVAL_IMPORT_CONCURRENCY", "7")
-	if got := importConcurrencyDefault(); got != 7 {
-		t.Fatalf("import concurrency default = %d, want 7", got)
+	for _, test := range []struct {
+		value string
+		want  int
+	}{{"1", 1}, {"4", 4}, {"30", 30}} {
+		t.Setenv("DENSE_MEM_EVAL_IMPORT_CONCURRENCY", test.value)
+		if got := importConcurrencyDefault(); got != test.want {
+			t.Fatalf("import concurrency default = %d, want %d", got, test.want)
+		}
 	}
 }
 
@@ -134,9 +140,38 @@ func TestEvalRunnerMainValidatesASeedThroughTheCLIPath(t *testing.T) {
 `), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	flag.CommandLine = flag.NewFlagSet("eval-runner-test", flag.ContinueOnError)
-	os.Args = []string{"eval-runner", "-mode", "validate", "-seed", seed, "-suite", suite, "-out", t.TempDir()}
-	main()
+	for _, test := range []struct {
+		name, environment, override string
+		want                        int
+	}{
+		{name: "default", want: 4},
+		{name: "environment minimum", environment: "1", want: 1},
+		{name: "environment maximum", environment: "30", want: 30},
+		{name: "flag overrides environment", environment: "30", override: "4", want: 4},
+		{name: "flag maximum", environment: "1", override: "30", want: 30},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("DENSE_MEM_EVAL_IMPORT_CONCURRENCY", test.environment)
+			out := t.TempDir()
+			flag.CommandLine = flag.NewFlagSet("eval-runner-test", flag.ContinueOnError)
+			os.Args = []string{"eval-runner", "-mode", "validate", "-seed", seed, "-suite", suite, "-out", out}
+			if test.override != "" {
+				os.Args = append(os.Args, "--import-concurrency", test.override)
+			}
+			main()
+			data, err := os.ReadFile(filepath.Join(out, "run_config.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var config evalharness.RunConfig
+			if err := json.Unmarshal(data, &config); err != nil {
+				t.Fatal(err)
+			}
+			if config.ImportConcurrency != test.want {
+				t.Fatalf("recorded import concurrency = %d, want %d", config.ImportConcurrency, test.want)
+			}
+		})
+	}
 }
 
 func TestEvalRunnerMainCompareModeWritesComparison(t *testing.T) {

@@ -14,8 +14,14 @@ export SEED="${seed_path}"
 export SUITE="${suite_path}"
 export ALLOW_UNGATED_EVALUATION=1
 export V1_DATA_DIR="${tmp_dir}/runtime"
+unset IMPORT_CONCURRENCY DENSE_MEM_EVAL_IMPORT_CONCURRENCY
 # shellcheck source=run_full_public_rag_eval_until_done.sh
 source "${ROOT_DIR}/tests/eval/scripts/run_full_public_rag_eval_until_done.sh"
+
+if [[ -n "${IMPORT_CONCURRENCY}" ]]; then
+  echo "monitor must inherit the runner's import concurrency default" >&2
+  exit 1
+fi
 
 if [[ "$(terminal_attempt_outcomes_sql)" != "'completed'" ]]; then
   echo "terminal attempt outcome list is not completed-only" >&2
@@ -94,6 +100,38 @@ if [[ "$(sha256sum "${RUNNER}" | awk '{print $1}')" != "${runner_hash_before}" ]
   echo "reuse mode rebuilt the existing runner" >&2
   exit 1
 fi
+
+export MONITOR_TEST_CAPTURE="${tmp_dir}/import-arguments"
+cat > "${RUNNER}" <<'RUNNER'
+#!/usr/bin/env bash
+printf '%s\0' "${DENSE_MEM_EVAL_IMPORT_CONCURRENCY:-}" "$@" > "${MONITOR_TEST_CAPTURE}"
+RUNNER
+for selection in default environment 1 4 30; do
+  IMPORT_CONCURRENCY=""
+  unset DENSE_MEM_EVAL_IMPORT_CONCURRENCY
+  if [[ "${selection}" != default ]]; then
+    export DENSE_MEM_EVAL_IMPORT_CONCURRENCY=30
+  fi
+  if [[ "${selection}" =~ ^[0-9]+$ ]]; then IMPORT_CONCURRENCY="${selection}"; fi
+  start_import
+  wait "$(cat "${IMPORT_DIR}/import.pid")"
+  mapfile -d '' -t captured < "${MONITOR_TEST_CAPTURE}"
+  expected_environment=""
+  if [[ "${selection}" != default ]]; then expected_environment=30; fi
+  [[ "${captured[0]}" == "${expected_environment}" ]] || { echo "runner environment was lost" >&2; exit 1; }
+  concurrency_flag_count=0
+  for index in "${!captured[@]}"; do
+    if [[ "${captured[index]}" == --import-concurrency ]]; then
+      concurrency_flag_count=$((concurrency_flag_count + 1))
+      [[ "${captured[index+1]}" == "${selection}" ]] || { echo "explicit concurrency was changed" >&2; exit 1; }
+    fi
+  done
+  expected_flags=0
+  if [[ "${selection}" =~ ^[0-9]+$ ]]; then expected_flags=1; fi
+  [[ "${concurrency_flag_count}" == "${expected_flags}" ]] || { echo "unexpected monitor concurrency override" >&2; exit 1; }
+done
+unset DENSE_MEM_EVAL_IMPORT_CONCURRENCY
+IMPORT_CONCURRENCY=""
 
 write_status "test" 991 991 990 0 0 "import-123" "17.5" "42"
 jq -e '

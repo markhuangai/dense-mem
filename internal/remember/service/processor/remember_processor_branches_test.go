@@ -232,6 +232,7 @@ func TestRememberProcessorRecordsPreCallbackLockFailureAsExecutionFailure(t *tes
 	require.Equal(t, "execution", base.invocation.Classification)
 	require.Equal(t, "failed", base.invocation.Outcome)
 	require.Equal(t, "database_failure", base.invocation.ErrorCode)
+	require.Equal(t, "idempotency_lock_busy", status.Errors[0].ReasonCode)
 	require.True(t, base.invocation.Retryable)
 }
 

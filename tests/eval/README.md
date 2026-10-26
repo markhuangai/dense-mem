@@ -254,7 +254,7 @@ go run ./cmd/eval-seedgen \
 export SEED=tests/eval/seeds/local_eval_100/seed_manifest.json
 export SUITE=tests/eval/suites/local_eval_100.jsonl
 export ALLOW_UNGATED_EVALUATION=1
-export IMPORT_CONCURRENCY=5
+export IMPORT_CONCURRENCY=4
 export MIN_RECALL_AT_K=0.8429611650485437
 export MIN_REQUIRED_RANK1_RATE=0.7621359223300971
 export MAX_AVERAGE_BAD_AT_K=0
@@ -355,13 +355,23 @@ terminal result:
 SEED="${SEED}" \
 SUITE="${SUITE}" \
 RELEASE_GATE_POLICY="${RELEASE_GATE}" \
-IMPORT_CONCURRENCY=10 \
 tests/eval/scripts/run_full_public_rag_eval_until_done.sh
 ```
 
-The runner and monitor default to 10 concurrent import requests and reject a
-higher value. The eval-only Compose overlay also limits embedding requests to
-10.
+The runner defaults to four concurrent import requests and supports explicit
+settings from 1 through 30. Use `--import-concurrency` or
+`DENSE_MEM_EVAL_IMPORT_CONCURRENCY` for the runner. The monitor inherits that
+default or environment setting unless `IMPORT_CONCURRENCY` supplies an explicit
+override. The CLI flag takes precedence over the runner environment setting.
+
+Concurrency is a client workload setting, not a reservation of server capacity.
+Remember admission allows at most four users per database pool and may allow
+fewer for smaller or occupied pools. On `idempotency_lock_busy`, lower concurrency
+and retry the exact request with its original idempotency key. If even one
+request cannot start, ask an operator to check pool capacity. Preserve completed
+source checkpoints and mappings when resuming; do not change evidence or keys
+to bypass admission. The eval-only Compose overlay separately limits embedding
+requests to 10.
 
 The monitor polls every 60 seconds by default. `SLEEP_SECONDS` changes only
 the monitor cadence; it does not control terminal Remember processing.

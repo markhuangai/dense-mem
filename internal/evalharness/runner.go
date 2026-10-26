@@ -30,7 +30,7 @@ type RunOptions struct {
 }
 
 const (
-	DefaultImportConcurrency = 10
+	DefaultImportConcurrency = 4
 	MaxImportConcurrency     = 30
 )
 

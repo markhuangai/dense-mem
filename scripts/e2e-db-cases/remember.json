@@ -3,6 +3,13 @@
   "capability": "remember",
   "cases": [
     {
+      "id": "server/TestRememberEvaluationImporterAdmission",
+      "package": "./cmd/internal/serverapp",
+      "run": "^TestRememberEvaluationImporterAdmission$",
+      "phase": "precheck",
+      "source": "cmd/internal/serverapp/evaluation_import_admission_integration_test.go"
+    },
+    {
       "id": "repository/TestSubmissionPredicateRegistrationPreflightCatalogAndIsolation",
       "package": "./internal/knowledge/postgres",
       "run": "^TestSubmissionPredicateRegistrationPreflightCatalogAndIsolation$",
