@@ -300,11 +300,12 @@ func TestRememberProcessorCommitsValidatedAssessmentAndResult(t *testing.T) {
 		commitResult:              &knowledgecontract.SynchronousRememberCommitResult{IngestID: "committed", Outcome: "completed", PublicResult: commitResult},
 	}
 	metrics := observability.NewPrometheusMetrics()
+	logger := &rememberProcessorLogCapture{}
 	processor := &rememberSynchronousProcessor{
 		ledger:   ledger,
 		catalog:  &processorAssessmentCatalogStub{},
 		provider: &processorAssessmentProviderStub{},
-		metrics:  metrics,
+		metrics:  metrics, logger: logger,
 	}
 	ctx := requestctx.WithRememberInvocationIDSink(context.Background())
 	status, err := processor.ProcessRemember(ctx, input)
@@ -315,6 +316,30 @@ func TestRememberProcessorCommitsValidatedAssessmentAndResult(t *testing.T) {
 	require.Equal(t, "execution", ledger.invocation.Classification)
 	require.NotEmpty(t, requestctx.RememberInvocationIDFromContext(ctx))
 	require.Contains(t, rememberMetricsText(t, metrics), `densemem_logical_operation_attempts_total{classification="execution",operation="remember",outcome="evaluated_zero"} 1`)
+	require.NotNil(t, ledger.commitInput.AssessorDiagnostics)
+	var phases []map[string]any
+	for index, message := range logger.infos {
+		if message == "remember_phase_completed" {
+			phases = append(phases, logger.infoAttrs[index])
+		}
+	}
+	require.Len(t, phases, 4)
+	for index, phase := range []string{"duplicate_embedding", "assessment", "embedding", "commit"} {
+		attrs := phases[index]
+		require.Equal(t, phase, attrs["phase"])
+		require.Equal(t, input.TeamID, attrs["team_id"])
+		require.Equal(t, input.OwnerProfileID, attrs["owner_profile_id"])
+		require.NotEmpty(t, attrs["attempt_id"])
+		require.GreaterOrEqual(t, attrs["duration_ms"].(int64), int64(0))
+	}
+	require.NotNil(t, phases[1]["assessor_diagnostics"])
+	ledger.commitErr = context.DeadlineExceeded
+	ledger.commitResult = nil
+	_, err = processor.ProcessRemember(ctx, input)
+	require.Error(t, err)
+	require.Equal(t, "commit", ledger.failure.Attempt.FailedPhase)
+	require.NotNil(t, ledger.failure.Attempt.AssessorDiagnostics)
+
 }
 
 func TestRememberProcessorRecordsAssessmentRejectionTrails(t *testing.T) {
@@ -600,6 +625,7 @@ type rememberPipelineLedgerStub struct {
 	planErr          error
 	commitResult     *knowledgecontract.SynchronousRememberCommitResult
 	commitErr        error
+	commitInput      knowledgecontract.SynchronousRememberCommitInput
 }
 
 func (s *rememberPipelineLedgerStub) PlanRememberDuplicateEmbeddings(context.Context, knowledgecontract.RememberDuplicateCandidateInput) (*knowledgecontract.RememberDuplicateEmbeddingPlan, error) {
@@ -629,7 +655,8 @@ func (s *rememberPipelineLedgerStub) PlanRememberEmbeddings(context.Context, kno
 	return &knowledgecontract.InlineEmbeddingPlan{}, nil
 }
 
-func (s *rememberPipelineLedgerStub) CommitRememberWithEmbeddings(context.Context, knowledgecontract.SynchronousRememberCommitInput, []knowledgecontract.InlineEmbeddingResult) (*knowledgecontract.SynchronousRememberCommitResult, error) {
+func (s *rememberPipelineLedgerStub) CommitRememberWithEmbeddings(_ context.Context, input knowledgecontract.SynchronousRememberCommitInput, _ []knowledgecontract.InlineEmbeddingResult) (*knowledgecontract.SynchronousRememberCommitResult, error) {
+	s.commitInput = input
 	if s.commitErr != nil {
 		return nil, s.commitErr
 	}

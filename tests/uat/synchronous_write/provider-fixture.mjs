@@ -247,6 +247,17 @@ function fixtureChatResponse(payload, requestFault = "none", attempt = 1) {
     split.predicate_registration = { predicate_key: heldPredicateKey, relationship_kind: "state", current_cardinality: "many" };
     return assessment;
   }
+  if (requestFault === "assessment-predicate-key-repair") {
+    const repair = structuredInput(payload, (input) => Array.isArray(input.validation_errors));
+    if (!(repair.validation_errors || []).some((error) => error.field?.endsWith(".predicate_key") && error.message === "is outside predicate allowlist")) {
+      const split = assessment.relationship_results[0].splits[0];
+      split.predicate_status = "resolved";
+      split.predicate_key = "fixture_not_in_predicate_allowlist";
+      split.predicate_version = 1;
+      split.predicate_registration = null;
+    }
+    return assessment;
+  }
   if (requestFault === "assessment-predicate-repair") {
     const repair = structuredInput(payload, (input) => Array.isArray(input.validation_errors));
     const actionable = (repair.validation_errors || []).some((error) => error.field?.endsWith(".predicate_range") && error.message?.includes("256"));

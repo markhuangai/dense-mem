@@ -182,8 +182,10 @@ func (p *rememberSynchronousProcessor) processRememberUnlocked(
 	requestctx.SetRememberInvocationID(ctx, ingestID)
 	snapshot, scope := rememberAssessmentSnapshot(input, ingestID)
 	assessorTurns := 0
+	var assessorDiagnostics map[string]any
 	recoveryAttempt := false
 	fail := func(err error, phase string) (*rememberapp.SubmissionStatusResult, error) {
+		err = rememberapp.WithSynchronousAssessmentDiagnostics(err, assessorDiagnostics)
 		status, canonicalAttemptID, processErr := p.recordRememberFailure(ctx, input, ingestID, snapshot, started, phase, assessorTurns, err)
 		invocationStatus := status
 		if invocationStatus == nil {
@@ -264,13 +266,14 @@ func (p *rememberSynchronousProcessor) processRememberUnlocked(
 		}
 		return fail(prepareErr, "assessment")
 	}
+	assessorDiagnostics = preparedWrite.Commit.AssessorDiagnostics
 	assessorTurns = preparedWrite.AssessorTurns
 	commitInput, inlineEmbeddings := preparedWrite.Commit, preparedWrite.Embeddings
 	commitStarted := time.Now()
 	commitCtx, commitCancel := rememberapp.ContextForPhase(ctx, rememberapp.RememberPhaseCommit)
 	if err := commitCtx.Err(); err != nil {
 		commitCancel()
-		observability.RecordRememberPhase(p.metrics, "commit", rememberMetricPhaseOutcome(err), time.Since(commitStarted))
+		p.observeRememberPhase(ctx, input, ingestID, "commit", err, commitStarted, nil)
 		return fail(err, "commit")
 	}
 	defer commitCancel()
@@ -279,7 +282,7 @@ func (p *rememberSynchronousProcessor) processRememberUnlocked(
 	if errors.Is(commitMetricErr, repository.ErrRememberReplay) {
 		commitMetricErr = nil
 	}
-	observability.RecordRememberPhase(p.metrics, "commit", rememberMetricPhaseOutcome(commitMetricErr), time.Since(commitStarted))
+	p.observeRememberPhase(ctx, input, ingestID, "commit", commitMetricErr, commitStarted, nil)
 	if errors.Is(err, repository.ErrRememberReplay) {
 		replay, replayErr := p.loadRememberReplay(ctx, input, ingestID)
 		canonicalAttemptID := ""
@@ -410,7 +413,7 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 			ContractVersion: domain.ContractVersion, SubmissionKind: "remember",
 			FailedPhase: phase, ErrorCode: publicError.Code, Retryable: publicError.Retryable, RetryabilitySet: true, CorrelationID: correlationID, PublicResult: publicResult,
 			EvidenceCount: len(input.Evidence), AssessorTurns: assessorTurns, Duration: time.Since(started),
-			AssessorValidation: assessorValidation,
+			AssessorValidation: assessorValidation, AssessorDiagnostics: rememberapp.SynchronousAssessmentDiagnostics(failure),
 		},
 		Diagnostics: diagnostics,
 	})
@@ -560,6 +563,9 @@ func (p *rememberSynchronousProcessor) logRememberFailure(
 	attrs = append(attrs, observability.Int("assessor_turns", clampAssessorTurns(assessorTurns)))
 	if validation := rememberapp.SynchronousAssessmentValidationDiagnostics(failure); validation != nil {
 		attrs = append(attrs, observability.LogAttr{Key: "assessor_validation", Value: validation})
+	}
+	if diagnostics := rememberapp.SynchronousAssessmentDiagnostics(failure); diagnostics != nil {
+		attrs = append(attrs, observability.LogAttr{Key: "assessor_diagnostics", Value: diagnostics})
 	}
 	var planFailure *rememberEmbeddingPlanFailure
 	var configurationFailure *rememberEmbeddingConfigurationFailure

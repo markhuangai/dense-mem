@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/markhuangai/dense-mem/internal/observability"
 
@@ -278,11 +279,14 @@ func (v *OpenAIAssessor) runRememberAssessmentTurn(
 		messages,
 	)
 	if err != nil {
-		return assessor.SemanticAssessmentTurn{}, "", err
+		return assessor.SemanticAssessmentTurn{Diagnostics: providerResult.Diagnostics}, "", err
 	}
+	validationStarted := time.Now()
 	if providerResult.ReportedUsage != nil && providerResult.ReportedUsage.PromptTokens > int64(v.assessmentLimits.MaxInputTokens) {
 		observability.RecordAssessorValidationFailure(v.metrics, "input_budget")
+		validationMS := time.Since(validationStarted).Milliseconds()
 		return assessor.SemanticAssessmentTurn{
+				Diagnostics: providerResult.Diagnostics, ValidationMS: &validationMS,
 				InputTokens:  int(providerResult.ReportedUsage.PromptTokens),
 				OutputTokens: int(providerResult.ReportedUsage.CompletionTokens),
 			}, "", &MalformedResponseError{
@@ -296,7 +300,9 @@ func (v *OpenAIAssessor) runRememberAssessmentTurn(
 			}
 	}
 	response, responseErrors, failureStage := semanticAssessmentResponseForCorrection(prepared, providerResult, v.assessmentLimits)
+	validationMS := time.Since(validationStarted).Milliseconds()
 	turn := assessor.SemanticAssessmentTurn{
+		Diagnostics: providerResult.Diagnostics, ValidationMS: &validationMS,
 		Response:         response,
 		ValidationErrors: responseErrors,
 		ValidationStage:  failureStage,

@@ -755,15 +755,15 @@ func validateSemanticAssessmentEvidenceSecurityResults(
 	for index, result := range results {
 		field := fmt.Sprintf("evidence_security_results[%d]", index)
 		if result.EvidenceID == "" {
-			errs = append(errs, semanticErr(field+".evidence_id", "is required"))
+			errs = append(errs, semanticCodedErr(field+".evidence_id", "is required", "evidence_id_required"))
 			continue
 		}
 		if _, ok := evidenceByID[result.EvidenceID]; !ok {
-			errs = append(errs, semanticErr(field+".evidence_id", "is unknown"))
+			errs = append(errs, semanticCodedErr(field+".evidence_id", "is unknown", "evidence_id_unknown"))
 			continue
 		}
 		if _, duplicate := seen[result.EvidenceID]; duplicate {
-			errs = append(errs, semanticErr(field+".evidence_id", "is duplicated"))
+			errs = append(errs, semanticCodedErr(field+".evidence_id", "is duplicated", "evidence_id_duplicate"))
 		}
 		seen[result.EvidenceID] = struct{}{}
 		if result.Decision != "pass" && result.Decision != "reject" {
@@ -802,11 +802,11 @@ func validateSemanticAssessmentEvidenceSecurityResults(
 		}
 	}
 	if len(results) != len(evidenceByID) {
-		errs = append(errs, semanticErr("evidence_security_results", "must contain exactly one result per evidence item"))
+		errs = append(errs, semanticCodedErr("evidence_security_results", "must contain exactly one result per evidence item", "evidence_result_count_mismatch"))
 	}
 	for evidenceID := range evidenceByID {
 		if _, ok := seen[evidenceID]; !ok {
-			errs = append(errs, semanticErr("evidence_security_results", "is missing an evidence result"))
+			errs = append(errs, semanticCodedErr("evidence_security_results", "is missing an evidence result", "evidence_result_missing"))
 		}
 	}
 	return errs

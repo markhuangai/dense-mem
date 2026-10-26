@@ -841,6 +841,7 @@ func (s *rememberWaitAwareLedgerStub) WithRememberAttemptLock(_ context.Context,
 }
 
 type rememberProcessorLogCapture struct {
+	infoAttrs  []map[string]any
 	infos      []string
 	warns      []string
 	warnTexts  []string
@@ -848,8 +849,13 @@ type rememberProcessorLogCapture struct {
 	errorTexts []string
 }
 
-func (l *rememberProcessorLogCapture) Info(message string, _ ...observability.LogAttr) {
+func (l *rememberProcessorLogCapture) Info(message string, attrs ...observability.LogAttr) {
 	l.infos = append(l.infos, message)
+	values := map[string]any{}
+	for _, attr := range attrs {
+		values[attr.Key] = attr.Value
+	}
+	l.infoAttrs = append(l.infoAttrs, values)
 }
 
 func (l *rememberProcessorLogCapture) Error(message string, err error, _ ...observability.LogAttr) {

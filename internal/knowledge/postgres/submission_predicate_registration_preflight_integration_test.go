@@ -94,6 +94,8 @@ func TestSubmissionPredicateRegistrationPreflightCatalogAndIsolation(t *testing.
 			require.Len(t, issues, 1)
 			require.Equal(t, 0, issues[0].RegistrationIndex)
 			require.Equal(t, testCase.field, issues[0].Field)
+			codes := map[string]string{"subject kind": "predicate_subject_kind_mismatch", "object kind": "predicate_object_kind_mismatch", "relationship kind": "predicate_relationship_kind_mismatch", "cardinality": "predicate_cardinality_mismatch", "inactive": "predicate_inactive", "ambiguous alias": "predicate_alias_ambiguous"}
+			require.Equal(t, codes[testCase.name], issues[0].Code)
 		})
 	}
 	for _, testCase := range []struct {

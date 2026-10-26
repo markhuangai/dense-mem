@@ -108,6 +108,7 @@ type SubmissionPredicateRegistrationValidationInput struct {
 }
 
 type SubmissionPredicateRegistrationIssue struct {
+	Code              string `json:"-"`
 	RegistrationIndex int
 	Field             string
 	Message           string
@@ -148,6 +149,7 @@ type EvidenceSecurityResult struct {
 // one final Remember transaction. Provider work happens before this input is
 // committed; no field represents a pre-provider reservation.
 type SynchronousRememberCommitInput struct {
+	AssessorDiagnostics                     map[string]any
 	TeamID                                  string
 	OwnerProfileID                          string
 	IngestID                                string

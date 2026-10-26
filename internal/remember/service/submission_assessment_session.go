@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/observability"
@@ -127,7 +128,9 @@ func (s *assessmentEngine) assessRememberSessionWithValidator(
 		return assessor.SemanticAssessmentResponse{}, nil, request, errors.New("synchronous assessment refresh is required")
 	}
 	s.completedInputTokens, s.completedOutputTokens = 0, 0
+	s.diagnostics.beginTurn(ctx)
 	session, turn, err := s.provider.Assess(ctx, request)
+	s.diagnostics.finishProviderTurn(turn, err)
 	if err != nil {
 		s.completedInputTokens += max(0, turn.InputTokens)
 		s.completedOutputTokens += max(0, turn.OutputTokens)
@@ -179,6 +182,7 @@ func (s *assessmentEngine) completeRememberSessionTurnsWithValidator(
 		}
 		s.completedInputTokens += inputTokens
 		s.completedOutputTokens += outputTokens
+		validationStarted := time.Now()
 		validationErrors := append([]assessor.SemanticValidationError(nil), turn.ValidationErrors...)
 		if len(validationErrors) == 0 {
 			response, validationErrors = assessor.PrepareSemanticAssessmentResponse(request, response, s.limits)
@@ -187,12 +191,14 @@ func (s *assessmentEngine) completeRememberSessionTurnsWithValidator(
 			var err error
 			validationErrors, err = validate(ctx, request, response)
 			if err != nil {
+				s.diagnostics.finishValidation(validationStarted, validationErrors)
 				return assessor.SemanticAssessmentResponse{}, request, &submissionAssessmentConsumedTurnsError{
 					cause:         wrapSubmissionAssessmentValidationHistory(err, validationHistory),
 					providerTurns: totalTurns,
 				}
 			}
 		}
+		s.diagnostics.finishValidation(validationStarted, validationErrors)
 		if len(validationErrors) == 0 {
 			response.ProviderTurns = totalTurns
 			return response, request, nil
@@ -226,9 +232,11 @@ func (s *assessmentEngine) completeRememberSessionTurnsWithValidator(
 		if err != nil {
 			return assessor.SemanticAssessmentResponse{}, request, &submissionAssessmentConsumedTurnsError{cause: wrapSubmissionAssessmentValidationHistory(err, validationHistory), providerTurns: totalTurns}
 		}
+		s.diagnostics.beginTurn(ctx)
 		turn, err = s.provider.Repair(ctx, session, assessor.SemanticAssessmentRepairRequest{
 			Request: nextRequest, ValidationErrors: validationErrors,
 		})
+		s.diagnostics.finishProviderTurn(turn, err)
 		if err != nil {
 			s.completedInputTokens += max(0, turn.InputTokens)
 			s.completedOutputTokens += max(0, turn.OutputTokens)

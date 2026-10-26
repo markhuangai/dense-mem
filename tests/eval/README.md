@@ -799,6 +799,47 @@ Missing usage remains explicitly unavailable through proxy counters rather
 than becoming estimated or zero consumption. This cohort does not establish
 general retrieval-quality or performance equivalence.
 
+Remember assessment diagnosis for #586 uses the existing private control detail
+route `/control/api/teams/{team_id}/remember-attempts/{attempt_id}`. Its event
+metadata can contain `assessor_diagnostics` on successful and failed attempts,
+including the rejected turns preceding a successful repair. Historical records
+without the field remain readable; absence means unobserved, not zero.
+
+`preparation_ms` measures catalog/request preparation before the first provider
+turn. `elapsed_ms` is the inclusive assessment duration. Each of at most three
+`turns` records an attempted provider turn, its inclusive `elapsed_ms`, remaining
+assessment budget at entry, and the existing provider `queue_ms`, `admission_ms`,
+`http_ms`, configured `http_timeout_ms`, and failure phase when observed. HTTP time
+includes body reads. A failed first call can have one diagnostic turn while
+`assessor_turns` remains zero: that counter still counts completed responses.
+Configured HTTP timeout is not the remaining request deadline.
+
+Per-turn `validation_ms` includes provider response validation and application
+validation, including predicate-catalog checks. It overlaps the inclusive turn
+duration; do not add the two. Provider time overlaps that duration too.
+`issues` holds at most twenty normalized field paths and server-owned codes;
+`truncated` and the bounded error count describe omitted detail. Predicate codes
+distinguish allowlist, nullability, endpoint-kind, inactive-catalog and alias
+conflicts. Evidence codes distinguish required, unknown, duplicate and missing
+results. Unclassified reasons use `other`. Provider messages and submitted text
+are excluded even when raw diagnostic capture is unavailable. These internal
+codes are never serialized into repair feedback or public memory results.
+
+Correlate `remember_phase_completed` structured logs by team, owner, attempt and
+correlation IDs. The phases are `duplicate_embedding`, `assessment`, `embedding`
+and `commit`. Commit duration is measured after the transaction returns and is
+therefore log-only; it is not appended to the already committed attempt event.
+These logs and durable assessment diagnostics do not depend on optional metrics.
+Absent measurements are omitted; observed sub-millisecond durations are zero.
+
+`baselines/issue_586_remember_diagnostics.json` records the retained import counts
+and source-artifact hashes. Failed attempts are not lost documents. Missing
+historical prompts prevent exact replay, and no historical root cause or measured
+reliability improvement is claimed. The maintainer-approved diagnostic-only 1k
+waiver is recorded on #586; replacement checks use deterministic HTTP providers,
+real PostgreSQL, synchronous-write production E2E with metrics enabled and
+disabled, and session ingestion. Full current-head CI and E2E remain mandatory.
+
 Ontology attempt receipts optionally contain `diagnostics` with measured
 `queue_ms`, `admission_ms`, `http_ms`, `reconciliation_ms`, the configured
 `http_timeout_ms`, and a closed `failure_phase`. Absent timings were not observed;

@@ -441,7 +441,7 @@ func resolveSubmissionPredicateRegistration(ctx context.Context, tx *gorm.DB, in
 		return SemanticReviewPredicateCandidate{}, "", err
 	}
 	if loaded != nil {
-		if field, _ := knowledgecontract.SubmissionPredicateRegistrationCompatibility(*loaded, registration); field != "" {
+		if field, _, _ := knowledgecontract.SubmissionPredicateRegistrationCompatibility(*loaded, registration); field != "" {
 			return SemanticReviewPredicateCandidate{}, "", ErrSubmissionPredicateRegistrationHeld
 		}
 		return *loaded, "reused", nil
