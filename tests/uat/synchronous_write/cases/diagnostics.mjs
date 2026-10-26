@@ -333,7 +333,7 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
 }
 
 function rememberArguments(label, marker) {
-  const suffix = `${Date.now()}-${randomUUID()}`;
+  const suffix = randomUUID();
   const idempotencyKey = `synchronous-write-diagnostics-${label}-${suffix}`;
   const predicateContext = label === "predicate-repair" ? " This public fixture has additional background context.".repeat(6) : "";
   return {
