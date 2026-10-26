@@ -958,6 +958,20 @@
       "run": "^TestOntologyMaintenanceRevalidationRecovery$",
       "phase": "precheck",
       "source": "internal/ontology/postgres/maintenance_revalidation_recovery_integration_test.go"
+    },
+    {
+      "id": "repository/TestPairedEvaluationTerminalUnknownUsageAndReceiptIdentity",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestPairedEvaluationTerminalUnknownUsageAndReceiptIdentity$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/paired_evaluation_integration_test.go"
+    },
+    {
+      "id": "repository/TestPairedEvaluationCapacityActivationAndPausedAdmission",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestPairedEvaluationCapacityActivationAndPausedAdmission$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/paired_evaluation_integration_test.go"
     }
   ]
 }

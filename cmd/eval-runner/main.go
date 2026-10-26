@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -13,6 +14,7 @@ import (
 )
 
 func main() {
+	paired := registerPairFlags()
 	var opts evalharness.RunOptions
 	var baselineRun string
 	var candidateRun string
@@ -70,6 +72,16 @@ func main() {
 	registerFloatGate("max-average-dream-bad-at-k", "maximum average bad dream refs@k allowed when dream qrels are present", &opts.Gates.MaxAverageDreamBadAtK, validateNonNegative)
 	registerFloatGate("max-dream-bad-rank1-rate", "maximum share of dream-scored cases with a bad dream ref first", &opts.Gates.MaxDreamBadRank1Rate, validateRate)
 	flag.Parse()
+	if opts.Mode == "paired" {
+		if err := evalharness.RunPairCommand(*paired, os.Stdout); err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				fmt.Fprintf(os.Stderr, "paired evaluation: %v\n", err)
+				os.Exit(124)
+			}
+			exitf("paired evaluation: %v", err)
+		}
+		return
+	}
 
 	ctx := context.Background()
 	if opts.Mode == "compare" {

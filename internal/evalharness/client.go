@@ -427,8 +427,7 @@ func (c *HTTPClient) importCorpusGroup(ctx context.Context, corpus []CorpusItem)
 	}
 	return mapping, nil
 }
-func (c *HTTPClient) importCorpusItem(ctx context.Context, item CorpusItem) (KnowledgeMapping, error) {
-	mapping := newKnowledgeMapping()
+func corpusRememberInput(item CorpusItem) map[string]any {
 	evidence := map[string]any{
 		"content":  item.Content,
 		"source":   firstNonEmpty(item.SourceDataset, item.Title, "eval-seed"),
@@ -439,6 +438,12 @@ func (c *HTTPClient) importCorpusItem(ctx context.Context, item CorpusItem) (Kno
 	if len(item.Relationships) > 0 {
 		input["relationships"] = item.Relationships
 	}
+	return input
+}
+
+func (c *HTTPClient) importCorpusItem(ctx context.Context, item CorpusItem) (KnowledgeMapping, error) {
+	mapping := newKnowledgeMapping()
+	input := corpusRememberInput(item)
 	var out map[string]any
 	if _, err := c.ensureContract(ctx); err != nil {
 		return mapping, fmt.Errorf("import %s: %w", item.SourceDocID, err)

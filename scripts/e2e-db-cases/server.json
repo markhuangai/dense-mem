@@ -50,6 +50,13 @@
       "run": "^TestServerLifecycleCancelsPreHandoffRuntimeWorkerBeforeRun$",
       "phase": "precheck",
       "source": "cmd/internal/serverapp/lifecycle_runtime_integration_test.go"
+    },
+    {
+      "id": "server/TestPairedEvaluationRealServiceResumeFreezeAndCommonScore",
+      "package": "./cmd/internal/serverapp",
+      "run": "^TestPairedEvaluationRealServiceResumeFreezeAndCommonScore$",
+      "phase": "precheck",
+      "source": "cmd/internal/serverapp/paired_evaluation_integration_test.go"
     }
   ]
 }
