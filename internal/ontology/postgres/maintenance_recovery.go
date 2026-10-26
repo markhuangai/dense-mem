@@ -75,7 +75,21 @@ func (s *Store) recoverMaintenanceBatches(ctx context.Context, now time.Time) er
 			if !locked {
 				continue
 			}
-			if err := completeMaintenanceBatch(tx, claim, receipt.Result, receipt.Result.FailureCode, now, &phase); err != nil {
+			phase = "recovery_savepoint"
+			// GORM's PostgreSQL savepoint helpers discard execution errors.
+			if err := tx.Exec("SAVEPOINT maintenance_recovery_candidate").Error; err != nil {
+				return err
+			}
+			err = completeMaintenanceBatch(tx, claim, receipt.Result, receipt.Result.FailureCode, now, &phase)
+			if err == ontology.ErrLeaseLost {
+				phase = "recovery_rollback"
+				err = tx.Exec("ROLLBACK TO SAVEPOINT maintenance_recovery_candidate").Error
+			}
+			if err != nil {
+				return err
+			}
+			phase = "recovery_release"
+			if err := tx.Exec("RELEASE SAVEPOINT maintenance_recovery_candidate").Error; err != nil {
 				return err
 			}
 		}

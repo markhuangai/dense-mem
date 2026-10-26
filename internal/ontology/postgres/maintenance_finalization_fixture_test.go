@@ -4,7 +4,10 @@ package postgres
 
 import (
 	"context"
+	"fmt"
 	"slices"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -17,6 +20,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/ontology/assessment"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 type finalizationFixture struct {
@@ -59,6 +63,11 @@ func newFinalizationFixtureWithConcurrency(t *testing.T, global, team int, texts
 	}
 	config := concurrencyConfig(t, f, global, team)
 	window := maintenanceWindow(t, f, config)
+	return claimFinalizationFixture(t, f, window)
+}
+
+func claimFinalizationFixture(t *testing.T, f *ontologyFixture, window *ontology.MaintenanceWindow) *finalizationFixture {
+	t.Helper()
 	_, err := f.store.MaintenanceCommand(context.Background(), domain.OntologyMaintenanceCommand{Action: "run", OperationKey: uuid.NewString(), MaxBatches: 1}, time.Now().UTC(), nil)
 	require.NoError(t, err)
 	_, claim := maintenanceClaim(t, f, window)
@@ -193,5 +202,122 @@ func (x *finalizationFixture) recover(t *testing.T) {
 	require.NoError(t, err)
 	if turn != nil {
 		require.NoError(t, x.f.store.ReleaseMaintenanceTurn(context.Background(), *turn))
+	}
+}
+
+func newFinalizationRecoveryCohort(t *testing.T, mode string, healthyFirst bool) (*finalizationFixture, *finalizationFixture, *ontologyFixture) {
+	t.Helper()
+	expiring := newFinalizationFixtureWithConcurrency(t, 2, 1)
+	other := maintenanceOtherTeam(t, expiring.f)
+	other.organizationEvidence(t, 0, "Copper uses SQLite for archival storage.", nil)
+	healthy := claimFinalizationFixture(t, other, expiring.window)
+	require.Equal(t, other.team, healthy.claim.TeamID)
+	pending := maintenanceOtherTeam(t, expiring.f)
+	pending.organizationEvidence(t, 0, "Cobalt uses Redis for coordination.", nil)
+	expiring.stageOutcome(t, mode)
+	healthy.stageOutcome(t, mode)
+	if healthyFirst {
+		require.NoError(t, expiring.f.admin.Exec(`UPDATE ontology_maintenance_batches SET created_at=(SELECT created_at-interval '1 second' FROM ontology_maintenance_batches WHERE batch_id=?::uuid) WHERE batch_id=?::uuid`, expiring.claim.ID, healthy.claim.ID).Error)
+	}
+	return expiring, healthy, pending
+}
+
+func (x *finalizationFixture) queuedSources(t *testing.T) string {
+	t.Helper()
+	var rows string
+	require.NoError(t, x.f.admin.Raw(`SELECT COALESCE(jsonb_agg(to_jsonb(source) ORDER BY source_kind,source_id)::text,'[]') FROM ontology_maintenance_sources AS source WHERE team_id=?::uuid`, x.f.team).Row().Scan(&rows))
+	require.NotEqual(t, "[]", rows)
+	return rows
+}
+
+func (x *finalizationFixture) recoverAfterExpiry(t *testing.T, boundary, rollbackFailure string) (*ontology.MaintenanceTurn, error) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	reached, resume := make(chan error, 1), make(chan struct{})
+	release := sync.OnceFunc(func() { close(resume) })
+	var blocked, rollbackReached atomic.Bool
+	barrier := func(tx *gorm.DB) {
+		if tx.Error != nil || !blocked.CompareAndSwap(false, true) {
+			return
+		}
+		var count int
+		var err error
+		if boundary == "source_updates" {
+			err = tx.Statement.ConnPool.QueryRowContext(ctx, `SELECT count(*) FROM ontology_maintenance_sources WHERE team_id=$1::uuid AND assessment_id=$2::uuid`, x.f.team, x.result.AssessmentID).Scan(&count)
+			if err == nil && count != len(x.claim.Sources) {
+				err = fmt.Errorf("completion barrier reached with %d of %d source writes", count, len(x.claim.Sources))
+			}
+		}
+		reached <- err
+		select {
+		case <-resume:
+		case <-ctx.Done():
+		}
+	}
+	name := "finalization_expiry_" + uuid.NewString()
+	require.NoError(t, x.f.app.Callback().Row().After("gorm:row").Register(name, func(tx *gorm.DB) {
+		if boundary == "selection" && strings.Contains(tx.Statement.SQL.String(), "FROM ontology_maintenance_batches AS batch JOIN ontology_assessments AS assessment") {
+			barrier(tx)
+		}
+	}))
+	defer func() { require.NoError(t, x.f.app.Callback().Row().Remove(name)) }()
+	require.NoError(t, x.f.app.Callback().Raw().Before("gorm:raw").Register(name, func(tx *gorm.DB) {
+		query := tx.Statement.SQL.String()
+		if boundary == "source_updates" && strings.HasPrefix(query, "UPDATE ontology_maintenance_batches SET status='completed'") && slices.Contains(tx.Statement.Vars, any(x.claim.ID)) {
+			barrier(tx)
+		}
+		if query == "ROLLBACK TO SAVEPOINT maintenance_recovery_candidate" {
+			rollbackReached.Store(true)
+			if rollbackFailure == "canceled" {
+				cancel()
+			} else if rollbackFailure == "sql" {
+				_, err := tx.Statement.ConnPool.ExecContext(ctx, "RELEASE SAVEPOINT maintenance_recovery_candidate")
+				tx.AddError(err)
+			}
+		}
+	}))
+	defer func() { require.NoError(t, x.f.app.Callback().Raw().Remove(name)) }()
+	type result struct {
+		turn *ontology.MaintenanceTurn
+		err  error
+	}
+	finished, stopped := make(chan result, 1), make(chan struct{})
+	require.NoError(t, x.f.admin.Raw(`UPDATE ontology_maintenance_batches SET lease_until=clock_timestamp()+interval '2 seconds' WHERE batch_id=?::uuid RETURNING lease_until`, x.claim.ID).Row().Scan(&x.claim.LeaseUntil))
+	now := time.Now().UTC()
+	go func() {
+		defer close(stopped)
+		turn, err := x.f.store.ClaimMaintenanceTurn(ctx, x.window.ID, now, time.Minute)
+		finished <- result{turn, err}
+	}()
+	defer func() {
+		cancel()
+		release()
+		<-stopped
+	}()
+	select {
+	case err := <-reached:
+		require.NoError(t, err)
+	case outcome := <-finished:
+		t.Fatalf("recovery did not reach %s barrier: %v", boundary, outcome.err)
+	case <-time.After(5 * time.Second):
+		t.Fatalf("recovery did not reach %s barrier", boundary)
+	}
+	var live bool
+	require.NoError(t, x.f.admin.Raw(`SELECT lease_until>clock_timestamp() FROM ontology_maintenance_batches WHERE batch_id=?::uuid`, x.claim.ID).Row().Scan(&live))
+	require.True(t, live, "the candidate must still be live at the barrier")
+	require.Eventually(t, func() bool {
+		var expired bool
+		err := x.f.admin.Raw(`SELECT lease_until<=clock_timestamp() FROM ontology_maintenance_batches WHERE batch_id=?::uuid`, x.claim.ID).Row().Scan(&expired)
+		return err == nil && expired
+	}, 3*time.Second, 10*time.Millisecond)
+	release()
+	select {
+	case outcome := <-finished:
+		require.True(t, rollbackReached.Load(), "the expired candidate must reach its rollback boundary")
+		return outcome.turn, outcome.err
+	case <-time.After(5 * time.Second):
+		t.Fatal("recovery did not finish after lease expiry")
+		return nil, nil
 	}
 }
