@@ -157,6 +157,10 @@ func runTokenDiagnosticsCLI(t *testing.T, env []string, args ...string) (string,
 	defer cancel()
 	command := exec.CommandContext(ctx, os.Args[0], append([]string{"-test.run=^TestEvalRunnerTokenDiagnosticsProcess$", "--"}, args...)...)
 	command.Env = append([]string{"DENSE_MEM_TEST_DIAGNOSTICS_PROCESS=1"}, env...)
+	// Forward Go's coverage directory so CLI subprocess counters join the parent profile.
+	if coverage := flag.Lookup("test.gocoverdir"); coverage != nil && coverage.Value.String() != "" {
+		command.Env = append(command.Env, "GOCOVERDIR="+coverage.Value.String())
+	}
 	var stdout, stderr bytes.Buffer
 	command.Stdout, command.Stderr = &stdout, &stderr
 	err := command.Run()
