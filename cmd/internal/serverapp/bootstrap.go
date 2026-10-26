@@ -8,8 +8,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgconn"
-
 	"github.com/markhuangai/dense-mem/cmd/internal/migrationapp"
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/observability"
@@ -168,19 +166,9 @@ func newRootLogger(cfg config.Config, level slog.Level) (*observability.Logger, 
 }
 
 func newRootProtector(cfg config.Config) (*observability.CredentialProtector, error) {
-	postgresConfig, err := pgconn.ParseConfig(cfg.PostgresDSN)
+	secrets, err := cfg.OperationalSecrets()
 	if err != nil {
-		return nil, &config.ValidationError{Field: "POSTGRES_DSN", Message: "invalid connection configuration"}
+		return nil, err
 	}
-	secrets := []string{
-		cfg.PostgresDSN,
-		postgresConfig.Password,
-		cfg.RedisPassword,
-		cfg.AIAPIKey,
-		cfg.AIVerifierAPIKey,
-		cfg.ControlPortalToken,
-		cfg.TelemetryScrapeToken,
-	}
-	secrets = append(secrets, cfg.ExportHeaderSecrets()...)
 	return observability.NewCredentialProtector(secrets...), nil
 }

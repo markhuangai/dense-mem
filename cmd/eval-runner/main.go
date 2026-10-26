@@ -26,7 +26,9 @@ func main() {
 	var derivedV2SuitePath string
 	var cohortLockPath string
 	var repairLockPath string
-	flag.StringVar(&opts.Mode, "mode", "validate", "validate, import, baseline, candidate, compare, compare-v2-cohort, derive-v2, derive-v3, or validate-v2-cohort")
+	var metricsURL string
+	flag.StringVar(&opts.Mode, "mode", "validate", "validate, import, baseline, candidate, compare, compare-v2-cohort, derive-v2, derive-v3, validate-v2-cohort, or token-diagnostics")
+	flag.StringVar(&metricsURL, "metrics-url", "", "direct Prometheus scrape URL (or DENSE_MEM_EVAL_METRICS_URL) for token-diagnostics")
 	flag.StringVar(&opts.SeedManifestPath, "seed", "", "seed manifest path (source seed for derive-v2; derive-v3 uses parent/filtered V1 inputs)")
 	flag.StringVar(&opts.SuitePath, "suite", "", "suite JSONL path (source suite for derive-v2; derive-v3 uses parent/filtered V1 inputs)")
 	flag.StringVar(&opts.OutDir, "out", "", "output run directory")
@@ -40,8 +42,8 @@ func main() {
 	flag.StringVar(&derivedV2SuitePath, "derived-v2-suite", "", "derived V2 suite required for V2 cohort validation or comparison")
 	flag.StringVar(&cohortLockPath, "cohort-lock", "", "committed cohort lock for derive-v2, derive-v3, V2 cohort validation, or V2 cohort comparison")
 	flag.StringVar(&repairLockPath, "repair-lock", "", "encoding repair source lock required for derive-v3")
-	flag.StringVar(&opts.BaseURL, "base-url", env("DENSE_MEM_BASE_URL", "http://127.0.0.1:8080"), "Dense-Mem HTTP base URL")
-	flag.StringVar(&opts.APIKey, "api-key", env("DENSE_MEM_API_KEY", ""), "read/write API key")
+	flag.StringVar(&opts.BaseURL, "base-url", "http://127.0.0.1:8080", "Dense-Mem HTTP base URL (or DENSE_MEM_BASE_URL)")
+	flag.StringVar(&opts.APIKey, "api-key", "", "read/write API key (prefer DENSE_MEM_API_KEY)")
 	flag.BoolVar(&opts.ImportSeed, "import-seed", false, "import corpus through remember before running cases")
 	flag.IntVar(&opts.ImportConcurrency, "import-concurrency", importConcurrencyDefault(), fmt.Sprintf("maximum concurrent seed import requests (1-%d)", evalharness.MaxImportConcurrency))
 	flag.StringVar(&opts.ResumeSourceDocIDsPath, "resume-source-doc-ids", env("DENSE_MEM_EVAL_RESUME_SOURCE_DOC_IDS", ""), "newline-delimited source document IDs with completed Remember attempts")
@@ -70,8 +72,18 @@ func main() {
 	registerFloatGate("max-average-dream-bad-at-k", "maximum average bad dream refs@k allowed when dream qrels are present", &opts.Gates.MaxAverageDreamBadAtK, validateNonNegative)
 	registerFloatGate("max-dream-bad-rank1-rate", "maximum share of dream-scored cases with a bad dream ref first", &opts.Gates.MaxDreamBadRank1Rate, validateRate)
 	flag.Parse()
+	resolveStringEnvironment(flag.CommandLine, "base-url", "DENSE_MEM_BASE_URL", &opts.BaseURL)
+	resolveStringEnvironment(flag.CommandLine, "api-key", "DENSE_MEM_API_KEY", &opts.APIKey)
+	resolveStringEnvironment(flag.CommandLine, "metrics-url", "DENSE_MEM_EVAL_METRICS_URL", &metricsURL)
 
 	ctx := context.Background()
+	if opts.Mode == "token-diagnostics" {
+		if err := runTokenDiagnostics(ctx, metricsURL, opts.OutDir, opts.APIKey); err != nil {
+			exitf("%v", err)
+		}
+		fmt.Println("token diagnostics written")
+		return
+	}
 	if opts.Mode == "compare" {
 		comparison, err := evalharness.CompareRunDirs(baselineRun, candidateRun, opts.OutDir)
 		if err != nil {
