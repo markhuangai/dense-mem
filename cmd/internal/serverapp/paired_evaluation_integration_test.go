@@ -195,9 +195,12 @@ func runPairedServiceSide(t *testing.T, c evalharness.PairConfig, f *pairedServi
 	}
 	rls := postgres.NewRLS()
 	require.NoError(t, rls.WithSystemTx(ctx, f.admin, func(tx *gorm.DB) error {
-		drift := tx.Exec(`UPDATE search_documents SET search_state='stale',embedding=NULL WHERE team_id=?`, f.release.Scope.TeamID)
+		drift := tx.Exec(`UPDATE search_documents SET search_state='pending',embedding=NULL WHERE team_id=?`, f.release.Scope.TeamID)
+		if drift.Error != nil {
+			return drift.Error
+		}
 		require.Positive(t, drift.RowsAffected)
-		return drift.Error
+		return nil
 	}))
 	checkBlocked("search")
 	repaired, err := f.reconciliation.Run(ctx)
@@ -216,8 +219,11 @@ func runPairedServiceSide(t *testing.T, c evalharness.PairConfig, f *pairedServi
 		}
 		require.NoError(t, rls.WithSystemTx(ctx, f.admin, func(tx *gorm.DB) error {
 			drift := tx.Exec(query, args...)
+			if drift.Error != nil {
+				return drift.Error
+			}
 			require.Positive(t, drift.RowsAffected)
-			return drift.Error
+			return nil
 		}))
 		checkBlocked("pending_projections")
 		for turn := 0; turn < 100; turn++ {
