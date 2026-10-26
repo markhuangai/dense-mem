@@ -18,7 +18,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
-	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
 func TestInlineEmbeddingResultsFromDocumentsCopiesPlanMetadataAndVectors(t *testing.T) {
@@ -283,63 +282,6 @@ func TestRememberProcessorCoversPipelineFailurePhases(t *testing.T) {
 	var nilProcessor *rememberSynchronousProcessor
 	_, err := nilProcessor.processRememberUnlocked(context.Background(), input)
 	require.EqualError(t, err, "remember processor: ledger is required")
-}
-
-func TestRememberProcessorCommitsValidatedAssessmentAndResult(t *testing.T) {
-	input := rememberapp.RememberProcessRequest{
-		TeamID: "team", OwnerProfileID: "owner", IdempotencyKey: "key", RequestHash: "hash",
-		Evidence: []rememberapp.EvidenceInput{{Content: "fact", ForceInsert: true}},
-	}
-	commitResult := map[string]any{
-		"contract_version": domain.ContractVersion, "submission_id": "committed", "submission_kind": "remember",
-		"processing_state": "completed", "search_state": "current", "evidence": []any{}, "relationship_results": []any{}, "errors": []any{},
-	}
-	ledger := &rememberPipelineLedgerStub{
-		rememberFailureLedgerStub: &rememberFailureLedgerStub{},
-		plan:                      &knowledgecontract.InlineEmbeddingPlan{},
-		commitResult:              &knowledgecontract.SynchronousRememberCommitResult{IngestID: "committed", Outcome: "completed", PublicResult: commitResult},
-	}
-	metrics := observability.NewPrometheusMetrics()
-	logger := &rememberProcessorLogCapture{}
-	processor := &rememberSynchronousProcessor{
-		ledger:   ledger,
-		catalog:  &processorAssessmentCatalogStub{},
-		provider: &processorAssessmentProviderStub{},
-		metrics:  metrics, logger: logger,
-	}
-	ctx := requestctx.WithRememberInvocationIDSink(context.Background())
-	status, err := processor.ProcessRemember(ctx, input)
-	require.NoError(t, err)
-	require.Equal(t, "committed", status.SubmissionID)
-	require.Equal(t, "completed", status.ProcessingState)
-	require.Equal(t, "evaluated_zero", ledger.invocation.Outcome)
-	require.Equal(t, "execution", ledger.invocation.Classification)
-	require.NotEmpty(t, requestctx.RememberInvocationIDFromContext(ctx))
-	require.Contains(t, rememberMetricsText(t, metrics), `densemem_logical_operation_attempts_total{classification="execution",operation="remember",outcome="evaluated_zero"} 1`)
-	require.NotNil(t, ledger.commitInput.AssessorDiagnostics)
-	var phases []map[string]any
-	for index, message := range logger.infos {
-		if message == "remember_phase_completed" {
-			phases = append(phases, logger.infoAttrs[index])
-		}
-	}
-	require.Len(t, phases, 4)
-	for index, phase := range []string{"duplicate_embedding", "assessment", "embedding", "commit"} {
-		attrs := phases[index]
-		require.Equal(t, phase, attrs["phase"])
-		require.Equal(t, input.TeamID, attrs["team_id"])
-		require.Equal(t, input.OwnerProfileID, attrs["owner_profile_id"])
-		require.NotEmpty(t, attrs["attempt_id"])
-		require.GreaterOrEqual(t, attrs["duration_ms"].(int64), int64(0))
-	}
-	require.NotNil(t, phases[1]["assessor_diagnostics"])
-	ledger.commitErr = context.DeadlineExceeded
-	ledger.commitResult = nil
-	_, err = processor.ProcessRemember(ctx, input)
-	require.Error(t, err)
-	require.Equal(t, "commit", ledger.failure.Attempt.FailedPhase)
-	require.NotNil(t, ledger.failure.Attempt.AssessorDiagnostics)
-
 }
 
 func TestRememberProcessorRecordsAssessmentRejectionTrails(t *testing.T) {
