@@ -58,4 +58,4 @@ SELECT jsonb_build_object(
     'canonical_hash','sha256:'||encode(sha256(convert_to(COALESCE((SELECT jsonb_agg(jsonb_build_array(kind,body) ORDER BY kind,body)::text FROM canonical),'[]'),'UTF8')),'hex'),
     'source_hash','sha256:'||encode(sha256(convert_to(COALESCE((SELECT jsonb_agg(receipt ORDER BY receipt->>'source_doc_id')::text FROM imports),'[]'),'UTF8')),'hex')
 )
-FROM scope
+FROM scope AS s

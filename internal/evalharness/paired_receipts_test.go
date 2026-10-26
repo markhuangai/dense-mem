@@ -250,3 +250,34 @@ func TestPairReportIncompleteCoverage(t *testing.T) {
 	require.ErrorContains(t, err, "comparison is incomplete")
 	require.Contains(t, report.Sides["candidate"].Readiness.IncompleteReasons, "ontology_coverage")
 }
+
+func TestPairRuntimeStateCannotOverlapPreservedCapture(t *testing.T) {
+	for _, side := range []string{"baseline", "candidate"} {
+		for _, nested := range []bool{false, true} {
+			c := pairedFixture(t)
+			capture := t.TempDir()
+			original := filepath.Join(capture, "original.json")
+			require.NoError(t, os.WriteFile(original, []byte("preserved"), 0o600))
+			c.Baseline.CaptureDir, c.Baseline.CaptureSHA256 = capture, c.Baseline.Runner.SHA256
+			state := capture
+			if nested {
+				state = filepath.Join(capture, "runtime-state")
+			}
+			if side == "baseline" {
+				c.Baseline.Runtime.StateDir = state
+			} else {
+				c.Candidate.Runtime.StateDir = state
+			}
+			config := filepath.Join(t.TempDir(), "pair.json")
+			require.NoError(t, writePairJSON(config, c))
+			err := RunPairCommand(PairCommand{ConfigPath: config, Action: "check-config"}, io.Discard)
+			require.ErrorContains(t, err, "must not overlap")
+			contents, err := os.ReadFile(original)
+			require.NoError(t, err)
+			require.Equal(t, "preserved", string(contents))
+			entries, err := os.ReadDir(capture)
+			require.NoError(t, err)
+			require.Len(t, entries, 1)
+		}
+	}
+}

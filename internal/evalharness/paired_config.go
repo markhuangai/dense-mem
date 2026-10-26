@@ -111,20 +111,26 @@ func LoadPairConfig(path string) (PairConfig, error) {
 	if c.Baseline.Runtime.ServerContainer == c.Candidate.Runtime.ServerContainer || c.Baseline.Runtime.PostgresContainer == c.Candidate.Runtime.PostgresContainer || c.Baseline.Runtime.StateDir == c.Candidate.Runtime.StateDir {
 		return c, fmt.Errorf("paired runtimes and state directories must be distinct")
 	}
-	for _, original := range []string{c.Baseline.CaptureDir, c.Candidate.Runtime.StateDir, c.Baseline.Runtime.StateDir} {
-		if original == "" {
+	for _, directories := range [][2]string{
+		{c.OutDir, c.Baseline.CaptureDir},
+		{c.OutDir, c.Candidate.Runtime.StateDir},
+		{c.OutDir, c.Baseline.Runtime.StateDir},
+		{c.Candidate.Runtime.StateDir, c.Baseline.CaptureDir},
+		{c.Baseline.Runtime.StateDir, c.Baseline.CaptureDir},
+	} {
+		if directories[1] == "" {
 			continue
 		}
-		output, err := resolvedPairPath(c.OutDir)
+		output, err := resolvedPairPath(directories[0])
 		if err != nil {
 			return c, err
 		}
-		protected, err := resolvedPairPath(original)
+		protected, err := resolvedPairPath(directories[1])
 		if err != nil {
 			return c, err
 		}
 		if output == protected || pairWithin(protected, output) || pairWithin(output, protected) {
-			return c, fmt.Errorf("paired output must not overlap runtime state or original captures")
+			return c, fmt.Errorf("paired directories must not overlap: %s and %s", directories[0], directories[1])
 		}
 	}
 

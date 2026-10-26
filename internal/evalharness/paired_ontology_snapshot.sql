@@ -27,4 +27,4 @@ SELECT jsonb_build_object(
         'reserved_output',w.reserved_output,'overrun',w.overrun) FROM ontology_maintenance_windows w
         WHERE w.starts_at<=clock_timestamp() AND w.ends_at>clock_timestamp() ORDER BY w.starts_at DESC LIMIT 1)
 )
-FROM scope
+FROM scope AS s
