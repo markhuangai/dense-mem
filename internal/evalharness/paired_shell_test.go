@@ -78,6 +78,35 @@ func TestPairShellDeadlineResumeAndCapturePreservation(t *testing.T) {
 		command.Env = append(os.Environ(), "PAIR_RUNNER="+binary, "PAIR_CONFIG="+configPath, "PAIR_SCRIPT="+script)
 		return command.CombinedOutput()
 	}
+	t.Run("successful_native_completion", func(t *testing.T) {
+		c := pairedFixture(t)
+		configPath := filepath.Join(t.TempDir(), "pair.json")
+		require.NoError(t, writePairJSON(configPath, c))
+		process, err := PairProcessIdentity(os.Getpid())
+		require.NoError(t, err)
+		stage, err := BeginPairStage(c, "candidate", "validate", process)
+		require.NoError(t, err)
+		var intent PairStageIntent
+		require.NoError(t, readPairJSON(filepath.Join(stage.Directory, "intent.json"), &intent))
+		t.Setenv("PAIR_NATIVE_SUCCESS_STAGE", stage.Directory)
+		output, err := run(configPath, `set -Eeuo pipefail
+source "$PAIR_SCRIPT"
+pair_side=candidate; pair_stage=validate; pair_stage_dir="$PAIR_NATIVE_SUCCESS_STAGE"; pair_interrupted=false
+pair_native "$PAIR_RUNNER" --mode validate --seed "$(jq -er '.seed_manifest' "$PAIR_CONFIG")" --suite "$(jq -er '.suite' "$PAIR_CONFIG")" --out "$pair_stage_dir/native"`)
+		require.NoError(t, err, "%s", output)
+		var completion struct {
+			Code       int       `json:"exit_code"`
+			FinishedAt time.Time `json:"finished_at"`
+		}
+		require.NoError(t, readPairJSON(filepath.Join(stage.Directory, "native-exit.json"), &completion))
+		require.Zero(t, completion.Code)
+		require.False(t, completion.FinishedAt.Before(intent.StartedAt), "completion %s precedes start %s", completion.FinishedAt, intent.StartedAt)
+		require.NotZero(t, completion.FinishedAt.Nanosecond(), "native completion lost subsecond precision")
+		require.False(t, completion.FinishedAt.After(time.Now()))
+		require.FileExists(t, filepath.Join(stage.Directory, "native-process.json"))
+		require.NoError(t, FinishPairStage(c, stage.Directory))
+		require.NoError(t, VerifyPairStage(c, stage.Directory))
+	})
 	c := pairedFixture(t)
 	c.Deadline = time.Now().Add(3 * time.Second)
 	configPath := filepath.Join(t.TempDir(), "pair.json")

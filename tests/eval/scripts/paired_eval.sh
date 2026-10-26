@@ -133,7 +133,7 @@ pair_native() {
   pair_native_pid=$!
   wait "${pair_native_pid}" || code="$?"
   pair_native_pid=""
-  printf '{"exit_code":%s,"finished_at":"%s"}\n' "${code}" "$(date -u +%FT%TZ)" > "${pair_stage_dir}/native-exit.json"
+  printf '{"exit_code":%s,"finished_at":"%s"}\n' "${code}" "$(date -u +%FT%T.%NZ)" > "${pair_stage_dir}/native-exit.json"
   if (( code != 0 )); then
     if (( code == 124 || code >= 128 )); then pair_interrupted=true; fi
     echo "native ${pair_side}/${pair_stage} failed with exit ${code}; retained ${pair_stage_dir}/native.log" >&2
