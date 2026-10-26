@@ -292,6 +292,67 @@ docker compose -p "${DENSE_MEM_EVAL_COMPOSE_PROJECT}" \
 Do not use this team or stack for manual memory work. The monitor assumes one
 seed dataset per V1 runtime.
 
+## Capture bounded token diagnostics
+
+Use the supported evaluation runner for a token snapshot from one deployment:
+
+```bash
+go run ./cmd/eval-runner -mode token-diagnostics \
+  -metrics-url http://127.0.0.1:18090/metrics \
+  -out tests/eval/runs/token-observation
+```
+
+Run with the deployment's environment already loaded through your normal
+evaluation setup. This mode uses `internal/config`, including its validation and
+configured export-header files, without starting services or connecting to the
+database. `TELEMETRY_SCRAPE_TOKEN` supplies the bearer credential. The optional
+`DENSE_MEM_EVAL_METRICS_URL` supplies the URL when `-metrics-url` is omitted.
+Use the deployment's direct scrape endpoint; URLs with credentials, query
+parameters, or fragments and all redirects are rejected.
+
+The collector protects the same operational credentials as server logging:
+the PostgreSQL DSN and resolved password, Redis password, provider keys, control
+and telemetry tokens, and configured export-header authentication values. It
+also protects `DENSE_MEM_API_KEY` and `DENSE_MEM_CONTROL_TOKEN`. Supply the
+configuration for the deployment being inspected. Protection cannot discover
+unknown or previously rotated credentials. Keep credentials in the environment
+or existing private configuration files; never print environment dumps, request
+headers, raw scrapes, or credential values in diagnostic commands. Disable shell
+tracing before loading credentials. The runner does not source env files.
+
+`token_usage.json` contains `status` (`observed` or `empty`), a UTC `observed_at`,
+and `metrics` entries with `name`, selected `labels`, and numeric `value`. The
+allowlisted families are:
+
+- `densemem_operation_provider_tokens_total`
+- `densemem_ai_operation_tokens_total`
+- `densemem_ai_operation_unpriced_total`
+- `densemem_embedding_tokens_total`
+- `densemem_verifier_tokens_total`
+
+Only the `component`, `model`, `operation`, `kind`, `source`, and `reason` labels
+are retained. Configured credentials and their supported serialized forms are
+protected after selection; unrelated secret-like model names and ordinary text
+remain readable. Identity labels, metric help, endpoints, and response headers
+are excluded. Distinct samples remain distinct even when their retained labels
+match. The collector does not aggregate or reinterpret their values.
+
+The request has a 20-second timeout, the scrape is limited to 4 MiB, and the
+protected JSON is limited to 256 KiB. Malformed metrics, unavailable protection,
+HTTP failures, and exceeded bounds fail without a successful snapshot. Errors
+identify a bounded failure category or HTTP status without raw upstream text.
+The output file is created with mode `0600` and is never overwritten; select a
+new output directory for each observation. An omitted `-out` uses a timestamped
+directory under ignored `tests/eval/runs`. Stdout contains only a completion
+summary, and `empty` is explicit in the artifact rather than reported as zero
+usage.
+
+These are deployment-wide process counter observations, not isolated team or
+evaluation totals. Counters can reset, provider usage can be missing, and metric
+families can overlap. A snapshot alone proves neither complete token usage nor
+monetary cost. Keep generated snapshots ignored and review protected artifacts
+before sharing them.
+
 ## Provision the eval team once
 
 After startup migrations finish, provision a dedicated team through the private
