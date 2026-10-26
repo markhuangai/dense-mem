@@ -15,7 +15,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/evalharness"
+	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func TestPairedEvaluationRealServiceResumeFreezeAndCommonScore(t *testing.T) {
@@ -191,9 +193,12 @@ func runPairedServiceSide(t *testing.T, c evalharness.PairConfig, f *pairedServi
 		require.False(t, ready.Ready)
 		require.Equal(t, []string{reason}, ready.WaitingFor)
 	}
-	drift := f.admin.Exec(`UPDATE search_documents SET search_state='stale',embedding=NULL WHERE team_id=?`, f.release.Scope.TeamID)
-	require.NoError(t, drift.Error)
-	require.Positive(t, drift.RowsAffected)
+	rls := postgres.NewRLS()
+	require.NoError(t, rls.WithSystemTx(ctx, f.admin, func(tx *gorm.DB) error {
+		drift := tx.Exec(`UPDATE search_documents SET search_state='stale',embedding=NULL WHERE team_id=?`, f.release.Scope.TeamID)
+		require.Positive(t, drift.RowsAffected)
+		return drift.Error
+	}))
 	checkBlocked("search")
 	repaired, err := f.reconciliation.Run(ctx)
 	require.NoError(t, err)
@@ -209,9 +214,11 @@ func runPairedServiceSide(t *testing.T, c evalharness.PairConfig, f *pairedServi
 		if strings.Count(query, "?") == 2 {
 			args = append(args, f.release.Scope.TeamID)
 		}
-		drift := f.admin.Exec(query, args...)
-		require.NoError(t, drift.Error)
-		require.Positive(t, drift.RowsAffected)
+		require.NoError(t, rls.WithSystemTx(ctx, f.admin, func(tx *gorm.DB) error {
+			drift := tx.Exec(query, args...)
+			require.Positive(t, drift.RowsAffected)
+			return drift.Error
+		}))
 		checkBlocked("pending_projections")
 		for turn := 0; turn < 100; turn++ {
 			_, err := f.projections.RunProjectionTurn(ctx)
