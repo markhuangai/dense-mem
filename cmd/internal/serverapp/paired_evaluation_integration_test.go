@@ -190,7 +190,7 @@ func runPairedServiceSide(t *testing.T, c evalharness.PairConfig, f *pairedServi
 		o := observe()
 		ready, err := evalharness.EvaluatePairReadiness(f.release.Protocol, o, false)
 		require.NoError(t, err)
-		require.False(t, ready.Ready)
+		require.False(t, ready.Ready, "%s: %+v", reason, ready)
 		require.Equal(t, []string{reason}, ready.WaitingFor)
 	}
 	rls := postgres.NewRLS()
@@ -211,14 +211,10 @@ func runPairedServiceSide(t *testing.T, c evalharness.PairConfig, f *pairedServi
 	require.True(t, readyAfterSearch.Ready)
 	for _, query := range []string{
 		`UPDATE community_topic_work SET status='pending' WHERE team_id=?`,
-		`UPDATE community_records SET status='stale' WHERE team_id=? AND community_id IN (SELECT community_id FROM community_topic_work WHERE team_id=?)`,
+		`UPDATE community_topic_versions SET version=version+1 WHERE team_id=? AND dependency_key LIKE 'relationship:%'`,
 	} {
-		args := []any{f.release.Scope.TeamID}
-		if strings.Count(query, "?") == 2 {
-			args = append(args, f.release.Scope.TeamID)
-		}
 		require.NoError(t, rls.WithSystemTx(ctx, f.admin, func(tx *gorm.DB) error {
-			drift := tx.Exec(query, args...)
+			drift := tx.Exec(query, f.release.Scope.TeamID)
 			if drift.Error != nil {
 				return drift.Error
 			}
