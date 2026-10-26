@@ -116,7 +116,9 @@ func newPairedServiceFixture(t *testing.T, side string) *pairedServiceFixture {
 	}})
 	_, err = maintenance.Command(ctx, domain.OntologyMaintenanceCommand{Action: "pause", OperationKey: uuid.NewString()}, "", "")
 	require.NoError(t, err)
-	reader := evaluation.New(evaluation.Dependencies{Repository: evaluationpg.NewReader(app, rls), Audit: audit, Recall: recall.NewRecallService(recall.RecallDependencies{Search: recallpg.NewStore(app, rls, search, nil, nil), Provider: embedder, OntologyConfig: configuration, Communities: communityStore})})
+	recallStore := recallpg.NewStore(app, rls, search, searchRecallConflictReader(), recallpg.LoadRecallEvidenceConflictRecords).
+		WithOntology(func() recallpg.OntologyReader { return ontologyStore.NewRecallReader() })
+	reader := evaluation.New(evaluation.Dependencies{Repository: evaluationpg.NewReader(app, rls), Audit: audit, Recall: recall.NewRecallService(recall.RecallDependencies{Search: recallStore, Provider: embedder, OntologyConfig: configuration, Communities: communityStore})})
 	reg, err := registry.BuildActive(registry.Dependencies{RememberBindings: registry.RememberBindings{Service: writer}})
 	require.NoError(t, err)
 	mcp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
