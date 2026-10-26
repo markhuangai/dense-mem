@@ -3,9 +3,11 @@
 package serverapp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -94,21 +96,38 @@ func TestRememberEvaluationImporterAdmission(t *testing.T) {
 			h.assertCompleted(t, 0)
 			cancel()
 			require.Error(t, receiveImportResult(t, h.ctx, done))
-			for range test.admitted {
-				select {
-				case <-h.provider.cancelled:
-				case <-h.ctx.Done():
-					t.Fatal("Remember did not cancel held provider work")
-				}
-			}
-			h.waitIdle(t)
 			h.release()
+			h.waitIdle(t)
 			recovered, err := h.client.ImportCorpusWithConcurrency(h.ctx, corpus, 1)
 			require.NoError(t, err)
 			require.Len(t, recovered.BySourceDocID, len(corpus))
 			h.assertCompleted(t, len(corpus))
 		})
 	}
+
+	t.Run("stateless cancellation releases the only admission slot", func(t *testing.T) {
+		h := newImportAdmissionHarness(t, 2)
+		corpus := admissionCorpus(1, 0)
+		ctx, cancel := context.WithCancel(h.ctx)
+		defer cancel()
+		done := make(chan error, 1)
+		go func() { done <- h.callStatelessRemember(ctx, corpus[0]) }()
+		h.waitEntered(t, 1)
+		cancel()
+		require.ErrorIs(t, receiveImportResult(t, h.ctx, done), context.Canceled)
+		select {
+		case <-h.provider.cancelled:
+		case <-h.ctx.Done():
+			t.Fatal("stateless Remember did not cancel held provider work")
+		}
+		h.waitIdle(t)
+		h.assertCompleted(t, 0)
+		h.release()
+		recovered, err := h.client.ImportCorpus(h.ctx, corpus)
+		require.NoError(t, err)
+		require.Len(t, recovered.BySourceDocID, 1)
+		h.assertCompleted(t, 1)
+	})
 
 	t.Run("interruption retains completed mappings and resumes", func(t *testing.T) {
 		h := newImportAdmissionHarness(t, 5)
@@ -137,21 +156,33 @@ func TestRememberEvaluationImporterAdmission(t *testing.T) {
 		require.Error(t, receiveImportResult(t, h.ctx, done))
 		require.Equal(t, 2, count)
 		require.Len(t, completed.BySourceDocID, 2)
-		h.waitIdle(t)
 		h.release()
+		h.waitIdle(t)
+		h.assertCompleted(t, 3)
+		var live []struct{ SourceDocID, EvidenceID string }
+		require.NoError(t, h.rls.WithSystemTx(h.ctx, h.admin, func(tx *gorm.DB) error {
+			return tx.Raw(`
+				SELECT fragment.metadata->>'source_doc_id' AS source_doc_id,
+				       fragment.fragment_id::text AS evidence_id
+				FROM evidence_fragments AS fragment
+				JOIN remember_attempts AS attempt
+				  ON attempt.team_id = fragment.team_id AND attempt.attempt_id = fragment.ingest_id
+				WHERE fragment.team_id = ?::uuid AND attempt.outcome = 'completed'
+			`, h.teamID).Scan(&live).Error
+		}))
+		require.Len(t, live, 3)
 		skip := make(map[string]struct{})
-		for source, ref := range completed.BySourceDocID {
-			var live int
-			require.NoError(t, h.rls.WithSystemTx(h.ctx, h.admin, func(tx *gorm.DB) error {
-				return tx.Raw("SELECT count(*) FROM evidence_fragments WHERE team_id = ?::uuid AND fragment_id = ?::uuid", h.teamID, ref.ID).Scan(&live).Error
-			}))
-			require.Equal(t, 1, live)
-			skip[source] = struct{}{}
+		for _, item := range live {
+			if ref, exists := completed.BySourceDocID[item.SourceDocID]; exists {
+				require.Equal(t, ref.ID, item.EvidenceID)
+			}
+			completed.BySourceDocID[item.SourceDocID] = evalharness.Ref{Type: "fragment", ID: item.EvidenceID, SourceDocID: item.SourceDocID}
+			skip[item.SourceDocID] = struct{}{}
 		}
 		resumed, count, err := h.client.ImportCorpusFileWithConcurrency(h.ctx, path, evalharness.DefaultImportConcurrency, nil, skip)
 		require.NoError(t, err)
 		require.Equal(t, len(corpus), count)
-		require.Len(t, resumed.BySourceDocID, 3)
+		require.Len(t, resumed.BySourceDocID, 2)
 		for source, ref := range completed.BySourceDocID {
 			require.NotContains(t, resumed.BySourceDocID, source)
 			resumed.BySourceDocID[source] = ref
@@ -304,6 +335,38 @@ func (h *importAdmissionHarness) waitEntered(t *testing.T, count int) {
 			t.Fatal("imports did not reach provider admission")
 		}
 	}
+}
+
+func (h *importAdmissionHarness) callStatelessRemember(ctx context.Context, item evalharness.CorpusItem) error {
+	input := map[string]any{
+		"target_space": "team_shared", "idempotency_key": "eval:" + item.SourceDocID,
+		"evidence": []map[string]any{{"content": item.Content, "source": "eval-seed", "labels": item.Labels,
+			"metadata": map[string]any{"source_doc_id": item.SourceDocID, "source_dataset": item.SourceDataset, "eval_seed": true}}},
+		"relationships": item.Relationships,
+	}
+	body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": map[string]any{
+		"name": "remember", "arguments": input,
+		"_meta": map[string]any{"io.modelcontextprotocol/protocolVersion": "2026-07-28", "io.modelcontextprotocol/clientCapabilities": map[string]any{}},
+	}})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.client.BaseURL+"/mcp", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("MCP-Protocol-Version", "2026-07-28")
+	req.Header.Set("Mcp-Method", "tools/call")
+	req.Header.Set("Mcp-Name", "remember")
+	response, err := h.client.Client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	_, err = io.Copy(io.Discard, response.Body)
+	return err
 }
 
 func (h *importAdmissionHarness) waitIdle(t *testing.T) {
