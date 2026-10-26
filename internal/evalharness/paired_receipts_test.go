@@ -83,9 +83,13 @@ func writePairCompletedStage(t *testing.T, c PairConfig, side, stage string) str
 			require.NoError(t, writePairJSON(filepath.Join(start.Directory, "before.json"), o))
 		}
 	case "score":
-		capture, err := latestPairStage(c, side, "capture")
-		require.NoError(t, err)
-		proof, err := VerifyPairCaptureProof(c, r, filepath.Join(capture, "native"))
+		capture := r.CaptureDir
+		if capture == "" {
+			stage, err := latestPairStage(c, side, "capture")
+			require.NoError(t, err)
+			capture = filepath.Join(stage, "native")
+		}
+		proof, err := VerifyPairCaptureProof(c, r, capture)
 		require.NoError(t, err)
 		require.NoError(t, writePairJSON(filepath.Join(start.Directory, "capture-proof.json"), proof))
 		require.NoError(t, writePairJSON(filepath.Join(start.Directory, "scorer.json"), c.Scorer))
@@ -280,4 +284,243 @@ func TestPairRuntimeStateCannotOverlapPreservedCapture(t *testing.T) {
 			require.Len(t, entries, 1)
 		}
 	}
+}
+
+func TestPairRecoveryRejectsAmbiguousArtifactsAndLiveNativeProcess(t *testing.T) {
+	c := pairedFixture(t)
+	dead := PairProcess{PID: 1, BootID: "previous-host", StartTick: "1"}
+	process, err := PairProcessIdentity(os.Getpid())
+	require.NoError(t, err)
+	start, err := BeginPairStage(c, "candidate", "import", dead)
+	require.NoError(t, err)
+	nativePath := filepath.Join(start.Directory, "native-process.json")
+	require.NoError(t, writePairJSON(nativePath, process))
+	_, err = BeginPairStage(c, "candidate", "import", process)
+	require.ErrorContains(t, err, "native subprocess is still running")
+	require.NoFileExists(t, filepath.Join(start.Directory, "interrupted.json"))
+	require.NoError(t, os.WriteFile(nativePath, []byte("{"), 0o600))
+	_, err = BeginPairStage(c, "candidate", "import", process)
+	require.ErrorContains(t, err, "invalid paired JSON")
+	require.NoDirExists(t, filepath.Join(c.OutDir, "candidate", "import", "attempt-0002"))
+	for _, name := range []string{"unexpected-file", "attempt-invalid", "attempt-0000"} {
+		t.Run(name, func(t *testing.T) {
+			c := pairedFixture(t)
+			path := filepath.Join(c.OutDir, "candidate", "import", name)
+			if name == "unexpected-file" {
+				require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+				require.NoError(t, os.WriteFile(path, []byte("unclaimed artifact"), 0o600))
+			} else {
+				require.NoError(t, os.MkdirAll(path, 0o700))
+			}
+			_, err := BeginPairStage(c, "candidate", "import", process)
+			require.Error(t, err)
+			require.NoDirExists(t, filepath.Join(c.OutDir, "candidate", "import", "attempt-0001"))
+		})
+	}
+	c = pairedFixture(t)
+	dir := writePairCompletedStage(t, c, "candidate", "validate")
+	var receipt PairStageReceipt
+	require.NoError(t, readPairJSON(filepath.Join(dir, "receipt.json"), &receipt))
+	receipt.FinishedAt = receipt.Intent.StartedAt.Add(-time.Second)
+	require.NoError(t, writePairJSON(filepath.Join(dir, "receipt.json"), receipt))
+	require.ErrorContains(t, VerifyPairStage(c, dir), "identity or time")
+	_, err = BeginPairStage(c, "candidate", "validate", process)
+	require.Error(t, err)
+}
+
+func TestPairCaptureCompletionRequiresMatchingFrozenRuntime(t *testing.T) {
+	cases := []struct {
+		name string
+		edit func(*PairObservation)
+	}{
+		{"scope", func(o *PairObservation) { o.Scope.OwnerID = uuid.NewString() }},
+		{"active_capacity", func(o *PairObservation) { o.Policy.Team = 1 }},
+		{"missing_source", func(o *PairObservation) { o.Imports = o.Imports[:1] }},
+		{"canonical_drift", func(o *PairObservation) { o.CanonicalHash = pairBytesHash([]byte("changed")) }},
+		{"disabled", func(o *PairObservation) { o.Enabled = false }},
+		{"unpaused", func(o *PairObservation) { o.Paused = false }},
+		{"wrong_evidence", func(o *PairObservation) { o.Imports[0].EvidenceIDs[0] = "different-evidence" }},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			c := pairedFixture(t)
+			writePairCompletedStage(t, c, "candidate", "import")
+			process, err := PairProcessIdentity(os.Getpid())
+			require.NoError(t, err)
+			stage, err := BeginPairStage(c, "candidate", "capture", process)
+			require.NoError(t, err)
+			o := pairFixtureObservation(t, c, c.Candidate)
+			test.edit(&o)
+			writePairNativeCapture(t, c, filepath.Join(stage.Directory, "native"))
+			require.NoError(t, writePairJSON(filepath.Join(stage.Directory, "before.json"), o))
+			require.NoError(t, writePairJSON(filepath.Join(stage.Directory, "observation.json"), o))
+			require.NoError(t, writePairJSON(filepath.Join(stage.Directory, "native-exit.json"), map[string]any{"exit_code": 0, "finished_at": time.Now().UTC()}))
+			err = FinishPairStage(c, stage.Directory)
+			if test.name == "wrong_evidence" {
+				require.NoError(t, err)
+				_, err = VerifyPairCaptureProof(c, c.Candidate, filepath.Join(stage.Directory, "native"))
+				require.ErrorContains(t, err, "live import evidence")
+			} else {
+				require.Error(t, err)
+				require.NoFileExists(t, filepath.Join(stage.Directory, "receipt.json"))
+				require.NoFileExists(t, filepath.Join(stage.Directory, "native", "pair_capture.json"))
+			}
+		})
+	}
+}
+
+func TestPairImportMappingDeadlineCannotCompleteAnInterruptedStage(t *testing.T) {
+	t.Setenv("PAIR_API_KEY", "fixture")
+	c := pairedFixture(t)
+	stage, err := BeginPairStage(c, "candidate", "import", PairProcess{PID: 1, BootID: "previous-host", StartTick: "1"})
+	require.NoError(t, err)
+	_, err = runFixturePairCommand(t, c, PairCommand{Action: "complete-import-mapping", Side: "candidate", Directory: t.TempDir()})
+	require.ErrorContains(t, err, "belong to this paired run")
+	config := filepath.Join(stage.Directory, "native", "run_config.json")
+	require.NoError(t, writePairJSON(config, RunConfig{Mode: "baseline", SeedHash: c.SeedHash}))
+	require.ErrorContains(t, CompletePairImportMapping(c, "candidate", stage.Directory), "incompatible native import")
+	require.NoError(t, writePairJSON(config, RunConfig{Mode: "import", SeedHash: c.SeedHash}))
+	mapping := filepath.Join(stage.Directory, "native", "knowledge_mapping.json")
+	require.NoError(t, writePairJSON(mapping, newKnowledgeMapping()))
+	before, err := os.ReadFile(mapping)
+	require.NoError(t, err)
+	c.Deadline = time.Now().Add(-time.Second)
+	_, err = runFixturePairCommand(t, c, PairCommand{Action: "complete-import-mapping", Side: "candidate", Directory: stage.Directory})
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	after, err := os.ReadFile(mapping)
+	require.NoError(t, err)
+	require.Equal(t, before, after)
+	require.NoFileExists(t, filepath.Join(stage.Directory, "receipt.json"))
+}
+
+func TestPairInterruptedCaptureAndScoreRequireEveryCompletionArtifact(t *testing.T) {
+	for _, stage := range []string{"capture", "score"} {
+		files := []string{"native-exit.json", "native/run_config.json", "native/knowledge_mapping.json", "native/summary.json", "native/recall_traces.jsonl", "native/retrieval_scores.jsonl"}
+		if stage == "capture" {
+			files = append(files, "before.json", "observation.json")
+		} else {
+			files = append(files, "capture-proof.json", "scorer.json")
+		}
+		for _, missing := range files {
+			t.Run(stage+"/"+missing, func(t *testing.T) {
+				c := pairedFixture(t)
+				writePairCompletedStage(t, c, "candidate", "import")
+				dir := writePairCompletedStage(t, c, "candidate", "capture")
+				if stage == "score" {
+					dir = writePairCompletedStage(t, c, "candidate", "score")
+				}
+				require.NoError(t, os.Remove(filepath.Join(dir, "receipt.json")))
+				if stage == "capture" {
+					require.NoError(t, os.Remove(filepath.Join(dir, "native", "pair_capture.json")))
+				}
+				var intent PairStageIntent
+				require.NoError(t, readPairJSON(filepath.Join(dir, "intent.json"), &intent))
+				intent.Process = PairProcess{PID: 1, BootID: "previous-host", StartTick: "1"}
+				require.NoError(t, writePairJSON(filepath.Join(dir, "intent.json"), intent))
+				require.NoError(t, os.Remove(filepath.Join(dir, missing)))
+				before, err := pairArtifactHashes(dir)
+				require.NoError(t, err)
+				process, err := PairProcessIdentity(os.Getpid())
+				require.NoError(t, err)
+				_, err = BeginPairStage(c, "candidate", stage, process)
+				require.ErrorContains(t, err, "not proven complete")
+				after, err := pairArtifactHashes(dir)
+				require.NoError(t, err)
+				require.Equal(t, before, after, "ambiguous completion must preserve all retained artifacts")
+				require.NoDirExists(t, filepath.Join(filepath.Dir(dir), "attempt-0002"))
+			})
+		}
+	}
+}
+
+func TestPairCaptureProofRejectsIncompleteAndUnfrozenHistory(t *testing.T) {
+	cases := []struct {
+		name string
+		edit func(*PairCaptureProof)
+	}{
+		{"missing_import", func(p *PairCaptureProof) { p.After.Imports = p.After.Imports[:1] }},
+		{"foreign_receipt", func(p *PairCaptureProof) { p.After.Imports[0].Scope.OwnerID = uuid.NewString() }},
+		{"before_scope", func(p *PairCaptureProof) { p.Before.Scope.Generation++ }},
+		{"missing_observed_time", func(p *PairCaptureProof) { p.Before.ObservedAt = time.Time{} }},
+		{"not_paused", func(p *PairCaptureProof) { p.Before.Paused = false }},
+		{"window_changed", func(p *PairCaptureProof) { p.Before.WindowID = "previous-window" }},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			c := pairedFixture(t)
+			writePairCompletedStage(t, c, "baseline", "import")
+			dir := filepath.Join(writePairCompletedStage(t, c, "baseline", "capture"), "native")
+			path := filepath.Join(dir, "pair_capture.json")
+			var proof PairCaptureProof
+			require.NoError(t, readPairJSON(path, &proof))
+			test.edit(&proof)
+			require.NoError(t, writePairJSON(path, proof))
+			_, err := VerifyPairCaptureProof(c, c.Baseline, dir)
+			require.Error(t, err)
+		})
+	}
+	c := pairedFixture(t)
+	writePairCompletedStage(t, c, "baseline", "import")
+	dir := filepath.Join(writePairCompletedStage(t, c, "baseline", "capture"), "native")
+	r := c.Baseline
+	r.CaptureSHA256 = pairBytesHash([]byte("different proof"))
+	_, err := VerifyPairCaptureProof(c, r, dir)
+	require.ErrorContains(t, err, "proof hash mismatch")
+	require.NoError(t, os.Symlink(filepath.Join(dir, "summary.json"), filepath.Join(dir, "linked-artifact")))
+	_, err = VerifyPairCaptureProof(c, c.Baseline, dir)
+	require.ErrorContains(t, err, "regular files")
+}
+
+func TestPairScoreCompletionRejectsDifferentScorerProofAndTrace(t *testing.T) {
+	for _, artifact := range []string{"scorer", "proof", "trace"} {
+		t.Run(artifact, func(t *testing.T) {
+			c := pairedFixture(t)
+			writePairCompletedStage(t, c, "candidate", "import")
+			writePairCompletedStage(t, c, "candidate", "capture")
+			dir := writePairCompletedStage(t, c, "candidate", "score")
+			require.NoError(t, os.Remove(filepath.Join(dir, "receipt.json")))
+			switch artifact {
+			case "scorer":
+				changed := c.Scorer
+				changed.SHA256 = pairBytesHash([]byte("different scorer"))
+				require.NoError(t, writePairJSON(filepath.Join(dir, "scorer.json"), changed))
+			case "proof":
+				var proof PairCaptureProof
+				require.NoError(t, readPairJSON(filepath.Join(dir, "capture-proof.json"), &proof))
+				proof.Identity.ImageID = pairBytesHash([]byte("different capture"))
+				require.NoError(t, writePairJSON(filepath.Join(dir, "capture-proof.json"), proof))
+			case "trace":
+				path := filepath.Join(dir, "native", "recall_traces.jsonl")
+				traces, err := LoadRecallTraces(path)
+				require.NoError(t, err)
+				traces[0].RankedRefs[0].Rank++
+				require.NoError(t, writeJSONL(path, traces))
+			}
+			require.Error(t, FinishPairStage(c, dir))
+			require.NoFileExists(t, filepath.Join(dir, "receipt.json"))
+		})
+	}
+}
+
+func TestPairStageRecoveryRejectsMissingOrDifferentIntent(t *testing.T) {
+	c := pairedFixture(t)
+	process, err := PairProcessIdentity(os.Getpid())
+	require.NoError(t, err)
+	root := filepath.Join(c.OutDir, "candidate", "import")
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "attempt-0001"), 0o700))
+	_, err = BeginPairStage(c, "candidate", "import", process)
+	require.Error(t, err)
+	require.NoDirExists(t, filepath.Join(root, "attempt-0002"))
+	c = pairedFixture(t)
+	stage, err := BeginPairStage(c, "candidate", "import", PairProcess{PID: 1, BootID: "previous-host", StartTick: "1"})
+	require.NoError(t, err)
+	original, err := os.ReadFile(filepath.Join(stage.Directory, "intent.json"))
+	require.NoError(t, err)
+	c.RunID = "another-run"
+	_, err = BeginPairStage(c, "candidate", "import", process)
+	require.ErrorContains(t, err, "stage identity changed")
+	require.ErrorContains(t, FinishPairStage(c, stage.Directory), "intent is incompatible")
+	after, err := os.ReadFile(filepath.Join(stage.Directory, "intent.json"))
+	require.NoError(t, err)
+	require.Equal(t, original, after)
 }

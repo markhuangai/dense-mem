@@ -92,3 +92,48 @@ func TestPairProtocolRequiresNativeApplicability(t *testing.T) {
 	require.Error(t, VerifyPairProtocol(r, 404, nil))
 	require.Error(t, VerifyPairProtocol(r, 200, []byte(`{"enabled":true}`)))
 }
+
+func TestPairNativeObservationRejectsUntrustedWireValues(t *testing.T) {
+	cases := []struct {
+		name string
+		part string
+		edit func(map[string]any)
+	}{
+		{"database_type", "database", func(m map[string]any) { m["evidence_count"] = "unknown" }},
+		{"unclaimed_evidence", "database", func(m map[string]any) { m["unclaimed_evidence"] = 1 }},
+		{"missing_fingerprint", "database", func(m map[string]any) { m["source_hash"] = "" }},
+		{"window_changed", "database", func(m map[string]any) { m["legacy_window"] = map[string]any{"id": "different-window"} }},
+		{"provider_receipt_identity", "database", func(m map[string]any) { m["provider_attempts"] = []any{map[string]any{}} }},
+		{"search_type", "search", func(m map[string]any) { m["expected_documents"] = "unknown" }},
+		{"embedding_contract", "search", func(m map[string]any) { m["contract"].(map[string]any)["model"] = "different-model" }},
+		{"ontology_type", "ontology", func(m map[string]any) { m["active_work"] = "unknown" }},
+		{"configuration_failure", "ontology", func(m map[string]any) { m["configuration_error"] = "invalid" }},
+		{"community_type", "community", func(m map[string]any) { m["projection_coverage"].(map[string]any)["pending_topics"] = "unknown" }},
+		{"community_missing", "community", func(m map[string]any) { delete(m, "projection_coverage") }},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			c := pairedFixture(t)
+			snapshot := commandNativeSnapshot(t, c.Candidate, []PairImportAttempt{})
+			parts := map[string]*json.RawMessage{"database": &snapshot.Database, "search": &snapshot.Search, "ontology": &snapshot.Ontology, "community": &snapshot.Community}
+			var object map[string]any
+			require.NoError(t, json.Unmarshal(*parts[test.part], &object))
+			test.edit(object)
+			raw, err := json.Marshal(object)
+			require.NoError(t, err)
+			*parts[test.part] = raw
+			_, err = DecodePairObservation(c.Candidate, snapshot, false)
+			require.Error(t, err)
+		})
+	}
+	c := pairedFixture(t)
+	snapshot := commandNativeSnapshot(t, c.Baseline, []PairImportAttempt{})
+	c.Baseline.Protocol = "none"
+	o, err := DecodePairObservation(c.Baseline, snapshot, false)
+	require.NoError(t, err)
+	require.True(t, o.CoverageComplete)
+	require.True(t, o.ProjectionCoverageComplete)
+	c.Baseline.Protocol = "legacy"
+	_, err = DecodePairObservation(c.Baseline, snapshot, false)
+	require.ErrorContains(t, err, "recorded workflow")
+}
