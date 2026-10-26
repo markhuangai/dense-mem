@@ -1,14 +1,69 @@
 package evalharness
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/markhuangai/dense-mem/internal/domain"
+	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	"github.com/stretchr/testify/require"
 )
+
+func TestPairShellMaintenanceKeysRespectNativeContract(t *testing.T) {
+	script, err := filepath.Abs("../../tests/eval/scripts/paired_eval.sh")
+	require.NoError(t, err)
+	keys := map[string]bool{}
+	for _, tc := range []struct{ name, runID, side, stage, attempt, action string }{
+		{"short", "pair-fixture", "candidate", "capacity", "attempt-0001", "pause"},
+		{"boundary", strings.Repeat("r", 91), "baseline", "capacity", "attempt-0001", "pause"},
+		{"overflow", strings.Repeat("r", 91), "candidate", "capacity", "attempt-0001", "pause"},
+		{"maximum", strings.Repeat("r", 96), "candidate", "capacity", "attempt-0001", "pause"},
+		{"side", strings.Repeat("r", 96), "baseline", "capacity", "attempt-0001", "pause"},
+		{"stage", strings.Repeat("r", 96), "candidate", "drain", "attempt-0001", "pause"},
+		{"attempt", strings.Repeat("r", 96), "candidate", "capacity", "attempt-0002", "pause"},
+		{"action", strings.Repeat("r", 96), "candidate", "capacity", "attempt-0001", "resume"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := pairedFixture(t)
+			c.RunID = tc.runID
+			config := filepath.Join(t.TempDir(), "pair.json")
+			require.NoError(t, writePairJSON(config, c))
+			_, err := LoadPairConfig(config)
+			require.NoError(t, err)
+			dir := filepath.Join(t.TempDir(), tc.attempt)
+			require.NoError(t, os.Mkdir(dir, 0o700))
+			command := exec.Command("bash", "-c", `set -Eeuo pipefail
+source "$1"
+PAIR_CONFIG="$2"; pair_side="$3"; pair_stage="$4"; pair_stage_dir="$5"
+pair_control() { printf '%s\n' "$3"; }
+pair_command "$6"
+cat "$pair_stage_dir/$6.json"`, "paired-key-test", script, config, tc.side, tc.stage, dir, tc.action)
+			output, err := command.CombinedOutput()
+			require.NoError(t, err, "%s", output)
+			var body struct {
+				OperationKey string `json:"operation_key"`
+			}
+			require.NoError(t, json.Unmarshal(output, &body))
+			_, err = ontology.PrepareMaintenanceCommand(domain.OntologyMaintenanceCommand{OperationKey: body.OperationKey, Action: tc.action})
+			require.NoError(t, err, "key has %d bytes", len(body.OperationKey))
+			original := strings.Join([]string{tc.runID, tc.side, tc.stage, tc.attempt, tc.action}, ":")
+			if len(original) <= 128 {
+				require.Equal(t, original, body.OperationKey, "preserve existing replay identities")
+			}
+			require.False(t, keys[body.OperationKey], "distinct commands must not share a key")
+			keys[body.OperationKey] = true
+			replay := exec.Command(command.Path, command.Args[1:]...)
+			replayed, err := replay.CombinedOutput()
+			require.NoError(t, err, "%s", replayed)
+			require.Equal(t, output, replayed)
+		})
+	}
+}
 
 func TestPairShellDeadlineResumeAndCapturePreservation(t *testing.T) {
 	t.Setenv("PAIR_API_KEY", "fixture")

@@ -144,6 +144,9 @@ pair_native() {
 pair_command() {
   local action="$1" key
   key="$(jq -er '.run_id' "${PAIR_CONFIG}"):${pair_side}:${pair_stage}:$(basename "${pair_stage_dir}"):${action}"
+  if (( ${#key} > 128 )); then
+    key="paired:$(printf '%s' "${key}" | sha256sum | awk '{print $1}')"
+  fi
   pair_control "/ontology/${action}" POST "$(jq -n --arg key "${key}" '{operation_key:$key}')" > "${pair_stage_dir}/${action}.json"
 }
 
