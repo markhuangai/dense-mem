@@ -225,6 +225,27 @@
       "run": "^TestCommunityTopicSchedulerCancellationRestartsPersistedDiscovery$",
       "phase": "precheck",
       "source": "internal/community/postgres/topic_scheduler_progress_integration_test.go"
+    },
+    {
+      "id": "repository/TestCommunityTopicPostgresStartupReadiness",
+      "package": "./internal/community/postgres",
+      "run": "^TestCommunityTopicPostgresStartupReadiness$",
+      "phase": "precheck",
+      "source": "internal/community/postgres/postgres_startup_integration_test.go"
+    },
+    {
+      "id": "repository/TestCommunityTopicPostgresStartupFailureCleanup",
+      "package": "./internal/community/postgres",
+      "run": "^TestCommunityTopicPostgresStartupFailureCleanup$",
+      "phase": "precheck",
+      "source": "internal/community/postgres/postgres_startup_integration_test.go"
+    },
+    {
+      "id": "repository/TestCommunityTopicPostgresStartupCancellationCleanup",
+      "package": "./internal/community/postgres",
+      "run": "^TestCommunityTopicPostgresStartupCancellationCleanup$",
+      "phase": "precheck",
+      "source": "internal/community/postgres/postgres_startup_integration_test.go"
     }
   ]
 }
