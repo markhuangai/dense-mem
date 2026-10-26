@@ -348,12 +348,14 @@ run_scenario() {
   fi
 
   set +e
+  local execution_started=$SECONDS
   docker start --attach "$container" 2>&1 |
     redact_diagnostics "$ENV_FILE" "$control_token" "$telemetry_token" "$postgres_password" "$api_key" "$identity_upgrade_api_key" "$oauth_token" "$grafana_password"
   local -a scenario_pipeline_status=("${PIPESTATUS[@]}")
   set -e
   ((scenario_pipeline_status[1] == 0)) || fail "diagnostic redaction failed"
   local scenario_status="${scenario_pipeline_status[0]}"
+  report_phase scenario_execution "$execution_started" "$scenario_status"
   if ((scenario_status != 0)); then
     printf 'dense-mem CI scenario [%s]: failed stack diagnostics\n' "$scenario" >&2
     set +e
@@ -453,9 +455,10 @@ remove_project_resources() {
 stop_stack() {
   local project="$1"
   validate_project "$project"
-  local attempt
+  local attempt started=$SECONDS
   for attempt in 1 2 3 4 5; do
     if remove_project_resources "$project"; then
+      report_phase teardown "$started" 0 "$attempt" "$project"
       return 0
     fi
     if ((attempt < 5)); then
@@ -463,6 +466,7 @@ stop_stack() {
     fi
   done
   printf 'dense-mem CI controller: failed to remove every resource for project %s\n' "$project" >&2
+  report_phase teardown "$started" 1 "$attempt" "$project"
   return 1
 }
 

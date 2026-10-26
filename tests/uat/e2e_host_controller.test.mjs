@@ -932,6 +932,45 @@ test("Go helper containers fall back from module proxy transport errors", () => 
   assert.match(stack, /-e "GOPROXY=https:\/\/proxy\.golang\.org\|direct"/);
 });
 
+test("image acquisition accepts only the bounded registry HTTP failure allowlist", async () => {
+  const start = controller.indexOf("\ntransient_image_pull_failure() {") + 1;
+  const end = controller.indexOf("\npull_images() {", start);
+  assert.ok(start > 0 && end > start);
+  const script = `${controller.slice(start, end)}\nprintf '%s\\n' "$1" | transient_image_pull_failure`;
+  for (const reason of ["500 Internal Server Error", "502 Bad Gateway", "503 Service Unavailable", "504 Gateway Timeout"]) {
+    const failure = `unknown: failed to copy: httpReadSeeker: unexpected status from GET request to https://registry.example/v2/redis/blobs/sha256:123: ${reason}`;
+    await run("bash", ["-c", script, "image-acquisition", failure]);
+    await run("bash", ["-c", script, "image-acquisition", `Error response from daemon: unexpected status from HEAD request to http://127.0.0.1:1234/v2/recovery/manifests/latest: ${reason}`]);
+    await run("bash", ["-c", script, "image-acquisition", `Image redis Pulling\nImage redis Error ${failure}\n${failure}`]);
+    await assert.rejects(run("bash", ["-c", script, "image-acquisition", `${failure}\nError response from daemon: unauthorized: authentication required`]));
+    await assert.rejects(run("bash", ["-c", script, "image-acquisition", `${failure}\nError response from daemon: unknown registry error`]));
+    await assert.rejects(run("bash", ["-c", script, "image-acquisition", `${failure}\nHTTP 404 Not Found`]));
+  }
+  for (const failure of [
+    "", "Image redis Pulled", "500 Internal Server Error", "Error response from daemon: 429 Too Many Requests",
+    "request returned 500 Internal Server Error for API route and version http://docker/v1.45/images/create, check if the server supports the requested API version",
+    "Error response from daemon: 503 Service Unavailable",
+    "Error response from daemon: manifest unknown", "Error response from daemon: no matching manifest",
+    "Error response from daemon: digest mismatch", "Error response from daemon: context canceled",
+    "Error response from daemon: x509 certificate expired", "Error response from daemon: 404 Not Found",
+    "Error response from daemon: unknown error", "Error response from daemon: connection refused",
+    "Error response from daemon: unauthorized despite 500 Internal Server Error",
+  ]) {
+    await assert.rejects(run("bash", ["-c", script, "image-acquisition", failure]), failure);
+  }
+});
+
+test("phase receipts keep successful controller stdout available for the project", async () => {
+  const start = controller.indexOf("\nreport_phase() {") + 1;
+  const end = controller.indexOf("\ntransient_image_pull_failure() {", start);
+  const { stdout, stderr } = await run("bash", ["-c", `${controller.slice(start, end)}
+SECONDS=4
+report_phase image_acquisition 2 1 2 densemem-ci-test
+printf '%s\\n' densemem-ci-test`]);
+  assert.equal(stdout, "densemem-ci-test\n");
+  assert.match(stderr, /^dense-mem CI phase: phase=image_acquisition project=densemem-ci-test status=1 elapsed_seconds=2 attempt=2\n$/);
+});
+
 test("scenario runner executes Entra and diagnostics through the shared path", () => {
   assert.match(scenario, /dense-mem CI scenario \[%s\]/);
   assert.match(scenario, /log "running \$\{script\}"/);

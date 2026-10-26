@@ -303,6 +303,48 @@ ci_compose() {
   docker compose "${compose_args[@]}" "$@"
 }
 
+report_phase() {
+  local phase="$1" started="$2" status="$3" attempt="${4:-1}" project="${5:-${COMPOSE_PROJECT_NAME:-unknown}}"
+  printf 'dense-mem CI phase: phase=%s project=%s status=%s elapsed_seconds=%s attempt=%s\n' \
+    "$phase" "$project" "$status" "$((SECONDS - started))" "$attempt" >&2
+}
+
+transient_image_pull_failure() {
+  node -e '
+let input = "";
+process.stdin.on("data", chunk => { input += chunk; });
+process.stdin.on("end", () => {
+  const lines = input.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "").split(/[\r\n]+/).filter(Boolean);
+  const deterministic = /unauthorized|authentication required|denied|forbidden|not found|manifest unknown|unknown blob|no matching manifest|digest mismatch|verification failed|invalid reference|x509|certificate|no space left/i;
+  const transient = /\b(?:500 Internal Server Error|502 Bad Gateway|503 Service Unavailable|504 Gateway Timeout)\b/i;
+  const registry = /\bunexpected status from (?:GET|HEAD) request to https?:\/\/[^\s]+\/v2\/[^\s]+/i;
+  const errors = lines.filter(line => deterministic.test(line) || transient.test(line) || /\b(error|failed|unknown|invalid|mismatch|canceled|cancelled|unexpected|timeout|refused|unreachable|reset)\b/i.test(line));
+  process.exit(errors.length > 0 && errors.every(line => !deterministic.test(line) && registry.test(line) && transient.test(line)) ? 0 : 1);
+});
+'
+}
+
+pull_images() {
+  local attempt output status started
+  for attempt in 1 2; do
+    started=$SECONDS
+    if output="$("$@" 2>&1)"; then
+      status=0
+    else
+      status=$?
+    fi
+    printf '%s\n' "$output" | redact_diagnostics "$ENV_FILE" "${DENSE_MEM_CI_TELEMETRY_SCRAPE_TOKEN:-}" >&2 ||
+      fail "image-acquisition diagnostic redaction failed"
+    report_phase image_acquisition "$started" "$status" "$attempt"
+    ((status == 0)) && return 0
+    if ((attempt == 2)) || ! printf '%s\n' "$output" | transient_image_pull_failure; then
+      return "$status"
+    fi
+    printf '%s\n' 'dense-mem CI controller: transient image acquisition failed; retrying once in 2 seconds' >&2
+    sleep 2
+  done
+}
+
 assert_no_host_ports() {
   ci_compose config --format json |
     node -e '
@@ -675,7 +717,7 @@ doctor() {
   printf '%s\n' "$CONTRACT_VERSION"
 }
 
-start_stack() {
+start_stack() (
   local run_id="$1" attempt="$2" phase="$3" scenario="$4" image_ref="$5" source_dir="${6:-${PWD}}"
   validate_decimal "$run_id"
   validate_decimal "$attempt"
@@ -708,33 +750,31 @@ start_stack() {
   mkdir -p "$run_root"
   chmod 700 "$run_root"
   local runtime_compose_path="${run_root}/runtime-compose.yml"
-  local stack_started=0
+  local phase_started=$SECONDS current_phase=fixture_preparation
   cleanup_failed_start() {
     local status=$?
     trap - EXIT INT TERM
     set +e
-    cleanup_identity_cleanup_lock || true
-    if ((stack_started)); then
-      local cleanup_overlay="$DENSE_MEM_CI_COMPOSE_OVERLAY_FILE"
-      DENSE_MEM_CI_COMPOSE_OVERLAY_FILE=""
-      stop_stack "$project" || true
-      DENSE_MEM_CI_COMPOSE_OVERLAY_FILE="$cleanup_overlay"
-    fi
+    [[ -z "$current_phase" ]] || report_phase "$current_phase" "$phase_started" "$status"
+    local cleanup_status=0
+    cleanup_identity_cleanup_lock || cleanup_status=1
+    stop_stack "$project" || cleanup_status=1
     if [[ -n "$runtime_compose_path" && -e "$runtime_compose_path" ]]; then
-      rm -f -- "$runtime_compose_path"
+      rm -f -- "$runtime_compose_path" || cleanup_status=1
     fi
     if [[ -n "$DENSE_MEM_CI_HELPER_DIR" && -e "$DENSE_MEM_CI_HELPER_DIR" ]]; then
-      rm -r -- "$DENSE_MEM_CI_HELPER_DIR"
+      rm -r -- "$DENSE_MEM_CI_HELPER_DIR" || cleanup_status=1
     fi
     if [[ -n "$DENSE_MEM_CI_PRIVATE_DIR" && -e "$DENSE_MEM_CI_PRIVATE_DIR" ]]; then
-      rm -r -- "$DENSE_MEM_CI_PRIVATE_DIR"
+      rm -r -- "$DENSE_MEM_CI_PRIVATE_DIR" || cleanup_status=1
     fi
-    if docker image inspect "${project}-oauth-compat-harness:latest" >/dev/null 2>&1; then
-      docker image rm "${project}-oauth-compat-harness:latest" >/dev/null 2>&1 || true
-    fi
+    ((cleanup_status == 0)) || printf 'dense-mem CI controller: failed-start cleanup incomplete for %s (original status %s)\n' "$project" "$status" >&2
+    ((status != 0)) || status=$cleanup_status
     exit "$status"
   }
-  trap cleanup_failed_start EXIT INT TERM
+  trap cleanup_failed_start EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
 
   prepare_stack_helpers "$project" "$source_dir" "$helpers" "$run_id" "$attempt" "$phase" "$scenario" >/dev/null
   assert_no_host_ports || fail "Compose bundle publishes a host port"
@@ -757,10 +797,13 @@ start_stack() {
       profiles+=(--profile "$helper")
     done
   fi
-  stack_started=1
+  report_phase fixture_preparation "$phase_started" 0
+  current_phase=""
+  pull_images ci_compose "${profiles[@]}" pull --policy missing
+  phase_started=$SECONDS
+  current_phase=fixture_preparation
   seed_stack_inputs "$project" "$run_id" "$attempt" "$phase" "$scenario" "$source_dir"
   if ! ci_compose "${profiles[@]}" up -d --wait --wait-timeout 300 postgres >/dev/null; then
-    ci_compose down --volumes --remove-orphans >/dev/null 2>&1 || true
     fail "PostgreSQL failed to start"
   fi
   wait_for_postgres_service
@@ -768,19 +811,16 @@ start_stack() {
   if [[ "$scenario" == "identity_cleanup" ]]; then
     run_identity_cleanup_startup_matrix "$source_dir" "$project"
     if ! ci_compose "${profiles[@]}" up -d --wait --wait-timeout 300 synchronous-write-provider >/dev/null; then
-      ci_compose down --volumes --remove-orphans >/dev/null 2>&1 || true
       fail "identity cleanup provider helper failed to start"
     fi
   elif [[ "$scenario" == "ontology_upgrade" ]]; then
     run_ontology_upgrade_startup_matrix "$source_dir" "$project"
   elif ! ci_compose "${profiles[@]}" up -d --wait --wait-timeout 300 >/dev/null; then
-    ci_compose down --volumes --remove-orphans >/dev/null 2>&1 || true
     fail "Compose stack failed to start"
   else
     verify_postgres_runtime_migration_state
   fi
   if ! ci_compose --profile client_env up -d --wait --wait-timeout 300 client-env >/dev/null; then
-    ci_compose down --volumes --remove-orphans >/dev/null 2>&1 || true
     fail "client runtime environment failed to start"
   fi
   if ! ci_compose --profile client_env exec -T \
@@ -790,17 +830,16 @@ start_stack() {
     -e "DENSE_MEM_CI_NETWORK=${project}_ci" \
     -e "DENSE_MEM_CI_SCENARIO=${scenario}" \
     client-env sh -ec 'umask 077; printf "DENSE_MEM_USER_URL=%s\\nDENSE_MEM_CONTROL_URL=%s\\nDENSE_MEM_PROMETHEUS_URL=%s\\nDENSE_MEM_E2E_NETWORK=%s\\nDENSE_MEM_E2E_SCENARIO=%s\\n" "$DENSE_MEM_CI_USER_URL" "$DENSE_MEM_CI_CONTROL_URL" "$DENSE_MEM_CI_PROMETHEUS_URL" "$DENSE_MEM_CI_NETWORK" "$DENSE_MEM_CI_SCENARIO" > /client/runtime.env' >/dev/null; then
-    ci_compose down --volumes --remove-orphans >/dev/null 2>&1 || true
     fail "failed to write the non-secret client runtime environment"
   fi
 
   start_stack_helpers "$project" "$source_dir" "$helpers"
   write_runtime_compose "$runtime_compose_path" "$project" "$compose_image"
 
+  report_phase fixture_preparation "$phase_started" 0
   printf '%s\n' "$project"
-  stack_started=0
   trap - EXIT INT TERM
-}
+)
 
 
 source "${CONTROLLER_DIR}/e2e-host-controller-runtime.sh"

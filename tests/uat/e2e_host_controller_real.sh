@@ -245,6 +245,10 @@ expect_failure() {
   local status=$?
   set -e
   ((status != 0)) || fail "expected command to fail: $*"
+  if grep -q 'unbound variable' "$output"; then
+    cat "$output" >&2
+    fail "failed-start cleanup lost its local state"
+  fi
 }
 
 project_resources() {
@@ -328,6 +332,10 @@ check_dns "$network_two"
 ids_one="$(docker ps -aq --filter "label=com.docker.compose.project=${project_one}" | sort)"
 ids_two="$(docker ps -aq --filter "label=com.docker.compose.project=${project_two}" | sort)"
 [[ -z "$(comm -12 <(printf '%s\n' "$ids_one") <(printf '%s\n' "$ids_two"))" ]] || fail "concurrent stacks share containers"
+
+node "${ROOT_DIR}/tests/uat/e2e_host_controller_registry.mjs" \
+  "$CONTROLLER" "$ROOT_DIR" "$TEST_ROOT" "$COMPOSE_FILE" "$fixture_prefix" "$fixture_attempt" \
+  "$project_one" "${image}@${digest}"
 
 "$CONTROLLER" stop "$project_one"
 "$CONTROLLER" stop "$project_one"
