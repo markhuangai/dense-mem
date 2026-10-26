@@ -14,6 +14,7 @@ func (cfg Config) OperationalSecrets() ([]string, error) {
 		cfg.RedisPassword,
 		cfg.AIAPIKey,
 		cfg.AIVerifierAPIKey,
+		cfg.Decision.APIKey,
 		cfg.ControlPortalToken,
 		cfg.TelemetryScrapeToken,
 	}

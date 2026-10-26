@@ -6,7 +6,7 @@ import { Textarea } from "../ui/primitives/textarea";
 import { Input } from "../ui/primitives/input";
 import { FormEvent, Fragment, ReactNode, useCallback, useEffect, useState } from "react";
 import { Check, Clock, ListFilter, MessageSquare, Network, RefreshCw, Settings, X } from "lucide-react";
-import { ControlApi, GeneralConfig, GeneralConfigItem, OperationLogConfig, OperationLogConfigItem, RecallFeedbackConfig, RecallFeedbackConfigItem, SSOConfig, SSOConfigItem, TelemetryPricingConfig, TelemetryPricingConfigItem } from "../api";
+import { ControlApi, DecisionConfig, GeneralConfig, GeneralConfigItem, OperationLogConfig, OperationLogConfigItem, RecallFeedbackConfig, RecallFeedbackConfigItem, SSOConfig, SSOConfigItem, TelemetryPricingConfig, TelemetryPricingConfigItem } from "../api";
 import { LoadingState, SectionHeading } from "../ui/components";
 import { formatDate, readError } from "./utils";
 import { OntologyMaintenancePanel } from "./OntologyMaintenancePanel";
@@ -15,7 +15,7 @@ import type { OntologyMaintenanceStatus } from "../api";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/primitives/tabs";
 import { useUnsavedChanges, useViewTransition } from "../ui/navigation";
 
-export type ConfigTab = "general" | "sso" | "operation-logs" | "recall-feedback" | "telemetry-pricing";
+export type ConfigTab = "general" | "sso" | "operation-logs" | "recall-feedback" | "telemetry-pricing" | "decisions";
 
 const CONFIG_LABELS: Record<string, string> = {
   APP_TIMEZONE: "Timezone",
@@ -38,6 +38,10 @@ const CONFIG_LABELS: Record<string, string> = {
   OPERATION_LOG_RETENTION_DAYS: "Retention days",
   RECALL_FEEDBACK_ENABLED: "Enable recall feedback",
   RECALL_FEEDBACK_RETENTION_DAYS: "Investigation retention days",
+  DECISION_DEDUPLICATION_ENABLED: "Evidence deduplication",
+  DECISION_SECURITY_REVIEW_ENABLED: "Security review",
+  DECISION_CONFLICT_REVIEW_ENABLED: "Conflict review",
+  DECISION_RECALL_RERANKING_ENABLED: "Recall reranking",
   TELEMETRY_COST_VERIFIER_INPUT_USD_PER_MILLION_TOKENS: "Verifier input USD / million tokens",
   TELEMETRY_COST_VERIFIER_OUTPUT_USD_PER_MILLION_TOKENS: "Verifier output USD / million tokens",
   TELEMETRY_COST_EMBEDDING_INPUT_USD_PER_MILLION_TOKENS: "Embedding input USD / million tokens",
@@ -111,6 +115,7 @@ export function ConfigPanel({ api, tab, onTabChange }: { api: ControlApi; tab?: 
     { id: "operation-logs", label: "Operation logs", icon: ListFilter },
     { id: "recall-feedback", label: "Recall feedback", icon: MessageSquare },
     { id: "telemetry-pricing", label: "Pricing", icon: Settings },
+    { id: "decisions", label: "Decisions", icon: Network },
   ] as const;
   const activeTab = tab && tabs.some((item) => item.id === tab) ? tab : localTab;
   return <div className="stack"><SectionHeading title="Settings" subtitle="Configure service behavior, retention, and model pricing." />
@@ -121,6 +126,7 @@ export function ConfigPanel({ api, tab, onTabChange }: { api: ControlApi; tab?: 
       <TabsContent value="operation-logs"><OperationLogConfigPanel api={api} /></TabsContent>
       <TabsContent value="recall-feedback"><RecallFeedbackConfigPanel api={api} /></TabsContent>
       <TabsContent value="telemetry-pricing"><TelemetryPricingConfigPanel api={api} /></TabsContent>
+      <TabsContent value="decisions"><DecisionConfigPanel api={api} /></TabsContent>
     </Tabs>
   </div>;
 }
@@ -212,6 +218,35 @@ function TelemetryPricingConfigPanel({ api }: { api: ControlApi }) {
   );
 }
 
+export function DecisionConfigPanel({ api }: { api: ControlApi }) {
+  const load = useCallback(() => api.getDecisionConfig(), [api]);
+  return <RuntimeConfigPanel<DecisionConfig>
+    title="Decisions" refreshLabel="Refresh decision config" load={load}
+    save={(input) => api.updateDecisionConfig(input)} changedOnly
+    detail={(config) => <>
+      <p>{config.effective.provider.configured
+        ? `Provider configured: ${config.effective.provider.provider} · ${config.effective.provider.model}`
+        : "Decision provider is not configured. Saved preferences apply when a provider is configured."}</p>
+      <p className="form-meta">All tasks default to on. Saved changes apply to new operations within five seconds.</p>
+      <p className="form-meta">Settings revision: <code>{config.effective.revision}</code></p>
+      {config.effective.stale && <div className="banner error" role="alert">Settings refresh failed. Showing the last verified settings from {formatDate(config.effective.last_verified_at)}.</div>}
+    </>}
+    renderItem={(item, value, onChange) => {
+      const checked = (value || "true") === "true";
+      return <div className="setting-row">
+        <div className="setting-label">
+          <Label htmlFor={item.key}>{CONFIG_LABELS[item.key]}</Label>
+          <p id={`${item.key}-help`}>{item.value === "" ? "Default on" : `Saved ${item.value === "true" ? "on" : "off"}`} · Effective {item.effective_value === "true" ? "on" : "off"}</p>
+        </div>
+        <Label className="toggle-row config-toggle" htmlFor={item.key}>
+          <span>{checked ? "On" : "Off"}</span>
+          <Switch id={item.key} checked={checked} aria-describedby={`${item.key}-help`} onCheckedChange={(next) => onChange(next === true ? "true" : "false")} />
+        </Label>
+      </div>;
+    }}
+  />;
+}
+
 function RuntimeConfigPanel<T extends RuntimeConfig>({
   title,
   refreshLabel,
@@ -219,6 +254,7 @@ function RuntimeConfigPanel<T extends RuntimeConfig>({
   save,
   detail,
   renderItem,
+  changedOnly = false,
 }: {
   title: string;
   refreshLabel: string;
@@ -226,6 +262,7 @@ function RuntimeConfigPanel<T extends RuntimeConfig>({
   save: (input: RuntimeConfigInput) => Promise<T>;
   detail?: (config: T) => ReactNode;
   renderItem?: (item: ConfigItem, value: string, onChange: (value: string) => void) => ReactNode;
+  changedOnly?: boolean;
 }) {
   const transition = useViewTransition();
   const [config, setConfig] = useState<T | null>(null);
@@ -261,7 +298,7 @@ function RuntimeConfigPanel<T extends RuntimeConfig>({
     setMessage("");
     try {
       const next = await save({
-        items: Object.entries(draft).map(([key, value]) => ({ key, value })),
+        items: Object.entries(draft).filter(([key, value]) => !changedOnly || config?.items.find((item) => item.key === key)?.value !== value).map(([key, value]) => ({ key, value })),
       });
       setConfig(next);
       setDraft(Object.fromEntries(next.items.map((item) => [item.key, item.value])));
@@ -307,7 +344,7 @@ function RuntimeConfigPanel<T extends RuntimeConfig>({
             })}
           </fieldset>)}
           <div className="button-row span">
-            <Button variant="default" className="primary-button" type="submit" disabled={loading || !config}>
+            <Button variant="default" className="primary-button" type="submit" disabled={loading || !config || (changedOnly && !config.items.some((item) => (draft[item.key] ?? "") !== item.value))}>
               <Check size={16} aria-hidden="true" />
               Save config
             </Button>

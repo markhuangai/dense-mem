@@ -303,6 +303,20 @@
       "run": "^TestRememberRejectsMismatchedProvenanceWhenReusingSourceRevision$",
       "phase": "precheck",
       "source": "internal/knowledge/postgres/ledger_source_revision_supersedes_integration_test.go"
+    },
+    {
+      "id": "repository/TestDecisionRememberPostgresAtomicityReplayIsolationAndSettingsSnapshot",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestDecisionRememberPostgresAtomicityReplayIsolationAndSettingsSnapshot$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/decision_workflows_integration_test.go"
+    },
+    {
+      "id": "repository/TestDecisionConflictPostgresSelectionFailureAndStaleFence",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestDecisionConflictPostgresSelectionFailureAndStaleFence$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/decision_workflows_integration_test.go"
     }
   ]
 }

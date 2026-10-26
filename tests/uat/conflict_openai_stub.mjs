@@ -2,6 +2,7 @@
 
 import http from "node:http";
 import { forwardEmbedding } from "./embedding_upstream.mjs";
+import { handleDecisionFixture } from "./decision_providers/protocol.mjs";
 
 const port = positiveInteger(process.env.DENSE_MEM_CONFLICT_STUB_PORT ?? "8081", "DENSE_MEM_CONFLICT_STUB_PORT");
 const host = process.env.DENSE_MEM_CONFLICT_STUB_HOST ?? "0.0.0.0";
@@ -13,6 +14,7 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "GET" && request.url === "/health") {
       return sendJSON(response, 200, { status: "ok", chat_requests: chatRequests });
     }
+    if (request.method === "GET" && request.url === "/decision-fixture") return handleDecisionFixture(request, response, {});
     if (request.method === "POST" && request.url === "/control/embedding-fault") {
       const payload = await readJSON(request);
       if (typeof payload?.enabled !== "boolean") {
@@ -25,6 +27,7 @@ const server = http.createServer(async (request, response) => {
       return sendJSON(response, 405, { error: { message: "method not allowed" } });
     }
     const payload = await readJSON(request);
+    if (handleDecisionFixture(request, response, payload)) return;
     if (request.url === "/v1/embeddings") {
       if (embeddingFault) throw new ProviderFault("deterministic conflict embedding failure");
       const upstream = await forwardEmbedding(payload, response);

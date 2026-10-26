@@ -14,6 +14,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 
 	embeddingcontract "github.com/markhuangai/dense-mem/internal/embedding/contract"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
@@ -32,8 +33,11 @@ var ErrRecallAuthContext = errors.New("recall: authenticated actor context is re
 type RecallService = recallcontract.Service
 
 type RecallDependencies struct {
-	Search   RecallSearchRepository
-	Provider embeddingcontract.EmbeddingProviderInterface
+	Decisions        modelprovider.DecisionProvider
+	DecisionSettings modelprovider.DecisionSettings
+	Logger           observability.LogProvider
+	Search           RecallSearchRepository
+	Provider         embeddingcontract.EmbeddingProviderInterface
 
 	Communities RecallCommunityRepository
 
@@ -60,9 +64,12 @@ type RecallOntologyConfigProvider interface {
 }
 
 type recallService struct {
-	search    RecallSearchRepository
-	retrieval *Retrieval
-	provider  embeddingcontract.EmbeddingProviderInterface
+	decisions        modelprovider.DecisionProvider
+	decisionSettings modelprovider.DecisionSettings
+	logger           observability.LogProvider
+	search           RecallSearchRepository
+	retrieval        *Retrieval
+	provider         embeddingcontract.EmbeddingProviderInterface
 
 	communities RecallCommunityRepository
 
@@ -76,8 +83,9 @@ func NewRecallService(deps RecallDependencies) RecallService {
 		metrics = observability.NoopDiscoverabilityMetrics()
 	}
 	return &recallService{
+		decisions: deps.Decisions, decisionSettings: deps.DecisionSettings, logger: deps.Logger,
 		search:         deps.Search,
-		retrieval:      NewRetrieval(deps.Search),
+		retrieval:      &Retrieval{repository: deps.Search, decisions: deps.Decisions, logger: deps.Logger},
 		provider:       deps.Provider,
 		communities:    deps.Communities,
 		ontologyConfig: deps.OntologyConfig,
@@ -114,7 +122,26 @@ type RecallSearchStates = recallcontract.RecallSearchStates
 
 func (s *recallService) Recall(ctx context.Context, req RecallRequest) (*RecallResult, error) {
 	ctx = observability.WithReadPerformance(ctx, s.metrics)
-	return s.recallWithExecution(ctx, recallExecutionRequest{RecallRequest: req})
+	actor, ok := requestctx.ActorFromContext(ctx)
+	if !ok || actor.TeamID == uuid.Nil || actor.OwnerID == uuid.Nil {
+		return nil, ErrRecallAuthContext
+	}
+	ctx, degradation, err := s.decisionContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result, err := s.recallWithExecution(ctx, recallExecutionRequest{RecallRequest: req})
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	if err == nil && result != nil && degradation != nil {
+		result.Degradations = append(result.Degradations, *degradation)
+		result.Degradation = &result.Degradations[0]
+	}
+	if err == nil && result != nil {
+		reconcileDecisionSelections(ctx, s.logger, result)
+	}
+	return result, err
 }
 
 func (s *recallService) recallWithExecution(ctx context.Context, req recallExecutionRequest) (result *RecallResult, err error) {
@@ -214,8 +241,12 @@ func (s *recallService) recallWithExecution(ctx context.Context, req recallExecu
 	if coverageDegradation != nil {
 		result.Degradations = append(result.Degradations, *coverageDegradation)
 	}
-	relationships, relationshipState, relationshipDegradations, directGroups := s.recallRelatedRelationships(ctx, actor.TeamID.String(), req.RecallRequest, queryEmbedding, coveredGroups, req.organizationEnabled && teamSharedBranch)
+	relationships, relationshipState, relationshipDegradations, directGroups, relationshipStages, relationshipErr := s.recallRelatedRelationships(ctx, actor.TeamID.String(), req.RecallRequest, queryEmbedding, coveredGroups, req.organizationEnabled && teamSharedBranch)
+	if relationshipErr != nil {
+		return nil, relationshipErr
+	}
 	result.RelatedRelationships = relationships
+	result.DecisionStages = append(result.DecisionStages, relationshipStages...)
 	result.SearchStates.Relationships = relationshipState
 	result.Degradations = append(result.Degradations, relationshipDegradations...)
 	communities, paths, communityDegradation := []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, (*RecallDegradationResult)(nil)
@@ -745,6 +776,9 @@ func recallResultFromRepository(
 		DiscoveryPaths:    []RecallDiscoveryPath{},
 		DiscoveryGuidance: "No additional discovery guidance.",
 		SearchState:       searchState,
+	}
+	if recalled != nil {
+		result.DecisionStages = append([]modelprovider.DecisionStage(nil), recalled.DecisionStages...)
 	}
 	if len(result.Degradations) > 0 {
 		result.Degradation = &result.Degradations[0]

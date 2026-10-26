@@ -38,7 +38,8 @@ func recordRecallFeedbackSnapshot(
 		SearchState:     res.SearchState,
 		Degradation:     degradation,
 		SnapshotMetadata: map[string]any{
-			"result_schema": "v2.evidence_community_relationship_refs.v1",
+			"result_schema":   "v2.evidence_community_relationship_refs.v1",
+			"decision_stages": res.DecisionStages,
 		},
 	})
 	if err != nil {

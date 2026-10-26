@@ -13,6 +13,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	repository "github.com/markhuangai/dense-mem/internal/knowledge/contract"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 )
 
@@ -20,11 +21,13 @@ import (
 // request-owned Remember assessment. No durable ledger or assessment
 // repository is needed until the provider has returned a valid response.
 type SynchronousAssessmentDependencies struct {
-	Catalog  SubmissionAssessmentCatalog
-	Provider assessor.Provider
-	Limits   assessor.SemanticAssessmentLimits
-	Metrics  observability.DiscoverabilityMetrics
-	Logger   observability.LogProvider
+	Catalog          SubmissionAssessmentCatalog
+	Provider         assessor.Provider
+	Limits           assessor.SemanticAssessmentLimits
+	Metrics          observability.DiscoverabilityMetrics
+	Logger           observability.LogProvider
+	Decisions        modelprovider.DecisionProvider
+	DecisionSnapshot *domain.DecisionRuntimeConfig
 }
 
 // RememberAssessmentScope carries authenticated request identity into the
@@ -239,6 +242,10 @@ func AssessSynchronousRemember(
 	// allowlist. Freeze the first bounded selection so a repair cannot observe a
 	// different catalog result while the response is being validated and
 	// committed.
+	request.DecisionRouting, err = routeSubmissionDecisions(ctx, deps.Decisions, deps.DecisionSnapshot, request, deps.Logger)
+	if err != nil {
+		return nil, err
+	}
 	selectedRequest := request
 	refresh := func(refreshCtx context.Context) (assessor.SemanticAssessmentRequest, error) {
 		_ = refreshCtx

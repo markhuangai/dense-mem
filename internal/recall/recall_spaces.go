@@ -2,6 +2,7 @@ package recall
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"strings"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
@@ -174,6 +176,7 @@ func fuseRecallResults(branches []*RecallResult, resultLimit, relationshipLimit 
 			fused.SearchStates.Relationships = domain.CombineSearchProjectionStates(fused.SearchStates.Relationships, branch.SearchStates.Relationships)
 		}
 		fused.Conflicts = append(fused.Conflicts, branch.Conflicts...)
+		fused.DecisionStages = append(fused.DecisionStages, branch.DecisionStages...)
 		fused.RelatedCommunities = append(fused.RelatedCommunities, branch.RelatedCommunities...)
 		fused.DiscoveryPaths = append(fused.DiscoveryPaths, branch.DiscoveryPaths...)
 		for _, degradation := range branch.Degradations {
@@ -310,10 +313,10 @@ func (s *recallService) recallRelatedRelationships(
 	queryEmbedding []float32,
 	excludedGroups map[string]struct{},
 	organizationEnabled bool,
-) ([]RelatedRelationshipSummary, string, []RecallDegradationResult, map[string]struct{}) {
+) ([]RelatedRelationshipSummary, string, []RecallDegradationResult, map[string]struct{}, []modelprovider.DecisionStage, error) {
 	relationshipLimit := recallOptionalLimitValue(req.RelationshipLimit)
 	if relationshipLimit <= 0 {
-		return []RelatedRelationshipSummary{}, string(domain.SearchProjectionNotRequired), nil, map[string]struct{}{}
+		return []RelatedRelationshipSummary{}, string(domain.SearchProjectionNotRequired), nil, map[string]struct{}{}, nil, nil
 	}
 	branch, _ := recallBranchFromContext(ctx)
 	recalled, err := s.retrieval.RecallRelationships(ctx, recallcontract.RecallRelationshipsInput{
@@ -337,7 +340,7 @@ func (s *recallService) recallRelatedRelationships(
 			Optional: true,
 			Code:     "relationship_discovery_unavailable",
 			Message:  "relationship discovery was unavailable; primary evidence recall was used",
-		}}, map[string]struct{}{}
+		}}, map[string]struct{}{}, nil, recallRelationshipCancellation(ctx, err)
 	}
 	state := string(domain.SearchProjectionCurrent)
 	if recalled != nil && recalled.SearchState != "" {
@@ -364,5 +367,16 @@ func (s *recallService) recallRelatedRelationships(
 			}
 		}
 	}
-	return relatedRelationshipSummaries(recalled), state, degradations, groups
+	var stages []modelprovider.DecisionStage
+	if recalled != nil {
+		stages = recalled.DecisionStages
+	}
+	return relatedRelationshipSummaries(recalled), state, degradations, groups, stages, nil
+}
+
+func recallRelationshipCancellation(ctx context.Context, err error) error {
+	if errors.Is(err, context.Canceled) || ctx.Err() != nil {
+		return err
+	}
+	return nil
 }

@@ -7,10 +7,14 @@ import (
 	"github.com/markhuangai/dense-mem/internal/conflict/assessment"
 	conflictpostgres "github.com/markhuangai/dense-mem/internal/conflict/postgres"
 	conflictreview "github.com/markhuangai/dense-mem/internal/conflict/review"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 )
 
 type conflictReviewApplicationDependencies struct {
+	Decisions        modelprovider.DecisionProvider
+	DecisionSettings modelprovider.DecisionSettings
+	Logger           observability.LogProvider
 	Store            *conflictpostgres.Store
 	Provider         conflictreview.Provider
 	Embeddings       conflictreview.EmbeddingProvider
@@ -32,5 +36,6 @@ func buildConflictReviewApplication(deps conflictReviewApplicationDependencies) 
 		deps.Timezone,
 		deps.Limits,
 		deps.Metrics,
+		conflictreview.DecisionOptions{Provider: deps.Decisions, Settings: deps.DecisionSettings, Logger: deps.Logger},
 	)
 }

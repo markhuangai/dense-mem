@@ -31,6 +31,7 @@
     "architecture/modules/control-portal.json",
     "architecture/modules/correlation-policy.json",
     "architecture/modules/credential-crypto-port.json",
+    "architecture/modules/decision-provider.json",
     "architecture/modules/demo-composition.json",
     "architecture/modules/dream-application.json",
     "architecture/modules/embedding-contract.json",

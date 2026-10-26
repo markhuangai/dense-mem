@@ -316,6 +316,19 @@ if (has("synchronous_write")) {
     AI_VERIFIER_DISABLE_TEMPERATURE: "true",
   })) serverEnvironment.set(key, value);
 }
+if (scenario === "decision_providers") {
+  for (const [key, value] of Object.entries({
+    AI_DECISION_PROVIDER: "openai",
+    AI_DECISION_API_URL: "http://synchronous-write-provider:8787/v1",
+    AI_DECISION_API_KEY: "dense-mem-e2e-decision-key",
+    AI_DECISION_MODEL: "gpt-6-luna",
+    AI_DECISION_MAX_INPUT_TOKENS: "32000",
+    AI_DECISION_MAX_QUESTION_INPUT_TOKENS: "32000",
+    AI_DECISION_TIMEOUT_SECONDS: "10",
+    AI_DECISION_MAX_CONCURRENCY: "4",
+    LOG_LEVEL: "debug",
+  })) serverEnvironment.set(key, value);
+}
 if (fixtureEmbeddingProvider) {
   const providerService = [
     "    command: [\"sh\", \"-c\", \"sleep infinity\"]",
@@ -502,6 +515,8 @@ start_stack_helpers() {
     [[ -n "$conflict" ]] || fail "conflict provider helper was not created"
     docker cp "${source_dir}/tests/uat/conflict_openai_stub.mjs" "${conflict}:/e2e/conflict_openai_stub.mjs" >/dev/null
     docker cp "${source_dir}/tests/uat/embedding_upstream.mjs" "${conflict}:/e2e/embedding_upstream.mjs" >/dev/null
+    docker exec "$conflict" mkdir -p /e2e/decision_providers >/dev/null
+    docker cp "${source_dir}/tests/uat/decision_providers/protocol.mjs" "${conflict}:/e2e/decision_providers/protocol.mjs" >/dev/null
     docker exec -d "$conflict" node /e2e/conflict_openai_stub.mjs >/dev/null
   fi
   if [[ "${DENSE_MEM_CI_HOSTED:-0}" == "1" ]] || has_helper "$helpers" verifier || has_helper "$helpers" synchronous_write; then
@@ -511,6 +526,8 @@ start_stack_helpers() {
     docker exec "$provider" mkdir -p /e2e/synchronous_write >/dev/null
     docker cp "${source_dir}/tests/uat/embedding_upstream.mjs" "${provider}:/e2e/embedding_upstream.mjs" >/dev/null
     docker cp "${source_dir}/tests/uat/synchronous_write/provider-fixture.mjs" "${provider}:/e2e/synchronous_write/provider-fixture.mjs" >/dev/null
+    docker exec "$provider" mkdir -p /e2e/decision_providers >/dev/null
+    docker cp "${source_dir}/tests/uat/decision_providers/protocol.mjs" "${provider}:/e2e/decision_providers/protocol.mjs" >/dev/null
     docker exec -d "$provider" node /e2e/synchronous_write/provider-fixture.mjs >/dev/null
   fi
 }

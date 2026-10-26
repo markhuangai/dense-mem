@@ -5,8 +5,9 @@ import (
 	"errors"
 	"time"
 
-	repository "github.com/markhuangai/dense-mem/internal/conflict/contract"
 	"github.com/markhuangai/dense-mem/internal/conflict/assessment"
+	repository "github.com/markhuangai/dense-mem/internal/conflict/contract"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 )
 
@@ -30,11 +31,12 @@ func NewRunner(
 	timezone string,
 	limits conflictassessment.SemanticAssessmentLimits,
 	metrics observability.DiscoverabilityMetrics,
+	decisionOptions ...DecisionOptions,
 ) (*Runner, error) {
 	if ledger == nil {
 		return nil, errors.New("conflict review runner: ledger is required")
 	}
-	service, err := New(Dependencies{
+	deps := Dependencies{
 		Repository:       ledger,
 		Provider:         provider,
 		Embeddings:       embeddings,
@@ -42,11 +44,23 @@ func NewRunner(
 		Metrics:          metrics,
 		Timezone:         timezone,
 		Limits:           limits,
-	})
+	}
+	if len(decisionOptions) > 0 {
+		deps.Decisions = decisionOptions[0].Provider
+		deps.DecisionSettings = decisionOptions[0].Settings
+		deps.Logger = decisionOptions[0].Logger
+	}
+	service, err := New(deps)
 	if err != nil {
 		return nil, err
 	}
 	return &Runner{ledger: ledger, service: service}, nil
+}
+
+type DecisionOptions struct {
+	Provider modelprovider.DecisionProvider
+	Settings modelprovider.DecisionSettings
+	Logger   observability.LogProvider
 }
 
 func (r *Runner) ReserveRelationshipConflictReviewRun(ctx context.Context, input repository.ConflictReviewRunInput) (*repository.ConflictReviewRunRecord, bool, error) {

@@ -14,6 +14,7 @@ func buildSessionApplication(deps rememberApplicationDependencies, repository se
 	limits.MaxEvidenceItems = session.MaxExcerpts
 	preparer := remember.NewSynchronousProcessor(remember.ProcessorDependencies{
 		Ledger: deps.Persistence, Catalog: deps.Catalog, Assessor: deps.Assessor, Embedder: deps.Embedder,
+		Decisions: deps.Decisions, DecisionSettings: deps.DecisionSettings,
 		Limits: limits, Metrics: deps.Metrics, Logger: deps.Logger, DiagnosticProtector: deps.DiagnosticProtector,
 	})
 	return sessionservice.NewService(sessionservice.Dependencies{

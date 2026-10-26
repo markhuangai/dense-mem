@@ -1,7 +1,7 @@
-import type { GeneralConfig, GeneralConfigInput, GeneralConfigItem, SSOConfigInput } from "./configuration-api-types";
+import type { DecisionConfig, GeneralConfig, GeneralConfigInput, GeneralConfigItem, SSOConfigInput } from "./configuration-api-types";
 import type { MemoryAccess } from "./credentialPermissions";
 export type { MemoryAccess, MemoryPermission } from "./credentialPermissions";
-export type { GeneralConfig, GeneralConfigInput, GeneralConfigItem, SSOConfigInput } from "./configuration-api-types";
+export type { DecisionConfig, DecisionTasks, GeneralConfig, GeneralConfigInput, GeneralConfigItem, SSOConfigInput } from "./configuration-api-types";
 import type { OntologyMaintenanceConfig, OntologyMaintenanceRun, OntologyMaintenanceStatus, OntologyMaintenanceRunPage } from "./ontology-maintenance-api-types";
 export type { OntologyMaintenanceConfig, OntologyMaintenanceRun, OntologyMaintenanceStatus, OntologyMaintenanceRunPage } from "./ontology-maintenance-api-types";
 import type { ControlTelemetryQuery, TelemetrySnapshot } from "./telemetry/types";
@@ -807,6 +807,14 @@ export class ControlApi {
 
   getRecallFeedbackConfig(): Promise<RecallFeedbackConfig> {
     return this.requestEnvelope<RecallFeedbackConfig>("/config/recall-feedback");
+  }
+
+  getDecisionConfig(): Promise<DecisionConfig> {
+    return this.requestEnvelope<DecisionConfig>("/config/decisions");
+  }
+
+  updateDecisionConfig(input: GeneralConfigInput): Promise<DecisionConfig> {
+    return this.requestEnvelope<DecisionConfig>("/config/decisions", { method: "PATCH", body: input });
   }
 
   updateRecallFeedbackConfig(input: RecallFeedbackConfigInput): Promise<RecallFeedbackConfig> {

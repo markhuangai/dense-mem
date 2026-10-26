@@ -61,8 +61,10 @@ type AppConfigServiceImpl struct {
 	now           func() time.Time
 	checkInterval time.Duration
 
-	mu    sync.Mutex
-	cache *appConfigCache
+	mu              sync.Mutex
+	cache           *appConfigCache
+	refreshMu       sync.Mutex
+	decisionOptions DecisionSettingsOptions
 }
 
 type appConfigCache struct {
@@ -72,11 +74,14 @@ type appConfigCache struct {
 	sso        accessservice.SSORuntimeConfig
 	settings   domain.SSOConfigSettings
 
-	opLogs    domain.OperationLogConfigSettings
-	private   domain.PrivateMemoryConfigSettings
-	recall    domain.RecallFeedbackConfigSettings
-	telemetry domain.TelemetryPricingConfigSettings
-	checkedAt time.Time
+	opLogs      domain.OperationLogConfigSettings
+	private     domain.PrivateMemoryConfigSettings
+	recall      domain.RecallFeedbackConfigSettings
+	telemetry   domain.TelemetryPricingConfigSettings
+	checkedAt   time.Time
+	verifiedAt  time.Time
+	refreshErr  error
+	invalidated bool
 }
 
 var _ AppConfigService = (*AppConfigServiceImpl)(nil)
@@ -214,10 +219,15 @@ func (s *AppConfigServiceImpl) currentCache(ctx context.Context) (*appConfigCach
 	if s == nil || s.repo == nil {
 		return nil, fmt.Errorf("app config service is unavailable")
 	}
+	s.refreshMu.Lock()
+	defer s.refreshMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	now := s.now().UTC()
 
 	s.mu.Lock()
-	if s.cache != nil && now.Sub(s.cache.checkedAt) < s.cacheInterval() {
+	if s.cache != nil && !s.cache.invalidated && now.Sub(s.cache.checkedAt) < s.cacheInterval() {
 		cache := cloneAppConfigCache(s.cache)
 		s.mu.Unlock()
 		return cache, nil
@@ -229,8 +239,10 @@ func (s *AppConfigServiceImpl) currentCache(ctx context.Context) (*appConfigCach
 		return s.cachedOrError(now, err)
 	}
 	s.mu.Lock()
-	if s.cache != nil && updateTime == s.cache.updateTime {
+	if s.cache != nil && !s.cache.invalidated && updateTime == s.cache.updateTime {
 		s.cache.checkedAt = now
+		s.cache.verifiedAt = now
+		s.cache.refreshErr = nil
 		cache := cloneAppConfigCache(s.cache)
 		s.mu.Unlock()
 		return cache, nil
@@ -257,6 +269,8 @@ func (s *AppConfigServiceImpl) cachedOrError(checkedAt time.Time, err error) (*a
 	defer s.mu.Unlock()
 	if s.cache != nil {
 		s.cache.checkedAt = checkedAt
+		s.cache.refreshErr = err
+		s.cache.invalidated = false
 		return cloneAppConfigCache(s.cache), nil
 	}
 	return nil, err
@@ -270,15 +284,22 @@ func (s *AppConfigServiceImpl) cacheInterval() time.Duration {
 }
 
 func (s *AppConfigServiceImpl) invalidate() {
+	s.refreshMu.Lock()
+	defer s.refreshMu.Unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.cache = nil
+	if s.cache != nil {
+		s.cache.invalidated = true
+	}
 }
 
 func buildAppConfigCache(entries map[string]domain.AppConfigEntry, checkedAt time.Time) (*appConfigCache, error) {
 	updateEntry, ok := entries[domain.AppConfigUpdateTimeKey]
 	if !ok || strings.TrimSpace(updateEntry.Value) == "" {
 		return nil, fmt.Errorf("%w: update_time is required", ErrInvalidAppConfig)
+	}
+	if _, err := decisionSettingsFromEntries(entries, domain.DecisionProviderStatus{}); err != nil {
+		return nil, err
 	}
 	general, err := generalRuntimeConfigFromEntries(entries)
 	if err != nil {
@@ -315,6 +336,7 @@ func buildAppConfigCache(entries map[string]domain.AppConfigEntry, checkedAt tim
 		recall:     recall,
 		telemetry:  telemetry,
 		checkedAt:  checkedAt,
+		verifiedAt: checkedAt,
 	}, nil
 }
 

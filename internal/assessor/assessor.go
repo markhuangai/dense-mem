@@ -311,7 +311,7 @@ func PrepareSemanticAssessmentResponse(
 	if len(errs) > 0 {
 		return response, errs
 	}
-	canonical, err := json.Marshal(response)
+	canonical, err := semanticAssessmentGenerationJSON(response)
 	if err != nil {
 		return response, []SemanticValidationError{semanticErr("response", "cannot be normalized")}
 	}

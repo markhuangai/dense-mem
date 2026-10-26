@@ -49,6 +49,7 @@ const assessmentEvents = Number(postgresQuery(`
     AND action IN ('selected', 'abstained', 'failed')
 `));
 assert(assessmentEvents >= 1, "live conflict review did not persist a terminal assessment event");
+await verifyTypedConflictReview();
 const queueGauge = await waitForPrometheusMetric(
   `sum(densemem_conflict_queue_cases{team_id="${seededTeamID}",status="overdue"})`,
   (value) => value >= 1,
@@ -204,17 +205,61 @@ async function waitForPrometheusMetric(query, predicate, timeoutMs) {
   throw new Error(`timed out waiting for Prometheus metric ${query}`);
 }
 
-function runReview(fixture, now) {
+async function verifyTypedConflictReview() {
+  const providerURL = requiredEnv("DENSE_MEM_E2E_CONFLICT_PROVIDER_URL").replace(/\/v1\/?$/, "");
+  for (const mode of ["normal", "refusal"]) {
+    const teamID = await createTeam(`typed ${mode}`);
+    const fixture = await createConflictFixture(`typed-${mode}`, teamID);
+    shapeQueueFixture(fixture, { overdue: true, lease: "idle", nextReviewAt: "2000-01-01T00:00:00Z" });
+    await httpJSON(`${providerURL}/decision-fixture`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode }) });
+    const before = (await httpJSON(`${providerURL}/health`)).chat_requests.length;
+    const result = runReview(fixture, new Date(Date.now() + 2 * 24 * 60 * 60 * 1_000).toISOString(), { decisions: true, expectFailure: mode === "refusal" });
+    const exchanges = (await httpJSON(`${providerURL}/decision-fixture`)).exchanges;
+    assert(exchanges.some((item) => item.mode === mode && item.names.includes("position") && item.names.includes("sufficiently_supported") && item.types.includes("choice")), `typed conflict ${mode} did not reach both decision questions`);
+    assert((await httpJSON(`${providerURL}/health`)).chat_requests.length === before, `typed conflict ${mode} must not invoke generation`);
+    const event = JSON.parse(postgresQuery(`
+      SELECT event.metadata::text FROM relationship_conflict_ai_assessment_events event
+      JOIN relationship_conflict_ai_assessment_attempts attempt USING (team_id, assessment_attempt_id)
+      WHERE attempt.team_id=${sqlLiteral(teamID)}::uuid AND attempt.conflict_id=${sqlLiteral(fixture.conflictID)}::uuid
+        AND event.action=${sqlLiteral(mode === "normal" ? "selected" : "failed")}
+      ORDER BY event.created_at DESC LIMIT 1
+    `));
+    const status = postgresQuery(`SELECT status FROM relationship_conflict_cases WHERE team_id=${sqlLiteral(teamID)}::uuid AND conflict_id=${sqlLiteral(fixture.conflictID)}::uuid`);
+    if (mode === "normal") {
+      assert(result.outcome === "resolve" && result.resolution_method === "ai", "typed selection did not resolve the conflict");
+      assert(status === "resolved", "typed selection was not durably resolved");
+      assert(event.selected_position_id === result.preferred_position_id, "typed selection and durable position disagree");
+      assert(event.confidence_kind === "decision_position_probability", "typed probability was confused with generative confidence");
+      assert(event.decision_stage?.action === "select_typed_position", "typed conflict provenance is missing");
+      assert(event.decision_stage?.result?.answers?.position?.confidence === 0.2, "vendor confidence must remain separate from probability gates");
+    } else {
+      assert(status === "overdue", "refused required review changed the conflict outcome");
+      assert(event.decision_stage?.action === "fail_required_task", "required refusal did not persist its failed decision stage");
+      assert(postgresQuery(`SELECT count(*) FROM relationship_records WHERE team_id=${sqlLiteral(teamID)}::uuid AND status='superseded'`) === "0", "refused review partially superseded relationships");
+    }
+  }
+  await httpJSON(`${providerURL}/decision-fixture`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode: "normal" }) });
+}
+
+function runReview(fixture, now, { decisions = false, expectFailure = false } = {}) {
   const result = spawnSync(reviewDriver, [
     "--team-id", fixture.teamID,
     "--conflict-id", fixture.conflictID,
     "--now", now,
   ], {
     cwd: fileURLToPath(new URL("../..", import.meta.url)),
-    env: process.env,
+    env: { ...process.env, ...(decisions ? {
+      AI_DECISION_PROVIDER: "openai", AI_DECISION_API_URL: requiredEnv("DENSE_MEM_E2E_CONFLICT_PROVIDER_URL"),
+      AI_DECISION_API_KEY: "dense-mem-e2e-decision-key", AI_DECISION_MODEL: "gpt-6-luna",
+      AI_DECISION_MAX_INPUT_TOKENS: "32000", AI_DECISION_MAX_QUESTION_INPUT_TOKENS: "32000",
+    } : {}) },
     encoding: "utf8",
     timeout: 60_000,
   });
+  if (expectFailure) {
+    assert(result.status === 1, "required typed conflict refusal must fail the driver");
+    return { failed: true };
+  }
   if (result.status !== 0) {
     const details = [result.error?.message, result.stderr || result.stdout].filter(Boolean).join(": ");
     throw new Error(`live conflict review driver failed (${result.status}): ${redact(details)}`);

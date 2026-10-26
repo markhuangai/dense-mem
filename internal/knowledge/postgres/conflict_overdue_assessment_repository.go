@@ -104,7 +104,7 @@ func (r *Store) ReserveOverdueConflictAssessment(
 		if err != nil {
 			return err
 		}
-		if failureCount >= ConflictAssessmentMaxFailedDays {
+		if failureCount >= ConflictAssessmentMaxFailedDays && !input.RequireProvider {
 			assessmentAttemptID, err := latestFailedOverdueConflictAssessmentID(ctx, tx, input.TeamID, input.ConflictID, version, input.Model, input.PolicyVersion)
 			if err != nil {
 				return err
@@ -228,6 +228,12 @@ func (r *Store) CompleteOverdueConflictAssessment(
 		metadata := map[string]any{
 			"case_version":   input.CaseVersion,
 			"provider_turns": input.ProviderTurns,
+		}
+		if input.DecisionDiagnostics != nil {
+			metadata["decision_stage"] = input.DecisionDiagnostics
+			if input.DecisionDiagnostics.Action == "select_typed_position" {
+				metadata["confidence_kind"] = "decision_position_probability"
+			}
 		}
 		if input.SelectedPositionID != "" {
 			metadata["selected_position_id"] = input.SelectedPositionID

@@ -13,6 +13,7 @@ npm run --prefix .lint lint:lines
 node scripts/check-architecture.mjs
 node --test tests/uat/architecture_conformance.test.mjs
 node --test tests/uat/synchronous_write/*.test.mjs
+node --test tests/uat/decision_providers/*.test.mjs
 node --test tests/uat/embedding_upstream.test.mjs
 node --test tests/uat/ontology_organization_cleanup.test.mjs tests/eval/scripts/session_provider_proxy.test.mjs tests/eval/scripts/contextual_intake_v1.test.mjs
 scripts/static-analysis.sh

@@ -27,6 +27,8 @@ type rememberSynchronousProcessor struct {
 	ledger             rememberSynchronousLedger
 	catalog            rememberapp.SubmissionAssessmentCatalog
 	provider           assessor.Provider
+	decisions          modelprovider.DecisionProvider
+	decisionSettings   modelprovider.DecisionSettings
 	embedder           embeddingcontract.EmbeddingProviderInterface
 	limits             assessor.SemanticAssessmentLimits
 	metrics            observability.DiscoverabilityMetrics
@@ -48,6 +50,8 @@ type ProcessorDependencies struct {
 	Ledger              Persistence
 	Catalog             rememberapp.SubmissionAssessmentCatalog
 	Assessor            assessor.Provider
+	Decisions           modelprovider.DecisionProvider
+	DecisionSettings    modelprovider.DecisionSettings
 	Embedder            embeddingcontract.EmbeddingProviderInterface
 	Limits              assessor.SemanticAssessmentLimits
 	Metrics             observability.DiscoverabilityMetrics
@@ -74,6 +78,7 @@ func NewSynchronousProcessor(deps ProcessorDependencies) *rememberSynchronousPro
 		ledger: deps.Ledger, catalog: deps.Catalog, provider: deps.Assessor, embedder: deps.Embedder,
 		limits: deps.Limits, metrics: deps.Metrics, logger: deps.Logger, protector: deps.DiagnosticProtector,
 		isStaleInput: staleInput, commitFailureStage: deps.CommitFailureStage,
+		decisions: deps.Decisions, decisionSettings: deps.DecisionSettings,
 	}
 }
 

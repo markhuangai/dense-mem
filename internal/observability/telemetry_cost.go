@@ -14,12 +14,14 @@ const (
 	AIOperationDreamGeneration         = "dream_generation"
 	AIOperationEvidenceDiscovery       = "evidence_discovery"
 	AIOperationRecallEmbedding         = "recall_embedding"
+	AIOperationRecallReranking         = "recall_reranking"
 	AIOperationSearchDocumentEmbedding = "search_document_embedding"
 	AIOperationCommunitySummary        = "community_summary"
 	AIOperationOntologyOrganization    = "ontology_organization"
 
 	AIComponentVerifier  = "verifier"
 	AIComponentEmbedding = "embedding"
+	AIComponentDecision  = "decision"
 
 	AITokenSourceProvider  = "provider"
 	AITokenSourceTokenizer = "tokenizer"
@@ -140,7 +142,7 @@ func normalizeAIOperation(value string) string {
 
 func normalizeAIComponent(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case AIComponentVerifier, AIComponentEmbedding:
+	case AIComponentVerifier, AIComponentEmbedding, AIComponentDecision:
 		return strings.ToLower(strings.TrimSpace(value))
 	default:
 		return unknownMetricLabel

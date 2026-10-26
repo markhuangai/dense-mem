@@ -3,6 +3,14 @@
   "runtime": "production",
   "scenarios": [
     {
+      "name": "decision_providers",
+      "isolation": "exclusive",
+      "runtime": "production",
+      "helper_profiles": ["synchronous_write", "playwright"],
+      "timeout_minutes": 60,
+      "playwright": true
+    },
+    {
       "name": "langchain_retriever",
       "isolation": "exclusive",
       "runtime": "production",

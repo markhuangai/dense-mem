@@ -9,9 +9,10 @@ import (
 	"strings"
 	"time"
 
-	repository "github.com/markhuangai/dense-mem/internal/conflict/contract"
 	"github.com/markhuangai/dense-mem/internal/conflict/assessment"
+	repository "github.com/markhuangai/dense-mem/internal/conflict/contract"
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
 )
@@ -55,6 +56,9 @@ type metricsProvider interface {
 }
 
 type Dependencies struct {
+	Decisions        modelprovider.DecisionProvider
+	DecisionSettings modelprovider.DecisionSettings
+	Logger           observability.LogProvider
 	Repository       Repository
 	Provider         Provider
 	Embeddings       EmbeddingProvider
@@ -66,6 +70,9 @@ type Dependencies struct {
 }
 
 type Service struct {
+	decisions        modelprovider.DecisionProvider
+	decisionSettings modelprovider.DecisionSettings
+	logger           observability.LogProvider
 	repository       Repository
 	provider         Provider
 	embeddings       embeddingExecutor
@@ -143,6 +150,7 @@ func New(deps Dependencies) (*Service, error) {
 		provider.SetMetrics(metrics)
 	}
 	return &Service{
+		decisions: deps.Decisions, decisionSettings: deps.DecisionSettings, logger: deps.Logger,
 		repository:       deps.Repository,
 		provider:         deps.Provider,
 		embeddings:       semanticwrite.NewExecutor(conflictEmbeddingBatchProvider{provider: deps.Embeddings}),
@@ -220,14 +228,23 @@ func (s *Service) ReviewRelationshipConflictCase(
 		return s.applyResolutionResult(ctx, result, input, pending.AssessmentAttemptID, pending.Method, applied)
 	}
 
+	snapshot, snapshotErr := s.decisionSnapshot(ctx)
+	if snapshotErr != nil {
+		return nil, snapshotErr
+	}
+	reservationModel := s.provider.ModelName()
+	if snapshot != nil && snapshot.Effective.ConflictReview {
+		reservationModel = snapshot.Provider.Model
+	}
 	localNow := input.Now.In(s.location)
 	reservation, dossier, reserved, err := s.repository.ReserveOverdueConflictAssessment(ctx, repository.ReserveOverdueConflictAssessmentInput{
+		RequireProvider:     snapshot != nil && snapshot.Effective.ConflictReview,
 		TeamID:              input.TeamID,
 		ConflictID:          input.ConflictID,
 		ReviewRunID:         input.ReviewRunID,
 		WorkerID:            input.WorkerID,
 		LocalAssessmentDate: localNow,
-		Model:               s.provider.ModelName(),
+		Model:               reservationModel,
 		PolicyVersion:       domain.ConflictOverduePolicyVersion,
 	})
 	if err != nil {
@@ -252,8 +269,11 @@ func (s *Service) ReviewRelationshipConflictCase(
 
 	providerCtx := observability.WithMetricIdentity(ctx, input.TeamID, "")
 	providerCtx = observability.WithAIOperation(providerCtx, observability.AIOperationConflictReview, 1)
-	response, err := s.provider.AssessRelationshipConflict(providerCtx, prepared)
+	response, err := s.assessConflict(providerCtx, prepared, snapshot)
 	if err != nil {
+		if snapshot != nil && snapshot.Effective.ConflictReview {
+			return s.recordRequiredDecisionFailure(ctx, result, input, reservation, err, response.DecisionStage)
+		}
 		return s.recordAssessmentFailure(ctx, result, input, reservation, dossier, conflictAssessmentFailureClass(err))
 	}
 	return s.applyAssessmentResponse(ctx, result, input, reservation, dossier, response)
@@ -300,16 +320,20 @@ func (s *Service) applyAssessmentResponse(
 		if !valid {
 			return s.recordAssessmentFailure(ctx, result, input, reservation, dossier, "invalid_response")
 		}
-		if response.Confidence < AssessmentConfidenceThreshold {
+		if response.SelectionProbability == nil && response.Confidence < AssessmentConfidenceThreshold {
 			return s.recordAssessmentFailure(ctx, result, input, reservation, dossier, "below_confidence_threshold")
 		}
 		confidence := response.Confidence
+		if response.SelectionProbability != nil {
+			confidence = *response.SelectionProbability
+		}
 		if _, err := s.completeAssessment(ctx, input, reservation, repository.CompleteOverdueConflictAssessmentInput{
-			Decision:           "selected",
-			SelectedPositionID: positionID,
-			Confidence:         &confidence,
-			ProviderTurns:      response.ProviderTurns,
-			ResponseHash:       conflictAssessmentResponseHash(response),
+			Decision:            "selected",
+			SelectedPositionID:  positionID,
+			Confidence:          &confidence,
+			ProviderTurns:       response.ProviderTurns,
+			ResponseHash:        conflictAssessmentResponseHash(response),
+			DecisionDiagnostics: response.DecisionStage,
 		}); err != nil {
 			return s.handleAssessmentCompletionError(result, err)
 		}
@@ -333,10 +357,11 @@ func (s *Service) applyAssessmentResponse(
 	if response.Decision == conflictassessment.ConflictAssessmentDecisionAbstain && response.PositionID == nil && response.Confidence == 0 {
 		confidence := float64(0)
 		if _, err := s.completeAssessment(ctx, input, reservation, repository.CompleteOverdueConflictAssessmentInput{
-			Decision:      "abstained",
-			Confidence:    &confidence,
-			ProviderTurns: response.ProviderTurns,
-			ResponseHash:  conflictAssessmentResponseHash(response),
+			Decision:            "abstained",
+			Confidence:          &confidence,
+			ProviderTurns:       response.ProviderTurns,
+			ResponseHash:        conflictAssessmentResponseHash(response),
+			DecisionDiagnostics: response.DecisionStage,
 		}); err != nil {
 			return s.handleAssessmentCompletionError(result, err)
 		}
@@ -687,6 +712,10 @@ func conflictAssessmentResponseHash(response conflictassessment.ConflictAssessme
 		fmt.Sprintf("%.6f", response.Confidence),
 		strings.TrimSpace(response.Rationale),
 	}, "\x00")
+	if response.DecisionStage != nil {
+		stageHash, _ := modelprovider.DecisionInputHash(response.DecisionStage)
+		payload += "\x00" + stageHash
+	}
 	sum := sha256.Sum256([]byte(payload))
 	return "sha256:" + hex.EncodeToString(sum[:])
 }

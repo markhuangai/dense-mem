@@ -212,10 +212,10 @@ func semanticAssessmentResponseForCorrection(
 			fmt.Sprintf("must be less than or equal to %d", limits.MaxOutputTokens),
 		)}, "response_output_tokens"
 	}
-	if validationErrors := assessor.ValidateSemanticAssessmentResponseRaw([]byte(result.Content)); len(validationErrors) > 0 {
+	if validationErrors := assessor.ValidateSemanticAssessmentResponseRaw([]byte(result.Content)); req.DecisionRouting == nil && len(validationErrors) > 0 {
 		return assessor.SemanticAssessmentResponse{}, validationErrors, "response_json"
 	}
-	response, err := assessor.DecodeSemanticAssessmentResponseJSON([]byte(result.Content), limits)
+	response, err := assessor.DecodeSemanticAssessmentGeneration([]byte(result.Content), req, limits)
 	if err != nil {
 		field := "response"
 		message := "must be one complete JSON object matching the required field types"

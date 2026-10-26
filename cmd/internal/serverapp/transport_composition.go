@@ -67,6 +67,7 @@ type transportCompositionInputs struct {
 	auditService            accessservice.AuditService
 	securityService         settings.SecurityService
 	appConfig               settings.AppConfigService
+	decisionConfig          settings.DecisionConfigService
 	operationLogs           operations.OperationLogReader
 	operationLogHealth      func(context.Context) error
 	usageMetrics            operations.UsageMetricsService
@@ -392,6 +393,7 @@ func buildTransportComposition(deps transportCompositionInputs) (*transportCompo
 				Directory:           deps.directoryIdentity,
 				ControlIdentity:     deps.controlIdentity,
 				Config:              deps.appConfig,
+				Decisions:           deps.decisionConfig,
 				Logs:                deps.operationLogs,
 				RecallFeedback:      deps.recallFeedback,
 				Dreams:              deps.controlDream,

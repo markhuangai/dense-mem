@@ -74,7 +74,7 @@ func (v *OpenAIAssessor) Assess(ctx context.Context, req assessor.SemanticAssess
 		id:       strconv.FormatUint(atomic.AddUint64(&openAISemanticAssessmentSessionSequence, 1), 10),
 		prepared: prepared,
 		messages: []openAIVerifierMessage{
-			{Role: "system", Content: assessor.SemanticAssessmentSystemPrompt},
+			{Role: "system", Content: assessor.SemanticAssessmentSystemPrompt + assessor.SemanticAssessmentGenerationInstruction(prepared)},
 			{Role: "user", Content: string(userJSON)},
 		},
 	}
@@ -116,7 +116,7 @@ func (v *OpenAIAssessor) Repair(ctx context.Context, sessionRef assessor.Semanti
 			FailureClass: ProviderFailureClassRequestInvalid,
 		}
 	}
-	if semanticAssessmentRequestEnvelope(session.prepared) != semanticAssessmentRequestEnvelope(prepared) {
+	if semanticAssessmentRequestEnvelope(session.prepared) != semanticAssessmentRequestEnvelope(prepared) || !assessor.SameSemanticAssessmentRouting(session.prepared.DecisionRouting, prepared.DecisionRouting) {
 		return assessor.SemanticAssessmentTurn{}, &ProviderError{
 			Provider:     openAIVerifierProvider,
 			Message:      "semantic assessment repair changed the submitted envelope",
@@ -132,7 +132,7 @@ func (v *OpenAIAssessor) Repair(ctx context.Context, sessionRef assessor.Semanti
 	}
 	correctionJSON, err := json.Marshal(semanticAssessmentSessionRepair{
 		ValidationErrors: boundedSemanticAssessmentCorrectionErrors(repair.ValidationErrors),
-		Instruction:      semanticAssessmentSessionRepairInstruction,
+		Instruction:      semanticAssessmentSessionRepairInstruction + assessor.SemanticAssessmentGenerationInstruction(prepared),
 	})
 	if err != nil {
 		return assessor.SemanticAssessmentTurn{}, &ProviderError{
@@ -226,7 +226,7 @@ func (v *OpenAIAssessor) runRememberAssessmentTurn(
 		v.model,
 		assessor.SemanticAssessmentSchemaName,
 		messages,
-		assessor.SemanticAssessmentResponseSchemaWithLimits(v.assessmentLimits),
+		assessor.SemanticAssessmentGenerationSchema(prepared, v.assessmentLimits),
 		v.disableTemperature,
 		v.assessmentLimits.Tokenizer,
 	)
@@ -275,7 +275,7 @@ func (v *OpenAIAssessor) runRememberAssessmentTurn(
 		ctx,
 		v.model,
 		assessor.SemanticAssessmentSchemaName,
-		assessor.SemanticAssessmentResponseSchemaWithLimits(v.assessmentLimits),
+		assessor.SemanticAssessmentGenerationSchema(prepared, v.assessmentLimits),
 		messages,
 	)
 	if err != nil {

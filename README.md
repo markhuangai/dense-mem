@@ -213,6 +213,74 @@ Verifier and assessor calls send `temperature: 0` by default. Set
 `AI_VERIFIER_DISABLE_TEMPERATURE=true` to omit the field for providers or models
 that reject temperature.
 
+### Optional typed decisions
+
+Configure an independent decision provider to enable evidence deduplication,
+security review, conflict review, and recall reranking automatically:
+
+```dotenv
+AI_DECISION_PROVIDER=openai
+AI_DECISION_API_URL=https://api.openai.com/v1
+AI_DECISION_API_KEY=<private-credential>
+AI_DECISION_MODEL=gpt-6-luna
+AI_DECISION_MAX_INPUT_TOKENS=32000
+AI_DECISION_TIMEOUT_SECONDS=10
+AI_DECISION_MAX_CONCURRENCY=4
+```
+
+The 32k input setting is a conservative deployment limit. OpenAI's Decisions
+endpoint supports up to 400 questions per request; its endpoint-specific token
+ceiling is unconfirmed. The general model window is not an endpoint guarantee.
+For Jev, use `AI_DECISION_PROVIDER=typesafe`,
+`AI_DECISION_API_URL=https://api.typesafe.ai/v1`, and pinned
+`AI_DECISION_MODEL=jev-1.14.0`. Set request and question limits separately with
+`AI_DECISION_MAX_INPUT_TOKENS=64000` and
+`AI_DECISION_MAX_QUESTION_INPUT_TOKENS=32000`. Jev's explicit
+`AI_DECISION_LONG_CONTEXT_ENABLED=true` opt-in raises both allowed ceilings to
+262000, with documented latency and accuracy trade-offs. Input counts use the
+configured verifier tokenizer as estimates; reported usage is recorded separately.
+
+An unset provider or `AI_DECISION_PROVIDER=disabled` retains existing behavior.
+Enabled providers require complete independent credentials and limits; decision
+credentials never inherit from generation. Under **Settings → Decisions**, save
+individual task switches in PostgreSQL. Missing preferences default to on after
+a successful settings read; explicit off survives restarts and provider changes.
+There is no workload environment variable. Changes reach new operations through
+the five-second settings refresh; running operations retain one revision. Refresh
+failures retain the last valid snapshot marked stale, and required work fails if
+no valid snapshot exists. The private control listener exposes strict
+`GET`/`PATCH /control/api/config/decisions` using the existing configuration item
+format and `{ "data": ... }` envelope. It never returns provider credentials.
+
+Decisions replace only confident bounded tasks. Deduplication requires exactly
+one equivalence probability ≥0.99 with every alternative ≤0.01; all ≤0.01 means
+new evidence. Security passes only when every hazard probability is ≤0.01.
+Conflict selection requires both position and sufficiently-supported
+probabilities ≥0.99. Uncertainty retains complete generative review and exact
+security spans. Generative extraction and other semantic fields remain required.
+Required decision failures are visible and never silently invoke generation.
+Recall scores hydrated authorized shortlists of at most 50 evidence and 20
+Relationships per space, outside transactions; optional failures retain the
+original ranking with an explicit degradation. Existing temporal, grouping, and
+cross-space fusion rules still apply. Reranking adds provider work; no live speed
+or quality improvement is claimed.
+
+Set `LOG_LEVEL=debug` for bounded, credential-protected payloads, question IDs,
+criteria, authorized references, distributions, thresholds, and ranking changes.
+Info records task actions, uncertainty routing, settings revisions, usage, and
+durations; warnings identify stale settings, rate limiting, overload, refusals, context
+rejection, missing usage, and optional degradation. Errors identify required
+provider, configuration, validation, and persistence failures. Correlation and
+operation IDs connect task, exchange, routing, and existing commit logs. Logging
+works with telemetry disabled. Diagnose recorded operations and exchanges; this
+feature adds no probe endpoints or diagnostic model calls.
+
+See [ADR 0015](adr/0015-optional-typed-decisions.md) and the
+[validation record](tests/eval/decision-providers.md). Live OpenAI comparison is
+deferred by maintainer direction because credentials are unavailable; Jev live
+quality and latency remain pending access. HTTP fixtures do not establish model
+accuracy or performance.
+
 ### Fully Local Setup (Ollama)
 
 Any OpenAI-compatible endpoint can provide embeddings and verification. With

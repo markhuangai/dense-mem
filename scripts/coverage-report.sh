@@ -221,8 +221,8 @@ run_complete_part() {
 			-count=1 -timeout=15m -covermode=atomic -coverpkg="${coverpkg}" -coverprofile="${community_scale_profile}"
 		DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test -tags integration ./internal/service \
 			-run '^TestAudit' -count=1 -timeout=5m -covermode=atomic -coverpkg="${coverpkg}" -coverprofile="${audit_profile}"
-		DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 DENSE_MEM_REQUIRE_POSTGRES_TESTS=1 go test -tags integration ./internal/knowledge/postgres \
-			-run '^TestSession' -count=1 -timeout=15m -covermode=atomic -coverpkg="${coverpkg}" -coverprofile="${session_profile}"
+		DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 DENSE_MEM_REQUIRE_POSTGRES_TESTS=1 go test -tags integration ./internal/knowledge/postgres ./internal/settings \
+			-run '^Test(Session|Decision)' -count=1 -timeout=15m -covermode=atomic -coverpkg="${coverpkg}" -coverprofile="${session_profile}"
 		seal_complete_part postgres "${postgres_profiles[@]}"
 	fi
 }
