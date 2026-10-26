@@ -67,7 +67,7 @@ func newPairedServiceFixture(t *testing.T, side string) *pairedServiceFixture {
 	ctx := context.Background()
 	teamID, ownerID := uuid.New(), uuid.New()
 	require.NoError(t, accesspg.NewTeamRepository(admin, rls).Create(ctx, &domain.Team{ID: teamID, Name: "paired-" + uuid.NewString()}))
-	credential := &domain.Credential{ID: ownerID, TeamID: teamID, Name: "paired owner", KeyHash: "synthetic", KeyPrefix: strings.ReplaceAll(ownerID.String(), "-", "")[:24], KeySuffix: "fixture", Scopes: []string{"read", "write"}}
+	credential := &domain.Credential{ID: ownerID, TeamID: teamID, Name: "paired owner", KeyHash: "synthetic", KeyPrefix: strings.ReplaceAll(ownerID.String(), "-", "")[:24], KeySuffix: "owner", Scopes: []string{"read", "write"}}
 	require.NoError(t, accesspg.NewCredentialRepository(admin, rls, nil).CreateCredential(ctx, credential))
 	model, dimensions := ensureRememberProcessorIntegrationSearchContract(t, admin, rls)
 	store := knowledgepg.NewStore(app, rls, knowledge.ConflictRuntimeConfig{})
