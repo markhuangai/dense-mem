@@ -66,10 +66,14 @@ canonical writer changes are separated from discovery's own effects.
 ## Validation and retained evidence
 
 All new database cases are registered in the ontology precheck inventory.
-Shard 0 runs the complete measurement alongside the large-backlog case; shard 1
-runs the remaining ontology cases, including vocabulary/source fences. Development
-E2E runs shards 0 and 1 plus `ontology_organization,ontology_management` on the
-exact pushed source SHA. The expensive measurement is omitted only from duplicate
+Shard 0 runs the large-backlog and vocabulary/source-fence cases; shard 1 runs
+the complete measurement; shard 2 runs the remaining ontology cases. Shards 3–5
+retain all other registered capabilities. Development E2E runs all six shards plus
+`ontology_organization,ontology_management` on the exact pushed source SHA. All six
+shards must finish within 30 minutes; the existing 30-minute job timeouts and
+27-minute execution bounds remain unchanged. The allocation and bound were
+[directly approved](https://github.com/markhuangai/dense-mem/issues/633#issuecomment-6440871680).
+The expensive measurement is omitted only from duplicate
 coverage execution; the other `Revalidation.*` correctness cases retain observer
 coverage, and the complete measurement remains mandatory in PostgreSQL E2E.
 Keep the run URL, trusted workflow revision, source SHA, production image digest,

@@ -1211,8 +1211,10 @@ test("six precheck shards preserve every real runner selection exactly once", as
   assert.equal(selections.length, 6);
   const dedicated = [
     "repository/TestOntologyMaintenanceLargeBacklogAndFairTurns",
-    "repository/TestOntologyMaintenanceRevalidationDiscoveryMeasurement",
+    "repository/TestOntologyOrganizationVocabularyAndSourceFences",
   ];
+  const measurement = "repository/TestOntologyMaintenanceRevalidationDiscoveryMeasurement";
+  assert.equal(selections[1], `cases:${measurement}`);
   assert.equal(selections[0], `cases:${dedicated.join(",")}`);
   const inventory = [];
   const directory = join(root, "scripts/e2e-db-cases");
@@ -1227,9 +1229,9 @@ test("six precheck shards preserve every real runner selection exactly once", as
     const ids = selected.stdout.trim().split(/\r?\n/);
     assert.ok(ids.length > 0);
     if (selection === selections[0]) assert.deepEqual(ids, dedicated);
-    if (selection === selections[1]) {
-      assert.ok(dedicated.every((id) => !ids.includes(id)));
-      assert.ok(ids.includes("repository/TestOntologyOrganizationVocabularyAndSourceFences"));
+    if (selection === selections[1]) assert.deepEqual(ids, [measurement]);
+    if (selection === selections[2]) {
+      assert.ok([...dedicated, measurement].every((id) => !ids.includes(id)));
     }
     actual.push(...ids);
   }

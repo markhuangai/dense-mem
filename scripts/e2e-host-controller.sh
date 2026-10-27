@@ -555,17 +555,19 @@ const ontologyIndex = records.findIndex((record) => record.capability === "ontol
 const isolateOntology = ontologyIndex >= 0 && records.length >= 3;
 const caseSelections = [];
 if (shardCount === 6) {
-  // Keep the two longest ontology cases together so the remaining cohort fits its fixed deadline.
+  // The complete measurement needs its own deadline alongside the two existing ontology selections.
   const dedicated = [
     "repository/TestOntologyMaintenanceLargeBacklogAndFairTurns",
-    "repository/TestOntologyMaintenanceRevalidationDiscoveryMeasurement",
+    "repository/TestOntologyOrganizationVocabularyAndSourceFences",
   ];
+  const measurement = "repository/TestOntologyMaintenanceRevalidationDiscoveryMeasurement";
+  const isolated = [...dedicated, measurement];
   const ontology = records[ontologyIndex];
-  if (!ontology || dedicated.some((id) => !ontology.caseIds.includes(id)) || ontology.caseIds.length <= dedicated.length || records.length < 5) {
-    throw new Error("six precheck shards require both long ontology cases, remaining ontology, and four populated capability groups");
+  if (!ontology || isolated.some((id) => !ontology.caseIds.includes(id)) || ontology.caseIds.length <= isolated.length || records.length < 5) {
+    throw new Error("six precheck shards require both long ontology cases, discovery measurement, remaining ontology, and four populated capability groups");
   }
-  caseSelections.push(dedicated.join(","), ontology.caseIds.filter((id) => !dedicated.includes(id)).sort().join(","));
-  groups.splice(0, 2);
+  caseSelections.push(dedicated.join(","), measurement, ontology.caseIds.filter((id) => !isolated.includes(id)).sort().join(","));
+  groups.splice(0, 3);
 }
 if (isolateOntology) {
   records.splice(ontologyIndex, 1);
