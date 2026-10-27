@@ -1,0 +1,733 @@
+{
+  "schema_version": 1,
+  "issue": 633,
+  "investigation_only": true,
+  "source_sha": "484be6dd8762294e177d31059436ea2260d050cf",
+  "base_sha": "76c1fa5a2cd714e177fc3ce60a00f88c982f8f28",
+  "validation": {
+    "run_id": 40504929103,
+    "url": "https://github.com/markhuangai/dense-mem/actions/runs/40504929103",
+    "trusted_workflow_sha": "c4632748df62fc183ec3f9e76e52357a817dcbfb",
+    "image_digest": "sha256:02a99f873c80294da8ab4d6605b107327d972af57bc8d28ae27911e71c9c93bf",
+    "scenarios": [
+      "ontology_organization",
+      "ontology_management"
+    ],
+    "postgres_shards": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "registered_cases_passed": 654,
+    "shard_seconds": {
+      "Development PostgreSQL shard 2": 1427.0,
+      "Development PostgreSQL shard 3": 1162.0,
+      "Development PostgreSQL shard 5": 1484.0,
+      "Development PostgreSQL shard 4": 1203.0,
+      "Development PostgreSQL shard 0": 802.0,
+      "Development PostgreSQL shard 1": 817.0
+    },
+    "all_shards_span_seconds": 1484.0,
+    "required_cases": {
+      "TestOntologyMaintenanceRevalidationDiscoveryConcurrency": {
+        "result": "pass",
+        "seconds": 27.13
+      },
+      "TestOntologyMaintenanceRevalidationDiscoveryCancellation": {
+        "result": "pass",
+        "seconds": 11.56
+      },
+      "TestOntologyMaintenanceRevalidationDiscoveryIsolation": {
+        "result": "pass",
+        "seconds": 3.89
+      },
+      "TestOntologyMaintenanceRevalidationDiscoveryLockCancellation": {
+        "result": "pass",
+        "seconds": 3.87
+      },
+      "TestOntologyMaintenanceRevalidationDiscoveryMeasurement": {
+        "result": "pass",
+        "seconds": 716.91
+      }
+    },
+    "cleanup": {
+      "run_id": 40508526950,
+      "deleted": [
+        {
+          "version_id": 1454239140,
+          "digest": "sha256:02a99f873c80294da8ab4d6605b107327d972af57bc8d28ae27911e71c9c93bf",
+          "run_id": 40504929103,
+          "run_attempt": 1
+        }
+      ],
+      "retained": []
+    },
+    "log_sha256": {
+      "development-40504929103-job-122192499110.log": "6e399ed0bb5c3919aaa8ab3864cd8cf5e96bc6bd609f711198d38af00bf4d09d",
+      "development-40504929103-job-122192499166.log": "218c51ebcac6e4832149466ffa58d497d7d79db542cd93fb81b33db26c323025",
+      "development-40504929103-job-122192499169.log": "aca4d37f516b79d3f717b3a7ea4df402d22690e7915aebe88fd04e6dd73e1f4c",
+      "development-40504929103-job-122192499178.log": "06b37c6f8b1c81cbf95d6469d1813cb4a8286e2bdf80ca51139b9a1fe9f383d7",
+      "development-40504929103-job-122192499210.log": "dd6c97fd02882d1f106ea1eff4532d075baa68fdbe473920d4656ce827b32cc0",
+      "development-40504929103-job-122192499251.log": "912949df677d2fbbddd9cb501a30914f6db9172854c2551a69e0c1aab127f5eb"
+    }
+  },
+  "environment": {
+    "runner": "GitHub Actions ubuntu-latest, x86-64, rootless Docker",
+    "go_test_image_default": "golang:1.26.9-bookworm",
+    "postgres_test_image": "pgvector/pgvector:0.8.2-pg18-trixie",
+    "provider": "deterministic HTTP fixture",
+    "sql_timing": "GORM Trace excludes row decoding and transaction begin/commit; page and validator timers include their complete calls"
+  },
+  "protocol": {
+    "fixture": "discovery-receipts-v1",
+    "workloads_sha256": "b89ed9ee15221d3b32ffe48e4efba2f69b7974c16968b40fafa0534a801d721a",
+    "source_files_sha256": {
+      "maintenance_discovery.go": "af9df1b5b4985dfff12e2dd6b6435bed73e058b02ec39a025868991ff4b7ee6a",
+      "maintenance_discovery_concurrency_integration_test.go": "70b84daa70dca05939f69ab0958b2a5ff753adeccc001c38bd2fd0f9a378482f",
+      "maintenance_discovery_fixture_test.go": "a1c874fda056700ba032dfc5b904a328bb261e3bb90394a989c9a04c41310d28",
+      "maintenance_discovery_isolation_integration_test.go": "7e319f4a3aa49bee689fe94af6a1c6920d6b1187b5a6931f2fac856593bda759",
+      "maintenance_discovery_measurement_integration_test.go": "3ee323caf57a7d963de84270544256381d4887457e353a9d8f04bbb2c8729198",
+      "maintenance_discovery_observation.go": "926d7baae44f6c9da355fae9ee6571a5b92161b282d044e5ecdb25b8a0a461bc",
+      "organization.go": "84fbc0acd5505fad15fd52031df9f25c162e897b355f4c6b4922bf8855e55edd",
+      "source_queries.go": "ab8522223c52a53b39cb76b8c1d9ea4256c7e4ab3943553ba7bf63eb10718d16"
+    },
+    "sources_per_page": 100,
+    "fresh_repetitions_per_workload": 3,
+    "warmup_pages_per_repetition": 2,
+    "measured_pairs_per_repetition": 5,
+    "observation_modes": [
+      "disabled",
+      "enabled"
+    ],
+    "records": {
+      "protocol": 1,
+      "measurement": 90,
+      "coverage": 18,
+      "concurrency": 7,
+      "cancellation": 3,
+      "isolation": 1,
+      "lock_cancellation": 1
+    },
+    "p95_method": "nearest rank over 15 measured pages per mode",
+    "paired_overhead": "median of (enabled page / disabled paired page - 1) * 100",
+    "sql_counter_enabled_in_both_modes": true,
+    "timing_pass_fail_threshold": null
+  },
+  "workloads": [
+    {
+      "workload": "overlap-64",
+      "modes": {
+        "disabled": {
+          "samples": 15,
+          "page_median_ms": 613.275,
+          "page_p95_ms": 6121.421,
+          "sql_median_ms": 553.295,
+          "sql_statements": [
+            1335
+          ]
+        },
+        "enabled": {
+          "samples": 15,
+          "page_median_ms": 613.308,
+          "page_p95_ms": 5288.089,
+          "sql_median_ms": 554.259,
+          "sql_statements": [
+            1335
+          ],
+          "receipt_counts": [
+            64
+          ],
+          "validation_median_ms": 531.801,
+          "repeated_validation_median_ms": 216.29,
+          "receipt_sql_statements": [
+            1025
+          ],
+          "receipt_sql_median_ms": 488.117,
+          "repeated_validation_page_share_median_percent": 35.27255685461989,
+          "receipt_widths": {
+            "sources=1,dependencies=1": 17,
+            "sources=1,dependencies=2": 35,
+            "sources=2,dependencies=1": 1,
+            "sources=3,dependencies=1": 2,
+            "sources=3,dependencies=4": 6,
+            "sources=5,dependencies=6": 1,
+            "sources=8,dependencies=9": 1,
+            "sources=9,dependencies=10": 1
+          },
+          "call_counts": {
+            "completed": 100,
+            "current": 100,
+            "errors": 0,
+            "refreshed": 100,
+            "selected": 100,
+            "source_errors": 0,
+            "stale": 0,
+            "started": 100
+          }
+        }
+      },
+      "paired_observation_overhead_median_percent": -0.060519503407530095,
+      "repetitions": [
+        {
+          "repetition": 1,
+          "page_median_disabled_ms": 657.97,
+          "page_median_enabled_ms": 655.347
+        },
+        {
+          "repetition": 2,
+          "page_median_disabled_ms": 608.97,
+          "page_median_enabled_ms": 608.13
+        },
+        {
+          "repetition": 3,
+          "page_median_disabled_ms": 612.003,
+          "page_median_enabled_ms": 603.95
+        }
+      ]
+    },
+    {
+      "workload": "shared-5",
+      "modes": {
+        "disabled": {
+          "samples": 15,
+          "page_median_ms": 1332.093,
+          "page_p95_ms": 1398.758,
+          "sql_median_ms": 1064.012,
+          "sql_statements": [
+            1510
+          ]
+        },
+        "enabled": {
+          "samples": 15,
+          "page_median_ms": 1325.053,
+          "page_p95_ms": 1402.468,
+          "sql_median_ms": 1058.968,
+          "sql_statements": [
+            1510
+          ],
+          "receipt_counts": [
+            5
+          ],
+          "validation_median_ms": 1141.06,
+          "repeated_validation_median_ms": 1082.146,
+          "receipt_sql_statements": [
+            1200
+          ],
+          "receipt_sql_median_ms": 915.957,
+          "repeated_validation_page_share_median_percent": 81.6306474437154,
+          "receipt_widths": {
+            "sources=20,dependencies=21": 5
+          },
+          "call_counts": {
+            "completed": 100,
+            "current": 100,
+            "errors": 0,
+            "refreshed": 100,
+            "selected": 100,
+            "source_errors": 0,
+            "stale": 0,
+            "started": 100
+          }
+        }
+      },
+      "paired_observation_overhead_median_percent": -0.2583753748510609,
+      "repetitions": [
+        {
+          "repetition": 1,
+          "page_median_disabled_ms": 1370.615,
+          "page_median_enabled_ms": 1325.053
+        },
+        {
+          "repetition": 2,
+          "page_median_disabled_ms": 1332.093,
+          "page_median_enabled_ms": 1342.209
+        },
+        {
+          "repetition": 3,
+          "page_median_disabled_ms": 1294.531,
+          "page_median_enabled_ms": 1302.478
+        }
+      ]
+    },
+    {
+      "workload": "unique",
+      "modes": {
+        "disabled": {
+          "samples": 15,
+          "page_median_ms": 702.765,
+          "page_p95_ms": 761.522,
+          "sql_median_ms": 655.659,
+          "sql_statements": [
+            1410
+          ]
+        },
+        "enabled": {
+          "samples": 15,
+          "page_median_ms": 701.978,
+          "page_p95_ms": 733.701,
+          "sql_median_ms": 654.957,
+          "sql_statements": [
+            1410
+          ],
+          "receipt_counts": [
+            100
+          ],
+          "validation_median_ms": 616.083,
+          "repeated_validation_median_ms": 0,
+          "receipt_sql_statements": [
+            1100
+          ],
+          "receipt_sql_median_ms": 583.463,
+          "repeated_validation_page_share_median_percent": 0.0,
+          "receipt_widths": {
+            "sources=1,dependencies=2": 100
+          },
+          "call_counts": {
+            "completed": 100,
+            "current": 100,
+            "errors": 0,
+            "refreshed": 100,
+            "selected": 100,
+            "source_errors": 0,
+            "stale": 0,
+            "started": 100
+          }
+        }
+      },
+      "paired_observation_overhead_median_percent": 0.19625137148642224,
+      "repetitions": [
+        {
+          "repetition": 1,
+          "page_median_disabled_ms": 653.248,
+          "page_median_enabled_ms": 658.878
+        },
+        {
+          "repetition": 2,
+          "page_median_disabled_ms": 702.765,
+          "page_median_enabled_ms": 704.241
+        },
+        {
+          "repetition": 3,
+          "page_median_disabled_ms": 719.399,
+          "page_median_enabled_ms": 723.18
+        }
+      ]
+    }
+  ],
+  "coverage_and_provider_usage": [
+    {
+      "workload": "unique",
+      "repetition": 1,
+      "provider_calls": 100,
+      "canonical_sha256": "ed8cd99a11abcd79a704c37a02fb1a87d9f61acc981482a292f7266275184575",
+      "receipts_unchanged": true,
+      "attempts_without_reported_usage": 0,
+      "claimed_source_appearances": 0,
+      "current_source_counts": {
+        "eligible": 100,
+        "organized": 100,
+        "pending": 0,
+        "ambiguous": 0,
+        "failed": 0
+      },
+      "definition_markers": 0,
+      "distinct_assessments": 100,
+      "prepared_batches": 0,
+      "provider_attempts": 100,
+      "receipt_rows": 100,
+      "reported_input_tokens": 1700,
+      "reported_output_tokens": 900
+    },
+    {
+      "workload": "unique",
+      "repetition": 2,
+      "provider_calls": 100,
+      "canonical_sha256": "27bc725c76638b1cc192c5f354e1dbb062c34af0223a7e44d863546772a7d169",
+      "receipts_unchanged": true,
+      "attempts_without_reported_usage": 0,
+      "claimed_source_appearances": 0,
+      "current_source_counts": {
+        "eligible": 100,
+        "organized": 100,
+        "pending": 0,
+        "ambiguous": 0,
+        "failed": 0
+      },
+      "definition_markers": 0,
+      "distinct_assessments": 100,
+      "prepared_batches": 0,
+      "provider_attempts": 100,
+      "receipt_rows": 100,
+      "reported_input_tokens": 1700,
+      "reported_output_tokens": 900
+    },
+    {
+      "workload": "unique",
+      "repetition": 3,
+      "provider_calls": 100,
+      "canonical_sha256": "6fbff952456740c84495380c3df817a858628ec2be8dec780b4c5e33aa4c1128",
+      "receipts_unchanged": true,
+      "attempts_without_reported_usage": 0,
+      "claimed_source_appearances": 0,
+      "current_source_counts": {
+        "eligible": 100,
+        "organized": 100,
+        "pending": 0,
+        "ambiguous": 0,
+        "failed": 0
+      },
+      "definition_markers": 0,
+      "distinct_assessments": 100,
+      "prepared_batches": 0,
+      "provider_attempts": 100,
+      "receipt_rows": 100,
+      "reported_input_tokens": 1700,
+      "reported_output_tokens": 900
+    },
+    {
+      "workload": "overlap-64",
+      "repetition": 1,
+      "provider_calls": 90,
+      "canonical_sha256": "7e8da25c6965026bed8ae8d44b1c0ecb9781dedfe96a53538e199c9a8dac6ea3",
+      "receipts_unchanged": true,
+      "attempts_without_reported_usage": 0,
+      "claimed_source_appearances": 0,
+      "current_source_counts": {
+        "eligible": 100,
+        "organized": 75,
+        "pending": 0,
+        "ambiguous": 10,
+        "failed": 15
+      },
+      "definition_markers": 0,
+      "distinct_assessments": 64,
+      "prepared_batches": 0,
+      "provider_attempts": 90,
+      "receipt_rows": 64,
+      "reported_input_tokens": 1530,
+      "reported_output_tokens": 810
+    },
+    {
+      "workload": "overlap-64",
+      "repetition": 2,
+      "provider_calls": 90,
+      "canonical_sha256": "bec0322a87569f24fb4644f4ab018eb986f51af6f9a2577cdf44ca617ba297aa",
+      "receipts_unchanged": true,
+      "attempts_without_reported_usage": 0,
+      "claimed_source_appearances": 0,
+      "current_source_counts": {
+        "eligible": 100,
+        "organized": 75,
+        "pending": 0,
+        "ambiguous": 10,
+        "failed": 15
+      },
+      "definition_markers": 0,
+      "distinct_assessments": 64,
+      "prepared_batches": 0,
+      "provider_attempts": 90,
+      "receipt_rows": 64,
+      "reported_input_tokens": 1530,
+      "reported_output_tokens": 810
+    },
+    {
+      "workload": "overlap-64",
+      "repetition": 3,
+      "provider_calls": 90,
+      "canonical_sha256": "c97129b353457576f2bf4d7a96604c60cd262cd5d9f147c39d437e1732125d69",
+      "receipts_unchanged": true,
+      "attempts_without_reported_usage": 0,
+      "claimed_source_appearances": 0,
+      "current_source_counts": {
+        "eligible": 100,
+        "organized": 75,
+        "pending": 0,
+        "ambiguous": 10,
+        "failed": 15
+      },
+      "definition_markers": 0,
+      "distinct_assessments": 64,
+      "prepared_batches": 0,
+      "provider_attempts": 90,
+      "receipt_rows": 64,
+      "reported_input_tokens": 1530,
+      "reported_output_tokens": 810
+    },
+    {
+      "workload": "shared-5",
+      "repetition": 1,
+      "provider_calls": 5,
+      "canonical_sha256": "3caa9e3f52102606bc36484cd116e061d686c4730e64135de5c930131c15c596",
+      "receipts_unchanged": true,
+      "attempts_without_reported_usage": 0,
+      "claimed_source_appearances": 0,
+      "current_source_counts": {
+        "eligible": 100,
+        "organized": 100,
+        "pending": 0,
+        "ambiguous": 0,
+        "failed": 0
+      },
+      "definition_markers": 0,
+      "distinct_assessments": 5,
+      "prepared_batches": 0,
+      "provider_attempts": 5,
+      "receipt_rows": 5,
+      "reported_input_tokens": 85,
+      "reported_output_tokens": 45
+    },
+    {
+      "workload": "shared-5",
+      "repetition": 2,
+      "provider_calls": 5,
+      "canonical_sha256": "bb3e862927ae358ad348e3ae00ef3e8d571de87e3742941e2cb993a86cb3b79c",
+      "receipts_unchanged": true,
+      "attempts_without_reported_usage": 0,
+      "claimed_source_appearances": 0,
+      "current_source_counts": {
+        "eligible": 100,
+        "organized": 100,
+        "pending": 0,
+        "ambiguous": 0,
+        "failed": 0
+      },
+      "definition_markers": 0,
+      "distinct_assessments": 5,
+      "prepared_batches": 0,
+      "provider_attempts": 5,
+      "receipt_rows": 5,
+      "reported_input_tokens": 85,
+      "reported_output_tokens": 45
+    },
+    {
+      "workload": "shared-5",
+      "repetition": 3,
+      "provider_calls": 5,
+      "canonical_sha256": "f590191eeff4bd404be34e8c8793ba77f5b1cbe56f4b635ec3b539c759841f4a",
+      "receipts_unchanged": true,
+      "attempts_without_reported_usage": 0,
+      "claimed_source_appearances": 0,
+      "current_source_counts": {
+        "eligible": 100,
+        "organized": 100,
+        "pending": 0,
+        "ambiguous": 0,
+        "failed": 0
+      },
+      "definition_markers": 0,
+      "distinct_assessments": 5,
+      "prepared_batches": 0,
+      "provider_attempts": 5,
+      "receipt_rows": 5,
+      "reported_input_tokens": 85,
+      "reported_output_tokens": 45
+    }
+  ],
+  "concurrent_writers": [
+    {
+      "change": "definition",
+      "page_rejected": false,
+      "provider_calls_added": 0,
+      "receipts_unchanged": true,
+      "writer_committed_between_checks": false,
+      "writer_waited_for_lock": true,
+      "receipt_call_outcomes": {
+        "completed": 2,
+        "current": 2,
+        "errors": 0,
+        "refreshed": 2,
+        "selected": 2,
+        "source_errors": 0,
+        "stale": 0,
+        "started": 2
+      }
+    },
+    {
+      "change": "new_vocabulary",
+      "page_rejected": false,
+      "provider_calls_added": 0,
+      "receipts_unchanged": true,
+      "writer_committed_between_checks": true,
+      "writer_waited_for_lock": false,
+      "receipt_call_outcomes": {
+        "completed": 2,
+        "current": 1,
+        "errors": 0,
+        "refreshed": 2,
+        "selected": 2,
+        "source_errors": 0,
+        "stale": 1,
+        "started": 2
+      }
+    },
+    {
+      "change": "source",
+      "page_rejected": false,
+      "provider_calls_added": 0,
+      "receipts_unchanged": true,
+      "writer_committed_between_checks": true,
+      "writer_waited_for_lock": false,
+      "receipt_call_outcomes": {
+        "completed": 2,
+        "current": 1,
+        "errors": 0,
+        "refreshed": 2,
+        "selected": 2,
+        "source_errors": 0,
+        "stale": 1,
+        "started": 2
+      }
+    },
+    {
+      "change": "support",
+      "page_rejected": false,
+      "provider_calls_added": 0,
+      "receipts_unchanged": true,
+      "writer_committed_between_checks": true,
+      "writer_waited_for_lock": false,
+      "receipt_call_outcomes": {
+        "completed": 2,
+        "current": 1,
+        "errors": 0,
+        "refreshed": 2,
+        "selected": 2,
+        "source_errors": 0,
+        "stale": 1,
+        "started": 2
+      }
+    },
+    {
+      "change": "override",
+      "page_rejected": false,
+      "provider_calls_added": 0,
+      "receipts_unchanged": true,
+      "writer_committed_between_checks": true,
+      "writer_waited_for_lock": false,
+      "receipt_call_outcomes": {
+        "completed": 2,
+        "current": 1,
+        "errors": 0,
+        "refreshed": 2,
+        "selected": 2,
+        "source_errors": 0,
+        "stale": 1,
+        "started": 2
+      }
+    },
+    {
+      "change": "generation",
+      "page_rejected": true,
+      "provider_calls_added": 0,
+      "receipts_unchanged": true,
+      "writer_committed_between_checks": true,
+      "writer_waited_for_lock": false,
+      "receipt_call_outcomes": {
+        "completed": 1,
+        "current": 1,
+        "errors": 0,
+        "refreshed": 0,
+        "selected": 1,
+        "source_errors": 1,
+        "stale": 0,
+        "started": 1
+      }
+    },
+    {
+      "change": "unrelated_vocabulary",
+      "page_rejected": false,
+      "provider_calls_added": 0,
+      "receipts_unchanged": true,
+      "writer_committed_between_checks": true,
+      "writer_waited_for_lock": false,
+      "receipt_call_outcomes": {
+        "completed": 2,
+        "current": 2,
+        "errors": 0,
+        "refreshed": 2,
+        "selected": 2,
+        "source_errors": 0,
+        "stale": 0,
+        "started": 2
+      }
+    }
+  ],
+  "boundaries": {
+    "cancellation": [
+      {
+        "boundary": "receipt_started",
+        "resumed": true,
+        "rolled_back": true,
+        "receipt_call_outcomes": {
+          "completed": 1,
+          "current": 0,
+          "errors": 1,
+          "refreshed": 0,
+          "selected": 1,
+          "source_errors": 1,
+          "stale": 0,
+          "started": 1
+        }
+      },
+      {
+        "boundary": "receipt_finished",
+        "resumed": true,
+        "rolled_back": true,
+        "receipt_call_outcomes": {
+          "completed": 1,
+          "current": 1,
+          "errors": 0,
+          "refreshed": 0,
+          "selected": 1,
+          "source_errors": 1,
+          "stale": 0,
+          "started": 1
+        }
+      },
+      {
+        "boundary": "source_finished",
+        "resumed": true,
+        "rolled_back": true,
+        "receipt_call_outcomes": {
+          "completed": 1,
+          "current": 1,
+          "errors": 0,
+          "refreshed": 1,
+          "selected": 2,
+          "source_errors": 1,
+          "stale": 0,
+          "started": 1
+        }
+      }
+    ],
+    "isolation": {
+      "abc_owners": true,
+      "canonical_unchanged": true,
+      "pagination_pages": 2,
+      "private_and_foreign_excluded": true,
+      "receipts_unchanged": true
+    },
+    "lock_cancellation": {
+      "lock_wait_observed": true,
+      "resumed": true,
+      "rolled_back": true
+    }
+  },
+  "conclusion": {
+    "page_wide_freshness_memoization": "unsafe under the unchanged write-transaction isolation and locks",
+    "evidence": "Relevant vocabulary, source/support withdrawal, manager override, and generation writers can commit between checks; a definition writer can wait behind an existing lock. See the observed writer records.",
+    "potentially_shareable": "Immutable receipt decoding, schema validation, and receipt-derived handle/dependency preparation, scoped by team, space, generation and complete receipt identity; its separate saving was not measured.",
+    "live_work": "Current source eligibility/fingerprints, definition/support/override views, vocabulary context, generation fences and per-source refresh/cursor/requeue work still require current validation.",
+    "next_step": "Require a separately approved optimization plan. Do not infer achievable savings from repeated validation time."
+  },
+  "limitations": [
+    "Disposable deterministic evidence-source fixtures reproduce receipt overlap and terminal-state shapes, not historical texts or receipt/dependency payloads.",
+    "Timing samples are small and run on variable CI hardware. Both modes retain the SQL counter; their comparison measures incremental observation overhead.",
+    "Pages replay an unchanged definition marker after setup. These results establish neither full-corpus throughput nor convergence, retrieval quality or runtime speedup.",
+    "Validator timing excludes receipt lookup/decoding and observer recording; complete committed-page timing includes the page path.",
+    "Provider calls and usage are deterministic setup work; measured discovery pages add no provider calls. Unknown usage remains distinct from zero consumption.",
+    "Concurrency records describe the synchronized writers observed in these tests, not an exhaustive proof of every possible interleaving."
+  ]
+}

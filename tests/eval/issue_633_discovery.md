@@ -89,8 +89,94 @@ used by bootstrap. Credentials, explicit patterns, unknown settings and malforme
 values remain masked, including credentials equal to a public value. This scoped
 amendment was [directly approved](https://github.com/markhuangai/dense-mem/issues/633#issuecomment-6439754910).
 
-After measurements complete, retain compact aggregate evidence in
-`tests/eval/baselines/issue_633_discovery.json`; raw logs and generated outputs
-stay in ignored or task-owned temporary paths. The final-head full repository
-CI, CodeQL, production-image E2E and review gates remain required. The PR leaves
-#633 open for the evidence-backed optimization decision.
+The compact evidence is in [the baseline](baselines/issue_633_discovery.json).
+Raw logs and generated outputs stay in ignored or task-owned temporary paths.
+The final-head full repository CI, CodeQL, production-image E2E and review gates
+remain required. The PR leaves #633 open for the optimization decision.
+
+## Reproduction and aggregation
+
+Use a repository-admin account and the trusted workflow on `main`, with a full
+pushed same-repository source SHA. The recorded baseline source is
+`484be6dd8762294e177d31059436ea2260d050cf`.
+
+```bash
+gh workflow run development-e2e.yml --repo markhuangai/dense-mem --ref main \
+  -f source_ref=484be6dd8762294e177d31059436ea2260d050cf \
+  -f postgres_shards=all \
+  -f scenarios=ontology_organization,ontology_management
+```
+
+Retain the new run ID and download its six PostgreSQL job logs to an ignored
+evaluation run directory. Decode the outer Go test JSON records, then concatenate
+`Output` chunks by `(Package, Test)` through each newline before parsing the
+`ontology_discovery_*` records: Go splits long output into 1,024-character chunks.
+Require one protocol, 90 measurement, 18 coverage, seven concurrency, three
+cancellation, one isolation and one lock-cancellation record. Verify the protocol's
+workload/source hashes, run ID and image digest against the tested source and
+workflow receipt. Require all 654 registered cases to pass exactly once and
+verify the originating run's exact image deletion.
+
+For each workload and observation mode, aggregate its 15 measured pages across
+three repetitions. Report median latency and nearest-rank p95, selecting sorted
+sample `ceil(0.95*n)`. Compute observation's paired percentage difference as the
+median of `(enabled_page_ms / disabled_page_ms - 1) * 100`, matching repetition
+and sample. Preserve per-repetition medians and actual receipt-width histograms.
+Match before/after source counts, provider calls/usage and canonical hashes;
+match SQL counts in each enabled/disabled pair. Disabled freshness observations
+remain unavailable. These rules permit regeneration from the logged records
+without the historical corpus or a live model provider.
+
+## Measured result and safety conclusion
+
+[Run 40504929103](https://github.com/markhuangai/dense-mem/actions/runs/40504929103)
+passed all 654 registered cases, both ontology scenarios and all required record
+checks. The slowest shard and total six-shard span were 1,484 seconds (24m44s).
+[Cleanup 40508526950](https://github.com/markhuangai/dense-mem/actions/runs/40508526950)
+deleted the exact published image; its digest and deleted version are in the
+baseline.
+
+All enabled pages selected/refreshed 100 sources and started/completed 100
+current receipt checks, with zero stale/error outcomes. The median costs were:
+
+| Workload | Committed page ms | Validation ms | Repeated validation ms | Receipt / total SQL statements |
+|---|---:|---:|---:|---:|
+| unique | 701.978 | 616.083 | 0 | 1,100 / 1,410 |
+| overlap-64 | 613.308 | 531.801 | 216.290 | 1,025 / 1,335 |
+| shared-5 | 1,325.053 | 1,141.060 | 1,082.146 | 1,200 / 1,510 |
+
+Receipt/dependency widths differ between workloads; their histograms are retained
+in the baseline. Repeated validation occupies a median 35.27% and 81.63% of the
+enabled overlap/shared pages, but those times include live work that cannot be
+skipped safely. Provider calls and reported usage remained unchanged throughout
+each repetition; all 100 distinct source states, receipts and canonical hashes
+were preserved.
+
+Paired observation differences were +0.20%, -0.06% and -0.26% for unique, overlap
+and shared workloads. Their signs reflect measurement noise and do not establish
+speedup or zero overhead. Both modes retain SQL-counter overhead. The overlap
+p95 was 5,288.089 ms enabled and 6,121.421 ms disabled; with 15 samples, this
+nearest-rank p95 is the maximum and is not a stable tail estimate.
+
+The synchronized writers establish the reuse boundary:
+
+| Writer | Observed during the paused page | Result |
+|---|---|---|
+| Relevant definition publication | Waited behind an existing lock | Both checks remained current before commit |
+| Relevant vocabulary, source/support withdrawal, manager override | Committed between receipt checks | The second check of the same receipt became stale |
+| Generation change | Committed during the page | Visible PostgreSQL rejection, rollback, and old-generation exclusion |
+| Unused vocabulary | Committed between checks | Both checks remained current |
+
+Do not memoize receipt freshness across this write page. Its `WithTeamTx` path
+allows later statements to see newly committed inputs; receipt identity does not
+freeze current source eligibility, definitions/support, overrides, vocabulary or
+generation. Preserve per-source refreshes, cursor updates, requeues, cancellation
+and lock behavior.
+
+Immutable receipt decoding, closed-schema validation, and receipt-derived
+handle/dependency preparation are candidates for sharing within a page when
+bound to team, space, generation and complete receipt identity. Their separate
+saving was not measured: the validator timer starts after receipt lookup and
+decoding. Profile that pure work before proposing an optimization, and require a
+separately approved plan. No runtime optimization or historical-corpus speedup
+claim follows from this investigation.
