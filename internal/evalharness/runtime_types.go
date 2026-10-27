@@ -63,6 +63,7 @@ type runtimeMount struct {
 	Source      string `json:"Source"`
 	Destination string `json:"Destination"`
 	RW          bool   `json:"RW"`
+	Anonymous   bool   `json:"anonymous,omitempty"`
 }
 
 type runtimeContainer struct {

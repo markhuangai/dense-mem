@@ -53,6 +53,11 @@ func inspectRuntimeContainer(ctx context.Context, id string) (runtimeContainer, 
 		Config                   struct {
 			Labels   map[string]string
 			Hostname string
+			Volumes  map[string]json.RawMessage
+		}
+		HostConfig struct {
+			Mounts             []struct{ Type, Source, Target string }
+			Binds, VolumesFrom []string
 		}
 		State struct {
 			Running   bool
@@ -73,6 +78,23 @@ func inspectRuntimeContainer(ctx context.Context, id string) (runtimeContainer, 
 		return runtimeContainer{}, fmt.Errorf("invalid Docker container inspection")
 	}
 	c := raw[0]
+	for i := range c.Mounts {
+		mount := &c.Mounts[i]
+		if mount.Type != "volume" || len(c.HostConfig.VolumesFrom) != 0 {
+			continue
+		}
+		_, mount.Anonymous = c.Config.Volumes[mount.Destination]
+		for _, requested := range c.HostConfig.Mounts {
+			if requested.Target == mount.Destination {
+				mount.Anonymous = requested.Type == "volume" && requested.Source == ""
+			}
+		}
+		for _, bind := range c.HostConfig.Binds {
+			if parts := strings.Split(bind, ":"); len(parts) > 1 && parts[1] == mount.Destination {
+				mount.Anonymous = false
+			}
+		}
+	}
 	networks := []string{}
 	for name, network := range c.NetworkSettings.Networks {
 		if network.NetworkID == "" {
@@ -200,6 +222,7 @@ func captureRuntimeResources(ctx context.Context, receipt *runtimeReceipt, fixtu
 	}
 	containers := []runtimeContainer{}
 	images, networks, volumes, binds := map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}
+	anonymousVolumes := map[string]bool{}
 	for _, container := range all {
 		fixture := slices.Contains(fixtureIDs, container.ID)
 		if fixture {
@@ -222,6 +245,9 @@ func captureRuntimeResources(ctx context.Context, receipt *runtimeReceipt, fixtu
 		for _, mount := range container.Mounts {
 			if mount.Type == "volume" {
 				volumes[mount.Name] = true
+				if mount.Anonymous {
+					anonymousVolumes[mount.Name] = true
+				}
 			}
 			if mount.Type != "bind" || !mount.RW {
 				continue
@@ -301,8 +327,8 @@ func captureRuntimeResources(ctx context.Context, receipt *runtimeReceipt, fixtu
 		if volume.Project == receipt.Project && !known && volume.Owner != receipt.ID && !(adopted && volume.Owner == "") {
 			return fmt.Errorf("unrecorded volume lacks this runtime's ownership label")
 		}
-		// Anonymous storage is owned through its exact container mount, never its name alone.
-		if volume.Project == "" && pairSHA.MatchString("sha256:"+name) && (!slices.Contains(receipt.InitialVolumes, name) || adopted) {
+		// Only a source-free creation request proves anonymous allocation by this container.
+		if volume.Project == "" && anonymousVolumes[name] && (!slices.Contains(receipt.InitialVolumes, name) || adopted) {
 			volume.Owned = true
 		}
 		for _, previous := range previousVolumes {

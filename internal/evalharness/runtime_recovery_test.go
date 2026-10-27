@@ -26,6 +26,68 @@ func evalRuntimeIncompletePlan(t *testing.T, root string) string {
 	return path
 }
 
+func TestEvalRuntimeDockerRecordedVolumeOwnership(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	root := evalRuntimeDockerRoot(t)
+	project := "eval627-" + uuid.NewString()
+	external := strings.ReplaceAll(uuid.NewString()+uuid.NewString(), "-", "")
+	_, err := runtimeDocker(ctx, "volume", "create", external)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		present, err := runtimePresent(cleanupCtx, "volume", external)
+		if err == nil && present {
+			_, err = runtimeDocker(cleanupCtx, "volume", "rm", external)
+		}
+		if err != nil {
+			t.Errorf("external fixture volume cleanup: %v", err)
+		}
+	})
+	created, err := runtimeDocker(ctx, "container", "create", "--network", "none", "--label", "com.docker.compose.project="+project,
+		"--mount", "type=volume,source="+external+",target=/external", "--volume", external+":/external-short",
+		"--mount", "type=volume,target=/anonymous", "--volume", "/anonymous-short", "busybox:1.37.0-musl", "true")
+	require.NoError(t, err)
+	container, err := inspectRuntimeContainer(ctx, strings.TrimSpace(string(created)))
+	require.NoError(t, err)
+	dir := filepath.Join(root, "runtime")
+	plan := evalRuntimeIncompletePlan(t, root)
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		if err := RunRuntimeCommand(cleanupCtx, RuntimeCommand{Action: "retire", Directory: dir, RetentionPlan: plan}, io.Discard); err != nil {
+			t.Errorf("recorded-volume fixture retirement: %v", err)
+			return
+		}
+		receipt, err := readRuntimeReceipt(dir)
+		if err != nil {
+			t.Errorf("recorded-volume cleanup receipt: %v", err)
+			return
+		}
+		removeEvalRuntimeFixture(t, root, receipt)
+	})
+	require.NoError(t, RunRuntimeCommand(ctx, RuntimeCommand{Action: "record", Directory: dir, Project: project}, io.Discard))
+	receipt, err := readRuntimeReceipt(dir)
+	require.NoError(t, err)
+	require.Len(t, receipt.Containers, 1)
+	require.Equal(t, container.ID, receipt.Containers[0].ID)
+	require.Len(t, receipt.Volumes, 3)
+	for _, volume := range receipt.Volumes {
+		require.Equal(t, volume.Name != external, volume.Owned, "explicit external names must never imply anonymous ownership")
+	}
+	require.NoError(t, RunRuntimeCommand(ctx, RuntimeCommand{Action: "retire", Directory: dir, RetentionPlan: plan}, io.Discard))
+	for _, volume := range receipt.Volumes {
+		present, err := runtimePresent(ctx, "volume", volume.Name)
+		require.NoError(t, err)
+		require.Equal(t, volume.Name == external, present, "retirement preserves external storage and removes proven anonymous allocations")
+	}
+	retired, err := readRuntimeReceipt(dir)
+	require.NoError(t, err)
+	require.Equal(t, "retained_external", retired.Retirement.Dispositions["volume:"+external])
+	require.NoError(t, RunRuntimeCommand(ctx, RuntimeCommand{Action: "verify", Directory: dir}, io.Discard))
+}
+
 func TestEvalRuntimeDockerOwnershipAndStorageGuards(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
