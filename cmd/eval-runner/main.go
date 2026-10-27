@@ -6,8 +6,10 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/evalharness"
@@ -15,6 +17,7 @@ import (
 
 func main() {
 	paired := registerPairFlags()
+	runtime := registerRuntimeFlags()
 	var opts evalharness.RunOptions
 	var baselineRun string
 	var candidateRun string
@@ -29,7 +32,7 @@ func main() {
 	var cohortLockPath string
 	var repairLockPath string
 	var metricsURL string
-	flag.StringVar(&opts.Mode, "mode", "validate", "validate, import, baseline, candidate, compare, compare-v2-cohort, derive-v2, derive-v3, validate-v2-cohort, or token-diagnostics")
+	flag.StringVar(&opts.Mode, "mode", "validate", "validate, import, baseline, candidate, compare, compare-v2-cohort, derive-v2, derive-v3, validate-v2-cohort, token-diagnostics, or runtime")
 	flag.StringVar(&metricsURL, "metrics-url", "", "direct Prometheus scrape URL (or DENSE_MEM_EVAL_METRICS_URL) for token-diagnostics")
 	flag.StringVar(&opts.SeedManifestPath, "seed", "", "seed manifest path (source seed for derive-v2; derive-v3 uses parent/filtered V1 inputs)")
 	flag.StringVar(&opts.SuitePath, "suite", "", "suite JSONL path (source suite for derive-v2; derive-v3 uses parent/filtered V1 inputs)")
@@ -74,6 +77,14 @@ func main() {
 	registerFloatGate("max-average-dream-bad-at-k", "maximum average bad dream refs@k allowed when dream qrels are present", &opts.Gates.MaxAverageDreamBadAtK, validateNonNegative)
 	registerFloatGate("max-dream-bad-rank1-rate", "maximum share of dream-scored cases with a bad dream ref first", &opts.Gates.MaxDreamBadRank1Rate, validateRate)
 	flag.Parse()
+	if opts.Mode == "runtime" {
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer cancel()
+		if err := evalharness.RunRuntimeCommand(ctx, *runtime, os.Stdout); err != nil {
+			exitf("evaluation runtime: %v", err)
+		}
+		return
+	}
 	resolveStringEnvironment(flag.CommandLine, "base-url", "DENSE_MEM_BASE_URL", &opts.BaseURL)
 	resolveStringEnvironment(flag.CommandLine, "api-key", "DENSE_MEM_API_KEY", &opts.APIKey)
 	resolveStringEnvironment(flag.CommandLine, "metrics-url", "DENSE_MEM_EVAL_METRICS_URL", &metricsURL)

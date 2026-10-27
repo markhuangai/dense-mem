@@ -282,6 +282,7 @@ pair_main() {
         exec {runtime_lock}> "${lock_root}/${container_id}.lock"
         flock -n "${runtime_lock}" || { echo "another monitor owns the prepared container" >&2; return 1; }
       done
+      pair_tool runtime-lifecycle --pair-side "${pair_side}" >/dev/null
       pair_snapshot "${pair_out}/${pair_side}/preflight.json"
       pair_tool claim-runtime --pair-side "${pair_side}" --pair-input "${pair_out}/${pair_side}/preflight.json" > "${pair_out}/${pair_side}/runtime-claim.json"
     fi
