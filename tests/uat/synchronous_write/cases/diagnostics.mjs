@@ -69,6 +69,10 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
   const controlURL = requiredEnv("DENSE_MEM_CONTROL_URL").replace(/\/$/, "");
   const token = requiredEnv("DENSE_MEM_CONTROL_TOKEN");
   const assessmentDisconnect = rememberArguments("assessment-disconnect", "[fixture-fault:assessment-timeout]");
+  const providerHealthURL = "http://synchronous-write-provider:8787/health";
+  const providerTrace = await fetch(providerHealthURL, { signal: AbortSignal.timeout(5_000) });
+  expect(providerTrace.ok, `assessment fixture health failed: ${providerTrace.status}`);
+  const assessmentRequestOffset = (await providerTrace.json()).chat_requests.length;
   const assessmentController = new AbortController();
   const assessmentCall = fetch(`${requiredEnv("DENSE_MEM_USER_URL").replace(/\/$/, "")}/mcp`, {
     method: "POST",
@@ -91,11 +95,27 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
     expect(response.ok, `assessment disconnect fixture returned HTTP ${response.status}`);
     return body;
   });
-  const assessmentAbort = setTimeout(() => assessmentController.abort(), 1_000);
   try {
-    await assert.rejects(assessmentCall, { name: "AbortError" });
+    await Promise.all([
+      assert.rejects(assessmentCall, { name: "AbortError" }),
+      (async () => {
+        const signal = AbortSignal.any([assessmentController.signal, AbortSignal.timeout(20_000)]);
+        while (true) {
+          const response = await fetch(providerHealthURL, { signal });
+          expect(response.ok, `assessment fixture health failed: ${response.status}`);
+          const requests = (await response.json()).chat_requests.slice(assessmentRequestOffset);
+          if (requests.some((request) => request.model === rememberModel &&
+            request.schema_name === "dense_mem_semantic_assessment_response" && request.fault === "assessment-timeout")) {
+            assessmentController.abort();
+            return;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+      })(),
+    ]);
   } finally {
-    clearTimeout(assessmentAbort);
+    assessmentController.abort();
+    await assessmentCall.catch(() => {});
   }
   let assessmentFailure = "";
   for (let attempt = 0; attempt < 25; attempt += 1) {
