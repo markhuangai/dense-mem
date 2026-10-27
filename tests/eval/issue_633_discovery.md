@@ -65,13 +65,21 @@ canonical writer changes are separated from discovery's own effects.
 
 ## Validation and retained evidence
 
-All new database cases are registered in the ontology precheck inventory and
-the existing `Revalidation.*` coverage selection. Development E2E runs shard 1
-plus `ontology_organization,ontology_management` on the exact pushed source SHA.
+All new database cases are registered in the ontology precheck inventory.
+Shard 0 runs the complete measurement alongside the large-backlog case; shard 1
+runs the remaining ontology cases, including vocabulary/source fences. Development
+E2E runs shards 0 and 1 plus `ontology_organization,ontology_management` on the
+exact pushed source SHA. The expensive measurement is omitted only from duplicate
+coverage execution; the other `Revalidation.*` correctness cases retain observer
+coverage, and the complete measurement remains mandatory in PostgreSQL E2E.
 Keep the run URL, trusted workflow revision, source SHA, production image digest,
 required-case results and run-owned image cleanup receipt with the report.
 The source SHA is supplied by that verified workflow receipt; the test logs bind
-the actual measured source files by SHA-256.
+the actual measured source files by SHA-256. The CI redactor preserves validated
+boolean/integer values of the five public telemetry/verifier/embedding settings
+used by bootstrap. Credentials, explicit patterns, unknown settings and malformed
+values remain masked, including credentials equal to a public value. This scoped
+amendment was [directly approved](https://github.com/markhuangai/dense-mem/issues/633#issuecomment-6439754910).
 
 After measurements complete, retain compact aggregate evidence in
 `tests/eval/baselines/issue_633_discovery.json`; raw logs and generated outputs

@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { devNull, tmpdir } from "node:os";
-import { createRedactor, redactChunks } from "../../scripts/e2e-redact-diagnostics.mjs";
+import { createRedactor, redactChunks, valueFromEnvFile } from "../../scripts/e2e-redact-diagnostics.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -1031,6 +1031,49 @@ test("diagnostics retain exact redaction across split and overlapping secrets", 
   assert.equal(output, "xx[REDACTED]yy");
 });
 
+test("diagnostics preserve typed public configuration values in measurement JSON", async () => {
+  const fixture = await mkdtemp(join(tmpdir(), "dense-mem-public-diagnostics-"));
+  try {
+    const envFile = join(fixture, ".env");
+    await writeFile(envFile, [
+      "TELEMETRY_ENABLED=false", "AI_VERIFIER_DISABLE_TEMPERATURE=true",
+      "AI_API_EMBEDDING_DIMENSIONS=1024", "AI_API_EMBEDDING_MAX_BATCH_ITEMS=100",
+      "AI_API_EMBEDDING_MAX_CONCURRENCY=12", "POSTGRES_PASSWORD=fixture-database-secret",
+    ].join("\n") + "\n");
+    const input = { observation_enabled: true, unavailable: false, sources: 100, sql_statements: 1100,
+      dimensions: 1024, concurrency: 12, duration_ms: 100.1024, hash: "00102400", password: "fixture-database-secret" };
+    const script = 'printf \'%s\\n\' "$1" | node "$2"';
+    const { stdout } = await run("bash", ["-c", script, "measurement-json", JSON.stringify(input), join(scripts, "e2e-redact-diagnostics.mjs")], {
+      env: { DENSE_MEM_CI_REDACT_ENV_FILE: envFile, DENSE_MEM_CI_REDACT_ALLOW_SHORT: "1", DENSE_MEM_CI_REDACT_EXTRA_VALUES: "" },
+    });
+    assert.deepEqual(JSON.parse(stdout), { ...input, password: "[REDACTED]" });
+    assert.equal(valueFromEnvFile(envFile, "AI_API_EMBEDDING_MAX_BATCH_ITEMS"), "100");
+  } finally {
+    await rm(fixture, { recursive: true, force: true });
+  }
+});
+
+test("diagnostics retain credential collisions, unknown settings and malformed public values", async () => {
+  const fixture = await mkdtemp(join(tmpdir(), "dense-mem-credential-diagnostics-"));
+  try {
+    const envFile = join(fixture, ".env");
+    await writeFile(envFile, [
+      "TELEMETRY_ENABLED=true", "AI_API_EMBEDDING_MAX_BATCH_ITEMS=100",
+      "POSTGRES_PASSWORD=true", "AI_API_KEY=100", "CUSTOM_SETTING=unknown-protected-value",
+      "AI_VERIFIER_DISABLE_TEMPERATURE=invalid-boolean-secret", "AI_API_EMBEDDING_DIMENSIONS=invalid-integer-secret",
+      "AI_API_EMBEDDING_MAX_CONCURRENCY=999999999999999999999999",
+    ].join("\n") + "\n");
+    const input = "true 100 unknown-protected-value invalid-boolean-secret invalid-integer-secret 999999999999999999999999 extra-protected-pattern";
+    const { stdout } = await run("bash", ["-c", 'printf \'%s\\n\' "$1" | node "$2"', "credential-collisions", input, join(scripts, "e2e-redact-diagnostics.mjs")], {
+      env: { DENSE_MEM_CI_REDACT_ENV_FILE: envFile, DENSE_MEM_CI_REDACT_ALLOW_SHORT: "1", DENSE_MEM_CI_REDACT_EXTRA_VALUES: "extra-protected-pattern" },
+    });
+    assert.equal(stdout.trim(), Array(7).fill("[REDACTED]").join(" "));
+    assert.equal(valueFromEnvFile(envFile, "TELEMETRY_ENABLED"), "true");
+  } finally {
+    await rm(fixture, { recursive: true, force: true });
+  }
+});
+
 test("diagnostics complete large output with a delayed reader", { timeout: 15000 }, async () => {
   const values = ["alpha", "alpha-long", "pha-longer", "token:value", "secret-secret"];
   const input = `${"synthetic SQL output ".repeat(100000)}\nsecret-secret Ω\n`;
@@ -1168,7 +1211,7 @@ test("six precheck shards preserve every real runner selection exactly once", as
   assert.equal(selections.length, 6);
   const dedicated = [
     "repository/TestOntologyMaintenanceLargeBacklogAndFairTurns",
-    "repository/TestOntologyOrganizationVocabularyAndSourceFences",
+    "repository/TestOntologyMaintenanceRevalidationDiscoveryMeasurement",
   ];
   assert.equal(selections[0], `cases:${dedicated.join(",")}`);
   const inventory = [];
@@ -1184,7 +1227,10 @@ test("six precheck shards preserve every real runner selection exactly once", as
     const ids = selected.stdout.trim().split(/\r?\n/);
     assert.ok(ids.length > 0);
     if (selection === selections[0]) assert.deepEqual(ids, dedicated);
-    if (selection === selections[1]) assert.ok(dedicated.every((id) => !ids.includes(id)));
+    if (selection === selections[1]) {
+      assert.ok(dedicated.every((id) => !ids.includes(id)));
+      assert.ok(ids.includes("repository/TestOntologyOrganizationVocabularyAndSourceFences"));
+    }
     actual.push(...ids);
   }
   assert.equal(new Set(actual).size, actual.length);

@@ -558,7 +558,7 @@ if (shardCount === 6) {
   // Keep the two longest ontology cases together so the remaining cohort fits its fixed deadline.
   const dedicated = [
     "repository/TestOntologyMaintenanceLargeBacklogAndFairTurns",
-    "repository/TestOntologyOrganizationVocabularyAndSourceFences",
+    "repository/TestOntologyMaintenanceRevalidationDiscoveryMeasurement",
   ];
   const ontology = records[ontologyIndex];
   if (!ontology || dedicated.some((id) => !ontology.caseIds.includes(id)) || ontology.caseIds.length <= dedicated.length || records.length < 5) {
