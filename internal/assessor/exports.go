@@ -30,7 +30,10 @@ func ResolveSemanticAssessmentRange(
 	evidenceByID map[string]SemanticReviewEvidence,
 	value *SemanticAssessmentGroundedRange,
 ) error {
-	return resolveSemanticAssessmentRange(evidenceByID, value)
+	if err := resolveSemanticAssessmentRange(evidenceByID, value); err != nil {
+		return *err
+	}
+	return nil
 }
 
 // ValidateSemanticAssessmentSubmissionResponse validates the complete

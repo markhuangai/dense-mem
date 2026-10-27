@@ -151,7 +151,9 @@ func boundedAssessmentValidationCode(code string) string {
 		"predicate_cardinality_invalid", "predicate_status_invalid", "predicate_inactive", "predicate_alias_ambiguous",
 		"predicate_alias_collision", "predicate_relationship_kind_mismatch", "predicate_cardinality_mismatch",
 		"predicate_subject_kind_invalid", "predicate_object_kind_invalid", "evidence_id_required",
-		"evidence_id_unknown", "evidence_id_duplicate", "evidence_result_count_mismatch", "evidence_result_missing":
+		"evidence_id_unknown", "evidence_id_duplicate", "evidence_result_count_mismatch", "evidence_result_missing",
+		"range_required", "range_evidence_unknown", "range_boundary_unknown", "range_order_invalid", "range_not_covered",
+		"predicate_phrase_blank", "predicate_phrase_too_long":
 		return code
 	default:
 		return "other"

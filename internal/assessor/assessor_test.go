@@ -91,10 +91,14 @@ func TestSemanticAssessmentPredicateLengthErrorsNameTheProviderRange(t *testing.
 				require.Empty(t, errs)
 				return
 			}
-			require.Contains(t, errs, SemanticValidationError{
-				Field:   "relationship_results[0].splits[0].predicate_range",
-				Message: "must select a non-blank predicate phrase of at most 256 Unicode characters",
-			})
+			wantCode, wantMessage := "predicate_phrase_too_long", "at most 256 Unicode characters"
+			if strings.TrimSpace(test.text) == "" {
+				wantCode, wantMessage = "predicate_phrase_blank", "not whitespace"
+			}
+			require.NotEmpty(t, errs)
+			require.Equal(t, "relationship_results[0].splits[0].predicate_range", errs[0].Field)
+			require.Equal(t, wantCode, errs[0].Code)
+			require.Contains(t, errs[0].Message, wantMessage)
 			for _, err := range errs {
 				require.NotContains(t, err.Field, "original_predicate")
 			}
@@ -195,6 +199,16 @@ func TestSemanticAssessmentSubmissionContractPreservesTypedValue(t *testing.T) {
 		t.Fatalf("PrepareSemanticAssessmentResponse() errors = %#v", errs)
 	}
 
+	response.RelationshipResults[0].Splits[0].SupportRanges = []SemanticAssessmentGroundedRange{semanticAssessmentTestRange(evidence, 0, 10)}
+	_, errs = PrepareSemanticAssessmentResponse(prepared, response, limits)
+	require.Len(t, errs, 1)
+	require.Equal(t, "relationship_results[0].splits[0].value_range", errs[0].Field)
+	require.Equal(t, "range_not_covered", errs[0].Code)
+	require.Contains(t, errs[0].Message, "same evidence_id")
+	response.RelationshipResults[0].Splits[0].SupportRanges = []SemanticAssessmentGroundedRange{supportRange}
+	_, errs = PrepareSemanticAssessmentResponse(prepared, response, limits)
+	require.Empty(t, errs)
+
 	response.RelationshipResults[0].Splits[0].ObjectValue.CanonicalValue = "43"
 	if _, errs := PrepareSemanticAssessmentResponse(prepared, response, limits); len(errs) == 0 || !strings.Contains(semanticAssessmentJoinedErrors(errs), "does not preserve its submitted object") {
 		t.Fatalf("PrepareSemanticAssessmentResponse() errors = %#v, want typed value preservation error", errs)
@@ -220,6 +234,15 @@ func TestSemanticAssessmentSubmissionContractRepairsChangedExactConstraints(t *t
 	require.Contains(t, joined, "must reuse the exact known_entity_id")
 	require.Contains(t, joined, "must equal the exact known_entity_id")
 	require.Contains(t, joined, "must equal the exact known_predicate_key")
+
+	response = semanticAssessmentTestResponse()
+	split := &response.RelationshipResults[0].Splits[0]
+	split.PredicateStatus, split.PredicateKey, split.PredicateVersion = "registration_required", nil, nil
+	split.PredicateRegistration = &SemanticAssessmentPredicateRegistration{PredicateKey: "distinct_key", RelationshipKind: "state", CurrentCardinality: "many"}
+	_, errs = PrepareSemanticAssessmentResponse(prepared, response, limits)
+	require.Contains(t, semanticAssessmentJoinedErrors(errs), "must resolve the exact known_predicate_key")
+	_, errs = PrepareSemanticAssessmentResponse(prepared, semanticAssessmentTestResponse(), limits)
+	require.Empty(t, errs)
 }
 
 func TestSemanticAssessmentKnownEntityIDDisambiguatesNameMatches(t *testing.T) {

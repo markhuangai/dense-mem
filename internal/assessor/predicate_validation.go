@@ -31,10 +31,10 @@ func validateSemanticAssessmentPredicateResult(
 		}
 		var errs []SemanticValidationError
 		if subjectOK && !semanticKindAllowed(subject.Kind, option.AllowedSubjectKinds) {
-			errs = append(errs, semanticCodedErr(field+".predicate_key", "does not accept the subject kind", "predicate_subject_kind_mismatch"))
+			errs = append(errs, semanticCodedErr(field+".predicate_key", "does not accept the subject kind; registration under the same key cannot change this constraint", "predicate_subject_kind_mismatch"))
 		}
 		if objectOK && !semanticKindAllowed(objectKind, option.AllowedObjectKinds) {
-			errs = append(errs, semanticCodedErr(field+".predicate_key", "does not accept the object kind", "predicate_object_kind_mismatch"))
+			errs = append(errs, semanticCodedErr(field+".predicate_key", "does not accept the object kind; registration under the same key cannot change this constraint", "predicate_object_kind_mismatch"))
 		}
 		return errs
 	case "registration_required":

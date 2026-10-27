@@ -892,7 +892,9 @@ duration; do not add the two. Provider time overlaps that duration too.
 `truncated` and the bounded error count describe omitted detail. Predicate codes
 distinguish allowlist, nullability, endpoint-kind, inactive-catalog and alias
 conflicts. Evidence codes distinguish required, unknown, duplicate and missing
-results. Unclassified reasons use `other`. Provider messages and submitted text
+results. Span codes distinguish unknown evidence or markers, empty/reversed
+ranges, blank/overlong predicate phrases, and ranges outside same-evidence
+support. Unclassified reasons use `other`. Provider messages and submitted text
 are excluded even when raw diagnostic capture is unavailable. These internal
 codes are never serialized into repair feedback or public memory results.
 
@@ -910,6 +912,38 @@ reliability improvement is claimed. The maintainer-approved diagnostic-only 1k
 waiver is recorded on #586; replacement checks use deterministic HTTP providers,
 real PostgreSQL, synchronous-write production E2E with metrics enabled and
 disabled, and session ingestion. Full current-head CI and E2E remain mandatory.
+
+The follow-on predicate/span repair change has a separate
+[approved protocol](https://github.com/markhuangai/dense-mem/issues/586#issuecomment-6431998713).
+The diagnostic-only waiver does not cover it. Inspection of the retained seven
+rc.20 exhausted assessments found repeated incompatible-key registration and
+resolution, predicate ranges outside their support, whitespace-only predicates,
+and unknown boundary references. All 21 retained responses obeyed the predicate
+status/key/version/registration nullability rules. Missing original assessor
+requests still prevent an exact historical replay; these observations do not
+explain the 23 separate timeouts.
+
+Repair feedback names the failed compatibility or range rule without changing
+acceptance. An incompatible catalog key cannot be repaired by registering it
+again, an exact known key cannot be substituted, and invalid citations do not
+justify dropping a supported claim. Ranges remain exact Unicode boundaries;
+predicate/value ranges must fit within one support range for the same evidence.
+
+Use the paired prepared-runtime workflow below for the fresh base/candidate
+comparison: frozen public v3 seed, 991 sources, 204 scored cases per side,
+`dense-mem-testing`, `@cf/baai/bge-m3` at 1024 dimensions, import concurrency and
+admission limit 4, and equal ontology capacity (global 8, team 4, context 300000).
+Require complete native imports and readiness, zero unmapped references,
+non-increasing exhausted-validation attempts and repair turns with at least one
+strictly lower, no increase in total failed attempts, and no applicable overall
+or per-axis quality regression beyond floating-point noise. Review changed
+dispositions against the exact evidence; incorrectly discarded support fails.
+Keep timeouts, phase durations, and unavailable usage distinct. Retain the
+revision/image/input identities and all outcomes with the PR's comparison
+receipt; never rerun a semantic or quality failure merely to obtain success.
+The comparison has no fixed overall time limit: renew its harness deadline
+while progressing and investigate two consecutive 15-minute observations with
+no source, readiness, or stage progress.
 
 Ontology attempt receipts optionally contain `diagnostics` with measured
 `queue_ms`, `admission_ms`, `http_ms`, `reconciliation_ms`, the configured

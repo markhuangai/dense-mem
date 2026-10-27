@@ -507,21 +507,24 @@ func resolveSemanticAssessmentSubmissionResponse(
 			split := &result.Splits[j]
 			path := fmt.Sprintf("relationship_results[%d].splits[%d]", i, j)
 			if err := resolveSemanticAssessmentRange(evidenceByID, &split.PredicateRange); err != nil {
-				errs = append(errs, semanticErr(path+".predicate_range", err.Error()))
+				err.Field = path + ".predicate_range"
+				errs = append(errs, *err)
 			} else {
 				evidence := evidenceByID[split.PredicateRange.EvidenceID]
 				split.OriginalPredicate, _ = SemanticEvidenceSpan(evidence.Content, split.PredicateRange.Start, split.PredicateRange.End)
 			}
 			if split.ValueRange != nil {
 				if err := resolveSemanticAssessmentRange(evidenceByID, split.ValueRange); err != nil {
-					errs = append(errs, semanticErr(path+".value_range", err.Error()))
+					err.Field = path + ".value_range"
+					errs = append(errs, *err)
 				}
 			}
 			split.Evidence = make([]SemanticAssessmentEvidenceSpan, 0, len(split.SupportRanges))
 			for k := range split.SupportRanges {
 				rangeValue := &split.SupportRanges[k]
 				if err := resolveSemanticAssessmentRange(evidenceByID, rangeValue); err != nil {
-					errs = append(errs, semanticErr(fmt.Sprintf("%s.support_ranges[%d]", path, k), err.Error()))
+					err.Field = fmt.Sprintf("%s.support_ranges[%d]", path, k)
+					errs = append(errs, *err)
 					continue
 				}
 				split.Evidence = append(split.Evidence, SemanticAssessmentEvidenceSpan{
@@ -563,21 +566,24 @@ func semanticAssessmentAnchorPrecedes(anchor SemanticAssessmentEntityAnchor, gro
 func resolveSemanticAssessmentRange(
 	evidenceByID map[string]SemanticReviewEvidence,
 	value *SemanticAssessmentGroundedRange,
-) error {
+) *SemanticValidationError {
 	if value == nil {
-		return fmt.Errorf("range is required")
+		return &SemanticValidationError{Message: "range is required; copy evidence_id, start_ref, and end_ref from the supplied evidence", Code: "range_required"}
 	}
 	value.EvidenceID = strings.TrimSpace(value.EvidenceID)
 	value.StartRef = strings.TrimSpace(value.StartRef)
 	value.EndRef = strings.TrimSpace(value.EndRef)
 	evidence, ok := evidenceByID[value.EvidenceID]
 	if !ok {
-		return fmt.Errorf("evidence_id is unknown")
+		return &SemanticValidationError{Message: "evidence_id is unknown; copy a supplied evidence_id and its own boundary references", Code: "range_evidence_unknown"}
 	}
 	start, startOK := semanticAssessmentBoundaryOffset(evidence, value.StartRef)
 	end, endOK := semanticAssessmentBoundaryOffset(evidence, value.EndRef)
-	if !startOK || !endOK || start < 0 || end <= start {
-		return fmt.Errorf("boundary references are invalid")
+	if !startOK || !endOK {
+		return &SemanticValidationError{Message: "start_ref or end_ref is not a supplied boundary reference for this evidence_id; copy both markers from that evidence's boundary_text", Code: "range_boundary_unknown"}
+	}
+	if start < 0 || end <= start {
+		return &SemanticValidationError{Message: "range is empty or reversed; start_ref must precede end_ref, with the start inclusive and the end exclusive", Code: "range_order_invalid"}
 	}
 	value.Start = start
 	value.End = end
@@ -730,10 +736,10 @@ func validateSemanticAssessmentSubmissionResponse(
 				errs = append(errs, semanticErr(path+".support_ranges", "must contain at least one submitted support range"))
 			}
 			if !semanticAssessmentRangeCovered(split.PredicateRange, split.SupportRanges) {
-				errs = append(errs, semanticErr(path+".predicate_range", "must be covered by a support range"))
+				errs = append(errs, semanticCodedErr(path+".predicate_range", "must be fully contained in one support_range with the same evidence_id; its start must be at or after the support start and its end at or before the support end", "range_not_covered"))
 			}
 			if split.ValueRange != nil && !semanticAssessmentRangeCovered(*split.ValueRange, split.SupportRanges) {
-				errs = append(errs, semanticErr(path+".value_range", "must be covered by a support range"))
+				errs = append(errs, semanticCodedErr(path+".value_range", "must be fully contained in one support_range with the same evidence_id; its start must be at or after the support start and its end at or before the support end", "range_not_covered"))
 			}
 		}
 	}

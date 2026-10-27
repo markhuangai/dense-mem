@@ -12,6 +12,7 @@ const repositoryRoot = fileURLToPath(new URL("../../../..", import.meta.url));
 const rememberModel = "dense-mem-synchronous-write-e2e-remember";
 const heldPredicateKey = "retired_memory_store_fixture";
 const repairedPredicateKey = "stores_durable_memory_in_fixture";
+const incompatiblePredicateKey = "incompatible_memory_store_fixture";
 
 export async function run({ rpc, rawRPC = rpc, expect }) {
   const selectedFault = (process.env.DENSE_MEM_E2E_PROVIDER_FAULT || "none").trim();
@@ -849,11 +850,15 @@ async function runPredicateRegistrationCases({ expect, selectedFault = "none" })
       '${sqlLiteral(teamID)}'::uuid, '${heldPredicateKey}', 1, ARRAY[]::text[],
       ARRAY['concept']::text[], ARRAY['product']::text[], 'event', 'one',
       'retired', 'fixture', '{}'::jsonb
+    ), (
+      '${sqlLiteral(teamID)}'::uuid, '${incompatiblePredicateKey}', 1, ARRAY['Incompatible Memory Store Fixture']::text[],
+      ARRAY['organization']::text[], ARRAY['string']::text[], 'state', 'many',
+      'active', 'fixture', '{}'::jsonb
     );
   `, "synchronous-write-predicate-registration-seed");
 
   const faults = selectedFault === "none"
-    ? ["predicate-registration-exhausted", "predicate-registration-repair", "predicate-registration-reuse"]
+    ? ["predicate-registration-exhausted", "predicate-registration-repair", "predicate-registration-reuse", "predicate-registration-kind-repair"]
     : selectedFault === "predicate-registration-reuse"
       ? ["predicate-registration-repair", selectedFault]
       : [selectedFault];
@@ -873,6 +878,15 @@ async function runPredicateRegistrationCases({ expect, selectedFault = "none" })
         AND attempt_id = '${sqlLiteral(result.submission_id)}'::uuid;
     `));
     expect(assessorTurns === (exhausted ? 3 : fault === "predicate-registration-reuse" ? 1 : 2), `${fault} must retain its complete assessor turn count: ${assessorTurns}`);
+    if (fault === "predicate-registration-kind-repair") {
+      const code = postgresQuery(`
+        SELECT metadata->'assessor_diagnostics'->'turns'->0->'issues'->0->>'code'
+        FROM remember_attempt_events
+        WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND attempt_id = '${sqlLiteral(result.submission_id)}'::uuid
+          AND metadata ? 'assessor_diagnostics';
+      `);
+      expect(code === "predicate_subject_kind_mismatch", `canonical/alias repair must retain its subject-kind reason: ${code}`);
+    }
 
     const canonicalCounts = rememberCanonicalCounts(teamID, result.submission_id);
     expect(canonicalCounts.length === 5 && canonicalCounts.slice(0, 4).every((count) => count === (exhausted ? 0 : 1)) &&
@@ -927,12 +941,19 @@ async function runPredicateRegistrationCases({ expect, selectedFault = "none" })
     ORDER BY version;
   `);
   expect(heldRows === "1:retired", `rejected registration must not mutate the retired definition: ${heldRows}`);
+  const incompatibleRows = postgresQuery(`
+    SELECT version || ':' || lifecycle_state || ':' || array_to_string(allowed_subject_kinds, ',')
+    FROM team_predicate_definitions
+    WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND predicate_key = '${incompatiblePredicateKey}'
+    ORDER BY version;
+  `);
+  expect(incompatibleRows === "1:active:organization", `repair must not widen the incompatible predicate: ${incompatibleRows}`);
   const repairedRows = postgresQuery(`
     SELECT version || ':' || lifecycle_state FROM team_predicate_definitions
     WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND predicate_key = '${repairedPredicateKey}'
     ORDER BY version;
   `);
-  expect(repairedRows === (faults.includes("predicate-registration-repair") ? "1:active" : ""), `repaired registration must be created once and reused: ${repairedRows}`);
+  expect(repairedRows === (faults.some((fault) => fault !== "predicate-registration-exhausted") ? "1:active" : ""), `repaired registration must be created once and reused: ${repairedRows}`);
   return results;
 }
 
