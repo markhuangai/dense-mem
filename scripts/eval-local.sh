@@ -12,6 +12,8 @@ IMPORT_SEED=0
 IMPORT_CONCURRENCY=""
 RESUME_SOURCE_DOC_IDS=""
 COMPOSE_UP=0
+RUNTIME_ARGS=()
+RUNTIME_ACTION=""
 TRACES=""
 MAPPING=""
 BASELINE_RUN=""
@@ -29,6 +31,18 @@ MAX_DREAM_BAD_RANK1_RATE=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --runtime-action)
+      RUNTIME_ACTION="$2"
+      shift 2
+      ;;
+    --runtime-dir|--compose-project|--compose-file|--retention-plan|--supersedes|--stop-timeout|--fixture-container)
+      RUNTIME_ARGS+=("$1" "$2")
+      shift 2
+      ;;
+    --new-runtime)
+      RUNTIME_ARGS+=("$1")
+      shift
+      ;;
     --mode)
       MODE="$2"
       shift 2
@@ -124,13 +138,29 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [[ "${MODE}" == "runtime" ]]; then
+  if [[ "${COMPOSE_UP}" == "1" ]]; then
+    echo "--mode runtime uses --runtime-action start instead of --compose-up" >&2
+    exit 2
+  fi
+  exec go run ./cmd/eval-runner --mode runtime --runtime-action "${RUNTIME_ACTION:-verify}" "${RUNTIME_ARGS[@]}"
+fi
+
 if [[ "${MODE}" != "compare" && ( -z "${SEED}" || -z "${SUITE}" ) ]]; then
   echo "--seed and --suite are required" >&2
   exit 2
 fi
 
 if [[ "${COMPOSE_UP}" == "1" ]]; then
-  docker compose -p "${DENSE_MEM_EVAL_COMPOSE_PROJECT:-densemem_eval}" -f examples/docker-compose.evaluation.yml up -d --build
+  if [[ -n "${RUNTIME_ACTION}" && "${RUNTIME_ACTION}" != "start" ]]; then
+    echo "--compose-up only supports the start runtime action" >&2
+    exit 2
+  fi
+  go run ./cmd/eval-runner --mode runtime --compose-project "${DENSE_MEM_EVAL_COMPOSE_PROJECT:-densemem_eval}" \
+    "${RUNTIME_ARGS[@]}" --runtime-action start
+elif [[ -n "${RUNTIME_ACTION}" ]] || (( ${#RUNTIME_ARGS[@]} > 0 )); then
+  echo "runtime arguments require --mode runtime or --compose-up" >&2
+  exit 2
 fi
 
 args=(go run ./cmd/eval-runner --mode "${MODE}")

@@ -284,13 +284,18 @@ export V1_COMPOSE_DATA_DIR="$(realpath -m tests/eval/runtime/v1)"
 export DENSE_MEM_EVAL_ENV_FILE="$(realpath .env)"
 export DENSE_MEM_EVAL_COMPOSE_PROJECT=densemem_eval_full
 
-docker compose -p "${DENSE_MEM_EVAL_COMPOSE_PROJECT}" \
-  -f examples/docker-compose.evaluation.yml \
-  up -d --build
+scripts/eval-local.sh --mode runtime --runtime-action start \
+  --runtime-dir "${V1_COMPOSE_DATA_DIR}" \
+  --compose-project "${DENSE_MEM_EVAL_COMPOSE_PROJECT}" --new-runtime
 ```
 
 Do not use this team or stack for manual memory work. The monitor assumes one
 seed dataset per V1 runtime.
+
+Follow [runtime retirement](runtime-lifecycle.md) when replacing a local stack.
+Maintenance pause does not retire Docker resources or bind storage. Retire the
+named old runtime with verified retained evidence, then start its replacement
+with `--supersedes`; omit `--new-runtime` when resuming the same active receipt.
 
 ## Capture bounded token diagnostics
 
@@ -961,7 +966,7 @@ PAIR_CONFIG=/absolute/path/pair.json \
   bash tests/eval/scripts/run_full_public_rag_eval_until_done.sh
 ```
 
-Prepare separate Docker Compose server/PostgreSQL projects first, with local published HTTP/control ports (8080/8090 internally), evaluation tools enabled, and a shared-write credential for the intended owner. Supply credentials through the environment variable names in the manifest. Never put credentials in the manifest. The monitor does not provision runtimes, grant allowances, change import defaults, or modify existing evaluation protocols.
+Prepare separate Docker Compose server/PostgreSQL projects through the [runtime lifecycle](runtime-lifecycle.md), with local published HTTP/control ports (8080/8090 internally), evaluation tools enabled, and a shared-write credential for the intended owner. Supply credentials through the environment variable names in the manifest. Never put credentials in the manifest. The monitor does not provision runtimes, grant allowances, change import defaults, or modify existing evaluation protocols.
 
 Pin each server image ID and OCI source-revision label, release-native runner SHA-256 and clean Go VCS revision, seed identity, exact suite bytes, and a common scorer binary/revision. Build the runners from their pinned clean checkouts; a failed build or unverifiable runner stops execution. Record SHA-256 hashes of the exact verifier and embedding endpoint URLs, effective Remember/ontology models, and active embedding provider/model/dimensions/index strategy. An unavailable backing model revision must be the explicit string `unknown` and is reported as a comparison limitation.
 
