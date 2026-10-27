@@ -37,6 +37,10 @@ func RunPairCommand(cmd PairCommand, out io.Writer) error {
 	}
 	var result any = map[string]any{"verified": true}
 	switch cmd.Action {
+	case "runtime-lifecycle":
+		if err := CheckPairRuntimeLifecycle(c, cmd.Side); err != nil {
+			return err
+		}
 	case "protocol":
 		r, err := pairRelease(c, cmd.Side)
 		if err != nil {
@@ -59,6 +63,9 @@ func RunPairCommand(cmd PairCommand, out io.Writer) error {
 			return err
 		}
 	case "claim-runtime":
+		if err := CheckPairRuntimeLifecycle(c, cmd.Side); err != nil {
+			return err
+		}
 		r, err := pairRelease(c, cmd.Side)
 		if err != nil {
 			return err
