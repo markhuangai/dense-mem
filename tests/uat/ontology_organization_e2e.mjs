@@ -74,6 +74,7 @@ try {
     WHERE source.team_id=${sqlLiteral(teamID)}::uuid AND source.source_kind='evidence' AND source.source_id IN (${sourceIDs.map(sqlLiteral).join(",")})`));
   assert.equal(currentReceipts.length, sourceIDs.length, "completed sources must reference durable assessments in their own scope");
   for (const receipt of currentReceipts) { assert.equal(receipt.status, "organized"); assert(receipt.assessment); assert(!receipt.failure); }
+  assertCompletionTimestamps();
 
   const runs = (await control("/ontology/runs?limit=1")).data;
   assert.equal(runs.runs.length, 1);
@@ -427,11 +428,19 @@ async function finalizationRecovery(key, failureCode = "") {
     if (failureCode) assert.equal(admitted.length, 3, "the failed receipt must exhaust complete-response regeneration");
     const completedBefore = Number(postgresQuery(`SELECT completed_batches FROM ontology_maintenance_runs WHERE run_id=${sqlLiteral(receipt.run_id)}::uuid`));
     const receiptBody = postgresQuery(`SELECT md5(body::text) FROM ontology_assessments WHERE operation_key=${sqlLiteral(`maintenance:${receipt.id}`)}`);
+    let recoveryBoundary;
+    await pollFinalization(() => {
+      recoveryBoundary = postgresQuery(`SELECT clock_timestamp()::text FROM pg_stat_activity
+        WHERE datname=current_database() AND wait_event='advisory' AND query LIKE '%UPDATE ontology_maintenance_sources SET status=%'
+        AND query_start>${sqlLiteral(receipt.query_started_at)}::timestamptz LIMIT 1`);
+      return Boolean(recoveryBoundary);
+    }, "recovery blocked after the canceled finalization");
     const started = Date.now();
     await release();
     await pollFinalization(() => postgresQuery(`SELECT status FROM ontology_maintenance_batches WHERE batch_id=${sqlLiteral(receipt.id)}::uuid`) === "completed", "automatic receipt recovery");
     assert(Date.now() < Date.parse(receipt.lease_until), "recovery must precede native lease expiry");
     assert.equal(postgresQuery(`SELECT failure_code FROM ontology_maintenance_batches WHERE batch_id=${sqlLiteral(receipt.id)}::uuid`), failureCode);
+    assertCompletionTimestamps(receipt.id, recoveryBoundary);
     assert(Number(postgresQuery(`SELECT completed_batches FROM ontology_maintenance_runs WHERE run_id=${sqlLiteral(receipt.run_id)}::uuid`)) > completedBefore, "recovery must count the completed batch");
     if (failureCode) {
       const outcomes = JSON.parse(postgresQuery(`SELECT jsonb_agg(jsonb_build_object('status',status,'reason',reason))::text FROM ontology_maintenance_sources WHERE team_id=${sqlLiteral(teamID)}::uuid AND assessment_id=(SELECT assessment_id FROM ontology_assessments WHERE operation_key=${sqlLiteral(`maintenance:${receipt.id}`)})`));
@@ -450,6 +459,20 @@ async function finalizationRecovery(key, failureCode = "") {
     await release();
     postgresQuery("DROP TRIGGER IF EXISTS ontology_e2e_finalization_barrier ON ontology_maintenance_sources; DROP FUNCTION IF EXISTS ontology_e2e_finalization_barrier()");
   }
+}
+
+function assertCompletionTimestamps(batchID, earliest) {
+  const selected = batchID ? `AND batch.batch_id=${sqlLiteral(batchID)}::uuid` : "";
+  const boundary = earliest ? `OR batch.completed_at<${sqlLiteral(earliest)}::timestamptz` : "";
+  const counts = JSON.parse(postgresQuery(`SELECT jsonb_build_object('completed',count(*),'invalid',count(*) FILTER(
+    WHERE batch.completed_at IS NULL OR batch.completed_at<batch.created_at OR batch.completed_at<assessment.created_at
+    OR run.updated_at<batch.completed_at ${boundary}))::text
+    FROM ontology_maintenance_batches AS batch JOIN ontology_maintenance_runs AS run USING(run_id)
+    JOIN ontology_assessments AS assessment ON assessment.team_id=batch.team_id AND assessment.shared_space_id=batch.shared_space_id
+      AND assessment.space_generation=batch.space_generation AND assessment.operation_key='maintenance:'||batch.batch_id::text
+    WHERE batch.team_id=${sqlLiteral(teamID)}::uuid AND batch.status='completed' ${selected}`));
+  assert(counts.completed > 0, "timestamp checks must observe completed native batches");
+  assert.equal(counts.invalid, 0, "native completion timestamps must follow creation, receipt, and barrier time");
 }
 
 async function pollFinalization(check, label, seconds = 150) {
