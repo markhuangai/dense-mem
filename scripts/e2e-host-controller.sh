@@ -525,7 +525,7 @@ const shardCount = Number(process.argv[3]);
 if (![3, 6].includes(shardCount)) throw new Error("precheck requires three or six shards");
 const batchSize = 40;
 const groups = Array.from({ length: shardCount }, () => ({
-  cases: 0,
+  load: 0,
   packageCounts: new Map(),
   capabilities: [],
 }));
@@ -546,7 +546,9 @@ for (const entry of fs.readdirSync(directory).filter((item) => item.endsWith(".j
   const cases = [...packageCounts.values()].reduce((total, count) => total + count, 0);
   const weight = [...packageCounts.values()].reduce((total, count) => total + Math.ceil(count / batchSize), 0);
   const caseIds = fragment.cases.filter((item) => item.phase === "precheck").map((item) => item.id);
-  records.push({ capability, cases, packageCounts, weight, caseIds });
+  // Community's fanout cohort needs more room than its case count suggests in the bounded six-shard route.
+  const load = shardCount === 6 && capability === "community" ? cases * 4 : cases;
+  records.push({ capability, cases, load, packageCounts, weight, caseIds });
 }
 
 if (records.length === 0) throw new Error("no populated precheck database capability fragments");
@@ -555,17 +557,19 @@ const ontologyIndex = records.findIndex((record) => record.capability === "ontol
 const isolateOntology = ontologyIndex >= 0 && records.length >= 3;
 const caseSelections = [];
 if (shardCount === 6) {
-  // Keep the two longest ontology cases together so the remaining cohort fits its fixed deadline.
+  // The complete measurement needs its own deadline alongside the two existing ontology selections.
   const dedicated = [
     "repository/TestOntologyMaintenanceLargeBacklogAndFairTurns",
     "repository/TestOntologyOrganizationVocabularyAndSourceFences",
   ];
+  const measurement = "repository/TestOntologyMaintenanceRevalidationDiscoveryMeasurement";
+  const isolated = [...dedicated, measurement];
   const ontology = records[ontologyIndex];
-  if (!ontology || dedicated.some((id) => !ontology.caseIds.includes(id)) || ontology.caseIds.length <= dedicated.length || records.length < 5) {
-    throw new Error("six precheck shards require both long ontology cases, remaining ontology, and four populated capability groups");
+  if (!ontology || isolated.some((id) => !ontology.caseIds.includes(id)) || ontology.caseIds.length <= isolated.length || records.length < 5) {
+    throw new Error("six precheck shards require both long ontology cases, discovery measurement, remaining ontology, and four populated capability groups");
   }
-  caseSelections.push(dedicated.join(","), ontology.caseIds.filter((id) => !dedicated.includes(id)).sort().join(","));
-  groups.splice(0, 2);
+  caseSelections.push(dedicated.join(","), measurement, ontology.caseIds.filter((id) => !isolated.includes(id)).sort().join(","));
+  groups.splice(0, 3);
 }
 if (isolateOntology) {
   records.splice(ontologyIndex, 1);
@@ -573,7 +577,7 @@ if (isolateOntology) {
 }
 
 records.sort((left, right) =>
-  (shardCount === 6 ? right.cases - left.cases : right.weight - left.weight) ||
+  (shardCount === 6 ? right.load - left.load : right.weight - left.weight) ||
   right.cases - left.cases ||
   (left.capability < right.capability ? -1 : left.capability > right.capability ? 1 : 0),
 );
@@ -589,7 +593,7 @@ for (const record of records) {
     for (const [packageName, count] of record.packageCounts) {
       projected.set(packageName, (projected.get(packageName) || 0) + count);
     }
-    const candidate = [groups[index].cases + record.cases, batchWeight(projected), index];
+    const candidate = [groups[index].load + record.load, batchWeight(projected), index];
     if (!selected || candidate[0] < selected[0] ||
         (candidate[0] === selected[0] && candidate[1] < selected[1]) ||
         (candidate[0] === selected[0] && candidate[1] === selected[1] && candidate[2] < selected[2])) {
@@ -598,7 +602,7 @@ for (const record of records) {
   }
   const group = groups[selected[2]];
   group.capabilities.push(record.capability);
-  group.cases += record.cases;
+  group.load += record.load;
   for (const [packageName, count] of record.packageCounts) {
     group.packageCounts.set(packageName, (group.packageCounts.get(packageName) || 0) + count);
   }

@@ -6,6 +6,20 @@ import { resolve } from "node:path";
 
 const REDACTION = "[REDACTED]";
 
+function publicConfigurationValue(name, value) {
+  switch (name) {
+    case "TELEMETRY_ENABLED":
+    case "AI_VERIFIER_DISABLE_TEMPERATURE":
+      return /^(true|false)$/.test(value);
+    case "AI_API_EMBEDDING_DIMENSIONS":
+    case "AI_API_EMBEDDING_MAX_BATCH_ITEMS":
+    case "AI_API_EMBEDDING_MAX_CONCURRENCY":
+      return /^[1-9][0-9]*$/.test(value) && Number.isSafeInteger(Number(value));
+    default:
+      return false;
+  }
+}
+
 function valuesFromEnvFile(path, field = "", minimumLength = 4) {
   const values = [];
   let selected;
@@ -76,7 +90,7 @@ function valuesFromEnvFile(path, field = "", minimumLength = 4) {
     const match = line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*(?:=|:)\s*(.*)$/);
     if (!match) unsupported(lineNumber, "expected KEY=VALUE or KEY: VALUE assignment");
     const value = parseValue(match[2], lineNumber);
-    if (!field || match[1] === field) add(value);
+    if (field ? match[1] === field : !publicConfigurationValue(match[1], value)) add(value);
   }
   return field ? selected : values;
 }
