@@ -168,6 +168,47 @@ func TestEvalRuntimeDockerLifecycle(t *testing.T) {
 	require.NoError(t, writePairJSON(old.planPath, old.plan))
 	protected, err := captureProtectedRuntimes(ctx, old.plan.ProtectedRuntimes)
 	require.NoError(t, err)
+	var activeServer runtimeContainer
+	for _, container := range protected {
+		if container.Service == "server" {
+			activeServer = container
+		}
+	}
+	require.NotEmpty(t, activeServer.ID)
+	require.NoError(t, stopRuntimeContainer(ctx, activeServer, 10*time.Second))
+	require.NoError(t, RunRuntimeCommand(ctx, RuntimeCommand{Action: "start", Directory: active.command.Directory}, io.Discard))
+	require.Eventually(t, func() bool {
+		current, err := inspectRuntimeContainer(ctx, activeServer.ID)
+		return err == nil && current.Running && current.Health == "healthy"
+	}, 20*time.Second, 100*time.Millisecond)
+	protected, err = captureProtectedRuntimes(ctx, old.plan.ProtectedRuntimes)
+	require.NoError(t, err)
+	t.Run("unhealthy_protected_runtime_blocks_retirement", func(t *testing.T) {
+		t.Cleanup(func() {
+			cleanupCtx, stop := context.WithTimeout(context.Background(), 20*time.Second)
+			defer stop()
+			_, err := runtimeDocker(cleanupCtx, "container", "exec", activeServer.ID, "touch", "/ready")
+			require.NoError(t, err)
+			require.Eventually(t, func() bool {
+				current, err := inspectRuntimeContainer(cleanupCtx, activeServer.ID)
+				return err == nil && current.Health == "healthy"
+			}, 15*time.Second, 100*time.Millisecond)
+		})
+		_, err := runtimeDocker(ctx, "container", "exec", activeServer.ID, "rm", "/ready")
+		require.NoError(t, err)
+		require.Eventually(t, func() bool {
+			current, err := inspectRuntimeContainer(ctx, activeServer.ID)
+			return err == nil && current.Health == "unhealthy"
+		}, 20*time.Second, 100*time.Millisecond)
+		require.ErrorContains(t, RunRuntimeCommand(ctx, RuntimeCommand{Action: "retire", Directory: old.command.Directory, RetentionPlan: old.planPath, StopTimeout: time.Second}, io.Discard), "protected runtime is not healthy")
+		require.ErrorContains(t, verifyProtectedRuntimes(ctx, protected), "health changed")
+		current, err := readRuntimeReceipt(old.command.Directory)
+		require.NoError(t, err)
+		require.Equal(t, "active", current.State)
+		require.Nil(t, current.Retirement)
+		require.NoError(t, verifyActiveRuntime(ctx, current))
+	})
+	require.NoError(t, verifyProtectedRuntimes(ctx, protected))
 	receipt, err := readRuntimeReceipt(old.command.Directory)
 	require.NoError(t, err)
 	monitorDir := filepath.Join(old.root, "monitor")
@@ -182,6 +223,7 @@ func TestEvalRuntimeDockerLifecycle(t *testing.T) {
 		}
 	}
 	require.NoError(t, CheckPairRuntimeLifecycle(pair, "candidate"))
+	require.NoError(t, CheckPairRuntimeLifecycle(pair, "candidate"), "registration is idempotent")
 	receipt, err = readRuntimeReceipt(old.command.Directory)
 	require.NoError(t, err)
 	require.Equal(t, []string{monitorDir}, receipt.MonitorDirs)
@@ -205,6 +247,13 @@ func TestEvalRuntimeDockerLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	record := RuntimeCommand{Action: "record", Directory: old.command.Directory, Fixtures: []string{fixtureID}}
 	require.NoError(t, RunRuntimeCommand(ctx, record, io.Discard))
+	require.NoError(t, RunRuntimeCommand(ctx, RuntimeCommand{Action: "record", Directory: old.command.Directory}, io.Discard), "re-enrollment retains explicit terminal fixtures")
+	terminalBefore, err := inspectRuntimeContainer(ctx, fixtureID)
+	require.NoError(t, err)
+	require.NoError(t, RunRuntimeCommand(ctx, resume, io.Discard))
+	terminalAfter, err := inspectRuntimeContainer(ctx, fixtureID)
+	require.NoError(t, err)
+	require.Equal(t, terminalBefore.StartedAt, terminalAfter.StartedAt, "resumption never restarts a terminal fixture")
 	receipt, err = readRuntimeReceipt(old.command.Directory)
 	require.NoError(t, err)
 	require.True(t, slices.ContainsFunc(receipt.Containers, func(c runtimeContainer) bool { return c.ID == fixtureID && c.Fixture }))

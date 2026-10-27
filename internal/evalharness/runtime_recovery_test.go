@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -86,6 +87,174 @@ func TestEvalRuntimeDockerRecordedVolumeOwnership(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "retained_external", retired.Retirement.Dispositions["volume:"+external])
 	require.NoError(t, RunRuntimeCommand(ctx, RuntimeCommand{Action: "verify", Directory: dir}, io.Discard))
+}
+
+func TestEvalRuntimeDockerRejectionAndReadback(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+	fixture := newEvalRuntimeFixture(t, ctx, false, "")
+	receipt, err := readRuntimeReceipt(fixture.command.Directory)
+	require.NoError(t, err)
+	protected, err := captureProtectedRuntimes(ctx, []string{receipt.Directory})
+	require.NoError(t, err)
+	created, err := runtimeDocker(ctx, "container", "create", "--network", "none", "--label", runtimeOwnerLabel+"="+receipt.ID, "busybox:1.37.0-musl", "true")
+	require.NoError(t, err)
+	terminalID := strings.TrimSpace(string(created))
+	t.Cleanup(func() {
+		cleanupCtx, stop := context.WithTimeout(context.Background(), 20*time.Second)
+		defer stop()
+		present, err := runtimePresent(cleanupCtx, "container", terminalID)
+		if err == nil && present {
+			_, err = runtimeDocker(cleanupCtx, "container", "rm", terminalID)
+		}
+		require.NoError(t, err)
+	})
+	_, err = runtimeDocker(ctx, "container", "start", "--attach", terminalID)
+	require.NoError(t, err)
+	lost := receipt
+	require.NoError(t, captureRuntimeResources(ctx, &lost, []string{terminalID}, false))
+	terminal, err := inspectRuntimeContainer(ctx, terminalID)
+	require.NoError(t, err)
+	_, err = runtimeDocker(ctx, "container", "rm", terminalID)
+	require.NoError(t, err)
+	cases := []struct {
+		name, reason string
+		change       func(*runtimeReceipt)
+	}{
+		{"missing_container", "disappeared before retirement intent", func(r *runtimeReceipt) { *r = lost }},
+		{"reused_container_name", "name now identifies another", func(r *runtimeReceipt) { *r = lost }},
+		{"changed_image", "container identity changed", func(r *runtimeReceipt) { r.Containers[0].ImageID = "sha256:" + strings.Repeat("0", 64) }},
+		{"unrecorded_container", "unrecorded container", func(r *runtimeReceipt) { r.Containers = r.Containers[1:] }},
+		{"bind_outside_runtime", "outside its runtime directory", func(r *runtimeReceipt) { r.Binds[0].Identity.Path = filepath.Dir(r.Directory) }},
+		{"bind_replaced", "storage identity changed", func(r *runtimeReceipt) { r.Binds[0].Identity.Inode++ }},
+		{"volume_missing", "volume disappeared before retirement intent", func(r *runtimeReceipt) { r.Volumes[0].Name = "eval627-missing-" + uuid.NewString() }},
+		{"volume_replaced", "volume identity changed", func(r *runtimeReceipt) { r.Volumes[0].CreatedAt += "-changed" }},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			if test.name == "reused_container_name" {
+				created, err := runtimeDocker(ctx, "container", "create", "--network", "none", "--name", terminal.Name, "--label", "com.docker.compose.project=eval627-other-"+uuid.NewString(), "busybox:1.37.0-musl", "true")
+				require.NoError(t, err)
+				t.Cleanup(func() {
+					cleanupCtx, stop := context.WithTimeout(context.Background(), 20*time.Second)
+					defer stop()
+					_, err := runtimeDocker(cleanupCtx, "container", "rm", strings.TrimSpace(string(created)))
+					require.NoError(t, err)
+				})
+			}
+			candidate := receipt
+			candidate.Containers = slices.Clone(receipt.Containers)
+			candidate.Binds = slices.Clone(receipt.Binds)
+			candidate.Volumes = slices.Clone(receipt.Volumes)
+			test.change(&candidate)
+			require.ErrorContains(t, verifyRetirementOwnership(ctx, candidate), test.reason)
+			require.NoError(t, verifyProtectedRuntimes(ctx, protected))
+		})
+	}
+	before, err := os.ReadFile(filepath.Join(receipt.Directory, runtimeReceiptName))
+	require.NoError(t, err)
+	for _, id := range []string{receipt.Containers[0].ID, strings.ReplaceAll(uuid.NewString()+uuid.NewString(), "-", "")} {
+		require.Error(t, RunRuntimeCommand(ctx, RuntimeCommand{Action: "record", Directory: receipt.Directory, Fixtures: []string{id}}, io.Discard))
+	}
+	for _, action := range []string{"start", "record", "retire", "verify"} {
+		t.Run("cancelled_"+action, func(t *testing.T) {
+			cancelled, stop := context.WithCancel(ctx)
+			stop()
+			err := RunRuntimeCommand(cancelled, RuntimeCommand{Action: action, Directory: receipt.Directory, RetentionPlan: fixture.planPath}, io.Discard)
+			require.ErrorIs(t, err, context.Canceled)
+			require.NoError(t, verifyProtectedRuntimes(ctx, protected))
+		})
+	}
+	after, err := os.ReadFile(filepath.Join(receipt.Directory, runtimeReceiptName))
+	require.NoError(t, err)
+	require.Equal(t, before, after, "failed enrollment and cancellation must preserve the ownership receipt")
+	missing := "eval627-missing-" + uuid.NewString()
+	_, err = inspectRuntimeContainer(ctx, missing)
+	require.Error(t, err)
+	_, err = inspectRuntimeNetwork(ctx, missing, receipt.Project)
+	require.Error(t, err)
+	_, err = inspectRuntimeVolume(ctx, missing, receipt.Project)
+	require.Error(t, err)
+	_, err = inspectRuntimeImage(ctx, missing)
+	require.Error(t, err)
+	command := fixture.command
+	command.Directory = filepath.Join(t.TempDir(), "runtime")
+	require.ErrorContains(t, RunRuntimeCommand(ctx, command, io.Discard), "project already owns resources")
+	require.NoError(t, verifyProtectedRuntimes(ctx, protected))
+	retire := RuntimeCommand{Action: "retire", Directory: receipt.Directory, RetentionPlan: fixture.planPath, StopTimeout: 10 * time.Second}
+	require.NoError(t, RunRuntimeCommand(ctx, retire, io.Discard))
+	retired, err := readRuntimeReceipt(receipt.Directory)
+	require.NoError(t, err)
+	cancelled, stop := context.WithCancel(ctx)
+	stop()
+	require.ErrorIs(t, RunRuntimeCommand(cancelled, RuntimeCommand{Action: "verify", Directory: receipt.Directory}, io.Discard), context.Canceled, "Docker errors cannot prove resource absence")
+	copy := retired
+	copy.Retirement = nil
+	require.ErrorContains(t, verifyRetirementReadback(ctx, copy), "intent is missing")
+	progress := *retired.Retirement
+	copy.Retirement = &progress
+	progress.Dispositions = map[string]string{}
+	require.ErrorContains(t, verifyRetirementReadback(ctx, copy), "unfinished resource")
+	progress.Dispositions = retired.Retirement.Dispositions
+	progress.Helpers = map[string]runtimeContainer{"unfinished": {Name: "unresolved"}}
+	require.ErrorContains(t, verifyRetirementReadback(ctx, copy), "has not been reconciled")
+	require.ErrorContains(t, removeRuntimeHelper(ctx, &retired, runtimeContainer{}), "identity is unresolved")
+	bind := retired.Binds[0]
+	require.NoError(t, os.Mkdir(bind.Identity.Path, 0o700))
+	require.ErrorContains(t, verifyRetiredRuntime(ctx, retired), "bind storage is not proven absent")
+	require.NoError(t, os.Remove(bind.Identity.Path))
+	require.NoError(t, retireRuntimeBind(ctx, retire, &retired, bind), "cleanup resumes when the disposable directory is already absent")
+	require.NoError(t, verifyRetiredRuntime(ctx, retired))
+}
+
+func TestEvalRuntimeDockerStoragePreflight(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	for _, variant := range []string{"nonempty_bind", "outside_bind", "symlink_bind", "file_bind", "invalid_compose", "empty_enrollment"} {
+		t.Run(variant, func(t *testing.T) {
+			root := t.TempDir()
+			dir := filepath.Join(root, "runtime")
+			project := "eval627-" + uuid.NewString()
+			t.Cleanup(func() { removeEvalRuntimeFixture(t, root, runtimeReceipt{Project: project}) })
+			require.NoError(t, os.Mkdir(dir, 0o700))
+			source := filepath.Join(dir, "data")
+			reason := "new runtime storage is not empty"
+			if variant == "outside_bind" || variant == "symlink_bind" {
+				source, reason = filepath.Join(root, "outside"), "storage must be inside"
+			}
+			payload := source
+			if variant != "file_bind" {
+				require.NoError(t, os.Mkdir(source, 0o700))
+				payload = filepath.Join(source, "keep")
+			} else {
+				reason = "not a directory"
+			}
+			require.NoError(t, os.WriteFile(payload, []byte("preserve pre-existing data\n"), 0o600))
+			hash, err := PairFileHash(payload)
+			require.NoError(t, err)
+			if variant == "symlink_bind" {
+				link := filepath.Join(dir, "data")
+				require.NoError(t, os.Symlink(source, link))
+				source, reason = link, "symlink"
+			}
+			compose := filepath.Join(root, "compose.json")
+			require.NoError(t, writePairJSON(compose, map[string]any{"services": map[string]any{"server": map[string]any{
+				"image": "busybox:1.37.0-musl", "command": []string{"true"}, "volumes": []string{source + ":/data"},
+			}}}))
+			command := RuntimeCommand{Action: "start", Directory: dir, Project: project, ComposeFile: compose, New: true}
+			if variant == "invalid_compose" {
+				require.NoError(t, os.WriteFile(compose, []byte("{"), 0o600))
+				reason = "Compose config failed"
+			}
+			if variant == "empty_enrollment" {
+				command.Action, command.New, reason = "record", false, "no prepared containers"
+			}
+			require.ErrorContains(t, RunRuntimeCommand(ctx, command, io.Discard), reason)
+			require.NoError(t, runtimeVerifyFile(payload, hash))
+			require.NoFileExists(t, filepath.Join(dir, runtimeReceiptName))
+			require.NoError(t, assertUnusedRuntimeProject(ctx, project), "rejected preflight must not create Docker resources")
+		})
+	}
 }
 
 func TestEvalRuntimeDockerOwnershipAndStorageGuards(t *testing.T) {

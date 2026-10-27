@@ -66,7 +66,7 @@ func RunRuntimeCommand(ctx context.Context, cmd RuntimeCommand, out io.Writer) e
 			return err
 		}
 		if cmd.Project != "" && cmd.Project != receipt.Project {
-			return fmt.Errorf("Compose project differs from the runtime receipt")
+			return fmt.Errorf("evaluation Compose project differs from the runtime receipt")
 		}
 		cmd.Project = receipt.Project
 	} else {
@@ -261,7 +261,7 @@ func startEvalRuntime(ctx context.Context, cmd RuntimeCommand, receipt *runtimeR
 		receipt.State = "active"
 	}
 	if upErr == nil && len(receipt.Containers) == 0 {
-		upErr = fmt.Errorf("Compose startup produced no recorded containers")
+		upErr = fmt.Errorf("evaluation Compose startup produced no recorded containers")
 	}
 	return errors.Join(upErr, captureErr, saveRuntimeReceipt(*receipt))
 }
@@ -277,7 +277,7 @@ func assertUnusedRuntimeProject(ctx context.Context, project string) error {
 			return err
 		}
 		if len(data) > 0 {
-			return fmt.Errorf("Compose project already owns resources; use its receipt or explicit record")
+			return fmt.Errorf("evaluation Compose project already owns resources; use its receipt or explicit record")
 		}
 	}
 	return nil
