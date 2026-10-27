@@ -516,7 +516,7 @@ func validatePairLiveMapping(c PairConfig, dir string, imports []PairImportAttem
 	if err := readJSONFile(filepath.Join(dir, "knowledge_mapping.json"), &mapping); err != nil {
 		return err
 	}
-	for _, row := range imports {
+	for _, row := range completedPairImports(imports) {
 		ref := mapping.BySourceDocID[row.SourceDocID]
 		found := false
 		for _, id := range row.EvidenceIDs {

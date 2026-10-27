@@ -124,6 +124,18 @@ func runPairedServiceSide(t *testing.T, c evalharness.PairConfig, f *pairedServi
 	_, err = client.ImportCorpusWithConcurrency(ctx, corpus[:1], 1)
 	require.NoError(t, err)
 	first := observe()
+	require.Len(t, first.Imports, 2)
+	require.Equal(t, 2, f.provider.calls, "the native importer must recover its first provider failure")
+	var failed []evalharness.PairImportAttempt
+	for _, attempt := range first.Imports {
+		if attempt.Outcome == "failed" {
+			failed = append(failed, attempt)
+		}
+	}
+	require.Len(t, failed, 1)
+	_, err = evalharness.EvaluatePairImport(f.release.Scope, corpus, failed, false)
+	require.ErrorContains(t, err, "automatic retry is forbidden")
+	require.Equal(t, first.SourceHash, observe().SourceHash)
 	progress, err := evalharness.EvaluatePairImport(f.release.Scope, corpus, first.Imports, false)
 	require.NoError(t, err)
 	require.Equal(t, []string{corpus[0].SourceDocID}, progress.CompletedSourceIDs)

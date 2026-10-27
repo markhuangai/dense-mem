@@ -571,16 +571,17 @@ func (c *HTTPClient) RunRecallCase(ctx context.Context, tc Case) (RecallTrace, e
 	return traceFromToolOutput(tc, out), nil
 }
 
+const maxToolCallAttempts = 6
+
 func (c *HTTPClient) callToolWithRetry(ctx context.Context, name string, input any, out any) error {
-	const maxAttempts = 6
 	var lastErr error
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
+	for attempt := 1; attempt <= maxToolCallAttempts; attempt++ {
 		err := c.CallTool(ctx, name, input, out)
 		if err == nil {
 			return nil
 		}
 		lastErr = err
-		if !isTransientCallToolError(err) || attempt == maxAttempts {
+		if !isTransientCallToolError(err) || attempt == maxToolCallAttempts {
 			return err
 		}
 		delay := time.Duration(attempt) * 750 * time.Millisecond

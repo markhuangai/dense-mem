@@ -54,8 +54,8 @@ SELECT jsonb_build_object(
         AND NOT EXISTS(SELECT 1 FROM remember_attempts a CROSS JOIN LATERAL jsonb_array_elements(a.public_result->'evidence') e
             WHERE a.team_id=f.team_id AND a.submission_kind='remember' AND a.idempotency_key LIKE 'eval:%'
               AND a.outcome='completed' AND e->>'evidence_id'=f.fragment_id::text)),
-    'imports',COALESCE((SELECT jsonb_agg(receipt ORDER BY receipt->>'source_doc_id') FROM imports),'[]'::jsonb),
+    'imports',COALESCE((SELECT jsonb_agg(receipt ORDER BY receipt->>'source_doc_id',receipt->>'attempt_id') FROM imports),'[]'::jsonb),
     'canonical_hash','sha256:'||encode(sha256(convert_to(COALESCE((SELECT jsonb_agg(jsonb_build_array(kind,body) ORDER BY kind,body)::text FROM canonical),'[]'),'UTF8')),'hex'),
-    'source_hash','sha256:'||encode(sha256(convert_to(COALESCE((SELECT jsonb_agg(receipt ORDER BY receipt->>'source_doc_id')::text FROM imports),'[]'),'UTF8')),'hex')
+    'source_hash','sha256:'||encode(sha256(convert_to(COALESCE((SELECT jsonb_agg(receipt ORDER BY receipt->>'source_doc_id',receipt->>'attempt_id')::text FROM imports),'[]'),'UTF8')),'hex')
 )
 FROM scope AS s
