@@ -150,7 +150,7 @@ func (s *Store) ClaimMaintenanceBatch(ctx context.Context, turn ontology.Mainten
 		if err := tx.Exec(`INSERT INTO ontology_maintenance_batches(batch_id,run_id,window_id,team_id,shared_space_id,space_generation,lease_token,lease_until,sources,revisions,created_at) VALUES(?::uuid,?::uuid,?::uuid,?::uuid,?::uuid,?,?::uuid,?,?::jsonb,?::jsonb,?)`, claim.ID, runID, windowID, claim.TeamID, claim.SpaceID, claim.Generation, claim.LeaseToken, claim.LeaseUntil, string(sources), string(revisions), now).Error; err != nil {
 			return err
 		}
-		if err := tx.Exec(`UPDATE ontology_maintenance_runs SET status='running',updated_at=? WHERE run_id=?::uuid`, now, runID).Error; err != nil {
+		if err := tx.Exec(`UPDATE ontology_maintenance_runs SET status='running',updated_at=clock_timestamp() WHERE run_id=?::uuid`, runID).Error; err != nil {
 			return err
 		}
 		return releaseMaintenanceTurnTx(tx, turn)
@@ -345,16 +345,16 @@ func completeMaintenanceBatch(tx *gorm.DB, claim ontology.MaintenanceClaim, resu
 		if result.AssessmentID != "" {
 			assessmentID = result.AssessmentID
 		}
-		updated := tx.Exec(`UPDATE ontology_maintenance_sources SET status=?,reason=?,eligible=CASE WHEN ?='unavailable' THEN false ELSE eligible END,assessment_id=?::uuid,last_run_id=?::uuid,updated_at=?
+		updated := tx.Exec(`UPDATE ontology_maintenance_sources SET status=?,reason=?,eligible=CASE WHEN ?='unavailable' THEN false ELSE eligible END,assessment_id=?::uuid,last_run_id=?::uuid,updated_at=clock_timestamp()
 		 WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND source_kind=? AND source_id=? AND revision=?
-		 AND (NOT ? OR (eligible AND status='pending' AND source_version=? AND fingerprint=?))`, state, reason, state, assessmentID, claim.RunID, now, claim.TeamID, claim.SpaceID, claim.Generation, source.Kind, source.ID, revision, reuse, source.Version, fingerprints[key])
+		 AND (NOT ? OR (eligible AND status='pending' AND source_version=? AND fingerprint=?))`, state, reason, state, assessmentID, claim.RunID, claim.TeamID, claim.SpaceID, claim.Generation, source.Kind, source.ID, revision, reuse, source.Version, fingerprints[key])
 		if updated.Error != nil {
 			return updated.Error
 		}
 		progress = progress || (state == "organized" && updated.RowsAffected > 0)
 	}
 	*phase = "batch_update"
-	updated := tx.Exec(`UPDATE ontology_maintenance_batches SET status='completed',failure_code=?,completed_at=? WHERE batch_id=?::uuid AND status='running' AND lease_until>clock_timestamp()`, failure, now, claim.ID)
+	updated := tx.Exec(`UPDATE ontology_maintenance_batches SET status='completed',failure_code=?,completed_at=clock_timestamp() WHERE batch_id=?::uuid AND status='running' AND lease_until>clock_timestamp()`, failure, claim.ID)
 	if updated.Error != nil {
 		return updated.Error
 	}
@@ -364,7 +364,7 @@ func completeMaintenanceBatch(tx *gorm.DB, claim ontology.MaintenanceClaim, resu
 	*phase = "run_update"
 	var bounded bool
 	if err := tx.Raw(`UPDATE ontology_maintenance_runs SET completed_batches=completed_batches+1,failure_code=CASE WHEN ?<>'' THEN ? ELSE failure_code END,
-	 updated_at=? WHERE run_id=?::uuid RETURNING max_batches>0 AND completed_batches>=max_batches`, failure, failure, now, claim.RunID).Row().Scan(&bounded); err != nil {
+	 updated_at=clock_timestamp() WHERE run_id=?::uuid RETURNING max_batches>0 AND completed_batches>=max_batches`, failure, failure, claim.RunID).Row().Scan(&bounded); err != nil {
 		return err
 	}
 	if bounded {
@@ -372,12 +372,12 @@ func completeMaintenanceBatch(tx *gorm.DB, claim ontology.MaintenanceClaim, resu
 		if requiredFailure == "" {
 			requiredFailure = result.FailureCode
 		}
-		if err := completeMaintenanceRun(tx, claim.RunID, "", false, requiredFailure, now); err != nil {
+		if err := completeMaintenanceRun(tx, claim.RunID, "", false, requiredFailure); err != nil {
 			return err
 		}
 	}
 	if progress && failure == "" && result.FailureCode == "" && result.Current {
-		return tx.Exec(`UPDATE ontology_maintenance_state SET last_successful_progress=? WHERE singleton`, now).Error
+		return tx.Exec(`UPDATE ontology_maintenance_state SET last_successful_progress=clock_timestamp() WHERE singleton`).Error
 	}
 	return nil
 }

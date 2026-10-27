@@ -212,7 +212,7 @@ func (s *Store) ClaimMaintenanceTurn(ctx context.Context, windowID string, now t
 		 AND (max_batches=0 OR completed_batches+(SELECT count(*) FROM ontology_maintenance_batches AS batch WHERE batch.run_id=run.run_id AND batch.status='running')<max_batches)
 		 ORDER BY (kind='scheduled'),created_at,run_id LIMIT 1`, windowID).Row().Scan(&candidate.RunID, &candidate.RetryRunID)
 		if errors.Is(err, sql.ErrNoRows) {
-			if err := tx.Exec(`UPDATE ontology_maintenance_runs SET status='pending',updated_at=? WHERE window_id=?::uuid AND kind='scheduled' AND status IN ('completed','incomplete')`, now, windowID).Error; err != nil {
+			if err := tx.Exec(`UPDATE ontology_maintenance_runs SET status='pending',updated_at=clock_timestamp() WHERE window_id=?::uuid AND kind='scheduled' AND status IN ('completed','incomplete')`, windowID).Error; err != nil {
 				return err
 			}
 			err = tx.Raw(`SELECT run_id::text,'' FROM ontology_maintenance_runs WHERE window_id=?::uuid AND kind='scheduled' AND status='pending'`, windowID).Row().Scan(&candidate.RunID, &candidate.RetryRunID)
@@ -243,7 +243,7 @@ func (s *Store) ClaimMaintenanceTurn(ctx context.Context, windowID string, now t
 			if active > 0 {
 				return nil
 			}
-			return completeMaintenanceRun(tx, candidate.RunID, candidate.RetryRunID, candidate.RetryRunID == "", "", now)
+			return completeMaintenanceRun(tx, candidate.RunID, candidate.RetryRunID, candidate.RetryRunID == "", "")
 		}
 		if err != nil {
 			return err

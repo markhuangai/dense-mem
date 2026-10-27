@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -182,6 +183,146 @@ func TestOntologyMaintenanceFinalizationReceiptsAndAccounting(t *testing.T) {
 }
 
 func TestOntologyMaintenanceFinalizationRacesAndFences(t *testing.T) {
+	for _, testCase := range []struct {
+		name      string
+		recovery  bool
+		scheduled bool
+		zeroCalls bool
+	}{
+		{name: "normal_bounded"},
+		{name: "recovered_bounded", recovery: true},
+		{name: "recovered_scheduled", recovery: true, scheduled: true},
+		{name: "recovered_zero_attempts", recovery: true, scheduled: true, zeroCalls: true},
+	} {
+		t.Run("completion_time/"+testCase.name, func(t *testing.T) {
+			f := newOrganizationFixture(t)
+			text := "Atlas uses PostgreSQL for storage."
+			if testCase.zeroCalls {
+				text = strings.Repeat("Atlas uses PostgreSQL. ", 50000)
+			}
+			f.organizationEvidence(t, 0, text, nil)
+			window := maintenanceWindow(t, f, concurrencyConfig(t, f, 4, 4))
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			type barrierKey struct{}
+			blockedCtx := context.WithValue(ctx, barrierKey{}, true)
+			reached, resume, stopped := make(chan struct{}), make(chan struct{}), make(chan struct{})
+			release := sync.OnceFunc(func() { close(resume) })
+			var blocked atomic.Bool
+			callback := "completion_time_" + uuid.NewString()
+			require.NoError(t, f.app.Callback().Row().Before("gorm:row").Register(callback, func(tx *gorm.DB) {
+				if tx.Statement.Context.Value(barrierKey{}) != true || tx.Statement.SQL.String() != "SELECT paused FROM ontology_maintenance_state WHERE singleton FOR UPDATE" || !blocked.CompareAndSwap(false, true) {
+					return
+				}
+				close(reached)
+				select {
+				case <-resume:
+				case <-ctx.Done():
+				}
+			}))
+			defer func() { require.NoError(t, f.app.Callback().Row().Remove(callback)) }()
+			var observed time.Time
+			require.NoError(t, f.admin.Raw(`SELECT clock_timestamp()`).Row().Scan(&observed))
+			finished := make(chan error, 1)
+			var claim *ontology.MaintenanceClaim
+			var x *finalizationFixture
+			started := false
+			defer func() {
+				cancel()
+				release()
+				if started {
+					<-stopped
+				}
+			}()
+			start := func() {
+				started = true
+				go func() {
+					defer close(stopped)
+					if !testCase.recovery {
+						finished <- f.store.CompleteMaintenanceBatch(blockedCtx, *claim, x.result, "", observed)
+						return
+					}
+					turn, err := f.store.ClaimMaintenanceTurn(blockedCtx, window.ID, observed, time.Minute)
+					if err == nil && turn != nil {
+						err = f.store.ReleaseMaintenanceTurn(ctx, *turn)
+					}
+					finished <- err
+				}()
+				select {
+				case <-reached:
+				case err := <-finished:
+					t.Fatalf("completion did not reach accounting barrier: %v", err)
+				case <-time.After(5 * time.Second):
+					t.Fatal("completion did not reach accounting barrier")
+				}
+			}
+			if testCase.recovery {
+				start()
+			}
+			if testCase.scheduled {
+				_, claim = maintenanceClaim(t, f, window)
+				x = finalizationFixtureForClaim(t, f, window, claim)
+			} else {
+				x = claimFinalizationFixture(t, f, window)
+				claim = x.claim
+			}
+			x.stage(t)
+			var created time.Time
+			require.NoError(t, f.admin.Raw(`SELECT created_at FROM ontology_maintenance_batches WHERE batch_id=?::uuid`, claim.ID).Row().Scan(&created))
+			require.True(t, created.After(observed), "the selected batch must be newer than admission's observation")
+			history, canonical := x.history(t), f.canonicalSnapshot(t)
+			calls := x.calls.Load()
+			if testCase.zeroCalls {
+				require.Zero(t, calls)
+			} else {
+				require.Positive(t, calls)
+			}
+			unchanged := x.completionState(t)
+			require.ErrorIs(t, f.store.CompleteMaintenanceBatch(ctx, *claim, x.result, "", claim.LeaseUntil), ontology.ErrLeaseLost)
+			require.Equal(t, unchanged, x.completionState(t), "injected-time expiry cannot mutate completion")
+			if !testCase.recovery {
+				start()
+			}
+			var earliest time.Time
+			require.NoError(t, f.admin.Raw(`SELECT clock_timestamp()`).Row().Scan(&earliest))
+			release()
+			require.NoError(t, <-finished)
+			x.assertCompletedOutcome(t)
+			x.assertCompletionTimestamps(t, earliest)
+			var finalized int
+			require.NoError(t, f.admin.Raw(`SELECT count(*) FROM ontology_maintenance_sources WHERE team_id=?::uuid AND assessment_id=?::uuid`, f.team, x.result.AssessmentID).Row().Scan(&finalized))
+			require.Equal(t, len(claim.Sources), finalized, "timestamp assertions must observe every finalized source")
+			completed := x.completionState(t)
+			require.NoError(t, f.store.CompleteMaintenanceBatch(ctx, *claim, x.result, "", observed))
+			require.NoError(t, f.store.recoverMaintenanceBatches(ctx, observed))
+			require.Equal(t, completed, x.completionState(t), "duplicate completion cannot rewrite timestamps or counters")
+			require.Equal(t, history, x.history(t))
+			require.Equal(t, canonical, f.canonicalSnapshot(t))
+			require.Equal(t, calls, x.calls.Load())
+			if testCase.scheduled {
+				for range 2 {
+					turn, err := f.store.ClaimMaintenanceTurn(ctx, window.ID, observed, time.Minute)
+					require.NoError(t, err)
+					if turn != nil {
+						require.NoError(t, f.store.ReleaseMaintenanceTurn(ctx, *turn))
+					}
+					x.assertCompletionTimestamps(t, earliest)
+				}
+				if testCase.zeroCalls {
+					run := maintenanceRunByID(t, f, claim.RunID)
+					require.Equal(t, "incomplete", run.Status, "oversized sources drain with incomplete coverage")
+					f.organizationEvidence(t, 0, "Copper uses SQLite for archival storage.", nil)
+					turn, err := f.store.ClaimMaintenanceTurn(ctx, window.ID, observed, time.Minute)
+					require.NoError(t, err)
+					require.NotNil(t, turn)
+					reopened := maintenanceRunByID(t, f, claim.RunID)
+					require.Equal(t, "pending", reopened.Status)
+					require.False(t, reopened.UpdatedAt.Before(run.UpdatedAt), "reopening cannot reuse stale admission time")
+					require.NoError(t, f.store.ReleaseMaintenanceTurn(ctx, *turn))
+				}
+			}
+		})
+	}
 	for _, failure := range []string{"sql", "canceled"} {
 		t.Run("recovery_rollback_"+failure, func(t *testing.T) {
 			x, healthy, pending := newFinalizationRecoveryCohort(t, "reported", true)
