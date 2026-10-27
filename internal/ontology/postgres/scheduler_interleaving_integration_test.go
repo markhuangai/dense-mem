@@ -8,6 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	community "github.com/markhuangai/dense-mem/internal/community/contract"
@@ -20,6 +21,39 @@ import (
 )
 
 func TestOntologyMaintenanceParallelSchedulerMixedTurns(t *testing.T) {
+	t.Run("provider-entry", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			entered := make(chan struct{}, 1)
+			waitForEntry := schedulerProviderEntryBarrier(entered)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			cancelled := make(chan struct{})
+			go func() { waitForEntry(ctx); close(cancelled) }()
+			ready := make(chan struct{}, 2)
+			for range 2 {
+				go func() { waitForEntry(context.Background()); ready <- struct{}{} }()
+			}
+			synctest.Wait()
+			require.Empty(t, ready)
+			select {
+			case <-cancelled:
+				t.Fatal("provider entry wait returned before entry or cancellation")
+			default:
+			}
+			cancel()
+			synctest.Wait()
+			select {
+			case <-cancelled:
+			default:
+				t.Fatal("provider entry wait did not honor cancellation")
+			}
+			require.Empty(t, ready, "cancelling a waiter must not signal provider entry")
+			entered <- struct{}{}
+			synctest.Wait()
+			require.Len(t, ready, 2)
+			waitForEntry(context.Background())
+		})
+	})
 	for _, capacity := range []int{4, 8} {
 		for _, teamCount := range []int{1, 2} {
 			t.Run(fmt.Sprintf("capacity-%d-teams-%d", capacity, teamCount), func(t *testing.T) {
@@ -36,16 +70,19 @@ func TestOntologyMaintenanceParallelSchedulerMixedTurns(t *testing.T) {
 				}
 				config := schedulerConfig(t, f, capacity, capacity)
 				m := &schedulerMeasurement{started: time.Now(), MaxTeamAdmitted: map[string]int{}}
-				gate, firstProvider := make(chan struct{}), make(chan struct{})
-				var releaseOnce, firstOnce sync.Once
-				release := func() { releaseOnce.Do(func() { close(gate) }) }
-				entered := make(chan struct{}, 100)
-				provider := schedulerProvider(m, f, entered, nil)
+				gate, providerSelected, resumeProvider := make(chan struct{}), make(chan struct{}), make(chan struct{})
+				var releaseOnce, resumeOnce, firstOnce sync.Once
+				releaseEntry := func() { resumeOnce.Do(func() { close(resumeProvider) }) }
+				release := func() { releaseEntry(); releaseOnce.Do(func() { close(gate) }) }
+				entered := make(chan struct{}, 1)
+				provider := schedulerProvider(m, f, nil, nil)
 				blockedProvider := schedulerProvider(m, f, entered, gate)
 				service, _ := schedulerFixtureService(t, f, config, func(request assessment.Request, response *assessment.Response) {
 					first := false
-					firstOnce.Do(func() { first = true; close(firstProvider) })
+					firstOnce.Do(func() { first = true })
 					if first {
+						close(providerSelected)
+						<-resumeProvider
 						blockedProvider(request, response)
 					} else {
 						provider(request, response)
@@ -70,19 +107,43 @@ func TestOntologyMaintenanceParallelSchedulerMixedTurns(t *testing.T) {
 						return ctx.Err()
 					}
 				}, nil)
+				projectionAttempted, projectionReady := make(chan struct{}, 1), make(chan struct{}, 1)
+				waitForEntry := schedulerProviderEntryBarrier(entered)
 				projections.before = func(ctx context.Context) {
 					select {
-					case <-firstProvider:
-					case <-ctx.Done():
+					case projectionAttempted <- struct{}{}:
+					default:
+					}
+					waitForEntry(ctx)
+					select {
+					case projectionReady <- struct{}{}:
+					default:
 					}
 				}
 				service.SetProjectionRunner(projections)
 				canonical := schedulerCanonical(t, teams...)
+				observation := time.NewTimer(30 * time.Second)
+				defer observation.Stop()
 				_, stop := startScheduler(t, service, release, 2)
 				defer stop()
+				for _, signal := range []<-chan struct{}{providerSelected, projectionAttempted} {
+					select {
+					case <-signal:
+					case <-observation.C:
+						t.Fatal("provider selection or projection attempt was not observed")
+					}
+				}
+				select {
+				case <-projectionReady:
+					t.Fatal("projection passed the entry barrier while the selected provider was paused")
+				case <-time.After(100 * time.Millisecond):
+				case <-observation.C:
+					t.Fatal("provider entry pause exceeded the observation bound")
+				}
+				releaseEntry()
 				select {
 				case <-projectionEntered:
-				case <-time.After(30 * time.Second):
+				case <-observation.C:
 					t.Fatal("a real projection did not overlap admitted organization work")
 				}
 				m.mu.Lock()
@@ -126,6 +187,18 @@ func TestOntologyMaintenanceParallelSchedulerMixedTurns(t *testing.T) {
 					require.Zero(t, foreign)
 				}
 			})
+		}
+	}
+}
+
+func schedulerProviderEntryBarrier(entered <-chan struct{}) func(context.Context) {
+	ready := make(chan struct{})
+	return func(ctx context.Context) {
+		select {
+		case <-entered:
+			close(ready)
+		case <-ready:
+		case <-ctx.Done():
 		}
 	}
 }
