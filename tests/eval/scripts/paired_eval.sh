@@ -182,8 +182,8 @@ pair_import() {
     --out "${pair_stage_dir}/native" --base-url "$(pair_value '.runtime.base_url')" --import-seed \
     --import-concurrency "$(pair_value '.import_concurrency')" --resume-source-doc-ids "${pair_stage_dir}/completed-source-ids.txt" \
     --run-id "${pair_run_id}-${pair_side}-import" --max-page-size 500
-  pair_tool complete-import-mapping --pair-side "${pair_side}" --pair-directory "${pair_stage_dir}" >/dev/null
   pair_observe
+  pair_tool complete-import-mapping --pair-side "${pair_side}" --pair-directory "${pair_stage_dir}" >/dev/null
   pair_finish
 }
 

@@ -395,6 +395,15 @@ func TestPairImportMappingDeadlineCannotCompleteAnInterruptedStage(t *testing.T)
 	require.NoError(t, writePairJSON(mapping, newKnowledgeMapping()))
 	before, err := os.ReadFile(mapping)
 	require.NoError(t, err)
+	observation := pairFixtureObservation(t, c, c.Candidate)
+	observation.Imports = observation.Imports[:1]
+	require.NoError(t, writePairJSON(filepath.Join(stage.Directory, "observation.json"), observation))
+	require.ErrorContains(t, CompletePairImportMapping(c, "candidate", stage.Directory), "incomplete")
+	observation.Imports[0].Outcome = "failed"
+	observation.Imports[0].Live = false
+	observation.Imports[0].EvidenceIDs, observation.Imports[0].ContentHashes = nil, nil
+	require.NoError(t, writePairJSON(filepath.Join(stage.Directory, "observation.json"), observation))
+	require.ErrorContains(t, CompletePairImportMapping(c, "candidate", stage.Directory), "automatic retry is forbidden")
 	c.Deadline = time.Now().Add(-time.Second)
 	_, err = runFixturePairCommand(t, c, PairCommand{Action: "complete-import-mapping", Side: "candidate", Directory: stage.Directory})
 	require.ErrorIs(t, err, context.DeadlineExceeded)

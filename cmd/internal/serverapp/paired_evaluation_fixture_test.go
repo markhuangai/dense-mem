@@ -198,7 +198,25 @@ func (p *pairedRememberAssessor) Assess(ctx context.Context, request assessor.Se
 			Provider: "paired-fixture", FailureClass: modelprovider.ProviderFailureClassHTTPServer, StatusCode: http.StatusServiceUnavailable,
 		}
 	}
-	return p.rememberProcessorIntegrationRegistrationAssessor.Assess(ctx, request)
+	session, turn, err := p.rememberProcessorIntegrationRegistrationAssessor.Assess(ctx, request)
+	if err != nil || !strings.HasPrefix(request.Evidence[0].Content, "PostgreSQL stores durable memory for") {
+		return session, turn, err
+	}
+	for _, group := range request.EvidenceEquivalenceCandidates {
+		for _, candidate := range group.Candidates {
+			if candidate.Content != "Project Alpha stores durable memory in PostgreSQL." {
+				continue
+			}
+			for index := range turn.Response.EvidenceEquivalenceResults {
+				result := &turn.Response.EvidenceEquivalenceResults[index]
+				if result.EvidenceID == group.EvidenceID {
+					result.Action, result.CandidateEvidenceID = "reuse", &candidate.EvidenceID
+					return session, turn, nil
+				}
+			}
+		}
+	}
+	return nil, assessor.SemanticAssessmentTurn{}, fmt.Errorf("paraphrase fixture has no supplied canonical candidate")
 }
 
 func pairArgumentString(arguments map[string]any, key string) string {
