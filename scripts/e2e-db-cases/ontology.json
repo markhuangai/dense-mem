@@ -855,6 +855,13 @@
       "source": "internal/ontology/postgres/organization_batch_reads_integration_test.go"
     },
     {
+      "id": "repository/TestOntologyOrganizationFreshnessStopsAfterStaleBatch",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyOrganizationFreshnessStopsAfterStaleBatch$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/organization_batch_reads_integration_test.go"
+    },
+    {
       "id": "repository/TestOntologyOrganizationBatchedVocabulary",
       "package": "./internal/ontology/postgres",
       "run": "^TestOntologyOrganizationBatchedVocabulary$",

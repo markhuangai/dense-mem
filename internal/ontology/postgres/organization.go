@@ -420,16 +420,19 @@ func (s *Store) organizationInputsCurrent(tx *gorm.DB, fence scope, receipt onto
 		}
 		records = append(records, record)
 	}
-	views, err := s.organizationViews(tx, fence, records)
-	if errors.Is(err, ontology.ErrContextBound) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	for _, view := range views {
-		if !view.Current {
+	for start := 0; start < len(records); start += ontology.MaxOrganizationSources {
+		end := min(start+ontology.MaxOrganizationSources, len(records))
+		views, err := s.organizationViews(tx, fence, records[start:end])
+		if errors.Is(err, ontology.ErrContextBound) {
 			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		for _, view := range views {
+			if !view.Current {
+				return false, nil
+			}
 		}
 	}
 	contextData, err := s.organizationContext(tx, fence, handles)
