@@ -253,9 +253,11 @@ func TestDecisionRememberPostgresAtomicityReplayIsolationAndSettingsSnapshot(t *
 	}
 	fixture.status.Store(0)
 	fixture.onDecision = func(string) {
-		require.NoError(t, rls.WithSystemTx(ctx, admin, func(tx *gorm.DB) error {
+		if err := rls.WithSystemTx(ctx, admin, func(tx *gorm.DB) error {
 			return tx.Exec(`INSERT INTO evidence_quarantines(team_id,fragment_id,ingest_id,owner_profile_id,reason) SELECT team_id,fragment_id,ingest_id,owner_profile_id,'decision stale test' FROM evidence_fragments WHERE team_id=?::uuid AND fragment_id=?::uuid ON CONFLICT DO NOTHING`, team, first.Evidence[0].EvidenceID).Error
-		}))
+		}); err != nil {
+			t.Error(err)
+		}
 	}
 	stale := reused
 	stale.IdempotencyKey, stale.RequestHash = "decision-stale", "decision-stale"
@@ -284,8 +286,9 @@ func TestDecisionRememberPostgresAtomicityReplayIsolationAndSettingsSnapshot(t *
 	read := recallpostgres.NewStore(app, rls, search, reader, recallpostgres.LoadRecallEvidenceConflictRecords)
 	recallAPI := recall.NewRecallService(recall.RecallDependencies{Search: read, Provider: &sessionFactsEmbedder{}, Decisions: decisions, DecisionSettings: controls, Logger: logger})
 	fixture.onDecision = func(raw string) {
-		require.NotContains(t, raw, "PRIVATE DECISION CANARY")
-		require.NotContains(t, raw, "FOREIGN DECISION CANARY")
+		if strings.Contains(raw, "PRIVATE DECISION CANARY") || strings.Contains(raw, "FOREIGN DECISION CANARY") {
+			t.Error("unauthorized candidate dispatched to decision provider")
+		}
 	}
 	actorCtx := requestctx.WithActor(ctx, requestctx.Actor{TeamID: uuid.MustParse(team), OwnerID: uuid.MustParse(ownerA), AllowedSpaces: []domain.MemorySpaceAccess{{ID: uuid.MustParse(shared), Kind: domain.MemorySpaceTeamShared}}})
 	zero := 0

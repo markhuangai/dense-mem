@@ -89,11 +89,17 @@ func (p *Provider) Decide(ctx context.Context, request modelprovider.DecisionReq
 	}
 	for _, group := range request.Groups {
 		for _, question := range group.Questions {
+			if err = ctx.Err(); err != nil {
+				return result, err
+			}
 			p.log(ctx, slog.LevelDebug, "decision.question.prepared", append(append([]observability.LogAttr{}, attrs...), attr("group_id", group.ID), attr("candidate_reference", group.Reference), attr("question", observability.DecisionLogValue(question)))...)
 		}
 	}
-	batches, err := p.pack(request.Groups)
+	batches, err := p.pack(ctx, request.Groups)
 	if err != nil {
+		if ctx.Err() != nil {
+			return result, ctx.Err()
+		}
 		p.log(ctx, slog.LevelWarn, "decision.context.rejected", append(attrs, attr("action", "reject_before_dispatch"), attr("reason_code", "configured_context_limit"), attr("error", err.Error()))...)
 		return result, p.failure("decision request exceeds configured limits or cannot be encoded", "request_invalid", 0, err)
 	}
@@ -127,31 +133,37 @@ func (p *Provider) Decide(ctx context.Context, request modelprovider.DecisionReq
 	return result, p.failure("decision attempts exhausted", "provider_protocol", 0, nil)
 }
 
-func (p *Provider) pack(groups []modelprovider.DecisionGroup) ([]batch, error) {
+func (p *Provider) pack(ctx context.Context, groups []modelprovider.DecisionGroup) ([]batch, error) {
 	var batches []batch
-	var pending []modelprovider.DecisionGroup
-	var encoded batch
-	for _, group := range groups {
-		candidate := append(append([]modelprovider.DecisionGroup{}, pending...), group)
-		next, err := p.encodeBatch(candidate)
-		if err != nil && len(pending) != 0 {
-			batches = append(batches, encoded)
-			pending = nil
-			candidate = []modelprovider.DecisionGroup{group}
-			next, err = p.encodeBatch(candidate)
-		}
+	for len(groups) > 0 {
+		encoded, err := p.encodeBatch(ctx, groups[:1])
 		if err != nil {
 			return nil, err
 		}
-		pending, encoded = candidate, next
-	}
-	if len(pending) != 0 {
+		count := 1
+		for low, high := 2, len(groups); low <= high; {
+			middle := low + (high-low)/2
+			next, err := p.encodeBatch(ctx, groups[:middle])
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			if err != nil {
+				high = middle - 1
+				continue
+			}
+			encoded, count = next, middle
+			low = middle + 1
+		}
 		batches = append(batches, encoded)
+		groups = groups[count:]
 	}
 	return batches, nil
 }
 
-func (p *Provider) encodeBatch(groups []modelprovider.DecisionGroup) (batch, error) {
+func (p *Provider) encodeBatch(ctx context.Context, groups []modelprovider.DecisionGroup) (batch, error) {
+	if err := ctx.Err(); err != nil {
+		return batch{}, err
+	}
 	body, questions, err := encodeRequest(p.config.Provider, p.config.Model, groups)
 	if err != nil {
 		return batch{}, err
@@ -159,7 +171,7 @@ func (p *Provider) encodeBatch(groups []modelprovider.DecisionGroup) (batch, err
 	if len(body) > modelprovider.MaxProviderDiagnosticBodyBytes || len(questions) > modelprovider.DecisionMaxBatchQuestions {
 		return batch{}, fmt.Errorf("decision batch exceeds body or question limit")
 	}
-	tokens, err := assessor.CountTokens(string(body), p.tokenizer)
+	tokens, err := p.inputTokens(ctx, body)
 	if err != nil {
 		return batch{}, err
 	}
@@ -168,6 +180,9 @@ func (p *Provider) encodeBatch(groups []modelprovider.DecisionGroup) (batch, err
 	}
 	for _, group := range groups {
 		for _, question := range group.Questions {
+			if err := ctx.Err(); err != nil {
+				return batch{}, err
+			}
 			one := make([]modelprovider.DecisionGroup, len(groups))
 			copy(one, groups)
 			for i := range one {
@@ -180,7 +195,7 @@ func (p *Provider) encodeBatch(groups []modelprovider.DecisionGroup) (batch, err
 			if encodeErr != nil {
 				return batch{}, encodeErr
 			}
-			count, countErr := assessor.CountTokens(string(single), p.tokenizer)
+			count, countErr := p.inputTokens(ctx, single)
 			if countErr != nil {
 				return batch{}, countErr
 			}
@@ -190,6 +205,17 @@ func (p *Provider) encodeBatch(groups []modelprovider.DecisionGroup) (batch, err
 		}
 	}
 	return batch{body: body, questions: questions, tokens: tokens}, nil
+}
+
+func (p *Provider) inputTokens(ctx context.Context, body []byte) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	count, err := assessor.CountTokens(string(body), p.tokenizer)
+	if ctx.Err() != nil {
+		return 0, ctx.Err()
+	}
+	return count, err
 }
 
 func (p *Provider) call(ctx context.Context, batch batch, common []observability.LogAttr, index, attempt int) (result modelprovider.DecisionResult, receipt modelprovider.DecisionReceipt, err error) {

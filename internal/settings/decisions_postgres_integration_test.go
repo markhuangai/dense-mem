@@ -83,9 +83,16 @@ func TestDecisionSettingsPostgresPersistenceRefreshAndRollback(t *testing.T) {
 	entries, err := settingspostgres.NewAppConfigRepository(db, rls).List(ctx)
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(`ALTER TABLE app_config ADD CONSTRAINT decision_fixture_rollback CHECK(key <> 'DECISION_SECURITY_REVIEW_ENABLED' OR value <> 'false')`).Error)
+	constraintActive := true
+	defer func() {
+		if constraintActive {
+			require.NoError(t, db.Exec(`ALTER TABLE app_config DROP CONSTRAINT IF EXISTS decision_fixture_rollback`).Error)
+		}
+	}()
 	_, err = writer.UpdateDecisionSettings(ctx, map[string]string{domain.AppConfigDecisionConflict: "false", domain.AppConfigDecisionSecurity: "false"}, "control", "", "decision-rollback")
 	require.Error(t, err)
-	require.NoError(t, db.Exec(`ALTER TABLE app_config DROP CONSTRAINT decision_fixture_rollback`).Error)
+	require.NoError(t, db.Exec(`ALTER TABLE app_config DROP CONSTRAINT IF EXISTS decision_fixture_rollback`).Error)
+	constraintActive = false
 	rolledBack, err := settingspostgres.NewAppConfigRepository(db, rls).List(ctx)
 	require.NoError(t, err)
 	for _, key := range []string{domain.AppConfigDecisionConflict, domain.AppConfigDecisionSecurity, domain.AppConfigUpdateTimeKey} {
@@ -152,4 +159,60 @@ func TestDecisionSettingsControlAuthorizationAndStrictPatch(t *testing.T) {
 	require.NotContains(t, updated.Body.String(), "decision-settings-control")
 	read := controlRequest(e, http.MethodGet, "/control/api/config/decisions", "decision-settings-control", "")
 	require.Equal(t, http.StatusOK, read.Code)
+}
+
+func TestDecisionSettingsRefreshWaitHonorsCancellation(t *testing.T) {
+	db, rls, cleanup := openSettingsPostgres(t)
+	defer cleanup()
+	svc := decisionServiceForPostgres(db, rls, "openai")
+	before, err := svc.DecisionRuntimeConfig(context.Background())
+	require.NoError(t, err)
+	lock := db.Begin()
+	require.NoError(t, lock.Error)
+	lockActive := true
+	defer func() {
+		if lockActive {
+			require.NoError(t, lock.Rollback().Error)
+		}
+	}()
+	require.NoError(t, lock.Exec(`LOCK TABLE app_config IN ACCESS EXCLUSIVE MODE`).Error)
+	freshCtx, cancelFresh := context.WithTimeout(context.Background(), time.Second)
+	defer cancelFresh()
+	fresh, err := svc.DecisionRuntimeConfig(freshCtx)
+	require.NoError(t, err, "fresh snapshots must not read the locked settings table")
+	require.Equal(t, before, fresh)
+	time.Sleep(settings.DefaultAppConfigCacheCheckInterval + 100*time.Millisecond)
+	refreshCtx, cancelRefresh := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelRefresh()
+	refreshed := make(chan error, 1)
+	go func() {
+		_, err := svc.DecisionRuntimeConfig(refreshCtx)
+		refreshed <- err
+	}()
+	require.Eventually(t, func() bool {
+		var blocked int64
+		err := db.Raw(`SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid() AND wait_event_type='Lock' AND query ILIKE '%app_config%'`).Scan(&blocked).Error
+		return err == nil && blocked > 0
+	}, 5*time.Second, 10*time.Millisecond, "the first refresh must be blocked in a real PostgreSQL read")
+	readerCtx, cancelReader := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancelReader()
+	canceled := make(chan error, 1)
+	go func() {
+		_, err := svc.DecisionRuntimeConfig(readerCtx)
+		canceled <- err
+	}()
+	select {
+	case err := <-canceled:
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+	case <-time.After(time.Second):
+		t.Fatal("canceled settings reader remained blocked behind another refresh")
+	}
+	require.NoError(t, lock.Rollback().Error)
+	lockActive = false
+	require.NoError(t, <-refreshed)
+	after, err := svc.DecisionRuntimeConfig(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, before.Preferences, after.Preferences)
+	require.Equal(t, before.Revision, after.Revision)
+	require.False(t, after.Stale)
 }

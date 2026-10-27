@@ -63,7 +63,7 @@ type AppConfigServiceImpl struct {
 
 	mu              sync.Mutex
 	cache           *appConfigCache
-	refreshMu       sync.Mutex
+	refreshGate     chan struct{}
 	decisionOptions DecisionSettingsOptions
 }
 
@@ -92,6 +92,7 @@ func NewAppConfigService(repo settingscontract.AppConfigRepository, audit access
 		audit:         audit,
 		now:           func() time.Time { return time.Now().UTC() },
 		checkInterval: DefaultAppConfigCacheCheckInterval,
+		refreshGate:   make(chan struct{}, 1),
 	}
 }
 
@@ -219,20 +220,25 @@ func (s *AppConfigServiceImpl) currentCache(ctx context.Context) (*appConfigCach
 	if s == nil || s.repo == nil {
 		return nil, fmt.Errorf("app config service is unavailable")
 	}
-	s.refreshMu.Lock()
-	defer s.refreshMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if cache := s.freshCache(s.now().UTC()); cache != nil {
+		return cache, nil
+	}
+	select {
+	case s.refreshGate <- struct{}{}:
+		defer func() { <-s.refreshGate }()
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	now := s.now().UTC()
-
-	s.mu.Lock()
-	if s.cache != nil && !s.cache.invalidated && now.Sub(s.cache.checkedAt) < s.cacheInterval() {
-		cache := cloneAppConfigCache(s.cache)
-		s.mu.Unlock()
+	if cache := s.freshCache(now); cache != nil {
 		return cache, nil
 	}
-	s.mu.Unlock()
 
 	updateTime, err := s.repo.GetUpdateTime(ctx)
 	if err != nil {
@@ -264,6 +270,15 @@ func (s *AppConfigServiceImpl) currentCache(ctx context.Context) (*appConfigCach
 	return cache, nil
 }
 
+func (s *AppConfigServiceImpl) freshCache(now time.Time) *appConfigCache {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cache != nil && !s.cache.invalidated && now.Sub(s.cache.checkedAt) < s.cacheInterval() {
+		return cloneAppConfigCache(s.cache)
+	}
+	return nil
+}
+
 func (s *AppConfigServiceImpl) cachedOrError(checkedAt time.Time, err error) (*appConfigCache, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -284,8 +299,8 @@ func (s *AppConfigServiceImpl) cacheInterval() time.Duration {
 }
 
 func (s *AppConfigServiceImpl) invalidate() {
-	s.refreshMu.Lock()
-	defer s.refreshMu.Unlock()
+	s.refreshGate <- struct{}{}
+	defer func() { <-s.refreshGate }()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.cache != nil {

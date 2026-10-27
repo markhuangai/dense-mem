@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
@@ -29,6 +30,155 @@ func fixtureRequest() modelprovider.DecisionRequest {
 		{Name: "position", Type: modelprovider.DecisionChoice, Instructions: "Select the supported position.", Choices: []modelprovider.DecisionOption{{Value: "a", Description: "Position A"}, {Value: "b", Description: "Position B"}}},
 		{Name: "relevance", Type: modelprovider.DecisionScore, Instructions: "Evaluate relevance.", Levels: []modelprovider.DecisionLevel{{Label: "unrelated", Description: "No bearing on the query."}, {Label: "direct", Description: "Directly answers the query."}}},
 	}}}}
+}
+
+type packingCancellationInput struct{ cancel context.CancelFunc }
+
+func (input packingCancellationInput) MarshalJSON() ([]byte, error) {
+	input.cancel()
+	return []byte(`{}`), nil
+}
+
+func TestCancellationDuringPackingDoesNotDispatch(t *testing.T) {
+	for _, vendor := range []string{"openai", "typesafe"} {
+		t.Run(vendor, func(t *testing.T) {
+			var calls atomic.Int32
+			var logs bytes.Buffer
+			server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls.Add(1) }))
+			defer server.Close()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			request := fixtureRequest()
+			request.Groups[0].Input = packingCancellationInput{cancel: cancel}
+			result, err := fixtureProvider(t, vendor, server.URL, &logs).Decide(ctx, request)
+			if !errors.Is(err, context.Canceled) || calls.Load() != 0 || len(result.Receipts) != 0 {
+				t.Fatalf("packing cancellation was lost or dispatched: calls=%d receipts=%d err=%v", calls.Load(), len(result.Receipts), err)
+			}
+			if !strings.Contains(logs.String(), `"reason_code":"canceled"`) || strings.Contains(logs.String(), "configured_context_limit") {
+				t.Fatal("packing cancellation was logged as a configuration rejection")
+			}
+		})
+	}
+}
+
+func TestPackingPreservesGroupsAndExactSerializedLimits(t *testing.T) {
+	for _, vendor := range []string{"openai", "typesafe"} {
+		for _, bound := range []string{"request", "question"} {
+			t.Run(vendor+"/"+bound, func(t *testing.T) {
+				var logs bytes.Buffer
+				p := fixtureProvider(t, vendor, "http://fixture.invalid", &logs)
+				groups := make([]modelprovider.DecisionGroup, 8)
+				questionGroups := map[string]string{}
+				for i := range groups {
+					groups[i] = modelprovider.DecisionGroup{ID: fmt.Sprintf("group_%d", i), Input: strings.Repeat("Quoted \"context\" and Unicode 日本語.\n", 20)}
+					for j := 0; j < 2; j++ {
+						groups[i].Questions = append(groups[i].Questions, modelprovider.DecisionQuestion{Name: fmt.Sprintf("question_%d_%d", i, j), Type: modelprovider.DecisionPredicate, Instructions: "Is this claim fully supported by this group's evidence?"})
+						questionGroups[groups[i].Questions[j].Name] = groups[i].ID
+					}
+				}
+				tokens := func(body []byte) int {
+					t.Helper()
+					count, err := assessor.CountTokens(string(body), p.tokenizer)
+					if err != nil {
+						t.Fatal(err)
+					}
+					return count
+				}
+				requestLimit, questionLimit := 0, 0
+				for i := 0; i < len(groups); i += 3 {
+					body, _, err := encodeRequest(vendor, p.config.Model, groups[i:min(i+3, len(groups))])
+					if err != nil {
+						t.Fatal(err)
+					}
+					requestLimit = max(requestLimit, tokens(body))
+					for _, single := range singleQuestionBodies(t, vendor, body) {
+						questionLimit = max(questionLimit, tokens(single))
+					}
+				}
+				if bound == "request" {
+					p.config.MaxInputTokens, p.config.MaxQuestionInputTokens = requestLimit, requestLimit
+				} else {
+					p.config.MaxQuestionInputTokens = questionLimit
+				}
+				batches, err := p.pack(context.Background(), groups)
+				if err != nil || len(batches) != 3 {
+					t.Fatalf("expected three full batches: count=%d err=%v", len(batches), err)
+				}
+				seen := map[string]bool{}
+				for _, batch := range batches {
+					groupCounts := map[string]int{}
+					if tokens(batch.body) != batch.tokens || batch.tokens > p.config.MaxInputTokens || len(batch.questions) > 6 {
+						t.Fatal("request limit or indivisible group violated")
+					}
+					for _, single := range singleQuestionBodies(t, vendor, batch.body) {
+						if tokens(single) > p.config.MaxQuestionInputTokens {
+							t.Fatal("shared state plus question exceeds its exact serialized limit")
+						}
+					}
+					for _, question := range batch.questions {
+						if seen[question.Name] {
+							t.Fatal("question was duplicated across batches")
+						}
+						seen[question.Name] = true
+						groupCounts[questionGroups[question.Name]]++
+					}
+					for _, count := range groupCounts {
+						if count != 2 {
+							t.Fatal("packing split an indivisible group")
+						}
+					}
+				}
+				if len(seen) != 16 {
+					t.Fatal("packing omitted questions")
+				}
+			})
+		}
+	}
+}
+
+func singleQuestionBodies(t *testing.T, vendor string, body []byte) [][]byte {
+	t.Helper()
+	var wire struct {
+		Model     json.RawMessage `json:"model"`
+		Input     json.RawMessage `json:"input,omitempty"`
+		State     json.RawMessage `json:"state,omitempty"`
+		Questions json.RawMessage `json:"questions"`
+	}
+	if err := json.Unmarshal(body, &wire); err != nil {
+		t.Fatal(err)
+	}
+	var selected []any
+	if vendor == "openai" {
+		var questions []json.RawMessage
+		if err := json.Unmarshal(wire.Questions, &questions); err != nil {
+			t.Fatal(err)
+		}
+		for _, question := range questions {
+			selected = append(selected, []json.RawMessage{question})
+		}
+	} else {
+		var questions map[string]json.RawMessage
+		if err := json.Unmarshal(wire.Questions, &questions); err != nil {
+			t.Fatal(err)
+		}
+		for name, question := range questions {
+			selected = append(selected, map[string]json.RawMessage{name: question})
+		}
+	}
+	bodies := make([][]byte, 0, len(selected))
+	for _, question := range selected {
+		encoded, err := json.Marshal(question)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wire.Questions = encoded
+		encoded, err = json.Marshal(wire)
+		if err != nil {
+			t.Fatal(err)
+		}
+		bodies = append(bodies, encoded)
+	}
+	return bodies
 }
 
 func fixtureProvider(t *testing.T, vendor, endpoint string, logs *bytes.Buffer) *Provider {
