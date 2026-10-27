@@ -1216,6 +1216,7 @@ test("six precheck shards preserve every real runner selection exactly once", as
   const measurement = "repository/TestOntologyMaintenanceRevalidationDiscoveryMeasurement";
   assert.equal(selections[1], `cases:${measurement}`);
   assert.equal(selections[0], `cases:${dedicated.join(",")}`);
+  assert.ok(selections[3].split(",").includes("community"));
   const inventory = [];
   const directory = join(root, "scripts/e2e-db-cases");
   for (const file of await readdir(directory)) {

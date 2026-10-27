@@ -73,6 +73,10 @@ retain all other registered capabilities. Development E2E runs all six shards pl
 shards must finish within 30 minutes; the existing 30-minute job timeouts and
 27-minute execution bounds remain unchanged. The allocation and bound were
 [directly approved](https://github.com/markhuangai/dense-mem/issues/633#issuecomment-6440871680).
+The existing allocator weights community's case count fourfold in the six-shard
+route because its fanout cohort took about 598 seconds in
+[the measured validation run](https://github.com/markhuangai/dense-mem/actions/runs/40498086627).
+This is a placement estimate; successful all-six validation remains mandatory.
 The expensive measurement is omitted only from duplicate
 coverage execution; the other `Revalidation.*` correctness cases retain observer
 coverage, and the complete measurement remains mandatory in PostgreSQL E2E.

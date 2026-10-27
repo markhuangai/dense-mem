@@ -525,7 +525,7 @@ const shardCount = Number(process.argv[3]);
 if (![3, 6].includes(shardCount)) throw new Error("precheck requires three or six shards");
 const batchSize = 40;
 const groups = Array.from({ length: shardCount }, () => ({
-  cases: 0,
+  load: 0,
   packageCounts: new Map(),
   capabilities: [],
 }));
@@ -546,7 +546,9 @@ for (const entry of fs.readdirSync(directory).filter((item) => item.endsWith(".j
   const cases = [...packageCounts.values()].reduce((total, count) => total + count, 0);
   const weight = [...packageCounts.values()].reduce((total, count) => total + Math.ceil(count / batchSize), 0);
   const caseIds = fragment.cases.filter((item) => item.phase === "precheck").map((item) => item.id);
-  records.push({ capability, cases, packageCounts, weight, caseIds });
+  // Community's fanout cohort needs more room than its case count suggests in the bounded six-shard route.
+  const load = shardCount === 6 && capability === "community" ? cases * 4 : cases;
+  records.push({ capability, cases, load, packageCounts, weight, caseIds });
 }
 
 if (records.length === 0) throw new Error("no populated precheck database capability fragments");
@@ -575,7 +577,7 @@ if (isolateOntology) {
 }
 
 records.sort((left, right) =>
-  (shardCount === 6 ? right.cases - left.cases : right.weight - left.weight) ||
+  (shardCount === 6 ? right.load - left.load : right.weight - left.weight) ||
   right.cases - left.cases ||
   (left.capability < right.capability ? -1 : left.capability > right.capability ? 1 : 0),
 );
@@ -591,7 +593,7 @@ for (const record of records) {
     for (const [packageName, count] of record.packageCounts) {
       projected.set(packageName, (projected.get(packageName) || 0) + count);
     }
-    const candidate = [groups[index].cases + record.cases, batchWeight(projected), index];
+    const candidate = [groups[index].load + record.load, batchWeight(projected), index];
     if (!selected || candidate[0] < selected[0] ||
         (candidate[0] === selected[0] && candidate[1] < selected[1]) ||
         (candidate[0] === selected[0] && candidate[1] === selected[1] && candidate[2] < selected[2])) {
@@ -600,7 +602,7 @@ for (const record of records) {
   }
   const group = groups[selected[2]];
   group.capabilities.push(record.capability);
-  group.cases += record.cases;
+  group.load += record.load;
   for (const [packageName, count] of record.packageCounts) {
     group.packageCounts.set(packageName, (group.packageCounts.get(packageName) || 0) + count);
   }
