@@ -1166,7 +1166,11 @@ test("six precheck shards preserve every real runner selection exactly once", as
   const { stdout } = await run("bash", ["-c", command, "six-shards", root]);
   const selections = stdout.trim().split(/\r?\n/);
   assert.equal(selections.length, 6);
-  assert.equal(selections[0], "cases:repository/TestOntologyMaintenanceLargeBacklogAndFairTurns");
+  const dedicated = [
+    "repository/TestOntologyMaintenanceLargeBacklogAndFairTurns",
+    "repository/TestOntologyOrganizationVocabularyAndSourceFences",
+  ];
+  assert.equal(selections[0], `cases:${dedicated.join(",")}`);
   const inventory = [];
   const directory = join(root, "scripts/e2e-db-cases");
   for (const file of await readdir(directory)) {
@@ -1179,7 +1183,8 @@ test("six precheck shards preserve every real runner selection exactly once", as
     const selected = await run("go", ["-C", join(root, "cmd/e2e"), "run", ".", "--root", root, "--phase", "precheck", ...args, "--list"]);
     const ids = selected.stdout.trim().split(/\r?\n/);
     assert.ok(ids.length > 0);
-    if (selection === selections[1]) assert.ok(!ids.includes("repository/TestOntologyMaintenanceLargeBacklogAndFairTurns"));
+    if (selection === selections[0]) assert.deepEqual(ids, dedicated);
+    if (selection === selections[1]) assert.ok(dedicated.every((id) => !ids.includes(id)));
     actual.push(...ids);
   }
   assert.equal(new Set(actual).size, actual.length);

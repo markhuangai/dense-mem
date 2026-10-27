@@ -167,3 +167,23 @@ if prepare_identity 2>/dev/null; then
   exit 1
 fi
 jq -e '.assessor_model == "remember-override"' "${MONITOR_DIR}/requested_dataset_identity.json" >/dev/null
+
+runner_hash_before="$(sha256sum "${RUNNER}" | awk '{print $1}')"
+REUSE_EXISTING_RUNNER=0
+go() { return 41; }
+if ensure_runner; then
+  echo "failed build reused an older runner" >&2
+  exit 1
+fi
+[[ "$(sha256sum "${RUNNER}" | awk '{print $1}')" == "${runner_hash_before}" ]]
+unset -f go
+source "${ROOT_DIR}/tests/eval/scripts/paired_eval.sh"
+PAIR_CONFIG="${tmp_dir}/pair.json"
+printf '{}' > "${PAIR_CONFIG}"
+PAIR_RUNNER=""
+go() { return 42; }
+if (pair_main); then
+  echo "paired monitor continued after a failed build" >&2
+  exit 1
+fi
+unset -f go

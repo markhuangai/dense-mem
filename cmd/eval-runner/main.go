@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -13,6 +14,7 @@ import (
 )
 
 func main() {
+	paired := registerPairFlags()
 	var opts evalharness.RunOptions
 	var baselineRun string
 	var candidateRun string
@@ -75,6 +77,16 @@ func main() {
 	resolveStringEnvironment(flag.CommandLine, "base-url", "DENSE_MEM_BASE_URL", &opts.BaseURL)
 	resolveStringEnvironment(flag.CommandLine, "api-key", "DENSE_MEM_API_KEY", &opts.APIKey)
 	resolveStringEnvironment(flag.CommandLine, "metrics-url", "DENSE_MEM_EVAL_METRICS_URL", &metricsURL)
+	if opts.Mode == "paired" {
+		if err := evalharness.RunPairCommand(*paired, os.Stdout); err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				fmt.Fprintf(os.Stderr, "paired evaluation: %v\n", err)
+				os.Exit(124)
+			}
+			exitf("paired evaluation: %v", err)
+		}
+		return
+	}
 
 	ctx := context.Background()
 	if opts.Mode == "token-diagnostics" {

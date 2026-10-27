@@ -555,16 +555,19 @@ const ontologyIndex = records.findIndex((record) => record.capability === "ontol
 const isolateOntology = ontologyIndex >= 0 && records.length >= 3;
 const caseSelections = [];
 if (shardCount === 6) {
-  const backlog = "repository/TestOntologyMaintenanceLargeBacklogAndFairTurns";
+  // Keep the two longest ontology cases together so the remaining cohort fits its fixed deadline.
+  const dedicated = [
+    "repository/TestOntologyMaintenanceLargeBacklogAndFairTurns",
+    "repository/TestOntologyOrganizationVocabularyAndSourceFences",
+  ];
   const ontology = records[ontologyIndex];
-  if (!ontology?.caseIds.includes(backlog) || ontology.caseIds.length < 2 || records.length < 5) {
-    throw new Error("six precheck shards require the backlog case, remaining ontology, and four populated capability groups");
+  if (!ontology || dedicated.some((id) => !ontology.caseIds.includes(id)) || ontology.caseIds.length <= dedicated.length || records.length < 5) {
+    throw new Error("six precheck shards require both long ontology cases, remaining ontology, and four populated capability groups");
   }
-  caseSelections.push(backlog, ontology.caseIds.filter((id) => id !== backlog).sort().join(","));
+  caseSelections.push(dedicated.join(","), ontology.caseIds.filter((id) => !dedicated.includes(id)).sort().join(","));
   groups.splice(0, 2);
 }
 if (isolateOntology) {
-  // The large corpus remains intact; six-shard execution gives it a runner of its own.
   records.splice(ontologyIndex, 1);
   if (shardCount === 3) groups.pop();
 }

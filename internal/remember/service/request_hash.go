@@ -9,6 +9,11 @@ import (
 	"strings"
 )
 
+// CanonicalRequestHash binds the normalized request to its explicit memory destination.
+func CanonicalRequestHash(req RememberRequest) (string, error) {
+	return canonicalRequestHash(req)
+}
+
 // CanonicalRequestBodyHash hashes the normalized v2.6.2 Remember body. Evidence
 // and Value text remain byte-exact; ordering changes only for contract sets and
 // relationship refs.

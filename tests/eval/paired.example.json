@@ -1,0 +1,107 @@
+{
+  "schema_version": "dense-mem.eval.pair.v1",
+  "run_id": "paired-release",
+  "seed_manifest": "/absolute/path/seed_manifest.json",
+  "suite": "/absolute/path/suite.jsonl",
+  "seed_hash": "sha256:0923aa14109291e5d5cf24fe419f0b6fc229823bf3dd4292e17d45447365e675",
+  "suite_sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "out_dir": "/absolute/path/runs/paired-release",
+  "deadline": "2099-01-01T00:00:00Z",
+  "baseline": {
+    "release": "replace-baseline",
+    "source_revision": "0000000000000000000000000000000000000000",
+    "image_id": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "runner": {
+      "path": "/absolute/path/native-eval-runner",
+      "sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "source_revision": "0000000000000000000000000000000000000000"
+    },
+    "scope": {
+      "team_id": "00000000-0000-4000-8000-000000000001",
+      "owner_id": "00000000-0000-4000-8000-000000000002",
+      "space_id": "00000000-0000-4000-8000-000000000003",
+      "generation": 1
+    },
+    "models": {
+      "provider": "openai",
+      "remember": "replace-model",
+      "ontology": "replace-model",
+      "backing_revision": "unknown",
+      "verifier_endpoint_sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "embedding_endpoint_sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "embedding_model": "replace-embedding",
+      "embedding_dimensions": 3072,
+      "embedding_index_strategy": "hnsw"
+    },
+    "runtime": {
+      "project": "paired-baseline",
+      "server_container": "paired-baseline-server-1",
+      "postgres_container": "paired-baseline-postgres-1",
+      "base_url": "http://127.0.0.1:18080",
+      "control_url": "http://127.0.0.1:18090",
+      "credential_id": "00000000-0000-4000-8000-000000000002",
+      "api_key_env": "PAIR_BASELINE_API_KEY",
+      "control_token_env": "PAIR_BASELINE_CONTROL_TOKEN",
+      "state_dir": "/absolute/path/runtime/baseline"
+    },
+    "protocol": "adr0014",
+    "capacity": {
+      "team": 4,
+      "context_window_tokens": 300000,
+      "global": 8
+    },
+    "import_concurrency": 1,
+    "admission_limit": 4
+  },
+  "candidate": {
+    "release": "replace-candidate",
+    "source_revision": "0000000000000000000000000000000000000000",
+    "image_id": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "runner": {
+      "path": "/absolute/path/native-eval-runner",
+      "sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "source_revision": "0000000000000000000000000000000000000000"
+    },
+    "scope": {
+      "team_id": "00000000-0000-4000-8000-000000000001",
+      "owner_id": "00000000-0000-4000-8000-000000000002",
+      "space_id": "00000000-0000-4000-8000-000000000003",
+      "generation": 1
+    },
+    "models": {
+      "provider": "openai",
+      "remember": "replace-model",
+      "ontology": "replace-model",
+      "backing_revision": "unknown",
+      "verifier_endpoint_sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "embedding_endpoint_sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "embedding_model": "replace-embedding",
+      "embedding_dimensions": 3072,
+      "embedding_index_strategy": "hnsw"
+    },
+    "runtime": {
+      "project": "paired-candidate",
+      "server_container": "paired-candidate-server-1",
+      "postgres_container": "paired-candidate-postgres-1",
+      "base_url": "http://127.0.0.1:28080",
+      "control_url": "http://127.0.0.1:28090",
+      "credential_id": "00000000-0000-4000-8000-000000000002",
+      "api_key_env": "PAIR_CANDIDATE_API_KEY",
+      "control_token_env": "PAIR_CANDIDATE_CONTROL_TOKEN",
+      "state_dir": "/absolute/path/runtime/candidate"
+    },
+    "protocol": "adr0014",
+    "capacity": {
+      "team": 4,
+      "context_window_tokens": 300000,
+      "global": 8
+    },
+    "import_concurrency": 1,
+    "admission_limit": 4
+  },
+  "scorer": {
+    "path": "/absolute/path/native-eval-runner",
+    "sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "source_revision": "0000000000000000000000000000000000000000"
+  }
+}

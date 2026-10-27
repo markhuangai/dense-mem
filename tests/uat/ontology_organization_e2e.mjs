@@ -417,6 +417,10 @@ async function finalizationRecovery(key, failureCode = "") {
     // Stop later batches from changing recovered rows before inspection.
     await control("/ontology/pause", { operation_key: randomUUID() });
     paused = true;
+    const frozenStatus = (await control("/ontology/status")).data;
+    assert.equal(frozenStatus.enabled, true, "pause must preserve ontology enablement for capture");
+    assert.equal(frozenStatus.paused, true);
+    assert(frozenStatus.active_work > 0, "reconciled receipts must not hide unfinished batch finalization");
     const attempts = postgresQuery(`SELECT COALESCE(jsonb_agg(to_jsonb(attempt_record) ORDER BY assessment_id,attempt)::text,'[]') FROM ontology_maintenance_attempts AS attempt_record WHERE batch_id=${sqlLiteral(receipt.id)}::uuid`);
     const admitted = JSON.parse(attempts);
     assert(admitted.every((attempt) => attempt.reconciled_at), "active attempts cannot be recovered");
@@ -433,6 +437,9 @@ async function finalizationRecovery(key, failureCode = "") {
       const outcomes = JSON.parse(postgresQuery(`SELECT jsonb_agg(jsonb_build_object('status',status,'reason',reason))::text FROM ontology_maintenance_sources WHERE team_id=${sqlLiteral(teamID)}::uuid AND assessment_id=(SELECT assessment_id FROM ontology_assessments WHERE operation_key=${sqlLiteral(`maintenance:${receipt.id}`)})`));
       assert(outcomes?.length > 0, "failed receipt must finalize its unchanged sources");
       assert(outcomes.every((outcome) => outcome.status === "failed" && outcome.reason === failureCode));
+      const failedStatus = (await control("/ontology/status")).data;
+      assert.equal(failedStatus.coverage_complete, false, "drained terminal failure is incomplete coverage");
+      assert(failedStatus.counts.failed > 0);
     }
     assert.equal(postgresQuery(`SELECT count(*) FROM ontology_assessments WHERE operation_key=${sqlLiteral(`maintenance:${receipt.id}`)}`), "1");
     assert.equal(postgresQuery(`SELECT md5(body::text) FROM ontology_assessments WHERE operation_key=${sqlLiteral(`maintenance:${receipt.id}`)}`), receiptBody);

@@ -951,3 +951,28 @@ The replacement gates are real PostgreSQL retirement/history/restart/isolation
 and A/B/C concurrency regressions, context-boundary and regeneration tests,
 registered positive/adverse production-entry E2E, complete local checks,
 independent plan audit, and successful final-head full CI/production-image E2E.
+
+## Paired prepared-runtime evaluation (#605)
+
+`PAIR_CONFIG` opts the existing monitor into a resumable paired run. Start from [paired.example.json](paired.example.json), replace every placeholder, and keep that filled manifest and all generated artifacts under ignored `tests/eval/runs/` or another task-owned directory. The example deadline is a placeholder: choose an explicit observation deadline appropriate to the prepared runtimes.
+
+```bash
+PAIR_CONFIG=/absolute/path/pair.json \
+  bash tests/eval/scripts/run_full_public_rag_eval_until_done.sh
+```
+
+Prepare separate Docker Compose server/PostgreSQL projects first, with local published HTTP/control ports (8080/8090 internally), evaluation tools enabled, and a shared-write credential for the intended owner. Supply credentials through the environment variable names in the manifest. Never put credentials in the manifest. The monitor does not provision runtimes, grant allowances, change import defaults, or modify existing evaluation protocols.
+
+Pin each server image ID and OCI source-revision label, release-native runner SHA-256 and clean Go VCS revision, seed identity, exact suite bytes, and a common scorer binary/revision. Build the runners from their pinned clean checkouts; a failed build or unverifiable runner stops execution. Record SHA-256 hashes of the exact verifier and embedding endpoint URLs, effective Remember/ontology models, and active embedding provider/model/dimensions/index strategy. An unavailable backing model revision must be the explicit string `unknown` and is reported as a comparison limitation.
+
+An uncaptured baseline and the candidate must initially have empty canonical state and no import receipts. Container identity locks are shared across monitor configurations; output and runtime state receipts additionally bind the run, team, owner, credential, generation, capacities and input hashes. Both native runners validate the inputs before runtime mutation. Import concurrency and its prepared admission limit are explicit; maintenance global/team concurrency and model context capacity are separate controls. The monitor pauses before setting capacity and waits for the **active window** to match; queued settings do not qualify. No window/history rewriting or automatic allowance funding is allowed.
+
+For a verified baseline, set `baseline.capture_dir` to the original native capture directory and `baseline.capture_sha256` to the SHA-256 of its `pair_capture.json`. The proof must include release/source/image, runner, models, embedding, seed/suite, scope, original file hashes and before/after readiness. Missing provenance blocks reuse. Original captures remain unchanged. A fresh `none` baseline must return native HTTP 404 for the ontology status interface; any runtime exposing that interface must use its supported readiness protocol. Legacy pinned workflows keep their recorded guards; only verified legacy captures can enter this paired workflow. New candidates use `adr0014`.
+
+Restart with the same manifest/output. You may extend only `deadline` without changing the run identity. Completed stages require matching receipts and artifact hashes. An interrupted import reconciles durable native terminal receipts with exact request hashes, evidence bytes and live mappings, then submits only missing sources with their original keys. Failed or ambiguous attempts stop with retained evidence; changing keys to retry semantic failures is forbidden. An interrupted capture or score is reused only when its native completion and all outputs can be proven; otherwise recovery stops instead of repeating the experiment.
+
+ADR 0014 drain checks discovery, ordinary pending sources, active preparation, batches and projections, unreconciled attempts, current search and topic projection work. Pause preserves ontology enablement. Frozen readiness is checked before and after capture. Terminal failures and ambiguity can drain while coverage remains unsuccessful; unknown usage and historical reservations are reported without becoming false active-work blockers.
+
+Each stage has atomic intent/completion receipts, monitor and subprocess identity, UTC timestamps and artifact hashes. The final `paired_report.json`, Markdown report and `comparison/` retain common-scored per-axis results, distinct imported and organized-source progress, all stage attempts, usage availability and admission-to-reconciliation overlap. Invalid intervals are unavailable. A drained but unsuccessful side produces `status: incomplete` and a nonzero monitor exit. This is not a model-only latency or speedup measurement.
+
+The frozen public v3 cohort remains 991 sources, 204 cases and zero unmapped references. #605 has an explicit maintainer-approved deterministic 1k waiver ([receipt](https://github.com/markhuangai/dense-mem/issues/605#issuecomment-6406649737)); it does not waive future comparisons. Replacement verification comprises focused Go/shell tests, registered real PostgreSQL/application paired fixtures, and the `ontology_organization,synchronous_write` production scenarios plus full CI. The ontology scenario covers pause, authorization, replay, retained failure and cancellation; the paired fixtures exercise the evaluator against those service and database owners. No mocked service results substitute for those gates.

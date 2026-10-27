@@ -4,6 +4,13 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 cd "${ROOT_DIR}"
 
+if [[ -n "${PAIR_CONFIG:-}" && "${BASH_SOURCE[0]}" == "$0" ]]; then
+  # shellcheck source=paired_eval.sh
+  source "${ROOT_DIR}/tests/eval/scripts/paired_eval.sh"
+  pair_main
+  exit "$?"
+fi
+
 : "${SEED:?Set SEED to the seed_manifest.json path}"
 : "${SUITE:?Set SUITE to the suite JSONL path}"
 RELEASE_GATE_POLICY="${RELEASE_GATE_POLICY:-}"
@@ -181,7 +188,7 @@ ensure_runner() {
     return 0
   fi
   local tmp="${RUNNER}.tmp"
-  go build -o "${tmp}" ./cmd/eval-runner
+  go build -o "${tmp}" ./cmd/eval-runner || return "$?"
   mv "${tmp}" "${RUNNER}"
 }
 

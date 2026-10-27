@@ -40,6 +40,12 @@
     },
     {
       "path": "internal/tools/registry/uat_evaluation_dependency_test.go"
+    },
+    {
+      "path": "cmd/internal/serverapp/paired_evaluation_fixture_test.go"
+    },
+    {
+      "path": "cmd/internal/serverapp/paired_evaluation_integration_test.go"
     }
   ],
   "go": {
