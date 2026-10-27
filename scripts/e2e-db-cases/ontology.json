@@ -972,6 +972,11 @@
       "run": "^TestPairedEvaluationCapacityActivationAndPausedAdmission$",
       "phase": "precheck",
       "source": "internal/ontology/postgres/paired_evaluation_integration_test.go"
-    }
+    },
+    {"id": "repository/TestOntologyMaintenanceRevalidationDiscoveryMeasurement", "package": "./internal/ontology/postgres", "run": "^TestOntologyMaintenanceRevalidationDiscoveryMeasurement$", "phase": "precheck", "source": "internal/ontology/postgres/maintenance_discovery_measurement_integration_test.go"},
+    {"id": "repository/TestOntologyMaintenanceRevalidationDiscoveryConcurrency", "package": "./internal/ontology/postgres", "run": "^TestOntologyMaintenanceRevalidationDiscoveryConcurrency$", "phase": "precheck", "source": "internal/ontology/postgres/maintenance_discovery_concurrency_integration_test.go"},
+    {"id": "repository/TestOntologyMaintenanceRevalidationDiscoveryCancellation", "package": "./internal/ontology/postgres", "run": "^TestOntologyMaintenanceRevalidationDiscoveryCancellation$", "phase": "precheck", "source": "internal/ontology/postgres/maintenance_discovery_concurrency_integration_test.go"},
+    {"id": "repository/TestOntologyMaintenanceRevalidationDiscoveryIsolation", "package": "./internal/ontology/postgres", "run": "^TestOntologyMaintenanceRevalidationDiscoveryIsolation$", "phase": "precheck", "source": "internal/ontology/postgres/maintenance_discovery_isolation_integration_test.go"},
+    {"id": "repository/TestOntologyMaintenanceRevalidationDiscoveryLockCancellation", "package": "./internal/ontology/postgres", "run": "^TestOntologyMaintenanceRevalidationDiscoveryLockCancellation$", "phase": "precheck", "source": "internal/ontology/postgres/maintenance_discovery_isolation_integration_test.go"}
   ]
 }
