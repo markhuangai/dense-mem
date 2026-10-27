@@ -141,7 +141,7 @@ const maintenanceActiveSourceJoin = ` FROM ontology_maintenance_sources AS sourc
  JOIN teams AS team ON team.id=source.team_id AND team.status='active' AND team.deleted_at IS NULL
  JOIN memory_spaces AS space ON space.team_id=source.team_id AND space.id=source.shared_space_id AND space.generation=source.space_generation AND space.lifecycle_state='active'`
 
-func completeMaintenanceRun(tx *gorm.DB, runID, retryRunID string, allSources bool, requiredFailure string, now time.Time) error {
+func completeMaintenanceRun(tx *gorm.DB, runID, retryRunID string, allSources bool, requiredFailure string) error {
 	var unresolved bool
 	if err := tx.Raw(`SELECT EXISTS(SELECT 1`+maintenanceActiveSourceJoin+`
 	 WHERE source.eligible AND (source.status IN ('failed','ambiguous') OR (NOT ? AND source.status='pending'))
@@ -156,7 +156,7 @@ func completeMaintenanceRun(tx *gorm.DB, runID, retryRunID string, allSources bo
 		previousFailure = requiredFailure
 	}
 	status, reason := ontology.MaintenanceCompletion(unresolved || requiredFailure != "", previousFailure)
-	return tx.Exec(`UPDATE ontology_maintenance_runs SET status=?,failure_code=?,updated_at=? WHERE run_id=?::uuid`, status, reason, now, runID).Error
+	return tx.Exec(`UPDATE ontology_maintenance_runs SET status=?,failure_code=?,updated_at=clock_timestamp() WHERE run_id=?::uuid`, status, reason, runID).Error
 }
 
 func maintenanceRetryableRuns(tx *gorm.DB, runIDs []string) (map[string]bool, error) {

@@ -71,6 +71,11 @@ func claimFinalizationFixture(t *testing.T, f *ontologyFixture, window *ontology
 	_, err := f.store.MaintenanceCommand(context.Background(), domain.OntologyMaintenanceCommand{Action: "run", OperationKey: uuid.NewString(), MaxBatches: 1}, time.Now().UTC(), nil)
 	require.NoError(t, err)
 	_, claim := maintenanceClaim(t, f, window)
+	return finalizationFixtureForClaim(t, f, window, claim)
+}
+
+func finalizationFixtureForClaim(t *testing.T, f *ontologyFixture, window *ontology.MaintenanceWindow, claim *ontology.MaintenanceClaim) *finalizationFixture {
+	t.Helper()
 	organizer, calls := organizationFixtureServiceWithAccounting(t, f, nil, nil, "fixture-model", maintenanceFixtureLimits(), finalizationAccounting{f.store, *claim}, 300000, map[string]int{"prompt_tokens": 17, "completion_tokens": 9, "total_tokens": 26})
 	return &finalizationFixture{f: f, window: window, claim: claim, organizer: organizer, calls: calls}
 }
@@ -170,6 +175,7 @@ func (x *finalizationFixture) assertCompletedOutcome(t *testing.T) {
 	run := maintenanceRunByID(t, x.f, x.claim.RunID)
 	require.Equal(t, 1, run.CompletedBatches)
 	require.Equal(t, x.result.FailureCode, run.FailureCode)
+	x.assertCompletionTimestamps(t, time.Time{})
 	if x.result.FailureCode != "" {
 		require.Equal(t, "incomplete", run.Status)
 		for _, source := range x.claim.Sources {
@@ -187,6 +193,39 @@ func (x *finalizationFixture) assertCompletedOutcome(t *testing.T) {
 			}
 		}
 	}
+}
+
+func (x *finalizationFixture) assertCompletionTimestamps(t *testing.T, earliest time.Time) {
+	t.Helper()
+	var created, completed, receipt, updated time.Time
+	require.NoError(t, x.f.admin.Raw(`SELECT batch.created_at,batch.completed_at,assessment.created_at,run.updated_at
+	 FROM ontology_maintenance_batches AS batch JOIN ontology_maintenance_runs AS run USING(run_id)
+	 JOIN ontology_assessments AS assessment ON assessment.team_id=batch.team_id AND assessment.shared_space_id=batch.shared_space_id
+	 AND assessment.space_generation=batch.space_generation AND assessment.operation_key='maintenance:'||batch.batch_id::text
+	 WHERE batch.batch_id=?::uuid`, x.claim.ID).Row().Scan(&created, &completed, &receipt, &updated))
+	require.False(t, completed.Before(created), "completion cannot precede batch creation")
+	require.False(t, completed.Before(receipt), "completion cannot precede the selected receipt")
+	require.False(t, completed.Before(earliest), "completion cannot precede the released barrier")
+	require.False(t, updated.Before(completed), "run metadata cannot precede batch completion")
+	var invalidSources, organized int
+	require.NoError(t, x.f.admin.Raw(`SELECT count(*) FILTER(WHERE updated_at<? OR updated_at>?),count(*) FILTER(WHERE status='organized')
+	 FROM ontology_maintenance_sources WHERE team_id=?::uuid AND assessment_id=?::uuid`, receipt, completed, x.f.team, x.result.AssessmentID).Row().Scan(&invalidSources, &organized))
+	require.Zero(t, invalidSources, "source finalization must follow its receipt and precede batch completion")
+	if organized > 0 && x.result.Current && x.result.FailureCode == "" {
+		var progress time.Time
+		require.NoError(t, x.f.admin.Raw(`SELECT last_successful_progress FROM ontology_maintenance_state WHERE singleton`).Row().Scan(&progress))
+		require.False(t, progress.Before(completed), "progress metadata cannot precede successful completion")
+	}
+}
+
+func (x *finalizationFixture) completionState(t *testing.T) string {
+	t.Helper()
+	var state string
+	require.NoError(t, x.f.admin.Raw(`SELECT jsonb_build_object('batch',to_jsonb(batch),'run',to_jsonb(run),
+	 'sources',(SELECT jsonb_agg(to_jsonb(source) ORDER BY source_kind,source_id) FROM ontology_maintenance_sources AS source WHERE source.team_id=batch.team_id),
+	 'progress',(SELECT last_successful_progress FROM ontology_maintenance_state WHERE singleton))::text
+	 FROM ontology_maintenance_batches AS batch JOIN ontology_maintenance_runs AS run USING(run_id) WHERE batch.batch_id=?::uuid`, x.claim.ID).Row().Scan(&state))
+	return state
 }
 
 func (x *finalizationFixture) batchStatus(t *testing.T) string {
