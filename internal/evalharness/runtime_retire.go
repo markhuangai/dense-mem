@@ -147,6 +147,16 @@ func lockRuntimeResources(receipt runtimeReceipt) ([]*os.File, error) {
 	}
 	paths := []string{}
 	for _, monitor := range receipt.MonitorDirs {
+		if _, err := runtimeCleanPath(monitor); err != nil {
+			return nil, err
+		}
+		if _, err := os.Lstat(monitor); err != nil {
+			// Registered monitors hold container locks outside their removable output directory.
+			if os.IsNotExist(err) && len(receipt.Containers) > 0 {
+				continue
+			}
+			return nil, err
+		}
 		paths = append(paths, filepath.Join(monitor, "paired.lock"))
 	}
 	for _, container := range receipt.Containers {
