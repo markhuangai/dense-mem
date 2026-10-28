@@ -37,6 +37,18 @@ func newRecallAccuracyFixture(t *testing.T, reverseIDs, vectors bool) *recallAcc
 		mapping: evalharness.KnowledgeMapping{BySourceDocID: map[string]evalharness.Ref{}},
 		sources: map[string]evalharness.RecallAccuracySource{}, evidence: map[string]ontology.SourceHandle{},
 		entities: map[string]string{}, predicates: map[string]ontology.SourceHandle{}, vectors: vectors}
+	var evidenceTimestampDefault string
+	require.NoError(t, f.admin.Raw(`SELECT column_default FROM information_schema.columns
+		WHERE table_schema=current_schema() AND table_name='evidence_fragments' AND column_name='created_at'`).Row().Scan(&evidenceTimestampDefault))
+	require.NotEmpty(t, evidenceTimestampDefault)
+	t.Cleanup(func() {
+		require.NoError(t, f.rls.WithSystemTx(context.Background(), f.admin, func(tx *gorm.DB) error {
+			return tx.Exec("ALTER TABLE evidence_fragments ALTER COLUMN created_at SET DEFAULT " + evidenceTimestampDefault).Error
+		}))
+	})
+	require.NoError(t, f.rls.WithSystemTx(context.Background(), f.admin, func(tx *gorm.DB) error {
+		return tx.Exec(`ALTER TABLE evidence_fragments ALTER COLUMN created_at SET DEFAULT '2026-01-01T00:00:00Z'::timestamptz`).Error
+	}))
 	var sources []evalharness.RecallAccuracySource
 	for _, c := range f.cohort {
 		sources = append(sources, c.Sources...)
@@ -93,9 +105,6 @@ func newRecallAccuracyFixture(t *testing.T, reverseIDs, vectors bool) *recallAcc
 	}
 	// Equal timestamps leave the deliberately controlled document UUIDs as the full-text and vector tie breakers.
 	require.NoError(t, f.rls.WithSystemTx(context.Background(), f.admin, func(tx *gorm.DB) error {
-		if err := tx.Exec(`UPDATE evidence_fragments SET created_at='2026-01-01T00:00:00Z' WHERE team_id=?::uuid`, f.team).Error; err != nil {
-			return err
-		}
 		return tx.Exec(`UPDATE search_documents SET created_at='2026-01-01T00:00:00Z', updated_at='2026-01-01T00:00:00Z' WHERE team_id=?::uuid`, f.team).Error
 	}))
 	f.preserved = f.canonicalSnapshot(t)
