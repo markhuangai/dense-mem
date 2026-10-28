@@ -177,13 +177,78 @@ if ensure_runner; then
 fi
 [[ "$(sha256sum "${RUNNER}" | awk '{print $1}')" == "${runner_hash_before}" ]]
 unset -f go
-source "${ROOT_DIR}/tests/eval/scripts/paired_eval.sh"
-PAIR_CONFIG="${tmp_dir}/pair.json"
+
+for cleanup_case in success build_failure returned_failure error deadline INT TERM supplied retained_success retained_error; do
+  case_dir="${tmp_dir}/${cleanup_case} "'quote '\'' $() `literal` [*]'
+  mkdir -p "${case_dir}/temporary" "${case_dir}/evidence" "${case_dir}/supplied"
+  printf 'retained evaluation evidence\n' > "${case_dir}/evidence/stage.json"
+  printf 'caller-owned runner\n' > "${case_dir}/supplied/eval-runner"
+  printf 'caller-owned partial build\n' > "${case_dir}/supplied/eval-runner.tmp"
+  before_hashes="$(sha256sum "${case_dir}/evidence/stage.json" "${case_dir}/supplied/"*)"
+  case_status=0
+  TMPDIR="${case_dir}/temporary" bash -s -- "${ROOT_DIR}" "${cleanup_case}" "${case_dir}" > "${case_dir}/output.log" 2>&1 <<'BASH' || case_status="$?"
+set -Eeuo pipefail
+cd "$1"
+source tests/eval/scripts/paired_eval.sh
+cleanup_case="$2"; case_dir="$3"; PAIR_RUNNER=""
+PAIR_CONFIG="${case_dir}/pair.json"
 printf '{}' > "${PAIR_CONFIG}"
-PAIR_RUNNER=""
-go() { return 42; }
-if (pair_main); then
-  echo "paired monitor continued after a failed build" >&2
-  exit 1
+if [[ "${cleanup_case}" == build_failure || "${cleanup_case}" == returned_failure ]]; then
+  go() {
+    printf '%s\n' "${PAIR_RUNNER}" > "${case_dir}/owned-runner"
+    printf 'partial compiler output\n' > "$3"
+    return 42
+  }
+  if [[ "${cleanup_case}" == build_failure ]]; then pair_main; exit 99; fi
+  if pair_main; then exit 99; else original_status="$?"; fi
+  PAIR_RUNNER="${case_dir}/supplied/eval-runner"
+  exit "${original_status}"
 fi
-unset -f go
+if [[ "${cleanup_case}" == supplied ]]; then PAIR_RUNNER="${case_dir}/supplied/eval-runner"; fi
+pair_ensure_runner
+if [[ "${cleanup_case}" == supplied ]]; then exit 0; fi
+printf '%s\n' "${PAIR_RUNNER}" > "${case_dir}/owned-runner"
+[[ -x "${PAIR_RUNNER}" ]]
+if [[ "${cleanup_case}" == retained_* ]]; then
+  mkdir "${PAIR_RUNNER}.tmp"
+  printf 'unexpected retained contents\n' > "$(dirname "${PAIR_RUNNER}")/evidence.json"
+else
+  printf 'partial compiler output\n' > "${PAIR_RUNNER}.tmp"
+fi
+pair_stage_dir=""; pair_interrupted=false
+trap 'pair_on_error "$?"' ERR
+case "${cleanup_case}" in
+  error|retained_error) bash -c 'exit 43' ;;
+  deadline) bash -c 'exit 124' ;;
+  INT|TERM) trap 'exit 130' INT TERM; kill -s "${cleanup_case}" "$$" ;;
+esac
+PAIR_RUNNER="${case_dir}/supplied/eval-runner"
+BASH
+  expected_status=0
+  case "${cleanup_case}" in
+    build_failure|returned_failure) expected_status=42 ;;
+    error|retained_error) expected_status=43 ;;
+    deadline) expected_status=124 ;;
+    INT|TERM) expected_status=130 ;;
+  esac
+  [[ "${case_status}" == "${expected_status}" ]] || {
+    cat "${case_dir}/output.log" >&2
+    echo "${cleanup_case}: exit ${case_status}, expected ${expected_status}" >&2
+    exit 1
+  }
+  [[ "$(sha256sum "${case_dir}/evidence/stage.json" "${case_dir}/supplied/"*)" == "${before_hashes}" ]]
+  if [[ "${cleanup_case}" == supplied ]]; then
+    [[ -z "$(find "${case_dir}/temporary" -mindepth 1 -print -quit)" ]]
+    continue
+  fi
+  owned_runner="$(cat "${case_dir}/owned-runner")"
+  [[ ! -e "${owned_runner}" ]]
+  if [[ "${cleanup_case}" == retained_* ]]; then
+    [[ -d "${owned_runner}.tmp" ]]
+    [[ "$(cat "$(dirname "${owned_runner}")/evidence.json")" == 'unexpected retained contents' ]]
+    [[ "$(cat "${case_dir}/output.log")" == *'failed to clean paired runner files'* ]]
+    [[ "$(cat "${case_dir}/output.log")" == *'failed to remove paired runner directory'* ]]
+  else
+    [[ ! -e "$(dirname "${owned_runner}")" ]]
+  fi
+done

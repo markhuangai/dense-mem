@@ -241,17 +241,29 @@ pair_on_error() {
   exit "${pair_code}"
 }
 
+pair_cleanup_runner() {
+  local pair_code="$1" pair_tools="$2"
+  rm -f -- "${pair_tools}/eval-runner" "${pair_tools}/eval-runner.tmp" || echo "failed to clean paired runner files: ${pair_tools}" >&2
+  rmdir -- "${pair_tools}" || echo "failed to remove paired runner directory: ${pair_tools}" >&2
+  exit "${pair_code}"
+}
+
+pair_ensure_runner() {
+  [[ -z "${PAIR_RUNNER:-}" ]] || return 0
+  local pair_tools pair_cleanup
+  pair_tools="$(mktemp -d)" || return "$?"
+  printf -v pair_cleanup 'pair_cleanup_runner "$?" %q' "${pair_tools}"
+  trap "${pair_cleanup}" EXIT
+  PAIR_RUNNER="${pair_tools}/eval-runner"
+  go build -o "${PAIR_RUNNER}.tmp" ./cmd/eval-runner || return "$?"
+  mv "${PAIR_RUNNER}.tmp" "${PAIR_RUNNER}"
+}
+
 pair_main() {
   set -Eeuo pipefail
   umask 077
   PAIR_CONFIG="$(realpath -- "${PAIR_CONFIG}")"
-  local pair_tools=""
-  if [[ -z "${PAIR_RUNNER:-}" ]]; then
-    pair_tools="$(mktemp -d)"
-    PAIR_RUNNER="${pair_tools}/eval-runner"
-    go build -o "${PAIR_RUNNER}.tmp" ./cmd/eval-runner || return "$?"
-    mv "${PAIR_RUNNER}.tmp" "${PAIR_RUNNER}"
-  fi
+  pair_ensure_runner || return "$?"
   local pair_out pair_seed pair_suite pair_run_id pair_side pair_stage="" pair_stage_dir="" pair_reused pair_capture_dir pair_interrupted=false pair_native_pid=""
   pair_tool check-config >/dev/null
   pair_out="$(jq -er '.out_dir' "${PAIR_CONFIG}")"
@@ -302,5 +314,4 @@ pair_main() {
     pair_score
   done
   pair_tool report
-  if [[ -n "${pair_tools}" ]]; then rm "${PAIR_RUNNER}"; rmdir "${pair_tools}"; fi
 }
