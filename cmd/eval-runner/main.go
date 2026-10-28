@@ -32,7 +32,7 @@ func main() {
 	var cohortLockPath string
 	var repairLockPath string
 	var metricsURL string
-	flag.StringVar(&opts.Mode, "mode", "validate", "validate, import, baseline, candidate, compare, compare-v2-cohort, derive-v2, derive-v3, validate-v2-cohort, token-diagnostics, or runtime")
+	flag.StringVar(&opts.Mode, "mode", "validate", "validate, import, baseline, candidate, compare, compare-v2-cohort, derive-v2, derive-v3, generate-recall-accuracy, validate-v2-cohort, token-diagnostics, or runtime")
 	flag.StringVar(&metricsURL, "metrics-url", "", "direct Prometheus scrape URL (or DENSE_MEM_EVAL_METRICS_URL) for token-diagnostics")
 	flag.StringVar(&opts.SeedManifestPath, "seed", "", "seed manifest path (source seed for derive-v2; derive-v3 uses parent/filtered V1 inputs)")
 	flag.StringVar(&opts.SuitePath, "suite", "", "suite JSONL path (source suite for derive-v2; derive-v3 uses parent/filtered V1 inputs)")
@@ -77,6 +77,14 @@ func main() {
 	registerFloatGate("max-average-dream-bad-at-k", "maximum average bad dream refs@k allowed when dream qrels are present", &opts.Gates.MaxAverageDreamBadAtK, validateNonNegative)
 	registerFloatGate("max-dream-bad-rank1-rate", "maximum share of dream-scored cases with a bad dream ref first", &opts.Gates.MaxDreamBadRank1Rate, validateRate)
 	flag.Parse()
+	if opts.Mode == "generate-recall-accuracy" {
+		lock, err := evalharness.GenerateRecallAccuracy(opts.OutDir)
+		if err != nil {
+			exitf("generate recall accuracy: %v", err)
+		}
+		fmt.Printf("seed_id=%s cases=%d sources=%d seed_hash=%s\n", lock.SeedID, lock.CaseCount, lock.SourceCount, lock.SeedHash)
+		return
+	}
 	if opts.Mode == "runtime" {
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
