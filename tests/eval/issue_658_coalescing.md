@@ -26,7 +26,7 @@ results. Logs contain no source text, receipt bodies, or credentials.
 ## Paired protocol
 
 `TestOntologyMaintenanceRevalidationDiscoveryMeasurement/coalescing-markers`
-adds the versioned `coalescing-markers-v1` protocol to the existing measurement.
+adds the versioned `coalescing-markers-v3` protocol to the existing measurement.
 Both workloads use 100 sources, five current real receipts of 20 sources each, and 20
 stable markers queued upfront. Overlapping markers each match all sources;
 disjoint markers each match five sources through their unique ordinal terms.
@@ -36,7 +36,10 @@ The existing current receipts and their immutable history remain intact.
 
 Run five pairs per workload, alternating sequential/combined execution order.
 Each sample has a fresh PostgreSQL database and the same deterministic HTTP
-provider. Setup is excluded; no additional warm-up drain is performed. The
+provider. Source-creation notifications are drained before constructing the real
+assessment receipts. Setup explicitly runs PostgreSQL `ANALYZE` after receipts
+and after definition setup, so both modes start with current planner statistics.
+Setup is excluded; no additional warm-up drain is performed. The
 test-only sequential discovery/expansion drivers are frozen from base
 `09d16398005f0a8ba3ca0fe6c31e08c4341eca9f` and reuse the same source-selection and
 freshness owners. No production legacy mode or performance toggle is added.
@@ -84,4 +87,28 @@ Their failed reports are retained. A synthetic config-only DSN satisfied the
 loader; the cohort continued to use its own real disposable PostgreSQL fixtures.
 Provider settings, frozen judgments, and the context window were unchanged.
 
-Remote correctness, performance, production E2E and final PR gates are pending.
+The first [Development E2E run](https://github.com/markhuangai/dense-mem/actions/runs/40624465209)
+passed both ontology production scenarios and PostgreSQL shards 0 and 5. Shard 2
+found two fixture assumptions that omitted existing predicate/definition seeding;
+the corrected tests passed locally against PostgreSQL. Shard 1 reached its
+27-minute deadline after five overlap pairs and four disjoint pairs. Its
+`coalescing-markers-v1` evidence is retained as incomplete, not an acceptance pass.
+The run-owned image was deleted by the corresponding cleanup workflow.
+
+A local `coalescing-markers-v2` diagnostic run shortened source setup but exposed
+automatic-statistics refresh during longer sequential samples. It was interrupted
+and retained. Version 3 explicitly initializes statistics for both modes without
+changing the older `discovery-receipts-v1` fixture or its assertions.
+
+All 20 local version-3 samples passed. The median summed discovery time was
+38.33s sequential versus 2.05s combined for overlap (94.65% lower), and 1.970s
+versus 1.965s for disjoint work (0.25% lower). Overlap used 2,000 versus 100
+freshness checks; disjoint work used 100 in both modes. Every sample preserved
+canonical fingerprints, queue state, and receipts with no additional provider
+calls. Other local project runtimes remained active; these measurements require
+the planned isolated remote confirmation and establish no end-to-end speedup.
+
+This file records the prepublication evidence checkpoint. Final exact-head
+Development E2E, complete measurement, CI, CodeQL and production-image E2E
+receipts belong to the pull request closing #658; these historical attempts do
+not substitute for those gates.

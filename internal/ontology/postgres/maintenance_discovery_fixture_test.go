@@ -42,6 +42,11 @@ func discoveryEvidence(t *testing.T, f *ontologyFixture, index int) ontology.Sou
 
 func newDiscoveryFixture(t *testing.T, groups []int, outcomes []string, supported bool) *discoveryFixture {
 	t.Helper()
+	return newDiscoveryFixtureWithSetup(t, groups, outcomes, supported, false)
+}
+
+func newDiscoveryFixtureWithSetup(t *testing.T, groups []int, outcomes []string, supported, prepareSources bool) *discoveryFixture {
+	t.Helper()
 	x := &discoveryFixture{f: newOrganizationFixture(t), topic: testTopic("postgresql")}
 	f := x.f
 	if supported {
@@ -61,15 +66,24 @@ func newDiscoveryFixture(t *testing.T, groups []int, outcomes []string, supporte
 			map[string]int{"prompt_tokens": 17, "completion_tokens": 9, "total_tokens": 26})
 		services[mode], x.calls = service, append(x.calls, calls)
 	}
+	var prepared [][]ontology.SourceHandle
+	if prepareSources {
+		for _, count := range groups {
+			prepared = append(prepared, x.addSources(t, count))
+		}
+		x.claimTurn(t)
+		x.drain(t)
+	}
 	for group, count := range groups {
 		mode := "organized"
 		if len(outcomes) != 0 {
 			mode = outcomes[group]
 		}
 		var handles []ontology.SourceHandle
-		for range count {
-			handle := discoveryEvidence(t, f, len(x.sources)+1)
-			x.sources, handles = append(x.sources, handle), append(handles, handle)
+		if prepareSources {
+			handles = prepared[group]
+		} else {
+			handles = x.addSources(t, count)
 		}
 		result, err := services[mode].Organize(context.Background(), f.team,
 			ontology.OrganizationInput{OperationKey: fmt.Sprintf("discovery-receipt-%03d", group), Sources: handles})
@@ -107,17 +121,36 @@ func newDiscoveryFixture(t *testing.T, groups []int, outcomes []string, supporte
 			return nil
 		}))
 	}
-	window := maintenanceWindow(t, f, maintenanceSettings(t, f))
-	turn, err := f.store.ClaimMaintenanceTurn(context.Background(), window.ID, time.Now().UTC(), 30*time.Minute)
-	require.NoError(t, err)
-	require.NotNil(t, turn)
-	x.turn = *turn
-	t.Cleanup(func() { require.NoError(t, f.store.ReleaseMaintenanceTurn(context.Background(), x.turn)) })
+	if prepareSources {
+		require.NoError(t, f.admin.Exec(`ANALYZE`).Error)
+	} else {
+		x.claimTurn(t)
+	}
 	x.drain(t)
 	for i, handle := range x.sources {
 		require.NotEmpty(t, revalidationQueue(t, f, handle).AssessmentID, "source %d", i)
 	}
 	return x
+}
+
+func (x *discoveryFixture) addSources(t *testing.T, count int) []ontology.SourceHandle {
+	t.Helper()
+	var handles []ontology.SourceHandle
+	for range count {
+		handle := discoveryEvidence(t, x.f, len(x.sources)+1)
+		x.sources, handles = append(x.sources, handle), append(handles, handle)
+	}
+	return handles
+}
+
+func (x *discoveryFixture) claimTurn(t *testing.T) {
+	t.Helper()
+	window := maintenanceWindow(t, x.f, maintenanceSettings(t, x.f))
+	turn, err := x.f.store.ClaimMaintenanceTurn(context.Background(), window.ID, time.Now().UTC(), 30*time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, turn)
+	x.turn = *turn
+	t.Cleanup(func() { require.NoError(t, x.f.store.ReleaseMaintenanceTurn(context.Background(), x.turn)) })
 }
 
 func (x *discoveryFixture) drain(t *testing.T) {

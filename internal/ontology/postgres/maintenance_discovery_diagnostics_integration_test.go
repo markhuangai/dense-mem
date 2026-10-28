@@ -20,6 +20,11 @@ func TestOntologyMaintenanceDiscoveryCommittedDiagnostics(t *testing.T) {
 	for _, rollback := range []bool{false, true} {
 		t.Run(map[bool]string{false: "commit", true: "rollback"}[rollback], func(t *testing.T) {
 			x := newDiscoveryFixture(t, []int{2}, nil, false)
+			page, err := x.f.store.ListRecords(context.Background(), x.f.team, ontology.EntityClass, "", 1)
+			require.NoError(t, err)
+			_, err = x.f.store.SeedDefinitions(context.Background(), x.f.team, ontology.SeedInput{OperationKey: "diagnostics-seed", ExpectedRevision: page.Revision, Limit: 20})
+			require.NoError(t, err)
+			x.drain(t)
 			definitions := coalescingDefinitions(t, x, 2, "overlap")
 			enqueueCoalescingMarkers(t, x, definitions)
 			if rollback {
@@ -42,7 +47,7 @@ func TestOntologyMaintenanceDiscoveryCommittedDiagnostics(t *testing.T) {
 					return organizer
 				},
 			})
-			_, err := service.RunTurn(context.Background())
+			_, err = service.RunTurn(context.Background())
 			if rollback {
 				require.ErrorContains(t, err, "synthetic-discovery-secret")
 				require.Equal(t, markers, coalescingMarkerCursors(t, x))

@@ -175,7 +175,7 @@
     }
   },
   "remote_validation": {
-    "status": "pending",
+    "status": "first_attempt_failed",
     "workflow": "development-e2e.yml",
     "scenarios": [
       "ontology_organization",
@@ -186,15 +186,164 @@
       1,
       2,
       5
-    ]
+    ],
+    "run_url": "https://github.com/markhuangai/dense-mem/actions/runs/40624465209",
+    "source_sha": "0c3d8d94b488f9aaa260b18ff483d92704cc929b",
+    "image_digest": "sha256:d35f478b496e138c9c1783713f25f59e4495684f79a705a7c9d8546b85120293",
+    "passed": [
+      "ontology_organization",
+      "ontology_management",
+      "postgres_shard_0",
+      "postgres_shard_5"
+    ],
+    "failed": {
+      "postgres_shard_2": "Two fixture assumptions omitted existing predicate/definition seeding; corrected locally",
+      "postgres_shard_1": "27-minute deadline after five overlap pairs and four disjoint pairs"
+    },
+    "analysis_sha256": "ebf3e1c3050cd28b9143314ecd5fda3ae9d0b90d0d2bfa9cdb674afe8ee79988",
+    "cleanup": {
+      "run_url": "https://github.com/markhuangai/dense-mem/actions/runs/40627283146",
+      "deleted_version": 1458353016,
+      "digest": "sha256:d35f478b496e138c9c1783713f25f59e4495684f79a705a7c9d8546b85120293"
+    },
+    "final_gate": "New exact-source Development E2E required; its receipt is attached to the PR closing #658"
   },
   "performance": {
-    "status": "pending",
-    "protocol": "coalescing-markers-v1",
-    "pairs_per_workload": 5,
-    "workloads": [
-      "overlap",
-      "disjoint"
+    "status": "local_protocol_complete_remote_gate_required",
+    "protocol": {
+      "fixture": "coalescing-markers-v3",
+      "fresh_database_per_sample": true,
+      "image_digest": "",
+      "markers": 20,
+      "pairs": 5,
+      "provider": "deterministic HTTP fixture",
+      "receipt_source_counts": [
+        20,
+        20,
+        20,
+        20,
+        20
+      ],
+      "run_id": "",
+      "sequential_base": "09d16398005f0a8ba3ca0fe6c31e08c4341eca9f",
+      "setup": "drain source-creation notifications before real receipts; ANALYZE after receipts and after definition setup",
+      "shapes": [
+        "overlap",
+        "disjoint"
+      ],
+      "source_files_sha256": {
+        "maintenance_coalescing_fixture_test.go": "d91ff4b28d523fa0d92405b04cbb97cb0abdfcfea1821cc46fbce357a9cbbdf4",
+        "maintenance_coalescing_measurement_integration_test.go": "e0f71ab0773a8afec22e0e65bb2765b7e8e455ef58587655700450564d03950f",
+        "maintenance_coalescing_reference_test.go": "17df90eb6bd8f7eafd3c46bbed76fe73e3fd942346787eeeff98e2be62e2848a",
+        "maintenance_discovery.go": "fb559a7381c81feeea3057c983b94da8f3c0d0c4697acbdd424aae826a810dec",
+        "maintenance_discovery_concurrency_integration_test.go": "c42b226bcdd1e830a3e5762210a950b565f234d73f5fbb0644b8f6ec8afafcf4",
+        "maintenance_discovery_fixture_test.go": "f96271c1c9962d04ac39c9f961a183677e268b5c30f32d8b1c726460f66b5c9a",
+        "maintenance_discovery_isolation_integration_test.go": "faf63a7fa25af5f28913f28237fc6a9dd5cc20b14e4bc80637281b9623f0f397",
+        "maintenance_discovery_measurement_integration_test.go": "a96367c39b447fcd846e665cee7ce0677b51d1751904c5a54ffce80b628ae96f",
+        "maintenance_discovery_observation.go": "f50b140c148a79387be348c3ed180e4197f0bb9045908bf02af4f94f6c44a1bc",
+        "maintenance_discovery_stats.go": "3bbc3a2c70f3a9a7222300c20c57075c4f636b2445486235d485a478cc3e8669",
+        "maintenance_markers.go": "3efe3880b3f96fbc8bbb286957f3e1b25bf24e8aa128fcd6fd2b50ffead51ad5",
+        "organization.go": "65493accaa7943d0e44e2abf195ee17b95c16d763412d4eb6ffcf104f4564735",
+        "source_queries.go": "317202abe65030ec58054751ddcf85417d7069125b734b518c54908c334e3ea3"
+      },
+      "sources": 100,
+      "timing": "sum of discovery calls including commit; fixture setup and between-page completion queries excluded",
+      "warmup_drains": 0
+    },
+    "comparisons": [
+      {
+        "change_percent": -94.65084468739687,
+        "combined_median_ms": 2050.473073,
+        "combined_ms": [
+          2412.379627,
+          2444.461051,
+          1943.755514,
+          2050.473073,
+          1952.190533
+        ],
+        "sequential_median_ms": 38332.651665,
+        "sequential_ms": [
+          43641.300366,
+          40497.170646,
+          38332.651665,
+          37638.703473,
+          38235.504047
+        ],
+        "shape": "overlap"
+      },
+      {
+        "change_percent": -0.25241799435617995,
+        "combined_median_ms": 1964.613036,
+        "combined_ms": [
+          2038.831187,
+          1964.613036,
+          1941.285244,
+          1944.720815,
+          2031.729427
+        ],
+        "sequential_median_ms": 1969.584622,
+        "sequential_ms": [
+          1969.584622,
+          1992.879369,
+          1964.039382,
+          2013.035497,
+          1921.186426
+        ],
+        "shape": "disjoint"
+      }
+    ],
+    "sample_invariants": {
+      "samples": 20,
+      "fresh_databases": 20,
+      "receipts_each": 5,
+      "overlap_freshness_calls": {
+        "sequential": 2000,
+        "combined": 100
+      },
+      "disjoint_freshness_calls": {
+        "sequential": 100,
+        "combined": 100
+      },
+      "all_canonical_fingerprints_preserved": true,
+      "all_receipt_histories_preserved": true,
+      "all_queue_assertions_passed": true,
+      "additional_provider_calls": 0
+    },
+    "analysis_sha256": "399712827c55c18bbe47c077c29aae9f548be4f4b56d8d92b1bd54d86e71423e",
+    "test_log_sha256": "6b8d54cc20c22fe44b530a32251a2084a3cac9fdca00f9b98aee632dd4fd5d32",
+    "execution": {
+      "command": [
+        "go",
+        "test",
+        "-tags",
+        "integration",
+        "./internal/ontology/postgres",
+        "-run",
+        "^TestOntologyMaintenanceRevalidationDiscoveryMeasurement/coalescing-markers$",
+        "-count=1",
+        "-v",
+        "-timeout=20m"
+      ],
+      "started_at": 1793159230.9613175,
+      "duration_seconds": 482.14667868614197,
+      "exit_code": 0
+    },
+    "environment": "Local Docker Desktop; other project runtimes remained active, so remote isolated validation is mandatory",
+    "retained_prior_protocols": [
+      {
+        "protocol": "coalescing-markers-v1",
+        "location": "Development E2E 40624465209",
+        "status": "incomplete_timeout",
+        "completed_samples": 18,
+        "report_sha256": "a05ecc2efb5885013951526e378bc11de4084f766929be5ffb59ed5594fdd8d6"
+      },
+      {
+        "protocol": "coalescing-markers-v2",
+        "location": "local diagnostic run",
+        "status": "interrupted_for_statistics_bias",
+        "reason": "Automatic ANALYZE could occur during longer sequential samples but after shorter combined samples",
+        "test_log_sha256": "cb323b2a3b53c5a7ccda3db8ba9722d27e2b341c516b904350aa47b8e63f82fb"
+      }
     ]
   },
   "evaluation_1k": {
@@ -205,9 +354,47 @@
     "The live cohort is a bounded maintenance quality gate, not a full retrieval comparison.",
     "Whole-release runtime and accuracy improvement remain unproven."
   ],
-  "source_binding": "Prepublication working-tree hash with individual changed Go file hashes; only evidence documentation was added after local validation.",
+  "source_binding": "Original local/live validation retains its original source manifest. Subsequent changes affect four integration-test files and evidence documentation only; runtime code and the frozen live cohort are unchanged. Protocol v3 has its own verified source hashes and execution receipt.",
   "post_validation_documentation": [
     "tests/eval/issue_658_coalescing.md",
     "tests/eval/baselines/issue_658_coalescing.json"
+  ],
+  "checkpoint": "Prepublication evidence; final exact-head gates are recorded in the PR closing #658",
+  "post_audit_test_files_sha256": {
+    "internal/ontology/postgres/maintenance_coalescing_integration_test.go": "ac68785bd008e08d567c7d40f8ee539fc2b82606d3f512c498b92f124fde5593",
+    "internal/ontology/postgres/maintenance_discovery_diagnostics_integration_test.go": "b2fb3e99ab23b6fbb7d6bcd668234a8695a4247b1dcd8eb5d909cd59c919c340",
+    "internal/ontology/postgres/maintenance_discovery_fixture_test.go": "f96271c1c9962d04ac39c9f961a183677e268b5c30f32d8b1c726460f66b5c9a",
+    "internal/ontology/postgres/maintenance_coalescing_measurement_integration_test.go": "e0f71ab0773a8afec22e0e65bb2765b7e8e455ef58587655700450564d03950f"
+  },
+  "post_audit_validation": [
+    {
+      "command": [
+        "go",
+        "test",
+        "-tags",
+        "integration",
+        "./internal/ontology/postgres",
+        "-run",
+        "^TestOntologyMaintenance(CoalescingPreservesNonDefinitionOrder|DiscoveryCommittedDiagnostics)$",
+        "-count=1",
+        "-timeout=10m"
+      ],
+      "started_at": 1793159746.0554614,
+      "duration_seconds": 21.623088359832764,
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "go",
+        "tool",
+        "staticcheck",
+        "-tags=integration",
+        "-checks=inherit,-U1000",
+        "./internal/ontology/postgres"
+      ],
+      "started_at": 1793159767.678919,
+      "duration_seconds": 1.2898921966552734,
+      "exit_code": 0
+    }
   ]
 }

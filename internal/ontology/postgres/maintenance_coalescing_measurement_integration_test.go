@@ -15,10 +15,11 @@ import (
 
 func testMaintenanceCoalescingMeasurement(t *testing.T) {
 	discoveryLog(t, "coalescing_protocol", map[string]any{
-		"fixture": "coalescing-markers-v1", "sequential_base": "09d16398005f0a8ba3ca0fe6c31e08c4341eca9f",
+		"fixture": "coalescing-markers-v3", "sequential_base": "09d16398005f0a8ba3ca0fe6c31e08c4341eca9f",
 		"source_files_sha256": discoverySourceHashes(t), "shapes": []string{"overlap", "disjoint"},
 		"markers": 20, "sources": 100, "receipt_source_counts": []int{20, 20, 20, 20, 20},
 		"pairs": 5, "fresh_database_per_sample": true, "warmup_drains": 0,
+		"setup":    "drain source-creation notifications before real receipts; ANALYZE after receipts and after definition setup",
 		"provider": "deterministic HTTP fixture", "run_id": os.Getenv("DENSE_MEM_CI_PRECHECK_RUN_ID"),
 		"image_digest": os.Getenv("DENSE_MEM_CI_PRECHECK_IMAGE_DIGEST"),
 		"timing":       "sum of discovery calls including commit; fixture setup and between-page completion queries excluded",
@@ -38,8 +39,11 @@ func testMaintenanceCoalescingMeasurement(t *testing.T) {
 							report["failed"] = t.Failed()
 							discoveryLog(t, "coalescing_measurement", report)
 						}()
-						x := newDiscoveryFixture(t, []int{20, 20, 20, 20, 20}, nil, false)
+						setup := time.Now()
+						x := newDiscoveryFixtureWithSetup(t, []int{20, 20, 20, 20, 20}, nil, false, true)
 						definitions := coalescingDefinitions(t, x, 20, shape)
+						require.NoError(t, x.f.admin.Exec(`ANALYZE`).Error)
+						report["fixture_setup_ms"] = float64(time.Since(setup)) / float64(time.Millisecond)
 						canonical, history, queue, calls := schedulerCanonical(t, x.f), revalidationReceiptHistory(t, x.f), x.queue(t), x.providerCalls()
 						enqueueCoalescingMarkers(t, x, definitions)
 						store, ctx, recorder := x.recorder(context.Background(), true)
