@@ -121,7 +121,7 @@ func (f *recallAccuracyFixture) groupAccuracySources(t *testing.T, sources []eva
 		handles = append(handles, f.evidence[source.ID])
 	}
 	organizer, calls := f.organizer(t, meanings)
-	result, err := organizer.Organize(f.actor(0, "member"), f.team, ontology.OrganizationInput{OperationKey: uuid.NewString(), Sources: handles})
+	result, err := organizer.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: uuid.NewString(), Sources: handles})
 	require.NoError(t, err)
 	require.Empty(t, result.FailureCode)
 	require.NotNil(t, result.Publication)
