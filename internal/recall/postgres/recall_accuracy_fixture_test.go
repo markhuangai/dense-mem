@@ -123,19 +123,12 @@ func newRecallAccuracyFixture(t *testing.T, reverseIDs, vectors bool) *recallAcc
 
 func (f *recallAccuracyFixture) fixSearchDocumentIdentity(t testing.TB, oldID, stableID string) {
 	t.Helper()
-	// Preserve newly queued fixture jobs while re-keying their non-deferrable parent before any worker can consume them.
 	require.NoError(t, f.rls.WithSystemTx(context.Background(), f.admin, func(tx *gorm.DB) error {
-		var jobs string
-		if err := tx.Raw(`SELECT COALESCE(jsonb_agg(to_jsonb(job))::text,'[]') FROM embedding_jobs job WHERE team_id=?::uuid AND search_document_id=?::uuid`, f.team, oldID).Scan(&jobs).Error; err != nil {
-			return err
+		result := tx.Exec(`UPDATE search_documents SET search_document_id=?::uuid WHERE team_id=?::uuid AND search_document_id=?::uuid`, stableID, f.team, oldID)
+		if result.Error == nil && result.RowsAffected != 1 {
+			return fmt.Errorf("fixture search document %s was not found", oldID)
 		}
-		if err := tx.Exec(`DELETE FROM embedding_jobs WHERE team_id=?::uuid AND search_document_id=?::uuid`, f.team, oldID).Error; err != nil {
-			return err
-		}
-		if err := tx.Exec(`UPDATE search_documents SET search_document_id=?::uuid WHERE team_id=?::uuid AND search_document_id=?::uuid`, stableID, f.team, oldID).Error; err != nil {
-			return err
-		}
-		return tx.Exec(`INSERT INTO embedding_jobs SELECT (jsonb_populate_record(NULL::embedding_jobs, job || jsonb_build_object('search_document_id', ?::uuid))).* FROM jsonb_array_elements(?::jsonb) AS job`, stableID, jobs).Error
+		return result.Error
 	}))
 }
 
