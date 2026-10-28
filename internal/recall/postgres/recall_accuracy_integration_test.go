@@ -114,17 +114,18 @@ func flattenedAccuracySources(observation recallAccuracyObservation) []string {
 
 func (f *recallAccuracyFixture) groupAccuracySources(t *testing.T, sources []evalharness.RecallAccuracySource) {
 	t.Helper()
-	group := ontology.Record{ID: uuid.NewString(), Kind: ontology.EvidenceGroup, Group: &ontology.Group{}}
+	meanings := map[string]string{}
+	var handles []ontology.SourceHandle
 	for _, source := range sources {
-		handle := f.evidence[source.ID]
-		group.Group.Members = append(group.Group.Members, handle)
-		snapshots, err := f.ontology.ReadSources(context.Background(), f.team, []ontology.SourceHandle{handle})
-		require.NoError(t, err)
-		fingerprint, err := ontology.SourceFingerprint(snapshots[0])
-		require.NoError(t, err)
-		group.Sources = append(group.Sources, ontology.SourceDependency{SourceHandle: handle, Fingerprint: fingerprint})
+		meanings[source.Text] = "paraphrase"
+		handles = append(handles, f.evidence[source.ID])
 	}
-	f.publication(t, group)
+	organizer, calls := f.organizer(t, meanings)
+	result, err := organizer.Organize(f.actor(0, "member"), f.team, ontology.OrganizationInput{OperationKey: uuid.NewString(), Sources: handles})
+	require.NoError(t, err)
+	require.Empty(t, result.FailureCode)
+	require.NotNil(t, result.Publication)
+	require.Positive(t, calls.Load())
 }
 
 func TestRecallAccuracyIsolation(t *testing.T) {

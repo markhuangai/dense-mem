@@ -51,6 +51,8 @@ runs reverse UUID and insertion ordering and omit embeddings. Positive
 controls exercise predicate queries, common-word names, alias-only discovery,
 grouped displayed alternates, and explicit entity expansion. Private-space,
 cross-team, and different-owner controls exercise real RLS and mutation policy.
+The grouped variation uses the production organization service with synthetic
+provider equivalence proposals; no judgment labels or reasons reach that fixture.
 
 The Go JSON test stream includes `RECALL_ACCURACY_CASE`,
 `RECALL_ACCURACY_SUMMARY`, `RECALL_ACCURACY_LOCK`, and
