@@ -397,7 +397,7 @@ jobs:
           path: release
       - name: Verify existing files immediately before publication
         run: python release/policy.py verify --receipt release/source.json --dist release/dist
-      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086
         with:
           packages-dir: release/dist
           skip-existing: true
