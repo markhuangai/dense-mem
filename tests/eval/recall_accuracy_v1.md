@@ -41,6 +41,8 @@ evaluation scorer. The complete corpus is loaded together. Both ontology-off
 and ontology-on queries run against that same state, using fixed evidence and
 search-document timestamps, deterministic document UUIDs, and explicit source
 mappings. Two fresh fixtures must reproduce all source rankings and metrics.
+The four hub cases publish one shared topic because `HubPlatform` has one
+catalog alias owner. Every case's names and source assignments are retained.
 
 The baseline uses identical three-dimensional unit vectors `[1,0,0]` for every
 document and query. These vectors are deliberately independent of gold labels;

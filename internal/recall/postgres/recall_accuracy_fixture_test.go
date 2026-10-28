@@ -108,12 +108,31 @@ func newRecallAccuracyFixture(t *testing.T, reverseIDs, vectors bool) *recallAcc
 		return tx.Exec(`UPDATE search_documents SET created_at='2026-01-01T00:00:00Z', updated_at='2026-01-01T00:00:00Z' WHERE team_id=?::uuid`, f.team).Error
 	}))
 	f.preserved = f.canonicalSnapshot(t)
+	var concepts []evalharness.RecallAccuracyConcept
+	hubIndex := -1
 	for _, c := range f.cohort {
-		definition := ontology.Record{ID: uuid.NewString(), Kind: ontology.Kind(c.Concept.Kind), Definition: &ontology.Definition{
-			Key: c.Concept.Key, Label: c.Concept.Key, Aliases: c.Concept.Aliases}}
+		if c.Case.Slices[0] != "graph_hubs" || hubIndex == -1 {
+			if c.Case.Slices[0] == "graph_hubs" {
+				hubIndex = len(concepts)
+			}
+			concepts = append(concepts, c.Concept)
+			continue
+		}
+		// The shared hub alias has one catalog owner, with every case's names and source assignments retained.
+		hub := &concepts[hubIndex]
+		for _, name := range append([]string{c.Concept.Key}, c.Concept.Aliases...) {
+			if name != hub.Key && !slices.Contains(hub.Aliases, name) {
+				hub.Aliases = append(hub.Aliases, name)
+			}
+		}
+		hub.SourceIDs = append(hub.SourceIDs, c.Concept.SourceIDs...)
+	}
+	for _, concept := range concepts {
+		definition := ontology.Record{ID: uuid.NewString(), Kind: ontology.Kind(concept.Kind), Definition: &ontology.Definition{
+			Key: concept.Key, Label: concept.Key, Aliases: concept.Aliases}}
 		records := []ontology.Record{definition}
 		seen := map[string]bool{}
-		for _, sourceID := range c.Concept.SourceIDs {
+		for _, sourceID := range concept.SourceIDs {
 			handle := f.evidence[sourceID]
 			if definition.Kind == ontology.PredicateConcept {
 				handle = f.predicates[sourceID]
