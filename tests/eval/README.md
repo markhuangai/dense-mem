@@ -933,7 +933,9 @@ duration; do not add the two. Provider time overlaps that duration too.
 `truncated` and the bounded error count describe omitted detail. Predicate codes
 distinguish allowlist, nullability, endpoint-kind, inactive-catalog and alias
 conflicts. Evidence codes distinguish required, unknown, duplicate and missing
-results. Unclassified reasons use `other`. Provider messages and submitted text
+results. Span codes distinguish unknown evidence or markers, empty/reversed
+ranges, blank/overlong predicate phrases, and ranges outside same-evidence
+support. Unclassified reasons use `other`. Provider messages and submitted text
 are excluded even when raw diagnostic capture is unavailable. These internal
 codes are never serialized into repair feedback or public memory results.
 
@@ -951,6 +953,14 @@ reliability improvement is claimed. The maintainer-approved diagnostic-only 1k
 waiver is recorded on #586; replacement checks use deterministic HTTP providers,
 real PostgreSQL, synchronous-write production E2E with metrics enabled and
 disabled, and session ingestion. Full current-head CI and E2E remain mandatory.
+
+The follow-on predicate/span repair change has a separate [approved protocol](https://github.com/markhuangai/dense-mem/issues/586#issuecomment-6431998713). The maintainer subsequently [waived its live paired evaluation](https://github.com/markhuangai/dense-mem/issues/586#issuecomment-6468323991) on 2026-10-28; this is separate from the earlier diagnostic-only waiver. Inspection of the retained seven rc.20 exhausted assessments found repeated incompatible-key registration and resolution, predicate ranges outside their support, whitespace-only predicates, and unknown boundary references. All 21 retained responses obeyed the predicate status/key/version/registration nullability rules. Missing original assessor requests still prevent an exact historical replay; these observations do not explain the 23 separate timeouts.
+
+Repair feedback names the failed compatibility or range rule without changing acceptance. An incompatible catalog key cannot be repaired by registering it again, an exact known key cannot be substituted, and invalid citations do not justify dropping a supported claim. Ranges remain exact Unicode boundaries; predicate/value ranges must fit within one support range for the same evidence.
+
+The interrupted comparison used baseline `c4632748` and candidate `73f691df` with the frozen public v3 seed, `dense-mem-testing`, `@cf/baai/bge-m3` at 1024 dimensions, import concurrency/admission 4 and equal ontology capacity (global 8, team 4, context 300000). Baseline Remember import completed all 991 sources in 1007 durable attempts, retaining 14 timeout attempts, two exhausted validations and 184 provider repair turns. Baseline readiness and quality capture were incomplete; candidate import had not started. The native run was gracefully stopped and both isolated ontology schedulers were paused. Retained artifacts include the exact revisions, images, inputs, timings and unavailable usage. These partial observations establish no measured quality, reliability or timeout improvement and are not a passed comparison.
+
+Replacement verification uses the independent conformance audit, actual validators and local HTTP fixtures, real PostgreSQL regressions, registered synchronous-write/session-ingest production entrypoints, and final current-head review, CI, CodeQL and full production-image E2E. Supported fixture claims must remain stored after repair, and invalid complete responses must still yield zero partial semantic commit. The live comparison and its numerical gate are waived for this repair PR; the remaining validation gates are required.
 
 Ontology attempt receipts optionally contain `diagnostics` with measured
 `queue_ms`, `admission_ms`, `http_ms`, `reconciliation_ms`, the configured
@@ -1010,7 +1020,10 @@ An uncaptured baseline and the candidate must initially have empty canonical sta
 
 For a verified baseline, set `baseline.capture_dir` to the original native capture directory and `baseline.capture_sha256` to the SHA-256 of its `pair_capture.json`. The proof must include release/source/image, runner, models, embedding, seed/suite, scope, original file hashes and before/after readiness. Missing provenance blocks reuse. Original captures remain unchanged. A fresh `none` baseline must return native HTTP 404 for the ontology status interface; any runtime exposing that interface must use its supported readiness protocol. Legacy pinned workflows keep their recorded guards; only verified legacy captures can enter this paired workflow. New candidates use `adr0014`.
 
-Restart with the same manifest/output. You may extend only `deadline` without changing the run identity. Completed stages require matching receipts and artifact hashes. An interrupted import reconciles durable native terminal receipts with exact request hashes, evidence bytes and live mappings, then submits only missing sources with their original keys. Failed or ambiguous attempts stop with retained evidence; changing keys to retry semantic failures is forbidden. An interrupted capture or score is reused only when its native completion and all outputs can be proven; otherwise recovery stops instead of repeating the experiment.
+Restart with the same manifest/output. You may extend only `deadline` without changing the run identity. Completed stages require matching receipts and artifact hashes. An interrupted import reconciles durable native terminal receipts with exact request hashes, evidence bytes and live mappings, then submits only missing sources with their original keys. Recovered native failures remain in observations and source fingerprints alongside one completed receipt per source, within the existing six-attempt bound. Failed sources without a completed receipt, unsupported outcomes, duplicate identities/completions, and invalid scope or content stop with retained evidence; changing keys to retry semantic failures is forbidden. Mapping and distinct-source counts use completed receipts, preserving historical failures separately. An interrupted capture or score is reused only when its native completion and all outputs can be proven; otherwise recovery stops instead of repeating the experiment.
+
+Exact submitted bytes are checked against each request's durable evidence occurrence. Semantic duplicate reuse can map distinct wordings to one live canonical fragment; the fragment's original content is not the submitted occurrence. The snapshot binds the occurrence to the team, owner, ingest, evidence index and active space generation while retaining the canonical fragment mapping.
+Completed receipts also restore every source-to-canonical mapping after import, including unjudged sources whose wording reused another source's canonical fragment. Mapping repair validates the complete current import snapshot before writing artifacts.
 
 ADR 0014 drain checks discovery, ordinary pending sources, active preparation, batches and projections, unreconciled attempts, current search and topic projection work. Pause preserves ontology enablement. Frozen readiness is checked before and after capture. Terminal failures and ambiguity can drain while coverage remains unsuccessful; unknown usage and historical reservations are reported without becoming false active-work blockers.
 

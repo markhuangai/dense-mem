@@ -9,9 +9,11 @@ WITH scope AS (
         'request_hash', a.request_hash, 'outcome', a.outcome,
         'evidence_ids', COALESCE((SELECT jsonb_agg(e->>'evidence_id' ORDER BY e->>'evidence_id')
             FROM jsonb_array_elements(a.public_result->'evidence') e WHERE e->>'disposition'='stored'), '[]'::jsonb),
-        'content_hashes', COALESCE((SELECT jsonb_agg(f.content_hash ORDER BY f.fragment_id)
-            FROM jsonb_array_elements(a.public_result->'evidence') e JOIN evidence_fragments f
-              ON f.team_id=a.team_id AND f.fragment_id=NULLIF(e->>'evidence_id','')::uuid
+        'content_hashes', COALESCE((SELECT jsonb_agg(o.content_hash ORDER BY o.evidence_index)
+            FROM jsonb_array_elements(a.public_result->'evidence') e JOIN evidence_occurrences o
+              ON o.team_id=a.team_id AND o.ingest_id=a.attempt_id AND o.owner_profile_id=a.owner_profile_id
+                AND o.canonical_fragment_id=NULLIF(e->>'evidence_id','')::uuid
+                AND o.evidence_index=NULLIF(e->>'evidence_index','')::integer
             WHERE e->>'disposition'='stored'), '[]'::jsonb),
         'live', a.outcome='completed' AND EXISTS (
             SELECT 1 FROM jsonb_array_elements(a.public_result->'evidence') e
@@ -21,7 +23,11 @@ WITH scope AS (
             LEFT JOIN evidence_fragments f ON f.team_id=a.team_id AND f.fragment_id=NULLIF(e->>'evidence_id','')::uuid
                 AND f.space_id=a.space_id AND f.space_generation=a.space_generation
                 AND f.space_generation=dense_mem_active_space_generation(f.team_id,f.space_id)
-            WHERE e->>'disposition'='stored' AND f.fragment_id IS NULL
+            LEFT JOIN evidence_occurrences o ON o.team_id=a.team_id AND o.ingest_id=a.attempt_id
+                AND o.owner_profile_id=a.owner_profile_id AND o.canonical_fragment_id=f.fragment_id
+                AND o.evidence_index=NULLIF(e->>'evidence_index','')::integer
+                AND o.space_id=a.space_id AND o.space_generation=a.space_generation
+            WHERE e->>'disposition'='stored' AND (f.fragment_id IS NULL OR o.occurrence_id IS NULL)
         )) AS receipt
     FROM remember_attempts a JOIN scope s ON s.team_id=a.team_id
     WHERE a.submission_kind='remember' AND a.idempotency_key LIKE 'eval:%'
@@ -54,8 +60,8 @@ SELECT jsonb_build_object(
         AND NOT EXISTS(SELECT 1 FROM remember_attempts a CROSS JOIN LATERAL jsonb_array_elements(a.public_result->'evidence') e
             WHERE a.team_id=f.team_id AND a.submission_kind='remember' AND a.idempotency_key LIKE 'eval:%'
               AND a.outcome='completed' AND e->>'evidence_id'=f.fragment_id::text)),
-    'imports',COALESCE((SELECT jsonb_agg(receipt ORDER BY receipt->>'source_doc_id') FROM imports),'[]'::jsonb),
+    'imports',COALESCE((SELECT jsonb_agg(receipt ORDER BY receipt->>'source_doc_id',receipt->>'attempt_id') FROM imports),'[]'::jsonb),
     'canonical_hash','sha256:'||encode(sha256(convert_to(COALESCE((SELECT jsonb_agg(jsonb_build_array(kind,body) ORDER BY kind,body)::text FROM canonical),'[]'),'UTF8')),'hex'),
-    'source_hash','sha256:'||encode(sha256(convert_to(COALESCE((SELECT jsonb_agg(receipt ORDER BY receipt->>'source_doc_id')::text FROM imports),'[]'),'UTF8')),'hex')
+    'source_hash','sha256:'||encode(sha256(convert_to(COALESCE((SELECT jsonb_agg(receipt ORDER BY receipt->>'source_doc_id',receipt->>'attempt_id')::text FROM imports),'[]'),'UTF8')),'hex')
 )
 FROM scope AS s

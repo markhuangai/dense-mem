@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -11,6 +12,63 @@ import (
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 )
+
+func TestSynchronousAssessmentSpanReasonsSurviveRepairAndExhaustion(t *testing.T) {
+	for _, flaw := range []struct {
+		name, code string
+		mutate     func(assessor.SemanticAssessmentRequest, *assessor.SemanticAssessmentRelationshipSplit)
+	}{
+		{"unknown evidence", "range_evidence_unknown", func(_ assessor.SemanticAssessmentRequest, split *assessor.SemanticAssessmentRelationshipSplit) {
+			split.PredicateRange.EvidenceID = "unknown-evidence-canary"
+		}},
+		{"unknown marker", "range_boundary_unknown", func(_ assessor.SemanticAssessmentRequest, split *assessor.SemanticAssessmentRelationshipSplit) {
+			split.PredicateRange.StartRef = "unknown-marker-canary"
+		}},
+		{"empty", "range_order_invalid", func(_ assessor.SemanticAssessmentRequest, split *assessor.SemanticAssessmentRelationshipSplit) {
+			split.PredicateRange.EndRef = split.PredicateRange.StartRef
+		}},
+		{"outside support", "range_not_covered", func(req assessor.SemanticAssessmentRequest, split *assessor.SemanticAssessmentRelationshipSplit) {
+			end, _ := assessor.SemanticAssessmentBoundaryRef(req.Evidence[0], 1)
+			split.SupportRanges[0].EndRef = end
+		}},
+	} {
+		for _, invalidTurns := range []int{1, 3} {
+			t.Run(fmt.Sprintf("%s/%d", flaw.name, invalidTurns), func(t *testing.T) {
+				fixture := synchronousAssessmentFixture(t)
+				fixture.provider.response = func(req assessor.SemanticAssessmentRequest, turn int) assessor.SemanticAssessmentResponse {
+					response := validSynchronousAssessmentResponse(req)
+					if turn <= invalidTurns {
+						flaw.mutate(req, &response.RelationshipResults[0].Splits[0])
+					}
+					return response
+				}
+				result, err := AssessSynchronousRemember(context.Background(), fixture.deps, fixture.input)
+				var diagnostics map[string]any
+				if invalidTurns == 3 {
+					require.ErrorIs(t, err, ErrRememberProviderResponseInvalid)
+					require.Nil(t, result)
+					require.Equal(t, 3, SynchronousAssessmentProviderTurns(err))
+					diagnostics = SynchronousAssessmentDiagnostics(err)
+				} else {
+					require.NoError(t, err)
+					require.Equal(t, "stored", result.Response.RelationshipResults[0].Disposition)
+					commit, buildErr := BuildSynchronousRememberCommitInput(SynchronousRememberCommitRequest{Assessment: result})
+					require.NoError(t, buildErr)
+					diagnostics = commit.AssessorDiagnostics
+				}
+				turns := diagnostics["turns"].([]map[string]any)
+				require.Len(t, turns, min(invalidTurns+1, 3))
+				for _, turn := range turns[:invalidTurns] {
+					require.Contains(t, turn["issues"], map[string]any{"field": "relationship_results[].splits[].predicate_range", "code": flaw.code})
+				}
+				require.Equal(t, fixture.provider.assessRequest, fixture.provider.repairRequest)
+				encoded, marshalErr := json.Marshal(diagnostics)
+				require.NoError(t, marshalErr)
+				require.NotContains(t, string(encoded), "canary")
+			})
+		}
+	}
+}
 
 func TestSynchronousAssessmentDiagnosticsRetainRepairAndFailure(t *testing.T) {
 	for _, invalidTurns := range []int{0, 1, 3} {

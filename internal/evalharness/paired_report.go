@@ -205,7 +205,7 @@ func WritePairReport(c PairConfig) (PairReport, error) {
 		if !ready.Complete {
 			report.Status = "incomplete"
 		}
-		row := PairSideReport{Identity: proof.Identity, ReusedCapture: r.CaptureDir != "", DistinctSources: len(proof.After.Imports), Progress: proof.After, Readiness: ready, Usage: proof.After.Usage, HistoricalUsage: proof.After.HistoricalUsage, Windows: map[string]PairAttemptMeasurement{}}
+		row := PairSideReport{Identity: proof.Identity, ReusedCapture: r.CaptureDir != "", DistinctSources: len(completedPairImports(proof.After.Imports)), Progress: proof.After, Readiness: ready, Usage: proof.After.Usage, HistoricalUsage: proof.After.HistoricalUsage, Windows: map[string]PairAttemptMeasurement{}}
 		row.Attempts, err = MeasurePairAttempts(proof.After.ProviderAttempts)
 		if err != nil {
 			return report, err

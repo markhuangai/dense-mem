@@ -124,6 +124,18 @@ func runPairedServiceSide(t *testing.T, c evalharness.PairConfig, f *pairedServi
 	_, err = client.ImportCorpusWithConcurrency(ctx, corpus[:1], 1)
 	require.NoError(t, err)
 	first := observe()
+	require.Len(t, first.Imports, 2)
+	require.Equal(t, 2, f.provider.calls, "the native importer must recover its first provider failure")
+	var failed []evalharness.PairImportAttempt
+	for _, attempt := range first.Imports {
+		if attempt.Outcome == "failed" {
+			failed = append(failed, attempt)
+		}
+	}
+	require.Len(t, failed, 1)
+	_, err = evalharness.EvaluatePairImport(f.release.Scope, corpus, failed, false)
+	require.ErrorContains(t, err, "automatic retry is forbidden")
+	require.Equal(t, first.SourceHash, observe().SourceHash)
 	progress, err := evalharness.EvaluatePairImport(f.release.Scope, corpus, first.Imports, false)
 	require.NoError(t, err)
 	require.Equal(t, []string{corpus[0].SourceDocID}, progress.CompletedSourceIDs)
@@ -144,6 +156,24 @@ func runPairedServiceSide(t *testing.T, c evalharness.PairConfig, f *pairedServi
 	complete, err := evalharness.EvaluatePairImport(f.release.Scope, corpus, fullImport.Imports, false)
 	require.NoError(t, err)
 	require.True(t, complete.Complete)
+	var original, paraphrase evalharness.PairImportAttempt
+	for _, attempt := range fullImport.Imports {
+		if attempt.Outcome != "completed" {
+			continue
+		}
+		switch attempt.SourceDocID {
+		case "one":
+			original = attempt
+		case "unjudged":
+			paraphrase = attempt
+		}
+	}
+	require.NotEmpty(t, original.EvidenceIDs)
+	require.Equal(t, original.EvidenceIDs, paraphrase.EvidenceIDs)
+	require.NotEqual(t, original.ContentHashes, paraphrase.ContentHashes)
+	paraphrase.ContentHashes = original.ContentHashes
+	_, err = evalharness.EvaluatePairImport(f.release.Scope, corpus, []evalharness.PairImportAttempt{paraphrase}, false)
+	require.ErrorContains(t, err, "evidence content differs")
 	previousImport := resumed.Directory
 	resumed, err = evalharness.BeginPairStage(c, side, "import", process)
 	require.NoError(t, err)
@@ -152,6 +182,7 @@ func runPairedServiceSide(t *testing.T, c evalharness.PairConfig, f *pairedServi
 	require.NoError(t, os.WriteFile(allDone, []byte(strings.Join(complete.CompletedSourceIDs, "\n")+"\n"), 0o600))
 	_, err = evalharness.Run(ctx, evalharness.RunOptions{Mode: "import", SeedManifestPath: c.SeedManifest, SuitePath: c.Suite, BaseURL: f.mcp.URL, APIKey: "fixture", ImportSeed: true, ImportConcurrency: 1, ResumeSourceDocIDsPath: allDone, OutDir: filepath.Join(resumed.Directory, "native")})
 	require.NoError(t, err)
+	writePairedFixtureJSON(t, filepath.Join(resumed.Directory, "observation.json"), observe())
 	require.NoError(t, evalharness.CompletePairImportMapping(c, side, resumed.Directory))
 	require.Equal(t, calls+len(corpus)-1, f.provider.calls, "resuming must not re-assess a durably completed source")
 	calls = f.provider.calls
@@ -262,7 +293,11 @@ func pairedSmallSeed(t *testing.T, root string) (string, string, []evalharness.C
 	corpus := []evalharness.CorpusItem{}
 	for index, name := range []string{"Alpha", "Beta", "Gamma"} {
 		content := "Project " + name + " stores durable memory in PostgreSQL."
-		proposal := map[string]any{"ref": "stores", "subject": map[string]any{"name": "Project " + name, "entity_kind": "project"}, "predicate": map[string]any{"proposed_key": "stores_memory_" + strings.ToLower(name)}, "object": map[string]any{"value": map[string]any{"type": "string", "value": "PostgreSQL"}}, "polarity": "+", "evidence_indices": []int{0}}
+		subject := name
+		if index == 2 {
+			subject, content = "Alpha", "PostgreSQL stores durable memory for Project Alpha."
+		}
+		proposal := map[string]any{"ref": "stores", "subject": map[string]any{"name": "Project " + subject, "entity_kind": "project"}, "predicate": map[string]any{"proposed_key": "stores_memory_" + strings.ToLower(name)}, "object": map[string]any{"value": map[string]any{"type": "string", "value": "PostgreSQL"}}, "polarity": "+", "evidence_indices": []int{0}}
 		corpus = append(corpus, evalharness.CorpusItem{SourceDocID: []string{"one", "two", "unjudged"}[index], Content: content, Relationships: []any{proposal}})
 	}
 	manifest := evalharness.SeedManifest{SchemaVersion: evalharness.SeedSchemaVersionV2, SeedID: "paired-service-fixture", CorpusFile: "corpus.jsonl", CasesFile: "cases.jsonl", QrelsFile: "qrels.jsonl", RelationshipCount: 3}

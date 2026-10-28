@@ -116,7 +116,8 @@ func TestPredicateRegistrationValidationAndCompatibility(t *testing.T) {
 	loaded.AllowedSubjectKinds = []string{"organization"}
 	field, message, code = SubmissionPredicateRegistrationCompatibility(loaded, registration)
 	require.Equal(t, "subject_kind", field)
-	require.Equal(t, "is incompatible with the existing predicate", message)
+	require.Contains(t, message, "submitted subject kind")
+	require.Contains(t, message, "registration cannot change its endpoint constraints")
 	require.Equal(t, "predicate_subject_kind_mismatch", code)
 }
 
