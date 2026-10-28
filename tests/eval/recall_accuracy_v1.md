@@ -78,7 +78,16 @@ shard 5, and require every registered test to complete. Run the existing
 Focused checks do not replace final PR CI and full production-image E2E.
 The complete evaluator package suite runs in `ci-shared.yml`'s `go-tests` job.
 
-Commit compact baseline evidence with its capture commit and frozen hashes.
+The [committed baseline](baselines/recall_accuracy_v1.json) names `e0ccd0b3`
+as its capture commit and preserves the identical first observations from
+`41f94067`. It records all 210 required observations, complete mappings,
+preservation and isolation checks, frozen hashes, and known ranking failures.
+
+| Mode | Recall@10 | MRR | nDCG@10 | Mean Bad@10 |
+| --- | ---: | ---: | ---: | ---: |
+| Ontology off | 0.1667 | 0.0622 | 0.0855 | 0.1250 |
+| Ontology on | 0.3750 | 0.3393 | 0.3472 | 0.7083 |
+
 Keep generated bundles and complete logs under ignored seed/run directories.
 This cohort establishes a reproducible retrieval-logic baseline; it does not
 establish live provider accuracy or replace the release comparison in #660.
