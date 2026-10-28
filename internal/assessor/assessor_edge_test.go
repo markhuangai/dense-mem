@@ -796,7 +796,7 @@ func TestSemanticAssessmentResponseRejectsSemanticBoundaryViolations(t *testing.
 			mutate: func(response *SemanticAssessmentResponse) {
 				response.RelationshipResults[0].Splits[0].SupportRanges[0].StartRef = "invalid"
 			},
-			want: "relationship_results[0].splits[0].support_ranges[0]: boundary references are invalid",
+			want: "relationship_results[0].splits[0].support_ranges[0]: start_ref or end_ref is not a supplied boundary reference for this evidence_id",
 		},
 		{
 			name: "temporal bounds are ordered",

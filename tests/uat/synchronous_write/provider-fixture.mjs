@@ -254,6 +254,37 @@ function fixtureChatResponse(payload, requestFault = "none", attempt = 1) {
   if (schemaName === "dense_mem_dream_generation_response") return fixtureDreamGeneration(payload);
   if (schemaName === "ontology_organization_v1") return fixtureOntologyOrganization(payload);
   const assessment = fixtureAssessment(assessmentInput(payload), requestFault, attempt);
+  if (requestFault === "predicate-registration-kind-repair") {
+    const repair = structuredInput(payload, (input) => Array.isArray(input.validation_errors));
+    const actionable = repair.validation_errors?.some((error) => error.field?.endsWith("predicate_registration.predicate_key") && error.message?.includes("submitted subject kind") && error.message?.includes("registration cannot change"));
+    if (!actionable) {
+      const split = assessment.relationship_results[0].splits[0];
+      split.predicate_status = "registration_required";
+      split.predicate_key = null;
+      split.predicate_version = null;
+      split.predicate_registration = { predicate_key: "Incompatible Memory Store Fixture", relationship_kind: "state", current_cardinality: "many" };
+    }
+    return assessment;
+  }
+  if (["assessment-span-marker-repair", "assessment-span-support-repair", "assessment-span-blank-repair"].includes(requestFault)) {
+    const repair = structuredInput(payload, (input) => Array.isArray(input.validation_errors));
+    const expectedMessage = requestFault === "assessment-span-marker-repair" ? "boundary_text" : requestFault === "assessment-span-support-repair" ? "same evidence_id" : "not whitespace";
+    const actionable = repair.validation_errors?.some((error) => error.field?.endsWith("predicate_range") && error.message?.includes(expectedMessage));
+    if (!actionable) {
+      const evidence = assessmentInput(payload).evidence[0];
+      const refs = [...evidence.boundary_text.matchAll(/⟦([^⟧]+)⟧/g)].map((match) => match[1]);
+      const split = assessment.relationship_results[0].splits[0];
+      if (requestFault === "assessment-span-marker-repair") split.predicate_range.start_ref = "unknown-marker-canary";
+      else if (requestFault === "assessment-span-support-repair") split.support_ranges[0] = { ...split.support_ranges[0], end_ref: refs[1] };
+      else {
+        const space = [...evidence.content].indexOf(" ");
+        if (space < 0) throw new Error("span-blank fixture needs a space");
+        split.predicate_range.start_ref = refs[space];
+        split.predicate_range.end_ref = refs[space + 1];
+      }
+    }
+    return assessment;
+  }
   if (requestFault === "predicate-registration-repair" || requestFault === "predicate-registration-exhausted" || requestFault === "predicate-registration-reuse" || requestFault === "predicate-registration-drift") {
     const original = assessmentInput(payload);
     const split = assessment.relationship_results?.[0]?.splits?.[0];

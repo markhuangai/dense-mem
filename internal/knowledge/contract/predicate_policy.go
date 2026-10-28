@@ -113,16 +113,16 @@ func SubmissionPredicateRegistrationCompatibility(
 		return "predicate_key", "resolves to a predicate that is not active", "predicate_inactive"
 	}
 	if !SemanticPredicateKindAllowed(loaded.AllowedSubjectKinds, registration.SubjectKind) {
-		return "subject_kind", "is incompatible with the existing predicate", "predicate_subject_kind_mismatch"
+		return "subject_kind", "the existing predicate does not accept the submitted subject kind; registration cannot change its endpoint constraints", "predicate_subject_kind_mismatch"
 	}
 	if !SemanticPredicateKindAllowed(loaded.AllowedObjectKinds, registration.ObjectKind) {
-		return "object_kind", "is incompatible with the existing predicate", "predicate_object_kind_mismatch"
+		return "object_kind", "the existing predicate does not accept the submitted object kind; registration cannot change its endpoint constraints", "predicate_object_kind_mismatch"
 	}
 	if loaded.RelationshipKind != registration.RelationshipKind {
-		return "relationship_kind", "is incompatible with the existing predicate", "predicate_relationship_kind_mismatch"
+		return "relationship_kind", "does not match the existing predicate's relationship_kind; registration cannot change its relationship kind", "predicate_relationship_kind_mismatch"
 	}
 	if loaded.CurrentCardinality != registration.CurrentCardinality {
-		return "current_cardinality", "is incompatible with the existing predicate", "predicate_cardinality_mismatch"
+		return "current_cardinality", "does not match the existing predicate's current_cardinality; registration cannot change its cardinality", "predicate_cardinality_mismatch"
 	}
 	return "", "", ""
 }

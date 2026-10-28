@@ -1,6 +1,7 @@
 package evalharness
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -36,6 +37,63 @@ func TestPairImportResumeRequiresExactScopeAndTerminalEvidence(t *testing.T) {
 	_, err = EvaluatePairImport(scope, corpus, rows, true)
 	require.ErrorContains(t, err, "fresh")
 	_, err = EvaluatePairImport(scope, corpus, append(rows, rows[0]), false)
+	require.ErrorContains(t, err, "duplicate")
+}
+
+func TestPairImportRetainsRecoveredFailuresWithinNativeBound(t *testing.T) {
+	scope := PairScope{TeamID: "team", OwnerID: "owner", SpaceID: "shared", Generation: 1}
+	corpus := []CorpusItem{{SourceDocID: "one", Content: "first"}, {SourceDocID: "two", Content: "second"}}
+	hash, err := pairRequestHash(corpus[0])
+	require.NoError(t, err)
+	completed := PairImportAttempt{Scope: scope, SourceDocID: "one", AttemptID: "completed", RequestHash: hash,
+		Outcome: "completed", Live: true, EvidenceIDs: []string{"evidence"}, ContentHashes: []string{pairBytesHash([]byte("first"))}}
+	failed := PairImportAttempt{Scope: scope, SourceDocID: "one", AttemptID: "failed", RequestHash: hash, Outcome: "failed"}
+	rows := []PairImportAttempt{completed}
+	for index := 0; index < 5; index++ {
+		attempt := failed
+		attempt.AttemptID = fmt.Sprintf("failed-%d", index)
+		rows = append(rows, attempt)
+	}
+	for _, history := range [][]PairImportAttempt{rows, append(append([]PairImportAttempt(nil), rows[1:]...), completed)} {
+		progress, err := EvaluatePairImport(scope, corpus, history, false)
+		require.NoError(t, err)
+		require.Equal(t, []string{"one"}, progress.CompletedSourceIDs)
+		require.Equal(t, []string{"two"}, progress.PendingSourceIDs)
+		require.Len(t, history, 6)
+		_, err = EvaluatePairImport(scope, corpus, history, true)
+		require.ErrorContains(t, err, "fresh")
+	}
+	_, err = EvaluatePairImport(scope, corpus, append(rows, failed), false)
+	require.ErrorContains(t, err, "native retry bound")
+	_, err = EvaluatePairImport(scope, corpus, []PairImportAttempt{failed}, false)
+	require.ErrorContains(t, err, "automatic retry is forbidden")
+
+	for _, test := range []struct {
+		name string
+		edit func(*PairImportAttempt)
+	}{
+		{"owner", func(row *PairImportAttempt) { row.Scope.OwnerID = "other" }},
+		{"generation", func(row *PairImportAttempt) { row.Scope.Generation++ }},
+		{"request", func(row *PairImportAttempt) { row.RequestHash = "different" }},
+		{"unknown_source", func(row *PairImportAttempt) { row.SourceDocID = "unknown" }},
+		{"duplicate_identity", func(row *PairImportAttempt) { row.AttemptID = completed.AttemptID }},
+		{"live_failure", func(row *PairImportAttempt) { row.Live = true }},
+		{"failed_evidence", func(row *PairImportAttempt) { row.EvidenceIDs = completed.EvidenceIDs }},
+		{"failed_hashes", func(row *PairImportAttempt) { row.ContentHashes = completed.ContentHashes }},
+		{"unsupported_outcome", func(row *PairImportAttempt) { row.Outcome = "quarantined" }},
+		{"duplicate_completion", func(row *PairImportAttempt) {
+			*row = completed
+			row.AttemptID = "another-completion"
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			attempt := failed
+			test.edit(&attempt)
+			_, err := EvaluatePairImport(scope, corpus, []PairImportAttempt{attempt, completed}, false)
+			require.Error(t, err)
+		})
+	}
+	_, err = EvaluatePairImport(scope, corpus, []PairImportAttempt{failed, failed, completed}, false)
 	require.ErrorContains(t, err, "duplicate")
 }
 

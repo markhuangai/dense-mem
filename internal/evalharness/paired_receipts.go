@@ -516,7 +516,7 @@ func validatePairLiveMapping(c PairConfig, dir string, imports []PairImportAttem
 	if err := readJSONFile(filepath.Join(dir, "knowledge_mapping.json"), &mapping); err != nil {
 		return err
 	}
-	for _, row := range imports {
+	for _, row := range completedPairImports(imports) {
 		ref := mapping.BySourceDocID[row.SourceDocID]
 		found := false
 		for _, id := range row.EvidenceIDs {
@@ -553,12 +553,35 @@ func CompletePairImportMapping(c PairConfig, side, dir string) error {
 	}
 	ctx, cancel := context.WithDeadline(context.Background(), c.Deadline)
 	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	var observation PairObservation
+	if err := readPairJSON(filepath.Join(dir, "observation.json"), &observation); err != nil {
+		return err
+	}
+	_, corpus, _, _, _, _, _, err := loadRunInputs(c.SeedManifest, c.Suite)
+	if err != nil {
+		return err
+	}
+	progress, err := EvaluatePairImport(release.Scope, corpus, observation.Imports, false)
+	if err != nil {
+		return err
+	}
+	if observation.Scope != release.Scope || !progress.Complete {
+		return fmt.Errorf("paired import is incomplete or has a different scope")
+	}
 	client := HTTPClient{BaseURL: release.Runtime.BaseURL, APIKey: os.Getenv(release.Runtime.APIKeyEnv)}
 	evidence, err := client.ExportEvidenceMapping(ctx, 500)
 	if err != nil {
 		return err
 	}
 	mergeKnowledgeMapping(&mapping, evidence)
+	for _, row := range completedPairImports(observation.Imports) {
+		for _, id := range row.EvidenceIDs {
+			addSourceMapping(&mapping, Ref{Type: "evidence", ID: id, SourceDocID: row.SourceDocID}, true)
+		}
+	}
 	config.MappingHash, err = canonicalJSONHash(mapping)
 	if err != nil {
 		return err

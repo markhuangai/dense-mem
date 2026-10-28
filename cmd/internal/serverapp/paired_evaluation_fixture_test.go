@@ -55,7 +55,7 @@ type pairedServiceFixture struct {
 	control        *httptest.Server
 	maintenance    *organization.MaintenanceService
 	projections    communityapp.Service
-	provider       *rememberProcessorIntegrationRegistrationAssessor
+	provider       *pairedRememberAssessor
 	reconciliation searchapp.SearchReconciliationService
 }
 
@@ -71,7 +71,7 @@ func newPairedServiceFixture(t *testing.T, side string) *pairedServiceFixture {
 	require.NoError(t, accesspg.NewCredentialRepository(admin, rls, nil).CreateCredential(ctx, credential))
 	model, dimensions := ensureRememberProcessorIntegrationSearchContract(t, admin, rls)
 	store := knowledgepg.NewStore(app, rls, knowledge.ConflictRuntimeConfig{})
-	provider := &rememberProcessorIntegrationRegistrationAssessor{}
+	provider := &pairedRememberAssessor{failures: 1}
 	embedder := rememberProcessorIntegrationSearchEmbedder{model: model, dimensions: dimensions}
 	writer := remember.NewService(remember.Dependencies{Synchronous: processor.NewSynchronousProcessor(processor.ProcessorDependencies{Ledger: store, Catalog: store, Assessor: provider, Embedder: embedder, Limits: assessor.DefaultSemanticAssessmentLimits()})})
 	actorCtx := rememberProcessorActorContext(t, ctx, admin, rls, teamID, ownerID)
@@ -183,6 +183,40 @@ func newPairedServiceFixture(t *testing.T, side string) *pairedServiceFixture {
 	r := evalharness.PairRelease{Release: side, Protocol: "adr0014", Scope: evalharness.PairScope{TeamID: teamID.String(), OwnerID: ownerID.String()}, Capacity: evalharness.PairCapacity{Global: 4, Team: 4, ContextWindowTokens: 300000}, Models: evalharness.PairModels{Provider: "test", EmbeddingModel: model, EmbeddingDimensions: dimensions, EmbeddingIndexStrategy: "exact", Ontology: "paired-ontology", BackingRevision: "unknown"}, Runtime: evalharness.PairRuntime{CredentialID: ownerID.String(), BaseURL: mcp.URL, APIKeyEnv: "PAIR_FIXTURE_API_KEY"}}
 	require.NoError(t, admin.Raw(`SELECT id::text,generation FROM memory_spaces WHERE team_id=? AND kind='team_shared'`, teamID).Row().Scan(&r.Scope.SpaceID, &r.Scope.Generation))
 	return &pairedServiceFixture{admin: admin, release: r, mcp: mcp, control: control, maintenance: maintenance, projections: projections, provider: provider, reconciliation: searchapp.NewSearchReconciliationService(searchapp.SearchReconciliationDependencies{Repository: search, Projection: store, Provider: embedder})}
+}
+
+type pairedRememberAssessor struct {
+	rememberProcessorIntegrationRegistrationAssessor
+	failures int
+}
+
+func (p *pairedRememberAssessor) Assess(ctx context.Context, request assessor.SemanticAssessmentRequest) (assessor.SemanticAssessmentSession, assessor.SemanticAssessmentTurn, error) {
+	if p.failures > 0 {
+		p.failures--
+		p.calls++
+		return nil, assessor.SemanticAssessmentTurn{}, &assessorprovider.ProviderError{
+			Provider: "paired-fixture", FailureClass: modelprovider.ProviderFailureClassHTTPServer, StatusCode: http.StatusServiceUnavailable,
+		}
+	}
+	session, turn, err := p.rememberProcessorIntegrationRegistrationAssessor.Assess(ctx, request)
+	if err != nil || !strings.HasPrefix(request.Evidence[0].Content, "PostgreSQL stores durable memory for") {
+		return session, turn, err
+	}
+	for _, group := range request.EvidenceEquivalenceCandidates {
+		for _, candidate := range group.Candidates {
+			if candidate.Content != "Project Alpha stores durable memory in PostgreSQL." {
+				continue
+			}
+			for index := range turn.Response.EvidenceEquivalenceResults {
+				result := &turn.Response.EvidenceEquivalenceResults[index]
+				if result.EvidenceID == group.EvidenceID {
+					result.Action, result.CandidateEvidenceID = "reuse", &candidate.EvidenceID
+					return session, turn, nil
+				}
+			}
+		}
+	}
+	return nil, assessor.SemanticAssessmentTurn{}, fmt.Errorf("paraphrase fixture has no supplied canonical candidate")
 }
 
 func pairArgumentString(arguments map[string]any, key string) string {

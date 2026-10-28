@@ -61,7 +61,7 @@ func writePairNativeCapture(t *testing.T, c PairConfig, dir string) {
 	require.NoError(t, err)
 }
 
-func writePairCompletedStage(t *testing.T, c PairConfig, side, stage string) string {
+func writePairCompletedStage(t *testing.T, c PairConfig, side, stage string, edits ...func(*PairObservation)) string {
 	t.Helper()
 	process, err := PairProcessIdentity(os.Getpid())
 	require.NoError(t, err)
@@ -70,6 +70,9 @@ func writePairCompletedStage(t *testing.T, c PairConfig, side, stage string) str
 	r, err := pairRelease(c, side)
 	require.NoError(t, err)
 	o := pairFixtureObservation(t, c, r)
+	for _, edit := range edits {
+		edit(&o)
+	}
 	switch stage {
 	case "validate":
 		_, err = Run(context.Background(), RunOptions{Mode: "validate", SeedManifestPath: c.SeedManifest, SuitePath: c.Suite, OutDir: filepath.Join(start.Directory, "native")})
@@ -156,9 +159,15 @@ func TestPairCaptureReuseChecksProvenanceAndEveryCase(t *testing.T) {
 
 func TestPairCommonReportRetainsIncompleteCoverageAndSourceCaptures(t *testing.T) {
 	c := pairedFixture(t)
+	recovered := func(o *PairObservation) {
+		failed := o.Imports[0]
+		failed.AttemptID, failed.Outcome, failed.Live = "failed-attempt", "failed", false
+		failed.EvidenceIDs, failed.ContentHashes = nil, nil
+		o.Imports = append(o.Imports, failed)
+	}
 	for _, side := range []string{"baseline", "candidate"} {
-		writePairCompletedStage(t, c, side, "import")
-		writePairCompletedStage(t, c, side, "capture")
+		writePairCompletedStage(t, c, side, "import", recovered)
+		writePairCompletedStage(t, c, side, "capture", recovered)
 		writePairCompletedStage(t, c, side, "score")
 	}
 	baseline, err := latestPairStage(c, "baseline", "capture")
@@ -170,6 +179,8 @@ func TestPairCommonReportRetainsIncompleteCoverageAndSourceCaptures(t *testing.T
 	require.Equal(t, "complete", report.Status)
 	require.Zero(t, report.Comparison.RecallDelta)
 	require.Equal(t, 2, report.Sides["candidate"].DistinctSources)
+	require.Len(t, report.Sides["candidate"].Progress.Imports, 3)
+	require.Equal(t, "failed", report.Sides["candidate"].Progress.Imports[2].Outcome)
 	require.NotEmpty(t, report.Sides["candidate"].Scores.Slices)
 	require.NotEmpty(t, report.Limitations)
 	after, err := pairArtifactHashes(baseline)
@@ -384,6 +395,15 @@ func TestPairImportMappingDeadlineCannotCompleteAnInterruptedStage(t *testing.T)
 	require.NoError(t, writePairJSON(mapping, newKnowledgeMapping()))
 	before, err := os.ReadFile(mapping)
 	require.NoError(t, err)
+	observation := pairFixtureObservation(t, c, c.Candidate)
+	observation.Imports = observation.Imports[:1]
+	require.NoError(t, writePairJSON(filepath.Join(stage.Directory, "observation.json"), observation))
+	require.ErrorContains(t, CompletePairImportMapping(c, "candidate", stage.Directory), "incomplete")
+	observation.Imports[0].Outcome = "failed"
+	observation.Imports[0].Live = false
+	observation.Imports[0].EvidenceIDs, observation.Imports[0].ContentHashes = nil, nil
+	require.NoError(t, writePairJSON(filepath.Join(stage.Directory, "observation.json"), observation))
+	require.ErrorContains(t, CompletePairImportMapping(c, "candidate", stage.Directory), "automatic retry is forbidden")
 	c.Deadline = time.Now().Add(-time.Second)
 	_, err = runFixturePairCommand(t, c, PairCommand{Action: "complete-import-mapping", Side: "candidate", Directory: stage.Directory})
 	require.ErrorIs(t, err, context.DeadlineExceeded)

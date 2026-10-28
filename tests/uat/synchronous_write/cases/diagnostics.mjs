@@ -26,6 +26,9 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
     ["repair", "[fixture-fault:repair]", "completed", ""],
     ["predicate-repair", "[fixture-fault:assessment-predicate-repair]", "completed", ""],
     ["predicate-key-repair", "[fixture-fault:assessment-predicate-key-repair]", "completed", ""],
+    ["span-marker-repair", "[fixture-fault:assessment-span-marker-repair]", "completed", ""],
+    ["span-support-repair", "[fixture-fault:assessment-span-support-repair]", "completed", ""],
+    ["span-blank-repair", "[fixture-fault:assessment-span-blank-repair]", "completed", ""],
     ["repair-exhausted", "[fixture-fault:repair-exhausted]", "failed", "provider_response_invalid"],
     ["provider-status", "[fixture-fault:unavailable]", "failed", "provider_unavailable"],
     ["provider-429", "[fixture-fault:status-429]", "failed", "provider_unavailable"],
@@ -211,18 +214,20 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
   expect(validation.turns.some((turn) => turn.error_count > 0 && turn.fields.length > 0 && turn.field_families.length > 0), "semantic assessor failure must retain rejected validation fields and families");
   expect(!JSON.stringify(validation).includes("provider_secret") && !JSON.stringify(validation).includes("Diagnostics provider failure"), "validation metadata must exclude provider content");
 
-  for (const label of ["completed", "repair", "predicate-key-repair", "repair-exhausted", "assessment-invalid", "provider-429", "timeout"]) {
+  const repairedReasonCodes = { "predicate-repair": "predicate_phrase_too_long", "predicate-key-repair": "predicate_outside_allowlist", "span-marker-repair": "range_boundary_unknown", "span-support-repair": "range_not_covered", "span-blank-repair": "predicate_phrase_blank" };
+  for (const label of ["completed", "repair", ...Object.keys(repairedReasonCodes), "repair-exhausted", "assessment-invalid", "provider-429", "timeout"]) {
     const detail = await controlJSON(controlURL, token, `/control/api/teams/${teamID}/remember-attempts/${diagnosticAttemptIDs[label]}`);
     const measured = detail.data?.events?.find((event) => event.metadata?.assessor_diagnostics)?.metadata.assessor_diagnostics;
     expect(measured && Number.isInteger(measured.preparation_ms) && measured.preparation_ms >= 0, `${label} must retain assessment preparation timing`);
     expect(Number.isInteger(measured.elapsed_ms) && measured.elapsed_ms >= measured.preparation_ms, `${label} must retain inclusive assessment duration`);
     expect(Array.isArray(measured.turns) && measured.turns.length >= 1 && measured.turns.length <= 3, `${label} must retain bounded attempted turns`);
     expect(measured.turns.every((turn) => Number.isInteger(turn.elapsed_ms) && turn.provider && Number.isInteger(turn.provider.queue_ms) && Number.isInteger(turn.provider.http_ms)), `${label} must distinguish provider queue and HTTP durations`);
-    if (["repair", "predicate-key-repair"].includes(label)) {
+    if (label === "repair" || Object.hasOwn(repairedReasonCodes, label)) {
       expect(measured.turns.length === 2 && measured.turns[0].error_count > 0 && measured.turns[1].error_count === 0, `${label} must retain failed-turn history after successful repair`);
+      expect(attempts[label].relationship_results.every((result) => result.disposition === "stored"), `${label} must preserve supported relationships`);
     }
-    if (label === "predicate-key-repair") {
-      expect(measured.turns[0].issues.some((issue) => issue.code === "predicate_outside_allowlist"), "successful predicate repair must explain the rejected selection");
+    if (Object.hasOwn(repairedReasonCodes, label)) {
+      expect(measured.turns[0].issues.some((issue) => issue.code === repairedReasonCodes[label]), `${label} must retain its authoritative validation reason`);
     }
     if (label === "repair-exhausted") expect(measured.turns.length === 3, "exhausted validation must retain three complete attempts");
     if (label === "provider-429") expect(measured.turns[0].failure_class === "rate_limited" && measured.turns[0].status_code === 429, "rate limit must remain distinct from invalid response");

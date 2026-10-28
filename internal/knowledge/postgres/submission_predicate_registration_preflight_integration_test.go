@@ -96,6 +96,12 @@ func TestSubmissionPredicateRegistrationPreflightCatalogAndIsolation(t *testing.
 			require.Equal(t, testCase.field, issues[0].Field)
 			codes := map[string]string{"subject kind": "predicate_subject_kind_mismatch", "object kind": "predicate_object_kind_mismatch", "relationship kind": "predicate_relationship_kind_mismatch", "cardinality": "predicate_cardinality_mismatch", "inactive": "predicate_inactive", "ambiguous alias": "predicate_alias_ambiguous"}
 			require.Equal(t, codes[testCase.name], issues[0].Code)
+			if testCase.name == "subject kind" || testCase.name == "object kind" {
+				require.Contains(t, issues[0].Message, "submitted "+testCase.name)
+				require.Contains(t, issues[0].Message, "registration cannot change its endpoint constraints")
+			} else if testCase.name == "relationship kind" || testCase.name == "cardinality" {
+				require.Contains(t, issues[0].Message, "registration cannot change its "+testCase.name)
+			}
 		})
 	}
 	for _, testCase := range []struct {

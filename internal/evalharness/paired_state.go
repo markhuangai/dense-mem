@@ -56,6 +56,7 @@ func EvaluatePairImport(scope PairScope, corpus []CorpusItem, attempts []PairImp
 		contents[item.SourceDocID] = strings.TrimPrefix(pairBytesHash([]byte(item.Content)), "sha256:")
 	}
 	seen, identities := map[string]bool{}, map[string]bool{}
+	counts := map[string]int{}
 	for _, row := range attempts {
 		if row.Scope != scope {
 			return result, fmt.Errorf("import receipt has a different team, owner, space or generation")
@@ -66,8 +67,22 @@ func EvaluatePairImport(scope PairScope, corpus []CorpusItem, attempts []PairImp
 		if row.AttemptID == "" || row.RequestHash != requests[row.SourceDocID] {
 			return result, fmt.Errorf("import receipt does not match its exact request or attempt identity")
 		}
-		if seen[row.SourceDocID] || identities[row.AttemptID] {
+		if identities[row.AttemptID] {
 			return result, fmt.Errorf("duplicate import receipt for source %q", row.SourceDocID)
+		}
+		identities[row.AttemptID] = true
+		counts[row.SourceDocID]++
+		if counts[row.SourceDocID] > maxToolCallAttempts {
+			return result, fmt.Errorf("source %q exceeds the native retry bound", row.SourceDocID)
+		}
+		if row.Outcome == "failed" {
+			if row.Live || len(row.EvidenceIDs) != 0 || len(row.ContentHashes) != 0 {
+				return result, fmt.Errorf("failed import receipt for source %q contains semantic evidence", row.SourceDocID)
+			}
+			continue
+		}
+		if seen[row.SourceDocID] {
+			return result, fmt.Errorf("duplicate completed import receipt for source %q", row.SourceDocID)
 		}
 		if row.Outcome != "completed" || !row.Live || len(row.EvidenceIDs) == 0 {
 			return result, fmt.Errorf("source %q has a failed, unfinished or stale import receipt; automatic retry is forbidden", row.SourceDocID)
@@ -80,7 +95,12 @@ func EvaluatePairImport(scope PairScope, corpus []CorpusItem, attempts []PairImp
 				return result, fmt.Errorf("source %q evidence content differs from the frozen input", row.SourceDocID)
 			}
 		}
-		seen[row.SourceDocID], identities[row.AttemptID] = true, true
+		seen[row.SourceDocID] = true
+	}
+	for source := range counts {
+		if !seen[source] {
+			return result, fmt.Errorf("source %q has no completed import receipt; automatic retry is forbidden", source)
+		}
 	}
 	for _, item := range corpus {
 		if seen[item.SourceDocID] {
@@ -91,6 +111,16 @@ func EvaluatePairImport(scope PairScope, corpus []CorpusItem, attempts []PairImp
 	}
 	result.Complete = len(result.PendingSourceIDs) == 0
 	return result, nil
+}
+
+func completedPairImports(attempts []PairImportAttempt) []PairImportAttempt {
+	completed := make([]PairImportAttempt, 0, len(attempts))
+	for _, row := range attempts {
+		if row.Outcome == "completed" {
+			completed = append(completed, row)
+		}
+	}
+	return completed
 }
 
 func pairRequestHash(item CorpusItem) (string, error) {
