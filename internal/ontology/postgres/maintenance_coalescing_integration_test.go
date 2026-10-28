@@ -13,7 +13,7 @@ import (
 func TestOntologyMaintenanceCoalescingPages(t *testing.T) {
 	for _, shape := range []string{"overlap", "disjoint", "empty"} {
 		t.Run(shape, func(t *testing.T) {
-			x := newDiscoveryFixture(t, []int{20, 20, 20, 20, 20}, nil, false)
+			x := newDiscoveryFixtureWithSetup(t, []int{20, 20, 20, 20, 20}, nil, false, true)
 			definitions := coalescingDefinitions(t, x, 20, shape)
 			canonical, history, queue, calls := schedulerCanonical(t, x.f), revalidationReceiptHistory(t, x.f), x.queue(t), x.providerCalls()
 			enqueueCoalescingMarkers(t, x, definitions)
@@ -44,7 +44,7 @@ func TestOntologyMaintenanceCoalescingPages(t *testing.T) {
 }
 
 func TestOntologyMaintenanceCoalescingCursorAndGroupBounds(t *testing.T) {
-	x := newDiscoveryFixture(t, []int{20, 20, 20, 20, 20}, nil, false)
+	x := newDiscoveryFixtureWithSetup(t, []int{20, 20, 20, 20, 20}, nil, false, true)
 	definitions := coalescingDefinitions(t, x, 21, "overlap")
 	canonical, history, queue := schedulerCanonical(t, x.f), revalidationReceiptHistory(t, x.f), x.queue(t)
 	enqueueCoalescingMarkers(t, x, definitions)

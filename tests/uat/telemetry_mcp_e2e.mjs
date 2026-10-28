@@ -1027,12 +1027,14 @@ async function waitForTelemetrySignals() {
     if (signals.rememberCalls > 0 && signals.rememberDurationSamples > 0 && signals.recalls > 0 && signals.aiCostUSD > 0 && signals.embeddingRequests > 0) {
       const snapshot = (await controlJSON(`/telemetry?window=15m&scope=team&team_id=${encodeURIComponent(teamID)}`, { method: "GET" })).data;
       const activity = snapshot?.windowed_cards?.find((item) => item.id === "embedding_requests");
-      signals.embeddingActivity = { status: activity?.status, value: activity?.value, reason_code: activity?.reason_code };
-      if (activity?.status === "ready" && Number(activity.value) > 0) return signals;
+      const series = snapshot?.activity_series?.find((item) => item.id === "embedding_requests");
+      signals.embeddingActivity = { status: activity?.status, value: activity?.value, reason_code: activity?.reason_code, series_status: series?.status, series_points: series?.points?.length ?? 0 };
+      // Live cards can precede the second scrape in the snapshot's whole-second range.
+      if (activity?.status === "ready" && Number(activity.value) > 0 && series?.status === "ready" && series.points?.length > 0) return signals;
     }
     await delay(5_000);
   }
-  throw new Error(`timed out waiting for synchronous Remember, recall, AI-cost, and windowed embedding telemetry: ${JSON.stringify(signals)}`);
+  throw new Error(`timed out waiting for synchronous Remember, recall, AI-cost, and windowed and sampled embedding telemetry: ${JSON.stringify(signals)}`);
 }
 
 async function prometheusValue(metric) {

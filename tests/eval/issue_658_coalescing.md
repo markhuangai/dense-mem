@@ -112,3 +112,24 @@ This file records the prepublication evidence checkpoint. Final exact-head
 Development E2E, complete measurement, CI, CodeQL and production-image E2E
 receipts belong to the pull request closing #658; these historical attempts do
 not substitute for those gates.
+
+## CI fixture follow-up
+
+The first PR validation passed all 33 E2E scenarios and six PostgreSQL shards
+but missed the strict coverage threshold. Registering the existing committed
+diagnostics regression raised native complete coverage to 36,845/40,932 in
+[run 40643016026](https://github.com/markhuangai/dense-mem/actions/runs/40643016026).
+That run passed 32 scenarios and five PostgreSQL shards; telemetry parity failed
+and shard 2 exhausted its unchanged 27-minute budget after 111 tests passed.
+
+A real Grafana/Prometheus probe reproduced a startup boundary where a live
+embedding card sees a second scrape that the earlier, whole-second series query
+does not. The telemetry fixture now requires sampled embedding activity within
+its existing readiness loop. Every parity assertion remains. The failed run's
+raw scrape samples were unavailable, so its exact timing cannot be reconstructed.
+
+The two new large coalescing tests reuse prepared-source setup before constructing
+real receipts. All assertions and fresh databases remain. One local setup
+comparison passed in 240.751s before and 48.155s after; this is test setup evidence,
+not a service performance claim. The frozen measurement protocols are unchanged.
+Both failures are retained and require new-head CI/E2E verification.

@@ -354,7 +354,7 @@
     "The live cohort is a bounded maintenance quality gate, not a full retrieval comparison.",
     "Whole-release runtime and accuracy improvement remain unproven."
   ],
-  "source_binding": "Original local/live validation retains its original source manifest. Subsequent changes affect four integration-test files and evidence documentation only; runtime code and the frozen live cohort are unchanged. Protocol v3 has its own verified source hashes and execution receipt.",
+  "source_binding": "Original local/live validation retains its original source manifest. Later validation corrections affect integration fixtures, complete-coverage registration, the telemetry E2E readiness fixture, and evidence documentation. Runtime code and frozen live/measurement cohorts are unchanged; final-head gates remain recorded in the PR.",
   "post_validation_documentation": [
     "tests/eval/issue_658_coalescing.md",
     "tests/eval/baselines/issue_658_coalescing.json"
@@ -395,6 +395,52 @@
       "started_at": 1793159767.678919,
       "duration_seconds": 1.2898921966552734,
       "exit_code": 0
+    }
+  ],
+  "ci_validation_followups": [
+    {
+      "run_id": 40634304735,
+      "source_sha": "0c12f681d218782371714fc9cda0e6ca041241d1",
+      "result": "All 33 E2E scenarios and six PostgreSQL shards passed; complete coverage failed at 36832/40932",
+      "correction": "Register the existing committed-diagnostics regression in complete coverage; do not change the threshold"
+    },
+    {
+      "run_id": 40643016026,
+      "source_sha": "93424d4343cb2759c044ab9326a2ddaa36d2d189",
+      "complete_go_coverage": {
+        "covered": 36845,
+        "total": 40932,
+        "passed": true
+      },
+      "e2e_passed": 32,
+      "e2e_total": 33,
+      "postgres_shards_passed": 5,
+      "postgres_shards_total": 6,
+      "failures": [
+        "Telemetry parity queried an empty embedding-error series despite a ready live card",
+        "PostgreSQL shard 2 reached its 27-minute deadline after 111 top-level tests passed"
+      ],
+      "corrections": [
+        "Require the sampled embedding series in the existing bounded telemetry readiness loop; retain every parity assertion",
+        "Use existing prepared-source setup in the two new 100-source coalescing correctness tests; retain real receipts, fresh databases, and every assertion"
+      ],
+      "setup_comparison": {
+        "baseline_seconds": 240.751,
+        "candidate_seconds": 48.155,
+        "baseline_sha256": "c7bd721b2f4b744aa59cc7e3576bd1f677387396402806a83d508dc189fd77a2",
+        "candidate_sha256": "e50b99394ae4df464337a3796b7eccf6ed12ab5c75b51b0104f0d7fc341cde39",
+        "command": "go test -tags integration ./internal/ontology/postgres -run '^(TestOntologyMaintenanceCoalescingPages|TestOntologyMaintenanceCoalescingCursorAndGroupBounds)$' -count=1 -json -timeout=15m",
+        "postgres_required": true,
+        "interpretation": "One local setup comparison, not a runtime benchmark or release speedup; all original assertions retained"
+      },
+      "telemetry_probe": {
+        "grafana": "13.2.2",
+        "prometheus": "v3.12.0",
+        "result": "Live parent card is ready at 06:35:24.900 while frozen parent/error queries at 06:35:24.000 are empty; both series exist at 06:35:25",
+        "sha256": "d3fbc82c70b43042b85df7effe0453eb8e115deabfd3dd10c62a8f4fa8aeb369",
+        "limit": "Proves the startup race in existing code; failed-run scrape samples were not retained"
+      },
+      "status": "Corrections locally validated; fresh final-head full validation remains required"
     }
   ]
 }
