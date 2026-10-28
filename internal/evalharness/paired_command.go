@@ -112,6 +112,11 @@ func RunPairCommand(cmd PairCommand, out io.Writer) error {
 				return err
 			}
 		}
+		if c.Baseline.CaptureDir != "" {
+			if _, err := VerifyPairCaptureProof(c, c.Baseline, c.Baseline.CaptureDir); err != nil {
+				return err
+			}
+		}
 		hash, err := pairConfigHash(c)
 		if err != nil {
 			return err
@@ -133,11 +138,6 @@ func RunPairCommand(cmd PairCommand, out io.Writer) error {
 			}
 		} else {
 			return err
-		}
-		if c.Baseline.CaptureDir != "" {
-			if _, err := VerifyPairCaptureProof(c, c.Baseline, c.Baseline.CaptureDir); err != nil {
-				return err
-			}
 		}
 		result = c
 	case "containers", "session", "tools":
