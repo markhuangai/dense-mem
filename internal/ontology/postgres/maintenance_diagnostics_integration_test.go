@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -43,7 +44,7 @@ func TestOntologyMaintenanceAttemptDiagnosticsOperatorLogIsBounded(t *testing.T)
 				}})
 			for range 8 {
 				_, err := service.RunTurn(context.Background())
-				if output.Len() > 0 {
+				if strings.Contains(output.String(), `"msg":"ontology maintenance assessment attempt"`) {
 					if invalid {
 						require.ErrorContains(t, err, "provider_response_invalid")
 					} else {
@@ -56,7 +57,14 @@ func TestOntologyMaintenanceAttemptDiagnosticsOperatorLogIsBounded(t *testing.T)
 			require.NotEmpty(t, output.String())
 			require.NotContains(t, output.String(), "raw-source-canary")
 			require.NotContains(t, output.String(), "synthetic-provider-key")
-			lines := bytes.Split(bytes.TrimSpace(output.Bytes()), []byte("\n"))
+			var lines [][]byte
+			for _, line := range bytes.Split(bytes.TrimSpace(output.Bytes()), []byte("\n")) {
+				var fields map[string]any
+				require.NoError(t, json.Unmarshal(line, &fields))
+				if fields["msg"] == "ontology maintenance assessment attempt" {
+					lines = append(lines, line)
+				}
+			}
 			attemptCount := 1
 			if invalid {
 				attemptCount = 3

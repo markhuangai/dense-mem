@@ -122,7 +122,7 @@ func TestOntologyMaintenanceEnrollsActiveTeamsDespiteRetiredOptouts(t *testing.T
 			break
 		}
 		for range 6 {
-			require.NoError(t, f.store.DiscoverMaintenance(ctx, *turn, ontology.MaintenancePageSize))
+			require.NoError(t, f.store.discoverMaintenanceError(ctx, *turn, ontology.MaintenancePageSize))
 		}
 		seen[turn.TeamID] = true
 		require.NoError(t, f.store.ReleaseMaintenanceTurn(ctx, *turn))
@@ -201,7 +201,7 @@ func TestOntologyMaintenanceExpiredLeaseAndNewInvalidation(t *testing.T) {
 	discovery, err := f.store.ClaimMaintenanceTurn(ctx, window.ID, time.Now(), time.Minute)
 	require.NoError(t, err)
 	require.NotNil(t, discovery)
-	require.NoError(t, f.store.DiscoverMaintenance(ctx, *discovery, ontology.MaintenancePageSize))
+	require.NoError(t, f.store.discoverMaintenanceError(ctx, *discovery, ontology.MaintenancePageSize))
 	require.NoError(t, f.store.ReleaseMaintenanceTurn(ctx, *discovery))
 	require.NoError(t, f.store.CompleteMaintenanceBatch(ctx, *claim, ontology.OrganizationResult{Current: true, Outcomes: []ontology.OrganizationOutcome{{Source: source, Status: "organized"}}}, "", time.Now().UTC()))
 	status, err := f.store.MaintenanceStatus(ctx, time.Now().UTC())

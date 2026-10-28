@@ -23,6 +23,7 @@ type maintenanceDiscoveryEvent struct {
 type maintenanceDiscoveryObserver func(maintenanceDiscoveryEvent)
 
 func observeMaintenanceSource(ctx context.Context, fence scope, handle ontology.SourceHandle, phase string, err error) {
+	recordMaintenanceSource(ctx, handle, phase, err)
 	if observer, ok := ctx.Value(maintenanceDiscoveryObservationKey{}).(maintenanceDiscoveryObserver); ok && observer != nil {
 		observer(maintenanceDiscoveryEvent{Phase: phase, Scope: fence, Source: handle, Err: err})
 	}
@@ -30,6 +31,7 @@ func observeMaintenanceSource(ctx context.Context, fence scope, handle ontology.
 
 // The private observer measures actual calls without retaining receipt bodies or changing freshness decisions.
 func observeMaintenanceReceipt(ctx context.Context, fence scope, handle ontology.SourceHandle, receipt ontology.OrganizationReceipt) func(bool, error) {
+	recordMaintenanceReceipt(ctx, receipt)
 	observer, ok := ctx.Value(maintenanceDiscoveryObservationKey{}).(maintenanceDiscoveryObserver)
 	if !ok || observer == nil {
 		return nil

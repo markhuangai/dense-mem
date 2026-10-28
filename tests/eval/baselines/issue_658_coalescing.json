@@ -1,0 +1,446 @@
+{
+  "schema_version": 1,
+  "issue": 658,
+  "base_sha": "09d16398005f0a8ba3ca0fe6c31e08c4341eca9f",
+  "audit": {
+    "model": "gpt-6.1-sol",
+    "reasoning_effort": "max",
+    "rounds": 3,
+    "verdict": "conformant",
+    "passed_before_tests": true
+  },
+  "source_state_sha256": "8484be0ea1d471cab5088fadac77e21918a8777076634b02155cfd280032c6d5",
+  "source_files_sha256": {
+    "internal/ontology/contract/maintenance.go": "e566006f4e6ac11796daceed9c006dc287227cafd2d657ef0791d87a9b6d1c8a",
+    "internal/ontology/maintenance.go": "a7e65a829d6162b79fdfcd286739a18a0709e3154ae727c7aac2c8dbc758c655",
+    "internal/ontology/maintenance_diagnostics.go": "b39dcd9f8ce11b7646cd6ff521416de0f1b2a4496db442f034cbdbdee7d8d627",
+    "internal/ontology/postgres/maintenance_backlog_integration_test.go": "92262578fe325271af8bf9e5401e6d0768295c31428e1ce716036dc135ae66b7",
+    "internal/ontology/postgres/maintenance_coalescing_concurrency_integration_test.go": "64d03734256f89d5c6f2b3b312c77ee3334b3cfd38952154f3788e1f06e14d35",
+    "internal/ontology/postgres/maintenance_coalescing_fixture_test.go": "d91ff4b28d523fa0d92405b04cbb97cb0abdfcfea1821cc46fbce357a9cbbdf4",
+    "internal/ontology/postgres/maintenance_coalescing_integration_test.go": "720b3523c89138c140bdc902cfe85949eb958c375d2cb1169ab9997dc1d7f4bf",
+    "internal/ontology/postgres/maintenance_coalescing_measurement_integration_test.go": "f3fe50df66bd431b312b67a3a65f02f355fc5b72872aacd19f7fe7c75970e36c",
+    "internal/ontology/postgres/maintenance_coalescing_reference_test.go": "17df90eb6bd8f7eafd3c46bbed76fe73e3fd942346787eeeff98e2be62e2848a",
+    "internal/ontology/postgres/maintenance_concurrency_integration_test.go": "67e20c7190e0733dabba6f1c96a865c9c474be81fe211292f978e2fc12143f02",
+    "internal/ontology/postgres/maintenance_diagnostics_integration_test.go": "98b7d307bf0962730f89d0d9977493449e22567cbc41883f7730a111b04b3176",
+    "internal/ontology/postgres/maintenance_discovery.go": "fb559a7381c81feeea3057c983b94da8f3c0d0c4697acbdd424aae826a810dec",
+    "internal/ontology/postgres/maintenance_discovery_concurrency_integration_test.go": "c42b226bcdd1e830a3e5762210a950b565f234d73f5fbb0644b8f6ec8afafcf4",
+    "internal/ontology/postgres/maintenance_discovery_diagnostics_integration_test.go": "aa8ecf92548665948c77b90c2ae822101b1d6ed1bff53b648fec46cb25a3218b",
+    "internal/ontology/postgres/maintenance_discovery_fixture_test.go": "61112005abb8c01de89537b69f78a8860039a7d6c5cace15ebbdd961d819fd7c",
+    "internal/ontology/postgres/maintenance_discovery_isolation_integration_test.go": "faf63a7fa25af5f28913f28237fc6a9dd5cc20b14e4bc80637281b9623f0f397",
+    "internal/ontology/postgres/maintenance_discovery_measurement_integration_test.go": "a96367c39b447fcd846e665cee7ce0677b51d1751904c5a54ffce80b628ae96f",
+    "internal/ontology/postgres/maintenance_discovery_observation.go": "f50b140c148a79387be348c3ed180e4197f0bb9045908bf02af4f94f6c44a1bc",
+    "internal/ontology/postgres/maintenance_discovery_stats.go": "3bbc3a2c70f3a9a7222300c20c57075c4f636b2445486235d485a478cc3e8669",
+    "internal/ontology/postgres/maintenance_finalization_integration_test.go": "feb372fdfb3906316b4423d3009c2153254dbb55eb8f99efc19a9be7bd1cabc4",
+    "internal/ontology/postgres/maintenance_fixture_test.go": "2021aa30d35936bbb043e2829604f37a34da6d700243f8600491cde48d9ef276",
+    "internal/ontology/postgres/maintenance_integration_test.go": "c27f4ebe06e4be74db21b11bb893a08542e65070afac860483f7081e33eb3076",
+    "internal/ontology/postgres/maintenance_invalidation_integration_test.go": "f968dd84e5461f0da5c8bbd485bd6719bd8b7a4247b25a1591a4705f4996af12",
+    "internal/ontology/postgres/maintenance_markers.go": "3efe3880b3f96fbc8bbb286957f3e1b25bf24e8aa128fcd6fd2b50ffead51ad5",
+    "internal/ontology/postgres/maintenance_regressions_integration_test.go": "d93880e5daa8c2832093f8adf11b6438534356024156d050f5780da56072b817",
+    "internal/ontology/postgres/maintenance_revalidation_measurement_integration_test.go": "b76c6bf1bc150c64d6af0f90518f1ca01b79df58282d97c1cbe4608c3cdc611f",
+    "internal/ontology/postgres/source_queries.go": "317202abe65030ec58054751ddcf85417d7069125b734b518c54908c334e3ea3"
+  },
+  "local_checks": [
+    {
+      "check": "local-ontology",
+      "command": [
+        "go",
+        "test",
+        "./internal/ontology/...",
+        "-count=1"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 427.90590238571167
+    },
+    {
+      "check": "staticcheck",
+      "command": [
+        "go",
+        "tool",
+        "staticcheck",
+        "-checks=inherit,-U1000",
+        "./internal/ontology/..."
+      ],
+      "exit_code": 0,
+      "duration_seconds": 33.9423508644104
+    },
+    {
+      "check": "integration-compile",
+      "command": [
+        "go",
+        "test",
+        "-tags",
+        "integration",
+        "./internal/ontology/postgres",
+        "./internal/recall/postgres",
+        "-run",
+        "^$",
+        "-count=1"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 35.182793855667114
+    },
+    {
+      "check": "decision-deployment",
+      "command": [
+        "node",
+        "--test",
+        "tests/uat/decision_providers/deployment.test.mjs"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 0.8326234817504883
+    }
+  ],
+  "live_cohort": {
+    "name": "ontology_organization_v1 via TestOntologyMaintenanceCohort",
+    "cohort_sha256": "sha256:01e78a45a28121f64b36a7b17b8f76051ffd4186d2eed918470a054ad522ae14",
+    "context_window_tokens": 500000,
+    "backing_model_revision": "unknown",
+    "repetitions": [
+      {
+        "repetition": 1,
+        "passed_cases": [
+          "different_actors",
+          "exact_duplicates",
+          "manager_grouping",
+          "manager_separation",
+          "paraphrases",
+          "partial_overlap",
+          "polarity",
+          "qualifications",
+          "temporal_scope"
+        ],
+        "false_consolidations": 0,
+        "source_preservation": 1,
+        "distinct_fact_coverage": 1,
+        "repeated_slots": 0,
+        "model": "dense-mem",
+        "provider_identity": "sha256:c97670299e1ebe035671ddf759188183b2092409cfb6d481badfccc3c11dcb1d",
+        "duration_seconds": 102.227990256,
+        "report_sha256": "e11cd003f25436b3f5669996cea17e9041a477b07eb91304ea6b2658b85ab806",
+        "test_log_sha256": "b4964f60b19fc72505d78dfa251daa16d364a900dbcbf31d5e3c4cf9d5a24313"
+      },
+      {
+        "repetition": 2,
+        "passed_cases": [
+          "different_actors",
+          "exact_duplicates",
+          "manager_grouping",
+          "manager_separation",
+          "paraphrases",
+          "partial_overlap",
+          "polarity",
+          "qualifications",
+          "temporal_scope"
+        ],
+        "false_consolidations": 0,
+        "source_preservation": 1,
+        "distinct_fact_coverage": 1,
+        "repeated_slots": 0,
+        "model": "dense-mem",
+        "provider_identity": "sha256:c97670299e1ebe035671ddf759188183b2092409cfb6d481badfccc3c11dcb1d",
+        "duration_seconds": 93.520102134,
+        "report_sha256": "02809133d039fa66f4e7ba375be9cf47d5203631ef3523306f1a4c4f6f4d512c",
+        "test_log_sha256": "8d4491d47739dc2e72ff3be178ff307826b58356a86231f1006f1d6a12c1df04"
+      },
+      {
+        "repetition": 3,
+        "passed_cases": [
+          "different_actors",
+          "exact_duplicates",
+          "manager_grouping",
+          "manager_separation",
+          "paraphrases",
+          "partial_overlap",
+          "polarity",
+          "qualifications",
+          "temporal_scope"
+        ],
+        "false_consolidations": 0,
+        "source_preservation": 1,
+        "distinct_fact_coverage": 1,
+        "repeated_slots": 0,
+        "model": "dense-mem",
+        "provider_identity": "sha256:c97670299e1ebe035671ddf759188183b2092409cfb6d481badfccc3c11dcb1d",
+        "duration_seconds": 92.34101403899997,
+        "report_sha256": "d28324d885ada113df05bc3aa70efebe4f20818389c654d69fcaaf622295706f",
+        "test_log_sha256": "8dcf4c73a30e48bc07d95c41ea441f1105d813abc693e992521454e48c9dfa7a"
+      }
+    ],
+    "retained_setup_failures": {
+      "attempts": 3,
+      "reason": "config.Load required PostgreSQL connection configuration before model setup",
+      "provider_exchanges": 0,
+      "correction": "Synthetic config-only PostgreSQL DSN; actual storage remains the existing disposable testcontainers",
+      "reports_retained": true
+    }
+  },
+  "remote_validation": {
+    "status": "first_attempt_failed",
+    "workflow": "development-e2e.yml",
+    "scenarios": [
+      "ontology_organization",
+      "ontology_management"
+    ],
+    "postgres_shards": [
+      0,
+      1,
+      2,
+      5
+    ],
+    "run_url": "https://github.com/markhuangai/dense-mem/actions/runs/40624465209",
+    "source_sha": "0c3d8d94b488f9aaa260b18ff483d92704cc929b",
+    "image_digest": "sha256:d35f478b496e138c9c1783713f25f59e4495684f79a705a7c9d8546b85120293",
+    "passed": [
+      "ontology_organization",
+      "ontology_management",
+      "postgres_shard_0",
+      "postgres_shard_5"
+    ],
+    "failed": {
+      "postgres_shard_2": "Two fixture assumptions omitted existing predicate/definition seeding; corrected locally",
+      "postgres_shard_1": "27-minute deadline after five overlap pairs and four disjoint pairs"
+    },
+    "analysis_sha256": "ebf3e1c3050cd28b9143314ecd5fda3ae9d0b90d0d2bfa9cdb674afe8ee79988",
+    "cleanup": {
+      "run_url": "https://github.com/markhuangai/dense-mem/actions/runs/40627283146",
+      "deleted_version": 1458353016,
+      "digest": "sha256:d35f478b496e138c9c1783713f25f59e4495684f79a705a7c9d8546b85120293"
+    },
+    "final_gate": "New exact-source Development E2E required; its receipt is attached to the PR closing #658"
+  },
+  "performance": {
+    "status": "local_protocol_complete_remote_gate_required",
+    "protocol": {
+      "fixture": "coalescing-markers-v3",
+      "fresh_database_per_sample": true,
+      "image_digest": "",
+      "markers": 20,
+      "pairs": 5,
+      "provider": "deterministic HTTP fixture",
+      "receipt_source_counts": [
+        20,
+        20,
+        20,
+        20,
+        20
+      ],
+      "run_id": "",
+      "sequential_base": "09d16398005f0a8ba3ca0fe6c31e08c4341eca9f",
+      "setup": "drain source-creation notifications before real receipts; ANALYZE after receipts and after definition setup",
+      "shapes": [
+        "overlap",
+        "disjoint"
+      ],
+      "source_files_sha256": {
+        "maintenance_coalescing_fixture_test.go": "d91ff4b28d523fa0d92405b04cbb97cb0abdfcfea1821cc46fbce357a9cbbdf4",
+        "maintenance_coalescing_measurement_integration_test.go": "e0f71ab0773a8afec22e0e65bb2765b7e8e455ef58587655700450564d03950f",
+        "maintenance_coalescing_reference_test.go": "17df90eb6bd8f7eafd3c46bbed76fe73e3fd942346787eeeff98e2be62e2848a",
+        "maintenance_discovery.go": "fb559a7381c81feeea3057c983b94da8f3c0d0c4697acbdd424aae826a810dec",
+        "maintenance_discovery_concurrency_integration_test.go": "c42b226bcdd1e830a3e5762210a950b565f234d73f5fbb0644b8f6ec8afafcf4",
+        "maintenance_discovery_fixture_test.go": "f96271c1c9962d04ac39c9f961a183677e268b5c30f32d8b1c726460f66b5c9a",
+        "maintenance_discovery_isolation_integration_test.go": "faf63a7fa25af5f28913f28237fc6a9dd5cc20b14e4bc80637281b9623f0f397",
+        "maintenance_discovery_measurement_integration_test.go": "a96367c39b447fcd846e665cee7ce0677b51d1751904c5a54ffce80b628ae96f",
+        "maintenance_discovery_observation.go": "f50b140c148a79387be348c3ed180e4197f0bb9045908bf02af4f94f6c44a1bc",
+        "maintenance_discovery_stats.go": "3bbc3a2c70f3a9a7222300c20c57075c4f636b2445486235d485a478cc3e8669",
+        "maintenance_markers.go": "3efe3880b3f96fbc8bbb286957f3e1b25bf24e8aa128fcd6fd2b50ffead51ad5",
+        "organization.go": "65493accaa7943d0e44e2abf195ee17b95c16d763412d4eb6ffcf104f4564735",
+        "source_queries.go": "317202abe65030ec58054751ddcf85417d7069125b734b518c54908c334e3ea3"
+      },
+      "sources": 100,
+      "timing": "sum of discovery calls including commit; fixture setup and between-page completion queries excluded",
+      "warmup_drains": 0
+    },
+    "comparisons": [
+      {
+        "change_percent": -94.65084468739687,
+        "combined_median_ms": 2050.473073,
+        "combined_ms": [
+          2412.379627,
+          2444.461051,
+          1943.755514,
+          2050.473073,
+          1952.190533
+        ],
+        "sequential_median_ms": 38332.651665,
+        "sequential_ms": [
+          43641.300366,
+          40497.170646,
+          38332.651665,
+          37638.703473,
+          38235.504047
+        ],
+        "shape": "overlap"
+      },
+      {
+        "change_percent": -0.25241799435617995,
+        "combined_median_ms": 1964.613036,
+        "combined_ms": [
+          2038.831187,
+          1964.613036,
+          1941.285244,
+          1944.720815,
+          2031.729427
+        ],
+        "sequential_median_ms": 1969.584622,
+        "sequential_ms": [
+          1969.584622,
+          1992.879369,
+          1964.039382,
+          2013.035497,
+          1921.186426
+        ],
+        "shape": "disjoint"
+      }
+    ],
+    "sample_invariants": {
+      "samples": 20,
+      "fresh_databases": 20,
+      "receipts_each": 5,
+      "overlap_freshness_calls": {
+        "sequential": 2000,
+        "combined": 100
+      },
+      "disjoint_freshness_calls": {
+        "sequential": 100,
+        "combined": 100
+      },
+      "all_canonical_fingerprints_preserved": true,
+      "all_receipt_histories_preserved": true,
+      "all_queue_assertions_passed": true,
+      "additional_provider_calls": 0
+    },
+    "analysis_sha256": "399712827c55c18bbe47c077c29aae9f548be4f4b56d8d92b1bd54d86e71423e",
+    "test_log_sha256": "6b8d54cc20c22fe44b530a32251a2084a3cac9fdca00f9b98aee632dd4fd5d32",
+    "execution": {
+      "command": [
+        "go",
+        "test",
+        "-tags",
+        "integration",
+        "./internal/ontology/postgres",
+        "-run",
+        "^TestOntologyMaintenanceRevalidationDiscoveryMeasurement/coalescing-markers$",
+        "-count=1",
+        "-v",
+        "-timeout=20m"
+      ],
+      "started_at": 1793159230.9613175,
+      "duration_seconds": 482.14667868614197,
+      "exit_code": 0
+    },
+    "environment": "Local Docker Desktop; other project runtimes remained active, so remote isolated validation is mandatory",
+    "retained_prior_protocols": [
+      {
+        "protocol": "coalescing-markers-v1",
+        "location": "Development E2E 40624465209",
+        "status": "incomplete_timeout",
+        "completed_samples": 18,
+        "report_sha256": "a05ecc2efb5885013951526e378bc11de4084f766929be5ffb59ed5594fdd8d6"
+      },
+      {
+        "protocol": "coalescing-markers-v2",
+        "location": "local diagnostic run",
+        "status": "interrupted_for_statistics_bias",
+        "reason": "Automatic ANALYZE could occur during longer sequential samples but after shorter combined samples",
+        "test_log_sha256": "cb323b2a3b53c5a7ccda3db8ba9722d27e2b341c516b904350aa47b8e63f82fb"
+      }
+    ]
+  },
+  "evaluation_1k": {
+    "status": "maintainer_waived_for_658",
+    "final_comparison_issue": 660
+  },
+  "limitations": [
+    "The live cohort is a bounded maintenance quality gate, not a full retrieval comparison.",
+    "Whole-release runtime and accuracy improvement remain unproven."
+  ],
+  "source_binding": "Original local/live validation retains its original source manifest. Later validation corrections affect integration fixtures, complete-coverage registration, the telemetry E2E readiness fixture, and evidence documentation. Runtime code and frozen live/measurement cohorts are unchanged; final-head gates remain recorded in the PR.",
+  "post_validation_documentation": [
+    "tests/eval/issue_658_coalescing.md",
+    "tests/eval/baselines/issue_658_coalescing.json"
+  ],
+  "checkpoint": "Prepublication evidence; final exact-head gates are recorded in the PR closing #658",
+  "post_audit_test_files_sha256": {
+    "internal/ontology/postgres/maintenance_coalescing_integration_test.go": "ac68785bd008e08d567c7d40f8ee539fc2b82606d3f512c498b92f124fde5593",
+    "internal/ontology/postgres/maintenance_discovery_diagnostics_integration_test.go": "b2fb3e99ab23b6fbb7d6bcd668234a8695a4247b1dcd8eb5d909cd59c919c340",
+    "internal/ontology/postgres/maintenance_discovery_fixture_test.go": "f96271c1c9962d04ac39c9f961a183677e268b5c30f32d8b1c726460f66b5c9a",
+    "internal/ontology/postgres/maintenance_coalescing_measurement_integration_test.go": "e0f71ab0773a8afec22e0e65bb2765b7e8e455ef58587655700450564d03950f"
+  },
+  "post_audit_validation": [
+    {
+      "command": [
+        "go",
+        "test",
+        "-tags",
+        "integration",
+        "./internal/ontology/postgres",
+        "-run",
+        "^TestOntologyMaintenance(CoalescingPreservesNonDefinitionOrder|DiscoveryCommittedDiagnostics)$",
+        "-count=1",
+        "-timeout=10m"
+      ],
+      "started_at": 1793159746.0554614,
+      "duration_seconds": 21.623088359832764,
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "go",
+        "tool",
+        "staticcheck",
+        "-tags=integration",
+        "-checks=inherit,-U1000",
+        "./internal/ontology/postgres"
+      ],
+      "started_at": 1793159767.678919,
+      "duration_seconds": 1.2898921966552734,
+      "exit_code": 0
+    }
+  ],
+  "ci_validation_followups": [
+    {
+      "run_id": 40634304735,
+      "source_sha": "0c12f681d218782371714fc9cda0e6ca041241d1",
+      "result": "All 33 E2E scenarios and six PostgreSQL shards passed; complete coverage failed at 36832/40932",
+      "correction": "Register the existing committed-diagnostics regression in complete coverage; do not change the threshold"
+    },
+    {
+      "run_id": 40643016026,
+      "source_sha": "93424d4343cb2759c044ab9326a2ddaa36d2d189",
+      "complete_go_coverage": {
+        "covered": 36845,
+        "total": 40932,
+        "passed": true
+      },
+      "e2e_passed": 32,
+      "e2e_total": 33,
+      "postgres_shards_passed": 5,
+      "postgres_shards_total": 6,
+      "failures": [
+        "Telemetry parity queried an empty embedding-error series despite a ready live card",
+        "PostgreSQL shard 2 reached its 27-minute deadline after 111 top-level tests passed"
+      ],
+      "corrections": [
+        "Require the sampled embedding series in the existing bounded telemetry readiness loop; retain every parity assertion",
+        "Use existing prepared-source setup in the two new 100-source coalescing correctness tests; retain real receipts, fresh databases, and every assertion"
+      ],
+      "setup_comparison": {
+        "baseline_seconds": 240.751,
+        "candidate_seconds": 48.155,
+        "baseline_sha256": "c7bd721b2f4b744aa59cc7e3576bd1f677387396402806a83d508dc189fd77a2",
+        "candidate_sha256": "e50b99394ae4df464337a3796b7eccf6ed12ab5c75b51b0104f0d7fc341cde39",
+        "command": "go test -tags integration ./internal/ontology/postgres -run '^(TestOntologyMaintenanceCoalescingPages|TestOntologyMaintenanceCoalescingCursorAndGroupBounds)$' -count=1 -json -timeout=15m",
+        "postgres_required": true,
+        "interpretation": "One local setup comparison, not a runtime benchmark or release speedup; all original assertions retained"
+      },
+      "telemetry_probe": {
+        "grafana": "13.2.2",
+        "prometheus": "v3.12.0",
+        "result": "Live parent card is ready at 06:35:24.900 while frozen parent/error queries at 06:35:24.000 are empty; both series exist at 06:35:25",
+        "sha256": "d3fbc82c70b43042b85df7effe0453eb8e115deabfd3dd10c62a8f4fa8aeb369",
+        "limit": "Proves the startup race in existing code; failed-run scrape samples were not retained"
+      },
+      "status": "Corrections locally validated; fresh final-head full validation remains required"
+    }
+  ]
+}

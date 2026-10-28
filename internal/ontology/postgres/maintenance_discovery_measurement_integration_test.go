@@ -56,7 +56,9 @@ func discoverySourceHashes(t *testing.T) map[string]string {
 	t.Helper()
 	hashes := map[string]string{}
 	for _, name := range []string{"maintenance_discovery.go", "maintenance_discovery_observation.go", "organization.go", "source_queries.go",
-		"maintenance_discovery_fixture_test.go", "maintenance_discovery_measurement_integration_test.go", "maintenance_discovery_concurrency_integration_test.go", "maintenance_discovery_isolation_integration_test.go"} {
+		"maintenance_discovery_fixture_test.go", "maintenance_discovery_measurement_integration_test.go", "maintenance_discovery_concurrency_integration_test.go", "maintenance_discovery_isolation_integration_test.go",
+		"maintenance_markers.go", "maintenance_discovery_stats.go", "maintenance_coalescing_reference_test.go",
+		"maintenance_coalescing_fixture_test.go", "maintenance_coalescing_measurement_integration_test.go"} {
 		body, err := os.ReadFile(name)
 		require.NoError(t, err)
 		hashes[name] = fmt.Sprintf("%x", sha256.Sum256(body))
@@ -117,6 +119,7 @@ func discoveryMarkerState(t *testing.T, x *discoveryFixture) map[string]any {
 }
 
 func TestOntologyMaintenanceRevalidationDiscoveryMeasurement(t *testing.T) {
+	t.Run("coalescing-markers", testMaintenanceCoalescingMeasurement)
 	workloads := discoveryWorkloads()
 	encoded, err := json.Marshal(workloads)
 	require.NoError(t, err)
@@ -147,7 +150,7 @@ func TestOntologyMaintenanceRevalidationDiscoveryMeasurement(t *testing.T) {
 					before := discoveryMarkerState(t, x)
 					store, ctx, recorder := x.recorder(context.Background(), observe)
 					started := time.Now()
-					err := store.DiscoverMaintenance(ctx, x.turn, ontology.MaintenancePageSize)
+					err := store.discoverMaintenanceError(ctx, x.turn, ontology.MaintenancePageSize)
 					elapsed := time.Since(started)
 					require.NoError(t, err)
 					after := discoveryMarkerState(t, x)

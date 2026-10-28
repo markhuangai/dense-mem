@@ -187,7 +187,7 @@ func TestOntologyMaintenanceInvalidationFamilies(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, turn)
 			for range 20 {
-				require.NoError(t, f.store.DiscoverMaintenance(ctx, *turn, ontology.MaintenancePageSize))
+				require.NoError(t, f.store.discoverMaintenanceError(ctx, *turn, ontology.MaintenancePageSize))
 			}
 			var currentRevision int64
 			var state string

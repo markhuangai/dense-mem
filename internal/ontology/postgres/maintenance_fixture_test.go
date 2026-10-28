@@ -62,10 +62,15 @@ func maintenanceClaim(t *testing.T, f *ontologyFixture, window *ontology.Mainten
 	require.NoError(t, err)
 	require.NotNil(t, turn)
 	for range 8 {
-		require.NoError(t, f.store.DiscoverMaintenance(context.Background(), *turn, ontology.MaintenancePageSize))
+		require.NoError(t, f.store.discoverMaintenanceError(context.Background(), *turn, ontology.MaintenancePageSize))
 	}
 	claim, err := f.store.ClaimMaintenanceBatch(context.Background(), *turn, window.ID, time.Now().UTC())
 	require.NoError(t, err)
 	require.NotNil(t, claim)
 	return turn, claim
+}
+
+func (s *Store) discoverMaintenanceError(ctx context.Context, turn ontology.MaintenanceTurn, limit int) error {
+	_, err := s.DiscoverMaintenance(ctx, turn, limit)
+	return err
 }

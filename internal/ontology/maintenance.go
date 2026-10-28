@@ -181,6 +181,7 @@ func (s *MaintenanceService) RunTurn(ctx context.Context) (bool, error) {
 }
 
 func (s *MaintenanceService) prepareTurn(ctx context.Context) (work *maintenanceWork, progress bool, runErr error) {
+	started := time.Now()
 	policy, err := s.policy(ctx)
 	if err != nil {
 		return nil, false, err
@@ -203,6 +204,7 @@ func (s *MaintenanceService) prepareTurn(ctx context.Context) (work *maintenance
 	if err != nil || turn == nil {
 		return nil, false, err
 	}
+	defer func() { s.logMaintenancePreparation(ctx, *turn, work, time.Since(started), runErr) }()
 	defer func() {
 		finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
@@ -223,7 +225,9 @@ func (s *MaintenanceService) prepareTurn(ctx context.Context) (work *maintenance
 	}()
 	turnCtx, cancel := context.WithTimeout(ctx, lease-5*time.Second)
 	defer cancel()
-	if err = s.deps.Repository.DiscoverMaintenance(turnCtx, *turn, contract.MaintenancePageSize); err != nil {
+	discovery, err := s.deps.Repository.DiscoverMaintenance(turnCtx, *turn, contract.MaintenancePageSize)
+	s.logMaintenanceDiscovery(ctx, *turn, discovery, err)
+	if err != nil {
 		return nil, true, err
 	}
 	page, err := s.deps.Repository.ListRecords(turnCtx, turn.TeamID, contract.EntityClass, "", 1)
