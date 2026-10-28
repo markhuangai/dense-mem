@@ -27,6 +27,153 @@ func evalRuntimeIncompletePlan(t *testing.T, root string) string {
 	return path
 }
 
+func holdEvalRuntimeMonitor(t *testing.T, monitor string, receipt runtimeReceipt) func() {
+	t.Helper()
+	lockDir, err := runtimeLockDirectory()
+	require.NoError(t, err)
+	args := []string{"-c", `set -eu
+for path do
+  exec {lock}>"$path"
+  flock -n "$lock"
+done
+printf 'locked\n'
+IFS= read -r release`, "runtime-monitor", filepath.Join(monitor, "paired.lock")}
+	for _, container := range receipt.Containers {
+		args = append(args, filepath.Join(lockDir, container.ID+".lock"))
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	t.Cleanup(cancel)
+	command := exec.CommandContext(ctx, "bash", args...)
+	command.Stderr = os.Stderr
+	input, err := command.StdinPipe()
+	require.NoError(t, err)
+	output, err := command.StdoutPipe()
+	require.NoError(t, err)
+	require.NoError(t, command.Start())
+	released := false
+	release := func() {
+		if released {
+			return
+		}
+		released = true
+		_, writeErr := io.WriteString(input, "\n")
+		closeErr := input.Close()
+		waitErr := command.Wait()
+		cancel()
+		require.NoError(t, errors.Join(writeErr, closeErr, waitErr))
+	}
+	t.Cleanup(release)
+	ready := make([]byte, len("locked\n"))
+	_, err = io.ReadFull(output, ready)
+	require.NoError(t, err)
+	require.Equal(t, "locked\n", string(ready))
+	return release
+}
+
+func TestEvalRuntimeDockerMissingMonitorRecovery(t *testing.T) {
+	for _, variant := range []string{"removed", "renamed"} {
+		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+		defer cancel()
+		fixture := newEvalRuntimeFixture(t, ctx, false, "")
+		t.Run(variant, func(t *testing.T) {
+			receipt, err := readRuntimeReceipt(fixture.command.Directory)
+			require.NoError(t, err)
+			monitor := filepath.Join(fixture.root, "monitor")
+			require.NoError(t, os.Mkdir(monitor, 0o700))
+			t.Cleanup(func() { require.NoError(t, os.MkdirAll(monitor, 0o700)) })
+			release := holdEvalRuntimeMonitor(t, monitor, receipt)
+			pair := PairConfig{OutDir: monitor, Candidate: PairRelease{Runtime: PairRuntime{StateDir: receipt.Directory, Project: receipt.Project}}}
+			for _, container := range receipt.Containers {
+				switch container.Service {
+				case "server":
+					pair.Candidate.Runtime.ServerContainer = container.Name
+				case "postgres":
+					pair.Candidate.Runtime.PostgresContainer = container.Name
+				}
+			}
+			require.NoError(t, CheckPairRuntimeLifecycle(pair, "candidate"))
+			receipt, err = readRuntimeReceipt(receipt.Directory)
+			require.NoError(t, err)
+			require.Equal(t, []string{monitor}, receipt.MonitorDirs)
+			protected, err := captureProtectedRuntimes(ctx, []string{receipt.Directory})
+			require.NoError(t, err)
+			before, err := os.ReadFile(filepath.Join(receipt.Directory, runtimeReceiptName))
+			require.NoError(t, err)
+			unchanged := func(t *testing.T) {
+				t.Helper()
+				after, err := os.ReadFile(filepath.Join(receipt.Directory, runtimeReceiptName))
+				require.NoError(t, err)
+				require.Equal(t, before, after)
+				require.NoError(t, verifyProtectedRuntimes(ctx, protected))
+				require.NoDirExists(t, monitor)
+			}
+			if variant == "removed" {
+				require.NoError(t, os.Remove(filepath.Join(monitor, "paired.lock")))
+				require.NoError(t, os.Remove(monitor))
+			} else {
+				require.NoError(t, os.Rename(monitor, monitor+"-moved"))
+				_, err := runtimeLock(filepath.Join(monitor+"-moved", "paired.lock"))
+				require.ErrorContains(t, err, "owned by another process")
+			}
+			resume := RuntimeCommand{Action: "start", Directory: receipt.Directory}
+			retire := RuntimeCommand{Action: "retire", Directory: receipt.Directory, RetentionPlan: fixture.planPath, StopTimeout: 10 * time.Second}
+			for _, command := range []RuntimeCommand{resume, retire} {
+				require.ErrorContains(t, RunRuntimeCommand(ctx, command, io.Discard), "owned by another process")
+				unchanged(t)
+			}
+			release()
+			require.NoError(t, RunRuntimeCommand(ctx, resume, io.Discard))
+			unchanged(t)
+			archive, err := archiveRuntimeEvidence(fixture.plan)
+			require.NoError(t, err)
+			for _, failure := range []string{"source_missing", "source_corrupt", "archive_corrupt"} {
+				t.Run(failure, func(t *testing.T) {
+					path := archive.Files[0].SourcePath
+					if failure == "archive_corrupt" {
+						path = archive.Files[0].ArchivePath
+					}
+					original, err := os.ReadFile(path)
+					require.NoError(t, err)
+					t.Cleanup(func() { require.NoError(t, os.WriteFile(path, original, 0o600)) })
+					if failure == "source_missing" {
+						require.NoError(t, os.Remove(path))
+						require.ErrorIs(t, RunRuntimeCommand(ctx, retire, io.Discard), os.ErrNotExist)
+					} else {
+						require.NoError(t, os.WriteFile(path, []byte("corrupted"), 0o600))
+						require.ErrorContains(t, RunRuntimeCommand(ctx, retire, io.Discard), "hash")
+					}
+					unchanged(t)
+				})
+			}
+			planHash, err := canonicalJSONHash(fixture.plan)
+			require.NoError(t, err)
+			// This is the persisted checkpoint immediately before retirement begins resource changes.
+			receipt.State = "retiring"
+			receipt.Retirement = &runtimeRetirement{PlanHash: planHash, Archive: archive, StartedAt: time.Now().UTC(), Dispositions: map[string]string{}, Helpers: map[string]runtimeContainer{}}
+			require.NoError(t, saveRuntimeReceipt(receipt))
+			before, err = os.ReadFile(filepath.Join(receipt.Directory, runtimeReceiptName))
+			require.NoError(t, err)
+			t.Run("archive_missing_after_intent", func(t *testing.T) {
+				path := archive.Files[0].ArchivePath
+				original, err := os.ReadFile(path)
+				require.NoError(t, err)
+				t.Cleanup(func() { require.NoError(t, os.WriteFile(path, original, 0o600)) })
+				require.NoError(t, os.Remove(path))
+				require.ErrorIs(t, RunRuntimeCommand(ctx, retire, io.Discard), os.ErrNotExist)
+				unchanged(t)
+			})
+			require.NoError(t, RunRuntimeCommand(ctx, retire, io.Discard))
+			require.NoError(t, RunRuntimeCommand(ctx, RuntimeCommand{Action: "verify", Directory: receipt.Directory}, io.Discard))
+			retired, err := readRuntimeReceipt(receipt.Directory)
+			require.NoError(t, err)
+			require.Equal(t, "retired", retired.State)
+			require.Equal(t, []string{monitor}, retired.MonitorDirs)
+			require.NoDirExists(t, monitor)
+			require.NoError(t, verifyRuntimeArchive(retired.Retirement.Archive))
+		})
+	}
+}
+
 func TestEvalRuntimeDockerRecordedVolumeOwnership(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
