@@ -16,6 +16,7 @@ func TestOperationalSecretsIncludesConfiguredAndHeaderCredentials(t *testing.T) 
 	cfg := Config{
 		PostgresDSN: "postgres://user:database%20password@localhost/db", RedisPassword: "redis-secret",
 		AIAPIKey: "embedding-secret", AIVerifierAPIKey: "verifier-secret",
+		Decision:           DecisionProviderConfig{APIKey: "decision-secret"},
 		ControlPortalToken: "control-secret", TelemetryScrapeToken: "scrape-secret",
 		OTLPTraceHeaders:  map[string]string{"Authorization": "Basic " + basic},
 		OTLPMetricHeaders: map[string]string{"Cookie": "session=cookie-secret", "X-API-Key": "export-key"},
@@ -23,7 +24,7 @@ func TestOperationalSecretsIncludesConfiguredAndHeaderCredentials(t *testing.T) 
 	secrets, err := cfg.OperationalSecrets()
 	require.NoError(t, err)
 	require.ElementsMatch(t, []string{
-		cfg.PostgresDSN, "database password", "redis-secret", "embedding-secret", "verifier-secret", "control-secret", "scrape-secret",
+		cfg.PostgresDSN, "database password", "redis-secret", "embedding-secret", "verifier-secret", "decision-secret", "control-secret", "scrape-secret",
 		"Basic " + basic, basic, "export-user:export-password", "export-password", "session=cookie-secret", "cookie-secret", "export-key",
 	}, secrets)
 	value := map[string]any{"detail": strings.Join(secrets, " | "), "token": "fictional-token", "password": "ordinary user text"}

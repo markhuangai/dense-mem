@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
 	searchcontract "github.com/markhuangai/dense-mem/internal/search/contract"
@@ -23,6 +24,8 @@ const (
 
 type Retrieval struct {
 	repository recallcontract.SearchRepository
+	decisions  modelprovider.DecisionProvider
+	logger     observability.LogProvider
 }
 
 func NewRetrieval(repository recallcontract.SearchRepository) *Retrieval {
@@ -39,6 +42,12 @@ func (r *Retrieval) RecallEvidence(ctx context.Context, input recallcontract.Rec
 		total.Finish(err, items)
 	}()
 	input = normalizeRecallEvidenceInput(input)
+	requestedInput := input
+	decisionEnabled := false
+	if _, enabled := recallDecisions(ctx); enabled && r != nil && r.decisions != nil {
+		input.Limit = maxRecallResultLimit
+		decisionEnabled = true
+	}
 	if err := validateRecallEvidenceInput(input); err != nil {
 		return nil, err
 	}
@@ -57,9 +66,16 @@ func (r *Retrieval) RecallEvidence(ctx context.Context, input recallcontract.Rec
 		if err != nil {
 			return nil, err
 		}
+		if decisionEnabled {
+			return r.finishDecisionEvidence(ctx, requestedInput, result)
+		}
 		return result, nil
 	}
-	return r.recallEvidence(ctx, input, contract)
+	result, err = r.recallEvidence(ctx, input, contract)
+	if err == nil && decisionEnabled {
+		return r.finishDecisionEvidence(ctx, requestedInput, result)
+	}
+	return result, err
 }
 
 func (r *Retrieval) recallEvidence(ctx context.Context, input recallcontract.RecallEvidenceInput, contract *searchcontract.ActiveSearchContract) (*recallcontract.RecallEvidenceResult, error) {
@@ -127,6 +143,12 @@ func (r *Retrieval) RecallRelationships(ctx context.Context, input recallcontrac
 		total.Finish(err, items)
 	}()
 	input = normalizeRecallRelationshipsInput(input)
+	requestedInput := input
+	decisionEnabled := false
+	if _, enabled := recallDecisions(ctx); enabled && r != nil && r.decisions != nil {
+		input.Limit = maxRelatedRelationshipLimit
+		decisionEnabled = true
+	}
 	if err := validateRecallRelationshipsInput(input); err != nil {
 		return nil, err
 	}
@@ -189,9 +211,13 @@ func (r *Retrieval) RecallRelationships(ctx context.Context, input recallcontrac
 		results[i].Rank = i + 1
 	}
 	selection.Finish(nil, len(results))
-	return &recallcontract.RecallRelationshipsResult{
+	result = &recallcontract.RecallRelationshipsResult{
 		TeamID: input.TeamID, SearchState: searchState, VectorOmitted: vectorOmitted, Results: results, Degradations: organizationDegradation("relationships", batch.OrganizationDegradation),
-	}, nil
+	}
+	if decisionEnabled {
+		return r.finishDecisionRelationships(ctx, requestedInput, result)
+	}
+	return result, nil
 }
 
 func sortRecallRelationshipResults(results []recallcontract.RecallRelationshipHit) {

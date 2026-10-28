@@ -3,6 +3,13 @@
   "capability": "settings",
   "cases": [
     {
+      "id": "settings/TestDecisionSettingsRefreshWaitHonorsCancellation",
+      "package": "./internal/settings",
+      "run": "^TestDecisionSettingsRefreshWaitHonorsCancellation$",
+      "phase": "precheck",
+      "source": "internal/settings/decisions_postgres_integration_test.go"
+    },
+    {
       "id": "settings/TestSettingsControlPortalPositiveAndDurableAudit",
       "package": "./internal/settings",
       "run": "^TestSettingsControlPortalPositiveAndDurableAudit$",
@@ -22,6 +29,20 @@
       "run": "^TestSecurityBanRoundTripAndDurableAudit$",
       "phase": "precheck",
       "source": "internal/settings/settings_postgres_integration_test.go"
+    },
+    {
+      "id": "settings/TestDecisionSettingsPostgresPersistenceRefreshAndRollback",
+      "package": "./internal/settings",
+      "run": "^TestDecisionSettingsPostgresPersistenceRefreshAndRollback$",
+      "phase": "precheck",
+      "source": "internal/settings/decisions_postgres_integration_test.go"
+    },
+    {
+      "id": "settings/TestDecisionSettingsControlAuthorizationAndStrictPatch",
+      "package": "./internal/settings",
+      "run": "^TestDecisionSettingsControlAuthorizationAndStrictPatch$",
+      "phase": "precheck",
+      "source": "internal/settings/decisions_postgres_integration_test.go"
     }
   ]
 }

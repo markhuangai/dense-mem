@@ -24,6 +24,7 @@ test("Evidence view resolves a case, handles stale review, and stays keyboard-sa
     await page.setViewportSize({ width, height: 1000 });
     await page.getByRole("button", { name: "Choose theme", exact: true }).click();
     await page.getByRole("menuitem", { name: theme, exact: true }).click();
+    await expect(page.getByRole("button", { name: "Choose theme", exact: true })).toBeFocused();
     await expectConflictCardsContained(page);
     await expectPageContained(page);
     await page.screenshot({ path: testInfo.outputPath(`evidence-conflicts-${width}-${theme.toLowerCase()}.png`), fullPage: true });

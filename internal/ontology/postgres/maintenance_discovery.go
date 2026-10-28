@@ -101,7 +101,11 @@ func refreshMaintenanceSource(tx *gorm.DB, fence scope, handle ontology.SourceHa
 			if err != nil {
 				return err
 			}
+			finishObservation := observeMaintenanceReceipt(tx.Statement.Context, fence, handle, receipt)
 			current, err := (&Store{}).organizationInputsCurrent(tx, fence, receipt)
+			if finishObservation != nil {
+				finishObservation(current, err)
+			}
 			if err != nil {
 				return err
 			}
@@ -207,7 +211,10 @@ func expandMaintenanceMarkers(tx *gorm.DB, fence scope, limit int) error {
 			handles = handles[:remaining]
 		}
 		for _, handle := range handles {
-			if err := refreshMaintenanceInvalidation(tx, fence, handle, marker.TargetKind == "definition"); err != nil {
+			observeMaintenanceSource(tx.Statement.Context, fence, handle, "source_selected", nil)
+			err := refreshMaintenanceInvalidation(tx, fence, handle, marker.TargetKind == "definition")
+			observeMaintenanceSource(tx.Statement.Context, fence, handle, "source_finished", err)
+			if err != nil {
 				return err
 			}
 			marker.Cursor = ontology.SourceKey(handle)

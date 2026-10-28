@@ -36,6 +36,17 @@ func (p *rememberSynchronousProcessor) prepareRemember(ctx context.Context, inpu
 		err = rememberapp.WithSynchronousAssessmentDiagnostics(err, assessorDiagnostics)
 		return nil, &rememberPreparationError{Phase: phase, AssessorTurns: assessorTurns, AssessorSecurityRejected: input.AssessorSecurityRejected, Cause: err}
 	}
+	var decisionSnapshot *domain.DecisionRuntimeConfig
+	if p.decisions != nil {
+		if p.decisionSettings == nil {
+			return fail(fmt.Errorf("%w: decision settings are required", rememberapp.ErrRememberProviderUnavailable), "assessment")
+		}
+		value, err := p.decisionSettings.DecisionRuntimeConfig(ctx)
+		if err != nil {
+			return fail(fmt.Errorf("%w: decision settings unavailable: %w", rememberapp.ErrRememberProviderUnavailable, err), "assessment")
+		}
+		decisionSnapshot = &value
+	}
 	var handleErr error
 	input, snapshot, handleErr = p.resolveRememberHandles(ctx, input, snapshot)
 	if handleErr != nil {
@@ -80,6 +91,7 @@ func (p *rememberSynchronousProcessor) prepareRemember(ctx context.Context, inpu
 	assessmentStarted := time.Now()
 	prepared, err := rememberapp.AssessSynchronousRemember(ctx, rememberapp.SynchronousAssessmentDependencies{
 		Catalog: p.catalog, Provider: p.provider, Limits: p.limits, Metrics: p.metrics, Logger: p.logger,
+		Decisions: p.decisions, DecisionSnapshot: decisionSnapshot,
 	}, rememberapp.SynchronousAssessmentInput{Scope: scope, Snapshot: snapshot})
 	assessorDiagnostics = rememberapp.SynchronousAssessmentDiagnostics(err)
 	if prepared != nil {

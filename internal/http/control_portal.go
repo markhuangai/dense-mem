@@ -158,6 +158,11 @@ func newControlPortalServerWithMetricsAndTelemetry(
 		api.GET("/teams/:teamId/remember-attempts/:attemptId", control.getRememberAttemptDiagnostic)
 	}
 	registerRememberInvocationDiagnosticsRoutes(api, control, telemetry)
+	control.decisions = telemetry.Decisions
+	if telemetry.Decisions != nil {
+		api.GET("/config/decisions", control.getDecisionConfig)
+		api.PATCH("/config/decisions", control.updateDecisionConfig, httpmw.BindAndValidateStrict[controlDecisionConfigRequest](decisionConfigBodyKey))
+	}
 	if telemetry.RecallFeedback != nil {
 		api.GET("/recall-feedback-events", control.listRecallFeedbackEvents)
 		api.GET("/recall-feedback-events/:recallId", control.getRecallFeedbackEvent)

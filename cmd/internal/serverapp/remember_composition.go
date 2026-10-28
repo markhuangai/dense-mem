@@ -4,6 +4,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	embeddingcontract "github.com/markhuangai/dense-mem/internal/embedding/contract"
 	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	remembercontract "github.com/markhuangai/dense-mem/internal/remember/contract"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
@@ -14,6 +15,8 @@ type rememberApplicationDependencies struct {
 	Persistence         remembercontract.Persistence
 	Catalog             remembercontract.SubmissionAssessmentCatalog
 	Assessor            assessor.Provider
+	Decisions           modelprovider.DecisionProvider
+	DecisionSettings    modelprovider.DecisionSettings
 	Embedder            embeddingcontract.EmbeddingProviderInterface
 	Limits              assessor.SemanticAssessmentLimits
 	Metrics             observability.DiscoverabilityMetrics
@@ -25,6 +28,7 @@ type rememberApplicationDependencies struct {
 func buildRememberApplication(deps rememberApplicationDependencies) rememberapp.Service {
 	processor := rememberprocessor.NewSynchronousProcessor(rememberprocessor.ProcessorDependencies{
 		Ledger: deps.Persistence, Catalog: deps.Catalog, Assessor: deps.Assessor,
+		Decisions: deps.Decisions, DecisionSettings: deps.DecisionSettings,
 		Embedder: deps.Embedder, Limits: deps.Limits, Metrics: deps.Metrics,
 		Logger: deps.Logger, DiagnosticProtector: deps.DiagnosticProtector, IsStaleInput: rememberapp.IsRememberStaleInputError,
 		CommitFailureStage: knowledgepostgres.RememberCommitFailureStage,

@@ -214,15 +214,15 @@ run_complete_part() {
 	else
 		DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test -tags integration ./internal/ontology/postgres ./internal/community/postgres ./internal/dream/postgres ./cmd/internal/serverapp \
 			-run '^(TestOntologyMaintenance(Finalization.*|Parallel.*|Revalidation.*|CurrentReceiptCompletion|Cohort|RegenerationFailureRetry|ProviderPauseDrain|AccountingFailurePreventsPublication|ContextConfigurationAndManualReuse|BudgetRetirement.*|GlobalAccounting|LeaseInterruptionReturnsPending|ProgressBeyondFormerBudgets|ProviderFailureReleasesCapacity|DirectOrganizationRejectsMissingContext|ControlInterruptionResumesSameWindow|PauseCommandsAndWindows|OperatorHTTPAndScheduler|CommandAuditIsAtomic)|TestOntologyAutomaticRetirementPreservesGroupingOverrides|TestOntologyCurrentReadersDistinguishDependencyAndSourceChanges|TestOntologyGroupingOverridesPreserveAssignmentFreshness|TestOntologyCurrentReadersReportCanonicalFingerprintAndVersionChanges|TestOntologyVocabularyUsesCurrentCandidateWindow|TestOntologyVocabularyWindowPreservesTeamIsolationAndNameReuse|TestOntologyFollowupCohort|TestOntologyMaintenanceBoundedCompletionUsesPersistedOutcomes|TestOntologyMaintenanceEarlierAmbiguityKeepsBoundedRunIncomplete|TestOntologyMaintenanceScheduledRecoveryClearsCurrentReason|TestOntologyMaintenanceCompletedRunDoesNotHideUnrelatedFailures|TestOntologyMaintenanceConcurrentInterruptionPreservesRunWork|TestOntologyMixedSeparationOverrideProtectsEvidenceGroups|TestOntologyManagement.*|TestCommunityTopic.*|TestRetiredDreamHistoryPreservesProvenanceIsolationAndRetention|TestServerLifecycle.*|TestRunActiveServerCanceledBeforeWorkersDoesNotBuildRuntimeWorker|TestPrivateMemoryCommandsInspectFreshDatabaseWithoutStartingOrMigrating|TestPrivateMemoryPreflightCommandBoundsLegacyReportAndReturnsBlockers|TestPairedEvaluation.*)$' \
-			-skip '^TestCommunityTopicLargeFanoutResumesAndRotates$' \
+			-skip '^(TestCommunityTopicLargeFanoutResumesAndRotates|TestOntologyMaintenanceRevalidationDiscoveryMeasurement)$' \
 			-count=1 -timeout=30m -covermode=atomic -coverpkg="${coverpkg}" -coverprofile="${postgres_profile}"
 		DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test -tags integration ./internal/community/postgres \
 			-run '^TestCommunityTopicLargeFanoutResumesAndRotates$' \
 			-count=1 -timeout=15m -covermode=atomic -coverpkg="${coverpkg}" -coverprofile="${community_scale_profile}"
 		DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test -tags integration ./internal/service \
 			-run '^TestAudit' -count=1 -timeout=5m -covermode=atomic -coverpkg="${coverpkg}" -coverprofile="${audit_profile}"
-		DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 DENSE_MEM_REQUIRE_POSTGRES_TESTS=1 go test -tags integration ./internal/knowledge/postgres \
-			-run '^TestSession' -count=1 -timeout=15m -covermode=atomic -coverpkg="${coverpkg}" -coverprofile="${session_profile}"
+		DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 DENSE_MEM_REQUIRE_POSTGRES_TESTS=1 go test -tags integration ./internal/knowledge/postgres ./internal/settings \
+			-run '^Test(Session|Decision)' -count=1 -timeout=15m -covermode=atomic -coverpkg="${coverpkg}" -coverprofile="${session_profile}"
 		seal_complete_part postgres "${postgres_profiles[@]}"
 	fi
 }

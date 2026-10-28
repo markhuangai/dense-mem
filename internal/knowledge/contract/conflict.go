@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	tracecontract "github.com/markhuangai/dense-mem/internal/trace/contract"
 )
 
@@ -151,6 +152,7 @@ type ValidateRelationshipConflictContextInput struct {
 }
 
 type ReserveOverdueConflictAssessmentInput struct {
+	RequireProvider     bool
 	TeamID              string
 	ConflictID          string
 	ReviewRunID         string
@@ -198,6 +200,7 @@ type OverdueConflictAssessmentEvidence struct {
 }
 
 type CompleteOverdueConflictAssessmentInput struct {
+	DecisionDiagnostics *modelprovider.DecisionStage
 	TeamID              string
 	ConflictID          string
 	AssessmentAttemptID string

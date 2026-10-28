@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 import { forwardEmbedding } from "../embedding_upstream.mjs";
+import { handleDecisionFixture } from "../decision_providers/protocol.mjs";
 
 const port = Number(process.env.PORT || 8787);
 const fault = (process.env.DENSE_MEM_E2E_PROVIDER_FAULT || "none").trim();
@@ -55,6 +56,8 @@ const server = createServer(async (request, response) => {
     return;
   }
 
+  if (handleDecisionFixture(request, response, payload)) return;
+
   if (request.method === "POST" && request.url === "/ontology-fixture") {
     if (!["normal", "ambiguous", "fail-three-then-success", "hold"].includes(payload.mode)) {
       sendJSON(response, 400, { error: "invalid ontology fixture mode" });
@@ -76,6 +79,7 @@ const server = createServer(async (request, response) => {
       model: typeof payload.model === "string" ? payload.model : "",
       schema_name: typeof payload.response_format?.json_schema?.name === "string" ? payload.response_format.json_schema.name : "",
       fault: routeFault,
+      generated_fields: Object.keys(payload.response_format?.json_schema?.schema?.properties || {}),
     });
   }
   let embeddingFaultCall = 0;
@@ -173,6 +177,9 @@ const server = createServer(async (request, response) => {
         assessment = fixtureChatResponse(payload, assessmentFault, attempt);
       } finally { activeOntologyRequests -= 1; }
     } else assessment = fixtureChatResponse(payload, assessmentFault, attempt);
+    const properties = payload.response_format?.json_schema?.schema?.properties;
+    if (properties && !Object.hasOwn(properties, "evidence_security_results")) delete assessment.evidence_security_results;
+    if (properties && !Object.hasOwn(properties, "evidence_equivalence_results")) delete assessment.evidence_equivalence_results;
     sendJSON(response, 200, {
       choices: [{ message: { content: JSON.stringify(assessment) } }],
       usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },

@@ -265,6 +265,25 @@ func credentialLiteralCandidate(text, variant string) bool {
 			if text[index] == '+' && !strings.Contains(variant, " ") {
 				return false
 			}
+			if text[index] != variant[index] {
+				var decoded byte
+				switch text[index] {
+				case '%':
+					decoded = hexByte(text[index+1], text[index+2])
+				case '+':
+					decoded = ' '
+				case '\\':
+					escaped, _, _, ok := decodeCredentialCandidateEscape([]byte(text[index:min(len(text), index+12)]))
+					if !ok {
+						return false
+					}
+					decoded = escaped[0]
+				}
+				// Literal mismatches cannot change in later decoding layers.
+				if decoded != variant[index] && !credentialDecodedByteMayChange(decoded, true, true) {
+					return false
+				}
+			}
 			return true
 		}
 		if text[index] != variant[index] {

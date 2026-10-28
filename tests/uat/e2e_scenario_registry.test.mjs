@@ -202,7 +202,7 @@ test("production E2E runs the complete exact-source registry on hosted isolated 
     readFile(new URL("../../.github/workflows/pr-test-image.yml", import.meta.url), "utf8"),
     readFile(new URL("../../scripts/e2e-ci-bootstrap.sh", import.meta.url), "utf8"),
   ]);
-  assert.equal(matrixFor(registry, "all").include.length, 32);
+  assert.equal(matrixFor(registry, "all").include.length, 33);
   assert.equal(classifyScenario(registry, "ontology_upgrade").isolation, "exclusive");
   assertWorkflowOrchestration(workflow);
   const authorize = workflowJob(workflow, "authorize");

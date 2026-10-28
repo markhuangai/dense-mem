@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/url"
 	"os"
@@ -18,9 +19,14 @@ import (
 	conflictcontract "github.com/markhuangai/dense-mem/internal/conflict/contract"
 	conflictpostgres "github.com/markhuangai/dense-mem/internal/conflict/postgres"
 	"github.com/markhuangai/dense-mem/internal/conflict/review"
+	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/embedding"
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
+	"github.com/markhuangai/dense-mem/internal/observability"
+	decisionprovider "github.com/markhuangai/dense-mem/internal/provider/decision"
+	"github.com/markhuangai/dense-mem/internal/settings"
+	settingspostgres "github.com/markhuangai/dense-mem/internal/settings/postgres"
 	postgresstorage "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"github.com/markhuangai/dense-mem/internal/verifier"
 )
@@ -112,14 +118,29 @@ func main() {
 		nil,
 		cfg.GetAIAPIKey(),
 	)
-	reviewer, err := conflictreview.New(conflictreview.Dependencies{
+	dependencies := conflictreview.Dependencies{
 		Repository:       conflictStore,
 		Provider:         legacyConflictProvider{provider: provider},
 		Embeddings:       embeddingProvider,
 		EmbeddingTimeout: time.Duration(cfg.GetAIEmbeddingTimeoutSeconds()) * time.Second,
 		Timezone:         "UTC",
 		Limits:           limits,
-	})
+	}
+	if cfg.Decision.Configured() {
+		secrets, err := cfg.OperationalSecrets()
+		if err != nil {
+			fatal("resolve diagnostic protection: %v", err)
+		}
+		protector := observability.NewCredentialProtector(secrets...)
+		logger := observability.NewWithProtector(slog.LevelWarn, protector)
+		dependencies.Decisions, err = decisionprovider.New(cfg.Decision, cfg.AIVerifierTokenizer, nil, logger, protector, nil)
+		if err != nil {
+			fatal("build decision provider: %v", err)
+		}
+		dependencies.DecisionSettings = settings.NewAppConfigServiceWithDecisions(settingspostgres.NewAppConfigRepository(db, rls), nil, settings.DecisionSettingsOptions{Provider: domain.DecisionProviderStatus{Configured: true, Provider: cfg.Decision.Provider, Model: cfg.Decision.Model}, Logger: logger})
+		dependencies.Logger = logger
+	}
+	reviewer, err := conflictreview.New(dependencies)
 	if err != nil {
 		fatal("build conflict reviewer: %v", err)
 	}

@@ -3,6 +3,7 @@ package contract
 import (
 	"context"
 	"encoding/json"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"time"
 
 	ontologycontract "github.com/markhuangai/dense-mem/internal/ontology/contract"
@@ -96,6 +97,7 @@ type RecallRelationshipsInput struct {
 }
 
 type RecallEvidenceResult struct {
+	DecisionStages    []modelprovider.DecisionStage
 	Degradations      []RecallDegradationResult
 	TeamID            string
 	SearchState       string
@@ -105,11 +107,12 @@ type RecallEvidenceResult struct {
 }
 
 type RecallRelationshipsResult struct {
-	Degradations  []RecallDegradationResult
-	TeamID        string
-	SearchState   string
-	VectorOmitted bool
-	Results       []RecallRelationshipHit
+	DecisionStages []modelprovider.DecisionStage
+	Degradations   []RecallDegradationResult
+	TeamID         string
+	SearchState    string
+	VectorOmitted  bool
+	Results        []RecallRelationshipHit
 }
 
 type RecallEvidenceHit struct {
@@ -155,11 +158,12 @@ type RecallRelationshipHit struct {
 }
 
 type RecallResult struct {
-	RecallID             string                       `json:"recall_id"`
-	Results              []RecallResultItem           `json:"results"`
-	Conflicts            []RecallConflictSummary      `json:"conflicts"`
-	RelatedRelationships []RelatedRelationshipSummary `json:"related_relationships"`
-	RelatedCommunities   []RecallDiscoveryPath        `json:"related_communities"`
+	DecisionStages       []modelprovider.DecisionStage `json:"-"`
+	RecallID             string                        `json:"recall_id"`
+	Results              []RecallResultItem            `json:"results"`
+	Conflicts            []RecallConflictSummary       `json:"conflicts"`
+	RelatedRelationships []RelatedRelationshipSummary  `json:"related_relationships"`
+	RelatedCommunities   []RecallDiscoveryPath         `json:"related_communities"`
 
 	SearchStates     RecallSearchStates        `json:"search_states"`
 	Degradations     []RecallDegradationResult `json:"degradations"`

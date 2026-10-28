@@ -34,6 +34,7 @@ import (
 	operationspostgres "github.com/markhuangai/dense-mem/internal/operations/postgres"
 	privacy "github.com/markhuangai/dense-mem/internal/privacy/postgres"
 	assessorprovider "github.com/markhuangai/dense-mem/internal/provider/assessor"
+	decisionprovider "github.com/markhuangai/dense-mem/internal/provider/decision"
 	recallpostgres "github.com/markhuangai/dense-mem/internal/recall/postgres"
 	settingspostgres "github.com/markhuangai/dense-mem/internal/settings/postgres"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
@@ -172,7 +173,7 @@ func RunActiveServer(
 		observability.String("index_strategy", searchContract.Contract.IndexStrategy),
 	)
 	auditService := buildAuditApplication(pgDB.GetDB())
-	appConfigService := buildConfigurationApplication(appConfigRepo, auditService)
+	appConfigService := buildDecisionConfigurationApplication(appConfigRepo, auditService, cfg, logger)
 	operationLogService := buildOperationLogApplication(operationLogRepo, appConfigService)
 	operationLogService.SetMinimumLevel(level)
 	if root, ok := logger.(observability.SinkAttacher); ok {
@@ -263,14 +264,27 @@ func RunActiveServer(
 	verifierProvider.SetMetrics(discoverabilityMetrics)
 	assessorProvider := assessorprovider.NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGateAndModel(&cfg, aiHTTPClient, assessmentLimits, aiConcurrencyGate, sessionModels.remember)
 	assessorProvider.SetMetrics(discoverabilityMetrics)
+	var decisions modelprovider.DecisionProvider
+	if cfg.Decision.Configured() {
+		decisions, err = decisionprovider.New(cfg.Decision, cfg.AIVerifierTokenizer, nil, logger, diagnosticProtector, discoverabilityMetrics)
+		if err != nil {
+			return fmt.Errorf("decision provider configuration: %w", err)
+		}
+		decisionSnapshot, snapshotErr := appConfigService.DecisionRuntimeConfig(startupCtx)
+		if snapshotErr != nil {
+			return fmt.Errorf("decision settings initialization: %w", snapshotErr)
+		}
+		logger.Info("decision.configuration.effective", observability.LogAttr{Key: "event", Value: "decision.configuration.effective"}, observability.LogAttr{Key: "action", Value: "enable_configured_tasks"}, observability.LogAttr{Key: "settings", Value: observability.DecisionLogValue(decisionSnapshot)})
+	}
 	sessionAssessmentLimits := assessmentLimits
 	sessionAssessmentLimits.MaxEvidenceItems = 100
 	sessionAssessor := assessorprovider.NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGateAndModel(&cfg, aiHTTPClient, sessionAssessmentLimits, aiConcurrencyGate, sessionModels.remember)
 	sessionAssessor.SetMetrics(discoverabilityMetrics)
 	ontologyMaintenance := buildOntologyMaintenance(ontologyStore, appConfigService, assessorProvider, assessmentLimits, sessionModels.remember, time.Duration(cfg.GetAIVerifierTimeoutSeconds())*time.Second, auditService, rootSlogLogger(logger))
 	conflictReviewRunner, err := buildConflictReviewApplication(conflictReviewApplicationDependencies{
-		Store:            conflictStore,
-		Provider:         verifierProvider,
+		Store:     conflictStore,
+		Provider:  verifierProvider,
+		Decisions: decisions, DecisionSettings: appConfigService, Logger: logger,
 		Embeddings:       retryEmbedder,
 		EmbeddingTimeout: time.Duration(cfg.GetAIEmbeddingTimeoutSeconds()) * time.Second,
 		Timezone:         cfg.GetAppTimezone(),
@@ -281,17 +295,18 @@ func RunActiveServer(
 		return fmt.Errorf("failed to build conflict review runner: %w", err)
 	}
 	applications := buildApplicationBundle(applicationCompositionDependencies{
-		Knowledge:              knowledgeStore,
-		Dream:                  dreamStore,
-		RememberPersistence:    knowledgeStore,
-		GraphStore:             graphStore,
-		TraceStore:             traceStore,
-		CommunityStore:         communitypostgres.NewStore(pgDB.GetDB(), rlsHelper).WithTopics(ontologyStore.NewTopicCatalogReader(), ontologyStore.NewTopicMembershipReader(), ontologyStore.NewTopicProjectionAdmission(), ontologyStore.NewTopicProjectionRelease()),
-		RememberCatalog:        knowledgeStore,
-		Search:                 searchRepo,
-		RecallSearch:           recallStore,
-		RecallFeedbackEvents:   recallFeedbackEventRepo,
-		Assessor:               assessorProvider,
+		Knowledge:            knowledgeStore,
+		Dream:                dreamStore,
+		RememberPersistence:  knowledgeStore,
+		GraphStore:           graphStore,
+		TraceStore:           traceStore,
+		CommunityStore:       communitypostgres.NewStore(pgDB.GetDB(), rlsHelper).WithTopics(ontologyStore.NewTopicCatalogReader(), ontologyStore.NewTopicMembershipReader(), ontologyStore.NewTopicProjectionAdmission(), ontologyStore.NewTopicProjectionRelease()),
+		RememberCatalog:      knowledgeStore,
+		Search:               searchRepo,
+		RecallSearch:         recallStore,
+		RecallFeedbackEvents: recallFeedbackEventRepo,
+		Assessor:             assessorProvider,
+		Decisions:            decisions, DecisionSettings: appConfigService,
 		SessionAssessor:        sessionAssessor,
 		SessionEnabled:         cfg.SessionIngestEnabled && cfg.GetAIVerifierAPIURL() != "" && cfg.GetAIVerifierAPIKey() != "" && cfg.IsEmbeddingConfigured(),
 		RememberModel:          sessionModels.remember,
@@ -375,6 +390,7 @@ func RunActiveServer(
 		auditService:             auditService,
 		securityService:          securityService,
 		appConfig:                appConfigService,
+		decisionConfig:           appConfigService,
 		operationLogs:            operationLogService,
 		operationLogHealth:       operationLogService.CheckReadiness,
 		usageMetrics:             usageMetricsService,

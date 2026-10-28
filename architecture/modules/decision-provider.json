@@ -1,0 +1,13 @@
+{
+  "schema_version": 2,
+  "capability": "decision-provider",
+  "go": {
+    "units": [
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/provider/decision",
+        "role": "adapter",
+        "visibility": "private"
+      }
+    ]
+  }
+}

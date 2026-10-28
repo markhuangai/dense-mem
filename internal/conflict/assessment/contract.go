@@ -68,13 +68,15 @@ type ConflictAssessmentRequest struct {
 }
 
 type ConflictAssessmentResponse struct {
-	Decision      string  `json:"decision"`
-	PositionID    *string `json:"position_id"`
-	Confidence    float64 `json:"confidence"`
-	Rationale     string  `json:"rationale"`
-	InputTokens   int     `json:"-"`
-	OutputTokens  int     `json:"-"`
-	ProviderTurns int     `json:"-"`
+	DecisionStage        *modelprovider.DecisionStage `json:"-"`
+	SelectionProbability *float64                     `json:"-"`
+	Decision             string                       `json:"decision"`
+	PositionID           *string                      `json:"position_id"`
+	Confidence           float64                      `json:"confidence"`
+	Rationale            string                       `json:"rationale"`
+	InputTokens          int                          `json:"-"`
+	OutputTokens         int                          `json:"-"`
+	ProviderTurns        int                          `json:"-"`
 }
 
 func ConflictAssessmentResponseSchema() map[string]any {

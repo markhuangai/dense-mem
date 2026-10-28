@@ -1,5 +1,7 @@
 package assessor
 
+import "github.com/markhuangai/dense-mem/internal/modelprovider"
+
 // SemanticAssessmentRequest is the server-owned, single-call assessor input.
 // Team and owner fields are retained for deterministic validation but never
 // leave the service boundary.
@@ -23,9 +25,10 @@ type SemanticAssessmentRequest struct {
 	CandidateContextTruncated bool                                        `json:"candidate_context_truncated"`
 	// Candidate context omission counts are server-side diagnostics. They are
 	// intentionally excluded from the provider payload and public response.
-	CandidateContextOmittedCandidates       int `json:"-"`
-	CandidateContextOmittedPredicateOptions int `json:"-"`
-	InputTokens                             int `json:"-"`
+	CandidateContextOmittedCandidates       int                        `json:"-"`
+	CandidateContextOmittedPredicateOptions int                        `json:"-"`
+	InputTokens                             int                        `json:"-"`
+	DecisionRouting                         *SemanticAssessmentRouting `json:"-"`
 }
 
 type SemanticAssessmentEntityCandidateGroup struct {
@@ -56,6 +59,7 @@ type SemanticAssessmentPredicateOption struct {
 }
 
 type SemanticAssessmentResponse struct {
+	DecisionStages             []modelprovider.DecisionStage                 `json:"decision_stages,omitempty"`
 	RequestID                  string                                        `json:"request_id"`
 	EvidenceSecurityResults    []SemanticAssessmentEvidenceSecurityResult    `json:"evidence_security_results"`
 	EvidenceEquivalenceResults []SemanticAssessmentEvidenceEquivalenceResult `json:"evidence_equivalence_results"`

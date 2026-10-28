@@ -3,6 +3,7 @@ package evalharness
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -120,11 +121,20 @@ func allRuntimeContainers(ctx context.Context) ([]runtimeContainer, error) {
 	if err != nil {
 		return nil, err
 	}
+	return inspectRuntimeContainers(ctx, ids)
+}
+
+func inspectRuntimeContainers(ctx context.Context, ids []string) ([]runtimeContainer, error) {
 	containers := make([]runtimeContainer, 0, len(ids))
 	for _, id := range ids {
 		container, err := inspectRuntimeContainer(ctx, id)
 		if err != nil {
-			return nil, err
+			// Another Docker user can remove a listed container before inspection.
+			present, presenceErr := runtimePresent(ctx, "container", id)
+			if presenceErr != nil || present {
+				return nil, errors.Join(err, presenceErr)
+			}
+			continue
 		}
 		containers = append(containers, container)
 	}

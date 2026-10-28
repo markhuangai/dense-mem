@@ -124,6 +124,7 @@ func AIVerifierMaxConcurrency(cfg ConfigProvider) int {
 // Config holds all configuration for the application.
 // All fields are populated from environment variables with sensible defaults.
 type Config struct {
+	Decision                        DecisionProviderConfig
 	SessionIngestEnabled            bool
 	PostgresDSN                     string `json:"-"`
 	PostgresMaxOpenConns            int
@@ -604,6 +605,10 @@ func loadWithPostgresDSN(postgresDSN string) (Config, error) {
 		return cfg, err
 	}
 	cfg.AIVerifierTokenizer = strings.TrimSpace(getEnvOrDefault("AI_VERIFIER_TOKENIZER", DefaultAIVerifierTokenizer))
+	cfg.Decision, err = loadDecisionProviderConfig()
+	if err != nil {
+		return cfg, err
+	}
 
 	cfg.MemoryAutoWriteConfidenceThreshold, err = parseFloatOrDefault("MEMORY_AUTO_WRITE_CONFIDENCE_THRESHOLD", DefaultMemoryAutoWriteConfidenceThreshold)
 	if err != nil {

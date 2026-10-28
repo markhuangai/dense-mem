@@ -38,6 +38,8 @@ type applicationCompositionDependencies struct {
 	RecallSearch           recallcontract.SearchRepository
 	RecallFeedbackEvents   recallcontract.FeedbackEventRepository
 	Assessor               assessor.Provider
+	Decisions              modelprovider.DecisionProvider
+	DecisionSettings       modelprovider.DecisionSettings
 	SessionAssessor        assessor.Provider
 	SessionEnabled         bool
 	RememberModel          string
@@ -78,6 +80,8 @@ func buildApplicationBundle(deps applicationCompositionDependencies) application
 		Persistence:         deps.RememberPersistence,
 		Catalog:             deps.RememberCatalog,
 		Assessor:            deps.Assessor,
+		Decisions:           deps.Decisions,
+		DecisionSettings:    deps.DecisionSettings,
 		Embedder:            deps.EmbeddingProvider,
 		Limits:              deps.AssessmentLimits,
 		Metrics:             deps.Metrics,
@@ -87,6 +91,7 @@ func buildApplicationBundle(deps applicationCompositionDependencies) application
 	})
 	sessionService := buildSessionApplication(rememberApplicationDependencies{
 		Persistence: deps.RememberPersistence, Catalog: deps.RememberCatalog, Assessor: deps.SessionAssessor,
+		Decisions: deps.Decisions, DecisionSettings: deps.DecisionSettings,
 		Embedder: deps.EmbeddingProvider, Limits: deps.AssessmentLimits, Metrics: deps.Metrics,
 		Logger: deps.Logger, DiagnosticProtector: deps.DiagnosticProtector, Audit: deps.Audit,
 	}, deps.Knowledge, deps.GeneratorTransport, deps.RememberModel, deps.SessionEnabled)
@@ -96,6 +101,7 @@ func buildApplicationBundle(deps applicationCompositionDependencies) application
 		Communities:    deps.CommunityStore,
 		OntologyConfig: deps.AppConfig,
 		Metrics:        deps.Metrics,
+		Decisions:      deps.Decisions, DecisionSettings: deps.DecisionSettings, Logger: deps.Logger,
 	})
 	communityService := buildCommunityApplication(communityApplicationDependencies{
 		Store:     deps.CommunityStore,

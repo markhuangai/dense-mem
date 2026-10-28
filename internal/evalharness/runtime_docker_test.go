@@ -398,6 +398,84 @@ func TestEvalRuntimeDockerLifecycle(t *testing.T) {
 	require.Equal(t, "retired", summary["state"])
 }
 
+func TestEvalRuntimeDockerContainerSnapshot(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	base := "busybox:1.37.0-musl"
+	if _, err := runtimeDocker(ctx, "image", "inspect", base); err != nil {
+		_, err = runtimeDocker(ctx, "image", "pull", base)
+		require.NoError(t, err)
+	}
+	project := "eval627-" + uuid.NewString()
+	owner := uuid.NewString()
+	create := func(network string) runtimeContainer {
+		t.Helper()
+		output, err := runtimeDocker(ctx, "container", "create", "--network", network,
+			"--label", "com.docker.compose.project="+project, "--label", runtimeOwnerLabel+"="+owner, base, "true")
+		require.NoError(t, err)
+		id := strings.TrimSpace(string(output))
+		t.Cleanup(func() {
+			cleanupCtx, stop := context.WithTimeout(context.Background(), 20*time.Second)
+			defer stop()
+			present, err := runtimePresent(cleanupCtx, "container", id)
+			require.NoError(t, err)
+			if present {
+				_, err = runtimeDocker(cleanupCtx, "container", "rm", id)
+				require.NoError(t, err)
+			}
+		})
+		container, err := inspectRuntimeContainer(ctx, id)
+		require.NoError(t, err)
+		return container
+	}
+	retained := create("none")
+	disappearing := create("none")
+	_, err := runtimeDocker(ctx, "container", "start", "--attach", disappearing.ID)
+	require.NoError(t, err)
+	disappearing, err = inspectRuntimeContainer(ctx, disappearing.ID)
+	require.NoError(t, err)
+	require.Equal(t, "exited", disappearing.Status)
+	require.False(t, disappearing.Running)
+	ids, err := runtimeList(ctx, "container")
+	require.NoError(t, err)
+	require.Contains(t, ids, disappearing.ID)
+	_, err = runtimeDocker(ctx, "container", "rm", disappearing.ID)
+	require.NoError(t, err)
+	containers, err := inspectRuntimeContainers(ctx, ids)
+	require.NoError(t, err)
+	require.False(t, slices.ContainsFunc(containers, func(c runtimeContainer) bool { return c.ID == disappearing.ID }))
+	require.True(t, slices.ContainsFunc(containers, func(c runtimeContainer) bool { return sameRuntimeContainer(retained, c) }))
+	receipt := runtimeReceipt{Project: project, State: "active", Containers: []runtimeContainer{retained, disappearing}}
+	require.ErrorContains(t, verifyRetirementOwnership(ctx, receipt), "disappeared before retirement intent")
+	require.Error(t, verifyActiveRuntime(ctx, receipt), "owned runtime containers still require direct inspection")
+	cancelled, stop := context.WithCancel(ctx)
+	stop()
+	_, err = inspectRuntimeContainers(cancelled, []string{disappearing.ID})
+	require.ErrorIs(t, err, context.Canceled, "failed Docker reads cannot prove absence")
+
+	output, err := runtimeDocker(ctx, "network", "create", project)
+	require.NoError(t, err)
+	networkID := strings.TrimSpace(string(output))
+	t.Cleanup(func() {
+		cleanupCtx, stop := context.WithTimeout(context.Background(), 20*time.Second)
+		defer stop()
+		present, err := runtimePresent(cleanupCtx, "network", networkID)
+		require.NoError(t, err)
+		if present {
+			_, err = runtimeDocker(cleanupCtx, "network", "rm", networkID)
+			require.NoError(t, err)
+		}
+	})
+	uninspectable := create(project)
+	_, err = runtimeDocker(ctx, "network", "rm", networkID)
+	require.NoError(t, err)
+	_, err = inspectRuntimeContainers(ctx, []string{uninspectable.ID})
+	require.Error(t, err, "an existing container's unresolved network must remain an inspection failure")
+	present, err := runtimePresent(ctx, "container", uninspectable.ID)
+	require.NoError(t, err)
+	require.True(t, present)
+}
+
 func TestEvalRuntimeDockerPartialPreparation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()

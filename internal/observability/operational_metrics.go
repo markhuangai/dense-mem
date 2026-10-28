@@ -21,6 +21,7 @@ var aiOperationLabels = []string{
 	AIOperationDreamGeneration,
 	AIOperationEvidenceDiscovery,
 	AIOperationRecallEmbedding,
+	AIOperationRecallReranking,
 	AIOperationSearchDocumentEmbedding,
 	AIOperationCommunitySummary,
 	AIOperationOntologyOrganization,
@@ -227,7 +228,7 @@ func (m *operationalPrometheusMetrics) seedBoundedSeries() {
 		m.recallHypothesisExpansions.WithLabelValues(outcome)
 	}
 	for _, operation := range append(append([]string(nil), aiOperationLabels...), unknownMetricLabel) {
-		for _, component := range []string{AIComponentVerifier, AIComponentEmbedding, unknownMetricLabel} {
+		for _, component := range []string{AIComponentVerifier, AIComponentEmbedding, AIComponentDecision, unknownMetricLabel} {
 			for _, kind := range []string{"input", "output", "total"} {
 				for _, source := range []string{AITokenSourceProvider, AITokenSourceTokenizer, unknownMetricLabel} {
 					m.providerTokens.WithLabelValues(operation, component, kind, source)
@@ -362,7 +363,7 @@ func (m *PrometheusMetrics) observeProviderTokens(operation, component, kind, so
 		return
 	}
 	operation = boundedMetricLabel(operation, append(append([]string(nil), aiOperationLabels...), unknownMetricLabel))
-	component = boundedMetricLabel(component, []string{AIComponentVerifier, AIComponentEmbedding})
+	component = boundedMetricLabel(component, []string{AIComponentVerifier, AIComponentEmbedding, AIComponentDecision})
 	kind = boundedMetricLabel(kind, []string{"input", "output", "total"})
 	source = boundedMetricLabel(source, []string{AITokenSourceProvider, AITokenSourceTokenizer})
 	m.operational.providerTokens.WithLabelValues(operation, component, kind, source).Add(float64(count))
@@ -373,7 +374,7 @@ func (m *PrometheusMetrics) observeProviderUnpriced(operation, component, reason
 		return
 	}
 	operation = boundedMetricLabel(operation, append(append([]string(nil), aiOperationLabels...), unknownMetricLabel))
-	component = boundedMetricLabel(component, []string{AIComponentVerifier, AIComponentEmbedding})
+	component = boundedMetricLabel(component, []string{AIComponentVerifier, AIComponentEmbedding, AIComponentDecision})
 	reason = boundedMetricLabel(reason, []string{"missing_usage", "missing_price", "tokenizer_error", "invalid_usage", "pricing_unavailable"})
 	m.operational.providerUnpriced.WithLabelValues(operation, component, reason).Inc()
 }

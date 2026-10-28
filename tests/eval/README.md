@@ -920,11 +920,14 @@ disabled, and session ingestion. Full current-head CI and E2E remain mandatory.
 
 The follow-on predicate/span repair change has a separate
 [approved protocol](https://github.com/markhuangai/dense-mem/issues/586#issuecomment-6431998713).
-The diagnostic-only waiver does not cover it. Inspection of the retained seven
-rc.20 exhausted assessments found repeated incompatible-key registration and
-resolution, predicate ranges outside their support, whitespace-only predicates,
-and unknown boundary references. All 21 retained responses obeyed the predicate
-status/key/version/registration nullability rules. Missing original assessor
+The maintainer subsequently
+[waived its live paired evaluation](https://github.com/markhuangai/dense-mem/issues/586#issuecomment-6468323991)
+on 2026-10-28; this is separate from the earlier diagnostic-only waiver.
+Inspection of the retained seven rc.20 exhausted assessments found repeated
+incompatible-key registration and resolution, predicate ranges outside their
+support, whitespace-only predicates, and unknown boundary references. All 21
+retained responses obeyed the predicate status/key/version/registration
+nullability rules. Missing original assessor
 requests still prevent an exact historical replay; these observations do not
 explain the 23 separate timeouts.
 
@@ -934,21 +937,25 @@ again, an exact known key cannot be substituted, and invalid citations do not
 justify dropping a supported claim. Ranges remain exact Unicode boundaries;
 predicate/value ranges must fit within one support range for the same evidence.
 
-Use the paired prepared-runtime workflow below for the fresh base/candidate
-comparison: frozen public v3 seed, 991 sources, 204 scored cases per side,
-`dense-mem-testing`, `@cf/baai/bge-m3` at 1024 dimensions, import concurrency and
-admission limit 4, and equal ontology capacity (global 8, team 4, context 300000).
-Require complete native imports and readiness, zero unmapped references,
-non-increasing exhausted-validation attempts and repair turns with at least one
-strictly lower, no increase in total failed attempts, and no applicable overall
-or per-axis quality regression beyond floating-point noise. Review changed
-dispositions against the exact evidence; incorrectly discarded support fails.
-Keep timeouts, phase durations, and unavailable usage distinct. Retain the
-revision/image/input identities and all outcomes with the PR's comparison
-receipt; never rerun a semantic or quality failure merely to obtain success.
-The comparison has no fixed overall time limit: renew its harness deadline
-while progressing and investigate two consecutive 15-minute observations with
-no source, readiness, or stage progress.
+The interrupted comparison used baseline `c4632748` and candidate `73f691df`
+with the frozen public v3 seed, `dense-mem-testing`, `@cf/baai/bge-m3` at 1024
+dimensions, import concurrency/admission 4 and equal ontology capacity
+(global 8, team 4, context 300000). Baseline Remember import completed all 991
+sources in 1007 durable attempts, retaining 14 timeout attempts, two exhausted
+validations and 184 provider repair turns. Baseline readiness and quality capture
+were incomplete; candidate import had not started. The native run was gracefully
+stopped and both isolated ontology schedulers were paused. Retained artifacts
+include the exact revisions, images, inputs, timings and unavailable usage.
+These partial observations establish no measured quality, reliability or timeout
+improvement and are not a passed comparison.
+
+Replacement verification uses the independent conformance audit, actual
+validators and local HTTP fixtures, real PostgreSQL regressions, registered
+synchronous-write/session-ingest production entrypoints, and final current-head
+review, CI, CodeQL and full production-image E2E. Supported fixture claims must
+remain stored after repair, and invalid complete responses must still yield zero
+partial semantic commit. The live comparison and its numerical gate are waived
+for this repair PR; the remaining validation gates are required.
 
 Ontology attempt receipts optionally contain `diagnostics` with measured
 `queue_ms`, `admission_ms`, `http_ms`, `reconciliation_ms`, the configured

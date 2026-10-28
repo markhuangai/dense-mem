@@ -29,6 +29,7 @@ type ControlPortalTelemetry struct {
 	Directory           *accessservice.DirectoryIdentityService
 	ControlIdentity     *accessservice.ControlIdentityService
 	Config              settings.AppConfigService
+	Decisions           settings.DecisionConfigService
 	Logs                operations.OperationLogReader
 	RecallFeedback      recall.RecallFeedbackEventReader
 	Dreams              dream.ControlService
@@ -68,6 +69,7 @@ type controlPortalHandler struct {
 	directory           *accessservice.DirectoryIdentityService
 	controlIdentity     *accessservice.ControlIdentityService
 	appConfig           settings.AppConfigService
+	decisions           settings.DecisionConfigService
 	logger              httpcontract.LogProvider
 	verifierModel       string
 	embeddingModel      string
