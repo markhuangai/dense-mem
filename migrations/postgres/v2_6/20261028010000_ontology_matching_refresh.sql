@@ -27,4 +27,3 @@ JOIN memory_spaces AS space ON space.team_id=head.team_id AND space.id=head.shar
 JOIN teams AS team ON team.id=head.team_id AND team.status='active' AND team.deleted_at IS NULL
 WHERE NOT head.retired AND head.kind IN ('entity_class','predicate_concept','topic')
 ORDER BY head.team_id,head.shared_space_id,head.space_generation,head.record_id;
-
