@@ -12,6 +12,7 @@ import (
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	"github.com/pressly/goose/v3"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func TestOntologyMatchingRefreshMigration(t *testing.T) {
@@ -51,6 +52,7 @@ func TestOntologyMatchingRefreshMigration(t *testing.T) {
 	}
 	before := preserved()
 	require.NoError(t, f.admin.Exec("GRANT CREATE ON SCHEMA public TO ontology_app").Error)
+	require.NoError(t, f.admin.Exec("ALTER TABLE teams OWNER TO ontology_app").Error)
 	pool, err := f.app.DB()
 	require.NoError(t, err)
 	pool.SetMaxOpenConns(1)
@@ -58,6 +60,20 @@ func TestOntologyMatchingRefreshMigration(t *testing.T) {
 	var restricted bool
 	require.NoError(t, f.app.Raw(`SELECT NOT (rolsuper OR rolbypassrls) FROM pg_roles WHERE rolname=current_user`).Row().Scan(&restricted))
 	require.True(t, restricted)
+	assertMigrationTeamScope := func() {
+		require.NoError(t, f.rls.WithSystemTx(context.Background(), f.app, func(tx *gorm.DB) error {
+			if err := tx.Exec(`SELECT set_config('app.tx_mode','migration',true)`).Error; err != nil {
+				return err
+			}
+			var visible int
+			if err := tx.Raw("SELECT count(*) FROM teams").Row().Scan(&visible); err != nil {
+				return err
+			}
+			require.Zero(t, visible, "migration-only team access must not persist outside the refresh")
+			return nil
+		}))
+	}
+	assertMigrationTeamScope()
 	name := "20261028010000_ontology_matching_refresh.sql"
 	body, err := os.ReadFile(filepath.Join("..", "..", "..", "migrations", "postgres", "v2_6", name))
 	require.NoError(t, err)
@@ -73,6 +89,7 @@ func TestOntologyMatchingRefreshMigration(t *testing.T) {
 				_, err = provider.Up(context.Background())
 			}
 			require.NoError(t, err)
+			assertMigrationTeamScope()
 			require.Equal(t, before, preserved(), "refresh must not rewrite accepted data or history")
 			var ids []string
 			require.NoError(t, f.admin.Raw(`SELECT anchor_id FROM ontology_maintenance_markers WHERE anchor_kind='ontology_record_heads' ORDER BY anchor_id`).Scan(&ids).Error)

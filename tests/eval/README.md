@@ -196,13 +196,15 @@ retrieval-quality equivalence. Use each pinned release's native runner to
 validate the frozen seed before import and retain its recorded readiness
 protocol, terminal outcomes, and usage limitations. Capture the same 204 cases,
 then replay both trace sets with one pinned prerelease scorer using `--traces`
-and `--mapping` to preserve grouped evidence coverage consistently.
+and `--mapping` to preserve grouped evidence coverage consistently. Scoring copies normalize only `fragment` to `evidence`, preserving IDs and other kinds. Mapping lookup, judgments, grouped alternates and diagnostics share that identity, with maximum-grade deduplication and one ranked slot per returned result. Missing context stays distinct from explicitly empty context; serialized mappings and traces retain their original representations.
 Compare the rescored directories with ordinary `--mode compare`, which requires
 identical seed hashes. Use `ALLOW_UNGATED_EVALUATION=1` for this diagnostic
 workflow and omit the historical release-gate policy. Complete comparison
 evidence requires all 991 imports accounted for, 204 scored cases per release,
 complete mappings, and disclosed ontology readiness. The pair describes the
 two release configurations; it does not isolate ontology's contribution.
+
+For issue #665 offline replay, set `eval_seed` to the frozen v3 seed directory and `eval_capture` to the retained baseline capture, then run `go run ./cmd/eval-runner --mode baseline --seed "$eval_seed/seed_manifest.json" --suite "$eval_seed/suite.jsonl" --traces "$eval_capture/recall_traces.jsonl" --mapping "$eval_capture/knowledge_mapping.json" --out tests/eval/runs/new-alias-correction/baseline --base-url http://127.0.0.1:1 --max-unmapped-source-refs 0`. Repeat with the candidate capture, `--mode candidate`, and a separate fresh ignored output directory using the same pinned scorer. Require the same 204 unique cases, independently aggregate the JSONL scores, and reconcile per-case changes against the retained alias diagnostic. Hash original traces, mappings, qrels and reports before and after; never adjust judgments to reproduce the diagnostic. The [compact correction evidence](baselines/issue_665_evidence_alias_scoring.json) records source/build identities, hashes and changes. This is offline rescoring of the frozen 991-document historical corpus, not a new live comparison: retain incomplete ontology coverage, mixed candidate release history, missing negative judgments and uncontrolled latency limitations. Keep original and corrected reports separately.
 
 ## Use the approved local seed
 
@@ -758,13 +760,17 @@ Before any live run, freeze the matching inputs, definitions, judgments, generat
 hash, source state, configured provider/model, context window, and three fresh-state
 repetitions. Run `TestOntologyMaintenanceCohort` and
 `TestOntologyMaintenanceMatchingCohort` with `DENSE_MEM_ONTOLOGY_LIVE_EVAL=1`,
-`DENSE_MEM_REPOSITORY_TESTCONTAINERS=1`, `DENSE_MEM_REQUIRE_POSTGRES_TESTS=1`, and
-an explicit `ONTOLOGY_MAINTENANCE_CONTEXT_WINDOW_TOKENS`. Give each repetition a
+`DENSE_MEM_REPOSITORY_TESTCONTAINERS=1`, `DENSE_MEM_REQUIRE_POSTGRES_TESTS=1`,
+`AI_VERIFIER_MODEL=dense-mem`, `AI_VERIFIER_DISABLE_TEMPERATURE=false`, and
+`ONTOLOGY_MAINTENANCE_CONTEXT_WINDOW_TOKENS=500000`. Give each repetition a
 separate ignored `DENSE_MEM_ORGANIZATION_REPORT_DIR`; preserve every failed result.
-The approved #659 protocol uses the configured `dense-mem` model and 500,000-token
-context. The backing model revision is unknown unless supplied by the provider.
+The approved #659 restart selects `dense-mem` only in the evaluation process
+environment; the maintainer reports that it maps to `gpt-6-luna`. Preserve the
+full strict schema and original `temperature: 0` request setting. Retain all
+earlier runs, including the `dense-mem-testing` Muse diagnostics. Per-response
+backend identity and internal revision remain unknown unless exposed by the provider.
 
-Require complete source/fact retention and zero false consolidation. The maintainer
+Require complete source/fact retention, zero false consolidation, and zero repeated slots. The maintainer
 approved #659's latency amendment after the original enabled/disabled comparison
 failed on both the unchanged base and candidate. Retain those failures and run five
 fresh alternating base/candidate pairs with the unchanged `BenchmarkRecallOntology`

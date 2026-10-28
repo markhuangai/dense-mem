@@ -1,0 +1,651 @@
+{
+  "issue": "https://github.com/markhuangai/dense-mem/issues/665",
+  "status": "offline_scoring_correction",
+  "normalization": "Scoring-owned copies canonicalize only fragment to evidence, preserving IDs and other kinds; judgments use maximum grade per normalized identity and grouped results retain one slot with only displayed alternates.",
+  "seed_id": "public_6axis_1k_v3",
+  "seed_hash": "sha256:0923aa14109291e5d5cf24fe419f0b6fc229823bf3dd4292e17d45447365e675",
+  "corpus_count": 991,
+  "cases_per_release": 204,
+  "comparison_kind": "Historical v2.6.5 versus upgraded v2.6.6-rc.29 captures, rescored offline; no live Recall, model call, import or new judgment.",
+  "limitations": [
+    "Original comparison remains incomplete: 62 ambiguous ontology sources and incomplete native ontology/topic coverage.",
+    "Candidate ingestion used rc.20 and ontology includes rc.20/rc.25 history before rc.29; the comparison does not isolate ontology's contribution.",
+    "The frozen cohort has no negative judgments; zero Bad@10 does not establish false-positive safety.",
+    "Historical captures had different shared-host load; preserved latency is not a controlled speedup measurement.",
+    "Embedding usage and complete pricing are unavailable; no complete monetary-cost claim is made."
+  ],
+  "independent_aggregation": "Python math.fsum over all per-case JSONL metrics, with separate scored-context/evidence/dream denominators; metrics checked against Go summaries and all 204 diagnostic scores per release at absolute tolerance 1e-12. Any diagnostic-list differences must be independently explained by duplicate mapped evidence identities.",
+  "protected_inputs_unchanged": true,
+  "protected_input_hashes": {
+    "tests/eval/seeds/public_6axis_1k_v3/relationship_ledger.jsonl": "sha256:7ed37a63fdfde69f91bc466482a03be1560ea1785fe5a43bc124f08879f2ef75",
+    "tests/eval/seeds/public_6axis_1k_v3/suite.jsonl": "sha256:438a9742576ad5fa9a97c8edaa1e6b0550c740a812dfd3cf051cce68e632b17d",
+    "tests/eval/seeds/public_6axis_1k_v3/v3_derivation_report.json": "sha256:2ac4fe77035e15a615c95642a94d1800962cd10935620191750f07d617d26acb",
+    "tests/eval/seeds/public_6axis_1k_v3/validation_report.json": "sha256:a100e5739798e37039de3fe524de726a0ef914c70f502a5dbcc97de556815dcd",
+    "tests/eval/seeds/public_6axis_1k_v3/encoding_repairs.json": "sha256:05aab781ef70a6842b752081f4ca07f8cc9a3a19af157f60516ea3d2b0333f54",
+    "tests/eval/seeds/public_6axis_1k_v3/seed_manifest.json": "sha256:62b6a210f23633bbb3dcba60a6f81e55cbcbc385d3406eb3cf5a5a3d05cd5076",
+    "tests/eval/seeds/public_6axis_1k_v3/qrels.jsonl": "sha256:407b50c550dc32c34f440088d2c64de365026cd1f045a1ea68df890e0a61ea62",
+    "tests/eval/seeds/public_6axis_1k_v3/corpus.jsonl": "sha256:f9fff0cc01abd54a7411b0a1e2827ccab322ca6f47ea7554ebb26e59f333e72f",
+    "tests/eval/seeds/public_6axis_1k_v3/answers.jsonl": "sha256:a6cf3f37734473f47d36e89462a1e74e904f0362bd2b0fd5e7244b44fbb79fc4",
+    "tests/eval/seeds/public_6axis_1k_v3/cases.jsonl": "sha256:aceb01948cfcdc4b65fb3f79c896d63365ef901a0d4dd0cfeeedcd589f168324",
+    "tests/eval/seeds/public_6axis_1k_v3/transforms.jsonl": "sha256:cd6896adad524a0f80a99630000e699159ed9d04c0b29bd1ff9939375c63b53e",
+    "tests/eval/seeds/public_6axis_1k_v3/licenses.md": "sha256:94435fc76125c010e750104d70a7b33509de843e2393636324c74814e5267ffa",
+    "tests/eval/seeds/public_6axis_1k_v3/v2_derivation_report.json": "sha256:0790d237f34a1e63696cad434c34143b84634908ff1b08d3cd57a0b094e5c7d7",
+    "tests/eval/seeds/public_6axis_1k_v3/repaired_source/validation_report.json": "sha256:12b9edce8cbcd4530b4d1d4a74402b0ae2e22323d6b3025900ea742fd8b84911",
+    "tests/eval/seeds/public_6axis_1k_v3/repaired_source/seed_manifest.json": "sha256:3df5ade8578b1800089c362fa7d8a436e4b7f87bbd6a898a770ee4a1b04886db",
+    "tests/eval/seeds/public_6axis_1k_v3/repaired_source/qrels.jsonl": "sha256:407b50c550dc32c34f440088d2c64de365026cd1f045a1ea68df890e0a61ea62",
+    "tests/eval/seeds/public_6axis_1k_v3/repaired_source/corpus.jsonl": "sha256:6420a03c604bbd7bea6f95dac11c459d851fca82b127dca23e62c205a0fe152a",
+    "tests/eval/seeds/public_6axis_1k_v3/repaired_source/answers.jsonl": "sha256:a6cf3f37734473f47d36e89462a1e74e904f0362bd2b0fd5e7244b44fbb79fc4",
+    "tests/eval/seeds/public_6axis_1k_v3/repaired_source/cases.jsonl": "sha256:aceb01948cfcdc4b65fb3f79c896d63365ef901a0d4dd0cfeeedcd589f168324",
+    "tests/eval/seeds/public_6axis_1k_v3/repaired_source/transforms.jsonl": "sha256:cd6896adad524a0f80a99630000e699159ed9d04c0b29bd1ff9939375c63b53e",
+    "tests/eval/seeds/public_6axis_1k_v3/repaired_source/licenses.md": "sha256:94435fc76125c010e750104d70a7b33509de843e2393636324c74814e5267ffa",
+    "tests/eval/runs/public-6axis-v3-20261023-rc20/upgrade-rc29-20261026/comparison-report.json": "sha256:c7eb4118124f908d90127dd43865ea463f07d82c5ec02d90e4cf3c79fe094a7c",
+    "tests/eval/runs/public-6axis-v3-20261023-rc20/baseline/runs/common-score-rc29/knowledge_mapping.json": "sha256:013356abe32b5852ab4065c2f335b42beaa582c67de7b7a19640b20469d60ffc",
+    "tests/eval/runs/public-6axis-v3-20261023-rc20/baseline/runs/common-score-rc29/recall_traces.jsonl": "sha256:36373375f20af21503fd47bd348d81bcd1a30dc53d0bfb1d5ebbe048d63aef4a",
+    "tests/eval/runs/public-6axis-v3-20261023-rc20/baseline/runs/common-score-rc29/retrieval_scores.jsonl": "sha256:c26906b6f98b7180aab59cf74067a8a83b27d226e96c502e7c35c1b0695b1d1a",
+    "tests/eval/runs/public-6axis-v3-20261023-rc20/baseline/runs/common-score-rc29/summary.json": "sha256:246a6a55e01da4a72d4a031f1964ede8a47e79fd1879dc660a188fea0c8c2b3f",
+    "tests/eval/runs/public-6axis-v3-20261023-rc20/candidate/runs/rc29-common-score/knowledge_mapping.json": "sha256:d3dc190f593ffcab539dcb063cae401875b74a91a0907680f534aef72db25008",
+    "tests/eval/runs/public-6axis-v3-20261023-rc20/candidate/runs/rc29-common-score/recall_traces.jsonl": "sha256:08fddf3c0c5a8d53cc70e0b9fdfcbf1d10e3b1b598c2a634158a4c9e1653660d",
+    "tests/eval/runs/public-6axis-v3-20261023-rc20/candidate/runs/rc29-common-score/retrieval_scores.jsonl": "sha256:3b04bf4799316c271b29feb392b35941ab13d147fb26c72d297ce5adfbfe7919",
+    "tests/eval/runs/public-6axis-v3-20261023-rc20/candidate/runs/rc29-common-score/summary.json": "sha256:949da9302c53a35a7e95aa099ce97c92737937007a0990418160c8020ddf8d9b",
+    "tests/eval/baselines/public_6axis_1k_v3_v2.6.5_vs_v2.6.6-rc.29.json": "sha256:23a9bd9569af0f67d332103c9781066aba2ff51267789fe888d6f456a06d05c4"
+  },
+  "alias_diagnostic_sha256": "sha256:837b1d19cb32854cbca34e45e740996bd5174df4397fdffae34a2684555cad3f",
+  "releases": {
+    "baseline": {
+      "capture": "baseline/runs/common-score-rc29",
+      "unmapped_source_refs": 0,
+      "before": {
+        "cases": 204,
+        "recall_at_k": 0.89109477124183,
+        "mrr": 0.8431625427948958,
+        "ndcg_at_k": 0.8275191566893182,
+        "bad_at_k": 0.0,
+        "required_rank1_rate": 0.7941176470588235,
+        "bad_rank1_rate": 0.0
+      },
+      "after": {
+        "overall": {
+          "cases": 204,
+          "recall_at_k": 0.893545751633987,
+          "mrr": 0.844306333644569,
+          "ndcg_at_k": 0.8290219684362924,
+          "bad_at_k": 0.0,
+          "required_rank1_rate": 0.7941176470588235,
+          "bad_rank1_rate": 0.0
+        },
+        "context": {
+          "cases": 0
+        },
+        "evidence": {
+          "cases": 95,
+          "recall_at_k": 0.7714035087719298,
+          "mrr": 0.7254051796157058,
+          "ndcg_at_k": 0.67791749466294,
+          "bad_at_k": 0.0,
+          "required_rank1_rate": 0.6526315789473685,
+          "bad_rank1_rate": 0.0
+        },
+        "dream": {
+          "cases": 0
+        }
+      },
+      "changed_case_count": 1,
+      "changed_cases": [
+        {
+          "case_id": "public_6axis_v1:qasper:dev:1604.08504:dac087e1328e65ca08f66d8b5307d6624bf3943f",
+          "changes": {
+            "evidence_first_required_rank": [
+              10,
+              3
+            ],
+            "evidence_missing_required_refs": [
+              [
+                {
+                  "type": "source_doc",
+                  "source_doc_id": "public_6axis_v1:qasper:dev:1604.08504:dac087e1328e65ca08f66d8b5307d6624bf3943f:gold:0:0",
+                  "grade": 1,
+                  "reason": "public benchmark evidence"
+                }
+              ],
+              null
+            ],
+            "evidence_mrr": [
+              0.1,
+              0.3333333333333333
+            ],
+            "evidence_ndcg_at_k": [
+              0.17723928678404777,
+              0.483812883166777
+            ],
+            "evidence_recall_at_k": [
+              0.5,
+              1
+            ],
+            "evidence_relevant_at_k": [
+              1,
+              2
+            ],
+            "first_required_rank": [
+              10,
+              3
+            ],
+            "missing_required_refs": [
+              [
+                {
+                  "type": "source_doc",
+                  "source_doc_id": "public_6axis_v1:qasper:dev:1604.08504:dac087e1328e65ca08f66d8b5307d6624bf3943f:gold:0:0",
+                  "grade": 1,
+                  "reason": "public benchmark evidence"
+                }
+              ],
+              null
+            ],
+            "mrr": [
+              0.1,
+              0.3333333333333333
+            ],
+            "ndcg_at_k": [
+              0.17723928678404777,
+              0.483812883166777
+            ],
+            "recall_at_k": [
+              0.5,
+              1
+            ],
+            "relevant_at_k": [
+              1,
+              2
+            ]
+          }
+        }
+      ],
+      "all_numeric_metrics_match_retained_alias_diagnostic": true,
+      "reconciled_diagnostic_differences": [],
+      "corrected_scores_sha256": "sha256:2d701932d4d3ad7ee4571128d3a27122cdc8479f38f91cd2d6758cfca782e103"
+    },
+    "candidate": {
+      "capture": "candidate/runs/rc29-common-score",
+      "unmapped_source_refs": 0,
+      "before": {
+        "cases": 204,
+        "recall_at_k": 0.8898692810457516,
+        "mrr": 0.8185243541861189,
+        "ndcg_at_k": 0.8103381173235203,
+        "bad_at_k": 0.0,
+        "required_rank1_rate": 0.7549019607843137,
+        "bad_rank1_rate": 0.0
+      },
+      "after": {
+        "overall": {
+          "cases": 204,
+          "recall_at_k": 0.8986928104575164,
+          "mrr": 0.8245701058201058,
+          "ndcg_at_k": 0.8167784868022029,
+          "bad_at_k": 0.0,
+          "required_rank1_rate": 0.7598039215686274,
+          "bad_rank1_rate": 0.0
+        },
+        "context": {
+          "cases": 0
+        },
+        "evidence": {
+          "cases": 95,
+          "recall_at_k": 0.7824561403508772,
+          "mrr": 0.7124979114452799,
+          "ndcg_at_k": 0.6739511164491817,
+          "bad_at_k": 0.0,
+          "required_rank1_rate": 0.6210526315789474,
+          "bad_rank1_rate": 0.0
+        },
+        "dream": {
+          "cases": 0
+        }
+      },
+      "changed_case_count": 5,
+      "changed_cases": [
+        {
+          "case_id": "public_6axis_v1:qasper:dev:1604.00400:3f856097be2246bde8244add838e83a2c793bd17",
+          "changes": {
+            "evidence_missing_required_refs": [
+              [
+                {
+                  "type": "source_doc",
+                  "source_doc_id": "public_6axis_v1:qasper:dev:1604.00400:3f856097be2246bde8244add838e83a2c793bd17:gold:1:0",
+                  "grade": 1,
+                  "reason": "public benchmark evidence"
+                }
+              ],
+              null
+            ],
+            "evidence_ndcg_at_k": [
+              0.2640681225725909,
+              0.43067655807339306
+            ],
+            "evidence_recall_at_k": [
+              0.5,
+              1
+            ],
+            "evidence_relevant_total": [
+              2,
+              1
+            ],
+            "missing_required_refs": [
+              [
+                {
+                  "type": "source_doc",
+                  "source_doc_id": "public_6axis_v1:qasper:dev:1604.00400:3f856097be2246bde8244add838e83a2c793bd17:gold:1:0",
+                  "grade": 1,
+                  "reason": "public benchmark evidence"
+                }
+              ],
+              null
+            ],
+            "ndcg_at_k": [
+              0.2640681225725909,
+              0.43067655807339306
+            ],
+            "recall_at_k": [
+              0.5,
+              1
+            ],
+            "relevant_total": [
+              2,
+              1
+            ]
+          }
+        },
+        {
+          "case_id": "public_6axis_v1:qasper:dev:1604.00400:bf52c01bf82612d0c7bbf2e6a5bb2570c322936f",
+          "changes": {
+            "evidence_missing_required_refs": [
+              [
+                {
+                  "type": "source_doc",
+                  "source_doc_id": "public_6axis_v1:qasper:dev:1604.00400:bf52c01bf82612d0c7bbf2e6a5bb2570c322936f:gold:1:0",
+                  "grade": 1,
+                  "reason": "public benchmark evidence"
+                }
+              ],
+              null
+            ],
+            "evidence_ndcg_at_k": [
+              0.7757386182436073,
+              0.9709286432396583
+            ],
+            "evidence_recall_at_k": [
+              0.75,
+              1
+            ],
+            "evidence_relevant_at_k": [
+              3,
+              4
+            ],
+            "missing_required_refs": [
+              [
+                {
+                  "type": "source_doc",
+                  "source_doc_id": "public_6axis_v1:qasper:dev:1604.00400:bf52c01bf82612d0c7bbf2e6a5bb2570c322936f:gold:1:0",
+                  "grade": 1,
+                  "reason": "public benchmark evidence"
+                }
+              ],
+              null
+            ],
+            "ndcg_at_k": [
+              0.7757386182436073,
+              0.9709286432396583
+            ],
+            "recall_at_k": [
+              0.75,
+              1
+            ],
+            "relevant_at_k": [
+              3,
+              4
+            ]
+          }
+        },
+        {
+          "case_id": "public_6axis_v1:qasper:dev:1604.08504:dac087e1328e65ca08f66d8b5307d6624bf3943f",
+          "changes": {
+            "evidence_first_required_rank": [
+              10,
+              3
+            ],
+            "evidence_missing_required_refs": [
+              [
+                {
+                  "type": "source_doc",
+                  "source_doc_id": "public_6axis_v1:qasper:dev:1604.08504:dac087e1328e65ca08f66d8b5307d6624bf3943f:gold:0:0",
+                  "grade": 1,
+                  "reason": "public benchmark evidence"
+                }
+              ],
+              null
+            ],
+            "evidence_mrr": [
+              0.1,
+              0.3333333333333333
+            ],
+            "evidence_ndcg_at_k": [
+              0.17723928678404777,
+              0.483812883166777
+            ],
+            "evidence_recall_at_k": [
+              0.5,
+              1
+            ],
+            "evidence_relevant_at_k": [
+              1,
+              2
+            ],
+            "first_required_rank": [
+              10,
+              3
+            ],
+            "missing_required_refs": [
+              [
+                {
+                  "type": "source_doc",
+                  "source_doc_id": "public_6axis_v1:qasper:dev:1604.08504:dac087e1328e65ca08f66d8b5307d6624bf3943f:gold:0:0",
+                  "grade": 1,
+                  "reason": "public benchmark evidence"
+                }
+              ],
+              null
+            ],
+            "mrr": [
+              0.1,
+              0.3333333333333333
+            ],
+            "ndcg_at_k": [
+              0.17723928678404777,
+              0.483812883166777
+            ],
+            "recall_at_k": [
+              0.5,
+              1
+            ],
+            "relevant_at_k": [
+              1,
+              2
+            ]
+          }
+        },
+        {
+          "case_id": "public_6axis_v1:qasper:dev:1605.06083:6d4400f45bd97b812e946b8a682b018826e841f1",
+          "changes": {
+            "evidence_missing_required_refs": [
+              [
+                {
+                  "type": "source_doc",
+                  "source_doc_id": "public_6axis_v1:qasper:dev:1605.06083:6d4400f45bd97b812e946b8a682b018826e841f1:gold:1:0",
+                  "grade": 1,
+                  "reason": "public benchmark evidence"
+                },
+                {
+                  "type": "source_doc",
+                  "source_doc_id": "public_6axis_v1:qasper:dev:1605.06083:6d4400f45bd97b812e946b8a682b018826e841f1:gold:2:0",
+                  "grade": 1,
+                  "reason": "public benchmark evidence"
+                },
+                {
+                  "type": "source_doc",
+                  "source_doc_id": "public_6axis_v1:qasper:dev:1605.06083:6d4400f45bd97b812e946b8a682b018826e841f1:gold:3:0",
+                  "grade": 1,
+                  "reason": "public benchmark evidence"
+                },
+                {
+                  "type": "source_doc",
+                  "source_doc_id": "public_6axis_v1:qasper:dev:1605.06083:6d4400f45bd97b812e946b8a682b018826e841f1:gold:4:0",
+                  "grade": 1,
+                  "reason": "public benchmark evidence"
+                }
+              ],
+              [
+                {
+                  "type": "source_doc",
+                  "source_doc_id": "public_6axis_v1:qasper:dev:1605.06083:6d4400f45bd97b812e946b8a682b018826e841f1:gold:1:0",
+                  "grade": 1,
+                  "reason": "public benchmark evidence"
+                },
+                {
+                  "type": "source_doc",
+                  "source_doc_id": "public_6axis_v1:qasper:dev:1605.06083:6d4400f45bd97b812e946b8a682b018826e841f1:gold:2:0",
+                  "grade": 1,
+                  "reason": "public benchmark evidence"
+                },
+                {
+                  "type": "source_doc",
+                  "source_doc_id": "public_6axis_v1:qasper:dev:1605.06083:6d4400f45bd97b812e946b8a682b018826e841f1:gold:3:0",
+                  "grade": 1,
+                  "reason": "public benchmark evidence"
+                }
+              ]
+            ],
+            "evidence_ndcg_at_k": [
+              0.21398626473452756,
+              0.24630238874073
+            ],
+            "evidence_recall_at_k": [
+              0.2,
+              0.25
+            ],
+            "evidence_relevant_total": [
+              5,
+              4
+            ],
+            "missing_required_refs": [
+              [
+                {
+                  "type": "source_doc",
+                  "source_doc_id": "public_6axis_v1:qasper:dev:1605.06083:6d4400f45bd97b812e946b8a682b018826e841f1:gold:1:0",
+                  "grade": 1,
+                  "reason": "public benchmark evidence"
+                },
+                {
+                  "type": "source_doc",
+                  "source_doc_id": "public_6axis_v1:qasper:dev:1605.06083:6d4400f45bd97b812e946b8a682b018826e841f1:gold:2:0",
+                  "grade": 1,
+                  "reason": "public benchmark evidence"
+                },
+                {
+                  "type": "source_doc",
+                  "source_doc_id": "public_6axis_v1:qasper:dev:1605.06083:6d4400f45bd97b812e946b8a682b018826e841f1:gold:3:0",
+                  "grade": 1,
+                  "reason": "public benchmark evidence"
+                },
+                {
+                  "type": "source_doc",
+                  "source_doc_id": "public_6axis_v1:qasper:dev:1605.06083:6d4400f45bd97b812e946b8a682b018826e841f1:gold:4:0",
+                  "grade": 1,
+                  "reason": "public benchmark evidence"
+                }
+              ],
+              [
+                {
+                  "type": "source_doc",
+                  "source_doc_id": "public_6axis_v1:qasper:dev:1605.06083:6d4400f45bd97b812e946b8a682b018826e841f1:gold:1:0",
+                  "grade": 1,
+                  "reason": "public benchmark evidence"
+                },
+                {
+                  "type": "source_doc",
+                  "source_doc_id": "public_6axis_v1:qasper:dev:1605.06083:6d4400f45bd97b812e946b8a682b018826e841f1:gold:2:0",
+                  "grade": 1,
+                  "reason": "public benchmark evidence"
+                },
+                {
+                  "type": "source_doc",
+                  "source_doc_id": "public_6axis_v1:qasper:dev:1605.06083:6d4400f45bd97b812e946b8a682b018826e841f1:gold:3:0",
+                  "grade": 1,
+                  "reason": "public benchmark evidence"
+                }
+              ]
+            ],
+            "ndcg_at_k": [
+              0.21398626473452756,
+              0.24630238874073
+            ],
+            "recall_at_k": [
+              0.2,
+              0.25
+            ],
+            "relevant_total": [
+              5,
+              4
+            ]
+          }
+        },
+        {
+          "case_id": "public_6axis_v1:qasper:dev:1605.06083:7561a968470a8936d10e1ba722d2f38b5a9a4d38",
+          "changes": {
+            "evidence_first_required_rank": [
+              null,
+              1
+            ],
+            "evidence_missing_required_refs": [
+              [
+                {
+                  "type": "source_doc",
+                  "source_doc_id": "public_6axis_v1:qasper:dev:1605.06083:7561a968470a8936d10e1ba722d2f38b5a9a4d38:gold:0:0",
+                  "grade": 1,
+                  "reason": "public benchmark evidence"
+                },
+                {
+                  "type": "source_doc",
+                  "source_doc_id": "public_6axis_v1:qasper:dev:1605.06083:7561a968470a8936d10e1ba722d2f38b5a9a4d38:gold:1:0",
+                  "grade": 1,
+                  "reason": "public benchmark evidence"
+                }
+              ],
+              [
+                {
+                  "type": "source_doc",
+                  "source_doc_id": "public_6axis_v1:qasper:dev:1605.06083:7561a968470a8936d10e1ba722d2f38b5a9a4d38:gold:1:0",
+                  "grade": 1,
+                  "reason": "public benchmark evidence"
+                }
+              ]
+            ],
+            "evidence_mrr": [
+              0,
+              1
+            ],
+            "evidence_ndcg_at_k": [
+              0,
+              0.6131471927654585
+            ],
+            "evidence_recall_at_k": [
+              0,
+              0.5
+            ],
+            "evidence_relevant_at_k": [
+              0,
+              1
+            ],
+            "first_required_rank": [
+              null,
+              1
+            ],
+            "missing_required_refs": [
+              [
+                {
+                  "type": "source_doc",
+                  "source_doc_id": "public_6axis_v1:qasper:dev:1605.06083:7561a968470a8936d10e1ba722d2f38b5a9a4d38:gold:0:0",
+                  "grade": 1,
+                  "reason": "public benchmark evidence"
+                },
+                {
+                  "type": "source_doc",
+                  "source_doc_id": "public_6axis_v1:qasper:dev:1605.06083:7561a968470a8936d10e1ba722d2f38b5a9a4d38:gold:1:0",
+                  "grade": 1,
+                  "reason": "public benchmark evidence"
+                }
+              ],
+              [
+                {
+                  "type": "source_doc",
+                  "source_doc_id": "public_6axis_v1:qasper:dev:1605.06083:7561a968470a8936d10e1ba722d2f38b5a9a4d38:gold:1:0",
+                  "grade": 1,
+                  "reason": "public benchmark evidence"
+                }
+              ]
+            ],
+            "mrr": [
+              0,
+              1
+            ],
+            "ndcg_at_k": [
+              0,
+              0.6131471927654585
+            ],
+            "recall_at_k": [
+              0,
+              0.5
+            ],
+            "relevant_at_k": [
+              0,
+              1
+            ]
+          }
+        }
+      ],
+      "all_numeric_metrics_match_retained_alias_diagnostic": true,
+      "reconciled_diagnostic_differences": [
+        {
+          "case_id": "public_6axis_v1:qasper:dev:1605.06083:6d4400f45bd97b812e946b8a682b018826e841f1",
+          "field": "evidence_missing_required_refs",
+          "reason": "The retained mapping-only diagnostic repeated a missing evidence identity through two source-document judgments; corrected scoring reports it once.",
+          "duplicate_identities": [
+            {
+              "identity": [
+                "evidence",
+                "59f96d5f-3b6d-4e34-95c8-69833eba4486"
+              ],
+              "kept_source_doc_id": "public_6axis_v1:qasper:dev:1605.06083:6d4400f45bd97b812e946b8a682b018826e841f1:gold:1:0",
+              "removed_source_doc_id": "public_6axis_v1:qasper:dev:1605.06083:6d4400f45bd97b812e946b8a682b018826e841f1:gold:4:0"
+            }
+          ]
+        },
+        {
+          "case_id": "public_6axis_v1:qasper:dev:1605.06083:6d4400f45bd97b812e946b8a682b018826e841f1",
+          "field": "missing_required_refs",
+          "reason": "The retained mapping-only diagnostic repeated a missing evidence identity through two source-document judgments; corrected scoring reports it once.",
+          "duplicate_identities": [
+            {
+              "identity": [
+                "evidence",
+                "59f96d5f-3b6d-4e34-95c8-69833eba4486"
+              ],
+              "kept_source_doc_id": "public_6axis_v1:qasper:dev:1605.06083:6d4400f45bd97b812e946b8a682b018826e841f1:gold:1:0",
+              "removed_source_doc_id": "public_6axis_v1:qasper:dev:1605.06083:6d4400f45bd97b812e946b8a682b018826e841f1:gold:4:0"
+            }
+          ]
+        }
+      ],
+      "corrected_scores_sha256": "sha256:d44eb01292fd845607b8c2a13fb40df92fd13f060e3d8df673aa8f2486539c19"
+    }
+  },
+  "corrected_comparison": {
+    "recall_delta": 0.0051470588235293935,
+    "mrr_delta": -0.01973622782446316,
+    "ndcg_delta": -0.012243481634089504,
+    "bad_at_k_delta": 0.0
+  },
+  "scorer": {
+    "source_revision": "b7d635dfac1d24d841d9c2bd1f941edb14a17d5e",
+    "source_tree": "52659d3e30f107f0756d5732b8b60a12caf7fcda",
+    "source_base_revision": "6dfccc4da6d067c8674f186feebaf0fb716d97ea",
+    "audit_base_revision": "f3f29fc7df2deed2a456dd729bc0d8c464887450",
+    "source_binding": "Built from the verified clean source revision; scorer source-file hashes and the resulting runner hash bind this offline replay to that checkout.",
+    "source_files_sha256": {
+      "internal/evalharness/score.go": "sha256:b94fd34bc349869e6ef80db9262f142f18509e4111acbf9c1ec2301a77102cf2",
+      "internal/evalharness/runner.go": "sha256:5c25f820117b9b81a7d42c0e17d511370c01b6e3f20876d26b69674c440c2b09",
+      "internal/evalharness/grouped_score_test.go": "sha256:50a2e644621ad39871547da42314e447357282c18e280a7ff9dfb1d80ad707d2",
+      "internal/recall/quality/metrics.go": "sha256:d045f53801d85d2a1f7e3ebd1f8e537496ab490d61246b35756c2d09f98716e9"
+    },
+    "runner_sha256": "sha256:f52072d858470040eafa9eb8f1afec7a645be6d2f2c04c015efcacb198f550cb",
+    "go_version": "go version go1.26.10 linux/amd64"
+  }
+}

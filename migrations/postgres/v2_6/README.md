@@ -155,8 +155,12 @@ Rollback runs Down while workers remain stopped, then restores the prior matchin
 binary; retaining the queued refresh is required. Neither direction resurrects
 history or treats an old receipt as current without the normal context check.
 
-The migration takes marker-row locks in scope/record order with a transaction-local
-five-second lock timeout and migration RLS context. It scans active definition
-heads without rewriting canonical tables or adding indexes or constraints. The
-enqueue is atomic; a failure rolls back and can be retried after diagnosing the
-blocker. The existing bounded discovery pages drain the committed queue on restart.
+The migration takes a table lock to create and drop a temporary migration-only
+team-read policy, then marker-row locks in scope/record order, all with a
+transaction-local five-second lock timeout and migration RLS context. The policy
+exists only within the migration transaction and permits the scan through forced
+team RLS; neither direction retains broader runtime access. It scans active
+definition heads without rewriting canonical tables or adding indexes or
+constraints. The enqueue is atomic; a failure rolls back and can be retried after
+diagnosing the blocker. The existing bounded discovery pages drain the committed
+queue on restart.

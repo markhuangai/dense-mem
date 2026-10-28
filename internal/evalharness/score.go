@@ -41,6 +41,11 @@ func ScoreTrace(caseID string, k int, qrel QRel, trace RecallTrace, mapping Know
 
 func scoreTrace(caseID string, k int, qrel QRel, trace RecallTrace, scoring scoringContext) RetrievalScore {
 	mapping := scoring.mapping
+	qrel = scoringQRel(qrel, mapping)
+	trace.RankedRefs = scoringRefs(trace.RankedRefs)
+	trace.ContextRefs = scoringRefs(trace.ContextRefs)
+	trace.ContextEvidenceRefs = scoringRefs(trace.ContextEvidenceRefs)
+	trace.DreamRefs = scoringRefs(trace.DreamRefs)
 	required, unmappedRequired := remapJudgments(qrel.RequiredRefs, mapping)
 	bad, unmappedBad := remapResultRefs(qrel.BadRefs, mapping)
 	requiredEvidence, unmappedRequiredEvidence := remapJudgments(qrel.RequiredEvidenceRefs, mapping)
@@ -66,6 +71,7 @@ func scoreTrace(caseID string, k int, qrel QRel, trace RecallTrace, scoring scor
 		UnmappedSourceRefs: append(append(append(append(append(unmappedRequired, unmappedBad...), unmappedRequiredEvidence...), unmappedBadEvidence...), unmappedRequiredDreams...), unmappedBadDreams...),
 		LatencyMS:          trace.LatencyMS,
 	}
+	score.UnmappedSourceRefs = scoringJudgmentRefs(score.UnmappedSourceRefs, mapping)
 	if trace.ContextRefs != nil {
 		contextRefs := scoring.refsForQRel(trace.ContextRefs, qrel.RequiredRefs, qrel.BadRefs)
 		contextMetrics := recallquality.ScoreAtK(resultRefs(contextRefs), required, bad, k)
@@ -84,8 +90,8 @@ func scoreTrace(caseID string, k int, qrel QRel, trace RecallTrace, scoring scor
 	if len(qrel.RequiredEvidenceRefs) > 0 || len(qrel.BadEvidenceRefs) > 0 {
 		evidenceRefs := scoring.refsForQRel(trace.ContextEvidenceRefs, qrel.RequiredEvidenceRefs, qrel.BadEvidenceRefs)
 		evidenceAvailable := trace.ContextEvidenceRefs != nil
-		if trace.ContextEvidenceRefs == nil && qrelTargetsOnlyType(qrel.RequiredEvidenceRefs, qrel.BadEvidenceRefs, mapping, "fragment") {
-			evidenceRefs = fragmentRefs(trace.ContextRefs)
+		if trace.ContextEvidenceRefs == nil && qrelTargetsOnlyType(qrel.RequiredEvidenceRefs, qrel.BadEvidenceRefs, mapping, "evidence") {
+			evidenceRefs = contextEvidenceRefs(trace.ContextRefs)
 			evidenceAvailable = evidenceRefs != nil
 		}
 		if evidenceAvailable {
@@ -493,13 +499,103 @@ func remapJudgments(refs []Ref, mapping KnowledgeMapping) ([]recallquality.Judgm
 			unmapped = append(unmapped, ref)
 			resolved = Ref{Type: ref.Type, ID: "unmapped:" + ref.SourceDocID}
 		}
-		grade := ref.Grade
-		if grade <= 0 {
-			grade = 1
-		}
-		out = append(out, recallquality.Judgment{Type: resolved.Type, ID: resolved.ID, Grade: grade})
+		out = append(out, recallquality.Judgment{Type: resolved.Type, ID: resolved.ID, Grade: judgmentGrade(ref.Grade)})
 	}
 	return out, unmapped
+}
+
+func judgmentGrade(grade float64) float64 {
+	if grade <= 0 {
+		return 1
+	}
+	return grade
+}
+
+func scoringRefType(refType string) string {
+	if strings.TrimSpace(refType) == "fragment" {
+		return "evidence"
+	}
+	return refType
+}
+
+func scoringRefs(refs []Ref) []Ref {
+	if refs == nil {
+		return nil
+	}
+	out := make([]Ref, len(refs))
+	for i, ref := range refs {
+		ref.Type = scoringRefType(ref.Type)
+		out[i] = ref
+	}
+	return out
+}
+
+func scoringMapping(mapping KnowledgeMapping) KnowledgeMapping {
+	out := mapping
+	out.BySourceDocID = make(map[string]Ref, len(mapping.BySourceDocID))
+	for sourceDocID, ref := range mapping.BySourceDocID {
+		ref.Type = scoringRefType(ref.Type)
+		out.BySourceDocID[sourceDocID] = ref
+	}
+	out.BySourceDocIDAndType = make(map[string]map[string][]Ref, len(mapping.BySourceDocIDAndType))
+	for sourceDocID, byType := range mapping.BySourceDocIDAndType {
+		if byType == nil {
+			out.BySourceDocIDAndType[sourceDocID] = nil
+			continue
+		}
+		normalized := make(map[string][]Ref, len(byType))
+		types := make([]string, 0, len(byType))
+		for refType := range byType {
+			types = append(types, refType)
+		}
+		sort.Strings(types)
+		for _, refType := range types {
+			targetType := scoringRefType(refType)
+			for _, ref := range byType[refType] {
+				if ref.Type == "" {
+					ref.Type = refType
+				}
+				ref.Type = scoringRefType(ref.Type)
+				if targetType != "evidence" || !hasMappedRef(normalized[targetType], ref) {
+					normalized[targetType] = append(normalized[targetType], ref)
+				}
+			}
+		}
+		out.BySourceDocIDAndType[sourceDocID] = normalized
+	}
+	return out
+}
+
+func scoringQRel(qrel QRel, mapping KnowledgeMapping) QRel {
+	for _, refs := range []*[]Ref{&qrel.RequiredRefs, &qrel.BadRefs, &qrel.RequiredEvidenceRefs, &qrel.BadEvidenceRefs, &qrel.RequiredDreamRefs, &qrel.BadDreamRefs} {
+		*refs = scoringJudgmentRefs(*refs, mapping)
+	}
+	return qrel
+}
+
+func scoringJudgmentRefs(refs []Ref, mapping KnowledgeMapping) []Ref {
+	if refs == nil {
+		return nil
+	}
+	out := make([]Ref, 0, len(refs))
+	positions := make(map[string]int, len(refs))
+	for _, ref := range refs {
+		ref.Type = scoringRefType(ref.Type)
+		resolved, ok := resolveRef(ref, mapping)
+		if !ok {
+			resolved = Ref{Type: ref.Type, ID: "unmapped:" + ref.SourceDocID}
+		}
+		key := refKey(resolved.Type, resolved.ID)
+		if index, exists := positions[key]; exists {
+			if judgmentGrade(ref.Grade) > judgmentGrade(out[index].Grade) {
+				out[index].Grade = ref.Grade
+			}
+			continue
+		}
+		positions[key] = len(out)
+		out = append(out, ref)
+	}
+	return out
 }
 
 func remapResultRefs(refs []Ref, mapping KnowledgeMapping) ([]recallquality.ResultRef, []Ref) {
@@ -538,6 +634,7 @@ type scoringContext struct {
 }
 
 func newScoringContext(mapping KnowledgeMapping) scoringContext {
+	mapping = scoringMapping(mapping)
 	scoring := scoringContext{
 		mapping:              mapping,
 		sourceDocIDsByRefKey: map[string][]string{},
@@ -648,13 +745,13 @@ func qrelTargetsOnlyType(required []Ref, bad []Ref, mapping KnowledgeMapping, ta
 	return ok
 }
 
-func fragmentRefs(refs []Ref) []Ref {
+func contextEvidenceRefs(refs []Ref) []Ref {
 	if refs == nil {
 		return nil
 	}
 	out := make([]Ref, 0, len(refs))
 	for _, ref := range refs {
-		if strings.TrimSpace(ref.Type) == "fragment" {
+		if strings.TrimSpace(ref.Type) == "evidence" {
 			out = append(out, ref)
 		}
 	}

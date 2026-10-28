@@ -308,6 +308,7 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 }
 
 func validateRequiredQRelMappings(qrels map[string]QRel, suite []SuiteCase, mapping KnowledgeMapping) error {
+	mapping = scoringMapping(mapping)
 	for _, suiteCase := range suite {
 		qrel, ok := qrels[suiteCase.CaseID]
 		if !ok {
@@ -328,6 +329,7 @@ func validateRequiredQRelMappings(qrels map[string]QRel, suite []SuiteCase, mapp
 				if strings.TrimSpace(ref.SourceDocID) == "" {
 					continue
 				}
+				ref.Type = scoringRefType(ref.Type)
 				if _, ok := resolveRef(ref, mapping); !ok {
 					return fmt.Errorf("%s qrel ref for case %q is unmapped after import: type=%s source_doc_id=%s", refs.label, suiteCase.CaseID, ref.Type, ref.SourceDocID)
 				}
