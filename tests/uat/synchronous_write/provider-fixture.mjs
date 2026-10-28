@@ -59,7 +59,7 @@ const server = createServer(async (request, response) => {
   if (handleDecisionFixture(request, response, payload)) return;
 
   if (request.method === "POST" && request.url === "/ontology-fixture") {
-    if (!["normal", "ambiguous", "fail-three-then-success", "hold"].includes(payload.mode)) {
+    if (!["normal", "matching", "ambiguous", "fail-three-then-success", "hold"].includes(payload.mode)) {
       sendJSON(response, 400, { error: "invalid ontology fixture mode" });
       return;
     }
@@ -341,8 +341,11 @@ function fixtureOntologyOrganization(payload) {
     const kind = item.kind === "entity" ? "entity_class" : item.kind === "predicate" ? "predicate_concept" : "topic";
     const base = kind === "entity_class" ? item.entity_kind : "";
     const topicKey = /redis|keydb/i.test(JSON.stringify(item)) ? "memory-coordination" : "memory-storage";
+    const candidateKey = ontologyMode === "matching" && item.kind === "evidence"
+      ? (/\bheliostat\b/i.test(item.text) ? "suntracker" : /\babout\b/i.test(item.text) ? "about" : /\band\b/i.test(item.text) ? "conjunctioncatalog" : "grammarnoise")
+      : topicKey;
     const signature = `${kind}:${base}:${kind === "topic" ? topicKey : ""}`;
-    let ref = item.locked_definition_ref || input.definitions.find((definition) => definition.kind === kind && (kind !== "entity_class" || definition.base_entity_kind === base) && (kind !== "topic" || definition.key === topicKey))?.ref || created.get(signature);
+    let ref = item.locked_definition_ref || input.definitions.find((definition) => definition.kind === kind && (kind !== "entity_class" || definition.base_entity_kind === base) && (kind !== "topic" || definition.key === candidateKey))?.ref || created.get(signature);
     if (!ref) {
       ref = `new-definition-${definitions.length}`;
       created.set(signature, ref);

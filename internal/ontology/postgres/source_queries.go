@@ -1,5 +1,7 @@
 package postgres
 
+const vocabularyVectorSQL = `ts_delete(to_tsvector('simple',array_to_string(head.names,' ') || ' ' || COALESCE(revision.body->'definition'->>'description','')),?::text[])`
+
 const maintenanceEntityPageSQL = `SELECT entity_id::text AS id,version FROM entity_records WHERE team_id=?::uuid AND space_id=?::uuid AND space_generation=? AND entity_id>COALESCE(NULLIF(?,'')::uuid,'00000000-0000-0000-0000-000000000000'::uuid) ORDER BY entity_id LIMIT ?`
 
 const maintenanceDefinitionPageSQL = `WITH RECURSIVE input AS (
@@ -30,8 +32,7 @@ const maintenanceDefinitionSourcesSQL = `), roots AS (
  JOIN input AS scope ON scope.team_id=dependency.team_id AND scope.shared_space_id=dependency.shared_space_id
  AND scope.space_generation=dependency.space_generation
 ), words AS (
- SELECT head.names || tsvector_to_array(to_tsvector('simple',array_to_string(head.names,' ') || ' ' ||
- COALESCE(revision.body->'definition'->>'description',''))) AS terms
+ SELECT head.names || tsvector_to_array(` + vocabularyVectorSQL + `) AS terms
  FROM ontology_record_heads AS head JOIN ontology_record_revisions AS revision
  USING(team_id,shared_space_id,space_generation,record_id,version)
  JOIN input AS scope USING(team_id,shared_space_id,space_generation)

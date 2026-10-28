@@ -62,6 +62,63 @@ func TestPairCommandValidatesRealBinaryAndRetainsRunIdentity(t *testing.T) {
 	for _, release := range []*PairRelease{&c.Baseline, &c.Candidate} {
 		release.Runner, release.SourceRevision = c.Scorer, revision
 	}
+	t.Run("baseline_proof_before_identity", func(t *testing.T) {
+		c := c
+		c.OutDir = filepath.Join(t.TempDir(), "capture-source")
+		writePairCompletedStage(t, c, "baseline", "import")
+		capture := filepath.Join(writePairCompletedStage(t, c, "baseline", "capture"), "native")
+		captureHashes, err := pairArtifactHashes(capture)
+		require.NoError(t, err)
+		proofHash, err := PairFileHash(filepath.Join(capture, "pair_capture.json"))
+		require.NoError(t, err)
+		c.OutDir = filepath.Join(t.TempDir(), "paired-output")
+		c.Baseline.CaptureDir = capture
+		c.Baseline.CaptureSHA256 = pairBytesHash([]byte("incorrect baseline proof"))
+		identity := filepath.Join(c.OutDir, "identity.json")
+		_, err = runFixturePairCommand(t, c, PairCommand{Action: "validate"})
+		require.ErrorContains(t, err, "baseline capture proof hash mismatch")
+		require.NoFileExists(t, identity)
+		afterCapture, err := pairArtifactHashes(capture)
+		require.NoError(t, err)
+		require.Equal(t, captureHashes, afterCapture)
+
+		c.Baseline.CaptureSHA256 = proofHash
+		_, err = runFixturePairCommand(t, c, PairCommand{Action: "validate"})
+		require.NoError(t, err)
+		original, err := os.ReadFile(identity)
+		require.NoError(t, err)
+		assertRetained := func() {
+			t.Helper()
+			after, err := os.ReadFile(identity)
+			require.NoError(t, err)
+			require.Equal(t, original, after)
+			afterCapture, err := pairArtifactHashes(capture)
+			require.NoError(t, err)
+			require.Equal(t, captureHashes, afterCapture)
+		}
+		assertRetained()
+		_, err = runFixturePairCommand(t, c, PairCommand{Action: "validate"})
+		require.NoError(t, err)
+		assertRetained()
+
+		changed := c
+		changed.Baseline.CaptureSHA256 = pairBytesHash([]byte("incorrect baseline proof"))
+		_, err = runFixturePairCommand(t, changed, PairCommand{Action: "validate"})
+		require.ErrorContains(t, err, "baseline capture proof hash mismatch")
+		assertRetained()
+		changed = c
+		changed.Candidate.Models.Remember = "changed"
+		_, err = runFixturePairCommand(t, changed, PairCommand{Action: "validate"})
+		require.ErrorContains(t, err, "paired run identity changed")
+		assertRetained()
+
+		require.NoError(t, os.WriteFile(filepath.Join(capture, "recall_traces.jsonl"), []byte("modified capture\n"), 0o600))
+		_, err = runFixturePairCommand(t, c, PairCommand{Action: "validate"})
+		require.ErrorContains(t, err, "capture artifacts differ from their immutable receipt")
+		after, err := os.ReadFile(identity)
+		require.NoError(t, err)
+		require.Equal(t, original, after)
+	})
 	output, err = runFixturePairCommand(t, c, PairCommand{Action: "validate"})
 	require.NoError(t, err)
 	var result PairConfig

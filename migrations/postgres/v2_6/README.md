@@ -138,3 +138,25 @@ Down is supported only while the operational installation remains empty.
 Populated retirement requires disabling or pausing maintenance and rolling
 forward. Never restart an incompatible binary or rewrite historical accounting
 to make rollback appear safe.
+
+## Ontology matching refresh (#659)
+
+`20261028010000_ontology_matching_refresh.sql` enqueues current active shared
+definitions through the existing maintenance marker function in both directions.
+It changes only the work queue: canonical Knowledge, stored source vocabulary,
+fingerprints, operation hashes, settings, and immutable assessments remain exact.
+Existing empty-cursor notifications coalesce; partially consumed markers receive
+a new sequence and restart from the beginning. Readiness remains incomplete while
+these markers or the resulting source work are pending.
+
+Pause or disable maintenance, drain admitted work, and stop every old worker before
+applying the migration. Upgrade starts the filtered matching binary after Up.
+Rollback runs Down while workers remain stopped, then restores the prior matching
+binary; retaining the queued refresh is required. Neither direction resurrects
+history or treats an old receipt as current without the normal context check.
+
+The migration takes marker-row locks in scope/record order with a transaction-local
+five-second lock timeout and migration RLS context. It scans active definition
+heads without rewriting canonical tables or adding indexes or constraints. The
+enqueue is atomic; a failure rolls back and can be retried after diagnosing the
+blocker. The existing bounded discovery pages drain the committed queue on restart.

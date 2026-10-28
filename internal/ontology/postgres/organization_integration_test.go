@@ -2,7 +2,11 @@
 
 package postgres
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/markhuangai/dense-mem/internal/evalharness"
+)
 
 func TestOntologyOrganizationAtomicReplayAndIsolation(t *testing.T) {
 	testOntologyOrganizationAtomicReplayAndIsolation(t)
@@ -39,3 +43,7 @@ func TestOntologyOrganizationCancellationReceipt(t *testing.T) {
 func TestOntologyOrganizationCohort(t *testing.T) { testOntologyOrganizationCohort(t) }
 
 func TestOntologyMaintenanceCohort(t *testing.T) { testOntologyCohort(t, true) }
+
+func TestOntologyMaintenanceMatchingCohort(t *testing.T) {
+	testOntologyCohortWithMatching(t, true, evalharness.OntologyMatchingCohort())
+}

@@ -1,0 +1,17 @@
+{
+  "acceptance": {
+    "distinct_fact_coverage": 1,
+    "false_consolidations": 0,
+    "fresh_state_live_repetitions": 3,
+    "repeated_slots": 0,
+    "source_preservation": 1
+  },
+  "case_count": 8,
+  "cohort_sha256": "sha256:28a36b121a0e2126b0d04f80e66464e8668fa20d75291f59fd5800f2d8b3b7f2",
+  "generator": "internal/evalharness/organization_matching_cohort.go",
+  "generator_sha256": "sha256:a36d044ba70b39440392981fdba59a2afad4006e943147af229c81df0fd12764",
+  "issue": 659,
+  "judgment_policy": "Fixed synthetic sources, vocabulary and gold judgments; gold equivalence keys and fact IDs never enter provider input. Existing frozen cohorts remain unchanged.",
+  "schema_version": "dense-mem.ontology.matching_cohort.v1",
+  "source_count": 16
+}
