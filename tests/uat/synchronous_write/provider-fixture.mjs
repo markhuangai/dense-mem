@@ -254,6 +254,12 @@ function fixtureChatResponse(payload, requestFault = "none", attempt = 1) {
   if (schemaName === "dense_mem_dream_generation_response") return fixtureDreamGeneration(payload);
   if (schemaName === "ontology_organization_v1") return fixtureOntologyOrganization(payload);
   const assessment = fixtureAssessment(assessmentInput(payload), requestFault, attempt);
+  if (requestFault === "routed-field-repair" || requestFault === "routed-field-exhausted") {
+    const repair = structuredInput(payload, (input) => Array.isArray(input.validation_errors));
+    const actionable = repair.validation_errors?.some((error) => error.field === "relationship_results[0].disposition" && error.message === "is required");
+    if (requestFault === "routed-field-exhausted" || !actionable) delete assessment.relationship_results[0].disposition;
+    return assessment;
+  }
   if (requestFault === "predicate-registration-kind-repair") {
     const repair = structuredInput(payload, (input) => Array.isArray(input.validation_errors));
     const actionable = repair.validation_errors?.some((error) => error.field?.endsWith("predicate_registration.predicate_key") && error.message?.includes("submitted subject kind") && error.message?.includes("registration cannot change"));
