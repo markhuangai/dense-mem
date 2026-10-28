@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/lib/pq"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
@@ -14,11 +15,15 @@ import (
 
 var maintenanceSourceKinds = []ontology.SourceKind{ontology.EntitySource, ontology.PredicateSource, ontology.EvidenceSource, ontology.RelationshipSource}
 
-func (s *Store) DiscoverMaintenance(ctx context.Context, turn ontology.MaintenanceTurn, limit int) error {
+func (s *Store) DiscoverMaintenance(ctx context.Context, turn ontology.MaintenanceTurn, limit int) (result ontology.MaintenanceDiscoveryResult, err error) {
+	started := time.Now()
+	defer func() { result.Duration = time.Since(started) }()
 	if limit < 1 || limit > ontology.MaintenancePageSize {
-		return ontology.ErrInvalid
+		return result, ontology.ErrInvalid
 	}
-	return s.withScope(ctx, turn.TeamID, false, func(tx *gorm.DB, fence scope) error {
+	stats := newMaintenanceDiscoveryStats()
+	ctx = context.WithValue(ctx, maintenanceDiscoveryStatsKey{}, stats)
+	err = s.withScope(ctx, turn.TeamID, false, func(tx *gorm.DB, fence scope) error {
 		if fence.SpaceID != turn.SpaceID || fence.Generation != turn.Generation {
 			return ontology.ErrLeaseLost
 		}
@@ -43,6 +48,7 @@ func (s *Store) DiscoverMaintenance(ctx context.Context, turn ontology.Maintenan
 				if err := refreshMaintenanceSource(tx, fence, handle, false); err != nil {
 					return err
 				}
+				stats.counts.InitialSources++
 				cursor = handle.ID
 			}
 			if !more {
@@ -53,8 +59,14 @@ func (s *Store) DiscoverMaintenance(ctx context.Context, turn ontology.Maintenan
 				return err
 			}
 		}
+		stats.markerExpansion = true
 		return expandMaintenanceMarkers(tx, fence, limit)
 	})
+	result.Attempted = stats.counts
+	if err == nil {
+		result.Committed, result.Counts = true, stats.counts
+	}
+	return result, err
 }
 
 func maintenanceSourcePage(tx *gorm.DB, fence scope, kind ontology.SourceKind, cursor string, limit int) ([]ontology.SourceHandle, error) {
@@ -142,13 +154,17 @@ func refreshMaintenanceSource(tx *gorm.DB, fence scope, handle ontology.SourceHa
 	if len(text) > 8192 {
 		text = text[:8192]
 	}
-	return tx.Exec(`INSERT INTO ontology_maintenance_sources(team_id,shared_space_id,space_generation,source_kind,source_id,source_version,fingerprint,meaning_key,search_tsv,vocabulary_words,eligible,status,reason)
+	write := tx.Exec(`INSERT INTO ontology_maintenance_sources(team_id,shared_space_id,space_generation,source_kind,source_id,source_version,fingerprint,meaning_key,search_tsv,vocabulary_words,eligible,status,reason)
 	 VALUES(?::uuid,?::uuid,?,?,?,?,?,?,to_tsvector('simple',?),?::text[],?,?,?)
 	 ON CONFLICT(team_id,shared_space_id,space_generation,source_kind,source_id) DO UPDATE SET
 	 source_version=EXCLUDED.source_version,fingerprint=EXCLUDED.fingerprint,meaning_key=EXCLUDED.meaning_key,search_tsv=EXCLUDED.search_tsv,vocabulary_words=EXCLUDED.vocabulary_words,eligible=EXCLUDED.eligible,
 	 revision=ontology_maintenance_sources.revision+1,status=EXCLUDED.status,reason=EXCLUDED.reason,
 	 pending_at=CASE WHEN ontology_maintenance_sources.status='pending' THEN ontology_maintenance_sources.pending_at ELSE clock_timestamp() END,
-	 updated_at=clock_timestamp() WHERE ontology_maintenance_sources.fingerprint<>EXCLUDED.fingerprint OR ?`, fence.TeamID, fence.SpaceID, fence.Generation, handle.Kind, handle.ID, handle.Version, fingerprint, snapshot.MeaningKey, string(text), pq.Array(vocabularyWords), snapshot.Eligible, status, reason, force).Error
+	 updated_at=clock_timestamp() WHERE ontology_maintenance_sources.fingerprint<>EXCLUDED.fingerprint OR ?`, fence.TeamID, fence.SpaceID, fence.Generation, handle.Kind, handle.ID, handle.Version, fingerprint, snapshot.MeaningKey, string(text), pq.Array(vocabularyWords), snapshot.Eligible, status, reason, force)
+	if write.Error == nil && write.RowsAffected > 0 && status == "pending" {
+		observeMaintenanceSource(tx.Statement.Context, fence, handle, "source_requeued", nil)
+	}
+	return write.Error
 }
 
 func latestMaintenanceHandle(tx *gorm.DB, fence scope, handle ontology.SourceHandle) (ontology.SourceHandle, error) {
@@ -175,66 +191,6 @@ func latestMaintenanceHandle(tx *gorm.DB, fence scope, handle ontology.SourceHan
 	}
 	handle.Version = version
 	return handle, nil
-}
-
-type maintenanceMarker struct {
-	AnchorKind, AnchorID, TargetKind, TargetID, Cursor string
-	Sequence                                           int64
-}
-
-func expandMaintenanceMarkers(tx *gorm.DB, fence scope, limit int) error {
-	for remaining := limit; remaining > 0; {
-		var marker maintenanceMarker
-		err := tx.Raw(`SELECT anchor_kind,anchor_id,target_kind,target_id,marker_sequence,cursor FROM ontology_maintenance_markers WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? ORDER BY marker_sequence LIMIT 1 FOR UPDATE`, fence.TeamID, fence.SpaceID, fence.Generation).Row().Scan(&marker.AnchorKind, &marker.AnchorID, &marker.TargetKind, &marker.TargetID, &marker.Sequence, &marker.Cursor)
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if marker.TargetKind == "team" || marker.TargetKind == "space" {
-			if err := tx.Exec(`UPDATE ontology_maintenance_teams SET discovery_kind=0,discovery_cursor='' WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=?`, fence.TeamID, fence.SpaceID, fence.Generation).Error; err != nil {
-				return err
-			}
-			if err := deleteMaintenanceMarker(tx, fence, marker); err != nil {
-				return err
-			}
-			remaining--
-			continue
-		}
-		handles, err := maintenanceMarkerSources(tx, fence, marker, remaining+1)
-		if err != nil {
-			return err
-		}
-		more := len(handles) > remaining
-		if more {
-			handles = handles[:remaining]
-		}
-		for _, handle := range handles {
-			observeMaintenanceSource(tx.Statement.Context, fence, handle, "source_selected", nil)
-			err := refreshMaintenanceInvalidation(tx, fence, handle, marker.TargetKind == "definition")
-			observeMaintenanceSource(tx.Statement.Context, fence, handle, "source_finished", err)
-			if err != nil {
-				return err
-			}
-			marker.Cursor = ontology.SourceKey(handle)
-			remaining--
-		}
-		if more {
-			return tx.Exec(`UPDATE ontology_maintenance_markers SET cursor=? WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND anchor_kind=? AND anchor_id=? AND marker_sequence=?`, marker.Cursor, fence.TeamID, fence.SpaceID, fence.Generation, marker.AnchorKind, marker.AnchorID, marker.Sequence).Error
-		}
-		if err := deleteMaintenanceMarker(tx, fence, marker); err != nil {
-			return err
-		}
-		if len(handles) == 0 {
-			remaining--
-		}
-	}
-	return nil
-}
-
-func deleteMaintenanceMarker(tx *gorm.DB, fence scope, marker maintenanceMarker) error {
-	return tx.Exec(`DELETE FROM ontology_maintenance_markers WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND anchor_kind=? AND anchor_id=? AND marker_sequence=?`, fence.TeamID, fence.SpaceID, fence.Generation, marker.AnchorKind, marker.AnchorID, marker.Sequence).Error
 }
 
 func refreshMaintenanceInvalidation(tx *gorm.DB, fence scope, handle ontology.SourceHandle, definition bool) error {

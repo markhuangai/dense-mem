@@ -65,7 +65,7 @@ func TestOntologyMaintenanceRunCompletionUsesActiveScope(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, turn)
 			for range 6 {
-				require.NoError(t, f.store.DiscoverMaintenance(ctx, *turn, ontology.MaintenancePageSize))
+				require.NoError(t, f.store.discoverMaintenanceError(ctx, *turn, ontology.MaintenancePageSize))
 			}
 			require.NoError(t, f.rls.WithSystemTx(ctx, f.app, func(tx *gorm.DB) error {
 				if err := tx.Exec(`UPDATE ontology_maintenance_sources SET status=?,last_run_id=?::uuid WHERE team_id=?::uuid`, failedStatus, turn.RunID, f.team).Error; err != nil {
@@ -101,7 +101,7 @@ func TestOntologyMaintenanceQueuedMarkerCoalescingAndConsumption(t *testing.T) {
 	require.NotNil(t, turn)
 	defer func() { require.NoError(t, f.store.ReleaseMaintenanceTurn(ctx, *turn)) }()
 	for range 8 {
-		require.NoError(t, f.store.DiscoverMaintenance(ctx, *turn, ontology.MaintenancePageSize))
+		require.NoError(t, f.store.discoverMaintenanceError(ctx, *turn, ontology.MaintenancePageSize))
 	}
 	mutate := func(ctx context.Context, revision int) error {
 		return f.rls.WithTeamTx(ctx, f.app, f.team, func(tx *gorm.DB) error {
@@ -158,7 +158,7 @@ func TestOntologyMaintenanceQueuedMarkerCoalescingAndConsumption(t *testing.T) {
 	requeued, cursor := marker()
 	require.Greater(t, requeued, reset)
 	require.Empty(t, cursor)
-	require.NoError(t, f.store.DiscoverMaintenance(ctx, *turn, ontology.MaintenancePageSize))
+	require.NoError(t, f.store.discoverMaintenanceError(ctx, *turn, ontology.MaintenancePageSize))
 	var version int64
 	require.NoError(t, f.admin.Raw(`SELECT source_version FROM ontology_maintenance_sources WHERE team_id=?::uuid AND source_kind='entity' AND source_id=?`, f.team, source.ID).Row().Scan(&version))
 	require.EqualValues(t, 5, version, "the write blocked by consumption must be rediscovered")
@@ -239,7 +239,7 @@ func TestOntologyMaintenanceTransitiveInvalidation(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, turn)
 	for range 10 {
-		require.NoError(t, f.store.DiscoverMaintenance(context.Background(), *turn, ontology.MaintenancePageSize))
+		require.NoError(t, f.store.discoverMaintenanceError(context.Background(), *turn, ontology.MaintenancePageSize))
 	}
 	status, err := service.Status(context.Background())
 	require.NoError(t, err)

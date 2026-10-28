@@ -24,6 +24,7 @@ type pausedDiscovery struct {
 	release  func()
 	cancel   context.CancelFunc
 	done     <-chan error
+	result   <-chan ontology.MaintenanceDiscoveryResult
 }
 
 func pauseDiscovery(t *testing.T, x *discoveryFixture, phase string, limit int) pausedDiscovery {
@@ -32,6 +33,7 @@ func pauseDiscovery(t *testing.T, x *discoveryFixture, phase string, limit int) 
 	store, ctx, recorder := x.recorder(ctx, true)
 	arrived, resume, stopped := make(chan maintenanceDiscoveryEvent, 1), make(chan struct{}), make(chan struct{})
 	finished := make(chan error, 1)
+	outcomes := make(chan ontology.MaintenanceDiscoveryResult, 1)
 	var reached atomic.Bool
 	release := sync.OnceFunc(func() { close(resume) })
 	recorder.after = func(event maintenanceDiscoveryEvent) {
@@ -54,7 +56,9 @@ func pauseDiscovery(t *testing.T, x *discoveryFixture, phase string, limit int) 
 	})
 	go func() {
 		defer close(stopped)
-		finished <- store.DiscoverMaintenance(ctx, x.turn, limit)
+		result, err := store.DiscoverMaintenance(ctx, x.turn, limit)
+		outcomes <- result
+		finished <- err
 	}()
 	select {
 	case event := <-arrived:
@@ -67,7 +71,7 @@ func pauseDiscovery(t *testing.T, x *discoveryFixture, phase string, limit int) 
 	case <-ctx.Done():
 		t.Fatalf("discovery did not reach %s boundary: %v", phase, ctx.Err())
 	}
-	return pausedDiscovery{recorder: recorder, release: release, cancel: cancel, done: finished}
+	return pausedDiscovery{recorder: recorder, release: release, cancel: cancel, done: finished, result: outcomes}
 }
 
 func discoveryWriterState(t *testing.T, f *ontologyFixture, done <-chan error) (committed bool) {
@@ -102,7 +106,7 @@ func TestOntologyMaintenanceRevalidationDiscoveryConcurrency(t *testing.T) {
 			if change == "new_vocabulary" {
 				outcomes[0] = "ambiguous"
 			}
-			x := newDiscoveryFixture(t, []int{2}, outcomes, change == "support")
+			x := newDiscoveryFixture(t, []int{2}, outcomes, true)
 			f := x.f
 			canonical, history, queue, calls := schedulerCanonical(t, f), revalidationReceiptHistory(t, f), x.queue(t), x.providerCalls()
 			page, err := f.store.ListRecords(context.Background(), f.team, "", "", 1)
@@ -148,6 +152,7 @@ func TestOntologyMaintenanceRevalidationDiscoveryConcurrency(t *testing.T) {
 				}
 			}
 			x.marker(t)
+			enqueueDiscoverySupportMarker(t, x)
 			paused := pauseDiscovery(t, x, "receipt_finished", 2)
 			writerCtx, cancelWriter := context.WithTimeout(writerParent, 15*time.Second)
 			defer cancelWriter()
@@ -184,7 +189,7 @@ func TestOntologyMaintenanceRevalidationDiscoveryConcurrency(t *testing.T) {
 				require.Equal(t, afterWriter, schedulerCanonical(t, f), "discovery must not add canonical writes")
 			}
 			if change == "generation" {
-				require.ErrorIs(t, f.store.DiscoverMaintenance(context.Background(), x.turn, 100), ontology.ErrLeaseLost)
+				require.ErrorIs(t, f.store.discoverMaintenanceError(context.Background(), x.turn, 100), ontology.ErrLeaseLost)
 				var visible int
 				require.NoError(t, f.rls.WithTeamTx(context.Background(), f.app, f.team, func(tx *gorm.DB) error {
 					return tx.Raw(`SELECT count(*) FROM ontology_maintenance_sources WHERE team_id=?::uuid AND space_generation=?`, f.team, f.generation).Row().Scan(&visible)
@@ -219,21 +224,26 @@ func TestOntologyMaintenanceRevalidationDiscoveryConcurrency(t *testing.T) {
 func TestOntologyMaintenanceRevalidationDiscoveryCancellation(t *testing.T) {
 	for _, boundary := range []string{"receipt_started", "receipt_finished", "source_finished"} {
 		t.Run(boundary, func(t *testing.T) {
-			x := newDiscoveryFixture(t, []int{2}, nil, false)
+			x := newDiscoveryFixture(t, []int{2}, nil, true)
 			canonical, history, queue := schedulerCanonical(t, x.f), revalidationReceiptHistory(t, x.f), x.queue(t)
 			x.marker(t)
+			enqueueDiscoverySupportMarker(t, x)
 			marker := discoveryMarkerState(t, x)
 			paused := pauseDiscovery(t, x, boundary, 100)
 			paused.cancel()
 			paused.release()
 			err := <-paused.done
+			result := <-paused.result
+			require.False(t, result.Committed)
+			require.Equal(t, ontology.MaintenanceDiscoveryCounts{}, result.Counts)
+			require.Positive(t, result.Attempted.EnumeratedMatches)
 			require.Error(t, err)
 			require.True(t, errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded), fmt.Sprintf("unexpected cancellation error: %v", err))
 			require.Equal(t, queue, x.queue(t))
 			require.Equal(t, marker, discoveryMarkerState(t, x))
 			require.Equal(t, canonical, schedulerCanonical(t, x.f))
 			require.Equal(t, history, revalidationReceiptHistory(t, x.f))
-			require.NoError(t, x.f.store.DiscoverMaintenance(context.Background(), x.turn, 100))
+			require.NoError(t, x.f.store.discoverMaintenanceError(context.Background(), x.turn, 100))
 			require.EqualValues(t, 0, discoveryMarkerState(t, x)["markers"])
 			discoveryLog(t, "cancellation", map[string]any{"boundary": boundary, "rolled_back": true, "resumed": true, "freshness": paused.recorder.metrics()})
 		})

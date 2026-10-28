@@ -46,7 +46,7 @@ func TestOntologyMaintenanceFinalizationCancellationAndDiscovery(t *testing.T) {
 			require.NoError(t, err)
 			defer func() { _, _ = blocker.ExecContext(ctx, `SELECT pg_advisory_unlock(603001)`) }()
 			discovered := make(chan error, 1)
-			go func() { discovered <- f.store.DiscoverMaintenance(ctx, *discovery, ontology.MaintenancePageSize) }()
+			go func() { discovered <- f.store.discoverMaintenanceError(ctx, *discovery, ontology.MaintenancePageSize) }()
 			waitFor := func(event, statement string) {
 				t.Helper()
 				require.Eventually(t, func() bool {
@@ -431,7 +431,7 @@ func TestOntologyMaintenanceFinalizationAdmissionAndIsolation(t *testing.T) {
 				require.Equal(t, queued, x.queuedSources(t), "expired completion must not commit any source writes")
 				ctx := context.Background()
 				for range 8 {
-					require.NoError(t, pending.store.DiscoverMaintenance(ctx, *turn, ontology.MaintenancePageSize))
+					require.NoError(t, pending.store.discoverMaintenanceError(ctx, *turn, ontology.MaintenancePageSize))
 				}
 				claim, err := pending.store.ClaimMaintenanceBatch(ctx, *turn, x.window.ID, time.Now())
 				require.NoError(t, err)
@@ -495,7 +495,7 @@ func TestOntologyMaintenanceFinalizationAdmissionAndIsolation(t *testing.T) {
 			require.True(t, time.Now().Before(x.claim.LeaseUntil))
 			x.assertCompletedOutcome(t)
 			for range 8 {
-				require.NoError(t, f.store.DiscoverMaintenance(ctx, *turn, ontology.MaintenancePageSize))
+				require.NoError(t, f.store.discoverMaintenanceError(ctx, *turn, ontology.MaintenancePageSize))
 			}
 			claim, err := f.store.ClaimMaintenanceBatch(ctx, *turn, x.window.ID, time.Now())
 			require.NoError(t, err)

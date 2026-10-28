@@ -118,7 +118,7 @@ func TestOntologyMaintenanceLargeBacklogAndFairTurns(t *testing.T) {
 	require.NotNil(t, first)
 	_, err = f.store.ClaimMaintenanceTurn(ctx, window.ID, time.Now().UTC(), time.Minute)
 	require.NoError(t, err)
-	require.NoError(t, f.store.DiscoverMaintenance(ctx, *first, ontology.MaintenancePageSize))
+	require.NoError(t, f.store.discoverMaintenanceError(ctx, *first, ontology.MaintenancePageSize))
 	require.NoError(t, f.store.ReleaseMaintenanceTurn(ctx, *first))
 	second, err := f.store.ClaimMaintenanceTurn(ctx, window.ID, time.Now().UTC(), time.Hour)
 	require.NoError(t, err)
@@ -134,13 +134,13 @@ func TestOntologyMaintenanceLargeBacklogAndFairTurns(t *testing.T) {
 			big = turn
 			break
 		}
-		require.NoError(t, f.store.DiscoverMaintenance(ctx, *turn, ontology.MaintenancePageSize))
+		require.NoError(t, f.store.discoverMaintenanceError(ctx, *turn, ontology.MaintenancePageSize))
 		require.NoError(t, f.store.ReleaseMaintenanceTurn(ctx, *turn))
 	}
 	require.NotNil(t, big)
 	var discovered bool
 	for range 800 {
-		require.NoError(t, f.store.DiscoverMaintenance(ctx, *big, ontology.MaintenancePageSize))
+		require.NoError(t, f.store.discoverMaintenanceError(ctx, *big, ontology.MaintenancePageSize))
 		require.NoError(t, f.admin.Raw(`SELECT discovery_kind=4 FROM ontology_maintenance_teams WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=?`, f.team, f.space, f.generation).Row().Scan(&discovered))
 		if discovered {
 			break
@@ -242,7 +242,7 @@ func TestOntologyMaintenanceOversizedGroupClosure(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, turn)
 	for range 8 {
-		require.NoError(t, f.store.DiscoverMaintenance(context.Background(), *turn, ontology.MaintenancePageSize))
+		require.NoError(t, f.store.discoverMaintenanceError(context.Background(), *turn, ontology.MaintenancePageSize))
 	}
 	claim, err := f.store.ClaimMaintenanceBatch(context.Background(), *turn, window.ID, time.Now().UTC())
 	require.NoError(t, err)

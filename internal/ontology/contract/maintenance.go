@@ -10,6 +10,7 @@ import (
 )
 
 const MaintenancePageSize = 100
+const MaintenanceDefinitionGroupSize = 20
 const MaxManualBatches = 100
 
 var (
@@ -113,13 +114,30 @@ type MaintenanceRunPage struct {
 	NextCursor string           `json:"next_cursor,omitempty"`
 }
 
+type MaintenanceDiscoveryCounts struct {
+	InitialSources       int `json:"initial_sources"`
+	EnumeratedMatches    int `json:"enumerated_matches"`
+	RefreshedSources     int `json:"refreshed_sources"`
+	FreshnessInvocations int `json:"freshness_invocations"`
+	DistinctReceipts     int `json:"distinct_receipts"`
+	Requeues             int `json:"requeues"`
+	CompletedMarkers     int `json:"completed_markers"`
+}
+
+type MaintenanceDiscoveryResult struct {
+	Committed bool
+	Counts    MaintenanceDiscoveryCounts
+	Attempted MaintenanceDiscoveryCounts
+	Duration  time.Duration
+}
+
 type MaintenanceRepository interface {
 	SeedDefinitions(context.Context, string, SeedInput) (SeedResult, error)
 	ListRecords(context.Context, string, Kind, string, int) (Page, error)
 	EnsureMaintenanceWindow(context.Context, domain.OntologyMaintenanceConfig, time.Time) (*MaintenanceWindow, error)
 	CurrentMaintenanceWindow(context.Context, time.Time) (*MaintenanceWindow, error)
 	ClaimMaintenanceTurn(context.Context, string, time.Time, time.Duration) (*MaintenanceTurn, error)
-	DiscoverMaintenance(context.Context, MaintenanceTurn, int) error
+	DiscoverMaintenance(context.Context, MaintenanceTurn, int) (MaintenanceDiscoveryResult, error)
 	ClaimMaintenanceBatch(context.Context, MaintenanceTurn, string, time.Time) (*MaintenanceClaim, error)
 	ReleaseMaintenanceTurn(context.Context, MaintenanceTurn) error
 	RecordMaintenanceFailure(context.Context, string, string, time.Time) error

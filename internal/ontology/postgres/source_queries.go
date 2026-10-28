@@ -6,7 +6,9 @@ const maintenanceDefinitionPageSQL = `WITH RECURSIVE input AS (
  SELECT ?::uuid AS team_id,?::uuid AS shared_space_id,?::bigint AS space_generation,
  NULLIF(?,'')::uuid AS record_id,?::text AS source_kind,?::text AS source_id,
  ?::text AS after_kind,?::text AS after_id
-), roots AS (
+` + maintenanceDefinitionSourcesSQL
+
+const maintenanceDefinitionSourcesSQL = `), roots AS (
  SELECT head.record_id FROM ontology_record_heads AS head JOIN input AS scope
  USING(team_id,shared_space_id,space_generation) WHERE head.record_id=scope.record_id
  UNION
@@ -57,6 +59,22 @@ JOIN ontology_maintenance_sources AS source USING(source_kind,source_id)
 JOIN input AS scope USING(team_id,shared_space_id,space_generation)
 WHERE source.eligible AND (source.source_kind,source.source_id)>(scope.after_kind,scope.after_id)
 ORDER BY source.source_kind,source.source_id LIMIT ?`
+
+const maintenanceDefinitionGroupSQL = `WITH markers AS (
+ SELECT * FROM jsonb_to_recordset(?::jsonb) AS marker(marker_index integer,record_id text,source_kind text,source_id text,after_kind text,after_id text)
+), matches AS MATERIALIZED (
+ SELECT marker.marker_index,matched.* FROM markers AS marker CROSS JOIN LATERAL (
+ WITH RECURSIVE input AS (
+ SELECT ?::uuid AS team_id,?::uuid AS shared_space_id,?::bigint AS space_generation,
+ NULLIF(marker.record_id,'')::uuid AS record_id,marker.source_kind,marker.source_id,marker.after_kind,marker.after_id
+` + maintenanceDefinitionSourcesSQL + `
+ ) AS matched
+), page AS (
+ SELECT DISTINCT source_kind,source_id,source_version FROM matches ORDER BY source_kind,source_id LIMIT ?
+)
+SELECT matches.marker_index,matches.source_kind,matches.source_id,matches.source_version,page.source_id IS NOT NULL
+FROM matches LEFT JOIN page USING(source_kind,source_id,source_version)
+ORDER BY matches.source_kind,matches.source_id,matches.marker_index`
 
 const entitySourceSQL = `
 WITH candidate AS (

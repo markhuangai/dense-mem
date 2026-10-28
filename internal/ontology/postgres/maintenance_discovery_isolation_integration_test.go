@@ -19,6 +19,7 @@ import (
 
 func TestOntologyMaintenanceRevalidationDiscoveryIsolation(t *testing.T) {
 	x := newDiscoveryFixture(t, []int{2}, nil, false)
+	definitions := coalescingDefinitions(t, x, 2, "overlap")
 	f := x.f
 	other := maintenanceOtherTeam(t, f)
 	foreign := other.organizationEvidence(t, 0, "PostgreSQL discovery foreign evidence.", nil)
@@ -32,6 +33,7 @@ func TestOntologyMaintenanceRevalidationDiscoveryIsolation(t *testing.T) {
 	}
 	canonical, history, queue := schedulerCanonical(t, f, other), revalidationReceiptHistory(t, f), x.queue(t)
 	x.marker(t)
+	enqueueCoalescingMarkers(t, x, definitions)
 	marker := discoveryMarkerState(t, x)
 	for _, owner := range []int{0, 1} {
 		require.NoError(t, f.store.withScope(f.actor(owner, "member"), f.team, true, func(tx *gorm.DB, fence scope) error {
@@ -41,10 +43,10 @@ func TestOntologyMaintenanceRevalidationDiscoveryIsolation(t *testing.T) {
 			return nil
 		}))
 	}
-	require.ErrorIs(t, f.store.DiscoverMaintenance(other.actor(0, "manager"), x.turn, 100), ontology.ErrUnauthorized)
+	require.ErrorIs(t, f.store.discoverMaintenanceError(other.actor(0, "manager"), x.turn, 100), ontology.ErrUnauthorized)
 	wrong := x.turn
 	wrong.TeamID, wrong.SpaceID, wrong.Generation = other.team, other.space, other.generation
-	require.ErrorIs(t, f.store.DiscoverMaintenance(context.Background(), wrong, 100), ontology.ErrLeaseLost)
+	require.ErrorIs(t, f.store.discoverMaintenanceError(context.Background(), wrong, 100), ontology.ErrLeaseLost)
 	require.Equal(t, marker, discoveryMarkerState(t, x))
 	var leaked int
 	require.NoError(t, f.rls.WithTeamProfileTx(other.actor(0, "member"), f.app, other.team, other.owners[0], func(tx *gorm.DB) error {
@@ -53,11 +55,11 @@ func TestOntologyMaintenanceRevalidationDiscoveryIsolation(t *testing.T) {
 	require.Zero(t, leaked)
 	store, ctx, recorder := x.recorder(context.Background(), true)
 	ordered := discoverySortedSources(x.sources)
-	require.NoError(t, store.DiscoverMaintenance(ctx, x.turn, 1))
+	require.NoError(t, store.discoverMaintenanceError(ctx, x.turn, 1))
 	afterFirst := discoveryMarkerState(t, x)
-	require.EqualValues(t, 1, afterFirst["markers"])
+	require.EqualValues(t, 3, afterFirst["markers"])
 	require.Equal(t, ontology.SourceKey(ordered[0]), afterFirst["cursor"])
-	require.NoError(t, store.DiscoverMaintenance(ctx, x.turn, 1))
+	require.NoError(t, store.discoverMaintenanceError(ctx, x.turn, 1))
 	require.EqualValues(t, 0, discoveryMarkerState(t, x)["markers"])
 	checks := recorder.completed()
 	require.Len(t, checks, 2)
@@ -122,7 +124,7 @@ func TestOntologyMaintenanceRevalidationDiscoveryLockCancellation(t *testing.T) 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- x.f.store.DiscoverMaintenance(ctx, x.turn, 100) }()
+	go func() { done <- x.f.store.discoverMaintenanceError(ctx, x.turn, 100) }()
 	require.Eventually(t, func() bool {
 		var waiting bool
 		err := x.f.admin.Raw(`SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database()
@@ -140,7 +142,7 @@ func TestOntologyMaintenanceRevalidationDiscoveryLockCancellation(t *testing.T) 
 	// Release the transaction before proving that a later discovery call can acquire the same row.
 	cancelLock()
 	require.Error(t, <-stopped)
-	require.NoError(t, x.f.store.DiscoverMaintenance(context.Background(), x.turn, 100))
+	require.NoError(t, x.f.store.discoverMaintenanceError(context.Background(), x.turn, 100))
 	require.EqualValues(t, 0, discoveryMarkerState(t, x)["markers"])
 	discoveryLog(t, "lock_cancellation", map[string]any{"lock_wait_observed": true, "rolled_back": true, "resumed": true})
 }

@@ -78,7 +78,7 @@ func TestOntologyMaintenanceProgressBeyondFormerBudgets(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, turn)
 		for range 8 {
-			require.NoError(t, f.store.DiscoverMaintenance(ctx, *turn, ontology.MaintenancePageSize))
+			require.NoError(t, f.store.discoverMaintenanceError(ctx, *turn, ontology.MaintenancePageSize))
 		}
 		claim, err := f.store.ClaimMaintenanceBatch(ctx, *turn, window.ID, time.Now())
 		require.NoError(t, err)

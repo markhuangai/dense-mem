@@ -31,7 +31,7 @@ func revalidationDiscover(t *testing.T, f *ontologyFixture, window *ontology.Mai
 	require.NotNil(t, turn)
 	defer func() { require.NoError(t, f.store.ReleaseMaintenanceTurn(ctx, *turn)) }()
 	for range 8 {
-		require.NoError(t, f.store.DiscoverMaintenance(ctx, *turn, ontology.MaintenancePageSize))
+		require.NoError(t, f.store.discoverMaintenanceError(ctx, *turn, ontology.MaintenancePageSize))
 	}
 }
 
