@@ -196,13 +196,15 @@ retrieval-quality equivalence. Use each pinned release's native runner to
 validate the frozen seed before import and retain its recorded readiness
 protocol, terminal outcomes, and usage limitations. Capture the same 204 cases,
 then replay both trace sets with one pinned prerelease scorer using `--traces`
-and `--mapping` to preserve grouped evidence coverage consistently.
+and `--mapping` to preserve grouped evidence coverage consistently. Scoring copies normalize only `fragment` to `evidence`, preserving IDs and other kinds. Mapping lookup, judgments, grouped alternates and diagnostics share that identity, with maximum-grade deduplication and one ranked slot per returned result. Missing context stays distinct from explicitly empty context; serialized mappings and traces retain their original representations.
 Compare the rescored directories with ordinary `--mode compare`, which requires
 identical seed hashes. Use `ALLOW_UNGATED_EVALUATION=1` for this diagnostic
 workflow and omit the historical release-gate policy. Complete comparison
 evidence requires all 991 imports accounted for, 204 scored cases per release,
 complete mappings, and disclosed ontology readiness. The pair describes the
 two release configurations; it does not isolate ontology's contribution.
+
+For issue #665 offline replay, set `eval_seed` to the frozen v3 seed directory and `eval_capture` to the retained baseline capture, then run `go run ./cmd/eval-runner --mode baseline --seed "$eval_seed/seed_manifest.json" --suite "$eval_seed/suite.jsonl" --traces "$eval_capture/recall_traces.jsonl" --mapping "$eval_capture/knowledge_mapping.json" --out tests/eval/runs/new-alias-correction/baseline --base-url http://127.0.0.1:1 --max-unmapped-source-refs 0`. Repeat with the candidate capture, `--mode candidate`, and a separate fresh ignored output directory using the same pinned scorer. Require the same 204 unique cases, independently aggregate the JSONL scores, and reconcile per-case changes against the retained alias diagnostic. Hash original traces, mappings, qrels and reports before and after; never adjust judgments to reproduce the diagnostic. The [compact correction evidence](baselines/issue_665_evidence_alias_scoring.json) records source/build identities, hashes and changes. This is offline rescoring of the frozen 991-document historical corpus, not a new live comparison: retain incomplete ontology coverage, mixed candidate release history, missing negative judgments and uncontrolled latency limitations. Keep original and corrected reports separately.
 
 ## Use the approved local seed
 
