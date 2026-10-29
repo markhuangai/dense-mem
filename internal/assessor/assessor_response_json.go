@@ -9,6 +9,14 @@ import (
 	"github.com/markhuangai/dense-mem/internal/jsonstrict"
 )
 
+type SemanticAssessmentResponseValidationError struct {
+	Errors []SemanticValidationError
+}
+
+func (e *SemanticAssessmentResponseValidationError) Error() string {
+	return semanticAssessmentJoinedErrors(e.Errors)
+}
+
 func validateSemanticAssessmentResponseRaw(raw []byte) []SemanticValidationError {
 	top, errs := assessmentRawObject(raw, "", []string{"request_id", "evidence_security_results", "evidence_equivalence_results", "evidence_conflict_results", "entity_results", "relationship_results"}, nil)
 	if len(errs) > 0 {
