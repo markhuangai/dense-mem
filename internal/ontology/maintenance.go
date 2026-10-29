@@ -200,15 +200,15 @@ func (s *MaintenanceService) prepareTurn(ctx context.Context) (work *maintenance
 		return nil, false, nil
 	}
 	lease := 3*s.deps.ProviderTimeout + 15*time.Second
-	turn, err := s.deps.Repository.ClaimMaintenanceTurn(ctx, window.ID, s.deps.Now(), lease)
+	turn, claimErr := s.deps.Repository.ClaimMaintenanceTurn(ctx, window.ID, s.deps.Now(), lease)
 	if turn == nil {
-		return nil, false, err
+		return nil, false, claimErr
 	}
 	defer func() { s.logMaintenancePreparation(ctx, *turn, work, time.Since(started), runErr) }()
 	defer func() {
 		finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
-		if runErr != nil {
+		if claimErr == nil && runErr != nil {
 			code := contract.MaintenanceFailureCode(runErr)
 			var organizationErr *OrganizationError
 			if code == "" && errors.As(runErr, &organizationErr) {
@@ -223,8 +223,8 @@ func (s *MaintenanceService) prepareTurn(ctx context.Context) (work *maintenance
 			runErr = errors.Join(runErr, s.deps.Repository.ReleaseMaintenanceTurn(finishCtx, *turn))
 		}
 	}()
-	if err != nil {
-		return nil, false, err
+	if claimErr != nil {
+		return nil, false, claimErr
 	}
 	turnCtx, cancel := context.WithTimeout(ctx, lease-5*time.Second)
 	defer cancel()
