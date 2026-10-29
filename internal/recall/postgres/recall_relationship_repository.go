@@ -76,7 +76,7 @@ func (r *Store) ReadRelationshipCandidates(ctx context.Context, input RecallRela
 			}
 		}
 		if len(input.QueryEmbedding) > 0 && vectorState == string(domain.SearchProjectionCurrent) {
-			vectorHits, err = augmentRecallChannel(vectorHits, ontologyHits, candidateLimit, func(ids []string) ([]SearchHit, error) {
+			vectorHits, err = augmentRecallVectorChannel(vectorHits, ontologyHits, candidateLimit, func(ids []string) ([]SearchHit, error) {
 				return searchRecallRelationshipExactVectorSources(ctx, tx, input, contract, candidateLimit, ids)
 			})
 			if err != nil {

@@ -2,6 +2,8 @@ package postgres
 
 import (
 	"fmt"
+	"math"
+	"sort"
 
 	"github.com/lib/pq"
 )
@@ -39,6 +41,41 @@ func augmentRecallChannel(existing, ontology []SearchHit, limit int, score func(
 		return nil, fmt.Errorf("recall: ontology scoring pool exceeds twice the candidate limit")
 	}
 	return score(ids)
+}
+
+func augmentRecallVectorChannel(existing, ontology []SearchHit, limit int, score func([]string) ([]SearchHit, error)) ([]SearchHit, error) {
+	// Ordinary scores remain valid in the same repeatable-read transaction used for ontology augmentation.
+	return augmentRecallChannel(existing, ontology, limit, func(ids []string) ([]SearchHit, error) {
+		bySource := make(map[string]SearchHit, len(existing))
+		for _, hit := range existing {
+			bySource[hit.SourceID] = hit
+		}
+		pooled := make([]SearchHit, 0, len(ids))
+		unscored := make([]string, 0, len(ontology))
+		for _, id := range ids {
+			if hit, ok := bySource[id]; ok {
+				pooled = append(pooled, hit)
+			} else {
+				unscored = append(unscored, id)
+			}
+		}
+		hits, err := score(unscored)
+		if err != nil {
+			return nil, err
+		}
+		pooled = append(pooled, hits...)
+		sort.Slice(pooled, func(i, j int) bool {
+			left, right := pooled[i], pooled[j]
+			if math.IsNaN(left.Distance) != math.IsNaN(right.Distance) {
+				return !math.IsNaN(left.Distance)
+			}
+			if left.Distance != right.Distance && !math.IsNaN(left.Distance) {
+				return left.Distance < right.Distance
+			}
+			return left.SearchDocumentID < right.SearchDocumentID
+		})
+		return pooled[:min(len(pooled), limit)], nil
+	})
 }
 
 func recallBoundedVectorQuery(query string) string {

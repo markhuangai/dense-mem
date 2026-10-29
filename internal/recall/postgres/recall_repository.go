@@ -96,7 +96,7 @@ func (r *Store) ReadEvidenceCandidates(ctx context.Context, input RecallEvidence
 			}
 		}
 		if len(input.QueryEmbedding) > 0 {
-			vectorHits, err = augmentRecallChannel(vectorHits, ontologyHits, candidateLimit, func(ids []string) ([]SearchHit, error) {
+			vectorHits, err = augmentRecallVectorChannel(vectorHits, ontologyHits, candidateLimit, func(ids []string) ([]SearchHit, error) {
 				return searchRecallExactVectorSources(ctx, tx, input, contract, candidateLimit, ids)
 			})
 			if err != nil {

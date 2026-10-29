@@ -59,7 +59,7 @@ func TestRecallOntologyScoringUsesQueryAndBoundedSources(t *testing.T) {
 	require.NoError(t, err)
 	input := RecallEvidenceInput{TeamID: f.team, SpaceID: f.space, Query: "alpha beta", QueryEmbedding: []float32{1, 0, 0}}
 	require.NoError(t, f.rls.WithTeamReadOnlyRepeatableTx(ctx, f.app, f.team, func(tx *gorm.DB) error {
-		for _, score := range []func([]string) ([]SearchHit, error){
+		for index, score := range []func([]string) ([]SearchHit, error){
 			func(ids []string) ([]SearchHit, error) {
 				return searchRecallFullTextSources(ctx, tx, input, contract, 1, ids)
 			},
@@ -70,7 +70,11 @@ func TestRecallOntologyScoringUsesQueryAndBoundedSources(t *testing.T) {
 			ordinary, err := score([]string{weak.ID})
 			require.NoError(t, err)
 			require.Len(t, ordinary, 1)
-			augmented, err := augmentRecallChannel(ordinary, []SearchHit{{SourceID: strong.ID}, {SourceID: strong.ID}}, 1, score)
+			augment := augmentRecallChannel
+			if index == 1 {
+				augment = augmentRecallVectorChannel
+			}
+			augmented, err := augment(ordinary, []SearchHit{{SourceID: strong.ID}, {SourceID: strong.ID}}, 1, score)
 			require.NoError(t, err)
 			require.Len(t, augmented, 1)
 			require.Equal(t, strong.ID, augmented[0].SourceID)
@@ -86,12 +90,17 @@ func TestRecallOntologyScoringKeepsSourceLookupsBounded(t *testing.T) {
 	f := newRecallOntologyFixture(t)
 	ctx := f.actor(2, "member")
 	ids := []string{}
+	allIDs := []string{}
 	for index := range 96 {
 		handle := f.evidence(t, index%2, fmt.Sprintf("Bounded scoring source %d", index), nil)
+		allIDs = append(allIDs, handle.ID)
 		if index < 60 {
 			ids = append(ids, handle.ID)
 		}
 	}
+	require.NoError(t, f.rls.WithSystemTx(context.Background(), f.admin, func(tx *gorm.DB) error {
+		return tx.Exec(`UPDATE search_documents SET embedding='[0,0,0]'::vector WHERE team_id=?::uuid AND source_id IN (?::uuid,?::uuid)`, f.team, allIDs[0], allIDs[95]).Error
+	}))
 	contract, err := f.search.GetActiveSearchContract(ctx)
 	require.NoError(t, err)
 	capture := &projectionQueryCapture{}
@@ -130,6 +139,23 @@ func TestRecallOntologyScoringKeepsSourceLookupsBounded(t *testing.T) {
 			visit(reports[0].Plan)
 			require.Equal(t, float64(len(ids)), sourceRows, "bounded scoring must not scan the team's fragments once per candidate")
 		}
+		score := func(ids []string) ([]SearchHit, error) {
+			return searchRecallExactVectorSources(ctx, tx, input, contract, len(allIDs), ids)
+		}
+		ordinary, err := score(ids)
+		require.NoError(t, err)
+		discoveries := make([]SearchHit, 0, len(allIDs))
+		for _, id := range allIDs {
+			discoveries = append(discoveries, SearchHit{SourceID: id})
+		}
+		merged, err := augmentRecallVectorChannel(ordinary, discoveries, len(allIDs), score)
+		require.NoError(t, err)
+		expected, err := score(allIDs)
+		require.NoError(t, err)
+		require.Len(t, merged, len(expected))
+		for index := range expected {
+			require.Equal(t, expected[index].SourceID, merged[index].SourceID, "reused scores must preserve PostgreSQL distance and document-ID ordering, including NaN distances")
+		}
 		return nil
 	}))
 }
@@ -147,6 +173,7 @@ func TestRecallOntologyRelationshipScoringPreservesVectorReadiness(t *testing.T)
 			SubjectEntityID: subject.EntityID, PredicateKey: "works_on", ObjectEntityID: object.EntityID,
 			Support: &EvidenceSupportInput{FragmentID: ingest.Evidence[0].FragmentID, SourceGroupKey: uuid.NewString(), SpanStart: 0, SpanEnd: len(text), Authority: "primary"}})
 		require.NotNil(t, decision.Relationship)
+		require.Equal(t, "active", decision.Relationship.Status)
 		handle := ontology.SourceHandle{Kind: ontology.RelationshipSource, ID: decision.Relationship.RelationshipID, Version: int64(decision.Relationship.Version)}
 		handles = append(handles, handle)
 		document, err := f.search.UpsertSearchDocument(context.Background(), knowledge.UpsertSearchDocumentInput{TeamID: f.team, OwnerProfileID: f.owners[index], SourceKind: "relationship", SourceID: handle.ID, SourceVersion: handle.Version, DocumentText: text})
@@ -159,9 +186,10 @@ func TestRecallOntologyRelationshipScoringPreservesVectorReadiness(t *testing.T)
 	f.publication(t, definition, f.assignment(t, definition.ID, handles[1]))
 	contract, err := f.search.GetActiveSearchContract(ctx)
 	require.NoError(t, err)
-	input := RecallRelationshipsInput{TeamID: f.team, SpaceID: f.space, Query: "staff catalog", QueryEmbedding: []float32{1, 0, 0}, OrganizationEnabled: true, Limit: 10}
+	input := RecallRelationshipsInput{TeamID: f.team, SpaceID: f.space, Query: "staff catalog", QueryEmbedding: []float32{1, 0, 0}, ExcludedGroupKeys: []string{}, OrganizationEnabled: true, Limit: 10}
 	batch, err := f.search.ReadRelationshipCandidates(ctx, input, contract, 60)
 	require.NoError(t, err)
+	require.Empty(t, batch.OrganizationDegradation)
 	require.NotEqual(t, "current", batch.SearchState)
 	require.Empty(t, batch.VectorHits)
 	require.Empty(t, batch.ExpansionHits)
@@ -186,7 +214,7 @@ func TestRecallOntologyRelationshipScoringPreservesVectorReadiness(t *testing.T)
 		}
 		ordinary, err := score([]string{handles[0].ID})
 		require.NoError(t, err)
-		augmented, err := augmentRecallChannel(ordinary, []SearchHit{{SourceID: handles[1].ID}}, 1, score)
+		augmented, err := augmentRecallVectorChannel(ordinary, []SearchHit{{SourceID: handles[1].ID}}, 1, score)
 		require.NoError(t, err)
 		require.Len(t, augmented, 1)
 		require.Equal(t, handles[1].ID, augmented[0].SourceID)
