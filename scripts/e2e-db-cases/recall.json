@@ -3,6 +3,27 @@
   "capability": "recall",
   "cases": [
     {
+      "id": "repository/TestRecallAccuracyCohort",
+      "package": "./internal/recall/postgres",
+      "run": "^TestRecallAccuracyCohort$",
+      "phase": "precheck",
+      "source": "internal/recall/postgres/recall_accuracy_integration_test.go"
+    },
+    {
+      "id": "repository/TestRecallAccuracyVariations",
+      "package": "./internal/recall/postgres",
+      "run": "^TestRecallAccuracyVariations$",
+      "phase": "precheck",
+      "source": "internal/recall/postgres/recall_accuracy_integration_test.go"
+    },
+    {
+      "id": "repository/TestRecallAccuracyIsolation",
+      "package": "./internal/recall/postgres",
+      "run": "^TestRecallAccuracyIsolation$",
+      "phase": "precheck",
+      "source": "internal/recall/postgres/recall_accuracy_integration_test.go"
+    },
+    {
       "id": "repository/TestEvidenceConflictHistoricalEventHydrationIsBounded",
       "package": "./internal/recall/postgres",
       "run": "^TestEvidenceConflictHistoricalEventHydrationIsBounded$",

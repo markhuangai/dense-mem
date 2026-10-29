@@ -1,0 +1,22 @@
+{
+  "artifact_sha256": {
+    "cases.jsonl": "sha256:b04f4f2121fe9fe311fb7943c3236ab5b6b613686f091506bf699440b0b953ee",
+    "cohort.json": "sha256:26628ff529fb0f27745129c0a15a15a86a2a07f9177a4e8c02c5611082a72250",
+    "corpus.jsonl": "sha256:480bf410afb1d78378ccc90cb98ec79ba5e50cc2a4b5c7e76a83f5b119760193",
+    "judgments.jsonl": "sha256:063fbcf33ae489bca1c864a2f66c19433bacd871b62e430f8232f4c791d55694",
+    "qrels.jsonl": "sha256:2b02ece297afb082f7507464742999032f527b241e408f4b70b3c30b836fcde3",
+    "seed_manifest.json": "sha256:4e3db6f86864acc3d3868a1657690f74375b465eab9208f331980bb59283f58e",
+    "suite.jsonl": "sha256:07ed2f8e9205a8c698c129c28868cee3544b83e2da1447575d54c19db1cfd025"
+  },
+  "case_count": 24,
+  "cohort_sha256": "sha256:a40278c4f979acf39a184a270ce425b4ec5f32b71a98786a7567c11100dfcbea",
+  "generator_sha256": {
+    "internal/evalharness/recall_accuracy_cohort.go": "sha256:02f185c74281737723f2186c41da40e7a690c264c07f083700a1cfa58a98380e",
+    "internal/evalharness/recall_accuracy_export.go": "sha256:3e4c59407c4eaecd017e2a42cec7187972cb51557d7527055e42fbf7f651eb17"
+  },
+  "judgment_sha256": "sha256:063fbcf33ae489bca1c864a2f66c19433bacd871b62e430f8232f4c791d55694",
+  "schema_version": "dense-mem.eval.recall_accuracy.v1",
+  "seed_hash": "sha256:a6706f33085408f1039087eae2b9875c93ab0dfd387c0707ef25fd3d24c31105",
+  "seed_id": "recall_accuracy_v1",
+  "source_count": 132
+}
