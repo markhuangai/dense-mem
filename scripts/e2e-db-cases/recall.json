@@ -430,6 +430,27 @@
       "phase": "scenario",
       "source": "internal/recall/postgres/ontology_management_cohort_integration_test.go",
       "scenario": "ontology_management"
+    },
+    {
+      "id": "repository/TestRecallOntologyScoringDoesNotBoostExistingCandidates",
+      "package": "./internal/recall/postgres",
+      "run": "^TestRecallOntologyScoringDoesNotBoostExistingCandidates$",
+      "phase": "precheck",
+      "source": "internal/recall/postgres/recall_ontology_scoring_integration_test.go"
+    },
+    {
+      "id": "repository/TestRecallOntologyScoringUsesQueryAndBoundedSources",
+      "package": "./internal/recall/postgres",
+      "run": "^TestRecallOntologyScoringUsesQueryAndBoundedSources$",
+      "phase": "precheck",
+      "source": "internal/recall/postgres/recall_ontology_scoring_integration_test.go"
+    },
+    {
+      "id": "repository/TestRecallOntologyRelationshipScoringPreservesVectorReadiness",
+      "package": "./internal/recall/postgres",
+      "run": "^TestRecallOntologyRelationshipScoringPreservesVectorReadiness$",
+      "phase": "precheck",
+      "source": "internal/recall/postgres/recall_ontology_scoring_integration_test.go"
     }
   ]
 }

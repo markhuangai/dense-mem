@@ -17,7 +17,7 @@ import (
 )
 
 func (r *Store) ReadRelationshipCandidates(ctx context.Context, input RecallRelationshipsInput, contract *ActiveSearchContract, candidateLimit int) (*recallcontract.RecallCandidateBatch, error) {
-	var textHits, vectorHits, expansionHits []SearchHit
+	var textHits, vectorHits, expansionHits, ontologyHits []SearchHit
 	vectorState := string(domain.SearchProjectionPending)
 	organizationCode := ""
 	err := r.withRecallTx(ctx, input.TeamID, input.OrganizationEnabled, func(tx *gorm.DB) error {
@@ -63,11 +63,26 @@ func (r *Store) ReadRelationshipCandidates(ctx context.Context, input RecallRela
 			return err
 		}
 		organizationCode = organization.Degradation
-		additional, err := r.organizationRelationshipCandidates(ctx, tx, input, contract, organization, candidateLimit)
+		ontologyHits, err = r.organizationRelationshipCandidates(ctx, tx, input, contract, organization, candidateLimit)
 		if err != nil {
 			return &ontologyReadError{cause: err}
 		}
-		expansionHits = mergeRecallExpansion(expansionHits, additional, candidateLimit)
+		if input.Query != "" {
+			textHits, err = augmentRecallChannel(textHits, ontologyHits, candidateLimit, func(ids []string) ([]SearchHit, error) {
+				return searchRecallRelationshipFullTextSources(ctx, tx, input, contract, candidateLimit, ids)
+			})
+			if err != nil {
+				return &ontologyReadError{cause: err}
+			}
+		}
+		if len(input.QueryEmbedding) > 0 && vectorState == string(domain.SearchProjectionCurrent) {
+			vectorHits, err = augmentRecallChannel(vectorHits, ontologyHits, candidateLimit, func(ids []string) ([]SearchHit, error) {
+				return searchRecallRelationshipExactVectorSources(ctx, tx, input, contract, candidateLimit, ids)
+			})
+			if err != nil {
+				return &ontologyReadError{cause: err}
+			}
+		}
 		return nil
 	})
 	var optional *ontologyReadError
@@ -84,7 +99,7 @@ func (r *Store) ReadRelationshipCandidates(ctx context.Context, input RecallRela
 	}
 	return &recallcontract.RecallCandidateBatch{
 		OrganizationDegradation: organizationCode,
-		TextHits:                textHits, VectorHits: vectorHits, ExpansionHits: expansionHits, SearchState: vectorState,
+		TextHits:                textHits, VectorHits: vectorHits, ExpansionHits: expansionHits, OntologyHits: ontologyHits, SearchState: vectorState,
 	}, nil
 }
 
@@ -198,17 +213,21 @@ func searchRecallRelationshipExactVector(
 	contract *ActiveSearchContract,
 	limit int,
 ) ([]SearchHit, error) {
+	return searchRecallRelationshipExactVectorSources(ctx, tx, input, contract, limit, nil)
+}
+
+func searchRecallRelationshipExactVectorSources(ctx context.Context, tx *gorm.DB, input RecallRelationshipsInput, contract *ActiveSearchContract, limit int, sourceIDs []string) ([]SearchHit, error) {
 	spaceClause := recallSpacePredicate("document.space_id", input.TeamID, input.SpaceID, input.SpaceKind)
 	if len(input.QueryEmbedding) != contract.EmbeddingDimensions {
 		return nil, fmt.Errorf("%w: contract dimensions %d, query dimensions %d", ErrSearchContractMismatch, contract.EmbeddingDimensions, len(input.QueryEmbedding))
 	}
-	if contract.IndexStrategy != string(domain.VectorIndexExact) && !contract.AllowExactFallback {
+	if sourceIDs == nil && contract.IndexStrategy != string(domain.VectorIndexExact) && !contract.AllowExactFallback {
 		return nil, fmt.Errorf("%w: active search contract does not allow exact vector search", ErrSearchContractMismatch)
 	}
 	if contract.DistanceMetric != string(domain.VectorDistanceCosine) {
 		return nil, fmt.Errorf("%w: exact vector search supports %s distance only", ErrSearchContractMismatch, domain.VectorDistanceCosine)
 	}
-	if contract.ExactMaxRows > 0 {
+	if sourceIDs == nil && contract.ExactMaxRows > 0 {
 		var candidateCount int64
 		if err := tx.WithContext(ctx).Raw(`
 			WITH `+storagepostgres.RecallRelationshipVectorGenerationScopeSQL+`
@@ -239,8 +258,9 @@ func searchRecallRelationshipExactVector(
 	if err != nil {
 		return nil, err
 	}
-	rows, err := tx.WithContext(ctx).Raw(`
-		WITH `+storagepostgres.RecallRelationshipVectorGenerationScopeSQL+`
+	sourceClause, args := recallSourceFilter("document.source_id", sourceIDs, []any{input.TeamID, input.TeamID, vectorLiteral, input.TeamID, contract.EmbeddingContractID, contract.EmbeddingDimensions})
+	query := `
+		WITH ` + storagepostgres.RecallRelationshipVectorGenerationScopeSQL + `
 		SELECT document.team_id::text, document.search_document_id::text, document.source_kind,
 		       document.source_id::text, document.source_version, document.document_version,
 		       document.embedding_contract_id::text, document.search_state,
@@ -252,15 +272,21 @@ func searchRecallRelationshipExactVector(
 		 AND document.source_kind = 'relationship'
 		 AND document.embedding_contract_id = ?::uuid
 			 AND document.embedding_dimensions = ?
-				 `+spaceClause+`
+				 ` + spaceClause + `
 			 AND document.projection_format_version = 2
-			 AND `+storagepostgres.RelationshipGenerationDocumentSQL("document", "current_generation.projection_generation_id", "current_generation.projection_generation_id::text")+`
+			 AND ` + storagepostgres.RelationshipGenerationDocumentSQL("document", "current_generation.projection_generation_id", "current_generation.projection_generation_id::text") + `
 		 AND document.search_state = 'current'
 		 AND document.embedding IS NOT NULL
-		ORDER BY document.embedding <=> ?::vector ASC, document.search_document_id ASC
-		LIMIT ?
-	`, input.TeamID, input.TeamID, vectorLiteral, input.TeamID, contract.EmbeddingContractID,
-		contract.EmbeddingDimensions, vectorLiteral, limit).Rows()
+		 ` + sourceClause + `
+	`
+	if sourceIDs != nil {
+		query = recallBoundedVectorQuery(query)
+		args = append(args, limit)
+	} else {
+		query += " ORDER BY document.embedding <=> ?::vector ASC, document.search_document_id ASC LIMIT ?"
+		args = append(args, vectorLiteral, limit)
+	}
+	rows, err := tx.WithContext(ctx).Raw(query, args...).Rows()
 	if err != nil {
 		return nil, err
 	}

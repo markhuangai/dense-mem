@@ -32,8 +32,10 @@ func main() {
 	var cohortLockPath string
 	var repairLockPath string
 	var metricsURL string
-	flag.StringVar(&opts.Mode, "mode", "validate", "validate, import, baseline, candidate, compare, compare-v2-cohort, derive-v2, derive-v3, generate-recall-accuracy, validate-v2-cohort, token-diagnostics, or runtime")
+	var experimentManifest string
+	flag.StringVar(&opts.Mode, "mode", "validate", "validate, import, baseline, candidate, compare, compare-v2-cohort, derive-v2, derive-v3, generate-recall-accuracy, recall-accuracy-report, validate-v2-cohort, token-diagnostics, or runtime")
 	flag.StringVar(&metricsURL, "metrics-url", "", "direct Prometheus scrape URL (or DENSE_MEM_EVAL_METRICS_URL) for token-diagnostics")
+	flag.StringVar(&experimentManifest, "experiment-manifest", "", "paired-run manifest for recall-accuracy-report")
 	flag.StringVar(&opts.SeedManifestPath, "seed", "", "seed manifest path (source seed for derive-v2; derive-v3 uses parent/filtered V1 inputs)")
 	flag.StringVar(&opts.SuitePath, "suite", "", "suite JSONL path (source suite for derive-v2; derive-v3 uses parent/filtered V1 inputs)")
 	flag.StringVar(&opts.OutDir, "out", "", "output run directory")
@@ -77,6 +79,17 @@ func main() {
 	registerFloatGate("max-average-dream-bad-at-k", "maximum average bad dream refs@k allowed when dream qrels are present", &opts.Gates.MaxAverageDreamBadAtK, validateNonNegative)
 	registerFloatGate("max-dream-bad-rank1-rate", "maximum share of dream-scored cases with a bad dream ref first", &opts.Gates.MaxDreamBadRank1Rate, validateRate)
 	flag.Parse()
+	if opts.Mode == "recall-accuracy-report" {
+		report, err := evalharness.WriteRecallAccuracyReport(experimentManifest)
+		if err != nil {
+			exitf("recall accuracy report: %v", err)
+		}
+		fmt.Printf("seed_id=%s repetitions=%d passed=%t\n", report.SeedID, len(report.Repetitions), report.Passed)
+		if !report.Passed {
+			exitf("recall accuracy report: declared quality gates did not pass")
+		}
+		return
+	}
 	if opts.Mode == "generate-recall-accuracy" {
 		lock, err := evalharness.GenerateRecallAccuracy(opts.OutDir)
 		if err != nil {

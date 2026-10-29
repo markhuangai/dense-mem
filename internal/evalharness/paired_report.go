@@ -173,12 +173,11 @@ func latestPairStage(c PairConfig, side, stage string) (string, error) {
 	return dir, nil
 }
 
-func WritePairReport(c PairConfig) (PairReport, error) {
+func readPairReport(c PairConfig) (PairReport, error) {
 	report := PairReport{SchemaVersion: PairSchema, RunID: c.RunID, Status: "complete", FinishedAt: time.Now().UTC(), Scorer: c.Scorer, Sides: map[string]PairSideReport{}, Stages: []PairStageTiming{}, Limitations: []string{
 		"Attempt overlap measures admission through reconciliation, not network-only concurrency or model-generation time.",
 		"Unknown usage is not zero consumption. Configured capacity does not establish a speedup.",
 	}}
-	scoreDirs := map[string]string{}
 	for _, side := range []string{"baseline", "candidate"} {
 		r, _ := pairRelease(c, side)
 		capture := r.CaptureDir
@@ -197,7 +196,6 @@ func WritePairReport(c PairConfig) (PairReport, error) {
 		if err != nil {
 			return report, err
 		}
-		scoreDirs[side] = filepath.Join(score, "native")
 		ready, err := EvaluatePairReadiness(r.Protocol, proof.After, true)
 		if err != nil {
 			return report, err
@@ -233,7 +231,7 @@ func WritePairReport(c PairConfig) (PairReport, error) {
 		}
 	}
 	var err error
-	report.Comparison, err = CompareRunDirs(scoreDirs["baseline"], scoreDirs["candidate"], filepath.Join(c.OutDir, "comparison"))
+	report.Comparison, err = CompareSummaries(report.Sides["baseline"].Scores, report.Sides["candidate"].Scores)
 	if err != nil {
 		return report, err
 	}
@@ -278,6 +276,17 @@ func WritePairReport(c PairConfig) (PairReport, error) {
 	}
 	sort.Slice(report.Stages, func(i, j int) bool { return report.Stages[i].StartedAt.Before(report.Stages[j].StartedAt) })
 	report.ElapsedSeconds = report.FinishedAt.Sub(report.StartedAt).Seconds()
+	return report, nil
+}
+
+func WritePairReport(c PairConfig) (PairReport, error) {
+	report, err := readPairReport(c)
+	if err != nil {
+		return report, err
+	}
+	if err := writeJSONFile(filepath.Join(c.OutDir, "comparison", "comparison.json"), report.Comparison); err != nil {
+		return report, err
+	}
 	if err := writePairJSON(filepath.Join(c.OutDir, "paired_report.json"), report); err != nil {
 		return report, err
 	}

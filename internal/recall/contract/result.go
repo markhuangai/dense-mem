@@ -40,6 +40,7 @@ type RecallCandidateBatch struct {
 	TextHits                []searchcontract.SearchHit
 	VectorHits              []searchcontract.SearchHit
 	ExpansionHits           []searchcontract.SearchHit
+	OntologyHits            []searchcontract.SearchHit
 	SearchState             string
 	OrganizationDegradation string
 }

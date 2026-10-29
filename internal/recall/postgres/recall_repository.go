@@ -27,7 +27,7 @@ const (
 var _ recallcontract.Repository = (*Store)(nil)
 
 func (r *Store) ReadEvidenceCandidates(ctx context.Context, input RecallEvidenceInput, contract *ActiveSearchContract, candidateLimit int) (*recallcontract.RecallCandidateBatch, error) {
-	var textHits, vectorHits, expansionHits []SearchHit
+	var textHits, vectorHits, expansionHits, ontologyHits []SearchHit
 	searchState := string(domain.SearchProjectionCurrent)
 	organizationCode := ""
 	err := r.withRecallTx(ctx, input.TeamID, input.OrganizationEnabled, func(tx *gorm.DB) error {
@@ -83,11 +83,26 @@ func (r *Store) ReadEvidenceCandidates(ctx context.Context, input RecallEvidence
 			return err
 		}
 		organizationCode = organization.Degradation
-		additional, err := r.organizationEvidenceCandidates(ctx, tx, input, contract, organization, candidateLimit)
+		ontologyHits, err = r.organizationEvidenceCandidates(ctx, tx, input, contract, organization, candidateLimit)
 		if err != nil {
 			return &ontologyReadError{cause: err}
 		}
-		expansionHits = mergeRecallExpansion(expansionHits, additional, candidateLimit)
+		if input.Query != "" {
+			textHits, err = augmentRecallChannel(textHits, ontologyHits, candidateLimit, func(ids []string) ([]SearchHit, error) {
+				return searchRecallFullTextSources(ctx, tx, input, contract, candidateLimit, ids)
+			})
+			if err != nil {
+				return &ontologyReadError{cause: err}
+			}
+		}
+		if len(input.QueryEmbedding) > 0 {
+			vectorHits, err = augmentRecallChannel(vectorHits, ontologyHits, candidateLimit, func(ids []string) ([]SearchHit, error) {
+				return searchRecallExactVectorSources(ctx, tx, input, contract, candidateLimit, ids)
+			})
+			if err != nil {
+				return &ontologyReadError{cause: err}
+			}
+		}
 		return nil
 	})
 	var optional *ontologyReadError
@@ -104,7 +119,7 @@ func (r *Store) ReadEvidenceCandidates(ctx context.Context, input RecallEvidence
 	}
 	return &recallcontract.RecallCandidateBatch{
 		OrganizationDegradation: organizationCode,
-		TextHits:                textHits, VectorHits: vectorHits, ExpansionHits: expansionHits, SearchState: searchState,
+		TextHits:                textHits, VectorHits: vectorHits, ExpansionHits: expansionHits, OntologyHits: ontologyHits, SearchState: searchState,
 	}, nil
 }
 
@@ -212,8 +227,14 @@ func searchRecallFullText(
 	contract *ActiveSearchContract,
 	limit int,
 ) ([]SearchHit, error) {
+	return searchRecallFullTextSources(ctx, tx, input, contract, limit, nil)
+}
+
+func searchRecallFullTextSources(ctx context.Context, tx *gorm.DB, input RecallEvidenceInput, contract *ActiveSearchContract, limit int, sourceIDs []string) ([]SearchHit, error) {
 	eventAt := recallEventAt(input.ValidAt, input.KnownAt)
 	spaceClause := recallSpacePredicate("search_documents.space_id", input.TeamID, input.SpaceID, input.SpaceKind)
+	sourceClause, args := recallSourceFilter("search_documents.source_id", sourceIDs, []any{input.Query, input.TeamID, contract.EmbeddingContractID, eventAt, input.KnownAt, input.Query})
+	args = append(args, limit)
 	rows, err := tx.WithContext(ctx).Raw(`
 		SELECT search_documents.team_id::text, search_documents.search_document_id::text,
 		       search_documents.source_kind, search_documents.source_id::text,
@@ -233,10 +254,10 @@ func searchRecallFullText(
 		  AND COALESCE(source_fragment.metadata->>'conflict_resolution_deletion_only', '') <> 'true'
 		  `+recallEvidenceAliasVisibilitySQL("source_fragment")+`
 		  AND search_documents.search_tsv @@ plainto_tsquery('simple', ?)
-	`+spaceClause+`
+	`+spaceClause+sourceClause+`
 		ORDER BY text_rank DESC, search_documents.updated_at DESC, search_documents.search_document_id ASC
 		LIMIT ?
-	`, input.Query, input.TeamID, contract.EmbeddingContractID, eventAt, input.KnownAt, input.Query, limit).Rows()
+	`, args...).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -268,6 +289,10 @@ func searchRecallExactVector(
 	contract *ActiveSearchContract,
 	limit int,
 ) ([]SearchHit, error) {
+	return searchRecallExactVectorSources(ctx, tx, input, contract, limit, nil)
+}
+
+func searchRecallExactVectorSources(ctx context.Context, tx *gorm.DB, input RecallEvidenceInput, contract *ActiveSearchContract, limit int, sourceIDs []string) ([]SearchHit, error) {
 	if len(input.QueryEmbedding) != contract.EmbeddingDimensions {
 		return nil, fmt.Errorf("%w: contract dimensions %d, query dimensions %d", ErrSearchContractMismatch, contract.EmbeddingDimensions, len(input.QueryEmbedding))
 	}
@@ -276,7 +301,8 @@ func searchRecallExactVector(
 		return nil, err
 	}
 	spaceClause := recallSpacePredicate("search_documents.space_id", input.TeamID, input.SpaceID, input.SpaceKind)
-	rows, err := tx.WithContext(ctx).Raw(`
+	sourceClause, args := recallSourceFilter("search_documents.source_id", sourceIDs, []any{vectorLiteral, input.TeamID, contract.EmbeddingContractID, contract.EmbeddingDimensions, input.KnownAt})
+	query := `
 		SELECT search_documents.team_id::text, search_documents.search_document_id::text,
 		       search_documents.source_kind, search_documents.source_id::text,
 		       search_documents.source_version, search_documents.document_version,
@@ -295,12 +321,17 @@ func searchRecallExactVector(
 		  AND search_documents.search_state = 'current'
 		  AND search_documents.embedding IS NOT NULL
 		  AND COALESCE(source_fragment.metadata->>'conflict_resolution_deletion_only', '') <> 'true'
-		  `+recallEvidenceAliasVisibilitySQL("source_fragment")+`
-		`+spaceClause+`
-		ORDER BY search_documents.embedding <=> ?::vector ASC, search_documents.search_document_id ASC
-		LIMIT ?
-	`, vectorLiteral, input.TeamID, contract.EmbeddingContractID,
-		contract.EmbeddingDimensions, input.KnownAt, vectorLiteral, limit).Rows()
+		  ` + recallEvidenceAliasVisibilitySQL("source_fragment") + `
+		` + spaceClause + sourceClause + `
+	`
+	if sourceIDs != nil {
+		query = recallBoundedVectorQuery(query)
+		args = append(args, limit)
+	} else {
+		query += " ORDER BY search_documents.embedding <=> ?::vector ASC, search_documents.search_document_id ASC LIMIT ?"
+		args = append(args, vectorLiteral, limit)
+	}
+	rows, err := tx.WithContext(ctx).Raw(query, args...).Rows()
 	if err != nil {
 		return nil, err
 	}
