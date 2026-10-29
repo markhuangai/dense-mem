@@ -67,15 +67,8 @@ func (r *Store) ReadRelationshipCandidates(ctx context.Context, input RecallRela
 		if err != nil {
 			return &ontologyReadError{cause: err}
 		}
-		if input.Query != "" {
-			textHits, err = augmentRecallChannel(textHits, ontologyHits, candidateLimit, func(ids []string) ([]SearchHit, error) {
-				return searchRecallRelationshipFullTextSources(ctx, tx, input, contract, candidateLimit, ids)
-			})
-			if err != nil {
-				return &ontologyReadError{cause: err}
-			}
-		}
-		if len(input.QueryEmbedding) > 0 && vectorState == string(domain.SearchProjectionCurrent) {
+		// Exhaustive text and exact-vector searches already rank the full eligible pool in this snapshot.
+		if len(input.QueryEmbedding) > 0 && vectorState == string(domain.SearchProjectionCurrent) && contract.IndexStrategy != string(domain.VectorIndexExact) {
 			vectorHits, err = augmentRecallVectorChannel(vectorHits, ontologyHits, candidateLimit, func(ids []string) ([]SearchHit, error) {
 				return searchRecallRelationshipExactVectorSources(ctx, tx, input, contract, candidateLimit, ids)
 			})

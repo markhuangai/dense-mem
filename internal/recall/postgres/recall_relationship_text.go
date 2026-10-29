@@ -15,14 +15,8 @@ func searchRecallRelationshipFullText(
 	contract *ActiveSearchContract,
 	limit int,
 ) ([]SearchHit, error) {
-	return searchRecallRelationshipFullTextSources(ctx, tx, input, contract, limit, nil)
-}
-
-func searchRecallRelationshipFullTextSources(ctx context.Context, tx *gorm.DB, input RecallRelationshipsInput, contract *ActiveSearchContract, limit int, sourceIDs []string) ([]SearchHit, error) {
 	eventAt := recallEventAt(input.ValidAt, input.KnownAt)
 	spaceClause := recallSpacePredicate("document.space_id", input.TeamID, input.SpaceID, input.SpaceKind)
-	sourceClause, args := recallSourceFilter("document.source_id", sourceIDs, []any{input.TeamID, input.Query, input.TeamID, contract.EmbeddingContractID, eventAt, input.Query})
-	args = append(args, limit)
 	rows, err := tx.WithContext(ctx).Raw(`
 		WITH `+storagepostgres.RecallRelationshipGenerationScopeSQL+`
 		SELECT document.team_id::text, document.search_document_id::text, document.source_kind,
@@ -39,10 +33,10 @@ func searchRecallRelationshipFullTextSources(ctx context.Context, tx *gorm.DB, i
 		 AND `+storagepostgres.RelationshipGenerationDocumentSQL("document", "generation.projection_generation_id", "generation.projection_generation_id::text")+`
 		 AND (document.search_state IN ('pending', 'current', 'failed') OR (?::timestamptz IS NOT NULL AND document.search_state = 'not_required'))
 		WHERE document.search_tsv @@ plainto_tsquery('simple', ?)
-		  `+spaceClause+sourceClause+`
+		  `+spaceClause+`
 		ORDER BY text_rank DESC, document.updated_at DESC, document.search_document_id ASC
 		LIMIT ?
-	`, args...).Rows()
+	`, input.TeamID, input.Query, input.TeamID, contract.EmbeddingContractID, eventAt, input.Query, limit).Rows()
 	if err != nil {
 		return nil, err
 	}

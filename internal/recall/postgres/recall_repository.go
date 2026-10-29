@@ -87,15 +87,8 @@ func (r *Store) ReadEvidenceCandidates(ctx context.Context, input RecallEvidence
 		if err != nil {
 			return &ontologyReadError{cause: err}
 		}
-		if input.Query != "" {
-			textHits, err = augmentRecallChannel(textHits, ontologyHits, candidateLimit, func(ids []string) ([]SearchHit, error) {
-				return searchRecallFullTextSources(ctx, tx, input, contract, candidateLimit, ids)
-			})
-			if err != nil {
-				return &ontologyReadError{cause: err}
-			}
-		}
-		if len(input.QueryEmbedding) > 0 {
+		// Exhaustive text and exact-vector searches already rank the full eligible pool in this snapshot.
+		if len(input.QueryEmbedding) > 0 && contract.IndexStrategy != string(domain.VectorIndexExact) {
 			vectorHits, err = augmentRecallVectorChannel(vectorHits, ontologyHits, candidateLimit, func(ids []string) ([]SearchHit, error) {
 				return searchRecallExactVectorSources(ctx, tx, input, contract, candidateLimit, ids)
 			})
@@ -227,14 +220,8 @@ func searchRecallFullText(
 	contract *ActiveSearchContract,
 	limit int,
 ) ([]SearchHit, error) {
-	return searchRecallFullTextSources(ctx, tx, input, contract, limit, nil)
-}
-
-func searchRecallFullTextSources(ctx context.Context, tx *gorm.DB, input RecallEvidenceInput, contract *ActiveSearchContract, limit int, sourceIDs []string) ([]SearchHit, error) {
 	eventAt := recallEventAt(input.ValidAt, input.KnownAt)
 	spaceClause := recallSpacePredicate("search_documents.space_id", input.TeamID, input.SpaceID, input.SpaceKind)
-	sourceClause, args := recallSourceFilter("search_documents.source_id", sourceIDs, []any{input.Query, input.TeamID, contract.EmbeddingContractID, eventAt, input.KnownAt, input.Query})
-	args = append(args, limit)
 	rows, err := tx.WithContext(ctx).Raw(`
 		SELECT search_documents.team_id::text, search_documents.search_document_id::text,
 		       search_documents.source_kind, search_documents.source_id::text,
@@ -244,7 +231,9 @@ func searchRecallFullTextSources(ctx context.Context, tx *gorm.DB, input RecallE
 		       0::double precision AS distance,
 		       ts_rank_cd(search_documents.search_tsv, plainto_tsquery('simple', ?))::double precision AS text_rank
 		FROM search_documents
-		`+recallEvidenceSourceJoin(sourceIDs != nil)+`
+		JOIN evidence_fragments AS source_fragment
+		  ON source_fragment.team_id = search_documents.team_id
+		 AND source_fragment.fragment_id = search_documents.source_id
 		WHERE search_documents.team_id = ?::uuid
 		  AND search_documents.source_kind = 'evidence'
 		  AND search_documents.embedding_contract_id = ?::uuid
@@ -252,10 +241,10 @@ func searchRecallFullTextSources(ctx context.Context, tx *gorm.DB, input RecallE
 		  AND COALESCE(source_fragment.metadata->>'conflict_resolution_deletion_only', '') <> 'true'
 		  `+recallEvidenceAliasVisibilitySQL("source_fragment")+`
 		  AND search_documents.search_tsv @@ plainto_tsquery('simple', ?)
-	`+spaceClause+sourceClause+`
+	`+spaceClause+`
 		ORDER BY text_rank DESC, search_documents.updated_at DESC, search_documents.search_document_id ASC
 		LIMIT ?
-	`, args...).Rows()
+	`, input.Query, input.TeamID, contract.EmbeddingContractID, eventAt, input.KnownAt, input.Query, limit).Rows()
 	if err != nil {
 		return nil, err
 	}

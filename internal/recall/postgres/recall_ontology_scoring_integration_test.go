@@ -59,29 +59,19 @@ func TestRecallOntologyScoringUsesQueryAndBoundedSources(t *testing.T) {
 	require.NoError(t, err)
 	input := RecallEvidenceInput{TeamID: f.team, SpaceID: f.space, Query: "alpha beta", QueryEmbedding: []float32{1, 0, 0}}
 	require.NoError(t, f.rls.WithTeamReadOnlyRepeatableTx(ctx, f.app, f.team, func(tx *gorm.DB) error {
-		for index, score := range []func([]string) ([]SearchHit, error){
-			func(ids []string) ([]SearchHit, error) {
-				return searchRecallFullTextSources(ctx, tx, input, contract, 1, ids)
-			},
-			func(ids []string) ([]SearchHit, error) {
-				return searchRecallExactVectorSources(ctx, tx, input, contract, 1, ids)
-			},
-		} {
-			ordinary, err := score([]string{weak.ID})
-			require.NoError(t, err)
-			require.Len(t, ordinary, 1)
-			augment := augmentRecallChannel
-			if index == 1 {
-				augment = augmentRecallVectorChannel
-			}
-			augmented, err := augment(ordinary, []SearchHit{{SourceID: strong.ID}, {SourceID: strong.ID}}, 1, score)
-			require.NoError(t, err)
-			require.Len(t, augmented, 1)
-			require.Equal(t, strong.ID, augmented[0].SourceID)
-			empty, err := score([]string{})
-			require.NoError(t, err)
-			require.Empty(t, empty, "an empty bounded pool must never become an unrestricted search")
+		score := func(ids []string) ([]SearchHit, error) {
+			return searchRecallExactVectorSources(ctx, tx, input, contract, 1, ids)
 		}
+		ordinary, err := score([]string{weak.ID})
+		require.NoError(t, err)
+		require.Len(t, ordinary, 1)
+		augmented, err := augmentRecallVectorChannel(ordinary, []SearchHit{{SourceID: strong.ID}, {SourceID: strong.ID}}, 1, score)
+		require.NoError(t, err)
+		require.Len(t, augmented, 1)
+		require.Equal(t, strong.ID, augmented[0].SourceID)
+		empty, err := score([]string{})
+		require.NoError(t, err)
+		require.Empty(t, empty, "an empty bounded pool must never become an unrestricted search")
 		return nil
 	}))
 }
@@ -106,12 +96,20 @@ func TestRecallOntologyScoringKeepsSourceLookupsBounded(t *testing.T) {
 	capture := &projectionQueryCapture{}
 	db := newReadPerformanceCountedDB(f.app, &readPerformanceBenchmarkCounters{capture: capture})
 	input := RecallEvidenceInput{TeamID: f.team, SpaceID: f.space, Query: "bounded scoring", QueryEmbedding: []float32{1, 0, 0}}
+	ordinary, err := f.search.ReadEvidenceCandidates(ctx, input, contract, 60)
+	require.NoError(t, err)
+	definition := ontology.Record{ID: uuid.NewString(), Kind: ontology.Topic, Definition: &ontology.Definition{Key: input.Query, Label: input.Query}}
+	f.publication(t, definition, f.assignment(t, definition.ID, ontology.SourceHandle{Kind: ontology.EvidenceSource, ID: allIDs[0], Version: 1}))
+	input.OrganizationEnabled = true
+	organized, err := f.search.ReadEvidenceCandidates(ctx, input, contract, 60)
+	require.NoError(t, err)
+	require.Empty(t, organized.OrganizationDegradation)
+	require.Len(t, organized.OntologyHits, 1)
+	require.Equal(t, ordinary.TextHits, organized.TextHits, "exhaustive text ranking already includes every eligible discovery in its scored pool")
+	require.Equal(t, ordinary.VectorHits, organized.VectorHits, "exhaustive vector ranking already includes every eligible discovery in its scored pool")
 	require.NoError(t, f.rls.WithTeamReadOnlyRepeatableTx(ctx, db, f.team, func(tx *gorm.DB) error {
-		for _, score := range []func() ([]SearchHit, error){
-			func() ([]SearchHit, error) { return searchRecallFullTextSources(ctx, tx, input, contract, 60, ids) },
-			func() ([]SearchHit, error) { return searchRecallExactVectorSources(ctx, tx, input, contract, 60, ids) },
-		} {
-			hits, err := score()
+		{
+			hits, err := searchRecallExactVectorSources(ctx, tx, input, contract, 60, ids)
 			require.NoError(t, err)
 			require.Len(t, hits, len(ids))
 			statement := capture.Statements[len(capture.Statements)-1]
