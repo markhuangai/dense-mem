@@ -588,7 +588,7 @@ func TestEvalRuntimeDockerResumeBeforeFirstStart(t *testing.T) {
 	})
 	require.NoError(t, prepareRuntimeCompose(ctx, &receipt, true))
 	require.NoError(t, saveRuntimeReceipt(receipt))
-	_, err = runRuntimeCompose(ctx, receipt, true, "create")
+	_, err = runRuntimeCompose(ctx, receipt, true, runtimeComposeConfigTimeout, "create")
 	require.NoError(t, err)
 	require.NoError(t, captureRuntimeResources(ctx, &receipt, nil, false))
 	require.NoError(t, saveRuntimeReceipt(receipt))
@@ -600,4 +600,179 @@ func TestEvalRuntimeDockerResumeBeforeFirstStart(t *testing.T) {
 	require.Equal(t, "active", saved.State)
 	require.Equal(t, receipt.Containers[0].ID, saved.Containers[0].ID)
 	require.True(t, saved.Containers[0].Running)
+}
+
+func newEvalRuntimeCommandFixture(t *testing.T, ctx context.Context) RuntimeCommand {
+	t.Helper()
+	root := evalRuntimeDockerRoot(t)
+	compose := filepath.Join(root, "compose.json")
+	require.NoError(t, writePairJSON(compose, map[string]any{"services": map[string]any{"server": map[string]any{
+		"image":       "busybox:1.37.0-musl",
+		"command":     []string{"sh", "-ec", "touch /scratch/ready; trap 'exit 0' TERM; while :; do sleep 0.1; done"},
+		"volumes":     []string{"/scratch"},
+		"healthcheck": map[string]any{"test": []string{"CMD", "test", "-f", "/scratch/ready"}, "interval": "1s", "timeout": "1s", "retries": 10},
+	}}}))
+	command := RuntimeCommand{Action: "start", Directory: filepath.Join(root, "runtime"), Project: "eval653-" + uuid.NewString(), ComposeFile: compose, New: true}
+	t.Logf("owned command fixture project: %s", command.Project)
+	plan := evalRuntimeIncompletePlan(t, root)
+	t.Cleanup(func() {
+		cleanupCtx, stop := context.WithTimeout(context.Background(), 3*time.Minute)
+		defer stop()
+		if _, err := readRuntimeReceipt(command.Directory); os.IsNotExist(err) {
+			return
+		}
+		if err := RunRuntimeCommand(cleanupCtx, RuntimeCommand{Action: "retire", Directory: command.Directory, RetentionPlan: plan, StopTimeout: 10 * time.Second}, io.Discard); err != nil {
+			t.Errorf("command fixture retirement: %v", err)
+			return
+		}
+		receipt, err := readRuntimeReceipt(command.Directory)
+		if err != nil {
+			t.Errorf("command fixture cleanup receipt: %v", err)
+			return
+		}
+		removeEvalRuntimeFixture(t, root, receipt)
+	})
+	require.NoError(t, RunRuntimeCommand(ctx, command, io.Discard))
+	return command
+}
+
+func TestEvalRuntimeComposeDeadlines(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	fixture := newEvalRuntimeCommandFixture(t, ctx)
+	receipt, err := readRuntimeReceipt(fixture.Directory)
+	require.NoError(t, err)
+	output, err := runRuntimeCompose(ctx, receipt, true, 10*time.Second, "exec", "--no-TTY", "server", "echo", "completed")
+	require.NoError(t, err)
+	require.Equal(t, "completed", strings.TrimSpace(string(output)))
+	for _, test := range []struct {
+		name           string
+		parent, runner time.Duration
+	}{
+		{"runner_deadline", time.Minute, 2 * time.Second},
+		{"earlier_parent_deadline", 2 * time.Second, time.Minute},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			parent, stop := context.WithTimeout(ctx, test.parent)
+			defer stop()
+			started := time.Now()
+			_, err := runRuntimeCompose(parent, receipt, true, test.runner, "exec", "--no-TTY", "server", "sleep", "30")
+			require.ErrorContains(t, err, "Compose exec failed")
+			require.Less(t, time.Since(started), 10*time.Second, "the shorter deadline must interrupt the real command")
+		})
+	}
+	t.Run("cancellation_after_execution", func(t *testing.T) {
+		parent, stop := context.WithCancel(ctx)
+		defer stop()
+		done := make(chan error, 1)
+		go func() {
+			defer close(done)
+			_, err := runRuntimeCompose(parent, receipt, true, time.Minute, "exec", "--no-TTY", "server", "sh", "-ec", "touch /scratch/executing; exec sleep 30")
+			done <- err
+		}()
+		var serverID string
+		for _, container := range receipt.Containers {
+			if container.Service == "server" {
+				serverID = container.ID
+			}
+		}
+		require.Eventually(t, func() bool {
+			_, err := runtimeDocker(ctx, "container", "exec", serverID, "test", "-f", "/scratch/executing")
+			return err == nil
+		}, 10*time.Second, 100*time.Millisecond)
+		stop()
+		select {
+		case err := <-done:
+			require.ErrorContains(t, err, "Compose exec failed")
+		case <-time.After(10 * time.Second):
+			t.Fatal("cancellation did not interrupt the real command")
+		}
+	})
+}
+
+func TestEvalRuntimeDockerStartupCancellationRecovery(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
+	defer cancel()
+	protectedFixture := newEvalRuntimeCommandFixture(t, ctx)
+	protected, err := captureProtectedRuntimes(ctx, []string{protectedFixture.Directory})
+	require.NoError(t, err)
+	root := evalRuntimeDockerRoot(t)
+	compose := filepath.Join(root, "compose.json")
+	require.NoError(t, writePairJSON(compose, map[string]any{"services": map[string]any{"server": map[string]any{
+		"image":       "busybox:1.37.0-musl",
+		"command":     []string{"sh", "-ec", "trap 'exit 0' TERM; while :; do sleep 0.1; done"},
+		"volumes":     []string{"${V1_COMPOSE_DATA_DIR}/data:/data"},
+		"healthcheck": map[string]any{"test": []string{"CMD", "test", "-f", "/data/ready"}, "interval": "1s", "timeout": "1s", "retries": 120},
+	}}}))
+	command := RuntimeCommand{Action: "start", Directory: filepath.Join(root, "runtime"), Project: "eval653-" + uuid.NewString(), ComposeFile: compose, New: true}
+	plan := evalRuntimeIncompletePlan(t, root)
+	t.Cleanup(func() {
+		cleanupCtx, stop := context.WithTimeout(context.Background(), 3*time.Minute)
+		defer stop()
+		if err := RunRuntimeCommand(cleanupCtx, RuntimeCommand{Action: "retire", Directory: command.Directory, RetentionPlan: plan, StopTimeout: 10 * time.Second}, io.Discard); err != nil {
+			t.Errorf("cancelled-start fixture retirement: %v", err)
+			return
+		}
+		receipt, err := readRuntimeReceipt(command.Directory)
+		if err != nil {
+			t.Errorf("cancelled-start cleanup receipt: %v", err)
+			return
+		}
+		removeEvalRuntimeFixture(t, root, receipt)
+	})
+	startup, stop := context.WithCancel(ctx)
+	done := make(chan error, 1)
+	go func() {
+		defer close(done)
+		done <- RunRuntimeCommand(startup, command, io.Discard)
+	}()
+	t.Cleanup(func() {
+		stop()
+		select {
+		case <-done:
+		case <-time.After(3 * time.Minute):
+			t.Error("cancelled startup did not finish before cleanup")
+		}
+	})
+	var allocated runtimeContainer
+	require.Eventually(t, func() bool {
+		data, err := runtimeDocker(ctx, "container", "ls", "--quiet", "--filter", "label=com.docker.compose.project="+command.Project)
+		if err != nil || len(strings.Fields(string(data))) != 1 {
+			return false
+		}
+		allocated, err = inspectRuntimeContainer(ctx, strings.TrimSpace(string(data)))
+		return err == nil && allocated.Running
+	}, 30*time.Second, 100*time.Millisecond)
+	stop()
+	select {
+	case err := <-done:
+		require.ErrorContains(t, err, "Compose up failed")
+	case <-time.After(75 * time.Second):
+		t.Fatal("startup cancellation did not return after resource allocation")
+	}
+	interrupted, err := readRuntimeReceipt(command.Directory)
+	require.NoError(t, err)
+	require.Equal(t, "preparing", interrupted.State)
+	require.Len(t, interrupted.Containers, 1)
+	require.True(t, sameRuntimeContainer(allocated, interrupted.Containers[0]))
+	require.NotEmpty(t, interrupted.Networks)
+	require.NotEmpty(t, interrupted.Binds)
+	require.NoError(t, verifyProtectedRuntimes(ctx, protected))
+	replacement := RuntimeCommand{Action: "start", Directory: filepath.Join(root, "replacement"), Project: "eval653-" + uuid.NewString(), ComposeFile: compose, Supersedes: command.Directory}
+	t.Cleanup(func() {
+		removeEvalRuntimeFixture(t, replacement.Directory, runtimeReceipt{Project: replacement.Project})
+	})
+	require.ErrorContains(t, RunRuntimeCommand(ctx, replacement, io.Discard), "replacement blocked")
+	require.NoError(t, assertUnusedRuntimeProject(ctx, replacement.Project))
+	_, err = runtimeDocker(ctx, "container", "exec", allocated.ID, "touch", "/data/ready")
+	require.NoError(t, err)
+	require.NoError(t, RunRuntimeCommand(ctx, RuntimeCommand{Action: "start", Directory: command.Directory}, io.Discard))
+	resumed, err := readRuntimeReceipt(command.Directory)
+	require.NoError(t, err)
+	require.Equal(t, "active", resumed.State)
+	require.Equal(t, interrupted.ID, resumed.ID)
+	require.True(t, sameRuntimeContainer(interrupted.Containers[0], resumed.Containers[0]))
+	require.Equal(t, interrupted.Networks, resumed.Networks)
+	require.Equal(t, interrupted.Binds, resumed.Binds)
+	require.NoError(t, verifyProtectedRuntimes(ctx, protected))
 }
