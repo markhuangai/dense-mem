@@ -135,6 +135,16 @@ maximum 5m). A timeout leaves retirement incomplete and replacement blocked.
 Diagnose the failed resource, then repeat the same retirement command and plan.
 No global prune, age-based selection or forced removal is used.
 
+If a registered monitor output directory was moved or removed, retirement and
+active-runtime resume can continue once all recorded container locks are
+available. The monitor takes those locks outside its output directory before
+registering, so a live monitor still blocks either operation even when its output
+lock was unlinked. Existing output directories retain their usual lock checks;
+other filesystem errors and missing container identities still block recovery.
+The command does not recreate the output directory or remove its receipt entry.
+Retirement still requires every declared source and retained archive to validate;
+moving or deleting required evidence does not make it optional.
+
 Only recorded resources are removed. Other container references protect images,
 networks, volumes and overlapping bind storage. Shared resources remain with an
 explicit retained disposition. New tags also protect images. Bind contents are
