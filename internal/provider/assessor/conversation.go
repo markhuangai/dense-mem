@@ -217,6 +217,10 @@ func semanticAssessmentResponseForCorrection(
 	}
 	response, err := assessor.DecodeSemanticAssessmentGeneration([]byte(result.Content), req, limits)
 	if err != nil {
+		var validation *assessor.SemanticAssessmentResponseValidationError
+		if errors.As(err, &validation) {
+			return assessor.SemanticAssessmentResponse{}, validation.Errors, "response_json"
+		}
 		field := "response"
 		message := "must be one complete JSON object matching the required field types"
 		var typeError *json.UnmarshalTypeError

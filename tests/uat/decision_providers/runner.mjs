@@ -30,6 +30,25 @@ try {
   const replay = await rpc(userURL, "remember", stored.request);
   assert.equal(replay.processing_state, "completed");
   assert.equal((await fixture()).exchanges.length, count, "unchanged replay must not invoke decisions");
+  for (const fault of ["routed-field-repair", "routed-field-exhausted"]) {
+    const start = (await getJSON(`${fixtureURL}/health`)).chat_requests.length;
+    const beforeDecisions = (await fixture()).exchanges.length;
+    const { result } = await remember(userURL, fault, fault);
+    const calls = (await getJSON(`${fixtureURL}/health`)).chat_requests.slice(start).filter((request) => request.fault === fault);
+    assert(calls.every((request) => !request.generated_fields.includes("evidence_security_results") && !request.generated_fields.includes("evidence_equivalence_results")), "repairs must retain routed schemas");
+    assert.equal((await fixture()).exchanges.length, beforeDecisions + 1, "repairs must reuse the decision snapshot");
+    if (fault === "routed-field-repair") {
+      assert.equal(result.processing_state, "completed", "field-specific feedback must enable a complete repair");
+      assert.equal(calls.length, 2);
+      assert(result.evidence.every((item) => item.disposition === "stored"));
+      assert(result.relationship_results.every((item) => item.disposition === "stored"));
+    } else {
+      assert.equal(result.processing_state, "failed");
+      assert.equal(calls.length, 3, "malformed responses must stop at the existing turn bound");
+      assert(result.evidence.every((item) => item.disposition === "not_stored"));
+      assert(result.relationship_results.every((item) => item.disposition === "not_stored"));
+    }
+  }
   await fixture("regenerate");
   assert.equal((await remember(userURL, "Regenerate")).result.processing_state, "completed");
   await fixture("uncertain");
@@ -114,9 +133,10 @@ function createTypeSafeInstance() {
   return docker(["create", "--name", childName, "--network", network, ...labels.flatMap(([key,value]) => ["--label",`${key}=${value}`]), ...Array.from(environment,([key,value]) => ["--env",`${key}=${value}`]).flat(), source.Image, ...(source.Config.Cmd || [])]).trim();
 }
 
-async function remember(base, suffix) {
+async function remember(base, suffix, fault = "") {
   const name = `${prefix} ${suffix}`;
   const request = { target_space: "team_shared", idempotency_key: `decision-${randomUUID()}`, evidence: [{ content: `${name} uses PostgreSQL.`, source_type: "manual" }], relationships: [{ ref: "uses", subject: { name, entity_kind: "project" }, predicate: { proposed_key: "uses" }, object: { entity: { name: "PostgreSQL", entity_kind: "product" } }, polarity: "+", evidence_indices: [0] }] };
+  if (fault) request.evidence[0].content += ` [fixture-fault:${fault}]`;
   return { request, result: await rpc(base, "remember", request) };
 }
 async function verifyReranking(base, vendor) {

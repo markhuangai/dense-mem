@@ -222,7 +222,7 @@ func DecodeSemanticAssessmentResponseJSON(
 		return SemanticAssessmentResponse{}, fmt.Errorf("semantic assessment response exceeds %d token limit", limits.MaxOutputTokens)
 	}
 	if errs := validateSemanticAssessmentResponseRaw(raw); len(errs) > 0 {
-		return SemanticAssessmentResponse{}, errors.New(semanticAssessmentJoinedErrors(errs))
+		return SemanticAssessmentResponse{}, &SemanticAssessmentResponseValidationError{Errors: errs}
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
