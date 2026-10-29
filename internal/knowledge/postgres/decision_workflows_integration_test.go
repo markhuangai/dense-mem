@@ -40,9 +40,10 @@ import (
 )
 
 type decisionWorkflowHTTP struct {
-	calls      atomic.Int64
-	status     atomic.Int64
-	onDecision func(string)
+	calls        atomic.Int64
+	status       atomic.Int64
+	onDecision   func(string)
+	onAssessment func([]modelprovider.Message, map[string]json.RawMessage)
 }
 
 func (f *decisionWorkflowHTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -128,6 +129,9 @@ func (f *decisionWorkflowHTTP) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		if _, included := request.ResponseFormat.JSONSchema.Schema.Properties[key]; !included {
 			delete(fields, key)
 		}
+	}
+	if f.onAssessment != nil {
+		f.onAssessment(request.Messages, fields)
 	}
 	body, _ = json.Marshal(fields)
 	_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": string(body)}}}})
@@ -297,6 +301,62 @@ func TestDecisionRememberPostgresAtomicityReplayIsolationAndSettingsSnapshot(t *
 	require.Len(t, recalled.Results, 1)
 	require.NotEmpty(t, recalled.DecisionStages)
 	require.Equal(t, []string{recalled.Results[0].EvidenceID}, recalled.DecisionStages[0].SelectedIDs)
+
+	_, err = controls.UpdateDecisionSettings(ctx, map[string]string{domain.AppConfigDecisionSecurity: "true"}, "control", "", "routed-repair")
+	require.NoError(t, err)
+	for _, exhausted := range []bool{false, true} {
+		t.Run(fmt.Sprintf("routed repair exhausted=%t", exhausted), func(t *testing.T) {
+			repairTeam := createLedgerTeam(t, admin, rls, fmt.Sprintf("decision-repair-%t", exhausted))
+			repairOwner := createLedgerProfile(t, admin, rls, repairTeam, "repair-owner")
+			repairSpace, repairGeneration := duplicateTeamSharedSpace(t, admin, rls, repairTeam)
+			repairInput := rememberapp.RememberProcessRequest{
+				TeamID: repairTeam, OwnerProfileID: repairOwner, SpaceID: repairSpace, SpaceGeneration: repairGeneration,
+				SpaceKind: domain.MemorySpaceTeamShared, IdempotencyKey: "routed-repair", RequestHash: "routed-repair",
+				Evidence: rememberapp.RepositoryEvidenceInputs([]rememberapp.RememberEvidenceInput{
+					{Content: "Routed repair evidence uses PostgreSQL.", SourceType: "manual"},
+					{Content: "A second evidence item must not partially commit.", SourceType: "manual"},
+				}),
+			}
+			decisionCalls := fixture.calls.Load()
+			var requests [][]modelprovider.Message
+			fixture.onAssessment = func(messages []modelprovider.Message, fields map[string]json.RawMessage) {
+				requests = append(requests, messages)
+				require.NotContains(t, fields, "evidence_security_results")
+				require.NotContains(t, fields, "evidence_equivalence_results")
+				if len(requests) > 1 {
+					require.Equal(t, requests[0], messages[:2])
+					var feedback struct {
+						ValidationErrors []assessor.SemanticValidationError `json:"validation_errors"`
+					}
+					require.NoError(t, json.Unmarshal([]byte(messages[len(messages)-1].Content), &feedback))
+					require.Equal(t, []assessor.SemanticValidationError{{Field: "relationship_results", Message: "is required"}}, feedback.ValidationErrors)
+				}
+				if len(requests) == 1 || exhausted {
+					delete(fields, "relationship_results")
+				}
+			}
+			defer func() { fixture.onAssessment = nil }()
+			result, processErr := api.ProcessRemember(ctx, repairInput)
+			require.Equal(t, decisionCalls+1, fixture.calls.Load(), "repair must reuse the original decision snapshot")
+			if exhausted {
+				var failed *rememberapp.RememberProcessError
+				require.ErrorAs(t, processErr, &failed)
+				require.NotNil(t, failed.Status)
+				require.Equal(t, "failed", failed.Status.ProcessingState)
+				require.Len(t, requests, 3)
+				for _, table := range []string{"knowledge_ingests", "evidence_occurrences", "semantic_assessments", "relationship_records"} {
+					require.Zero(t, duplicateCount(t, admin, rls, `SELECT count(*) FROM `+table+` WHERE team_id=?::uuid`, repairTeam), table)
+				}
+				return
+			}
+			require.NoError(t, processErr)
+			require.Equal(t, "completed", result.ProcessingState)
+			require.Len(t, requests, 2)
+			require.EqualValues(t, 1, duplicateCount(t, admin, rls, `SELECT count(*) FROM knowledge_ingests WHERE team_id=?::uuid`, repairTeam))
+			require.EqualValues(t, 2, duplicateCount(t, admin, rls, `SELECT count(*) FROM evidence_occurrences WHERE team_id=?::uuid`, repairTeam))
+			require.EqualValues(t, 1, duplicateCount(t, admin, rls, `SELECT count(*) FROM semantic_assessments WHERE team_id=?::uuid`, repairTeam))
+		})
+	}
 }
 
 type decisionConflictGenerative struct{ calls atomic.Int64 }

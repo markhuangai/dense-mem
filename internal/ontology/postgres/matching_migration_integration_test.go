@@ -108,7 +108,7 @@ func TestOntologyMatchingRefreshMigration(t *testing.T) {
 			f.store = NewStore(f.app, f.rls)
 			status, err := f.store.TeamOntologyStatus(f.actor(0, "manager"), f.team)
 			require.NoError(t, err)
-			require.Greater(t, status.PendingMarkers, 0)
+			require.Positive(t, status.PendingMarkers)
 			require.False(t, status.DiscoveryComplete)
 			require.False(t, status.CoverageComplete)
 			require.NoError(t, f.admin.Exec(`DELETE FROM ontology_maintenance_markers WHERE anchor_kind='ontology_record_heads'`).Error)

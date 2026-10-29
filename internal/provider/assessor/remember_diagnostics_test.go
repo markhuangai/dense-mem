@@ -3,6 +3,7 @@ package assessorprovider
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,100 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
 )
+
+func TestRememberHTTPRoutedRawValidationRepair(t *testing.T) {
+	for _, route := range []struct {
+		name                  string
+		security, equivalence bool
+	}{{"unrouted", false, false}, {"security", true, false}, {"equivalence", false, true}, {"both", true, true}} {
+		for _, exhausted := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/exhausted=%t", route.name, exhausted), func(t *testing.T) {
+				request, _ := semanticAssessmentSubmissionContractTestRequest(t)
+				valid := semanticAssessmentTestResponse()
+				if route.security || route.equivalence {
+					request.DecisionRouting = &assessor.SemanticAssessmentRouting{}
+					if route.security {
+						request.DecisionRouting.Security = valid.EvidenceSecurityResults
+					}
+					if route.equivalence {
+						request.DecisionRouting.Equivalence = valid.EvidenceEquivalenceResults
+					}
+				}
+				routingBefore, err := json.Marshal(request.DecisionRouting)
+				require.NoError(t, err)
+				var requests []openAIVerifierRequest
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					var wire openAIVerifierRequest
+					require.NoError(t, json.NewDecoder(r.Body).Decode(&wire))
+					requests = append(requests, wire)
+					if len(requests) > 1 {
+						var feedback semanticAssessmentSessionRepair
+						last := wire.Messages[len(wire.Messages)-1].Content
+						require.NoError(t, json.Unmarshal([]byte(last), &feedback))
+						require.Equal(t, []assessor.SemanticValidationError{{Field: "relationship_results[0].disposition", Message: "is required"}}, feedback.ValidationErrors)
+						require.NotContains(t, last, "private-code-canary")
+						require.Equal(t, requests[0].Messages, wire.Messages[:2])
+						require.Equal(t, requests[0].ResponseFormat, wire.ResponseFormat)
+					}
+					var fields map[string]any
+					require.NoError(t, json.Unmarshal(mustMarshalJSON(t, valid), &fields))
+					if route.security {
+						delete(fields, "evidence_security_results")
+					}
+					if route.equivalence {
+						delete(fields, "evidence_equivalence_results")
+					}
+					if len(requests) == 1 || exhausted {
+						delete(fields["relationship_results"].([]any)[0].(map[string]any), "disposition")
+					}
+					require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": string(mustMarshalJSON(t, fields))}}}}))
+				}))
+				defer server.Close()
+				provider := NewOpenAIAssessor(newTestVerifierConfig(server.URL, "key", "assessor-model"), server.Client())
+				session, turn, err := provider.Assess(context.Background(), request)
+				require.NoError(t, err)
+				for {
+					require.Equal(t, assessor.SemanticAssessmentResponse{}, turn.Response)
+					require.Equal(t, "response_json", turn.ValidationStage)
+					require.Equal(t, []assessor.SemanticValidationError{{Field: "relationship_results[0].disposition", Message: "is required"}}, turn.ValidationErrors)
+					turn.ValidationErrors[0].Code = "private-code-canary"
+					turn, err = provider.Repair(context.Background(), session, assessor.SemanticAssessmentRepairRequest{Request: request, ValidationErrors: turn.ValidationErrors})
+					if err != nil || len(turn.ValidationErrors) == 0 {
+						break
+					}
+				}
+				if exhausted {
+					var malformed *MalformedResponseError
+					require.ErrorAs(t, err, &malformed)
+					require.Equal(t, "malformed_exhausted", malformed.FailureClass)
+					require.Equal(t, 3, malformed.Attempts)
+					require.Len(t, requests, 3)
+					require.Equal(t, assessor.SemanticAssessmentResponse{}, turn.Response)
+				} else {
+					require.NoError(t, err)
+					require.Len(t, requests, 2)
+					require.Len(t, turn.Response.EntityResults, 2)
+					require.Len(t, turn.Response.RelationshipResults, 1)
+					require.Equal(t, "stored", turn.Response.RelationshipResults[0].Disposition)
+					require.Equal(t, valid.EvidenceSecurityResults, turn.Response.EvidenceSecurityResults)
+					require.Equal(t, valid.EvidenceEquivalenceResults, turn.Response.EvidenceEquivalenceResults)
+					changed := request
+					changed.RequestID = "different-request"
+					_, err = provider.Repair(context.Background(), session, assessor.SemanticAssessmentRepairRequest{Request: changed})
+					require.ErrorContains(t, err, "changed the submitted envelope")
+					changed = request
+					changed.DecisionRouting = &assessor.SemanticAssessmentRouting{Security: []assessor.SemanticAssessmentEvidenceSecurityResult{}}
+					_, err = provider.Repair(context.Background(), session, assessor.SemanticAssessmentRepairRequest{Request: changed})
+					require.ErrorContains(t, err, "changed the submitted envelope")
+					require.Len(t, requests, 2)
+				}
+				routingAfter, err := json.Marshal(request.DecisionRouting)
+				require.NoError(t, err)
+				require.Equal(t, routingBefore, routingAfter)
+			})
+		}
+	}
+}
 
 func TestRememberTurnDiagnosticsSurviveHTTPFailuresAndRepair(t *testing.T) {
 	for _, status := range []int{http.StatusOK, http.StatusTooManyRequests, http.StatusServiceUnavailable} {
