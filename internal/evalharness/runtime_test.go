@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -48,6 +49,99 @@ func TestEvalRuntimePathsAndLocks(t *testing.T) {
 	defer lock.Close()
 	_, err = runtimeLock(filepath.Join(root, "runtime.lock"))
 	require.ErrorContains(t, err, "owned by another process")
+}
+
+func TestEvalRuntimeResourceLocks(t *testing.T) {
+	for _, variant := range []string{"existing", "missing", "missing_no_containers", "missing_invalid_container", "symlink", "symlink_parent", "not_directory", "permission", "contended"} {
+		t.Run(variant, func(t *testing.T) {
+			root := t.TempDir()
+			monitor := filepath.Join(root, "z-monitor")
+			lockDir, err := runtimeLockDirectory()
+			require.NoError(t, err)
+			receipt := runtimeReceipt{MonitorDirs: []string{monitor, monitor}}
+			for range 2 {
+				id := strings.ReplaceAll(uuid.NewString()+uuid.NewString(), "-", "")
+				receipt.Containers = append(receipt.Containers, runtimeContainer{ID: id})
+				t.Cleanup(func() {
+					err := os.Remove(filepath.Join(lockDir, id+".lock"))
+					if !os.IsNotExist(err) {
+						require.NoError(t, err)
+					}
+				})
+			}
+			receipt.Containers = append(receipt.Containers, receipt.Containers[0])
+			var expected error
+			reason, releasedPath := "", ""
+			switch variant {
+			case "missing":
+			case "missing_no_containers":
+				receipt.Containers, expected = nil, os.ErrNotExist
+			case "missing_invalid_container":
+				receipt.Containers[0].ID = "invalid"
+				reason = "invalid recorded container identity"
+			case "symlink", "symlink_parent":
+				require.NoError(t, os.Symlink(filepath.Join(root, "absent-target"), monitor))
+				if variant == "symlink_parent" {
+					receipt.MonitorDirs = []string{filepath.Join(monitor, "absent-child")}
+				}
+				reason = "symlink"
+			case "not_directory":
+				require.NoError(t, os.WriteFile(monitor, []byte("preserve"), 0o600))
+				expected = syscall.ENOTDIR
+			case "permission":
+				if os.Geteuid() == 0 {
+					t.Skip("root bypasses directory search permissions")
+				}
+				require.NoError(t, os.Mkdir(monitor, 0o000))
+				t.Cleanup(func() { require.NoError(t, os.Chmod(monitor, 0o700)) })
+				receipt.MonitorDirs = []string{filepath.Join(monitor, "absent-child")}
+				expected = os.ErrPermission
+			default:
+				require.NoError(t, os.Mkdir(monitor, 0o700))
+				if variant == "contended" {
+					first := filepath.Join(root, "a-monitor")
+					require.NoError(t, os.Mkdir(first, 0o700))
+					receipt.MonitorDirs = append(receipt.MonitorDirs, first)
+					releasedPath = filepath.Join(first, "paired.lock")
+					held, err := runtimeLock(filepath.Join(monitor, "paired.lock"))
+					require.NoError(t, err)
+					t.Cleanup(func() { require.NoError(t, held.Close()) })
+					expected = syscall.EWOULDBLOCK
+				}
+			}
+			locks, err := lockRuntimeResources(receipt)
+			t.Cleanup(func() {
+				for _, lock := range locks {
+					require.NoError(t, lock.Close())
+				}
+			})
+			if expected != nil || reason != "" {
+				require.Nil(t, locks)
+				if expected != nil {
+					require.ErrorIs(t, err, expected)
+				} else {
+					require.ErrorContains(t, err, reason)
+				}
+				if releasedPath != "" {
+					lock, err := runtimeLock(releasedPath)
+					require.NoError(t, err, "partial acquisition must release earlier monitor locks")
+					require.NoError(t, lock.Close())
+				}
+				return
+			}
+			require.NoError(t, err)
+			wantLocks := 3
+			if variant == "missing" {
+				wantLocks = 2
+				require.NoDirExists(t, monitor)
+			}
+			require.Len(t, locks, wantLocks, "duplicate paths must not acquire the same lock twice")
+			for _, lock := range locks {
+				_, err := runtimeLock(lock.Name())
+				require.ErrorIs(t, err, syscall.EWOULDBLOCK)
+			}
+		})
+	}
 }
 
 func TestEvalRuntimeRequiresExplicitIntent(t *testing.T) {
