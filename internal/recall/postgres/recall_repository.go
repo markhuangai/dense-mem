@@ -244,9 +244,7 @@ func searchRecallFullTextSources(ctx context.Context, tx *gorm.DB, input RecallE
 		       0::double precision AS distance,
 		       ts_rank_cd(search_documents.search_tsv, plainto_tsquery('simple', ?))::double precision AS text_rank
 		FROM search_documents
-		JOIN evidence_fragments AS source_fragment
-		  ON source_fragment.team_id = search_documents.team_id
-		 AND source_fragment.fragment_id = search_documents.source_id
+		`+recallEvidenceSourceJoin(sourceIDs != nil)+`
 		WHERE search_documents.team_id = ?::uuid
 		  AND search_documents.source_kind = 'evidence'
 		  AND search_documents.embedding_contract_id = ?::uuid
@@ -311,9 +309,7 @@ func searchRecallExactVectorSources(ctx context.Context, tx *gorm.DB, input Reca
 		       (search_documents.embedding <=> ?::vector)::double precision AS distance,
 		       0::double precision AS text_rank
 		FROM search_documents
-		JOIN evidence_fragments AS source_fragment
-		  ON source_fragment.team_id = search_documents.team_id
-		 AND source_fragment.fragment_id = search_documents.source_id
+		` + recallEvidenceSourceJoin(sourceIDs != nil) + `
 		WHERE search_documents.team_id = ?::uuid
 		  AND search_documents.source_kind = 'evidence'
 		  AND search_documents.embedding_contract_id = ?::uuid

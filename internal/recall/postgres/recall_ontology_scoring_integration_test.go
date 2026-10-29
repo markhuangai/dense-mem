@@ -4,6 +4,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 
@@ -76,6 +77,58 @@ func TestRecallOntologyScoringUsesQueryAndBoundedSources(t *testing.T) {
 			empty, err := score([]string{})
 			require.NoError(t, err)
 			require.Empty(t, empty, "an empty bounded pool must never become an unrestricted search")
+		}
+		return nil
+	}))
+}
+
+func TestRecallOntologyScoringKeepsSourceLookupsBounded(t *testing.T) {
+	f := newRecallOntologyFixture(t)
+	ctx := f.actor(2, "member")
+	ids := []string{}
+	for index := range 96 {
+		handle := f.evidence(t, index%2, fmt.Sprintf("Bounded scoring source %d", index), nil)
+		if index < 60 {
+			ids = append(ids, handle.ID)
+		}
+	}
+	contract, err := f.search.GetActiveSearchContract(ctx)
+	require.NoError(t, err)
+	capture := &projectionQueryCapture{}
+	db := newReadPerformanceCountedDB(f.app, &readPerformanceBenchmarkCounters{capture: capture})
+	input := RecallEvidenceInput{TeamID: f.team, SpaceID: f.space, Query: "bounded scoring", QueryEmbedding: []float32{1, 0, 0}}
+	require.NoError(t, f.rls.WithTeamReadOnlyRepeatableTx(ctx, db, f.team, func(tx *gorm.DB) error {
+		for _, score := range []func() ([]SearchHit, error){
+			func() ([]SearchHit, error) { return searchRecallFullTextSources(ctx, tx, input, contract, 60, ids) },
+			func() ([]SearchHit, error) { return searchRecallExactVectorSources(ctx, tx, input, contract, 60, ids) },
+		} {
+			hits, err := score()
+			require.NoError(t, err)
+			require.Len(t, hits, len(ids))
+			statement := capture.Statements[len(capture.Statements)-1]
+			var encoded []byte
+			require.NoError(t, tx.Statement.ConnPool.QueryRowContext(ctx, "EXPLAIN (ANALYZE, FORMAT JSON) "+statement.rawSQL, statement.rawArgs...).Scan(&encoded))
+			type node struct {
+				Relation string  `json:"Relation Name"`
+				Rows     float64 `json:"Actual Rows"`
+				Loops    float64 `json:"Actual Loops"`
+				Plans    []node  `json:"Plans"`
+			}
+			var reports []struct{ Plan node }
+			require.NoError(t, json.Unmarshal(encoded, &reports))
+			require.Len(t, reports, 1)
+			var sourceRows float64
+			var visit func(node)
+			visit = func(current node) {
+				if current.Relation == "evidence_fragments" {
+					sourceRows += current.Rows * current.Loops
+				}
+				for _, child := range current.Plans {
+					visit(child)
+				}
+			}
+			visit(reports[0].Plan)
+			require.Equal(t, float64(len(ids)), sourceRows, "bounded scoring must not scan the team's fragments once per candidate")
 		}
 		return nil
 	}))

@@ -446,6 +446,13 @@
       "source": "internal/recall/postgres/recall_ontology_scoring_integration_test.go"
     },
     {
+      "id": "repository/TestRecallOntologyScoringKeepsSourceLookupsBounded",
+      "package": "./internal/recall/postgres",
+      "run": "^TestRecallOntologyScoringKeepsSourceLookupsBounded$",
+      "phase": "precheck",
+      "source": "internal/recall/postgres/recall_ontology_scoring_integration_test.go"
+    },
+    {
       "id": "repository/TestRecallOntologyRelationshipScoringPreservesVectorReadiness",
       "package": "./internal/recall/postgres",
       "run": "^TestRecallOntologyRelationshipScoringPreservesVectorReadiness$",
