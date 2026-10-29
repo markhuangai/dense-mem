@@ -15,6 +15,7 @@ import (
 	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
+	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"github.com/stretchr/testify/require"
 )
 
@@ -33,6 +34,10 @@ func accuracyFrozenLock(t *testing.T) evalharness.RecallAccuracyLock {
 }
 
 func TestRecallAccuracyCohort(t *testing.T) {
+	// Shared-DSN fixtures truncate their database, so only disposable containers may run concurrently.
+	if storagepostgres.GetTestDSN() == "" && os.Getenv("DENSE_MEM_REPOSITORY_TESTCONTAINERS") == "1" {
+		t.Parallel()
+	}
 	lock := accuracyFrozenLock(t)
 	var repetitions [2][]recallAccuracyObservation
 	for repetition := range repetitions {
@@ -65,6 +70,9 @@ func TestRecallAccuracyCohort(t *testing.T) {
 }
 
 func TestRecallAccuracyVariations(t *testing.T) {
+	if storagepostgres.GetTestDSN() == "" && os.Getenv("DENSE_MEM_REPOSITORY_TESTCONTAINERS") == "1" {
+		t.Parallel()
+	}
 	accuracyFrozenLock(t)
 	for _, variant := range []struct {
 		name             string
