@@ -60,6 +60,41 @@ func maintenanceServiceFixture(t *testing.T, f *ontologyFixture, config *setting
 	}
 }
 
+type cancelledClaimRepository struct {
+	ontology.MaintenanceRepository
+	cancel context.CancelFunc
+	turn   *ontology.MaintenanceTurn
+}
+
+func (r *cancelledClaimRepository) ClaimMaintenanceTurn(ctx context.Context, window string, now time.Time, lease time.Duration) (*ontology.MaintenanceTurn, error) {
+	turn, err := r.MaintenanceRepository.ClaimMaintenanceTurn(ctx, window, now, lease)
+	if err != nil || turn == nil {
+		return turn, err
+	}
+	r.turn = turn
+	r.cancel()
+	return turn, ctx.Err()
+}
+
+func TestOntologyMaintenanceClaimErrorReleasesReturnedTurn(t *testing.T) {
+	f := newOrganizationFixture(t)
+	f.organizationEvidence(t, 0, "Claim acknowledgement cancellation.", nil)
+	before := f.canonicalSnapshot(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// A committed claim can lose its acknowledgement when its caller is cancelled.
+	repository := &cancelledClaimRepository{MaintenanceRepository: f.store, cancel: cancel}
+	service, calls := schedulerFixtureService(t, f, schedulerConfig(t, f, 1, 1), nil, repository)
+	_, err := service.RunTurn(ctx)
+	require.ErrorIs(t, err, context.Canceled)
+	require.NotNil(t, repository.turn)
+	var active int
+	require.NoError(t, f.admin.Raw(`SELECT count(*) FROM ontology_maintenance_teams WHERE team_id=?::uuid AND lease_token=?::uuid AND lease_until>clock_timestamp()`, f.team, repository.turn.LeaseToken).Row().Scan(&active))
+	require.Zero(t, active, "a returned preparation handle must be released even when claim acknowledgement fails")
+	require.Zero(t, calls())
+	require.Equal(t, before, f.canonicalSnapshot(t))
+}
+
 func TestOntologyMaintenanceOperatorHTTPAndScheduler(t *testing.T) {
 	f := newOrganizationFixture(t)
 	f.organizationEvidence(t, 0, "Atlas uses PostgreSQL.", nil)
