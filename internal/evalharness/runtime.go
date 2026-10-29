@@ -15,6 +15,9 @@ import (
 	"github.com/google/uuid"
 )
 
+const runtimeComposeConfigTimeout = 5 * time.Minute
+const runtimeComposeStartupTimeout = 30 * time.Minute
+
 func RunRuntimeCommand(ctx context.Context, cmd RuntimeCommand, out io.Writer) error {
 	switch cmd.Action {
 	case "start", "record", "retire", "verify":
@@ -252,7 +255,7 @@ func startEvalRuntime(ctx context.Context, cmd RuntimeCommand, receipt *runtimeR
 	if err := saveRuntimeReceipt(*receipt); err != nil {
 		return err
 	}
-	_, upErr := runRuntimeCompose(ctx, *receipt, true, "up", "--detach", "--build", "--no-recreate", "--wait", "--wait-timeout", "120")
+	_, upErr := runRuntimeCompose(ctx, *receipt, true, runtimeComposeStartupTimeout, "up", "--detach", "--build", "--no-recreate", "--wait", "--wait-timeout", "120")
 	// A failed or interrupted up can still have allocated durable Docker resources.
 	captureCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
 	defer cancel()
@@ -283,13 +286,13 @@ func assertUnusedRuntimeProject(ctx context.Context, project string) error {
 	return nil
 }
 
-func runRuntimeCompose(ctx context.Context, receipt runtimeReceipt, overlay bool, args ...string) ([]byte, error) {
+func runRuntimeCompose(ctx context.Context, receipt runtimeReceipt, overlay bool, timeout time.Duration, args ...string) ([]byte, error) {
 	command := []string{"compose", "--project-name", receipt.Project, "--file", receipt.ComposeFile}
 	if overlay {
 		command = append(command, "--file", filepath.Join(receipt.Directory, "runtime-compose.json"))
 	}
 	command = append(command, args...)
-	bounded, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	bounded, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	process := exec.CommandContext(bounded, "docker", command...)
 	process.Env = append(os.Environ(), "V1_COMPOSE_DATA_DIR="+receipt.Directory)
@@ -301,7 +304,7 @@ func runRuntimeCompose(ctx context.Context, receipt runtimeReceipt, overlay bool
 }
 
 func prepareRuntimeCompose(ctx context.Context, receipt *runtimeReceipt, fresh bool) error {
-	data, err := runRuntimeCompose(ctx, *receipt, false, "config", "--format", "json")
+	data, err := runRuntimeCompose(ctx, *receipt, false, runtimeComposeConfigTimeout, "config", "--format", "json")
 	if err != nil {
 		return err
 	}
