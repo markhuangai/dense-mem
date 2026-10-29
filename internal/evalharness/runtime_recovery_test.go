@@ -2,6 +2,7 @@ package evalharness
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -174,70 +175,182 @@ func TestEvalRuntimeDockerMissingMonitorRecovery(t *testing.T) {
 	}
 }
 
-func TestEvalRuntimeDockerRecordedVolumeOwnership(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
-	root := evalRuntimeDockerRoot(t)
-	project := "eval627-" + uuid.NewString()
-	external := strings.ReplaceAll(uuid.NewString()+uuid.NewString(), "-", "")
-	_, err := runtimeDocker(ctx, "volume", "create", external)
+type evalRecordedVolumeFixture struct {
+	Root, Project, External, ContainerID string
+	Mounts                               []runtimeMount
+	cleanupFailed                        bool
+}
+
+func newEvalRecordedVolumeFixture(t *testing.T, ctx context.Context) *evalRecordedVolumeFixture {
+	t.Helper()
+	fixture := &evalRecordedVolumeFixture{
+		Root: evalRuntimeDockerRoot(t), Project: "eval627-" + uuid.NewString(),
+		External: strings.ReplaceAll(uuid.NewString()+uuid.NewString(), "-", ""),
+	}
+	t.Cleanup(func() {
+		if fixture.cleanupFailed {
+			t.Logf("preserving recorded-volume recovery evidence: %+v", fixture)
+			return
+		}
+		receipt := runtimeReceipt{Project: fixture.Project}
+		if fixture.ContainerID != "" {
+			receipt.Containers = []runtimeContainer{{ID: fixture.ContainerID}}
+		}
+		removeEvalRuntimeFixture(t, fixture.Root, receipt)
+	})
+	_, err := runtimeDocker(ctx, "volume", "create", fixture.External)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
-		present, err := runtimePresent(cleanupCtx, "volume", external)
+		present, err := runtimePresent(cleanupCtx, "volume", fixture.External)
 		if err == nil && present {
-			_, err = runtimeDocker(cleanupCtx, "volume", "rm", external)
+			t.Logf("removing external fixture volume %s", fixture.External)
+			_, err = runtimeDocker(cleanupCtx, "volume", "rm", fixture.External)
 		}
 		if err != nil {
-			t.Errorf("external fixture volume cleanup: %v", err)
+			fixture.cleanupFailed = true
+			t.Errorf("external fixture volume %s cleanup: %v", fixture.External, err)
 		}
 	})
-	created, err := runtimeDocker(ctx, "container", "create", "--network", "none", "--label", "com.docker.compose.project="+project,
-		"--mount", "type=volume,source="+external+",target=/external", "--volume", external+":/external-short",
+	created, err := runtimeDocker(ctx, "container", "create", "--network", "none", "--label", "com.docker.compose.project="+fixture.Project,
+		"--mount", "type=volume,source="+fixture.External+",target=/external", "--volume", fixture.External+":/external-short",
 		"--mount", "type=volume,target=/anonymous", "--volume", "/anonymous-short", "busybox:1.37.0-musl", "true")
 	require.NoError(t, err)
-	container, err := inspectRuntimeContainer(ctx, strings.TrimSpace(string(created)))
-	require.NoError(t, err)
-	dir := filepath.Join(root, "runtime")
-	plan := evalRuntimeIncompletePlan(t, root)
+	fixture.ContainerID = strings.TrimSpace(string(created))
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		present, err := runtimePresent(cleanupCtx, "container", fixture.ContainerID)
+		if err == nil && present {
+			_, err = runtimeDocker(cleanupCtx, "container", "rm", "--volumes", fixture.ContainerID)
+		}
+		if err != nil {
+			fixture.cleanupFailed = true
+			t.Errorf("recorded-volume fixture container %s cleanup: %v", fixture.ContainerID, err)
+		}
+	})
+	t.Logf("owned recorded-volume fixture: %+v", fixture)
+	return fixture
+}
+
+func recordEvalVolumeFixture(t *testing.T, ctx context.Context, fixture *evalRecordedVolumeFixture) (string, string) {
+	t.Helper()
+	dir := filepath.Join(fixture.Root, "runtime")
+	plan := evalRuntimeIncompletePlan(t, fixture.Root)
+	enrolled := false
 	t.Cleanup(func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
-		if err := RunRuntimeCommand(cleanupCtx, RuntimeCommand{Action: "retire", Directory: dir, RetentionPlan: plan}, io.Discard); err != nil {
-			t.Errorf("recorded-volume fixture retirement: %v", err)
+		_, err := readRuntimeReceipt(dir)
+		if os.IsNotExist(err) && !enrolled {
 			return
 		}
-		receipt, err := readRuntimeReceipt(dir)
 		if err != nil {
+			fixture.cleanupFailed = true
 			t.Errorf("recorded-volume cleanup receipt: %v", err)
 			return
 		}
-		removeEvalRuntimeFixture(t, root, receipt)
+		if err := RunRuntimeCommand(cleanupCtx, RuntimeCommand{Action: "retire", Directory: dir, RetentionPlan: plan}, io.Discard); err != nil {
+			fixture.cleanupFailed = true
+			t.Errorf("recorded-volume fixture retirement: %v", err)
+		}
 	})
-	require.NoError(t, RunRuntimeCommand(ctx, RuntimeCommand{Action: "record", Directory: dir, Project: project}, io.Discard))
+	require.NoError(t, RunRuntimeCommand(ctx, RuntimeCommand{Action: "record", Directory: dir, Project: fixture.Project}, io.Discard), "recorded-volume fixture enrollment")
+	enrolled = true
+	return dir, plan
+}
+
+func TestEvalRuntimeDockerRecordedVolumeOwnership(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	fixture := newEvalRecordedVolumeFixture(t, ctx)
+	container, err := inspectRuntimeContainer(ctx, fixture.ContainerID)
+	require.NoError(t, err, "recorded-volume fixture inspection")
+	fixture.Mounts = container.Mounts
+	t.Logf("recorded-volume fixture mounts: %+v", fixture.Mounts)
+	dir, plan := recordEvalVolumeFixture(t, ctx, fixture)
 	receipt, err := readRuntimeReceipt(dir)
 	require.NoError(t, err)
 	require.Len(t, receipt.Containers, 1)
 	require.Equal(t, container.ID, receipt.Containers[0].ID)
 	require.Len(t, receipt.Volumes, 3)
 	for _, volume := range receipt.Volumes {
-		require.Equal(t, volume.Name != external, volume.Owned, "explicit external names must never imply anonymous ownership")
+		require.Equal(t, volume.Name != fixture.External, volume.Owned, "explicit external names must never imply anonymous ownership")
 	}
 	require.NoError(t, RunRuntimeCommand(ctx, RuntimeCommand{Action: "retire", Directory: dir, RetentionPlan: plan}, io.Discard))
 	for _, volume := range receipt.Volumes {
 		present, err := runtimePresent(ctx, "volume", volume.Name)
 		require.NoError(t, err)
-		require.Equal(t, volume.Name == external, present, "retirement preserves external storage and removes proven anonymous allocations")
+		require.Equal(t, volume.Name == fixture.External, present, "retirement preserves external storage and removes proven anonymous allocations")
 	}
 	retired, err := readRuntimeReceipt(dir)
 	require.NoError(t, err)
-	require.Equal(t, "retained_external", retired.Retirement.Dispositions["volume:"+external])
+	require.Equal(t, "retained_external", retired.Retirement.Dispositions["volume:"+fixture.External])
 	require.NoError(t, RunRuntimeCommand(ctx, RuntimeCommand{Action: "verify", Directory: dir}, io.Discard))
 }
 
+func TestEvalRuntimeDockerRecordedVolumeOwnershipSetupFailure(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	if stage := os.Getenv("DENSE_MEM_RECORDED_VOLUME_FAILURE"); stage != "" {
+		fixture := newEvalRecordedVolumeFixture(t, ctx)
+		container, err := inspectRuntimeContainer(ctx, fixture.ContainerID)
+		require.NoError(t, err)
+		fixture.Mounts = container.Mounts
+		t.Logf("recorded-volume fixture mounts: %+v", fixture.Mounts)
+		require.NoError(t, writePairJSON(os.Getenv("DENSE_MEM_RECORDED_VOLUME_IDENTITIES"), fixture))
+		cancel()
+		switch stage {
+		case "inspection":
+			_, err := inspectRuntimeContainer(ctx, fixture.ContainerID)
+			require.NoError(t, err, "recorded-volume fixture inspection")
+		case "enrollment":
+			recordEvalVolumeFixture(t, ctx, fixture)
+		default:
+			t.Fatalf("unknown recorded-volume failure stage %q", stage)
+		}
+		t.Fatal("cancelled setup unexpectedly succeeded")
+	}
+	for _, stage := range []string{"inspection", "enrollment"} {
+		t.Run(stage, func(t *testing.T) {
+			identities := filepath.Join(t.TempDir(), "fixture.json")
+			command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestEvalRuntimeDockerRecordedVolumeOwnershipSetupFailure$", "-test.v")
+			command.Env = append(os.Environ(), "DENSE_MEM_RECORDED_VOLUME_FAILURE="+stage, "DENSE_MEM_RECORDED_VOLUME_IDENTITIES="+identities)
+			output, err := command.CombinedOutput()
+			require.Error(t, err, "child must retain its setup failure: %s", output)
+			require.NoError(t, ctx.Err(), "%s", output)
+			require.Contains(t, string(output), "context canceled")
+			require.Contains(t, string(output), "recorded-volume fixture "+stage)
+			require.NotContains(t, string(output), "recorded-volume fixture retirement:")
+			require.NotContains(t, string(output), "recorded-volume cleanup receipt:")
+			data, err := os.ReadFile(identities)
+			require.NoError(t, err, "%s", output)
+			var fixture evalRecordedVolumeFixture
+			require.NoError(t, json.Unmarshal(data, &fixture))
+			present, err := runtimePresent(ctx, "container", fixture.ContainerID)
+			require.NoError(t, err)
+			require.False(t, present, "%s", output)
+			volumes := map[string]bool{}
+			for _, mount := range fixture.Mounts {
+				require.Equal(t, "volume", mount.Type)
+				volumes[mount.Name] = mount.Anonymous
+				present, err := runtimePresent(ctx, "volume", mount.Name)
+				require.NoError(t, err)
+				require.False(t, present, "fixture volume %s remains: %s", mount.Name, output)
+			}
+			require.Len(t, volumes, 3)
+			for name, anonymous := range volumes {
+				require.Equal(t, name != fixture.External, anonymous)
+			}
+			require.Contains(t, string(output), "removing external fixture volume "+fixture.External)
+			require.NoDirExists(t, fixture.Root, "%s", output)
+		})
+	}
+}
+
 func TestEvalRuntimeDockerRejectionAndReadback(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	fixture := newEvalRuntimeFixture(t, ctx, false, "")
 	receipt, err := readRuntimeReceipt(fixture.command.Directory)
