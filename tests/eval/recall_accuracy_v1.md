@@ -43,6 +43,7 @@ search-document timestamps, deterministic document UUIDs, and explicit source
 mappings. Two fresh fixtures must reproduce all source rankings and metrics.
 The cohort and variation tests may run concurrently in separate disposable
 PostgreSQL containers; shared-DSN execution remains serial.
+Planner statistics are refreshed after the frozen corpus and ontology are loaded.
 The four hub cases publish one shared topic because `HubPlatform` has one
 catalog alias owner. Every case's names and source assignments are retained.
 

@@ -145,6 +145,7 @@ func newRecallAccuracyFixture(t *testing.T, reverseIDs, vectors bool) *recallAcc
 		}
 		f.publication(t, records...)
 	}
+	require.NoError(t, f.admin.Exec("ANALYZE").Error)
 	require.Equal(t, f.preserved, f.canonicalSnapshot(t))
 	return f
 }
