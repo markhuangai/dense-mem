@@ -93,3 +93,14 @@ func TestRecallANNQueryEFSearchCoversCandidateLimit(t *testing.T) {
 	require.Equal(t, 240, recallANNQueryEFSearch(&ActiveSearchContract{QueryEFSearch: 240}, 200))
 	require.Equal(t, searchDefaultQueryEFSearch, recallANNQueryEFSearch(nil, 0))
 }
+
+func TestRecallOntologyScoringSkipsUnchangedPoolsAndRejectsUnboundedPools(t *testing.T) {
+	existing := []SearchHit{{SourceID: "a"}, {SourceID: "b"}}
+	for _, ontology := range [][]SearchHit{nil, {{SourceID: "b"}, {SourceID: "a"}, {SourceID: "a"}}} {
+		actual, err := augmentRecallVectorChannel(existing, ontology, 2, nil)
+		require.NoError(t, err)
+		require.Equal(t, existing, actual)
+	}
+	_, err := augmentRecallVectorChannel(existing, []SearchHit{{SourceID: "c"}}, 1, nil)
+	require.ErrorContains(t, err, "twice the candidate limit")
+}

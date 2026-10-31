@@ -15,6 +15,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/evalharness"
 	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
+	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -184,14 +185,38 @@ func (f *recallAccuracyFixture) canonicalSnapshot(t testing.TB) string {
 }
 
 type recallAccuracyObservation struct {
-	CaseID          string                     `json:"case_id"`
-	Variant         string                     `json:"variant"`
-	Organization    bool                       `json:"ontology_enabled"`
-	RankedSources   [][]string                 `json:"ranked_sources"`
-	Score           evalharness.RetrievalScore `json:"score"`
-	SearchState     string                     `json:"search_state"`
-	Degradations    []string                   `json:"degradations"`
-	CanonicalIntact bool                       `json:"canonical_preserved"`
+	CaseID          string                               `json:"case_id"`
+	Variant         string                               `json:"variant"`
+	Organization    bool                                 `json:"ontology_enabled"`
+	RankedSources   [][]string                           `json:"ranked_sources"`
+	Score           evalharness.RetrievalScore           `json:"score"`
+	SearchState     string                               `json:"search_state"`
+	Degradations    []string                             `json:"degradations"`
+	CanonicalIntact bool                                 `json:"canonical_preserved"`
+	Branches        map[string][]recallAccuracyBranchHit `json:"branches"`
+	RankingScores   []float64                            `json:"ranking_scores"`
+}
+
+type recallAccuracyBranchHit struct {
+	Source      string  `json:"source"`
+	Rank        int     `json:"rank"`
+	TextRank    float64 `json:"text_rank"`
+	Distance    float64 `json:"distance"`
+	SearchState string  `json:"search_state"`
+}
+
+func (f *recallAccuracyFixture) branchTrace(t *testing.T, batch *recallcontract.RecallCandidateBatch) map[string][]recallAccuracyBranchHit {
+	t.Helper()
+	branches := map[string][]recallAccuracyBranchHit{}
+	for name, hits := range map[string][]SearchHit{"text": batch.TextHits, "vector": batch.VectorHits, "explicit": batch.ExpansionHits, "ontology": batch.OntologyHits} {
+		require.LessOrEqual(t, len(hits), 60)
+		branches[name] = []recallAccuracyBranchHit{}
+		for index, hit := range hits {
+			require.Contains(t, f.sources, hit.SourceID)
+			branches[name] = append(branches[name], recallAccuracyBranchHit{Source: f.sources[hit.SourceID].ID, Rank: index + 1, TextRank: hit.TextRank, Distance: hit.Distance, SearchState: hit.SearchState})
+		}
+	}
+	return branches
 }
 
 func (f *recallAccuracyFixture) observe(t *testing.T, c evalharness.RecallAccuracyCase, organization bool, variant string, expand bool) recallAccuracyObservation {
@@ -207,10 +232,16 @@ func (f *recallAccuracyFixture) observe(t *testing.T, c evalharness.RecallAccura
 		first := c.Sources[0]
 		input.ExpandFromEntityIDs = []string{f.entities[first.SubjectKind+":"+first.Subject]}
 	}
+	require.Equal(t, 10, input.Limit)
+	contract, err := f.search.GetActiveSearchContract(f.actor(2, "member"))
+	require.NoError(t, err)
+	batch, err := f.search.ReadEvidenceCandidates(f.actor(2, "member"), input, contract, 60)
+	require.NoError(t, err)
 	result, err := f.search.RecallEvidence(f.actor(2, "member"), input)
 	require.NoError(t, err)
 	observation := recallAccuracyObservation{CaseID: c.Case.CaseID, Variant: variant, Organization: organization,
-		RankedSources: [][]string{}, SearchState: result.SearchState, Degradations: degradationCodes(result.Degradations)}
+		RankedSources: [][]string{}, SearchState: result.SearchState, Degradations: degradationCodes(result.Degradations),
+		Branches: f.branchTrace(t, batch), RankingScores: []float64{}}
 	trace := evalharness.RecallTrace{CaseID: c.Case.CaseID, Query: input.Query, RankedRefs: []evalharness.Ref{}}
 	for index, hit := range result.Results {
 		require.Equal(t, index+1, hit.Rank)
@@ -223,6 +254,7 @@ func (f *recallAccuracyFixture) observe(t *testing.T, c evalharness.RecallAccura
 			sources = append(sources, f.sources[id].ID)
 		}
 		observation.RankedSources = append(observation.RankedSources, sources)
+		observation.RankingScores = append(observation.RankingScores, hit.Score)
 		trace.RankedRefs = append(trace.RankedRefs, evalharness.Ref{Type: "evidence", ID: hit.EvidenceID, Rank: hit.Rank, EquivalentEvidenceIDs: hit.EquivalentEvidenceIDs})
 	}
 	observation.Score = evalharness.ScoreTrace(c.Case.CaseID, c.Case.Limit, c.QRel, trace, f.mapping)

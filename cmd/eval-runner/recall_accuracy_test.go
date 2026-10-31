@@ -31,3 +31,11 @@ func TestEvalRunnerRecallAccuracyCLI(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, stderr, "output directory is required")
 }
+
+func TestEvalRunnerRecallAccuracyReportRejectsMissingInputs(t *testing.T) {
+	stdout, stderr, err := runTokenDiagnosticsCLI(t, nil, "-mode", "recall-accuracy-report", "-experiment-manifest", filepath.Join(t.TempDir(), "absent.json"))
+	require.Error(t, err)
+	require.Empty(t, stdout)
+	require.Contains(t, stderr, "recall accuracy report:")
+	require.Contains(t, stderr, "no such file")
+}

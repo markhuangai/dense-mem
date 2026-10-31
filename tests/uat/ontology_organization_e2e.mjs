@@ -109,6 +109,7 @@ try {
   }
   const discovered = await mcp("recall_memory", { ...args, query: "database platform" }, reader.api_key);
   assert(discovered.results.some((item) => sourceIDs.includes(item.evidence_id)), "published alias must discover its source evidence");
+  await assertOntologyQueryScoring(reader.api_key, coordinationID, sourceIDs);
   // One evidence slot leaves one uses group uncovered even with current projections.
   const relationshipDiscovery = await mcp("recall_memory", { ...args, query: "database platform", limit: 1, relationship_limit: 20 }, reader.api_key);
   const displayedRelationshipIDs = relationshipDiscovery.related_relationships.flatMap((item) => [item.relationship_id, ...item.equivalent_relationship_ids]);
@@ -349,6 +350,36 @@ async function summaryCalls() {
   const response = await fetch(`${required("DENSE_MEM_E2E_PROVIDER_URL")}/health`);
   assert.equal(response.status, 200);
   return ((await response.json()).chat_requests || []).filter((item) => item.schema_name === "community_summary").length;
+}
+
+async function assertOntologyQueryScoring(readerKey, ordinaryID, ontologyIDs) {
+  const rows = JSON.parse(postgresQuery(`SELECT jsonb_agg(jsonb_build_object('id',search_document_id,'source',source_id,'embedding',embedding::text,'dimensions',embedding_dimensions))
+    FROM search_documents WHERE team_id=${sqlLiteral(teamID)}::uuid AND source_kind='evidence'
+      AND space_id=dense_mem_team_shared_space(${sqlLiteral(teamID)}::uuid) AND search_state='current' AND embedding IS NOT NULL`));
+  assert(rows.some((row) => row.source === ordinaryID));
+  assert(rows.some((row) => row.source === ontologyIDs[0]));
+  const dimension = rows[0].dimensions;
+  assert(rows.every((row) => row.dimensions === dimension));
+  const vector = (axis) => JSON.stringify(Array.from({ length: dimension }, (_, index) => Number(index === axis)));
+  const selected = rows.map((row) => `${sqlLiteral(row.id)}::uuid`).join(",");
+  const rankFirst = (id) => postgresQuery(`UPDATE search_documents SET embedding=(CASE WHEN source_id=${sqlLiteral(id)}::uuid THEN ${sqlLiteral(vector(0))} ELSE ${sqlLiteral(vector(1))} END)::vector WHERE search_document_id IN (${selected})`);
+  const request = { query: "database platform [fixture-ranking:ontology]", limit: 1, relationship_limit: 0, community_limit: 0 };
+  try {
+    rankFirst(ordinaryID);
+    await control("/config/ontology-maintenance", { items: [{ key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "false" }] }, "PATCH");
+    const ordinary = await mcp("recall_memory", request, readerKey);
+    assert.equal(ordinary.results[0]?.evidence_id, ordinaryID);
+    await control("/config/ontology-maintenance", { items: [{ key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "true" }] }, "PATCH");
+    const unrelatedMembership = await mcp("recall_memory", request, readerKey);
+    assert.equal(unrelatedMembership.results[0]?.evidence_id, ordinaryID, "ontology membership must not promote a less relevant vector candidate");
+    rankFirst(ontologyIDs[0]);
+    const relevantDiscovery = await mcp("recall_memory", request, readerKey);
+    assert(ontologyIDs.includes(relevantDiscovery.results[0]?.evidence_id), "query-relevant ontology evidence must retain its ranked place");
+    console.log(JSON.stringify({ scenario: "ontology_query_scoring", membership_adds_no_vote: true, relevant_discovery_ranked_first: true }));
+  } finally {
+    postgresQuery(`UPDATE search_documents AS document SET embedding=original.embedding::vector FROM (VALUES ${rows.map((row) => `(${sqlLiteral(row.id)}::uuid,${sqlLiteral(row.embedding)})`).join(",")}) AS original(id,embedding) WHERE document.search_document_id=original.id`);
+    await control("/config/ontology-maintenance", { items: [{ key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "true" }] }, "PATCH");
+  }
 }
 
 function postgresQuery(sql) {
