@@ -269,6 +269,17 @@ func fuseRecallCandidates(batch *recallcontract.RecallCandidateBatch, kind strin
 			candidate.SearchState = domain.CombineSearchProjectionStates(candidate.SearchState, hit.SearchState)
 		}
 	}
+	for _, hit := range batch.OntologyHits {
+		if hit.SourceKind != kind || hit.SourceID == "" {
+			continue
+		}
+		if _, excluded := known[hit.SourceID]; excluded {
+			continue
+		}
+		if _, scored := candidates[hit.SourceID]; !scored {
+			candidates[hit.SourceID] = &recallCandidate{ID: hit.SourceID, SearchState: hit.SearchState}
+		}
+	}
 	result := make([]recallCandidate, 0, len(candidates))
 	for _, candidate := range candidates {
 		result = append(result, *candidate)

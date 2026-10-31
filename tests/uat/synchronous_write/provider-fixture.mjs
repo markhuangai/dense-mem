@@ -107,6 +107,11 @@ const server = createServer(async (request, response) => {
 
   if (request.url?.endsWith("/embeddings")) {
     const inputs = Array.isArray(payload.input) ? payload.input : [payload.input || ""];
+    if (inputs.every((input) => String(input).includes("[fixture-ranking:ontology]"))) {
+      const embedding = Array.from({ length: payload.dimensions }, (_, index) => Number(index === 0));
+      sendJSON(response, 200, { model: payload.model, data: inputs.map((_, index) => ({ index, embedding })) });
+      return;
+    }
     if (inputs.some((input) => String(input).includes(correctionProviderTimeoutMarker))) {
       await new Promise((resolve) => setTimeout(resolve, timeoutDelayMs));
     }

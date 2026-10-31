@@ -1202,6 +1202,41 @@ test("ontology retains a complete dedicated precheck shard", async () => {
   assert.deepEqual(groups.flat().sort(), expected.trim().split(/\r?\n/).sort());
 });
 
+test("six precheck shards account for package batches while the legacy route retains its allocation", async () => {
+  const fixture = await mkdtemp(join(tmpdir(), "dense-mem-precheck-package-cost-"));
+  try {
+    const directory = join(fixture, "scripts/e2e-db-cases");
+    await mkdir(directory, { recursive: true });
+    const ontologyIDs = [
+      "repository/TestOntologyMaintenanceLargeBacklogAndFairTurns",
+      "repository/TestOntologyOrganizationVocabularyAndSourceFences",
+      "repository/TestOntologyMaintenanceRevalidationDiscoveryMeasurement",
+      "repository/TestOntologyRemaining",
+    ];
+    for (const [capability, count] of [["ontology", 4], ["alpha", 41], ["beta", 40], ["gamma", 39], ["delta", 1]]) {
+      const cases = Array.from({ length: count }, (_, index) => ({
+        id: capability === "ontology" ? ontologyIDs[index] : `${capability}/TestCase${index}`,
+        phase: "precheck",
+        package: `./${capability}${capability === "beta" || capability === "gamma" ? index : ""}`,
+      }));
+      await writeFile(join(directory, `${capability}.json`), JSON.stringify({ version: 1, capability, cases }));
+    }
+    const start = controller.indexOf("\npartition_precheck_capabilities()") + 1;
+    const helper = controller.slice(start, controller.indexOf("\nprecheck() {", start));
+    const partition = async (count) => (await run("bash", [
+      "-c", `${helper}\npartition_precheck_capabilities "$1" ${count}`, "package-cost", fixture,
+    ])).stdout.trim().split(/\r?\n/);
+    const six = await partition(6);
+    assert.equal(six.length, 6);
+    const ordinary = six.slice(3).map((selection) => selection.split(","));
+    assert.deepEqual(ordinary.flat().sort(), ["alpha", "beta", "delta", "gamma"]);
+    assert.ok(ordinary.find((group) => group.includes("delta")).includes("alpha"));
+    assert.deepEqual(await partition(3), ["ontology", "beta,delta", "gamma,alpha"]);
+  } finally {
+    await rm(fixture, { recursive: true, force: true });
+  }
+});
+
 test("six precheck shards preserve every real runner selection exactly once", async () => {
   const start = controller.indexOf("\npartition_precheck_capabilities()") + 1;
   const helper = controller.slice(start, controller.indexOf("\nprecheck() {", start));

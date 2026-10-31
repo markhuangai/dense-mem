@@ -593,7 +593,9 @@ for (const record of records) {
     for (const [packageName, count] of record.packageCounts) {
       projected.set(packageName, (projected.get(packageName) || 0) + count);
     }
-    const candidate = [groups[index].load + record.load, batchWeight(projected), index];
+    const projectedBatches = batchWeight(projected);
+    const setupLoad = shardCount === 6 ? batchSize * projectedBatches : 0;
+    const candidate = [groups[index].load + record.load + setupLoad, projectedBatches, index];
     if (!selected || candidate[0] < selected[0] ||
         (candidate[0] === selected[0] && candidate[1] < selected[1]) ||
         (candidate[0] === selected[0] && candidate[1] === selected[1] && candidate[2] < selected[2])) {

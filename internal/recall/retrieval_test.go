@@ -3,6 +3,7 @@ package recall
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -187,6 +188,56 @@ func TestRetrievalTieBreakers(t *testing.T) {
 	}
 	sortRecallRelationshipResults(results)
 	require.Equal(t, []string{a, b}, []string{results[0].RelationshipID, results[1].RelationshipID})
+}
+
+func TestRetrievalOntologyMembershipDoesNotAddRankingVotes(t *testing.T) {
+	for _, kind := range []string{"evidence", "relationship"} {
+		t.Run(kind, func(t *testing.T) {
+			batch := &recallcontract.RecallCandidateBatch{}
+			for index := range 60 {
+				batch.VectorHits = append(batch.VectorHits, searchcontract.SearchHit{
+					SourceKind: kind, SourceID: fmt.Sprintf("candidate-%02d", index), SearchState: "current",
+				})
+			}
+			ordinary := fuseRecallCandidates(batch, kind, nil)
+			batch.OntologyHits = []searchcontract.SearchHit{batch.VectorHits[59], batch.VectorHits[0], batch.VectorHits[59]}
+			withOntology := fuseRecallCandidates(batch, kind, nil)
+			require.Equal(t, ordinary, withOntology)
+			require.InDelta(t, 1.0/120, withOntology[59].Score, 1e-12)
+			batch.ExpansionHits = []searchcontract.SearchHit{batch.VectorHits[59]}
+			explicit := fuseRecallCandidates(batch, kind, nil)
+			require.Equal(t, batch.VectorHits[59].SourceID, explicit[0].ID)
+			require.InDelta(t, 1.0/120+0.5/61, explicit[0].Score, 1e-12)
+		})
+	}
+}
+
+func TestRetrievalOntologyFallbackIsUniqueUnweightedAndKnownScoped(t *testing.T) {
+	for _, kind := range []string{"evidence", "relationship"} {
+		t.Run(kind, func(t *testing.T) {
+			batch := &recallcontract.RecallCandidateBatch{
+				TextHits: []searchcontract.SearchHit{{SourceKind: kind, SourceID: "scored", SearchState: "current"}},
+				OntologyHits: []searchcontract.SearchHit{
+					{SourceKind: kind, SourceID: "b", SearchState: "pending"},
+					{SourceKind: kind, SourceID: "a", SearchState: "failed"},
+					{SourceKind: kind, SourceID: "a", SearchState: "failed"},
+					{SourceKind: kind, SourceID: "known", SearchState: "current"},
+					{SourceKind: kind, SourceID: "scored", SearchState: "current"},
+					{SourceKind: "other", SourceID: "foreign-kind"},
+					{SourceKind: kind},
+				},
+			}
+			result := fuseRecallCandidates(batch, kind, []string{"known"})
+			require.Equal(t, []string{"scored", "a", "b"}, recallCandidateIDs(result))
+			require.Positive(t, result[0].Score)
+			require.Zero(t, result[1].Score)
+			require.Zero(t, result[2].Score)
+			require.Equal(t, "failed", result[1].SearchState)
+			batch.TextHits = nil
+			require.Equal(t, []string{"a", "b", "scored"}, recallCandidateIDs(fuseRecallCandidates(batch, kind, []string{"known"})))
+			require.Empty(t, fuseRecallCandidates(&recallcontract.RecallCandidateBatch{}, kind, nil))
+		})
+	}
 }
 
 func TestRetrievalSelectsDistinctSemanticGroupsBeforeLimit(t *testing.T) {
