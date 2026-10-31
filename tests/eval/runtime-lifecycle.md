@@ -32,6 +32,13 @@ restart, but changed identities cannot be silently recreated. Interrupted
 preparation retains a `preparing` receipt and can resume with the same Compose
 source. A recorded `retiring` or `retired` runtime cannot resume.
 
+Compose configuration has a five-minute deadline. Image build and startup share
+a separate 30-minute deadline, including the unchanged 120-second readiness
+wait. An earlier caller deadline or cancellation still interrupts the command.
+Failed or interrupted startup retains a `preparing` receipt and captures allocated
+resources for up to one additional minute before returning. Resume with the same
+runtime directory and Compose source to reuse recorded resources and build work.
+
 Startup refuses writable named volumes or bind paths already mounted by another
 runtime. Generated Compose overrides bind containers, networks, named volumes
 and build images to the persisted runtime ID. Recovery requires those labels or

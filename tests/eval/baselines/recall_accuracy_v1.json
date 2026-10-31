@@ -1,0 +1,526 @@
+{
+  "schema_version": "dense-mem.eval.recall_accuracy_baseline.v1",
+  "issue": 666,
+  "source_revision": "e0ccd0b3365c3c0af4e93aa50eef4cbdd68460ab",
+  "first_observation": {
+    "source_revision": "41f9406791d0b9552f284211eae6af399da8c1ff",
+    "run_url": "https://github.com/markhuangai/dense-mem/actions/runs/40775429692",
+    "primary_cohort_result": "passed with fresh-fixture repeatability",
+    "workflow_result": "failed grouped-alternate setup; corrected separately without changing the primary baseline",
+    "primary_observations_unchanged": true,
+    "test_log_sha256": "sha256:1395cad74356b204852c2b86d03bbf41aec4f8cadc6fc5ef506a247a1d40947e"
+  },
+  "trusted_workflow_revision": "df3c04892816f1d67476bcd9133269ec8dc85ff7",
+  "run_url": "https://github.com/markhuangai/dense-mem/actions/runs/40783325703",
+  "image_digest": "ghcr.io/markhuangai/dense-mem-e2e@sha256:2ae1359c702f4f6aa5125930e906f636401b6be59aa512832c63851ad830eeb3",
+  "selections": {
+    "source_ref": "e0ccd0b3365c3c0af4e93aa50eef4cbdd68460ab",
+    "scenarios": "ontology_organization,space_aware_recall",
+    "postgres_shards": "5"
+  },
+  "source_lock": "tests/eval/source_locks/recall_accuracy_v1.json",
+  "source_lock_sha256": "sha256:c112305607e036eb1692a8a3a77cf1afa246bf88f25d4b1a2d053eb94035d21b",
+  "cohort_sha256": "sha256:a40278c4f979acf39a184a270ce425b4ec5f32b71a98786a7567c11100dfcbea",
+  "judgment_sha256": "sha256:063fbcf33ae489bca1c864a2f66c19433bacd871b62e430f8232f4c791d55694",
+  "seed_hash": "sha256:a6706f33085408f1039087eae2b9875c93ab0dfd387c0707ef25fd3d24c31105",
+  "case_count": 24,
+  "required_observations": {
+    "alias_only_control": 8,
+    "constant_vectors": 96,
+    "explicit_entity_expansion": 4,
+    "grouped_alternates": 4,
+    "meaningful_query_control": 2,
+    "missing_embeddings": 48,
+    "reversed_uuid_order": 48
+  },
+  "skipped_required_tests": 0,
+  "source_count": 132,
+  "embedding_fixture": "Constant [1,0,0] vectors, 3 dimensions; synthetic retrieval-logic evidence only.",
+  "ranking_policy": "Observational baseline; ranking failures are retained, not a quality pass.",
+  "limitations": [
+    "Constant synthetic embeddings exercise retrieval logic, not learned embedding or live provider quality.",
+    "Ordinary and ontology modes share the same frozen corpus and judgments; ranking failures remain observations.",
+    "This cohort does not replace the independent release comparison obligation in issue #660."
+  ],
+  "known_failures": {
+    "ordinary": {
+      "incomplete_recall_cases": [
+        "recall_accuracy_v1:name_mercury",
+        "recall_accuracy_v1:name_atlas",
+        "recall_accuracy_v1:name_common_word",
+        "recall_accuracy_v1:name_same_name",
+        "recall_accuracy_v1:hub_elm",
+        "recall_accuracy_v1:hub_fir",
+        "recall_accuracy_v1:hub_ginkgo",
+        "recall_accuracy_v1:hub_hazel",
+        "recall_accuracy_v1:synonym_database",
+        "recall_accuracy_v1:synonym_cache",
+        "recall_accuracy_v1:synonym_ownership",
+        "recall_accuracy_v1:synonym_acronym",
+        "recall_accuracy_v1:polarity_positive",
+        "recall_accuracy_v1:polarity_negative",
+        "recall_accuracy_v1:time_current",
+        "recall_accuracy_v1:time_past",
+        "recall_accuracy_v1:multihop_rhea",
+        "recall_accuracy_v1:multihop_soren",
+        "recall_accuracy_v1:multihop_tara",
+        "recall_accuracy_v1:multihop_uma"
+      ],
+      "explicit_negative_cases": [
+        "recall_accuracy_v1:predicate_uses",
+        "recall_accuracy_v1:predicate_works_on",
+        "recall_accuracy_v1:predicate_located_in"
+      ]
+    },
+    "ontology": {
+      "incomplete_recall_cases": [
+        "recall_accuracy_v1:hub_fir",
+        "recall_accuracy_v1:hub_ginkgo",
+        "recall_accuracy_v1:hub_hazel",
+        "recall_accuracy_v1:synonym_database",
+        "recall_accuracy_v1:synonym_cache",
+        "recall_accuracy_v1:synonym_ownership",
+        "recall_accuracy_v1:synonym_acronym",
+        "recall_accuracy_v1:polarity_positive",
+        "recall_accuracy_v1:polarity_negative",
+        "recall_accuracy_v1:time_current",
+        "recall_accuracy_v1:time_past",
+        "recall_accuracy_v1:multihop_rhea",
+        "recall_accuracy_v1:multihop_soren",
+        "recall_accuracy_v1:multihop_tara",
+        "recall_accuracy_v1:multihop_uma"
+      ],
+      "explicit_negative_cases": [
+        "recall_accuracy_v1:predicate_uses",
+        "recall_accuracy_v1:predicate_works_on",
+        "recall_accuracy_v1:predicate_located_in",
+        "recall_accuracy_v1:predicate_meaningful_predicate",
+        "recall_accuracy_v1:name_mercury",
+        "recall_accuracy_v1:name_atlas",
+        "recall_accuracy_v1:name_common_word",
+        "recall_accuracy_v1:name_same_name",
+        "recall_accuracy_v1:hub_elm"
+      ]
+    }
+  },
+  "postgresql_test_results": {
+    "TestRecallAccuracyCohort": "passed",
+    "TestRecallAccuracyVariations": "passed",
+    "TestRecallAccuracyIsolation": "passed"
+  },
+  "fresh_fixture_repeatability": {
+    "fresh_runs": 2,
+    "normalized_observations_equal": true
+  },
+  "isolation": {
+    "actors": 3,
+    "private_owner_reads": 3,
+    "shared_foreign_hint_checks": 12,
+    "wrong_owner_retraction_rejected": true,
+    "source_preserved": true
+  },
+  "canonical_preservation": true,
+  "unmapped_references": 0,
+  "independent_metric_reconciliation": true,
+  "test_log_sha256": "sha256:837dac922f52a74351be40911b9df8e44d3e519344ea066b72c7f4a7be6b5901",
+  "summary": {
+    "ordinary": {
+      "recall_at_10": 0.16666666666666666,
+      "mrr": 0.06220238095238095,
+      "ndcg_at_10": 0.08554477990519227,
+      "bad_at_10": 0.125
+    },
+    "ontology": {
+      "recall_at_10": 0.375,
+      "mrr": 0.33928571428571425,
+      "ndcg_at_10": 0.34722222222222215,
+      "bad_at_10": 0.7083333333333334
+    }
+  },
+  "cases": [
+    {
+      "case_id": "recall_accuracy_v1:predicate_uses",
+      "family": "generic_predicates",
+      "ordinary": {
+        "recall_at_10": 1,
+        "mrr": 1,
+        "ndcg_at_10": 1,
+        "bad_at_10": 1
+      },
+      "ontology": {
+        "recall_at_10": 1,
+        "mrr": 0.14285714285714285,
+        "ndcg_at_10": 0.3333333333333333,
+        "bad_at_10": 1
+      }
+    },
+    {
+      "case_id": "recall_accuracy_v1:predicate_works_on",
+      "family": "generic_predicates",
+      "ordinary": {
+        "recall_at_10": 1,
+        "mrr": 0.25,
+        "ndcg_at_10": 0.43067655807339306,
+        "bad_at_10": 1
+      },
+      "ontology": {
+        "recall_at_10": 1,
+        "mrr": 1,
+        "ndcg_at_10": 1,
+        "bad_at_10": 1
+      }
+    },
+    {
+      "case_id": "recall_accuracy_v1:predicate_located_in",
+      "family": "generic_predicates",
+      "ordinary": {
+        "recall_at_10": 1,
+        "mrr": 0.14285714285714285,
+        "ndcg_at_10": 0.3333333333333333,
+        "bad_at_10": 1
+      },
+      "ontology": {
+        "recall_at_10": 1,
+        "mrr": 1,
+        "ndcg_at_10": 1,
+        "bad_at_10": 1
+      }
+    },
+    {
+      "case_id": "recall_accuracy_v1:predicate_meaningful_predicate",
+      "family": "generic_predicates",
+      "ordinary": {
+        "recall_at_10": 1,
+        "mrr": 0.1,
+        "ndcg_at_10": 0.2890648263178879,
+        "bad_at_10": 0
+      },
+      "ontology": {
+        "recall_at_10": 1,
+        "mrr": 1,
+        "ndcg_at_10": 1,
+        "bad_at_10": 1
+      }
+    },
+    {
+      "case_id": "recall_accuracy_v1:name_mercury",
+      "family": "ambiguous_names",
+      "ordinary": {
+        "recall_at_10": 0,
+        "mrr": 0,
+        "ndcg_at_10": 0,
+        "bad_at_10": 0
+      },
+      "ontology": {
+        "recall_at_10": 1,
+        "mrr": 1,
+        "ndcg_at_10": 1,
+        "bad_at_10": 1
+      }
+    },
+    {
+      "case_id": "recall_accuracy_v1:name_atlas",
+      "family": "ambiguous_names",
+      "ordinary": {
+        "recall_at_10": 0,
+        "mrr": 0,
+        "ndcg_at_10": 0,
+        "bad_at_10": 0
+      },
+      "ontology": {
+        "recall_at_10": 1,
+        "mrr": 1,
+        "ndcg_at_10": 1,
+        "bad_at_10": 1
+      }
+    },
+    {
+      "case_id": "recall_accuracy_v1:name_common_word",
+      "family": "ambiguous_names",
+      "ordinary": {
+        "recall_at_10": 0,
+        "mrr": 0,
+        "ndcg_at_10": 0,
+        "bad_at_10": 0
+      },
+      "ontology": {
+        "recall_at_10": 1,
+        "mrr": 1,
+        "ndcg_at_10": 1,
+        "bad_at_10": 1
+      }
+    },
+    {
+      "case_id": "recall_accuracy_v1:name_same_name",
+      "family": "ambiguous_names",
+      "ordinary": {
+        "recall_at_10": 0,
+        "mrr": 0,
+        "ndcg_at_10": 0,
+        "bad_at_10": 0
+      },
+      "ontology": {
+        "recall_at_10": 1,
+        "mrr": 1,
+        "ndcg_at_10": 1,
+        "bad_at_10": 1
+      }
+    },
+    {
+      "case_id": "recall_accuracy_v1:hub_elm",
+      "family": "graph_hubs",
+      "ordinary": {
+        "recall_at_10": 0,
+        "mrr": 0,
+        "ndcg_at_10": 0,
+        "bad_at_10": 0
+      },
+      "ontology": {
+        "recall_at_10": 1,
+        "mrr": 1,
+        "ndcg_at_10": 1,
+        "bad_at_10": 9
+      }
+    },
+    {
+      "case_id": "recall_accuracy_v1:hub_fir",
+      "family": "graph_hubs",
+      "ordinary": {
+        "recall_at_10": 0,
+        "mrr": 0,
+        "ndcg_at_10": 0,
+        "bad_at_10": 0
+      },
+      "ontology": {
+        "recall_at_10": 0,
+        "mrr": 0,
+        "ndcg_at_10": 0,
+        "bad_at_10": 0
+      }
+    },
+    {
+      "case_id": "recall_accuracy_v1:hub_ginkgo",
+      "family": "graph_hubs",
+      "ordinary": {
+        "recall_at_10": 0,
+        "mrr": 0,
+        "ndcg_at_10": 0,
+        "bad_at_10": 0
+      },
+      "ontology": {
+        "recall_at_10": 0,
+        "mrr": 0,
+        "ndcg_at_10": 0,
+        "bad_at_10": 0
+      }
+    },
+    {
+      "case_id": "recall_accuracy_v1:hub_hazel",
+      "family": "graph_hubs",
+      "ordinary": {
+        "recall_at_10": 0,
+        "mrr": 0,
+        "ndcg_at_10": 0,
+        "bad_at_10": 0
+      },
+      "ontology": {
+        "recall_at_10": 0,
+        "mrr": 0,
+        "ndcg_at_10": 0,
+        "bad_at_10": 0
+      }
+    },
+    {
+      "case_id": "recall_accuracy_v1:synonym_database",
+      "family": "synonyms",
+      "ordinary": {
+        "recall_at_10": 0,
+        "mrr": 0,
+        "ndcg_at_10": 0,
+        "bad_at_10": 0
+      },
+      "ontology": {
+        "recall_at_10": 0,
+        "mrr": 0,
+        "ndcg_at_10": 0,
+        "bad_at_10": 0
+      }
+    },
+    {
+      "case_id": "recall_accuracy_v1:synonym_cache",
+      "family": "synonyms",
+      "ordinary": {
+        "recall_at_10": 0,
+        "mrr": 0,
+        "ndcg_at_10": 0,
+        "bad_at_10": 0
+      },
+      "ontology": {
+        "recall_at_10": 0,
+        "mrr": 0,
+        "ndcg_at_10": 0,
+        "bad_at_10": 0
+      }
+    },
+    {
+      "case_id": "recall_accuracy_v1:synonym_ownership",
+      "family": "synonyms",
+      "ordinary": {
+        "recall_at_10": 0,
+        "mrr": 0,
+        "ndcg_at_10": 0,
+        "bad_at_10": 0
+      },
+      "ontology": {
+        "recall_at_10": 0,
+        "mrr": 0,
+        "ndcg_at_10": 0,
+        "bad_at_10": 0
+      }
+    },
+    {
+      "case_id": "recall_accuracy_v1:synonym_acronym",
+      "family": "synonyms",
+      "ordinary": {
+        "recall_at_10": 0,
+        "mrr": 0,
+        "ndcg_at_10": 0,
+        "bad_at_10": 0
+      },
+      "ontology": {
+        "recall_at_10": 0,
+        "mrr": 0,
+        "ndcg_at_10": 0,
+        "bad_at_10": 0
+      }
+    },
+    {
+      "case_id": "recall_accuracy_v1:polarity_positive",
+      "family": "polarity_time",
+      "ordinary": {
+        "recall_at_10": 0,
+        "mrr": 0,
+        "ndcg_at_10": 0,
+        "bad_at_10": 0
+      },
+      "ontology": {
+        "recall_at_10": 0,
+        "mrr": 0,
+        "ndcg_at_10": 0,
+        "bad_at_10": 0
+      }
+    },
+    {
+      "case_id": "recall_accuracy_v1:polarity_negative",
+      "family": "polarity_time",
+      "ordinary": {
+        "recall_at_10": 0,
+        "mrr": 0,
+        "ndcg_at_10": 0,
+        "bad_at_10": 0
+      },
+      "ontology": {
+        "recall_at_10": 0,
+        "mrr": 0,
+        "ndcg_at_10": 0,
+        "bad_at_10": 0
+      }
+    },
+    {
+      "case_id": "recall_accuracy_v1:time_current",
+      "family": "polarity_time",
+      "ordinary": {
+        "recall_at_10": 0,
+        "mrr": 0,
+        "ndcg_at_10": 0,
+        "bad_at_10": 0
+      },
+      "ontology": {
+        "recall_at_10": 0,
+        "mrr": 0,
+        "ndcg_at_10": 0,
+        "bad_at_10": 0
+      }
+    },
+    {
+      "case_id": "recall_accuracy_v1:time_past",
+      "family": "polarity_time",
+      "ordinary": {
+        "recall_at_10": 0,
+        "mrr": 0,
+        "ndcg_at_10": 0,
+        "bad_at_10": 0
+      },
+      "ontology": {
+        "recall_at_10": 0,
+        "mrr": 0,
+        "ndcg_at_10": 0,
+        "bad_at_10": 0
+      }
+    },
+    {
+      "case_id": "recall_accuracy_v1:multihop_rhea",
+      "family": "multihop",
+      "ordinary": {
+        "recall_at_10": 0,
+        "mrr": 0,
+        "ndcg_at_10": 0,
+        "bad_at_10": 0
+      },
+      "ontology": {
+        "recall_at_10": 0,
+        "mrr": 0,
+        "ndcg_at_10": 0,
+        "bad_at_10": 0
+      }
+    },
+    {
+      "case_id": "recall_accuracy_v1:multihop_soren",
+      "family": "multihop",
+      "ordinary": {
+        "recall_at_10": 0,
+        "mrr": 0,
+        "ndcg_at_10": 0,
+        "bad_at_10": 0
+      },
+      "ontology": {
+        "recall_at_10": 0,
+        "mrr": 0,
+        "ndcg_at_10": 0,
+        "bad_at_10": 0
+      }
+    },
+    {
+      "case_id": "recall_accuracy_v1:multihop_tara",
+      "family": "multihop",
+      "ordinary": {
+        "recall_at_10": 0,
+        "mrr": 0,
+        "ndcg_at_10": 0,
+        "bad_at_10": 0
+      },
+      "ontology": {
+        "recall_at_10": 0,
+        "mrr": 0,
+        "ndcg_at_10": 0,
+        "bad_at_10": 0
+      }
+    },
+    {
+      "case_id": "recall_accuracy_v1:multihop_uma",
+      "family": "multihop",
+      "ordinary": {
+        "recall_at_10": 0,
+        "mrr": 0,
+        "ndcg_at_10": 0,
+        "bad_at_10": 0
+      },
+      "ontology": {
+        "recall_at_10": 0,
+        "mrr": 0,
+        "ndcg_at_10": 0,
+        "bad_at_10": 0
+      }
+    }
+  ]
+}

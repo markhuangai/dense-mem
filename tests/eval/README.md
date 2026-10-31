@@ -190,7 +190,7 @@ Verify every generated filename and byte against the frozen seed before using
 it. An existing output path is rejected; failed derivation leaves inputs and
 existing output untouched. Keep generated seeds and full run outputs ignored.
 
-The paired release comparison remains separate work under issue #584.
+The paired release comparison remains separate work under issue #584. The separate [Recall accuracy cohort](recall_accuracy_v1.md) adds frozen explicit negative judgments.
 Publishing this generator does not establish a completed comparison or
 retrieval-quality equivalence. Use each pinned release's native runner to
 validate the frozen seed before import and retain its recorded readiness
