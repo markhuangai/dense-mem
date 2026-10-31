@@ -205,7 +205,7 @@ func TestRedisBackendFailureIsBounded(t *testing.T) {
 }
 
 func TestRunFromEnvironmentStopsAtLogLevelAndDatabaseBoundaries(t *testing.T) {
-	t.Setenv("POSTGRES_DSN", "postgres://user:pass@127.0.0.1:1/db?sslmode=disable")
+	t.Setenv("POSTGRES_DSN", "postgres://user:pass@127.0.0.1:1/db?sslmode=disable&connect_timeout=1")
 	t.Setenv("CONTROL_PORTAL_TOKEN", "control-secret")
 	t.Setenv("LOG_LEVEL", "not-a-level")
 	if err := RunFromEnvironment(context.Background(), RuntimeOptions{ValidateStartup: func(*config.Config) error { return nil }}); err == nil || !strings.Contains(err.Error(), "parse log level") {
@@ -222,7 +222,7 @@ func TestRunFromEnvironmentStopsAtLogLevelAndDatabaseBoundaries(t *testing.T) {
 func TestRunMigrationControlRetirementStopsAtLogLevelAndDatabaseBoundaries(t *testing.T) {
 	previousLogger := slog.Default()
 	defer slog.SetDefault(previousLogger)
-	t.Setenv("POSTGRES_DSN", "postgres://user:pass@127.0.0.1:1/db?sslmode=disable")
+	t.Setenv("POSTGRES_DSN", "postgres://user:pass@127.0.0.1:1/db?sslmode=disable&connect_timeout=1")
 	t.Setenv("LOG_LEVEL", "not-a-level")
 	if err := RunMigrationControlRetirement(context.Background()); err == nil || !strings.Contains(err.Error(), "parse log level") {
 		t.Fatalf("invalid log level error = %v", err)
