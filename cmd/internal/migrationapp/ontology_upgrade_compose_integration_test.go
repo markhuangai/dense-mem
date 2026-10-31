@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
+	ontologypostgres "github.com/markhuangai/dense-mem/internal/ontology/postgres"
 	storage "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"github.com/stretchr/testify/require"
 	gormpostgres "gorm.io/driver/postgres"
@@ -28,7 +30,18 @@ func TestOntologyUpgradeComposeSeed(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, pool.Close()) })
 	batch := seedOntologyUpgrade(t, db)
+	definition := ontology.Record{ID: uuid.NewString(), Kind: ontology.Topic, Definition: &ontology.Definition{Key: "upgrade-matching", Label: "Upgrade matching", Description: "of and the"}}
+	var team string
 	require.NoError(t, storage.NewRLS().WithSystemTx(context.Background(), db, func(tx *gorm.DB) error {
+		return tx.Raw(`SELECT team_id::text FROM ontology_maintenance_batches WHERE batch_id=?::uuid`, batch).Row().Scan(&team)
+	}))
+	_, err = ontologypostgres.NewStore(db, storage.NewRLS()).PublishAutomatic(context.Background(), team,
+		ontology.Publication{OperationKey: "upgrade-matching-definition", Reason: "Preserved matching vocabulary", Changes: []ontology.Change{{Record: definition}}})
+	require.NoError(t, err)
+	require.NoError(t, storage.NewRLS().WithSystemTx(context.Background(), db, func(tx *gorm.DB) error {
+		if err := tx.Exec(`DELETE FROM ontology_maintenance_markers WHERE team_id=?::uuid AND anchor_kind='ontology_record_heads' AND anchor_id=?`, team, definition.ID).Error; err != nil {
+			return err
+		}
 		switch variant {
 		case "live":
 			return tx.Exec(`UPDATE ontology_maintenance_batches SET lease_until=clock_timestamp()+interval '30 seconds' WHERE batch_id=?::uuid`, batch).Error

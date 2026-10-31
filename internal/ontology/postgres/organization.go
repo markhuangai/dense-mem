@@ -161,7 +161,8 @@ func (s *Store) organizationVocabulary(tx *gorm.DB, fence scope, sources []ontol
 	if words == nil {
 		words = []string{}
 	}
-	query := strings.Join(words, " OR ")
+	query := ontology.LooseVocabularyQuery(words)
+	stopWords := pq.Array(ontology.VocabularyStopWords())
 	result := []ontology.RecordView{}
 	after := vocabularyCandidate{}
 	examined := 0
@@ -170,21 +171,21 @@ func (s *Store) organizationVocabulary(tx *gorm.DB, fence scope, sources []ontol
 		rows, err := tx.Raw(`WITH ranked AS (
    SELECT revision.body,head.record_id,
     head.record_id=ANY(?::uuid[]) AS forced,head.names && ?::text[] AS exact,
-    ts_rank_cd(to_tsvector('simple',array_to_string(head.names,' ') || ' ' || COALESCE(revision.body->'definition'->>'description','')),
+    ts_rank_cd(`+vocabularyVectorSQL+`,
      websearch_to_tsquery('simple',?)) AS rank
    FROM ontology_record_heads AS head
    JOIN ontology_record_revisions AS revision USING(team_id,shared_space_id,space_generation,record_id,version)
    WHERE head.team_id=?::uuid AND head.shared_space_id=?::uuid AND head.space_generation=?
     AND NOT head.retired AND head.kind IN ('entity_class','predicate_concept','topic')
     AND (head.record_id=ANY(?::uuid[]) OR head.names && ?::text[]
-     OR to_tsvector('simple',array_to_string(head.names,' ') || ' ' || COALESCE(revision.body->'definition'->>'description',''))
+     OR `+vocabularyVectorSQL+`
        @@ websearch_to_tsquery('simple',?)))
    SELECT body,forced,exact,rank,record_id::text FROM ranked
    WHERE ?='' OR (forced,exact,rank)<(?::boolean,?::boolean,?::real)
     OR ((forced,exact,rank)=(?::boolean,?::boolean,?::real) AND record_id>NULLIF(?,'')::uuid)
    ORDER BY forced DESC,exact DESC,rank DESC,record_id LIMIT ?`,
-			pq.Array(forced), pq.Array(words), query, fence.TeamID, fence.SpaceID, fence.Generation,
-			pq.Array(forced), pq.Array(words), query, after.record.ID, after.forced, after.exact, after.rank,
+			pq.Array(forced), pq.Array(words), stopWords, query, fence.TeamID, fence.SpaceID, fence.Generation,
+			pq.Array(forced), pq.Array(words), stopWords, query, after.record.ID, after.forced, after.exact, after.rank,
 			after.forced, after.exact, after.rank, after.record.ID, limit).Rows()
 		if err != nil {
 			return nil, err

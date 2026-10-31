@@ -250,7 +250,7 @@ func maintenanceMarkerSources(tx *gorm.DB, fence scope, marker maintenanceMarker
 			sourceKind, _, _ = strings.Cut(marker.AnchorID, ":")
 			sourceID = marker.TargetID
 		}
-		err := appendRows(maintenanceDefinitionPageSQL, fence.TeamID, fence.SpaceID, fence.Generation, recordID, sourceKind, sourceID, kind, id, limit)
+		err := appendRows(maintenanceDefinitionPageSQL, fence.TeamID, fence.SpaceID, fence.Generation, recordID, sourceKind, sourceID, kind, id, pq.Array(ontology.VocabularyStopWords()), limit)
 		return result, err
 	}
 	direct := ontology.SourceHandle{ID: marker.TargetID, Version: 1}

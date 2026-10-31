@@ -744,7 +744,7 @@ reported separately; the legacy detector cannot construct the scale fixture.
 Current closeout validation uses `BenchmarkRecallOntology` and
 `scripts/compare_ontology_recall.py` with the frozen five paired disabled/enabled
 measurements and unchanged 10% median p95 bound. Historical metrics certify only
-their recorded source revision; disabled community reads now return no topics.
+their recorded source revision; disabled community reads now return no topics. See [ontology loose matching](issue_659_matching.md).
 
 ## Private Session Gate (#218)
 

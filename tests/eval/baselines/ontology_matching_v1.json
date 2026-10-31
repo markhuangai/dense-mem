@@ -1,0 +1,19 @@
+{
+  "case_count": 8,
+  "cohort_sha256": "sha256:28a36b121a0e2126b0d04f80e66464e8668fa20d75291f59fd5800f2d8b3b7f2",
+  "command": "go test ./internal/evalharness -run '^TestOntologyMatchingBaseline$' -count=1",
+  "issue": 659,
+  "schema_version": "dense-mem.ontology.matching_baseline.v1",
+  "scope": "Synthetic unorganized matching cohort baseline; no retrieval or runtime improvement claimed.",
+  "score": {
+    "repeated_slots": 5,
+    "false_consolidations": 0,
+    "distinct_facts": 11,
+    "retained_facts": 11,
+    "original_sources": 16,
+    "retained_sources": 16,
+    "distinct_fact_coverage": 1,
+    "source_preservation": 1
+  },
+  "source_lock": "tests/eval/source_locks/ontology_matching_v1.json"
+}

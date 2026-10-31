@@ -1,10 +1,12 @@
 package postgres
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -28,11 +30,24 @@ import (
 func testOntologyOrganizationCohort(t *testing.T) { testOntologyCohort(t, false) }
 
 func testOntologyCohort(t *testing.T, maintenance bool, supplements ...[]evalharness.OrganizationFollowupCase) {
+	testOntologyCohortWithMatching(t, maintenance, nil, supplements...)
+}
+
+func testOntologyCohortWithMatching(t *testing.T, maintenance bool, matching []evalharness.OrganizationMatchingCase, supplements ...[]evalharness.OrganizationFollowupCase) {
 	f := newOrganizationFixture(t)
 	cohort := evalharness.OntologyOrganizationCohort()
 	lockPath := "../../../tests/eval/baselines/ontology_organization_v1.json"
 	followups := map[string]evalharness.OrganizationFollowupCase{}
 	var judgments any = cohort
+	matchingCases := map[string]evalharness.OrganizationMatchingCase{}
+	if len(matching) > 0 {
+		cohort, judgments = nil, matching
+		lockPath = "../../../tests/eval/source_locks/ontology_matching_v1.json"
+		for _, item := range matching {
+			cohort = append(cohort, item.Case)
+			matchingCases[item.Case.ID] = item
+		}
+	}
 	if len(supplements) > 0 {
 		cohort = nil
 		judgments = supplements[0]
@@ -53,14 +68,19 @@ func testOntologyCohort(t *testing.T, maintenance bool, supplements ...[]evalhar
 	require.NoError(t, err)
 	require.NoError(t, json.Unmarshal(baselineBytes, &lock))
 	require.Equal(t, lock.CohortSHA256, "sha256:"+hex.EncodeToString(digest[:]))
-	if len(followups) > 0 {
-		generator, err := os.ReadFile("../../evalharness/organization_followup_cohort.go")
+	if len(followups) > 0 || len(matching) > 0 {
+		generatorPath := "../../evalharness/organization_followup_cohort.go"
+		if len(matching) > 0 {
+			generatorPath = "../../evalharness/organization_matching_cohort.go"
+		}
+		generator, err := os.ReadFile(generatorPath)
 		require.NoError(t, err)
 		generatorDigest := sha256.Sum256(generator)
 		require.Equal(t, lock.GeneratorSHA256, "sha256:"+hex.EncodeToString(generatorDigest[:]))
 	}
 	scores := map[string]evalharness.OrganizationScore{}
 	reports := map[string]ontology.OrganizationResult{}
+	measurements := map[string]map[string]any{}
 	live := os.Getenv("DENSE_MEM_ONTOLOGY_LIVE_EVAL") == "1"
 	diagnostic := os.Getenv("DENSE_MEM_ONTOLOGY_DIAGNOSTIC") == "1"
 	directory := os.Getenv("DENSE_MEM_ORGANIZATION_REPORT_DIR")
@@ -76,6 +96,9 @@ func testOntologyCohort(t *testing.T, maintenance bool, supplements ...[]evalhar
 		if len(followups) > 0 {
 			mode = "followups"
 		}
+		if len(matching) > 0 {
+			mode = "matching"
+		}
 		directory = filepath.Join(directory, mode)
 		require.NoError(t, os.MkdirAll(directory, 0700))
 	}
@@ -86,8 +109,13 @@ func testOntologyCohort(t *testing.T, maintenance bool, supplements ...[]evalhar
 			if maintenance {
 				f = newOrganizationFixture(t)
 			}
+			var maintenanceLog bytes.Buffer
+			logger := slog.New(slog.NewJSONHandler(&maintenanceLog, nil))
 			defer func() {
 				if directory != "" {
+					if maintenance {
+						require.NoError(t, os.WriteFile(filepath.Join(directory, testCase.ID+"-maintenance.jsonl"), maintenanceLog.Bytes(), 0600))
+					}
 					writeOrganizationDiagnostic(t, filepath.Join(directory, testCase.ID+"-result.json"), map[string]any{"case_id": testCase.ID, "diagnostic_only": diagnostic, "ineligible_for_quality_gate": diagnostic, "failed": t.Failed(), "result": reports[testCase.ID], "score": scores[testCase.ID], "cohort_sha256": lock.CohortSHA256, "model": model, "provider_identity": identity})
 				}
 			}()
@@ -110,6 +138,9 @@ func testOntologyCohort(t *testing.T, maintenance bool, supplements ...[]evalhar
 				byText[source.Text] = source.EquivalenceKey
 			}
 			var vocabularyID string
+			if matchingCase, ok := matchingCases[testCase.ID]; ok {
+				measurements[testCase.ID] = seedMatchingCohortVocabulary(t, f, matchingCase, handles)
+			}
 			if followups[testCase.ID].StaleVocabulary {
 				definitions := seedStaleVocabulary(t, f, 20, 1)
 				vocabularyID = definitions[0].ID
@@ -150,7 +181,7 @@ func testOntologyCohort(t *testing.T, maintenance bool, supplements ...[]evalhar
 				identity = provider.Identity()
 				service = organization.NewService(f.store, provider)
 				if maintenance {
-					maintained = organization.NewMaintenanceService(organization.MaintenanceDependencies{Repository: f.store, Config: settings, DefaultModel: model, ProviderTimeout: time.Duration(cfg.GetAIVerifierTimeoutSeconds()) * time.Second, Organizer: func(model string, contextWindowTokens int64, accounting assessment.AttemptAccounting) *organization.Service {
+					maintained = organization.NewMaintenanceService(organization.MaintenanceDependencies{Repository: f.store, Config: settings, DefaultModel: model, Logger: logger, ProviderTimeout: time.Duration(cfg.GetAIVerifierTimeoutSeconds()) * time.Second, Organizer: func(model string, contextWindowTokens int64, accounting assessment.AttemptAccounting) *organization.Service {
 						return organization.NewService(f.store, assessment.NewProviderWithAccounting(transport, model, limits, accounting, int(contextWindowTokens)))
 					}})
 				}
@@ -165,7 +196,7 @@ func testOntologyCohort(t *testing.T, maintenance bool, supplements ...[]evalhar
 				callCount = calls.Load
 				if maintenance {
 					var counters []*atomic.Int32
-					maintained = organization.NewMaintenanceService(organization.MaintenanceDependencies{Repository: f.store, Config: maintenanceSettings(t, f), DefaultModel: model, ProviderTimeout: time.Minute, Organizer: func(model string, contextWindowTokens int64, accounting assessment.AttemptAccounting) *organization.Service {
+					maintained = organization.NewMaintenanceService(organization.MaintenanceDependencies{Repository: f.store, Config: maintenanceSettings(t, f), DefaultModel: model, Logger: logger, ProviderTimeout: time.Minute, Organizer: func(model string, contextWindowTokens int64, accounting assessment.AttemptAccounting) *organization.Service {
 						service, count := organizationFixtureServiceWithAccounting(t, f, func(a, b assessment.Item) bool { return byText[a.Text] == byText[b.Text] }, nil, model, assessor.DefaultSemanticAssessmentLimits(), accounting, int(contextWindowTokens))
 						counters = append(counters, count)
 						return service
@@ -181,6 +212,7 @@ func testOntologyCohort(t *testing.T, maintenance bool, supplements ...[]evalhar
 			}
 			input := ontology.OrganizationInput{OperationKey: "cohort-" + testCase.ID, Sources: handles}
 			var result ontology.OrganizationResult
+			started := time.Now()
 			if maintenance {
 				for range 100 {
 					progress, err := maintained.RunTurn(ctx)
@@ -212,6 +244,27 @@ func testOntologyCohort(t *testing.T, maintenance bool, supplements ...[]evalhar
 				result, err = service.Organize(ctx, f.team, input)
 			}
 			reports[testCase.ID] = result
+			measurement := measurements[testCase.ID]
+			if measurement == nil {
+				measurement = map[string]any{}
+			}
+			measurement["processing_ms"] = time.Since(started).Milliseconds()
+			if callCount != nil {
+				measurement["provider_calls"] = callCount()
+			}
+			if maintenance {
+				var discovery []map[string]any
+				for _, line := range bytes.Split(bytes.TrimSpace(maintenanceLog.Bytes()), []byte("\n")) {
+					var event map[string]any
+					require.NoError(t, json.Unmarshal(line, &event))
+					if event["msg"] == "ontology maintenance discovery" {
+						discovery = append(discovery, event)
+					}
+				}
+				require.NotEmpty(t, discovery)
+				measurement["discovery"] = discovery
+			}
+			measurements[testCase.ID] = measurement
 			require.NoError(t, err)
 			require.Empty(t, result.FailureCode)
 			groups, err := f.store.ListRecords(context.Background(), f.team, ontology.EvidenceGroup, "", ontology.MaxPageSize)
@@ -281,7 +334,7 @@ func testOntologyCohort(t *testing.T, maintenance bool, supplements ...[]evalhar
 	}
 	if directory != "" {
 		require.NoError(t, os.MkdirAll(directory, 0700))
-		report := map[string]any{"schema_version": "dense-mem.ontology.organization_run.v1", "cohort_sha256": lock.CohortSHA256, "live": live, "maintenance_discovery": maintenance, "model": model, "provider_identity": identity, "scores": scores, "results": reports, "failed": t.Failed(), "diagnostic_only": diagnostic, "ineligible_for_quality_gate": diagnostic}
+		report := map[string]any{"schema_version": "dense-mem.ontology.organization_run.v1", "cohort_sha256": lock.CohortSHA256, "live": live, "maintenance_discovery": maintenance, "model": model, "provider_identity": identity, "scores": scores, "results": reports, "measurements": measurements, "failed": t.Failed(), "diagnostic_only": diagnostic, "ineligible_for_quality_gate": diagnostic}
 		if !t.Failed() {
 			report["false_consolidations"], report["source_preservation"], report["distinct_fact_coverage"], report["repeated_slots"] = 0, 1, 1, 0
 		}

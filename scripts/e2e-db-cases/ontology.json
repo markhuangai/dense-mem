@@ -2,6 +2,12 @@
   "version": 1,
   "capability": "ontology",
   "cases": [
+    {"id": "repository/TestOntologyMaintenanceClaimErrorReleasesReturnedTurn","package": "./internal/ontology/postgres","run": "^TestOntologyMaintenanceClaimErrorReleasesReturnedTurn$","phase": "precheck","source": "internal/ontology/postgres/maintenance_service_integration_test.go"},
+    {"id": "repository/TestOntologyMatchingVocabularyAndInvalidation","package": "./internal/ontology/postgres","run": "^TestOntologyMatchingVocabularyAndInvalidation$","phase": "precheck","source": "internal/ontology/postgres/matching_integration_test.go"},
+    {"id": "repository/TestOntologyMatchingConcurrentInvalidation","package": "./internal/ontology/postgres","run": "^TestOntologyMatchingConcurrentInvalidation$","phase": "precheck","source": "internal/ontology/postgres/matching_concurrency_integration_test.go"},
+    {"id": "repository/TestOntologyMatchingRefreshMigration","package": "./internal/ontology/postgres","run": "^TestOntologyMatchingRefreshMigration$","phase": "precheck","source": "internal/ontology/postgres/matching_migration_integration_test.go"},
+    {"id": "repository/TestOntologyMatchingHistoricalReceiptRefresh","package": "./internal/ontology/postgres","run": "^TestOntologyMatchingHistoricalReceiptRefresh$","phase": "precheck","source": "internal/ontology/postgres/matching_receipt_integration_test.go"},
+    {"id": "repository/TestOntologyMaintenanceMatchingCohort","package": "./internal/ontology/postgres","run": "^TestOntologyMaintenanceMatchingCohort$","phase": "precheck","source": "internal/ontology/postgres/organization_integration_test.go"},
     {
       "id": "repository/TestOntologyDefinitionChangesValidateActiveChildren",
       "package": "./internal/ontology/postgres",
