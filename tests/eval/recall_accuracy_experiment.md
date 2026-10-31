@@ -28,7 +28,7 @@ ignored run directories. Retain historical runtimes and captures.
 
 Use the configured `dense-mem` generation model and Cloudflare
 `@cf/baai/bge-m3` at 1,024 dimensions. Disable all optional decision tasks. Both
-sides use import concurrency 10 after admission preflight, ontology global/team
+sides use import concurrency and verified admission 4, ontology global/team
 capacity 8/8 and a 500,000-token context window. Record effective model identities,
 endpoint hashes, input hashes, source/image/runner identities and unavailable
 backing revisions before imports.
