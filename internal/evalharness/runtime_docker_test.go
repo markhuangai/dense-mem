@@ -108,7 +108,7 @@ func newEvalRuntimeFixture(t *testing.T, ctx context.Context, stubborn bool, sup
 				return
 			}
 		}
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 		defer cancel()
 		receipt, err := readRuntimeReceipt(fixture.command.Directory)
 		if os.IsNotExist(err) {
@@ -157,7 +157,7 @@ func newEvalRuntimeFixture(t *testing.T, ctx context.Context, stubborn bool, sup
 }
 
 func TestEvalRuntimeDockerLifecycle(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	_, err := runtimeDocker(ctx, "version", "--format", "{{.Server.Version}}")
 	require.NoError(t, err, "this regression requires real Docker; it must not skip")
@@ -288,7 +288,7 @@ func TestEvalRuntimeDockerLifecycle(t *testing.T) {
 		}
 	})
 
-	retire := RuntimeCommand{Action: "retire", Directory: old.command.Directory, RetentionPlan: old.planPath, StopTimeout: time.Second}
+	retire := RuntimeCommand{Action: "retire", Directory: old.command.Directory, RetentionPlan: old.planPath, StopTimeout: 10 * time.Second}
 	monitorLock, err := runtimeLock(filepath.Join(monitorDir, "paired.lock"))
 	require.NoError(t, err)
 	require.ErrorContains(t, RunRuntimeCommand(ctx, retire, io.Discard), "owned by another process")

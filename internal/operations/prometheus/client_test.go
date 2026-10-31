@@ -149,7 +149,11 @@ func TestClientBoundsFailureMessagesAndReasons(t *testing.T) {
 			}
 		})
 	}
-	for _, base := range []string{"http://%", "http://127.0.0.1:1"} {
+	transportFailure := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		panic(http.ErrAbortHandler)
+	}))
+	defer transportFailure.Close()
+	for _, base := range []string{"http://%", transportFailure.URL} {
 		client := NewClient(base, time.Second)
 		_, err := client.Instant(context.Background(), "secret")
 		require.EqualError(t, err, "telemetry backend query failed")
