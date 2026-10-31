@@ -103,6 +103,7 @@ try {
   await saveAndPublish([{ action: "remove_override", record_id: classification.id, expected_version: classification.version }]);
   assert((await ui(`/records/${classification.id}`)).retired, "the fixture correction must be removed before browser checks");
   assert.deepEqual(snapshot(), canonical, "corrections and rollback changed canonical facts or provenance");
+  await matchingAcceptance();
   console.log("ontology management production HTTP/MCP: permissions, isolation, replay, stale conflicts, provider-free preview, split persistence, pin/unpin and rollback passed");
 } finally {
   await control(initial.paused ? "/ontology/pause" : "/ontology/resume", { operation_key: randomUUID() });
@@ -130,11 +131,11 @@ async function recall() {
   const all = result.results.flatMap((item) => [item.evidence_id, ...item.equivalent_evidence_ids]);
   assert.equal(new Set(all).size, 2, "Recall must retain both authorized source handles"); return result.results;
 }
-async function settle() {
+async function settle(key = manager) {
   await control("/ontology/resume", { operation_key: randomUUID() });
   await control("/ontology/runs", { operation_key: randomUUID(), max_batches: 100 });
   let complete = false;
-  for (let i = 0; i < 150; i++) { const status = await ui("/status"); if (status.coverage_complete) { complete = true; break; } await new Promise((resolve) => setTimeout(resolve, 1000)); }
+  for (let i = 0; i < 150; i++) { const status = await ui("/status", undefined, key); if (status.coverage_complete) { complete = true; break; } await new Promise((resolve) => setTimeout(resolve, 1000)); }
   assert(complete, "team maintenance did not complete"); await control("/ontology/pause", { operation_key: randomUUID() });
 }
 async function providerCalls() { const response = await fetch(`${required("DENSE_MEM_E2E_PROVIDER_URL")}/health`); assert(response.ok); return (await response.json()).chat_requests; }
@@ -150,12 +151,53 @@ function sourceAssessments(ids) {
   for (const source of result) { assert.equal(source.status, "organized"); assert(source.assessment); }
   return result;
 }
-function snapshot() {
+function snapshot(scopeTeam = teamID) {
+  assert.match(scopeTeam, /^[0-9a-f-]{36}$/);
   const tables = ["evidence_fragments", "evidence_occurrences", "evidence_sources", "evidence_source_revisions", "entity_records", "entity_names", "value_records", "relationship_records", "relationship_evidence_supports", "relationship_support_decision_events", "evidence_lifecycle_events", "evidence_quarantines"];
-  const sql = ["BEGIN", "SET LOCAL app.tx_mode='system'", ...tables.map((table) => `SELECT COALESCE(jsonb_agg(to_jsonb(row) ORDER BY to_jsonb(row)::text)::text,'[]') FROM ${table} AS row WHERE team_id='${teamID}'::uuid`), "COMMIT"].join(";\n");
+  const sql = ["BEGIN", "SET LOCAL app.tx_mode='system'", ...tables.map((table) => `SELECT COALESCE(jsonb_agg(to_jsonb(row) ORDER BY to_jsonb(row)::text)::text,'[]') FROM ${table} AS row WHERE team_id='${scopeTeam}'::uuid`), "COMMIT"].join(";\n");
   return executeFixtureSQL(sql);
 }
 function executeFixtureSQL(sql) {
   const result = spawnSync("docker", ["compose", "-p", required("DENSE_MEM_E2E_COMPOSE_PROJECT"), "-f", required("DENSE_MEM_E2E_COMPOSE_FILE"), "exec", "-T", "postgres", "sh", "-ec", 'psql -q -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -c "$1"', "ontology-management-e2e", sql], { cwd: fileURLToPath(new URL("../..", import.meta.url)), encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr); return result.stdout.trim();
+}
+
+async function matchingAcceptance() {
+  const team = await control("/teams", { name: `ontology-matching-${randomUUID()}` });
+  const owner = await credential(team.id, "manager", ["read", "write"]);
+  const key = owner.api_key;
+  const definitions = [
+    { key: "grammarnoise", label: "Grammar noise", description: "of and the", aliases: [] },
+    { key: "suntracker", label: "Solar tracker", description: "heliostat", aliases: [] },
+    { key: "about", label: "about", description: "Named project", aliases: [] },
+    { key: "conjunctioncatalog", label: "Conjunction catalog", description: "Named catalog", aliases: ["and"] },
+  ];
+  const draft = await ui("/drafts", { operation_key: randomUUID(), expected_version: 0, expected_revision: (await ui("/status", undefined, key)).revision,
+    reason: "Matching acceptance vocabulary", edits: definitions.map((definition) => ({ action: "define", expected_version: 0, kind: "topic", definition })) }, key);
+  await ui(`/drafts/${draft.id}/publish`, { operation_key: randomUUID(), expected_version: draft.version, expected_revision: draft.base_revision, reason: draft.reason }, key);
+  const fixtureMode = async (mode) => {
+    const response = await fetch(`${required("DENSE_MEM_E2E_PROVIDER_URL")}/ontology-fixture`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode }) });
+    assert.equal(response.status, 200);
+  };
+  await fixtureMode("matching");
+  try {
+    for (const [content, expected] of [
+      ["Atlas uses PostgreSQL as part of the system.", "memory-storage"],
+      ["Atlas uses PostgreSQL for heliostat control.", "suntracker"],
+      ["Atlas uses PostgreSQL for the about project.", "about"],
+      ["Atlas uses PostgreSQL and backups.", "conjunctioncatalog"],
+    ]) {
+      const source = await remember(content, key);
+      const before = snapshot(team.id);
+      await settle(key);
+      const records = (await ui("/records?kind=assignment&limit=200", undefined, key)).records;
+      const assignment = records.find((record) => record.current && record.assignment.source.id === source);
+      assert(assignment, "matching acceptance source must receive a current assignment");
+      const definition = await ui(`/records/${assignment.assignment.definition_id}`, undefined, key);
+      assert.equal(definition.definition.key, expected, "loose stop words, meaningful terms, exact names and aliases must retain their distinct admission paths");
+      assert.deepEqual(snapshot(team.id), before, "matching must preserve canonical sources and facts");
+    }
+  } finally {
+    await fixtureMode("normal");
+  }
 }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/lib/pq"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	"gorm.io/gorm"
 )
@@ -167,7 +168,7 @@ func maintenanceDefinitionGroupPage(tx *gorm.DB, fence scope, markers []maintena
 	if err != nil {
 		return page, err
 	}
-	rows, err := tx.Raw(maintenanceDefinitionGroupSQL, string(body), fence.TeamID, fence.SpaceID, fence.Generation, limit+1, limit).Rows()
+	rows, err := tx.Raw(maintenanceDefinitionGroupSQL, string(body), fence.TeamID, fence.SpaceID, fence.Generation, pq.Array(ontology.VocabularyStopWords()), limit+1, limit).Rows()
 	if err != nil {
 		return page, err
 	}

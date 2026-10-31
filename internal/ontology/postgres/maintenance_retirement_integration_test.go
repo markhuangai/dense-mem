@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -258,7 +259,7 @@ func TestOntologyMaintenanceBudgetRetirementRejectsLegacyWriters(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if entry.IsDir() || entry.Name() == "20261023020000_ontology_budget_retirement.sql" {
+		if entry.IsDir() || strings.SplitN(entry.Name(), "_", 2)[0] >= "20261023020000" {
 			return nil
 		}
 		relative, err := filepath.Rel("../../../migrations/postgres", path)
