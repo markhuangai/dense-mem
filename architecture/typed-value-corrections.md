@@ -1,21 +1,9 @@
 # Typed-Value Relationship corrections
 
-Status: design report for [issue #429](https://github.com/markhuangai/dense-mem/issues/429).
-This document records the current supported workflow and a bounded recommendation.
-It does not change a runtime contract, schema, migration, or accepted ADR.
+The supported correction workflow depends on the original observation and its
+current effective support. Accepted ADRs govern any future contract change.
 
-## Report provenance
-
-- Audit source: the current `main` revision fetched before the report was written.
-- Before the report was written, the source checkout and task checkout were
-  clean, protected Git configuration was recorded without exposing values, and
-  no workflow test artifacts existed. Other registered worktrees and their
-  pre-existing state were preserved.
-- The behavior observations below describe that audited state. Test results are
-  recorded by the implementation workflow after the independent plan audit;
-  this report does not claim that unrun checks passed.
-
-## Recommendation
+## Choosing a correction workflow
 
 Use the workflow that matches what was wrong in the original observation:
 
@@ -86,7 +74,7 @@ correct_relationship
 ```
 
 The current owners and coverage can be located with these stable symbol and
-test anchors (the report intentionally omits file paths and line numbers):
+test anchors:
 
 - Registry and contract boundary: `bindRememberTool`, `bindLifecycleTool`,
   `validateCorrectRelationship`, `contractToolDescription`, and
@@ -166,12 +154,6 @@ owner, the verification event, and a same-predicate semantic relation, then
 inserts one `corrects` cross-reference. It does not update the target's status,
 version, support, or search document, so an active old Relationship can remain
 alongside the new typed Value.
-
-The ordinary one-cardinality supersession test proves the version-advancing
-state transition,
-but no current test directly exercises a Remember `correction_target` outcome
-for either cardinality. That absence is a known coverage gap for this report,
-separate from the larger missing typed-Value replacement capability.
 
 The surrounding Remember commit is all-or-nothing in its PostgreSQL transaction,
 and provider work occurs before that transaction. A correction-target failure can
@@ -286,121 +268,14 @@ changed requests under the same key conflict.
 The public lifecycle port exposes correction planning/commit and evidence
 retraction, but not the repository's internal `RetractRelationship` method.
 
-## Current-versus-proposed behavior matrix
-
-| Situation | Current `remember` behavior | Current `correct_relationship` behavior | Supported recommendation now | Proposed bounded extension (future scope only) |
-| --- | --- | --- | --- | --- |
-| Entity or predicate was extracted incorrectly from the cited evidence | For predicates allowing multiple active Relationships, can store a new assessed Relationship and optionally attach `correction_target`; the target remains in its prior lifecycle state. For `current_cardinality = one`, a matching active sibling follows the stale-version rollback described below, while a semantically related target outside that selector can receive only a lineage link and remain active. | Can replace the caller-owned Relationship, preserve exact effective supports, and atomically supersede the source when the complete set fits the 200-entry input bound and each support has a distinct public tuple. | Use `correct_relationship` with the current source version only when the complete current support set is known and representable. Public reads stop at 100 rows; larger input capacity does not guarantee a complete read-to-correction workflow. | Keep the existing Entity/predicate correction path; no typed-value extension is needed. |
-| Corrected Entity/predicate identity already exists only as inactive or unsupported history | A new Remember proposal can reactivate an exact caller-owned canonical identity when its identity, space, and validity match, attaching fresh evidence; it does not mutate another owner's row or an identity alias. A same-team row owned by another profile is not reused or mutated because identity lookup is owner-scoped. | Identity resolution rejects an inactive or zero-support canonical destination in the caller's own identity scope as `inactive_relationship_collision` before source supersession. Identity alias rows are excluded from that lookup and do not themselves trigger the rejection. A matching row owned by another profile is outside that lookup, so the correction creates a caller-owned successor. | Use fresh Remember only for a fresh-evidence state update. For provenance-preserving correction, no public revive path exists for the caller's inactive identity; do not retry that deterministic rejection as a stale-version conflict. | Define explicit destination-collision semantics before extending correction, with history and ownership tests. |
-| Typed Value was extracted incorrectly for a `current_cardinality = one` predicate whose target is a matching active sibling | Applying the new active Relationship supersedes the target and increments its version before `correction_target` checks the supplied version; the check returns `ErrCorrectionTargetStale`, so the whole Remember transaction rolls back and no correction link commits. A prior observation in the same request can cause the same stale check for a later proposal even when that later proposal's selector would not match the target. | Cannot patch the object Value or unit; a Value object cannot become an Entity. | No complete public atomic correction exists. Treat the stale result as a rolled-back attempt; do not present `correction_target` as replacement or repeat a deterministic in-batch rollback. | Add a typed-Value patch that resolves or creates the canonical Value, reuses exact supports, and supersedes the source atomically. |
-| Typed Value was extracted incorrectly for a `current_cardinality = one` predicate whose target is semantically related but not a matching active sibling | The target is not selected for one-cardinality supersession, so its expected version remains current and `correction_target` can commit only a `corrects` lineage link; the old Relationship remains active. | Cannot patch the object Value or unit; a Value object cannot become an Entity. | No complete public atomic correction exists. Do not present the lineage link as replacement; track a bounded follow-up. | Add a typed-Value patch that resolves or creates the canonical Value, reuses exact supports, and supersedes the source atomically. |
-| Numeric Value or unit was extracted incorrectly for a predicate allowing multiple active Relationships | Accepts a typed Value and can attach a correction cross-reference, but does not supersede the old Relationship. | Cannot patch the object Value or unit; a Value object cannot become an Entity. | No complete public atomic correction exists. Do not present `correction_target` as replacement; track a bounded follow-up. | Add a typed-Value patch that resolves or creates the canonical Value, reuses exact supports, and supersedes the source atomically. |
-| `date` or `date_time` was extracted incorrectly | Accepts the typed Value as a string and validates the Relationship validity window. For multiple-cardinality predicates, or one-cardinality targets outside the matching-sibling selector, it can add only a lineage link; a matching one-cardinality sibling follows the stale-version rollback described above. | Cannot patch the Value type or canonical value, and preserves the source validity window. | Same typed-Value gap; do not use a two-call approximation. | Apply the same typed-Value replacement rules, with strict date representation and explicit validity evidence. |
-| `string` or `boolean` Value was extracted incorrectly | Accepts and validates the typed Value. For multiple-cardinality predicates, or one-cardinality targets outside the matching-sibling selector, it has the same lineage-only `correction_target` behavior; a matching one-cardinality sibling follows the stale-version rollback described above. | Cannot patch any Value object. | Same typed-Value gap. | Replace the canonical typed Value under the same owner, version, support, and atomic supersession fences. |
-| Value type changed (for example `number` to `date`) | A fresh proposal can store the new type. A multiple-cardinality `correction_target`, or a one-cardinality target outside the matching-sibling selector, leaves the old Relationship active; a matching one-cardinality sibling follows the stale-version rollback described above. | No Value-type patch exists. | Treat as a new fact or a follow-up correction design; never coerce the old Value in place. | Permit a type change only when the original evidence proves mis-extraction; otherwise reject this path and require fresh Remember evidence. |
-| The real-world fact changed after the original evidence | A new Remember submission can carry fresh evidence and a new validity window. Known evidence may supplement, but accepted Relationships retain submitted support. | Reuses the existing effective support set and is therefore not a fresh-fact intake path. | Use `remember` with independent fresh evidence and no correction target. | Preserve this routing and reject typed-Value correction requests that are actually new facts. |
-| Same-team owner corrects a Relationship | Authentication fixes the owner; request fields cannot override it. | Source mutation requires the caller to own the source; same-team visibility is not mutation authority. | Reject wrong-owner attempts with the existing bounded error. | Reuse the same authenticated owner check for Value patches and every created or reused Value. |
-| Source version is stale | `correction_target.expected_version` is checked during the semantic commit; a mismatch rejects the Remember transaction. An earlier observation in the same request can also increment a later target before its check. | Submit and confirm fence the source version; pending confirmation becomes a bounded changed-state rejection. | Refresh and retry with a new key when an independent version change caused staleness. Matching-sibling or earlier-in-batch correction-target rollback leaves the target unchanged, so do not repeat that request: use eligible Entity/predicate correction or the documented no-current-workflow outcome for typed Values. | Require the source expected version for Value patches and return the existing typed stale result without partial state. |
-| Support is missing, altered, or from the wrong space | Accepted Relationships require support; known evidence is bounded and must not replace submitted support. | Support spans must exactly match effective supports, contain at most 200 entries, and remain in the Relationship's memory space; truncation is rejected. | Preserve exact evidence IDs, occurrences, spans, source revisions, and space ownership. Trace/export reads return at most 100 support rows without pagination; do not infer the complete effective set from a truncated result. | Reuse exact effective support only for a proven mis-extraction; keep support and space checks identical. |
-| Two effective supports share an evidence ID and span but differ in occurrence ID | Can preserve both occurrence-specific supports on one Relationship. | The input cannot distinguish them: one tuple fails full-set matching and two identical tuples fail validation. | No complete public correction path exists for this state; do not collapse distinct occurrence provenance. | Decide how correction identifies and preserves each occurrence, then prove the colliding-tuple case with real PostgreSQL and production-entry tests. |
-| A support is stored under an exact-evidence alias | Can retain the alias-backed support and its canonical occurrence provenance. | Trace publishes the canonical fragment ID, while correction matching expects the raw alias fragment ID. For migrated alias rows, trace `occurrence_id` carries that raw ID, but the public shape has no alias marker; only a caller that retained the raw mapping can safely submit it as `evidence_id`. The canonical ID alone yields `support_set_mismatch`. | Without an independently retained mapping, alias-backed support has no complete public correction path. | Keep the conversion explicit and prove alias-backed and ordinary occurrence cases with real PostgreSQL and production-entry tests. |
-| Trace returns historical or otherwise ineffective support rows below the read ceiling | Can preserve support decisions and lifecycle history, but those rows are not necessarily the current correction-effective set. | Correction filters latest support decisions, active quarantines, evidence lifecycle, and source revisions before exact-set matching; trace returns the raw support rows and does not expose enough quarantine/current-source state to reproduce all filters. | No complete public read-to-correction path exists from trace alone, even below 100 rows; retain the effective set or use a future effective-support reader. | Expose or derive one authoritative effective-support projection before extending correction input. |
-| Validity was mis-extracted from the cited evidence | Can propose a different ordered validity window, but this does not atomically replace the existing Relationship. | Correction copies the source validity window; no validity patch is exposed, and one-cardinality supersession requires the same `valid_from`. | No complete current atomic correction exists. Do not route a mis-extracted window to fresh Remember or infer a replacement through `correction_target`. | Require a validity patch whose evidence explicitly supports the corrected window, with the same owner, version, support, and atomic supersession fences. |
-| Retry or replay | Whole-request hash and durable attempt state replay the authoritative result or return an idempotency conflict. | Correction hash and durable submission replay the authoritative receipt or reject a changed request under the same key. | Keep retry keys scoped to the authenticated team/profile and include every correction field in the hash. | Include the complete typed-Value patch, support set, validity, and reason in the existing correction hash. |
-| Provenance and atomicity | Evidence, observation, verification, support, search state, and optional cross-reference commit together. | Original/successor states, copied supports, cross-reference, correction event, search state, and receipt commit together. | Never claim a successful lineage link is an atomic replacement. | Keep provider work outside the transaction and atomically commit Value resolution, source supersession, successor, lineage, history, and search state. |
-
-The trade-offs are explicit:
-
-| Decision dimension | Retain and document Remember | Bounded `correct_relationship` extension (future) |
-| --- | --- | --- |
-| Compatibility | Zero runtime or wire changes, but the typed-Value replacement gap remains visible to clients. | Add an optional typed-Value patch while retaining existing Entity/predicate inputs and outputs. |
-| Client effort | Existing Remember callers can submit evidence, but cannot obtain one atomic replacement for a typed Value. | Clients need the source version and complete effective supports before submitting the typed patch. The current 100-row trace/export limit constrains that workflow and must be accounted for in a separately approved extension. |
-| Policy ownership | Remember assessment and semantic commit remain the owners; `correction_target` stays a lineage operation. | Lifecycle correction remains the single owner of replacement and reuses the existing version, support, ownership, and search fences. |
-| Implementation and test cost | Documentation only; no new persistence, provider, migration, or E2E work. | Requires Value resolution, request hashing, provider/search fencing, rollback proof, and real PostgreSQL plus production-entry positive/adverse tests. |
-
-The recommendation is to retain Remember for fresh facts, retain the existing
-`correct_relationship` path for Entity/predicate mistakes, and schedule a
-separate approved implementation for the typed-Value extension. The extension
-column describes a target behavior only; it is not an API change in this
-report.
-
 ## Mis-extraction versus changed fact
 
-Consider an evidence span that says “the package weighs 12 kg.” If the assessor
-stored `120 kg`, the error is a mis-extraction: the cited span is still the
-source of truth. A future typed-Value correction must be able to reuse that
-exact occurrence, source revision, quote, authority, and span while replacing
-the Value-backed Relationship atomically.
+If evidence says “the package weighs 12 kg” but the stored Value is `120 kg`,
+the cited occurrence remains the source of truth. Correcting that extraction
+must preserve its source revision, quote, authority and exact span. The current
+public correction contract has no atomic typed-Value replacement operation.
 
-If a later observation says “the package now weighs 15 kg,” that is a changed
-fact. It needs a new Remember evidence item and its own assessment, support,
-validity, and possible conflict handling. The old `12 kg` evidence cannot be
-silently repurposed to support `15 kg`. The same distinction applies to dates,
-date-times, units, strings, booleans, and a change of Value type.
-
-## Bounded future implementation scope
-
-The comparison establishes a real gap but does not authorize its implementation
-in this report. A later approved issue should keep the extension inside the
-existing lifecycle owner and correction transaction:
-
-- Add a mutually exclusive typed-Value patch variant to the correction input,
-  covering Value type, canonical value, optional unit/display, and the existing
-  normalization policy. Do not coerce a supplied Value into another type or
-  mutate a `value_records` row in place; resolve or create the canonical Value
-  and point the successor Relationship at it.
-- Decide validity-window patch semantics explicitly. A correction that changes
-  validity must reuse evidence that states the corrected window; an actual
-  later fact or validity change is routed through fresh Remember evidence. It
-  must never infer a new time window from an old span that does not contain it.
-- Retain the current owner, expected-version, active/canonical/support-count,
-  exact-support, memory-space, collision, confirmation, request-hash, provider
-  fence, and search-document invariants. Keep provider execution outside the
-  authoritative transaction and commit source supersession, successor state,
-  lineage, history, and search state atomically.
-- Preserve occurrence IDs, source IDs and revisions, quotes, authority,
-  support decisions, and correction event metadata. A changed fact must not be
-  admitted through this support-reuse path merely because its Value has the
-  same type or unit. Decide whether correction input carries occurrence identity
-  or uses another deterministic preservation mechanism when distinct supports
-  share a public evidence/span tuple. Preserve the alias-to-raw-fragment
-  conversion for migrated exact-evidence aliases and do not apply it to
-  ordinary occurrence IDs without confirming the mapping.
-- Add real PostgreSQL positive and adverse cases for each Value type and unit,
-  wrong owner, stale version, support mismatch/revision change, validity
-  change, replay conflict, ambiguous selection, active collision, search-fence
-  failure, and rollback. Include two effective supports with the same canonical
-  evidence and span but different occurrence IDs. Add a production-entry
-  positive/adverse scenario when the public contract changes, including that
-  occurrence collision.
-
-No new field, migration, registry description, public API, or ADR is proposed
-for acceptance by issue #429 itself.
-
-## Evidence and known limits
-
-The current contract and policy are covered by real-logic and PostgreSQL tests,
-including typed Value and validity validation, Remember correction-target
-propagation and complete-commit input, typed Value canonical de-duplication,
-correction replacement, owner isolation, replay, support preservation, active
-collision, atomic search behavior, stale-version and support-revision fences,
-occurrence provenance, exact-evidence alias canonicalization, known-evidence
-ownership and support isolation, and public correction success and adverse
-provider, stale-state, and ownership-isolation scenarios. The occurrence and
-alias suites each record the remaining gap: no direct correction case covers
-two distinct occurrences with one public tuple or conversion of a public
-canonical alias ID to its retained raw ID.
-
-These tests prove the existing Entity/predicate correction path and typed Value
-intake. They do not prove atomic replacement of a Value, because the current
-`correct_relationship` schema has no Value patch and no test can exercise one.
-That missing proof is the implementation gap recorded here, not a reason to
-expand this design-only change.
-
-## Scope and rollback
-
-This report changes no runtime behavior, canonical data, public schema, or
-accepted architecture. Reverting the one document removes the recommendation;
-there is no data rollback or migration boundary. Any future implementation
-requires a separately approved issue, updated contract, real PostgreSQL and
-production-entry tests, and an independent plan audit.
+If later evidence says “the package now weighs 15 kg”, submit fresh evidence
+through Remember with its own assessment and validity. The old `12 kg` evidence
+cannot support `15 kg`. The same distinction applies to dates, date-times,
+units, strings, booleans and Value types.

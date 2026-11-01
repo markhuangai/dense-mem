@@ -1208,12 +1208,14 @@ test("six precheck shards account for package batches while the legacy route ret
     const directory = join(fixture, "scripts/e2e-db-cases");
     await mkdir(directory, { recursive: true });
     const ontologyIDs = [
+      "repository/TestOntologyMaintenanceFinalizationAdmissionAndIsolation",
       "repository/TestOntologyMaintenanceLargeBacklogAndFairTurns",
+      "repository/TestOntologyMaintenanceReadMeasurement",
       "repository/TestOntologyOrganizationVocabularyAndSourceFences",
       "repository/TestOntologyMaintenanceRevalidationDiscoveryMeasurement",
       "repository/TestOntologyRemaining",
     ];
-    for (const [capability, count] of [["ontology", 4], ["alpha", 41], ["beta", 40], ["gamma", 39], ["delta", 1]]) {
+    for (const [capability, count] of [["ontology", 6], ["alpha", 41], ["beta", 40], ["gamma", 39], ["delta", 1]]) {
       const cases = Array.from({ length: count }, (_, index) => ({
         id: capability === "ontology" ? ontologyIDs[index] : `${capability}/TestCase${index}`,
         phase: "precheck",
@@ -1245,7 +1247,9 @@ test("six precheck shards preserve every real runner selection exactly once", as
   const selections = stdout.trim().split(/\r?\n/);
   assert.equal(selections.length, 6);
   const dedicated = [
+    "repository/TestOntologyMaintenanceFinalizationAdmissionAndIsolation",
     "repository/TestOntologyMaintenanceLargeBacklogAndFairTurns",
+    "repository/TestOntologyMaintenanceReadMeasurement",
     "repository/TestOntologyOrganizationVocabularyAndSourceFences",
   ];
   const measurement = "repository/TestOntologyMaintenanceRevalidationDiscoveryMeasurement";
@@ -1273,7 +1277,7 @@ test("six precheck shards preserve every real runner selection exactly once", as
   }
   assert.equal(new Set(actual).size, actual.length);
   assert.deepEqual(actual.sort(), inventory.sort());
-  assert.ok(actual.length >= 606);
+  assert.equal(actual.length, 680);
   assert.equal((await run("bash", ["-c", command, "six-shards", root])).stdout, stdout);
   await assert.rejects(run("bash", ["-c", `${helper}\npartition_precheck_capabilities "$1" 4`, "bad-shards", root]), /three or six shards/);
 });

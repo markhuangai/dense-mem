@@ -275,13 +275,13 @@ func pairKey(left, right string) string {
 	return left + ":" + right
 }
 
-func ResponseSchema() map[string]any {
+func ResponseSchema(requestID string) map[string]any {
 	text := map[string]any{"type": "string"}
 	ref := map[string]any{"type": "string", "maxLength": 64}
 	definition := closedObject(map[string]any{"ref": ref, "kind": map[string]any{"type": "string", "enum": []string{"entity_class", "predicate_concept", "topic"}}, "key": map[string]any{"type": "string", "maxLength": 128}, "label": map[string]any{"type": "string", "maxLength": 128}, "description": map[string]any{"type": "string", "maxLength": 1000}, "aliases": map[string]any{"type": "array", "maxItems": 20, "items": map[string]any{"type": "string", "maxLength": 128}}, "parent_ref": ref, "base_entity_kind": text})
 	item := closedObject(map[string]any{"ref": ref, "status": map[string]any{"type": "string", "enum": []string{"classified", "ambiguous"}}, "definition_ref": ref, "reason": map[string]any{"type": "string", "maxLength": 128}})
 	pair := closedObject(map[string]any{"ref": ref, "relation": map[string]any{"type": "string", "enum": []string{"equivalent", "distinct", "ambiguous"}}})
-	return closedObject(map[string]any{"request_id": text, "definitions": map[string]any{"type": "array", "maxItems": 20, "items": definition}, "items": map[string]any{"type": "array", "maxItems": 20, "items": item}, "equivalence": map[string]any{"type": "array", "maxItems": 190, "items": pair}})
+	return closedObject(map[string]any{"request_id": map[string]any{"type": "string", "enum": []string{requestID}}, "definitions": map[string]any{"type": "array", "maxItems": 20, "items": definition}, "items": map[string]any{"type": "array", "maxItems": 20, "items": item}, "equivalence": map[string]any{"type": "array", "maxItems": 190, "items": pair}})
 }
 
 func closedObject(properties map[string]any) map[string]any {

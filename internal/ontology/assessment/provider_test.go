@@ -25,7 +25,7 @@ func TestOrganizationExplicitContextWindow(t *testing.T) {
 	calls := 0
 	transport := fixtureTransport(func(_ context.Context, req modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
 		calls++
-		input, err := NewProvider(nil, "model", limits, 300000).messageTokens(req.Messages)
+		input, err := NewProvider(nil, "model", limits, 300000).messageTokens(req.Messages, req.Schema)
 		require.NoError(t, err)
 		require.LessOrEqual(t, input+req.MaxOutputTokens, req.MaxInputTokens+req.MaxOutputTokens)
 		return modelprovider.StructuredResult{Content: string(valid)}, nil
@@ -124,7 +124,7 @@ func TestOrganizationContextWindowIncludesRegenerationHistory(t *testing.T) {
 		calls := 0
 		provider := NewProvider(fixtureTransport(func(_ context.Context, req modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
 			calls++
-			tokens, err := NewProvider(nil, "model", limits, 300000).messageTokens(req.Messages)
+			tokens, err := NewProvider(nil, "model", limits, 300000).messageTokens(req.Messages, req.Schema)
 			require.NoError(t, err)
 			require.LessOrEqual(t, tokens+req.MaxOutputTokens, capacity)
 			if overflow {
@@ -261,7 +261,7 @@ func TestOrganizationCompleteRegenerationAndTokenAccounting(t *testing.T) {
 	transport := fixtureTransport(func(ctx context.Context, req modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
 		calls++
 		require.Equal(t, SchemaName, req.SchemaName)
-		require.Equal(t, ResponseSchema(), req.Schema)
+		require.Equal(t, ResponseSchema(request.RequestID), req.Schema)
 		if calls == 1 {
 			return modelprovider.StructuredResult{Content: `{"request_id":"request","definitions":[],"items":[],"equivalence":[]}`}, nil
 		}
@@ -288,6 +288,66 @@ func TestOrganizationCompleteRegenerationAndTokenAccounting(t *testing.T) {
 	require.ErrorIs(t, err, modelprovider.ErrVerifierMalformedResponse)
 	require.Equal(t, 3, calls)
 	require.Len(t, attempts, 3)
+}
+
+func TestOrganizationRequestIdentitySchemaAndCompleteRepair(t *testing.T) {
+	for _, repair := range []bool{false, true} {
+		t.Run(map[bool]string{false: "exhausted", true: "repaired"}[repair], func(t *testing.T) {
+			request, response := assessmentFixture()
+			request.RequestID = "1479d3a1-800a-4fc7-a1c7-a007f8d8ce23"
+			limits := assessor.DefaultSemanticAssessmentLimits()
+			calls := []modelprovider.StructuredRequest{}
+			provider := NewProvider(fixtureTransport(func(_ context.Context, outbound modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
+				calls = append(calls, outbound)
+				properties := outbound.Schema["properties"].(map[string]any)
+				require.Equal(t, map[string]any{"type": "string", "enum": []string{request.RequestID}}, properties["request_id"])
+				var original Request
+				require.NoError(t, json.Unmarshal([]byte(outbound.Messages[1].Content), &original))
+				require.Equal(t, request, original)
+				if len(calls) > 1 {
+					var correction map[string]string
+					require.NoError(t, json.Unmarshal([]byte(outbound.Messages[len(outbound.Messages)-1].Content), &correction))
+					require.Contains(t, correction["instruction"], request.RequestID)
+					prior, err := Decode(outbound.Messages[len(outbound.Messages)-2].Content)
+					require.NoError(t, err)
+					require.Equal(t, "a74b4d9b-e96a-4936-93c8-62fe93405efc", prior.RequestID)
+				}
+				response.RequestID = "a74b4d9b-e96a-4936-93c8-62fe93405efc"
+				if repair && len(calls) == 3 {
+					response.RequestID = request.RequestID
+				}
+				encoded, err := json.Marshal(response)
+				require.NoError(t, err)
+				return modelprovider.StructuredResult{Content: string(encoded)}, nil
+			}), "model", limits, 300000)
+			measured, err := provider.Measure(request)
+			require.NoError(t, err)
+			result, attempts, err := provider.Assess(context.Background(), request)
+			require.Len(t, calls, 3)
+			require.Len(t, attempts, 3)
+			require.Equal(t, measured, attempts[0].EstimatedInputTokens)
+			for i, outbound := range calls {
+				messages := make([]assessor.SemanticAssessmentProviderMessage, len(outbound.Messages))
+				for j, message := range outbound.Messages {
+					messages[j] = assessor.SemanticAssessmentProviderMessage{Role: message.Role, Content: message.Content}
+				}
+				tokens, countErr := assessor.CountSemanticAssessmentProviderRequestTokens(outbound.Model, outbound.SchemaName, outbound.Schema, limits.ProviderTemperatureDisabled, messages, limits.Tokenizer)
+				require.NoError(t, countErr)
+				require.Equal(t, tokens, attempts[i].EstimatedInputTokens)
+				require.Equal(t, calls[0].Schema, outbound.Schema)
+				if i < 2 || !repair {
+					require.Equal(t, "request_id_mismatch", attempts[i].Validation.Code)
+				}
+			}
+			if repair {
+				require.NoError(t, err)
+				require.Equal(t, response, result)
+			} else {
+				require.ErrorIs(t, err, modelprovider.ErrVerifierMalformedResponse)
+				require.Empty(t, result)
+			}
+		})
+	}
 }
 
 func TestOrganizationInitialBudgetAllowsBothCompleteRegenerations(t *testing.T) {

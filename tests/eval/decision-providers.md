@@ -1,11 +1,10 @@
 # Decision provider validation
 
-The approved comparison uses frozen `public_6axis_1k_v3`: 991 documents and
-204 cases, source hash
+Live validation uses the frozen `public_6axis_1k_v3` cohort: 991 documents,
+204 cases and seed hash
 `0923aa14109291e5d5cf24fe419f0b6fc229823bf3dd4292e17d45447365e675`.
-The maintainer explicitly deferred live OpenAI validation on 2026-10-26 because
-credentials are unavailable. Jev live validation also remains pending access.
-No live quality, recall equivalence, cost, or latency result is available.
+The live access and validation limitations in [ADR 0015](../../adr/0015-optional-typed-decisions.md)
+remain in force. Fixture results supply no live quality, cost or latency evidence.
 
 Local verification exercises the real HTTP adapters with protocol fixtures,
 application policy, disposable PostgreSQL, production server composition, and

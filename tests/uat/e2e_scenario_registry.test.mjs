@@ -111,6 +111,7 @@ test("production E2E registry is complete and valid", () => {
   assert.deepEqual(validateRegistry(registry), []);
   assert.equal(new Set(registry.scenarios.map(({ name }) => name)).size, registry.scenarios.length);
   assert.doesNotThrow(() => assertValidRegistry(registry));
+  assert.equal(matrixFor(registry, "all").include[0].name, "ontology_organization");
 });
 
 test("registry partitions exclusive and team-scoped scenarios", () => {

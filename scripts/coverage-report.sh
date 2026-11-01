@@ -6,20 +6,20 @@ cd "${ROOT_DIR}"
 
 usage() {
 	cat >&2 <<'EOF'
-usage: scripts/coverage-report.sh --transitional | --complete | --complete-part core|postgres | --merge-complete
+usage: scripts/coverage-report.sh --transitional | --complete | --complete-part core|postgres|postgres-support | --merge-complete
 
 --transitional runs the legacy Go inventory. --complete accounts for every
 first-party root-module package, the evaluation profile, focused PostgreSQL
 application coverage, the nested E2E module, and cross-package execution, then
 enforces the strict above-90-percent gate on the deduplicated merged inventory.
 --complete-part produces one source-bound profile set; --merge-complete requires
-both sets from the same source and workflow attempt before enforcing the gate.
+all three sets from the same source and workflow attempt before enforcing the gate.
 EOF
 }
 
 case "${1:-}" in
 	--transitional|--complete|--merge-complete) [[ $# == 1 ]] || { usage; exit 2; } ;;
-	--complete-part) [[ $# == 2 && ( "$2" == core || "$2" == postgres ) ]] || { usage; exit 2; } ;;
+	--complete-part) [[ $# == 2 && ( "$2" == core || "$2" == postgres || "$2" == postgres-support ) ]] || { usage; exit 2; } ;;
 	*) usage; exit 2 ;;
 esac
 
@@ -131,9 +131,9 @@ complete_paths() {
 	root_profile="${COVERAGE_DIR}/core/go-root-complete.raw"
 	evaluation_profile="${COVERAGE_DIR}/core/go-evaluation-complete.raw"
 	postgres_profile="${COVERAGE_DIR}/postgres/go-postgres-complete.raw"
-	community_scale_profile="${COVERAGE_DIR}/postgres/go-community-scale-complete.raw"
-	audit_profile="${COVERAGE_DIR}/postgres/go-audit-complete.raw"
-	session_profile="${COVERAGE_DIR}/postgres/go-session-complete.raw"
+	community_scale_profile="${COVERAGE_DIR}/postgres-support/go-community-scale-complete.raw"
+	audit_profile="${COVERAGE_DIR}/postgres-support/go-audit-complete.raw"
+	session_profile="${COVERAGE_DIR}/postgres-support/go-session-complete.raw"
 	e2e_profile="${COVERAGE_DIR}/core/go-e2e-complete.raw"
 	root_dedup_profile="${COVERAGE_DIR}/go-root-complete.out"
 	evaluation_dedup_profile="${COVERAGE_DIR}/go-evaluation-complete.out"
@@ -146,7 +146,8 @@ complete_paths() {
 	e2e_report="${COVERAGE_DIR}/go-e2e-complete.txt"
 	complete_report="${COVERAGE_DIR}/go-complete.txt"
 	core_profiles=("${root_profile}" "${evaluation_profile}" "${e2e_profile}")
-	postgres_profiles=("${postgres_profile}" "${community_scale_profile}" "${audit_profile}" "${session_profile}")
+	postgres_profiles=("${postgres_profile}")
+	postgres_support_profiles=("${community_scale_profile}" "${audit_profile}" "${session_profile}")
 }
 
 coverage_identity() {
@@ -169,13 +170,17 @@ seal_complete_part() {
 verify_complete_parts() {
 	local part expected profile
 	expected="$(coverage_identity)"
-	for part in core postgres; do
+	for part in core postgres postgres-support; do
 		[[ -f "${COVERAGE_DIR}/${part}/identity.txt" && "$(cat "${COVERAGE_DIR}/${part}/identity.txt")" == "$expected" ]] || {
 			echo "coverage ${part} identity does not match the source and workflow attempt" >&2
 			return 1
 		}
 		local -a expected_profiles
-		if [[ "$part" == core ]]; then expected_profiles=("${core_profiles[@]}"); else expected_profiles=("${postgres_profiles[@]}"); fi
+		case "$part" in
+			core) expected_profiles=("${core_profiles[@]}") ;;
+			postgres) expected_profiles=("${postgres_profiles[@]}") ;;
+			postgres-support) expected_profiles=("${postgres_support_profiles[@]}") ;;
+		esac
 		local expected_checksums
 		expected_checksums="$(for profile in "${expected_profiles[@]}"; do
 			(cd "$(dirname "$profile")"; sha256sum "$(basename "$profile")") || return 1
@@ -211,11 +216,13 @@ run_complete_part() {
 		go test -tags evaluation "${evaluation_packages[@]}" -timeout=30m -covermode=atomic -coverpkg="${evaluation_coverpkg}" -coverprofile="${evaluation_profile}" -count=1
 		go -C cmd/e2e test ./... -covermode=atomic -coverprofile="${e2e_profile}" -count=1
 		seal_complete_part core "${core_profiles[@]}"
-	else
+	elif [[ "$part" == postgres ]]; then
 		DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test -tags integration ./internal/ontology/postgres ./internal/community/postgres ./internal/dream/postgres ./cmd/internal/serverapp \
 			-run '^(TestOntologyMaintenance(Finalization.*|Parallel.*|Revalidation.*|CurrentReceiptCompletion|DiscoveryCommittedDiagnostics|Cohort|MatchingCohort|RegenerationFailureRetry|ProviderPauseDrain|AccountingFailurePreventsPublication|ContextConfigurationAndManualReuse|BudgetRetirement.*|GlobalAccounting|LeaseInterruptionReturnsPending|ProgressBeyondFormerBudgets|ProviderFailureReleasesCapacity|DirectOrganizationRejectsMissingContext|ControlInterruptionResumesSameWindow|PauseCommandsAndWindows|OperatorHTTPAndScheduler|CommandAuditIsAtomic)|TestOntologyMatching.*|TestOntologyAutomaticRetirementPreservesGroupingOverrides|TestOntologyCurrentReadersDistinguishDependencyAndSourceChanges|TestOntologyGroupingOverridesPreserveAssignmentFreshness|TestOntologyCurrentReadersReportCanonicalFingerprintAndVersionChanges|TestOntologyVocabularyUsesCurrentCandidateWindow|TestOntologyVocabularyWindowPreservesTeamIsolationAndNameReuse|TestOntologyFollowupCohort|TestOntologyMaintenanceBoundedCompletionUsesPersistedOutcomes|TestOntologyMaintenanceEarlierAmbiguityKeepsBoundedRunIncomplete|TestOntologyMaintenanceScheduledRecoveryClearsCurrentReason|TestOntologyMaintenanceCompletedRunDoesNotHideUnrelatedFailures|TestOntologyMaintenanceConcurrentInterruptionPreservesRunWork|TestOntologyMixedSeparationOverrideProtectsEvidenceGroups|TestOntologyManagement.*|TestCommunityTopic.*|TestRetiredDreamHistoryPreservesProvenanceIsolationAndRetention|TestServerLifecycle.*|TestRunActiveServerCanceledBeforeWorkersDoesNotBuildRuntimeWorker|TestPrivateMemoryCommandsInspectFreshDatabaseWithoutStartingOrMigrating|TestPrivateMemoryPreflightCommandBoundsLegacyReportAndReturnsBlockers|TestPairedEvaluation.*)$' \
 			-skip '^(TestCommunityTopicLargeFanoutResumesAndRotates|TestOntologyMaintenanceRevalidationDiscoveryMeasurement)$' \
 			-count=1 -timeout=30m -covermode=atomic -coverpkg="${coverpkg}" -coverprofile="${postgres_profile}"
+		seal_complete_part postgres "${postgres_profiles[@]}"
+	else
 		DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test -tags integration ./internal/community/postgres \
 			-run '^TestCommunityTopicLargeFanoutResumesAndRotates$' \
 			-count=1 -timeout=15m -covermode=atomic -coverpkg="${coverpkg}" -coverprofile="${community_scale_profile}"
@@ -223,7 +230,7 @@ run_complete_part() {
 			-run '^TestAudit' -count=1 -timeout=5m -covermode=atomic -coverpkg="${coverpkg}" -coverprofile="${audit_profile}"
 		DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 DENSE_MEM_REQUIRE_POSTGRES_TESTS=1 go test -tags integration ./internal/knowledge/postgres ./internal/settings \
 			-run '^Test(Session|Decision)' -count=1 -timeout=15m -covermode=atomic -coverpkg="${coverpkg}" -coverprofile="${session_profile}"
-		seal_complete_part postgres "${postgres_profiles[@]}"
+		seal_complete_part postgres-support "${postgres_support_profiles[@]}"
 	fi
 }
 
@@ -259,6 +266,7 @@ merge_complete() {
 run_complete() {
 	run_complete_part core
 	run_complete_part postgres
+	run_complete_part postgres-support
 	merge_complete
 }
 

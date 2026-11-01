@@ -195,7 +195,7 @@ test("repository CI aggregate rejects absent and non-successful mandatory jobs",
     }
   }
   assert.match(workflowJob(workflow, "result"), /needs: \[npm-audit, postgres-migrations, quality, go-tests, coverage, coverage-merge, python\]/);
-  assert.match(workflow, /part: \[core, postgres\]/);
+  assert.match(workflow, /part: \[postgres, core, postgres-support\]/);
   assert.match(workflowJob(workflow, "coverage-merge"), /needs: coverage/);
 });
 

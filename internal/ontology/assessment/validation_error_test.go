@@ -109,7 +109,7 @@ func TestOrganizationValidationDiagnosticsCompleteRepairAndLimitPrecedence(t *te
 		provider := NewProvider(fixtureTransport(func(_ context.Context, outbound modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
 			calls++
 			require.Equal(t, SystemPrompt, outbound.Messages[0].Content)
-			require.Equal(t, ResponseSchema(), outbound.Schema)
+			require.Equal(t, ResponseSchema(request.RequestID), outbound.Schema)
 			if calls > 1 {
 				var correction map[string]string
 				require.NoError(t, json.Unmarshal([]byte(outbound.Messages[len(outbound.Messages)-1].Content), &correction))

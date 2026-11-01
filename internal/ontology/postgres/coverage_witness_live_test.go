@@ -58,14 +58,72 @@ func (r *coverageProbeRepository) ReadOrganization(ctx context.Context, team str
 
 type coverageProbeTransport struct {
 	modelprovider.StructuredTransport
-	calls atomic.Int32
+	calls    atomic.Int32
+	maxCalls int32
 }
 
 func (p *coverageProbeTransport) Complete(ctx context.Context, request modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
-	if p.calls.Add(1) > 18 {
+	limit := p.maxCalls
+	if limit == 0 {
+		limit = 18
+	}
+	if p.calls.Add(1) > limit {
 		return modelprovider.StructuredResult{}, errors.New("diagnostic provider-call limit reached")
 	}
 	return p.StructuredTransport.Complete(ctx, request)
+}
+
+func TestOntologyCoverageCandidateWitness(t *testing.T) {
+	input := os.Getenv("DENSE_MEM_ONTOLOGY_CANDIDATE_WITNESS_INPUT")
+	if input == "" {
+		t.Skip("explicit captured predicate context required")
+	}
+	require.Equal(t, "1", os.Getenv("DENSE_MEM_ONTOLOGY_LIVE_EVAL"))
+	require.Equal(t, "1", os.Getenv("DENSE_MEM_ONTOLOGY_DIAGNOSTIC"))
+	var captured struct {
+		Family               string                       `json:"family"`
+		OriginalAssessmentID string                       `json:"original_assessment_id"`
+		Context              ontology.OrganizationContext `json:"context"`
+		OriginalReceipt      ontology.OrganizationReceipt `json:"original_receipt"`
+	}
+	body, err := os.ReadFile(input)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(body, &captured))
+	require.Equal(t, "commit_conflict", captured.Family)
+	require.Equal(t, captured.OriginalAssessmentID, captured.OriginalReceipt.ID)
+	require.Len(t, captured.Context.Sources, 1)
+	require.Equal(t, ontology.PredicateSource, captured.Context.Sources[0].Kind)
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	require.Equal(t, "dense-mem-testing", cfg.GetAIVerifierModel())
+	directory := os.Getenv("DENSE_MEM_ORGANIZATION_REPORT_DIR")
+	require.NotEmpty(t, directory)
+	require.NoError(t, os.Mkdir(directory, 0700), "candidate probe must use a new directory")
+	recorder := newOrganizationDiagnosticRecorder(t, directory, "candidate-predicate", cfg)
+	limits := assessorprovider.SemanticAssessmentLimitsForConfig(&cfg)
+	transport := &coverageProbeTransport{StructuredTransport: assessorprovider.NewOpenAIAssessorWithAssessmentLimits(&cfg, nil, limits), maxCalls: 3}
+	provider := assessment.NewProvider(transport, cfg.GetAIVerifierModel(), limits, 500000)
+	require.NoError(t, provider.ConfigurationError())
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Minute)
+	defer cancel()
+	started := time.Now()
+	request, response, attempts, assessErr := organization.NewService(nil, provider).AssessDiagnostic(modelprovider.WithExchangeRecorder(ctx, recorder), captured.Context)
+	entry := map[string]any{"original_assessment_id": captured.OriginalAssessmentID, "context": captured.Context,
+		"context_origin": "checkpoint reconstructed snapshot", "historical_context_available": false,
+		"reconstructed": true, "diagnostic_only": true, "semantic_commit": false, "ineligible_for_quality_gate": true,
+		"request": request, "response": response, "attempts": attempts, "provider_identity": provider.Identity(),
+		"provider_calls": transport.calls.Load(), "provider_call_limit": 3, "elapsed_ms": time.Since(started).Milliseconds()}
+	if assessErr != nil {
+		entry["error"] = assessErr.Error()
+	}
+	writeCoverageWitnessDiagnostic(t, recorder, filepath.Join(directory, "result.json"), entry)
+	require.Len(t, request.Items, 1)
+	require.Empty(t, request.Items[0].LockedDefinitionRef, "candidate witness must remain provider-reachable on the normal path")
+	require.Positive(t, transport.calls.Load())
+	require.LessOrEqual(t, transport.calls.Load(), int32(3))
+	require.Equal(t, int(transport.calls.Load()), recorder.sequence)
+	require.NoError(t, assessErr)
+	require.NoError(t, assessment.Validate(request, response))
 }
 
 func TestOntologyCoverageLiveWitnesses(t *testing.T) {

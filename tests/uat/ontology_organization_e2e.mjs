@@ -2,12 +2,15 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { captureRememberFailure } from "./synchronous_write/cases/diagnostics.mjs";
 
 const userURL = required("DENSE_MEM_USER_URL").replace(/\/$/, "");
 const controlURL = required("DENSE_MEM_CONTROL_URL").replace(/\/$/, "");
 const controlToken = required("DENSE_MEM_CONTROL_TOKEN");
 const apiKey = required("DENSE_MEM_E2E_API_KEY");
 const teamID = required("DENSE_MEM_E2E_TEAM_ID");
+const failureDirectory = process.env.DENSE_MEM_E2E_REMEMBER_FAILURE_DIR || `/tmp/dense-mem-remember-failures-${randomUUID()}`;
+const credentialTeams = new Map([[apiKey, teamID]]);
 const original = (await control("/config/ontology-maintenance")).data;
 const summaryCallsBefore = await summaryCalls();
 let paused = false;
@@ -25,6 +28,8 @@ try {
   const privateCredential = (await control(`/teams/${teamID}/credentials`, { name: "Ontology private source", scopes: ["read", "write"], rate_limit: 300 })).data;
   const foreignTeam = (await control("/teams", { name: `ontology-foreign-${randomUUID()}` })).data;
   const foreignCredential = (await control(`/teams/${foreignTeam.id}/credentials`, { name: "Ontology foreign source", scopes: ["read", "write"], rate_limit: 300 })).data;
+  for (const credential of [shared, second, reader, privateCredential]) credentialTeams.set(credential.api_key, teamID);
+  credentialTeams.set(foreignCredential.api_key, foreignTeam.id);
   const texts = ["Atlas stores PostgreSQL data.", "Atlas uses PostgreSQL for data storage.", "Atlas stores PostgreSQL data and encrypts its backups."];
   const sourceIDs = [];
   const relationshipIDs = [];
@@ -328,7 +333,19 @@ async function expectStatus(path, body, status, method) { assert.equal((await re
 async function rpc(name, args, key) {
   const response = await fetch(`${userURL}/mcp`, { method: "POST", headers: { Authorization: `Bearer ${key}`, Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: randomUUID(), method: "tools/call", params: { name, arguments: args } }) });
   assert.equal(response.status, 200);
-  return response.json();
+  const envelope = await response.json();
+  if (name === "remember") {
+    const terminal = envelope.result?.content?.[0]?.text ? JSON.parse(envelope.result.content[0].text) : envelope.error;
+    if (terminal?.processing_state === "failed" || envelope.result?.isError || envelope.error) {
+      try {
+        console.error(JSON.stringify(await captureRememberFailure({ control, teamID: credentialTeams.get(key), correlationID: terminal?.correlation_id,
+          directory: failureDirectory })));
+      } catch (error) {
+        throw new AggregateError([new Error("Remember failed"), error], "Remember failure diagnostic capture failed");
+      }
+    }
+  }
+  return envelope;
 }
 async function mcp(name, args, key) {
   const result = await rpc(name, args, key);
@@ -395,11 +412,8 @@ async function fixtureMode(mode) {
   assert.equal(response.status, 200);
 }
 async function rememberFixture(key, content) {
-  const response = await fetch(`${userURL}/mcp`, { method: "POST", headers: { Authorization: `Bearer ${key}`, Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: randomUUID(), method: "tools/call", params: { name: "remember", arguments: { target_space: "team_shared", idempotency_key: randomUUID(), evidence: [{ content, source_type: "document", source: "ontology-followups", source_group: randomUUID() }], relationships: [{ ref: "storage", subject: { name: "Atlas", entity_kind: "project" }, predicate: { proposed_key: "uses" }, object: { entity: { name: "PostgreSQL", entity_kind: "product" } }, polarity: "+", evidence_indices: [0] }] } } }) });
-  assert.equal(response.status, 200);
-  const rpc = await response.json();
-  assert.notEqual(rpc.result?.isError, true, JSON.stringify(rpc.error ?? rpc.result));
-  assert.equal(JSON.parse(rpc.result.content[0].text).processing_state, "completed");
+  const result = await mcp("remember", { target_space: "team_shared", idempotency_key: randomUUID(), evidence: [{ content, source_type: "document", source: "ontology-followups", source_group: randomUUID() }], relationships: [{ ref: "storage", subject: { name: "Atlas", entity_kind: "project" }, predicate: { proposed_key: "uses" }, object: { entity: { name: "PostgreSQL", entity_kind: "product" } }, polarity: "+", evidence_indices: [0] }] }, key);
+  assert.equal(result.processing_state, "completed");
 }
 async function terminalRun(id) {
   for (let index = 0; index < 150; index++) {

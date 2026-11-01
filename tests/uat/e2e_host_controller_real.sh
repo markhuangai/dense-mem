@@ -28,6 +28,8 @@ stale_network=""
 stale_volume=""
 network_blocker=""
 network_release_pid=""
+remember_fixture=""
+remember_project=""
 
 fail() {
   printf 'real rootless controller test: %s\n' "$*" >&2
@@ -60,6 +62,8 @@ cleanup() {
   [[ -n "$network_blocker" ]] && docker rm -f "$network_blocker" >/dev/null 2>&1 || true
   [[ -n "$stale_network" ]] && docker network rm "$stale_network" >/dev/null 2>&1 || true
   [[ -n "$stale_volume" ]] && docker volume rm "$stale_volume" >/dev/null 2>&1 || true
+  [[ -n "$remember_fixture" ]] && docker rm -f "$remember_fixture" >/dev/null 2>&1 || true
+  [[ -n "$remember_project" ]] && remember_fixture_controller cleanup_remember_failure_diagnostics "$remember_project" >/dev/null 2>&1 || true
   rm -r -- "$TEST_ROOT"
   exit "$status"
 }
@@ -98,6 +102,45 @@ export DENSE_MEM_CI_COMPOSE_FILE="$COMPOSE_FILE"
 export DENSE_MEM_CI_ENV_FILE="$ENV_FILE"
 export DENSE_MEM_CI_PROMETHEUS_FILE="$PROMETHEUS_FILE"
 export DENSE_MEM_CI_TELEMETRY_TOKEN_FILE="${TEST_ROOT}/telemetry-scrape-token"
+
+remember_fixture_controller() {
+  CONTRACT_VERSION=dense-mem-ci-e2e.v1 REPOSITORY="${DENSE_MEM_CI_REPOSITORY:-${GITHUB_REPOSITORY:-markhuangai/dense-mem}}" \
+    bash -euc 'source "$1"; shift; "$@"' remember-fixture \
+    "$(dirname "$CONTROLLER")/e2e-host-controller-runtime.sh" "$@"
+}
+remember_project="densemem-ci-${run_one}-remember"
+remember_directory="/tmp/dense-mem-remember-${remember_project}"
+[[ ! -e "$remember_directory" && ! -L "$remember_directory" ]] || fail "Remember fixture directory already exists"
+node - "${TEST_ROOT}/remember-payload.json" <<'NODE'
+const fs = require('node:fs');
+fs.writeFileSync(process.argv[2], JSON.stringify({ team_id: 'fixture-team', attempt_id: '67ea64c5-2baf-4a42-8cae-766d37c2b334',
+  correlation_id: 'fixture-correlation', error_code: 'embedding_unavailable', failed_phase: 'embedding', diagnostics: { provider_exchanges: [{
+    component: 'embedding', status_code: 409, response_body: JSON.stringify({ error: { message: 'embedding upstream returned status 409', detail: 'temporary-private-body-canary' } }),
+  }] } }), { mode: 0o600 });
+NODE
+remember_fixture="$(docker create --mount "type=bind,source=${TEST_ROOT}/remember-payload.json,target=/fixture.json,readonly" \
+  alpine:3.24 sh -ec 'mkdir -m 700 /tmp/dense-mem-remember-failures; cp /fixture.json /tmp/dense-mem-remember-failures/67ea64c5-2baf-4a42-8cae-766d37c2b334.private.json')"
+docker start --attach "$remember_fixture" >/dev/null
+remember_fixture_controller collect_remember_failure_diagnostics "$remember_fixture" "$ROOT_DIR" "$remember_project" > "${TEST_ROOT}/remember-analysis.jsonl"
+docker rm "$remember_fixture" >/dev/null
+remember_fixture=""
+node - "$remember_directory" "${TEST_ROOT}/remember-analysis.jsonl" <<'NODE'
+const assert = require('node:assert/strict'), fs = require('node:fs');
+const path = process.argv[2] + '/67ea64c5-2baf-4a42-8cae-766d37c2b334.private.json';
+assert.match(fs.readFileSync(path, 'utf8'), /temporary-private-body-canary/);
+assert.equal(fs.statSync(path).mode & 0o077, 0);
+const output = fs.readFileSync(process.argv[3], 'utf8');
+assert.match(output, /fixture_discarded_upstream_error_body/);
+assert.doesNotMatch(output, /temporary-private-body-canary|response_body/);
+NODE
+remember_owner="$(cat "$remember_directory/.owner")"
+printf '%s\n' foreign-owner > "$remember_directory/.owner"
+if remember_fixture_controller cleanup_remember_failure_diagnostics "$remember_project"; then fail "foreign Remember evidence was removed"; fi
+[[ -f "$remember_directory/67ea64c5-2baf-4a42-8cae-766d37c2b334.private.json" ]] || fail "protected Remember evidence was lost"
+printf '%s\n' "$remember_owner" > "$remember_directory/.owner"
+remember_fixture_controller cleanup_remember_failure_diagnostics "$remember_project"
+[[ ! -e "$remember_directory" ]] || fail "Remember temporary evidence remains after owned cleanup"
+remember_project=""
 export DENSE_MEM_CI_REGISTRY_SCRIPT="${ROOT_DIR}/scripts/e2e-scenario-registry.mjs"
 export DENSE_MEM_CI_REPOSITORY="${DENSE_MEM_CI_TEST_REPOSITORY:-markhuangai/dense-mem-controller-contract}"
 

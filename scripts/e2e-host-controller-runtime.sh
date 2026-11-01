@@ -33,6 +33,38 @@ scenario_helpers() {
   fi
 }
 
+collect_remember_failure_diagnostics() {
+  local container="$1" source_dir="$2" project="$3"
+  local directory="/tmp/dense-mem-remember-${project}"
+  mkdir -m 700 -- "$directory" || return 1
+  printf '%s\n' "$CONTRACT_VERSION" "$REPOSITORY" "$project" > "$directory/.owner"
+  chmod 600 "$directory/.owner"
+  docker cp "$container:/tmp/dense-mem-remember-failures/." "$directory/" >/dev/null 2>&1 || return 1
+  chmod -R go-rwx "$directory"
+  node --input-type=module - "$source_dir/tests/uat/synchronous_write/cases/diagnostics.mjs" "$directory" <<'NODE'
+import { readFile, readdir } from 'node:fs/promises';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+const { diagnoseRememberFailure } = await import(pathToFileURL(process.argv[2]));
+const directory = process.argv[3];
+const files = (await readdir(directory)).filter((name) => /^[0-9a-f-]{36}\.private\.json$/.test(name));
+if (!files.length) throw new Error('Remember failure capture is missing');
+for (const name of files) {
+  const body = await readFile(join(directory, name), 'utf8');
+  process.stdout.write(JSON.stringify(diagnoseRememberFailure(JSON.parse(body), body)) + '\n');
+}
+NODE
+}
+
+cleanup_remember_failure_diagnostics() {
+  local project="$1" directory="/tmp/dense-mem-remember-${1}"
+  [[ -e "$directory" || -L "$directory" ]] || return 0
+  [[ -d "$directory" && ! -L "$directory" && -f "$directory/.owner" && ! -L "$directory/.owner" ]] || return 1
+  [[ "$(cat "$directory/.owner")" == "$(printf '%s\n' "$CONTRACT_VERSION" "$REPOSITORY" "$project")" ]] || return 1
+  rm -r -- "$directory" || return 1
+  [[ ! -e "$directory" ]]
+}
+
 run_scenario() {
   local run_id="$1" attempt="$2" phase="$3" stack_scenario="$4" scenario="$5" image_ref="$6" source_dir="$7"
   validate_decimal "$run_id"
@@ -264,6 +296,7 @@ run_scenario() {
     -e "DENSE_MEM_E2E_MEMORY_SCENARIO=${scenario}"
     -e "DENSE_MEM_E2E_CONFLICT_REVIEW_LIVE=${conflict_live}"
     -e "DENSE_MEM_E2E_DIAGNOSTICS_FIXTURE_FILE=/results/${scenario}-diagnostics.json"
+    -e "DENSE_MEM_E2E_REMEMBER_FAILURE_DIR=/tmp/dense-mem-remember-failures"
     -e "DENSE_MEM_CONTROL_TOKEN=${control_token}"
   )
   if [[ -f "${helper_dir}/conflict-review-driver" ]]; then
@@ -356,6 +389,10 @@ run_scenario() {
   ((scenario_pipeline_status[1] == 0)) || fail "diagnostic redaction failed"
   local scenario_status="${scenario_pipeline_status[0]}"
   report_phase scenario_execution "$execution_started" "$scenario_status"
+  if [[ "$scenario" == "ontology_organization" && "$scenario_status" != "0" ]]; then
+    collect_remember_failure_diagnostics "$container" "$source_dir" "$project" ||
+      printf '%s\n' 'Remember temporary failure diagnosis is unavailable' >&2
+  fi
   if ((scenario_status != 0)); then
     printf 'dense-mem CI scenario [%s]: failed stack diagnostics\n' "$scenario" >&2
     set +e
@@ -458,6 +495,10 @@ stop_stack() {
   local attempt started=$SECONDS
   for attempt in 1 2 3 4 5; do
     if remove_project_resources "$project"; then
+      if ! cleanup_remember_failure_diagnostics "$project"; then
+        report_phase teardown "$started" 1 "$attempt" "$project"
+        return 1
+      fi
       report_phase teardown "$started" 0 "$attempt" "$project"
       return 0
     fi

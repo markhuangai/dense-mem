@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
 export const name = "diagnostics";
 const rememberModel = "dense-mem-synchronous-write-e2e-remember";
@@ -36,6 +37,7 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
     ["malformed", "[fixture-fault:malformed]", "failed", "provider_response_invalid"],
     ["assessment-invalid", "[fixture-fault:assessment-invalid]", "failed", "provider_response_invalid"],
     ["embedding", "[fixture-fault:embedding-count]", "failed", "embedding_response_invalid"],
+    ["embedding-409", "[fixture-fault:embedding-status-409]", "failed", "embedding_unavailable"],
     ["timeout", "[fixture-fault:timeout]", "failed", "provider_unavailable"],
   ];
   for (const [label, marker, expectedState, expectedCode] of diagnosticFaults) {
@@ -214,6 +216,13 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
   expect(validation.turns.some((turn) => turn.error_count > 0 && turn.fields.length > 0 && turn.field_families.length > 0), "semantic assessor failure must retain rejected validation fields and families");
   expect(!JSON.stringify(validation).includes("provider_secret") && !JSON.stringify(validation).includes("Diagnostics provider failure"), "validation metadata must exclude provider content");
 
+  const embeddingRejection = await controlJSON(controlURL, token, `/control/api/teams/${teamID}/remember-attempts/${diagnosticAttemptIDs["embedding-409"]}`);
+  const rejectedExchanges = embeddingRejection.data.diagnostics.provider_exchanges.filter((exchange) => exchange.component === "embedding");
+  expect(rejectedExchanges.length === 1, "embedding 409 must retain one exchange without automatic retry");
+  expect(rejectedExchanges[0].status_code === 409 && rejectedExchanges[0].response_body.includes("fixture_embedding_conflict"), "embedding 409 must retain its provider status and body");
+  expect(attempts["embedding-409"].errors[0].reason_code === "embedding_request_rejected", "embedding 409 must preserve the request-rejection classification");
+  expect(embeddingRejection.data.document_count === 0, "embedding rejection must not partially publish search documents");
+
   const repairedReasonCodes = { "predicate-repair": "predicate_phrase_too_long", "predicate-key-repair": "predicate_outside_allowlist", "span-marker-repair": "range_boundary_unknown", "span-support-repair": "range_not_covered", "span-blank-repair": "predicate_phrase_blank" };
   for (const label of ["completed", "repair", ...Object.keys(repairedReasonCodes), "repair-exhausted", "assessment-invalid", "provider-429", "timeout"]) {
     const detail = await controlJSON(controlURL, token, `/control/api/teams/${teamID}/remember-attempts/${diagnosticAttemptIDs[label]}`);
@@ -355,6 +364,49 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
     expired_invocation_id: expiredInvocationID,
     assessment_disconnect: "request_cancelled",
   };
+}
+
+export async function captureRememberFailure({ control, teamID, correlationID, directory }) {
+  assert(teamID, "failed Remember credential has no known team");
+  assert(correlationID, "failed Remember has no correlation ID for diagnostic lookup");
+  const list = await control(`/remember-attempts?team_id=${encodeURIComponent(teamID)}&outcome=failed&limit=100`);
+  const matches = (list.data || []).filter((item) => item.correlation_id === correlationID);
+  assert.equal(matches.length, 1, "failed Remember must match exactly one authoritative attempt");
+  const attemptID = matches[0].attempt_id;
+  assert.match(attemptID, /^[0-9a-f-]{36}$/);
+  const detail = (await control(`/teams/${teamID}/remember-attempts/${attemptID}`)).data;
+  assert.equal(detail.attempt_id, attemptID);
+  assert.equal(detail.correlation_id, correlationID);
+  assert.equal(detail.team_id, teamID);
+  assert.equal(detail.outcome, "failed");
+  const encoded = JSON.stringify(detail);
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  await writeFile(join(directory, `${attemptID}.private.json`), encoded, { mode: 0o600, flag: "wx" });
+  const summary = diagnoseRememberFailure(detail, encoded);
+  await writeFile(join(directory, `${attemptID}.summary.json`), JSON.stringify(summary), { mode: 0o600, flag: "wx" });
+  return summary;
+}
+
+export function diagnoseRememberFailure(detail, encoded = JSON.stringify(detail)) {
+  return {
+    type: "remember_failure_diagnostics", team_id: detail.team_id, attempt_id: detail.attempt_id, correlation_id: detail.correlation_id,
+    error_code: detail.error_code, failed_phase: detail.failed_phase, duration_ms: detail.duration_ms,
+    sha256: createHash("sha256").update(encoded).digest("hex"),
+    provider_exchanges: (detail.diagnostics?.provider_exchanges || []).map((exchange) => ({
+      diagnostic_id: exchange.diagnostic_id, component: exchange.component, model: exchange.model,
+      status_code: exchange.status_code, outcome: exchange.outcome, capture_state: exchange.capture_state,
+      response_analysis: analyzeFailureResponse(exchange),
+    })),
+  };
+}
+
+function analyzeFailureResponse(exchange) {
+  if (!exchange.response_body) return "response_body_unavailable";
+  let body;
+  try { body = JSON.parse(exchange.response_body); } catch { return "response_not_json"; }
+  if (body?.error?.message === `embedding upstream returned status ${exchange.status_code}`) return "fixture_discarded_upstream_error_body";
+  if (body?.error?.code === "fixture_embedding_conflict") return "deterministic_fixture_conflict";
+  return body?.error || Array.isArray(body?.errors) ? "provider_error_details_in_temporary_capture" : "no_structured_provider_error";
 }
 
 function rememberArguments(label, marker) {

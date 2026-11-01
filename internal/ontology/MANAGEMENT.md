@@ -34,10 +34,9 @@ The additive draft migration creates empty tables and indexes without a canonica
 backfill or table rewrite. It forces owner and shared-generation RLS. Down
 refuses populated history; production recovery rolls forward.
 
-Issue #529 records the approved historical 1k waiver and replacement verification:
-the unchanged nine-case/19-source organization cohort, actual Recall comparisons,
-the separately locked manager correction cohort, and the registered exclusive
-`ontology_management` production scenario with desktop/mobile browser checks.
+Validate the unchanged nine-case/19-source organization cohort, actual Recall
+comparisons, the locked manager-correction cohort and the registered exclusive
+`ontology_management` scenario with desktop/mobile browser checks.
 Detailed reports remain in ignored paths. Verified compact evidence belongs in
 `tests/eval/baselines/`; full final-head CI and production-image E2E remain gates.
 
@@ -55,12 +54,12 @@ attempts in the same assessment.
 
 Historical receipts without this object remain readable and immutable. Absence
 means no validation detail was recorded; it does not imply successful validation.
-The historical receipts inspected for #588 cannot establish their original
-validation cause and do not identify a model or prompt defect.
+Without original exchanges, historical receipts cannot establish a validation
+cause or identify a model or prompt defect.
 
 Older binaries strictly decode assessment receipts and may reject the additional
 field. Drain in-flight work and stop older readers and writers before deploying
 the new binary. After new receipts exist, recover by rolling forward with a
-compatible reader; do not rewrite history to support an older binary. Issue #588
-records the maintainer-approved 1k evaluation waiver and mandatory focused,
-PostgreSQL, production-entry E2E, audit and final CI/E2E replacement checks.
+compatible reader; do not rewrite history to support an older binary. Validate
+with focused, PostgreSQL and production-entry checks, independent audit and
+final current-head CI/E2E. Issue-specific historical waivers do not transfer.

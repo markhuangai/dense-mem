@@ -128,6 +128,10 @@ const server = createServer(async (request, response) => {
     sendJSON(response, 500, { error: { message: "fixture provider failure", code: "provider_failure" } });
     return;
   }
+  if (routeFault === "embedding-status-409") {
+    sendJSON(response, 409, { error: { message: "fixture embedding conflict", code: "fixture_embedding_conflict" } });
+    return;
+  }
 
   if (request.url?.endsWith("/embeddings")) {
     const inputs = Array.isArray(payload.input) ? payload.input : [payload.input || ""];

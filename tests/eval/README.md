@@ -19,36 +19,12 @@ terminal Remember result has been returned.
 The normal release image contains no evaluation MCP tools. The committed
 `examples/docker-compose.evaluation.yml` builds the separate `evaluation`
 Docker target, whose binary is compiled with the `evaluation` build tag. That
-target adds only `eval_list_knowledge_refs`, `eval_run_dream_cycle`, and
-`eval_run_recall_case`; there is no runtime switch that can expose them in the
+target adds only `eval_list_knowledge_refs` and `eval_run_recall_case`; there is no runtime switch that can expose them in the
 production binary.
 
 The approved seed, generated diagnostic datasets, persistent databases,
 credentials, and run artifacts are local-only and ignored by git. The full
 release evaluation never runs in remote CI.
-
-## Layout
-
-```text
-tests/eval/
-  README.md
-  scripts/
-    prepare_public_6axis_eval.py
-    prepare_public_semantic_eval.py
-    prepare_full_public_rag_eval.py
-    run_full_public_rag_eval_until_done.sh
-  data/                 # downloaded public datasets
-  seeds/                # approved or generated local seed packs
-  suites/               # approved or generated local suites
-  runtime/v1/
-    dataset_identity.json
-    eval_credential.json
-    postgres/
-    redis/
-    prometheus/
-    monitor/
-    runs/
-```
 
 ## Public Six-Axis Gate
 
@@ -61,16 +37,11 @@ tests/eval/
 | `qasper` | QASPER train/dev v0.3 | Paper QA evidence retrieval. |
 | `longmem_oracle` | LongMemEval-S cleaned | Long-memory chat recall over non-abstention oracle rows. |
 
-The post-cutover release procedure retains `public_6axis_1k_v1` as a historical
-deterministic comparison. Issue #291 explicitly waives that comparison for this
-cutover; `public_6axis_5k_v1` remains diagnostic unless a later roadmap issue
-promotes it.
-
-The approved gate policy is committed at:
-
-```text
-tests/eval/baselines/v2.1.1_public_6axis_1k_baseline.json
-```
+The current frozen comparison uses `public_6axis_1k_v3`: 991 documents,
+204 cases, original qrels and zero unmapped references. The historical V1 gate
+policy remains in `baselines/v2.1.1_public_6axis_1k_baseline.json`; it does not
+select or waive a current comparison. Evaluation approvals and run histories
+belong in project memory. Keep source locks and compact machine evidence here.
 
 A seed corpus row is plain evidence: `source_doc_id`, `content`, and optional
 source metadata. Content is split rather than truncated, and the Go harness
@@ -78,7 +49,7 @@ rejects any corpus row above 999 Unicode code points. Legacy `claims` and
 `auto_promote` fields are rejected because they bypass production extraction
 and synchronous Remember.
 
-## Issue #149 V2 relationship derivation
+## Locked relationship derivation
 
 `public_6axis_1k_v2` is derived from the selected V1 cohort; it never replaces
 or normalizes corpus evidence. It adds a flat `relationships` array to each
@@ -97,8 +68,7 @@ differs from the declared cohort.
 ```bash
 go run ./cmd/eval-runner \
   --mode derive-v2 \
-  --seed path/to/public_6axis_1k_v1/seed_manifest.json \
-  --suite path/to/public_6axis_1k_v1/suite.jsonl \
+  --seed path/to/public_6axis_1k_v1/seed_manifest.json --suite path/to/public_6axis_1k_v1/suite.jsonl \
   --relationship-ledger path/to/relationship_ledger.jsonl \
   --cohort-lock tests/eval/source_locks/public_6axis_1k_v2_cohort.json \
   --derived-seed-id public_6axis_1k_v2 \
@@ -106,31 +76,24 @@ go run ./cmd/eval-runner \
 
 go run ./cmd/eval-runner \
   --mode validate-v2-cohort \
-  --parent-v1-seed tests/eval/seeds/public_6axis_1k_v1/seed_manifest.json \
-  --parent-v1-suite tests/eval/suites/public_6axis_1k_v1.jsonl \
-  --filtered-v1-seed path/to/filtered_public_6axis_1k_v1/seed_manifest.json \
-  --filtered-v1-suite path/to/filtered_public_6axis_1k_v1/suite.jsonl \
-  --derived-v2-seed path/to/public_6axis_1k_v2/seed_manifest.json \
-  --derived-v2-suite path/to/public_6axis_1k_v2/suite.jsonl \
+  --parent-v1-seed tests/eval/seeds/public_6axis_1k_v1/seed_manifest.json --parent-v1-suite tests/eval/suites/public_6axis_1k_v1.jsonl \
+  --filtered-v1-seed path/to/filtered_public_6axis_1k_v1/seed_manifest.json --filtered-v1-suite path/to/filtered_public_6axis_1k_v1/suite.jsonl \
+  --derived-v2-seed path/to/public_6axis_1k_v2/seed_manifest.json --derived-v2-suite path/to/public_6axis_1k_v2/suite.jsonl \
   --cohort-lock tests/eval/source_locks/public_6axis_1k_v2_cohort.json
 
 go run ./cmd/eval-runner \
   --mode compare-v2-cohort \
   --baseline-run path/to/filtered_v1_baseline \
   --candidate-run path/to/public_6axis_1k_v2_baseline \
-  --parent-v1-seed tests/eval/seeds/public_6axis_1k_v1/seed_manifest.json \
-  --parent-v1-suite tests/eval/suites/public_6axis_1k_v1.jsonl \
-  --filtered-v1-seed path/to/filtered_public_6axis_1k_v1/seed_manifest.json \
-  --filtered-v1-suite path/to/filtered_public_6axis_1k_v1/suite.jsonl \
-  --derived-v2-seed path/to/public_6axis_1k_v2/seed_manifest.json \
-  --derived-v2-suite path/to/public_6axis_1k_v2/suite.jsonl \
+  --parent-v1-seed tests/eval/seeds/public_6axis_1k_v1/seed_manifest.json --parent-v1-suite tests/eval/suites/public_6axis_1k_v1.jsonl \
+  --filtered-v1-seed path/to/filtered_public_6axis_1k_v1/seed_manifest.json --filtered-v1-suite path/to/filtered_public_6axis_1k_v1/suite.jsonl \
+  --derived-v2-seed path/to/public_6axis_1k_v2/seed_manifest.json --derived-v2-suite path/to/public_6axis_1k_v2/suite.jsonl \
   --cohort-lock tests/eval/source_locks/public_6axis_1k_v2_cohort.json \
   --out path/to/v1_v2_comparison
 
 go run ./cmd/eval-runner \
   --mode validate \
-  --seed path/to/public_6axis_1k_v2/seed_manifest.json \
-  --suite path/to/public_6axis_1k_v2/suite.jsonl \
+  --seed path/to/public_6axis_1k_v2/seed_manifest.json --suite path/to/public_6axis_1k_v2/suite.jsonl \
   --out path/to/v2-validation
 ```
 
@@ -152,8 +115,7 @@ presenting the result as a release-gate decision.
 
 ## Repaired 1k v3 seed generator
 
-`public_6axis_1k_v3` retains the locked 991-document, 204-case cohort from
-issue #149. The dataset revision still uses `dense-mem.eval.seed.v2`. It
+`public_6axis_1k_v3` retains the locked 991-document, 204-case cohort. The dataset revision still uses `dense-mem.eval.seed.v2`. It
 repairs 26 reversible UTF-8-as-Latin-1 sequences in 12 evidence records and
 regenerates flat relationship proposals with `evidence_indices`. Cases,
 queries, judgments, ordering, and the nine original exclusions stay fixed.
@@ -164,10 +126,8 @@ Restore the original local artifacts, then derive into a new directory:
 ```bash
 go run ./cmd/eval-runner \
   --mode derive-v3 \
-  --parent-v1-seed tests/eval/seeds/public_6axis_1k_v1/seed_manifest.json \
-  --parent-v1-suite tests/eval/suites/public_6axis_1k_v1.jsonl \
-  --filtered-v1-seed tests/eval/runtime/issue149-v1-filtered-seed/seed_manifest.json \
-  --filtered-v1-suite tests/eval/runtime/issue149-v1-filtered-seed/suite.jsonl \
+  --parent-v1-seed tests/eval/seeds/public_6axis_1k_v1/seed_manifest.json --parent-v1-suite tests/eval/suites/public_6axis_1k_v1.jsonl \
+  --filtered-v1-seed tests/eval/runtime/issue149-v1-filtered-seed/seed_manifest.json --filtered-v1-suite tests/eval/runtime/issue149-v1-filtered-seed/suite.jsonl \
   --relationship-ledger tests/eval/runtime/issue149-v2-ledger/relationship_ledger.jsonl \
   --cohort-lock tests/eval/source_locks/public_6axis_1k_v2_cohort.json \
   --repair-lock tests/eval/source_locks/public_6axis_1k_v3_repairs.json \
@@ -190,7 +150,10 @@ Verify every generated filename and byte against the frozen seed before using
 it. An existing output path is rejected; failed derivation leaves inputs and
 existing output untouched. Keep generated seeds and full run outputs ignored.
 
-The current [shared release comparison for #660 and #668](issues_660_668_shared_evaluation.md) records complete public imports and scoring with an incomplete evaluation conclusion. The [earlier failed comparison](issue_660_release_comparison.md) preserves the initial attempt and historical #584 evidence. The separate [Recall accuracy cohort](recall_accuracy_v1.md) adds frozen explicit negative judgments. The [query-scoring experiment protocol](recall_accuracy_experiment.md) records #667's retained measurements and #668's shared-release scope.
+The [Recall accuracy cohort](recall_accuracy_v1.md) supplies explicit negative
+judgments. [Recall accuracy reporting](recall_accuracy_experiment.md) explains
+how to reconcile retained paired captures. Historical results remain in compact
+JSON baselines and project memory; they do not certify a later source revision.
 Publishing this generator does not establish a completed comparison or
 retrieval-quality equivalence. Use each pinned release's native runner to
 validate the frozen seed before import and retain its recorded readiness
@@ -204,41 +167,42 @@ evidence requires all 991 imports accounted for, 204 scored cases per release,
 complete mappings, and disclosed ontology readiness. The pair describes the
 two release configurations; it does not isolate ontology's contribution.
 
-For issue #665 offline replay, set `eval_seed` to the frozen v3 seed directory and `eval_capture` to the retained baseline capture, then run `go run ./cmd/eval-runner --mode baseline --seed "$eval_seed/seed_manifest.json" --suite "$eval_seed/suite.jsonl" --traces "$eval_capture/recall_traces.jsonl" --mapping "$eval_capture/knowledge_mapping.json" --out tests/eval/runs/new-alias-correction/baseline --base-url http://127.0.0.1:1 --max-unmapped-source-refs 0`. Repeat with the candidate capture, `--mode candidate`, and a separate fresh ignored output directory using the same pinned scorer. Require the same 204 unique cases, independently aggregate the JSONL scores, and reconcile per-case changes against the retained alias diagnostic. Hash original traces, mappings, qrels and reports before and after; never adjust judgments to reproduce the diagnostic. The [compact correction evidence](baselines/issue_665_evidence_alias_scoring.json) records source/build identities, hashes and changes. This is offline rescoring of the frozen 991-document historical corpus, not a new live comparison: retain incomplete ontology coverage, mixed candidate release history, missing negative judgments and uncontrolled latency limitations. Keep original and corrected reports separately.
-
-## Use the approved local seed
-
-The hard gate consumes the existing approved `public_6axis_1k_v1` seed and
-suite. It does not generate, download, or replace them. Their required identity
-is pinned by the committed policy: 206 cases and seed hash
-`sha256:eb09124331228e59898a93740104ab978b9974e3ebf7f7fc2e09728ef95b3d78`.
-
-Because these artifacts are ignored, a new worktree does not contain them.
-Restore the approved local copy at these paths; do not substitute a regenerated
-seed:
+For offline replay, set `eval_seed` to the frozen v3 directory and `eval_capture`
+to a retained native capture. Run the same pinned scorer for both sides:
 
 ```bash
-SEED=tests/eval/seeds/public_6axis_1k_v1/seed_manifest.json
-SUITE=tests/eval/suites/public_6axis_1k_v1.jsonl
-RELEASE_GATE=tests/eval/baselines/v2.1.1_public_6axis_1k_baseline.json
+go run ./cmd/eval-runner --mode baseline \
+  --seed "$eval_seed/seed_manifest.json" --suite "$eval_seed/suite.jsonl" \
+  --traces "$eval_capture/recall_traces.jsonl" \
+  --mapping "$eval_capture/knowledge_mapping.json" \
+  --out tests/eval/runs/new-offline-comparison/baseline \
+  --base-url http://127.0.0.1:1 --max-unmapped-source-refs 0
 ```
 
-The preparation script refuses `--size 1000` so it cannot overwrite the
-approved gate artifact. It may generate the optional diagnostic 5k seed:
+Repeat with `--mode candidate`, its original capture and a separate new output.
+Require 204 unique cases and independently reconcile every per-case change and
+aggregate. Hash original traces, mappings, qrels and reports before and after.
+Keep originals unchanged. Offline rescoring does not establish live readiness,
+model reliability or controlled latency.
+
+## Select frozen inputs
+
+Generated inputs are ignored and absent from a fresh checkout. Restore the
+approved artifacts and verify their hashes before selecting them explicitly:
 
 ```bash
-python3 tests/eval/scripts/prepare_public_6axis_eval.py \
-  --size 5000 \
-  --force
+SEED=tests/eval/seeds/public_6axis_1k_v3/seed_manifest.json
+SUITE=tests/eval/seeds/public_6axis_1k_v3/suite.jsonl
 ```
 
-The runner has no default seed or suite. This prevents an invocation from
-silently evaluating the wrong corpus.
-
-The old relational seed presets depended on typed claims and preloaded facts,
-so they are retired. `cmd/eval-seedgen` retains the content-only
-`local_eval_1k` preset and provides `local_eval_100` for a fast image/harness
-smoke check.
+The v3 seed hash is
+`0923aa14109291e5d5cf24fe419f0b6fc229823bf3dd4292e17d45447365e675`;
+the suite hash is
+`438a9742576ad5fa9a97c8edaa1e6b0550c740a812dfd3cf051cce68e632b17d`.
+Do not regenerate inputs to replace retained evidence. The runner has no default
+seed or suite. A diagnostic comparison uses `ALLOW_UNGATED_EVALUATION=1` and
+omits the historical `RELEASE_GATE_POLICY`; its own approved quality and
+completeness gates still apply. Use the paired route below for separate runtimes.
 
 ## Run the 100-row smoke check
 
@@ -267,14 +231,14 @@ tests/eval/scripts/run_full_public_rag_eval_until_done.sh
 ```
 
 These retrieval floors mirror the historical public gate only to catch smoke
-regressions. This run is not release evidence and does not replace the waived
+regressions. This run is not release evidence and does not replace the deterministic
 1k comparison. The monitor requires all 100 latest Remember attempts and
 fragments to be terminal with no failed rows before passing. Its ignored
 `dataset_identity.json` binds the seed/suite hashes, runner hash, server image
 ID, team, and model configuration; `gate_result.json` records the smoke
 thresholds and metrics.
 
-## Start the persistent V1 stack
+## Start a persistent PostgreSQL stack
 
 The evaluation compose stores database state under `tests/eval/runtime/v1` by
 default and reads the ignored repository-root `.env`. Set
@@ -292,7 +256,7 @@ scripts/eval-local.sh --mode runtime --runtime-action start \
 ```
 
 Do not use this team or stack for manual memory work. The monitor assumes one
-seed dataset per V1 runtime.
+seed dataset per runtime.
 
 Follow [runtime retirement](runtime-lifecycle.md) when replacing a local stack.
 Maintenance pause does not retire Docker resources or bind storage. Retire the
@@ -363,7 +327,7 @@ before sharing them.
 ## Provision the eval team once
 
 After startup migrations finish, provision a dedicated team through the private
-control API and keep its ignored credential file under the V1 runtime:
+control API and keep its ignored credential file under the runtime:
 
 ```bash
 control_token="${CONTROL_PORTAL_TOKEN:?export CONTROL_PORTAL_TOKEN first}"
@@ -399,31 +363,28 @@ artifacts. It does not start the stack or write memory:
 ```bash
 scripts/eval-local.sh \
   --mode validate \
-  --seed "${SEED}" \
-  --suite "${SUITE}" \
-  --release-gate-policy "${RELEASE_GATE}" \
+  --seed "${SEED}" --suite "${SUITE}" \
   --out tests/eval/runtime/v1/runs/validate
 ```
 
 For `public_6axis_*` seeds, validation also requires the existing
 `validation_report.json` named by the seed manifest. The report must have
 status `passed`. The runner recomputes the complete seed hash and requires it,
-the seed ID, and the case count to match the committed policy before any local
-stack or import work begins.
+the seed ID and the case count to match the selected frozen inputs. A release
+policy, when explicitly selected, is verified before stack or import work.
 
 ## Import once, resume, and run recall
 
 The long-running monitor is local and on-demand; nothing starts it
 automatically or from remote CI. It builds the current runner, validates the
-selected seed against the policy, imports through MCP `tools/call` `remember`,
+selected frozen seed and any explicit policy, imports through MCP `tools/call` `remember`,
 and then runs the baseline recall suite after each Remember call has returned a
 terminal result:
 
 ```bash
-SEED="${SEED}" \
-SUITE="${SUITE}" \
-RELEASE_GATE_POLICY="${RELEASE_GATE}" \
-tests/eval/scripts/run_full_public_rag_eval_until_done.sh
+env -u RELEASE_GATE_POLICY SEED="${SEED}" SUITE="${SUITE}" \
+  ALLOW_UNGATED_EVALUATION=1 \
+  tests/eval/scripts/run_full_public_rag_eval_until_done.sh
 ```
 
 The runner defaults to four concurrent import requests and supports explicit
@@ -496,11 +457,9 @@ export DENSE_MEM_API_KEY="$(jq -r .api_key tests/eval/runtime/v1/eval_credential
 
 go run ./cmd/eval-runner \
   --mode baseline \
-  --seed "${SEED}" \
-  --suite "${SUITE}" \
+  --seed "${SEED}" --suite "${SUITE}" \
   --out tests/eval/runtime/v1/runs/baseline-rerun \
   --mapping tests/eval/runtime/v1/runs/import/knowledge_mapping.json \
-  --release-gate-policy "${RELEASE_GATE}" \
   --max-page-size 500
 ```
 
@@ -539,14 +498,14 @@ generates or replaces that seed.
 
 ## Reset safety
 
-The scripts never delete or reset database state. To replace the V1 dataset,
+The scripts never delete or reset database state. To replace the dataset,
 stop the eval stack and explicitly inspect `tests/eval/runtime/v1` first. Remove
 or archive it only after confirming that its database, identity, credentials,
 and run artifacts are no longer needed.
 
 ## Search and Recall read-pipeline benchmark
 
-Issue #456 uses a separate disposable PostgreSQL benchmark. It does not consume
+Use a separate disposable PostgreSQL benchmark. It does not consume
 the public 1k evaluation dataset. The benchmark seeds deterministic evidence,
 one supported Relationship, a credential-private evidence item, fixed vectors,
 and an HNSW index through the real PostgreSQL adapters.
@@ -581,7 +540,7 @@ Preserve raw benchmark output under the ignored
 `tests/eval/runs/issue-456` directory; commit only the compact baseline summary
 with the measured source commit.
 
-## Issue #457 relationship projection query comparison
+## Relationship projection query comparison
 
 After the plan audit passes, compare the exact base commit and candidate on the
 same host without concurrent test load. Keep the base production files at the
@@ -624,7 +583,7 @@ keep median p50 and p95 increases within the greater of 5% or 1 ms. Commit a
 compact comparison with the measured source fingerprints and keep raw logs,
 query reports, plans, and comparison output ignored.
 
-## Issue #458 Recall retrieval ownership comparison
+## Recall retrieval ownership comparison
 
 Run the inherited benchmark and source comparator on the exact base and the
 candidate after the plan audit passes. Keep the two checkouts' production code
@@ -644,7 +603,7 @@ requires unchanged SQL and transaction counts and median p50 and p95 increases
 within the greater of 5% or 1 ms across five measured runs. Commit only a
 compact comparison with both source fingerprints; keep raw reports ignored.
 
-## Issue #493 usage flush scaling
+## Usage flush scaling
 
 After the independent plan audit passes, run the current Operations service and
 PostgreSQL repository benchmark against disposable PostgreSQL:
@@ -697,58 +656,131 @@ batching recommendation is conditional on owner/credential SQL consuming over
 half of flush time at 100 or 1,000 buckets. No production workload frequency or
 batching latency improvement is inferred.
 
-A future bounded candidate groups the complete owner primary key, sums additive
-counters, takes the maximum latency and latest timestamp, and writes owner and
-credential rows in chunks of at most 1,000 rows. Grouping prevents duplicate
-`ON CONFLICT` targets within one statement. The existing flush-ledger transaction,
-RLS context, credential attribution and all-or-nothing rollback must remain.
-This ticket contains no batching prototype or production algorithm change.
+## Discovery measurement
 
-## Ontology topic community replacement evaluation (#245)
-
-Keep the frozen nine-case/19-source organization cohort and both existing hashes
-unchanged. The community cohort has a separate source lock. Run the registered
-`TestCommunityTopic*` PostgreSQL cases, including actual Recall over the frozen
-cohort, 5,001 groups supported by one evidence assignment, bounded previews,
-independent refresh, lifecycle, and RLS tests. Set
-`DENSE_MEM_ORGANIZATION_REPORT_DIR` to an unused ignored task directory to retain
-the detailed comparison. Commit only compact verified evidence after the gates.
-The verified quality, scale and latency results are recorded in
-[`baselines/community_topics_v1.json`](baselines/community_topics_v1.json).
-
-The legacy/ontology comparison is historical. Run it from the exact #245 source
-revision below; #530 retired the legacy mode, so the current benchmark cannot
-supply this comparison. Capture both stdout and stderr before running its scorer:
+`TestOntologyMaintenanceRevalidationDiscoveryMeasurement` runs deterministic HTTP
+providers against real PostgreSQL on dedicated shard 1. It includes
+`discovery-receipts-v1` and `coalescing-markers-v3`; neither calls a live model.
+After plan conformance, request the complete exact-source Development route:
 
 ```bash
-mkdir -p tests/eval/runs/issue-245
-issue245_source=$(mktemp -d tests/eval/runs/issue-245/source.XXXXXX)
-git archive d16c15229120e83e740a4730b32e3694f9269e10 | tar -x -C "$issue245_source"
-(
-  cd "$issue245_source"
-  env -u DATABASE_URL DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 \
-    DENSE_MEM_REQUIRE_POSTGRES_TESTS=1 \
-    go test -tags integration ./internal/community/postgres -run '^$' \
-    -bench '^BenchmarkCommunityTopicProjection$' -benchtime=200x -count=5 -timeout=45m
-) > tests/eval/runs/issue-245/benchmark.txt 2>&1
-python3 tests/eval/scripts/compare_community_topics.py \
-  --input tests/eval/runs/issue-245/benchmark.txt \
-  --out tests/eval/runs/issue-245/latency.json
+gh workflow run development-e2e.yml --repo markhuangai/dense-mem --ref main \
+  -f source_ref="$pushed_source_sha" -f postgres_shards=all \
+  -f scenarios=ontology_organization,ontology_management
 ```
 
-Each mode performs 20 warmups and 200 measurements for five pairs. The comparator
-requires complete pairs and a median paired p95 regression no greater than 10%.
-Large-topic completion, bounded pages, and zero summary-provider attempts are
-reported separately; the legacy detector cannot construct the scale fixture.
+Retain all six job logs in a new ignored run directory. Decode outer Go test JSON,
+then concatenate `Output` chunks by `(Package, Test)` through each newline before
+parsing `ontology_discovery_*` records; Go splits long output into 1,024-character
+chunks. Verify run ID, exact tested source and image digest against the workflow
+receipt, and source/workload hashes against the tested files. Require all 680
+registered cases exactly once, selected scenarios, aggregate and owned cleanup.
 
-Current closeout validation uses `BenchmarkRecallOntology` and
-`scripts/compare_ontology_recall.py` with the frozen five paired disabled/enabled
-measurements and unchanged 10% median p95 bound. Historical metrics certify only
-their recorded source revision; disabled community reads now return no topics. See [ontology loose matching](issue_659_matching.md).
+The receipt protocol requires one `protocol`, 90 `measurement`, 18 `coverage`,
+seven concurrency, three cancellation, one isolation and one lock-cancellation
+record. Its unique, overlap-64 and shared-5 workloads each have 100 sources,
+three fresh repetitions, two warmup pages and five alternating measured pairs.
+For each workload/mode, aggregate all 15 measured pages and retain repetition
+medians and receipt-width histograms. Report median and nearest-rank p95
+(sorted sample `ceil(0.95*n)`). Pair observation overhead by repetition/sample
+using the median of `(enabled_page_ms / disabled_page_ms - 1) * 100`.
+Disabled freshness observations are unavailable, not zero calls. Require equal
+SQL counts per pair and unchanged source outcomes, provider calls/usage, receipts
+and canonical hashes. With 15 pages, p95 is the maximum and is not a stable tail.
 
-## Private Session Gate (#218)
+The coalescing protocol requires one `coalescing_protocol`, 20 successful
+`coalescing_measurement` records and two `coalescing_comparison` records. Each
+shape has five alternating sequential/combined pairs, a fresh database per
+sample, 100 sources, five real 20-source receipts and 20 markers. Setup drains
+source notifications and runs ANALYZE after receipts and definition setup;
+there is no warmup drain. Overlap requires 2,000 sequential versus 100 combined
+freshness checks and a lower combined median. Disjoint requires 100 in each mode
+and reports the measured change, including regressions. Require unchanged queue,
+canonical state and receipts and zero added provider calls. Preserve failed or
+incomplete samples; they cannot satisfy the five-pair gate.
 
-The issue records the approved historical-1k waiver. Generate the frozen 32-case
+Discovery duration includes commit. Preparation includes discovery, provider
+turns may overlap, and GORM timing excludes decoding/transaction boundaries;
+do not add these measurements as exclusive phases or infer release speedup.
+Concurrent writers can invalidate a later source check of the same receipt.
+Preserve per-source freshness, marker/cursor progress, cancellation and rollback.
+
+## Ontology cohort and Recall benchmark
+
+The organization and matching source locks, original judgments and fixtures are
+unchanged. The matching lock is `source_locks/ontology_matching_v1.json` (eight
+cases, 16 sources); it complements the original nine-case/19-source organization
+cohort. Exact names/aliases, explicit refs, raw source vocabulary, semantic texts
+and immutable receipts retain their contracts.
+
+Both live cohorts are integration-tagged. Verify selection without a provider
+call before an independently approved live repetition:
+
+```bash
+go test -tags integration ./internal/ontology/postgres \
+  -list '^TestOntologyMaintenance(Matching)?Cohort$'
+```
+
+A live invocation requires the configured provider environment, an explicit
+model context window and disposable PostgreSQL for each arm. For the existing
+matching protocol, use the approved model, temperature and context values:
+
+```bash
+env -u DATABASE_URL DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 \
+  DENSE_MEM_REQUIRE_POSTGRES_TESTS=1 DENSE_MEM_ONTOLOGY_LIVE_EVAL=1 \
+  AI_VERIFIER_MODEL=dense-mem AI_VERIFIER_DISABLE_TEMPERATURE=false \
+  ONTOLOGY_MAINTENANCE_CONTEXT_WINDOW_TOKENS=500000 \
+  DENSE_MEM_ORGANIZATION_REPORT_DIR="$new_report_directory" \
+  go test -tags integration ./internal/ontology/postgres \
+  -run '^TestOntologyMaintenance(Matching)?Cohort$' -count=1 -timeout=90m -v
+```
+
+Freeze inputs, definitions, judgments, source/generator hashes, configured and
+reported models and unavailable backing revisions before live work. Preserve
+every failed attempt in a new ignored directory. Selection checks do not
+re-authorize or repeat historical model campaigns.
+
+`BenchmarkRecallOntology` uses the real disposable PostgreSQL Recall path with
+20 warmups and 200 measured reads per workload/mode. Unset `DATABASE_URL`
+**separately in each arm**; otherwise the fixture may select an existing database.
+The opt-in is `DENSE_MEM_REPOSITORY_TESTCONTAINERS=1`.
+
+```bash
+(
+  cd "$baseline_checkout"
+  env -u DATABASE_URL DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 \
+    DENSE_MEM_REQUIRE_POSTGRES_TESTS=1 \
+    go test -tags integration ./internal/recall/postgres -run '^$' \
+    -bench '^BenchmarkRecallOntology$' -benchtime=200x -count=1 \
+    -benchmem -timeout=45m
+) > "$baseline_log" 2>&1
+(
+  cd "$candidate_checkout"
+  env -u DATABASE_URL DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 \
+    DENSE_MEM_REQUIRE_POSTGRES_TESTS=1 \
+    go test -tags integration ./internal/recall/postgres -run '^$' \
+    -bench '^BenchmarkRecallOntology$' -benchtime=200x -count=1 \
+    -benchmem -timeout=45m
+) > "$candidate_log" 2>&1
+```
+
+For the source-paired matching protocol, freeze five fresh alternating pairs:
+base first in odd pairs, candidate first in even pairs. Use
+`scripts/compare_ontology_recall_pairs.py` with all ten source-bound arms.
+The enabled workloads must each stay within 10% median paired candidate/base p95
+regression; disabled mode remains an explicit control. The within-source
+five-pair disabled/enabled route uses `-count=5` and
+`scripts/compare_ontology_recall.py` with the same 10% bound. Keep protocols and
+both source identities fixed; do not retry failed measurements automatically.
+
+Run registered `TestCommunityTopic*` PostgreSQL cases for current topic
+projection, large fanout, bounded previews, independent freshness, lifecycle and
+RLS. The former legacy detector comparison requires its archived source; current
+code does not expose that retired mode. Keep its compact baseline unchanged.
+
+## Private session evaluation
+
+Generate the frozen 32-case
 cohort and twelve existing Remember payload controls into an ignored path:
 
 ```bash
@@ -780,20 +812,12 @@ isolated PostgreSQL container. It never includes credentials in its output.
 Chat input/output counts require provider-reported usage. When an embedding
 provider omits usage, the report explicitly counts those calls under
 `embedding_usage_unavailable`; it reports no estimated or complete combined
-token total. This measurement clarification was approved for #218; quality,
-provenance, isolation and deadline requirements remain unchanged.
+token total. Keep the source-lock quality, provenance, isolation and deadline
+requirements unchanged.
 
-The maintainer approved correcting the mixed-object Remember control to submit
-the registered `primary_database` as `known_predicate_key` and require that exact
-result. Its original proposed key was non-authoritative and valid normalization
-failed the exact-key scorer on both base and candidate. The other eleven controls,
-five typed-value facts, all 32 quality cases, scoring and deadlines are unchanged.
-
-The maintainer also approved adding the explicitly stated designer and musician
-roles to the homonym case's expected facts. All 32 input cases and all twelve
-Remember controls remain identical; the expected set now includes exactly
-`Jordan has_role designer` and `Jordan has_role musician`. Retain the failed
-45/47 precision result and rerun fresh repetitions with the corrected source lock.
+The source lock supplies the exact predicate and homonym-role judgments.
+Preserve every input and expected fact; historical fixture corrections do not
+authorize changing a new run's judgments or thresholds.
 
 ```bash
 node tests/eval/scripts/run_session_ingest_v1.mjs remember tmp/session-ingest/cohort.json tmp/session-ingest/base.json
@@ -811,17 +835,9 @@ structured provider turns, embedding turns and provider-reported chat token usag
 Missing chat usage fails the gate. Failures retain an incomplete report and stop;
 thresholds and expected facts must not be weakened after a run.
 
-Historical passing #218 evidence is recorded in
-`baselines/session_ingest_v1_evidence.json`, including tested source/image hashes,
-three quality repetitions, paired controls, approved fixture corrections and
-unavailable embedding usage. Its `current_validation_status` records the later
-runtime source and outstanding gates; historical metrics certify only their
-recorded source. Raw run outputs remain ignored.
+## Contextual intake and evidence-conflict cohort
 
-# Contextual intake and evidence-conflict replacement cohort
-
-Issues #592, #598, #606 and #609 record the maintainer-approved deterministic
-1k waiver and replacement verification. `contextual_intake_v1` freezes twelve
+`contextual_intake_v1` freezes twelve
 security cases and eight conflict cases, including the retained quota,
 slash-separated identifier and active/pending observations. The original request
 hashes identify retained witnesses; runtime operation keys are fresh and all
@@ -877,7 +893,7 @@ Missing usage remains explicitly unavailable through proxy counters rather
 than becoming estimated or zero consumption. This cohort does not establish
 general retrieval-quality or performance equivalence.
 
-Remember assessment diagnosis for #586 uses the existing private control detail
+Remember assessment diagnosis uses the existing private control detail
 route `/control/api/teams/{team_id}/remember-attempts/{attempt_id}`. Its event
 metadata can contain `assessor_diagnostics` on successful and failed attempts,
 including the rejected turns preceding a successful repair. Historical records
@@ -912,21 +928,7 @@ therefore log-only; it is not appended to the already committed attempt event.
 These logs and durable assessment diagnostics do not depend on optional metrics.
 Absent measurements are omitted; observed sub-millisecond durations are zero.
 
-`baselines/issue_586_remember_diagnostics.json` records the retained import counts
-and source-artifact hashes. Failed attempts are not lost documents. Missing
-historical prompts prevent exact replay, and no historical root cause or measured
-reliability improvement is claimed. The maintainer-approved diagnostic-only 1k
-waiver is recorded on #586; replacement checks use deterministic HTTP providers,
-real PostgreSQL, synchronous-write production E2E with metrics enabled and
-disabled, and session ingestion. Full current-head CI and E2E remain mandatory.
-
-The follow-on predicate/span repair change has a separate [approved protocol](https://github.com/markhuangai/dense-mem/issues/586#issuecomment-6431998713). The maintainer subsequently [waived its live paired evaluation](https://github.com/markhuangai/dense-mem/issues/586#issuecomment-6468323991) on 2026-10-28; this is separate from the earlier diagnostic-only waiver. Inspection of the retained seven rc.20 exhausted assessments found repeated incompatible-key registration and resolution, predicate ranges outside their support, whitespace-only predicates, and unknown boundary references. All 21 retained responses obeyed the predicate status/key/version/registration nullability rules. Missing original assessor requests still prevent an exact historical replay; these observations do not explain the 23 separate timeouts.
-
 Repair feedback names the failed compatibility or range rule without changing acceptance. An incompatible catalog key cannot be repaired by registering it again, an exact known key cannot be substituted, and invalid citations do not justify dropping a supported claim. Ranges remain exact Unicode boundaries; predicate/value ranges must fit within one support range for the same evidence.
-
-The interrupted comparison used baseline `c4632748` and candidate `73f691df` with the frozen public v3 seed, `dense-mem-testing`, `@cf/baai/bge-m3` at 1024 dimensions, import concurrency/admission 4 and equal ontology capacity (global 8, team 4, context 300000). Baseline Remember import completed all 991 sources in 1007 durable attempts, retaining 14 timeout attempts, two exhausted validations and 184 provider repair turns. Baseline readiness and quality capture were incomplete; candidate import had not started. The native run was gracefully stopped and both isolated ontology schedulers were paused. Retained artifacts include the exact revisions, images, inputs, timings and unavailable usage. These partial observations establish no measured quality, reliability or timeout improvement and are not a passed comparison.
-
-Replacement verification uses the independent conformance audit, actual validators and local HTTP fixtures, real PostgreSQL regressions, registered synchronous-write/session-ingest production entrypoints, and final current-head review, CI, CodeQL and full production-image E2E. Supported fixture claims must remain stored after repair, and invalid complete responses must still yield zero partial semantic commit. The live comparison and its numerical gate are waived for this repair PR; the remaining validation gates are required.
 
 Ontology attempt receipts optionally contain `diagnostics` with measured
 `queue_ms`, `admission_ms`, `http_ms`, `reconciliation_ms`, the configured
@@ -937,12 +939,11 @@ Historical receipts remain unchanged and need not contain these fields.
 
 Raw cohorts, reports, source manifests and stack resources stay ignored and
 are cleaned only after final delivery validation. Commit the generator, source
-lock and compact comparison evidence. The waiver does not alter the pinned
-release evaluation, provider timeouts/retries, ontology budget transition or
-historical conflict cases. Real PostgreSQL regressions, local checks and final
+lock and compact comparison evidence. Keep the selected pinned release protocol, provider deadlines/retries and
+original conflict cases unchanged. Real PostgreSQL regressions, local checks and final
 current-head production-image E2E remain required.
 
-## Ontology readiness after budget retirement (#617)
+## Ontology readiness
 
 For releases implementing ADR 0014, configure the selected model's explicit
 context-window size before dispatch. No allowance grants or cumulative funding
@@ -959,17 +960,9 @@ Keep terminal failures, ambiguity, partial usage, unavailable usage, measured
 progress, and elapsed time in the report. Reported usage remains a lower bound
 when usage is unavailable. Do not equate configured concurrency with measured
 provider-call overlap or claim a speedup without a completed measurement.
-Previously pinned release comparisons keep their recorded protocol. Issue #605
-owns resumable evaluation orchestration; this change does not rewrite that run.
+Previously pinned release comparisons keep their recorded protocol.
 
-The maintainer waived #617's deterministic 1k comparison before implementation
-in [the issue approval record](https://github.com/markhuangai/dense-mem/issues/617#issuecomment-6372012498).
-The replacement gates are real PostgreSQL retirement/history/restart/isolation
-and A/B/C concurrency regressions, context-boundary and regeneration tests,
-registered positive/adverse production-entry E2E, complete local checks,
-independent plan audit, and successful final-head full CI/production-image E2E.
-
-## Paired prepared-runtime evaluation (#605)
+## Paired prepared-runtime evaluation
 
 `PAIR_CONFIG` opts the existing monitor into a resumable paired run. Start from [paired.example.json](paired.example.json), replace every placeholder, and keep that filled manifest and all generated artifacts under ignored `tests/eval/runs/` or another task-owned directory. The example deadline is a placeholder: choose an explicit observation deadline appropriate to the prepared runtimes.
 
@@ -995,4 +988,9 @@ ADR 0014 drain checks discovery, ordinary pending sources, active preparation, b
 
 Each stage has atomic intent/completion receipts, monitor and subprocess identity, UTC timestamps and artifact hashes. The final `paired_report.json`, Markdown report and `comparison/` retain common-scored per-axis results, distinct imported and organized-source progress, all stage attempts, usage availability and admission-to-reconciliation overlap. Invalid intervals are unavailable. A drained but unsuccessful side produces `status: incomplete` and a nonzero monitor exit. This is not a model-only latency or speedup measurement.
 
-The frozen public v3 cohort remains 991 sources, 204 cases and zero unmapped references. #605 has an explicit maintainer-approved deterministic 1k waiver ([receipt](https://github.com/markhuangai/dense-mem/issues/605#issuecomment-6406649737)); it does not waive future comparisons. Replacement verification comprises focused Go/shell tests, registered real PostgreSQL/application paired fixtures, and the `ontology_organization,synchronous_write` production scenarios plus full CI. The ontology scenario covers pause, authorization, replay, retained failure and cancellation; the paired fixtures exercise the evaluator against those service and database owners. No mocked service results substitute for those gates.
+The frozen public v3 cohort requires 991 completed imports, 204 scored cases,
+zero unmapped references and complete readiness on both sides. Retain terminal
+failures, ambiguity and unknown usage in every report. Complete unfavorable
+results are not improvements. Keep run histories in project memory and generated
+raw evidence in ignored paths; compact baselines certify only their recorded
+source, input and protocol identities.

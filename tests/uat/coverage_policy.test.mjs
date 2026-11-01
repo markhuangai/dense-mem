@@ -41,6 +41,10 @@ test("coverage reports use complete Go discovery and deduplicated profiles", asy
   assert.match(script, /grep -v '\/cmd\/server\$'/);
   assert.match(script, /--tags evaluation/);
   assert.match(workflow, /scripts\/coverage-report\.sh --complete/);
+  const coverageJob = workflow.slice(workflow.indexOf("\n  coverage:"), workflow.indexOf("\n  coverage-merge:"));
+  assert.match(coverageJob, /max-parallel: 2/);
+  assert.match(coverageJob, /part: \[postgres, core, postgres-support\]/);
+  assert.match(workflow, /path: coverage\/postgres-support/);
   assert.match(script, /total \* 10/);
   assert.match(ci, /coverage-gate\.mjs/);
   assert.match(gate, /covered \* 10/);
@@ -375,22 +379,28 @@ test("real Go coverage parts retain cross-package and testless execution and rej
   assert.notEqual(coverage("--merge-complete").status, 0);
   requirePass(coverage("--complete-part", "postgres"));
   assert.match(readFixture(join(outputDir, "postgres/go-postgres-complete.raw")), /fixture\/internal\/testless\/value.go:[^\n]+ [1-9]/m);
-  for (const line of [2, 3]) assert.match(readFixture(join(outputDir, "postgres/go-session-complete.raw")), new RegExp(`fixture/internal/decisiononly/value.go:${line}\\.[^\\n]+ [1-9]`, "m"));
+  assert.notEqual(coverage("--merge-complete").status, 0);
+  requirePass(coverage("--complete-part", "postgres-support"));
+  for (const line of [2, 3]) assert.match(readFixture(join(outputDir, "postgres-support/go-session-complete.raw")), new RegExp(`fixture/internal/decisiononly/value.go:${line}\\.[^\\n]+ [1-9]`, "m"));
   requirePass(coverage("--merge-complete"));
   assert.match(readFixture(join(outputDir, "go-complete.txt")), /100\.0%/);
-  const profile = join(outputDir, "postgres/go-audit-complete.raw");
+  const profile = join(outputDir, "postgres-support/go-audit-complete.raw");
   const savedProfile = readFixture(profile);
   writeFileSync(profile, "mode: atomic\n");
   assert.notEqual(coverage("--merge-complete").status, 0);
   writeFileSync(profile, savedProfile);
-  const identity = join(outputDir, "postgres/identity.txt");
-  const savedIdentity = readFixture(identity);
-  for (const replacement of [savedIdentity.replace(/^[^\n]+/, "0".repeat(40)), savedIdentity.replace("\n123\n1\n", "\n123\n2\n")]) {
-    writeFileSync(identity, replacement);
+  for (const part of ["core", "postgres", "postgres-support"]) {
+    const identity = join(outputDir, part, "identity.txt");
+    const savedIdentity = readFixture(identity);
+    for (const replacement of [savedIdentity.replace(/^[^\n]+/, "0".repeat(40)), savedIdentity.replace("\n123\n1\n", "\n123\n2\n")]) {
+      writeFileSync(identity, replacement);
+      assert.notEqual(coverage("--merge-complete").status, 0);
+    }
+    rmSync(identity);
     assert.notEqual(coverage("--merge-complete").status, 0);
+    writeFileSync(identity, savedIdentity);
   }
-  writeFileSync(identity, savedIdentity);
-  const manifest = join(outputDir, "postgres/profiles.sha256");
+  const manifest = join(outputDir, "postgres-support/profiles.sha256");
   const savedManifest = readFixture(manifest);
   writeFileSync(manifest, savedManifest.split("\n").filter((line) => !line.includes("go-audit-complete.raw")).join("\n"));
   assert.notEqual(coverage("--merge-complete").status, 0);
