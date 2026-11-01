@@ -2,24 +2,13 @@
   "schema_version": "dense-mem.issues-660-668.shared-evaluation.v1",
   "status": "incomplete",
   "issues": {
-    "660": {
-      "successful_conclusion": false,
-      "close_issue": false,
-      "reason": "candidate ontology/projection coverage incomplete; work counters and complete usage unavailable"
-    },
-    "668": {
-      "successful_conclusion": false,
-      "close_issue": false,
-      "reason": "nDCG@10 did not improve, Recall@10 declined, candidate coverage incomplete, adverse safety unmeasured"
-    }
+    "660": {"successful_conclusion": false, "close_issue": false, "reason": "candidate ontology/projection coverage incomplete; work counters and complete usage unavailable"},
+    "668": {"successful_conclusion": false, "close_issue": false, "reason": "nDCG@10 did not improve, Recall@10 declined, candidate coverage incomplete, adverse safety unmeasured"}
   },
   "run_id": "issues-660-668-shared-campaign-20261101",
   "audit_base": "92620e862446b31e5f20f34224c4dfd5f7c640fb",
   "frozen_deadline": "2026-11-02T02:56:21.130988Z",
-  "campaign_exit": {
-    "exit_code": 1,
-    "finished_at": "2026-11-01T08:22:32.482769+00:00"
-  },
+  "campaign_exit": {"exit_code": 1, "finished_at": "2026-11-01T08:22:32.482769+00:00"},
   "conditions": {
     "import_concurrency": 4,
     "verified_native_admission_limit": 4,
@@ -27,11 +16,7 @@
     "log_level": "info",
     "assessment_timeout_seconds": 160,
     "commit_timeout_seconds": 10,
-    "candidate_ontology": {
-      "global": 8,
-      "team": 8,
-      "context_window_tokens": 500000
-    },
+    "candidate_ontology": {"global": 8, "team": 8, "context_window_tokens": 500000},
     "optional_decision_tasks": "disabled",
     "live_AI_DECISION_experiment": "maintainer-approved deferral"
   },
@@ -53,13 +38,7 @@
         "admission_failures": 0,
         "commit_failures": 0,
         "durable_exact_evidence_scope_search_verified": true,
-        "client_operation_seconds": [
-          9.665886346,
-          6.423188734,
-          8.631290154,
-          18.36561387,
-          7.9825644350000005
-        ]
+        "client_operation_seconds": [9.665886346, 6.423188734, 8.631290154, 18.36561387, 7.9825644350000005]
       },
       "candidate": {
         "completed_sources": 5,
@@ -68,13 +47,7 @@
         "admission_failures": 0,
         "commit_failures": 0,
         "durable_exact_evidence_scope_search_verified": true,
-        "client_operation_seconds": [
-          7.847747396,
-          8.71408455,
-          11.231747595,
-          8.028556105,
-          7.591846558
-        ]
+        "client_operation_seconds": [7.847747396, 8.71408455, 11.231747595, 8.028556105, 7.591846558]
       }
     }
   },
@@ -177,11 +150,7 @@
           "average_bad_at_k": 0
         }
       },
-      "branch_availability": {
-        "context_scored_case_count": 0,
-        "evidence_scored_case_count": 95,
-        "dream_scored_case_count": 0
-      },
+      "branch_availability": {"context_scored_case_count": 0, "evidence_scored_case_count": 95, "dream_scored_case_count": 0},
       "server_recall_ms": {
         "mean": 194.23039215686273,
         "p50": 166,
@@ -193,34 +162,16 @@
         "invocation_count": 1035,
         "durable_attempt_count": 1035,
         "completed_sources": 991,
-        "invocation_outcomes": {
-          "cancelled": 31,
-          "completed": 991,
-          "failed": 13
-        },
-        "invocation_classifications": {
-          "execution": 1035
-        },
-        "attempt_outcomes": {
-          "completed": 991,
-          "failed": 44
-        },
+        "invocation_outcomes": {"cancelled": 31, "completed": 991, "failed": 13},
+        "invocation_classifications": {"execution": 1035},
+        "attempt_outcomes": {"completed": 991, "failed": 44},
         "assessor_turns": 1194,
         "provider_components": {
           "embedding": {
             "exchanges": 1704,
-            "http_status": {
-              "200": 1701,
-              "0": 2,
-              "409": 1
-            },
-            "capture_states": {
-              "captured": 1702,
-              "no_response": 2
-            },
-            "requested_models": {
-              "@cf/baai/bge-m3": 1704
-            },
+            "http_status": {"200": 1701, "0": 2, "409": 1},
+            "capture_states": {"captured": 1702, "no_response": 2},
+            "requested_models": {"@cf/baai/bge-m3": 1704},
             "response_reported_models": {},
             "usage_available": 0,
             "usage_unavailable": 1704,
@@ -232,30 +183,17 @@
           },
           "assessor": {
             "exchanges": 1223,
-            "http_status": {
-              "0": 29,
-              "200": 1194
-            },
-            "capture_states": {
-              "unavailable": 1223
-            },
-            "requested_models": {
-              "dense-mem-testing": 1223
-            },
-            "response_reported_models": {
-              "dense-mem-testing": 1194
-            },
+            "http_status": {"0": 29, "200": 1194},
+            "capture_states": {"unavailable": 1223},
+            "requested_models": {"dense-mem-testing": 1223},
+            "response_reported_models": {"dense-mem-testing": 1194},
             "usage_available": 1194,
             "usage_unavailable": 29,
             "usage_unparseable": 0,
             "reported_prompt_tokens": 61124262,
             "reported_completion_tokens": 635152,
             "reported_total_tokens": 61759414,
-            "usage_field_availability": {
-              "prompt_tokens": 1194,
-              "completion_tokens": 1194,
-              "total_tokens": 1194
-            }
+            "usage_field_availability": {"prompt_tokens": 1194, "completion_tokens": 1194, "total_tokens": 1194}
           }
         },
         "identity": "unique retained invocation_id + sequence_no; attempt diagnostics are not added again",
@@ -264,11 +202,7 @@
       },
       "ingestion_reconciliation": {
         "durable_attempts_per_source": 1.0443995963673058,
-        "attempts_per_source_histogram": {
-          "1": 949,
-          "2": 40,
-          "3": 2
-        },
+        "attempts_per_source_histogram": {"1": 949, "2": 40, "3": 2},
         "typed_errors": [
           {
             "code": "embedding_unavailable",
@@ -328,10 +262,7 @@
         "ready": true,
         "complete": false,
         "waiting_for": [],
-        "incomplete_reasons": [
-          "ontology_coverage",
-          "projection_coverage"
-        ]
+        "incomplete_reasons": ["ontology_coverage", "projection_coverage"]
       },
       "state": {
         "enabled": true,
@@ -408,11 +339,7 @@
           "average_bad_at_k": 0
         }
       },
-      "branch_availability": {
-        "context_scored_case_count": 0,
-        "evidence_scored_case_count": 95,
-        "dream_scored_case_count": 0
-      },
+      "branch_availability": {"context_scored_case_count": 0, "evidence_scored_case_count": 95, "dream_scored_case_count": 0},
       "server_recall_ms": {
         "mean": 438.22058823529414,
         "p50": 404,
@@ -424,31 +351,16 @@
         "invocation_count": 1011,
         "durable_attempt_count": 1011,
         "completed_sources": 991,
-        "invocation_outcomes": {
-          "completed": 991,
-          "failed": 9,
-          "cancelled": 11
-        },
-        "invocation_classifications": {
-          "execution": 1011
-        },
-        "attempt_outcomes": {
-          "completed": 991,
-          "failed": 20
-        },
+        "invocation_outcomes": {"completed": 991, "failed": 9, "cancelled": 11},
+        "invocation_classifications": {"execution": 1011},
+        "attempt_outcomes": {"completed": 991, "failed": 20},
         "assessor_turns": 1147,
         "provider_components": {
           "embedding": {
             "exchanges": 1765,
-            "http_status": {
-              "200": 1765
-            },
-            "capture_states": {
-              "captured": 1765
-            },
-            "requested_models": {
-              "@cf/baai/bge-m3": 1765
-            },
+            "http_status": {"200": 1765},
+            "capture_states": {"captured": 1765},
+            "requested_models": {"@cf/baai/bge-m3": 1765},
             "response_reported_models": {},
             "usage_available": 0,
             "usage_unavailable": 1765,
@@ -460,31 +372,17 @@
           },
           "assessor": {
             "exchanges": 1158,
-            "http_status": {
-              "200": 1147,
-              "0": 11
-            },
-            "capture_states": {
-              "captured": 1147,
-              "no_response": 11
-            },
-            "requested_models": {
-              "dense-mem-testing": 1158
-            },
-            "response_reported_models": {
-              "dense-mem-testing": 1147
-            },
+            "http_status": {"200": 1147, "0": 11},
+            "capture_states": {"captured": 1147, "no_response": 11},
+            "requested_models": {"dense-mem-testing": 1158},
+            "response_reported_models": {"dense-mem-testing": 1147},
             "usage_available": 1147,
             "usage_unavailable": 11,
             "usage_unparseable": 0,
             "reported_prompt_tokens": 59250155,
             "reported_completion_tokens": 682671,
             "reported_total_tokens": 59932826,
-            "usage_field_availability": {
-              "prompt_tokens": 1147,
-              "completion_tokens": 1147,
-              "total_tokens": 1147
-            }
+            "usage_field_availability": {"prompt_tokens": 1147, "completion_tokens": 1147, "total_tokens": 1147}
           }
         },
         "identity": "unique retained invocation_id + sequence_no; attempt diagnostics are not added again",
@@ -493,11 +391,7 @@
       },
       "ingestion_reconciliation": {
         "durable_attempts_per_source": 1.0201816347124117,
-        "attempts_per_source_histogram": {
-          "1": 972,
-          "2": 18,
-          "3": 1
-        },
+        "attempts_per_source_histogram": {"1": 972, "2": 18, "3": 1},
         "typed_errors": [
           {
             "code": "provider_response_invalid",
@@ -525,10 +419,7 @@
       }
     }
   },
-  "scorer": {
-    "sha256": "sha256:91edcc7eafe4560a5086d9074e8d1b5a32d2ef4b9adc99c0c6ffb6922a7e4e9e",
-    "source_revision": "92620e862446b31e5f20f34224c4dfd5f7c640fb"
-  },
+  "scorer": {"sha256": "sha256:91edcc7eafe4560a5086d9074e8d1b5a32d2ef4b9adc99c0c6ffb6922a7e4e9e", "source_revision": "92620e862446b31e5f20f34224c4dfd5f7c640fb"},
   "inputs": {
     "documents": 991,
     "cases_per_release": 204,
@@ -770,16 +661,8 @@
     "receipts_without_provider_dispatch": 829,
     "provider_turns": 1322,
     "extra_turns_above_one_per_model_assessment": 187,
-    "per_turn_failure_codes": {
-      "completed": 1096,
-      "response_invalid": 224,
-      "timeout": 2
-    },
-    "per_turn_failure_phases": {
-      "none": 1096,
-      "validation": 224,
-      "request": 2
-    },
+    "per_turn_failure_codes": {"completed": 1096, "response_invalid": 224, "timeout": 2},
+    "per_turn_failure_phases": {"none": 1096, "validation": 224, "request": 2},
     "source_appearances_in_native_receipts": 26542,
     "distinct_source_handles_in_receipts": 3651,
     "distinct_source_version_fingerprints_in_receipts": 3651,
@@ -843,11 +726,7 @@
       "stale_input": 23,
       "provider_unavailable": 2
     },
-    "turns_per_assessment": {
-      "1": 994,
-      "3": 46,
-      "2": 95
-    },
+    "turns_per_assessment": {"1": 994, "3": 46, "2": 95},
     "boundary": "Turn outcomes inherited from each final native assessment receipt; they are not individual HTTP-response outcomes."
   },
   "ontology_terminal_sources": [
@@ -1000,16 +879,8 @@
         "deadline_unchanged": "2026-11-02T02:56:21.130988Z"
       },
       "sides": {
-        "baseline": {
-          "invocations": 0,
-          "durable_attempts": 0,
-          "provider_exchanges": 0
-        },
-        "candidate": {
-          "invocations": 0,
-          "durable_attempts": 0,
-          "provider_exchanges": 0
-        }
+        "baseline": {"invocations": 0, "durable_attempts": 0, "provider_exchanges": 0},
+        "candidate": {"invocations": 0, "durable_attempts": 0, "provider_exchanges": 0}
       },
       "native_error": "eval run: import recall_accuracy_v1:predicate_works_on:source:01: mcp tools/call remember returned -32602: evidence[0].labels must be an array",
       "native_log_sha256": "sha256:25846a5d87af6aff8807ba9ee21a5ef94a9eb62c7d8aaf92b8eef64979abc2ba",
@@ -1032,189 +903,51 @@
     "No current-head remote or PR validation is established by this evaluation receipt."
   ],
   "artifact_hashes": [
-    {
-      "artifact": "campaign/pair-config.json",
-      "sha256": "sha256:fc744d2f3e0a8336e83a390fac51a0bb2444dd482ff9c1abb0575eab683a8ae7"
-    },
-    {
-      "artifact": "campaign/paired/paired_report.json",
-      "sha256": "sha256:473d8f7e4021399c7242fc81f2f3d7420b56e95d10693006fb5761dcf64ca1ea"
-    },
-    {
-      "artifact": "receipts/qualification-summary.json",
-      "sha256": "sha256:6579fe3b939f1710f7c31dedd0c7e0779b3ebf24d3d2a1a491459bef026d27fe"
-    },
-    {
-      "artifact": "receipts/qualification-native-conditions.json",
-      "sha256": "sha256:42099f443d25c731a2a86320b7c400f7e92f3fdb0b6c961c30df7ebc1668c425"
-    },
-    {
-      "artifact": "receipts/qualification-provider-parity.json",
-      "sha256": "sha256:5d138f178644bef93f50853513a3ed07f31353c29fac2122a6c37f487d1e4092"
-    },
-    {
-      "artifact": "receipts/primary-stage-verification.json",
-      "sha256": "sha256:286b35ba04c1d2b1049e0b41dc4fa02fbe84dd0daa3fdd5ab781878deecb74e7"
-    },
-    {
-      "artifact": "receipts/primary-per-case-comparison.json",
-      "sha256": "sha256:af67cfdb48ef312df219aebadbad86d21a381ae9f7f96af5d36e5f4afb505677"
-    },
-    {
-      "artifact": "receipts/control-per-case-comparison.json",
-      "sha256": "sha256:dc99db5de6874345d45249d702bc290aadb863a144b8eb83ee6ccd666199955a"
-    },
-    {
-      "artifact": "receipts/baseline-all-metrics-reconciliation.json",
-      "sha256": "sha256:dd11c4b9838453b5d707697902b73e6e5b14e99c4304d520064363721782757a"
-    },
-    {
-      "artifact": "receipts/candidate-all-metrics-reconciliation.json",
-      "sha256": "sha256:d2e3e22e9f77d93c871776246f26e0b421a2a4a5343f2e3dcf7411cc08967d18"
-    },
-    {
-      "artifact": "receipts/control-all-metrics-reconciliation.json",
-      "sha256": "sha256:58a87ebbf05fef8e01bcd9e6b1bd5842d4b7d6d99c6b68ddd0a7afef5758837e"
-    },
-    {
-      "artifact": "receipts/primary-regression-explanation.json",
-      "sha256": "sha256:05e1c49cdde813b77c0b858ad12d92574278578fcad5cf66e7ec483e9972c1ca"
-    },
-    {
-      "artifact": "receipts/campaign-baseline-accounting.json",
-      "sha256": "sha256:f9ebfb50ae97f94471d01f8513d3192c69dadc18b1cb756d11358697559be827"
-    },
-    {
-      "artifact": "receipts/campaign-candidate-accounting.json",
-      "sha256": "sha256:7d435211d83877cefa494c15a0b84035cc53076fa94986a3e7992a18d3334303"
-    },
-    {
-      "artifact": "receipts/ingestion-reconciliation.json",
-      "sha256": "sha256:d828ba1af9483b33c010827327280ffbf1a7448e424077749116fb475ca2acc2"
-    },
-    {
-      "artifact": "receipts/ontology-work-and-timing-reconciliation.json",
-      "sha256": "sha256:51ae0240ddfccbe4954e0d450a32b2cae6f4a815129b6c44edee0aa483519f84"
-    },
-    {
-      "artifact": "receipts/ontology-assessment-reconciliation.json",
-      "sha256": "sha256:c42ea9139410c97f9f2bbd8304c2cf6744c0e19090b471a6979133c124a11576"
-    },
-    {
-      "artifact": "receipts/ontology-discovery-preparation-timings.json",
-      "sha256": "sha256:dcb09b2d8b8a11e44388454c723691785b0266315c23a549010dee85d56fec33"
-    },
-    {
-      "artifact": "receipts/ontology-terminal-source-reasons.json",
-      "sha256": "sha256:c472c445402cce2dd065850ff14e6bf555981bfde381339442fa7d28576a19b7"
-    },
-    {
-      "artifact": "receipts/ontology-validation-failure-reasons.json",
-      "sha256": "sha256:bd837a203b828ff6c02808ede00d0caae8e3f7129d135006618d72d948caf4ab"
-    },
-    {
-      "artifact": "campaign/ontology-disabled-control/control-verification.json",
-      "sha256": "sha256:61268fa79c21d8982c60df9e321e9b9649ab5f23d0648304bd39866bd7251413"
-    },
-    {
-      "artifact": "campaign/ontology-disabled-control/primary-outcome.json",
-      "sha256": "sha256:f4939e8bc148c11322ad62ffbce1cdf54121a7e51d071d071cee6052f0f66257"
-    },
-    {
-      "artifact": "adverse/pair-config.json",
-      "sha256": "sha256:da30f7e0cde39095e2265b52de6a2a71fe7cc8beb5e7ea70b8d9b34108f0e1eb"
-    },
-    {
-      "artifact": "receipts/adverse-source-lock-verification.json",
-      "sha256": "sha256:de5e217e146d56c81729d39a801849e187081c49b7f76d0cc34002440285c5f8"
-    },
-    {
-      "artifact": "receipts/adverse-terminal-proof.json",
-      "sha256": "sha256:71c08291c9495a6a45bb741dd23a66360c9934c69ff672c5b13387f0a9031ea7"
-    },
-    {
-      "artifact": "adverse/paired/baseline/import/attempt-0001/native.log",
-      "sha256": "sha256:25846a5d87af6aff8807ba9ee21a5ef94a9eb62c7d8aaf92b8eef64979abc2ba"
-    },
-    {
-      "artifact": "receipts/plan-audit-round3.json",
-      "sha256": "sha256:864cac54e53eb0aeb73325c5ec384525adf12cd822434b96f7353d50d35df640"
-    },
-    {
-      "artifact": "receipts/local-validation.json",
-      "sha256": "sha256:becdba5493064bf8feff57875ed2dba06e1c3af363595c9b3efac7266dcec003"
-    },
-    {
-      "artifact": "campaign/paired/baseline/import/attempt-0001/receipt.json",
-      "sha256": "sha256:63ef45960318cc3c5f1efd2dba17b06fb3e609616dbadd734fbff6c4e81f22cc"
-    },
-    {
-      "artifact": "campaign/paired/baseline/drain/attempt-0001/receipt.json",
-      "sha256": "sha256:abd408ac9d5d3ea7812404b2bb1fe202fdcaf1fadddd87bfe67c8e360d8eb3dd"
-    },
-    {
-      "artifact": "campaign/paired/baseline/capture/attempt-0001/receipt.json",
-      "sha256": "sha256:6785d8e85882c071894f0e8e2a738f6c617878f34cfd94b6799cb4040c9596ff"
-    },
-    {
-      "artifact": "campaign/paired/baseline/score/attempt-0001/receipt.json",
-      "sha256": "sha256:cc022b66bba162a1f4902aab30696bfb1ffe093a2d14599b99a31f7e8eec3d62"
-    },
-    {
-      "artifact": "campaign/paired/baseline/score/attempt-0001/native/summary.json",
-      "sha256": "sha256:854b35c3e16e7135b5f4cdbb875c427fe47a8d25a08423200176dcfb2c657cc4"
-    },
-    {
-      "artifact": "campaign/paired/baseline/score/attempt-0001/native/retrieval_scores.jsonl",
-      "sha256": "sha256:25066d1729ae9d203cd6e34b98d2c414e6b035c927777e219dda3ce4b79b1670"
-    },
-    {
-      "artifact": "campaign/paired/baseline/score/attempt-0001/native/knowledge_mapping.json",
-      "sha256": "sha256:332a75821aedfba9e7bc3f2fe84e0dc94155bfcf9b36aaaed5af4c32ddeae770"
-    },
-    {
-      "artifact": "campaign/paired/baseline/score/attempt-0001/native/recall_traces.jsonl",
-      "sha256": "sha256:af7a8be014f834f5b9d46a8cfdcb6b2712fbbf11720222747a44761932b3904e"
-    },
-    {
-      "artifact": "campaign/paired/candidate/import/attempt-0001/receipt.json",
-      "sha256": "sha256:691902e2f8d7d4e78f267b0a661e4f73a70bef9daee557d277f450f459d97d61"
-    },
-    {
-      "artifact": "campaign/paired/candidate/drain/attempt-0001/receipt.json",
-      "sha256": "sha256:408843238716b5d8ab0ef1b907b7039da4c12e07636e03a82d032932d018d014"
-    },
-    {
-      "artifact": "campaign/paired/candidate/capture/attempt-0001/receipt.json",
-      "sha256": "sha256:182658d086e074380d9146510bce2d99fc7b81b98c88d22b70a602b3ef391952"
-    },
-    {
-      "artifact": "campaign/paired/candidate/score/attempt-0001/receipt.json",
-      "sha256": "sha256:d63ec9d1e38f6ffe835580b4aa0cf843dfa4971f18d01a95a922a101cfef701a"
-    },
-    {
-      "artifact": "campaign/paired/candidate/score/attempt-0001/native/summary.json",
-      "sha256": "sha256:bb1ed9c37b49b44db2b291ae8572cd308d2e8bbf1f3e03d7ebfe8de265f96bea"
-    },
-    {
-      "artifact": "campaign/paired/candidate/score/attempt-0001/native/retrieval_scores.jsonl",
-      "sha256": "sha256:15c6c21887bc405556efb5c313dfae325eadc61cec7ad6482ac4bde0e7a7f0d3"
-    },
-    {
-      "artifact": "campaign/paired/candidate/score/attempt-0001/native/knowledge_mapping.json",
-      "sha256": "sha256:b5ffb0caa1353aeacb74bfa34253474ce911f48bc0ea16c7bb999e4c0d0e6a76"
-    },
-    {
-      "artifact": "campaign/paired/candidate/score/attempt-0001/native/recall_traces.jsonl",
-      "sha256": "sha256:afd00457e88a0d17e1d6f9e13f804f10ee78bd674d7f20fa4fb91d5516879f6b"
-    },
-    {
-      "artifact": "historical/receipts/published-image-source-proofs.json",
-      "sha256": "sha256:95dbcca52dcbdcf0e81537f24acbdd325c3c755f51b180c88bcf9c9b7310abec"
-    },
-    {
-      "artifact": "historical/receipts/native-runners.json",
-      "sha256": "sha256:35f232e71ae5090bec07da91c3111dd7fce68100cd958eb5e7e2cc53b509d763"
-    }
+    {"artifact": "campaign/pair-config.json", "sha256": "sha256:fc744d2f3e0a8336e83a390fac51a0bb2444dd482ff9c1abb0575eab683a8ae7"},
+    {"artifact": "campaign/paired/paired_report.json", "sha256": "sha256:473d8f7e4021399c7242fc81f2f3d7420b56e95d10693006fb5761dcf64ca1ea"},
+    {"artifact": "receipts/qualification-summary.json", "sha256": "sha256:6579fe3b939f1710f7c31dedd0c7e0779b3ebf24d3d2a1a491459bef026d27fe"},
+    {"artifact": "receipts/qualification-native-conditions.json", "sha256": "sha256:42099f443d25c731a2a86320b7c400f7e92f3fdb0b6c961c30df7ebc1668c425"},
+    {"artifact": "receipts/qualification-provider-parity.json", "sha256": "sha256:5d138f178644bef93f50853513a3ed07f31353c29fac2122a6c37f487d1e4092"},
+    {"artifact": "receipts/primary-stage-verification.json", "sha256": "sha256:286b35ba04c1d2b1049e0b41dc4fa02fbe84dd0daa3fdd5ab781878deecb74e7"},
+    {"artifact": "receipts/primary-per-case-comparison.json", "sha256": "sha256:af67cfdb48ef312df219aebadbad86d21a381ae9f7f96af5d36e5f4afb505677"},
+    {"artifact": "receipts/control-per-case-comparison.json", "sha256": "sha256:dc99db5de6874345d45249d702bc290aadb863a144b8eb83ee6ccd666199955a"},
+    {"artifact": "receipts/baseline-all-metrics-reconciliation.json", "sha256": "sha256:dd11c4b9838453b5d707697902b73e6e5b14e99c4304d520064363721782757a"},
+    {"artifact": "receipts/candidate-all-metrics-reconciliation.json", "sha256": "sha256:d2e3e22e9f77d93c871776246f26e0b421a2a4a5343f2e3dcf7411cc08967d18"},
+    {"artifact": "receipts/control-all-metrics-reconciliation.json", "sha256": "sha256:58a87ebbf05fef8e01bcd9e6b1bd5842d4b7d6d99c6b68ddd0a7afef5758837e"},
+    {"artifact": "receipts/primary-regression-explanation.json", "sha256": "sha256:05e1c49cdde813b77c0b858ad12d92574278578fcad5cf66e7ec483e9972c1ca"},
+    {"artifact": "receipts/campaign-baseline-accounting.json", "sha256": "sha256:f9ebfb50ae97f94471d01f8513d3192c69dadc18b1cb756d11358697559be827"},
+    {"artifact": "receipts/campaign-candidate-accounting.json", "sha256": "sha256:7d435211d83877cefa494c15a0b84035cc53076fa94986a3e7992a18d3334303"},
+    {"artifact": "receipts/ingestion-reconciliation.json", "sha256": "sha256:d828ba1af9483b33c010827327280ffbf1a7448e424077749116fb475ca2acc2"},
+    {"artifact": "receipts/ontology-work-and-timing-reconciliation.json", "sha256": "sha256:51ae0240ddfccbe4954e0d450a32b2cae6f4a815129b6c44edee0aa483519f84"},
+    {"artifact": "receipts/ontology-assessment-reconciliation.json", "sha256": "sha256:c42ea9139410c97f9f2bbd8304c2cf6744c0e19090b471a6979133c124a11576"},
+    {"artifact": "receipts/ontology-discovery-preparation-timings.json", "sha256": "sha256:dcb09b2d8b8a11e44388454c723691785b0266315c23a549010dee85d56fec33"},
+    {"artifact": "receipts/ontology-terminal-source-reasons.json", "sha256": "sha256:c472c445402cce2dd065850ff14e6bf555981bfde381339442fa7d28576a19b7"},
+    {"artifact": "receipts/ontology-validation-failure-reasons.json", "sha256": "sha256:bd837a203b828ff6c02808ede00d0caae8e3f7129d135006618d72d948caf4ab"},
+    {"artifact": "campaign/ontology-disabled-control/control-verification.json", "sha256": "sha256:61268fa79c21d8982c60df9e321e9b9649ab5f23d0648304bd39866bd7251413"},
+    {"artifact": "campaign/ontology-disabled-control/primary-outcome.json", "sha256": "sha256:f4939e8bc148c11322ad62ffbce1cdf54121a7e51d071d071cee6052f0f66257"},
+    {"artifact": "adverse/pair-config.json", "sha256": "sha256:da30f7e0cde39095e2265b52de6a2a71fe7cc8beb5e7ea70b8d9b34108f0e1eb"},
+    {"artifact": "receipts/adverse-source-lock-verification.json", "sha256": "sha256:de5e217e146d56c81729d39a801849e187081c49b7f76d0cc34002440285c5f8"},
+    {"artifact": "receipts/adverse-terminal-proof.json", "sha256": "sha256:71c08291c9495a6a45bb741dd23a66360c9934c69ff672c5b13387f0a9031ea7"},
+    {"artifact": "adverse/paired/baseline/import/attempt-0001/native.log", "sha256": "sha256:25846a5d87af6aff8807ba9ee21a5ef94a9eb62c7d8aaf92b8eef64979abc2ba"},
+    {"artifact": "receipts/plan-audit-round3.json", "sha256": "sha256:864cac54e53eb0aeb73325c5ec384525adf12cd822434b96f7353d50d35df640"},
+    {"artifact": "receipts/local-validation.json", "sha256": "sha256:becdba5493064bf8feff57875ed2dba06e1c3af363595c9b3efac7266dcec003"},
+    {"artifact": "campaign/paired/baseline/import/attempt-0001/receipt.json", "sha256": "sha256:63ef45960318cc3c5f1efd2dba17b06fb3e609616dbadd734fbff6c4e81f22cc"},
+    {"artifact": "campaign/paired/baseline/drain/attempt-0001/receipt.json", "sha256": "sha256:abd408ac9d5d3ea7812404b2bb1fe202fdcaf1fadddd87bfe67c8e360d8eb3dd"},
+    {"artifact": "campaign/paired/baseline/capture/attempt-0001/receipt.json", "sha256": "sha256:6785d8e85882c071894f0e8e2a738f6c617878f34cfd94b6799cb4040c9596ff"},
+    {"artifact": "campaign/paired/baseline/score/attempt-0001/receipt.json", "sha256": "sha256:cc022b66bba162a1f4902aab30696bfb1ffe093a2d14599b99a31f7e8eec3d62"},
+    {"artifact": "campaign/paired/baseline/score/attempt-0001/native/summary.json", "sha256": "sha256:854b35c3e16e7135b5f4cdbb875c427fe47a8d25a08423200176dcfb2c657cc4"},
+    {"artifact": "campaign/paired/baseline/score/attempt-0001/native/retrieval_scores.jsonl", "sha256": "sha256:25066d1729ae9d203cd6e34b98d2c414e6b035c927777e219dda3ce4b79b1670"},
+    {"artifact": "campaign/paired/baseline/score/attempt-0001/native/knowledge_mapping.json", "sha256": "sha256:332a75821aedfba9e7bc3f2fe84e0dc94155bfcf9b36aaaed5af4c32ddeae770"},
+    {"artifact": "campaign/paired/baseline/score/attempt-0001/native/recall_traces.jsonl", "sha256": "sha256:af7a8be014f834f5b9d46a8cfdcb6b2712fbbf11720222747a44761932b3904e"},
+    {"artifact": "campaign/paired/candidate/import/attempt-0001/receipt.json", "sha256": "sha256:691902e2f8d7d4e78f267b0a661e4f73a70bef9daee557d277f450f459d97d61"},
+    {"artifact": "campaign/paired/candidate/drain/attempt-0001/receipt.json", "sha256": "sha256:408843238716b5d8ab0ef1b907b7039da4c12e07636e03a82d032932d018d014"},
+    {"artifact": "campaign/paired/candidate/capture/attempt-0001/receipt.json", "sha256": "sha256:182658d086e074380d9146510bce2d99fc7b81b98c88d22b70a602b3ef391952"},
+    {"artifact": "campaign/paired/candidate/score/attempt-0001/receipt.json", "sha256": "sha256:d63ec9d1e38f6ffe835580b4aa0cf843dfa4971f18d01a95a922a101cfef701a"},
+    {"artifact": "campaign/paired/candidate/score/attempt-0001/native/summary.json", "sha256": "sha256:bb1ed9c37b49b44db2b291ae8572cd308d2e8bbf1f3e03d7ebfe8de265f96bea"},
+    {"artifact": "campaign/paired/candidate/score/attempt-0001/native/retrieval_scores.jsonl", "sha256": "sha256:15c6c21887bc405556efb5c313dfae325eadc61cec7ad6482ac4bde0e7a7f0d3"},
+    {"artifact": "campaign/paired/candidate/score/attempt-0001/native/knowledge_mapping.json", "sha256": "sha256:b5ffb0caa1353aeacb74bfa34253474ce911f48bc0ea16c7bb999e4c0d0e6a76"},
+    {"artifact": "campaign/paired/candidate/score/attempt-0001/native/recall_traces.jsonl", "sha256": "sha256:afd00457e88a0d17e1d6f9e13f804f10ee78bd674d7f20fa4fb91d5516879f6b"},
+    {"artifact": "historical/receipts/published-image-source-proofs.json", "sha256": "sha256:95dbcca52dcbdcf0e81537f24acbdd325c3c755f51b180c88bcf9c9b7310abec"},
+    {"artifact": "historical/receipts/native-runners.json", "sha256": "sha256:35f232e71ae5090bec07da91c3111dd7fce68100cd958eb5e7e2cc53b509d763"}
   ]
 }
