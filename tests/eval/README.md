@@ -190,7 +190,7 @@ Verify every generated filename and byte against the frozen seed before using
 it. An existing output path is rejected; failed derivation leaves inputs and
 existing output untouched. Keep generated seeds and full run outputs ignored.
 
-The paired release comparison remains separate work under issue #584. The separate [Recall accuracy cohort](recall_accuracy_v1.md) adds frozen explicit negative judgments. The [query-scoring experiment protocol](recall_accuracy_experiment.md) records #667's retained measurements and #668's deferred full comparison.
+The current [shared release comparison for #660 and #668](issues_660_668_shared_evaluation.md) records complete public imports and scoring with an incomplete evaluation conclusion. The [earlier failed comparison](issue_660_release_comparison.md) preserves the initial attempt and historical #584 evidence. The separate [Recall accuracy cohort](recall_accuracy_v1.md) adds frozen explicit negative judgments. The [query-scoring experiment protocol](recall_accuracy_experiment.md) records #667's retained measurements and #668's shared-release scope.
 Publishing this generator does not establish a completed comparison or
 retrieval-quality equivalence. Use each pinned release's native runner to
 validate the frozen seed before import and retain its recorded readiness

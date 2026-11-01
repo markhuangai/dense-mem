@@ -46,12 +46,14 @@ type PairStageIntent struct {
 	StartedAt     time.Time   `json:"started_at"`
 	Deadline      time.Time   `json:"deadline"`
 	Process       PairProcess `json:"process"`
+	Clock         *PairClock  `json:"monotonic,omitempty"`
 }
 
 type PairStageReceipt struct {
 	Intent     PairStageIntent   `json:"intent"`
 	FinishedAt time.Time         `json:"finished_at"`
 	Files      map[string]string `json:"files"`
+	Clock      *PairClock        `json:"monotonic,omitempty"`
 }
 
 type PairStageStart struct {
@@ -153,11 +155,15 @@ func BeginPairStage(c PairConfig, side, stage string, process PairProcess) (Pair
 			return result, err
 		}
 	}
+	clock, err := pairClockNow()
+	if err != nil {
+		return result, err
+	}
 	dir := filepath.Join(root, fmt.Sprintf("attempt-%04d", previous+1))
 	if err := os.Mkdir(dir, 0o700); err != nil {
 		return result, err
 	}
-	intent := PairStageIntent{SchemaVersion: PairSchema, ConfigHash: hash, Side: side, Stage: stage, Attempt: previous + 1, StartedAt: time.Now().UTC(), Deadline: c.Deadline, Process: process}
+	intent := PairStageIntent{SchemaVersion: PairSchema, ConfigHash: hash, Side: side, Stage: stage, Attempt: previous + 1, StartedAt: time.Now().UTC(), Deadline: c.Deadline, Process: process, Clock: clock}
 	if err := writePairJSON(filepath.Join(dir, "intent.json"), intent); err != nil {
 		return result, err
 	}
@@ -169,6 +175,13 @@ func BeginPairStage(c PairConfig, side, stage string, process PairProcess) (Pair
 		requests := make([]map[string]string, 0, len(corpus))
 		for _, item := range corpus {
 			hash, err := pairRequestHash(item)
+			release, releaseErr := pairRelease(c, side)
+			if releaseErr != nil {
+				return result, releaseErr
+			}
+			if pairLegacyRelease(release) {
+				hash, err = pairLegacyRequestHash(item)
+			}
 			if err != nil {
 				return result, err
 			}
@@ -215,7 +228,17 @@ func FinishPairStage(c PairConfig, dir string) error {
 	if err != nil {
 		return err
 	}
-	return writePairJSON(filepath.Join(dir, "receipt.json"), PairStageReceipt{Intent: intent, FinishedAt: time.Now().UTC(), Files: files})
+	var clock *PairClock
+	if intent.Clock != nil {
+		clock, err = pairClockNow()
+		if err != nil {
+			return err
+		}
+		if _, err := pairClockElapsed(intent.Clock, clock); err != nil {
+			return err
+		}
+	}
+	return writePairJSON(filepath.Join(dir, "receipt.json"), PairStageReceipt{Intent: intent, FinishedAt: time.Now().UTC(), Files: files, Clock: clock})
 }
 
 func VerifyPairStage(c PairConfig, dir string) error {
@@ -227,8 +250,11 @@ func VerifyPairStage(c PairConfig, dir string) error {
 	if err != nil {
 		return err
 	}
-	if receipt.Intent.ConfigHash != hash || receipt.Intent.SchemaVersion != PairSchema || receipt.FinishedAt.Before(receipt.Intent.StartedAt) {
+	if receipt.Intent.ConfigHash != hash || receipt.Intent.SchemaVersion != PairSchema || (receipt.Clock == nil && receipt.FinishedAt.Before(receipt.Intent.StartedAt)) {
 		return fmt.Errorf("paired stage receipt identity or time is invalid")
+	}
+	if _, err := pairClockElapsed(receipt.Intent.Clock, receipt.Clock); err != nil {
+		return err
 	}
 	files, err := pairArtifactHashes(dir)
 	if err != nil {
@@ -290,7 +316,7 @@ func validatePairStageOutputs(c PairConfig, intent PairStageIntent, dir string) 
 		if err := readPairJSON(filepath.Join(dir, "native-exit.json"), &exit); err != nil {
 			return err
 		}
-		if exit.Code == nil || *exit.Code != 0 || exit.FinishedAt.Before(intent.StartedAt) {
+		if exit.Code == nil || *exit.Code != 0 || (intent.Clock == nil && exit.FinishedAt.Before(intent.StartedAt)) {
 			return fmt.Errorf("native stage has no successful completion")
 		}
 	}

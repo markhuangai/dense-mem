@@ -2,6 +2,8 @@ package evalharness
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +15,38 @@ import (
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	"github.com/stretchr/testify/require"
 )
+
+func TestPairShellHTTPRequestsJSON(t *testing.T) {
+	script, err := filepath.Abs("../../tests/eval/scripts/paired_eval.sh")
+	require.NoError(t, err)
+	t.Setenv("PAIR_HTTP_TEST_TOKEN", "fixture-token")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Accept") != "application/json" {
+			http.Error(w, "unsupported Accept header", http.StatusNotAcceptable)
+			return
+		}
+		if r.Method != http.MethodPost || r.Header.Get("Content-Type") != "application/json" || r.Header.Get("Authorization") != "Bearer fixture-token" {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		var request struct {
+			Method string `json:"method"`
+		}
+		if json.NewDecoder(r.Body).Decode(&request) != nil || request.Method != "tools/list" {
+			http.Error(w, "invalid RPC", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"tools":[]}}`))
+	}))
+	defer server.Close()
+	command := exec.Command("bash", "-c", `set -Eeuo pipefail
+source "$1"
+pair_http "$2" PAIR_HTTP_TEST_TOKEN POST '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'`, "paired-http-test", script, server.URL)
+	output, err := command.CombinedOutput()
+	require.NoError(t, err, "%s", output)
+	require.JSONEq(t, `{"jsonrpc":"2.0","id":1,"result":{"tools":[]}}`, string(output))
+}
 
 func TestPairShellMaintenanceKeysRespectNativeContract(t *testing.T) {
 	script, err := filepath.Abs("../../tests/eval/scripts/paired_eval.sh")

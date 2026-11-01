@@ -84,6 +84,10 @@ honestly and makes the CLI exit nonzero.
 
 ## Deferred #668 execution
 
+The maintainer subsequently replaced this execution protocol with the
+[shared #660/#668 release campaign](issues_660_668_shared_evaluation.md).
+The remainder of this section records the earlier deferred contract.
+
 After #660 and the retrieval PR merge, separately approve and pin the retrieval
 merge commit and its first parent. Verify the code difference and matching native
 runners/images. Use one corrected scorer for both sides. The frozen public input

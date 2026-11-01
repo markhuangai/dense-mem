@@ -1,0 +1,340 @@
+{
+  "issue": 660,
+  "schema_version": "dense-mem.issue-660.release-comparison.v1",
+  "status": "incomplete_baseline_import_failed",
+  "comparison_complete": false,
+  "close_issue": false,
+  "observed_at": "2026-11-01T01:27:07.468615+00:00",
+  "audit_base": "92620e862446b31e5f20f34224c4dfd5f7c640fb",
+  "frozen_deadline": "2026-11-02T00:54:45.269317Z",
+  "baseline": {
+    "release": "v2.6.5",
+    "source_revision": "49ba9d36acaf19bde5a8ddbe7552fd04621d19bd",
+    "image_id": "sha256:188b8cedbd0b8f80b01ecde67e59b903f6e38090d5de9bf944b0f9f71a4f8ebf",
+    "runner": {
+      "sha256": "sha256:367d0bd6f0846670c84f0a21672c51cd1f92bf130c27b329fc3d9b843682665b",
+      "source_revision": "49ba9d36acaf19bde5a8ddbe7552fd04621d19bd"
+    },
+    "protocol": "none"
+  },
+  "candidate": {
+    "release": "v2.7.1-rc.17",
+    "source_revision": "92620e862446b31e5f20f34224c4dfd5f7c640fb",
+    "image_id": "sha256:9d7950d4bb3ce61b56d36574d0197105d7124bd29b428ad3eca6fee248a0079e",
+    "runner": {
+      "sha256": "sha256:91edcc7eafe4560a5086d9074e8d1b5a32d2ef4b9adc99c0c6ffb6922a7e4e9e",
+      "source_revision": "92620e862446b31e5f20f34224c4dfd5f7c640fb"
+    },
+    "protocol": "adr0014"
+  },
+  "scorer": {
+    "sha256": "sha256:91edcc7eafe4560a5086d9074e8d1b5a32d2ef4b9adc99c0c6ffb6922a7e4e9e",
+    "source_revision": "92620e862446b31e5f20f34224c4dfd5f7c640fb"
+  },
+  "inputs": {
+    "seed_id": "public_6axis_1k_v3",
+    "documents": 991,
+    "cases_per_side": 204,
+    "seed_hash": "sha256:0923aa14109291e5d5cf24fe419f0b6fc229823bf3dd4292e17d45447365e675",
+    "suite_sha256": "sha256:438a9742576ad5fa9a97c8edaa1e6b0550c740a812dfd3cf051cce68e632b17d"
+  },
+  "conditions": {
+    "import_concurrency": 10,
+    "declared_admission_limit": 10,
+    "verified_native_advisory_admission_cap": 4,
+    "admission_condition_conformant": false,
+    "postgres_pool": 25,
+    "candidate_ontology": {
+      "requested": {
+        "global": 8,
+        "team": 8,
+        "context_window_tokens": 500000
+      },
+      "activated": false,
+      "reason": "Monitor failed on baseline before candidate capacity/import stages."
+    }
+  },
+  "models": {
+    "configured_alias": "dense-mem-testing",
+    "maintainer_reported_backing_model": "gpt-6-luna",
+    "provider_reported_model": "dense-mem-testing",
+    "backing_revision": "unknown",
+    "embedding_model": "@cf/baai/bge-m3",
+    "embedding_dimensions": 1024,
+    "embedding_index_strategy": "vector_hnsw",
+    "optional_decisions": "disabled"
+  },
+  "completeness": {
+    "baseline": {
+      "side": "baseline",
+      "observed_at": "2026-11-01T01:27:04.930468+00:00",
+      "durable_attempts": 20,
+      "distinct_durable_sources": 5,
+      "completed_sources": 1,
+      "incomplete_sources": 990,
+      "outcomes": {
+        "failed": 19,
+        "completed": 1
+      },
+      "scored_cases": 0,
+      "expected_cases": 204,
+      "evidence_count": 1,
+      "search": "converged"
+    },
+    "candidate": {
+      "side": "candidate",
+      "observed_at": "2026-11-01T01:27:07.468615+00:00",
+      "durable_attempts": 0,
+      "distinct_durable_sources": 0,
+      "completed_sources": 0,
+      "incomplete_sources": 991,
+      "outcomes": {},
+      "scored_cases": 0,
+      "expected_cases": 204,
+      "evidence_count": 0,
+      "search": "converged"
+    }
+  },
+  "invocations": {
+    "logged_completed_invocations": 63,
+    "distinct_logged_invocation_ids": 63,
+    "distinct_logged_request_hashes": 11,
+    "invocation_phases": {
+      "idempotency_lock": 43,
+      "commit": 19,
+      "assessment": 1
+    },
+    "invocation_error_codes": {
+      "database_failure": 43,
+      "request_timeout": 19,
+      "None": 1
+    },
+    "processing_failure_codes": {
+      "semantic_commit_timeout": 18,
+      "null": 1
+    },
+    "processing_failed_stages": {
+      "relationships": 16,
+      "null": 1,
+      "predicate_resolution": 1,
+      "search_documents": 1
+    },
+    "limitation": "Request hashes and invocation logs do not prove complete scheduled/dispatched accounting; no complete client operation timings or usage total is inferred."
+  },
+  "usage": {
+    "assessor": {
+      "captured_exchanges": 25,
+      "with_usage": 24,
+      "without_usage": 1,
+      "reported_models": [
+        "dense-mem-testing"
+      ],
+      "reported_system_fingerprints": [],
+      "reported_input_tokens": 454116,
+      "reported_output_tokens": 13166,
+      "reported_total_tokens": 467282
+    },
+    "embedding": {
+      "captured_exchanges": 38,
+      "with_usage": 0,
+      "without_usage": 38,
+      "reported_models": [],
+      "reported_system_fingerprints": [],
+      "reported_input_tokens": null,
+      "reported_output_tokens": null,
+      "reported_total_tokens": null
+    },
+    "limitations": [
+      "Invocation diagnostics only; attempt diagnostics are not added again.",
+      "Captured exchange usage is a reported subtotal; missing responses or usage remain unknown.",
+      "Input/output aliases are alternatives, not additive counts.",
+      "No complete-client operation timing or billed-cost total is inferred."
+    ]
+  },
+  "timing": {
+    "baseline_import_started_at": "2026-11-01T01:19:39.110532793Z",
+    "baseline_import_finished_at": "2026-11-01T01:26:27.155651160Z",
+    "baseline_import_utc_elapsed_seconds": 408.045119,
+    "monitor_utc_elapsed_seconds": 422.02712,
+    "monitor_monotonic_elapsed_seconds": 397.9871007919937,
+    "limitation": "UTC interval and outer monotonic receipt disagree; do not infer precise processing performance."
+  },
+  "measurements": {
+    "quality": null,
+    "per_axis_quality": null,
+    "case_regressions": null,
+    "recall_latency": null,
+    "release_speedup": null,
+    "distinct_ontology_work": null,
+    "repeated_ontology_work": null,
+    "billed_cost": null
+  },
+  "failure": {
+    "native_exit_code": 1,
+    "native_error": "Import returned a structured tool error: Dense-Mem could not confirm that the operation was saved.",
+    "verified_admission_owner": "internal/storage/postgres/lockadmission/admission.go:maxSharedAdmissionLimit=4; internal/knowledge/postgres/advisory_lock_admission.go:sharedAdvisoryLockAdmissionLimit=4",
+    "commit_timeout_root_cause": "not established",
+    "semantic_restarts": 0
+  },
+  "historical_foundations": {
+    "artifact_hashes": {
+      "tests/eval/baselines/issue_658_coalescing.json": "sha256:912d87a900705be76a7ed0bae8af01a7f827dd9f99ab0a4664779b6b7fb81725",
+      "tests/eval/issue_658_coalescing.md": "sha256:782d0e9274ef981132762ef04b02d82a0748ac5118a556f043dd339ba92ff0a6",
+      "tests/eval/issue_659_matching.md": "sha256:3d91bb13c0c08a76512aa2ac9973dc0d386b055d6c761e8522f4f26ae1df2290",
+      "tests/eval/baselines/ontology_matching_v1.json": "sha256:9574a54a364534bc9e239f83ab006d0315648c1aa65dde6a1410231072547b78",
+      "tests/eval/source_locks/ontology_matching_v1.json": "sha256:168e3d3e1ec2b8e127a10c0884cd23a7d6d42d6ca107559869c1526a10453dd2",
+      "internal/evalharness/organization_matching_cohort.go": "sha256:a36d044ba70b39440392981fdba59a2afad4006e943147af229c81df0fd12764"
+    },
+    "t01_remote": {
+      "source_sha": "0c12f681d218782371714fc9cda0e6ca041241d1",
+      "run_url": "https://github.com/markhuangai/dense-mem/actions/runs/40629690372",
+      "pairs_per_shape": 5,
+      "overlap_median_seconds": {
+        "sequential": 47.482,
+        "combined": 2.53
+      },
+      "overlap_freshness_checks": {
+        "sequential": 2000,
+        "combined": 100
+      },
+      "disjoint_median_seconds": {
+        "sequential": 2.476,
+        "combined": 2.442
+      },
+      "disjoint_freshness_checks": {
+        "sequential": 100,
+        "combined": 100
+      },
+      "scope": "Isolated discovery comparisons, not full release speedup.",
+      "evidence": "receipts/historical-pr-661.json"
+    },
+    "t02_retained": {
+      "live_repetitions": {
+        "complete_pass": [
+          2,
+          3
+        ],
+        "failed": [
+          1,
+          4
+        ]
+      },
+      "cases_per_repetition": 17,
+      "limitation": "Third clean native repetition unachieved; request-ID faults retained; repetition 4 also includes accepted Unicode false-negative. #659-only exception does not waive #660 requirements.",
+      "model_alias": "dense-mem",
+      "maintainer_reported_backing_model": "gpt-6-luna",
+      "backing_revision": "unknown",
+      "evidence": "receipts/historical-pr-688.json"
+    }
+  },
+  "local_validation": {
+    "plan_audit_round": 5,
+    "plan_audit_verdict": "conformant_before_tests",
+    "evaluator_suite_seconds": 648.2930227280012,
+    "evaluator_suite_passed": true,
+    "vet_passed": true,
+    "decision_deployment_tests_passed": 3,
+    "pre_pr_development_selection": "PostgreSQL shard 5, including server/TestPairedEvaluationRealServiceResumeFreezeAndCommonScore",
+    "remote_validation": "pending_publication",
+    "evaluation_build_passed": true
+  },
+  "limitations": [
+    "The manifest admission claim was not established by preflight; native sources cap this path at four.",
+    "No complete import mapping, frozen capture, common score, recall case or recall latency exists.",
+    "The 11 distinct logged request hashes do not prove complete scheduled/dispatched accounting.",
+    "Captured usage is a subtotal; unavailable usage and billed cost are unknown.",
+    "Historical 41+ hour mixed-release evidence is separate and does not establish a controlled speedup.",
+    "Historical T01/T02 conditions and exceptions do not waive this failed comparison.",
+    "Failed evidence and task-owned runtimes are retained; #660 remains open."
+  ],
+  "artifact_hashes": [
+    {
+      "artifact": "pair-config.json",
+      "sha256": "sha256:204ab33addcbd5fa6b3325bb77832381874357bbe50533fd0fb7833170b63ede"
+    },
+    {
+      "artifact": "receipts/native-runners.json",
+      "sha256": "sha256:35f232e71ae5090bec07da91c3111dd7fce68100cd958eb5e7e2cc53b509d763"
+    },
+    {
+      "artifact": "receipts/published-image-source-proofs.json",
+      "sha256": "sha256:95dbcca52dcbdcf0e81537f24acbdd325c3c755f51b180c88bcf9c9b7310abec"
+    },
+    {
+      "artifact": "receipts/control-runner-v2-frozen.json",
+      "sha256": "sha256:f9c02433ad2b5e8670eeb3c3736e7e647b078be217a1a515fd0923c781baeb8a"
+    },
+    {
+      "artifact": "receipts/plan-audit-round-5.json",
+      "sha256": "sha256:7f7f625a9df53ce37c8c8e84380f4dbbe15432bdf60bb13e6604b01a3538c443"
+    },
+    {
+      "artifact": "receipts/local-final-evaluator.json",
+      "sha256": "sha256:57084be4e6585c11d8a2b3b3ff966b42398180abdce8f68ebda8482924969362"
+    },
+    {
+      "artifact": "receipts/local-evaluation-build.json",
+      "sha256": "sha256:96d9b620ea49bd3530beb85f92088009a1e309cff7d4614795e00c290a413851"
+    },
+    {
+      "artifact": "receipts/decision-deployment-local.json",
+      "sha256": "sha256:910eac671cba7efef10c41f84869ab35623a755203d7c89b394c9a853de6c215"
+    },
+    {
+      "artifact": "receipts/paired-monitor-launch-1.log",
+      "sha256": "sha256:01df641fe8c641cb39a970c7399fe5e39073e1c5ac0b235605f960d5865ac6c8"
+    },
+    {
+      "artifact": "receipts/paired-monitor-launch-2.log",
+      "sha256": "sha256:24010f40ea671c34a9a8c5ab5de3823d697c680268604481e7f5b4891aca26f2"
+    },
+    {
+      "artifact": "receipts/paired-monitor-launch-3.json",
+      "sha256": "sha256:510092871784cb3338c8bf042f87156ba5616269f03e38d1fbbacdc63a9437eb"
+    },
+    {
+      "artifact": "paired/baseline/import/attempt-0001/intent.json",
+      "sha256": "sha256:1cfdb484efa719f1bf142bbfc53c176bc011ef2a0c39667aeac6b5098914f289"
+    },
+    {
+      "artifact": "paired/baseline/import/attempt-0001/native-exit.json",
+      "sha256": "sha256:1b0834b78821d881ba978c77850a936f78e81029c3505e7a3e240b8542daedea"
+    },
+    {
+      "artifact": "paired/baseline/import/attempt-0001/native.log",
+      "sha256": "sha256:40f77208fd3a12467e24f883dec450319a6095d23b89ea756250d9a8c11fe44b"
+    },
+    {
+      "artifact": "paired/baseline/import/attempt-0001/failure.json",
+      "sha256": "sha256:bc484069bd6d27fd7424962da277510d5bb0e9da87275fbd7e0e83cb7efb3fb9"
+    },
+    {
+      "artifact": "receipts/baseline-terminal-snapshot.json",
+      "sha256": "sha256:4048db8b21e90e98d508f554844ffaa2e33878b317f6141a1ed66435b9039b5f"
+    },
+    {
+      "artifact": "receipts/candidate-terminal-snapshot.json",
+      "sha256": "sha256:11957f3edc1d2c1b8a074e28a1d2deaa2998c5227b3031d5967234c48501102e"
+    },
+    {
+      "artifact": "receipts/baseline-final-invocation-summary.json",
+      "sha256": "sha256:08d90c04b3ccdf384adf7f8fa5f3d1ad77b985a85538d52fb3dd7179f3a0dd76"
+    },
+    {
+      "artifact": "receipts/baseline-provider-usage-summary.json",
+      "sha256": "sha256:915cceb384772aaf4e1ad28853bed72eeac2ff72c378185bbf274372cc6dbc96"
+    },
+    {
+      "artifact": "receipts/historical-pr-661.json",
+      "sha256": "sha256:7af12b232a360c495a6d5715d2e6018571780fc66b8a5bec09fcb32d2a56f54d"
+    },
+    {
+      "artifact": "receipts/historical-pr-688.json",
+      "sha256": "sha256:fae4cd4dd44fc55f04556a96164ce95f66c16af3c6c88c8021ffeb8a2807be76"
+    },
+    {
+      "artifact": "receipts/local-final-evaluation-build.json",
+      "sha256": "sha256:b5bbdbf0d0c3d71ae5086bf294e8ea46bba25dcc5d2c5450f3c750f5ed0b1fcd"
+    }
+  ]
+}

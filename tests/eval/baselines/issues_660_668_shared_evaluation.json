@@ -1,0 +1,953 @@
+{
+  "schema_version": "dense-mem.issues-660-668.shared-evaluation.v1",
+  "status": "incomplete",
+  "issues": {
+    "660": {"successful_conclusion": false, "close_issue": false, "reason": "candidate ontology/projection coverage incomplete; work counters and complete usage unavailable"},
+    "668": {"successful_conclusion": false, "close_issue": false, "reason": "nDCG@10 did not improve, Recall@10 declined, candidate coverage incomplete, adverse safety unmeasured"}
+  },
+  "run_id": "issues-660-668-shared-campaign-20261101",
+  "audit_base": "92620e862446b31e5f20f34224c4dfd5f7c640fb",
+  "frozen_deadline": "2026-11-02T02:56:21.130988Z",
+  "campaign_exit": {"exit_code": 1, "finished_at": "2026-11-01T08:22:32.482769+00:00"},
+  "conditions": {
+    "import_concurrency": 4,
+    "verified_native_admission_limit": 4,
+    "postgres_pool": 25,
+    "log_level": "info",
+    "assessment_timeout_seconds": 160,
+    "commit_timeout_seconds": 10,
+    "candidate_ontology": {"global": 8, "team": 8, "context_window_tokens": 500000},
+    "optional_decision_tasks": "disabled",
+    "live_AI_DECISION_experiment": "maintainer-approved deferral"
+  },
+  "models": {
+    "configured_alias": "dense-mem-testing",
+    "maintainer_provided_backing_model": "gpt-6-luna",
+    "runtime_reported_model": "dense-mem-testing",
+    "backing_revision": "unknown",
+    "embedding_model": "@cf/baai/bge-m3",
+    "embedding_dimensions": 1024
+  },
+  "qualification": {
+    "status": "qualified",
+    "releases": {
+      "baseline": {
+        "completed_sources": 5,
+        "client_submissions": 5,
+        "durable_attempts": 5,
+        "admission_failures": 0,
+        "commit_failures": 0,
+        "durable_exact_evidence_scope_search_verified": true,
+        "client_operation_seconds": [9.665886346, 6.423188734, 8.631290154, 18.36561387, 7.9825644350000005]
+      },
+      "candidate": {
+        "completed_sources": 5,
+        "client_submissions": 5,
+        "durable_attempts": 5,
+        "admission_failures": 0,
+        "commit_failures": 0,
+        "durable_exact_evidence_scope_search_verified": true,
+        "client_operation_seconds": [7.847747396, 8.71408455, 11.231747595, 8.028556105, 7.591846558]
+      }
+    }
+  },
+  "releases": {
+    "baseline": {
+      "identity": {
+        "release": "v2.6.5",
+        "source_revision": "49ba9d36acaf19bde5a8ddbe7552fd04621d19bd",
+        "image_id": "sha256:2751acd44eb61787bb5aaccde8843548815bdbc396f8c91d78a174e1a018f88b",
+        "runner_sha256": "sha256:367d0bd6f0846670c84f0a21672c51cd1f92bf130c27b329fc3d9b843682665b",
+        "protocol": "none"
+      },
+      "published_production_image": {
+        "release": "v2.6.5",
+        "platform_manifest": "sha256:ad2706056607b0a63372b3f377d79b114f443f689725e9b2987344361329d29d",
+        "architecture": "amd64",
+        "source_revision": "49ba9d36acaf19bde5a8ddbe7552fd04621d19bd",
+        "version_label": "v2.6.5-rc.17",
+        "variant": "production"
+      },
+      "completed_imports": 991,
+      "readiness": {
+        "ready": true,
+        "complete": true,
+        "waiting_for": [],
+        "incomplete_reasons": []
+      },
+      "state": {
+        "enabled": false,
+        "paused": false,
+        "coverage_complete": true,
+        "eligible": 0,
+        "organized": 0,
+        "pending": 0,
+        "failed": 0,
+        "ambiguous": 0,
+        "active_work": 0,
+        "active_batches": 0,
+        "active_preparations": 0,
+        "active_projections": 0,
+        "pending_projections": 0,
+        "failed_projections": 0,
+        "projection_coverage_complete": true,
+        "search_converged": true,
+        "canonical_hash": "sha256:3310bad8043528dba2ff88be72dd20eb2de1f0423015050557cf3cef716ba117",
+        "source_hash": "sha256:0e5c24fe661af40ff744012874a0d0ee60ff28fa53f786951956f323e5038def"
+      },
+      "quality_metrics": {
+        "case_count": 204,
+        "scored_case_count": 204,
+        "unmapped_source_refs": 0,
+        "average_recall_at_k": 0.8937908496732027,
+        "average_mrr": 0.8534099751011515,
+        "average_ndcg_at_k": 0.834013892326463,
+        "average_bad_at_k": 0,
+        "required_rank1_rate": 0.8088235294117647,
+        "bad_rank1_rate": 0
+      },
+      "per_axis_quality": {
+        "scifact": {
+          "case_count": 25,
+          "average_recall_at_k": 1,
+          "average_mrr": 0.825,
+          "average_ndcg_at_k": 0.8680214802887337,
+          "average_bad_at_k": 0
+        },
+        "msmarco": {
+          "case_count": 84,
+          "average_recall_at_k": 1,
+          "average_mrr": 0.9845238095238096,
+          "average_ndcg_at_k": 0.9883069352476904,
+          "average_bad_at_k": 0
+        },
+        "hotpotqa": {
+          "case_count": 13,
+          "average_recall_at_k": 0.9230769230769231,
+          "average_mrr": 1,
+          "average_ndcg_at_k": 0.9404841835023782,
+          "average_bad_at_k": 0
+        },
+        "musique": {
+          "case_count": 27,
+          "average_recall_at_k": 0.8518518518518519,
+          "average_mrr": 0.9814814814814815,
+          "average_ndcg_at_k": 0.8243734755420938,
+          "average_bad_at_k": 0
+        },
+        "qasper": {
+          "case_count": 46,
+          "average_recall_at_k": 0.6376811594202898,
+          "average_mrr": 0.5167529330572809,
+          "average_ndcg_at_k": 0.5117828146131609,
+          "average_bad_at_k": 0
+        },
+        "longmem_oracle": {
+          "case_count": 9,
+          "average_recall_at_k": 1,
+          "average_mrr": 0.8333333333333334,
+          "average_ndcg_at_k": 0.8215696410223639,
+          "average_bad_at_k": 0
+        }
+      },
+      "branch_availability": {"context_scored_case_count": 0, "evidence_scored_case_count": 95, "dream_scored_case_count": 0},
+      "server_recall_ms": {
+        "mean": 194.23039215686273,
+        "p50": 166,
+        "p95": 357,
+        "p99": 583
+      },
+      "ingestion_accounting": {
+        "side": "baseline",
+        "invocation_count": 1035,
+        "durable_attempt_count": 1035,
+        "completed_sources": 991,
+        "invocation_outcomes": {"cancelled": 31, "completed": 991, "failed": 13},
+        "invocation_classifications": {"execution": 1035},
+        "attempt_outcomes": {"completed": 991, "failed": 44},
+        "assessor_turns": 1194,
+        "provider_components": {
+          "embedding": {
+            "exchanges": 1704,
+            "http_status": {"200": 1701, "0": 2, "409": 1},
+            "capture_states": {"captured": 1702, "no_response": 2},
+            "requested_models": {"@cf/baai/bge-m3": 1704},
+            "response_reported_models": {},
+            "usage_available": 0,
+            "usage_unavailable": 1704,
+            "usage_unparseable": 0,
+            "reported_prompt_tokens": null,
+            "reported_completion_tokens": null,
+            "reported_total_tokens": null,
+            "usage_field_availability": {}
+          },
+          "assessor": {
+            "exchanges": 1223,
+            "http_status": {"0": 29, "200": 1194},
+            "capture_states": {"unavailable": 1223},
+            "requested_models": {"dense-mem-testing": 1223},
+            "response_reported_models": {"dense-mem-testing": 1194},
+            "usage_available": 1194,
+            "usage_unavailable": 29,
+            "usage_unparseable": 0,
+            "reported_prompt_tokens": 61124262,
+            "reported_completion_tokens": 635152,
+            "reported_total_tokens": 61759414,
+            "usage_field_availability": {"prompt_tokens": 1194, "completion_tokens": 1194, "total_tokens": 1194}
+          }
+        },
+        "identity": "unique retained invocation_id + sequence_no; attempt diagnostics are not added again",
+        "limitation": "Reported token sums cover only available fields. Missing usage and monetary cost remain unknown.",
+        "raw_sha256": "sha256:946b1cf3641d7f183c29a1e47771ced6084b9921bb7350a222f355d77ccdfe1b"
+      },
+      "ingestion_reconciliation": {
+        "durable_attempts_per_source": 1.0443995963673058,
+        "attempts_per_source_histogram": {"1": 949, "2": 40, "3": 2},
+        "typed_errors": [
+          {
+            "code": "embedding_unavailable",
+            "component": "remember.embedding",
+            "retryable": true,
+            "count": 1
+          },
+          {
+            "code": "provider_response_invalid",
+            "component": "remember.assessment",
+            "retryable": true,
+            "count": 12
+          },
+          {
+            "code": "request_timeout",
+            "component": "remember.assessment",
+            "retryable": true,
+            "count": 29
+          },
+          {
+            "code": "request_timeout",
+            "component": "remember.embedding",
+            "retryable": true,
+            "count": 2
+          }
+        ],
+        "remember_invocation_duration": {
+          "boundary": "native server Remember invocation duration; not complete client operation",
+          "available_invocations": 1035,
+          "mean_ms": 19060.761352657006,
+          "p50_ms": 13613,
+          "p95_ms": 31088,
+          "p99_ms": 163815
+        },
+        "unavailable_capture_state_with_retained_response": 1194,
+        "capture_state_note": "Retained response bodies with reported usage are separately parsed and hashed; older capture-state labels alone do not establish missing bodies."
+      }
+    },
+    "candidate": {
+      "identity": {
+        "release": "v2.7.1-rc.17",
+        "source_revision": "92620e862446b31e5f20f34224c4dfd5f7c640fb",
+        "image_id": "sha256:5ed81bb5d7aa53bc1ad25daa9d98176bfd0bd125b4fca3ba9ee4bebb6b537320",
+        "runner_sha256": "sha256:91edcc7eafe4560a5086d9074e8d1b5a32d2ef4b9adc99c0c6ffb6922a7e4e9e",
+        "protocol": "adr0014"
+      },
+      "published_production_image": {
+        "release": "v2.7.1-rc.17",
+        "platform_manifest": "sha256:4e4f4b69db49ce2c3a854f71d089635e3e0fadb0fbc41451ba28c21a95fc3e18",
+        "architecture": "amd64",
+        "source_revision": "92620e862446b31e5f20f34224c4dfd5f7c640fb",
+        "version_label": "v2.7.1-rc.17",
+        "variant": "production"
+      },
+      "completed_imports": 991,
+      "readiness": {
+        "ready": true,
+        "complete": false,
+        "waiting_for": [],
+        "incomplete_reasons": ["ontology_coverage", "projection_coverage"]
+      },
+      "state": {
+        "enabled": true,
+        "paused": true,
+        "coverage_complete": false,
+        "eligible": 3651,
+        "organized": 3004,
+        "pending": 0,
+        "failed": 417,
+        "ambiguous": 230,
+        "active_work": 0,
+        "active_batches": 0,
+        "active_preparations": 0,
+        "active_projections": 0,
+        "pending_projections": 0,
+        "failed_projections": 0,
+        "projection_coverage_complete": false,
+        "search_converged": true,
+        "canonical_hash": "sha256:e7c28fb9d470b06354ddfee07a55c4265cbfa8da5de4baf3a238e8190b96d49d",
+        "source_hash": "sha256:e9b52f8836813ef9e06f62d009e3f836e5453f260e61855967d8e718b453f920"
+      },
+      "quality_metrics": {
+        "case_count": 204,
+        "scored_case_count": 204,
+        "unmapped_source_refs": 0,
+        "average_recall_at_k": 0.893545751633987,
+        "average_mrr": 0.8534099751011515,
+        "average_ndcg_at_k": 0.8338554799538835,
+        "average_bad_at_k": 0,
+        "required_rank1_rate": 0.8088235294117647,
+        "bad_rank1_rate": 0
+      },
+      "per_axis_quality": {
+        "scifact": {
+          "case_count": 25,
+          "average_recall_at_k": 1,
+          "average_mrr": 0.825,
+          "average_ndcg_at_k": 0.8680214802887337,
+          "average_bad_at_k": 0
+        },
+        "msmarco": {
+          "case_count": 84,
+          "average_recall_at_k": 1,
+          "average_mrr": 0.9845238095238096,
+          "average_ndcg_at_k": 0.9883069352476904,
+          "average_bad_at_k": 0
+        },
+        "hotpotqa": {
+          "case_count": 13,
+          "average_recall_at_k": 0.9230769230769231,
+          "average_mrr": 1,
+          "average_ndcg_at_k": 0.9404841835023782,
+          "average_bad_at_k": 0
+        },
+        "musique": {
+          "case_count": 27,
+          "average_recall_at_k": 0.8518518518518519,
+          "average_mrr": 0.9814814814814815,
+          "average_ndcg_at_k": 0.8243734755420938,
+          "average_bad_at_k": 0
+        },
+        "qasper": {
+          "case_count": 46,
+          "average_recall_at_k": 0.6365942028985507,
+          "average_mrr": 0.5167529330572809,
+          "average_ndcg_at_k": 0.5110802901782434,
+          "average_bad_at_k": 0
+        },
+        "longmem_oracle": {
+          "case_count": 9,
+          "average_recall_at_k": 1,
+          "average_mrr": 0.8333333333333334,
+          "average_ndcg_at_k": 0.8215696410223639,
+          "average_bad_at_k": 0
+        }
+      },
+      "branch_availability": {"context_scored_case_count": 0, "evidence_scored_case_count": 95, "dream_scored_case_count": 0},
+      "server_recall_ms": {
+        "mean": 438.22058823529414,
+        "p50": 404,
+        "p95": 568,
+        "p99": 915
+      },
+      "ingestion_accounting": {
+        "side": "candidate",
+        "invocation_count": 1011,
+        "durable_attempt_count": 1011,
+        "completed_sources": 991,
+        "invocation_outcomes": {"completed": 991, "failed": 9, "cancelled": 11},
+        "invocation_classifications": {"execution": 1011},
+        "attempt_outcomes": {"completed": 991, "failed": 20},
+        "assessor_turns": 1147,
+        "provider_components": {
+          "embedding": {
+            "exchanges": 1765,
+            "http_status": {"200": 1765},
+            "capture_states": {"captured": 1765},
+            "requested_models": {"@cf/baai/bge-m3": 1765},
+            "response_reported_models": {},
+            "usage_available": 0,
+            "usage_unavailable": 1765,
+            "usage_unparseable": 0,
+            "reported_prompt_tokens": null,
+            "reported_completion_tokens": null,
+            "reported_total_tokens": null,
+            "usage_field_availability": {}
+          },
+          "assessor": {
+            "exchanges": 1158,
+            "http_status": {"200": 1147, "0": 11},
+            "capture_states": {"captured": 1147, "no_response": 11},
+            "requested_models": {"dense-mem-testing": 1158},
+            "response_reported_models": {"dense-mem-testing": 1147},
+            "usage_available": 1147,
+            "usage_unavailable": 11,
+            "usage_unparseable": 0,
+            "reported_prompt_tokens": 59250155,
+            "reported_completion_tokens": 682671,
+            "reported_total_tokens": 59932826,
+            "usage_field_availability": {"prompt_tokens": 1147, "completion_tokens": 1147, "total_tokens": 1147}
+          }
+        },
+        "identity": "unique retained invocation_id + sequence_no; attempt diagnostics are not added again",
+        "limitation": "Reported token sums cover only available fields. Missing usage and monetary cost remain unknown.",
+        "raw_sha256": "sha256:9e64c740fbcc46e297ca33377038c025e3dc342ba8fbb792a12f3e5c103f94d4"
+      },
+      "ingestion_reconciliation": {
+        "durable_attempts_per_source": 1.0201816347124117,
+        "attempts_per_source_histogram": {"1": 972, "2": 18, "3": 1},
+        "typed_errors": [
+          {
+            "code": "provider_response_invalid",
+            "component": "remember.assessment",
+            "retryable": true,
+            "count": 9
+          },
+          {
+            "code": "request_timeout",
+            "component": "remember.assessment",
+            "retryable": true,
+            "count": 11
+          }
+        ],
+        "remember_invocation_duration": {
+          "boundary": "native server Remember invocation duration; not complete client operation",
+          "available_invocations": 1011,
+          "mean_ms": 18187.86350148368,
+          "p50_ms": 14764,
+          "p95_ms": 32378,
+          "p99_ms": 163292
+        },
+        "unavailable_capture_state_with_retained_response": 0,
+        "capture_state_note": "Retained response bodies with reported usage are separately parsed and hashed; older capture-state labels alone do not establish missing bodies."
+      }
+    }
+  },
+  "scorer": {"sha256": "sha256:91edcc7eafe4560a5086d9074e8d1b5a32d2ef4b9adc99c0c6ffb6922a7e4e9e", "source_revision": "92620e862446b31e5f20f34224c4dfd5f7c640fb"},
+  "inputs": {
+    "documents": 991,
+    "cases_per_release": 204,
+    "seed_hash": "sha256:0923aa14109291e5d5cf24fe419f0b6fc229823bf3dd4292e17d45447365e675",
+    "suite_sha256": "sha256:438a9742576ad5fa9a97c8edaa1e6b0550c740a812dfd3cf051cce68e632b17d"
+  },
+  "stages": [
+    {
+      "side": "baseline",
+      "stage": "validate",
+      "attempt": 1,
+      "status": "completed",
+      "started_at": "2026-11-01T02:56:48.232464387Z",
+      "finished_at": "2026-11-01T02:56:48.551413206Z",
+      "elapsed_seconds": 0.319305494
+    },
+    {
+      "side": "candidate",
+      "stage": "validate",
+      "attempt": 1,
+      "status": "completed",
+      "started_at": "2026-11-01T02:56:50.207458619Z",
+      "finished_at": "2026-11-01T02:56:50.586132743Z",
+      "elapsed_seconds": 0.379012
+    },
+    {
+      "side": "baseline",
+      "stage": "capacity",
+      "attempt": 1,
+      "status": "completed",
+      "started_at": "2026-11-01T02:56:52.07679904Z",
+      "finished_at": "2026-11-01T02:56:52.671036384Z",
+      "elapsed_seconds": 0.594569027
+    },
+    {
+      "side": "baseline",
+      "stage": "import",
+      "attempt": 1,
+      "status": "completed",
+      "started_at": "2026-11-01T02:56:52.777960139Z",
+      "finished_at": "2026-11-01T04:27:04.704874117Z",
+      "elapsed_seconds": 5052.492667817
+    },
+    {
+      "side": "baseline",
+      "stage": "drain",
+      "attempt": 1,
+      "status": "completed",
+      "started_at": "2026-11-01T04:27:04.820226814Z",
+      "finished_at": "2026-11-01T04:27:09.533498194Z",
+      "elapsed_seconds": 4.713597601
+    },
+    {
+      "side": "baseline",
+      "stage": "capture",
+      "attempt": 1,
+      "status": "completed",
+      "started_at": "2026-11-01T04:27:09.64716519Z",
+      "finished_at": "2026-11-01T04:28:08.683785399Z",
+      "elapsed_seconds": 54.598109155
+    },
+    {
+      "side": "baseline",
+      "stage": "score",
+      "attempt": 1,
+      "status": "completed",
+      "started_at": "2026-11-01T04:28:10.618374811Z",
+      "finished_at": "2026-11-01T04:28:12.338072562Z",
+      "elapsed_seconds": 1.720032271
+    },
+    {
+      "side": "candidate",
+      "stage": "capacity",
+      "attempt": 1,
+      "status": "completed",
+      "started_at": "2026-11-01T04:28:12.454030626Z",
+      "finished_at": "2026-11-01T04:29:18.388408169Z",
+      "elapsed_seconds": 61.462492887
+    },
+    {
+      "side": "candidate",
+      "stage": "import",
+      "attempt": 1,
+      "status": "completed",
+      "started_at": "2026-11-01T04:29:18.503242606Z",
+      "finished_at": "2026-11-01T05:52:42.488428075Z",
+      "elapsed_seconds": 4637.185070231
+    },
+    {
+      "side": "candidate",
+      "stage": "drain",
+      "attempt": 1,
+      "status": "completed",
+      "started_at": "2026-11-01T05:52:42.625117296Z",
+      "finished_at": "2026-11-01T08:20:25.681285711Z",
+      "elapsed_seconds": 8132.754493191
+    },
+    {
+      "side": "candidate",
+      "stage": "capture",
+      "attempt": 1,
+      "status": "completed",
+      "started_at": "2026-11-01T08:20:25.783626058Z",
+      "finished_at": "2026-11-01T08:22:18.307957886Z",
+      "elapsed_seconds": 103.746320005
+    },
+    {
+      "side": "candidate",
+      "stage": "score",
+      "attempt": 1,
+      "status": "completed",
+      "started_at": "2026-11-01T08:22:23.465284836Z",
+      "finished_at": "2026-11-01T08:22:25.243349265Z",
+      "elapsed_seconds": 1.778375327
+    }
+  ],
+  "control": {
+    "verification": {
+      "status": "passed",
+      "primary_proof_sha256": "28fdbf8a42bb9acbadb2309bb53284c4e8366eb4ece5c60fa4ba73f9cf44daef",
+      "primary_report_status": "incomplete",
+      "source_canonical_and_ontology_content_unchanged": true,
+      "enabled_and_paused_restored": true,
+      "interpretation": "grouping and discovery disabled together; same semantic state"
+    },
+    "quality_metrics": {
+      "case_count": 204,
+      "scored_case_count": 204,
+      "unmapped_source_refs": 0,
+      "average_recall_at_k": 0.893545751633987,
+      "average_mrr": 0.8534099751011515,
+      "average_ndcg_at_k": 0.8338554799538835,
+      "average_bad_at_k": 0,
+      "required_rank1_rate": 0.8088235294117647,
+      "bad_rank1_rate": 0
+    },
+    "quality_matches_primary_cases": 204,
+    "server_recall_ms": {
+      "mean": 232.98039215686273,
+      "p50": 189,
+      "p95": 463,
+      "p99": 748
+    }
+  },
+  "regression": {
+    "case_id": "public_6axis_v1:qasper:dev:1605.06083:6d4400f45bd97b812e946b8a682b018826e841f1",
+    "original_gold_source_count": 5,
+    "explanation": "The first relevant result remains at rank 2. Baseline Remember maps gold:1:0 and gold:4:0, which have different original content hashes, to one canonical evidence ID; candidate maps them to two distinct evidence IDs. The common scorer therefore normalizes by 4 versus 5 relevant canonical refs. This explains the only primary metric change and does not establish a ranking-position regression. Independent model-generated semantic states confound release-quality attribution.",
+    "sides": {
+      "baseline": {
+        "sources": [
+          {
+            "source_doc_id": "public_6axis_v1:qasper:dev:1605.06083:6d4400f45bd97b812e946b8a682b018826e841f1:gold:0:0",
+            "content_sha256": "246ffaad2a2b8745cb9419477bebf6ac969bec7ac974fd3b8f0c94a02d528a05",
+            "canonical_evidence_id": "fa268aba-8a89-4e08-9894-0ef623891b4b",
+            "native_public_result_content_hash": "sha256:246ffaad2a2b8745cb9419477bebf6ac969bec7ac974fd3b8f0c94a02d528a05"
+          },
+          {
+            "source_doc_id": "public_6axis_v1:qasper:dev:1605.06083:6d4400f45bd97b812e946b8a682b018826e841f1:gold:1:0",
+            "content_sha256": "f65adf28739ba5e4ebdf06860df1bf901947742dc54cc7aff9f3080dc76e9127",
+            "canonical_evidence_id": "1b65a50a-fa91-4828-bfc7-62d1a5bcaf30",
+            "native_public_result_content_hash": "sha256:f65adf28739ba5e4ebdf06860df1bf901947742dc54cc7aff9f3080dc76e9127"
+          },
+          {
+            "source_doc_id": "public_6axis_v1:qasper:dev:1605.06083:6d4400f45bd97b812e946b8a682b018826e841f1:gold:2:0",
+            "content_sha256": "14275a44ff473a914cfb07c8aa1fbdbe3d0d2bf84d3ef0915704b399d6534710",
+            "canonical_evidence_id": "099ad1a9-62b1-4243-b679-b6ef82bfa4f4",
+            "native_public_result_content_hash": "sha256:14275a44ff473a914cfb07c8aa1fbdbe3d0d2bf84d3ef0915704b399d6534710"
+          },
+          {
+            "source_doc_id": "public_6axis_v1:qasper:dev:1605.06083:6d4400f45bd97b812e946b8a682b018826e841f1:gold:3:0",
+            "content_sha256": "d50efea51619990016f08797712c7a766abdd8ac44f097059bb0cfc9b18c0cee",
+            "canonical_evidence_id": "25623161-c74a-4e37-983b-c3b3730e668e",
+            "native_public_result_content_hash": "sha256:d50efea51619990016f08797712c7a766abdd8ac44f097059bb0cfc9b18c0cee"
+          },
+          {
+            "source_doc_id": "public_6axis_v1:qasper:dev:1605.06083:6d4400f45bd97b812e946b8a682b018826e841f1:gold:4:0",
+            "content_sha256": "d0cc4b5646d0fa844a20535a592dbfec16f7454033058c6ad2a280adbcc6f8fe",
+            "canonical_evidence_id": "1b65a50a-fa91-4828-bfc7-62d1a5bcaf30",
+            "native_public_result_content_hash": "sha256:d0cc4b5646d0fa844a20535a592dbfec16f7454033058c6ad2a280adbcc6f8fe"
+          }
+        ],
+        "metrics": {
+          "relevant_at_k": 1,
+          "relevant_total": 4,
+          "recall_at_k": 0.25,
+          "mrr": 0.5,
+          "ndcg_at_k": 0.24630238874073,
+          "first_required_rank": 2
+        }
+      },
+      "candidate": {
+        "sources": [
+          {
+            "source_doc_id": "public_6axis_v1:qasper:dev:1605.06083:6d4400f45bd97b812e946b8a682b018826e841f1:gold:0:0",
+            "content_sha256": "246ffaad2a2b8745cb9419477bebf6ac969bec7ac974fd3b8f0c94a02d528a05",
+            "canonical_evidence_id": "9875b15b-c6b5-4a79-bf1e-96342680f05f",
+            "native_public_result_content_hash": "sha256:246ffaad2a2b8745cb9419477bebf6ac969bec7ac974fd3b8f0c94a02d528a05"
+          },
+          {
+            "source_doc_id": "public_6axis_v1:qasper:dev:1605.06083:6d4400f45bd97b812e946b8a682b018826e841f1:gold:1:0",
+            "content_sha256": "f65adf28739ba5e4ebdf06860df1bf901947742dc54cc7aff9f3080dc76e9127",
+            "canonical_evidence_id": "c5606b2e-ff85-4686-8349-a3bff4508f1a",
+            "native_public_result_content_hash": "sha256:f65adf28739ba5e4ebdf06860df1bf901947742dc54cc7aff9f3080dc76e9127"
+          },
+          {
+            "source_doc_id": "public_6axis_v1:qasper:dev:1605.06083:6d4400f45bd97b812e946b8a682b018826e841f1:gold:2:0",
+            "content_sha256": "14275a44ff473a914cfb07c8aa1fbdbe3d0d2bf84d3ef0915704b399d6534710",
+            "canonical_evidence_id": "141ac822-2a9c-4b7f-afdc-5615a93456e1",
+            "native_public_result_content_hash": "sha256:14275a44ff473a914cfb07c8aa1fbdbe3d0d2bf84d3ef0915704b399d6534710"
+          },
+          {
+            "source_doc_id": "public_6axis_v1:qasper:dev:1605.06083:6d4400f45bd97b812e946b8a682b018826e841f1:gold:3:0",
+            "content_sha256": "d50efea51619990016f08797712c7a766abdd8ac44f097059bb0cfc9b18c0cee",
+            "canonical_evidence_id": "97edae74-f2e9-4210-90a9-7609d791950e",
+            "native_public_result_content_hash": "sha256:d50efea51619990016f08797712c7a766abdd8ac44f097059bb0cfc9b18c0cee"
+          },
+          {
+            "source_doc_id": "public_6axis_v1:qasper:dev:1605.06083:6d4400f45bd97b812e946b8a682b018826e841f1:gold:4:0",
+            "content_sha256": "d0cc4b5646d0fa844a20535a592dbfec16f7454033058c6ad2a280adbcc6f8fe",
+            "canonical_evidence_id": "d0e0611f-9ba0-430f-a48f-48dae0bf8169",
+            "native_public_result_content_hash": "sha256:d0cc4b5646d0fa844a20535a592dbfec16f7454033058c6ad2a280adbcc6f8fe"
+          }
+        ],
+        "metrics": {
+          "relevant_at_k": 1,
+          "relevant_total": 5,
+          "recall_at_k": 0.2,
+          "mrr": 0.5,
+          "ndcg_at_k": 0.21398626473452756,
+          "first_required_rank": 2
+        }
+      }
+    }
+  },
+  "ontology_work": {
+    "receipt_count": 1964,
+    "provider_assessments": 1135,
+    "receipts_without_provider_dispatch": 829,
+    "provider_turns": 1322,
+    "extra_turns_above_one_per_model_assessment": 187,
+    "per_turn_failure_codes": {"completed": 1096, "response_invalid": 224, "timeout": 2},
+    "per_turn_failure_phases": {"none": 1096, "validation": 224, "request": 2},
+    "source_appearances_in_native_receipts": 26542,
+    "distinct_source_handles_in_receipts": 3651,
+    "distinct_source_version_fingerprints_in_receipts": 3651,
+    "per_turn_diagnostics": {
+      "queue_ms": {
+        "available_attempts": 1322,
+        "unavailable_attempts": 0,
+        "sum": 0,
+        "mean": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0
+      },
+      "admission_ms": {
+        "available_attempts": 1322,
+        "unavailable_attempts": 0,
+        "sum": 11911,
+        "mean": 9.009833585476551,
+        "p50": 4,
+        "p95": 32,
+        "p99": 109,
+        "max": 341
+      },
+      "http_ms": {
+        "available_attempts": 1322,
+        "unavailable_attempts": 0,
+        "sum": 8153530,
+        "mean": 6167.571860816944,
+        "p50": 3672,
+        "p95": 12375,
+        "p99": 14583,
+        "max": 600000
+      },
+      "reconciliation_ms": {
+        "available_attempts": 1322,
+        "unavailable_attempts": 0,
+        "sum": 13126,
+        "mean": 9.928895612708018,
+        "p50": 3,
+        "p95": 21,
+        "p99": 190,
+        "max": 768
+      }
+    },
+    "raw_sha256": "sha256:10f2755da47cdf6e1c3bf6cd6b7d9a80645fa8f0ef3e5dc2704e14247bead966",
+    "limitations": [
+      "Source appearances are receipt context inputs, not a count of provider prompt items.",
+      "Durations aggregate concurrent attempts; their sum is not wall-clock elapsed time.",
+      "No-dispatch receipts use native deterministic paths; they are not presumed cache hits.",
+      "INFO discovery counts were redacted; marker enumeration, freshness and requeue counters remain unavailable."
+    ]
+  },
+  "ontology_assessments": {
+    "provider_turns": 1322,
+    "distinct_assessments": 1135,
+    "final_assessment_outcomes": {
+      "completed": 1065,
+      "provider_response_invalid": 37,
+      "commit_conflict": 8,
+      "stale_input": 23,
+      "provider_unavailable": 2
+    },
+    "turns_per_assessment": {"1": 994, "3": 46, "2": 95},
+    "boundary": "Turn outcomes inherited from each final native assessment receipt; they are not individual HTTP-response outcomes."
+  },
+  "ontology_terminal_sources": [
+    {
+      "count": 230,
+      "reason": "classification_ambiguous",
+      "status": "ambiguous",
+      "eligible": true
+    },
+    {
+      "count": 8,
+      "reason": "commit_conflict",
+      "status": "failed",
+      "eligible": true
+    },
+    {
+      "count": 316,
+      "reason": "provider_response_invalid",
+      "status": "failed",
+      "eligible": true
+    },
+    {
+      "count": 14,
+      "reason": "provider_unavailable",
+      "status": "failed",
+      "eligible": true
+    },
+    {
+      "count": 79,
+      "reason": "stale_input",
+      "status": "failed",
+      "eligible": true
+    },
+    {
+      "count": 3004,
+      "reason": "",
+      "status": "organized",
+      "eligible": true
+    },
+    {
+      "count": 3,
+      "reason": "source_unavailable",
+      "status": "unavailable",
+      "eligible": false
+    }
+  ],
+  "ontology_validation_reasons": {
+    "validation_failures": 224,
+    "closed_diagnostic_counts": [
+      {
+        "stage": "validate",
+        "code": "item_locked_classification",
+        "field_family": "items",
+        "count": 112
+      },
+      {
+        "stage": "validate",
+        "code": "request_id_mismatch",
+        "field_family": "request_id",
+        "count": 34
+      },
+      {
+        "stage": "validate",
+        "code": "item_reason_limit",
+        "field_family": "items",
+        "count": 26
+      },
+      {
+        "stage": "validate",
+        "code": "item_ambiguous_classification",
+        "field_family": "items",
+        "count": 22
+      },
+      {
+        "stage": "validate",
+        "code": "item_definition_ref",
+        "field_family": "items",
+        "count": 8
+      },
+      {
+        "stage": "validate",
+        "code": "item_count_mismatch",
+        "field_family": "items",
+        "count": 6
+      },
+      {
+        "stage": "validate",
+        "code": "definition_ref_supplied",
+        "field_family": "definitions",
+        "count": 6
+      },
+      {
+        "stage": "validate",
+        "code": "definition_catalog",
+        "field_family": "definitions",
+        "count": 4
+      },
+      {
+        "stage": "validate",
+        "code": "item_source_kind",
+        "field_family": "items",
+        "count": 3
+      },
+      {
+        "stage": "validate",
+        "code": "definition_record",
+        "field_family": "definitions",
+        "count": 1
+      },
+      {
+        "stage": "validate",
+        "code": "definition_unused",
+        "field_family": "definitions",
+        "count": 1
+      },
+      {
+        "stage": "validate",
+        "code": "equivalence_coverage",
+        "field_family": "equivalence",
+        "count": 1
+      }
+    ]
+  },
+  "adverse": {
+    "source_lock": {
+      "status": "passed",
+      "source_count": 132,
+      "case_count": 24,
+      "seed_hash": "sha256:a6706f33085408f1039087eae2b9875c93ab0dfd387c0707ef25fd3d24c31105",
+      "artifact_sha256": {
+        "cases.jsonl": "sha256:b04f4f2121fe9fe311fb7943c3236ab5b6b613686f091506bf699440b0b953ee",
+        "cohort.json": "sha256:26628ff529fb0f27745129c0a15a15a86a2a07f9177a4e8c02c5611082a72250",
+        "corpus.jsonl": "sha256:480bf410afb1d78378ccc90cb98ec79ba5e50cc2a4b5c7e76a83f5b119760193",
+        "judgments.jsonl": "sha256:063fbcf33ae489bca1c864a2f66c19433bacd871b62e430f8232f4c791d55694",
+        "qrels.jsonl": "sha256:2b02ece297afb082f7507464742999032f527b241e408f4b70b3c30b836fcde3",
+        "seed_manifest.json": "sha256:4e3db6f86864acc3d3868a1657690f74375b465eab9208f331980bb59283f58e",
+        "suite.jsonl": "sha256:07ed2f8e9205a8c698c129c28868cee3544b83e2da1447575d54c19db1cfd025"
+      },
+      "generator_sha256": {
+        "internal/evalharness/recall_accuracy_cohort.go": "sha256:02f185c74281737723f2186c41da40e7a690c264c07f083700a1cfa58a98380e",
+        "internal/evalharness/recall_accuracy_export.go": "sha256:3e4c59407c4eaecd017e2a42cec7187972cb51557d7527055e42fbf7f651eb17"
+      }
+    },
+    "outcome": {
+      "status": "failed_before_model_work",
+      "monitor_exit": {
+        "exit_code": 1,
+        "finished_at": "2026-11-01T08:30:31.384597+00:00",
+        "monotonic_ns": 78373098082881,
+        "deadline_unchanged": "2026-11-02T02:56:21.130988Z"
+      },
+      "sides": {
+        "baseline": {"invocations": 0, "durable_attempts": 0, "provider_exchanges": 0},
+        "candidate": {"invocations": 0, "durable_attempts": 0, "provider_exchanges": 0}
+      },
+      "native_error": "eval run: import recall_accuracy_v1:predicate_works_on:source:01: mcp tools/call remember returned -32602: evidence[0].labels must be an array",
+      "native_log_sha256": "sha256:25846a5d87af6aff8807ba9ee21a5ef94a9eb62c7d8aaf92b8eef64979abc2ba",
+      "observed_at": "2026-11-01T08:42:18.117652+00:00",
+      "baseline_importer_source": "49ba9d36acaf19bde5a8ddbe7552fd04621d19bd:internal/evalharness/client.go:435",
+      "interpretation": "No safety metrics; nil optional labels serialized as null by pinned baseline native importer; candidate not dispatched. Frozen seed and native runners unchanged."
+    },
+    "safety_metrics": null
+  },
+  "measurement_limits": [
+    "Server Recall and Remember durations exclude complete client operations.",
+    "Token subtotals include only retained responses; missing usage, embedding tokens and billed cost remain unknown.",
+    "Ingestion provider exchange identity is invocation_id plus sequence_no; duplicated attempt diagnostics are excluded.",
+    "Ontology turn outcomes in paired SQL inherit final assessment outcome; immutable receipts supply per-turn response/validation outcomes.",
+    "Source appearances in receipts are context inputs, not provider prompt-item counts; no-dispatch receipts are not presumed cache hits.",
+    "INFO discovery counters are redacted; marker enumeration, freshness and requeue work are unavailable.",
+    "Native short-list cutoff clamps to returned length; baseline single k=9 row has relevant_total=1, so no @10 numerical effect.",
+    "Host load, provider drift, sequential captures and independently generated semantic states limit causal release attribution.",
+    "Historical 41+ hour mixed-release run and failed initial concurrency-10 run remain separate.",
+    "No current-head remote or PR validation is established by this evaluation receipt."
+  ],
+  "artifact_hashes": [
+    {"artifact": "campaign/pair-config.json", "sha256": "sha256:fc744d2f3e0a8336e83a390fac51a0bb2444dd482ff9c1abb0575eab683a8ae7"},
+    {"artifact": "campaign/paired/paired_report.json", "sha256": "sha256:473d8f7e4021399c7242fc81f2f3d7420b56e95d10693006fb5761dcf64ca1ea"},
+    {"artifact": "receipts/qualification-summary.json", "sha256": "sha256:6579fe3b939f1710f7c31dedd0c7e0779b3ebf24d3d2a1a491459bef026d27fe"},
+    {"artifact": "receipts/qualification-native-conditions.json", "sha256": "sha256:42099f443d25c731a2a86320b7c400f7e92f3fdb0b6c961c30df7ebc1668c425"},
+    {"artifact": "receipts/qualification-provider-parity.json", "sha256": "sha256:5d138f178644bef93f50853513a3ed07f31353c29fac2122a6c37f487d1e4092"},
+    {"artifact": "receipts/primary-stage-verification.json", "sha256": "sha256:286b35ba04c1d2b1049e0b41dc4fa02fbe84dd0daa3fdd5ab781878deecb74e7"},
+    {"artifact": "receipts/primary-per-case-comparison.json", "sha256": "sha256:af67cfdb48ef312df219aebadbad86d21a381ae9f7f96af5d36e5f4afb505677"},
+    {"artifact": "receipts/control-per-case-comparison.json", "sha256": "sha256:dc99db5de6874345d45249d702bc290aadb863a144b8eb83ee6ccd666199955a"},
+    {"artifact": "receipts/baseline-all-metrics-reconciliation.json", "sha256": "sha256:dd11c4b9838453b5d707697902b73e6e5b14e99c4304d520064363721782757a"},
+    {"artifact": "receipts/candidate-all-metrics-reconciliation.json", "sha256": "sha256:d2e3e22e9f77d93c871776246f26e0b421a2a4a5343f2e3dcf7411cc08967d18"},
+    {"artifact": "receipts/control-all-metrics-reconciliation.json", "sha256": "sha256:58a87ebbf05fef8e01bcd9e6b1bd5842d4b7d6d99c6b68ddd0a7afef5758837e"},
+    {"artifact": "receipts/primary-regression-explanation.json", "sha256": "sha256:05e1c49cdde813b77c0b858ad12d92574278578fcad5cf66e7ec483e9972c1ca"},
+    {"artifact": "receipts/campaign-baseline-accounting.json", "sha256": "sha256:f9ebfb50ae97f94471d01f8513d3192c69dadc18b1cb756d11358697559be827"},
+    {"artifact": "receipts/campaign-candidate-accounting.json", "sha256": "sha256:7d435211d83877cefa494c15a0b84035cc53076fa94986a3e7992a18d3334303"},
+    {"artifact": "receipts/ingestion-reconciliation.json", "sha256": "sha256:d828ba1af9483b33c010827327280ffbf1a7448e424077749116fb475ca2acc2"},
+    {"artifact": "receipts/ontology-work-and-timing-reconciliation.json", "sha256": "sha256:51ae0240ddfccbe4954e0d450a32b2cae6f4a815129b6c44edee0aa483519f84"},
+    {"artifact": "receipts/ontology-assessment-reconciliation.json", "sha256": "sha256:c42ea9139410c97f9f2bbd8304c2cf6744c0e19090b471a6979133c124a11576"},
+    {"artifact": "receipts/ontology-discovery-preparation-timings.json", "sha256": "sha256:dcb09b2d8b8a11e44388454c723691785b0266315c23a549010dee85d56fec33"},
+    {"artifact": "receipts/ontology-terminal-source-reasons.json", "sha256": "sha256:c472c445402cce2dd065850ff14e6bf555981bfde381339442fa7d28576a19b7"},
+    {"artifact": "receipts/ontology-validation-failure-reasons.json", "sha256": "sha256:bd837a203b828ff6c02808ede00d0caae8e3f7129d135006618d72d948caf4ab"},
+    {"artifact": "campaign/ontology-disabled-control/control-verification.json", "sha256": "sha256:61268fa79c21d8982c60df9e321e9b9649ab5f23d0648304bd39866bd7251413"},
+    {"artifact": "campaign/ontology-disabled-control/primary-outcome.json", "sha256": "sha256:f4939e8bc148c11322ad62ffbce1cdf54121a7e51d071d071cee6052f0f66257"},
+    {"artifact": "adverse/pair-config.json", "sha256": "sha256:da30f7e0cde39095e2265b52de6a2a71fe7cc8beb5e7ea70b8d9b34108f0e1eb"},
+    {"artifact": "receipts/adverse-source-lock-verification.json", "sha256": "sha256:de5e217e146d56c81729d39a801849e187081c49b7f76d0cc34002440285c5f8"},
+    {"artifact": "receipts/adverse-terminal-proof.json", "sha256": "sha256:71c08291c9495a6a45bb741dd23a66360c9934c69ff672c5b13387f0a9031ea7"},
+    {"artifact": "adverse/paired/baseline/import/attempt-0001/native.log", "sha256": "sha256:25846a5d87af6aff8807ba9ee21a5ef94a9eb62c7d8aaf92b8eef64979abc2ba"},
+    {"artifact": "receipts/plan-audit-round3.json", "sha256": "sha256:864cac54e53eb0aeb73325c5ec384525adf12cd822434b96f7353d50d35df640"},
+    {"artifact": "receipts/local-validation.json", "sha256": "sha256:becdba5493064bf8feff57875ed2dba06e1c3af363595c9b3efac7266dcec003"},
+    {"artifact": "campaign/paired/baseline/import/attempt-0001/receipt.json", "sha256": "sha256:63ef45960318cc3c5f1efd2dba17b06fb3e609616dbadd734fbff6c4e81f22cc"},
+    {"artifact": "campaign/paired/baseline/drain/attempt-0001/receipt.json", "sha256": "sha256:abd408ac9d5d3ea7812404b2bb1fe202fdcaf1fadddd87bfe67c8e360d8eb3dd"},
+    {"artifact": "campaign/paired/baseline/capture/attempt-0001/receipt.json", "sha256": "sha256:6785d8e85882c071894f0e8e2a738f6c617878f34cfd94b6799cb4040c9596ff"},
+    {"artifact": "campaign/paired/baseline/score/attempt-0001/receipt.json", "sha256": "sha256:cc022b66bba162a1f4902aab30696bfb1ffe093a2d14599b99a31f7e8eec3d62"},
+    {"artifact": "campaign/paired/baseline/score/attempt-0001/native/summary.json", "sha256": "sha256:854b35c3e16e7135b5f4cdbb875c427fe47a8d25a08423200176dcfb2c657cc4"},
+    {"artifact": "campaign/paired/baseline/score/attempt-0001/native/retrieval_scores.jsonl", "sha256": "sha256:25066d1729ae9d203cd6e34b98d2c414e6b035c927777e219dda3ce4b79b1670"},
+    {"artifact": "campaign/paired/baseline/score/attempt-0001/native/knowledge_mapping.json", "sha256": "sha256:332a75821aedfba9e7bc3f2fe84e0dc94155bfcf9b36aaaed5af4c32ddeae770"},
+    {"artifact": "campaign/paired/baseline/score/attempt-0001/native/recall_traces.jsonl", "sha256": "sha256:af7a8be014f834f5b9d46a8cfdcb6b2712fbbf11720222747a44761932b3904e"},
+    {"artifact": "campaign/paired/candidate/import/attempt-0001/receipt.json", "sha256": "sha256:691902e2f8d7d4e78f267b0a661e4f73a70bef9daee557d277f450f459d97d61"},
+    {"artifact": "campaign/paired/candidate/drain/attempt-0001/receipt.json", "sha256": "sha256:408843238716b5d8ab0ef1b907b7039da4c12e07636e03a82d032932d018d014"},
+    {"artifact": "campaign/paired/candidate/capture/attempt-0001/receipt.json", "sha256": "sha256:182658d086e074380d9146510bce2d99fc7b81b98c88d22b70a602b3ef391952"},
+    {"artifact": "campaign/paired/candidate/score/attempt-0001/receipt.json", "sha256": "sha256:d63ec9d1e38f6ffe835580b4aa0cf843dfa4971f18d01a95a922a101cfef701a"},
+    {"artifact": "campaign/paired/candidate/score/attempt-0001/native/summary.json", "sha256": "sha256:bb1ed9c37b49b44db2b291ae8572cd308d2e8bbf1f3e03d7ebfe8de265f96bea"},
+    {"artifact": "campaign/paired/candidate/score/attempt-0001/native/retrieval_scores.jsonl", "sha256": "sha256:15c6c21887bc405556efb5c313dfae325eadc61cec7ad6482ac4bde0e7a7f0d3"},
+    {"artifact": "campaign/paired/candidate/score/attempt-0001/native/knowledge_mapping.json", "sha256": "sha256:b5ffb0caa1353aeacb74bfa34253474ce911f48bc0ea16c7bb999e4c0d0e6a76"},
+    {"artifact": "campaign/paired/candidate/score/attempt-0001/native/recall_traces.jsonl", "sha256": "sha256:afd00457e88a0d17e1d6f9e13f804f10ee78bd674d7f20fa4fb91d5516879f6b"},
+    {"artifact": "historical/receipts/published-image-source-proofs.json", "sha256": "sha256:95dbcca52dcbdcf0e81537f24acbdd325c3c755f51b180c88bcf9c9b7310abec"},
+    {"artifact": "historical/receipts/native-runners.json", "sha256": "sha256:35f232e71ae5090bec07da91c3111dd7fce68100cd958eb5e7e2cc53b509d763"}
+  ]
+}

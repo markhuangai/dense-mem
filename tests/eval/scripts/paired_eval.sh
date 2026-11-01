@@ -15,7 +15,7 @@ pair_http() {
     echo "invalid operational credential encoding" >&2
     return 1
   fi
-  local -a args=(--silent --show-error --max-time 30 --request "${method}" --header 'Content-Type: application/json')
+  local -a args=(--silent --show-error --max-time 30 --request "${method}" --header 'Content-Type: application/json' --header 'Accept: application/json')
   if [[ "${5:-false}" == true ]]; then args+=(--write-out $'\n%{http_code}'); else args+=(--fail); fi
   [[ -z "${body}" ]] || args+=(--data-binary "${body}")
   printf 'header = "Authorization: Bearer %s"\n' "${token}" | curl --config - "${args[@]}" "${url}"

@@ -328,15 +328,29 @@ func TestPairRecoveryRejectsAmbiguousArtifactsAndLiveNativeProcess(t *testing.T)
 			require.NoDirExists(t, filepath.Join(c.OutDir, "candidate", "import", "attempt-0001"))
 		})
 	}
-	c = pairedFixture(t)
-	dir := writePairCompletedStage(t, c, "candidate", "validate")
-	var receipt PairStageReceipt
-	require.NoError(t, readPairJSON(filepath.Join(dir, "receipt.json"), &receipt))
-	receipt.FinishedAt = receipt.Intent.StartedAt.Add(-time.Second)
-	require.NoError(t, writePairJSON(filepath.Join(dir, "receipt.json"), receipt))
-	require.ErrorContains(t, VerifyPairStage(c, dir), "identity or time")
-	_, err = BeginPairStage(c, "candidate", "validate", process)
-	require.Error(t, err)
+	for _, mode := range []string{"monotonic", "historical"} {
+		t.Run(mode, func(t *testing.T) {
+			c := pairedFixture(t)
+			dir := writePairCompletedStage(t, c, "candidate", "validate")
+			var receipt PairStageReceipt
+			require.NoError(t, readPairJSON(filepath.Join(dir, "receipt.json"), &receipt))
+			want := "monotonic"
+			if mode == "monotonic" {
+				receipt.Clock.Nanoseconds = receipt.Intent.Clock.Nanoseconds - 1
+			} else {
+				receipt.Intent.Clock, receipt.Clock = nil, nil
+				receipt.FinishedAt = receipt.Intent.StartedAt.Add(-time.Second)
+				require.NoError(t, writePairJSON(filepath.Join(dir, "intent.json"), receipt.Intent))
+				receipt.Files, err = pairArtifactHashes(dir)
+				require.NoError(t, err)
+				want = "identity or time"
+			}
+			require.NoError(t, writePairJSON(filepath.Join(dir, "receipt.json"), receipt))
+			require.ErrorContains(t, VerifyPairStage(c, dir), want)
+			_, err = BeginPairStage(c, "candidate", "validate", process)
+			require.Error(t, err)
+		})
+	}
 }
 
 func TestPairCaptureCompletionRequiresMatchingFrozenRuntime(t *testing.T) {
