@@ -259,11 +259,18 @@ func readPairReport(c PairConfig) (PairReport, error) {
 			if intent.Clock == nil {
 				allClocks = false
 			} else {
-				if _, err := pairClockElapsed(intent.Clock, finishedClock); err != nil {
+				if _, err := pairClockElapsed(intent.Clock, intent.Clock); err != nil {
 					return err
 				}
-				if startedClock == nil || intent.Clock.Nanoseconds < startedClock.Nanoseconds {
-					startedClock = intent.Clock
+				if intent.Clock.BootID != finishedClock.BootID {
+					allClocks = false
+				} else {
+					if _, err := pairClockElapsed(intent.Clock, finishedClock); err != nil {
+						return err
+					}
+					if startedClock == nil || intent.Clock.Nanoseconds < startedClock.Nanoseconds {
+						startedClock = intent.Clock
+					}
 				}
 			}
 			var receipt PairStageReceipt
@@ -299,7 +306,7 @@ func readPairReport(c PairConfig) (PairReport, error) {
 			return report, err
 		}
 	} else {
-		report.Limitations = append(report.Limitations, "Historical stages lack a verified monotonic interval; elapsed time is unavailable, and UTC timestamps are labels only.")
+		report.Limitations = append(report.Limitations, "Overall elapsed time is unavailable because stage clocks are missing or belong to another host boot; UTC timestamps are labels only.")
 	}
 	return report, nil
 }

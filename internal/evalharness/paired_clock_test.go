@@ -64,3 +64,49 @@ func TestPairReportHistoricalTimingStaysUnavailable(t *testing.T) {
 		require.Nil(t, stage.ElapsedSeconds)
 	}
 }
+
+func TestPairReportRetainedStageTimingsSurviveReboot(t *testing.T) {
+	for _, corrupt := range []bool{false, true} {
+		name := "verifiable"
+		if corrupt {
+			name = "corrupt_stage_interval"
+		}
+		t.Run(name, func(t *testing.T) {
+			c := pairedFixture(t)
+			var last string
+			for _, side := range []string{"baseline", "candidate"} {
+				for _, stage := range []string{"import", "capture", "score"} {
+					last = writePairCompletedStage(t, c, side, stage)
+					var receipt PairStageReceipt
+					require.NoError(t, readPairJSON(filepath.Join(last, "receipt.json"), &receipt))
+					receipt.Intent.Clock = &PairClock{BootID: "retained-boot", Nanoseconds: 1_000_000_000}
+					receipt.Clock = &PairClock{BootID: "retained-boot", Nanoseconds: 3_500_000_000}
+					require.NoError(t, writePairJSON(filepath.Join(last, "intent.json"), receipt.Intent))
+					var err error
+					receipt.Files, err = pairArtifactHashes(last)
+					require.NoError(t, err)
+					require.NoError(t, writePairJSON(filepath.Join(last, "receipt.json"), receipt))
+				}
+			}
+			if corrupt {
+				var receipt PairStageReceipt
+				require.NoError(t, readPairJSON(filepath.Join(last, "receipt.json"), &receipt))
+				receipt.Clock.BootID = "unrelated-boot"
+				require.NoError(t, writePairJSON(filepath.Join(last, "receipt.json"), receipt))
+			}
+			report, err := WritePairReport(c)
+			if corrupt {
+				require.ErrorContains(t, err, "monotonic")
+				require.NoFileExists(t, filepath.Join(c.OutDir, "paired_report.json"))
+				return
+			}
+			require.NoError(t, err)
+			require.Nil(t, report.ElapsedSeconds)
+			require.Len(t, report.Stages, 6)
+			for _, stage := range report.Stages {
+				require.NotNil(t, stage.ElapsedSeconds)
+				require.Equal(t, 2.5, *stage.ElapsedSeconds)
+			}
+		})
+	}
+}
