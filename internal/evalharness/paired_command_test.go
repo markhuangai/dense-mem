@@ -201,6 +201,8 @@ func TestPairCommandObservationDistinguishesPreflightCapacityAndFreeze(t *testin
 		require.NoError(t, writePairJSON(input, snapshot))
 	}
 	status.Enabled = false
+	enabledCommunity := snapshot.Community
+	snapshot.Community = json.RawMessage(`{"legacy_processing_retired":true,"effective_config":{"enabled":false}}`)
 	writeStatus()
 	output, err = runFixturePairCommand(t, c, command)
 	require.NoError(t, err)
@@ -210,6 +212,7 @@ func TestPairCommandObservationDistinguishesPreflightCapacityAndFreeze(t *testin
 	_, err = runFixturePairCommand(t, c, command)
 	require.ErrorContains(t, err, "remain enabled")
 	status.Enabled, status.Paused = true, false
+	snapshot.Community = enabledCommunity
 	writeStatus()
 	command.Frozen = true
 	_, err = runFixturePairCommand(t, c, command)

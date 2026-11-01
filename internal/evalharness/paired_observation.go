@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -74,6 +75,14 @@ func DecodePairObservation(release PairRelease, snapshot PairNativeSnapshot, fre
 	}
 	o.ObservedAt, o.Scope = db.ObservedAt, db.Scope
 	o.SourceHash, o.CanonicalHash, o.Imports = db.SourceHash, db.CanonicalHash, db.Imports
+	for _, row := range db.Imports {
+		if row.ContractVersion == "dense-mem.v2.6.3" && !pairLegacyRelease(release) {
+			return o, fmt.Errorf("legacy import contract does not match the pinned runtime")
+		}
+		if pairLegacyRelease(release) && row.ContractVersion != "" && row.ContractVersion != "dense-mem.v2.6.3" {
+			return o, fmt.Errorf("pinned baseline import contract differs")
+		}
+	}
 	if err := requirePairFields(snapshot.Search, "status", "expected_documents", "current_documents", "drifted_documents"); err != nil {
 		return o, err
 	}
@@ -109,15 +118,32 @@ func DecodePairObservation(release PairRelease, snapshot PairNativeSnapshot, fre
 	if err := requirePairFields(snapshot.Database, "active_batches", "active_preparations", "active_projections", "unreconciled_attempts", "budget_deferred", "foreign_work", "provider_attempts"); err != nil {
 		return o, err
 	}
-	if err := requirePairFields(snapshot.Community, "projection_coverage.pending_topics", "projection_coverage.stale_topics", "projection_coverage.failed_topics", "projection_coverage.coverage_complete"); err != nil {
-		return o, err
-	}
 	var status ontology.MaintenanceStatus
 	if err := json.Unmarshal(snapshot.Ontology, &status); err != nil {
 		return o, err
 	}
-	if status.ConfigurationError != "" && !fresh {
+	preparing := !status.Enabled && db.CanonicalCount == 0 && db.EvidenceCount == 0 && len(db.Imports) == 0 &&
+		status.ActiveWork == 0 && db.ActiveBatches == 0 && db.ActivePreparations == 0 && db.ActiveProjections == 0 &&
+		db.Unreconciled == 0 && len(db.ProviderAttempts) == 0
+	if status.ConfigurationError != "" && !fresh && !preparing {
 		return o, fmt.Errorf("native ontology configuration is invalid")
+	}
+	if preparing {
+		if err := requirePairFields(snapshot.Community, "legacy_processing_retired", "effective_config.enabled"); err != nil {
+			return o, err
+		}
+		var disabled struct {
+			Retired bool                   `json:"legacy_processing_retired"`
+			Config  struct{ Enabled bool } `json:"effective_config"`
+		}
+		if err := json.Unmarshal(snapshot.Community, &disabled); err != nil {
+			return o, err
+		}
+		if !disabled.Retired || disabled.Config.Enabled {
+			return o, fmt.Errorf("empty runtime preparation requires disabled native community status")
+		}
+	} else if err := requirePairFields(snapshot.Community, "projection_coverage.pending_topics", "projection_coverage.stale_topics", "projection_coverage.failed_topics", "projection_coverage.coverage_complete"); err != nil {
+		return o, err
 	}
 	var community struct {
 		Coverage struct {
@@ -273,11 +299,18 @@ func VerifyPairSession(release PairRelease, raw []byte) error {
 			Team struct {
 				ID string `json:"id"`
 			} `json:"team"`
+			Membership struct {
+				TeamID string   `json:"team_id"`
+				Grants []string `json:"grants"`
+			} `json:"membership"`
 			Credential *struct {
-				ID     string `json:"id"`
-				TeamID string `json:"team_id"`
+				ID              string   `json:"id"`
+				TeamID          string   `json:"team_id"`
+				Scopes          []string `json:"scopes"`
+				MemoryBinding   string   `json:"memory_binding"`
+				MemorySpaceKind string   `json:"memory_space_kind"`
 			} `json:"credential"`
-			MemoryAccess struct {
+			MemoryAccess *struct {
 				Shared struct {
 					Write bool `json:"write"`
 				} `json:"team_shared"`
@@ -288,10 +321,23 @@ func VerifyPairSession(release PairRelease, raw []byte) error {
 		return fmt.Errorf("invalid authenticated runtime identity")
 	}
 	s := session.Data
-	if s.Team.ID != release.Scope.TeamID || s.Credential == nil || s.Credential.ID != release.Runtime.CredentialID || s.Credential.TeamID != release.Scope.TeamID || !s.MemoryAccess.Shared.Write {
+	if s.Team.ID != release.Scope.TeamID || s.Credential == nil || s.Credential.ID != release.Runtime.CredentialID || s.Credential.TeamID != release.Scope.TeamID {
+		return fmt.Errorf("credential does not authenticate the prepared team with shared write access")
+	}
+	sharedWrite := s.MemoryAccess != nil && s.MemoryAccess.Shared.Write
+	if pairLegacyRelease(release) {
+		sharedWrite = s.MemoryAccess == nil && s.Membership.TeamID == release.Scope.TeamID &&
+			slices.Contains(s.Membership.Grants, "write") && slices.Contains(s.Credential.Scopes, "write") &&
+			s.Credential.MemoryBinding == "shared_only" && s.Credential.MemorySpaceKind == "team_shared"
+	}
+	if !sharedWrite {
 		return fmt.Errorf("credential does not authenticate the prepared team with shared write access")
 	}
 	return nil
+}
+
+func pairLegacyRelease(release PairRelease) bool {
+	return release.Protocol == "none" && release.Release == "v2.6.5" && release.SourceRevision == "49ba9d36acaf19bde5a8ddbe7552fd04621d19bd"
 }
 
 func VerifyPairProtocol(release PairRelease, status int, body []byte) error {

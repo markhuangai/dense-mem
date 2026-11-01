@@ -358,11 +358,24 @@ func captureRuntimeResources(ctx context.Context, receipt *runtimeReceipt, fixtu
 	for _, id := range strings.Fields(string(built)) {
 		images[id] = true
 	}
+	for _, previous := range previousImages {
+		images[previous.ID] = true
+	}
 	receipt.Images = nil
 	for id := range images {
 		image, err := inspectRuntimeImage(ctx, id)
 		if err != nil {
-			return err
+			present, presenceErr := runtimePresent(ctx, "image", id)
+			if presenceErr != nil || present {
+				return errors.Join(err, presenceErr)
+			}
+			previous := slices.IndexFunc(previousImages, func(image runtimeImage) bool { return image.ID == id })
+			if previous < 0 {
+				return err
+			}
+			// Rebuilding a tag can remove Docker's image record while its original container survives.
+			receipt.Images = append(receipt.Images, previousImages[previous])
+			continue
 		}
 		image.Owned = !adopted && image.Owner == receipt.ID && !slices.Contains(receipt.InitialImages, id)
 		for _, previous := range previousImages {

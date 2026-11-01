@@ -40,6 +40,30 @@ func TestPairImportResumeRequiresExactScopeAndTerminalEvidence(t *testing.T) {
 	require.ErrorContains(t, err, "duplicate")
 }
 
+func TestPairImportUsesNativeRequestHashContract(t *testing.T) {
+	scope := PairScope{TeamID: "team", OwnerID: "owner", SpaceID: "shared", Generation: 1}
+	item := CorpusItem{SourceDocID: "document", Content: "Exact café evidence"}
+	legacy, err := pairLegacyRequestHash(item)
+	require.NoError(t, err)
+	current, err := pairRequestHash(item)
+	require.NoError(t, err)
+	require.NotEqual(t, legacy, current)
+	row := PairImportAttempt{Scope: scope, SourceDocID: item.SourceDocID, AttemptID: "attempt", ContractVersion: "dense-mem.v2.6.3", RequestHash: legacy,
+		Outcome: "completed", EvidenceIDs: []string{"evidence"}, ContentHashes: []string{pairBytesHash([]byte(item.Content))}, Live: true}
+	result, err := EvaluatePairImport(scope, []CorpusItem{item}, []PairImportAttempt{row}, false)
+	require.NoError(t, err)
+	require.True(t, result.Complete)
+	row.RequestHash = current
+	_, err = EvaluatePairImport(scope, []CorpusItem{item}, []PairImportAttempt{row}, false)
+	require.ErrorContains(t, err, "exact request")
+	row.ContractVersion = "dense-mem.v2.7.0"
+	_, err = EvaluatePairImport(scope, []CorpusItem{item}, []PairImportAttempt{row}, false)
+	require.NoError(t, err)
+	row.RequestHash = legacy
+	_, err = EvaluatePairImport(scope, []CorpusItem{item}, []PairImportAttempt{row}, false)
+	require.ErrorContains(t, err, "exact request")
+}
+
 func TestPairImportRetainsRecoveredFailuresWithinNativeBound(t *testing.T) {
 	scope := PairScope{TeamID: "team", OwnerID: "owner", SpaceID: "shared", Generation: 1}
 	corpus := []CorpusItem{{SourceDocID: "one", Content: "first"}, {SourceDocID: "two", Content: "second"}}

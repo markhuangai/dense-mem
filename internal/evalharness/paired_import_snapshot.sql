@@ -6,7 +6,7 @@ WITH scope AS (
         'scope', jsonb_build_object('team_id', a.team_id, 'owner_id', a.owner_profile_id,
             'space_id', a.space_id, 'generation', a.space_generation),
         'source_doc_id', substring(a.idempotency_key FROM 6), 'attempt_id', a.attempt_id,
-        'request_hash', a.request_hash, 'outcome', a.outcome,
+        'request_hash', a.request_hash, 'contract_version', a.contract_version, 'outcome', a.outcome,
         'evidence_ids', COALESCE((SELECT jsonb_agg(e->>'evidence_id' ORDER BY e->>'evidence_id')
             FROM jsonb_array_elements(a.public_result->'evidence') e WHERE e->>'disposition'='stored'), '[]'::jsonb),
         'content_hashes', COALESCE((SELECT jsonb_agg(o.content_hash ORDER BY o.evidence_index)

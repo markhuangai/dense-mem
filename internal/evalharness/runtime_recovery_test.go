@@ -889,3 +889,59 @@ func TestEvalRuntimeDockerStartupCancellationRecovery(t *testing.T) {
 	require.Equal(t, interrupted.Binds, resumed.Binds)
 	require.NoError(t, verifyProtectedRuntimes(ctx, protected))
 }
+
+func TestEvalRuntimeDockerMissingRecordedImageRecovery(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	fixture := newEvalRuntimeFixture(t, ctx, false, "")
+	receipt, err := readRuntimeReceipt(fixture.command.Directory)
+	require.NoError(t, err)
+	var server runtimeContainer
+	for _, container := range receipt.Containers {
+		if container.Service == "server" {
+			server = container
+		}
+	}
+	require.NotEmpty(t, server.ID)
+	index := slices.IndexFunc(receipt.Images, func(image runtimeImage) bool { return image.ID == server.ImageID })
+	require.NotEqual(t, -1, index)
+	image := receipt.Images[index]
+	require.True(t, image.Owned)
+	require.Equal(t, receipt.ID, image.Owner)
+	referenced, err := runtimeReferenced(ctx, receipt, "image", image.ID)
+	require.NoError(t, err)
+	require.False(t, referenced, "only this fixture may reference the image removed by the fault injection")
+	require.NoError(t, stopRuntimeContainer(ctx, server, 10*time.Second))
+	_, err = runtimeDocker(ctx, "image", "rm", "--force", image.ID)
+	var imageExit *exec.ExitError
+	if errors.As(err, &imageExit) {
+		t.Logf("controlled image-removal fault diagnostics: %s", imageExit.Stderr)
+	}
+	require.NoError(t, err)
+	present, err := runtimePresent(ctx, "image", image.ID)
+	require.NoError(t, err)
+	require.False(t, present)
+
+	unknown := receipt
+	unknown.Images = slices.DeleteFunc(slices.Clone(receipt.Images), func(candidate runtimeImage) bool { return candidate.ID == image.ID })
+	beforeUnknown := unknown
+	require.Error(t, captureRuntimeResources(ctx, &unknown, nil, false), "an unrecorded missing image must not be adopted")
+	require.Equal(t, beforeUnknown, unknown, "failed capture must preserve the previous receipt")
+
+	require.NoError(t, captureRuntimeResources(ctx, &receipt, nil, false))
+	require.Contains(t, receipt.Images, image, "verified absence must preserve the recorded image identity and ownership")
+	current, err := inspectRuntimeContainer(ctx, server.ID)
+	require.NoError(t, err)
+	require.True(t, sameRuntimeContainer(server, current))
+	receipt.State = "preparing"
+	require.NoError(t, saveRuntimeReceipt(receipt))
+	require.NoError(t, RunRuntimeCommand(ctx, RuntimeCommand{Action: "start", Directory: receipt.Directory}, io.Discard))
+	recovered, err := readRuntimeReceipt(receipt.Directory)
+	require.NoError(t, err)
+	require.Equal(t, "active", recovered.State)
+	require.Contains(t, recovered.Images, image)
+	current, err = inspectRuntimeContainer(ctx, server.ID)
+	require.NoError(t, err)
+	require.True(t, sameRuntimeContainer(server, current), "recovery must retain the original container and image")
+	require.True(t, current.Running)
+}

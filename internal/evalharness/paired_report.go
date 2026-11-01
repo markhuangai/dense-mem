@@ -149,7 +149,7 @@ type PairReport struct {
 	Status         string                    `json:"status"`
 	StartedAt      time.Time                 `json:"started_at"`
 	FinishedAt     time.Time                 `json:"finished_at"`
-	ElapsedSeconds float64                   `json:"elapsed_seconds"`
+	ElapsedSeconds *float64                  `json:"elapsed_seconds"`
 	Scorer         PairBinary                `json:"scorer"`
 	Sides          map[string]PairSideReport `json:"sides"`
 	Stages         []PairStageTiming         `json:"stages"`
@@ -174,6 +174,12 @@ func latestPairStage(c PairConfig, side, stage string) (string, error) {
 }
 
 func readPairReport(c PairConfig) (PairReport, error) {
+	finishedClock, err := pairClockNow()
+	if err != nil {
+		return PairReport{}, err
+	}
+	var startedClock *PairClock
+	allClocks := true
 	report := PairReport{SchemaVersion: PairSchema, RunID: c.RunID, Status: "complete", FinishedAt: time.Now().UTC(), Scorer: c.Scorer, Sides: map[string]PairSideReport{}, Stages: []PairStageTiming{}, Limitations: []string{
 		"Attempt overlap measures admission through reconciliation, not network-only concurrency or model-generation time.",
 		"Unknown usage is not zero consumption. Configured capacity does not establish a speedup.",
@@ -230,7 +236,6 @@ func readPairReport(c PairConfig) (PairReport, error) {
 			report.Limitations = append(report.Limitations, side+": original capture reused; its import/build time is not part of this run's elapsed time.")
 		}
 	}
-	var err error
 	report.Comparison, err = CompareSummaries(report.Sides["baseline"].Scores, report.Sides["candidate"].Scores)
 	if err != nil {
 		return report, err
@@ -251,15 +256,28 @@ func readPairReport(c PairConfig) (PairReport, error) {
 			if report.StartedAt.IsZero() || intent.StartedAt.Before(report.StartedAt) {
 				report.StartedAt = intent.StartedAt
 			}
+			if intent.Clock == nil {
+				allClocks = false
+			} else {
+				if _, err := pairClockElapsed(intent.Clock, finishedClock); err != nil {
+					return err
+				}
+				if startedClock == nil || intent.Clock.Nanoseconds < startedClock.Nanoseconds {
+					startedClock = intent.Clock
+				}
+			}
 			var receipt PairStageReceipt
 			if err := readPairJSON(filepath.Join(filepath.Dir(path), "receipt.json"), &receipt); err == nil {
 				if err := VerifyPairStage(c, filepath.Dir(path)); err != nil {
 					return err
 				}
-				seconds := receipt.FinishedAt.Sub(intent.StartedAt).Seconds()
+				seconds, err := pairClockElapsed(intent.Clock, receipt.Clock)
+				if err != nil {
+					return err
+				}
 				timing.Status = "completed"
 				timing.FinishedAt = &receipt.FinishedAt
-				timing.ElapsedSeconds = &seconds
+				timing.ElapsedSeconds = seconds
 			} else if !os.IsNotExist(err) {
 				return err
 			}
@@ -275,7 +293,14 @@ func readPairReport(c PairConfig) (PairReport, error) {
 		}
 	}
 	sort.Slice(report.Stages, func(i, j int) bool { return report.Stages[i].StartedAt.Before(report.Stages[j].StartedAt) })
-	report.ElapsedSeconds = report.FinishedAt.Sub(report.StartedAt).Seconds()
+	if allClocks && startedClock != nil {
+		report.ElapsedSeconds, err = pairClockElapsed(startedClock, finishedClock)
+		if err != nil {
+			return report, err
+		}
+	} else {
+		report.Limitations = append(report.Limitations, "Historical stages lack a verified monotonic interval; elapsed time is unavailable, and UTC timestamps are labels only.")
+	}
 	return report, nil
 }
 
@@ -291,7 +316,11 @@ func WritePairReport(c PairConfig) (PairReport, error) {
 		return report, err
 	}
 	var md strings.Builder
-	fmt.Fprintf(&md, "# Paired evaluation %s\n\nStatus: **%s**. Elapsed: %.1f seconds.\n\n| Release | Sources | Cases | Recall@K | Unknown usage attempts | Maximum admitted-attempt overlap |\n|---|---:|---:|---:|---:|---:|\n", c.RunID, report.Status, report.ElapsedSeconds)
+	elapsed := "unavailable"
+	if report.ElapsedSeconds != nil {
+		elapsed = fmt.Sprintf("%.1f seconds (monotonic)", *report.ElapsedSeconds)
+	}
+	fmt.Fprintf(&md, "# Paired evaluation %s\n\nStatus: **%s**. Elapsed: %s.\n\n| Release | Sources | Cases | Recall@K | Unknown usage attempts | Maximum admitted-attempt overlap |\n|---|---:|---:|---:|---:|---:|\n", c.RunID, report.Status, elapsed)
 	for _, side := range []string{"baseline", "candidate"} {
 		r := report.Sides[side]
 		fmt.Fprintf(&md, "| %s | %d | %d | %.4f | %d | %d (%s) |\n", r.Identity.Release, r.DistinctSources, r.Scores.ScoredCaseCount, r.Scores.AverageRecallAtK, r.Attempts.UnknownUsage, r.Attempts.MaximumOverlap, r.Attempts.IntervalStatus)

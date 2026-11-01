@@ -37,6 +37,21 @@ func RunPairCommand(cmd PairCommand, out io.Writer) error {
 	}
 	var result any = map[string]any{"verified": true}
 	switch cmd.Action {
+	case "verify-probe":
+		var snapshot PairNativeSnapshot
+		if err := readPairJSON(cmd.Input, &snapshot); err != nil {
+			return err
+		}
+		result, err = VerifyPairProbe(c, cmd.Side, cmd.Directory, snapshot)
+		if err != nil {
+			return err
+		}
+	case "probe":
+		var ids []string
+		if err := readPairJSON(cmd.Input, &ids); err != nil {
+			return err
+		}
+		return RunPairProbe(c, cmd.Side, ids, cmd.Directory, out)
 	case "runtime-lifecycle":
 		if err := CheckPairRuntimeLifecycle(c, cmd.Side); err != nil {
 			return err

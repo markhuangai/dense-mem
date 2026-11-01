@@ -3,10 +3,11 @@ package evalharness
 import (
 	"encoding/json"
 	"fmt"
-	remember "github.com/markhuangai/dense-mem/internal/remember/service"
 	"sort"
 	"strings"
 	"time"
+
+	remember "github.com/markhuangai/dense-mem/internal/remember/service"
 )
 
 type PairScope struct {
@@ -23,14 +24,15 @@ type PairCapacity struct {
 }
 
 type PairImportAttempt struct {
-	Scope         PairScope `json:"scope"`
-	SourceDocID   string    `json:"source_doc_id"`
-	AttemptID     string    `json:"attempt_id"`
-	RequestHash   string    `json:"request_hash"`
-	Outcome       string    `json:"outcome"`
-	EvidenceIDs   []string  `json:"evidence_ids"`
-	ContentHashes []string  `json:"content_hashes"`
-	Live          bool      `json:"live"`
+	Scope           PairScope `json:"scope"`
+	SourceDocID     string    `json:"source_doc_id"`
+	AttemptID       string    `json:"attempt_id"`
+	RequestHash     string    `json:"request_hash"`
+	ContractVersion string    `json:"contract_version,omitempty"`
+	Outcome         string    `json:"outcome"`
+	EvidenceIDs     []string  `json:"evidence_ids"`
+	ContentHashes   []string  `json:"content_hashes"`
+	Live            bool      `json:"live"`
 }
 
 type PairImportProgress struct {
@@ -47,12 +49,17 @@ func EvaluatePairImport(scope PairScope, corpus []CorpusItem, attempts []PairImp
 	wanted := sourceDocIDIndexForCorpus(corpus)
 	contents := map[string]string{}
 	requests := map[string]string{}
+	legacyRequests := map[string]string{}
 	for _, item := range corpus {
 		hash, err := pairRequestHash(item)
 		if err != nil {
 			return result, err
 		}
 		requests[item.SourceDocID] = hash
+		legacyRequests[item.SourceDocID], err = pairLegacyRequestHash(item)
+		if err != nil {
+			return result, err
+		}
 		contents[item.SourceDocID] = strings.TrimPrefix(pairBytesHash([]byte(item.Content)), "sha256:")
 	}
 	seen, identities := map[string]bool{}, map[string]bool{}
@@ -64,7 +71,11 @@ func EvaluatePairImport(scope PairScope, corpus []CorpusItem, attempts []PairImp
 		if _, ok := wanted[row.SourceDocID]; !ok {
 			return result, fmt.Errorf("import receipt references unknown source %q", row.SourceDocID)
 		}
-		if row.AttemptID == "" || row.RequestHash != requests[row.SourceDocID] {
+		expected := requests[row.SourceDocID]
+		if row.ContractVersion == "dense-mem.v2.6.3" {
+			expected = legacyRequests[row.SourceDocID]
+		}
+		if row.AttemptID == "" || row.RequestHash != expected {
 			return result, fmt.Errorf("import receipt does not match its exact request or attempt identity")
 		}
 		if identities[row.AttemptID] {
@@ -111,6 +122,21 @@ func EvaluatePairImport(scope PairScope, corpus []CorpusItem, attempts []PairImp
 	}
 	result.Complete = len(result.PendingSourceIDs) == 0
 	return result, nil
+}
+
+func pairLegacyRequestHash(item CorpusItem) (string, error) {
+	input := corpusRememberInput(item)
+	input["relationship_hints"] = input["relationships"]
+	delete(input, "relationships")
+	raw, err := json.Marshal(input)
+	if err != nil {
+		return "", err
+	}
+	var request remember.RememberRequest
+	if err := json.Unmarshal(raw, &request); err != nil {
+		return "", err
+	}
+	return remember.CanonicalRequestBodyHashForVersion("dense-mem.v2.6.2", request.Evidence, request.EntityHints, request.RelationshipHints)
 }
 
 func completedPairImports(attempts []PairImportAttempt) []PairImportAttempt {

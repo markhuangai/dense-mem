@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -40,6 +41,87 @@ func TestPairNativeObservationRejectsMissingAndForeignState(t *testing.T) {
 	snapshot.Database = encode(db)
 	_, err = DecodePairObservation(r, snapshot, true)
 	require.ErrorContains(t, err, "isolated")
+}
+
+func TestPairNativeImportContractRequiresPinnedLegacyRelease(t *testing.T) {
+	c := pairedFixture(t)
+	row := PairImportAttempt{ContractVersion: "dense-mem.v2.6.3"}
+	snapshot := commandNativeSnapshot(t, c.Candidate, []PairImportAttempt{row})
+	_, err := DecodePairObservation(c.Candidate, snapshot, false)
+	require.ErrorContains(t, err, "legacy import contract")
+	r := c.Baseline
+	r.Protocol, r.Release, r.SourceRevision = "none", "v2.6.5", "49ba9d36acaf19bde5a8ddbe7552fd04621d19bd"
+	snapshot = commandNativeSnapshot(t, r, []PairImportAttempt{row})
+	_, err = DecodePairObservation(r, snapshot, false)
+	require.NoError(t, err)
+	row.ContractVersion = "dense-mem.v2.7.0"
+	snapshot = commandNativeSnapshot(t, r, []PairImportAttempt{row})
+	_, err = DecodePairObservation(r, snapshot, false)
+	require.ErrorContains(t, err, "pinned baseline import contract")
+	row.ContractVersion = "dense-mem.v2.6.3"
+	r.SourceRevision = strings.Repeat("a", 40)
+	snapshot = commandNativeSnapshot(t, r, []PairImportAttempt{row})
+	_, err = DecodePairObservation(r, snapshot, false)
+	require.ErrorContains(t, err, "legacy import contract")
+}
+
+func TestPairNativeObservationAllowsEmptyDisabledPreparation(t *testing.T) {
+	c := pairedFixture(t)
+	for _, tc := range []struct {
+		name      string
+		fresh     bool
+		part      string
+		field     string
+		value     any
+		wantError bool
+	}{
+		{name: "fresh", fresh: true},
+		{name: "resumed"},
+		{name: "enabled", part: "ontology", field: "enabled", value: true, wantError: true},
+		{name: "evidence", part: "database", field: "evidence_count", value: 1, wantError: true},
+		{name: "canonical", part: "database", field: "canonical_count", value: 1, wantError: true},
+		{name: "import", part: "database", field: "imports", value: []any{map[string]any{}}, wantError: true},
+		{name: "provider_attempt", part: "database", field: "provider_attempts", value: []any{map[string]any{}}, wantError: true},
+		{name: "batch", part: "database", field: "active_batches", value: 1, wantError: true},
+		{name: "preparation", part: "database", field: "active_preparations", value: 1, wantError: true},
+		{name: "projection", part: "database", field: "active_projections", value: 1, wantError: true},
+		{name: "unreconciled", part: "database", field: "unreconciled_attempts", value: 1, wantError: true},
+		{name: "active_work", part: "ontology", field: "active_work", value: 1, wantError: true},
+		{name: "community_enabled", part: "community", field: "effective_config", value: map[string]any{"enabled": true}, wantError: true},
+		{name: "legacy_active", part: "community", field: "legacy_processing_retired", value: false, wantError: true},
+		{name: "missing_disabled_config", part: "community", field: "effective_config", value: nil, wantError: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			snapshot := commandNativeSnapshot(t, c.Candidate, []PairImportAttempt{})
+			var status map[string]any
+			require.NoError(t, json.Unmarshal(snapshot.Ontology, &status))
+			status["enabled"] = false
+			status["configuration_error"] = "configuration_invalid"
+			raw, err := json.Marshal(status)
+			require.NoError(t, err)
+			snapshot.Ontology = raw
+			snapshot.Community = json.RawMessage(`{"legacy_processing_retired":true,"effective_config":{"enabled":false}}`)
+			if tc.part != "" {
+				parts := map[string]*json.RawMessage{"database": &snapshot.Database, "ontology": &snapshot.Ontology, "community": &snapshot.Community}
+				var object map[string]any
+				require.NoError(t, json.Unmarshal(*parts[tc.part], &object))
+				object[tc.field] = tc.value
+				raw, err := json.Marshal(object)
+				require.NoError(t, err)
+				*parts[tc.part] = raw
+			}
+			o, err := DecodePairObservation(c.Candidate, snapshot, tc.fresh)
+			if tc.wantError {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.False(t, o.ProjectionCoverageComplete)
+			ready, err := EvaluatePairReadiness(c.Candidate.Protocol, o, true)
+			require.ErrorContains(t, err, "ontology must remain enabled")
+			require.False(t, ready.Ready)
+		})
+	}
 }
 
 func TestPairRuntimeIdentityAndRunnerProvenance(t *testing.T) {
@@ -136,4 +218,55 @@ func TestPairNativeObservationRejectsUntrustedWireValues(t *testing.T) {
 	c.Baseline.Protocol = "legacy"
 	_, err = DecodePairObservation(c.Baseline, snapshot, false)
 	require.ErrorContains(t, err, "recorded workflow")
+}
+
+func TestPairSessionVerifiesPinnedBaselineBinding(t *testing.T) {
+	r := pairedFixture(t).Baseline
+	r.Protocol, r.Release = "none", "v2.6.5"
+	r.SourceRevision = "49ba9d36acaf19bde5a8ddbe7552fd04621d19bd"
+	data := func() map[string]any {
+		return map[string]any{
+			"team":       map[string]any{"id": r.Scope.TeamID},
+			"membership": map[string]any{"team_id": r.Scope.TeamID, "grants": []string{"read", "write"}},
+			"credential": map[string]any{"id": r.Runtime.CredentialID, "team_id": r.Scope.TeamID,
+				"scopes": []string{"read", "write"}, "memory_binding": "shared_only", "memory_space_kind": "team_shared"},
+		}
+	}
+	encode := func(value map[string]any) []byte {
+		raw, err := json.Marshal(map[string]any{"data": value})
+		require.NoError(t, err)
+		return raw
+	}
+	require.NoError(t, VerifyPairSession(r, encode(data())))
+	for _, test := range []struct {
+		name, group, field string
+		value              any
+	}{
+		{"foreign_team", "team", "id", "00000000-0000-4000-8000-000000000099"},
+		{"foreign_membership", "membership", "team_id", "00000000-0000-4000-8000-000000000099"},
+		{"foreign_credential_team", "credential", "team_id", "00000000-0000-4000-8000-000000000099"},
+		{"different_owner", "credential", "id", "00000000-0000-4000-8000-000000000099"},
+		{"readonly_membership", "membership", "grants", []string{"read"}},
+		{"readonly_credential", "credential", "scopes", []string{"read"}},
+		{"private_binding", "credential", "memory_binding", "credential_private"},
+		{"private_space", "credential", "memory_space_kind", "credential_private"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			value := data()
+			value[test.group].(map[string]any)[test.field] = test.value
+			require.Error(t, VerifyPairSession(r, encode(value)))
+		})
+	}
+	for _, change := range []func(*PairRelease){
+		func(r *PairRelease) { r.Protocol = "adr0014" },
+		func(r *PairRelease) { r.Release = "v2.6.4" },
+		func(r *PairRelease) { r.SourceRevision = "0000000000000000000000000000000000000001" },
+	} {
+		changed := r
+		change(&changed)
+		require.Error(t, VerifyPairSession(changed, encode(data())), "legacy shape requires the exact pinned native baseline")
+	}
+	value := data()
+	value["memory_access"] = map[string]any{"team_shared": map[string]any{"write": true}}
+	require.Error(t, VerifyPairSession(r, encode(value)), "the pinned legacy source must retain its native session shape")
 }

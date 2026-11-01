@@ -25,6 +25,11 @@ func CanonicalRequestBodyHash(
 	return canonicalRequestBodyHashForContract(requestHashContractVersion, evidence, entityHints, relationshipHints)
 }
 
+// CanonicalRequestBodyHashForVersion verifies retained native evaluation requests without changing the contract selected by production callers.
+func CanonicalRequestBodyHashForVersion(version string, evidence any, entityHints, relationshipHints []map[string]any) (string, error) {
+	return canonicalRequestBodyHashForContract(version, evidence, entityHints, relationshipHints)
+}
+
 // CanonicalLegacyRequestBodyHash hashes the v2.6.1 Remember body retained by
 // submitted Dream confirmations created before the v2.6.2 cutover.
 func CanonicalLegacyRequestBodyHash(
