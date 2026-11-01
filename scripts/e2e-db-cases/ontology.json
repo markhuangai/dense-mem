@@ -2,6 +2,7 @@
   "version": 1,
   "capability": "ontology",
   "cases": [
+    {"id": "repository/TestOntologyCoverageFailureWitnesses","package": "./internal/ontology/postgres","run": "^TestOntologyCoverageFailureWitnesses$","phase": "precheck","source": "internal/ontology/postgres/coverage_witness_integration_test.go"},
     {"id": "repository/TestOntologyMaintenanceClaimErrorReleasesReturnedTurn","package": "./internal/ontology/postgres","run": "^TestOntologyMaintenanceClaimErrorReleasesReturnedTurn$","phase": "precheck","source": "internal/ontology/postgres/maintenance_service_integration_test.go"},
     {"id": "repository/TestOntologyMatchingVocabularyAndInvalidation","package": "./internal/ontology/postgres","run": "^TestOntologyMatchingVocabularyAndInvalidation$","phase": "precheck","source": "internal/ontology/postgres/matching_integration_test.go"},
     {"id": "repository/TestOntologyMatchingConcurrentInvalidation","package": "./internal/ontology/postgres","run": "^TestOntologyMatchingConcurrentInvalidation$","phase": "precheck","source": "internal/ontology/postgres/matching_concurrency_integration_test.go"},

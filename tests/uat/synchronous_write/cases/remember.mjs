@@ -1105,11 +1105,20 @@ async function runConcurrentWinnerCase({ rpc, expect }) {
 
 async function runAdmissionCapacityCase({ rpc, rawRPC, expect }) {
   const fixtureURL = "http://synchronous-write-provider:8787";
+  const timing = { stages: [], instrumentation_ms: 0 };
+  const started = performance.now();
+  const mark = (stage, fields = {}) => {
+    const measured = performance.now();
+    timing.stages.push({ stage, elapsed_ms: measured - started, ...fields });
+    timing.instrumentation_ms += performance.now() - measured;
+  };
   const setMode = async (mode) => {
+    mark("control_started", { mode });
     const response = await fetch(`${fixtureURL}/admission-fixture`, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode }),
     });
     expect(response.ok, `admission fixture control failed: ${response.status}`);
+    mark("control_completed", { mode });
   };
   const suffix = randomUUID().replaceAll("-", "");
   const requests = Array.from({ length: 5 }, (_, index) => {
@@ -1127,8 +1136,10 @@ async function runAdmissionCapacityCase({ rpc, rawRPC, expect }) {
   await setMode("hold");
   try {
     for (const [index, args] of requests.slice(0, 4).entries()) {
+      mark("request_started", { index });
       pending.push(rawRPC("tools/call", { name: "remember", arguments: args }, controllers[index].signal)
-        .then((response) => ({ response }), (error) => ({ error })));
+        .then((response) => { mark("request_settled", { index }); return { response }; },
+          (error) => { mark("request_settled", { index, transport_error: true }); return { error }; }));
     }
     let held = 0;
     const deadline = Date.now() + 20_000;
@@ -1140,7 +1151,10 @@ async function runAdmissionCapacityCase({ rpc, rawRPC, expect }) {
       await delay(50);
     }
     expect(held === 4, `four independent Remember calls must reach the provider: ${held}`);
+    mark("four_provider_requests_observed");
+    mark("excess_request_started");
     const rejected = await rawRPC("tools/call", { name: "remember", arguments: requests[4] });
+    mark("excess_request_completed");
     expect(rejected.result?.isError === true, "excess Remember must report a terminal error");
     const busy = rejected.result.structuredContent;
     assertStrictTerminalRemember(busy, expect);
@@ -1148,7 +1162,10 @@ async function runAdmissionCapacityCase({ rpc, rawRPC, expect }) {
     expect(failure.code === "database_failure" && failure.reason_code === "idempotency_lock_busy", "busy admission must retain its precise bounded reason");
     expect(failure.retryable === true && failure.next_action === "retry_same_request", "busy admission must preserve unchanged-request retry");
     expect(failure.message.includes("Reduce concurrent requests") && failure.remediation.includes("same idempotency_key"), "busy admission must explain capacity recovery");
-    expect(rememberCanonicalCounts(requiredEnv("DENSE_MEM_E2E_TEAM_ID"), busy.submission_id).every((count) => count === 0), "rejected admission must commit no canonical state");
+    mark("canonical_check_started");
+    const counts = rememberCanonicalCounts(requiredEnv("DENSE_MEM_E2E_TEAM_ID"), busy.submission_id);
+    mark("canonical_check_completed");
+    expect(counts.every((count) => count === 0), "rejected admission must commit no canonical state");
     await setMode("normal");
     for (const outcome of await Promise.all(pending)) {
       if (outcome.error) throw outcome.error;
@@ -1157,15 +1174,28 @@ async function runAdmissionCapacityCase({ rpc, rawRPC, expect }) {
       expect(result.processing_state === "completed", "admitted concurrent Remember must complete after release");
     }
     const recovered = terminalPayload(await rpc("tools/call", { name: "remember", arguments: requests[4] }));
+    mark("capacity_recovered");
     assertStrictTerminalRemember(recovered, expect);
     expect(recovered.processing_state === "completed", "the rejected request must complete after capacity is released");
     const replay = terminalPayload(await rpc("tools/call", { name: "remember", arguments: requests[4] }));
+    mark("replay_completed");
     expect(stableJSON(replay) === stableJSON(recovered), "capacity recovery must retain exact terminal replay");
-    return { fault: "admission-capacity", admitted: 4, rejected: failure.reason_code, recovered: recovered.processing_state };
+    return { fault: "admission-capacity", admitted: 4, rejected: failure.reason_code, recovered: recovered.processing_state, timing };
   } finally {
     for (const controller of controllers) controller.abort();
     await setMode("normal");
     await Promise.all(pending);
+    try {
+      const health = await fetch(`${fixtureURL}/health`, { signal: AbortSignal.timeout(2000) });
+      if (!health.ok) throw new Error(`fixture health returned ${health.status}`);
+      const state = await health.json();
+      timing.provider = state.admission_timing;
+      timing.embedding = state.embedding_timing;
+    } catch (error) {
+      timing.capture_error = error.message;
+    }
+    mark("cleanup_completed");
+    process.stdout.write(JSON.stringify({ type: "admission_capacity_timing", ...timing }) + "\n");
   }
 }
 
