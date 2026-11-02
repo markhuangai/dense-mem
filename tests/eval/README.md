@@ -773,6 +773,9 @@ five-pair disabled/enabled route uses `-count=5` and
 `scripts/compare_ontology_recall.py` with the same 10% bound. Keep protocols and
 both source identities fixed; do not retry failed measurements automatically.
 
+Record each arm's effective fixture setup, candidate counts, marker fanout, processing duration and provider calls separately; fixture counts do not establish runtime throughput.
+Compare historical measurements only when fixture identity and execution context permit.
+
 Run registered `TestCommunityTopic*` PostgreSQL cases for current topic
 projection, large fanout, bounded previews, independent freshness, lifecycle and
 RLS. The former legacy detector comparison requires its archived source; current
