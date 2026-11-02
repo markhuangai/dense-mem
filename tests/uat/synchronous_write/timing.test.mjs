@@ -65,24 +65,40 @@ async function until(read, predicate) {
   assert.fail("fixture did not reach its expected state");
 }
 
-test("admission holds precede slow upstream embedding and record delayed control release over real HTTP", async (t) => {
+test("admission holds release a two-slot embedding client and scope timing to its current window", async (t) => {
   const upstreamRequests = await embeddingUpstream(t, { delayMS: 2100 });
   const { post, health } = await fixture(t);
+  const previous = await post("/v1/embeddings", { model: "fixture-model", dimensions: 2, input: ["earlier case"] });
+  assert.equal(previous.status, 200);
+  await previous.json();
+  assert.ok((await health()).embedding_timing.events.length > 0);
   assert.equal((await post("/admission-fixture", { mode: "hold" })).status, 200);
-  const requests = Array.from({ length: 4 }, (_, index) => post("/v1/embeddings", request(`admitted-${index}`)));
-  await until(health, (state) => state.held_admission_requests === 4);
-  assert.equal(upstreamRequests.length, 0, "admission must hold before upstream embedding starts");
+  assert.deepEqual((await health()).embedding_timing, { events: [], dropped: 0, instrumentation_ms: 0 });
+  let scheduled = 0;
+  const clients = Array.from({ length: 2 }, async () => {
+    const responses = [];
+    while (scheduled < 4) {
+      const index = scheduled++;
+      responses.push(await post("/v1/embeddings", request(`admitted-${index}`)));
+    }
+    return responses;
+  });
+  await until(health, (state) => state.held_admission_requests === 2);
+  assert.equal(upstreamRequests.length, 1, "current holders must wait before upstream embedding starts");
   assert.equal((await post("/admission-fixture", { mode: "normal", delay_ms: 40 })).status, 200);
-  const responses = await Promise.all(requests);
+  const responses = (await Promise.all(clients)).flat();
+  assert.equal(responses.length, 4);
   assert.ok(responses.every((response) => response.status === 200));
-  assert.equal(upstreamRequests.length, 4, "released requests must still use real upstream embedding");
+  assert.equal(upstreamRequests.length, 5, "all released and queued requests must use real upstream embedding");
   for (const response of responses) assert.deepEqual((await response.json()).data[0].embedding, [1, 0]);
   const state = await health();
   const events = state.admission_timing.events;
+  assert.equal(state.embedding_timing.events.length, 4);
+  assert.ok(state.embedding_timing.events.every((entry) => entry.fault === "admission-hold"));
   assert.equal(state.held_admission_requests, 0);
   assert.equal(state.admission_timing.dropped, 0);
-  assert.equal(events.filter((entry) => entry.event === "held").length, 4);
-  assert.equal(events.filter((entry) => entry.event === "released" && entry.reason === "control").length, 4);
+  assert.equal(events.filter((entry) => entry.event === "held").length, 2);
+  assert.equal(events.filter((entry) => entry.event === "released" && entry.reason === "control").length, 2);
   const received = events.find((entry) => entry.event === "control_received" && entry.mode === "normal");
   const applied = events.find((entry) => entry.event === "control_applied" && entry.mode === "normal");
   assert.ok(applied.at_ms - received.at_ms >= 35);
@@ -93,7 +109,7 @@ test("admission holds precede slow upstream embedding and record delayed control
     "provider instrumentation excludes the intentional control delay");
   assert.ok(events.every((entry, index) => index === 0 || entry.at_ms >= events[index - 1].at_ms));
   const heldCalls = events.filter((entry) => entry.event === "held").map((entry) => entry.call).sort();
-  assert.equal(new Set(heldCalls).size, 4);
+  assert.equal(new Set(heldCalls).size, 2);
   assert.deepEqual(events.filter((entry) => entry.event === "released").map((entry) => entry.call).sort(), heldCalls);
 });
 

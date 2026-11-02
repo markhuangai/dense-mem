@@ -1133,6 +1133,7 @@ async function runAdmissionCapacityCase({ rpc, rawRPC, expect }) {
   });
   const controllers = requests.slice(0, 4).map(() => new AbortController());
   const pending = [];
+  expect(rememberAdmissionLockCount() === 0, "admission fixture must begin without Remember lock holders");
   await setMode("hold");
   try {
     for (const [index, args] of requests.slice(0, 4).entries()) {
@@ -1142,16 +1143,23 @@ async function runAdmissionCapacityCase({ rpc, rawRPC, expect }) {
           (error) => { mark("request_settled", { index, transport_error: true }); return { error }; }));
     }
     let held = 0;
+    let admitted = 0;
+    timing.native_admission = { checks: 0, query_ms: 0, last_count: 0 };
     const deadline = Date.now() + 20_000;
     while (Date.now() < deadline) {
       const health = await fetch(`${fixtureURL}/health`);
       expect(health.ok, "admission fixture health failed");
       held = (await health.json()).held_admission_requests;
-      if (held === 4) break;
+      const queryStarted = performance.now();
+      admitted = rememberAdmissionLockCount();
+      timing.native_admission.checks += 1;
+      timing.native_admission.query_ms += performance.now() - queryStarted;
+      timing.native_admission.last_count = admitted;
+      if (admitted === 4 && held > 0) break;
       await delay(50);
     }
-    expect(held === 4, `four independent Remember calls must reach the provider: ${held}`);
-    mark("four_provider_requests_observed");
+    expect(admitted === 4 && held > 0, `four Remember calls must hold native admission while the provider is blocked: ${admitted} admitted, ${held} provider holders`);
+    mark("four_admitted_requests_observed", { held_provider_requests: held });
     mark("excess_request_started");
     const rejected = await rawRPC("tools/call", { name: "remember", arguments: requests[4] });
     mark("excess_request_completed");
@@ -1430,6 +1438,17 @@ function postgresQuery(sql) {
     throw new Error("known-evidence PostgreSQL query helper only permits read queries");
   }
   return postgresExec(sql, "synchronous-write-remember-query").trim();
+}
+
+function rememberAdmissionLockCount() {
+  // Provider slots can be fewer than admission slots, so observe the native Remember lock holders.
+  return Number(postgresQuery(`
+    SELECT count(*) FROM pg_locks AS held
+    JOIN pg_stat_activity AS owner ON owner.pid = held.pid
+    WHERE held.locktype = 'advisory' AND held.granted AND held.mode = 'ExclusiveLock'
+      AND owner.datname = current_database()
+      AND owner.query = 'SELECT pg_try_advisory_lock(hashtextextended($1, $2))';
+  `));
 }
 
 function rememberCanonicalCounts(teamID, submissionID) {

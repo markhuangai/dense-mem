@@ -70,6 +70,9 @@ const server = createServer(async (request, response) => {
       admissionTiming.events.length = 0;
       admissionTiming.dropped = 0;
       admissionTiming.instrumentation_ms = 0;
+      embeddingTiming.events.length = 0;
+      embeddingTiming.dropped = 0;
+      embeddingTiming.instrumentation_ms = 0;
     }
     recordTiming(admissionTiming, "control_received", { mode: payload.mode, delay_ms: delayMS });
     if (delayMS) await new Promise((resolve) => setTimeout(resolve, delayMS));
