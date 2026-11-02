@@ -31,6 +31,45 @@ func unitReceipt(t *testing.T, sources []contract.SourceSnapshot) contract.Organ
 	return receipt
 }
 
+func TestOrganizationRequestCarriesRegisteredPredicateKeys(t *testing.T) {
+	first := unitSource("first", "")
+	first.Kind, first.ID = contract.PredicateSource, "uses"
+	first.State = map[string]string{"aliases": "[]", "subject_kinds": "{project}", "object_kinds": "{product}", "kind": "state", "cardinality": "many", "metadata": "{}"}
+	second := first
+	second.ID = "builds"
+	evidence := unitSource("evidence", "Atlas uses PostgreSQL.")
+	entity := unitSource("entity", "")
+	entity.Kind, entity.EntityKind = contract.EntitySource, "project"
+	entity.State = map[string]string{"names": `[["owner","Atlas","canonical",""]]`, "identity": "{}"}
+	relationship := unitSource("relationship", "")
+	relationship.Kind = contract.RelationshipSource
+	relationship.State = map[string]string{"subject": entity.ID, "predicate": "works_on", "object_entity": uuid.NewString(), "kind": "state", "cardinality": "many", "polarity": "+"}
+	sources := []contract.SourceSnapshot{first, second, evidence, entity, relationship}
+	receipt := unitReceipt(t, sources)
+	provider := assessment.NewProvider(nil, "model", assessor.DefaultSemanticAssessmentLimits(), 300000)
+	request, _, err := NewService(nil, provider).request(contract.OrganizationContext{Sources: sources}, &receipt)
+	require.NoError(t, err)
+	require.Len(t, request.Items, len(sources))
+	encoded, err := json.Marshal(request)
+	require.NoError(t, err)
+	var outbound assessment.Request
+	require.NoError(t, json.Unmarshal(encoded, &outbound))
+	for index, source := range sources[:2] {
+		require.Equal(t, source.ID, outbound.Items[index].Context["predicate"])
+		require.NotContains(t, source.State, "predicate")
+	}
+	require.NotEqual(t, outbound.Items[0].Context, outbound.Items[1].Context)
+	for index, source := range sources[2:] {
+		require.Equal(t, contract.SourceDisplayContext(source), outbound.Items[index+2].Context)
+		require.Equal(t, contract.SourceDisplayText(source), outbound.Items[index+2].Text)
+	}
+	for index, source := range sources {
+		fingerprint, err := contract.SourceFingerprint(source)
+		require.NoError(t, err)
+		require.Equal(t, receipt.Sources[index].Fingerprint, fingerprint)
+	}
+}
+
 func TestOrganizationRequestUsesBoundedContextAndManagerRules(t *testing.T) {
 	a, b := unitSource("a", "Atlas uses PostgreSQL."), unitSource("b", "Atlas uses PostgreSQL.")
 	topic := contract.Record{ID: uuid.NewString(), Version: 1, Kind: contract.Topic, Definition: &contract.Definition{Key: "postgresql", Label: "PostgreSQL"}}
