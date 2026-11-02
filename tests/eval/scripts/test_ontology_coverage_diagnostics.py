@@ -1,6 +1,11 @@
 import copy
+import hashlib
 import importlib.util
+import json
 from pathlib import Path
+import subprocess
+import sys
+import tempfile
 import unittest
 
 
@@ -50,6 +55,61 @@ class OntologyCoverageDiagnosticsTests(unittest.TestCase):
             diagnostics.reconcile(rows, [terminal, terminal])
         with self.assertRaises(ValueError):
             diagnostics.reconcile(rows + rows, [terminal])
+
+    def test_organized_sources_require_lineage_and_accept_unchanged_outcomes(self):
+        terminal = source("a", "organized", "", "last")
+        rows = [assessment("last", [terminal])]
+        for status in ("organized", "unchanged"):
+            with self.subTest(outcome=status):
+                rows[0]["body"]["result"]["outcomes"][0]["status"] = status
+                result = diagnostics.reconcile(rows, [terminal])
+                self.assertEqual(result["terminal_outcomes"], {"organized:": 1})
+                self.assertEqual(result["unresolved_sources"], 0)
+                for changed in (dict(terminal, assessment_id="missing"),
+                                dict(terminal, fingerprint="changed"),
+                                dict(terminal, reason="stale_input")):
+                    with self.assertRaises(ValueError):
+                        diagnostics.reconcile(rows, [changed])
+        rows[0]["body"]["result"]["outcomes"][0]["status"] = "failed"
+        with self.assertRaises(ValueError):
+            diagnostics.reconcile(rows, [terminal])
+
+    def test_cli_creates_private_output_without_overwriting_existing_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            rows = []
+            sources = []
+            for family in diagnostics.FAMILIES:
+                item = source(family, "ambiguous" if family == "classification_ambiguous" else "failed", family, family)
+                rows.append(assessment(family, [item], family, family))
+                sources.append(item)
+            retained = root / "assessments.jsonl"
+            retained.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+            terminal = root / "terminal.json"
+            terminal.write_text(json.dumps({"scope": {}, "sources": sources}), encoding="utf-8")
+            output = root / "diagnostics.json"
+            command = [sys.executable, "-c", """
+import os, runpy, stat, sys
+from pathlib import Path
+output = Path(sys.argv[-1])
+def check_permissions(event, args):
+    if event in ("open", "os.chmod") and output.exists():
+        assert stat.S_IMODE(output.stat().st_mode) & 0o077 == 0
+os.umask(0)
+sys.addaudithook(check_permissions)
+sys.argv = sys.argv[1:]
+runpy.run_path(sys.argv[0], run_name="__main__")
+""", str(Path(diagnostics.__file__).resolve()), "--assessments", str(retained),
+                       "--terminal-sources", str(terminal), "--expected-assessments-sha256",
+                       hashlib.sha256(retained.read_bytes()).hexdigest(), "--out", str(output)]
+            result = subprocess.run(command, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(output.stat().st_mode & 0o777, 0o600)
+            original = output.read_bytes()
+            repeated = subprocess.run(command, capture_output=True, text=True)
+            self.assertNotEqual(repeated.returncode, 0)
+            self.assertIn("FileExistsError", repeated.stderr)
+            self.assertEqual(output.read_bytes(), original)
 
     def test_selection_uses_source_count_then_time_then_identity(self):
         rows = []

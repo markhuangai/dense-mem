@@ -2,6 +2,7 @@ import argparse
 import collections
 import hashlib
 import json
+import os
 from pathlib import Path
 
 
@@ -57,8 +58,6 @@ def reconcile(assessments, terminal_sources):
         if key in terminal:
             raise ValueError("duplicate terminal source identity")
         terminal[key] = source
-        if source["status"] not in ("failed", "ambiguous"):
-            continue
         receipt = by_id.get(source["assessment_id"])
         if receipt is None:
             raise ValueError("terminal source has no retained assessment")
@@ -66,9 +65,14 @@ def reconcile(assessments, terminal_sources):
         outcomes = [item for item in receipt["result"]["outcomes"] if source_key(item["source"]) == key]
         if len(dependencies) != 1 or dependencies[0]["fingerprint"] != source["fingerprint"]:
             raise ValueError("terminal source fingerprint differs from assessment")
-        if len(outcomes) != 1 or (outcomes[0]["status"], outcomes[0].get("reason", "")) != (
+        outcome_status = outcomes[0]["status"] if len(outcomes) == 1 else None
+        if outcome_status == "unchanged":
+            outcome_status = "organized"
+        if len(outcomes) != 1 or (outcome_status, outcomes[0].get("reason", "")) != (
                 source["status"], source["reason"]):
             raise ValueError("terminal source outcome differs from assessment")
+        if source["status"] not in ("failed", "ambiguous"):
+            continue
         unresolved.append(source)
         if source["reason"] == "provider_response_invalid":
             invalid_codes[receipt["result"]["attempts"][-1]["validation"]["code"]] += 1
@@ -119,8 +123,8 @@ def main():
         "witnesses": select_witnesses(assessments),
         "historical_provider_bodies_available": False,
     }
-    with args.out.open("x", encoding="utf-8") as output:
-        args.out.chmod(0o600)
+    descriptor = os.open(args.out, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as output:
         json.dump(result, output, indent=2)
         output.write("\n")
     print(json.dumps({"unresolved_sources": result["reconciliation"]["unresolved_sources"],
