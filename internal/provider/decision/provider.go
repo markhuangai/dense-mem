@@ -92,7 +92,7 @@ func (p *Provider) Decide(ctx context.Context, request modelprovider.DecisionReq
 			if err = ctx.Err(); err != nil {
 				return result, err
 			}
-			p.log(ctx, slog.LevelDebug, "decision.question.prepared", append(append([]observability.LogAttr{}, attrs...), attr("group_id", group.ID), attr("candidate_reference", group.Reference), attr("question", observability.DecisionLogValue(question)))...)
+			p.log(observability.WithSinkSuppressed(ctx), slog.LevelDebug, "decision.question.prepared", append(append([]observability.LogAttr{}, attrs...), attr("group_id", group.ID), attr("candidate_reference", group.Reference), attr("question", observability.DecisionLogValue(question)))...)
 		}
 	}
 	batches, err := p.pack(ctx, request.Groups)
@@ -431,15 +431,12 @@ func (p *Provider) log(ctx context.Context, level slog.Level, event string, fiel
 }
 
 func (p *Provider) payload(ctx context.Context, direction string, body []byte, common []observability.LogAttr) {
-	const logBodyLimit = 8192
-	protected, reason := p.protector.ProtectDiagnosticBytes(body, logBodyLimit, observability.AuthenticationSecretsFromContext(ctx)...)
-	state := "captured"
-	if reason != observability.CredentialProtectionAvailable {
-		state = "unavailable"
+	if root, ok := p.logger.(interface{ ContextSlog() *slog.Logger }); ok && !root.ContextSlog().Enabled(ctx, slog.LevelDebug) {
+		return
 	}
-	fields := append(append([]observability.LogAttr{}, common...), attr("direction", direction), attr("capture_state", state), attr("capture_reason", int(reason)), attr("payload_bytes", len(body)), attr("payload_limit_bytes", logBodyLimit), attr("truncated", len(body) > logBodyLimit))
-	if protected != nil {
-		fields = append(fields, attr("payload", string(protected)))
+	ctx = observability.WithSinkSuppressed(ctx)
+	for _, chunk := range observability.CaptureDiagnosticBody(ctx, p.protector, body, modelprovider.MaxProviderDiagnosticBodyBytes) {
+		fields := append(append([]observability.LogAttr{}, common...), attr("direction", direction), attr("payload_chunk", chunk))
+		p.log(ctx, slog.LevelDebug, "decision.exchange.payload", fields...)
 	}
-	p.log(ctx, slog.LevelDebug, "decision.exchange.payload", fields...)
 }

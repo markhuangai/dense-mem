@@ -471,12 +471,12 @@ function RememberInvocationDetailView({ detail, onOpenLogs }: { detail: Remember
         {onOpenLogs && <div className="button-row">
           <Button variant="outline" className="ghost-button" type="button" onClick={() => onOpenLogs({ team_id: detail.team_id, correlation_id: detail.correlation_id, invocation_id: detail.invocation_id })}>View related logs</Button>
         </div>}
-        <h3>Original request</h3>
+        {(["failed", "cancelled", "conflict"].includes(detail.outcome) || Boolean(detail.error_code)) && <><h3>Original request</h3>
         {detail.request_capture_state === "expired" ? <DiagnosticUnavailable message="This request capture expired and its body is no longer available." /> : detail.request_body ? <><DiagnosticBody label="Request body" content={detail.request_body} />{detail.request_capture_state === "truncated" && <DiagnosticUnavailable message={TRUNCATED_CAPTURE_MESSAGE} />}</> : <DiagnosticUnavailable message={`Request capture is ${detail.request_capture_state || "unavailable"}.`} />}
         <h3>AI provider exchanges</h3>
         {detail.provider_exchanges.length === 0 ? <DiagnosticUnavailable message="No provider exchange was captured for this call." /> : detail.provider_exchanges.map((exchange) => <DiagnosticExchange exchange={{ ...exchange, diagnostic_id: exchange.diagnostic_id || `${exchange.sequence_no}:${exchange.component}`, captured_at: exchange.captured_at || detail.created_at, expires_at: exchange.expires_at || detail.expires_at, retained_by_legal_hold: detail.retained_by_legal_hold } as RememberDiagnosticExchange} key={`${exchange.sequence_no}:${exchange.diagnostic_id || exchange.component}`} />)}
         <h3>Caller response</h3>
-        {detail.caller_response ? <><DiagnosticBody label="Captured response (Caller receipt unknown)" content={detail.caller_response} />{detail.caller_response_capture_state === "truncated" && <DiagnosticUnavailable message={TRUNCATED_CAPTURE_MESSAGE} />}</> : <DiagnosticUnavailable message={`Caller response capture is ${deliveryState || "unknown"}; receipt is not inferred.`} />}
+        {detail.caller_response ? <><DiagnosticBody label="Captured response (Caller receipt unknown)" content={detail.caller_response} />{detail.caller_response_capture_state === "truncated" && <DiagnosticUnavailable message={TRUNCATED_CAPTURE_MESSAGE} />}</> : <DiagnosticUnavailable message={`Caller response capture is ${deliveryState || "unknown"}; receipt is not inferred.`} />}</>}
       </section>
     </section>
   );
@@ -522,7 +522,7 @@ function RememberAttemptDetailView({ detail }: { detail: RememberAttemptDiagnost
 
       <AssessorValidationSection events={detail.events} />
 
-      <RememberDiagnosticSection detail={detail} />
+      {(["failed", "cancelled", "conflict"].includes(detail.outcome) || Boolean(detail.error_code)) && <RememberDiagnosticSection detail={detail} />}
     </section>
   );
 }

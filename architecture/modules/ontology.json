@@ -28,6 +28,9 @@
   "source_ownership": [
     {
       "path": "cmd/internal/serverapp/ontology_composition.go"
+    },
+    {
+      "path": "cmd/internal/serverapp/ontology_diagnostic_composition.go"
     }
   ],
   "workers": [

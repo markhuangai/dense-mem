@@ -181,7 +181,7 @@ func TestRememberExchangeRecorderProjectsProviderExchangeOnce(t *testing.T) {
 	require.Contains(t, string(exchanges[0].ResponseBody), "embedding")
 }
 
-func TestRememberExchangeRecorderUsesPrecomputedProviderProjection(t *testing.T) {
+func TestRememberExchangeRecorderPreservesCompleteProviderBody(t *testing.T) {
 	recorder := &rememberExchangeRecorder{protector: observability.NewCredentialProtector()}
 	rawResponse := []byte(`{"model":"embedding-model","data":[{"index":0,"embedding":[0.1,0.2]}]}`)
 	recorder.RecordProviderExchange(context.Background(), modelprovider.ProviderExchange{
@@ -193,8 +193,13 @@ func TestRememberExchangeRecorderUsesPrecomputedProviderProjection(t *testing.T)
 
 	exchanges := recorder.Snapshot()
 	require.Len(t, exchanges, 1)
-	require.Contains(t, string(exchanges[0].ResponseBody), `"embedding_dimensions":2`)
-	require.NotContains(t, string(exchanges[0].ResponseBody), "0.1")
+	require.JSONEq(t, string(rawResponse), string(exchanges[0].ResponseBody))
+	require.Empty(t, exchanges[0].ResponseBodyProjection)
+
+	rawError := []byte(`{"message":"upstream deployment not ready","retry_after":3}`)
+	recorder.RecordProviderExchange(context.Background(), modelprovider.ProviderExchange{Component: "embedding", ResponseBody: rawError,
+		ResponseBodyProjection: []byte(`{"field_count":2}`), StatusCode: 409, Outcome: "captured"})
+	require.JSONEq(t, string(rawError), string(recorder.Snapshot()[1].ResponseBody))
 }
 
 func TestRememberExchangeSnapshotRetainsLaterMetadataAfterAggregateLimit(t *testing.T) {

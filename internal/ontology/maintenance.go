@@ -36,6 +36,12 @@ type MaintenanceDependencies struct {
 	Now             func() time.Time
 	Projections     ProjectionRunner
 	Logger          *slog.Logger
+	Diagnostics     MaintenanceDiagnosticCapture
+}
+
+type MaintenanceDiagnosticCapture struct {
+	NewRecorder   func() modelprovider.SnapshotRecorder
+	RecordFailure func(context.Context, contract.MaintenanceClaim, contract.OrganizationResult, []modelprovider.ProviderExchange) error
 }
 
 type ProjectionRunner interface {
@@ -256,6 +262,12 @@ func (s *MaintenanceService) executeBatch(ctx context.Context, work maintenanceW
 	defer cancel()
 	claimCtx := contract.WithMaintenanceClaim(turnCtx, claim)
 	var result contract.OrganizationResult
+	var recorder modelprovider.SnapshotRecorder
+	if s.deps.Diagnostics.NewRecorder != nil {
+		recorder = s.deps.Diagnostics.NewRecorder()
+		claimCtx = modelprovider.WithExchangeRecorder(claimCtx, recorder)
+	}
+	claimCtx = observability.WithExchangeScope(claimCtx, observability.ExchangeScope{TeamID: claim.TeamID, RunID: claim.RunID, BatchID: claim.ID})
 	defer func() {
 		failure := contract.MaintenanceFailureCode(runErr)
 		if failure == "" {
@@ -272,6 +284,20 @@ func (s *MaintenanceService) executeBatch(ctx context.Context, work maintenanceW
 				failure = "maintenance_failure"
 			}
 			runErr = errors.Join(runErr, s.deps.Repository.RecordMaintenanceFailure(finishCtx, claim.RunID, failure, s.deps.Now()))
+		}
+		if (runErr != nil || result.FailureCode != "") && s.deps.Diagnostics.RecordFailure != nil {
+			var exchanges []modelprovider.ProviderExchange
+			if recorder != nil {
+				exchanges = recorder.Snapshot()
+			}
+			diagnosticCtx, diagnosticCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer diagnosticCancel()
+			if result.FailureCode == "" {
+				result.FailureCode = failure
+			}
+			if err := s.deps.Diagnostics.RecordFailure(diagnosticCtx, claim, result, exchanges); err != nil && s.deps.Logger != nil {
+				s.deps.Logger.LogAttrs(diagnosticCtx, slog.LevelWarn, "ontology_failure_diagnostics_unavailable", slog.String("run_id", claim.RunID), slog.String("batch_id", claim.ID), slog.String("assessment_id", result.AssessmentID))
+			}
 		}
 	}()
 	accounting := &maintenanceAttemptAccounting{repository: s.deps.Repository, claim: claim, now: s.deps.Now, admitted: map[int]bool{}}

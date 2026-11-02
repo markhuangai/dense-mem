@@ -20,6 +20,17 @@ function fixture() {
 }
 
 describe("Ontology maintenance controls", () => {
+  it("offers captured exchanges only for runs with a failure", async () => {
+    const api = fixture();
+    vi.mocked(api.listOntologyMaintenanceRuns).mockResolvedValue({ runs: [{ ...run, failure_code: "", status: "completed", retryable: false }, { ...run, id: "failed-run" }] });
+    vi.spyOn(api, "listOperationLogs").mockResolvedValue({ data: [], pagination: { limit: 20, offset: 0, total: 0 } });
+    render(<OntologyMaintenancePanel api={api} />);
+    const buttons = await screen.findAllByRole("button", { name: "View failure diagnostics" });
+    expect(buttons).toHaveLength(1);
+    fireEvent.click(buttons[0]);
+    expect(await screen.findByText(/No retained failure captures/)).toBeVisible();
+    expect(api.listOperationLogs).toHaveBeenCalledWith(expect.objectContaining({ reference_id: "failed-run", event: "ontology_failure_capture" }));
+  });
   it("keeps empty discovery distinct from completed coverage", async () => {
     const api = fixture();
     vi.mocked(api.getOntologyMaintenanceStatus).mockResolvedValue({ ...status, window: undefined, counts: { eligible: 0, organized: 0, pending: 0, failed: 0, ambiguous: 0 } });
