@@ -264,7 +264,7 @@ jobs:
       fail-fast: false
       max-parallel: 2
       matrix:
-        part: [postgres, core, postgres-support]
+        part: [core, postgres]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -320,11 +320,6 @@ jobs:
         with:
           name: go-coverage-postgres-${{ github.run_id }}-${{ github.run_attempt }}
           path: coverage/postgres
-      - name: Download PostgreSQL supporting coverage profiles
-        uses: actions/download-artifact@v8
-        with:
-          name: go-coverage-postgres-support-${{ github.run_id }}-${{ github.run_attempt }}
-          path: coverage/postgres-support
       - name: Run unit coverage gate
         run: scripts/coverage-report.sh --merge-complete
 

@@ -12,8 +12,10 @@ usage: scripts/coverage-report.sh --transitional | --complete | --complete-part 
 first-party root-module package, the evaluation profile, focused PostgreSQL
 application coverage, the nested E2E module, and cross-package execution, then
 enforces the strict above-90-percent gate on the deduplicated merged inventory.
---complete-part produces one source-bound profile set; --merge-complete requires
-all three sets from the same source and workflow attempt before enforcing the gate.
+--complete-part core also produces the separately sealed supporting PostgreSQL
+part inside the core artifact, so existing two-job callers transport all three
+sets. --merge-complete requires every set from the same source and workflow
+attempt before enforcing the gate.
 EOF
 }
 
@@ -127,13 +129,23 @@ run_transitional() {
 		}'
 }
 
+complete_part_dir() {
+	if [[ "$1" == postgres-support ]]; then
+		printf '%s/core/postgres-support\n' "${COVERAGE_DIR}"
+	else
+		printf '%s/%s\n' "${COVERAGE_DIR}" "$1"
+	fi
+}
+
 complete_paths() {
+	local support_directory
+	support_directory="$(complete_part_dir postgres-support)"
 	root_profile="${COVERAGE_DIR}/core/go-root-complete.raw"
 	evaluation_profile="${COVERAGE_DIR}/core/go-evaluation-complete.raw"
 	postgres_profile="${COVERAGE_DIR}/postgres/go-postgres-complete.raw"
-	community_scale_profile="${COVERAGE_DIR}/postgres-support/go-community-scale-complete.raw"
-	audit_profile="${COVERAGE_DIR}/postgres-support/go-audit-complete.raw"
-	session_profile="${COVERAGE_DIR}/postgres-support/go-session-complete.raw"
+	community_scale_profile="${support_directory}/go-community-scale-complete.raw"
+	audit_profile="${support_directory}/go-audit-complete.raw"
+	session_profile="${support_directory}/go-session-complete.raw"
 	e2e_profile="${COVERAGE_DIR}/core/go-e2e-complete.raw"
 	root_dedup_profile="${COVERAGE_DIR}/go-root-complete.out"
 	evaluation_dedup_profile="${COVERAGE_DIR}/go-evaluation-complete.out"
@@ -155,23 +167,30 @@ coverage_identity() {
 }
 
 seal_complete_part() {
-	local part="$1"
+	local part="$1" directory
 	shift
+	directory="$(complete_part_dir "$part")"
 	for profile in "$@"; do
 		if [[ ! -s "$profile" ]] || ! awk 'NR > 1 && NF >= 3 { found = 1 } END { exit !found }' "$profile"; then
 			echo "coverage profile is missing or empty: ${profile}" >&2
 			return 1
 		fi
 	done
-	coverage_identity > "${COVERAGE_DIR}/${part}/identity.txt"
-	(cd "${COVERAGE_DIR}/${part}"; sha256sum go-*-complete.raw > profiles.sha256)
+	coverage_identity > "${directory}/identity.txt"
+	(
+		cd "${directory}"
+		for profile in "$@"; do
+			sha256sum "$(basename "$profile")"
+		done > profiles.sha256
+	)
 }
 
 verify_complete_parts() {
-	local part expected profile
+	local part expected profile directory
 	expected="$(coverage_identity)"
 	for part in core postgres postgres-support; do
-		[[ -f "${COVERAGE_DIR}/${part}/identity.txt" && "$(cat "${COVERAGE_DIR}/${part}/identity.txt")" == "$expected" ]] || {
+		directory="$(complete_part_dir "$part")"
+		[[ -f "${directory}/identity.txt" && "$(cat "${directory}/identity.txt")" == "$expected" ]] || {
 			echo "coverage ${part} identity does not match the source and workflow attempt" >&2
 			return 1
 		}
@@ -185,11 +204,11 @@ verify_complete_parts() {
 		expected_checksums="$(for profile in "${expected_profiles[@]}"; do
 			(cd "$(dirname "$profile")"; sha256sum "$(basename "$profile")") || return 1
 		done | LC_ALL=C sort)"
-		[[ -f "${COVERAGE_DIR}/${part}/profiles.sha256" && "$(LC_ALL=C sort "${COVERAGE_DIR}/${part}/profiles.sha256")" == "$expected_checksums" ]] || {
+		[[ -f "${directory}/profiles.sha256" && "$(LC_ALL=C sort "${directory}/profiles.sha256")" == "$expected_checksums" ]] || {
 			echo "coverage ${part} profile inventory or checksum does not match" >&2
 			return 1
 		}
-		(cd "${COVERAGE_DIR}/${part}"; sha256sum --check --status profiles.sha256) || {
+		(cd "${directory}"; sha256sum --check --status profiles.sha256) || {
 			echo "coverage ${part} profile checksum verification failed" >&2
 			return 1
 		}
@@ -199,8 +218,10 @@ verify_complete_parts() {
 run_complete_part() {
 	local part="$1"
 	complete_paths
-	mkdir -p "${COVERAGE_DIR}/${part}"
-	rm -f -- "${COVERAGE_DIR}/${part}/identity.txt" "${COVERAGE_DIR}/${part}/profiles.sha256"
+	local directory
+	directory="$(complete_part_dir "$part")"
+	mkdir -p "${directory}"
+	rm -f -- "${directory}/identity.txt" "${directory}/profiles.sha256"
 	local -a packages evaluation_packages cover_packages evaluation_cover_packages
 	mapfile -t packages < <(scripts/go-packages.sh --coverage | grep -v '/cmd/server$')
 	mapfile -t evaluation_packages < <(scripts/go-packages.sh --coverage --tags evaluation | grep -v '/cmd/server$')
@@ -216,6 +237,7 @@ run_complete_part() {
 		go test -tags evaluation "${evaluation_packages[@]}" -timeout=30m -covermode=atomic -coverpkg="${evaluation_coverpkg}" -coverprofile="${evaluation_profile}" -count=1
 		go -C cmd/e2e test ./... -covermode=atomic -coverprofile="${e2e_profile}" -count=1
 		seal_complete_part core "${core_profiles[@]}"
+		run_complete_part postgres-support
 	elif [[ "$part" == postgres ]]; then
 		DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test -tags integration ./internal/ontology/postgres ./internal/community/postgres ./internal/dream/postgres ./cmd/internal/serverapp \
 			-run '^(TestOntologyMaintenance(Finalization.*|Parallel.*|Revalidation.*|CurrentReceiptCompletion|DiscoveryCommittedDiagnostics|Cohort|MatchingCohort|RegenerationFailureRetry|ProviderPauseDrain|AccountingFailurePreventsPublication|ContextConfigurationAndManualReuse|BudgetRetirement.*|GlobalAccounting|LeaseInterruptionReturnsPending|ProgressBeyondFormerBudgets|ProviderFailureReleasesCapacity|DirectOrganizationRejectsMissingContext|ControlInterruptionResumesSameWindow|PauseCommandsAndWindows|OperatorHTTPAndScheduler|CommandAuditIsAtomic)|TestOntologyMatching.*|TestOntologyAutomaticRetirementPreservesGroupingOverrides|TestOntologyCurrentReadersDistinguishDependencyAndSourceChanges|TestOntologyGroupingOverridesPreserveAssignmentFreshness|TestOntologyCurrentReadersReportCanonicalFingerprintAndVersionChanges|TestOntologyVocabularyUsesCurrentCandidateWindow|TestOntologyVocabularyWindowPreservesTeamIsolationAndNameReuse|TestOntologyFollowupCohort|TestOntologyMaintenanceBoundedCompletionUsesPersistedOutcomes|TestOntologyMaintenanceEarlierAmbiguityKeepsBoundedRunIncomplete|TestOntologyMaintenanceScheduledRecoveryClearsCurrentReason|TestOntologyMaintenanceCompletedRunDoesNotHideUnrelatedFailures|TestOntologyMaintenanceConcurrentInterruptionPreservesRunWork|TestOntologyMixedSeparationOverrideProtectsEvidenceGroups|TestOntologyManagement.*|TestCommunityTopic.*|TestRetiredDreamHistoryPreservesProvenanceIsolationAndRetention|TestServerLifecycle.*|TestRunActiveServerCanceledBeforeWorkersDoesNotBuildRuntimeWorker|TestPrivateMemoryCommandsInspectFreshDatabaseWithoutStartingOrMigrating|TestPrivateMemoryPreflightCommandBoundsLegacyReportAndReturnsBlockers|TestPairedEvaluation.*)$' \
@@ -266,7 +288,6 @@ merge_complete() {
 run_complete() {
 	run_complete_part core
 	run_complete_part postgres
-	run_complete_part postgres-support
 	merge_complete
 }
 
