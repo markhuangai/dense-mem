@@ -20,71 +20,21 @@ async function fixture(t) {
 }
 
 function request(id) {
-  return {
-    response_format: { json_schema: { name: "dense_mem_semantic_assessment_response" } },
-    messages: [{ role: "user", content: JSON.stringify({ request_id: id,
-      evidence: [{ evidence_id: "evidence", content: "Atlas uses PostgreSQL. [fixture-fault:admission-hold]" }],
-      submitted_entities: [], submitted_relationships: [],
-    }) }],
-  };
+  return { model: "fixture-model", dimensions: 2, input: [`${id} [fixture-fault:admission-hold]`] };
 }
 
-async function until(read, predicate) {
-  const deadline = performance.now() + 2000;
-  while (performance.now() < deadline) {
-    const value = await read();
-    if (predicate(value)) return value;
-    await delay(10);
-  }
-  assert.fail("fixture did not reach its expected state");
-}
-
-test("admission timing distinguishes held arrivals and delayed control release over real HTTP", async (t) => {
-  const { post, health } = await fixture(t);
-  assert.equal((await post("/admission-fixture", { mode: "hold" })).status, 200);
-  const requests = Array.from({ length: 4 }, (_, index) => post("/v1/chat/completions", request(`admitted-${index}`)));
-  await until(health, (state) => state.held_admission_requests === 4);
-  assert.equal((await post("/admission-fixture", { mode: "normal", delay_ms: 40 })).status, 200);
-  const responses = await Promise.all(requests);
-  assert.ok(responses.every((response) => response.status === 200));
-  const state = await health();
-  const events = state.admission_timing.events;
-  assert.equal(state.held_admission_requests, 0);
-  assert.equal(state.admission_timing.dropped, 0);
-  assert.equal(events.filter((entry) => entry.event === "held").length, 4);
-  assert.equal(events.filter((entry) => entry.event === "released" && entry.reason === "control").length, 4);
-  const received = events.find((entry) => entry.event === "control_received" && entry.mode === "normal");
-  const applied = events.find((entry) => entry.event === "control_applied" && entry.mode === "normal");
-  assert.ok(applied.at_ms - received.at_ms >= 35);
-  assert.equal(received.delay_ms, 40);
-  assert.ok(events.every((entry) => Number.isFinite(entry.instrumentation_ms) && entry.instrumentation_ms >= 0));
-  assert.equal(state.admission_timing.instrumentation_ms, events.reduce((total, entry) => total + entry.instrumentation_ms, 0));
-  assert.ok(state.admission_timing.instrumentation_ms < applied.at_ms - received.at_ms,
-    "provider instrumentation excludes the intentional control delay");
-  assert.ok(events.every((entry, index) => index === 0 || entry.at_ms >= events[index - 1].at_ms));
-  assert.deepEqual(events.filter((entry) => entry.event === "held").map((entry) => entry.request_id).sort(),
-    ["admitted-0", "admitted-1", "admitted-2", "admitted-3"]);
-});
-
-test("admission timing records cancellation and rejects invalid diagnostic delays", async (t) => {
-  const { post, health } = await fixture(t);
-  assert.equal((await post("/admission-fixture", { mode: "hold", delay_ms: -1 })).status, 400);
-  assert.equal((await post("/admission-fixture", { mode: "hold", delay_ms: 5001 })).status, 400);
-  await post("/admission-fixture", { mode: "hold" });
-  const controller = new AbortController();
-  const pending = post("/v1/chat/completions", request("cancelled"), controller.signal).catch((error) => error);
-  await until(health, (state) => state.held_admission_requests === 1);
-  controller.abort();
-  assert.equal((await pending).name, "AbortError");
-  const state = await until(health, (value) => value.held_admission_requests === 0);
-  assert.ok(state.admission_timing.events.some((entry) => entry.event === "released" && entry.reason === "client_closed"));
-  await post("/admission-fixture", { mode: "normal" });
-});
-
-test("embedding timing retains real upstream failure status without upstream content", async (t) => {
-  const upstream = createServer((_request, response) => {
-    response.writeHead(429, { "content-type": "application/json" });
-    response.end(JSON.stringify({ error: { message: "synthetic-upstream-secret" } }));
+async function embeddingUpstream(t, { delayMS = 0, status = 200 } = {}) {
+  const requests = [];
+  const upstream = createServer(async (incoming, response) => {
+    let body = "";
+    for await (const chunk of incoming) body += chunk;
+    const payload = JSON.parse(body);
+    requests.push(payload);
+    if (delayMS) await delay(delayMS);
+    response.writeHead(status, { "content-type": "application/json" });
+    response.end(JSON.stringify(status === 200
+      ? { model: payload.model, data: payload.input.map((_, index) => ({ index, embedding: [1, 0] })) }
+      : { error: { message: "synthetic-upstream-secret" } }));
   });
   await new Promise((resolve) => upstream.listen(0, "127.0.0.1", resolve));
   t.after(() => { upstream.close(); upstream.closeAllConnections(); });
@@ -102,6 +52,72 @@ test("embedding timing retains real upstream failure status without upstream con
       else process.env[key] = value;
     }
   });
+  return requests;
+}
+
+async function until(read, predicate) {
+  const deadline = performance.now() + 2000;
+  while (performance.now() < deadline) {
+    const value = await read();
+    if (predicate(value)) return value;
+    await delay(10);
+  }
+  assert.fail("fixture did not reach its expected state");
+}
+
+test("admission holds precede slow upstream embedding and record delayed control release over real HTTP", async (t) => {
+  const upstreamRequests = await embeddingUpstream(t, { delayMS: 2100 });
+  const { post, health } = await fixture(t);
+  assert.equal((await post("/admission-fixture", { mode: "hold" })).status, 200);
+  const requests = Array.from({ length: 4 }, (_, index) => post("/v1/embeddings", request(`admitted-${index}`)));
+  await until(health, (state) => state.held_admission_requests === 4);
+  assert.equal(upstreamRequests.length, 0, "admission must hold before upstream embedding starts");
+  assert.equal((await post("/admission-fixture", { mode: "normal", delay_ms: 40 })).status, 200);
+  const responses = await Promise.all(requests);
+  assert.ok(responses.every((response) => response.status === 200));
+  assert.equal(upstreamRequests.length, 4, "released requests must still use real upstream embedding");
+  for (const response of responses) assert.deepEqual((await response.json()).data[0].embedding, [1, 0]);
+  const state = await health();
+  const events = state.admission_timing.events;
+  assert.equal(state.held_admission_requests, 0);
+  assert.equal(state.admission_timing.dropped, 0);
+  assert.equal(events.filter((entry) => entry.event === "held").length, 4);
+  assert.equal(events.filter((entry) => entry.event === "released" && entry.reason === "control").length, 4);
+  const received = events.find((entry) => entry.event === "control_received" && entry.mode === "normal");
+  const applied = events.find((entry) => entry.event === "control_applied" && entry.mode === "normal");
+  assert.ok(applied.at_ms - received.at_ms >= 35);
+  assert.equal(received.delay_ms, 40);
+  assert.ok(events.every((entry) => Number.isFinite(entry.instrumentation_ms) && entry.instrumentation_ms >= 0));
+  assert.equal(state.admission_timing.instrumentation_ms, events.reduce((total, entry) => total + entry.instrumentation_ms, 0));
+  assert.ok(state.admission_timing.instrumentation_ms < applied.at_ms - received.at_ms,
+    "provider instrumentation excludes the intentional control delay");
+  assert.ok(events.every((entry, index) => index === 0 || entry.at_ms >= events[index - 1].at_ms));
+  const heldCalls = events.filter((entry) => entry.event === "held").map((entry) => entry.call).sort();
+  assert.equal(new Set(heldCalls).size, 4);
+  assert.deepEqual(events.filter((entry) => entry.event === "released").map((entry) => entry.call).sort(), heldCalls);
+});
+
+test("admission timing records cancellation and rejects invalid diagnostic delays", async (t) => {
+  const upstreamRequests = await embeddingUpstream(t);
+  const { post, health } = await fixture(t);
+  assert.equal((await post("/admission-fixture", { mode: "hold", delay_ms: -1 })).status, 400);
+  assert.equal((await post("/admission-fixture", { mode: "hold", delay_ms: 5001 })).status, 400);
+  await post("/admission-fixture", { mode: "hold" });
+  const controller = new AbortController();
+  const pending = post("/v1/embeddings", request("cancelled"), controller.signal).catch((error) => error);
+  await until(health, (state) => state.held_admission_requests === 1);
+  controller.abort();
+  assert.equal((await pending).name, "AbortError");
+  const state = await until(health, (value) => value.held_admission_requests === 0);
+  assert.ok(state.admission_timing.events.some((entry) => entry.event === "released" && entry.reason === "client_closed"));
+  await post("/admission-fixture", { mode: "normal" });
+  assert.equal(upstreamRequests.length, 0, "cancelled holders must not start upstream embedding");
+  assert.equal((await post("/v1/embeddings", request("recovered"))).status, 200);
+  assert.equal(upstreamRequests.length, 1);
+});
+
+test("embedding timing retains real upstream failure status without upstream content", async (t) => {
+  await embeddingUpstream(t, { status: 429 });
   const { post, health } = await fixture(t);
   const response = await post("/v1/embeddings", { model: "fixture-model", dimensions: 2, input: ["Atlas uses PostgreSQL."] });
   assert.equal(response.status, 429);

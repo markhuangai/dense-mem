@@ -151,6 +151,23 @@ const server = createServer(async (request, response) => {
       sendJSON(response, 200, { model: "fixture-wrong-model", data: [{ index: 0, embedding: [0] }] });
       return;
     }
+    if (holdAdmissionRequests && routeFault === "admission-hold") {
+      await new Promise((resolve) => {
+        const release = (reason = "control") => {
+          clearTimeout(timer);
+          response.off("close", closed);
+          heldAdmissionRequests.delete(release);
+          recordTiming(admissionTiming, "released", { call: embeddingFaultCall, reason, held: heldAdmissionRequests.size });
+          resolve();
+        };
+        const closed = () => release("client_closed");
+        const timer = setTimeout(() => release("hold_deadline"), 30_000);
+        heldAdmissionRequests.add(release);
+        recordTiming(admissionTiming, "held", { call: embeddingFaultCall, held: heldAdmissionRequests.size });
+        response.once("close", closed);
+      });
+      if (response.destroyed) return;
+    }
     const embeddingStarted = performance.now();
     const upstream = await forwardEmbedding(payload, response);
     const timing = recordTiming(embeddingTiming, "upstream_completed", { fault: routeFault, call: embeddingFaultCall, item_count: inputs.length,
@@ -176,24 +193,6 @@ const server = createServer(async (request, response) => {
   }
 
   if (request.url?.endsWith("/chat/completions")) {
-    if (holdAdmissionRequests && routeFault === "admission-hold") {
-      const requestID = assessmentInput(payload).request_id || "";
-      await new Promise((resolve) => {
-        const release = (reason = "control") => {
-          clearTimeout(timer);
-          response.off("close", closed);
-          heldAdmissionRequests.delete(release);
-          recordTiming(admissionTiming, "released", { request_id: requestID, reason, held: heldAdmissionRequests.size });
-          resolve();
-        };
-        const closed = () => release("client_closed");
-        const timer = setTimeout(() => release("hold_deadline"), 30_000);
-        heldAdmissionRequests.add(release);
-        recordTiming(admissionTiming, "held", { request_id: requestID, held: heldAdmissionRequests.size });
-        response.once("close", closed);
-      });
-      if (response.destroyed) return;
-    }
     assessmentCalls += 1;
     const assessmentRequest = assessmentInput(payload);
     const assessmentFault = routeFault;

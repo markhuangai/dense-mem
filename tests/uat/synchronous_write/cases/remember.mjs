@@ -1162,11 +1162,11 @@ async function runAdmissionCapacityCase({ rpc, rawRPC, expect }) {
     expect(failure.code === "database_failure" && failure.reason_code === "idempotency_lock_busy", "busy admission must retain its precise bounded reason");
     expect(failure.retryable === true && failure.next_action === "retry_same_request", "busy admission must preserve unchanged-request retry");
     expect(failure.message.includes("Reduce concurrent requests") && failure.remediation.includes("same idempotency_key"), "busy admission must explain capacity recovery");
+    await setMode("normal");
     mark("canonical_check_started");
     const counts = rememberCanonicalCounts(requiredEnv("DENSE_MEM_E2E_TEAM_ID"), busy.submission_id);
     mark("canonical_check_completed");
     expect(counts.every((count) => count === 0), "rejected admission must commit no canonical state");
-    await setMode("normal");
     for (const outcome of await Promise.all(pending)) {
       if (outcome.error) throw outcome.error;
       const result = terminalPayload(outcome.response.result);
