@@ -77,12 +77,20 @@ func TestOntologyCoverageFailureWitnesses(t *testing.T) {
 		require.Equal(t, catalog, after)
 		require.Equal(t, before, f.canonicalSnapshot(t))
 	})
-	for _, family := range []string{"request_id_mismatch", "item_locked_classification", "item_ambiguous_classification", "item_reason_limit", "valid_ambiguity"} {
+	for _, family := range []string{"request_id_mismatch", "item_locked_classification", "item_ambiguous_classification", "item_reason_limit", "definition_record", "valid_ambiguity"} {
 		t.Run(family, func(t *testing.T) {
 			before := f.canonicalSnapshot(t)
 			catalog, err := f.store.ListRecords(context.Background(), f.team, "", "", ontology.MaxPageSize)
 			require.NoError(t, err)
 			service, calls := organizationFixtureService(t, f, nil, func(request assessment.Request, response *assessment.Response) {
+				if family == "definition_record" {
+					response.Definitions = append(response.Definitions, assessment.Definition{Ref: "empty-key", Kind: ontology.Topic, Label: "Storage", Aliases: []string{}})
+					for i, item := range request.Items {
+						if item.LockedDefinitionRef == "" {
+							response.Items[i].DefinitionRef = "empty-key"
+						}
+					}
+				}
 				for i, item := range request.Items {
 					if item.LockedDefinitionRef == "" {
 						if family == "valid_ambiguity" {

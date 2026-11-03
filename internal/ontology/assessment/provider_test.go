@@ -350,6 +350,84 @@ func TestOrganizationRequestIdentitySchemaAndCompleteRepair(t *testing.T) {
 	}
 }
 
+func TestOrganizationDefinitionKeyValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name, key string
+		valid     bool
+	}{
+		{"empty", "", false},
+		{"whitespace", " \t", false},
+		{"nul", "topic\x00", false},
+		{"over_limit", strings.Repeat("界", 129), false},
+		{"unicode_boundary", strings.Repeat("界", 128), true},
+		{"internal_space", "storage systems", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			request, response := assessmentFixture()
+			response.Definitions[0].Key = tc.key
+			err := Validate(request, response)
+			if tc.valid {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorIs(t, err, ontology.ErrInvalid)
+			require.ErrorContains(t, err, "definition key must be nonblank, at most 128 characters, and contain no NUL")
+			requireValidation(t, err, "validate", "definition_record", "definitions")
+		})
+	}
+}
+
+func TestOrganizationEmptyDefinitionKeyCompleteRepair(t *testing.T) {
+	for _, repair := range []bool{false, true} {
+		t.Run(map[bool]string{false: "exhausted", true: "repaired"}[repair], func(t *testing.T) {
+			request, response := assessmentFixture()
+			original, err := json.Marshal(request)
+			require.NoError(t, err)
+			calls := 0
+			provider := NewProvider(fixtureTransport(func(_ context.Context, outbound modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
+				calls++
+				require.Equal(t, string(original), outbound.Messages[1].Content)
+				properties := outbound.Schema["properties"].(map[string]any)
+				definition := properties["definitions"].(map[string]any)["items"].(map[string]any)
+				key := definition["properties"].(map[string]any)["key"]
+				require.Equal(t, map[string]any{"type": "string", "minLength": 1, "maxLength": 128}, key)
+				if calls > 1 {
+					var correction map[string]string
+					require.NoError(t, json.Unmarshal([]byte(outbound.Messages[len(outbound.Messages)-1].Content), &correction))
+					require.Contains(t, correction["validation_errors"], "definition key must be nonblank")
+					previous, err := Decode(outbound.Messages[len(outbound.Messages)-2].Content)
+					require.NoError(t, err)
+					require.Empty(t, previous.Definitions[0].Key)
+				}
+				response.Definitions[0].Key = ""
+				if repair && calls == 3 {
+					response.Definitions[0].Key = "storage"
+				}
+				encoded, err := json.Marshal(response)
+				require.NoError(t, err)
+				return modelprovider.StructuredResult{Content: string(encoded)}, nil
+			}), "model", assessor.DefaultSemanticAssessmentLimits(), 300000)
+			result, attempts, err := provider.Assess(context.Background(), request)
+			require.Equal(t, 3, calls)
+			require.Len(t, attempts, 3)
+			for i, attempt := range attempts {
+				if repair && i == 2 {
+					require.Nil(t, attempt.Validation)
+					continue
+				}
+				require.Equal(t, "definition_record", attempt.Validation.Code)
+			}
+			if repair {
+				require.NoError(t, err)
+				require.Equal(t, response, result)
+			} else {
+				require.ErrorIs(t, err, modelprovider.ErrVerifierMalformedResponse)
+				require.Empty(t, result)
+			}
+		})
+	}
+}
+
 func TestOrganizationInitialBudgetAllowsBothCompleteRegenerations(t *testing.T) {
 	request, response := assessmentFixture()
 	request.Items[0].Text = strings.Repeat("context detail ", 4000)
