@@ -360,7 +360,6 @@ const (
 )
 
 func credentialDecodedLiteralCandidateOrder(text, variant string, limit int, allowPercentEncoding, allowUnicodeEncoding, percentFirst bool) bool {
-	stableVariant := !strings.ContainsAny(variant[:limit], "%+\\")
 	current := credentialCandidateBuffer{length: len(text)}
 	prefixLimit := min(len(current.bytes), max(limit, credentialLiteralCandidateLimit))
 	if current.length > prefixLimit {
@@ -386,7 +385,7 @@ func credentialDecodedLiteralCandidateOrder(text, variant string, limit int, all
 			if status == credentialCandidateMatch {
 				return true
 			}
-			if status == credentialCandidateNoMatch && (!allowUnicodeEncoding || stableVariant) {
+			if status == credentialCandidateNoMatch && !allowUnicodeEncoding {
 				return false
 			}
 			if status == credentialCandidateNoMatch && current.truncated && previousStatus == credentialCandidateMayChange && !credentialCandidateBuffersEqual(before, current) {
@@ -401,7 +400,7 @@ func credentialDecodedLiteralCandidateOrder(text, variant string, limit int, all
 			if status == credentialCandidateMatch {
 				return true
 			}
-			if status == credentialCandidateNoMatch && (!allowPercentEncoding || percentFirst || stableVariant) {
+			if status == credentialCandidateNoMatch && (!allowPercentEncoding || percentFirst) {
 				return false
 			}
 		}
@@ -414,7 +413,7 @@ func credentialDecodedLiteralCandidateOrder(text, variant string, limit int, all
 			if status == credentialCandidateMatch {
 				return true
 			}
-			if status == credentialCandidateNoMatch && (!current.truncated || stableVariant) {
+			if status == credentialCandidateNoMatch && !current.truncated {
 				return false
 			}
 			if status == credentialCandidateNoMatch && current.truncated && previousStatus == credentialCandidateMayChange && !credentialCandidateBuffersEqual(before, current) {
@@ -517,6 +516,14 @@ func decodeCredentialCandidateEscapes(input credentialCandidateBuffer) credentia
 		index += next
 		if input.bytes[index] == '\\' {
 			if encoded, encodedSize, consumed, ok := decodeCredentialCandidateEscape(input.bytes[index:input.length]); ok {
+				if input.truncated && consumed == 6 && input.bytes[index+1] == 'u' && input.length-index < 12 {
+					high := hexByte(input.bytes[index+2], input.bytes[index+3])
+					if high >= 0xD8 && high <= 0xDB {
+						// The unread tail may complete the pair, so the full matcher must decide.
+						decoded.truncated = true
+						return decoded
+					}
+				}
 				if !credentialCandidateAppend(&decoded, encoded[:encodedSize]...) {
 					return decoded
 				}
