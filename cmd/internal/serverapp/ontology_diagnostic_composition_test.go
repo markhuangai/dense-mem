@@ -32,13 +32,15 @@ func (s *ontologyDiagnosticTestSink) WriteLog(_ context.Context, record observab
 func TestOntologyFailureCaptureUsesPrivateSinkAndCompleteManifests(t *testing.T) {
 	sink := &ontologyDiagnosticTestSink{}
 	const secret = "known-provider-key"
+	const authentication = "presented-request-credential"
+	ctx := observability.WithAuthenticationSecrets(context.Background(), authentication)
 	diagnostic := ontologyDiagnosticCapture(sink, observability.NewCredentialProtector(secret))
 	claim := contract.MaintenanceClaim{TeamID: uuid.NewString(), RunID: uuid.NewString(), ID: uuid.NewString()}
 	result := contract.OrganizationResult{AssessmentID: uuid.NewString(), FailureCode: "provider_response_invalid"}
-	response := `{"error":"` + strings.Repeat("provider detail ", 1000) + secret + `"}`
+	response := `{"error":"` + strings.Repeat("provider detail ", 1000) + secret + authentication + `"}`
 	recorder := diagnostic.NewRecorder()
-	recorder.RecordProviderExchange(context.Background(), modelprovider.ProviderExchange{Component: "assessor-" + secret, Model: secret, RequestBody: []byte(`{"messages":"admitted","secret":"user content"}`), ResponseBody: []byte(response), StatusCode: 409, Outcome: "captured"})
-	require.NoError(t, diagnostic.RecordFailure(context.Background(), claim, result, recorder.Snapshot()))
+	recorder.RecordProviderExchange(ctx, modelprovider.ProviderExchange{Component: "assessor-" + secret, Model: secret, RequestBody: []byte(`{"messages":"admitted","secret":"user content"}`), ResponseBody: []byte(response), StatusCode: 409, Outcome: "captured"})
+	require.NoError(t, diagnostic.RecordFailure(ctx, claim, result, recorder.Snapshot()))
 	require.Greater(t, len(sink.records), 2)
 	manifest := sink.records[len(sink.records)-1]
 	require.Equal(t, "ontology_failure_capture", manifest.Message)
@@ -54,6 +56,7 @@ func TestOntologyFailureCaptureUsesPrivateSinkAndCompleteManifests(t *testing.T)
 		require.NoError(t, err)
 		require.LessOrEqual(t, len(encoded), observability.MaxOperationMetadataBytes)
 		require.NotContains(t, string(encoded), secret)
+		require.NotContains(t, string(encoded), authentication)
 		var payload struct {
 			Direction string                            `json:"direction"`
 			Chunk     observability.DiagnosticBodyChunk `json:"payload_chunk"`
@@ -64,7 +67,7 @@ func TestOntologyFailureCaptureUsesPrivateSinkAndCompleteManifests(t *testing.T)
 			responseChunks = append(responseChunks, payload.Chunk)
 		}
 	}
-	want := strings.ReplaceAll(response, secret, observability.CredentialProtectionRedacted)
+	want := strings.NewReplacer(secret, observability.CredentialProtectionRedacted, authentication, observability.CredentialProtectionRedacted).Replace(response)
 	require.Equal(t, want, responseBody.String())
 	for index, chunk := range responseChunks {
 		require.Equal(t, index, chunk.Index)

@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/require"
 )
@@ -46,6 +47,42 @@ func TestDiagnosticChunksProtectBeforeSplittingAndPreserveWireText(t *testing.T)
 	require.Equal(t, strings.ReplaceAll(body, secret, CredentialProtectionRedacted), got.String())
 	digest := sha256.Sum256([]byte(got.String()))
 	require.Equal(t, hex.EncodeToString(digest[:]), chunks[0].SHA256)
+}
+
+func TestProtectedDiagnosticChunksKeepBoundsAndUTF8(t *testing.T) {
+	for _, test := range []struct {
+		body   []byte
+		limit  int
+		reason CredentialProtectionUnavailableReason
+	}{
+		{nil, 0, CredentialProtectionAvailable},
+		{[]byte(strings.Repeat("é😀", 1000) + CredentialProtectionRedacted), 1 << 20, CredentialProtectionAvailable},
+		{[]byte("retained"), 0, CredentialProtectionBudgetExceeded},
+		{[]byte("retained"), 1, CredentialProtectionBudgetExceeded},
+		{[]byte{0xff}, 100, CredentialProtectionInvalidEncoding},
+	} {
+		chunks := ChunkProtectedDiagnosticBody(test.body, test.limit)
+		var body strings.Builder
+		for index, chunk := range chunks {
+			require.Equal(t, index, chunk.Index)
+			require.Equal(t, len(chunks), chunk.Count)
+			require.Equal(t, len(test.body), chunk.OriginalBytes)
+			require.Equal(t, int(test.reason), chunk.Reason)
+			if test.reason != CredentialProtectionAvailable {
+				require.Equal(t, "unavailable", chunk.State)
+				require.Empty(t, chunk.Body)
+				continue
+			}
+			require.Equal(t, "captured", chunk.State)
+			require.True(t, utf8.ValidString(chunk.Body))
+			body.WriteString(chunk.Body)
+		}
+		if test.reason == CredentialProtectionAvailable {
+			require.Equal(t, string(test.body), body.String())
+			digest := sha256.Sum256(test.body)
+			require.Equal(t, hex.EncodeToString(digest[:]), chunks[0].SHA256)
+		}
+	}
 }
 
 func TestCredentialProtectorProtectDiagnosticBytesPreservesBoundedCaptureStates(t *testing.T) {

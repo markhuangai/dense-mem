@@ -52,7 +52,7 @@ func ontologyDiagnosticCapture(sink observability.LogSink, protector observabili
 					if !ok || metadata["body"] != "" {
 						return errors.New("ontology diagnostic chunk metadata unavailable")
 					}
-					// CaptureDiagnosticBody has already protected the complete body before splitting it.
+					// NewDiagnosticRecorder protects the complete body before snapshots reach this writer.
 					metadata["body"] = chunk.Body
 					body, err = json.Marshal(protected)
 					if err != nil || len(body) > observability.MaxOperationMetadataBytes {
@@ -68,7 +68,7 @@ func ontologyDiagnosticCapture(sink observability.LogSink, protector observabili
 					if direction == "response" {
 						body = exchange.ResponseBody
 					}
-					for _, chunk := range observability.CaptureDiagnosticBody(ctx, protector, body, modelprovider.MaxProviderDiagnosticBodyBytes) {
+					for _, chunk := range observability.ChunkProtectedDiagnosticBody(body, modelprovider.MaxProviderDiagnosticBodyBytes) {
 						attrs := map[string]any{"exchange": index, "direction": direction, "component": exchange.Component, "model": exchange.Model,
 							"status_code": exchange.StatusCode, "outcome": exchange.Outcome, "capture_state": exchange.CaptureState, "capture_reason": exchange.CaptureReason}
 						if err := write("ontology_failure_payload", attrs, &chunk); err != nil {

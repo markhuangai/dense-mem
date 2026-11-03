@@ -42,6 +42,26 @@ func CaptureDiagnosticBody(ctx context.Context, protector DiagnosticProtector, b
 		chunk.State, chunk.Reason = "unavailable", int(reason)
 		return []DiagnosticBodyChunk{chunk}
 	}
+	return chunkDiagnosticBody(protected, chunk)
+}
+
+// ChunkProtectedDiagnosticBody formats recorder-protected bytes; callers must separately protect the accompanying metadata.
+func ChunkProtectedDiagnosticBody(body []byte, maxBytes int) []DiagnosticBodyChunk {
+	chunk := DiagnosticBodyChunk{Count: 1, State: "captured", OriginalBytes: len(body)}
+	if len(body) > 0 {
+		if maxBytes <= 0 || len(body) > maxBytes {
+			chunk.State, chunk.Reason = "unavailable", int(CredentialProtectionBudgetExceeded)
+			return []DiagnosticBodyChunk{chunk}
+		}
+		if !utf8.Valid(body) {
+			chunk.State, chunk.Reason = "unavailable", int(CredentialProtectionInvalidEncoding)
+			return []DiagnosticBodyChunk{chunk}
+		}
+	}
+	return chunkDiagnosticBody(body, chunk)
+}
+
+func chunkDiagnosticBody(protected []byte, chunk DiagnosticBodyChunk) []DiagnosticBodyChunk {
 	digest := sha256.Sum256(protected)
 	chunk.SHA256 = hex.EncodeToString(digest[:])
 	chunks := []DiagnosticBodyChunk{}

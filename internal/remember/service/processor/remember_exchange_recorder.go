@@ -283,6 +283,7 @@ type rememberExchangeRecorder struct {
 	protector observability.DiagnosticProtector
 }
 
+// NewDiagnosticRecorder protects complete bodies with configured and request-scoped credentials before retaining bounded snapshots.
 func NewDiagnosticRecorder(protector observability.DiagnosticProtector) modelprovider.SnapshotRecorder {
 	return &rememberExchangeRecorder{protector: protector}
 }
