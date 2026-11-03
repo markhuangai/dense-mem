@@ -1,6 +1,7 @@
 package observability
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/url"
@@ -87,6 +88,40 @@ func BenchmarkCredentialProtectorSQLDiagnostic(b *testing.B) {
 		got := protector.Snapshot(query, MaxOperationMetadataBytes, "dense-mem-presented-api-credential")
 		if got.UnavailableReason != CredentialProtectionAvailable || got.Value != query {
 			b.Fatal("SQL diagnostic must remain available and unchanged")
+		}
+	}
+}
+
+func credentialTestAssessmentBody(value string) []byte {
+	return []byte(`{"messages":[{"role":"system","content":"Classify every item.\nReturn complete decisions."},{"role":"user","content":"` +
+		strings.Repeat(`{\"ref\":\"source\",\"text\":\"Atlas uses PostgreSQL.\\nKeep ordinary password and token fields exact.\"},`, 20) +
+		value + `"}],"response_format":{"type":"json_schema"}}`)
+}
+
+func TestCredentialProtectorKeepsStructuredAssessmentBodies(t *testing.T) {
+	const secret = "a+b"
+	encoded := secret
+	for range maxCredentialDecodeLayers - 1 {
+		encoded = encodeCredentialTestUnicodeLayer(encoded)
+	}
+	protector := NewCredentialProtector("dense-mem-ontology-e2e-key", "synthetic-control-credential", "disabled", secret)
+	for _, value := range []string{"ordinary admitted text", url.QueryEscape(encoded)} {
+		body := credentialTestAssessmentBody(value)
+		got, reason := ProtectDiagnosticText(context.Background(), protector, body, 1<<20)
+		require.Equal(t, CredentialProtectionAvailable, reason)
+		require.Equal(t, bytes.ReplaceAll(body, []byte(url.QueryEscape(encoded)), []byte(CredentialProtectionRedacted)), got)
+	}
+}
+
+func BenchmarkCredentialProtectorStructuredAssessment(b *testing.B) {
+	protector := NewCredentialProtector("postgres://operator:synthetic-database-credential@postgres/memory", "dense-mem-ontology-e2e-key", "synthetic-control-credential", "disabled")
+	body := credentialTestAssessmentBody("ordinary admitted text")
+	b.SetBytes(int64(len(body)))
+	b.ReportAllocs()
+	for b.Loop() {
+		got, reason := ProtectDiagnosticText(context.Background(), protector, body, 1<<20)
+		if reason != CredentialProtectionAvailable || !bytes.Equal(body, got) {
+			b.Fatal("complete structured assessment must remain exact and available")
 		}
 	}
 }

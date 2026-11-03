@@ -360,9 +360,11 @@ const (
 )
 
 func credentialDecodedLiteralCandidateOrder(text, variant string, limit int, allowPercentEncoding, allowUnicodeEncoding, percentFirst bool) bool {
+	stableVariant := !strings.ContainsAny(variant[:limit], "%+\\")
 	current := credentialCandidateBuffer{length: len(text)}
-	if current.length > len(current.bytes) {
-		current.length = len(current.bytes)
+	prefixLimit := min(len(current.bytes), max(limit, credentialLiteralCandidateLimit))
+	if current.length > prefixLimit {
+		current.length = prefixLimit
 		current.truncated = true
 	}
 	copy(current.bytes[:current.length], text[:current.length])
@@ -384,7 +386,7 @@ func credentialDecodedLiteralCandidateOrder(text, variant string, limit int, all
 			if status == credentialCandidateMatch {
 				return true
 			}
-			if status == credentialCandidateNoMatch && !allowUnicodeEncoding {
+			if status == credentialCandidateNoMatch && (!allowUnicodeEncoding || stableVariant) {
 				return false
 			}
 			if status == credentialCandidateNoMatch && current.truncated && previousStatus == credentialCandidateMayChange && !credentialCandidateBuffersEqual(before, current) {
@@ -399,7 +401,7 @@ func credentialDecodedLiteralCandidateOrder(text, variant string, limit int, all
 			if status == credentialCandidateMatch {
 				return true
 			}
-			if status == credentialCandidateNoMatch && (!allowPercentEncoding || percentFirst) {
+			if status == credentialCandidateNoMatch && (!allowPercentEncoding || percentFirst || stableVariant) {
 				return false
 			}
 		}
@@ -412,7 +414,7 @@ func credentialDecodedLiteralCandidateOrder(text, variant string, limit int, all
 			if status == credentialCandidateMatch {
 				return true
 			}
-			if status == credentialCandidateNoMatch && !current.truncated {
+			if status == credentialCandidateNoMatch && (!current.truncated || stableVariant) {
 				return false
 			}
 			if status == credentialCandidateNoMatch && current.truncated && previousStatus == credentialCandidateMayChange && !credentialCandidateBuffersEqual(before, current) {

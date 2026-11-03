@@ -355,16 +355,56 @@ run_scenario() {
     ' bash "$scenario"
   )
 
-  local container=""
+  local container="" failure_diagnostics_collected=0
+  collect_scenario_failure_diagnostics() {
+    ((failure_diagnostics_collected == 0)) || return 0
+    failure_diagnostics_collected=1
+    if [[ "$scenario" == "ontology_organization" && -n "$container" ]]; then
+      collect_remember_failure_diagnostics "$container" "$source_dir" "$project" ||
+        printf '%s\n' 'Remember temporary failure diagnosis is unavailable' >&2
+    fi
+    printf 'dense-mem CI scenario [%s]: failed stack diagnostics\n' "$scenario" >&2
+    set +e
+    (
+      DENSE_MEM_CI_COMPOSE_OVERLAY_FILE="$helper_overlay"
+      export DENSE_MEM_CI_COMPOSE_OVERLAY_FILE
+      {
+        printf '%s\n' '--- Compose services ---'
+        ci_compose ps --all
+        printf '%s\n' '--- Last 200 lines per Compose service ---'
+        ci_compose logs --no-color --timestamps --tail 200
+      } 2>&1
+    ) | redact_diagnostics "$ENV_FILE" "$control_token" "$telemetry_token" "$postgres_password" "$api_key" "$identity_upgrade_api_key" "$oauth_token" "$grafana_password"
+    local -a diagnostics_pipeline_status=("${PIPESTATUS[@]}")
+    set -e
+    if ((diagnostics_pipeline_status[0] != 0)); then
+      printf 'dense-mem CI scenario [%s]: stack diagnostic collection failed\n' "$scenario" >&2
+    fi
+    if ((diagnostics_pipeline_status[1] != 0)); then
+      printf 'dense-mem CI scenario [%s]: stack diagnostic redaction failed\n' "$scenario" >&2
+    fi
+  }
   cleanup_scenario_container() {
-    local status=$?
-    trap - EXIT INT TERM
+    local status="${1:-$?}"
+    [[ "${2:-}" != "ERR" || $- == *e* ]] || return "$status"
+    trap - EXIT INT TERM ERR
+    if ((status != 0)); then
+      if [[ -n "${execution_started:-}" ]]; then
+        report_phase scenario_execution "$execution_started" "$status"
+      fi
+      collect_scenario_failure_diagnostics
+    fi
     if [[ -n "$container" ]]; then
-      docker rm -f "$container" >/dev/null 2>&1 || status=1
+      if ! docker rm -f "$container" >/dev/null 2>&1 && ((status == 0)); then
+        status=1
+      fi
     fi
     exit "$status"
   }
-  trap cleanup_scenario_container EXIT INT TERM
+  trap cleanup_scenario_container EXIT
+  trap 'cleanup_scenario_container "$?" ERR' ERR
+  trap 'cleanup_scenario_container 130' INT
+  trap 'cleanup_scenario_container 143' TERM
   container="$(docker "${docker_args[@]}")"
   copy_git_source "$container" "$source_dir"
   copy_file_into_container "$container" "$runtime_compose_host" /tmp/dense-mem-runtime-compose.yml
@@ -389,37 +429,14 @@ run_scenario() {
   ((scenario_pipeline_status[1] == 0)) || fail "diagnostic redaction failed"
   local scenario_status="${scenario_pipeline_status[0]}"
   report_phase scenario_execution "$execution_started" "$scenario_status"
-  if [[ "$scenario" == "ontology_organization" && "$scenario_status" != "0" ]]; then
-    collect_remember_failure_diagnostics "$container" "$source_dir" "$project" ||
-      printf '%s\n' 'Remember temporary failure diagnosis is unavailable' >&2
-  fi
   if ((scenario_status != 0)); then
-    printf 'dense-mem CI scenario [%s]: failed stack diagnostics\n' "$scenario" >&2
-    set +e
-    (
-      DENSE_MEM_CI_COMPOSE_OVERLAY_FILE="$helper_overlay"
-      export DENSE_MEM_CI_COMPOSE_OVERLAY_FILE
-      {
-        printf '%s\n' '--- Compose services ---'
-        ci_compose ps --all
-        printf '%s\n' '--- Last 200 lines per Compose service ---'
-        ci_compose logs --no-color --timestamps --tail 200
-      } 2>&1
-    ) | redact_diagnostics "$ENV_FILE" "$control_token" "$telemetry_token" "$postgres_password" "$api_key" "$identity_upgrade_api_key" "$oauth_token" "$grafana_password"
-    local -a diagnostics_pipeline_status=("${PIPESTATUS[@]}")
-    set -e
-    if ((diagnostics_pipeline_status[0] != 0)); then
-      printf 'dense-mem CI scenario [%s]: stack diagnostic collection failed\n' "$scenario" >&2
-    fi
-    if ((diagnostics_pipeline_status[1] != 0)); then
-      printf 'dense-mem CI scenario [%s]: stack diagnostic redaction failed\n' "$scenario" >&2
-    fi
+    collect_scenario_failure_diagnostics
   fi
   if [[ "${DENSE_MEM_E2E_EXPORT_PERFORMANCE:-0}" == "1" && "$scenario" == "enterprise_exports" && "$scenario_status" == "0" ]]; then
     docker cp "$container:$result_file" "${run_root}/performance-result.json" >/dev/null || fail "performance result receipt is missing"
     chmod 600 "${run_root}/performance-result.json"
   fi
-  trap - EXIT INT TERM
+  trap - EXIT INT TERM ERR
   docker rm "$container" >/dev/null
   container=""
   return "$scenario_status"

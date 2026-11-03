@@ -354,19 +354,37 @@ func TestSemanticOneCardinalitySearchRetirementIsAtomicAndIsolated(t *testing.T)
 	require.Equal(t, "converged", convergence.Status)
 	t.Logf("cardinality search witness: retired version=%d; current version=%d; protected=%d; convergence=%s", retired.Version, current.Version, len(protected), convergence.Status)
 	generationID := uuid.NewString()
+	retiredContractID := uuid.NewString()
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Exec(`INSERT INTO embedding_contracts
+			(embedding_contract_id, contract_key, version, provider, model, dimensions, distance_metric,
+			vector_normalization, document_format_version, query_format_version, lifecycle_state)
+			SELECT ?::uuid, contract_key, version+1, provider, model, dimensions, distance_metric,
+			vector_normalization, document_format_version, query_format_version, 'retired'
+			FROM embedding_contracts WHERE embedding_contract_id=?::uuid`, retiredContractID, contractID).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`UPDATE search_index_generations SET activation_state='retired'
+			WHERE embedding_contract_id=?::uuid`, contractID).Error; err != nil {
+			return err
+		}
 		if err := tx.Exec(`INSERT INTO search_projection_generations
 			(team_id, projection_generation_id, source_kind, generation, projection_format_version, state,
 			eligible_count, projected_count, current_vector_count, drifted_count, completed_at, activated_at)
 			VALUES (?::uuid, ?::uuid, 'relationship', 1, 2, 'current', 1, 1, 1, 1, now(), now())`, teamID, generationID).Error; err != nil {
 			return err
 		}
-		if err := tx.Exec(`UPDATE search_documents SET projection_generation_id=?::uuid
-			WHERE team_id=?::uuid AND source_kind='relationship' AND source_id=?::uuid`, generationID, teamID, firstID).Error; err != nil {
-			return err
-		}
-		return tx.Exec("UPDATE embedding_contracts SET lifecycle_state='retired' WHERE embedding_contract_id=?::uuid", contractID).Error
+		return tx.Exec(`UPDATE search_documents SET embedding_contract_id=?::uuid, projection_generation_id=?::uuid
+			WHERE team_id=?::uuid AND source_kind='relationship' AND source_id=?::uuid AND embedding_contract_id=?::uuid`,
+			retiredContractID, generationID, teamID, firstID, contractID).Error
 	}))
+	contractID = retiredContractID
+	_, err = search.GetActiveSearchContract(ctx)
+	require.ErrorIs(t, err, ErrSearchContractMismatch)
+	historical := load(teamID, ownerA, firstID)
+	require.Equal(t, retiredContractID, historical.Document.EmbeddingContractID)
+	require.Equal(t, "current", historical.Document.SearchState)
+	require.NotEmpty(t, historical.Vector)
 	standaloneIngest := createSemanticIngest(t, scoped(teamID, ownerA), store, teamID, ownerA, "cardinality-no-active-contract", "Project selects GraphDB without an active search contract.")
 	standalone := applySemanticDecision(t, scoped(teamID, ownerA), store, ApplyRelationshipDecisionInput{
 		TeamID: teamID, OwnerProfileID: ownerA, IngestID: standaloneIngest.IngestID,
@@ -374,9 +392,13 @@ func TestSemanticOneCardinalitySearchRetirementIsAtomicAndIsolated(t *testing.T)
 		Support: &EvidenceSupportInput{FragmentID: standaloneIngest.Evidence[0].FragmentID, SourceGroupKey: "cardinality-no-contract", SpanEnd: len(standaloneIngest.Evidence[0].Content), Authority: "primary"},
 	})
 	require.Equal(t, "active", standalone.Relationship.Status)
-	require.Equal(t, "not_required", load(teamID, ownerA, firstID).Document.SearchState)
-	require.Empty(t, load(teamID, ownerA, firstID).Vector)
-	require.Empty(t, load(teamID, ownerA, firstID).Document.ProjectionGenerationID)
+	historicalRetired := load(teamID, ownerA, firstID)
+	require.Equal(t, "superseded", historicalRetired.Status)
+	require.Greater(t, historicalRetired.Version, historical.Version)
+	require.EqualValues(t, historicalRetired.Version, historicalRetired.Document.SourceVersion)
+	require.Equal(t, "not_required", historicalRetired.Document.SearchState)
+	require.Empty(t, historicalRetired.Vector)
+	require.Empty(t, historicalRetired.Document.ProjectionGenerationID)
 	require.Contains(t, logs.String(), "UPDATE search_projection_generations SET drifted_count = 0")
 	var drifted int64
 	require.NoError(t, rls.WithTeamProfileTx(scoped(teamID, ownerA), appDB, teamID, ownerA, func(tx *gorm.DB) error {

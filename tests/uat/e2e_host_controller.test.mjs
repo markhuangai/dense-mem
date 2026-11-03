@@ -1015,6 +1015,115 @@ ${runtime.slice(diagnosticsStart, diagnosticsEnd)}`;
   }
 });
 
+test("scenario failures collect protected evidence before removing the client", { timeout: 20000 }, async (t) => {
+  const lifecycleStart = runtime.indexOf('  local container="" failure_diagnostics_collected=0');
+  const lifecycleEnd = runtime.indexOf("\n}\n\ncontrol_api_request()", lifecycleStart);
+  const redactorStart = controller.indexOf("\nredact_diagnostics() {") + 1;
+  const redactorEnd = controller.indexOf("\n}\n", redactorStart) + 2;
+  assert(lifecycleStart >= 0 && lifecycleEnd > lifecycleStart && redactorStart > 0 && redactorEnd > redactorStart);
+  for (const entry of [
+    { name: "success", status: 0 },
+    { name: "assertion", status: 17 },
+    { name: "setup", status: 24 },
+    { name: "timeout", status: 143, signal: "SIGTERM" },
+    { name: "interrupt", status: 130, signal: "SIGINT" },
+    { name: "redaction failure", status: 1, redactionFail: true },
+    { name: "failed collection and cleanup", status: 143, signal: "SIGTERM", collectionFail: true, cleanupFail: true },
+  ]) {
+    await t.test(entry.name, async () => {
+      const fixture = await mkdtemp(join(tmpdir(), "dense-mem-scenario-trap-"));
+      let child;
+      let deadline;
+      try {
+        const envFile = join(fixture, "e2e.env");
+        const eventsFile = join(fixture, "events");
+        await writeFile(envFile, "CONTROL_PORTAL_TOKEN=fixture-control-credential\n");
+        const script = `set -euo pipefail
+exec 3>&2
+${controller.slice(redactorStart, redactorEnd)}
+docker() {
+  case "$1" in
+    create) printf '%s\\n' fixture-client ;;
+    start)
+      if [[ -n "$FIXTURE_SIGNAL" ]]; then
+        trap 'exit 130' INT
+        trap 'exit 143' TERM
+        printf '%s\\n' fixture-ready >&3
+        read -r -t 10 unused
+      else
+        return "$FIXTURE_STATUS"
+      fi ;;
+    rm)
+      [[ "${'${*: -1}'}" == fixture-client ]] || return 91
+      printf '%s\\n' "$*" >> "$FIXTURE_EVENTS"
+      return "$FIXTURE_CLEANUP_FAILURE" ;;
+    *) return 92 ;;
+  esac
+}
+copy_git_source() { [[ "$FIXTURE_SETUP_FAILURE" == 0 ]] || return 24; }
+copy_file_into_container() { :; }
+report_phase() { printf 'phase:%s:%s\\n' "$1" "$3" >> "$FIXTURE_EVENTS"; }
+fail() { printf '%s\\n' "$*" >&2; exit 1; }
+ci_compose() {
+  printf 'diagnostics:%s\\n' "$*" >> "$FIXTURE_EVENTS"
+  printf '%s\\n' "$control_token" "$grafana_password"
+  return "$FIXTURE_COLLECTION_FAILURE"
+}
+run_fixture() {
+  local scenario=synchronous_write_telemetry_disabled source_dir="$FIXTURE_DIR" project=fixture-project
+  local helper_overlay="" helper_dir="$FIXTURE_DIR/missing" runtime_compose_host=""
+  local control_token=fixture-control-credential grafana_password=fixture-grafana-credential
+  local telemetry_token="" postgres_password="" api_key="" identity_upgrade_api_key="" oauth_token=""
+  local DENSE_MEM_CI_DOCKER_BIN="" DENSE_MEM_CI_COMPOSE_PLUGIN=""
+  local -a docker_args=(create)
+${runtime.slice(lifecycleStart, lifecycleEnd)}
+}
+run_fixture`;
+        child = spawn("bash", ["-c", script], {
+          detached: true,
+          env: {
+            ...process.env, CONTROLLER_DIR: entry.redactionFail ? join(fixture, "missing") : scripts,
+            ENV_FILE: envFile, FIXTURE_DIR: fixture, FIXTURE_EVENTS: eventsFile,
+            FIXTURE_SIGNAL: entry.signal || "", FIXTURE_STATUS: String(entry.status),
+            FIXTURE_SETUP_FAILURE: entry.name === "setup" ? "1" : "0",
+            FIXTURE_COLLECTION_FAILURE: entry.collectionFail ? "1" : "0", FIXTURE_CLEANUP_FAILURE: entry.cleanupFail ? "1" : "0",
+          },
+        });
+        let stdout = "", stderr = "", signalled = false;
+        child.stdout.on("data", (chunk) => { stdout += chunk; });
+        child.stderr.on("data", (chunk) => {
+          stderr += chunk;
+          if (entry.signal && !signalled && stderr.includes("fixture-ready\n")) {
+            signalled = true;
+            process.kill(-child.pid, entry.signal);
+          }
+        });
+        deadline = setTimeout(() => process.kill(-child.pid, "SIGKILL"), 5000);
+        const [code, signal] = await once(child, "close");
+        assert.equal(signal, null, stderr);
+        assert.equal(code, entry.status, stderr);
+        const events = (await readFile(eventsFile, "utf8")).trim().split("\n");
+        assert.match(events.at(-1), /^rm (?:-f )?fixture-client$/);
+        if (entry.status === 0) {
+          assert.equal(events.some((event) => event.startsWith("diagnostics:")), false);
+        } else {
+          assert.equal(events.filter((event) => event === "diagnostics:ps --all").length, 1);
+          assert.equal(events.filter((event) => event === "diagnostics:logs --no-color --timestamps --tail 200").length, 1);
+          if (!entry.redactionFail) assert.match(stdout, /\[REDACTED\]/);
+          assert.doesNotMatch(stdout + stderr, /fixture-control-credential|fixture-grafana-credential/);
+        }
+        if (entry.collectionFail) assert.match(stderr, /stack diagnostic collection failed/);
+        if (entry.redactionFail) assert.match(stderr, /stack diagnostic redaction failed/);
+        if (entry.signal) assert(events.includes(`phase:scenario_execution:${entry.status}`));
+      } finally {
+        clearTimeout(deadline);
+        if (child && child.exitCode === null && child.signalCode === null) process.kill(-child.pid, "SIGKILL");
+        await rm(fixture, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
 test("diagnostics retain exact redaction across split and overlapping secrets", () => {
   const values = ["secret", "secret-extended", "token:fixture", "🔑private-key"];
   const input = "Ω plain secret-extended / secret / token:fixture / 🔑private-key end";
@@ -1277,7 +1386,7 @@ test("six precheck shards preserve every real runner selection exactly once", as
   }
   assert.equal(new Set(actual).size, actual.length);
   assert.deepEqual(actual.sort(), inventory.sort());
-  assert.equal(actual.length, 680);
+  assert.equal(actual.length, 682);
   assert.equal((await run("bash", ["-c", command, "six-shards", root])).stdout, stdout);
   await assert.rejects(run("bash", ["-c", `${helper}\npartition_precheck_capabilities "$1" 4`, "bad-shards", root]), /three or six shards/);
 });
