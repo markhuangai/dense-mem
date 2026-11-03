@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/markhuangai/dense-mem/internal/storage/postgres/testfixture"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -195,7 +196,7 @@ func setupKnowledgeOwnerDB(t *testing.T) (*gorm.DB, *gorm.DB, *postgres.RLS, fun
 		if networkName := strings.TrimSpace(os.Getenv("DENSE_MEM_CI_PRECHECK_NETWORK")); networkName != "" {
 			options = append(options, tcnetwork.WithNetworkName([]string{"postgres"}, networkName))
 		}
-		container, err := tcpostgres.Run(ctx, "pgvector/pgvector:0.8.2-pg18-trixie", options...)
+		container, err := testfixture.Run(ctx, "pgvector/pgvector:0.8.2-pg18-trixie", options...)
 		require.NoError(t, err)
 		baseCleanup = func() { _ = container.Terminate(ctx) }
 		if strings.TrimSpace(os.Getenv("DENSE_MEM_CI_PRECHECK_NETWORK")) == "" {

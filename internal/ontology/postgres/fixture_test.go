@@ -22,6 +22,7 @@ import (
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	storage "github.com/markhuangai/dense-mem/internal/storage/postgres"
+	"github.com/markhuangai/dense-mem/internal/storage/postgres/testfixture"
 	"github.com/pressly/goose/v3"
 	goosedb "github.com/pressly/goose/v3/database"
 	"github.com/stretchr/testify/require"
@@ -77,7 +78,7 @@ func newOntologyFixtureWithMaintenance(t *testing.T, maintenance bool) *ontology
 	if name := os.Getenv("DENSE_MEM_CI_PRECHECK_NETWORK"); name != "" {
 		options = append(options, network.WithNetworkName([]string{alias}, name))
 	}
-	container, err := postgrescontainer.Run(context.Background(), "pgvector/pgvector:0.8.2-pg18-trixie", options...)
+	container, err := testfixture.Run(context.Background(), "pgvector/pgvector:0.8.2-pg18-trixie", options...)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, container.Terminate(context.Background())) })
 	dsn, err := container.ConnectionString(context.Background(), "sslmode=disable")

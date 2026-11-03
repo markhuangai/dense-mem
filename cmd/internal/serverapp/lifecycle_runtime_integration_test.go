@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
+	"github.com/markhuangai/dense-mem/internal/storage/postgres/testfixture"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	testcontainerspostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -440,7 +441,7 @@ func withLifecyclePostgres(t *testing.T, fn func(*testing.T)) {
 	if networkName := strings.TrimSpace(os.Getenv("DENSE_MEM_CI_PRECHECK_NETWORK")); networkName != "" {
 		containerOptions = append(containerOptions, tcnetwork.WithNetworkName([]string{"postgres"}, networkName))
 	}
-	container, err := testcontainerspostgres.Run(
+	container, err := testfixture.Run(
 		ctx,
 		lifecyclePostgresImage,
 		containerOptions...,

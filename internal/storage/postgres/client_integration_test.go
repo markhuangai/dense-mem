@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/markhuangai/dense-mem/internal/storage/postgres/testfixture"
 	"github.com/pressly/goose/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -31,7 +32,7 @@ func getTestDSN(ctx context.Context) (string, func(), error) {
 	}
 
 	// Try to start a test container
-	container, err := postgres.Run(ctx, "pgvector/pgvector:0.8.2-pg18-trixie", postgresTestContainerOptions()...)
+	container, err := testfixture.Run(ctx, "pgvector/pgvector:0.8.2-pg18-trixie", postgresTestContainerOptions()...)
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to start postgres container: %w", err)
 	}

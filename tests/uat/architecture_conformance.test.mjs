@@ -68,7 +68,7 @@ test("loads the complete independently owned architecture inventory", () => {
   assert.equal(productionManifest.schema_version, 2);
   assert.equal(productionManifest.fragments.length, 64);
   assert.equal(productionManifest.source_ownership.length, 134);
-  assert.equal(productionManifest.workers.length, 47);
+  assert.equal(productionManifest.workers.length, 48);
   assert.equal(Object.hasOwn(productionManifest, "exceptions"), false);
   assert.deepEqual(validateManifest(productionManifest), []);
 });

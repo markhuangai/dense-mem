@@ -25,6 +25,7 @@ import (
 	assessorprovider "github.com/markhuangai/dense-mem/internal/provider/assessor"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	storage "github.com/markhuangai/dense-mem/internal/storage/postgres"
+	"github.com/markhuangai/dense-mem/internal/storage/postgres/testfixture"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	postgrescontainer "github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -37,7 +38,7 @@ func TestOrganizationServiceWithPostgres(t *testing.T) {
 	if os.Getenv("DENSE_MEM_REPOSITORY_TESTCONTAINERS") != "1" {
 		testcontainers.SkipIfProviderIsNotHealthy(t)
 	}
-	container, err := postgrescontainer.Run(context.Background(), "pgvector/pgvector:0.8.2-pg18-trixie",
+	container, err := testfixture.Run(context.Background(), "pgvector/pgvector:0.8.2-pg18-trixie",
 		postgrescontainer.WithDatabase("ontology_service_test"), postgrescontainer.WithUsername("testuser"), postgrescontainer.WithPassword("testpass"),
 		testcontainers.WithWaitStrategy(wait.ForLog("database system is ready to accept connections").WithOccurrence(2).WithStartupTimeout(time.Minute)))
 	require.NoError(t, err)

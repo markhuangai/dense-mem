@@ -14,7 +14,7 @@ const heldPredicateKey = "retired_memory_store_fixture";
 const repairedPredicateKey = "stores_durable_memory_in_fixture";
 const incompatiblePredicateKey = "incompatible_memory_store_fixture";
 
-export async function run({ rpc, rawRPC = rpc, expect }) {
+export async function run({ rpc, rawRPC = rpc, expect, runStep }) {
   const selectedFault = (process.env.DENSE_MEM_E2E_PROVIDER_FAULT || "none").trim();
   const providerRequestOffset = await providerFixtureRequestCount(expect);
   const faults = selectedFault === "none" ? [
@@ -46,44 +46,46 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
   expect(!tools.some((tool) => tool.name === "get_submission_status"), "selected catalog must remove the status tool");
 
   const results = [];
-  if (selectedFault === "none") results.push(await runRequiredRelationshipCase({ rawRPC, expect }));
+  if (selectedFault === "none") results.push(await runStep("required-relationship", () => runRequiredRelationshipCase({ rawRPC, expect })));
   for (const fault of faults) {
-    if (fault === "embedding-cancel") {
-      results.push(await runCancellationCase({ rpc, rawRPC, expect }));
-    } else if (fault === "multi") {
-      results.push(await runMultiItemCase({ rpc, expect }));
-    } else if (fault === "mixed-objects") {
-      results.push(await runMixedObjectCase({ expect }));
-    } else if (fault === "mixed") {
-      results.push(await runMixedDispositionCase({ rpc, expect }));
-    } else if (fault === "repair" || fault === "repair-exhausted") {
-      results.push(await runRepairCase({ rpc, expect, fault }));
-    } else if (fault === "predicate-registration-drift") {
-      results.push(await runPredicateRegistrationDriftCase({ expect }));
-    } else if (fault.startsWith("predicate-registration-")) {
-      results.push(...await runPredicateRegistrationCases({ expect, selectedFault: fault }));
-    } else if (fault === "security" || fault === "no-supported") {
-      results.push(await runTerminalDomainCase({ rpc, expect, fault }));
-    } else if (fault.startsWith("embedding-")) {
-      results.push(await runEmbeddingFaultCase({ rpc, expect, fault }));
-    } else {
-      results.push(await runProviderFaultCase({ rpc, expect, fault }));
-    }
+    await runStep(fault, async () => {
+      if (fault === "embedding-cancel") {
+        results.push(await runCancellationCase({ rpc, rawRPC, expect }));
+      } else if (fault === "multi") {
+        results.push(await runMultiItemCase({ rpc, expect }));
+      } else if (fault === "mixed-objects") {
+        results.push(await runMixedObjectCase({ expect }));
+      } else if (fault === "mixed") {
+        results.push(await runMixedDispositionCase({ rpc, expect }));
+      } else if (fault === "repair" || fault === "repair-exhausted") {
+        results.push(await runRepairCase({ rpc, expect, fault }));
+      } else if (fault === "predicate-registration-drift") {
+        results.push(await runPredicateRegistrationDriftCase({ expect }));
+      } else if (fault.startsWith("predicate-registration-")) {
+        results.push(...await runPredicateRegistrationCases({ expect, selectedFault: fault }));
+      } else if (fault === "security" || fault === "no-supported") {
+        results.push(await runTerminalDomainCase({ rpc, expect, fault }));
+      } else if (fault.startsWith("embedding-")) {
+        results.push(await runEmbeddingFaultCase({ rpc, expect, fault }));
+      } else {
+        results.push(await runProviderFaultCase({ rpc, expect, fault }));
+      }
+    });
   }
 
   if (selectedFault === "none") {
-    results.push(...await runPredicateRegistrationCases({ expect }));
-    results.push(await runPredicateRegistrationDriftCase({ expect }));
-    results.push(await runKnownEvidenceCase({ expect }));
-    results.push(await runSemanticDuplicateCase({ expect }));
-    results.push(await runBudgetContextCase({ expect }));
-    results.push(await runEvidenceConflictCase({ rpc, expect }));
-    results.push(await runConcurrentWinnerCase({ rpc, expect }));
-    results.push(await runAdmissionCapacityCase({ rpc, rawRPC, expect }));
-    results.push(await runChangedHashConflictCase({ rawRPC, expect }));
-    results.push(await runPredicateWordingBoundsCase({ rpc, expect }));
-    results.push(await runSupersessionFenceCase({ rpc, expect }));
-    results.push(await assertRememberSessionModelRouting(expect, providerRequestOffset));
+    results.push(...await runStep("predicate-registration", () => runPredicateRegistrationCases({ expect })));
+    results.push(await runStep("predicate-registration-drift", () => runPredicateRegistrationDriftCase({ expect })));
+    results.push(await runStep("known-evidence", () => runKnownEvidenceCase({ expect })));
+    results.push(await runStep("semantic-duplicate", () => runSemanticDuplicateCase({ expect })));
+    results.push(await runStep("budget-context", () => runBudgetContextCase({ expect })));
+    results.push(await runStep("evidence-conflict", () => runEvidenceConflictCase({ rpc, expect })));
+    results.push(await runStep("concurrent-winner", () => runConcurrentWinnerCase({ rpc, expect })));
+    results.push(await runStep("admission-capacity", () => runAdmissionCapacityCase({ rpc, rawRPC, expect })));
+    results.push(await runStep("changed-hash-conflict", () => runChangedHashConflictCase({ rawRPC, expect })));
+    results.push(await runStep("predicate-wording-bounds", () => runPredicateWordingBoundsCase({ rpc, expect })));
+    results.push(await runStep("supersession-fence", () => runSupersessionFenceCase({ rpc, expect })));
+    results.push(await runStep("assert-remember-session-model-routing", () => assertRememberSessionModelRouting(expect, providerRequestOffset)));
   }
   return { mode: name, results };
 }

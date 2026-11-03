@@ -6,7 +6,7 @@ import { writeFile } from "node:fs/promises";
 export const name = "diagnostics";
 const rememberModel = "dense-mem-synchronous-write-e2e-remember";
 
-export async function run({ rpc, rawRPC = rpc, expect }) {
+export async function run({ rpc, rawRPC = rpc, expect, runStep }) {
   const attempts = {};
   const idempotencyKeys = {};
   for (const [label, marker, expectedState, expectedCode] of [
@@ -14,12 +14,14 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
     ["policy", "[fixture-fault:security]", "failed", "submission_policy_rejected"],
     ["failed", "[fixture-fault:unavailable]", "failed", "provider_unavailable"],
   ]) {
-    const request = rememberArguments(label, marker);
-    const result = terminalPayload(await rpc("tools/call", { name: "remember", arguments: request.payload }));
-    expect(result?.processing_state === expectedState, `${label} fixture must produce ${expectedState}: ${JSON.stringify(result)}`);
-    expect(!expectedCode || result?.errors?.[0]?.code === expectedCode, `${label} fixture must preserve ${expectedCode}`);
-    attempts[label] = result;
-    idempotencyKeys[label] = request.idempotencyKey;
+    await runStep(label, async () => {
+      const request = rememberArguments(label, marker);
+      const result = terminalPayload(await rpc("tools/call", { name: "remember", arguments: request.payload }));
+      expect(result?.processing_state === expectedState, `${label} fixture must produce ${expectedState}: ${JSON.stringify(result)}`);
+      expect(!expectedCode || result?.errors?.[0]?.code === expectedCode, `${label} fixture must preserve ${expectedCode}`);
+      attempts[label] = result;
+      idempotencyKeys[label] = request.idempotencyKey;
+    });
   }
 
   const diagnosticFaults = [
@@ -39,100 +41,106 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
     ["timeout", "[fixture-fault:timeout]", "failed", "provider_unavailable"],
   ];
   for (const [label, marker, expectedState, expectedCode] of diagnosticFaults) {
-    const request = rememberArguments(label, marker);
-    const result = terminalPayload(await rpc("tools/call", { name: "remember", arguments: request.payload }));
-    expect(result?.processing_state === expectedState, `${label} fixture must produce ${expectedState}: ${JSON.stringify(result)}`);
-    expect(!expectedCode || result?.errors?.[0]?.code === expectedCode, `${label} fixture must preserve ${expectedCode}: ${JSON.stringify(result)}`);
-    attempts[label] = result;
-    idempotencyKeys[label] = request.idempotencyKey;
+    await runStep(label, async () => {
+      const request = rememberArguments(label, marker);
+      const result = terminalPayload(await rpc("tools/call", { name: "remember", arguments: request.payload }));
+      expect(result?.processing_state === expectedState, `${label} fixture must produce ${expectedState}: ${JSON.stringify(result)}`);
+      expect(!expectedCode || result?.errors?.[0]?.code === expectedCode, `${label} fixture must preserve ${expectedCode}: ${JSON.stringify(result)}`);
+      attempts[label] = result;
+      idempotencyKeys[label] = request.idempotencyKey;
+    });
   }
 
-  const disconnectRequest = rememberArguments("disconnect", "[fixture-fault:embedding-cancel]");
-  const controller = new AbortController();
-  const disconnected = rawRPC("tools/call", { name: "remember", arguments: disconnectRequest.payload }, controller.signal);
-  setTimeout(() => controller.abort(), 1_000);
-  let disconnectError;
-  try {
-    await disconnected;
-  } catch (error) {
-    disconnectError = error;
-  }
-  expect(disconnectError?.name === "AbortError", `disconnect fixture must abort the client request: ${disconnectError}`);
-  let disconnectRetry;
-  for (let retryAttempt = 0; retryAttempt < 3; retryAttempt += 1) {
-    disconnectRetry = terminalPayload(await rpc("tools/call", { name: "remember", arguments: disconnectRequest.payload }));
-    if (disconnectRetry?.processing_state === "completed") break;
-    expect(disconnectRetry?.errors?.[0]?.retryable === true, `disconnect retry returned a non-retryable failure: ${JSON.stringify(disconnectRetry)}`);
-  }
-  expect(disconnectRetry?.processing_state === "completed", `disconnect retry must complete: ${JSON.stringify(disconnectRetry)}`);
-  attempts.disconnect = disconnectRetry;
-  idempotencyKeys.disconnect = disconnectRequest.idempotencyKey;
+  await runStep("disconnect", async () => {
+    const disconnectRequest = rememberArguments("disconnect", "[fixture-fault:embedding-cancel]");
+    const controller = new AbortController();
+    const disconnected = rawRPC("tools/call", { name: "remember", arguments: disconnectRequest.payload }, controller.signal);
+    setTimeout(() => controller.abort(), 1_000);
+    let disconnectError;
+    try {
+      await disconnected;
+    } catch (error) {
+      disconnectError = error;
+    }
+    expect(disconnectError?.name === "AbortError", `disconnect fixture must abort the client request: ${disconnectError}`);
+    let disconnectRetry;
+    for (let retryAttempt = 0; retryAttempt < 3; retryAttempt += 1) {
+      disconnectRetry = terminalPayload(await rpc("tools/call", { name: "remember", arguments: disconnectRequest.payload }));
+      if (disconnectRetry?.processing_state === "completed") break;
+      expect(disconnectRetry?.errors?.[0]?.retryable === true, `disconnect retry returned a non-retryable failure: ${JSON.stringify(disconnectRetry)}`);
+    }
+    expect(disconnectRetry?.processing_state === "completed", `disconnect retry must complete: ${JSON.stringify(disconnectRetry)}`);
+    attempts.disconnect = disconnectRetry;
+    idempotencyKeys.disconnect = disconnectRequest.idempotencyKey;
+  });
 
   const teamID = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
   const controlURL = requiredEnv("DENSE_MEM_CONTROL_URL").replace(/\/$/, "");
   const token = requiredEnv("DENSE_MEM_CONTROL_TOKEN");
-  const assessmentDisconnect = rememberArguments("assessment-disconnect", "[fixture-fault:assessment-timeout]");
-  const providerHealthURL = "http://synchronous-write-provider:8787/health";
-  const providerTrace = await fetch(providerHealthURL, { signal: AbortSignal.timeout(5_000) });
-  expect(providerTrace.ok, `assessment fixture health failed: ${providerTrace.status}`);
-  const assessmentRequestOffset = (await providerTrace.json()).chat_requests.length;
-  const assessmentController = new AbortController();
-  const assessmentCall = fetch(`${requiredEnv("DENSE_MEM_USER_URL").replace(/\/$/, "")}/mcp`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${requiredEnv("DENSE_MEM_E2E_API_KEY")}`,
-      Accept: "application/json, text/event-stream",
-      "Content-Type": "application/json",
-      "Mcp-Protocol-Version": "2026-07-28",
-      "Mcp-Method": "tools/call",
-      "Mcp-Name": "remember",
-    },
-    body: JSON.stringify({ jsonrpc: "2.0", id: Date.now(), method: "tools/call", params: {
-      name: "remember",
-      arguments: assessmentDisconnect.payload,
-      _meta: { "io.modelcontextprotocol/protocolVersion": "2026-07-28", "io.modelcontextprotocol/clientCapabilities": {} },
-    } }),
-    signal: assessmentController.signal,
-  }).then(async (response) => {
-    const body = await response.text();
-    expect(response.ok, `assessment disconnect fixture returned HTTP ${response.status}`);
-    return body;
-  });
-  try {
-    await Promise.all([
-      assert.rejects(assessmentCall, { name: "AbortError" }),
-      (async () => {
-        const signal = AbortSignal.any([assessmentController.signal, AbortSignal.timeout(20_000)]);
-        while (true) {
-          const response = await fetch(providerHealthURL, { signal });
-          expect(response.ok, `assessment fixture health failed: ${response.status}`);
-          const requests = (await response.json()).chat_requests.slice(assessmentRequestOffset);
-          if (requests.some((request) => request.model === rememberModel &&
-            request.schema_name === "dense_mem_semantic_assessment_response" && request.fault === "assessment-timeout")) {
-            assessmentController.abort();
-            return;
+  await runStep("assessment-disconnect", async () => {
+    const assessmentDisconnect = rememberArguments("assessment-disconnect", "[fixture-fault:assessment-timeout]");
+    const providerHealthURL = "http://synchronous-write-provider:8787/health";
+    const providerTrace = await fetch(providerHealthURL, { signal: AbortSignal.timeout(5_000) });
+    expect(providerTrace.ok, `assessment fixture health failed: ${providerTrace.status}`);
+    const assessmentRequestOffset = (await providerTrace.json()).chat_requests.length;
+    const assessmentController = new AbortController();
+    const assessmentCall = fetch(`${requiredEnv("DENSE_MEM_USER_URL").replace(/\/$/, "")}/mcp`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${requiredEnv("DENSE_MEM_E2E_API_KEY")}`,
+        Accept: "application/json, text/event-stream",
+        "Content-Type": "application/json",
+        "Mcp-Protocol-Version": "2026-07-28",
+        "Mcp-Method": "tools/call",
+        "Mcp-Name": "remember",
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: Date.now(), method: "tools/call", params: {
+        name: "remember",
+        arguments: assessmentDisconnect.payload,
+        _meta: { "io.modelcontextprotocol/protocolVersion": "2026-07-28", "io.modelcontextprotocol/clientCapabilities": {} },
+      } }),
+      signal: assessmentController.signal,
+    }).then(async (response) => {
+      const body = await response.text();
+      expect(response.ok, `assessment disconnect fixture returned HTTP ${response.status}`);
+      return body;
+    });
+    try {
+      await Promise.all([
+        assert.rejects(assessmentCall, { name: "AbortError" }),
+        (async () => {
+          const signal = AbortSignal.any([assessmentController.signal, AbortSignal.timeout(20_000)]);
+          while (true) {
+            const response = await fetch(providerHealthURL, { signal });
+            expect(response.ok, `assessment fixture health failed: ${response.status}`);
+            const requests = (await response.json()).chat_requests.slice(assessmentRequestOffset);
+            if (requests.some((request) => request.model === rememberModel &&
+              request.schema_name === "dense_mem_semantic_assessment_response" && request.fault === "assessment-timeout")) {
+              assessmentController.abort();
+              return;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 50));
           }
-          await new Promise((resolve) => setTimeout(resolve, 50));
-        }
-      })(),
-    ]);
-  } finally {
-    assessmentController.abort();
-    await assessmentCall.catch(() => {});
-  }
-  let assessmentFailure = "";
-  for (let attempt = 0; attempt < 25; attempt += 1) {
-    assessmentFailure = postgresQuery(`
-      SELECT error_code || '|' || failed_phase || '|' || document_count || '|' || outcome
-      FROM remember_attempts
-      WHERE team_id = '${sqlLiteral(teamID)}'::uuid
-        AND idempotency_key = '${sqlLiteral(assessmentDisconnect.idempotencyKey)}'
-      ORDER BY created_at DESC, attempt_id DESC LIMIT 1;
-    `);
-    if (assessmentFailure) break;
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  expect(assessmentFailure === "request_cancelled|assessment|0|failed", `assessment disconnect must retain cancellation without a semantic commit: ${assessmentFailure}`);
+        })(),
+      ]);
+    } finally {
+      assessmentController.abort();
+      await assessmentCall.catch(() => {});
+    }
+    let assessmentFailure = "";
+    for (let attempt = 0; attempt < 25; attempt += 1) {
+      assessmentFailure = postgresQuery(`
+        SELECT error_code || '|' || failed_phase || '|' || document_count || '|' || outcome
+        FROM remember_attempts
+        WHERE team_id = '${sqlLiteral(teamID)}'::uuid
+          AND idempotency_key = '${sqlLiteral(assessmentDisconnect.idempotencyKey)}'
+        ORDER BY created_at DESC, attempt_id DESC LIMIT 1;
+      `);
+      if (assessmentFailure) break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    expect(assessmentFailure === "request_cancelled|assessment|0|failed", `assessment disconnect must retain cancellation without a semantic commit: ${assessmentFailure}`);
+  });
 
   for (const path of [
     "/control/api/remember-attempts?limit=101",

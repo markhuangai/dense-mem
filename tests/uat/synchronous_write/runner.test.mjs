@@ -3,9 +3,87 @@ import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { createServer } from "node:http";
 
 import { fixtureChatResponse, fixtureFault } from "./provider-fixture.mjs";
 import { discoverCases } from "./runner.mjs";
+
+test("case progress preserves results, errors, stdout and run correlation", async () => {
+  const runner = new URL("./runner.mjs", import.meta.url).href;
+  const script = `
+    import assert from 'node:assert/strict';
+    import { runStep } from ${JSON.stringify(runner)};
+    const result = await runStep('remember/completed', async () => ({ completed: true }));
+    const failure = new Error('the-original-failure');
+    await assert.rejects(runStep('remember/failed', async () => { throw failure; }), error => error === failure);
+    process.stdout.write(JSON.stringify(result));
+  `;
+  const child = spawn(process.execPath, ["--input-type=module", "-e", script], { env: {
+    ...process.env, DENSE_MEM_E2E_RUN_ID: "691", DENSE_MEM_E2E_RUN_ATTEMPT: "2",
+    DENSE_MEM_E2E_SCENARIO: "synchronous_write", DENSE_MEM_E2E_COMMIT_SHA: "1".repeat(40),
+  } });
+  const closed = once(child, "close");
+  let stdout = "", stderr = "";
+  child.stdout.on("data", chunk => { stdout += chunk; });
+  child.stderr.on("data", chunk => { stderr += chunk; });
+  const [code] = await closed;
+  assert.equal(code, 0, stderr);
+  assert.deepEqual(JSON.parse(stdout), { completed: true });
+  const events = stderr.trim().split("\n").map(JSON.parse);
+  assert.deepEqual(events.map(event => [event.case, event.outcome]), [
+    ["remember/completed", "started"], ["remember/completed", "passed"],
+    ["remember/failed", "started"], ["remember/failed", "failed"],
+  ]);
+  for (const event of events) {
+    assert.equal(event.event, "e2e_case_progress");
+    assert.equal(event.run_id, "691");
+    assert.equal(event.run_attempt, "2");
+    assert.equal(event.scenario, "synchronous_write");
+    assert.equal(event.source_revision, "1".repeat(40));
+    assert.ok(event.elapsed_ms >= 0);
+  }
+});
+
+test("an interrupted case identifies its active step before completion", { timeout: 10000 }, async () => {
+  let received;
+  const requestReceived = new Promise(resolve => { received = resolve; });
+  const server = createServer(() => received());
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const runner = new URL("./runner.mjs", import.meta.url).href;
+  const child = spawn(process.execPath, ["--input-type=module", "-e", `
+    import { runStep } from ${JSON.stringify(runner)};
+    await runStep('remember/blocked-upstream', () => fetch('http://127.0.0.1:${server.address().port}'));
+  `]);
+  const closed = once(child, "close");
+  let stderr = "";
+  let started;
+  const progressStarted = new Promise(resolve => { started = resolve; });
+  child.stderr.on("data", chunk => {
+    stderr += chunk;
+    if (stderr.includes('"outcome":"started"')) started();
+  });
+  try {
+    await Promise.race([
+      Promise.all([requestReceived, progressStarted]),
+      closed.then(result => { throw new Error(`case exited before blocking: ${JSON.stringify(result)} ${stderr}`); }),
+    ]);
+    assert.match(stderr, /"case":"remember\/blocked-upstream"/);
+    assert.match(stderr, /"outcome":"started"/);
+    assert.doesNotMatch(stderr, /"outcome":"(?:passed|failed)"/);
+    child.kill("SIGTERM");
+    const [code, signal] = await closed;
+    assert.equal(code, null);
+    assert.equal(signal, "SIGTERM");
+    assert.equal(stderr.trim().split("\n").length, 1);
+  } finally {
+    child.kill("SIGKILL");
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+  }
+});
 
 test("provider fixture routes organization requests and retains locked classifications and pair constraints", () => {
   const request = structuredRequest("ontology_organization_v1", {

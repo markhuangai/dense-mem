@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
+	"github.com/markhuangai/dense-mem/internal/storage/postgres/testfixture"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
@@ -273,7 +273,7 @@ func setupRLSTestDB(t *testing.T) (*gorm.DB, func()) {
 		if os.Getenv("DENSE_MEM_REPOSITORY_TESTCONTAINERS") != "1" {
 			t.Skip("set DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 to run disposable RLS integration tests")
 		}
-		container, err := tcpostgres.Run(context.Background(), "pgvector/pgvector:0.8.2-pg18-trixie", postgresTestContainerOptions()...)
+		container, err := testfixture.Run(context.Background(), "pgvector/pgvector:0.8.2-pg18-trixie", postgresTestContainerOptions()...)
 		if err != nil {
 			t.Skipf("Postgres not available: %v", err)
 		}
