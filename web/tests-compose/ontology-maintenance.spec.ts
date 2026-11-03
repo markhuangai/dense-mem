@@ -213,6 +213,44 @@ test("loaded older retry actions follow successful work and server eligibility",
     }
     await expect(row).toHaveCount(1);
     await expect(row.getByRole("button", { name: "Retry failed work" })).toBeDisabled();
+    const payloadOffsets: number[] = [];
+    let expiredCapture = false;
+    const diagnosticRoute = "**/control/api/logs?**";
+    await page.route(diagnosticRoute, async (route) => {
+      const url = new URL(route.request().url());
+      if (url.searchParams.get("event") !== "ontology_failure_payload") return route.continue();
+      expect(url.searchParams.get("reference_type")).toBe("ontology_run");
+      expect(url.searchParams.get("reference_id")).toBe(failed.id);
+      expect(url.searchParams.get("team_id")).toBe(process.env.DENSE_MEM_E2E_TEAM_ID);
+      expect(url.searchParams.get("attempt_id")).toBeTruthy();
+      payloadOffsets.push(Number(url.searchParams.get("offset") || 0));
+      url.searchParams.set("limit", "2");
+      if (expiredCapture) url.searchParams.set("attempt_id", randomUUID());
+      await route.fulfill({ response: await route.fetch({ url: url.toString() }) });
+    });
+    try {
+      await row.getByRole("button", { name: "View failure diagnostics" }).click();
+      const diagnostics = page.getByRole("region", { name: "Ontology failure diagnostics" });
+      const inspect = diagnostics.getByRole("button", { name: /View failed assessment/ }).first();
+      await inspect.click();
+      await expect(diagnostics.locator(".remember-diagnostic-exchange")).toHaveCount(3);
+      await expect(diagnostics.locator(".remember-diagnostic-body pre").first()).toContainText("ontology_organization_v1");
+      const wireResponse = JSON.parse((await diagnostics.locator(".remember-diagnostic-body pre").nth(1).textContent())!);
+      expect(JSON.parse(wireResponse.choices[0].message.content).items).toEqual([]);
+      await diagnostics.getByText("Validation and provider attempts", { exact: true }).click();
+      await expect(diagnostics.locator("details pre")).toContainText("item_count_mismatch");
+      expect(payloadOffsets.length).toBeGreaterThan(1);
+      expect(payloadOffsets).toEqual(payloadOffsets.map((_, index) => index * 2));
+      await expectPageContained(page);
+      const denied = await request.get(`${controlURL}/control/api/logs?event=ontology_failure_capture`, { headers: { Authorization: `Bearer ${randomUUID()}` } });
+      expect(denied.status()).toBe(401);
+      expiredCapture = true;
+      await inspect.click();
+      await expect(diagnostics.getByRole("alert")).toContainText("incomplete or expired");
+      await expect(diagnostics.locator(".remember-diagnostic-body")).toHaveCount(0);
+    } finally {
+      await page.unroute(diagnosticRoute);
+    }
     await control("/ontology/resume", { operation_key: randomUUID() });
     await page.getByRole("button", { name: "Refresh ontology coverage" }).click();
     await expect(row.getByRole("button", { name: "Retry failed work" })).toBeEnabled();

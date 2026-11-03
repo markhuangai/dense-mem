@@ -654,7 +654,12 @@ func credentialTextContainsVariantDetailed(text string, variants []credentialVar
 }
 
 func credentialTextContainsVariantDetailedWithBudget(text string, variants []credentialVariant, budget *credentialSnapshotBudget) (bool, bool) {
+	starts := credentialCandidateStarts(variants)
 	for index := 0; index < len(text); {
+		if !starts[text[index]] {
+			index++
+			continue
+		}
 		if budget != nil && !budget.reserveMatchWork(credentialMatchWorkEstimate(text[index:], variants)) {
 			return false, false
 		}
@@ -774,7 +779,12 @@ func credentialTextContainsCompleteGoQuotedVariantWithBudget(text string, varian
 }
 
 func credentialURLTextContainsVariantWithBudget(text string, variants []credentialVariant, budget *credentialSnapshotBudget) bool {
+	starts := credentialCandidateStarts(variants)
 	for index := 0; index < len(text); {
+		if !starts[text[index]] {
+			index++
+			continue
+		}
 		if budget != nil && !budget.reserveMatchWork(credentialMatchWorkEstimate(text[index:], variants)) {
 			return false
 		}
