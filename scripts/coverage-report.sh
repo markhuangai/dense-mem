@@ -25,6 +25,10 @@ case "${1:-}" in
 	*) usage; exit 2 ;;
 esac
 
+if [[ "$1" == --complete-part && "${DENSE_MEM_CI_RESOURCE_REPORT_ACTIVE:-0}" != 1 ]]; then
+	exec env DENSE_MEM_CI_RESOURCE_REPORT_ACTIVE=1 node "${ROOT_DIR}/scripts/ci-resource-report.mjs" "coverage-$2" -- bash "$0" "$@"
+fi
+
 COVERAGE_DIR="${COVERAGE_OUTPUT_DIR:-${ROOT_DIR}/coverage}"
 mkdir -p "${COVERAGE_DIR}"
 

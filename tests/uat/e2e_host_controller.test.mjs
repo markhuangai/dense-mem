@@ -1038,8 +1038,8 @@ test("scenario failures collect protected evidence before removing the client", 
         const envFile = join(fixture, "e2e.env");
         const eventsFile = join(fixture, "events");
         await writeFile(envFile, "CONTROL_PORTAL_TOKEN=fixture-control-credential\n");
+        await executable(join(fixture, "docker"), '#!/usr/bin/env bash\ndocker "$@"\n');
         const script = `set -euo pipefail
-exec 3>&2
 ${controller.slice(redactorStart, redactorEnd)}
 docker() {
   case "$1" in
@@ -1048,7 +1048,7 @@ docker() {
       if [[ -n "$FIXTURE_SIGNAL" ]]; then
         trap 'exit 130' INT
         trap 'exit 143' TERM
-        printf '%s\\n' fixture-ready >&3
+        printf '%s\\n' fixture:ready >> "$FIXTURE_EVENTS"
         read -r -t 10 unused
       else
         return "$FIXTURE_STATUS"
@@ -1060,6 +1060,7 @@ docker() {
     *) return 92 ;;
   esac
 }
+export -f docker
 copy_git_source() { [[ "$FIXTURE_SETUP_FAILURE" == 0 ]] || return 24; }
 copy_file_into_container() { :; }
 report_phase() { printf 'phase:%s:%s\\n' "$1" "$3" >> "$FIXTURE_EVENTS"; }
@@ -1070,7 +1071,7 @@ ci_compose() {
   return "$FIXTURE_COLLECTION_FAILURE"
 }
 run_fixture() {
-  local scenario=synchronous_write_telemetry_disabled source_dir="$FIXTURE_DIR" project=fixture-project
+  local scenario=synchronous_write_telemetry_disabled source_dir="$FIXTURE_SOURCE_DIR" project=fixture-project
   local helper_overlay="" helper_dir="$FIXTURE_DIR/missing" runtime_compose_host=""
   local control_token=fixture-control-credential grafana_password=fixture-grafana-credential
   local telemetry_token="" postgres_password="" api_key="" identity_upgrade_api_key="" oauth_token=""
@@ -1083,7 +1084,7 @@ run_fixture`;
           detached: true,
           env: {
             ...process.env, CONTROLLER_DIR: entry.redactionFail ? join(fixture, "missing") : scripts,
-            ENV_FILE: envFile, FIXTURE_DIR: fixture, FIXTURE_EVENTS: eventsFile,
+            ENV_FILE: envFile, FIXTURE_DIR: fixture, FIXTURE_SOURCE_DIR: root, FIXTURE_EVENTS: eventsFile, PATH: `${fixture}:${process.env.PATH}`,
             FIXTURE_SIGNAL: entry.signal || "", FIXTURE_STATUS: String(entry.status),
             FIXTURE_SETUP_FAILURE: entry.name === "setup" ? "1" : "0",
             FIXTURE_COLLECTION_FAILURE: entry.collectionFail ? "1" : "0", FIXTURE_CLEANUP_FAILURE: entry.cleanupFail ? "1" : "0",
@@ -1091,17 +1092,25 @@ run_fixture`;
         });
         let stdout = "", stderr = "", signalled = false;
         child.stdout.on("data", (chunk) => { stdout += chunk; });
-        child.stderr.on("data", (chunk) => {
-          stderr += chunk;
-          if (entry.signal && !signalled && stderr.includes("fixture-ready\n")) {
-            signalled = true;
-            process.kill(-child.pid, entry.signal);
-          }
-        });
+        child.stderr.on("data", (chunk) => { stderr += chunk; });
         deadline = setTimeout(() => process.kill(-child.pid, "SIGKILL"), 5000);
-        const [code, signal] = await once(child, "close");
+        const finished = once(child, "close");
+        if (entry.signal) {
+          while (child.exitCode === null && child.signalCode === null) {
+            let events = "";
+            try { events = await readFile(eventsFile, "utf8"); } catch (error) { if (error.code !== "ENOENT") throw error; }
+            if (events.includes("fixture:ready\n")) {
+              signalled = true;
+              process.kill(-child.pid, entry.signal);
+              break;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 10));
+          }
+        }
+        const [code, signal] = await finished;
         assert.equal(signal, null, stderr);
         assert.equal(code, entry.status, stderr);
+        if (entry.signal) assert(signalled, "fixture must reach readiness before cancellation");
         const events = (await readFile(eventsFile, "utf8")).trim().split("\n");
         assert.match(events.at(-1), /^rm (?:-f )?fixture-client$/);
         if (entry.status === 0) {

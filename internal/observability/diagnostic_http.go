@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
@@ -65,19 +66,25 @@ func (t *diagnosticTransport) RoundTrip(request *http.Request) (*http.Response, 
 	} else if request.Body != nil {
 		state = "unavailable"
 	}
+	started := time.Now()
+	attrs = append(attrs, slog.Time("started_at", started.UTC()))
 	response, err := t.base.RoundTrip(request)
 	if err != nil {
+		attrs = append(attrs, slog.Int64("elapsed_ms", time.Since(started).Milliseconds()))
 		t.log(ctx, "request", body, state, attrs)
 		t.log(ctx, "response", nil, "no_response", attrs)
+		t.log(ctx, "transport_error", []byte(err.Error()), "captured", attrs)
 		return response, err
 	}
 	attrs = append(attrs, slog.Int("status_code", response.StatusCode))
 	if response.Body == nil {
+		attrs = append(attrs, slog.Int64("elapsed_ms", time.Since(started).Milliseconds()))
 		t.log(ctx, "request", body, state, attrs)
 		t.log(ctx, "response", nil, "no_response", attrs)
 		return response, nil
 	}
 	response.Body = &diagnosticResponseBody{ReadCloser: response.Body, expected: response.ContentLength, done: func(observed []byte, responseState string) {
+		attrs = append(attrs, slog.Int64("elapsed_ms", time.Since(started).Milliseconds()))
 		t.log(ctx, "request", body, state, attrs)
 		t.log(ctx, "response", observed, responseState, attrs)
 	}}

@@ -400,6 +400,38 @@ export function diagnoseRememberFailure(detail, encoded = JSON.stringify(detail)
   };
 }
 
+export function diagnoseProviderHTTPLog(encoded) {
+  const exchanges = new Map();
+  for (const line of encoded.split(/\r?\n/).filter(Boolean)) {
+    const row = JSON.parse(line);
+    assert.equal(row.msg, "ai_exchange_payload");
+    assert(row.exchange_id && row.team_id && row.run_id && row.batch_id, "provider capture correlation is missing");
+    const key = `${row.exchange_id}:${row.direction}`;
+    const entry = exchanges.get(key) || { row, chunks: [] };
+    entry.chunks.push(row.payload_chunk);
+    exchanges.set(key, entry);
+  }
+  const summaries = [];
+  for (const { row, chunks } of exchanges.values()) {
+    chunks.sort((a, b) => a.index - b.index);
+    assert.equal(chunks.length, chunks[0].count, "provider capture chunk count mismatch");
+    const body = chunks.map((chunk, index) => {
+      assert.equal(chunk.index, index, "provider capture chunk missing");
+      for (const key of ["count", "sha256", "state"]) assert.equal(chunk[key], chunks[0][key], "provider capture chunks disagree");
+      return chunk.body;
+    }).join("");
+    if (chunks[0].state === "captured") assert.equal(createHash("sha256").update(body).digest("hex"), chunks[0].sha256, "provider capture digest mismatch");
+    summaries.push({
+      exchange_id: row.exchange_id, team_id: row.team_id, run_id: row.run_id, batch_id: row.batch_id,
+      direction: row.direction, status_code: row.status_code || 0, started_at: row.started_at, elapsed_ms: row.elapsed_ms,
+      capture_state: chunks[0].state, transport_capture_state: row.transport_capture_state,
+      sha256: chunks[0].sha256, protected_bytes: Buffer.byteLength(body),
+      response_analysis: row.direction === "response" ? analyzeFailureResponse({ response_body: body, status_code: row.status_code }) : undefined,
+    });
+  }
+  return { type: "provider_http_diagnostics", sha256: createHash("sha256").update(encoded).digest("hex"), exchanges: summaries };
+}
+
 function analyzeFailureResponse(exchange) {
   if (!exchange.response_body) return "response_body_unavailable";
   let body;

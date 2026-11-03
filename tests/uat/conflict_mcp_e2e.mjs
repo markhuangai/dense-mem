@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { diagnoseProviderHTTPLog } from "./synchronous_write/cases/diagnostics.mjs";
 
 const userURL = requiredEnv("DENSE_MEM_USER_URL").replace(/\/$/, "");
 const controlURL = requiredEnv("DENSE_MEM_CONTROL_URL").replace(/\/$/, "");
@@ -15,6 +18,7 @@ const runID = `conflict-e2e-${Date.now()}`;
 const conflictReviewModel = "dense-mem-e2e-conflict-review";
 
 let rpcID = 0;
+const reportedProviderCaptures = new Set();
 
 const early = await runStage("early quorum", () => earlyQuorumScenario(seededTeamID));
 await runStage("removed placement tools", () => assertRemovedPlacementTools(early.profileA.apiKey));
@@ -558,6 +562,7 @@ function runReview(fixture, now) {
     encoding: "utf8",
     timeout: 60_000,
   });
+  reportProviderDiagnostics();
   if (result.status !== 0) {
     const details = [result.error?.message, result.stderr || result.stdout].filter(Boolean).join(": ");
     throw new Error(`conflict review driver failed (${result.status}): ${redactText(details)}`);
@@ -578,9 +583,25 @@ function runReviewExpectFailure(fixture, now) {
     encoding: "utf8",
     timeout: 60_000,
   });
+  reportProviderDiagnostics();
   assert(result.status !== 0, "embedding fault did not fail the conflict review driver");
   const details = [result.error?.message, result.stderr || result.stdout].filter(Boolean).join(": ");
   assert(details.includes("semantic write: embedding provider unavailable: provider call failed"), `conflict review did not reach the embedding fault: ${redactText(details)}`);
+}
+
+function reportProviderDiagnostics() {
+  const directory = process.env.DENSE_MEM_E2E_REMEMBER_FAILURE_DIR;
+  if (!directory) return;
+  if (!existsSync(directory)) {
+    console.error(JSON.stringify({ type: "provider_http_diagnostics", capture_state: "unavailable", reason: "driver_capture_directory_missing", exchanges: [] }));
+    return;
+  }
+  for (const name of readdirSync(directory).filter((name) => /^conflict-provider-.*\.private\.jsonl$/.test(name))) {
+    if (reportedProviderCaptures.has(name)) continue;
+    const encoded = readFileSync(join(directory, name), "utf8");
+    console.error(JSON.stringify(diagnoseProviderHTTPLog(encoded)));
+    reportedProviderCaptures.add(name);
+  }
 }
 
 function assertReview(result, outcome, stage, preferredPositionID, method) {

@@ -140,6 +140,7 @@ test("complete Go coverage deduplicates profiles and rejects exact thresholds", 
   const fixture = mkdtempSync(join(tmpdir(), "dense-mem-coverage-runner-"));
   t.after(() => rmSync(fixture, { recursive: true, force: true }));
   writeFixture(fixture, "scripts/coverage-report.sh", readFixture(coverageScript));
+  writeFixture(fixture, "scripts/ci-resource-report.mjs", readFixture(join(repositoryRoot, "scripts/ci-resource-report.mjs")));
   writeFixture(fixture, "scripts/go-packages.sh", readFixture(packageScript));
   chmodSync(join(fixture, "scripts/go-packages.sh"), 0o755);
   writeFixture(fixture, "fixture.go", "package fixture\n");
@@ -338,6 +339,7 @@ test("real Go coverage parts retain cross-package and testless execution and rej
   const fixture = mkdtempSync(join(tmpdir(), "dense-mem-real-coverage-"));
   t.after(() => rmSync(fixture, { recursive: true, force: true }));
   writeFixture(fixture, "scripts/coverage-report.sh", readFixture(coverageScript));
+  writeFixture(fixture, "scripts/ci-resource-report.mjs", readFixture(join(repositoryRoot, "scripts/ci-resource-report.mjs")));
   writeFixture(fixture, "scripts/go-packages.sh", readFixture(packageScript));
   chmodSync(join(fixture, "scripts/go-packages.sh"), 0o755);
   writeFixture(fixture, "go.mod", "module example.com/fixture\n\ngo 1.26\n");

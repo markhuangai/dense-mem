@@ -45,13 +45,17 @@ collect_remember_failure_diagnostics() {
 import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-const { diagnoseRememberFailure } = await import(pathToFileURL(process.argv[2]));
+const { diagnoseRememberFailure, diagnoseProviderHTTPLog } = await import(pathToFileURL(process.argv[2]));
 const directory = process.argv[3];
 const files = (await readdir(directory)).filter((name) => /^[0-9a-f-]{36}\.private\.json$/.test(name));
-if (!files.length) throw new Error('Remember failure capture is missing');
+const providerFiles = (await readdir(directory)).filter((name) => /^conflict-provider-.*\.private\.jsonl$/.test(name));
+if (!files.length && !providerFiles.length) throw new Error('Private provider failure capture is missing');
 for (const name of files) {
   const body = await readFile(join(directory, name), 'utf8');
   process.stdout.write(JSON.stringify(diagnoseRememberFailure(JSON.parse(body), body)) + '\n');
+}
+for (const name of providerFiles) {
+  process.stdout.write(JSON.stringify(diagnoseProviderHTTPLog(await readFile(join(directory, name), 'utf8'))) + '\n');
 }
 NODE
 }
@@ -359,7 +363,7 @@ run_scenario() {
   collect_scenario_failure_diagnostics() {
     ((failure_diagnostics_collected == 0)) || return 0
     failure_diagnostics_collected=1
-    if [[ "$scenario" == "ontology_organization" && -n "$container" ]]; then
+    if [[ -n "$container" && ( "$scenario" == "ontology_organization" || -f "${helper_dir}/conflict-review-driver" ) ]]; then
       collect_remember_failure_diagnostics "$container" "$source_dir" "$project" ||
         printf '%s\n' 'Remember temporary failure diagnosis is unavailable' >&2
     fi
@@ -422,7 +426,7 @@ run_scenario() {
 
   set +e
   local execution_started=$SECONDS
-  docker start --attach "$container" 2>&1 |
+  node "$source_dir/scripts/ci-resource-report.mjs" "$scenario" --source-dir "$source_dir" -- docker start --attach "$container" 2>&1 |
     redact_diagnostics "$ENV_FILE" "$control_token" "$telemetry_token" "$postgres_password" "$api_key" "$identity_upgrade_api_key" "$oauth_token" "$grafana_password"
   local -a scenario_pipeline_status=("${PIPESTATUS[@]}")
   set -e
