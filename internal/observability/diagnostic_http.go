@@ -65,18 +65,22 @@ func (t *diagnosticTransport) RoundTrip(request *http.Request) (*http.Response, 
 	} else if request.Body != nil {
 		state = "unavailable"
 	}
-	t.log(ctx, "request", body, state, attrs)
 	response, err := t.base.RoundTrip(request)
 	if err != nil {
+		t.log(ctx, "request", body, state, attrs)
 		t.log(ctx, "response", nil, "no_response", attrs)
 		return response, err
 	}
 	attrs = append(attrs, slog.Int("status_code", response.StatusCode))
 	if response.Body == nil {
+		t.log(ctx, "request", body, state, attrs)
 		t.log(ctx, "response", nil, "no_response", attrs)
 		return response, nil
 	}
-	response.Body = &diagnosticResponseBody{ReadCloser: response.Body, expected: response.ContentLength, done: func(body []byte, state string) { t.log(ctx, "response", body, state, attrs) }}
+	response.Body = &diagnosticResponseBody{ReadCloser: response.Body, expected: response.ContentLength, done: func(observed []byte, responseState string) {
+		t.log(ctx, "request", body, state, attrs)
+		t.log(ctx, "response", observed, responseState, attrs)
+	}}
 	return response, nil
 }
 
@@ -90,6 +94,8 @@ type diagnosticResponseBody struct {
 	body     []byte
 	observed int64
 	expected int64
+	readEOF  bool
+	readErr  bool
 	mu       sync.Mutex
 	once     sync.Once
 	done     func([]byte, string)
@@ -103,13 +109,8 @@ func (b *diagnosticResponseBody) Read(p []byte) (int, error) {
 	if remaining := modelprovider.MaxProviderDiagnosticBodyBytes + 1 - len(b.body); remaining > 0 {
 		b.body = append(b.body, p[:min(n, remaining)]...)
 	}
-	if err != nil {
-		state := "interrupted"
-		if err == io.EOF {
-			state = "captured"
-		}
-		b.once.Do(func() { b.done(b.body, state) })
-	}
+	b.readEOF = b.readEOF || err == io.EOF
+	b.readErr = b.readErr || (err != nil && err != io.EOF)
 	return n, err
 }
 
@@ -118,9 +119,10 @@ func (b *diagnosticResponseBody) Close() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	state := "interrupted"
-	if err == nil && b.expected >= 0 && b.observed == b.expected {
+	if !b.readErr && (b.readEOF || (err == nil && b.expected >= 0 && b.observed == b.expected)) {
 		state = "captured"
 	}
+	// EOF must reach the HTTP client before diagnostic work can consume its timeout.
 	b.once.Do(func() { b.done(b.body, state) })
 	return err
 }

@@ -2,8 +2,10 @@ package serverapp
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -35,12 +37,14 @@ func TestOntologyFailureCaptureUsesPrivateSinkAndCompleteManifests(t *testing.T)
 	result := contract.OrganizationResult{AssessmentID: uuid.NewString(), FailureCode: "provider_response_invalid"}
 	response := `{"error":"` + strings.Repeat("provider detail ", 1000) + secret + `"}`
 	recorder := diagnostic.NewRecorder()
-	recorder.RecordProviderExchange(context.Background(), modelprovider.ProviderExchange{Component: "assessor", RequestBody: []byte(`{"messages":"admitted","secret":"user content"}`), ResponseBody: []byte(response), StatusCode: 409, Outcome: "captured"})
+	recorder.RecordProviderExchange(context.Background(), modelprovider.ProviderExchange{Component: "assessor-" + secret, Model: secret, RequestBody: []byte(`{"messages":"admitted","secret":"user content"}`), ResponseBody: []byte(response), StatusCode: 409, Outcome: "captured"})
 	require.NoError(t, diagnostic.RecordFailure(context.Background(), claim, result, recorder.Snapshot()))
 	require.Greater(t, len(sink.records), 2)
 	manifest := sink.records[len(sink.records)-1]
 	require.Equal(t, "ontology_failure_capture", manifest.Message)
 	require.Equal(t, float64(len(sink.records)-1), manifest.Attrs["record_count"])
+	var responseBody strings.Builder
+	var responseChunks []observability.DiagnosticBodyChunk
 	for _, record := range sink.records {
 		require.Equal(t, "DEBUG", record.Severity)
 		require.Equal(t, claim.TeamID, record.TeamID)
@@ -50,6 +54,22 @@ func TestOntologyFailureCaptureUsesPrivateSinkAndCompleteManifests(t *testing.T)
 		require.NoError(t, err)
 		require.LessOrEqual(t, len(encoded), observability.MaxOperationMetadataBytes)
 		require.NotContains(t, string(encoded), secret)
+		var payload struct {
+			Direction string                            `json:"direction"`
+			Chunk     observability.DiagnosticBodyChunk `json:"payload_chunk"`
+		}
+		require.NoError(t, json.Unmarshal(encoded, &payload))
+		if payload.Direction == "response" {
+			responseBody.WriteString(payload.Chunk.Body)
+			responseChunks = append(responseChunks, payload.Chunk)
+		}
+	}
+	want := strings.ReplaceAll(response, secret, observability.CredentialProtectionRedacted)
+	require.Equal(t, want, responseBody.String())
+	for index, chunk := range responseChunks {
+		require.Equal(t, index, chunk.Index)
+		require.Equal(t, len(responseChunks), chunk.Count)
+		require.Equal(t, fmt.Sprintf("%x", sha256.Sum256([]byte(want))), chunk.SHA256)
 	}
 	sink.err = errors.New("sink unavailable")
 	require.Error(t, diagnostic.RecordFailure(context.Background(), claim, result, recorder.Snapshot()))

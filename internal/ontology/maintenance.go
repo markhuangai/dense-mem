@@ -292,11 +292,18 @@ func (s *MaintenanceService) executeBatch(ctx context.Context, work maintenanceW
 			}
 			diagnosticCtx, diagnosticCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 			defer diagnosticCancel()
+			captureStarted := time.Now()
 			if result.FailureCode == "" {
 				result.FailureCode = failure
 			}
 			if err := s.deps.Diagnostics.RecordFailure(diagnosticCtx, claim, result, exchanges); err != nil && s.deps.Logger != nil {
-				s.deps.Logger.LogAttrs(diagnosticCtx, slog.LevelWarn, "ontology_failure_diagnostics_unavailable", slog.String("run_id", claim.RunID), slog.String("batch_id", claim.ID), slog.String("assessment_id", result.AssessmentID))
+				reason := "capture_failed"
+				if errors.Is(diagnosticCtx.Err(), context.DeadlineExceeded) {
+					reason = "deadline_exceeded"
+				} else if diagnosticCtx.Err() != nil {
+					reason = "canceled"
+				}
+				s.deps.Logger.LogAttrs(diagnosticCtx, slog.LevelWarn, "ontology_failure_diagnostics_unavailable", slog.String("team_id", claim.TeamID), slog.String("run_id", claim.RunID), slog.String("batch_id", claim.ID), slog.String("assessment_id", result.AssessmentID), slog.String("reason", reason), slog.Int64("duration_ms", time.Since(captureStarted).Milliseconds()))
 			}
 		}
 	}()
@@ -306,17 +313,22 @@ func (s *MaintenanceService) executeBatch(ctx context.Context, work maintenanceW
 	result, runErr = organizer.Organize(assessmentCtx, claim.TeamID, contract.OrganizationInput{OperationKey: "maintenance:" + claim.ID, Sources: claim.Sources})
 	if s.deps.Logger != nil {
 		for _, attempt := range result.Attempts {
-			fields := []slog.Attr{slog.String("batch_id", claim.ID), slog.String("run_id", claim.RunID),
+			fields := []slog.Attr{slog.String("team_id", claim.TeamID), slog.String("batch_id", claim.ID), slog.String("run_id", claim.RunID),
 				slog.String("assessment_id", result.AssessmentID), slog.Int("attempt", attempt.Number),
 				slog.String("failure_code", attempt.FailureCode), slog.Bool("reported_usage_available", attempt.ReportedUsageAvailable)}
 			if attempt.Diagnostics.Valid() {
-				fields = append(fields, slog.Any("diagnostics", attempt.Diagnostics))
+				fields = append(fields, slog.Any("diagnostics", attempt.Diagnostics.LogFields()))
 			} else {
 				fields = append(fields, slog.Bool("diagnostics_invalid", true))
 			}
 			if attempt.Validation != nil {
 				if attempt.Validation.Valid() && attempt.FailureCode == "response_invalid" {
-					fields = append(fields, slog.Any("validation", attempt.Validation))
+					validation := map[string]any{"stage": attempt.Validation.Stage, "code": attempt.Validation.Code, "field_family": attempt.Validation.FieldFamily}
+					if attempt.Validation.ExpectedCount != nil {
+						validation["expected_count"] = *attempt.Validation.ExpectedCount
+						validation["actual_count"] = *attempt.Validation.ActualCount
+					}
+					fields = append(fields, slog.Any("validation", validation))
 				} else {
 					fields = append(fields, slog.Bool("validation_invalid", true))
 				}

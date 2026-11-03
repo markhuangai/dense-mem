@@ -118,6 +118,18 @@ func TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads(t *testing.T)
 			require.NotNil(t, failure, "native maintenance must retain the failed provider exchanges")
 			if mode == "invalid_response" {
 				require.Equal(t, "provider_response_invalid", failure.Attrs["failure_code"])
+				attempts, err := logs.ListOperationLogs(context.Background(), domain.OperationLogFilter{Event: "ontology maintenance assessment attempt", TeamID: &teamID})
+				require.NoError(t, err)
+				require.Len(t, attempts.Items, 3)
+				for _, attempt := range attempts.Items {
+					measured, ok := attempt.Attrs["diagnostics"].(map[string]any)
+					require.True(t, ok, "provider durations must remain visible after credential protection")
+					require.Contains(t, measured, "http_ms")
+					validation, ok := attempt.Attrs["validation"].(map[string]any)
+					require.True(t, ok, "the closed validation reason must remain visible after credential protection")
+					require.Equal(t, "decode", validation["stage"])
+					require.NotEmpty(t, validation["code"])
+				}
 			} else {
 				require.NotEmpty(t, failure.Attrs["failure_code"])
 			}

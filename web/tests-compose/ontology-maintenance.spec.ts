@@ -1,10 +1,41 @@
 import { navigate, openNavigation, confirmAction, expectPageContained, expectCompactNumberField } from "../tests-support/portal";
 import { randomUUID } from "node:crypto";
-import { expect, test } from "@playwright/test";
+import { expect, test, type APIRequestContext } from "@playwright/test";
 import type { CommunityStatus } from "../src/community-api-types";
 
 const controlURL = process.env.DENSE_MEM_CONTROL_URL!;
 const token = process.env.DENSE_MEM_CONTROL_TOKEN!;
+
+const retryTest = test.extend<{ ontologyRequest: APIRequestContext }>({
+  ontologyRequest: [async ({ playwright }, use) => {
+    const request = await playwright.request.newContext();
+    const headers = { Authorization: `Bearer ${token}` };
+    try {
+      const config = await request.get(`${controlURL}/control/api/config/ontology-maintenance`, { headers });
+      expect(config.ok()).toBeTruthy();
+      const original = (await config.json()).data;
+      const status = await request.get(`${controlURL}/control/api/ontology/status`, { headers });
+      expect(status.ok()).toBeTruthy();
+      const initial = (await status.json()).data;
+      try {
+        await use(request);
+      } finally {
+        const failures: unknown[] = [];
+        for (const restore of [
+          () => request.post(`${process.env.DENSE_MEM_E2E_PROVIDER_URL}/ontology-fixture`, { timeout: 5000, data: { mode: "normal" } }),
+          () => request.post(`${controlURL}/control/api/ontology/${initial.paused ? "pause" : "resume"}`, { timeout: 5000, headers, data: { operation_key: randomUUID() } }),
+          () => request.patch(`${controlURL}/control/api/config/ontology-maintenance`, { timeout: 5000, headers, data: { items: original.items.map(({ key, value }: { key: string; value: string }) => ({ key, value })) } }),
+        ]) {
+          try { expect((await restore()).ok()).toBeTruthy(); }
+          catch (error) { failures.push(error); }
+        }
+        if (failures.length) throw new AggregateError(failures, "Ontology browser settings restoration failed");
+      }
+    } finally {
+      await request.dispose();
+    }
+  }, { timeout: 30000 }],
+});
 
 test("operators save per-team concurrency for the next window and retain rejected drafts", async ({ page, request }) => {
   const headers = { Authorization: `Bearer ${token}` };
@@ -156,7 +187,7 @@ test("operators configure context capacity and retired budget controls reject wr
 });
 
 
-test("loaded older retry actions follow successful work and server eligibility", async ({ page, request }) => {
+retryTest("loaded older retry actions follow successful work and server eligibility", async ({ page, ontologyRequest: request }) => {
   test.setTimeout(180000);
   async function control(path: string, body?: unknown, method = body ? "POST" : "GET") {
     const response = await request.fetch(`${controlURL}/control/api${path}`, { method, headers: { Authorization: `Bearer ${token}` }, ...(body ? { data: body } : {}) });
@@ -167,9 +198,7 @@ test("loaded older retry actions follow successful work and server eligibility",
     const response = await request.post(`${process.env.DENSE_MEM_E2E_PROVIDER_URL}/ontology-fixture`, { data: { mode } });
     expect(response.ok()).toBeTruthy();
   }
-  const original = await control("/config/ontology-maintenance");
-  const initial = await control("/ontology/status");
-  try {
+  const failed = await test.step("create retryable ontology failure", async () => {
     await control("/config/ontology-maintenance", { items: [{ key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "true" }] }, "PATCH");
     await control("/ontology/pause", { operation_key: randomUUID() });
     const credential = await control(`/teams/${process.env.DENSE_MEM_E2E_TEAM_ID}/credentials`, { name: `Ontology browser retry ${randomUUID()}`, scopes: ["read", "write"], rate_limit: 300 });
@@ -198,6 +227,9 @@ test("loaded older retry actions follow successful work and server eligibility",
     expect(failed.retryable, JSON.stringify({ status: failed.status, failure_code: failed.failure_code, completed_batches: failed.completed_batches })).toBe(true);
     expect(failed.failure_code).toBeTruthy();
     await fixtureMode("normal");
+    return failed;
+  });
+  await test.step("inspect older failure diagnostics and retry eligibility", async () => {
     await control("/ontology/pause", { operation_key: randomUUID() });
     for (let index = 0; index < 52; index += 1) await control("/ontology/pause", { operation_key: randomUUID() });
     await page.goto(controlURL);
@@ -213,6 +245,8 @@ test("loaded older retry actions follow successful work and server eligibility",
     }
     await expect(row).toHaveCount(1);
     await expect(row.getByRole("button", { name: "Retry failed work" })).toBeDisabled();
+    await expect.poll(async () => (await control(`/logs?event=ontology_failure_capture&reference_type=ontology_run&reference_id=${failed.id}&team_id=${process.env.DENSE_MEM_E2E_TEAM_ID}`)).length,
+      { timeout: 20000, message: "failed ontology work must retain a complete diagnostic manifest" }).toBeGreaterThan(0);
     const payloadOffsets: number[] = [];
     let expiredCapture = false;
     const diagnosticRoute = "**/control/api/logs?**";
@@ -293,9 +327,5 @@ test("loaded older retry actions follow successful work and server eligibility",
     expect(completed.failure_code || "").toBe("");
     const rejected = await request.post(`${controlURL}/control/api/ontology/runs/${failed.id}/retry`, { headers: { Authorization: `Bearer ${token}` }, data: { operation_key: randomUUID(), max_batches: 1 } });
     expect(rejected.status()).toBe(422);
-  } finally {
-    await fixtureMode("normal");
-    await control(initial.paused ? "/ontology/pause" : "/ontology/resume", { operation_key: randomUUID() });
-    await control("/config/ontology-maintenance", { items: original.items.map(({ key, value }: { key: string; value: string }) => ({ key, value })) }, "PATCH");
-  }
+  });
 });

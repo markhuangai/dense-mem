@@ -13,6 +13,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/iotest"
+	"time"
 
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/stretchr/testify/require"
@@ -137,6 +139,82 @@ func TestDiagnosticResponseReadAndCloseCanRunConcurrently(t *testing.T) {
 		workers.Wait()
 		require.EqualValues(t, 1, captures.Load())
 	}
+}
+
+func TestDiagnosticHTTPClientReadsResponseBeforeBlockedPayloadLogging(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		_, _ = io.WriteString(w, `{"result":"complete"}`)
+	}))
+	defer server.Close()
+	output := &blockedDiagnosticWriter{started: make(chan struct{}), release: make(chan struct{})}
+	base := server.Client()
+	base.Timeout = 2 * time.Second
+	client := DiagnosticHTTPClient(base, slog.New(slog.NewJSONHandler(output, &slog.HandlerOptions{Level: slog.LevelDebug})), NewCredentialProtector())
+	type readResult struct {
+		body string
+		err  error
+	}
+	read := make(chan readResult, 1)
+	closed := make(chan error, 1)
+	go func() {
+		response, err := client.Post(server.URL, "application/json", strings.NewReader(`{"request":"kept"}`))
+		if err != nil {
+			read <- readResult{err: err}
+			closed <- err
+			return
+		}
+		body, err := io.ReadAll(response.Body)
+		read <- readResult{body: string(body), err: err}
+		closed <- response.Body.Close()
+	}()
+	defer func() {
+		close(output.release)
+		select {
+		case err := <-closed:
+			require.NoError(t, err)
+		case <-time.After(5 * time.Second):
+			t.Error("provider response did not close after logging was released")
+		}
+	}()
+	select {
+	case <-output.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("diagnostic writer was not reached")
+	}
+	select {
+	case result := <-read:
+		require.NoError(t, result.err)
+		require.Equal(t, `{"result":"complete"}`, result.body)
+	default:
+		t.Fatal("payload logging blocked the provider request or response read")
+	}
+}
+
+func TestDiagnosticHTTPClientDoesNotMarkReadErrorsCompleteOnClose(t *testing.T) {
+	var output bytes.Buffer
+	transport := diagnosticTestTransport(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(iotest.ErrReader(io.ErrUnexpectedEOF)), Header: http.Header{}, ContentLength: 0}, nil
+	})
+	client := DiagnosticHTTPClient(&http.Client{Transport: transport}, slog.New(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: slog.LevelDebug})), NewCredentialProtector())
+	response, err := client.Get("http://provider.invalid")
+	require.NoError(t, err)
+	_, err = io.ReadAll(response.Body)
+	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
+	require.NoError(t, response.Body.Close())
+	require.Contains(t, output.String(), `"transport_capture_state":"interrupted"`)
+}
+
+type blockedDiagnosticWriter struct {
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (w *blockedDiagnosticWriter) Write(body []byte) (int, error) {
+	w.once.Do(func() { close(w.started) })
+	<-w.release
+	return len(body), nil
 }
 
 type diagnosticTestTransport func(*http.Request) (*http.Response, error)

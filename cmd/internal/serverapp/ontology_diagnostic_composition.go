@@ -26,7 +26,12 @@ func ontologyDiagnosticCapture(sink observability.LogSink, protector observabili
 			}
 			captureID := uuid.NewString()
 			base := map[string]any{"reference_type": "ontology_run", "reference_id": claim.RunID, "run_id": claim.RunID, "batch_id": claim.ID, "assessment_id": result.AssessmentID, "attempt_id": captureID}
-			write := func(event string, attrs map[string]any) error {
+			write := func(event string, attrs map[string]any, chunk *observability.DiagnosticBodyChunk) error {
+				if chunk != nil {
+					metadata := *chunk
+					metadata.Body = ""
+					attrs["payload_chunk"] = metadata
+				}
 				for key, value := range base {
 					attrs[key] = value
 				}
@@ -42,6 +47,18 @@ func ontologyDiagnosticCapture(sink observability.LogSink, protector observabili
 				if err := json.Unmarshal(body, &protected); err != nil {
 					return err
 				}
+				if chunk != nil {
+					metadata, ok := protected["payload_chunk"].(map[string]any)
+					if !ok || metadata["body"] != "" {
+						return errors.New("ontology diagnostic chunk metadata unavailable")
+					}
+					// CaptureDiagnosticBody has already protected the complete body before splitting it.
+					metadata["body"] = chunk.Body
+					body, err = json.Marshal(protected)
+					if err != nil || len(body) > observability.MaxOperationMetadataBytes {
+						return errors.New("ontology diagnostic metadata exceeds record budget")
+					}
+				}
 				return sink.WriteLog(ctx, observability.LogRecord{Timestamp: time.Now().UTC(), Severity: "DEBUG", Message: event, TeamID: claim.TeamID, Attrs: protected, Contextual: true})
 			}
 			records := 0
@@ -53,15 +70,15 @@ func ontologyDiagnosticCapture(sink observability.LogSink, protector observabili
 					}
 					for _, chunk := range observability.CaptureDiagnosticBody(ctx, protector, body, modelprovider.MaxProviderDiagnosticBodyBytes) {
 						attrs := map[string]any{"exchange": index, "direction": direction, "component": exchange.Component, "model": exchange.Model,
-							"status_code": exchange.StatusCode, "outcome": exchange.Outcome, "capture_state": exchange.CaptureState, "capture_reason": exchange.CaptureReason, "payload_chunk": chunk}
-						if err := write("ontology_failure_payload", attrs); err != nil {
+							"status_code": exchange.StatusCode, "outcome": exchange.Outcome, "capture_state": exchange.CaptureState, "capture_reason": exchange.CaptureReason}
+						if err := write("ontology_failure_payload", attrs, &chunk); err != nil {
 							return err
 						}
 						records++
 					}
 				}
 			}
-			return write("ontology_failure_capture", map[string]any{"failure_code": result.FailureCode, "exchange_count": len(exchanges), "record_count": records, "attempts": result.Attempts})
+			return write("ontology_failure_capture", map[string]any{"failure_code": result.FailureCode, "exchange_count": len(exchanges), "record_count": records, "attempts": result.Attempts}, nil)
 		},
 	}
 }

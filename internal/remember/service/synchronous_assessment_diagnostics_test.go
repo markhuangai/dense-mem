@@ -1,9 +1,11 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -11,7 +13,41 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
+	"github.com/markhuangai/dense-mem/internal/observability"
 )
+
+func TestSynchronousAssessmentProviderDiagnosticsSurviveProtectedLogging(t *testing.T) {
+	zero, elapsed, timeout := int64(0), int64(12), int64(2000)
+	for _, provider := range []*modelprovider.CallDiagnostics{
+		{},
+		{QueueMS: &zero, AdmissionMS: &elapsed, HTTPMS: &elapsed, ReconciliationMS: &zero, HTTPTimeoutMS: &timeout, FailurePhase: "reconciliation", ReconciliationFailed: true},
+		{QueueMS: &zero, FailurePhase: "response_status"},
+		{QueueMS: new(int64(-1))},
+	} {
+		diagnostics := &assessmentDiagnostics{started: time.Now()}
+		diagnostics.beginTurn(context.Background())
+		diagnostics.finishProviderTurn(assessor.SemanticAssessmentTurn{Diagnostics: provider}, nil)
+		var output bytes.Buffer
+		logger := observability.NewWithHandler(slog.NewJSONHandler(&output, nil))
+		logger.InfoContext(context.Background(), "remember_phase_completed", observability.LogAttr{Key: "assessor_diagnostics", Value: diagnostics.snapshot()})
+		var logged struct {
+			Diagnostics struct {
+				Turns []map[string]json.RawMessage `json:"turns"`
+			} `json:"assessor_diagnostics"`
+		}
+		require.NoError(t, json.Unmarshal(output.Bytes(), &logged))
+		require.Len(t, logged.Diagnostics.Turns, 1)
+		turn := logged.Diagnostics.Turns[0]
+		if !provider.Valid() {
+			require.JSONEq(t, `true`, string(turn["provider_diagnostics_unavailable"]))
+			require.NotContains(t, turn, "provider")
+			continue
+		}
+		want, err := json.Marshal(provider)
+		require.NoError(t, err)
+		require.JSONEq(t, string(want), string(turn["provider"]))
+	}
+}
 
 func TestSynchronousAssessmentSpanReasonsSurviveRepairAndExhaustion(t *testing.T) {
 	for _, flaw := range []struct {
