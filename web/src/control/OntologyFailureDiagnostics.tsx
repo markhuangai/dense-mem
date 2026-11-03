@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { sha256 } from "@noble/hashes/sha2.js";
 import type { ControlApi, OperationLog } from "../api";
 import { Button } from "../ui/primitives/button";
 import { LoadingState, SectionHeading } from "../ui/components";
@@ -27,9 +28,7 @@ export async function reconstructOntologyExchanges(manifest: OperationLog, rows:
       const state = reason === "credential_protection_2" ? "over_budget" : captureState;
       if (head.state !== "captured") { bodies.push({ body: "", state, reason }); continue; }
       const body = chunks.map((chunk) => chunk.body).join("");
-      if (!globalThis.crypto?.subtle) throw new Error("Body integrity verification requires a secure browser context.");
-      const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body));
-      const hash = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+      const hash = Array.from(sha256(new TextEncoder().encode(body)), (byte) => byte.toString(16).padStart(2, "0")).join("");
       if (hash !== head.sha256) throw new Error("Body integrity verification failed; the capture will not be displayed.");
       bodies.push({ body, state, reason });
     }

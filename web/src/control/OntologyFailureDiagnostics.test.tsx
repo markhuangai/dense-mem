@@ -13,7 +13,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 function fixture() {
   const base: OperationLog = { id: "manifest", timestamp: "2026-11-02T22:00:00Z", severity: "DEBUG", severity_rank: 10, message: "ontology_failure_capture", team_id: "team-a", profile_id: null, correlation_id: "", error: "", attrs: { record_count: 3, exchange_count: 1, attempt_id: "capture", reference_id: "run", assessment_id: "assessment", batch_id: "batch", failure_code: "provider_response_invalid", attempts: [{ validation: { code: "item_locked_classification" } }] } };
-  const request = ` {"secret":"ordinary admitted fact", "messages":["original context"]} `;
+  const request = ` {"secret":"ordinary admitted fact", "messages":["original context α😀"]} `;
   const response = ` {"choices":[{"message":{"content":"malformed response"}}]} `;
   const chunks = [request.slice(0, 20), request.slice(20), response];
   const rows: OperationLog[] = chunks.map((body, index) => ({ ...base, id: `payload-${index}`, message: "ontology_failure_payload", attrs: { ...base.attrs, exchange: 0, direction: index === 2 ? "response" : "request", component: "assessor", model: "configured-model", status_code: 200, capture_state: "captured", payload_chunk: { index: index === 2 ? 0 : index, count: index === 2 ? 1 : 2, body, state: "captured", sha256: createHash("sha256").update(index === 2 ? response : request).digest("hex") } } }));
@@ -26,6 +26,17 @@ describe("Ontology failure exchanges", () => {
     const exchanges = await reconstructOntologyExchanges(f.manifest, [...f.rows].reverse());
     expect(exchanges[0].request.body).toBe(f.request);
     expect(exchanges[0].response.body).toBe(f.response);
+  });
+
+  it.each([undefined, {}])("verifies bodies and rejects corruption without browser WebCrypto (%j)", async (crypto) => {
+    vi.stubGlobal("crypto", crypto);
+    const f = fixture();
+    const exchanges = await reconstructOntologyExchanges(f.manifest, [...f.rows].reverse());
+    expect(exchanges[0].request.body).toBe(f.request);
+    expect(exchanges[0].response.body).toBe(f.response);
+    const altered = structuredClone(f.rows);
+    (altered[0].attrs!.payload_chunk as { body: string }).body += "changed";
+    await expect(reconstructOntologyExchanges(f.manifest, altered)).rejects.toThrow("integrity verification failed");
   });
 
   it("rejects missing, duplicate, altered and cross-team capture rows", async () => {
