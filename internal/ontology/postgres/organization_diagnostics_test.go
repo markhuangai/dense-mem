@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
@@ -149,6 +150,10 @@ func TestOrganizationDiagnosticCaptureUsesRealProviderValidation(t *testing.T) {
 	directory := t.TempDir()
 	recorder := newOrganizationDiagnosticRecorder(t, directory, "manager-separation", cfg)
 	request := assessment.Request{RequestID: "diagnostic-fixture", Definitions: []assessment.Definition{}, Items: []assessment.Item{{Ref: "a", Kind: ontology.EvidenceSource, Text: "Atlas uses PostgreSQL."}, {Ref: "b", Kind: ontology.EvidenceSource, Text: "Atlas uses PostgreSQL."}}, Pairs: []assessment.Pair{{Ref: "pair", LeftRef: "a", RightRef: "b", RequiredRelation: "distinct"}}}
+	expectedValidation := assessor.SemanticValidationError{
+		Field:   "equivalence[0].relation",
+		Message: `pair "pair" contradicts deterministic context or manager rule: must equal required_relation "distinct"; received "equivalent"`,
+	}
 	_, attempts, err := provider.Assess(modelprovider.WithExchangeRecorder(context.Background(), recorder), request)
 	require.NoError(t, err)
 	require.Len(t, attempts, 3)
@@ -164,9 +169,21 @@ func TestOrganizationDiagnosticCaptureUsesRealProviderValidation(t *testing.T) {
 		require.Equal(t, true, entry["diagnostic_only"])
 		require.Equal(t, true, entry["ineligible_for_quality_gate"])
 		if sequence < 3 {
-			require.Equal(t, "equivalence contradicts deterministic context or manager rule", entry["validation_error"])
+			require.Equal(t, expectedValidation.Error(), entry["validation_error"])
 		} else {
 			require.Empty(t, entry["validation_error"])
+		}
+		if sequence > 1 {
+			var outbound struct {
+				Messages []modelprovider.Message `json:"messages"`
+			}
+			require.NoError(t, json.Unmarshal([]byte(entry["request_body"].(string)), &outbound))
+			require.Len(t, outbound.Messages, 2*sequence)
+			var correction struct {
+				ValidationErrors []assessor.SemanticValidationError `json:"validation_errors"`
+			}
+			require.NoError(t, json.Unmarshal([]byte(outbound.Messages[len(outbound.Messages)-1].Content), &correction))
+			require.Equal(t, []assessor.SemanticValidationError{expectedValidation}, correction.ValidationErrors)
 		}
 		require.Equal(t, fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(entry["request_body"].(string)))), entry["request_sha256"])
 		require.Equal(t, fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(entry["response_body"].(string)))), entry["response_sha256"])
@@ -185,7 +202,7 @@ func TestOrganizationDiagnosticCaptureUsesRealProviderValidation(t *testing.T) {
 	require.NotContains(t, string(body), cfg.AIVerifierAPIKey)
 	var failed map[string]any
 	require.NoError(t, json.Unmarshal(body, &failed))
-	require.Equal(t, "equivalence contradicts deterministic context or manager rule", failed["validation_error"])
+	require.Equal(t, expectedValidation.Error(), failed["validation_error"])
 }
 
 func TestOrganizationDiagnosticHashesSurviveAggregateCaptureLimit(t *testing.T) {
