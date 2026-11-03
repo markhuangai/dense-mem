@@ -5,10 +5,10 @@ package postgres
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -124,8 +124,8 @@ func TestCommunityTopicPostgresStartupFailureCleanup(t *testing.T) {
 	t.Setenv("LOG_LEVEL", "info")
 	var created []testcontainers.Container
 	options, _ := postgresStartupTestOptions(t, &created)
-	secret := "startup-operational-credential-691"
-	encoded := base64.StdEncoding.EncodeToString([]byte(secret))
+	secret := "startup-operational-credential-691+/"
+	encoded := url.QueryEscape(secret)
 	options = append(options, postgresStartupInitScript(t, fmt.Sprintf("echo 'startup-init-failure: address already in use'\necho '%s %s admitted-password-field'\nhead -c 20000 /dev/zero | tr '\\000' x\necho startup-log-end\nexit 17\n", secret, encoded)))
 	var container *tcpostgres.PostgresContainer
 	var err error
