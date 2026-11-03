@@ -297,7 +297,7 @@ func Validate(request Request, response Response) error {
 		path := fmt.Sprintf("equivalence[%d]", i)
 		pair, ok := pairs[decision.Ref]
 		if !ok {
-			errs = append(errs, validationIssue(path+".ref", "equivalence_ref", "pair ref %q is outside allowlist %q", decision.Ref, pairRefs))
+			errs = append(errs, validationIssue(path+".ref", "equivalence_ref", "pair ref %q is outside allowlist supplied in request.pairs", decision.Ref))
 		}
 		choice := assessor.SemanticAssessmentEvidenceEquivalenceResult{EvidenceID: decision.Ref, Action: "new"}
 		switch decision.Relation {
@@ -320,9 +320,10 @@ func Validate(request Request, response Response) error {
 	coverageErrors := assessor.ValidateEvidenceEquivalenceResults(groups, choices)
 	if len(coverageErrors) > 0 {
 		received, _ := json.Marshal(response.Equivalence)
+		errs = append(errs, validationIssue("equivalence", "equivalence_coverage", "return exactly one decision per supplied pair ref %q, including distinct and ambiguous pairs; duplicate pair refs are not allowed; received %s", pairRefs, received))
 		for _, issue := range coverageErrors {
 			field := strings.ReplaceAll(strings.ReplaceAll(issue.Field, "evidence_equivalence_results", "equivalence"), ".evidence_id", ".ref")
-			errs = append(errs, validationIssue(field, "equivalence_coverage", "%s; return exactly one decision per supplied pair ref %q, including distinct and ambiguous pairs; duplicate pair refs are not allowed; received %s", issue.Message, pairRefs, received))
+			errs = append(errs, validationIssue(field, "equivalence_coverage", "%s", issue.Message))
 		}
 	} else {
 	transitivity:

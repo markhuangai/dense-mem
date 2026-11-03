@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -217,15 +218,19 @@ func semanticAssessmentJoinedErrors(errs []SemanticValidationError) string {
 	return strings.Join(parts, "; ")
 }
 
-// BoundSemanticAssessmentCorrectionErrors keeps deterministic repair feedback within the shared error-count bound.
+// BoundSemanticAssessmentCorrectionErrors keeps distinct repair feedback deterministic and within the shared error-count bound.
 func BoundSemanticAssessmentCorrectionErrors(errs []SemanticValidationError) []SemanticValidationError {
 	bounded := append([]SemanticValidationError(nil), errs...)
 	sort.Slice(bounded, func(i, j int) bool {
 		if bounded[i].Field == bounded[j].Field {
+			if bounded[i].Message == bounded[j].Message {
+				return bounded[i].Code < bounded[j].Code
+			}
 			return bounded[i].Message < bounded[j].Message
 		}
 		return bounded[i].Field < bounded[j].Field
 	})
+	bounded = slices.Compact(bounded)
 	if len(bounded) <= SemanticAssessmentMaxCorrectionErrors {
 		return bounded
 	}

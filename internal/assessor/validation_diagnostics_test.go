@@ -71,3 +71,26 @@ func TestSharedResponseShapeAndCorrectionErrors(t *testing.T) {
 	cause := errors.New("invalid complete response")
 	require.ErrorIs(t, &SemanticAssessmentResponseValidationError{Errors: errs, Cause: cause}, cause)
 }
+
+func TestSharedCorrectionErrorsPreserveDistinctIssuesBeforeCountBound(t *testing.T) {
+	issue := SemanticValidationError{Field: "items[0].ref", Message: "is duplicated", Code: "a"}
+	errs := make([]SemanticValidationError, SemanticAssessmentMaxCorrectionErrors+1)
+	for i := range errs {
+		errs[i] = issue
+	}
+	differentCode := issue
+	differentCode.Code = "b"
+	differentMessage := issue
+	differentMessage.Message = "is required"
+	differentField := issue
+	differentField.Field = "items[1].ref"
+	errs = append(errs, differentField, differentCode, differentMessage, differentCode)
+	original := append([]SemanticValidationError(nil), errs...)
+
+	bounded := BoundSemanticAssessmentCorrectionErrors(errs)
+	require.Equal(t, original, errs)
+	require.Equal(t, []SemanticValidationError{issue, differentCode, differentMessage, differentField}, bounded)
+	encoded, err := json.Marshal(bounded)
+	require.NoError(t, err)
+	require.NotContains(t, string(encoded), `"code"`)
+}
