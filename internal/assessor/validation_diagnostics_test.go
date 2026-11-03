@@ -2,6 +2,8 @@ package assessor
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -37,4 +39,35 @@ func TestEvidenceSecurityCoverageDiagnosticCodes(t *testing.T) {
 		})
 	}
 	require.Empty(t, validateSemanticAssessmentEvidenceSecurityResults([]SemanticAssessmentEvidenceSecurityResult{{EvidenceID: "submitted", Decision: "pass"}}, evidence))
+}
+
+func TestSharedResponseShapeAndCorrectionErrors(t *testing.T) {
+	_, errs := ValidateResponseObject([]byte(`{"required":null,"z":0,"a":0}`), "items[2]", []string{"required", "optional"}, nil, map[string]bool{"optional": true})
+	require.Equal(t, []SemanticValidationError{
+		{Field: "items[2].required", Message: "must not be null"},
+		{Field: "items[2].a", Message: "is unknown"},
+		{Field: "items[2].z", Message: "is unknown"},
+	}, errs)
+	_, errs = ValidateResponseObject([]byte(`{"required":null}`), "", []string{"required", "optional"}, map[string]bool{"required": true}, map[string]bool{"optional": true})
+	require.Empty(t, errs)
+	require.Equal(t, []SemanticValidationError{{Field: "items[1].ref", Message: "is required"}}, ValidateResponseArrayObjects([]byte(`[{"ref":"a"},{}]`), "items", []string{"ref"}, nil, nil))
+	_, errs = ValidateResponseObject([]byte(`{"ref":"a","ref":"b"}`), "items[0]", []string{"ref"}, nil, nil)
+	require.ErrorContains(t, errs[0], "duplicate JSON field")
+
+	errs = make([]SemanticValidationError, SemanticAssessmentMaxCorrectionErrors+2)
+	for i := range errs {
+		errs[i] = SemanticValidationError{Field: fmt.Sprintf("items[%03d].ref", len(errs)-i), Message: "is duplicated", Code: "private"}
+	}
+	original := append([]SemanticValidationError(nil), errs...)
+	bounded := BoundSemanticAssessmentCorrectionErrors(errs)
+	require.Equal(t, original, errs)
+	require.Len(t, bounded, SemanticAssessmentMaxCorrectionErrors)
+	require.Equal(t, "items[001].ref", bounded[0].Field)
+	require.Contains(t, bounded[len(bounded)-1].Message, "additional validation errors were omitted")
+	encoded, err := json.Marshal(bounded)
+	require.NoError(t, err)
+	require.NotContains(t, string(encoded), "private")
+	require.NotContains(t, string(encoded), "code")
+	cause := errors.New("invalid complete response")
+	require.ErrorIs(t, &SemanticAssessmentResponseValidationError{Errors: errs, Cause: cause}, cause)
 }

@@ -128,7 +128,7 @@ func (v *OpenAIVerifier) AssessRelationshipConflict(ctx context.Context, req Con
 			return ConflictAssessmentResponse{}, &MalformedResponseError{Provider: openAIVerifierProvider, Message: "conflict assessment response remained invalid after bounded correction", FailureClass: "malformed_exhausted", Attempts: turn}
 		}
 		correction, err := json.Marshal(map[string]any{
-			"validation_errors": boundedSemanticAssessmentCorrectionErrors(responseErrors),
+			"validation_errors": assessor.BoundSemanticAssessmentCorrectionErrors(responseErrors),
 			"instruction":       conflictAssessmentCorrectionInstruction,
 		})
 		if err != nil {

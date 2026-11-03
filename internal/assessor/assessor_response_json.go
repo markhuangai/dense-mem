@@ -3,7 +3,9 @@ package assessor
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/markhuangai/dense-mem/internal/jsonstrict"
@@ -11,11 +13,14 @@ import (
 
 type SemanticAssessmentResponseValidationError struct {
 	Errors []SemanticValidationError
+	Cause  error `json:"-"`
 }
 
 func (e *SemanticAssessmentResponseValidationError) Error() string {
 	return semanticAssessmentJoinedErrors(e.Errors)
 }
+
+func (e *SemanticAssessmentResponseValidationError) Unwrap() error { return e.Cause }
 
 func validateSemanticAssessmentResponseRaw(raw []byte) []SemanticValidationError {
 	top, errs := assessmentRawObject(raw, "", []string{"request_id", "evidence_security_results", "evidence_equivalence_results", "evidence_conflict_results", "entity_results", "relationship_results"}, nil)
@@ -57,7 +62,7 @@ func validateSemanticAssessmentResponseRaw(raw []byte) []SemanticValidationError
 		}
 		errs = append(errs, assessmentRawArrayObjects(result["positions"], path+".positions", []string{"evidence_id", "start_ref", "end_ref"}, nil)...)
 	}
-	errs = append(errs, assessmentRawArrayObjectsWithOptional(top["entity_results"], "entity_results", []string{"ref", "grounding_ref", "anchor_ref", "action", "candidate_entity_id"}, map[string]bool{"grounding_ref": true, "anchor_ref": true, "candidate_entity_id": true}, map[string]bool{"anchor_ref": true})...)
+	errs = append(errs, ValidateResponseArrayObjects(top["entity_results"], "entity_results", []string{"ref", "grounding_ref", "anchor_ref", "action", "candidate_entity_id"}, map[string]bool{"grounding_ref": true, "anchor_ref": true, "candidate_entity_id": true}, map[string]bool{"anchor_ref": true})...)
 
 	var relationships []json.RawMessage
 	if err := json.Unmarshal(top["relationship_results"], &relationships); err != nil {
@@ -116,27 +121,29 @@ func validateSemanticAssessmentSplitRaw(raw json.RawMessage, path string) []Sema
 }
 
 func assessmentRawArrayObjects(raw json.RawMessage, path string, fields []string, nullable map[string]bool) []SemanticValidationError {
-	return assessmentRawArrayObjectsWithOptional(raw, path, fields, nullable, nil)
+	return ValidateResponseArrayObjects(raw, path, fields, nullable, nil)
 }
 
-func assessmentRawArrayObjectsWithOptional(raw json.RawMessage, path string, fields []string, nullable, optional map[string]bool) []SemanticValidationError {
+// ValidateResponseArrayObjects applies the shared closed-object checks to every indexed array entry.
+func ValidateResponseArrayObjects(raw json.RawMessage, path string, fields []string, nullable, optional map[string]bool) []SemanticValidationError {
 	var values []json.RawMessage
 	if err := json.Unmarshal(raw, &values); err != nil {
 		return []SemanticValidationError{semanticErr(path, "must be an array")}
 	}
 	var errs []SemanticValidationError
 	for i, value := range values {
-		_, itemErrs := assessmentRawObjectWithOptional(value, fmt.Sprintf("%s[%d]", path, i), fields, nullable, optional)
+		_, itemErrs := ValidateResponseObject(value, fmt.Sprintf("%s[%d]", path, i), fields, nullable, optional)
 		errs = append(errs, itemErrs...)
 	}
 	return errs
 }
 
 func assessmentRawObject(raw json.RawMessage, path string, fields []string, nullable map[string]bool) (map[string]json.RawMessage, []SemanticValidationError) {
-	return assessmentRawObjectWithOptional(raw, path, fields, nullable, nil)
+	return ValidateResponseObject(raw, path, fields, nullable, nil)
 }
 
-func assessmentRawObjectWithOptional(raw json.RawMessage, path string, fields []string, nullable, optional map[string]bool) (map[string]json.RawMessage, []SemanticValidationError) {
+// ValidateResponseObject checks duplicate, unknown, required and nullable fields without coercing values.
+func ValidateResponseObject(raw json.RawMessage, path string, fields []string, nullable, optional map[string]bool) (map[string]json.RawMessage, []SemanticValidationError) {
 	if err := jsonstrict.RejectDuplicateFields(raw); err != nil {
 		return nil, []SemanticValidationError{semanticErr(assessmentRawField(path, ""), err.Error())}
 	}
@@ -162,10 +169,15 @@ func assessmentRawObjectWithOptional(raw json.RawMessage, path string, fields []
 			errs = append(errs, semanticErr(assessmentRawField(path, field), "must not be null"))
 		}
 	}
+	unknown := make([]string, 0)
 	for field := range object {
 		if _, ok := allowed[field]; !ok {
-			errs = append(errs, semanticErr(assessmentRawField(path, field), "is unknown"))
+			unknown = append(unknown, field)
 		}
+	}
+	sort.Strings(unknown)
+	for _, field := range unknown {
+		errs = append(errs, semanticErr(assessmentRawField(path, field), "is unknown"))
 	}
 	return object, errs
 }
@@ -180,10 +192,46 @@ func assessmentRawField(path string, field string) string {
 	return path + "." + field
 }
 
+// ResponseJSONValidationError retains the shared provider-facing JSON type error contract.
+func ResponseJSONValidationError(err error, path string) SemanticValidationError {
+	field := path
+	if field == "" {
+		field = "response"
+	}
+	message := "must be one complete JSON object matching the required field types"
+	var typeError *json.UnmarshalTypeError
+	if errors.As(err, &typeError) && (typeError.Field != "" || path != "") {
+		if typeError.Field != "" {
+			field = assessmentRawField(path, typeError.Field)
+		}
+		message = "must match the required JSON type"
+	}
+	return semanticErr(field, message)
+}
+
 func semanticAssessmentJoinedErrors(errs []SemanticValidationError) string {
 	parts := make([]string, 0, len(errs))
 	for _, err := range errs {
 		parts = append(parts, err.Error())
 	}
 	return strings.Join(parts, "; ")
+}
+
+// BoundSemanticAssessmentCorrectionErrors keeps deterministic repair feedback within the shared error-count bound.
+func BoundSemanticAssessmentCorrectionErrors(errs []SemanticValidationError) []SemanticValidationError {
+	bounded := append([]SemanticValidationError(nil), errs...)
+	sort.Slice(bounded, func(i, j int) bool {
+		if bounded[i].Field == bounded[j].Field {
+			return bounded[i].Message < bounded[j].Message
+		}
+		return bounded[i].Field < bounded[j].Field
+	})
+	if len(bounded) <= SemanticAssessmentMaxCorrectionErrors {
+		return bounded
+	}
+	bounded = bounded[:SemanticAssessmentMaxCorrectionErrors-1]
+	return append(bounded, SemanticValidationError{
+		Field:   "response",
+		Message: "additional validation errors were omitted; return one complete response matching the schema",
+	})
 }

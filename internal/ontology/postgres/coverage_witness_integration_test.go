@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/markhuangai/dense-mem/internal/assessor"
 	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	"github.com/markhuangai/dense-mem/internal/ontology/assessment"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
@@ -77,7 +78,7 @@ func TestOntologyCoverageFailureWitnesses(t *testing.T) {
 		require.Equal(t, catalog, after)
 		require.Equal(t, before, f.canonicalSnapshot(t))
 	})
-	for _, family := range []string{"request_id_mismatch", "item_locked_classification", "item_ambiguous_classification", "item_reason_limit", "definition_record", "valid_ambiguity"} {
+	for _, family := range []string{"request_id_mismatch", "item_locked_classification", "item_ambiguous_classification", "item_reason_limit", "item_source_kind", "definition_record", "valid_ambiguity"} {
 		t.Run(family, func(t *testing.T) {
 			before := f.canonicalSnapshot(t)
 			catalog, err := f.store.ListRecords(context.Background(), f.team, "", "", ontology.MaxPageSize)
@@ -93,6 +94,10 @@ func TestOntologyCoverageFailureWitnesses(t *testing.T) {
 				}
 				for i, item := range request.Items {
 					if item.LockedDefinitionRef == "" {
+						if family == "item_source_kind" {
+							response.Definitions = append(response.Definitions, assessment.Definition{Ref: "wrong-class", Kind: ontology.EntityClass, Key: "wrong-class", Label: "Wrong class", Aliases: []string{}, BaseEntityKind: "project"})
+							response.Items[i].DefinitionRef = "wrong-class"
+						}
 						if family == "valid_ambiguity" {
 							response.Items[i] = assessment.Decision{Ref: item.Ref, Status: "ambiguous", Reason: "Insufficient topic context"}
 						}
@@ -108,6 +113,18 @@ func TestOntologyCoverageFailureWitnesses(t *testing.T) {
 						response.Items[i] = assessment.Decision{Ref: item.Ref, Status: "ambiguous", Reason: "Cannot choose"}
 					case "item_reason_limit":
 						response.Items[i].Reason = strings.Repeat("x", 129)
+					}
+				}
+				if family != "valid_ambiguity" {
+					var rejected *assessor.SemanticAssessmentResponseValidationError
+					require.ErrorAs(t, assessment.Validate(request, *response), &rejected)
+					require.NotEmpty(t, rejected.Errors)
+					if family == "item_source_kind" {
+						require.Contains(t, rejected.Error(), "expected topic")
+						require.Contains(t, rejected.Error(), `selects kind "entity_class"`)
+					}
+					if family == "item_locked_classification" {
+						require.Contains(t, rejected.Error(), "locked_definition_ref")
 					}
 				}
 			})
@@ -130,4 +147,37 @@ func TestOntologyCoverageFailureWitnesses(t *testing.T) {
 			require.Equal(t, before, f.canonicalSnapshot(t))
 		})
 	}
+	t.Run("complete_locked_repair", func(t *testing.T) {
+		before := f.canonicalSnapshot(t)
+		catalog, err := f.store.ListRecords(context.Background(), f.team, "", "", ontology.MaxPageSize)
+		require.NoError(t, err)
+		turns := 0
+		service, calls := organizationFixtureServiceWithIdentity(t, f, nil, func(request assessment.Request, response *assessment.Response) {
+			turns++
+			current, err := f.store.ListRecords(context.Background(), f.team, "", "", ontology.MaxPageSize)
+			require.NoError(t, err)
+			require.Equal(t, catalog, current, "invalid attempts must not partially publish")
+			if turns < 3 {
+				for i, item := range request.Items {
+					if item.LockedDefinitionRef != "" {
+						response.Items[i] = assessment.Decision{Ref: item.Ref, Status: "ambiguous", Reason: "uncertain"}
+						var rejected *assessor.SemanticAssessmentResponseValidationError
+						require.ErrorAs(t, assessment.Validate(request, *response), &rejected)
+						require.Contains(t, rejected.Error(), item.Ref)
+						require.Contains(t, rejected.Error(), item.LockedDefinitionRef)
+					}
+				}
+			}
+		}, "repair-model", assessor.DefaultSemanticAssessmentLimits())
+		result, err := service.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: "complete-locked-repair", Sources: []ontology.SourceHandle{a, b}})
+		require.NoError(t, err)
+		require.Equal(t, int32(3), calls.Load())
+		require.True(t, result.Current)
+		require.NotNil(t, result.Publication)
+		require.Len(t, result.Attempts, 3)
+		require.Equal(t, "item_ambiguous_classification", result.Attempts[0].Validation.Code)
+		require.Equal(t, "item_ambiguous_classification", result.Attempts[1].Validation.Code)
+		require.Nil(t, result.Attempts[2].Validation)
+		require.Equal(t, before, f.canonicalSnapshot(t))
+	})
 }

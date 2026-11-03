@@ -131,7 +131,7 @@ func (v *OpenAIAssessor) Repair(ctx context.Context, sessionRef assessor.Semanti
 		}
 	}
 	correctionJSON, err := json.Marshal(semanticAssessmentSessionRepair{
-		ValidationErrors: boundedSemanticAssessmentCorrectionErrors(repair.ValidationErrors),
+		ValidationErrors: assessor.BoundSemanticAssessmentCorrectionErrors(repair.ValidationErrors),
 		Instruction:      semanticAssessmentSessionRepairInstruction + assessor.SemanticAssessmentGenerationInstruction(prepared),
 	})
 	if err != nil {

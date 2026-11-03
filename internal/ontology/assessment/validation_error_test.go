@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
-	"github.com/markhuangai/dense-mem/internal/jsonstrict"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	"github.com/stretchr/testify/require"
@@ -18,15 +17,12 @@ func TestOrganizationDecodeValidationDiagnostics(t *testing.T) {
 	encoded, err := json.Marshal(response)
 	require.NoError(t, err)
 	for name, raw := range map[string]string{
-		"syntax": `{`, "wrong_type": `{"request_id":[]}`, "trailing": string(encoded) + " {}",
-		"unknown":   `{"synthetic-provider-secret raw-source-canary":true}`,
+		"syntax": `{`, "wrong_type": `{"request_id":[],"definitions":[],"items":[],"equivalence":[]}`, "trailing": string(encoded) + " {}", "null": "null",
+		"unknown":   `{"request_id":"request","definitions":[],"items":[],"equivalence":[],"synthetic-provider-secret raw-source-canary":true}`,
 		"duplicate": `{"synthetic-provider-secret":1,"synthetic-provider-secret":2}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := Decode(raw)
-			var original Response
-			originalErr := jsonstrict.Decode(strings.NewReader(raw), &original, ontology.MaxPublicationBytes)
-			require.EqualError(t, err, originalErr.Error())
 			diagnostic := requireValidation(t, err, "decode", "strict_json", "response")
 			body, marshalErr := json.Marshal(diagnostic)
 			require.NoError(t, marshalErr)
@@ -34,15 +30,17 @@ func TestOrganizationDecodeValidationDiagnostics(t *testing.T) {
 			require.NotContains(t, string(body), "raw-source-canary")
 		})
 	}
-	for _, tc := range []struct{ raw, field, message string }{
-		{`null`, "request_id", "missing request_id"},
-		{`{"request_id":"request","items":[],"equivalence":[]}`, "definitions", "missing definitions"},
-		{strings.Replace(string(encoded), `"parent_ref":"",`, "", 1), "definitions.parent_ref", "missing definitions.parent_ref"},
-		{strings.Replace(string(encoded), `"reason":""`, `"reason":null`, 1), "items.reason", "missing items.reason"},
+	for _, tc := range []struct{ raw, field, family, message string }{
+		{`{}`, "request_id", "request_id", "is required"},
+		{`{"request_id":"request","items":[],"equivalence":[]}`, "definitions", "definitions", "is required"},
+		{strings.Replace(string(encoded), `"parent_ref":"",`, "", 1), "definitions[0].parent_ref", "definitions.parent_ref", "is required"},
+		{strings.Replace(string(encoded), `"reason":""`, `"reason":null`, 1), "items[0].reason", "items.reason", "must not be null"},
 	} {
 		_, err := Decode(tc.raw)
-		require.EqualError(t, err, tc.message)
-		requireValidation(t, err, "decode", "missing_field", tc.field)
+		var rejected *assessor.SemanticAssessmentResponseValidationError
+		require.ErrorAs(t, err, &rejected)
+		require.Contains(t, rejected.Errors, assessor.SemanticValidationError{Field: tc.field, Message: tc.message, Code: "missing_field"})
+		requireValidation(t, err, "decode", "missing_field", tc.family)
 	}
 }
 
@@ -84,7 +82,7 @@ func TestOrganizationSemanticValidationDiagnostics(t *testing.T) {
 			request, response := assessmentFixture()
 			tc.change(&request, &response)
 			err := Validate(request, response)
-			diagnostic := requireValidation(t, err, "validate", tc.code, tc.field)
+			diagnostic := requireValidation(t, err, "validate", tc.code, tc.field, response)
 			if tc.code == "item_count_mismatch" {
 				require.Equal(t, 2, *diagnostic.ExpectedCount)
 				require.Equal(t, 1, *diagnostic.ActualCount)
@@ -111,13 +109,13 @@ func TestOrganizationValidationDiagnosticsCompleteRepairAndLimitPrecedence(t *te
 			require.Equal(t, SystemPrompt, outbound.Messages[0].Content)
 			require.Equal(t, ResponseSchema(request.RequestID), outbound.Schema)
 			if calls > 1 {
-				var correction map[string]string
+				var correction correctionFeedback
 				require.NoError(t, json.Unmarshal([]byte(outbound.Messages[len(outbound.Messages)-1].Content), &correction))
-				expected := "missing request_id"
+				expected := "request_id: is required"
 				if overflow {
 					expected = "output exceeds token budget"
 				}
-				require.Equal(t, expected, correction["validation_errors"])
+				require.Contains(t, correctionMessages(correction), expected)
 				require.Equal(t, "{}", outbound.Messages[len(outbound.Messages)-2].Content)
 			}
 			if calls == 3 && !overflow {
@@ -165,13 +163,132 @@ func TestOrganizationValidationDiagnosticsCompleteRepairAndLimitPrecedence(t *te
 	}
 }
 
-func requireValidation(t *testing.T, err error, stage, code, family string) ontology.AssessmentValidation {
+type correctionFeedback struct {
+	ValidationErrors []assessor.SemanticValidationError `json:"validation_errors"`
+	Instruction      string                             `json:"instruction"`
+}
+
+func correctionMessages(feedback correctionFeedback) string {
+	return (&assessor.SemanticAssessmentResponseValidationError{Errors: feedback.ValidationErrors}).Error()
+}
+
+func requireCorrectionErrors(t *testing.T, err error, actual []assessor.SemanticValidationError) {
 	t.Helper()
-	var rejected *validationError
+	var rejected *assessor.SemanticAssessmentResponseValidationError
 	require.ErrorAs(t, err, &rejected)
-	require.True(t, rejected.diagnostic.Valid())
-	require.Equal(t, stage, rejected.diagnostic.Stage)
-	require.Equal(t, code, rejected.diagnostic.Code)
-	require.Equal(t, family, rejected.diagnostic.FieldFamily)
-	return rejected.diagnostic
+	expected, marshalErr := json.Marshal(assessor.BoundSemanticAssessmentCorrectionErrors(rejected.Errors))
+	require.NoError(t, marshalErr)
+	encoded, marshalErr := json.Marshal(actual)
+	require.NoError(t, marshalErr)
+	require.JSONEq(t, string(expected), string(encoded))
+}
+
+func requireValidation(t *testing.T, err error, stage, code, family string, responses ...Response) ontology.AssessmentValidation {
+	t.Helper()
+	var rejected *assessor.SemanticAssessmentResponseValidationError
+	require.ErrorAs(t, err, &rejected)
+	request, response := assessmentFixture()
+	if len(responses) > 0 {
+		response = responses[0]
+	}
+	diagnostic := validationDiagnostic(stage, err, request, response)
+	require.NotNil(t, diagnostic)
+	require.True(t, diagnostic.Valid(), "%+v", diagnostic)
+	require.Equal(t, stage, diagnostic.Stage)
+	require.Equal(t, code, diagnostic.Code)
+	require.Equal(t, family, diagnostic.FieldFamily)
+	return *diagnostic
+}
+
+func TestOrganizationDecodeReportsIndependentIndexedFields(t *testing.T) {
+	_, response := assessmentFixture()
+	encoded, err := json.Marshal(response)
+	require.NoError(t, err)
+	raw := strings.Replace(string(encoded), `"parent_ref":"",`, "", 1)
+	raw = strings.Replace(raw, `"ref":"a"`, `"ref":"a","unexpected":true`, 1)
+	raw = strings.Replace(raw, `"ref":"b","status":"classified"`, `"ref":"b","status":null`, 1)
+	result, err := Decode(raw)
+	require.Empty(t, result)
+	var rejected *assessor.SemanticAssessmentResponseValidationError
+	require.ErrorAs(t, err, &rejected)
+	require.Equal(t, []assessor.SemanticValidationError{
+		{Field: "definitions[0].parent_ref", Message: "is required", Code: "missing_field"},
+		{Field: "items[0].unexpected", Message: "is unknown", Code: "strict_json"},
+		{Field: "items[1].status", Message: "must not be null", Code: "missing_field"},
+	}, rejected.Errors)
+
+	raw = strings.Replace(string(encoded), `"request_id":"request"`, `"request_id":[]`, 1)
+	raw = strings.Replace(raw, `"ref":"b","status":"classified"`, `"ref":"b","status":false`, 1)
+	result, err = Decode(raw)
+	require.Empty(t, result)
+	require.ErrorAs(t, err, &rejected)
+	require.Len(t, rejected.Errors, 2)
+	require.Equal(t, "request_id", rejected.Errors[0].Field)
+	require.Equal(t, "items[1].status", rejected.Errors[1].Field)
+	require.Contains(t, rejected.Errors[1].Message, `"ref":"b"`)
+	require.Contains(t, rejected.Errors[1].Message, "bool")
+}
+
+func TestOrganizationDetailedSharedFeedbackRepairsCompleteResponses(t *testing.T) {
+	for _, repair := range []bool{false, true} {
+		t.Run(map[bool]string{false: "exhausted", true: "repaired"}[repair], func(t *testing.T) {
+			request, invalid := assessmentFixture()
+			locked := invalid.Definitions[0]
+			locked.Ref, locked.Key, locked.Label = "locked", "locked-topic", "Locked topic"
+			request.Definitions = []Definition{locked}
+			request.Items[0].LockedDefinitionRef = locked.Ref
+			request.Items[1].Kind = ontology.PredicateSource
+			request.Pairs[0].RequiredRelation = "distinct"
+			invalid.Items[1].Reason = strings.Repeat("x", 129)
+			invalidErr := Validate(request, invalid)
+			var rejected *assessor.SemanticAssessmentResponseValidationError
+			require.ErrorAs(t, invalidErr, &rejected)
+			require.Len(t, rejected.Errors, 4)
+			require.Contains(t, invalidErr.Error(), `items[0].definition_ref: item "a" classification changes deterministic reuse: must equal locked_definition_ref "locked"; received "new-topic"`)
+			require.Contains(t, invalidErr.Error(), `items[1].definition_ref: item "b" has incompatible source kind "predicate": expected predicate_concept; definition_ref "new-topic" selects kind "topic"`)
+			require.Contains(t, invalidErr.Error(), `pair "pair" contradicts deterministic context or manager rule: must equal required_relation "distinct"; received "equivalent"`)
+			_, valid := assessmentFixture()
+			valid.Definitions[0].Kind = ontology.PredicateConcept
+			valid.Items[0].DefinitionRef = locked.Ref
+			valid.Equivalence[0].Relation = "distinct"
+			require.NoError(t, Validate(request, valid))
+			original, err := json.Marshal(request)
+			require.NoError(t, err)
+			calls := 0
+			provider := NewProvider(fixtureTransport(func(_ context.Context, outbound modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
+				calls++
+				require.Len(t, outbound.Messages, 2*calls)
+				require.Equal(t, string(original), outbound.Messages[1].Content)
+				require.Equal(t, ResponseSchema(request.RequestID), outbound.Schema)
+				if calls > 1 {
+					var feedback correctionFeedback
+					require.NoError(t, json.Unmarshal([]byte(outbound.Messages[len(outbound.Messages)-1].Content), &feedback))
+					requireCorrectionErrors(t, invalidErr, feedback.ValidationErrors)
+					for _, issue := range feedback.ValidationErrors {
+						require.Empty(t, issue.Code)
+					}
+					prior, err := json.Marshal(invalid)
+					require.NoError(t, err)
+					require.Equal(t, string(prior), outbound.Messages[len(outbound.Messages)-2].Content)
+				}
+				response := invalid
+				if repair && calls == 3 {
+					response = valid
+				}
+				body, err := json.Marshal(response)
+				require.NoError(t, err)
+				return modelprovider.StructuredResult{Content: string(body)}, nil
+			}), "model", assessor.DefaultSemanticAssessmentLimits(), 300000)
+			result, attempts, err := provider.Assess(context.Background(), request)
+			require.Equal(t, 3, calls)
+			require.Len(t, attempts, 3)
+			if repair {
+				require.NoError(t, err)
+				require.Equal(t, valid, result)
+			} else {
+				require.ErrorIs(t, err, modelprovider.ErrVerifierMalformedResponse)
+				require.Empty(t, result)
+			}
+		})
+	}
 }

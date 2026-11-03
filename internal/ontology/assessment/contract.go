@@ -1,15 +1,14 @@
 package assessment
 
 import (
+	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
 
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/assessor"
-	"github.com/markhuangai/dense-mem/internal/jsonstrict"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 )
 
@@ -70,19 +69,10 @@ type Response struct {
 }
 
 func Decode(raw string) (Response, error) {
-	var response Response
-	if err := jsonstrict.Decode(strings.NewReader(raw), &response, ontology.MaxPublicationBytes); err != nil {
-		return response, validationFailure("decode", "strict_json", "response", err)
+	if len(raw) > ontology.MaxPublicationBytes {
+		return Response{}, validationResult([]assessor.SemanticValidationError{validationIssue("response", "strict_json", "JSON input exceeds %d bytes", ontology.MaxPublicationBytes)}, nil)
 	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(raw), &fields); err != nil {
-		return response, validationFailure("decode", "object_decode", "response", err)
-	}
-	for _, field := range []string{"request_id", "definitions", "items", "equivalence"} {
-		if value, ok := fields[field]; !ok || string(value) == "null" {
-			return response, validationFailure("decode", "missing_field", field, fmt.Errorf("missing %s", field))
-		}
-	}
+	fields, errs := assessor.ValidateResponseObject([]byte(raw), "", []string{"request_id", "definitions", "items", "equivalence"}, nil, nil)
 	for _, section := range []struct {
 		name   string
 		fields []string
@@ -91,75 +81,148 @@ func Decode(raw string) (Response, error) {
 		{"items", []string{"ref", "status", "definition_ref", "reason"}},
 		{"equivalence", []string{"ref", "relation"}},
 	} {
-		var entries []map[string]json.RawMessage
-		if err := json.Unmarshal(fields[section.name], &entries); err != nil {
-			return response, validationFailure("decode", "array_decode", section.name, err)
+		if value, ok := fields[section.name]; ok && !bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			errs = append(errs, assessor.ValidateResponseArrayObjects(value, section.name, section.fields, nil, nil)...)
 		}
-		for _, entry := range entries {
-			for _, field := range section.fields {
-				if value, ok := entry[field]; !ok || string(value) == "null" {
-					return response, validationFailure("decode", "missing_field", section.name+"."+field, fmt.Errorf("missing %s.%s", section.name, field))
-				}
+	}
+	for i := range errs {
+		if errs[i].Field == "" {
+			errs[i].Field = "response"
+		}
+		switch errs[i].Message {
+		case "is required", "must not be null":
+			errs[i].Code = "missing_field"
+		case "must be an array":
+			errs[i].Code = "array_decode"
+		default:
+			errs[i].Code = "strict_json"
+		}
+	}
+	if len(errs) > 0 {
+		return Response{}, validationResult(errs, nil)
+	}
+	var response Response
+	decode := func(raw json.RawMessage, path string, target any) {
+		if err := json.Unmarshal(raw, target); err != nil {
+			issue := assessor.ResponseJSONValidationError(err, path)
+			issue.Code = "strict_json"
+			issue.Message += fmt.Sprintf("; %v; offending item: %s", err, raw)
+			errs = append(errs, issue)
+		}
+	}
+	decode(fields["request_id"], "request_id", &response.RequestID)
+	for _, section := range []string{"definitions", "items", "equivalence"} {
+		var entries []json.RawMessage
+		_ = json.Unmarshal(fields[section], &entries)
+		switch section {
+		case "definitions":
+			response.Definitions = make([]Definition, len(entries))
+		case "items":
+			response.Items = make([]Decision, len(entries))
+		case "equivalence":
+			response.Equivalence = make([]Equivalence, len(entries))
+		}
+		for i, entry := range entries {
+			path := fmt.Sprintf("%s[%d]", section, i)
+			switch section {
+			case "definitions":
+				decode(entry, path, &response.Definitions[i])
+			case "items":
+				decode(entry, path, &response.Items[i])
+			case "equivalence":
+				decode(entry, path, &response.Equivalence[i])
 			}
 		}
+	}
+	if len(errs) > 0 {
+		return Response{}, validationResult(errs, nil)
 	}
 	return response, nil
 }
 
 func Validate(request Request, response Response) error {
-	const shapeError = "response identity, arrays, or coverage is invalid"
+	var errs []assessor.SemanticValidationError
+	var cause error
 	if response.RequestID != request.RequestID {
-		return validationFailure("validate", "request_id_mismatch", "request_id", errors.New(shapeError))
+		errs = append(errs, validationIssue("request_id", "request_id_mismatch", "must equal %q; received %q", request.RequestID, response.RequestID))
 	}
 	for _, section := range []struct {
 		name    string
 		missing bool
 	}{{"definitions", response.Definitions == nil}, {"items", response.Items == nil}, {"equivalence", response.Equivalence == nil}} {
 		if section.missing {
-			return validationFailure("validate", "missing_array", section.name, errors.New(shapeError))
+			errs = append(errs, validationIssue(section.name, "missing_array", "must be an array, including when empty"))
 		}
 	}
 	if len(response.Definitions) > ontology.MaxVocabularyCandidates {
-		return validationCountFailure("validate", "definition_limit", "definitions", ontology.MaxVocabularyCandidates, len(response.Definitions), errors.New(shapeError))
+		errs = append(errs, validationIssue("definitions", "definition_limit", "must contain at most %d definitions; received %d", ontology.MaxVocabularyCandidates, len(response.Definitions)))
 	}
 	if len(response.Items) != len(request.Items) {
-		return validationCountFailure("validate", "item_count_mismatch", "items", len(request.Items), len(response.Items), errors.New(shapeError))
+		errs = append(errs, validationIssue("items", "item_count_mismatch", "must contain exactly %d decisions, one per supplied item ref; received %d", len(request.Items), len(response.Items)))
+	}
+	if len(response.Definitions) > ontology.MaxVocabularyCandidates || len(response.Items) > 20 || len(response.Equivalence) > 190 {
+		if len(response.Equivalence) > 190 {
+			errs = append(errs, validationIssue("equivalence", "equivalence_coverage", "must contain exactly one decision per supplied pair ref; received %d", len(response.Equivalence)))
+		}
+		return validationResult(errs, nil)
 	}
 	definitions := map[string]Definition{}
-	catalog := map[string]ontology.Record{}
-	for _, d := range request.Definitions {
+	paths := map[string]string{}
+	definitionOrder := []string{}
+	for i, d := range request.Definitions {
 		definitions[d.Ref] = d
+		paths[d.Ref] = fmt.Sprintf("request.definitions[%d]", i)
+		definitionOrder = append(definitionOrder, d.Ref)
 	}
-	newRefs := map[string]bool{}
-	for _, d := range response.Definitions {
+	newRefs := []string{}
+	for i, d := range response.Definitions {
+		path := fmt.Sprintf("definitions[%d]", i)
 		if !validRef(d.Ref) {
-			return validationFailure("validate", "definition_ref_invalid", "definitions", fmt.Errorf("new definition ref is invalid or duplicated"))
+			errs = append(errs, validationIssue(path+".ref", "definition_ref_invalid", "definition ref %q must be nonempty, trimmed, at most 64 bytes and contain no NUL", d.Ref))
+			continue
 		}
-		if newRefs[d.Ref] {
-			return validationFailure("validate", "definition_ref_duplicate", "definitions", fmt.Errorf("new definition ref is invalid or duplicated"))
-		}
-		if definitions[d.Ref].Ref != "" {
-			return validationFailure("validate", "definition_ref_supplied", "definitions", fmt.Errorf("response.definitions is only for new definitions; omit supplied ref %q and reuse it in items[].definition_ref", d.Ref))
+		if _, exists := definitions[d.Ref]; exists {
+			code := "definition_ref_duplicate"
+			message := "definition ref %q is duplicated; use a fresh ref for each new definition"
+			if strings.HasPrefix(paths[d.Ref], "request.") {
+				code = "definition_ref_supplied"
+				message = "response.definitions is only for new definitions; omit supplied ref %q and reuse it in items[].definition_ref"
+			}
+			errs = append(errs, validationIssue(path+".ref", code, message, d.Ref))
+			continue
 		}
 		definitions[d.Ref] = d
-		newRefs[d.Ref] = true
+		paths[d.Ref] = path
+		definitionOrder = append(definitionOrder, d.Ref)
+		newRefs = append(newRefs, d.Ref)
 	}
-	for ref, d := range definitions {
+	catalog := map[string]ontology.Record{}
+	catalogValid := true
+	for _, ref := range definitionOrder {
+		d := definitions[ref]
 		parentID := ""
 		if d.ParentRef != "" {
 			if _, ok := definitions[d.ParentRef]; !ok {
-				return validationFailure("validate", "definition_parent_ref", "definitions", fmt.Errorf("parent ref is outside vocabulary allowlist"))
+				errs = append(errs, validationIssue(paths[ref]+".parent_ref", "definition_parent_ref", "definition %q parent_ref %q is outside vocabulary allowlist", ref, d.ParentRef))
+				catalogValid = false
 			}
 			parentID = referenceID(d.ParentRef)
 		}
 		record := ontology.Record{ID: referenceID(ref), Kind: d.Kind, Definition: &ontology.Definition{Key: d.Key, Label: d.Label, Description: d.Description, Aliases: d.Aliases, ParentID: parentID, BaseEntityKind: d.BaseEntityKind}}
 		if err := ontology.ValidateRecord(record); err != nil {
-			return validationFailure("validate", "definition_record", "definitions", fmt.Errorf("invalid definition: %w", err))
+			encoded, _ := json.Marshal(d)
+			errs = append(errs, validationIssue(paths[ref], "definition_record", "invalid definition %s: %v", encoded, err))
+			cause = ontology.ErrInvalid
+			catalogValid = false
 		}
 		catalog[record.ID] = record
 	}
-	if err := ontology.ValidateDefinitions(catalog); err != nil {
-		return validationFailure("validate", "definition_catalog", "definitions", err)
+	if catalogValid {
+		if err := ontology.ValidateDefinitions(catalog); err != nil {
+			encoded, _ := json.Marshal(response.Definitions)
+			errs = append(errs, validationIssue("definitions", "definition_catalog", "%v; proposed definitions: %s", err, encoded))
+			cause = ontology.ErrInvalid
+		}
 	}
 	items := map[string]Item{}
 	for _, item := range request.Items {
@@ -167,57 +230,74 @@ func Validate(request Request, response Response) error {
 	}
 	seen := map[string]bool{}
 	used := map[string]bool{}
-	for _, decision := range response.Items {
+	for i, decision := range response.Items {
+		path := fmt.Sprintf("items[%d]", i)
 		item, ok := items[decision.Ref]
-		const itemError = "item ref, reason, or coverage is invalid"
 		if !ok {
-			return validationFailure("validate", "item_ref_unknown", "items", errors.New(itemError))
+			errs = append(errs, validationIssue(path+".ref", "item_ref_unknown", "item ref %q is outside the supplied item allowlist", decision.Ref))
+			continue
 		}
 		if seen[decision.Ref] {
-			return validationFailure("validate", "item_ref_duplicate", "items", errors.New(itemError))
-		}
-		if len(decision.Reason) > 128 {
-			return validationFailure("validate", "item_reason_limit", "items", errors.New(itemError))
+			errs = append(errs, validationIssue(path+".ref", "item_ref_duplicate", "item ref %q is duplicated; return it exactly once", decision.Ref))
 		}
 		seen[decision.Ref] = true
+		if len(decision.Reason) > 128 {
+			errs = append(errs, validationIssue(path+".reason", "item_reason_limit", "item %q reason must be at most 128 bytes; received %d bytes: %q", decision.Ref, len(decision.Reason), decision.Reason))
+		}
 		switch decision.Status {
 		case "ambiguous":
 			if decision.DefinitionRef != "" || decision.Reason == "" || item.LockedDefinitionRef != "" {
-				return validationFailure("validate", "item_ambiguous_classification", "items", fmt.Errorf("ambiguous item must remain unclassified and cannot replace a locked classification"))
+				errs = append(errs, validationIssue(path, "item_ambiguous_classification", "item %q: ambiguous requires empty definition_ref and a nonempty reason, and cannot replace locked_definition_ref %q; received definition_ref %q and reason %q", decision.Ref, item.LockedDefinitionRef, decision.DefinitionRef, decision.Reason))
 			}
 		case "classified":
+			if item.LockedDefinitionRef != "" && decision.DefinitionRef != item.LockedDefinitionRef {
+				errs = append(errs, validationIssue(path+".definition_ref", "item_locked_classification", "item %q classification changes deterministic reuse: must equal locked_definition_ref %q; received %q", decision.Ref, item.LockedDefinitionRef, decision.DefinitionRef))
+			}
 			d, ok := definitions[decision.DefinitionRef]
 			if !ok {
-				return validationFailure("validate", "item_definition_ref", "items", fmt.Errorf("item %q definition_ref %q is outside allowlist; include a new definition in response.definitions or reuse a supplied ref", decision.Ref, decision.DefinitionRef))
-			}
-			if item.LockedDefinitionRef != "" && decision.DefinitionRef != item.LockedDefinitionRef {
-				return validationFailure("validate", "item_locked_classification", "items", fmt.Errorf("classification changes deterministic reuse"))
+				errs = append(errs, validationIssue(path+".definition_ref", "item_definition_ref", "item %q definition_ref %q is outside allowlist; include a new definition in response.definitions or reuse a supplied ref", decision.Ref, decision.DefinitionRef))
+				continue
 			}
 			if !compatibleDefinition(item, d) {
-				return validationFailure("validate", "item_source_kind", "items", fmt.Errorf("classification has incompatible source kind"))
+				expected := string(ontology.Topic)
+				if item.Kind == ontology.EntitySource {
+					expected = fmt.Sprintf("%s with base_entity_kind %q", ontology.EntityClass, item.EntityKind)
+				}
+				if item.Kind == ontology.PredicateSource {
+					expected = string(ontology.PredicateConcept)
+				}
+				errs = append(errs, validationIssue(path+".definition_ref", "item_source_kind", "item %q has incompatible source kind %q: expected %s; definition_ref %q selects kind %q with base_entity_kind %q", decision.Ref, item.Kind, expected, decision.DefinitionRef, d.Kind, d.BaseEntityKind))
 			}
 			used[decision.DefinitionRef] = true
 		default:
-			return validationFailure("validate", "item_status", "items", fmt.Errorf("unknown item status"))
+			errs = append(errs, validationIssue(path+".status", "item_status", "item %q status must be classified or ambiguous; received %q", decision.Ref, decision.Status))
 		}
 	}
-	for ref := range newRefs {
+	for _, item := range request.Items {
+		if !seen[item.Ref] {
+			errs = append(errs, validationIssue("items", "item_count_mismatch", "missing decision for supplied item ref %q; return each supplied item exactly once", item.Ref))
+		}
+	}
+	for _, ref := range newRefs {
 		if !used[ref] {
-			return validationFailure("validate", "definition_unused", "definitions", fmt.Errorf("new definition has no source assignment"))
+			errs = append(errs, validationIssue(paths[ref], "definition_unused", "new definition %q has no source assignment; omit it or assign an appropriate source", ref))
 		}
 	}
 	groups := []assessor.SemanticAssessmentEvidenceEquivalenceCandidateGroup{}
 	choices := []assessor.SemanticAssessmentEvidenceEquivalenceResult{}
 	pairs := map[string]Pair{}
+	pairRefs := []string{}
 	for _, pair := range request.Pairs {
 		pairs[pair.Ref] = pair
+		pairRefs = append(pairRefs, pair.Ref)
 		groups = append(groups, assessor.SemanticAssessmentEvidenceEquivalenceCandidateGroup{EvidenceID: pair.Ref, Candidates: []assessor.SemanticAssessmentEvidenceEquivalenceCandidate{{EvidenceID: "equivalent", Content: "complete meaning equivalence"}}})
 	}
 	equivalent := map[string]bool{}
-	for _, decision := range response.Equivalence {
+	for i, decision := range response.Equivalence {
+		path := fmt.Sprintf("equivalence[%d]", i)
 		pair, ok := pairs[decision.Ref]
 		if !ok {
-			return validationFailure("validate", "equivalence_ref", "equivalence", fmt.Errorf("equivalence ref is outside allowlist"))
+			errs = append(errs, validationIssue(path+".ref", "equivalence_ref", "pair ref %q is outside allowlist %q", decision.Ref, pairRefs))
 		}
 		choice := assessor.SemanticAssessmentEvidenceEquivalenceResult{EvidenceID: decision.Ref, Action: "new"}
 		switch decision.Relation {
@@ -225,29 +305,39 @@ func Validate(request Request, response Response) error {
 			value := "equivalent"
 			choice.Action = "reuse"
 			choice.CandidateEvidenceID = &value
-			equivalent[pairKey(pair.LeftRef, pair.RightRef)] = true
+			if ok {
+				equivalent[pairKey(pair.LeftRef, pair.RightRef)] = true
+			}
 		case "distinct", "ambiguous":
 		default:
-			return validationFailure("validate", "equivalence_relation", "equivalence", fmt.Errorf("unknown equivalence relation"))
+			errs = append(errs, validationIssue(path+".relation", "equivalence_relation", "pair %q relation must be equivalent, distinct or ambiguous; received %q", decision.Ref, decision.Relation))
 		}
-		if pair.RequiredRelation != "" && decision.Relation != pair.RequiredRelation {
-			return validationFailure("validate", "equivalence_required_relation", "equivalence", fmt.Errorf("equivalence contradicts deterministic context or manager rule"))
+		if ok && pair.RequiredRelation != "" && decision.Relation != pair.RequiredRelation {
+			errs = append(errs, validationIssue(path+".relation", "equivalence_required_relation", "pair %q contradicts deterministic context or manager rule: must equal required_relation %q; received %q", decision.Ref, pair.RequiredRelation, decision.Relation))
 		}
 		choices = append(choices, choice)
 	}
-	if errors := assessor.ValidateEvidenceEquivalenceResults(groups, choices); len(errors) > 0 {
-		return validationCountFailure("validate", "equivalence_coverage", "equivalence", len(request.Pairs), len(response.Equivalence), fmt.Errorf("invalid equivalence coverage: return exactly one decision per supplied pair ref, including distinct and ambiguous pairs; duplicate pair refs are not allowed"))
-	}
-	for _, a := range request.Items {
-		for _, b := range request.Items {
-			for _, c := range request.Items {
-				if a.Ref != c.Ref && equivalent[pairKey(a.Ref, b.Ref)] && equivalent[pairKey(b.Ref, c.Ref)] && !equivalent[pairKey(a.Ref, c.Ref)] {
-					return validationFailure("validate", "equivalence_transitivity", "equivalence", fmt.Errorf("equivalence is not transitive across complete comparisons"))
+	coverageErrors := assessor.ValidateEvidenceEquivalenceResults(groups, choices)
+	if len(coverageErrors) > 0 {
+		received, _ := json.Marshal(response.Equivalence)
+		for _, issue := range coverageErrors {
+			field := strings.ReplaceAll(strings.ReplaceAll(issue.Field, "evidence_equivalence_results", "equivalence"), ".evidence_id", ".ref")
+			errs = append(errs, validationIssue(field, "equivalence_coverage", "%s; return exactly one decision per supplied pair ref %q, including distinct and ambiguous pairs; duplicate pair refs are not allowed; received %s", issue.Message, pairRefs, received))
+		}
+	} else {
+	transitivity:
+		for _, a := range request.Items {
+			for _, b := range request.Items {
+				for _, c := range request.Items {
+					if a.Ref != c.Ref && equivalent[pairKey(a.Ref, b.Ref)] && equivalent[pairKey(b.Ref, c.Ref)] && !equivalent[pairKey(a.Ref, c.Ref)] {
+						errs = append(errs, validationIssue("equivalence", "equivalence_transitivity", "equivalence is not transitive: items %q and %q, and %q and %q, are equivalent but %q and %q are not", a.Ref, b.Ref, b.Ref, c.Ref, a.Ref, c.Ref))
+						break transitivity
+					}
 				}
 			}
 		}
 	}
-	return nil
+	return validationResult(errs, cause)
 }
 
 func compatibleDefinition(item Item, d Definition) bool {

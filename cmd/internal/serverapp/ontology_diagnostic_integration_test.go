@@ -35,7 +35,7 @@ import (
 )
 
 func TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads(t *testing.T) {
-	for _, mode := range []string{"invalid_response", "canceled", "success"} {
+	for _, mode := range []string{"invalid_response", "canceled", "success", "repair_success", "repair_exhausted"} {
 		t.Run(mode, func(t *testing.T) {
 			admin, app, rls, cleanup := setupRememberProcessorIntegrationDB(t)
 			defer cleanup()
@@ -73,13 +73,38 @@ func TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads(t *testing.T)
 					cancel()
 					return
 				}
-				if mode == "success" {
+				if mode == "success" || strings.HasPrefix(mode, "repair_") {
 					var input assessment.Request
 					if err := json.Unmarshal([]byte(envelope.Messages[1].Content), &input); err != nil {
 						http.Error(w, "invalid fixture assessment", 400)
 						return
 					}
-					body, err := json.Marshal(pairedOrganizationResponse(input))
+					response := pairedOrganizationResponse(input)
+					if strings.HasPrefix(mode, "repair_") {
+						if calls.Load() > 1 {
+							var feedback struct {
+								ValidationErrors []assessor.SemanticValidationError `json:"validation_errors"`
+							}
+							require.NoError(t, json.Unmarshal([]byte(envelope.Messages[len(envelope.Messages)-1].Content), &feedback))
+							require.Len(t, feedback.ValidationErrors, 2)
+							require.Contains(t, feedback.ValidationErrors[0].Field, "items[0]")
+							detail := (&assessor.SemanticAssessmentResponseValidationError{Errors: feedback.ValidationErrors}).Error()
+							require.Contains(t, detail, input.Items[0].Ref)
+							require.Contains(t, detail, "expected topic")
+							require.Contains(t, detail, `selects kind "entity_class"`)
+							require.Contains(t, detail, "at most 128 bytes")
+							for _, issue := range feedback.ValidationErrors {
+								require.Empty(t, issue.Code)
+							}
+						}
+						if mode == "repair_exhausted" || calls.Load() < 3 {
+							require.Len(t, response.Definitions, 1)
+							response.Definitions[0].Kind = "entity_class"
+							response.Definitions[0].BaseEntityKind = "project"
+							response.Items[0].Reason = strings.Repeat("x", 129)
+						}
+					}
+					body, err := json.Marshal(response)
 					if err != nil {
 						http.Error(w, "invalid fixture response", 500)
 						return
@@ -100,7 +125,7 @@ func TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads(t *testing.T)
 			var failure *domain.OperationLog
 			for range 12 {
 				_, runErr := maintenance.RunTurn(ctx)
-				if mode == "success" {
+				if mode == "success" || mode == "repair_success" {
 					require.NoError(t, runErr)
 				}
 				page, err := logs.ListOperationLogs(context.Background(), domain.OperationLogFilter{Event: "ontology_failure_capture", TeamID: &teamID})
@@ -111,12 +136,15 @@ func TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads(t *testing.T)
 				}
 			}
 			require.Positive(t, calls.Load())
-			if mode == "success" {
+			if mode == "success" || mode == "repair_success" {
 				require.Nil(t, failure, "successful exchanges must not enter the failure panel")
+				if mode == "repair_success" {
+					require.Equal(t, int32(3), calls.Load())
+				}
 				return
 			}
 			require.NotNil(t, failure, "native maintenance must retain the failed provider exchanges")
-			if mode == "invalid_response" {
+			if mode == "invalid_response" || mode == "repair_exhausted" {
 				require.Equal(t, "provider_response_invalid", failure.Attrs["failure_code"])
 				attempts, err := logs.ListOperationLogs(context.Background(), domain.OperationLogFilter{Event: "ontology maintenance assessment attempt", TeamID: &teamID})
 				require.NoError(t, err)
@@ -127,7 +155,12 @@ func TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads(t *testing.T)
 					require.Contains(t, measured, "http_ms")
 					validation, ok := attempt.Attrs["validation"].(map[string]any)
 					require.True(t, ok, "the closed validation reason must remain visible after credential protection")
-					require.Equal(t, "decode", validation["stage"])
+					stage := "decode"
+					if mode == "repair_exhausted" {
+						stage = "validate"
+						require.Equal(t, "item_reason_limit", validation["code"])
+					}
+					require.Equal(t, stage, validation["stage"])
 					require.NotEmpty(t, validation["code"])
 				}
 			} else {
@@ -146,6 +179,11 @@ func TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads(t *testing.T)
 			require.NoError(t, err)
 			if mode == "invalid_response" {
 				require.Contains(t, string(encoded), "malformed assessment")
+			}
+			if mode == "repair_exhausted" {
+				require.Contains(t, string(encoded), "validation_errors")
+				require.Contains(t, string(encoded), "expected topic")
+				require.Contains(t, string(encoded), "entity_class")
 			}
 			require.NotContains(t, string(encoded), secret)
 			otherTeam := uuid.New()
