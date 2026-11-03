@@ -262,6 +262,13 @@
       "source": "internal/knowledge/postgres/semantic_repository_integration_test.go"
     },
     {
+      "id": "repository/TestSemanticOneCardinalitySearchRetirementIsAtomicAndIsolated",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestSemanticOneCardinalitySearchRetirementIsAtomicAndIsolated$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/semantic_review_regression_integration_test.go"
+    },
+    {
       "id": "repository/TestSemanticOneCardinalitySupersedesPriorActiveRelationship",
       "package": "./internal/knowledge/postgres",
       "run": "^TestSemanticOneCardinalitySupersedesPriorActiveRelationship$",

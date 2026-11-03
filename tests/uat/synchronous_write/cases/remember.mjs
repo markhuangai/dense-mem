@@ -83,6 +83,7 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
     results.push(await runChangedHashConflictCase({ rawRPC, expect }));
     results.push(await runPredicateWordingBoundsCase({ rpc, expect }));
     results.push(await runSupersessionFenceCase({ rpc, expect }));
+    results.push(await runCardinalitySearchRetirementCase({ rpc, expect }));
     results.push(await assertRememberSessionModelRouting(expect, providerRequestOffset));
   }
   return { mode: name, results };
@@ -1301,6 +1302,65 @@ async function runSupersessionFenceCase({ rpc, expect }) {
   expect(stale.evidence.every((item) => item.disposition === "not_stored"), "stale supersession must not store evidence");
 
   return { fault: "supersession-stale", processing_state: stale.processing_state };
+}
+
+async function runCardinalitySearchRetirementCase({ rpc, expect }) {
+  const subject = `Cardinality ${randomUUID()}`;
+  const teamID = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
+  const args = (label, object, targetSpace = "team_shared", marker = "") => ({
+    target_space: targetSpace, idempotency_key: `cardinality-${label}-${randomUUID()}`,
+    evidence: [{ content: `${subject} uses ${object} as its primary database. [fixture:cardinality-${label}] ${marker}`, source_type: "manual" }],
+    relationships: [relationship("primary", subject, "project", { entity: { name: object, entity_kind: "product" } }, [0], "primary_database")],
+  });
+  const remember = async (input) => {
+    const result = terminalPayload(await rpc("tools/call", { name: "remember", arguments: input }));
+    assertStrictTerminalRemember(result, expect);
+    return result;
+  };
+  const relationshipID = (result) => {
+    const id = result.relationship_results[0]?.splits[0]?.relationship_id;
+    expect(Boolean(id), "cardinality fixture must return a stored Relationship");
+    return id;
+  };
+  const state = (id) => JSON.parse(postgresQuery(`
+    SELECT json_build_object('status', relationship.status, 'version', relationship.version,
+      'search_state', document.search_state, 'source_version', document.source_version,
+      'has_embedding', document.embedding IS NOT NULL, 'space', space.kind)
+    FROM relationship_records relationship JOIN search_documents document
+      ON document.team_id=relationship.team_id AND document.source_kind='relationship' AND document.source_id=relationship.relationship_id
+    JOIN memory_spaces space ON space.id=relationship.space_id
+    WHERE relationship.team_id='${sqlLiteral(teamID)}'::uuid AND relationship.relationship_id='${sqlLiteral(id)}'::uuid
+    ORDER BY document.updated_at DESC LIMIT 1
+  `));
+  const first = await remember(args("first", "PostgreSQL"));
+  expect(first.processing_state === "completed", "cardinality source must complete");
+  const firstID = relationshipID(first);
+  const privateResult = await remember(args("private", "PostgreSQL", "private"));
+  expect(privateResult.processing_state === "completed", "private cardinality source must complete");
+  const privateID = relationshipID(privateResult);
+  const original = state(firstID);
+  const privateBefore = state(privateID);
+  expect(privateBefore.space === "private" && privateID !== firstID, "private source must use its authenticated separate space");
+  const failed = await remember(args("failure", "GraphDB", "team_shared", "[fixture-fault:embedding-count]"));
+  expect(failed.processing_state === "failed" && failed.errors[0]?.code === "embedding_response_invalid", "failed cardinality replacement must retain its embedding failure");
+  assert.deepEqual(state(firstID), original, "failed replacement must preserve the active source and current vector");
+  const replacementArgs = args("replacement", "GraphDB");
+  const replacement = await remember(replacementArgs);
+  expect(replacement.processing_state === "completed", "cardinality replacement must complete");
+  const retired = state(firstID);
+  expect(retired.status === "superseded" && retired.search_state === "not_required" && !retired.has_embedding, "superseded predecessor must have no current search projection or vector");
+  expect(retired.source_version === retired.version, "retirement must fence the current canonical source version");
+  assert.deepEqual(state(privateID), privateBefore, "shared replacement must preserve the private source");
+  const providerBefore = await providerFixtureRequestCount(expect);
+  const replay = await remember(replacementArgs);
+  expect(stableJSON(replay) === stableJSON(replacement), "cardinality replacement must replay its exact terminal result");
+  expect(await providerFixtureRequestCount(expect) === providerBefore, "replay must not call the assessment provider");
+  const reactivated = await remember(args("reactivated", "PostgreSQL"));
+  expect(reactivated.processing_state === "completed" && relationshipID(reactivated) === firstID, "reactivation must reuse the original Relationship identity");
+  const current = state(firstID);
+  expect(current.status === "active" && current.search_state === "current" && current.has_embedding && current.source_version === current.version, "reactivation must publish a current versioned vector");
+  expect(state(relationshipID(replacement)).search_state === "not_required", "reactivation must retire the other predecessor");
+  return { fault: "cardinality-search-retirement", retired_version: retired.version, current_version: current.version, private_preserved: true, failed_replacement_preserved: true, replayed: true };
 }
 
 function singleItemArguments(label, marker, targetSpace = "team_shared") {
