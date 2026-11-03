@@ -16,9 +16,10 @@ import (
 	gormpostgres "gorm.io/driver/postgres"
 	"gorm.io/gorm"
 
+	accesspostgres "github.com/markhuangai/dense-mem/internal/access/postgres"
 	"github.com/markhuangai/dense-mem/internal/correlation"
+	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/requestctx"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
@@ -226,17 +227,37 @@ func TestSemanticOneCardinalitySearchRetirementIsAtomicAndIsolated(t *testing.T)
 	ownerA := createLedgerProfile(t, adminDB, rls, teamID, "a")
 	ownerB := createLedgerProfile(t, adminDB, rls, teamID, "b")
 	ownerC := createLedgerProfile(t, adminDB, rls, teamID, "c")
+	credentials := accesspostgres.NewCredentialRepository(appDB, rls, nil)
+	credential := func(team, owner string) *domain.Credential {
+		t.Helper()
+		key, err := credentials.GetByIDForTeam(ctx, uuid.MustParse(team), uuid.MustParse(owner))
+		require.NoError(t, err)
+		return key
+	}
 	scoped := func(team, owner string) context.Context {
-		return requestctx.WithActor(ctx, requestctx.Actor{TeamID: uuid.MustParse(team), OwnerID: uuid.MustParse(owner)})
+		return correlation.WithID(privateCredentialContext(credential(team, owner)), correlation.FromContext(ctx))
+	}
+	fixtureInput := func(team, owner, subject, object, content, key string) SynchronousRememberCommitInput {
+		input := conflictRememberFixtureInput(team, owner, subject, object, content, key, nil)
+		actor := credential(team, owner)
+		input.SpaceID, input.SpaceGeneration = actor.TeamSharedSpaceID.String(), actor.TeamSharedSpaceGeneration
+		return input
+	}
+	commit := func(writeCtx context.Context, team, owner, subject, object, content, key string) *SynchronousRememberCommitResult {
+		t.Helper()
+		input := fixtureInput(team, owner, subject, object, content, key)
+		result, err := store.CommitRememberWithEmbeddings(writeCtx, input, conflictRememberFixtureVectors(t, writeCtx, store, input))
+		require.NoError(t, err)
+		return result
 	}
 	subject := createSemanticEntity(t, scoped(teamID, ownerA), store, teamID, ownerA, "project", "Cardinality project")
 	postgres := createSemanticEntity(t, scoped(teamID, ownerA), store, teamID, ownerA, "product", "PostgreSQL")
 	graphdb := createSemanticEntity(t, scoped(teamID, ownerA), store, teamID, ownerA, "product", "GraphDB")
-	first := commitConflictRememberFixture(t, scoped(teamID, ownerA), store, teamID, ownerA, subject.EntityID, postgres.EntityID, "Project uses PostgreSQL.", "cardinality-first")
+	first := commit(scoped(teamID, ownerA), teamID, ownerA, subject.EntityID, postgres.EntityID, "Project uses PostgreSQL.", "cardinality-first")
 	firstID := first.RelationshipResults[0].Relationship.RelationshipID
-	protectedB := commitConflictRememberFixture(t, scoped(teamID, ownerB), store, teamID, ownerB, subject.EntityID, postgres.EntityID, "B confirms PostgreSQL.", "cardinality-b")
-	protectedC := commitConflictRememberFixture(t, scoped(teamID, ownerC), store, teamID, ownerC, subject.EntityID, postgres.EntityID, "C confirms PostgreSQL.", "cardinality-c")
-	scopeInput := conflictRememberFixtureInput(teamID, ownerA, subject.EntityID, postgres.EntityID, "Analytics uses PostgreSQL.", "cardinality-scope", nil)
+	protectedB := commit(scoped(teamID, ownerB), teamID, ownerB, subject.EntityID, postgres.EntityID, "B confirms PostgreSQL.", "cardinality-b")
+	protectedC := commit(scoped(teamID, ownerC), teamID, ownerC, subject.EntityID, postgres.EntityID, "C confirms PostgreSQL.", "cardinality-c")
+	scopeInput := fixtureInput(teamID, ownerA, subject.EntityID, postgres.EntityID, "Analytics uses PostgreSQL.", "cardinality-scope")
 	scopeInput.Commit.RelationshipObservations[0].Observation.ScopeKey = "analytics"
 	protectedScope, err := store.CommitRememberWithEmbeddings(scoped(teamID, ownerA), scopeInput, conflictRememberFixtureVectors(t, scoped(teamID, ownerA), store, scopeInput))
 	require.NoError(t, err)
@@ -244,7 +265,7 @@ func TestSemanticOneCardinalitySearchRetirementIsAtomicAndIsolated(t *testing.T)
 	otherOwner := createLedgerProfile(t, adminDB, rls, otherTeam, "other")
 	otherSubject := createSemanticEntity(t, scoped(otherTeam, otherOwner), store, otherTeam, otherOwner, "project", "Cardinality project")
 	otherObject := createSemanticEntity(t, scoped(otherTeam, otherOwner), store, otherTeam, otherOwner, "product", "PostgreSQL")
-	protectedTeam := commitConflictRememberFixture(t, scoped(otherTeam, otherOwner), store, otherTeam, otherOwner, otherSubject.EntityID, otherObject.EntityID, "Other team uses PostgreSQL.", "cardinality-team")
+	protectedTeam := commit(scoped(otherTeam, otherOwner), otherTeam, otherOwner, otherSubject.EntityID, otherObject.EntityID, "Other team uses PostgreSQL.", "cardinality-team")
 	type projection struct {
 		Document SearchDocumentForEmbedding
 		Version  int
@@ -276,7 +297,7 @@ func TestSemanticOneCardinalitySearchRetirementIsAtomicAndIsolated(t *testing.T)
 	for i, item := range protected {
 		unchanged[i] = load(item.team, item.owner, item.id)
 	}
-	replacement := conflictRememberFixtureInput(teamID, ownerA, subject.EntityID, graphdb.EntityID, "Project now uses GraphDB.", "cardinality-replacement", nil)
+	replacement := fixtureInput(teamID, ownerA, subject.EntityID, graphdb.EntityID, "Project now uses GraphDB.", "cardinality-replacement")
 	plan, err := store.PlanRememberEmbeddings(scoped(teamID, ownerA), replacement)
 	require.NoError(t, err)
 	vectors := rememberTestEmbeddings(plan, false)
@@ -315,7 +336,7 @@ func TestSemanticOneCardinalitySearchRetirementIsAtomicAndIsolated(t *testing.T)
 	_, err = store.CommitRememberWithEmbeddings(scoped(teamID, ownerA), replacement, vectors)
 	require.ErrorIs(t, err, ErrRememberReplay)
 	require.Equal(t, retired, load(teamID, ownerA, firstID))
-	third := commitConflictRememberFixture(t, scoped(teamID, ownerA), store, teamID, ownerA, subject.EntityID, postgres.EntityID, "Project uses PostgreSQL again.", "cardinality-reactivation")
+	third := commit(scoped(teamID, ownerA), teamID, ownerA, subject.EntityID, postgres.EntityID, "Project uses PostgreSQL again.", "cardinality-reactivation")
 	require.Equal(t, firstID, third.RelationshipResults[0].Relationship.RelationshipID)
 	current := load(teamID, ownerA, firstID)
 	require.Equal(t, "active", current.Status)

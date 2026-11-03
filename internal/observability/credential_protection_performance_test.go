@@ -49,6 +49,23 @@ func TestCredentialProtectorPreservesNumericPayloadAroundEncodedCredentials(t *t
 	}
 }
 
+func TestCredentialProtectorPreservesLiteralRunsAroundEncodedCredentials(t *testing.T) {
+	const secret = "private-provider-credential"
+	forms := []string{secret, "%70rivate-provider-credential", encodeCredentialTestUnicodeLayer(secret), url.QueryEscape(encodeCredentialTestUnicodeLayer(secret))}
+	for _, size := range []int{0, 1, 63, 64, 639, 640, 641, 2048} {
+		for _, form := range forms {
+			t.Run(fmt.Sprintf("padding=%d/form=%s", size, form), func(t *testing.T) {
+				prefix := ` {"content":"` + strings.Repeat("x", size) + `%zz\q+ordinary `
+				suffix := ` ` + strings.Repeat("y", size) + `","password":"ordinary admitted text","unicode":"é😀"} `
+				body := prefix + form + suffix
+				got, reason := ProtectDiagnosticText(context.Background(), NewCredentialProtector(secret), []byte(body), 1<<20)
+				require.Equal(t, CredentialProtectionAvailable, reason)
+				require.Equal(t, prefix+CredentialProtectionRedacted+suffix, string(got))
+			})
+		}
+	}
+}
+
 func BenchmarkCredentialProtectorEmbeddingResponse(b *testing.B) {
 	protector := NewCredentialProtector("synthetic-provider-key", "synthetic-authentication-material", "synthetic-database-password")
 	body := []byte(`{"data":[` + strings.Repeat("0.00012345678,", 1536*16) + `0],"model":"fixture"}`)

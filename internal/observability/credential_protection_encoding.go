@@ -1,6 +1,7 @@
 package observability
 
 import (
+	"bytes"
 	"net/url"
 	"strconv"
 	"strings"
@@ -452,27 +453,31 @@ func credentialCandidateBuffersEqual(left, right credentialCandidateBuffer) bool
 	if left.length != right.length || left.truncated != right.truncated {
 		return false
 	}
-	for index := 0; index < left.length; index++ {
-		if left.bytes[index] != right.bytes[index] {
-			return false
-		}
-	}
-	return true
+	return bytes.Equal(left.bytes[:left.length], right.bytes[:right.length])
 }
 
-func credentialCandidateAppend(candidate *credentialCandidateBuffer, value byte) bool {
-	if candidate.length >= len(candidate.bytes) {
+func credentialCandidateAppend(candidate *credentialCandidateBuffer, values ...byte) bool {
+	written := copy(candidate.bytes[candidate.length:], values)
+	candidate.length += written
+	if written != len(values) {
 		candidate.truncated = true
 		return false
 	}
-	candidate.bytes[candidate.length] = value
-	candidate.length++
 	return true
 }
 
 func decodeCredentialCandidatePercent(input credentialCandidateBuffer) credentialCandidateBuffer {
 	var decoded credentialCandidateBuffer
 	for index := 0; index < input.length; {
+		next := bytes.IndexAny(input.bytes[index:input.length], "%+")
+		if next < 0 {
+			credentialCandidateAppend(&decoded, input.bytes[index:input.length]...)
+			break
+		}
+		if !credentialCandidateAppend(&decoded, input.bytes[index:index+next]...) {
+			break
+		}
+		index += next
 		if input.bytes[index] == '%' && index+2 < input.length && isHexDigit(input.bytes[index+1]) && isHexDigit(input.bytes[index+2]) {
 			if !credentialCandidateAppend(&decoded, hexByte(input.bytes[index+1], input.bytes[index+2])) {
 				break
@@ -499,13 +504,19 @@ func decodeCredentialCandidatePercent(input credentialCandidateBuffer) credentia
 func decodeCredentialCandidateEscapes(input credentialCandidateBuffer) credentialCandidateBuffer {
 	var decoded credentialCandidateBuffer
 	for index := 0; index < input.length; {
+		next := bytes.IndexByte(input.bytes[index:input.length], '\\')
+		if next < 0 {
+			credentialCandidateAppend(&decoded, input.bytes[index:input.length]...)
+			break
+		}
+		if !credentialCandidateAppend(&decoded, input.bytes[index:index+next]...) {
+			break
+		}
+		index += next
 		if input.bytes[index] == '\\' {
 			if encoded, encodedSize, consumed, ok := decodeCredentialCandidateEscape(input.bytes[index:input.length]); ok {
-				for encodedIndex := 0; encodedIndex < encodedSize; encodedIndex++ {
-					if !credentialCandidateAppend(&decoded, encoded[encodedIndex]) {
-						decoded.truncated = true
-						return decoded
-					}
+				if !credentialCandidateAppend(&decoded, encoded[:encodedSize]...) {
+					return decoded
 				}
 				index += consumed
 				continue
