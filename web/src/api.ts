@@ -1,5 +1,7 @@
 import type { DecisionConfig, GeneralConfig, GeneralConfigInput, GeneralConfigItem, SSOConfigInput } from "./configuration-api-types";
 import type { MemoryAccess } from "./credentialPermissions";
+import type { ProviderTestResult, ProviderTestTarget } from "./provider-test-api-types";
+export type { ProviderTestResult, ProviderTestTarget } from "./provider-test-api-types";
 export type { MemoryAccess, MemoryPermission } from "./credentialPermissions";
 export type { DecisionConfig, DecisionTasks, GeneralConfig, GeneralConfigInput, GeneralConfigItem, SSOConfigInput } from "./configuration-api-types";
 import type { OntologyMaintenanceConfig, OntologyMaintenanceRun, OntologyMaintenanceStatus, OntologyMaintenanceRunPage } from "./ontology-maintenance-api-types";
@@ -927,6 +929,12 @@ export class ControlApi {
   private async requestEnvelope<T>(path: string, options: RequestOptions = {}): Promise<T> {
     const payload = await this.request<{ data: T }>(path, options);
     return payload.data;
+  }
+  listProviderTestTargets(signal?: AbortSignal): Promise<ProviderTestTarget[]> {
+    return this.requestEnvelope<ProviderTestTarget[]>("/diagnostics/providers", { signal });
+  }
+  runProviderTest(targetId: string, signal?: AbortSignal): Promise<ProviderTestResult> {
+    return this.requestEnvelope<ProviderTestResult>("/diagnostics/provider-tests", { method: "POST", body: { target_id: targetId }, signal });
   }
   private async request<T>(path: string, options: RequestOptions = {}): Promise<T> {
     return requestJson<T>(`${this.baseUrl}${path}`, {

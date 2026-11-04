@@ -138,6 +138,11 @@ func newControlPortalServerWithMetricsAndTelemetry(
 	api.Use(httpmw.TelemetryHTTPMiddleware(telemetry.HTTPMetrics))
 	control.auditExport = telemetry.AuditExport
 	control.diagnostics = telemetry.Diagnostics
+	control.providerTests = telemetry.ProviderTests
+	if telemetry.ProviderTests != nil {
+		api.GET("/diagnostics/providers", control.listProviderTests)
+		api.POST("/diagnostics/provider-tests", control.runProviderTest, httpmw.BindAndValidateStrict[controlProviderTestRequest](providerTestBodyKey))
+	}
 	if telemetry.AuditExport != nil {
 		api.GET("/audit/export", control.exportAudit)
 	}

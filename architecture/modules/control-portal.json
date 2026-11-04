@@ -54,6 +54,16 @@
         "visibility": "private"
       },
       {
+        "id": "web/src/control/ProviderTestsPanel.tsx",
+        "role": "transport",
+        "visibility": "private"
+      },
+      {
+        "id": "web/src/provider-test-api-types.ts",
+        "role": "transport",
+        "visibility": "private"
+      },
+      {
         "id": "web/src/control/ConflictQueuePanel.tsx",
         "role": "transport",
         "visibility": "private"

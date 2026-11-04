@@ -3,6 +3,9 @@
   "capability": "application-services",
   "source_ownership": [
     {
+      "path": "cmd/internal/serverapp/provider_test_composition.go"
+    },
+    {
       "path": "cmd/internal/serverapp/operation_log_composition.go"
     },
     {

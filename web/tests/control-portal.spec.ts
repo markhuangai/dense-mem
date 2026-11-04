@@ -1,5 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
 import { navigate, openNavigation, confirmAction, expectPageContained } from "../tests-support/portal";
+import { checkProviderTestsPanel } from "../tests-support/provider-tests";
 import { checkControlLayout } from "../tests-support/control-layout";
 import { expect, type Locator, type Page, test } from "@playwright/test";
 import type { OntologyMaintenanceConfig, OntologyMaintenanceStatus } from "../src/api";
@@ -516,6 +517,13 @@ test("top signals keeps long dependency diagnostics inside its metric row", asyn
   await expect(detail).toContainText("search_readiness · check_failed · 161 ms");
   await expect(detail).toContainText("redis · single_node_mode · latency n/a");
   await expectMetricDetailContained(dependencyRow, detail);
+});
+
+for (const width of [1440, 768, 390]) test(`AI provider diagnostics at ${width}px`, async ({ page }, testInfo) => {
+  await page.setViewportSize({ width, height: 900 });
+  await mockApi(page, { teams: [team], keys: [key] });
+  await openPortal(page);
+  await checkProviderTestsPanel(page, testInfo, width);
 });
 
 test("config tab uses horizontal subnavigation", async ({ page }) => {

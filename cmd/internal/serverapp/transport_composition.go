@@ -76,6 +76,7 @@ type transportCompositionInputs struct {
 	recallFeedback          recall.RecallFeedbackEventReader
 	community               communityapp.Service
 	ontologyMaintenance     *ontology.MaintenanceService
+	providerTests           operations.ProviderTests
 	ontologyManagement      *ontology.ManagementService
 	controlDream            dream.ControlService
 	controlDreamDiagnostics dream.DiagnosticService
@@ -385,6 +386,7 @@ func buildTransportComposition(deps transportCompositionInputs) (*transportCompo
 			densehttp.ControlPortalBindings{Telemetry: densehttp.ControlPortalTelemetry{
 				AuditExport:         auditExport,
 				Diagnostics:         diagnostics,
+				ProviderTests:       deps.providerTests,
 				Reader:              deps.telemetry.Reader,
 				HTTPMetrics:         deps.telemetry.HTTPMetrics,
 				ScrapeHandler:       deps.telemetry.ScrapeHandler,

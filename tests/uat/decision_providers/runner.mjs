@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
+import { verifyProviderTests } from "./provider-tests.mjs";
 
 const userURL = required("DENSE_MEM_USER_URL");
 const controlURL = required("DENSE_MEM_CONTROL_URL");
@@ -21,6 +22,7 @@ try {
   assert.deepEqual(initial.effective.effective, { deduplication: true, security_review: true, conflict_review: true, recall_reranking: true });
   assert(initial.items.every((item) => item.source === "default"));
   assert(!JSON.stringify(initial).includes("dense-mem-e2e-decision-key"));
+  await verifyProviderTests({ base: controlURL, token, memoryKey: apiKey, fixture: fixtureURL, project, compose });
   const stored = await remember(userURL, "Normal");
   assert.equal(stored.result.processing_state, "completed");
   const consoleLogs = spawnSync("docker", ["compose", "-p", project, "-f", compose, "logs", "--no-color", "server"], { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
@@ -94,6 +96,12 @@ try {
   const typesafeControl = `http://${childName}:8090`;
   const typesafe = await control(typesafeControl);
   assert.equal(typesafe.effective.provider.provider, "typesafe");
+  const probeTargets = await getJSON(`${typesafeControl}/control/api/diagnostics/providers`, { headers: { Authorization: `Bearer ${token}` } });
+  const probeTarget = probeTargets.data.find((target) => target.operation === "decide" && target.available);
+  assert(probeTarget?.endpoint.endsWith("/systemone"), "TypeSafe probe must use its configured production endpoint");
+  const probe = await getJSON(`${typesafeControl}/control/api/diagnostics/provider-tests`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ target_id: probeTarget.target_id }) });
+  assert.equal(probe.data.outcome, "succeeded");
+  assert.equal(probe.data.target.model, "jev-1.14.0");
   assert.equal(typesafe.effective.preferences.security_review, false, "saved off survives provider change and process startup");
   await control(typesafeControl, [{ key: "DECISION_SECURITY_REVIEW_ENABLED", value: "true" }]);
   const jev = await remember(`http://${childName}:8080`, "TypeSafe");

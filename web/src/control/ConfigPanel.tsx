@@ -10,12 +10,13 @@ import { ControlApi, DecisionConfig, GeneralConfig, GeneralConfigItem, Operation
 import { LoadingState, SectionHeading } from "../ui/components";
 import { formatDate, readError } from "./utils";
 import { OntologyMaintenancePanel } from "./OntologyMaintenancePanel";
+import { ProviderTestsPanel } from "./ProviderTestsPanel";
 import { OntologyTeamConcurrencyField } from "./OntologyTeamConcurrencyField";
 import type { OntologyMaintenanceStatus } from "../api";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/primitives/tabs";
 import { useUnsavedChanges, useViewTransition } from "../ui/navigation";
 
-export type ConfigTab = "general" | "sso" | "operation-logs" | "recall-feedback" | "telemetry-pricing" | "decisions";
+export type ConfigTab = "general" | "sso" | "operation-logs" | "recall-feedback" | "telemetry-pricing" | "decisions" | "ai-providers";
 
 const CONFIG_LABELS: Record<string, string> = {
   APP_TIMEZONE: "Timezone",
@@ -116,6 +117,7 @@ export function ConfigPanel({ api, tab, onTabChange }: { api: ControlApi; tab?: 
     { id: "recall-feedback", label: "Recall feedback", icon: MessageSquare },
     { id: "telemetry-pricing", label: "Pricing", icon: Settings },
     { id: "decisions", label: "Decisions", icon: Network },
+    { id: "ai-providers", label: "AI providers", icon: Network },
   ] as const;
   const activeTab = tab && tabs.some((item) => item.id === tab) ? tab : localTab;
   return <div className="stack"><SectionHeading title="Settings" subtitle="Configure service behavior, retention, and model pricing." />
@@ -127,6 +129,7 @@ export function ConfigPanel({ api, tab, onTabChange }: { api: ControlApi; tab?: 
       <TabsContent value="recall-feedback"><RecallFeedbackConfigPanel api={api} /></TabsContent>
       <TabsContent value="telemetry-pricing"><TelemetryPricingConfigPanel api={api} /></TabsContent>
       <TabsContent value="decisions"><DecisionConfigPanel api={api} /></TabsContent>
+      <TabsContent value="ai-providers"><ProviderTestsPanel api={api} /></TabsContent>
     </Tabs>
   </div>;
 }

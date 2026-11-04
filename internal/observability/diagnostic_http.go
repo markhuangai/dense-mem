@@ -5,6 +5,8 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -44,10 +46,16 @@ type diagnosticTransport struct {
 
 func (t *diagnosticTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	ctx := request.Context()
-	if t.logger == nil || !t.logger.Enabled(ctx, slog.LevelDebug) {
+	observer, _ := ctx.Value(httpDiagnosticObserverKey{}).(func(HTTPDiagnosticObservation))
+	if observer == nil && (t.logger == nil || !t.logger.Enabled(ctx, slog.LevelDebug)) {
 		return t.base.RoundTrip(request)
 	}
-	attrs := []slog.Attr{slog.String("exchange_id", uuid.NewString()), slog.String("invocation_id", requestctx.RememberInvocationIDFromContext(ctx))}
+	exchangeID := uuid.NewString()
+	observation, tracedCtx := newHTTPObservation(ctx, exchangeID)
+	if observation != nil {
+		request = request.WithContext(tracedCtx)
+	}
+	attrs := []slog.Attr{slog.String("exchange_id", exchangeID), slog.String("invocation_id", requestctx.RememberInvocationIDFromContext(ctx))}
 	if scope, ok := ctx.Value(exchangeScopeKey{}).(ExchangeScope); ok {
 		attrs = append(attrs, slog.String("team_id", scope.TeamID), slog.String("run_id", scope.RunID), slog.String("batch_id", scope.BatchID))
 	}
@@ -71,29 +79,46 @@ func (t *diagnosticTransport) RoundTrip(request *http.Request) (*http.Response, 
 	response, err := t.base.RoundTrip(request)
 	if err != nil {
 		attrs = append(attrs, slog.Int64("elapsed_ms", time.Since(started).Milliseconds()))
-		t.log(ctx, "request", body, state, attrs)
+		requestState, reason := t.log(ctx, "request", body, state, attrs)
 		t.log(ctx, "response", nil, "no_response", attrs)
 		t.log(ctx, "transport_error", []byte(err.Error()), "captured", attrs)
+		observation.finish(ctx, t.protector, 0, err, requestState, "no_response", reason)
 		return response, err
 	}
 	attrs = append(attrs, slog.Int("status_code", response.StatusCode))
 	if response.Body == nil {
 		attrs = append(attrs, slog.Int64("elapsed_ms", time.Since(started).Milliseconds()))
-		t.log(ctx, "request", body, state, attrs)
+		requestState, reason := t.log(ctx, "request", body, state, attrs)
 		t.log(ctx, "response", nil, "no_response", attrs)
+		observation.finish(ctx, t.protector, response.StatusCode, nil, requestState, "no_response", reason)
 		return response, nil
 	}
-	response.Body = &diagnosticResponseBody{ReadCloser: response.Body, expected: response.ContentLength, done: func(observed []byte, responseState string) {
+	response.Body = &diagnosticResponseBody{ReadCloser: response.Body, expected: response.ContentLength, done: func(observed []byte, responseState string, cause error) {
 		attrs = append(attrs, slog.Int64("elapsed_ms", time.Since(started).Milliseconds()))
-		t.log(ctx, "request", body, state, attrs)
-		t.log(ctx, "response", observed, responseState, attrs)
+		requestState, requestReason := t.log(ctx, "request", body, state, attrs)
+		responseState, responseReason := t.log(ctx, "response", observed, responseState, attrs)
+		observation.finish(ctx, t.protector, response.StatusCode, cause, requestState, responseState, strings.Trim(strings.Join([]string{requestReason, responseReason}, ";"), ";"))
 	}}
 	return response, nil
 }
 
-func (t *diagnosticTransport) log(ctx context.Context, direction string, body []byte, state string, attrs []slog.Attr) {
+func (t *diagnosticTransport) log(ctx context.Context, direction string, body []byte, state string, attrs []slog.Attr) (string, string) {
 	attrs = append(append([]slog.Attr{}, attrs...), slog.String("direction", direction), slog.String("transport_capture_state", state))
-	LogDiagnosticBody(ctx, t.logger, t.protector, "ai_exchange_payload", body, modelprovider.MaxProviderDiagnosticBodyBytes, attrs...)
+	chunks := CaptureDiagnosticBody(ctx, t.protector, body, modelprovider.MaxProviderDiagnosticBodyBytes)
+	logger := t.logger
+	if scoped, ok := ctx.Value(httpDiagnosticLoggerKey{}).(*slog.Logger); ok {
+		logger = scoped
+	}
+	if logger != nil && logger.Enabled(ctx, slog.LevelDebug) {
+		for _, chunk := range chunks {
+			fields := append(append([]slog.Attr{}, attrs...), slog.Any("payload_chunk", chunk))
+			logger.LogAttrs(WithSinkSuppressed(ctx), slog.LevelDebug, "ai_exchange_payload", fields...)
+		}
+	}
+	if chunks[0].State != "captured" {
+		return chunks[0].State, "credential_protection_" + strconv.Itoa(chunks[0].Reason)
+	}
+	return state, ""
 }
 
 type diagnosticResponseBody struct {
@@ -103,9 +128,10 @@ type diagnosticResponseBody struct {
 	expected int64
 	readEOF  bool
 	readErr  bool
+	cause    error
 	mu       sync.Mutex
 	once     sync.Once
-	done     func([]byte, string)
+	done     func([]byte, string, error)
 }
 
 func (b *diagnosticResponseBody) Read(p []byte) (int, error) {
@@ -118,6 +144,9 @@ func (b *diagnosticResponseBody) Read(p []byte) (int, error) {
 	}
 	b.readEOF = b.readEOF || err == io.EOF
 	b.readErr = b.readErr || (err != nil && err != io.EOF)
+	if err != nil && err != io.EOF {
+		b.cause = err
+	}
 	return n, err
 }
 
@@ -130,6 +159,9 @@ func (b *diagnosticResponseBody) Close() error {
 		state = "captured"
 	}
 	// EOF must reach the HTTP client before diagnostic work can consume its timeout.
-	b.once.Do(func() { b.done(b.body, state) })
+	if b.cause == nil {
+		b.cause = err
+	}
+	b.once.Do(func() { b.done(b.body, state, b.cause) })
 	return err
 }

@@ -266,7 +266,8 @@ func RunActiveServer(
 	assessorProvider.SetMetrics(discoverabilityMetrics)
 	var decisions modelprovider.DecisionProvider
 	if cfg.Decision.Configured() {
-		decisions, err = decisionprovider.New(cfg.Decision, cfg.AIVerifierTokenizer, nil, logger, diagnosticProtector, discoverabilityMetrics)
+		decisionClient := observability.DiagnosticHTTPClient(&nethttp.Client{}, nil, diagnosticProtector)
+		decisions, err = decisionprovider.New(cfg.Decision, cfg.AIVerifierTokenizer, decisionClient, logger, diagnosticProtector, discoverabilityMetrics)
 		if err != nil {
 			return fmt.Errorf("decision provider configuration: %w", err)
 		}
@@ -399,6 +400,7 @@ func RunActiveServer(
 		recallFeedback:           recallFeedbackEventService,
 		community:                communitySvc,
 		ontologyMaintenance:      ontologyMaintenance,
+		providerTests:            buildProviderTests(providerTestDependencies{config: cfg, client: aiHTTPClient, gate: aiConcurrencyGate, embeddings: openaiProvider, decisions: decisions, maintenance: ontologyMaintenance, logger: logger, protector: diagnosticProtector, metrics: discoverabilityMetrics}),
 		ontologyManagement:       ontology.NewManagementService(ontologyStore, auditService),
 		controlDream:             controlDreamSvc,
 		controlDreamDiagnostics:  applications.ControlDreamDiagnostics,

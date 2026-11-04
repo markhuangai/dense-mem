@@ -144,11 +144,24 @@ func (p *OpenAIEmbeddingProvider) embedBatch(ctx context.Context, texts []string
 }
 
 func (p *OpenAIEmbeddingProvider) embedChunk(ctx context.Context, texts []string) (vectors [][]float32, model string, err error) {
+	diagnostics := modelprovider.QueueDiagnosticsFromContext(ctx)
+	var queueStarted time.Time
+	if diagnostics != nil {
+		queueStarted = time.Now()
+	}
 	select {
 	case p.sem <- struct{}{}:
 		defer func() { <-p.sem }()
 	case <-ctx.Done():
+		if diagnostics != nil {
+			elapsed := time.Since(queueStarted).Milliseconds()
+			diagnostics.QueueMS, diagnostics.FailurePhase = &elapsed, "queue"
+		}
 		return nil, "", ctx.Err()
+	}
+	if diagnostics != nil {
+		elapsed := time.Since(queueStarted).Milliseconds()
+		diagnostics.QueueMS = &elapsed
 	}
 
 	url := strings.TrimSuffix(p.baseURL, "/") + "/embeddings"

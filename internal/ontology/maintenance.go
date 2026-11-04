@@ -81,6 +81,18 @@ func (s *MaintenanceService) policy(ctx context.Context) (domain.OntologyMainten
 	return policy, nil
 }
 
+func (s *MaintenanceService) ProviderPolicies(ctx context.Context) (domain.OntologyMaintenanceConfig, domain.OntologyMaintenanceConfig, error) {
+	status, err := s.Status(ctx)
+	return maintenanceEffectivePolicy(status), status.PendingPolicy, err
+}
+
+func maintenanceEffectivePolicy(status contract.MaintenanceStatus) domain.OntologyMaintenanceConfig {
+	if status.Window != nil && status.ObservedAt.Before(status.Window.EndsAt) {
+		return status.Window.Policy
+	}
+	return status.PendingPolicy
+}
+
 func (s *MaintenanceService) Status(ctx context.Context) (contract.MaintenanceStatus, error) {
 	policy, err := s.policy(ctx)
 	if err != nil {
@@ -88,10 +100,7 @@ func (s *MaintenanceService) Status(ctx context.Context) (contract.MaintenanceSt
 	}
 	status, err := s.deps.Repository.MaintenanceStatus(ctx, s.deps.Now())
 	status.PendingPolicy = policy
-	active := policy
-	if status.Window != nil && status.ObservedAt.Before(status.Window.EndsAt) {
-		active = status.Window.Policy
-	}
+	active := maintenanceEffectivePolicy(status)
 	if s.validatePolicy(active) != nil {
 		status.ConfigurationError = "configuration_invalid"
 		status.CoverageComplete = false

@@ -126,7 +126,7 @@ func TestDiagnosticResponseReadAndCloseCanRunConcurrently(t *testing.T) {
 	for range 32 {
 		reader, writer := io.Pipe()
 		var captures atomic.Int32
-		body := &diagnosticResponseBody{ReadCloser: reader, expected: -1, done: func([]byte, string) { captures.Add(1) }}
+		body := &diagnosticResponseBody{ReadCloser: reader, expected: -1, done: func([]byte, string, error) { captures.Add(1) }}
 		var workers sync.WaitGroup
 		workers.Add(2)
 		go func() { defer workers.Done(); _, _ = io.Copy(io.Discard, body) }()

@@ -60,6 +60,17 @@ of telemetry and protect credentials in supported serialized forms. Initial
 security rejection remains content-free; admitted diagnostics are bounded and
 report capture/truncation status.
 
+### Manual operator diagnostics (2026-11-04 refinement)
+
+The maintainer approved manual control-portal tests grouped by configured API
+endpoint and model. These explicitly requested diagnostic calls refine the
+original no-probe scope above: built-in samples reuse existing Assess, Embed,
+and Decide operations, provider transports, concurrency gates, credentials,
+timeouts, and validation. They do not enter memory persistence or run
+automatically during startup, configuration discovery, or memory workflows.
+The private authenticated control API selects server-owned targets and exposes
+credential-protected network, HTTP, and validation outcomes separately.
+
 ## Risk
 
 - A confident false equivalence or unsafe classification could alter memory;

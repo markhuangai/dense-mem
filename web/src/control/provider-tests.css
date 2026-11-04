@@ -1,0 +1,17 @@
+.provider-tests, .provider-endpoint, .provider-test-target, .provider-test-heading > div { min-width: 0; }
+.provider-endpoint { margin-top: 24px; }
+.provider-endpoint h3 { font-size: 14px; margin-bottom: 8px; overflow-wrap: anywhere; }
+.provider-test-target { padding: 20px 0; border-top: 1px solid var(--border); }
+.provider-test-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; }
+.provider-test-heading h4 { font-size: 16px; margin: 0 0 6px; overflow-wrap: anywhere; }
+.provider-test-heading p { margin: 4px 0; }
+.provider-test-heading .button-row { flex-shrink: 0; }
+.provider-test-result { margin-top: 16px; }
+.provider-test-result .key-detail-grid { margin: 12px 0; }
+.provider-test-result dd, .provider-test-error { overflow-wrap: anywhere; }
+.provider-test-result details { margin-top: 12px; }
+.provider-test-result summary { cursor: pointer; }
+@media (max-width: 767px) {
+  .provider-test-heading { flex-direction: column; gap: 12px; }
+  .provider-test-heading .button-row { width: 100%; flex-wrap: wrap; }
+}

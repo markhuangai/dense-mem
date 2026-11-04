@@ -140,7 +140,7 @@ run_playwright() {
   esac
   local -a specs=("tests-compose/search-convergence.spec.ts" "tests-compose/compose-portal.spec.ts")
   case "$SCENARIO" in
-    decision_providers) specs=("tests-compose/decisions.spec.ts") ;;
+    decision_providers) specs=("tests-compose/decisions.spec.ts" "tests-compose/provider-tests.spec.ts") ;;
     synchronous_write) specs=("tests-compose/remember-attempts.spec.ts") ;;
     ontology_management) specs=("tests-compose/ontology-management.spec.ts") ;;
     ontology_organization) specs=("tests-compose/ontology-maintenance.spec.ts") ;;

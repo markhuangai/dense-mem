@@ -15,7 +15,8 @@ export function handleDecisionFixture(request, response, payload) {
   const state = vendor === "openai" ? JSON.parse(payload.input) : payload.state;
   const questions = vendor === "openai" ? payload.questions : Object.entries(payload.questions).map(([name, question]) => ({ ...question, name }));
   exchanges.push({ vendor, mode, question_count: questions.length, names: questions.map((question) => question.name), types: questions.map((question) => question.type) });
-  if (["401", "429", "529"].includes(mode)) { send(response, Number(mode), { error: { message: "decision fixture rejection", code: `fixture_${mode}` } }); return true; }
+  if (mode === "disconnect") { response.destroy(); return true; }
+  if (["401", "429", "529"].includes(mode)) { send(response, Number(mode), { error: { message: "decision fixture rejection", code: `fixture_${mode}`, token: "admitted provider detail", operational_echo: request.headers?.authorization } }); return true; }
   if (mode === "malformed" || (mode === "regenerate" && attempts === 1)) { send(response, 200, { model: payload.model, answers: vendor === "openai" ? [] : {} }); return true; }
   const answers = questions.map((question) => {
     const base = { name: question.name, type: question.type };

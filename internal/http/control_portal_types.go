@@ -21,6 +21,7 @@ import (
 type ControlPortalTelemetry struct {
 	AuditExport         AuditExportReader
 	Diagnostics         DiagnosticBundleReader
+	ProviderTests       operations.ProviderTests
 	Reader              operations.TelemetryReader
 	HTTPMetrics         httpcontract.HTTPMetrics
 	ScrapeHandler       nethttp.Handler
@@ -47,6 +48,7 @@ type ControlPortalTelemetry struct {
 type controlPortalHandler struct {
 	auditExport         AuditExportReader
 	diagnostics         DiagnosticBundleReader
+	providerTests       operations.ProviderTests
 	teams               handler.TeamServiceInterface
 	credentials         handler.CredentialServiceInterface
 	security            settings.SecurityService
