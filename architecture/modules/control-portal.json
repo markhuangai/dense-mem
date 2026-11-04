@@ -164,6 +164,11 @@
         "visibility": "private"
       },
       {
+        "id": "web/src/control/OntologyFailureDiagnostics.tsx",
+        "role": "transport",
+        "visibility": "private"
+      },
+      {
         "id": "web/src/ontology-maintenance-api-types.ts",
         "role": "transport",
         "visibility": "private"

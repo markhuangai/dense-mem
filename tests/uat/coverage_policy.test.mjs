@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -41,6 +41,10 @@ test("coverage reports use complete Go discovery and deduplicated profiles", asy
   assert.match(script, /grep -v '\/cmd\/server\$'/);
   assert.match(script, /--tags evaluation/);
   assert.match(workflow, /scripts\/coverage-report\.sh --complete/);
+  const coverageJob = workflow.slice(workflow.indexOf("\n  coverage:"), workflow.indexOf("\n  coverage-merge:"));
+  assert.match(coverageJob, /max-parallel: 2/);
+  assert.match(coverageJob, /part: \[core, postgres\]/);
+  assert.match(workflow, /path: coverage\/core/);
   assert.match(script, /total \* 10/);
   assert.match(ci, /coverage-gate\.mjs/);
   assert.match(gate, /covered \* 10/);
@@ -136,6 +140,7 @@ test("complete Go coverage deduplicates profiles and rejects exact thresholds", 
   const fixture = mkdtempSync(join(tmpdir(), "dense-mem-coverage-runner-"));
   t.after(() => rmSync(fixture, { recursive: true, force: true }));
   writeFixture(fixture, "scripts/coverage-report.sh", readFixture(coverageScript));
+  writeFixture(fixture, "scripts/ci-resource-report.mjs", readFixture(join(repositoryRoot, "scripts/ci-resource-report.mjs")));
   writeFixture(fixture, "scripts/go-packages.sh", readFixture(packageScript));
   chmodSync(join(fixture, "scripts/go-packages.sh"), 0o755);
   writeFixture(fixture, "fixture.go", "package fixture\n");
@@ -334,6 +339,7 @@ test("real Go coverage parts retain cross-package and testless execution and rej
   const fixture = mkdtempSync(join(tmpdir(), "dense-mem-real-coverage-"));
   t.after(() => rmSync(fixture, { recursive: true, force: true }));
   writeFixture(fixture, "scripts/coverage-report.sh", readFixture(coverageScript));
+  writeFixture(fixture, "scripts/ci-resource-report.mjs", readFixture(join(repositoryRoot, "scripts/ci-resource-report.mjs")));
   writeFixture(fixture, "scripts/go-packages.sh", readFixture(packageScript));
   chmodSync(join(fixture, "scripts/go-packages.sh"), 0o755);
   writeFixture(fixture, "go.mod", "module example.com/fixture\n\ngo 1.26\n");
@@ -343,11 +349,12 @@ test("real Go coverage parts retain cross-package and testless execution and rej
   writeFixture(fixture, "internal/example/evaluation_test.go", '//go:build evaluation\n\npackage example\nimport "testing"\nfunc TestEvaluation(t *testing.T) { if Evaluation() != 99 { t.Fatal("evaluation") } }\n');
   writeFixture(fixture, "internal/testless/value.go", "package testless\nfunc Value() int { return 7 }\n");
   writeFixture(fixture, "internal/decisiononly/value.go", "package decisiononly\nfunc Workflow() int { return 11 }\nfunc Settings() int { return 13 }\n");
+  writeFixture(fixture, "internal/diagnosticonly/value.go", "package diagnosticonly\nfunc FailureCapture() int { return 17 }\nfunc AssessmentWitness() int { return 19 }\n");
   const targets = {
-    "internal/ontology/postgres": ["TestOntologyMaintenanceCohort"],
+    "internal/ontology/postgres": ["TestOntologyMaintenanceCohort", "TestOntologyCoverageFailureWitnesses"],
     "internal/community/postgres": ["TestCommunityTopicOrdinary", "TestCommunityTopicLargeFanoutResumesAndRotates"],
     "internal/dream/postgres": ["TestRetiredDreamHistoryPreservesProvenanceIsolationAndRetention"],
-    "cmd/internal/serverapp": ["TestServerLifecycleCore"],
+    "cmd/internal/serverapp": ["TestServerLifecycleCore", "TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads"],
     "internal/service": ["TestAuditFixture"],
     "internal/knowledge/postgres": ["TestSessionFixture", "TestDecisionWorkflowFixture"],
     "internal/settings": ["TestDecisionSettingsFixture"],
@@ -355,11 +362,14 @@ test("real Go coverage parts retain cross-package and testless execution and rej
   for (const [directory, names] of Object.entries(targets)) {
     writeFixture(fixture, `${directory}/value.go`, '//go:build integration\n\npackage fixture\nimport ("example.com/fixture/internal/example"; "example.com/fixture/internal/testless")\nfunc Value() int { return example.Choose(true) + testless.Value() }\n');
     const decisionImport = names.some((name) => name.startsWith("TestDecision")) ? '; "example.com/fixture/internal/decisiononly"' : "";
+    const diagnosticImport = names.some((name) => name.startsWith("TestOntologyCoverage") || name.startsWith("TestOntologyFailureCapture")) ? '; "example.com/fixture/internal/diagnosticonly"' : "";
     const tests = names.map((name) => {
-      const expression = name.includes("DecisionSettings") ? "decisiononly.Settings() != 13" : name.includes("DecisionWorkflow") ? "decisiononly.Workflow() != 11" : "Value() != 8";
+      let expression = name.includes("DecisionSettings") ? "decisiononly.Settings() != 13" : name.includes("DecisionWorkflow") ? "decisiononly.Workflow() != 11" : "Value() != 8";
+      if (name === "TestOntologyCoverageFailureWitnesses") expression = "diagnosticonly.AssessmentWitness() != 19";
+      if (name === "TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads") expression = "diagnosticonly.FailureCapture() != 17";
       return `func ${name}(t *testing.T) { if ${expression} { t.Fatal("cross-package execution") } }`;
     });
-    writeFixture(fixture, `${directory}/value_test.go`, `//go:build integration\n\npackage fixture\nimport ("testing"${decisionImport})\n${tests.join("\n")}\n`);
+    writeFixture(fixture, `${directory}/value_test.go`, `//go:build integration\n\npackage fixture\nimport ("testing"${decisionImport}${diagnosticImport})\n${tests.join("\n")}\n`);
   }
   writeFixture(fixture, "cmd/e2e/go.mod", "module example.com/fixture/cmd/e2e\n\ngo 1.26\n");
   writeFixture(fixture, "cmd/e2e/value.go", "package e2e\nfunc Value() int { return 3 }\n");
@@ -373,24 +383,41 @@ test("real Go coverage parts retain cross-package and testless execution and rej
   const core = readFixture(join(outputDir, "core/go-root-complete.raw"));
   assert.match(core, /fixture\/internal\/testless\/value.go:[^\n]+ 0/m);
   assert.notEqual(coverage("--merge-complete").status, 0);
+  for (const name of ["go-community-scale-complete.raw", "go-audit-complete.raw", "go-session-complete.raw"]) {
+    writeFixture(outputDir, `postgres/${name}`, "mode: atomic\nexample.com/unused.go:1.1,1.2 1 0\n");
+  }
   requirePass(coverage("--complete-part", "postgres"));
   assert.match(readFixture(join(outputDir, "postgres/go-postgres-complete.raw")), /fixture\/internal\/testless\/value.go:[^\n]+ [1-9]/m);
-  for (const line of [2, 3]) assert.match(readFixture(join(outputDir, "postgres/go-session-complete.raw")), new RegExp(`fixture/internal/decisiononly/value.go:${line}\\.[^\\n]+ [1-9]`, "m"));
+  for (const line of [2, 3]) assert.match(readFixture(join(outputDir, "postgres/go-postgres-complete.raw")), new RegExp(`fixture/internal/diagnosticonly/value.go:${line}\\.[^\\n]+ [1-9]`, "m"));
+  assert.doesNotMatch(readFixture(join(outputDir, "postgres/profiles.sha256")), /go-(audit|session|community-scale)-complete/);
+  for (const line of [2, 3]) assert.match(readFixture(join(outputDir, "core/postgres-support/go-session-complete.raw")), new RegExp(`fixture/internal/decisiononly/value.go:${line}\\.[^\\n]+ [1-9]`, "m"));
   requirePass(coverage("--merge-complete"));
   assert.match(readFixture(join(outputDir, "go-complete.txt")), /100\.0%/);
-  const profile = join(outputDir, "postgres/go-audit-complete.raw");
+  const downloaded = join(fixture, "downloaded");
+  for (const part of ["core", "postgres"]) cpSync(join(outputDir, part), join(downloaded, part), { recursive: true });
+  const downloadedCoverage = () => run("bash", [script, "--merge-complete"], { cwd: fixture, env: { ...env, COVERAGE_OUTPUT_DIR: downloaded } });
+  requirePass(downloadedCoverage());
+  rmSync(join(downloaded, "core/postgres-support"), { recursive: true });
+  assert.notEqual(downloadedCoverage().status, 0);
+  cpSync(join(outputDir, "core/postgres-support"), join(downloaded, "core/postgres-support"), { recursive: true });
+  requirePass(downloadedCoverage());
+  const profile = join(outputDir, "core/postgres-support/go-audit-complete.raw");
   const savedProfile = readFixture(profile);
   writeFileSync(profile, "mode: atomic\n");
   assert.notEqual(coverage("--merge-complete").status, 0);
   writeFileSync(profile, savedProfile);
-  const identity = join(outputDir, "postgres/identity.txt");
-  const savedIdentity = readFixture(identity);
-  for (const replacement of [savedIdentity.replace(/^[^\n]+/, "0".repeat(40)), savedIdentity.replace("\n123\n1\n", "\n123\n2\n")]) {
-    writeFileSync(identity, replacement);
+  for (const part of ["core", "postgres", "core/postgres-support"]) {
+    const identity = join(outputDir, part, "identity.txt");
+    const savedIdentity = readFixture(identity);
+    for (const replacement of [savedIdentity.replace(/^[^\n]+/, "0".repeat(40)), savedIdentity.replace("\n123\n1\n", "\n123\n2\n")]) {
+      writeFileSync(identity, replacement);
+      assert.notEqual(coverage("--merge-complete").status, 0);
+    }
+    rmSync(identity);
     assert.notEqual(coverage("--merge-complete").status, 0);
+    writeFileSync(identity, savedIdentity);
   }
-  writeFileSync(identity, savedIdentity);
-  const manifest = join(outputDir, "postgres/profiles.sha256");
+  const manifest = join(outputDir, "core/postgres-support/profiles.sha256");
   const savedManifest = readFixture(manifest);
   writeFileSync(manifest, savedManifest.split("\n").filter((line) => !line.includes("go-audit-complete.raw")).join("\n"));
   assert.notEqual(coverage("--merge-complete").status, 0);

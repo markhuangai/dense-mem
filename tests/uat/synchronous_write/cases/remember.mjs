@@ -83,6 +83,7 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
     results.push(await runChangedHashConflictCase({ rawRPC, expect }));
     results.push(await runPredicateWordingBoundsCase({ rpc, expect }));
     results.push(await runSupersessionFenceCase({ rpc, expect }));
+    results.push(await runCardinalitySearchRetirementCase({ rpc, expect }));
     results.push(await assertRememberSessionModelRouting(expect, providerRequestOffset));
   }
   return { mode: name, results };
@@ -1105,11 +1106,20 @@ async function runConcurrentWinnerCase({ rpc, expect }) {
 
 async function runAdmissionCapacityCase({ rpc, rawRPC, expect }) {
   const fixtureURL = "http://synchronous-write-provider:8787";
+  const timing = { stages: [], instrumentation_ms: 0 };
+  const started = performance.now();
+  const mark = (stage, fields = {}) => {
+    const measured = performance.now();
+    timing.stages.push({ stage, elapsed_ms: measured - started, ...fields });
+    timing.instrumentation_ms += performance.now() - measured;
+  };
   const setMode = async (mode) => {
+    mark("control_started", { mode });
     const response = await fetch(`${fixtureURL}/admission-fixture`, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode }),
     });
     expect(response.ok, `admission fixture control failed: ${response.status}`);
+    mark("control_completed", { mode });
   };
   const suffix = randomUUID().replaceAll("-", "");
   const requests = Array.from({ length: 5 }, (_, index) => {
@@ -1124,23 +1134,36 @@ async function runAdmissionCapacityCase({ rpc, rawRPC, expect }) {
   });
   const controllers = requests.slice(0, 4).map(() => new AbortController());
   const pending = [];
+  expect(rememberAdmissionLockCount() === 0, "admission fixture must begin without Remember lock holders");
   await setMode("hold");
   try {
     for (const [index, args] of requests.slice(0, 4).entries()) {
+      mark("request_started", { index });
       pending.push(rawRPC("tools/call", { name: "remember", arguments: args }, controllers[index].signal)
-        .then((response) => ({ response }), (error) => ({ error })));
+        .then((response) => { mark("request_settled", { index }); return { response }; },
+          (error) => { mark("request_settled", { index, transport_error: true }); return { error }; }));
     }
     let held = 0;
+    let admitted = 0;
+    timing.native_admission = { checks: 0, query_ms: 0, last_count: 0 };
     const deadline = Date.now() + 20_000;
     while (Date.now() < deadline) {
       const health = await fetch(`${fixtureURL}/health`);
       expect(health.ok, "admission fixture health failed");
       held = (await health.json()).held_admission_requests;
-      if (held === 4) break;
+      const queryStarted = performance.now();
+      admitted = rememberAdmissionLockCount();
+      timing.native_admission.checks += 1;
+      timing.native_admission.query_ms += performance.now() - queryStarted;
+      timing.native_admission.last_count = admitted;
+      if (admitted === 4 && held > 0) break;
       await delay(50);
     }
-    expect(held === 4, `four independent Remember calls must reach the provider: ${held}`);
+    expect(admitted === 4 && held > 0, `four Remember calls must hold native admission while the provider is blocked: ${admitted} admitted, ${held} provider holders`);
+    mark("four_admitted_requests_observed", { held_provider_requests: held });
+    mark("excess_request_started");
     const rejected = await rawRPC("tools/call", { name: "remember", arguments: requests[4] });
+    mark("excess_request_completed");
     expect(rejected.result?.isError === true, "excess Remember must report a terminal error");
     const busy = rejected.result.structuredContent;
     assertStrictTerminalRemember(busy, expect);
@@ -1148,8 +1171,11 @@ async function runAdmissionCapacityCase({ rpc, rawRPC, expect }) {
     expect(failure.code === "database_failure" && failure.reason_code === "idempotency_lock_busy", "busy admission must retain its precise bounded reason");
     expect(failure.retryable === true && failure.next_action === "retry_same_request", "busy admission must preserve unchanged-request retry");
     expect(failure.message.includes("Reduce concurrent requests") && failure.remediation.includes("same idempotency_key"), "busy admission must explain capacity recovery");
-    expect(rememberCanonicalCounts(requiredEnv("DENSE_MEM_E2E_TEAM_ID"), busy.submission_id).every((count) => count === 0), "rejected admission must commit no canonical state");
     await setMode("normal");
+    mark("canonical_check_started");
+    const counts = rememberCanonicalCounts(requiredEnv("DENSE_MEM_E2E_TEAM_ID"), busy.submission_id);
+    mark("canonical_check_completed");
+    expect(counts.every((count) => count === 0), "rejected admission must commit no canonical state");
     for (const outcome of await Promise.all(pending)) {
       if (outcome.error) throw outcome.error;
       const result = terminalPayload(outcome.response.result);
@@ -1157,15 +1183,28 @@ async function runAdmissionCapacityCase({ rpc, rawRPC, expect }) {
       expect(result.processing_state === "completed", "admitted concurrent Remember must complete after release");
     }
     const recovered = terminalPayload(await rpc("tools/call", { name: "remember", arguments: requests[4] }));
+    mark("capacity_recovered");
     assertStrictTerminalRemember(recovered, expect);
     expect(recovered.processing_state === "completed", "the rejected request must complete after capacity is released");
     const replay = terminalPayload(await rpc("tools/call", { name: "remember", arguments: requests[4] }));
+    mark("replay_completed");
     expect(stableJSON(replay) === stableJSON(recovered), "capacity recovery must retain exact terminal replay");
-    return { fault: "admission-capacity", admitted: 4, rejected: failure.reason_code, recovered: recovered.processing_state };
+    return { fault: "admission-capacity", admitted: 4, rejected: failure.reason_code, recovered: recovered.processing_state, timing };
   } finally {
     for (const controller of controllers) controller.abort();
     await setMode("normal");
     await Promise.all(pending);
+    try {
+      const health = await fetch(`${fixtureURL}/health`, { signal: AbortSignal.timeout(2000) });
+      if (!health.ok) throw new Error(`fixture health returned ${health.status}`);
+      const state = await health.json();
+      timing.provider = state.admission_timing;
+      timing.embedding = state.embedding_timing;
+    } catch (error) {
+      timing.capture_error = error.message;
+    }
+    mark("cleanup_completed");
+    process.stdout.write(JSON.stringify({ type: "admission_capacity_timing", ...timing }) + "\n");
   }
 }
 
@@ -1263,6 +1302,65 @@ async function runSupersessionFenceCase({ rpc, expect }) {
   expect(stale.evidence.every((item) => item.disposition === "not_stored"), "stale supersession must not store evidence");
 
   return { fault: "supersession-stale", processing_state: stale.processing_state };
+}
+
+async function runCardinalitySearchRetirementCase({ rpc, expect }) {
+  const subject = `Cardinality ${randomUUID()}`;
+  const teamID = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
+  const args = (label, object, targetSpace = "team_shared", marker = "") => ({
+    target_space: targetSpace, idempotency_key: `cardinality-${label}-${randomUUID()}`,
+    evidence: [{ content: `${subject} uses ${object} as its primary database. [fixture:cardinality-${label}] ${marker}`, source_type: "manual" }],
+    relationships: [relationship("primary", subject, "project", { entity: { name: object, entity_kind: "product" } }, [0], "primary_database")],
+  });
+  const remember = async (input) => {
+    const result = terminalPayload(await rpc("tools/call", { name: "remember", arguments: input }));
+    assertStrictTerminalRemember(result, expect);
+    return result;
+  };
+  const relationshipID = (result) => {
+    const id = result.relationship_results[0]?.splits[0]?.relationship_id;
+    expect(Boolean(id), "cardinality fixture must return a stored Relationship");
+    return id;
+  };
+  const state = (id) => JSON.parse(postgresQuery(`
+    SELECT json_build_object('status', relationship.status, 'version', relationship.version,
+      'search_state', document.search_state, 'source_version', document.source_version,
+      'has_embedding', document.embedding IS NOT NULL, 'space', space.kind)
+    FROM relationship_records relationship JOIN search_documents document
+      ON document.team_id=relationship.team_id AND document.source_kind='relationship' AND document.source_id=relationship.relationship_id
+    JOIN memory_spaces space ON space.id=relationship.space_id
+    WHERE relationship.team_id='${sqlLiteral(teamID)}'::uuid AND relationship.relationship_id='${sqlLiteral(id)}'::uuid
+    ORDER BY document.updated_at DESC LIMIT 1
+  `));
+  const first = await remember(args("first", "PostgreSQL"));
+  expect(first.processing_state === "completed", "cardinality source must complete");
+  const firstID = relationshipID(first);
+  const privateResult = await remember(args("private", "PostgreSQL", "private"));
+  expect(privateResult.processing_state === "completed", "private cardinality source must complete");
+  const privateID = relationshipID(privateResult);
+  const original = state(firstID);
+  const privateBefore = state(privateID);
+  expect(privateBefore.space === "private" && privateID !== firstID, "private source must use its authenticated separate space");
+  const failed = await remember(args("failure", "GraphDB", "team_shared", "[fixture-fault:embedding-count]"));
+  expect(failed.processing_state === "failed" && failed.errors[0]?.code === "embedding_response_invalid", "failed cardinality replacement must retain its embedding failure");
+  assert.deepEqual(state(firstID), original, "failed replacement must preserve the active source and current vector");
+  const replacementArgs = args("replacement", "GraphDB");
+  const replacement = await remember(replacementArgs);
+  expect(replacement.processing_state === "completed", "cardinality replacement must complete");
+  const retired = state(firstID);
+  expect(retired.status === "superseded" && retired.search_state === "not_required" && !retired.has_embedding, "superseded predecessor must have no current search projection or vector");
+  expect(retired.source_version === retired.version, "retirement must fence the current canonical source version");
+  assert.deepEqual(state(privateID), privateBefore, "shared replacement must preserve the private source");
+  const providerBefore = await providerFixtureRequestCount(expect);
+  const replay = await remember(replacementArgs);
+  expect(stableJSON(replay) === stableJSON(replacement), "cardinality replacement must replay its exact terminal result");
+  expect(await providerFixtureRequestCount(expect) === providerBefore, "replay must not call the assessment provider");
+  const reactivated = await remember(args("reactivated", "PostgreSQL"));
+  expect(reactivated.processing_state === "completed" && relationshipID(reactivated) === firstID, "reactivation must reuse the original Relationship identity");
+  const current = state(firstID);
+  expect(current.status === "active" && current.search_state === "current" && current.has_embedding && current.source_version === current.version, "reactivation must publish a current versioned vector");
+  expect(state(relationshipID(replacement)).search_state === "not_required", "reactivation must retire the other predecessor");
+  return { fault: "cardinality-search-retirement", retired_version: retired.version, current_version: current.version, private_preserved: true, failed_replacement_preserved: true, replayed: true };
 }
 
 function singleItemArguments(label, marker, targetSpace = "team_shared") {
@@ -1400,6 +1498,17 @@ function postgresQuery(sql) {
     throw new Error("known-evidence PostgreSQL query helper only permits read queries");
   }
   return postgresExec(sql, "synchronous-write-remember-query").trim();
+}
+
+function rememberAdmissionLockCount() {
+  // Provider slots can be fewer than admission slots, so observe the native Remember lock holders.
+  return Number(postgresQuery(`
+    SELECT count(*) FROM pg_locks AS held
+    JOIN pg_stat_activity AS owner ON owner.pid = held.pid
+    WHERE held.locktype = 'advisory' AND held.granted AND held.mode = 'ExclusiveLock'
+      AND owner.datname = current_database()
+      AND owner.query = 'SELECT pg_try_advisory_lock(hashtextextended($1, $2))';
+  `));
 }
 
 function rememberCanonicalCounts(teamID, submissionID) {

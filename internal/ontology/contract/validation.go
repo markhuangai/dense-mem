@@ -125,7 +125,10 @@ func ValidateRecord(record Record) error {
 }
 
 func validateDefinition(kind Kind, definition Definition) error {
-	if !boundedText(definition.Key, 128) || !boundedText(definition.Label, 128) || utf8.RuneCountInString(definition.Description) > 1000 || len(definition.Aliases) > MaxAliases {
+	if !boundedText(definition.Key, 128) {
+		return fmt.Errorf("%w: definition key must be nonblank, at most 128 characters, and contain no NUL", ErrInvalid)
+	}
+	if !boundedText(definition.Label, 128) || utf8.RuneCountInString(definition.Description) > 1000 || len(definition.Aliases) > MaxAliases {
 		return fmt.Errorf("%w: definition text or alias bounds", ErrInvalid)
 	}
 	if definition.ParentID != "" && !validID(definition.ParentID) {

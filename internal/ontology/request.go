@@ -66,7 +66,11 @@ func (s *Service) request(context contract.OrganizationContext, receipt *contrac
 			owners[source.OwnerID] = fmt.Sprintf("owner%d", len(owners))
 		}
 		ref := fmt.Sprintf("s%d", i)
-		item := assessment.Item{Ref: ref, Kind: source.Kind, Text: contract.SourceDisplayText(source), OwnerRef: owners[source.OwnerID], EntityKind: source.EntityKind, Context: contract.SourceDisplayContext(source)}
+		displayContext := contract.SourceDisplayContext(source)
+		if source.Kind == contract.PredicateSource {
+			displayContext["predicate"] = source.ID
+		}
+		item := assessment.Item{Ref: ref, Kind: source.Kind, Text: contract.SourceDisplayText(source), OwnerRef: owners[source.OwnerID], EntityKind: source.EntityKind, Context: displayContext}
 		locked, required := contract.OrganizationClassification(source, context.Records, context.Candidates)
 		item.LockedDefinitionRef = definitionRefs[locked]
 		if required && item.LockedDefinitionRef == "" {

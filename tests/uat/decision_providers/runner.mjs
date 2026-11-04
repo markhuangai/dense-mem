@@ -23,6 +23,19 @@ try {
   assert(!JSON.stringify(initial).includes("dense-mem-e2e-decision-key"));
   const stored = await remember(userURL, "Normal");
   assert.equal(stored.result.processing_state, "completed");
+  const consoleLogs = spawnSync("docker", ["compose", "-p", project, "-f", compose, "logs", "--no-color", "server"], { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
+  assert.equal(consoleLogs.status, 0, "decision console log collection must succeed");
+  const consoleText = `${consoleLogs.stdout}\n${consoleLogs.stderr}`;
+  assert(!consoleText.includes("dense-mem-e2e-decision-key"), "console payloads must protect the configured provider credential");
+  const consoleRecords = consoleText.split("\n").flatMap((line) => {
+    const start = line.indexOf("{");
+    if (start < 0) return [];
+    try { return [JSON.parse(line.slice(start))]; } catch { return []; }
+  });
+  assert(consoleRecords.some((record) => record.msg === "decision.question.prepared" && record.level === "DEBUG"), "admitted questions must reach console DEBUG logs");
+  for (const direction of ["request", "response"]) {
+    assert(consoleRecords.some((record) => record.msg === "decision.exchange.payload" && record.level === "DEBUG" && record.direction === direction && record.payload_chunk?.state === "captured"), `decision ${direction} payloads must reach console DEBUG logs`);
+  }
   const generated = (await getJSON(`${fixtureURL}/health`)).chat_requests.at(-1).generated_fields;
   assert(!generated.includes("evidence_security_results"));
   assert(!generated.includes("evidence_equivalence_results"));
@@ -91,7 +104,7 @@ try {
   assert(exchanges.some((item) => item.vendor === "openai"));
   assert(exchanges.some((item) => item.vendor === "typesafe"));
   await until(async () => {
-    for (const event of ["decision.task.completed", "decision.question.prepared", "decision.answer.validated", "decision.policy.completed", "decision.validation.regenerate"]) {
+    for (const event of ["decision.task.completed", "decision.answer.validated", "decision.policy.completed", "decision.validation.regenerate"]) {
       const response = await fetch(`${controlURL}/control/api/logs?limit=1&event=${encodeURIComponent(event)}`, { headers: { Authorization: `Bearer ${token}` } });
       assert(response.ok, `operation logs HTTP ${response.status}`);
       const logs = (await response.json()).data;
@@ -99,6 +112,10 @@ try {
     }
     return true;
   });
+  for (const event of ["decision.question.prepared", "decision.exchange.payload"]) {
+    const response = await getJSON(`${controlURL}/control/api/logs?limit=1&event=${encodeURIComponent(event)}`, { headers: { Authorization: `Bearer ${token}` } });
+    assert.equal(response.data.length, 0, "successful admitted request bodies must stay out of portal operation logs");
+  }
   process.stdout.write(`${JSON.stringify({ status: "ok", providers: ["openai", "typesafe"], protocol_exchanges: exchanges.length, live_quality: "pending_access" })}\n`);
   completed = true;
 } finally {

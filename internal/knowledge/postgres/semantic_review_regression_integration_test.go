@@ -3,15 +3,24 @@
 package postgres
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	gormpostgres "gorm.io/driver/postgres"
 	"gorm.io/gorm"
+
+	accesspostgres "github.com/markhuangai/dense-mem/internal/access/postgres"
+	"github.com/markhuangai/dense-mem/internal/correlation"
+	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/observability"
+	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
 func TestSemanticSupportMustMatchSuppliedIngest(t *testing.T) {
@@ -98,6 +107,7 @@ func TestSemanticOneCardinalityUpgradeSupersedesLegacyManyRows(t *testing.T) {
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "owner")
 	ledgerRepo := NewStore(appDB, rls, ConflictRuntimeConfig{})
 	semanticRepo := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	insertSearchTestContract(t, adminDB, rls, "cardinality-upgrade", 3, "exact", "")
 
 	denseMem := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "project", "Dense-Mem")
 	postgres := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "product", "PostgreSQL")
@@ -140,6 +150,14 @@ func TestSemanticOneCardinalityUpgradeSupersedesLegacyManyRows(t *testing.T) {
 		},
 	})
 	require.Equal(t, "many", graphdbUse.Relationship.CurrentCardinality)
+	search := newSearchFixtureStore(appDB, rls)
+	document, err := search.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID: teamID, OwnerProfileID: ownerID, SourceKind: "relationship", SourceID: graphdbUse.Relationship.RelationshipID,
+		SourceVersion: int64(graphdbUse.Relationship.Version), ProjectionFormat: 2, DocumentText: "legacy many GraphDB",
+		SpaceID: graphdbUse.Relationship.SpaceID, SpaceGeneration: graphdbUse.Relationship.SpaceGeneration,
+	})
+	require.NoError(t, err)
+	completeSearchDocumentsForTest(t, search, teamID, map[string][]float32{document.SearchDocumentID: {1, 0, 0}})
 
 	upgradeIngest := createSemanticIngest(t, ctx, ledgerRepo, teamID, ownerID,
 		"uses postgres as sole database", "Dense-Mem uses PostgreSQL as its sole durable database.")
@@ -163,7 +181,7 @@ func TestSemanticOneCardinalityUpgradeSupersedesLegacyManyRows(t *testing.T) {
 	assert.Equal(t, "one", upgraded.Relationship.CurrentCardinality)
 
 	var legacySiblingStatus string
-	err := rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+	err = rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
 		return tx.Raw(`
 			SELECT status
 			FROM relationship_records
@@ -173,11 +191,220 @@ func TestSemanticOneCardinalityUpgradeSupersedesLegacyManyRows(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "superseded", legacySiblingStatus)
+	documents, err := search.LoadSearchDocumentsForSources(ctx, LoadSearchDocumentsForSourcesInput{
+		TeamID: teamID, OwnerProfileID: ownerID, SourceKind: "relationship", SourceIDs: []string{graphdbUse.Relationship.RelationshipID},
+	})
+	require.NoError(t, err)
+	require.Len(t, documents, 1)
+	require.Equal(t, "not_required", documents[0].SearchState)
+	require.EqualValues(t, graphdbUse.Relationship.Version+1, documents[0].SourceVersion)
 
 	edgeIDs, err := listSemanticEdgeIDsForTest(ctx, appDB, rls, teamID)
 	require.NoError(t, err)
 	require.Len(t, edgeIDs, 1)
 	assert.Equal(t, upgraded.Relationship.RelationshipID, edgeIDs[0])
+}
+
+type semanticSearchDiagnosticConfig string
+
+func (c semanticSearchDiagnosticConfig) GetPostgresDSN() string { return string(c) }
+
+func TestSemanticOneCardinalitySearchRetirementIsAtomicAndIsolated(t *testing.T) {
+	adminDB, fixtureDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := correlation.WithID(context.Background(), uuid.NewString())
+	var logs bytes.Buffer
+	logger := observability.NewWithHandler(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	appDB, err := storagepostgres.OpenWithLogger(ctx, semanticSearchDiagnosticConfig(fixtureDB.Dialector.(*gormpostgres.Dialector).DSN), logger)
+	require.NoError(t, err)
+	connection, err := appDB.DB()
+	require.NoError(t, err)
+	defer connection.Close()
+	contractID := insertSearchTestContract(t, adminDB, rls, "cardinality-search", 3, "exact", "")
+	store := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	search := newSearchFixtureStore(appDB, rls)
+	teamID := createLedgerTeam(t, adminDB, rls, "cardinality-search")
+	ownerA := createLedgerProfile(t, adminDB, rls, teamID, "a")
+	ownerB := createLedgerProfile(t, adminDB, rls, teamID, "b")
+	ownerC := createLedgerProfile(t, adminDB, rls, teamID, "c")
+	credentials := accesspostgres.NewCredentialRepository(appDB, rls, nil)
+	credential := func(team, owner string) *domain.Credential {
+		t.Helper()
+		key, err := credentials.GetByIDForTeam(ctx, uuid.MustParse(team), uuid.MustParse(owner))
+		require.NoError(t, err)
+		return key
+	}
+	scoped := func(team, owner string) context.Context {
+		return correlation.WithID(privateCredentialContext(credential(team, owner)), correlation.FromContext(ctx))
+	}
+	fixtureInput := func(team, owner, subject, object, content, key string) SynchronousRememberCommitInput {
+		input := conflictRememberFixtureInput(team, owner, subject, object, content, key, nil)
+		actor := credential(team, owner)
+		input.SpaceID, input.SpaceGeneration = actor.TeamSharedSpaceID.String(), actor.TeamSharedSpaceGeneration
+		return input
+	}
+	commit := func(writeCtx context.Context, team, owner, subject, object, content, key string) *SynchronousRememberCommitResult {
+		t.Helper()
+		input := fixtureInput(team, owner, subject, object, content, key)
+		result, err := store.CommitRememberWithEmbeddings(writeCtx, input, conflictRememberFixtureVectors(t, writeCtx, store, input))
+		require.NoError(t, err)
+		return result
+	}
+	subject := createSemanticEntity(t, scoped(teamID, ownerA), store, teamID, ownerA, "project", "Cardinality project")
+	postgres := createSemanticEntity(t, scoped(teamID, ownerA), store, teamID, ownerA, "product", "PostgreSQL")
+	graphdb := createSemanticEntity(t, scoped(teamID, ownerA), store, teamID, ownerA, "product", "GraphDB")
+	first := commit(scoped(teamID, ownerA), teamID, ownerA, subject.EntityID, postgres.EntityID, "Project uses PostgreSQL.", "cardinality-first")
+	firstID := first.RelationshipResults[0].Relationship.RelationshipID
+	protectedB := commit(scoped(teamID, ownerB), teamID, ownerB, subject.EntityID, postgres.EntityID, "B confirms PostgreSQL.", "cardinality-b")
+	protectedC := commit(scoped(teamID, ownerC), teamID, ownerC, subject.EntityID, postgres.EntityID, "C confirms PostgreSQL.", "cardinality-c")
+	scopeInput := fixtureInput(teamID, ownerA, subject.EntityID, postgres.EntityID, "Analytics uses PostgreSQL.", "cardinality-scope")
+	scopeInput.Commit.RelationshipObservations[0].Observation.ScopeKey = "analytics"
+	protectedScope, err := store.CommitRememberWithEmbeddings(scoped(teamID, ownerA), scopeInput, conflictRememberFixtureVectors(t, scoped(teamID, ownerA), store, scopeInput))
+	require.NoError(t, err)
+	otherTeam := createLedgerTeam(t, adminDB, rls, "cardinality-other")
+	otherOwner := createLedgerProfile(t, adminDB, rls, otherTeam, "other")
+	otherSubject := createSemanticEntity(t, scoped(otherTeam, otherOwner), store, otherTeam, otherOwner, "project", "Cardinality project")
+	otherObject := createSemanticEntity(t, scoped(otherTeam, otherOwner), store, otherTeam, otherOwner, "product", "PostgreSQL")
+	protectedTeam := commit(scoped(otherTeam, otherOwner), otherTeam, otherOwner, otherSubject.EntityID, otherObject.EntityID, "Other team uses PostgreSQL.", "cardinality-team")
+	type projection struct {
+		Document SearchDocumentForEmbedding
+		Version  int
+		Status   string
+		Vector   string
+	}
+	load := func(team, owner, id string) projection {
+		t.Helper()
+		documents, err := search.LoadSearchDocumentsForSources(scoped(team, owner), LoadSearchDocumentsForSourcesInput{TeamID: team, OwnerProfileID: owner, SourceKind: "relationship", SourceIDs: []string{id}})
+		require.NoError(t, err)
+		require.Len(t, documents, 1)
+		value := projection{Document: documents[0]}
+		require.NoError(t, rls.WithTeamProfileTx(scoped(team, owner), appDB, team, owner, func(tx *gorm.DB) error {
+			return tx.Raw(`SELECT relationship.version, relationship.status, COALESCE(document.embedding::text, '')
+				FROM relationship_records relationship JOIN search_documents document
+				ON document.team_id=relationship.team_id AND document.source_kind='relationship' AND document.source_id=relationship.relationship_id
+				WHERE relationship.team_id=?::uuid AND relationship.relationship_id=?::uuid AND document.embedding_contract_id=?::uuid`, team, id, contractID).Row().Scan(&value.Version, &value.Status, &value.Vector)
+		}))
+		return value
+	}
+	before := load(teamID, ownerA, firstID)
+	protected := []struct{ team, owner, id string }{
+		{teamID, ownerB, protectedB.RelationshipResults[0].Relationship.RelationshipID},
+		{teamID, ownerC, protectedC.RelationshipResults[0].Relationship.RelationshipID},
+		{teamID, ownerA, protectedScope.RelationshipResults[0].Relationship.RelationshipID},
+		{otherTeam, otherOwner, protectedTeam.RelationshipResults[0].Relationship.RelationshipID},
+	}
+	unchanged := make([]projection, len(protected))
+	for i, item := range protected {
+		unchanged[i] = load(item.team, item.owner, item.id)
+	}
+	replacement := fixtureInput(teamID, ownerA, subject.EntityID, graphdb.EntityID, "Project now uses GraphDB.", "cardinality-replacement")
+	plan, err := store.PlanRememberEmbeddings(scoped(teamID, ownerA), replacement)
+	require.NoError(t, err)
+	vectors := rememberTestEmbeddings(plan, false)
+	invalid := append([]InlineEmbeddingResult(nil), vectors...)
+	changed := false
+	for i, document := range plan.Documents {
+		if document.SourceKind == "relationship" {
+			invalid[i].DocumentHash = sha256Hex("missing relationship embedding")
+			changed = true
+		}
+	}
+	require.True(t, changed)
+	logs.Reset()
+	_, err = store.CommitRememberWithEmbeddings(scoped(teamID, ownerA), replacement, invalid)
+	require.Error(t, err)
+	require.Equal(t, "embeddings", RememberCommitFailureStage(err))
+	require.Contains(t, logs.String(), "search_state = 'not_required'")
+	require.Contains(t, logs.String(), `"team_id":"`+teamID+`"`)
+	require.Contains(t, logs.String(), `"profile_id":"`+ownerA+`"`)
+	require.Contains(t, logs.String(), correlation.FromContext(ctx))
+	require.Equal(t, before, load(teamID, ownerA, firstID), "late failure must roll back supersession and retirement")
+	second, err := store.CommitRememberWithEmbeddings(scoped(teamID, ownerA), replacement, vectors)
+	require.NoError(t, err)
+	retired := load(teamID, ownerA, firstID)
+	require.Equal(t, "superseded", retired.Status)
+	require.Equal(t, "not_required", retired.Document.SearchState)
+	require.Empty(t, retired.Vector)
+	require.Empty(t, retired.Document.ProjectionGenerationID)
+	require.EqualValues(t, retired.Version, retired.Document.SourceVersion)
+	stale := SearchDocumentEmbedding{SearchDocumentID: before.Document.SearchDocumentID, SourceVersion: before.Document.SourceVersion,
+		ProjectionFormat: before.Document.ProjectionFormat, ProjectionGenerationID: before.Document.ProjectionGenerationID,
+		DocumentVersion: before.Document.DocumentVersion, DocumentHash: before.Document.DocumentHash,
+		EmbeddingContractID: contractID, EmbeddingDimensions: 3, Embedding: []float32{0, 0, 1}, SpaceID: before.Document.SpaceID, SpaceGeneration: before.Document.SpaceGeneration}
+	staleInput := CompleteSearchDocumentsWithEmbeddingsInput{TeamID: teamID, OwnerProfileID: ownerA, Documents: []SearchDocumentEmbedding{stale}}
+	require.ErrorIs(t, search.CompleteSearchDocumentsWithEmbeddings(scoped(teamID, ownerA), staleInput), ErrSearchStaleVersion)
+	_, err = store.CommitRememberWithEmbeddings(scoped(teamID, ownerA), replacement, vectors)
+	require.ErrorIs(t, err, ErrRememberReplay)
+	require.Equal(t, retired, load(teamID, ownerA, firstID))
+	third := commit(scoped(teamID, ownerA), teamID, ownerA, subject.EntityID, postgres.EntityID, "Project uses PostgreSQL again.", "cardinality-reactivation")
+	require.Equal(t, firstID, third.RelationshipResults[0].Relationship.RelationshipID)
+	current := load(teamID, ownerA, firstID)
+	require.Equal(t, "active", current.Status)
+	require.Equal(t, "current", current.Document.SearchState)
+	require.Greater(t, current.Version, retired.Version)
+	require.NoError(t, search.CompleteSearchDocumentsWithEmbeddings(scoped(teamID, ownerA), staleInput))
+	require.Equal(t, current, load(teamID, ownerA, firstID), "older completion must not overwrite the reactivated vector")
+	require.Equal(t, "not_required", load(teamID, ownerA, second.RelationshipResults[0].Relationship.RelationshipID).Document.SearchState)
+	for i, item := range protected {
+		require.Equal(t, unchanged[i], load(item.team, item.owner, item.id))
+	}
+	convergence, err := search.GetSearchConvergence(ctx, SearchConvergenceInput{EmbeddingContractID: contractID, EmbeddingDimensions: 3})
+	require.NoError(t, err)
+	require.Zero(t, convergence.DriftedDocuments)
+	require.Equal(t, "converged", convergence.Status)
+	t.Logf("cardinality search witness: retired version=%d; current version=%d; protected=%d; convergence=%s", retired.Version, current.Version, len(protected), convergence.Status)
+	generationID := uuid.NewString()
+	retiredContractID := uuid.NewString()
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Exec(`INSERT INTO embedding_contracts
+			(embedding_contract_id, contract_key, version, provider, model, dimensions, distance_metric,
+			vector_normalization, document_format_version, query_format_version, lifecycle_state)
+			SELECT ?::uuid, contract_key, version+1, provider, model, dimensions, distance_metric,
+			vector_normalization, document_format_version, query_format_version, 'retired'
+			FROM embedding_contracts WHERE embedding_contract_id=?::uuid`, retiredContractID, contractID).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`UPDATE search_index_generations SET activation_state='retired'
+			WHERE embedding_contract_id=?::uuid`, contractID).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`INSERT INTO search_projection_generations
+			(team_id, projection_generation_id, source_kind, generation, projection_format_version, state,
+			eligible_count, projected_count, current_vector_count, drifted_count, completed_at, activated_at)
+			VALUES (?::uuid, ?::uuid, 'relationship', 1, 2, 'current', 1, 1, 1, 1, now(), now())`, teamID, generationID).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`UPDATE search_documents SET embedding_contract_id=?::uuid, projection_generation_id=?::uuid
+			WHERE team_id=?::uuid AND source_kind='relationship' AND source_id=?::uuid AND embedding_contract_id=?::uuid`,
+			retiredContractID, generationID, teamID, firstID, contractID).Error
+	}))
+	contractID = retiredContractID
+	_, err = search.GetActiveSearchContract(ctx)
+	require.ErrorIs(t, err, ErrSearchContractMismatch)
+	historical := load(teamID, ownerA, firstID)
+	require.Equal(t, retiredContractID, historical.Document.EmbeddingContractID)
+	require.Equal(t, "current", historical.Document.SearchState)
+	require.NotEmpty(t, historical.Vector)
+	standaloneIngest := createSemanticIngest(t, scoped(teamID, ownerA), store, teamID, ownerA, "cardinality-no-active-contract", "Project selects GraphDB without an active search contract.")
+	standalone := applySemanticDecision(t, scoped(teamID, ownerA), store, ApplyRelationshipDecisionInput{
+		TeamID: teamID, OwnerProfileID: ownerA, IngestID: standaloneIngest.IngestID,
+		SubjectEntityID: subject.EntityID, PredicateKey: "primary_database", ObjectEntityID: graphdb.EntityID,
+		Support: &EvidenceSupportInput{FragmentID: standaloneIngest.Evidence[0].FragmentID, SourceGroupKey: "cardinality-no-contract", SpanEnd: len(standaloneIngest.Evidence[0].Content), Authority: "primary"},
+	})
+	require.Equal(t, "active", standalone.Relationship.Status)
+	historicalRetired := load(teamID, ownerA, firstID)
+	require.Equal(t, "superseded", historicalRetired.Status)
+	require.Greater(t, historicalRetired.Version, historical.Version)
+	require.EqualValues(t, historicalRetired.Version, historicalRetired.Document.SourceVersion)
+	require.Equal(t, "not_required", historicalRetired.Document.SearchState)
+	require.Empty(t, historicalRetired.Vector)
+	require.Empty(t, historicalRetired.Document.ProjectionGenerationID)
+	require.Contains(t, logs.String(), "UPDATE search_projection_generations SET drifted_count = 0")
+	var drifted int64
+	require.NoError(t, rls.WithTeamProfileTx(scoped(teamID, ownerA), appDB, teamID, ownerA, func(tx *gorm.DB) error {
+		return tx.Raw("SELECT drifted_count FROM search_projection_generations WHERE team_id=?::uuid AND projection_generation_id=?::uuid", teamID, generationID).Row().Scan(&drifted)
+	}))
+	require.EqualValues(t, 1, drifted, "profile transactions must preserve system-owned generation counters")
 }
 
 func TestSemanticDelayedOlderOneVersionDoesNotSupersedeNewerManyRows(t *testing.T) {

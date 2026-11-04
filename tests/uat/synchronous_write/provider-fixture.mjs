@@ -20,9 +20,24 @@ let maxActiveOntologyRequests = 0;
 const heldOntologyRequests = new Set();
 let holdAdmissionRequests = false;
 const heldAdmissionRequests = new Set();
+const admissionTiming = { events: [], dropped: 0, instrumentation_ms: 0 };
+const embeddingTiming = { events: [], dropped: 0, instrumentation_ms: 0 };
 let assessmentCalls = 0;
 let embeddingCalls = 0;
 const chatRequests = [];
+
+function recordTiming(timing, event, fields = {}) {
+  const started = performance.now();
+  if (timing.events.length === 128) {
+    timing.events.shift();
+    timing.dropped += 1;
+  }
+  const entry = { event, at_ms: started, ...fields };
+  timing.events.push(entry);
+  entry.instrumentation_ms = performance.now() - started;
+  timing.instrumentation_ms += entry.instrumentation_ms;
+  return entry;
+}
 
 function sendJSON(response, status, payload) {
   const body = JSON.stringify(payload);
@@ -32,7 +47,7 @@ function sendJSON(response, status, payload) {
 
 const server = createServer(async (request, response) => {
   if (request.method === "GET" && request.url === "/health") {
-    sendJSON(response, 200, { status: "ok", fault, assessment_calls: assessmentCalls, embedding_calls: embeddingCalls, chat_requests: chatRequests, active_ontology_requests: activeOntologyRequests, max_active_ontology_requests: maxActiveOntologyRequests, held_admission_requests: heldAdmissionRequests.size });
+    sendJSON(response, 200, { status: "ok", fault, assessment_calls: assessmentCalls, embedding_calls: embeddingCalls, chat_requests: chatRequests, active_ontology_requests: activeOntologyRequests, max_active_ontology_requests: maxActiveOntologyRequests, held_admission_requests: heldAdmissionRequests.size, admission_timing: admissionTiming, embedding_timing: embeddingTiming });
     return;
   }
   let body = "";
@@ -46,12 +61,24 @@ const server = createServer(async (request, response) => {
   }
 
   if (request.method === "POST" && request.url === "/admission-fixture") {
-    if (!["normal", "hold"].includes(payload.mode)) {
+    const delayMS = payload.delay_ms ?? 0;
+    if (!["normal", "hold"].includes(payload.mode) || !Number.isSafeInteger(delayMS) || delayMS < 0 || delayMS > 5000) {
       sendJSON(response, 400, { error: "invalid admission fixture mode" });
       return;
     }
+    if (payload.mode === "hold") {
+      admissionTiming.events.length = 0;
+      admissionTiming.dropped = 0;
+      admissionTiming.instrumentation_ms = 0;
+      embeddingTiming.events.length = 0;
+      embeddingTiming.dropped = 0;
+      embeddingTiming.instrumentation_ms = 0;
+    }
+    recordTiming(admissionTiming, "control_received", { mode: payload.mode, delay_ms: delayMS });
+    if (delayMS) await new Promise((resolve) => setTimeout(resolve, delayMS));
     holdAdmissionRequests = payload.mode === "hold";
     if (!holdAdmissionRequests) for (const release of heldAdmissionRequests) release();
+    recordTiming(admissionTiming, "control_applied", { mode: payload.mode, held: heldAdmissionRequests.size });
     sendJSON(response, 200, { mode: payload.mode });
     return;
   }
@@ -104,6 +131,10 @@ const server = createServer(async (request, response) => {
     sendJSON(response, 500, { error: { message: "fixture provider failure", code: "provider_failure" } });
     return;
   }
+  if (routeFault === "embedding-status-409") {
+    sendJSON(response, 409, { error: { message: "fixture embedding conflict", code: "fixture_embedding_conflict" } });
+    return;
+  }
 
   if (request.url?.endsWith("/embeddings")) {
     const inputs = Array.isArray(payload.input) ? payload.input : [payload.input || ""];
@@ -123,7 +154,28 @@ const server = createServer(async (request, response) => {
       sendJSON(response, 200, { model: "fixture-wrong-model", data: [{ index: 0, embedding: [0] }] });
       return;
     }
+    if (holdAdmissionRequests && routeFault === "admission-hold") {
+      await new Promise((resolve) => {
+        const release = (reason = "control") => {
+          clearTimeout(timer);
+          response.off("close", closed);
+          heldAdmissionRequests.delete(release);
+          recordTiming(admissionTiming, "released", { call: embeddingFaultCall, reason, held: heldAdmissionRequests.size });
+          resolve();
+        };
+        const closed = () => release("client_closed");
+        const timer = setTimeout(() => release("hold_deadline"), 30_000);
+        heldAdmissionRequests.add(release);
+        recordTiming(admissionTiming, "held", { call: embeddingFaultCall, held: heldAdmissionRequests.size });
+        response.once("close", closed);
+      });
+      if (response.destroyed) return;
+    }
+    const embeddingStarted = performance.now();
     const upstream = await forwardEmbedding(payload, response);
+    const timing = recordTiming(embeddingTiming, "upstream_completed", { fault: routeFault, call: embeddingFaultCall, item_count: inputs.length,
+      elapsed_ms: performance.now() - embeddingStarted, status: upstream.status, client_closed: response.destroyed });
+    if (upstream.status !== 200 || response.destroyed) process.stdout.write(JSON.stringify({ type: "fixture_embedding_timing", ...timing }) + "\n");
     if (upstream.status !== 200) {
       sendJSON(response, upstream.status, upstream.body);
       return;
@@ -144,20 +196,6 @@ const server = createServer(async (request, response) => {
   }
 
   if (request.url?.endsWith("/chat/completions")) {
-    if (holdAdmissionRequests && routeFault === "admission-hold") {
-      await new Promise((resolve) => {
-        const release = () => {
-          clearTimeout(timer);
-          response.off("close", release);
-          heldAdmissionRequests.delete(release);
-          resolve();
-        };
-        const timer = setTimeout(release, 30_000);
-        heldAdmissionRequests.add(release);
-        response.once("close", release);
-      });
-      if (response.destroyed) return;
-    }
     assessmentCalls += 1;
     const assessmentRequest = assessmentInput(payload);
     const assessmentFault = routeFault;
@@ -688,4 +726,4 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1
   });
 }
 
-export { fixtureChatResponse };
+export { fixtureChatResponse, server };

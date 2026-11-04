@@ -3,6 +3,13 @@
   "capability": "server",
   "cases": [
     {
+      "id": "server/TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads",
+      "package": "./cmd/internal/serverapp",
+      "run": "^TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads$",
+      "phase": "precheck",
+      "source": "cmd/internal/serverapp/ontology_diagnostic_integration_test.go"
+    },
+    {
       "id": "postgres/TestDemoCleanupRepositorySelectsOnlyExpiredDemoTeamsInBatches",
       "package": "./cmd/internal/demo/postgres",
       "run": "^TestDemoCleanupRepositorySelectsOnlyExpiredDemoTeamsInBatches$",

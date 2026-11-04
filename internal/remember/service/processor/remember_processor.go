@@ -109,6 +109,7 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 	if input.InvocationStartedAt.IsZero() {
 		input.InvocationStartedAt = time.Now().UTC()
 	}
+	p.logAdmittedRememberRequest(ctx, input)
 	locker, hasLocker := p.ledger.(rememberSynchronousIdempotencyLocker)
 	if !hasLocker {
 		return p.processRememberUnlocked(ctx, input)

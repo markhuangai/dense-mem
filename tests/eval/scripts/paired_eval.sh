@@ -15,14 +15,27 @@ pair_http() {
     echo "invalid operational credential encoding" >&2
     return 1
   fi
-  local -a args=(--silent --show-error --max-time 30 --request "${method}" --header 'Content-Type: application/json' --header 'Accept: application/json')
+  local -a args=(--silent --show-error --max-time "${6:-30}" --request "${method}" --header 'Content-Type: application/json' --header 'Accept: application/json')
   if [[ "${5:-false}" == true ]]; then args+=(--write-out $'\n%{http_code}'); else args+=(--fail); fi
   [[ -z "${body}" ]] || args+=(--data-binary "${body}")
   printf 'header = "Authorization: Bearer %s"\n' "${token}" | curl --config - "${args[@]}" "${url}"
 }
 
 pair_control() {
-  pair_http "$(pair_value '.runtime.control_url')/control/api$1" "$(pair_value '.runtime.control_token_env')" "${2:-GET}" "${3:-}" | jq -e '.data'
+  local request_seconds=30 code request_code
+  if [[ "$1" == /search/convergence && "${2:-GET}" == GET ]]; then
+    request_seconds="$(pair_remaining)" || return "$?"
+    (( request_seconds <= 180 )) || request_seconds=180
+  fi
+  if pair_http "$(pair_value '.runtime.control_url')/control/api$1" "$(pair_value '.runtime.control_token_env')" "${2:-GET}" "${3:-}" false "${request_seconds}" | jq -e '.data'; then
+    return 0
+  else
+    code=$? request_code="${PIPESTATUS[0]}"
+    if (( request_code == 28 )) && [[ "$1" == /search/convergence && "${2:-GET}" == GET ]]; then
+      pair_remaining >/dev/null || return "$?"
+    fi
+    return "${code}"
+  fi
 }
 
 pair_inspect_runtime() {

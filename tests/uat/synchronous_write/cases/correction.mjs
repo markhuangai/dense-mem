@@ -37,7 +37,8 @@ export async function run({ rpc, rawRPC, expect }) {
   const timedOut = await toolRaw(rawRPC, "correct_relationship", correctionInput(timeoutSource, `${providerTimeoutMarker}-${runID}`));
   expect(!timedOut.error && timedOut.result?.isError === true, "provider timeout must return a structured MCP error");
   const timedOutResult = structuredToolFailure(timedOut);
-  expect(timedOutResult.errors?.[0]?.code === "request_timeout", "provider timeout must retain its bounded timeout classification");
+  const timeoutCode = timedOutResult.errors?.[0]?.code;
+  expect(timeoutCode === "request_timeout", `provider timeout must retain its bounded timeout classification: received ${timeoutCode || timedOutResult.code || "missing_code"}`);
   const timeoutPreserved = await toolSuccess(rpc, "trace_memory", { relationship_id: timeoutSource.relationshipID });
   expect(timeoutPreserved.relationship?.relationship_status === "active", "provider timeout must preserve the original active relationship");
 

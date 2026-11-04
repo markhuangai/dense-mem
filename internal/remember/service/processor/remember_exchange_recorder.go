@@ -50,8 +50,8 @@ func captureRememberDiagnosticBody(body []byte, protector observability.Diagnost
 			reason: "credential_protection_" + strconv.Itoa(int(observability.CredentialProtectionUnsupported)),
 		}
 	}
-	// The extra bytes cover the root's JSON string envelope.
-	protected, reason := protector.ProtectDiagnosticBytes(body, rememberDiagnosticMaxBodyBytes+2, authenticatedSecrets...)
+	ctx := observability.WithAuthenticationSecrets(context.Background(), authenticatedSecrets...)
+	protected, reason := observability.ProtectDiagnosticText(ctx, protector, body, rememberDiagnosticMaxBodyBytes)
 	if reason != observability.CredentialProtectionAvailable {
 		return rememberDiagnosticCapture{
 			state:  "unavailable",
@@ -283,6 +283,7 @@ type rememberExchangeRecorder struct {
 	protector observability.DiagnosticProtector
 }
 
+// NewDiagnosticRecorder protects complete bodies with configured and request-scoped credentials before retaining bounded snapshots.
 func NewDiagnosticRecorder(protector observability.DiagnosticProtector) modelprovider.SnapshotRecorder {
 	return &rememberExchangeRecorder{protector: protector}
 }
@@ -298,12 +299,9 @@ func (r *rememberExchangeRecorder) RecordProviderExchange(ctx context.Context, e
 	authenticatedSecrets := observability.AuthenticationSecretsFromContext(ctx)
 	requestCapture := captureRememberDiagnosticBody(exchange.RequestBody, r.protector, authenticatedSecrets...)
 	exchange.RequestBody = requestCapture.body
-	responseBody := exchange.ResponseBody
-	if len(exchange.ResponseBodyProjection) > 0 {
-		responseBody = exchange.ResponseBodyProjection
-	}
-	responseCapture := captureRememberDiagnosticBody(responseBody, r.protector, authenticatedSecrets...)
+	responseCapture := captureRememberDiagnosticBody(exchange.ResponseBody, r.protector, authenticatedSecrets...)
 	exchange.ResponseBody = responseCapture.body
+	exchange.ResponseBodyProjection = nil
 	exchange.CaptureState, exchange.CaptureReason = combineRememberDiagnosticCapture(
 		rememberDiagnosticCaptureStateForExchange(exchange), exchange.CaptureReason, requestCapture, responseCapture,
 	)

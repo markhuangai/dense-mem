@@ -2,9 +2,13 @@ package serverapp
 
 import (
 	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/embedding"
 	embeddingcontract "github.com/markhuangai/dense-mem/internal/embedding/contract"
 	"github.com/markhuangai/dense-mem/internal/observability"
@@ -59,6 +63,70 @@ func TestSemanticwriteEmbeddingExecutorBoundsProviderActionFailuresAsUnavailable
 
 	require.ErrorIs(t, err, semanticwrite.ErrProviderUnavailable)
 	require.NotContains(t, err.Error(), "provider_authentication_failed")
+}
+
+func TestSemanticwriteEmbeddingExecutorPreservesHTTPFailureClassification(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		status        int
+		clientTimeout bool
+		want          error
+	}{
+		{name: "success", status: http.StatusOK},
+		{name: "provider timeout", status: http.StatusRequestTimeout, want: semanticwrite.ErrProviderTimeout},
+		{name: "client timeout", clientTimeout: true, want: semanticwrite.ErrProviderTimeout},
+		{name: "unavailable", status: http.StatusServiceUnavailable, want: semanticwrite.ErrProviderUnavailable},
+		{name: "rate limited", status: http.StatusTooManyRequests, want: semanticwrite.ErrProviderUnavailable},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = io.Copy(io.Discard, r.Body)
+				if test.clientTimeout {
+					<-r.Context().Done()
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("Retry-After", "0.001")
+				w.WriteHeader(test.status)
+				if test.status == http.StatusOK {
+					_, _ = io.WriteString(w, `{"data":[{"embedding":[0.25,0.5]}],"usage":{"prompt_tokens":1,"total_tokens":1}}`)
+					return
+				}
+				_, _ = io.WriteString(w, `{"error":{"message":"private provider failure"}}`)
+			}))
+			defer server.Close()
+			client := server.Client()
+			if test.clientTimeout {
+				client.Timeout = 20 * time.Millisecond
+			}
+			provider := embedding.NewOpenAIEmbeddingProvider(&config.Config{
+				AIAPIURL: server.URL, AIAPIKey: "fixture-key", AIEmbeddingModel: "fixture", AIEmbeddingDimensions: 2,
+			}, client)
+			retry := embedding.NewRetryEmbeddingProviderWithKeyAndOptions(provider, semanticwriteEmbeddingTestLogger{}, "fixture-key", embedding.RetryEmbeddingOptions{
+				MaxRetries: 1, BaseDelay: time.Millisecond, MaxDelay: time.Millisecond,
+			})
+			executor := newSemanticwriteEmbeddingExecutor(retry)
+			result, err := executor.Execute(context.Background(), semanticwrite.Plan{
+				Documents: []semanticwrite.Document{{Hash: "document-hash", Text: "document text"}},
+				Fence: semanticwrite.Fence{
+					Model: "fixture", Dimensions: 2, EmbeddingContractID: "contract",
+					SearchGenerationID: "generation", SearchGenerationVersion: 1,
+				},
+				Timeout: 2 * time.Second,
+			})
+			if test.want == nil {
+				require.NoError(t, err)
+				require.Equal(t, []float32{0.25, 0.5}, result.Embeddings[0].Vector)
+				return
+			}
+			require.ErrorIs(t, err, test.want)
+			require.Empty(t, result.Embeddings)
+			require.NotContains(t, err.Error(), "private provider failure")
+			if test.want == semanticwrite.ErrProviderTimeout {
+				require.NotErrorIs(t, err, semanticwrite.ErrProviderUnavailable)
+			}
+		})
+	}
 }
 
 type semanticwriteEmbeddingProviderStub struct {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"time"
 
 	repository "github.com/markhuangai/dense-mem/internal/knowledge/contract"
@@ -15,6 +16,16 @@ import (
 
 type rememberInvocationWriter interface {
 	RecordRememberInvocationDiagnostic(context.Context, repository.RememberInvocationDiagnosticInput) error
+}
+
+func (p *rememberSynchronousProcessor) logAdmittedRememberRequest(ctx context.Context, input rememberapp.RememberProcessRequest) {
+	if input.SecurityRejected || input.InitialSecurityRejected {
+		return
+	}
+	if root, ok := p.logger.(interface{ ContextSlog() *slog.Logger }); ok {
+		observability.LogDiagnosticBody(ctx, root.ContextSlog(), p.protector, "remember_request_payload", input.OriginalRequest, modelprovider.MaxProviderDiagnosticBodyBytes,
+			slog.String("team_id", input.TeamID), slog.String("profile_id", input.OwnerProfileID), slog.String("request_hash", input.RequestHash))
+	}
 }
 
 func processErrOrCause(processErr, fallback error) error {

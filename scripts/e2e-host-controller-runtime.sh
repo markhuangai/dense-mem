@@ -33,6 +33,42 @@ scenario_helpers() {
   fi
 }
 
+collect_remember_failure_diagnostics() {
+  local container="$1" source_dir="$2" project="$3"
+  local directory="/tmp/dense-mem-remember-${project}"
+  mkdir -m 700 -- "$directory" || return 1
+  printf '%s\n' "$CONTRACT_VERSION" "$REPOSITORY" "$project" > "$directory/.owner"
+  chmod 600 "$directory/.owner"
+  docker cp "$container:/tmp/dense-mem-remember-failures/." "$directory/" >/dev/null 2>&1 || return 1
+  chmod -R go-rwx "$directory"
+  node --input-type=module - "$source_dir/tests/uat/synchronous_write/cases/diagnostics.mjs" "$directory" <<'NODE'
+import { readFile, readdir } from 'node:fs/promises';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+const { diagnoseRememberFailure, diagnoseProviderHTTPLog } = await import(pathToFileURL(process.argv[2]));
+const directory = process.argv[3];
+const files = (await readdir(directory)).filter((name) => /^[0-9a-f-]{36}\.private\.json$/.test(name));
+const providerFiles = (await readdir(directory)).filter((name) => /^conflict-provider-.*\.private\.jsonl$/.test(name));
+if (!files.length && !providerFiles.length) throw new Error('Private provider failure capture is missing');
+for (const name of files) {
+  const body = await readFile(join(directory, name), 'utf8');
+  process.stdout.write(JSON.stringify(diagnoseRememberFailure(JSON.parse(body), body)) + '\n');
+}
+for (const name of providerFiles) {
+  process.stdout.write(JSON.stringify(diagnoseProviderHTTPLog(await readFile(join(directory, name), 'utf8'))) + '\n');
+}
+NODE
+}
+
+cleanup_remember_failure_diagnostics() {
+  local project="$1" directory="/tmp/dense-mem-remember-${1}"
+  [[ -e "$directory" || -L "$directory" ]] || return 0
+  [[ -d "$directory" && ! -L "$directory" && -f "$directory/.owner" && ! -L "$directory/.owner" ]] || return 1
+  [[ "$(cat "$directory/.owner")" == "$(printf '%s\n' "$CONTRACT_VERSION" "$REPOSITORY" "$project")" ]] || return 1
+  rm -r -- "$directory" || return 1
+  [[ ! -e "$directory" ]]
+}
+
 run_scenario() {
   local run_id="$1" attempt="$2" phase="$3" stack_scenario="$4" scenario="$5" image_ref="$6" source_dir="$7"
   validate_decimal "$run_id"
@@ -264,6 +300,7 @@ run_scenario() {
     -e "DENSE_MEM_E2E_MEMORY_SCENARIO=${scenario}"
     -e "DENSE_MEM_E2E_CONFLICT_REVIEW_LIVE=${conflict_live}"
     -e "DENSE_MEM_E2E_DIAGNOSTICS_FIXTURE_FILE=/results/${scenario}-diagnostics.json"
+    -e "DENSE_MEM_E2E_REMEMBER_FAILURE_DIR=/tmp/dense-mem-remember-failures"
     -e "DENSE_MEM_CONTROL_TOKEN=${control_token}"
   )
   if [[ -f "${helper_dir}/conflict-review-driver" ]]; then
@@ -322,41 +359,14 @@ run_scenario() {
     ' bash "$scenario"
   )
 
-  local container=""
-  cleanup_scenario_container() {
-    local status=$?
-    trap - EXIT INT TERM
-    if [[ -n "$container" ]]; then
-      docker rm -f "$container" >/dev/null 2>&1 || status=1
+  local container="" failure_diagnostics_collected=0
+  collect_scenario_failure_diagnostics() {
+    ((failure_diagnostics_collected == 0)) || return 0
+    failure_diagnostics_collected=1
+    if [[ -n "$container" && ( "$scenario" == "ontology_organization" || -f "${helper_dir}/conflict-review-driver" ) ]]; then
+      collect_remember_failure_diagnostics "$container" "$source_dir" "$project" ||
+        printf '%s\n' 'Remember temporary failure diagnosis is unavailable' >&2
     fi
-    exit "$status"
-  }
-  trap cleanup_scenario_container EXIT INT TERM
-  container="$(docker "${docker_args[@]}")"
-  copy_git_source "$container" "$source_dir"
-  copy_file_into_container "$container" "$runtime_compose_host" /tmp/dense-mem-runtime-compose.yml
-  copy_file_into_container "$container" "$DENSE_MEM_CI_DOCKER_BIN" /tmp/dense-mem-docker
-  copy_file_into_container "$container" "$DENSE_MEM_CI_COMPOSE_PLUGIN" /tmp/dense-mem-compose
-  if [[ -f "$helper_overlay" ]]; then
-    copy_file_into_container "$container" "$helper_overlay" /tmp/dense-mem-helper-compose.yml
-  fi
-  if [[ -f "${helper_dir}/conflict-review-driver" ]]; then
-    copy_file_into_container "$container" "${helper_dir}/conflict-review-driver" /tmp/dense-mem-conflict-review-driver
-  fi
-  if [[ -f "${helper_dir}/ca.pem" ]]; then
-    copy_file_into_container "$container" "${helper_dir}/ca.pem" /tmp/dense-mem-oauth-ca.pem
-  fi
-
-  set +e
-  local execution_started=$SECONDS
-  docker start --attach "$container" 2>&1 |
-    redact_diagnostics "$ENV_FILE" "$control_token" "$telemetry_token" "$postgres_password" "$api_key" "$identity_upgrade_api_key" "$oauth_token" "$grafana_password"
-  local -a scenario_pipeline_status=("${PIPESTATUS[@]}")
-  set -e
-  ((scenario_pipeline_status[1] == 0)) || fail "diagnostic redaction failed"
-  local scenario_status="${scenario_pipeline_status[0]}"
-  report_phase scenario_execution "$execution_started" "$scenario_status"
-  if ((scenario_status != 0)); then
     printf 'dense-mem CI scenario [%s]: failed stack diagnostics\n' "$scenario" >&2
     set +e
     (
@@ -377,12 +387,60 @@ run_scenario() {
     if ((diagnostics_pipeline_status[1] != 0)); then
       printf 'dense-mem CI scenario [%s]: stack diagnostic redaction failed\n' "$scenario" >&2
     fi
+  }
+  cleanup_scenario_container() {
+    local status="${1:-$?}"
+    [[ "${2:-}" != "ERR" || $- == *e* ]] || return "$status"
+    trap - EXIT INT TERM ERR
+    if ((status != 0)); then
+      if [[ -n "${execution_started:-}" ]]; then
+        report_phase scenario_execution "$execution_started" "$status"
+      fi
+      collect_scenario_failure_diagnostics
+    fi
+    if [[ -n "$container" ]]; then
+      if ! docker rm -f "$container" >/dev/null 2>&1 && ((status == 0)); then
+        status=1
+      fi
+    fi
+    exit "$status"
+  }
+  trap cleanup_scenario_container EXIT
+  trap 'cleanup_scenario_container "$?" ERR' ERR
+  trap 'cleanup_scenario_container 130' INT
+  trap 'cleanup_scenario_container 143' TERM
+  container="$(docker "${docker_args[@]}")"
+  copy_git_source "$container" "$source_dir"
+  copy_file_into_container "$container" "$runtime_compose_host" /tmp/dense-mem-runtime-compose.yml
+  copy_file_into_container "$container" "$DENSE_MEM_CI_DOCKER_BIN" /tmp/dense-mem-docker
+  copy_file_into_container "$container" "$DENSE_MEM_CI_COMPOSE_PLUGIN" /tmp/dense-mem-compose
+  if [[ -f "$helper_overlay" ]]; then
+    copy_file_into_container "$container" "$helper_overlay" /tmp/dense-mem-helper-compose.yml
+  fi
+  if [[ -f "${helper_dir}/conflict-review-driver" ]]; then
+    copy_file_into_container "$container" "${helper_dir}/conflict-review-driver" /tmp/dense-mem-conflict-review-driver
+  fi
+  if [[ -f "${helper_dir}/ca.pem" ]]; then
+    copy_file_into_container "$container" "${helper_dir}/ca.pem" /tmp/dense-mem-oauth-ca.pem
+  fi
+
+  set +e
+  local execution_started=$SECONDS
+  node "$source_dir/scripts/ci-resource-report.mjs" "$scenario" --source-dir "$source_dir" -- docker start --attach "$container" 2>&1 |
+    redact_diagnostics "$ENV_FILE" "$control_token" "$telemetry_token" "$postgres_password" "$api_key" "$identity_upgrade_api_key" "$oauth_token" "$grafana_password"
+  local -a scenario_pipeline_status=("${PIPESTATUS[@]}")
+  set -e
+  ((scenario_pipeline_status[1] == 0)) || fail "diagnostic redaction failed"
+  local scenario_status="${scenario_pipeline_status[0]}"
+  report_phase scenario_execution "$execution_started" "$scenario_status"
+  if ((scenario_status != 0)); then
+    collect_scenario_failure_diagnostics
   fi
   if [[ "${DENSE_MEM_E2E_EXPORT_PERFORMANCE:-0}" == "1" && "$scenario" == "enterprise_exports" && "$scenario_status" == "0" ]]; then
     docker cp "$container:$result_file" "${run_root}/performance-result.json" >/dev/null || fail "performance result receipt is missing"
     chmod 600 "${run_root}/performance-result.json"
   fi
-  trap - EXIT INT TERM
+  trap - EXIT INT TERM ERR
   docker rm "$container" >/dev/null
   container=""
   return "$scenario_status"
@@ -458,6 +516,10 @@ stop_stack() {
   local attempt started=$SECONDS
   for attempt in 1 2 3 4 5; do
     if remove_project_resources "$project"; then
+      if ! cleanup_remember_failure_diagnostics "$project"; then
+        report_phase teardown "$started" 1 "$attempt" "$project"
+        return 1
+      fi
       report_phase teardown "$started" 0 "$attempt" "$project"
       return 0
     fi

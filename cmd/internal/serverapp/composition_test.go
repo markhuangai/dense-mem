@@ -271,6 +271,7 @@ func TestSearchProviderCompositionBuildsSharedProviderFacets(t *testing.T) {
 		nil,
 		observability.NoopDiscoverabilityMetrics(),
 		observability.New(slog.LevelInfo),
+		observability.NewCredentialProtector(),
 	)
 	if providers == nil || providers.EmbeddingProvider == nil || providers.RetryEmbedding == nil || providers.Convergence == nil || providers.Reconciliation == nil {
 		t.Fatal("search composition did not build all provider facets")

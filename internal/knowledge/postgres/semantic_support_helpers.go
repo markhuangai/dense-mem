@@ -53,9 +53,9 @@ func supersedeOneCardinalityRelationships(
 			FROM selected
 			WHERE relationship.team_id = ?::uuid
 			  AND relationship.relationship_id = selected.relationship_id
-			RETURNING selected.relationship_id::text, selected.status
+			RETURNING selected.relationship_id::text, selected.status, relationship.version
 		)
-		SELECT relationship_id, status
+		SELECT relationship_id, status, version
 		FROM updated
 	`, input.TeamID, input.OwnerProfileID, input.SubjectEntityID, input.PredicateKey,
 		input.Polarity, timeArg(input.ValidFrom), input.ScopeKey,
@@ -66,18 +66,16 @@ func supersedeOneCardinalityRelationships(
 	type supersededRelationship struct {
 		relationshipID string
 		status         string
+		version        int
 	}
 	var superseded []supersededRelationship
 	for rows.Next() {
-		var relationshipID, status string
-		if err := rows.Scan(&relationshipID, &status); err != nil {
+		var item supersededRelationship
+		if err := rows.Scan(&item.relationshipID, &item.status, &item.version); err != nil {
 			_ = rows.Close()
 			return err
 		}
-		superseded = append(superseded, supersededRelationship{
-			relationshipID: relationshipID,
-			status:         status,
-		})
+		superseded = append(superseded, item)
 	}
 	if err := rows.Err(); err != nil {
 		_ = rows.Close()
@@ -87,6 +85,21 @@ func supersedeOneCardinalityRelationships(
 		return err
 	}
 	for _, item := range superseded {
+		var contracts []string
+		if err := tx.WithContext(ctx).Raw(`
+			SELECT embedding_contract_id::text FROM search_documents
+			WHERE team_id = ?::uuid AND source_kind = 'relationship' AND source_id = ?::uuid
+			ORDER BY embedding_contract_id
+		`, input.TeamID, item.relationshipID).Scan(&contracts).Error; err != nil {
+			return err
+		}
+		for _, contractID := range contracts {
+			if _, err := retireRelationshipSearchDocument(ctx, tx, input.TeamID, &RelationshipRecord{
+				RelationshipID: item.relationshipID, Version: item.version,
+			}, contractID); err != nil {
+				return fmt.Errorf("retire superseded relationship search document: %w", err)
+			}
+		}
 		if _, err := insertRelationshipTransition(ctx, tx, transitionInput{
 			TeamID:         input.TeamID,
 			OwnerProfileID: input.OwnerProfileID,

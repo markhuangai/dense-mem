@@ -3,6 +3,7 @@ package serverapp
 import (
 	"context"
 	"errors"
+	"net/http"
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/config"
@@ -97,8 +98,10 @@ func buildSearchProviders(
 	projection knowledgecontract.SearchProjectionRepository,
 	metrics observability.DiscoverabilityMetrics,
 	logger observability.LogProvider,
+	protector observability.DiagnosticProtector,
 ) *searchApplication {
-	openaiProvider := embedding.NewOpenAIEmbeddingProvider(&cfg, nil)
+	client := observability.DiagnosticHTTPClient(&http.Client{Timeout: time.Duration(cfg.GetAIEmbeddingTimeoutSeconds()) * time.Second}, rootDiagnosticLogger(logger), protector)
+	openaiProvider := embedding.NewOpenAIEmbeddingProvider(&cfg, client)
 	openaiProvider.SetMetrics(metrics)
 	retryEmbedder := embedding.NewRetryEmbeddingProviderWithKey(openaiProvider, logger, cfg.GetAIAPIKey())
 	retryEmbedder.SetMetrics(metrics)

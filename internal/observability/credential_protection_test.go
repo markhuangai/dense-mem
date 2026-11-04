@@ -1,6 +1,7 @@
 package observability
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -463,6 +464,36 @@ func TestCredentialProtectorMatchesSurrogateUnicodeEscapes(t *testing.T) {
 			require.Empty(t, got.UnavailableReason)
 			require.Equal(t, `{"password":"`+CredentialProtectionRedacted+`"}`, got.Value)
 		})
+	}
+}
+
+func TestCredentialProtectorKeepsSurrogateBoundaryMatches(t *testing.T) {
+	const prefix = `{"password":"ordinary admitted text","payload":"`
+	const suffix = `","token":"ordinary admitted text"}`
+	for _, padding := range []int{52, 53, 58, 59, 628, 634} {
+		secret := strings.Repeat("A", padding) + "😀"
+		pair := strings.Repeat("A", padding) + `\uD83D\uDE00`
+		for _, authenticated := range []bool{false, true} {
+			for index, form := range []string{pair, url.QueryEscape(pair), encodeCredentialTestUnicodeLayer(pair)} {
+				t.Run(fmt.Sprintf("padding=%d/authenticated=%t/form=%d", padding, authenticated, index), func(t *testing.T) {
+					ctx := context.Background()
+					protector := NewCredentialProtector(secret)
+					if authenticated {
+						protector = NewCredentialProtector()
+						ctx = WithAuthenticationSecrets(ctx, secret)
+					}
+					body := prefix + form + suffix
+					expected := prefix + CredentialProtectionRedacted + suffix
+					limit := len(body)*2 + 100
+					snapshot := protector.Snapshot(body, limit, AuthenticationSecretsFromContext(ctx)...)
+					require.Equal(t, CredentialProtectionAvailable, snapshot.UnavailableReason)
+					require.Equal(t, expected, snapshot.Value)
+					protected, reason := ProtectDiagnosticText(ctx, protector, []byte(body), limit)
+					require.Equal(t, CredentialProtectionAvailable, reason)
+					require.Equal(t, expected, string(protected))
+				})
+			}
+		}
 	}
 }
 

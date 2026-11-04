@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"strconv"
@@ -87,6 +88,11 @@ func main() {
 	}
 
 	cfg := driverConfig()
+	diagnosticClient, closeDiagnostics, err := driverDiagnosticClient(&cfg)
+	if err != nil {
+		fatal("prepare private provider diagnostics: %v", err)
+	}
+	defer closeDiagnostics()
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 	db, err := postgresstorage.Open(ctx, &cfg)
@@ -108,13 +114,13 @@ func main() {
 	limits := conflictassessment.DefaultSemanticAssessmentLimits()
 	provider := verifier.NewOpenAIVerifierWithAssessmentLimitsAndConcurrencyGateAndModel(
 		&cfg,
-		nil,
+		diagnosticClient(time.Duration(cfg.GetAIVerifierTimeoutSeconds())*time.Second),
 		verifier.SemanticAssessmentLimits(limits),
 		nil,
 		cfg.GetAIConflictReviewModel(),
 	)
 	embeddingProvider := embedding.NewRetryEmbeddingProviderWithKey(
-		embedding.NewOpenAIEmbeddingProvider(&cfg, nil),
+		embedding.NewOpenAIEmbeddingProvider(&cfg, diagnosticClient(time.Duration(cfg.GetAIEmbeddingTimeoutSeconds())*time.Second)),
 		nil,
 		cfg.GetAIAPIKey(),
 	)
@@ -160,6 +166,7 @@ func main() {
 	if run == nil || !claimed {
 		fatal("conflict review run was not claimable for %s", now.Format("2006-01-02"))
 	}
+	ctx = observability.WithExchangeScope(ctx, observability.ExchangeScope{TeamID: *teamID, RunID: run.ReviewRunID, BatchID: *conflictID})
 
 	record, err := claimTarget(ctx, conflictStore, *teamID, *conflictID, run.ReviewRunID, workerID, lease, now)
 	if err != nil {
@@ -213,6 +220,29 @@ func main() {
 		fatal("encode conflict review result: %v", err)
 	}
 	fmt.Println(string(encoded))
+}
+
+func driverDiagnosticClient(cfg *config.Config) (func(time.Duration) *http.Client, func(), error) {
+	directory := os.Getenv("DENSE_MEM_E2E_REMEMBER_FAILURE_DIR")
+	if directory == "" {
+		return func(timeout time.Duration) *http.Client { return &http.Client{Timeout: timeout} }, func() {}, nil
+	}
+	if err := os.MkdirAll(directory, 0700); err != nil {
+		return nil, nil, err
+	}
+	secrets, err := cfg.OperationalSecrets()
+	if err != nil {
+		return nil, nil, err
+	}
+	file, err := os.CreateTemp(directory, "conflict-provider-*.private.jsonl")
+	if err != nil {
+		return nil, nil, err
+	}
+	logger := slog.New(slog.NewJSONHandler(file, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	protector := observability.NewCredentialProtector(secrets...)
+	return func(timeout time.Duration) *http.Client {
+		return observability.DiagnosticHTTPClient(&http.Client{Timeout: timeout}, logger, protector)
+	}, func() { _ = file.Close() }, nil
 }
 
 func claimTarget(

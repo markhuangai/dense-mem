@@ -56,8 +56,7 @@ func (d *assessmentDiagnostics) finishProviderTurn(turn assessor.SemanticAssessm
 	d.current["elapsed_ms"] = time.Since(d.turnStarted).Milliseconds()
 	if turn.Diagnostics != nil {
 		if turn.Diagnostics.Valid() {
-			copy := *turn.Diagnostics
-			d.current["provider"] = copy
+			d.current["provider"] = turn.Diagnostics.LogFields()
 		} else {
 			d.current["provider_diagnostics_unavailable"] = true
 		}

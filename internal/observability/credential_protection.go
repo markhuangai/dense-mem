@@ -738,6 +738,18 @@ func jsonEncodedStringLen(text string) (int, bool) {
 	return length, true
 }
 
+// The complete matcher rejects every other first byte, including before decoding.
+func credentialCandidateStarts(variants []credentialVariant) [256]bool {
+	var starts [256]bool
+	starts['%'], starts['\\'], starts['+'] = true, true, true
+	for _, variant := range variants {
+		if variant.text != "" {
+			starts[variant.text[0]] = true
+		}
+	}
+	return starts
+}
+
 func redactCredentialTextBounded(text string, variants []credentialVariant, maxOutput int, budget *credentialSnapshotBudget) (string, bool, CredentialProtectionUnavailableReason) {
 	if maxOutput < 0 {
 		return "", false, CredentialProtectionBudgetExceeded
@@ -756,7 +768,16 @@ func redactCredentialTextBounded(text string, variants []credentialVariant, maxO
 
 	outputLength := 0
 	matches := make([]credentialTextMatch, 0)
+	starts := credentialCandidateStarts(variants)
 	for index := 0; index < len(text); {
+		if !starts[text[index]] {
+			if outputLength >= maxOutput {
+				return "", false, CredentialProtectionBudgetExceeded
+			}
+			outputLength++
+			index++
+			continue
+		}
 		if budget != nil && !budget.reserveMatchWork(credentialMatchWorkEstimate(text[index:], variants)) {
 			return "", false, CredentialProtectionBudgetExceeded
 		}

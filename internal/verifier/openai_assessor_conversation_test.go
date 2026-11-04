@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/stretchr/testify/require"
 )
 
@@ -23,7 +24,7 @@ func TestSemanticAssessmentConversationHelpersCoverFamiliesAndBounds(t *testing.
 	for index := range errs {
 		errs[index] = semanticErr("field", strings.Repeat("m", index+1))
 	}
-	bounded := boundedSemanticAssessmentCorrectionErrors(errs)
+	bounded := assessor.BoundSemanticAssessmentCorrectionErrors(errs)
 	require.Len(t, bounded, SemanticAssessmentMaxCorrectionErrors)
 	require.Equal(t, "response", bounded[len(bounded)-1].Field)
 	require.Len(t, semanticAssessmentValidationFieldFamilies([]SemanticValidationError{

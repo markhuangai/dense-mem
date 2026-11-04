@@ -6,10 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/markhuangai/dense-mem/internal/assessor"
 )
 
 func semanticAssessmentMessageTokens(messages []openAIVerifierMessage, tokenizerName string) (int, error) {
@@ -18,24 +19,6 @@ func semanticAssessmentMessageTokens(messages []openAIVerifierMessage, tokenizer
 		return 0, err
 	}
 	return CountTokens(string(encoded), tokenizerName)
-}
-
-func boundedSemanticAssessmentCorrectionErrors(errs []SemanticValidationError) []SemanticValidationError {
-	bounded := append([]SemanticValidationError(nil), errs...)
-	sort.Slice(bounded, func(i, j int) bool {
-		if bounded[i].Field == bounded[j].Field {
-			return bounded[i].Message < bounded[j].Message
-		}
-		return bounded[i].Field < bounded[j].Field
-	})
-	if len(bounded) <= SemanticAssessmentMaxCorrectionErrors {
-		return bounded
-	}
-	bounded = bounded[:SemanticAssessmentMaxCorrectionErrors-1]
-	return append(bounded, SemanticValidationError{
-		Field:   "response",
-		Message: "additional validation errors were omitted; return one complete response matching the schema",
-	})
 }
 
 func semanticAssessmentValidationFieldFamilies(errs []SemanticValidationError) []string {
@@ -163,16 +146,7 @@ func semanticAssessmentResponseForCorrection(
 	}
 	response, err := DecodeSemanticAssessmentResponseJSON([]byte(result.Content), limits)
 	if err != nil {
-		field := "response"
-		message := "must be one complete JSON object matching the required field types"
-		var typeError *json.UnmarshalTypeError
-		if errors.As(err, &typeError) && typeError.Field != "" {
-			field = typeError.Field
-			message = "must match the required JSON type"
-		}
-		return SemanticAssessmentResponse{}, []SemanticValidationError{
-			semanticErr(field, message),
-		}, "response_json"
+		return SemanticAssessmentResponse{}, []SemanticValidationError{assessor.ResponseJSONValidationError(err, "")}, "response_json"
 	}
 	normalized, validationErrors := PrepareSemanticAssessmentResponse(req, response, limits)
 	if len(validationErrors) > 0 {

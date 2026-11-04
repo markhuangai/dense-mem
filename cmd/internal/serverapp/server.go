@@ -250,7 +250,7 @@ func RunActiveServer(
 		}
 	}()
 	telemetryPrometheusService := telemetry.Prometheus
-	searchApplication := buildSearchProviders(cfg, searchRepo, searchContract, knowledgeStore, discoverabilityMetrics, logger)
+	searchApplication := buildSearchProviders(cfg, searchRepo, searchContract, knowledgeStore, discoverabilityMetrics, logger, diagnosticProtector)
 	openaiProvider := searchApplication.EmbeddingProvider
 	retryEmbedder := searchApplication.RetryEmbedding
 	sessionModels := aiSessionModelsForConfig(&cfg)
@@ -258,7 +258,7 @@ func RunActiveServer(
 	assessmentLimits.ProviderModel = sessionModels.remember
 	conflictAssessmentLimits := assessmentLimits
 	conflictAssessmentLimits.ProviderModel = sessionModels.conflictReview
-	aiHTTPClient := &nethttp.Client{Timeout: time.Duration(cfg.GetAIVerifierTimeoutSeconds()) * time.Second}
+	aiHTTPClient := observability.DiagnosticHTTPClient(&nethttp.Client{Timeout: time.Duration(cfg.GetAIVerifierTimeoutSeconds()) * time.Second}, rootDiagnosticLogger(logger), diagnosticProtector)
 	aiConcurrencyGate := modelprovider.NewConcurrencyGate(config.AIVerifierMaxConcurrency(&cfg))
 	verifierProvider := verifier.NewOpenAIVerifierWithAssessmentLimitsAndConcurrencyGateAndModel(&cfg, aiHTTPClient, verifier.SemanticAssessmentLimits(conflictAssessmentLimits), aiConcurrencyGate, sessionModels.conflictReview)
 	verifierProvider.SetMetrics(discoverabilityMetrics)
@@ -280,7 +280,7 @@ func RunActiveServer(
 	sessionAssessmentLimits.MaxEvidenceItems = 100
 	sessionAssessor := assessorprovider.NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGateAndModel(&cfg, aiHTTPClient, sessionAssessmentLimits, aiConcurrencyGate, sessionModels.remember)
 	sessionAssessor.SetMetrics(discoverabilityMetrics)
-	ontologyMaintenance := buildOntologyMaintenance(ontologyStore, appConfigService, assessorProvider, assessmentLimits, sessionModels.remember, time.Duration(cfg.GetAIVerifierTimeoutSeconds())*time.Second, auditService, rootSlogLogger(logger))
+	ontologyMaintenance := buildOntologyMaintenance(ontologyStore, appConfigService, assessorProvider, assessmentLimits, sessionModels.remember, time.Duration(cfg.GetAIVerifierTimeoutSeconds())*time.Second, auditService, rootSlogLogger(logger), ontologyDiagnosticCapture(operationLogService, diagnosticProtector))
 	conflictReviewRunner, err := buildConflictReviewApplication(conflictReviewApplicationDependencies{
 		Store:     conflictStore,
 		Provider:  verifierProvider,

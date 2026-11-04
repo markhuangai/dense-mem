@@ -36,6 +36,12 @@ type MaintenanceDependencies struct {
 	Now             func() time.Time
 	Projections     ProjectionRunner
 	Logger          *slog.Logger
+	Diagnostics     MaintenanceDiagnosticCapture
+}
+
+type MaintenanceDiagnosticCapture struct {
+	NewRecorder   func() modelprovider.SnapshotRecorder
+	RecordFailure func(context.Context, contract.MaintenanceClaim, contract.OrganizationResult, []modelprovider.ProviderExchange) error
 }
 
 type ProjectionRunner interface {
@@ -256,6 +262,12 @@ func (s *MaintenanceService) executeBatch(ctx context.Context, work maintenanceW
 	defer cancel()
 	claimCtx := contract.WithMaintenanceClaim(turnCtx, claim)
 	var result contract.OrganizationResult
+	var recorder modelprovider.SnapshotRecorder
+	if s.deps.Diagnostics.NewRecorder != nil {
+		recorder = s.deps.Diagnostics.NewRecorder()
+		claimCtx = modelprovider.WithExchangeRecorder(claimCtx, recorder)
+	}
+	claimCtx = observability.WithExchangeScope(claimCtx, observability.ExchangeScope{TeamID: claim.TeamID, RunID: claim.RunID, BatchID: claim.ID})
 	defer func() {
 		failure := contract.MaintenanceFailureCode(runErr)
 		if failure == "" {
@@ -273,6 +285,27 @@ func (s *MaintenanceService) executeBatch(ctx context.Context, work maintenanceW
 			}
 			runErr = errors.Join(runErr, s.deps.Repository.RecordMaintenanceFailure(finishCtx, claim.RunID, failure, s.deps.Now()))
 		}
+		if (runErr != nil || result.FailureCode != "") && s.deps.Diagnostics.RecordFailure != nil {
+			var exchanges []modelprovider.ProviderExchange
+			if recorder != nil {
+				exchanges = recorder.Snapshot()
+			}
+			diagnosticCtx, diagnosticCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer diagnosticCancel()
+			captureStarted := time.Now()
+			if result.FailureCode == "" {
+				result.FailureCode = failure
+			}
+			if err := s.deps.Diagnostics.RecordFailure(diagnosticCtx, claim, result, exchanges); err != nil && s.deps.Logger != nil {
+				reason := "capture_failed"
+				if errors.Is(diagnosticCtx.Err(), context.DeadlineExceeded) {
+					reason = "deadline_exceeded"
+				} else if diagnosticCtx.Err() != nil {
+					reason = "canceled"
+				}
+				s.deps.Logger.LogAttrs(diagnosticCtx, slog.LevelWarn, "ontology_failure_diagnostics_unavailable", slog.String("team_id", claim.TeamID), slog.String("run_id", claim.RunID), slog.String("batch_id", claim.ID), slog.String("assessment_id", result.AssessmentID), slog.String("reason", reason), slog.Int64("duration_ms", time.Since(captureStarted).Milliseconds()))
+			}
+		}
 	}()
 	accounting := &maintenanceAttemptAccounting{repository: s.deps.Repository, claim: claim, now: s.deps.Now, admitted: map[int]bool{}}
 	organizer := s.deps.Organizer(work.policy.Model, work.policy.ContextWindowTokens, accounting)
@@ -280,17 +313,22 @@ func (s *MaintenanceService) executeBatch(ctx context.Context, work maintenanceW
 	result, runErr = organizer.Organize(assessmentCtx, claim.TeamID, contract.OrganizationInput{OperationKey: "maintenance:" + claim.ID, Sources: claim.Sources})
 	if s.deps.Logger != nil {
 		for _, attempt := range result.Attempts {
-			fields := []slog.Attr{slog.String("batch_id", claim.ID), slog.String("run_id", claim.RunID),
+			fields := []slog.Attr{slog.String("team_id", claim.TeamID), slog.String("batch_id", claim.ID), slog.String("run_id", claim.RunID),
 				slog.String("assessment_id", result.AssessmentID), slog.Int("attempt", attempt.Number),
 				slog.String("failure_code", attempt.FailureCode), slog.Bool("reported_usage_available", attempt.ReportedUsageAvailable)}
 			if attempt.Diagnostics.Valid() {
-				fields = append(fields, slog.Any("diagnostics", attempt.Diagnostics))
+				fields = append(fields, slog.Any("diagnostics", attempt.Diagnostics.LogFields()))
 			} else {
 				fields = append(fields, slog.Bool("diagnostics_invalid", true))
 			}
 			if attempt.Validation != nil {
 				if attempt.Validation.Valid() && attempt.FailureCode == "response_invalid" {
-					fields = append(fields, slog.Any("validation", attempt.Validation))
+					validation := map[string]any{"stage": attempt.Validation.Stage, "code": attempt.Validation.Code, "field_family": attempt.Validation.FieldFamily}
+					if attempt.Validation.ExpectedCount != nil {
+						validation["expected_count"] = *attempt.Validation.ExpectedCount
+						validation["actual_count"] = *attempt.Validation.ActualCount
+					}
+					fields = append(fields, slog.Any("validation", validation))
 				} else {
 					fields = append(fields, slog.Bool("validation_invalid", true))
 				}

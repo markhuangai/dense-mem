@@ -363,12 +363,22 @@ func markRelationshipSearchDocumentNotRequired(
 	if err != nil {
 		return nil, err
 	}
+	return retireRelationshipSearchDocument(ctx, tx, commit.TeamID, relationship, contract.EmbeddingContractID)
+}
+
+func retireRelationshipSearchDocument(
+	ctx context.Context,
+	tx *gorm.DB,
+	teamID string,
+	relationship *RelationshipRecord,
+	embeddingContractID string,
+) (*SearchDocumentResult, error) {
 	previousGenerationID, err := relationshipSearchDocumentProjectionGenerationID(
 		ctx,
 		tx,
-		commit.TeamID,
+		teamID,
 		relationship.RelationshipID,
-		contract.EmbeddingContractID,
+		embeddingContractID,
 	)
 	if err != nil {
 		return nil, err
@@ -398,7 +408,7 @@ func markRelationshipSearchDocumentNotRequired(
 		FROM updated
 		ORDER BY search_document_id
 		LIMIT 1
-	`, int64(relationship.Version), commit.TeamID, relationship.RelationshipID, contract.EmbeddingContractID).Rows()
+	`, int64(relationship.Version), teamID, relationship.RelationshipID, embeddingContractID).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -426,7 +436,10 @@ func markRelationshipSearchDocumentNotRequired(
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	if err := refreshPreviousRelationshipProjectionGeneration(ctx, tx, commit.TeamID, previousGenerationID); err != nil {
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := refreshPreviousRelationshipProjectionGeneration(ctx, tx, teamID, previousGenerationID); err != nil {
 		return nil, err
 	}
 	return &loaded, nil

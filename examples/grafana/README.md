@@ -156,9 +156,6 @@ rehearsal times and warns that staging-only Remember history and test records
 are replaced. Keep staging-only diagnostics outside that database if they must
 survive a rehearsal.
 
-The issue #433 migration compared every mapped panel with the old system
-telemetry snapshot against the same Prometheus data in Grafana 13.2.2. The
-control Metrics and user Usage tabs were retired only after that parity check
-passed. The control telemetry reader remains for conflict-queue health and
+The control telemetry reader remains for conflict-queue health and
 operator diagnostics; team-overview request summaries and private diagnostics
 remain in the browser portals.
