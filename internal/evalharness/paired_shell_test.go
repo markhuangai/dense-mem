@@ -1,6 +1,7 @@
 package evalharness
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -8,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -46,6 +48,82 @@ pair_http "$2" PAIR_HTTP_TEST_TOKEN POST '{"jsonrpc":"2.0","id":1,"method":"tool
 	output, err := command.CombinedOutput()
 	require.NoError(t, err, "%s", output)
 	require.JSONEq(t, `{"jsonrpc":"2.0","id":1,"result":{"tools":[]}}`, string(output))
+}
+
+func TestPairShellConvergenceReadDeadline(t *testing.T) {
+	script, err := filepath.Abs("../../tests/eval/scripts/paired_eval.sh")
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name, path string
+		remaining  time.Duration
+		exitCode   int
+		requests   int32
+		canceled   bool
+	}{
+		{"slow_convergence", "/search/convergence", 4 * time.Minute, 0, 1, false},
+		{"ordinary_read_timeout", "/ontology/status", 4 * time.Minute, 4, 1, true},
+		{"campaign_deadline", "/search/convergence", 3 * time.Second, 124, 1, true},
+		{"expired_campaign", "/search/convergence", -time.Second, 124, 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var requests atomic.Int32
+			handled := make(chan bool, 1)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				if r.Method != http.MethodGet || r.Header.Get("Authorization") != "Bearer fixture-token" {
+					http.Error(w, "invalid request", http.StatusBadRequest)
+					return
+				}
+				// A valid convergence scan can exceed the ordinary 30-second control-read limit.
+				timer := time.NewTimer(31 * time.Second)
+				defer timer.Stop()
+				select {
+				case <-r.Context().Done():
+					handled <- true
+					return
+				case <-timer.C:
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`{"data":{"status":"converged"}}`))
+					handled <- false
+				}
+			}))
+			t.Cleanup(server.Close)
+			config := pairedFixture(t)
+			config.Candidate.Runtime.ControlURL = server.URL
+			config.Deadline = time.Now().Add(tc.remaining)
+			path := filepath.Join(t.TempDir(), "pair.json")
+			require.NoError(t, writePairJSON(path, config))
+			ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+			defer cancel()
+			command := exec.CommandContext(ctx, "bash", "-c", `set -Eeuo pipefail
+source "$1"
+PAIR_CONFIG="$2"; pair_side=candidate
+pair_control "$3"`, "paired-control-timeout-test", script, path, tc.path)
+			command.Env = append(os.Environ(), "PAIR_CONTROL_TOKEN=fixture-token")
+			output, err := command.CombinedOutput()
+			if tc.exitCode == 0 {
+				require.NoError(t, err, "%s", output)
+				require.JSONEq(t, `{"status":"converged"}`, string(output))
+			} else {
+				var exited *exec.ExitError
+				require.ErrorAs(t, err, &exited, "%s", output)
+				require.Equal(t, tc.exitCode, exited.ExitCode(), "%s", output)
+				if tc.requests > 0 {
+					require.Contains(t, string(output), "curl: (28)")
+				}
+			}
+			require.Equal(t, tc.requests, requests.Load())
+			if tc.requests > 0 {
+				select {
+				case canceled := <-handled:
+					require.Equal(t, tc.canceled, canceled)
+				case <-time.After(time.Second):
+					t.Fatal("HTTP handler did not observe completion or cancellation")
+				}
+			}
+		})
+	}
 }
 
 func TestPairShellMaintenanceKeysRespectNativeContract(t *testing.T) {
