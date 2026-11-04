@@ -66,7 +66,7 @@ test("case progress preserves results, errors, stdout and run correlation", asyn
   }
 });
 
-test("an interrupted case identifies its active step before completion", { timeout: 10000 }, async () => {
+test("an interrupted nested fault identifies its active step before completion", { timeout: 10000 }, async () => {
   let received;
   const requestReceived = new Promise(resolve => { received = resolve; });
   const server = createServer(() => received());
@@ -75,7 +75,8 @@ test("an interrupted case identifies its active step before completion", { timeo
   const runner = new URL("./runner.mjs", import.meta.url).href;
   const child = spawn(process.execPath, ["--input-type=module", "-e", `
     import { runStep } from ${JSON.stringify(runner)};
-    await runStep('remember/blocked-upstream', () => fetch('http://127.0.0.1:${server.address().port}'));
+    await runStep('remember/predicate-registration', () =>
+      runStep('remember/predicate-registration-repair', () => fetch('http://127.0.0.1:${server.address().port}')));
   `]);
   const closed = once(child, "close");
   let stderr = "";
@@ -83,21 +84,22 @@ test("an interrupted case identifies its active step before completion", { timeo
   const progressStarted = new Promise(resolve => { started = resolve; });
   child.stderr.on("data", chunk => {
     stderr += chunk;
-    if (stderr.includes('"outcome":"started"')) started();
+    if (stderr.endsWith("\n") && stderr.includes('"case":"remember/predicate-registration-repair"')) started();
   });
   try {
     await Promise.race([
       Promise.all([requestReceived, progressStarted]),
       closed.then(result => { throw new Error(`case exited before blocking: ${JSON.stringify(result)} ${stderr}`); }),
     ]);
-    assert.match(stderr, /"case":"remember\/blocked-upstream"/);
+    const events = stderr.trim().split("\n").map(JSON.parse);
+    assert.deepEqual(events.map(event => event.case), ["remember/predicate-registration", "remember/predicate-registration-repair"]);
     assert.match(stderr, /"outcome":"started"/);
     assert.doesNotMatch(stderr, /"outcome":"(?:passed|failed)"/);
     child.kill("SIGTERM");
     const [code, signal] = await closed;
     assert.equal(code, null);
     assert.equal(signal, "SIGTERM");
-    assert.equal(stderr.trim().split("\n").length, 1);
+    assert.equal(stderr.trim().split("\n").length, 2);
   } finally {
     child.kill("SIGKILL");
     server.closeAllConnections();
