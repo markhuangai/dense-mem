@@ -1133,6 +1133,63 @@ run_fixture`;
   }
 });
 
+test("diagnostics stream complete lines while retaining overlapping partial credentials", () => {
+  const secret = `fixture-control-${"x".repeat(128)}`;
+  let output = "";
+  const redactor = createRedactor(["fixture-control", secret], (chunk) => { output += chunk; });
+  redactor.write(`ready\n${secret.slice(0, 20)}`);
+  assert.equal(output, "ready\n");
+  redactor.write(`${secret.slice(20)}\n`);
+  assert.equal(output, "ready\n[REDACTED]\n");
+  redactor.end();
+  assert.equal(output, "ready\n[REDACTED]\n");
+  const input = `ready\n${secret}\nfinished\n`;
+  for (let index = 0; index <= input.length; index += 1) {
+    assert.equal(redactChunks([input.slice(0, index), input.slice(index)], ["fixture-control", secret]), "ready\n[REDACTED]\nfinished\n");
+  }
+});
+
+test("active case reaches controller output before an interrupted runner exits", { timeout: 6000 }, async () => {
+  const moduleURL = new URL("./synchronous_write/runner.mjs", import.meta.url).href;
+  const runner = spawn(process.execPath, ["--input-type=module", "-e",
+    `import { runStep } from ${JSON.stringify(moduleURL)}; setInterval(() => {}, 1000); await runStep("diagnostics/stalled-ci-case", () => new Promise(() => {}));`], {
+    env: { ...process.env, DENSE_MEM_E2E_RUN_ID: "live-progress", DENSE_MEM_E2E_RUN_ATTEMPT: "1",
+      DENSE_MEM_E2E_COMMIT_SHA: "f".repeat(40), DENSE_MEM_E2E_SCENARIO: "synchronous_write" },
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  const redactor = spawn(process.execPath, [join(scripts, "e2e-redact-diagnostics.mjs")], {
+    env: { ...process.env, DENSE_MEM_CI_REDACT_ENV_FILE: "", DENSE_MEM_CI_REDACT_ALLOW_SHORT: "1",
+      DENSE_MEM_CI_REDACT_EXTRA_VALUES: "x".repeat(128) },
+    stdio: ["pipe", "pipe", "inherit"],
+  });
+  const stopped = [once(runner, "close"), once(redactor, "close")];
+  let deadline;
+  try {
+    const line = await new Promise((resolve, reject) => {
+      let output = "";
+      deadline = setTimeout(() => reject(new Error("controller withheld the active case while the runner was blocked")), 4000);
+      runner.on("error", reject);
+      redactor.on("error", reject);
+      redactor.stdout.on("data", (chunk) => {
+        output += chunk;
+        if (output.includes("\n")) resolve(output.slice(0, output.indexOf("\n")));
+      });
+      runner.stderr.pipe(redactor.stdin);
+    });
+    const progress = JSON.parse(line);
+    assert.equal(progress.case, "diagnostics/stalled-ci-case");
+    assert.equal(progress.outcome, "started");
+    assert.equal(progress.run_id, "live-progress");
+    assert.equal(runner.exitCode, null);
+    assert.equal(redactor.exitCode, null);
+  } finally {
+    clearTimeout(deadline);
+    runner.kill("SIGTERM");
+    redactor.kill("SIGTERM");
+    await Promise.allSettled(stopped);
+  }
+});
+
 test("diagnostics retain exact redaction across split and overlapping secrets", () => {
   const values = ["secret", "secret-extended", "token:fixture", "🔑private-key"];
   const input = "Ω plain secret-extended / secret / token:fixture / 🔑private-key end";

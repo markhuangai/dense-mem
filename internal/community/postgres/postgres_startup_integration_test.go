@@ -122,64 +122,78 @@ func TestCommunityTopicPostgresStartupReadiness(t *testing.T) {
 
 func TestCommunityTopicPostgresStartupFailureCleanup(t *testing.T) {
 	t.Setenv("LOG_LEVEL", "info")
-	var created []testcontainers.Container
-	options, _ := postgresStartupTestOptions(t, &created)
-	secret := "startup-operational-credential-691+/"
-	encoded := url.QueryEscape(secret)
-	options = append(options, postgresStartupInitScript(t, fmt.Sprintf("echo 'startup-init-failure: address already in use'\necho '%s %s admitted-password-field'\nhead -c 20000 /dev/zero | tr '\\000' x\necho startup-log-end\nexit 17\n", secret, encoded)))
-	var container *tcpostgres.PostgresContainer
-	var err error
-	logs := capturePostgresStartupLogs(t, func() {
-		container, err = runLedgerPostgresContainer(observability.WithAuthenticationSecrets(context.Background(), secret), options...)
-	})
-	require.NotContains(t, logs, secret)
-	require.NotContains(t, logs, encoded)
-	require.Contains(t, logs, "admitted-password-field")
-	require.Contains(t, logs, observability.CredentialProtectionRedacted)
-	require.Contains(t, logs, `"logs_truncated":true`)
-	require.Contains(t, logs, `"exit_code":17`)
-	require.Contains(t, logs, `"running":false`)
-	require.Contains(t, logs, `"oom_killed":false`)
-	require.NotContains(t, logs, "diagnostic_unavailable_reason")
-	var manifest map[string]any
-	var chunks []string
-	for _, line := range strings.Split(logs, "\n") {
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		var event map[string]any
-		require.NoError(t, json.Unmarshal([]byte(line), &event))
-		if event["msg"] == "postgres_fixture_diagnostics" {
-			manifest = event
-		}
-		if event["msg"] == "postgres_fixture_log_chunk" {
-			require.Equal(t, float64(len(chunks)), event["chunk_index"])
-			chunks = append(chunks, event["content"].(string))
-		}
+	for _, truncated := range []bool{false, true} {
+		t.Run(fmt.Sprintf("truncated=%t", truncated), func(t *testing.T) {
+			var created []testcontainers.Container
+			options, _ := postgresStartupTestOptions(t, &created)
+			secret := "startup-operational-credential-691+/"
+			encoded := url.QueryEscape(secret)
+			script := fmt.Sprintf("echo 'startup-init-failure: address already in use'\necho '%s %s admitted-password-field'\n", secret, encoded)
+			if truncated {
+				script += fmt.Sprintf("printf '%%s' '%s'\nhead -c 20000 /dev/zero | tr '\\000' x\n", strings.Repeat(secret, 600))
+			}
+			script += "echo startup-log-end\nexit 17\n"
+			options = append(options, postgresStartupInitScript(t, script))
+			var container *tcpostgres.PostgresContainer
+			var err error
+			logs := capturePostgresStartupLogs(t, func() {
+				container, err = runLedgerPostgresContainer(observability.WithAuthenticationSecrets(context.Background(), secret), options...)
+			})
+			require.NotContains(t, logs, secret)
+			require.NotContains(t, logs, encoded)
+			require.Contains(t, logs, fmt.Sprintf(`"logs_truncated":%t`, truncated))
+			require.Contains(t, logs, `"exit_code":17`)
+			require.Contains(t, logs, `"running":false`)
+			require.Contains(t, logs, `"oom_killed":false`)
+			require.NotContains(t, logs, `"msg":"postgres_fixture_retry"`)
+			require.Nil(t, container)
+			require.ErrorContains(t, err, "container exited with code 17")
+			require.NotContains(t, err.Error(), secret)
+			require.NotContains(t, err.Error(), encoded)
+			require.Contains(t, err.Error(), "running=false")
+			require.Contains(t, err.Error(), "exit_code=17")
+			require.Contains(t, err.Error(), "oom_killed=false")
+			require.Contains(t, err.Error(), fmt.Sprintf("logs_truncated=%t", truncated))
+			var manifest map[string]any
+			var chunks []string
+			for _, line := range strings.Split(logs, "\n") {
+				if strings.TrimSpace(line) == "" {
+					continue
+				}
+				var event map[string]any
+				require.NoError(t, json.Unmarshal([]byte(line), &event))
+				if event["msg"] == "postgres_fixture_diagnostics" {
+					manifest = event
+				}
+				if event["msg"] == "postgres_fixture_log_chunk" {
+					require.Equal(t, float64(len(chunks)), event["chunk_index"])
+					chunks = append(chunks, event["content"].(string))
+				}
+			}
+			require.NotNil(t, manifest)
+			if truncated {
+				require.Equal(t, float64(16*1024), manifest["log_bytes"])
+				require.Equal(t, "incomplete startup log capture", manifest["logs_unavailable"])
+				require.Empty(t, chunks)
+				require.NotContains(t, logs, secret[:16])
+				require.NotContains(t, err.Error(), secret[:16])
+				require.Contains(t, err.Error(), "[omitted: incomplete startup log capture]")
+				require.NotContains(t, err.Error(), "startup-log-end")
+			} else {
+				require.NotContains(t, logs, "diagnostic_unavailable_reason")
+				require.Len(t, chunks, int(manifest["chunk_count"].(float64)))
+				reconstructed := strings.Join(chunks, "")
+				require.Len(t, reconstructed, int(manifest["protected_bytes"].(float64)))
+				require.Contains(t, reconstructed, "startup-init-failure: address already in use")
+				require.Contains(t, reconstructed, "admitted-password-field")
+				require.Contains(t, reconstructed, observability.CredentialProtectionRedacted)
+				excerpt := strings.SplitN(err.Error(), "Postgres startup logs (logs_truncated=false):\n", 2)
+				require.Len(t, excerpt, 2)
+				require.Equal(t, reconstructed, excerpt[1])
+			}
+			assertPostgresStartupContainerRemoved(t, created)
+		})
 	}
-	require.NotNil(t, manifest)
-	require.Equal(t, float64(16*1024), manifest["log_bytes"])
-	require.Len(t, chunks, int(manifest["chunk_count"].(float64)))
-	reconstructed := strings.Join(chunks, "")
-	require.Len(t, reconstructed, int(manifest["protected_bytes"].(float64)))
-	require.Contains(t, reconstructed, "startup-init-failure: address already in use")
-	require.Contains(t, reconstructed, "admitted-password-field")
-	require.NotContains(t, logs, `"msg":"postgres_fixture_retry"`)
-	require.Nil(t, container)
-	require.ErrorContains(t, err, "container exited with code 17")
-	require.NotContains(t, err.Error(), secret)
-	require.NotContains(t, err.Error(), encoded)
-	require.Contains(t, err.Error(), observability.CredentialProtectionRedacted)
-	require.Contains(t, err.Error(), "running=false")
-	require.Contains(t, err.Error(), "exit_code=17")
-	require.Contains(t, err.Error(), "oom_killed=false")
-	require.Contains(t, err.Error(), "startup-init-failure: address already in use")
-	require.Contains(t, err.Error(), "logs_truncated=true")
-	require.NotContains(t, err.Error(), "startup-log-end")
-	excerpt := strings.SplitN(err.Error(), "Postgres startup logs (logs_truncated=true):\n", 2)
-	require.Len(t, excerpt, 2)
-	require.Equal(t, reconstructed, excerpt[1])
-	assertPostgresStartupContainerRemoved(t, created)
 }
 
 func capturePostgresStartupLogs(t *testing.T, run func()) (captured string) {

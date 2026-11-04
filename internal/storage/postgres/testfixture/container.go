@@ -135,30 +135,36 @@ func startupDiagnostics(ctx context.Context, container *postgres.PostgresContain
 	if err := errors.Join(readErr, closeErr); err != nil {
 		attrs = append(attrs, observability.String("logs_interrupted", err.Error()))
 	}
-	// Protect the complete excerpt before splitting so credentials crossing chunk boundaries stay masked.
-	protected := observability.NewCredentialProtector().Snapshot(string(excerpt), 128*1024, observability.AuthenticationSecretsFromContext(ctx)...)
-	protectedText := "[omitted: credential protection unavailable]"
-	if protected.UnavailableReason != observability.CredentialProtectionAvailable {
+	protectedText := "[omitted: incomplete startup log capture]"
+	if truncated || readErr != nil || closeErr != nil {
+		// An incomplete capture can end inside a credential that exact-value protection cannot match.
 		logger.LogContext(ctx, level, "postgres_fixture_diagnostics", append(attrs,
-			observability.Int("diagnostic_unavailable_reason", int(protected.UnavailableReason)))...)
+			observability.String("logs_unavailable", "incomplete startup log capture"))...)
 	} else {
-		protectedText = protected.Value.(string)
-		text := protectedText
-		attrs = append(attrs, observability.Int("protected_bytes", len(text)))
-		var chunks []string
-		for len(text) > 0 {
-			end := min(len(text), 2048)
-			for end < len(text) && !utf8.RuneStart(text[end]) {
-				end--
+		protected := observability.NewCredentialProtector().Snapshot(string(excerpt), 128*1024, observability.AuthenticationSecretsFromContext(ctx)...)
+		protectedText = "[omitted: credential protection unavailable]"
+		if protected.UnavailableReason != observability.CredentialProtectionAvailable {
+			logger.LogContext(ctx, level, "postgres_fixture_diagnostics", append(attrs,
+				observability.Int("diagnostic_unavailable_reason", int(protected.UnavailableReason)))...)
+		} else {
+			protectedText = protected.Value.(string)
+			text := protectedText
+			attrs = append(attrs, observability.Int("protected_bytes", len(text)))
+			var chunks []string
+			for len(text) > 0 {
+				end := min(len(text), 2048)
+				for end < len(text) && !utf8.RuneStart(text[end]) {
+					end--
+				}
+				chunks = append(chunks, text[:end])
+				text = text[end:]
 			}
-			chunks = append(chunks, text[:end])
-			text = text[end:]
-		}
-		logger.LogContext(ctx, level, "postgres_fixture_diagnostics", append(attrs, observability.Int("chunk_count", len(chunks)))...)
-		for index, chunk := range chunks {
-			logger.LogContext(ctx, level, "postgres_fixture_log_chunk", observability.Int("attempt", attempt),
-				observability.String("container_id", container.GetContainerID()), observability.Int("chunk_index", index),
-				observability.Int("chunk_count", len(chunks)), observability.String("content", chunk))
+			logger.LogContext(ctx, level, "postgres_fixture_diagnostics", append(attrs, observability.Int("chunk_count", len(chunks)))...)
+			for index, chunk := range chunks {
+				logger.LogContext(ctx, level, "postgres_fixture_log_chunk", observability.Int("attempt", attempt),
+					observability.String("container_id", container.GetContainerID()), observability.Int("chunk_index", index),
+					observability.Int("chunk_count", len(chunks)), observability.String("content", chunk))
+			}
 		}
 	}
 	diagnostics = errors.Join(diagnostics, fmt.Errorf("Postgres startup logs (logs_truncated=%t):\n%s", truncated, protectedText))
