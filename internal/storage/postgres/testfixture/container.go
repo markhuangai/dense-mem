@@ -52,7 +52,7 @@ func Run(ctx context.Context, image string, options ...testcontainers.ContainerC
 			return container, nil
 		}
 		retry := publishedPortCollision(startupErr)
-		lastErr = fmt.Errorf("Postgres startup attempt=%d elapsed=%s: %w", attempt, time.Since(started), startupErr)
+		lastErr = fmt.Errorf("postgres startup attempt=%d elapsed=%s: %w", attempt, time.Since(started), startupErr)
 		containerID := ""
 		if container != nil {
 			containerID = container.GetContainerID()
@@ -108,14 +108,14 @@ func publishedPortCollision(err error) bool {
 func startupDiagnostics(ctx context.Context, container *postgres.PostgresContainer, logger observability.ContextLogProvider, level slog.Level, attempt int) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
-	diagnostics := fmt.Errorf("Postgres startup container=%s", container.GetContainerID())
+	diagnostics := fmt.Errorf("postgres startup container=%s", container.GetContainerID())
 	attrs := []observability.LogAttr{observability.Int("attempt", attempt), observability.String("container_id", container.GetContainerID())}
 	state, err := container.State(ctx)
 	if err != nil {
 		diagnostics = errors.Join(diagnostics, fmt.Errorf("collect Postgres startup state: %w", err))
 		attrs = append(attrs, observability.String("state_unavailable", err.Error()))
 	} else {
-		diagnostics = errors.Join(diagnostics, fmt.Errorf("Postgres startup status=%s running=%t exit_code=%d oom_killed=%t", state.Status, state.Running, state.ExitCode, state.OOMKilled))
+		diagnostics = errors.Join(diagnostics, fmt.Errorf("postgres startup status=%s running=%t exit_code=%d oom_killed=%t", state.Status, state.Running, state.ExitCode, state.OOMKilled))
 		attrs = append(attrs, observability.String("status", string(state.Status)), observability.Bool("running", state.Running),
 			observability.Int("exit_code", state.ExitCode), observability.Bool("oom_killed", state.OOMKilled))
 	}
@@ -167,7 +167,7 @@ func startupDiagnostics(ctx context.Context, container *postgres.PostgresContain
 			}
 		}
 	}
-	diagnostics = errors.Join(diagnostics, fmt.Errorf("Postgres startup logs (logs_truncated=%t):\n%s", truncated, protectedText))
+	diagnostics = errors.Join(diagnostics, fmt.Errorf("postgres startup logs (logs_truncated=%t):\n%s", truncated, protectedText))
 	if err := errors.Join(readErr, closeErr); err != nil {
 		diagnostics = errors.Join(diagnostics, fmt.Errorf("collect Postgres startup log content: %w", err))
 	}

@@ -85,7 +85,6 @@ func skipIfNoPostgres(t *testing.T, ctx context.Context) (string, func()) {
 		}
 		baseCleanup = func() { _ = container.Terminate(context.Background()) }
 	}
-
 	// Test connection
 	db, err := postgres.Open(ctx, &testConfig{dsn: dsn})
 	if err != nil {

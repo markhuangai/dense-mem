@@ -187,7 +187,7 @@ func TestCommunityTopicPostgresStartupFailureCleanup(t *testing.T) {
 				require.Contains(t, reconstructed, "startup-init-failure: address already in use")
 				require.Contains(t, reconstructed, "admitted-password-field")
 				require.Contains(t, reconstructed, observability.CredentialProtectionRedacted)
-				excerpt := strings.SplitN(err.Error(), "Postgres startup logs (logs_truncated=false):\n", 2)
+				excerpt := strings.SplitN(err.Error(), "postgres startup logs (logs_truncated=false):\n", 2)
 				require.Len(t, excerpt, 2)
 				require.Equal(t, reconstructed, excerpt[1])
 			}
