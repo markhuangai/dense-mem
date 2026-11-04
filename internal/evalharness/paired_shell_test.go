@@ -190,6 +190,51 @@ func TestPairShellDeadlineResumeAndCapturePreservation(t *testing.T) {
 		command.Env = append(os.Environ(), "PAIR_RUNNER="+binary, "PAIR_CONFIG="+configPath, "PAIR_SCRIPT="+script)
 		return command.CombinedOutput()
 	}
+	t.Run("http_failure_before_deadline_blocks_retry", func(t *testing.T) {
+		requestedAt := make(chan time.Time, 1)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requestedAt <- time.Now()
+			http.Error(w, "fixture unavailable", http.StatusServiceUnavailable)
+		}))
+		defer server.Close()
+		c := pairedFixture(t)
+		c.Candidate.Runtime.ControlURL = server.URL
+		c.Deadline = time.Now().Add(3 * time.Second)
+		configPath := filepath.Join(t.TempDir(), "pair.json")
+		require.NoError(t, writePairJSON(configPath, c))
+		t.Setenv("PAIR_CONTROL_TOKEN", "fixture-token")
+		output, err := run(configPath, `set -Eeuo pipefail
+source "$PAIR_SCRIPT"
+pair_side=candidate; pair_stage_dir=""; pair_interrupted=false
+trap 'pair_on_error "$?"' ERR
+pair_begin import
+jq() {
+  if [[ "$*" == '-e .data' ]]; then sleep 4; fi
+  command jq "$@"
+}
+pair_control /search/convergence`)
+		var exited *exec.ExitError
+		require.ErrorAs(t, err, &exited, "%s", output)
+		require.Equal(t, 4, exited.ExitCode(), "%s", output)
+		require.Contains(t, string(output), "curl: (22)")
+		select {
+		case observed := <-requestedAt:
+			require.True(t, observed.Before(c.Deadline), "HTTP error must precede the deadline")
+		default:
+			t.Fatal("control request did not reach the HTTP server")
+		}
+		require.True(t, time.Now().After(c.Deadline))
+		stage := filepath.Join(c.OutDir, "candidate", "import", "attempt-0001")
+		require.FileExists(t, filepath.Join(stage, "failure.json"))
+		c.Deadline = time.Now().Add(time.Minute)
+		require.NoError(t, writePairJSON(configPath, c))
+		process, err := PairProcessIdentity(os.Getpid())
+		require.NoError(t, err)
+		_, err = BeginPairStage(c, "candidate", "import", process)
+		require.ErrorContains(t, err, "retained failure; automatic retry is forbidden")
+		require.NoFileExists(t, filepath.Join(stage, "interrupted.json"))
+		require.NoDirExists(t, filepath.Join(c.OutDir, "candidate", "import", "attempt-0002"))
+	})
 	t.Run("successful_native_completion", func(t *testing.T) {
 		c := pairedFixture(t)
 		configPath := filepath.Join(t.TempDir(), "pair.json")

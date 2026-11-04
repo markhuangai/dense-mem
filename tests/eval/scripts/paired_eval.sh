@@ -22,7 +22,7 @@ pair_http() {
 }
 
 pair_control() {
-  local request_seconds=30 code
+  local request_seconds=30 code request_code
   if [[ "$1" == /search/convergence && "${2:-GET}" == GET ]]; then
     request_seconds="$(pair_remaining)" || return "$?"
     (( request_seconds <= 180 )) || request_seconds=180
@@ -30,8 +30,8 @@ pair_control() {
   if pair_http "$(pair_value '.runtime.control_url')/control/api$1" "$(pair_value '.runtime.control_token_env')" "${2:-GET}" "${3:-}" false "${request_seconds}" | jq -e '.data'; then
     return 0
   else
-    code=$?
-    if [[ "$1" == /search/convergence && "${2:-GET}" == GET ]]; then
+    code=$? request_code="${PIPESTATUS[0]}"
+    if (( request_code == 28 )) && [[ "$1" == /search/convergence && "${2:-GET}" == GET ]]; then
       pair_remaining >/dev/null || return "$?"
     fi
     return "${code}"
