@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { assertTerminalRememberResult } from "../surface.mjs";
+import { diagnoseRememberFailure } from "./diagnostics.mjs";
 
 export const name = "remember";
 
@@ -1350,7 +1351,18 @@ async function runCardinalitySearchRetirementCase({ rpc, expect }) {
   assert.deepEqual(state(firstID), original, "failed replacement must preserve the active source and current vector");
   const replacementArgs = args("replacement", "GraphDB");
   const replacement = await remember(replacementArgs);
-  expect(replacement.processing_state === "completed", "cardinality replacement must complete");
+  try {
+    expect(replacement.processing_state === "completed", "cardinality replacement must complete");
+  } catch (error) {
+    try {
+      const detail = (await controlJSON(`/teams/${teamID}/remember-attempts/${encodeURIComponent(replacement.submission_id)}`, { signal: AbortSignal.timeout(5000) })).data;
+      console.error(JSON.stringify(diagnoseRememberFailure(detail)));
+    } catch {
+      console.error(JSON.stringify({ type: "remember_failure_diagnostics_unavailable", attempt_id: replacement.submission_id,
+        correlation_id: replacement.correlation_id, reason: "control_diagnostic_read_failed" }));
+    }
+    throw error;
+  }
   const retired = state(firstID);
   expect(retired.status === "superseded" && retired.search_state === "not_required" && !retired.has_embedding, "superseded predecessor must have no current search projection or vector");
   expect(retired.source_version === retired.version, "retirement must fence the current canonical source version");
