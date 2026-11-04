@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -72,24 +71,6 @@ func semanticAssessmentConversationCandidateContextTokens(messages []openAIVerif
 		total += count
 	}
 	return total, nil
-}
-
-func boundedSemanticAssessmentCorrectionErrors(errs []assessor.SemanticValidationError) []assessor.SemanticValidationError {
-	bounded := append([]assessor.SemanticValidationError(nil), errs...)
-	sort.Slice(bounded, func(i, j int) bool {
-		if bounded[i].Field == bounded[j].Field {
-			return bounded[i].Message < bounded[j].Message
-		}
-		return bounded[i].Field < bounded[j].Field
-	})
-	if len(bounded) <= assessor.SemanticAssessmentMaxCorrectionErrors {
-		return bounded
-	}
-	bounded = bounded[:assessor.SemanticAssessmentMaxCorrectionErrors-1]
-	return append(bounded, assessor.SemanticValidationError{
-		Field:   "response",
-		Message: "additional validation errors were omitted; return one complete response matching the schema",
-	})
 }
 
 func semanticAssessmentValidationFieldFamilies(errs []assessor.SemanticValidationError) []string {
@@ -221,16 +202,7 @@ func semanticAssessmentResponseForCorrection(
 		if errors.As(err, &validation) {
 			return assessor.SemanticAssessmentResponse{}, validation.Errors, "response_json"
 		}
-		field := "response"
-		message := "must be one complete JSON object matching the required field types"
-		var typeError *json.UnmarshalTypeError
-		if errors.As(err, &typeError) && typeError.Field != "" {
-			field = typeError.Field
-			message = "must match the required JSON type"
-		}
-		return assessor.SemanticAssessmentResponse{}, []assessor.SemanticValidationError{
-			errField(field, message),
-		}, "response_json"
+		return assessor.SemanticAssessmentResponse{}, []assessor.SemanticValidationError{assessor.ResponseJSONValidationError(err, "")}, "response_json"
 	}
 	normalized, validationErrors := assessor.PrepareSemanticAssessmentResponse(req, response, limits)
 	if len(validationErrors) > 0 {

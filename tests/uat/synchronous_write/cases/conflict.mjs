@@ -25,6 +25,9 @@ export async function run() {
       }
     : process.env;
   const result = spawnSync(process.execPath, [script], { encoding: "utf8", env });
+  for (const line of (result.stderr || "").split(/\r?\n/)) {
+    if (line.startsWith('{"type":"provider_http_diagnostics",')) process.stderr.write(line + "\n");
+  }
   if (result.status !== 0) {
     throw new Error(`conflict synchronous-write case failed: ${result.stderr || result.stdout}`);
   }

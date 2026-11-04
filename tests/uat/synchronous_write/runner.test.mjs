@@ -9,6 +9,26 @@ import { createServer } from "node:http";
 
 import { fixtureChatResponse, fixtureFault } from "./provider-fixture.mjs";
 import { discoverCases } from "./runner.mjs";
+import { createHash } from "node:crypto";
+import { diagnoseProviderHTTPLog } from "./cases/diagnostics.mjs";
+
+test("private HTTP diagnostics reconstruct and verify chunks without exporting bodies", () => {
+  const body = '{"error":"complete private provider response"}';
+  const digest = createHash("sha256").update(body).digest("hex");
+  const parts = [body.slice(0, 15), body.slice(15)];
+  const records = parts.map((part, index) => ({ msg: "ai_exchange_payload", exchange_id: "exchange", direction: "response", team_id: "team", run_id: "run", batch_id: "batch", status_code: 409, transport_capture_state: "captured", started_at: "2026-11-03T22:00:00Z", elapsed_ms: 12, payload_chunk: { index, count: 2, body: part, sha256: digest, state: "captured" } }));
+  const encoded = records.map(JSON.stringify).join("\n");
+  const result = diagnoseProviderHTTPLog(encoded);
+  assert.equal(result.exchanges.length, 1);
+  assert.equal(result.exchanges[0].status_code, 409);
+  assert.equal(result.exchanges[0].sha256, digest);
+  assert.equal(result.exchanges[0].protected_bytes, Buffer.byteLength(body));
+  assert.doesNotMatch(JSON.stringify(result), /complete private provider response/);
+  assert.throws(() => diagnoseProviderHTTPLog(JSON.stringify(records[0])), /chunk count mismatch/);
+  const corrupted = structuredClone(records);
+  corrupted[1].payload_chunk.body = "changed";
+  assert.throws(() => diagnoseProviderHTTPLog(corrupted.map(JSON.stringify).join("\n")), /digest mismatch/);
+});
 
 test("case progress preserves results, errors, stdout and run correlation", async () => {
   const runner = new URL("./runner.mjs", import.meta.url).href;

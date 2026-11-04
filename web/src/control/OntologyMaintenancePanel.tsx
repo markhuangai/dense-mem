@@ -7,6 +7,7 @@ import { RefreshCw } from "lucide-react";
 import type { ControlApi, OntologyMaintenanceRunPage, OntologyMaintenanceStatus } from "../api";
 import { LoadingState, SectionHeading, UsageMeter } from "../ui/components";
 import { formatDate, readError } from "./utils";
+import { OntologyFailureDiagnostics } from "./OntologyFailureDiagnostics";
 
 export function OntologyMaintenancePanel({ api, onStatus }: { api: ControlApi; onStatus?: (status: OntologyMaintenanceStatus) => void }) {
   const [status, setStatus] = useState<OntologyMaintenanceStatus | null>(null);
@@ -16,6 +17,7 @@ export function OntologyMaintenancePanel({ api, onStatus }: { api: ControlApi; o
   const [error, setError] = useState("");
   const [refreshError, setRefreshError] = useState("");
   const [message, setMessage] = useState("");
+  const [diagnosticRun, setDiagnosticRun] = useState("");
   const [retryKey, setRetryKey] = useState<{ intent: string; key: string } | null>(null);
 
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -161,12 +163,13 @@ export function OntologyMaintenancePanel({ api, onStatus }: { api: ControlApi; o
         <div className="table-wrap"><Table className="data-table"><TableHeader><TableRow><TableHead>Run</TableHead><TableHead>Kind</TableHead><TableHead>Status</TableHead><TableHead>Batches / historical tokens</TableHead><TableHead>Reason</TableHead><TableHead>Action</TableHead></TableRow></TableHeader><TableBody>
           {runs.runs.map((run) => <TableRow key={run.id}>
             <TableCell title={run.id}>{run.id.slice(0, 8)}</TableCell><TableCell>{run.kind === "allowance" ? "Historical allowance" : run.kind}</TableCell><TableCell><span className={`status-pill ${run.status === "completed" ? "success" : run.status === "failed" ? "error" : run.retryable ? "warning" : "neutral"}`}>{run.status}</span></TableCell><TableCell>{run.kind === "allowance" ? `${(run.input_tokens ?? 0).toLocaleString()} input / ${(run.output_tokens ?? 0).toLocaleString()} output` : `${run.completed_batches}${run.max_batches ? ` / ${run.max_batches}` : ""}`}</TableCell><TableCell>{run.failure_code ?? "—"}</TableCell>
-            <TableCell>{run.retryable && <Button variant="outline" type="button" disabled={busy || historyLoading || Boolean(refreshError) || !status.enabled || status.paused || Boolean(status.configuration_error)} onClick={() => void command("run", run.id)}>Retry failed work</Button>}</TableCell>
+            <TableCell>{run.retryable && <Button variant="outline" type="button" disabled={busy || historyLoading || Boolean(refreshError) || !status.enabled || status.paused || Boolean(status.configuration_error)} onClick={() => void command("run", run.id)}>Retry failed work</Button>}{(run.failure_code || run.status === "failed") && <Button variant="outline" type="button" onClick={() => setDiagnosticRun(run.id)}>View failure diagnostics</Button>}</TableCell>
           </TableRow>)}
         </TableBody></Table></div>
         {!runs.runs.length && <p className="form-meta">No maintenance runs recorded.</p>}
         {runs.next_cursor && <Button variant="outline" type="button" disabled={historyLoading || busy} onClick={() => void loadMore()}>Load older runs</Button>}
       </section>
+      {diagnosticRun && <OntologyFailureDiagnostics api={api} runId={diagnosticRun} key={diagnosticRun} />}
     </>}
   </div>;
 }

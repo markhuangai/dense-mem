@@ -16,3 +16,10 @@ func rootSlogLogger(logger observability.LogProvider) *slog.Logger {
 	}
 	return nil
 }
+
+func rootDiagnosticLogger(logger observability.LogProvider) *slog.Logger {
+	if provider, ok := logger.(interface{ ContextSlog() *slog.Logger }); ok {
+		return provider.ContextSlog()
+	}
+	return nil
+}

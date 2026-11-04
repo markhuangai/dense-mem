@@ -46,8 +46,8 @@ describe("RememberAttemptsPanel", () => {
   it("explains legal-hold retention and shows a held call capture after normal expiry", async () => {
     const invocation = {
       team_id: "team-1", owner_profile_id: "owner-1", invocation_id: "held-call", canonical_attempt_id: "attempt-1",
-      request_hash: "hash-1", correlation_id: "corr-1", classification: "execution", outcome: "completed",
-      phase: "commit", protected_cause: "", delivery_stage: "write_observed", retryable: false,
+      request_hash: "hash-1", correlation_id: "corr-1", classification: "execution", outcome: "failed",
+      phase: "assessment", protected_cause: "provider unavailable", delivery_stage: "write_observed", retryable: true,
       duration_ms: 3, created_at: "2026-08-18T01:00:00Z", expires_at: "2026-08-25T01:00:00Z", retained_by_legal_hold: true,
     } as const;
     const api = {
@@ -64,6 +64,19 @@ describe("RememberAttemptsPanel", () => {
     const detail = await screen.findByRole("region", { name: "Remember call details" });
     expect(within(detail).getByText("Legal hold")).toBeInTheDocument();
     expect(within(detail).getByText("held request body")).toBeInTheDocument();
+  });
+
+  it.each(["calls", "attempts"] as const)("keeps successful %s metadata visible and hides all captured bodies", async (view) => {
+    const invocation = { team_id: "team-1", owner_profile_id: "owner-1", invocation_id: "successful-call", request_hash: "hash", correlation_id: "corr", classification: "execution", outcome: "completed", retryable: false, duration_ms: 1, phase: "commit", delivery_stage: "unknown_receipt", created_at: "2026-08-18T01:00:00Z", expires_at: "2026-08-25T01:00:00Z", retained_by_legal_hold: false, request_capture_state: "captured", request_body: "successful request canary", caller_response_capture_state: "captured", caller_response: "successful response canary", provider_exchanges: [{ component: "assessor", sequence_no: 1, request_body: "successful AI request canary", response_body: "successful AI response canary", outcome: "captured" }] };
+    const detail = { ...baseDetail("successful-attempt"), diagnostics: { original_request: { request_body: "successful request canary", capture_state: "captured" }, provider_exchanges: [{ request_body: "successful AI request canary", response_body: "successful AI response canary", capture_state: "captured" }], caller_response: { response_body: "successful response canary", capture_state: "captured" } } };
+    const api = { listRememberInvocationDiagnostics: vi.fn().mockResolvedValue({ data: [invocation], pagination: { total: 1 } }), getRememberInvocationDiagnostic: vi.fn().mockResolvedValue(invocation), listRememberAttemptDiagnostics: vi.fn().mockResolvedValue({ data: [summary("successful-attempt")], pagination: { total: 1 } }), getRememberAttemptDiagnostic: vi.fn().mockResolvedValue(detail) } as unknown as ControlApi;
+    render(<RememberAttemptsPanel api={api} team={team()} initialView={view} />);
+    await userEvent.click(await screen.findByRole("button", { name: view === "calls" ? "Inspect Remember call successful-call" : "Inspect Remember attempt successful-attempt" }));
+    const region = await screen.findByRole("region", { name: view === "calls" ? "Remember call details" : "Remember attempt details" });
+    expect(region).toBeVisible();
+    expect(screen.queryByText(/successful .*canary/)).not.toBeInTheDocument();
+    expect(within(region).queryByText("Original request")).not.toBeInTheDocument();
+    expect(within(region).queryByText("AI provider exchanges")).not.toBeInTheDocument();
   });
 
   it("opens on calls and links a call to filtered logs and its canonical attempt", async () => {

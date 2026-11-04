@@ -356,6 +356,15 @@ func (l *Logger) Slog() *slog.Logger {
 	return slog.New(legacyBridgeHandler{delegate: l.logger.Handler()})
 }
 
+// ContextSlog preserves exact admitted content for producers that always supply
+// a context; Slog retains its context-free compatibility contract.
+func (l *Logger) ContextSlog() *slog.Logger {
+	if l == nil {
+		return nil
+	}
+	return l.logger
+}
+
 // toSlogAttrs converts LogAttr slice to slog.Attr slice.
 // Derived vectors and embeddings are retained in their dedicated stores.
 func toSlogAttrs(attrs []LogAttr) []any {

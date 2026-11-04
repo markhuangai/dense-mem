@@ -11,6 +11,29 @@ type CallDiagnostics struct {
 	ReconciliationFailed bool   `json:"reconciliation_failed,omitempty"`
 }
 
+// LogFields projects measured values without opaque structs or mutable duration pointers.
+func (d *CallDiagnostics) LogFields() map[string]any {
+	if d == nil {
+		return nil
+	}
+	fields := map[string]any{}
+	for key, value := range map[string]*int64{
+		"queue_ms": d.QueueMS, "admission_ms": d.AdmissionMS, "http_ms": d.HTTPMS,
+		"reconciliation_ms": d.ReconciliationMS, "http_timeout_ms": d.HTTPTimeoutMS,
+	} {
+		if value != nil {
+			fields[key] = *value
+		}
+	}
+	if d.FailurePhase != "" {
+		fields["failure_phase"] = d.FailurePhase
+	}
+	if d.ReconciliationFailed {
+		fields["reconciliation_failed"] = true
+	}
+	return fields
+}
+
 func (d *CallDiagnostics) Valid() bool {
 	if d == nil {
 		return true

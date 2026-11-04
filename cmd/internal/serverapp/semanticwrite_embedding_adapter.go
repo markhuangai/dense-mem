@@ -28,6 +28,9 @@ func (a semanticwriteEmbeddingAdapter) EmbedBatch(ctx context.Context, texts []s
 		if metadata.Code == "provider_response_invalid" {
 			return nil, "", semanticwrite.ErrProviderResponseInvalid
 		}
+		if metadata.Code == "provider_timeout" {
+			return nil, "", semanticwrite.ErrProviderTimeout
+		}
 		return nil, "", err
 	}
 	result := make([]semanticwrite.IndexedEmbedding, len(vectors))

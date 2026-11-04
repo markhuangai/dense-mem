@@ -202,7 +202,7 @@ func TestOntologyMaintenanceAttemptDiagnosticsPersistenceAndFailureBoundaries(t 
 					require.NotNil(t, attempt.Validation)
 					require.Equal(t, "response_invalid", attempt.FailureCode)
 					if mode == "decode_invalid" || (mode == "repaired" && i == 0) {
-						require.Equal(t, &ontology.AssessmentValidation{Stage: "decode", Code: "strict_json", FieldFamily: "response"}, attempt.Validation)
+						require.Equal(t, &ontology.AssessmentValidation{Stage: "decode", Code: "missing_field", FieldFamily: "request_id"}, attempt.Validation)
 					} else {
 						require.Equal(t, "validate", attempt.Validation.Stage)
 						require.Equal(t, "item_count_mismatch", attempt.Validation.Code)

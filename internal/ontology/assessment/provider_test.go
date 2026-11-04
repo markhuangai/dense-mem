@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -25,7 +26,7 @@ func TestOrganizationExplicitContextWindow(t *testing.T) {
 	calls := 0
 	transport := fixtureTransport(func(_ context.Context, req modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
 		calls++
-		input, err := NewProvider(nil, "model", limits, 300000).messageTokens(req.Messages)
+		input, err := NewProvider(nil, "model", limits, 300000).messageTokens(req.Messages, req.Schema)
 		require.NoError(t, err)
 		require.LessOrEqual(t, input+req.MaxOutputTokens, req.MaxInputTokens+req.MaxOutputTokens)
 		return modelprovider.StructuredResult{Content: string(valid)}, nil
@@ -58,6 +59,20 @@ func TestOrganizationExplicitContextWindow(t *testing.T) {
 	inputOnly, err := assessor.CountTokens(request.Items[0].Text+request.Items[1].Text, limits.Tokenizer)
 	require.NoError(t, err)
 	require.Greater(t, measured, inputOnly, "complete schema and message framing must be counted")
+}
+
+func TestOrganizationRepairContractInvalidatesPriorIdentity(t *testing.T) {
+	limits := assessor.DefaultSemanticAssessmentLimits()
+	provider := NewProvider(nil, "model", limits, 300000)
+	require.NoError(t, provider.ConfigurationError())
+	// These identities freeze the string and repeated-context feedback contracts with identical model and limits.
+	for _, priorIdentity := range []string{
+		"sha256:b929583c6d97c7cefdc6c23ac69de1644408b970dfbddb658ee1f947be5403c5",
+		"sha256:7a1a311acdce46400d7df74166abb914ad9b51328954997d621274a343ef7b5c",
+	} {
+		require.NotEqual(t, priorIdentity, provider.Identity())
+	}
+	require.Equal(t, provider.Identity(), NewProvider(nil, "model", limits, 300000).Identity())
 }
 
 func (f fixtureTransport) Complete(ctx context.Context, request modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
@@ -124,7 +139,7 @@ func TestOrganizationContextWindowIncludesRegenerationHistory(t *testing.T) {
 		calls := 0
 		provider := NewProvider(fixtureTransport(func(_ context.Context, req modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
 			calls++
-			tokens, err := NewProvider(nil, "model", limits, 300000).messageTokens(req.Messages)
+			tokens, err := NewProvider(nil, "model", limits, 300000).messageTokens(req.Messages, req.Schema)
 			require.NoError(t, err)
 			require.LessOrEqual(t, tokens+req.MaxOutputTokens, capacity)
 			if overflow {
@@ -201,12 +216,12 @@ func TestOrganizationSuppliedDefinitionsAreReusedWithoutEchoes(t *testing.T) {
 	}
 	require.NoError(t, Validate(request, response))
 	response.Definitions = []Definition{supplied}
-	require.EqualError(t, Validate(request, response), `response.definitions is only for new definitions; omit supplied ref "d0" and reuse it in items[].definition_ref`)
+	require.ErrorContains(t, Validate(request, response), `definitions[0].ref: response.definitions is only for new definitions; omit supplied ref "d0" and reuse it in items[].definition_ref`)
 	response.Definitions[0].Ref = ""
-	require.EqualError(t, Validate(request, response), "new definition ref is invalid or duplicated")
+	requireValidation(t, Validate(request, response), "validate", "definition_ref_invalid", "definitions")
 	response.Definitions[0].Ref = "d1"
 	response.Definitions = append(response.Definitions, response.Definitions[0])
-	require.EqualError(t, Validate(request, response), "new definition ref is invalid or duplicated")
+	requireValidation(t, Validate(request, response), "validate", "definition_ref_duplicate", "definitions")
 }
 
 func TestOrganizationEchoCorrectionRegeneratesCompleteResponses(t *testing.T) {
@@ -232,11 +247,11 @@ func TestOrganizationEchoCorrectionRegeneratesCompleteResponses(t *testing.T) {
 	provider := NewProvider(fixtureTransport(func(_ context.Context, req modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
 		require.Less(t, calls, len(responses))
 		if calls == 1 {
-			var correction map[string]string
+			var correction correctionFeedback
 			require.NoError(t, json.Unmarshal([]byte(req.Messages[3].Content), &correction))
-			require.Equal(t, echoError.Error(), correction["validation_errors"])
-			require.Contains(t, correction["validation_errors"], `"d0"`)
-			require.NotContains(t, correction["validation_errors"], `"d1"`)
+			requireCorrectionErrors(t, echoError, correction.ValidationErrors)
+			require.Contains(t, correctionMessages(correction), `"d0"`)
+			require.NotContains(t, correctionMessages(correction), `"d1"`)
 		}
 		encoded, err := json.Marshal(responses[calls])
 		require.NoError(t, err)
@@ -261,7 +276,7 @@ func TestOrganizationCompleteRegenerationAndTokenAccounting(t *testing.T) {
 	transport := fixtureTransport(func(ctx context.Context, req modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
 		calls++
 		require.Equal(t, SchemaName, req.SchemaName)
-		require.Equal(t, ResponseSchema(), req.Schema)
+		require.Equal(t, ResponseSchema(request.RequestID), req.Schema)
 		if calls == 1 {
 			return modelprovider.StructuredResult{Content: `{"request_id":"request","definitions":[],"items":[],"equivalence":[]}`}, nil
 		}
@@ -288,6 +303,144 @@ func TestOrganizationCompleteRegenerationAndTokenAccounting(t *testing.T) {
 	require.ErrorIs(t, err, modelprovider.ErrVerifierMalformedResponse)
 	require.Equal(t, 3, calls)
 	require.Len(t, attempts, 3)
+}
+
+func TestOrganizationRequestIdentitySchemaAndCompleteRepair(t *testing.T) {
+	for _, repair := range []bool{false, true} {
+		t.Run(map[bool]string{false: "exhausted", true: "repaired"}[repair], func(t *testing.T) {
+			request, response := assessmentFixture()
+			request.RequestID = "1479d3a1-800a-4fc7-a1c7-a007f8d8ce23"
+			limits := assessor.DefaultSemanticAssessmentLimits()
+			calls := []modelprovider.StructuredRequest{}
+			provider := NewProvider(fixtureTransport(func(_ context.Context, outbound modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
+				calls = append(calls, outbound)
+				properties := outbound.Schema["properties"].(map[string]any)
+				require.Equal(t, map[string]any{"type": "string", "enum": []string{request.RequestID}}, properties["request_id"])
+				var original Request
+				require.NoError(t, json.Unmarshal([]byte(outbound.Messages[1].Content), &original))
+				require.Equal(t, request, original)
+				if len(calls) > 1 {
+					var correction correctionFeedback
+					require.NoError(t, json.Unmarshal([]byte(outbound.Messages[len(outbound.Messages)-1].Content), &correction))
+					require.Contains(t, correction.Instruction, request.RequestID)
+					prior, err := Decode(outbound.Messages[len(outbound.Messages)-2].Content)
+					require.NoError(t, err)
+					require.Equal(t, "a74b4d9b-e96a-4936-93c8-62fe93405efc", prior.RequestID)
+				}
+				response.RequestID = "a74b4d9b-e96a-4936-93c8-62fe93405efc"
+				if repair && len(calls) == 3 {
+					response.RequestID = request.RequestID
+				}
+				encoded, err := json.Marshal(response)
+				require.NoError(t, err)
+				return modelprovider.StructuredResult{Content: string(encoded)}, nil
+			}), "model", limits, 300000)
+			measured, err := provider.Measure(request)
+			require.NoError(t, err)
+			result, attempts, err := provider.Assess(context.Background(), request)
+			require.Len(t, calls, 3)
+			require.Len(t, attempts, 3)
+			require.Equal(t, measured, attempts[0].EstimatedInputTokens)
+			for i, outbound := range calls {
+				messages := make([]assessor.SemanticAssessmentProviderMessage, len(outbound.Messages))
+				for j, message := range outbound.Messages {
+					messages[j] = assessor.SemanticAssessmentProviderMessage{Role: message.Role, Content: message.Content}
+				}
+				tokens, countErr := assessor.CountSemanticAssessmentProviderRequestTokens(outbound.Model, outbound.SchemaName, outbound.Schema, limits.ProviderTemperatureDisabled, messages, limits.Tokenizer)
+				require.NoError(t, countErr)
+				require.Equal(t, tokens, attempts[i].EstimatedInputTokens)
+				require.Equal(t, calls[0].Schema, outbound.Schema)
+				if i < 2 || !repair {
+					require.Equal(t, "request_id_mismatch", attempts[i].Validation.Code)
+				}
+			}
+			if repair {
+				require.NoError(t, err)
+				require.Equal(t, response, result)
+			} else {
+				require.ErrorIs(t, err, modelprovider.ErrVerifierMalformedResponse)
+				require.Empty(t, result)
+			}
+		})
+	}
+}
+
+func TestOrganizationDefinitionKeyValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name, key string
+		valid     bool
+	}{
+		{"empty", "", false},
+		{"whitespace", " \t", false},
+		{"nul", "topic\x00", false},
+		{"over_limit", strings.Repeat("界", 129), false},
+		{"unicode_boundary", strings.Repeat("界", 128), true},
+		{"internal_space", "storage systems", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			request, response := assessmentFixture()
+			response.Definitions[0].Key = tc.key
+			err := Validate(request, response)
+			if tc.valid {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorIs(t, err, ontology.ErrInvalid)
+			require.ErrorContains(t, err, "definition key must be nonblank, at most 128 characters, and contain no NUL")
+			requireValidation(t, err, "validate", "definition_record", "definitions")
+		})
+	}
+}
+
+func TestOrganizationEmptyDefinitionKeyCompleteRepair(t *testing.T) {
+	for _, repair := range []bool{false, true} {
+		t.Run(map[bool]string{false: "exhausted", true: "repaired"}[repair], func(t *testing.T) {
+			request, response := assessmentFixture()
+			original, err := json.Marshal(request)
+			require.NoError(t, err)
+			calls := 0
+			provider := NewProvider(fixtureTransport(func(_ context.Context, outbound modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
+				calls++
+				require.Equal(t, string(original), outbound.Messages[1].Content)
+				properties := outbound.Schema["properties"].(map[string]any)
+				definition := properties["definitions"].(map[string]any)["items"].(map[string]any)
+				key := definition["properties"].(map[string]any)["key"]
+				require.Equal(t, map[string]any{"type": "string", "minLength": 1, "maxLength": 128}, key)
+				if calls > 1 {
+					var correction correctionFeedback
+					require.NoError(t, json.Unmarshal([]byte(outbound.Messages[len(outbound.Messages)-1].Content), &correction))
+					require.Contains(t, correctionMessages(correction), "definition key must be nonblank")
+					previous, err := Decode(outbound.Messages[len(outbound.Messages)-2].Content)
+					require.NoError(t, err)
+					require.Empty(t, previous.Definitions[0].Key)
+				}
+				response.Definitions[0].Key = ""
+				if repair && calls == 3 {
+					response.Definitions[0].Key = "storage"
+				}
+				encoded, err := json.Marshal(response)
+				require.NoError(t, err)
+				return modelprovider.StructuredResult{Content: string(encoded)}, nil
+			}), "model", assessor.DefaultSemanticAssessmentLimits(), 300000)
+			result, attempts, err := provider.Assess(context.Background(), request)
+			require.Equal(t, 3, calls)
+			require.Len(t, attempts, 3)
+			for i, attempt := range attempts {
+				if repair && i == 2 {
+					require.Nil(t, attempt.Validation)
+					continue
+				}
+				require.Equal(t, "definition_record", attempt.Validation.Code)
+			}
+			if repair {
+				require.NoError(t, err)
+				require.Equal(t, response, result)
+			} else {
+				require.ErrorIs(t, err, modelprovider.ErrVerifierMalformedResponse)
+				require.Empty(t, result)
+			}
+		})
+	}
 }
 
 func TestOrganizationInitialBudgetAllowsBothCompleteRegenerations(t *testing.T) {
@@ -338,9 +491,8 @@ func TestOrganizationInitialBudgetAllowsBothCompleteRegenerations(t *testing.T) 
 	require.Equal(t, 3, calls)
 }
 
-func TestOrganizationLargeDiagnosticsDoNotConsumeRepairHeadroom(t *testing.T) {
-	request, response := assessmentFixture()
-	request.Items[0].Text = strings.Repeat("context detail ", 4000)
+func TestOrganizationLargeDiagnosticsCannotOverflowRepairContext(t *testing.T) {
+	request, _ := assessmentFixture()
 	limits := assessor.DefaultSemanticAssessmentLimits()
 	limits.MaxOutputTokens = 16384
 	headroom := limits.MaxInputTokens - assessor.SemanticAssessmentConversationInputLimit(limits)
@@ -351,38 +503,24 @@ func TestOrganizationLargeDiagnosticsDoNotConsumeRepairHeadroom(t *testing.T) {
 	invalidTokens, err := assessor.CountTokens(invalid, limits.Tokenizer)
 	require.NoError(t, err)
 	require.LessOrEqual(t, invalidTokens, limits.MaxOutputTokens)
-	require.Greater(t, invalidTokens, limits.MaxOutputTokens/2)
 	_, decodeErr := Decode(invalid)
-	require.ErrorContains(t, decodeErr, "unknown field")
-	require.Greater(t, len([]rune(decodeErr.Error())), maxCorrectionErrorRunes)
-	valid, err := json.Marshal(response)
-	require.NoError(t, err)
+	var rejected *assessor.SemanticAssessmentResponseValidationError
+	require.ErrorAs(t, decodeErr, &rejected)
+	require.Contains(t, decodeErr.Error(), "is unknown")
+	require.Contains(t, decodeErr.Error(), "雪")
 	calls := 0
 	provider := NewProvider(fixtureTransport(func(_ context.Context, req modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
 		calls++
-		if calls > 1 {
-			var correction map[string]string
-			require.NoError(t, json.Unmarshal([]byte(req.Messages[len(req.Messages)-1].Content), &correction))
-			require.Len(t, []rune(correction["validation_errors"]), maxCorrectionErrorRunes)
-			require.Contains(t, correction["validation_errors"], "雪")
-			require.Contains(t, correction["validation_errors"], "diagnostic truncated")
-			require.NotContains(t, correction["validation_errors"], "\uFFFD")
-			require.Equal(t, invalid, req.Messages[len(req.Messages)-2].Content)
-		}
-		if calls < 3 {
-			return modelprovider.StructuredResult{Content: invalid}, nil
-		}
-		return modelprovider.StructuredResult{Content: string(valid)}, nil
+		require.LessOrEqual(t, len(req.Messages), 4)
+		return modelprovider.StructuredResult{Content: invalid}, nil
 	}), "model", limits, 300000)
 	result, attempts, err := provider.Assess(context.Background(), request)
-	require.NoError(t, err)
-	require.Equal(t, response, result)
-	require.Equal(t, 3, calls)
-	require.Len(t, attempts, 3)
-	for _, attempt := range attempts {
-		require.LessOrEqual(t, attempt.EstimatedInputTokens, limits.MaxInputTokens)
-	}
-	require.Empty(t, attempts[2].FailureCode)
+	require.ErrorIs(t, err, modelprovider.ErrVerifierMalformedResponse)
+	require.ErrorContains(t, err, "input exceeds token budget")
+	require.Empty(t, result)
+	require.Len(t, attempts, 2)
+	require.Equal(t, 2, calls)
+	require.Equal(t, "response_invalid", attempts[0].FailureCode)
 }
 
 func TestOrganizationProviderFailuresBudgetsAndCancellation(t *testing.T) {
@@ -463,10 +601,10 @@ func TestOrganizationPairCoverageRegenerationAcceptsCompleteNegativeResults(t *t
 		calls++
 		result := missing
 		if calls == 2 {
-			var correction map[string]string
+			var correction correctionFeedback
 			require.Len(t, req.Messages, 4)
 			require.NoError(t, json.Unmarshal([]byte(req.Messages[3].Content), &correction))
-			require.Equal(t, coverageError.Error(), correction["validation_errors"])
+			requireCorrectionErrors(t, coverageError, correction.ValidationErrors)
 			result = response
 		}
 		encoded, err := json.Marshal(result)
@@ -481,6 +619,104 @@ func TestOrganizationPairCoverageRegenerationAcceptsCompleteNegativeResults(t *t
 	require.Equal(t, "response_invalid", attempts[0].FailureCode)
 	require.Empty(t, attempts[1].FailureCode)
 	require.Greater(t, attempts[1].EstimatedInputTokens, attempts[0].EstimatedInputTokens)
+}
+
+func TestOrganizationFullPairCoverageRepairFitsConversation(t *testing.T) {
+	request, response := assessmentFixture()
+	request.Items, request.Pairs = nil, nil
+	response.Items, response.Equivalence = nil, nil
+	for i := range 20 {
+		ref := fmt.Sprintf("s%d", i)
+		request.Items = append(request.Items, Item{Ref: ref, Kind: ontology.EvidenceSource, Text: fmt.Sprintf("Atlas fact %d.", i), OwnerRef: "owner", Context: map[string]string{}})
+		response.Items = append(response.Items, Decision{Ref: ref, Status: "classified", DefinitionRef: response.Definitions[0].Ref})
+	}
+	var pairRefs []string
+	for left := range request.Items {
+		for right := left + 1; right < len(request.Items); right++ {
+			ref := fmt.Sprintf("p%d", len(request.Pairs))
+			request.Pairs = append(request.Pairs, Pair{Ref: ref, LeftRef: request.Items[left].Ref, RightRef: request.Items[right].Ref})
+			response.Equivalence = append(response.Equivalence, Equivalence{Ref: ref, Relation: "distinct"})
+			pairRefs = append(pairRefs, ref)
+		}
+	}
+	require.Len(t, request.Pairs, 190)
+	require.NoError(t, Validate(request, response))
+	original, err := json.Marshal(request)
+	require.NoError(t, err)
+	valid, err := json.Marshal(response)
+	require.NoError(t, err)
+	limits := assessor.DefaultSemanticAssessmentLimits()
+	outputTokens, err := assessor.CountTokens(string(valid), limits.Tokenizer)
+	require.NoError(t, err)
+	limits.MaxInputTokens, limits.MaxOutputTokens, limits.MaxCandidateContextTokens = 32000, outputTokens+128, 512
+	contextWindow := limits.MaxInputTokens + limits.MaxOutputTokens
+
+	for _, mode := range []string{"missing", "duplicate", "unknown"} {
+		for _, repair := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/repair=%t", mode, repair), func(t *testing.T) {
+				invalid := response
+				invalid.Equivalence = append([]Equivalence(nil), response.Equivalence...)
+				last := len(invalid.Equivalence) - 1
+				switch mode {
+				case "missing":
+					invalid.Equivalence = []Equivalence{}
+				case "duplicate":
+					invalid.Equivalence[last] = invalid.Equivalence[0]
+				case "unknown":
+					invalid.Equivalence[last].Ref = "unexpected-pair"
+				}
+				bad, marshalErr := json.Marshal(invalid)
+				require.NoError(t, marshalErr)
+				received, marshalErr := json.Marshal(invalid.Equivalence)
+				require.NoError(t, marshalErr)
+				calls := 0
+				var provider *Provider
+				provider = NewProvider(fixtureTransport(func(_ context.Context, outbound modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
+					calls++
+					require.Len(t, outbound.Messages, 2*calls)
+					require.Equal(t, SystemPrompt, outbound.Messages[0].Content)
+					require.Equal(t, string(original), outbound.Messages[1].Content)
+					require.Equal(t, ResponseSchema(request.RequestID), outbound.Schema)
+					inputTokens, countErr := provider.messageTokens(outbound.Messages, outbound.Schema)
+					require.NoError(t, countErr)
+					require.LessOrEqual(t, inputTokens, outbound.MaxInputTokens)
+					require.LessOrEqual(t, inputTokens+outbound.MaxOutputTokens, contextWindow)
+					for turn := 1; turn < calls; turn++ {
+						require.Equal(t, string(bad), outbound.Messages[2*turn].Content)
+					}
+					if calls > 1 {
+						var feedback correctionFeedback
+						require.NoError(t, json.Unmarshal([]byte(outbound.Messages[len(outbound.Messages)-1].Content), &feedback))
+						require.LessOrEqual(t, len(feedback.ValidationErrors), 4)
+						messages := correctionMessages(feedback)
+						require.Equal(t, 1, strings.Count(messages, fmt.Sprintf("%q", pairRefs)))
+						require.Equal(t, 1, strings.Count(messages, string(received)))
+						if mode != "missing" {
+							require.Contains(t, messages, fmt.Sprintf("equivalence[%d].ref", last))
+						}
+					}
+					if repair && calls == 3 {
+						return modelprovider.StructuredResult{Content: string(valid)}, nil
+					}
+					return modelprovider.StructuredResult{Content: string(bad)}, nil
+				}), "model", limits, contextWindow)
+				require.NoError(t, provider.ConfigurationError())
+				result, attempts, assessErr := provider.Assess(context.Background(), request)
+				require.Equal(t, 3, calls)
+				require.Len(t, attempts, 3)
+				if repair {
+					require.NoError(t, assessErr)
+					require.Equal(t, response, result)
+					require.Nil(t, attempts[2].Validation)
+				} else {
+					var malformed *modelprovider.MalformedResponseError
+					require.ErrorAs(t, assessErr, &malformed)
+					require.Equal(t, "malformed_exhausted", malformed.FailureClass)
+					require.Empty(t, result)
+				}
+			})
+		}
+	}
 }
 
 func TestOrganizationEvidenceClassificationUsesTopics(t *testing.T) {
@@ -506,19 +742,19 @@ func TestOrganizationMissingDefinitionCorrectionPreservesLockedReuse(t *testing.
 	valid.Items[1].DefinitionRef = "d1"
 	missing := valid
 	missing.Definitions = []Definition{}
-	require.EqualError(t, Validate(request, missing), `item "b" definition_ref "d1" is outside allowlist; include a new definition in response.definitions or reuse a supplied ref`)
+	require.ErrorContains(t, Validate(request, missing), `items[1].definition_ref: item "b" definition_ref "d1" is outside allowlist`)
 	unlocked := valid
 	unlocked.Items = append([]Decision{}, valid.Items...)
 	unlocked.Items[0].DefinitionRef = "d1"
-	require.EqualError(t, Validate(request, unlocked), "classification changes deterministic reuse")
+	require.ErrorContains(t, Validate(request, unlocked), `item "a" classification changes deterministic reuse: must equal locked_definition_ref "d0"; received "d1"`)
 	responses := []Response{missing, unlocked, valid}
 	calls := 0
 	provider := NewProvider(fixtureTransport(func(_ context.Context, req modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
 		require.Less(t, calls, len(responses))
 		if calls > 0 {
-			var correction map[string]string
+			var correction correctionFeedback
 			require.NoError(t, json.Unmarshal([]byte(req.Messages[len(req.Messages)-1].Content), &correction))
-			require.Equal(t, Validate(request, responses[calls-1]).Error(), correction["validation_errors"])
+			requireCorrectionErrors(t, Validate(request, responses[calls-1]), correction.ValidationErrors)
 		}
 		encoded, err := json.Marshal(responses[calls])
 		require.NoError(t, err)

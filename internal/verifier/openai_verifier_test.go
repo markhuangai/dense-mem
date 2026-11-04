@@ -13,6 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
@@ -122,7 +123,7 @@ func TestBoundedSemanticAssessmentCorrectionErrors(t *testing.T) {
 		}
 	}
 
-	bounded := boundedSemanticAssessmentCorrectionErrors(errs)
+	bounded := assessor.BoundSemanticAssessmentCorrectionErrors(errs)
 
 	require.Len(t, bounded, SemanticAssessmentMaxCorrectionErrors)
 	assert.Equal(t, "field[001]", bounded[0].Field)

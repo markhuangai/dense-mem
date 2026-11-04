@@ -53,6 +53,30 @@ func TestOpenAIProviderRecordsBoundedExchange(t *testing.T) {
 	require.Contains(t, string(recorder.exchanges[0].RequestBody), "embedding-model")
 }
 
+func TestOpenAIProviderConflictRetainsDiagnosticWithoutRetry(t *testing.T) {
+	const body = `{"error":{"message":"fixture conflict detail","code":"fixture_embedding_conflict"}}`
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_, _ = io.WriteString(w, body)
+	}))
+	defer srv.Close()
+	p := NewOpenAIEmbeddingProvider(&config.Config{
+		AIAPIURL: srv.URL, AIAPIKey: "fixture-key", AIEmbeddingModel: "embedding-model", AIEmbeddingDimensions: 2,
+	}, srv.Client())
+	recorder := &embeddingExchangeRecorder{}
+	_, _, err := p.Embed(modelprovider.WithExchangeRecorder(context.Background(), recorder), "conflict input")
+	require.Error(t, err)
+	require.Equal(t, int32(1), calls.Load())
+	require.Equal(t, embeddingcontract.FailureMetadata{Class: "provider_action_required", Code: "provider_contract_rejected", StatusCode: 409}, embeddingcontract.ClassifyFailure(err))
+	require.NotContains(t, err.Error(), "fixture conflict detail")
+	require.Len(t, recorder.exchanges, 1)
+	require.Equal(t, 409, recorder.exchanges[0].StatusCode)
+	require.Equal(t, body, string(recorder.exchanges[0].ResponseBody))
+}
+
 func TestOpenAIProviderAcceptsEmbeddingResponseAboveDiagnosticRetentionCap(t *testing.T) {
 	padding := strings.Repeat("x", 17<<20)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

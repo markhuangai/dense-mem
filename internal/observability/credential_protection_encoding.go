@@ -1,6 +1,7 @@
 package observability
 
 import (
+	"bytes"
 	"net/url"
 	"strconv"
 	"strings"
@@ -360,8 +361,9 @@ const (
 
 func credentialDecodedLiteralCandidateOrder(text, variant string, limit int, allowPercentEncoding, allowUnicodeEncoding, percentFirst bool) bool {
 	current := credentialCandidateBuffer{length: len(text)}
-	if current.length > len(current.bytes) {
-		current.length = len(current.bytes)
+	prefixLimit := min(len(current.bytes), max(limit, credentialLiteralCandidateLimit))
+	if current.length > prefixLimit {
+		current.length = prefixLimit
 		current.truncated = true
 	}
 	copy(current.bytes[:current.length], text[:current.length])
@@ -452,27 +454,31 @@ func credentialCandidateBuffersEqual(left, right credentialCandidateBuffer) bool
 	if left.length != right.length || left.truncated != right.truncated {
 		return false
 	}
-	for index := 0; index < left.length; index++ {
-		if left.bytes[index] != right.bytes[index] {
-			return false
-		}
-	}
-	return true
+	return bytes.Equal(left.bytes[:left.length], right.bytes[:right.length])
 }
 
-func credentialCandidateAppend(candidate *credentialCandidateBuffer, value byte) bool {
-	if candidate.length >= len(candidate.bytes) {
+func credentialCandidateAppend(candidate *credentialCandidateBuffer, values ...byte) bool {
+	written := copy(candidate.bytes[candidate.length:], values)
+	candidate.length += written
+	if written != len(values) {
 		candidate.truncated = true
 		return false
 	}
-	candidate.bytes[candidate.length] = value
-	candidate.length++
 	return true
 }
 
 func decodeCredentialCandidatePercent(input credentialCandidateBuffer) credentialCandidateBuffer {
 	var decoded credentialCandidateBuffer
 	for index := 0; index < input.length; {
+		next := bytes.IndexAny(input.bytes[index:input.length], "%+")
+		if next < 0 {
+			credentialCandidateAppend(&decoded, input.bytes[index:input.length]...)
+			break
+		}
+		if !credentialCandidateAppend(&decoded, input.bytes[index:index+next]...) {
+			break
+		}
+		index += next
 		if input.bytes[index] == '%' && index+2 < input.length && isHexDigit(input.bytes[index+1]) && isHexDigit(input.bytes[index+2]) {
 			if !credentialCandidateAppend(&decoded, hexByte(input.bytes[index+1], input.bytes[index+2])) {
 				break
@@ -499,13 +505,27 @@ func decodeCredentialCandidatePercent(input credentialCandidateBuffer) credentia
 func decodeCredentialCandidateEscapes(input credentialCandidateBuffer) credentialCandidateBuffer {
 	var decoded credentialCandidateBuffer
 	for index := 0; index < input.length; {
+		next := bytes.IndexByte(input.bytes[index:input.length], '\\')
+		if next < 0 {
+			credentialCandidateAppend(&decoded, input.bytes[index:input.length]...)
+			break
+		}
+		if !credentialCandidateAppend(&decoded, input.bytes[index:index+next]...) {
+			break
+		}
+		index += next
 		if input.bytes[index] == '\\' {
 			if encoded, encodedSize, consumed, ok := decodeCredentialCandidateEscape(input.bytes[index:input.length]); ok {
-				for encodedIndex := 0; encodedIndex < encodedSize; encodedIndex++ {
-					if !credentialCandidateAppend(&decoded, encoded[encodedIndex]) {
+				if input.truncated && consumed == 6 && input.bytes[index+1] == 'u' && input.length-index < 12 {
+					high := hexByte(input.bytes[index+2], input.bytes[index+3])
+					if high >= 0xD8 && high <= 0xDB {
+						// The unread tail may complete the pair, so the full matcher must decide.
 						decoded.truncated = true
 						return decoded
 					}
+				}
+				if !credentialCandidateAppend(&decoded, encoded[:encodedSize]...) {
+					return decoded
 				}
 				index += consumed
 				continue
@@ -654,7 +674,12 @@ func credentialTextContainsVariantDetailed(text string, variants []credentialVar
 }
 
 func credentialTextContainsVariantDetailedWithBudget(text string, variants []credentialVariant, budget *credentialSnapshotBudget) (bool, bool) {
+	starts := credentialCandidateStarts(variants)
 	for index := 0; index < len(text); {
+		if !starts[text[index]] {
+			index++
+			continue
+		}
 		if budget != nil && !budget.reserveMatchWork(credentialMatchWorkEstimate(text[index:], variants)) {
 			return false, false
 		}
@@ -774,7 +799,12 @@ func credentialTextContainsCompleteGoQuotedVariantWithBudget(text string, varian
 }
 
 func credentialURLTextContainsVariantWithBudget(text string, variants []credentialVariant, budget *credentialSnapshotBudget) bool {
+	starts := credentialCandidateStarts(variants)
 	for index := 0; index < len(text); {
+		if !starts[text[index]] {
+			index++
+			continue
+		}
 		if budget != nil && !budget.reserveMatchWork(credentialMatchWorkEstimate(text[index:], variants)) {
 			return false
 		}
