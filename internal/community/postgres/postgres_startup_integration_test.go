@@ -158,6 +158,7 @@ func TestCommunityTopicPostgresStartupFailureCleanup(t *testing.T) {
 		}
 	}
 	require.NotNil(t, manifest)
+	require.Equal(t, float64(16*1024), manifest["log_bytes"])
 	require.Len(t, chunks, int(manifest["chunk_count"].(float64)))
 	reconstructed := strings.Join(chunks, "")
 	require.Len(t, reconstructed, int(manifest["protected_bytes"].(float64)))
@@ -166,6 +167,9 @@ func TestCommunityTopicPostgresStartupFailureCleanup(t *testing.T) {
 	require.NotContains(t, logs, `"msg":"postgres_fixture_retry"`)
 	require.Nil(t, container)
 	require.ErrorContains(t, err, "container exited with code 17")
+	require.NotContains(t, err.Error(), secret)
+	require.NotContains(t, err.Error(), encoded)
+	require.Contains(t, err.Error(), observability.CredentialProtectionRedacted)
 	require.Contains(t, err.Error(), "running=false")
 	require.Contains(t, err.Error(), "exit_code=17")
 	require.Contains(t, err.Error(), "oom_killed=false")
@@ -174,7 +178,7 @@ func TestCommunityTopicPostgresStartupFailureCleanup(t *testing.T) {
 	require.NotContains(t, err.Error(), "startup-log-end")
 	excerpt := strings.SplitN(err.Error(), "Postgres startup logs (logs_truncated=true):\n", 2)
 	require.Len(t, excerpt, 2)
-	require.Len(t, excerpt[1], 16*1024)
+	require.Equal(t, reconstructed, excerpt[1])
 	assertPostgresStartupContainerRemoved(t, created)
 }
 

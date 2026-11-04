@@ -137,11 +137,13 @@ func startupDiagnostics(ctx context.Context, container *postgres.PostgresContain
 	}
 	// Protect the complete excerpt before splitting so credentials crossing chunk boundaries stay masked.
 	protected := observability.NewCredentialProtector().Snapshot(string(excerpt), 128*1024, observability.AuthenticationSecretsFromContext(ctx)...)
+	protectedText := "[omitted: credential protection unavailable]"
 	if protected.UnavailableReason != observability.CredentialProtectionAvailable {
 		logger.LogContext(ctx, level, "postgres_fixture_diagnostics", append(attrs,
 			observability.Int("diagnostic_unavailable_reason", int(protected.UnavailableReason)))...)
 	} else {
-		text := protected.Value.(string)
+		protectedText = protected.Value.(string)
+		text := protectedText
 		attrs = append(attrs, observability.Int("protected_bytes", len(text)))
 		var chunks []string
 		for len(text) > 0 {
@@ -159,7 +161,7 @@ func startupDiagnostics(ctx context.Context, container *postgres.PostgresContain
 				observability.Int("chunk_count", len(chunks)), observability.String("content", chunk))
 		}
 	}
-	diagnostics = errors.Join(diagnostics, fmt.Errorf("Postgres startup logs (logs_truncated=%t):\n%s", truncated, excerpt))
+	diagnostics = errors.Join(diagnostics, fmt.Errorf("Postgres startup logs (logs_truncated=%t):\n%s", truncated, protectedText))
 	if err := errors.Join(readErr, closeErr); err != nil {
 		diagnostics = errors.Join(diagnostics, fmt.Errorf("collect Postgres startup log content: %w", err))
 	}
