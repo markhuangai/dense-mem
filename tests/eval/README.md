@@ -707,11 +707,11 @@ Preserve per-source freshness, marker/cursor progress, cancellation and rollback
 
 ## Ontology cohort and Recall benchmark
 
-The organization and matching source locks, original judgments and fixtures are unchanged.
-The matching lock is `source_locks/ontology_matching_v1.json` (eight cases, 16 sources);
-it complements the original nine-case/19-source organization cohort. Exact names/aliases,
-explicit refs, raw source vocabulary, semantic texts and immutable receipts retain their contracts.
+The organization and matching source locks, original judgments and fixtures are unchanged. The matching lock is `source_locks/ontology_matching_v1.json` (eight cases, 16 sources); it complements the original nine-case/19-source organization cohort.
+Exact names/aliases, explicit refs, raw source vocabulary, semantic texts and immutable receipts retain their contracts.
 Require complete source/fact retention, zero false consolidation, and zero repeated slots.
+The matching source lock requires three fresh-state live repetitions. Run both cohorts in each repetition,
+using a separate ignored report directory and disposable PostgreSQL state; preserve every failed result.
 
 Both live cohorts are integration-tagged. Verify selection without a provider
 call before an independently approved live repetition:
