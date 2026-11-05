@@ -24,7 +24,7 @@ production binary.
 
 The approved seed, generated diagnostic datasets, persistent databases,
 credentials, and run artifacts are local-only and ignored by git. The full
-release evaluation never runs in remote CI.
+release evaluation never runs in remote CI. See [client measurements](measurement.md) for capture, diagnostics and offline verification.
 
 ## Public Six-Axis Gate
 

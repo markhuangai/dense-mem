@@ -11,7 +11,20 @@ import (
 
 func ScoreTraces(runID, mode, seedID, seedHash, suitePath string, suite []SuiteCase, cases map[string]Case, qrels map[string]QRel, traces []RecallTrace, mapping KnowledgeMapping) ([]RetrievalScore, Summary, error) {
 	traceByCase := make(map[string]RecallTrace, len(traces))
+	wanted := make(map[string]bool, len(suite))
+	for _, item := range suite {
+		if item.CaseID == "" || wanted[item.CaseID] {
+			return nil, Summary{}, fmt.Errorf("missing or duplicate suite case %q", item.CaseID)
+		}
+		wanted[item.CaseID] = true
+	}
 	for _, trace := range traces {
+		if !wanted[trace.CaseID] {
+			return nil, Summary{}, fmt.Errorf("unexpected recall trace %q", trace.CaseID)
+		}
+		if _, exists := traceByCase[trace.CaseID]; exists {
+			return nil, Summary{}, fmt.Errorf("duplicate recall trace %q", trace.CaseID)
+		}
 		traceByCase[trace.CaseID] = trace
 	}
 	scoring := newScoringContext(mapping)

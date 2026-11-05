@@ -1,0 +1,479 @@
+{
+  "schema_version": "dense-mem.eval.measurement-evidence.v1",
+  "issue": "https://github.com/markhuangai/dense-mem/issues/680",
+  "base_sha": "ae74da64892347e3c981ac40fb06d83a04f7012a",
+  "tested_merge_head_sha": "b0c758db8700941442c41692453b3d30ce30932d",
+  "original_base_sha": "f0a926e4aa3ec7a84e8f7f679f7bf07b13b0028a",
+  "main_update_authorization": "Direct user instruction: you can merge latest origin/main in",
+  "measurement_schema": "dense-mem.eval.measurements.v1",
+  "audit": {
+    "model": "gpt-6.1-sol",
+    "reasoning_effort": "max",
+    "round": 12,
+    "verdict": "conformant",
+    "before_ci_extension_tests": true,
+    "receipts_sha256": {
+      "1": "sha256:911c4000758333524e6a09d825c4cb36f6d0dd90eb3384682c2ae4b1f9899042",
+      "2": "sha256:b1be08e3d762ce9b825c54d2ff4d94f03713459924c3d591b4894d86f28ade6f",
+      "3": "sha256:eea6bf894c1db8f0f436c741e76a9b6c6d975a163765491fc3f5ef0c1d5fad6c",
+      "4": "sha256:39937cb6f629306c8220d14db854bff7f31721d4cb314a6d0d58fbbe6295b5b7",
+      "5": "sha256:0343f6f57aabe4c07879c94a3825dcb80cb4e31326da2264b9136f49eba5f2ff",
+      "6": "sha256:d6fb2b1be65e16b85f4d936212a2d4537617fbd9ae691cdc805e91ca7030359e",
+      "7": "sha256:262bf19800f4c5e3d4fa850e18e6ce788222cb952e2dd3efb0ec0488d9d93d62",
+      "8": "sha256:1986df6d423a445b112cfff3ee462c6a02d0a729083b3e8573eab6209f4859af",
+      "9": "sha256:b1fd079a64225967a7e1507c85ce67a9d0636e0fa0d4ae32a2c5281564928cf9",
+      "10": "sha256:59b1c47710f57a1e1106ad1d9bc546c2edde4b5f8aca28f48aa17606242406c5",
+      "11": "sha256:0a8970c3b7fc4a7e76ca5db63eec6e0eac6d3daf093f76ee135a104337e07fbc",
+      "12": "sha256:3bf05cd67f5c364d5b98d36926bce94a068b619a7c0188d6ff066698116d10d1"
+    }
+  },
+  "source_files_sha256": {
+    "cmd/eval-runner/main.go": "d3b2507eb62821f6b42f62ec6e3735135ac8447dfb7bee8732e913189b85331b",
+    "cmd/eval-runner/token_diagnostics.go": "4fbaf80adc241cf748026f0eb05a5e58dada231f213b6f2a9f3fd0b295d879c4",
+    "cmd/eval-runner/token_diagnostics_test.go": "2c39f95ba3f7729df3d6841fde39f4df1da82847de600df1377a860d1a84e8f5",
+    "cmd/internal/serverapp/paired_evaluation_integration_test.go": "308a2ee2293a97b4224944095973b24f634a33a2d62bccba35fa59de9d68395f",
+    "internal/evalharness/client.go": "8e90950c9679160a6154f060ab2aca8dd893978b1860330622cf2a1af32150da",
+    "internal/evalharness/load.go": "878efb64585967e4b4c1de86d5392f36435e74393c31551825af059c19aeea34",
+    "internal/evalharness/measurement_score_reference_test.go": "0ab37943293bcc108ce78be6bf6c9ad427d332028f76c2fc742c774018ed891b",
+    "internal/evalharness/measurement_validation.go": "e98374ba69a13676dc6ee02581f943b4d3dde3b3ba2bc80efa96793c1c054448",
+    "internal/evalharness/measurements.go": "3e0d97bd672c5a0f9f6aaa3af620afed93408e808ee0002fd4288e24870b4dae",
+    "internal/evalharness/measurements_test.go": "0f0f3bab255cc72f6794945f37a1ffc01917fd13c3ee5bd052e34646b28a8f82",
+    "internal/evalharness/paired_receipts.go": "77b9966101b72a398ab3e7e91f94ab2a49e4f64590a010f402f57309b3dcb2fe",
+    "internal/evalharness/runner.go": "4275ca496fd05b04551ba4fcc9f581dfe798c31deb22d58953526f54fe4a7478",
+    "internal/evalharness/score.go": "6930621c47a676de66ac93b171f62822a59e6d151141d507ba698a000b74c44e",
+    "internal/evalharness/types.go": "2688331cc6f573f817edba14f90991adefa2b171d660bffe1228194d12095f34",
+    "internal/evalharness/v2_cohort_comparison.go": "926959ac150159df131faea9e5a2210c5b3adb31db4bd80b731018e5598ecbbb",
+    "tests/eval/README.md": "1273331720e7a05a6d608ed56fcbf8dca1f316b1cfe15f217db514e137ce2b3d",
+    "tests/eval/fixtures/measurement_score_cases.json": "fdcc6738c9b45f75dfb1f5b08080f52ed819f379c7ee4b9eb9fc2dd2e47ecb76",
+    "tests/eval/measurement.md": "8aa583c78079c15c269f07f4b6032400cfdb128c1429d0fa0b7f3bbc14a37d6f",
+    "tests/eval/requirements-score-check.txt": "215334fabb0b114874d3e95b988aaffe96e00c1636eeef9a19694ce227b5d460",
+    "tests/eval/scripts/test_verify_measurement_scores.py": "0190d5bf2b13fc9ad0055706d135aade2295ebf2aa371d17961bb1fac7f5af38",
+    "tests/eval/scripts/verify_measurement_scores.py": "a6835aae83edd067c68c7f7f5ca861e0a80ae137fb634d6836b489709b78cf4e",
+    "scripts/coverage-report.sh": "808a09148d588e8167ddb28c6c8ebb3fc85112eba9b3c44787e97557e204d856",
+    "tests/uat/coverage_policy.test.mjs": "95933eebdb94fd9efc7b4ea47c3497553861bb517d0200be67bc357f1058b9de"
+  },
+  "unchanged_measurement_source_files": 21,
+  "focused_check_scope": "The four original focused checks, diagnostics and replay receipts prove the identical 21 measurement paths; the two added CI paths are separately audited and tested.",
+  "approved_ci_extension": {
+    "question": "May I include the small CI coverage split described above in #680 so delivery can continue? It would preserve every selected test and the coverage threshold.",
+    "answer": "Include the CI split (Recommended)",
+    "contract_sha256": "sha256:dbf9c7b97a587ebe8e47a4938e8292d6649780bdc0d65388ef12e82d860dadca",
+    "issue_addendum_url": "https://github.com/markhuangai/dense-mem/issues/680#issuecomment-6655360420",
+    "exact_inventory": {
+      "internal/ontology/postgres": {
+        "original": 84,
+        "ordinary": 69,
+        "parallel": 15
+      },
+      "internal/community/postgres": {
+        "original": 35,
+        "ordinary": 35,
+        "parallel": 0
+      },
+      "internal/dream/postgres": {
+        "original": 1,
+        "ordinary": 1,
+        "parallel": 0
+      },
+      "cmd/internal/serverapp": {
+        "original": 10,
+        "ordinary": 10,
+        "parallel": 0
+      }
+    },
+    "inventory_receipt_sha256": "sha256:5679e0b2bbcac21172537bafd65a3f9e40f3eb1d3651c758a577681646f0f6b9",
+    "group_timeout_seconds": 1800,
+    "atomic_coverage": true,
+    "selected_tests_unchanged": true,
+    "coverage_threshold_unchanged": ">90%"
+  },
+  "post_latest_audit_paths": [
+    "tests/eval/baselines/issue_680_measurement.json"
+  ],
+  "local_checks": [
+    {
+      "name": "go-test-main-update",
+      "command": [
+        "go",
+        "test",
+        "-timeout=30m",
+        "./internal/evalharness",
+        "./cmd/eval-runner",
+        "-count=1",
+        "-json"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 894.4674624410109,
+      "passed_tests": 818,
+      "skips": [],
+      "failures": [],
+      "log_sha256": "sha256:ea48ccf456e2f4cd3a1e5865b5f4da98d951071ebafef26dfcbbdf4e6e556120"
+    },
+    {
+      "name": "go-race-main-update",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-timeout=30m",
+        "./internal/evalharness",
+        "-count=1",
+        "-json"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 1084.479247843963,
+      "passed_tests": 789,
+      "skips": [],
+      "failures": [],
+      "log_sha256": "sha256:1a102d0166c23af6caf4e358d1280da9542b9f938aed5be3c1c7f01422fea7b6"
+    },
+    {
+      "name": "integration-service-main-update",
+      "command": [
+        "go",
+        "test",
+        "-tags",
+        "integration",
+        "./cmd/internal/serverapp",
+        "-run",
+        "^TestPairedEvaluationRealServiceResumeFreezeAndCommonScore$",
+        "-count=1",
+        "-json"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 35.191223561007064,
+      "passed_tests": 3,
+      "skips": [],
+      "failures": [],
+      "log_sha256": "sha256:31fc39f71f61bb03e2434bc2e477b5e782188f4446a67f55f7c67a8384636d11"
+    },
+    {
+      "name": "integration-ontology-main-update",
+      "command": [
+        "go",
+        "test",
+        "-tags",
+        "integration",
+        "./internal/ontology/postgres",
+        "-run",
+        "^TestPairedEvaluation",
+        "-count=1",
+        "-json"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 41.489992671995424,
+      "passed_tests": 6,
+      "skips": [],
+      "failures": [],
+      "log_sha256": "sha256:7d85a2a45068fb5b692ec4e58c0afdbb06b58f645f24cfc652acf8f179efe2da"
+    },
+    {
+      "name": "coverage-policy-ci-split",
+      "command": [
+        "node",
+        "--test",
+        "tests/uat/coverage_policy.test.mjs"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 34.78210411599139,
+      "log_sha256": "sha256:3445a61e20f046fd97ee29638405459ef6586f904659f8376c0acb6bcf2588c8"
+    },
+    {
+      "name": "coverage-inventory-ci-split",
+      "command": [
+        "go",
+        "test",
+        "-tags",
+        "integration",
+        "./internal/ontology/postgres",
+        "./internal/community/postgres",
+        "./internal/dream/postgres",
+        "./cmd/internal/serverapp",
+        "-list",
+        "."
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 20.679643681971356,
+      "log_sha256": "sha256:a06a89c52bcde7d4e65575cc3a4682684ea3f03163cfc5aa2f72bbec9d9f81b9"
+    },
+    {
+      "name": "ci-check-ci-split",
+      "command": [
+        "./scripts/ci-check.sh"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 8802.791619124007,
+      "log_sha256": "sha256:06ffb5ff40693e846f94213bf871a131c8597fe60d8ac511c2beb332ea7a1a7b"
+    }
+  ],
+  "complete_go_coverage": {
+    "covered_statements": 38454,
+    "total_statements": 42721,
+    "percent": 90.01193792280144,
+    "required": ">90%"
+  },
+  "complete_coverage_seals": {
+    "complete_parts": {
+      "core": {
+        "identity": [
+          "b0c758db8700941442c41692453b3d30ce30932d",
+          "local",
+          "1"
+        ],
+        "profile_hashes": {
+          "go-root-complete.raw": "64c56431dcc5c6dc44c07dfd60958110b128ee3becc0217fb99436df35798f2e",
+          "go-evaluation-complete.raw": "3ec55157739f68b46c9b12a15804b63d4eac4ac6004814786279523a6993b092",
+          "go-e2e-complete.raw": "5805cbbb2b8c859d1b288efa6720e5a1e1931faeb3346d445cf828b9dbb0b299"
+        }
+      },
+      "postgres": {
+        "identity": [
+          "b0c758db8700941442c41692453b3d30ce30932d",
+          "local",
+          "1"
+        ],
+        "profile_hashes": {
+          "go-postgres-complete.raw": "3b65acd49d1d8ae1e6a7eb1997c73e122f41aab6b42424afd05e5061e5fdcb37"
+        }
+      },
+      "postgres-support": {
+        "identity": [
+          "b0c758db8700941442c41692453b3d30ce30932d",
+          "local",
+          "1"
+        ],
+        "profile_hashes": {
+          "go-community-scale-complete.raw": "1ea38be94ae8861b79ee093b3624d8ed0cce84996f29fc2fd66139ecbcc7ee3c",
+          "go-audit-complete.raw": "422ec74c8947d6c9006e1698d71991cccf3535359ae312d3a85a23bdeaada76b",
+          "go-session-complete.raw": "ff5635884500663800c2723f5b5a0eca8cdda4e6ba818fae719f5b3e6f97f9da"
+        }
+      }
+    },
+    "all_identities_and_checksums_verified": true,
+    "ci_receipt_sha256": "sha256:d4205b83e9cbcfba3762a45ed536cbb45ee2feb7bf58363ed219c9ead721c456"
+  },
+  "ci_expected_python_skips": {
+    "core": 2,
+    "adk": 1,
+    "langchain": 1,
+    "reason": "Each isolated environment omits other optional adapter dependencies; all adapter cases execute in their corresponding installed-extra environment.",
+    "owners": [
+      "packages/python/tests/test_adk.py",
+      "packages/python/tests/test_langchain.py",
+      "packages/python/scripts/check.sh"
+    ]
+  },
+  "ci_environment": {
+    "source_copy": "All 2312 source files and modes verified against the worktree, including the 23 approved measurement and CI paths.",
+    "GOFLAGS": "-p=1",
+    "GOMAXPROCS": "8",
+    "RYUK_RECONNECTION_TIMEOUT": "1m",
+    "coverage_grouping": "Approved exact-inventory sequential 69/15 ontology partition; all test membership, original exclusions, per-group deadlines, instrumentation and thresholds preserved",
+    "docker_observer": "Temporary network-only observer forwards original output and semantics."
+  },
+  "diagnostics": {
+    "verified_at": "2026-11-05T01:14:40.367062+00:00",
+    "head_sha": "b0c758db8700941442c41692453b3d30ce30932d",
+    "audit_base_sha": "ae74da64892347e3c981ac40fb06d83a04f7012a",
+    "actual_logger_events": 102,
+    "go_test_output_fragments_rejoined": true,
+    "retry_http_status": 503,
+    "retry_severity": "WARN",
+    "reconstructed_payloads": 6,
+    "every_chunk_count_and_hash_verified": true,
+    "credentials_and_authentication_headers_absent": true,
+    "failed_predecessor_and_final_counts_preserved": true,
+    "error_classifications": {
+      "response_decode_error": 3,
+      "request_cancelled": 5,
+      "http_503": 2,
+      "client_error": 3
+    },
+    "capture_rejections": 20,
+    "log_sha256": "sha256:ea48ccf456e2f4cd3a1e5865b5f4da98d951071ebafef26dfcbbdf4e6e556120",
+    "conclusion": "Logs alone reconstruct protected 503 cause, bounded retry and successful operation; malformed response, request/backoff cancellation and corrupt capture retain causes, identities and counts."
+  },
+  "replay_alias_probes": [
+    {
+      "case": "directory-symlink",
+      "exit_code": 1,
+      "source_hashes_unchanged": true,
+      "http_dispatches": 0,
+      "bounded_rejection_present": true
+    },
+    {
+      "case": "linked-copy",
+      "exit_code": 1,
+      "source_hashes_unchanged": true,
+      "http_dispatches": 0,
+      "bounded_rejection_present": true
+    },
+    {
+      "case": "cross-name-journal-link",
+      "exit_code": 1,
+      "source_hashes_unchanged": true,
+      "http_dispatches": 0,
+      "bounded_rejection_present": true
+    },
+    {
+      "case": "seed-input-link",
+      "exit_code": 1,
+      "source_hashes_unchanged": true,
+      "http_dispatches": 0,
+      "bounded_rejection_present": true
+    }
+  ],
+  "ci_investigation": {
+    "terminal_attempt_5": {
+      "exit_code": 1,
+      "log_sha256": "sha256:130330a7ed5ca5d29c82a27c5b2a11f3cb62d91711c7877ef894c29fcde42578",
+      "failures": [
+        "Cumulative ontology/PostgreSQL package exceeded 1800 seconds.",
+        "Community fixture reused a stopped testcontainers cleanup service after its subprocess test."
+      ]
+    },
+    "cleanup_service_reproduction": {
+      "dependency": "testcontainers-go v0.44.0 / ryuk 0.14.0",
+      "default_grace_seconds": 10,
+      "default_sequence_exit_code": 1,
+      "default_log_sha256": "sha256:6c080dafc2655c640fd1a885e1cc2192327ac5346324a1c9e97ca031aef06e50",
+      "verified_grace_seconds": 60,
+      "verified_sequence_repeats": 2,
+      "verified_sequence_exit_code": 0,
+      "verified_log_sha256": "sha256:0910e05e219a1b6c902674621369fbf92c463c67efe5fc8e035622c8ace6a551"
+    },
+    "scheduler_samples_seconds_by_processors": {
+      "32": 75.43621995602734,
+      "4": 67.9494658469921,
+      "8": 55.296996349992696
+    },
+    "terminal_attempt_6": {
+      "exit_code": 1,
+      "log_sha256": "sha256:c8fef66a1fd13fbc618c750945b127b48e3ecd26ddff56f334fbd6d9b1be5a9f",
+      "failure": "Cumulative ontology/PostgreSQL coverage package exceeded 1800 seconds after all 185 fixture startups reached ready."
+    },
+    "scope": "No runtime source changed during CI investigation; the maintainer approved the exact-inventory coverage grouping after cumulative timeouts."
+  },
+  "offline_scoring": {
+    "schema_version": "dense-mem.eval.measurement-score-check.v1",
+    "versions": {
+      "ir-measures": "0.4.3",
+      "pytrec-eval-terrier": "0.5.11",
+      "numpy": "2.5.4",
+      "scipy": "1.18.1"
+    },
+    "reference": {
+      "cases": 7,
+      "ir_measures_cases": 3,
+      "fixture_sha256": "sha256:fdcc6738c9b45f75dfb1f5b08080f52ed819f379c7ee4b9eb9fc2dd2e47ecb76",
+      "go_log_sha256": "sha256:291f1cb49d84834301cb5900788e71760b563cb262ea7be5f6ebf16f5d96bf98",
+      "group_semantics": "Hand-checked source coverage and one displayed result per slot; grouped and repeated slots are not treated as ordinary TREC documents."
+    },
+    "replays": [
+      {
+        "case_count": 204,
+        "seed_hash": "sha256:0923aa14109291e5d5cf24fe419f0b6fc229823bf3dd4292e17d45447365e675",
+        "aggregate": {
+          "average_recall_at_k": 0.8937908496732027,
+          "average_mrr": 0.8534099751011516,
+          "average_ndcg_at_k": 0.8340138923264631,
+          "average_bad_at_k": 0.0,
+          "required_rank1_rate": 0.8088235294117647,
+          "bad_rank1_rate": 0.0,
+          "average_context_recall_at_k": 0,
+          "average_context_mrr": 0,
+          "average_context_ndcg_at_k": 0,
+          "average_context_bad_at_k": 0,
+          "context_required_rank1_rate": 0,
+          "context_bad_rank1_rate": 0,
+          "average_evidence_recall_at_k": 0.7719298245614035,
+          "average_evidence_mrr": 0.744954051796157,
+          "average_evidence_ndcg_at_k": 0.6886369943849908,
+          "average_evidence_bad_at_k": 0.0,
+          "evidence_required_rank1_rate": 0.6842105263157895,
+          "evidence_bad_rank1_rate": 0.0,
+          "average_dream_recall_at_k": 0,
+          "average_dream_mrr": 0,
+          "average_dream_ndcg_at_k": 0,
+          "average_dream_bad_at_k": 0,
+          "dream_required_rank1_rate": 0,
+          "dream_bad_rank1_rate": 0
+        },
+        "original_score_sha256": "sha256:25066d1729ae9d203cd6e34b98d2c414e6b035c927777e219dda3ce4b79b1670",
+        "replayed_score_sha256": "sha256:25066d1729ae9d203cd6e34b98d2c414e6b035c927777e219dda3ce4b79b1670"
+      },
+      {
+        "case_count": 204,
+        "seed_hash": "sha256:0923aa14109291e5d5cf24fe419f0b6fc229823bf3dd4292e17d45447365e675",
+        "aggregate": {
+          "average_recall_at_k": 0.893545751633987,
+          "average_mrr": 0.8534099751011516,
+          "average_ndcg_at_k": 0.8338554799538836,
+          "average_bad_at_k": 0.0,
+          "required_rank1_rate": 0.8088235294117647,
+          "bad_rank1_rate": 0.0,
+          "average_context_recall_at_k": 0,
+          "average_context_mrr": 0,
+          "average_context_ndcg_at_k": 0,
+          "average_context_bad_at_k": 0,
+          "context_required_rank1_rate": 0,
+          "context_bad_rank1_rate": 0,
+          "average_evidence_recall_at_k": 0.7714035087719298,
+          "average_evidence_mrr": 0.744954051796157,
+          "average_evidence_ndcg_at_k": 0.6882968246586099,
+          "average_evidence_bad_at_k": 0.0,
+          "evidence_required_rank1_rate": 0.6842105263157895,
+          "evidence_bad_rank1_rate": 0.0,
+          "average_dream_recall_at_k": 0,
+          "average_dream_mrr": 0,
+          "average_dream_ndcg_at_k": 0,
+          "average_dream_bad_at_k": 0,
+          "dream_required_rank1_rate": 0,
+          "dream_bad_rank1_rate": 0
+        },
+        "original_score_sha256": "sha256:15c6c21887bc405556efb5c313dfae325eadc61cec7ad6482ac4bde0e7a7f0d3",
+        "replayed_score_sha256": "sha256:15c6c21887bc405556efb5c313dfae325eadc61cec7ad6482ac4bde0e7a7f0d3"
+      }
+    ]
+  },
+  "historical_artifacts_sha256": {
+    "tests/eval/runs/issues-660-668-20261101T015500Z/campaign/paired/baseline/capture/attempt-0001/native/recall_traces.jsonl": "sha256:af7a8be014f834f5b9d46a8cfdcb6b2712fbbf11720222747a44761932b3904e",
+    "tests/eval/runs/issues-660-668-20261101T015500Z/campaign/paired/baseline/capture/attempt-0001/native/knowledge_mapping.json": "sha256:332a75821aedfba9e7bc3f2fe84e0dc94155bfcf9b36aaaed5af4c32ddeae770",
+    "tests/eval/runs/issues-660-668-20261101T015500Z/campaign/paired/baseline/capture/attempt-0001/native/retrieval_scores.jsonl": "sha256:f04d8210751acd0d9158bae660e04ad60a6f1d809b95d9532c8f3adbfefbe951",
+    "tests/eval/runs/issues-660-668-20261101T015500Z/campaign/paired/baseline/capture/attempt-0001/native/summary.json": "sha256:cfedbdcba35907ce6abe52d6fcb6ea79fdfe5e35fe9ee0df4d9ce2c409a7d948",
+    "tests/eval/runs/issues-660-668-20261101T015500Z/campaign/paired/baseline/capture/attempt-0001/native/suite.jsonl": "sha256:af53f215ffbf6ba591fdcc43cae29f7c6935da290b95d867f5f5cf4feb313be2",
+    "tests/eval/runs/issues-660-668-20261101T015500Z/campaign/paired/baseline/capture/attempt-0001/native/run_config.json": "sha256:23da50f60fcbca21ccbabfd574028a0b2ee9e4e523028d34ba690b70a858886b",
+    "tests/eval/runs/issues-660-668-20261101T015500Z/campaign/paired/baseline/capture/attempt-0001/native/pair_capture.json": "sha256:8f92a18a68da6e3d814cab6a1210eb01461451601d9b8e6b0457a5139932766a",
+    "tests/eval/runs/issues-660-668-20261101T015500Z/campaign/paired/baseline/score/attempt-0001/native/recall_traces.jsonl": "sha256:af7a8be014f834f5b9d46a8cfdcb6b2712fbbf11720222747a44761932b3904e",
+    "tests/eval/runs/issues-660-668-20261101T015500Z/campaign/paired/baseline/score/attempt-0001/native/knowledge_mapping.json": "sha256:332a75821aedfba9e7bc3f2fe84e0dc94155bfcf9b36aaaed5af4c32ddeae770",
+    "tests/eval/runs/issues-660-668-20261101T015500Z/campaign/paired/baseline/score/attempt-0001/native/retrieval_scores.jsonl": "sha256:25066d1729ae9d203cd6e34b98d2c414e6b035c927777e219dda3ce4b79b1670",
+    "tests/eval/runs/issues-660-668-20261101T015500Z/campaign/paired/baseline/score/attempt-0001/native/summary.json": "sha256:854b35c3e16e7135b5f4cdbb875c427fe47a8d25a08423200176dcfb2c657cc4",
+    "tests/eval/runs/issues-660-668-20261101T015500Z/campaign/paired/baseline/score/attempt-0001/native/suite.jsonl": "sha256:af53f215ffbf6ba591fdcc43cae29f7c6935da290b95d867f5f5cf4feb313be2",
+    "tests/eval/runs/issues-660-668-20261101T015500Z/campaign/paired/baseline/score/attempt-0001/native/run_config.json": "sha256:7e01c7dd7d768dab254453d76c69776fedfc9f6f2573ce82a9306ffc578824f7",
+    "tests/eval/runs/issues-660-668-20261101T015500Z/campaign/paired/candidate/capture/attempt-0001/native/recall_traces.jsonl": "sha256:afd00457e88a0d17e1d6f9e13f804f10ee78bd674d7f20fa4fb91d5516879f6b",
+    "tests/eval/runs/issues-660-668-20261101T015500Z/campaign/paired/candidate/capture/attempt-0001/native/knowledge_mapping.json": "sha256:b5ffb0caa1353aeacb74bfa34253474ce911f48bc0ea16c7bb999e4c0d0e6a76",
+    "tests/eval/runs/issues-660-668-20261101T015500Z/campaign/paired/candidate/capture/attempt-0001/native/retrieval_scores.jsonl": "sha256:15c6c21887bc405556efb5c313dfae325eadc61cec7ad6482ac4bde0e7a7f0d3",
+    "tests/eval/runs/issues-660-668-20261101T015500Z/campaign/paired/candidate/capture/attempt-0001/native/summary.json": "sha256:48dfa7d234383b2922f1dda3ebb5ba7b65383fab503571cadcc9aed85d495fe8",
+    "tests/eval/runs/issues-660-668-20261101T015500Z/campaign/paired/candidate/capture/attempt-0001/native/suite.jsonl": "sha256:af53f215ffbf6ba591fdcc43cae29f7c6935da290b95d867f5f5cf4feb313be2",
+    "tests/eval/runs/issues-660-668-20261101T015500Z/campaign/paired/candidate/capture/attempt-0001/native/run_config.json": "sha256:c4d5683750dd9849e15b1f1fa007c068b7ab4f30df94a89798be009b0e028702",
+    "tests/eval/runs/issues-660-668-20261101T015500Z/campaign/paired/candidate/capture/attempt-0001/native/pair_capture.json": "sha256:28fdbf8a42bb9acbadb2309bb53284c4e8366eb4ece5c60fa4ba73f9cf44daef",
+    "tests/eval/runs/issues-660-668-20261101T015500Z/campaign/paired/candidate/score/attempt-0001/native/recall_traces.jsonl": "sha256:afd00457e88a0d17e1d6f9e13f804f10ee78bd674d7f20fa4fb91d5516879f6b",
+    "tests/eval/runs/issues-660-668-20261101T015500Z/campaign/paired/candidate/score/attempt-0001/native/knowledge_mapping.json": "sha256:b5ffb0caa1353aeacb74bfa34253474ce911f48bc0ea16c7bb999e4c0d0e6a76",
+    "tests/eval/runs/issues-660-668-20261101T015500Z/campaign/paired/candidate/score/attempt-0001/native/retrieval_scores.jsonl": "sha256:15c6c21887bc405556efb5c313dfae325eadc61cec7ad6482ac4bde0e7a7f0d3",
+    "tests/eval/runs/issues-660-668-20261101T015500Z/campaign/paired/candidate/score/attempt-0001/native/summary.json": "sha256:bb1ed9c37b49b44db2b291ae8572cd308d2e8bbf1f3e03d7ebfe8de265f96bea",
+    "tests/eval/runs/issues-660-668-20261101T015500Z/campaign/paired/candidate/score/attempt-0001/native/suite.jsonl": "sha256:af53f215ffbf6ba591fdcc43cae29f7c6935da290b95d867f5f5cf4feb313be2",
+    "tests/eval/runs/issues-660-668-20261101T015500Z/campaign/paired/candidate/score/attempt-0001/native/run_config.json": "sha256:41327d48bef6742566fa0feb574960f9b7ff124ea2b895d3aa939d2e237eaace"
+  },
+  "historical_artifacts_unchanged": true,
+  "shared_environment_preservation_limit": "The former foreign #705 worktree is absent and foreign #700/#704 worktrees are additions. Replacing only the foreign branch name in memory reproduces the original Git-config hash exactly; no change is attributed to this workflow and no foreign resource was cleaned.",
+  "new_live_campaign": false,
+  "offline_provider_calls": 0,
+  "limitations": [
+    "Offline replay establishes no current live latency or readiness.",
+    "Legacy captures have unavailable client timing and attempt coverage.",
+    "Capture and diagnostic overhead can affect client elapsed time.",
+    "Client attempts remain distinct from durable source/provider receipts and complete monetary costs; unified reporting remains #685."
+  ],
+  "prior_ci_evidence_limit": "The first failed clean-CI full log was overwritten; its labelled excerpt, profile hash and guarded teardown receipts survive. Later failure logs are complete. Original Docker failure cause remains unconfirmed.",
+  "verified_at": "2026-11-05T12:57:07.909467+00:00"
+}

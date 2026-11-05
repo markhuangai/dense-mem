@@ -3,8 +3,14 @@
 package serverapp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 
 	"os"
 	"path/filepath"
@@ -156,6 +162,18 @@ func runPairedServiceSide(t *testing.T, c evalharness.PairConfig, f *pairedServi
 	complete, err := evalharness.EvaluatePairImport(f.release.Scope, corpus, fullImport.Imports, false)
 	require.NoError(t, err)
 	require.True(t, complete.Complete)
+	importCapture := filepath.Join(resumed.Directory, "native")
+	require.NoError(t, evalharness.ValidateExecutionCapture(importCapture))
+	writePairedFixtureJSON(t, filepath.Join(resumed.Directory, "observation.json"), fullImport)
+	require.NoError(t, evalharness.CompletePairImportMapping(c, side, resumed.Directory))
+	require.NoError(t, evalharness.ValidateExecutionCapture(importCapture))
+	mappingFile := filepath.Join(importCapture, "knowledge_mapping.json")
+	completedMapping, err := os.ReadFile(mappingFile)
+	require.NoError(t, err)
+	require.Contains(t, string(completedMapping), "unjudged")
+	require.NoError(t, os.WriteFile(mappingFile, append(completedMapping, '\n'), 0o600))
+	require.ErrorContains(t, evalharness.CompletePairImportMapping(c, side, resumed.Directory), "hash mismatch")
+	require.NoError(t, os.WriteFile(mappingFile, completedMapping, 0o600))
 	var original, paraphrase evalharness.PairImportAttempt
 	for _, attempt := range fullImport.Imports {
 		if attempt.Outcome != "completed" {
@@ -281,6 +299,49 @@ func runPairedServiceSide(t *testing.T, c evalharness.PairConfig, f *pairedServi
 	writePairedFixtureJSON(t, filepath.Join(capture.Directory, "before.json"), frozen)
 	_, err = evalharness.Run(ctx, evalharness.RunOptions{Mode: side, SeedManifestPath: c.SeedManifest, SuitePath: c.Suite, BaseURL: f.mcp.URL, APIKey: "fixture", MappingPath: filepath.Join(resumed.Directory, "native", "knowledge_mapping.json"), OutDir: filepath.Join(capture.Directory, "native"), Gates: evalharness.GateOptions{MaxUnmappedSourceRefs: new(int)}})
 	require.NoError(t, err)
+	require.NoError(t, evalharness.ValidateExecutionCapture(filepath.Join(capture.Directory, "native")))
+	measuredTraces, err := evalharness.LoadRecallTraces(filepath.Join(capture.Directory, "native", "recall_traces.jsonl"))
+	require.NoError(t, err)
+	require.Len(t, measuredTraces, 2)
+	for _, trace := range measuredTraces {
+		require.NotEmpty(t, trace.MeasurementCaptureID)
+		require.NotEmpty(t, trace.ClientOperationID)
+		require.NotNil(t, trace.ClientElapsedMS)
+		require.GreaterOrEqual(t, *trace.ClientElapsedMS, float64(trace.LatencyMS))
+	}
+	brokenCapture := filepath.Join(t.TempDir(), "broken-capture")
+	require.NoError(t, os.Mkdir(brokenCapture, 0o700))
+	for _, name := range []string{"run_config.json", "recall_traces.jsonl", "execution_measurements.json", "knowledge_mapping.json", "suite.jsonl"} {
+		body, err := os.ReadFile(filepath.Join(capture.Directory, "native", name))
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(filepath.Join(brokenCapture, name), body, 0o600))
+	}
+	require.ErrorContains(t, evalharness.ValidateExecutionCapture(brokenCapture), "execution_journal")
+	upstream, err := url.Parse(f.mcp.URL)
+	require.NoError(t, err)
+	proxy := httputil.NewSingleHostReverseProxy(upstream)
+	failing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "fixture body read", 400)
+			return
+		}
+		if bytes.Contains(body, []byte(`"case_id":"two"`)) {
+			http.Error(w, "second recall deliberately rejected", 422)
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		proxy.ServeHTTP(w, r)
+	}))
+	t.Cleanup(failing.Close)
+	partial := filepath.Join(t.TempDir(), "partial-capture")
+	_, err = evalharness.Run(ctx, evalharness.RunOptions{Mode: side, SeedManifestPath: c.SeedManifest, SuitePath: c.Suite, BaseURL: failing.URL, APIKey: "fixture", MappingPath: filepath.Join(resumed.Directory, "native", "knowledge_mapping.json"), OutDir: partial})
+	require.ErrorContains(t, err, "second recall deliberately rejected")
+	partialTraces, err := evalharness.LoadRecallTraces(filepath.Join(partial, "recall_traces.jsonl"))
+	require.NoError(t, err)
+	require.Len(t, partialTraces, 1)
+	require.Equal(t, "one", partialTraces[0].CaseID)
+	require.ErrorContains(t, evalharness.ValidateExecutionCapture(partial), "incomplete")
 	writePairedFixtureJSON(t, filepath.Join(capture.Directory, "observation.json"), observe())
 	writePairedFixtureJSON(t, filepath.Join(capture.Directory, "native-exit.json"), map[string]any{"exit_code": 0, "finished_at": time.Now().UTC()})
 	require.NoError(t, evalharness.FinishPairStage(c, capture.Directory))

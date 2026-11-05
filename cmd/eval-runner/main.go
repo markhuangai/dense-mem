@@ -120,7 +120,8 @@ func main() {
 		return
 	}
 
-	ctx := context.Background()
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
 	if opts.Mode == "token-diagnostics" {
 		if err := runTokenDiagnostics(ctx, metricsURL, opts.OutDir, opts.APIKey); err != nil {
 			exitf("%v", err)
@@ -128,8 +129,15 @@ func main() {
 		fmt.Println("token diagnostics written")
 		return
 	}
+	if opts.Mode == "import" || opts.Mode == "baseline" || opts.Mode == "candidate" || opts.Mode == "compare" || opts.Mode == "compare-v2-cohort" {
+		var err error
+		opts.Logger, opts.Protector, err = evaluationDiagnostics(opts.APIKey)
+		if err != nil {
+			exitf("evaluation diagnostics: %v", err)
+		}
+	}
 	if opts.Mode == "compare" {
-		comparison, err := evalharness.CompareRunDirs(baselineRun, candidateRun, opts.OutDir)
+		comparison, err := evalharness.CompareRunDirs(baselineRun, candidateRun, opts.OutDir, opts.Logger)
 		if err != nil {
 			exitf("compare: %v", err)
 		}
@@ -164,6 +172,7 @@ func main() {
 	}
 	if opts.Mode == "compare-v2-cohort" {
 		comparison, err := evalharness.CompareV2CohortRunDirs(evalharness.V2CohortComparisonOptions{
+			Logger: opts.Logger,
 			Cohort: evalharness.V2CohortValidationOptions{
 				ParentManifestPath:   parentV1ManifestPath,
 				ParentSuitePath:      parentV1SuitePath,

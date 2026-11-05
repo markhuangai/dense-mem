@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -165,4 +166,49 @@ func runTokenDiagnosticsCLI(t *testing.T, env []string, args ...string) (string,
 	command.Stdout, command.Stderr = &stdout, &stderr
 	err := command.Run()
 	return stdout.String(), stderr.String(), err
+}
+
+func TestEvaluationDiagnosticsUsesExistingLevelParser(t *testing.T) {
+	t.Setenv("LOG_LEVEL", "debug")
+	logger, protector, err := evaluationDiagnostics("synthetic-evaluator-key")
+	require.NoError(t, err)
+	require.NotNil(t, logger)
+	require.NotNil(t, protector)
+	t.Setenv("LOG_LEVEL", "invalid-level")
+	_, _, err = evaluationDiagnostics("synthetic-evaluator-key")
+	require.ErrorContains(t, err, "invalid LOG_LEVEL")
+}
+
+func TestEvalRunnerFailureProtectsCredentialsInBothOutputStreams(t *testing.T) {
+	const key = "private-cli-presented-credential"
+	const configured = "private-cli-environment-credential"
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		require.Equal(t, "Bearer "+key, r.Header.Get("Authorization"))
+		http.Error(w, fmt.Sprintf("admitted rejection: %s %s", key, configured), http.StatusBadRequest)
+	}))
+	defer server.Close()
+	root := t.TempDir()
+	for name, contents := range map[string]string{
+		"seed_manifest.json": `{"schema_version":"dense-mem.eval.seed.v1","seed_id":"cli-failure","corpus_file":"corpus.jsonl","cases_file":"cases.jsonl","qrels_file":"qrels.jsonl"}`,
+		"corpus.jsonl":       `{"source_doc_id":"doc-1","content":"fixture content"}` + "\n",
+		"cases.jsonl":        `{"case_id":"case-1","query":"fixture query"}` + "\n",
+		"qrels.jsonl":        `{"case_id":"case-1","required_refs":[{"type":"fragment","source_doc_id":"doc-1"}]}` + "\n",
+		"suite.jsonl":        `{"case_id":"case-1","weight":1}` + "\n",
+		"mapping.json":       `{"by_source_doc_id":{"doc-1":{"type":"fragment","id":"frag-1","source_doc_id":"doc-1"}}}`,
+	} {
+		require.NoError(t, os.WriteFile(filepath.Join(root, name), []byte(contents), 0o600))
+	}
+	stdout, stderr, err := runTokenDiagnosticsCLI(t, []string{"DENSE_MEM_API_KEY=" + configured, "LOG_LEVEL=debug"},
+		"-mode", "candidate", "-seed", filepath.Join(root, "seed_manifest.json"), "-suite", filepath.Join(root, "suite.jsonl"),
+		"-mapping", filepath.Join(root, "mapping.json"), "-base-url", server.URL, "-api-key", key, "-out", filepath.Join(root, "capture"))
+	require.Error(t, err)
+	require.Equal(t, int32(1), calls.Load())
+	require.Contains(t, stderr, "returned 400")
+	require.Contains(t, stderr, "admitted rejection")
+	require.Contains(t, stderr, "[REDACTED]")
+	for _, secret := range []string{key, configured} {
+		require.NotContains(t, stdout+stderr, secret)
+	}
 }

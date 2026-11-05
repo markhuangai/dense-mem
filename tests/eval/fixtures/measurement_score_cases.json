@@ -1,0 +1,246 @@
+[
+  {
+    "id": "graded",
+    "k": 3,
+    "qrel": {
+      "required_refs": [
+        {
+          "type": "evidence",
+          "id": "a",
+          "grade": 3
+        },
+        {
+          "type": "evidence",
+          "id": "b",
+          "grade": 1
+        }
+      ]
+    },
+    "trace": {
+      "ranked_refs": [
+        {
+          "type": "evidence",
+          "id": "a"
+        },
+        {
+          "type": "evidence",
+          "id": "noise"
+        },
+        {
+          "type": "evidence",
+          "id": "b"
+        }
+      ]
+    },
+    "expected": {
+      "recall_at_k": 1,
+      "mrr": 1,
+      "ndcg_at_k": 0.9828422279067397
+    },
+    "standard": true
+  },
+  {
+    "id": "fragment_alias",
+    "k": 2,
+    "qrel": {
+      "required_refs": [
+        {
+          "type": "fragment",
+          "id": "a",
+          "grade": 1
+        }
+      ]
+    },
+    "trace": {
+      "ranked_refs": [
+        {
+          "type": "evidence",
+          "id": "noise"
+        },
+        {
+          "type": "evidence",
+          "id": "a"
+        }
+      ]
+    },
+    "expected": {
+      "recall_at_k": 1,
+      "mrr": 0.5,
+      "ndcg_at_k": 0.6309297535714575
+    },
+    "standard": true
+  },
+  {
+    "id": "grouped_alternatives",
+    "k": 1,
+    "qrel": {
+      "required_refs": [
+        {
+          "type": "evidence",
+          "id": "a",
+          "grade": 3
+        },
+        {
+          "type": "evidence",
+          "id": "b",
+          "grade": 2
+        }
+      ]
+    },
+    "trace": {
+      "ranked_refs": [
+        {
+          "type": "evidence",
+          "id": "a",
+          "equivalent_evidence_ids": [
+            "b"
+          ]
+        }
+      ]
+    },
+    "expected": {
+      "recall_at_k": 1,
+      "mrr": 1,
+      "ndcg_at_k": 1
+    },
+    "standard": false
+  },
+  {
+    "id": "partial_group_support",
+    "k": 1,
+    "qrel": {
+      "required_refs": [
+        {
+          "type": "evidence",
+          "id": "a",
+          "grade": 1
+        },
+        {
+          "type": "evidence",
+          "id": "b",
+          "grade": 1
+        },
+        {
+          "type": "evidence",
+          "id": "c",
+          "grade": 1
+        }
+      ]
+    },
+    "trace": {
+      "ranked_refs": [
+        {
+          "type": "evidence",
+          "id": "a",
+          "equivalent_evidence_ids": [
+            "b"
+          ]
+        }
+      ]
+    },
+    "expected": {
+      "recall_at_k": 0.6666666666666666,
+      "mrr": 1,
+      "ndcg_at_k": 1
+    },
+    "standard": false
+  },
+  {
+    "id": "duplicate_slot",
+    "k": 3,
+    "qrel": {
+      "required_refs": [
+        {
+          "type": "evidence",
+          "id": "a",
+          "grade": 1
+        },
+        {
+          "type": "evidence",
+          "id": "b",
+          "grade": 1
+        }
+      ]
+    },
+    "trace": {
+      "ranked_refs": [
+        {
+          "type": "evidence",
+          "id": "a"
+        },
+        {
+          "type": "evidence",
+          "id": "a"
+        },
+        {
+          "type": "evidence",
+          "id": "b"
+        }
+      ]
+    },
+    "expected": {
+      "recall_at_k": 1,
+      "mrr": 1,
+      "ndcg_at_k": 0.9197207891481876
+    },
+    "standard": false
+  },
+  {
+    "id": "empty_results",
+    "k": 10,
+    "qrel": {
+      "required_refs": [
+        {
+          "type": "evidence",
+          "id": "a",
+          "grade": 1
+        }
+      ]
+    },
+    "trace": {
+      "ranked_refs": []
+    },
+    "expected": {
+      "recall_at_k": 0,
+      "mrr": 0,
+      "ndcg_at_k": 0
+    },
+    "standard": true
+  },
+  {
+    "id": "missing_support",
+    "k": 2,
+    "qrel": {
+      "required_refs": [
+        {
+          "type": "evidence",
+          "id": "a",
+          "grade": 1
+        },
+        {
+          "type": "evidence",
+          "id": "b",
+          "grade": 1
+        }
+      ]
+    },
+    "trace": {
+      "ranked_refs": [
+        {
+          "type": "evidence",
+          "id": "noise"
+        },
+        {
+          "type": "evidence",
+          "id": "a"
+        }
+      ]
+    },
+    "expected": {
+      "recall_at_k": 0.5,
+      "mrr": 0.5,
+      "ndcg_at_k": 0.38685280723454163
+    },
+    "standard": true
+  }
+]

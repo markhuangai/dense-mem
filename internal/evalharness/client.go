@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/markhuangai/dense-mem/internal/observability"
 )
 
 type HTTPClient struct {
@@ -21,6 +23,7 @@ type HTTPClient struct {
 	Client       *http.Client
 	contractMu   sync.Mutex
 	contractMode contractMode
+	journal      *executionJournal
 }
 
 type HTTPStatusError struct {
@@ -59,13 +62,26 @@ func (e *StructuredToolError) Error() string {
 	return fmt.Sprintf("mcp tools/call %s returned a structured tool error", e.Tool)
 }
 
-func (c *HTTPClient) CallTool(ctx context.Context, name string, input any, out any) error {
+func (c *HTTPClient) CallTool(ctx context.Context, name string, input any, out any) (err error) {
 	if strings.TrimSpace(c.BaseURL) == "" {
 		return fmt.Errorf("base URL is required")
 	}
 	if strings.TrimSpace(c.APIKey) == "" {
 		return fmt.Errorf("API key is required")
 	}
+	if ctx.Value(operationContextKey{}) == nil && c.journal != nil {
+		var op *measuredOperation
+		ctx, op, err = c.journal.start(ctx, "setup", name)
+		if err != nil {
+			return err
+		}
+		defer func() { err = op.finish(err, "completed") }()
+	}
+	ctx, attempt, err := c.startAttempt(ctx, name)
+	if err != nil {
+		return err
+	}
+	defer func() { err = attempt.finish(err) }()
 	return c.callMCPTool(ctx, name, input, out)
 }
 
@@ -443,8 +459,13 @@ func corpusRememberInput(item CorpusItem) map[string]any {
 	return input
 }
 
-func (c *HTTPClient) importCorpusItem(ctx context.Context, item CorpusItem) (KnowledgeMapping, error) {
-	mapping := newKnowledgeMapping()
+func (c *HTTPClient) importCorpusItem(ctx context.Context, item CorpusItem) (mapping KnowledgeMapping, err error) {
+	ctx, op, err := c.journal.start(ctx, "import", item.SourceDocID)
+	if err != nil {
+		return newKnowledgeMapping(), err
+	}
+	defer func() { err = op.finish(err, "completed") }()
+	mapping = newKnowledgeMapping()
 	input := corpusRememberInput(item)
 	var out map[string]any
 	if _, err := c.ensureContract(ctx); err != nil {
@@ -544,7 +565,18 @@ func (c *HTTPClient) exportKnowledgeMapping(ctx context.Context, limit int, kind
 	return mapping, nil
 }
 
-func (c *HTTPClient) RunRecallCase(ctx context.Context, tc Case) (RecallTrace, error) {
+func (c *HTTPClient) RunRecallCase(ctx context.Context, tc Case) (trace RecallTrace, err error) {
+	ctx, op, err := c.journal.start(ctx, "recall", tc.CaseID)
+	if err != nil {
+		return RecallTrace{}, err
+	}
+	defer func() {
+		if op != nil {
+			op.event.ElapsedMS = elapsedMilliseconds(op.started)
+			trace.ClientElapsedMS, trace.ClientOperationID, trace.MeasurementCaptureID, trace.ClientPhase = op.event.ElapsedMS, op.event.OperationID, op.journal.manifest.CaptureID, op.event.Phase
+		}
+		err = op.finish(err, "completed")
+	}()
 	input := map[string]any{
 		"case_id": tc.CaseID,
 		"query":   tc.Query,
@@ -585,6 +617,13 @@ func (c *HTTPClient) callToolWithRetry(ctx context.Context, name string, input a
 			return err
 		}
 		delay := time.Duration(attempt) * 750 * time.Millisecond
+		if op, _ := ctx.Value(operationContextKey{}).(*measuredOperation); op != nil {
+			event := op.event
+			event.Event, event.RetryDelayMS, event.Cause = "retry_scheduled", delay.Milliseconds(), err.Error()
+			if captureErr := op.journal.append(event); captureErr != nil {
+				return errors.Join(err, captureErr)
+			}
+		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -594,8 +633,21 @@ func (c *HTTPClient) callToolWithRetry(ctx context.Context, name string, input a
 	return lastErr
 }
 
-func (c *HTTPClient) doJSON(ctx context.Context, method, url, bearer string, input any, out any) error {
+func (c *HTTPClient) doJSON(ctx context.Context, method, url, bearer string, input any, out any) (err error) {
+	attempt, _ := ctx.Value(attemptContextKey{}).(*measuredAttempt)
+	if attempt == nil && c.journal != nil {
+		ctx, attempt, err = c.startAttempt(ctx, "tools/list")
+		if err != nil {
+			return err
+		}
+		defer func() { err = attempt.finish(err) }()
+	}
 	var body io.Reader
+	secrets := append(observability.AuthenticationSecretsFromContext(ctx), bearer)
+	if attempt != nil {
+		secrets = append(secrets, attempt.operation.journal.secrets...)
+	}
+	ctx = observability.WithAuthenticationSecrets(ctx, secrets...)
 	if input != nil {
 		payload, err := json.Marshal(input)
 		if err != nil {
@@ -615,11 +667,27 @@ func (c *HTTPClient) doJSON(ctx context.Context, method, url, bearer string, inp
 	if client == nil {
 		client = &http.Client{Timeout: 5 * time.Minute}
 	}
+	if attempt != nil {
+		attempt.event.Dispatched = true
+		req.Header.Set("X-Correlation-ID", attempt.event.CorrelationID)
+		j := attempt.operation.journal
+		logger := j.logger.ContextSlog().With("run_id", j.manifest.RunID, "capture_id", j.manifest.CaptureID, "operation_id", attempt.event.OperationID, "attempt_id", attempt.event.AttemptID, "method", attempt.event.Method, "correlation_id", attempt.event.CorrelationID)
+		// Remember payloads use admission-aware server diagnostics so initial security rejection stays content-free.
+		if attempt.event.Method != "remember" {
+			client = observability.DiagnosticHTTPClient(client, logger, j.protector)
+		}
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
+	if attempt != nil {
+		attempt.event.StatusCode = resp.StatusCode
+		if id := resp.Header.Get("X-Correlation-ID"); id != "" {
+			attempt.event.CorrelationID = id
+		}
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		payload, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return &HTTPStatusError{

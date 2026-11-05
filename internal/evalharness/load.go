@@ -156,13 +156,7 @@ func LoadRecallTraces(path string) ([]RecallTrace, error) {
 
 func SeedHash(manifestPath string, manifest *SeedManifest) (string, error) {
 	hash := sha256.New()
-	files := []string{manifestPath, resolveSeedPath(manifestPath, manifest.CorpusFile), resolveSeedPath(manifestPath, manifest.CasesFile), resolveSeedPath(manifestPath, manifest.QrelsFile)}
-	for _, optional := range []string{manifest.AnswersFile, manifest.HardNegativesFile, manifest.TransformsFile, manifest.DreamsFile, manifest.LicensesFile} {
-		if strings.TrimSpace(optional) != "" {
-			files = append(files, resolveSeedPath(manifestPath, optional))
-		}
-	}
-	for _, path := range files {
+	for _, path := range seedArtifactPaths(manifestPath, manifest) {
 		if _, err := fmt.Fprintf(hash, "file:%s\n", filepath.Base(path)); err != nil {
 			return "", err
 		}
@@ -182,6 +176,16 @@ func SeedHash(manifestPath string, manifest *SeedManifest) (string, error) {
 		}
 	}
 	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+func seedArtifactPaths(manifestPath string, manifest *SeedManifest) []string {
+	files := []string{manifestPath, resolveSeedPath(manifestPath, manifest.CorpusFile), resolveSeedPath(manifestPath, manifest.CasesFile), resolveSeedPath(manifestPath, manifest.QrelsFile)}
+	for _, optional := range []string{manifest.AnswersFile, manifest.HardNegativesFile, manifest.TransformsFile, manifest.DreamsFile, manifest.LicensesFile} {
+		if strings.TrimSpace(optional) != "" {
+			files = append(files, resolveSeedPath(manifestPath, optional))
+		}
+	}
+	return files
 }
 
 func canonicalJSONHash(value any) (string, error) {
