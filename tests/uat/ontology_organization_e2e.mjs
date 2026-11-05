@@ -71,7 +71,9 @@ try {
   assert.equal(status.counts.pending, 0);
   assert.equal(status.counts.failed, 0);
   assert(status.counts.organized > initial.counts.organized);
-  assert(projectionCoverage?.coverage_complete && projectionCoverage.current_topics >= 2, "alias discovery must exercise current topic projections");
+  assert(projectionCoverage?.coverage_complete && projectionCoverage.current_topics >= 2,
+    `alias discovery must exercise current topic projections: ${JSON.stringify({ projection_coverage: projectionCoverage ?? null,
+      discovery_complete: status.discovery_complete, counts: status.counts })}`);
   assert(status.usage.attempts > 0, "provider dispatches must have durable attempt identities");
   assert.equal(status.usage.unreconciled_attempts, 0);
   const currentReceipts = JSON.parse(postgresQuery(`SELECT COALESCE(jsonb_agg(jsonb_build_object('source',source.source_id,'status',source.status,'assessment',source.assessment_id,'failure',assessment.body->'result'->>'failure_code')),'[]')

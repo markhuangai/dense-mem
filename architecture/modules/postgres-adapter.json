@@ -17,7 +17,21 @@
         "id": "github.com/markhuangai/dense-mem/internal/storage/postgres/conflictread",
         "role": "postgres_infrastructure",
         "visibility": "private"
+      },
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/storage/postgres/testfixture",
+        "role": "postgres_infrastructure",
+        "visibility": "private"
       }
     ]
-  }
+  },
+  "workers": [
+    {
+      "path": "internal/storage/postgres/testfixture/container.go",
+      "function": "Run",
+      "kind": "run",
+      "ordinal": 1,
+      "role": "worker"
+    }
+  ]
 }

@@ -13,9 +13,9 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/markhuangai/dense-mem/internal/storage/postgres/testfixture"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
-	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"gorm.io/gorm"
 )
 
@@ -36,7 +36,7 @@ func runMigrationControlRetirementOnly(t *testing.T, ctx context.Context, db *sq
 
 func openMigrationControlRetirementBackupContainer(t *testing.T, ctx context.Context) (testcontainers.Container, *sql.DB, string, func()) {
 	t.Helper()
-	container, err := tcpostgres.Run(ctx, "pgvector/pgvector:0.8.2-pg18-trixie", postgresTestContainerOptions()...)
+	container, err := testfixture.Run(ctx, "pgvector/pgvector:0.8.2-pg18-trixie", postgresTestContainerOptions()...)
 	require.NoError(t, err)
 	sourceDSN, err := postgresTestContainerDSN(ctx, container)
 	require.NoError(t, err)
