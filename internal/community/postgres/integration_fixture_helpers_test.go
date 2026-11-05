@@ -4,10 +4,7 @@ package postgres
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"io"
-	"log"
 	"net/url"
 	"os"
 	"strings"
@@ -19,6 +16,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	privacypostgres "github.com/markhuangai/dense-mem/internal/privacy/postgres"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
+	"github.com/markhuangai/dense-mem/internal/storage/postgres/testfixture"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -122,61 +120,7 @@ func runLedgerPostgresContainer(ctx context.Context, options ...testcontainers.C
 				WithStartupTimeout(30 * time.Second),
 		),
 	}, options...)
-	const maxAttempts = 4
-	var lastErr error
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		started := time.Now()
-		container, err := tcpostgres.Run(ctx, "pgvector/pgvector:0.8.2-pg18-trixie", options...)
-		if err == nil {
-			return container, nil
-		}
-		retry := strings.Contains(strings.ToLower(err.Error()), "address already in use")
-		lastErr = fmt.Errorf("Postgres startup attempt=%d elapsed=%s: %w", attempt, time.Since(started), err)
-		if container != nil {
-			lastErr = errors.Join(lastErr, ledgerPostgresStartupDiagnostics(ctx, container))
-			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
-			// Reserve time to remove the container after stopping a stalled initialization process.
-			cleanupErr := container.Terminate(cleanupCtx, testcontainers.StopTimeout(5*time.Second))
-			cancel()
-			if cleanupErr != nil {
-				return nil, errors.Join(lastErr, fmt.Errorf("terminate failed Postgres container %s: %w", container.GetContainerID(), cleanupErr))
-			}
-		}
-		if !retry || attempt == maxAttempts {
-			break
-		}
-		log.Printf("retrying Postgres port collision after cleanup: %v", lastErr)
-		time.Sleep(time.Duration(attempt) * 250 * time.Millisecond)
-	}
-	return nil, lastErr
-}
-
-func ledgerPostgresStartupDiagnostics(ctx context.Context, container *tcpostgres.PostgresContainer) error {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-	defer cancel()
-	diagnostics := fmt.Errorf("Postgres startup container=%s", container.GetContainerID())
-	state, err := container.State(ctx)
-	if err != nil {
-		diagnostics = errors.Join(diagnostics, fmt.Errorf("collect Postgres startup state: %w", err))
-	} else {
-		diagnostics = errors.Join(diagnostics, fmt.Errorf("Postgres startup status=%s running=%t exit_code=%d oom_killed=%t", state.Status, state.Running, state.ExitCode, state.OOMKilled))
-	}
-	logs, err := container.Logs(ctx)
-	if err != nil {
-		return errors.Join(diagnostics, fmt.Errorf("collect Postgres startup logs: %w", err))
-	}
-	const maxLogBytes = 16 * 1024
-	excerpt, readErr := io.ReadAll(io.LimitReader(logs, maxLogBytes+1))
-	closeErr := logs.Close()
-	truncated := len(excerpt) > maxLogBytes
-	if truncated {
-		excerpt = excerpt[:maxLogBytes]
-	}
-	diagnostics = errors.Join(diagnostics, fmt.Errorf("Postgres startup logs (logs_truncated=%t):\n%s", truncated, excerpt))
-	if err := errors.Join(readErr, closeErr); err != nil {
-		diagnostics = errors.Join(diagnostics, fmt.Errorf("collect Postgres startup log content: %w", err))
-	}
-	return diagnostics
+	return testfixture.Run(ctx, "pgvector/pgvector:0.8.2-pg18-trixie", options...)
 }
 
 func postgresContainerDSN(ctx context.Context, container *tcpostgres.PostgresContainer, networkAlias string) (string, error) {

@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { assertTerminalRememberResult } from "../surface.mjs";
+import { diagnoseRememberFailure } from "./diagnostics.mjs";
 
 export const name = "remember";
 
@@ -14,7 +15,7 @@ const heldPredicateKey = "retired_memory_store_fixture";
 const repairedPredicateKey = "stores_durable_memory_in_fixture";
 const incompatiblePredicateKey = "incompatible_memory_store_fixture";
 
-export async function run({ rpc, rawRPC = rpc, expect }) {
+export async function run({ rpc, rawRPC = rpc, expect, runStep }) {
   const selectedFault = (process.env.DENSE_MEM_E2E_PROVIDER_FAULT || "none").trim();
   const providerRequestOffset = await providerFixtureRequestCount(expect);
   const faults = selectedFault === "none" ? [
@@ -46,45 +47,47 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
   expect(!tools.some((tool) => tool.name === "get_submission_status"), "selected catalog must remove the status tool");
 
   const results = [];
-  if (selectedFault === "none") results.push(await runRequiredRelationshipCase({ rawRPC, expect }));
+  if (selectedFault === "none") results.push(await runStep("required-relationship", () => runRequiredRelationshipCase({ rawRPC, expect })));
   for (const fault of faults) {
-    if (fault === "embedding-cancel") {
-      results.push(await runCancellationCase({ rpc, rawRPC, expect }));
-    } else if (fault === "multi") {
-      results.push(await runMultiItemCase({ rpc, expect }));
-    } else if (fault === "mixed-objects") {
-      results.push(await runMixedObjectCase({ expect }));
-    } else if (fault === "mixed") {
-      results.push(await runMixedDispositionCase({ rpc, expect }));
-    } else if (fault === "repair" || fault === "repair-exhausted") {
-      results.push(await runRepairCase({ rpc, expect, fault }));
-    } else if (fault === "predicate-registration-drift") {
-      results.push(await runPredicateRegistrationDriftCase({ expect }));
-    } else if (fault.startsWith("predicate-registration-")) {
-      results.push(...await runPredicateRegistrationCases({ expect, selectedFault: fault }));
-    } else if (fault === "security" || fault === "no-supported") {
-      results.push(await runTerminalDomainCase({ rpc, expect, fault }));
-    } else if (fault.startsWith("embedding-")) {
-      results.push(await runEmbeddingFaultCase({ rpc, expect, fault }));
-    } else {
-      results.push(await runProviderFaultCase({ rpc, expect, fault }));
-    }
+    await runStep(fault, async () => {
+      if (fault === "embedding-cancel") {
+        results.push(await runCancellationCase({ rpc, rawRPC, expect }));
+      } else if (fault === "multi") {
+        results.push(await runMultiItemCase({ rpc, expect }));
+      } else if (fault === "mixed-objects") {
+        results.push(await runMixedObjectCase({ expect }));
+      } else if (fault === "mixed") {
+        results.push(await runMixedDispositionCase({ rpc, expect }));
+      } else if (fault === "repair" || fault === "repair-exhausted") {
+        results.push(await runRepairCase({ rpc, expect, fault }));
+      } else if (fault === "predicate-registration-drift") {
+        results.push(await runPredicateRegistrationDriftCase({ expect }));
+      } else if (fault.startsWith("predicate-registration-")) {
+        results.push(...await runPredicateRegistrationCases({ expect, selectedFault: fault, runStep }));
+      } else if (fault === "security" || fault === "no-supported") {
+        results.push(await runTerminalDomainCase({ rpc, expect, fault }));
+      } else if (fault.startsWith("embedding-")) {
+        results.push(await runEmbeddingFaultCase({ rpc, expect, fault }));
+      } else {
+        results.push(await runProviderFaultCase({ rpc, expect, fault }));
+      }
+    });
   }
 
   if (selectedFault === "none") {
-    results.push(...await runPredicateRegistrationCases({ expect }));
-    results.push(await runPredicateRegistrationDriftCase({ expect }));
-    results.push(await runKnownEvidenceCase({ expect }));
-    results.push(await runSemanticDuplicateCase({ expect }));
-    results.push(await runBudgetContextCase({ expect }));
-    results.push(await runEvidenceConflictCase({ rpc, expect }));
-    results.push(await runConcurrentWinnerCase({ rpc, expect }));
-    results.push(await runAdmissionCapacityCase({ rpc, rawRPC, expect }));
-    results.push(await runChangedHashConflictCase({ rawRPC, expect }));
-    results.push(await runPredicateWordingBoundsCase({ rpc, expect }));
-    results.push(await runSupersessionFenceCase({ rpc, expect }));
-    results.push(await runCardinalitySearchRetirementCase({ rpc, expect }));
-    results.push(await assertRememberSessionModelRouting(expect, providerRequestOffset));
+    results.push(...await runStep("predicate-registration", () => runPredicateRegistrationCases({ expect, runStep })));
+    results.push(await runStep("predicate-registration-drift", () => runPredicateRegistrationDriftCase({ expect })));
+    results.push(await runStep("known-evidence", () => runKnownEvidenceCase({ expect })));
+    results.push(await runStep("semantic-duplicate", () => runSemanticDuplicateCase({ expect })));
+    results.push(await runStep("budget-context", () => runBudgetContextCase({ expect })));
+    results.push(await runStep("evidence-conflict", () => runEvidenceConflictCase({ rpc, expect })));
+    results.push(await runStep("concurrent-winner", () => runConcurrentWinnerCase({ rpc, expect })));
+    results.push(await runStep("admission-capacity", () => runAdmissionCapacityCase({ rpc, rawRPC, expect })));
+    results.push(await runStep("changed-hash-conflict", () => runChangedHashConflictCase({ rawRPC, expect })));
+    results.push(await runStep("predicate-wording-bounds", () => runPredicateWordingBoundsCase({ rpc, expect })));
+    results.push(await runStep("supersession-fence", () => runSupersessionFenceCase({ rpc, expect })));
+    results.push(await runStep("cardinality-search-retirement", () => runCardinalitySearchRetirementCase({ rpc, expect })));
+    results.push(await runStep("assert-remember-session-model-routing", () => assertRememberSessionModelRouting(expect, providerRequestOffset)));
   }
   return { mode: name, results };
 }
@@ -839,7 +842,7 @@ async function runRepairCase({ rpc, expect, fault }) {
   };
 }
 
-async function runPredicateRegistrationCases({ expect, selectedFault = "none" }) {
+async function runPredicateRegistrationCases({ expect, selectedFault = "none", runStep }) {
   const teamID = await createKnownEvidenceTeam(`predicate-registration-${Date.now()}`);
   const actor = await createKnownEvidenceCredential(teamID, `predicate-registration-${Date.now()}`);
   postgresExec(`
@@ -865,75 +868,77 @@ async function runPredicateRegistrationCases({ expect, selectedFault = "none" })
       : [selectedFault];
   const results = [];
   for (const fault of faults) {
-    const args = singleItemArguments(fault, `[fixture-fault:${fault}]`);
-    args.relationships[0].predicate.proposed_key = repairedPredicateKey;
-    const result = await rememberWithKey(actor.apiKey, args);
-    assertStrictTerminalRemember(result, expect);
-    const exhausted = fault === "predicate-registration-exhausted";
-    expect(result.processing_state === (exhausted ? "failed" : "completed"), `${fault} must reach its terminal state: ${JSON.stringify(result)}`);
-    expect(exhausted ? result.errors[0]?.code === "provider_response_invalid" : result.errors.length === 0, `${fault} must classify the provider response accurately: ${JSON.stringify(result.errors)}`);
-    expect(result.search_state === (exhausted ? "not_required" : "current"), `${fault} returned unexpected search state`);
-    const assessorTurns = Number(postgresQuery(`
-      SELECT assessor_turns FROM remember_attempts
-      WHERE team_id = '${sqlLiteral(teamID)}'::uuid
-        AND attempt_id = '${sqlLiteral(result.submission_id)}'::uuid;
-    `));
-    expect(assessorTurns === (exhausted ? 3 : fault === "predicate-registration-reuse" ? 1 : 2), `${fault} must retain its complete assessor turn count: ${assessorTurns}`);
-    if (fault === "predicate-registration-kind-repair") {
-      const code = postgresQuery(`
-        SELECT metadata->'assessor_diagnostics'->'turns'->0->'issues'->0->>'code'
-        FROM remember_attempt_events
-        WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND attempt_id = '${sqlLiteral(result.submission_id)}'::uuid
-          AND metadata ? 'assessor_diagnostics';
-      `);
-      expect(code === "predicate_subject_kind_mismatch", `canonical/alias repair must retain its subject-kind reason: ${code}`);
-    }
-
-    const canonicalCounts = rememberCanonicalCounts(teamID, result.submission_id);
-    expect(canonicalCounts.length === 5 && canonicalCounts.slice(0, 4).every((count) => count === (exhausted ? 0 : 1)) &&
-      (exhausted ? canonicalCounts[4] === 0 : canonicalCounts[4] > 0), `${fault} must commit all canonical rows and search documents or none: ${canonicalCounts.join(",")}`);
-    expect(result.evidence.length === 1 && result.evidence[0].disposition === (exhausted ? "not_stored" : "stored"), `${fault} returned unexpected evidence disposition`);
-    expect(result.relationship_results.length === 1 && result.relationship_results[0].disposition === (exhausted ? "not_stored" : "stored"), `${fault} returned unexpected relationship disposition`);
-    if (!exhausted) {
-      const committedPredicate = postgresQuery(`
-        SELECT predicate_key FROM relationship_observations
-        WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND ingest_id = '${sqlLiteral(result.submission_id)}'::uuid;
-      `);
-      expect(committedPredicate === repairedPredicateKey, `${fault} must store the repaired predicate: ${committedPredicate}`);
-    }
-    const repairedVersionCount = Number(postgresQuery(`
-      SELECT count(*) FROM team_predicate_definitions
-      WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND predicate_key = '${repairedPredicateKey}';
-    `));
-    expect(repairedVersionCount === (exhausted ? 0 : 1), `${fault} must leave the repaired predicate absent or create/reuse exactly one version: ${repairedVersionCount}`);
-    if (exhausted) {
-      expect(result.errors[0]?.retryable === true && result.errors[0]?.next_action === "retry_same_request", "exhausted provider output must retain same-key retry guidance");
-      const retry = await rememberWithKey(actor.apiKey, args);
-      assertStrictTerminalRemember(retry, expect);
-      expect(retry.processing_state === "failed" && retry.errors[0]?.code === "provider_response_invalid", "same-key retry must report the repeated invalid provider response");
-      expect(retry.submission_id !== result.submission_id, "retryable failed attempt must be processed again under the same key");
-      const retryTurns = Number(postgresQuery(`
+    await runStep(fault, async () => {
+      const args = singleItemArguments(fault, `[fixture-fault:${fault}]`);
+      args.relationships[0].predicate.proposed_key = repairedPredicateKey;
+      const result = await rememberWithKey(actor.apiKey, args);
+      assertStrictTerminalRemember(result, expect);
+      const exhausted = fault === "predicate-registration-exhausted";
+      expect(result.processing_state === (exhausted ? "failed" : "completed"), `${fault} must reach its terminal state: ${JSON.stringify(result)}`);
+      expect(exhausted ? result.errors[0]?.code === "provider_response_invalid" : result.errors.length === 0, `${fault} must classify the provider response accurately: ${JSON.stringify(result.errors)}`);
+      expect(result.search_state === (exhausted ? "not_required" : "current"), `${fault} returned unexpected search state`);
+      const assessorTurns = Number(postgresQuery(`
         SELECT assessor_turns FROM remember_attempts
-        WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND attempt_id = '${sqlLiteral(retry.submission_id)}'::uuid;
-      `));
-      expect(retryTurns === 3, `same-key retry must perform three bounded assessor turns: ${retryTurns}`);
-      const retryCanonicalCount = Number(postgresQuery(`
-        SELECT count(*) FROM knowledge_ingests
-        WHERE team_id = '${sqlLiteral(teamID)}'::uuid;
-      `));
-      expect(retryCanonicalCount === 0, "repeated invalid provider responses must leave the team without an ingest");
-    } else if (fault === "predicate-registration-repair") {
-      const replay = await rememberWithKey(actor.apiKey, args);
-      assertStrictTerminalRemember(replay, expect);
-      expect(stableJSON(replay) === stableJSON(result) && replay.submission_id === result.submission_id, "completed repair must replay the exact terminal result");
-      const attemptCount = Number(postgresQuery(`
-        SELECT count(*) FROM remember_attempts
         WHERE team_id = '${sqlLiteral(teamID)}'::uuid
-          AND idempotency_key = '${sqlLiteral(args.idempotency_key)}';
+          AND attempt_id = '${sqlLiteral(result.submission_id)}'::uuid;
       `));
-      expect(attemptCount === 1, "completed repair replay must not create another assessor attempt");
-    }
-    results.push({ fault, processing_state: result.processing_state, assessor_turns: assessorTurns, canonical_counts: canonicalCounts });
+      expect(assessorTurns === (exhausted ? 3 : fault === "predicate-registration-reuse" ? 1 : 2), `${fault} must retain its complete assessor turn count: ${assessorTurns}`);
+      if (fault === "predicate-registration-kind-repair") {
+        const code = postgresQuery(`
+          SELECT metadata->'assessor_diagnostics'->'turns'->0->'issues'->0->>'code'
+          FROM remember_attempt_events
+          WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND attempt_id = '${sqlLiteral(result.submission_id)}'::uuid
+            AND metadata ? 'assessor_diagnostics';
+        `);
+        expect(code === "predicate_subject_kind_mismatch", `canonical/alias repair must retain its subject-kind reason: ${code}`);
+      }
+
+      const canonicalCounts = rememberCanonicalCounts(teamID, result.submission_id);
+      expect(canonicalCounts.length === 5 && canonicalCounts.slice(0, 4).every((count) => count === (exhausted ? 0 : 1)) &&
+        (exhausted ? canonicalCounts[4] === 0 : canonicalCounts[4] > 0), `${fault} must commit all canonical rows and search documents or none: ${canonicalCounts.join(",")}`);
+      expect(result.evidence.length === 1 && result.evidence[0].disposition === (exhausted ? "not_stored" : "stored"), `${fault} returned unexpected evidence disposition`);
+      expect(result.relationship_results.length === 1 && result.relationship_results[0].disposition === (exhausted ? "not_stored" : "stored"), `${fault} returned unexpected relationship disposition`);
+      if (!exhausted) {
+        const committedPredicate = postgresQuery(`
+          SELECT predicate_key FROM relationship_observations
+          WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND ingest_id = '${sqlLiteral(result.submission_id)}'::uuid;
+        `);
+        expect(committedPredicate === repairedPredicateKey, `${fault} must store the repaired predicate: ${committedPredicate}`);
+      }
+      const repairedVersionCount = Number(postgresQuery(`
+        SELECT count(*) FROM team_predicate_definitions
+        WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND predicate_key = '${repairedPredicateKey}';
+      `));
+      expect(repairedVersionCount === (exhausted ? 0 : 1), `${fault} must leave the repaired predicate absent or create/reuse exactly one version: ${repairedVersionCount}`);
+      if (exhausted) {
+        expect(result.errors[0]?.retryable === true && result.errors[0]?.next_action === "retry_same_request", "exhausted provider output must retain same-key retry guidance");
+        const retry = await rememberWithKey(actor.apiKey, args);
+        assertStrictTerminalRemember(retry, expect);
+        expect(retry.processing_state === "failed" && retry.errors[0]?.code === "provider_response_invalid", "same-key retry must report the repeated invalid provider response");
+        expect(retry.submission_id !== result.submission_id, "retryable failed attempt must be processed again under the same key");
+        const retryTurns = Number(postgresQuery(`
+          SELECT assessor_turns FROM remember_attempts
+          WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND attempt_id = '${sqlLiteral(retry.submission_id)}'::uuid;
+        `));
+        expect(retryTurns === 3, `same-key retry must perform three bounded assessor turns: ${retryTurns}`);
+        const retryCanonicalCount = Number(postgresQuery(`
+          SELECT count(*) FROM knowledge_ingests
+          WHERE team_id = '${sqlLiteral(teamID)}'::uuid;
+        `));
+        expect(retryCanonicalCount === 0, "repeated invalid provider responses must leave the team without an ingest");
+      } else if (fault === "predicate-registration-repair") {
+        const replay = await rememberWithKey(actor.apiKey, args);
+        assertStrictTerminalRemember(replay, expect);
+        expect(stableJSON(replay) === stableJSON(result) && replay.submission_id === result.submission_id, "completed repair must replay the exact terminal result");
+        const attemptCount = Number(postgresQuery(`
+          SELECT count(*) FROM remember_attempts
+          WHERE team_id = '${sqlLiteral(teamID)}'::uuid
+            AND idempotency_key = '${sqlLiteral(args.idempotency_key)}';
+        `));
+        expect(attemptCount === 1, "completed repair replay must not create another assessor attempt");
+      }
+      results.push({ fault, processing_state: result.processing_state, assessor_turns: assessorTurns, canonical_counts: canonicalCounts });
+    });
   }
 
   const heldRows = postgresQuery(`
@@ -1346,7 +1351,18 @@ async function runCardinalitySearchRetirementCase({ rpc, expect }) {
   assert.deepEqual(state(firstID), original, "failed replacement must preserve the active source and current vector");
   const replacementArgs = args("replacement", "GraphDB");
   const replacement = await remember(replacementArgs);
-  expect(replacement.processing_state === "completed", "cardinality replacement must complete");
+  try {
+    expect(replacement.processing_state === "completed", "cardinality replacement must complete");
+  } catch (error) {
+    try {
+      const detail = (await controlJSON(`/teams/${teamID}/remember-attempts/${encodeURIComponent(replacement.submission_id)}`, { signal: AbortSignal.timeout(5000) })).data;
+      console.error(JSON.stringify(diagnoseRememberFailure(detail)));
+    } catch {
+      console.error(JSON.stringify({ type: "remember_failure_diagnostics_unavailable", attempt_id: replacement.submission_id,
+        correlation_id: replacement.correlation_id, reason: "control_diagnostic_read_failed" }));
+    }
+    throw error;
+  }
   const retired = state(firstID);
   expect(retired.status === "superseded" && retired.search_state === "not_required" && !retired.has_embedding, "superseded predecessor must have no current search projection or vector");
   expect(retired.source_version === retired.version, "retirement must fence the current canonical source version");

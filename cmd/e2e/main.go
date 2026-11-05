@@ -399,7 +399,16 @@ func groupCases(cases []databaseCase) []packageBatch {
 	return batches
 }
 
-func runBatch(root string, batch packageBatch, timeout time.Duration) error {
+func runBatch(root string, batch packageBatch, timeout time.Duration) (resultErr error) {
+	started := time.Now()
+	reportBatch(batch, timeout, started, "started")
+	defer func() {
+		outcome := "passed"
+		if resultErr != nil {
+			outcome = "failed"
+		}
+		reportBatch(batch, timeout, started, outcome)
+	}()
 	parts := make([]string, 0, len(batch.Cases))
 	for _, item := range batch.Cases {
 		parts = append(parts, "(?:"+item.Run+")")
@@ -450,6 +459,26 @@ func runBatch(root string, batch packageBatch, timeout time.Duration) error {
 		}
 	}
 	return nil
+}
+
+func reportBatch(batch packageBatch, budget time.Duration, started time.Time, outcome string) {
+	ids := make([]string, 0, len(batch.Cases))
+	for _, item := range batch.Cases {
+		ids = append(ids, item.ID)
+	}
+	level := "INFO"
+	if outcome == "failed" {
+		level = "ERROR"
+	}
+	_ = json.NewEncoder(os.Stderr).Encode(map[string]any{
+		"event": "database_batch_progress", "level": level, "time": time.Now().UTC().Format(time.RFC3339Nano),
+		"run_id": os.Getenv("DENSE_MEM_CI_PRECHECK_RUN_ID"), "run_attempt": os.Getenv("DENSE_MEM_CI_PRECHECK_RUN_ATTEMPT"),
+		"scenario": os.Getenv("DENSE_MEM_E2E_SCENARIO"), "package": batch.Package,
+		"source_revision": os.Getenv("DENSE_MEM_E2E_COMMIT_SHA"), "image_digest": os.Getenv("DENSE_MEM_CI_PRECHECK_IMAGE_DIGEST"),
+		"cases": ids, "selected_count": len(ids), "outcome": outcome,
+		"elapsed_ms": time.Since(started).Milliseconds(), "budget_ms": budget.Milliseconds(),
+		"remaining_ms": max(0, (budget - time.Since(started)).Milliseconds()),
+	})
 }
 
 func testName(expression string) string {

@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/markhuangai/dense-mem/internal/storage/postgres/testfixture"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
@@ -199,7 +200,7 @@ func setupSSOHTTPIntegrationDB(t *testing.T) *gorm.DB {
 	}
 	containerOptions = append(containerOptions, precheckContainerLabels()...)
 	containerOptions = append(containerOptions, precheckNetworkOptions()...)
-	container, err := tcpostgres.Run(ctx, "pgvector/pgvector:0.8.2-pg18-trixie", containerOptions...)
+	container, err := testfixture.Run(ctx, "pgvector/pgvector:0.8.2-pg18-trixie", containerOptions...)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, container.Terminate(context.Background()))
