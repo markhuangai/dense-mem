@@ -124,13 +124,22 @@ def retained_pair(original, replayed, seed):
     seed_hash, cases = frozen_cases(seed)
     if seed_hash != summary["seed_hash"]:
         raise ValueError("independent frozen seed hash mismatch")
+    if set(indexed) != set(cases):
+        raise ValueError("missing or unexpected frozen scored cases")
     aggregate = verify_aggregates(scores, summary, "overall", rank_rates=True)
     suite = rows(replayed / "suite.jsonl")
-    for axis, values in summary["slices"].items():
-        selected = [indexed[row["case_id"]] for row in suite if axis in set(row.get("slices", [])) | set(cases[row["case_id"]].get("slices", []))]
-        if not selected:
-            raise ValueError("slice has no independently selected cases: " + axis)
-        verify_aggregates(selected, values, axis, rank_rates=False)
+    suite_ids = [row["case_id"] for row in suite]
+    if len(suite_ids) != len(set(suite_ids)) or set(suite_ids) != set(cases):
+        raise ValueError("missing, duplicate or unexpected frozen suite cases")
+    slices = {}
+    for row in suite:
+        axes = row.get("slices", []) + cases[row["case_id"]].get("slices", [])
+        for axis in {value.strip() for value in axes if value.strip()}:
+            slices.setdefault(axis, []).append(indexed[row["case_id"]])
+    if set(slices) != set(summary["slices"]):
+        raise ValueError("missing or unexpected summary slices")
+    for axis, selected in slices.items():
+        verify_aggregates(selected, summary["slices"][axis], axis, rank_rates=False)
     return {"case_count": 204, "seed_hash": summary["seed_hash"], "aggregate": aggregate,
             "original_score_sha256": file_hash(original / "retrieval_scores.jsonl"),
             "replayed_score_sha256": file_hash(replayed / "retrieval_scores.jsonl")}

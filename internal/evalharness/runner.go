@@ -323,6 +323,12 @@ func Run(ctx context.Context, opts RunOptions) (result Summary, runErr error) {
 			}
 		}
 	}
+	// Quality gates do not change whether client execution completed.
+	finishErr := journal.finish(nil)
+	journal = nil
+	if finishErr != nil {
+		return Summary{}, finishErr
+	}
 	if opts.Gates.Any() {
 		gate := EvaluateGates(summary, opts.Gates)
 		if opts.OutDir != "" {

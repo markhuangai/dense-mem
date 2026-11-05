@@ -179,14 +179,36 @@ func TestEvaluationDiagnosticsUsesExistingLevelParser(t *testing.T) {
 	require.ErrorContains(t, err, "invalid LOG_LEVEL")
 }
 
+func TestEvaluationDiagnosticsStartupFailureDoesNotEchoCredentials(t *testing.T) {
+	const presented = "private-startup-presented-credential"
+	const configured = "private-startup-configured-credential"
+	const control = "private-startup-control-credential"
+	for _, test := range []struct{ name, level string }{
+		{"presented", presented}, {"configured", configured}, {"control", control},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			stdout, stderr, err := runTokenDiagnosticsCLI(t, []string{
+				"DENSE_MEM_API_KEY=" + configured, "DENSE_MEM_CONTROL_TOKEN=" + control, "LOG_LEVEL=" + test.level,
+			}, "--mode", "candidate", "--api-key", presented)
+			require.Error(t, err)
+			require.Empty(t, stdout)
+			require.Contains(t, stderr, "invalid LOG_LEVEL")
+			for _, secret := range []string{presented, configured, control} {
+				require.NotContains(t, stderr, secret)
+			}
+		})
+	}
+}
+
 func TestEvalRunnerFailureProtectsCredentialsInBothOutputStreams(t *testing.T) {
 	const key = "private-cli-presented-credential"
 	const configured = "private-cli-environment-credential"
+	const control = "private-cli-control-credential"
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		require.Equal(t, "Bearer "+key, r.Header.Get("Authorization"))
-		http.Error(w, fmt.Sprintf("admitted rejection: %s %s", key, configured), http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("admitted rejection: %s %s %s", key, configured, control), http.StatusBadRequest)
 	}))
 	defer server.Close()
 	root := t.TempDir()
@@ -200,7 +222,7 @@ func TestEvalRunnerFailureProtectsCredentialsInBothOutputStreams(t *testing.T) {
 	} {
 		require.NoError(t, os.WriteFile(filepath.Join(root, name), []byte(contents), 0o600))
 	}
-	stdout, stderr, err := runTokenDiagnosticsCLI(t, []string{"DENSE_MEM_API_KEY=" + configured, "LOG_LEVEL=debug"},
+	stdout, stderr, err := runTokenDiagnosticsCLI(t, []string{"DENSE_MEM_API_KEY=" + configured, "DENSE_MEM_CONTROL_TOKEN=" + control, "LOG_LEVEL=debug"},
 		"-mode", "candidate", "-seed", filepath.Join(root, "seed_manifest.json"), "-suite", filepath.Join(root, "suite.jsonl"),
 		"-mapping", filepath.Join(root, "mapping.json"), "-base-url", server.URL, "-api-key", key, "-out", filepath.Join(root, "capture"))
 	require.Error(t, err)
@@ -208,7 +230,15 @@ func TestEvalRunnerFailureProtectsCredentialsInBothOutputStreams(t *testing.T) {
 	require.Contains(t, stderr, "returned 400")
 	require.Contains(t, stderr, "admitted rejection")
 	require.Contains(t, stderr, "[REDACTED]")
-	for _, secret := range []string{key, configured} {
-		require.NotContains(t, stdout+stderr, secret)
+	retained := stdout + stderr
+	entries, err := os.ReadDir(filepath.Join(root, "capture"))
+	require.NoError(t, err)
+	for _, entry := range entries {
+		body, err := os.ReadFile(filepath.Join(root, "capture", entry.Name()))
+		require.NoError(t, err)
+		retained += string(body)
+	}
+	for _, secret := range []string{key, configured, control} {
+		require.NotContains(t, retained, secret)
 	}
 }

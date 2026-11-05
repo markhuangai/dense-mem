@@ -105,6 +105,7 @@ A missing journal requires restoring the original capture, not retrying ingestio
 Use the pinned reference packages in an isolated environment:
 
 ```bash
+verification_dir="$(mktemp -d)"
 python3 -m venv "$verification_dir/venv"
 "$verification_dir/venv/bin/pip" install -r tests/eval/requirements-score-check.txt
 go test ./internal/evalharness -run '^TestMeasurementScoreReference$' -count=1 -v \

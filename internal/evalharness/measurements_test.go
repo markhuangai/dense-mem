@@ -98,6 +98,66 @@ func TestExecutionMeasurementsSuccessRetryAndExactReplay(t *testing.T) {
 	require.Equal(t, "recall:case-2", final.LastCompleted)
 }
 
+func TestExecutionMeasurementsQualityRejectionsRemainReplayable(t *testing.T) {
+	for _, gate := range []string{"threshold", "release"} {
+		t.Run(gate, func(t *testing.T) {
+			opts, logs := measurementFixture(t)
+			var calls atomic.Int32
+			server := measurementServer(t, func(w http.ResponseWriter, _ *http.Request, input map[string]any) {
+				calls.Add(1)
+				measurementRecall(w, input)
+			})
+			defer server.Close()
+			opts.BaseURL = server.URL
+			gateFile := "gate_result.json"
+			if gate == "threshold" {
+				minimum := 1.0
+				opts.Gates.MinRecallAtK = &minimum
+			} else {
+				manifest, err := LoadSeedManifest(opts.SeedManifestPath)
+				require.NoError(t, err)
+				seedHash, err := SeedHash(opts.SeedManifestPath, manifest)
+				require.NoError(t, err)
+				policy := releaseGateTestPolicy()
+				policy.SeedID, policy.SeedHash = manifest.SeedID, seedHash
+				opts.ReleaseGatePolicyPath = filepath.Join(t.TempDir(), "policy.json")
+				require.NoError(t, writeJSONFile(opts.ReleaseGatePolicyPath, policy))
+				gateFile = "release_gate_result.json"
+			}
+			summary, err := Run(context.Background(), opts)
+			require.ErrorContains(t, err, "gate check failed")
+			require.Equal(t, 2, summary.ScoredCaseCount)
+			require.Less(t, summary.AverageRecallAtK, 1.0)
+			require.NoError(t, ValidateExecutionCapture(opts.OutDir))
+			var rejected struct {
+				Passed bool `json:"passed"`
+			}
+			require.NoError(t, readJSONFile(filepath.Join(opts.OutDir, gateFile), &rejected))
+			require.False(t, rejected.Passed)
+			final, level := measurementFinalLog(t, logs)
+			require.Equal(t, "INFO", level)
+			require.Equal(t, "completed", final.Outcome)
+			require.Equal(t, 2, final.Counts["recall_completed"])
+			original, err := pairArtifactHashes(opts.OutDir)
+			require.NoError(t, err)
+			replay := opts
+			replay.Gates, replay.ReleaseGatePolicyPath = GateOptions{}, ""
+			replay.TracesPath = filepath.Join(opts.OutDir, "recall_traces.jsonl")
+			replay.MappingPath = filepath.Join(opts.OutDir, "knowledge_mapping.json")
+			replay.OutDir = filepath.Join(t.TempDir(), "replay")
+			_, err = Run(context.Background(), replay)
+			require.NoError(t, err)
+			require.NoError(t, ValidateExecutionCapture(replay.OutDir))
+			_, err = CompareRunDirs(opts.OutDir, replay.OutDir, t.TempDir(), opts.Logger)
+			require.NoError(t, err)
+			after, err := pairArtifactHashes(opts.OutDir)
+			require.NoError(t, err)
+			require.Equal(t, original, after)
+			require.Equal(t, int32(2), calls.Load())
+		})
+	}
+}
+
 func TestExecutionMeasurementsRetainPartialFailureAndUnscheduledWork(t *testing.T) {
 	opts, logs := measurementFixture(t)
 	var cases []Case

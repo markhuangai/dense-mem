@@ -17,9 +17,9 @@ import (
 func evaluationDiagnostics(apiKey string) (*observability.Logger, *observability.CredentialProtector, error) {
 	level, err := observability.ParseLevel(os.Getenv("LOG_LEVEL"))
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, errors.New("invalid LOG_LEVEL")
 	}
-	protector := observability.NewCredentialProtector(apiKey, os.Getenv("DENSE_MEM_API_KEY"))
+	protector := observability.NewCredentialProtector(apiKey, os.Getenv("DENSE_MEM_API_KEY"), os.Getenv("DENSE_MEM_CONTROL_TOKEN"))
 	return observability.NewWithProtector(level, protector), protector, nil
 }
 

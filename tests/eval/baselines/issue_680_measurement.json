@@ -9,9 +9,12 @@
   "audit": {
     "model": "gpt-6.1-sol",
     "reasoning_effort": "max",
-    "round": 12,
+    "round": 15,
     "verdict": "conformant",
-    "before_ci_extension_tests": true,
+    "before_tests": true,
+    "frozen_contract_sha256": "sha256:eba8f58a8856a679ca191eb8d4d5f798a4337a00621b69ae9f94df201c273b23",
+    "compact_source_manifest_sha256": "sha256:d222de0276fe6bb4f5e633e6769a98b005c5feefd28e13cacb6710f1788b74fa",
+    "audited_evidence_sha256": "sha256:3b867721f07af07dc6802af0f72aefc0c643d5c262902247641b4a8883802578",
     "receipts_sha256": {
       "1": "sha256:911c4000758333524e6a09d825c4cb36f6d0dd90eb3384682c2ae4b1f9899042",
       "2": "sha256:b1be08e3d762ce9b825c54d2ff4d94f03713459924c3d591b4894d86f28ade6f",
@@ -24,36 +27,40 @@
       "9": "sha256:b1fd079a64225967a7e1507c85ce67a9d0636e0fa0d4ae32a2c5281564928cf9",
       "10": "sha256:59b1c47710f57a1e1106ad1d9bc546c2edde4b5f8aca28f48aa17606242406c5",
       "11": "sha256:0a8970c3b7fc4a7e76ca5db63eec6e0eac6d3daf093f76ee135a104337e07fbc",
-      "12": "sha256:3bf05cd67f5c364d5b98d36926bce94a068b619a7c0188d6ff066698116d10d1"
+      "12": "sha256:3bf05cd67f5c364d5b98d36926bce94a068b619a7c0188d6ff066698116d10d1",
+      "13": "sha256:a1609944cb2128ae0859ce00f8d85d35da183070e050657f1e29ab162265c898",
+      "14": "sha256:6a7490f3c1e4d6bf8f19d07b03b5ee25d89fe3449709362e9651524d3e586446",
+      "15": "sha256:2ebfa89ae6901498738ab99a4faaf952642deec2e2f8197ab0439d53dae18553"
     }
   },
   "source_files_sha256": {
     "cmd/eval-runner/main.go": "d3b2507eb62821f6b42f62ec6e3735135ac8447dfb7bee8732e913189b85331b",
-    "cmd/eval-runner/token_diagnostics.go": "4fbaf80adc241cf748026f0eb05a5e58dada231f213b6f2a9f3fd0b295d879c4",
-    "cmd/eval-runner/token_diagnostics_test.go": "2c39f95ba3f7729df3d6841fde39f4df1da82847de600df1377a860d1a84e8f5",
+    "cmd/eval-runner/token_diagnostics.go": "4548651db96a14618c66348539e99e0041aacdf3bb7bda8f7d6977e81be883a5",
+    "cmd/eval-runner/token_diagnostics_test.go": "adb37fbc0a728a2a79ff70a3b3f0379922946c06ec9c81caf0f80e940a13de80",
     "cmd/internal/serverapp/paired_evaluation_integration_test.go": "308a2ee2293a97b4224944095973b24f634a33a2d62bccba35fa59de9d68395f",
     "internal/evalharness/client.go": "8e90950c9679160a6154f060ab2aca8dd893978b1860330622cf2a1af32150da",
     "internal/evalharness/load.go": "878efb64585967e4b4c1de86d5392f36435e74393c31551825af059c19aeea34",
     "internal/evalharness/measurement_score_reference_test.go": "0ab37943293bcc108ce78be6bf6c9ad427d332028f76c2fc742c774018ed891b",
     "internal/evalharness/measurement_validation.go": "e98374ba69a13676dc6ee02581f943b4d3dde3b3ba2bc80efa96793c1c054448",
     "internal/evalharness/measurements.go": "3e0d97bd672c5a0f9f6aaa3af620afed93408e808ee0002fd4288e24870b4dae",
-    "internal/evalharness/measurements_test.go": "0f0f3bab255cc72f6794945f37a1ffc01917fd13c3ee5bd052e34646b28a8f82",
+    "internal/evalharness/measurements_test.go": "f4547ffc74f59e75ae3b9f3f0e265423f2c72e6a367334d6b4952986ac21dd90",
     "internal/evalharness/paired_receipts.go": "77b9966101b72a398ab3e7e91f94ab2a49e4f64590a010f402f57309b3dcb2fe",
-    "internal/evalharness/runner.go": "4275ca496fd05b04551ba4fcc9f581dfe798c31deb22d58953526f54fe4a7478",
+    "internal/evalharness/paired_shell_test.go": "af6456fc90b48e90bab324890bf8b37dbc82c90b64c96429f12eb72546d97ebe",
+    "internal/evalharness/runner.go": "dd3fad8e4e209c35b1e3ff8c05188b4c9d61b13533cbb5613f0f1bede6ae995c",
     "internal/evalharness/score.go": "6930621c47a676de66ac93b171f62822a59e6d151141d507ba698a000b74c44e",
     "internal/evalharness/types.go": "2688331cc6f573f817edba14f90991adefa2b171d660bffe1228194d12095f34",
     "internal/evalharness/v2_cohort_comparison.go": "926959ac150159df131faea9e5a2210c5b3adb31db4bd80b731018e5598ecbbb",
+    "scripts/coverage-report.sh": "808a09148d588e8167ddb28c6c8ebb3fc85112eba9b3c44787e97557e204d856",
     "tests/eval/README.md": "1273331720e7a05a6d608ed56fcbf8dca1f316b1cfe15f217db514e137ce2b3d",
     "tests/eval/fixtures/measurement_score_cases.json": "fdcc6738c9b45f75dfb1f5b08080f52ed819f379c7ee4b9eb9fc2dd2e47ecb76",
-    "tests/eval/measurement.md": "8aa583c78079c15c269f07f4b6032400cfdb128c1429d0fa0b7f3bbc14a37d6f",
+    "tests/eval/measurement.md": "18efa7feb08872db84bffbda1ada55b4c6c75ca43691dd3e86da2a87b362bed0",
     "tests/eval/requirements-score-check.txt": "215334fabb0b114874d3e95b988aaffe96e00c1636eeef9a19694ce227b5d460",
-    "tests/eval/scripts/test_verify_measurement_scores.py": "0190d5bf2b13fc9ad0055706d135aade2295ebf2aa371d17961bb1fac7f5af38",
-    "tests/eval/scripts/verify_measurement_scores.py": "a6835aae83edd067c68c7f7f5ca861e0a80ae137fb634d6836b489709b78cf4e",
-    "scripts/coverage-report.sh": "808a09148d588e8167ddb28c6c8ebb3fc85112eba9b3c44787e97557e204d856",
+    "tests/eval/scripts/paired_eval.sh": "ef2de91c4b343f73d2d927cbd47f8ff173616be795715afa78cecc06016ddf60",
+    "tests/eval/scripts/test_verify_measurement_scores.py": "6278a4891b3bdccf2a3d0bfa0ed144ea32995d33fb1c1b5f1e701ac07292207b",
+    "tests/eval/scripts/verify_measurement_scores.py": "a9a6b858f0474addd628f315cd0d44c9514a84910dbb549c9d1d3e611bc79be5",
     "tests/uat/coverage_policy.test.mjs": "95933eebdb94fd9efc7b4ea47c3497553861bb517d0200be67bc357f1058b9de"
   },
-  "unchanged_measurement_source_files": 21,
-  "focused_check_scope": "The four original focused checks, diagnostics and replay receipts prove the identical 21 measurement paths; the two added CI paths are separately audited and tested.",
+  "focused_check_scope": "795 harness tests, 795 harness race tests and both real-service/PostgreSQL selections retain byte-identical sources and dependencies; all 33 final CLI tests and 80 focused regressions ran after audit 15. Full CI covers all current source.",
   "approved_ci_extension": {
     "question": "May I include the small CI coverage split described above in #680 so delivery can continue? It would preserve every selected test and the coverage threshold.",
     "answer": "Include the CI split (Recommended)",
@@ -92,7 +99,7 @@
   ],
   "local_checks": [
     {
-      "name": "go-test-main-update",
+      "name": "go-test-review14",
       "command": [
         "go",
         "test",
@@ -103,14 +110,13 @@
         "-json"
       ],
       "exit_code": 0,
-      "elapsed_seconds": 894.4674624410109,
-      "passed_tests": 818,
-      "skips": [],
-      "failures": [],
-      "log_sha256": "sha256:ea48ccf456e2f4cd3a1e5865b5f4da98d951071ebafef26dfcbbdf4e6e556120"
+      "elapsed_seconds": 941.5168219269835,
+      "passed_tests": 795,
+      "log_sha256": "sha256:69f1838b149c8f68649a900a337c9bea74b309030aacaa2d01841329431ce0d1",
+      "validated_scope": "Only the unchanged internal/evalharness package; superseded CLI sub-results are excluded."
     },
     {
-      "name": "go-race-main-update",
+      "name": "go-race-review14",
       "command": [
         "go",
         "test",
@@ -121,14 +127,13 @@
         "-json"
       ],
       "exit_code": 0,
-      "elapsed_seconds": 1084.479247843963,
-      "passed_tests": 789,
-      "skips": [],
-      "failures": [],
-      "log_sha256": "sha256:1a102d0166c23af6caf4e358d1280da9542b9f938aed5be3c1c7f01422fea7b6"
+      "elapsed_seconds": 971.8480479109567,
+      "passed_tests": 795,
+      "log_sha256": "sha256:ffcc1f47d4893b7f29df5ce1066349b39f3efdfe2d7b892c8bc5b98724779f4a",
+      "validated_scope": "Unchanged source and dependency scope verified across all 2313 tracked files."
     },
     {
-      "name": "integration-service-main-update",
+      "name": "integration-service-review14",
       "command": [
         "go",
         "test",
@@ -141,14 +146,13 @@
         "-json"
       ],
       "exit_code": 0,
-      "elapsed_seconds": 35.191223561007064,
+      "elapsed_seconds": 28.632711287995335,
       "passed_tests": 3,
-      "skips": [],
-      "failures": [],
-      "log_sha256": "sha256:31fc39f71f61bb03e2434bc2e477b5e782188f4446a67f55f7c67a8384636d11"
+      "log_sha256": "sha256:93198a9037ef68654a62f0415879fa873fc393fae828d043c193b758abe9069d",
+      "validated_scope": "Unchanged source and dependency scope verified across all 2313 tracked files."
     },
     {
-      "name": "integration-ontology-main-update",
+      "name": "integration-ontology-review14",
       "command": [
         "go",
         "test",
@@ -161,55 +165,98 @@
         "-json"
       ],
       "exit_code": 0,
-      "elapsed_seconds": 41.489992671995424,
+      "elapsed_seconds": 35.12831848702626,
       "passed_tests": 6,
-      "skips": [],
-      "failures": [],
-      "log_sha256": "sha256:7d85a2a45068fb5b692ec4e58c0afdbb06b58f645f24cfc652acf8f179efe2da"
+      "log_sha256": "sha256:bac1d2ac1dc53e0f3800e496e8b69ce9f06a4a1476d3529bc868b178a1e624cb",
+      "validated_scope": "Unchanged source and dependency scope verified across all 2313 tracked files."
     },
     {
-      "name": "coverage-policy-ci-split",
-      "command": [
-        "node",
-        "--test",
-        "tests/uat/coverage_policy.test.mjs"
-      ],
-      "exit_code": 0,
-      "elapsed_seconds": 34.78210411599139,
-      "log_sha256": "sha256:3445a61e20f046fd97ee29638405459ef6586f904659f8376c0acb6bcf2588c8"
-    },
-    {
-      "name": "coverage-inventory-ci-split",
+      "name": "cli-package-review15",
       "command": [
         "go",
         "test",
-        "-tags",
-        "integration",
-        "./internal/ontology/postgres",
-        "./internal/community/postgres",
-        "./internal/dream/postgres",
-        "./cmd/internal/serverapp",
-        "-list",
-        "."
+        "-timeout=30m",
+        "./cmd/eval-runner",
+        "-count=1",
+        "-json"
       ],
       "exit_code": 0,
-      "elapsed_seconds": 20.679643681971356,
-      "log_sha256": "sha256:a06a89c52bcde7d4e65575cc3a4682684ea3f03163cfc5aa2f72bbec9d9f81b9"
+      "elapsed_seconds": 1.8364214620087296,
+      "passed_tests": 33,
+      "log_sha256": "sha256:c7362e91d1a432684742ac4f2a2b8007305653a703e92d8112d56e47a345ea29"
     },
     {
-      "name": "ci-check-ci-split",
+      "name": "focused-go-review15",
+      "command": [
+        "go",
+        "test",
+        "./internal/evalharness",
+        "./cmd/eval-runner",
+        "-run",
+        "^Test(ExecutionMeasurements|Measurement|MeasuredReplay|CaptureRejectionLogs|V2CohortComparisonRequiresMeasuredEvidence|ComparisonRejectsAlteredSummary|EvalRunnerFailureProtectsCredentialsInBothOutputStreams|EvaluationDiagnosticsUsesExistingLevelParser|EvaluationDiagnosticsStartupFailureDoesNotEchoCredentials|PairShellDeadlineResumeAndCapturePreservation)",
+        "-count=1",
+        "-json"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 18.154210766020697,
+      "passed_tests": 80,
+      "log_sha256": "sha256:0f8a34d8333179d31fbdc4d8a32d4d19ce34be958921d4ceb601b130672b2433"
+    },
+    {
+      "name": "python-score-tests-review15",
+      "command": [
+        "tests/eval/runs/issue-680-delivery/verification/venv/bin/python",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests/eval/scripts",
+        "-p",
+        "test_verify_measurement_scores.py",
+        "-v"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 0.34000275703147054,
+      "log_sha256": "sha256:a0975e07f2553f9744db9e7cfb74639c8746b8c3ddae56b338daf599a2e074c3"
+    },
+    {
+      "name": "verify-scores-review15",
+      "command": [
+        "tests/eval/runs/issue-680-delivery/verification/venv/bin/python",
+        "tests/eval/scripts/verify_measurement_scores.py",
+        "--go-log",
+        "tests/eval/runs/issue-680-delivery/verification/reference-review15.log",
+        "--seed",
+        "tests/eval/seeds/public_6axis_1k_v3/seed_manifest.json",
+        "--original-run",
+        "tests/eval/runs/issues-660-668-20261101T015500Z/campaign/paired/baseline/score/attempt-0001/native",
+        "--replayed-run",
+        "tests/eval/runs/issue-680-delivery/replay-review15/baseline",
+        "--original-run",
+        "tests/eval/runs/issues-660-668-20261101T015500Z/campaign/paired/candidate/score/attempt-0001/native",
+        "--replayed-run",
+        "tests/eval/runs/issue-680-delivery/replay-review15/candidate",
+        "--out",
+        "tests/eval/runs/issue-680-delivery/verification/scores-review15.json"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 0.2517109090113081,
+      "log_sha256": "sha256:2820deedfef186934b41c1d2bb3652cb542dee4e70a82557578b56a8265ba08b"
+    },
+    {
+      "name": "ci-check-review15",
       "command": [
         "./scripts/ci-check.sh"
       ],
       "exit_code": 0,
-      "elapsed_seconds": 8802.791619124007,
-      "log_sha256": "sha256:06ffb5ff40693e846f94213bf871a131c8597fe60d8ac511c2beb332ea7a1a7b"
+      "elapsed_seconds": 6731.208599100006,
+      "log_sha256": "sha256:81793302874b4317e7187199442b2068dc0c6928855ac387f81ab4053f6f1b88"
     }
   ],
   "complete_go_coverage": {
-    "covered_statements": 38454,
-    "total_statements": 42721,
-    "percent": 90.01193792280144,
+    "covered_statements": 38461,
+    "total_statements": 42725,
+    "percent": 90.01989467524868,
     "required": ">90%"
   },
   "complete_coverage_seals": {
@@ -221,8 +268,8 @@
           "1"
         ],
         "profile_hashes": {
-          "go-root-complete.raw": "64c56431dcc5c6dc44c07dfd60958110b128ee3becc0217fb99436df35798f2e",
-          "go-evaluation-complete.raw": "3ec55157739f68b46c9b12a15804b63d4eac4ac6004814786279523a6993b092",
+          "go-root-complete.raw": "a7859af143dc8d5e91d09e2a2f02d110b2f3b9a18b0e7e6430b38ec0bb40870c",
+          "go-evaluation-complete.raw": "2b5fe811740a5d9389d52aa9153a8573a34dd0317278c2ff73d44a0deb90cac3",
           "go-e2e-complete.raw": "5805cbbb2b8c859d1b288efa6720e5a1e1931faeb3346d445cf828b9dbb0b299"
         }
       },
@@ -233,24 +280,27 @@
           "1"
         ],
         "profile_hashes": {
-          "go-postgres-complete.raw": "3b65acd49d1d8ae1e6a7eb1997c73e122f41aab6b42424afd05e5061e5fdcb37"
+          "go-postgres-complete.raw": "02044068914e374df314ca4366e6d877201c25aed1e507ec47196613fa042eea"
         }
       },
-      "postgres-support": {
+      "core/postgres-support": {
         "identity": [
           "b0c758db8700941442c41692453b3d30ce30932d",
           "local",
           "1"
         ],
         "profile_hashes": {
-          "go-community-scale-complete.raw": "1ea38be94ae8861b79ee093b3624d8ed0cce84996f29fc2fd66139ecbcc7ee3c",
+          "go-community-scale-complete.raw": "72a123d220550a537dd2ec573e44979ef066c515730b5b68a8c9b8def35c72a1",
           "go-audit-complete.raw": "422ec74c8947d6c9006e1698d71991cccf3535359ae312d3a85a23bdeaada76b",
-          "go-session-complete.raw": "ff5635884500663800c2723f5b5a0eca8cdda4e6ba818fae719f5b3e6f97f9da"
+          "go-session-complete.raw": "26863d43990f073352add565d9413bab4ab15fa5cb2c6121c5d66f16b09277aa"
         }
       }
     },
     "all_identities_and_checksums_verified": true,
-    "ci_receipt_sha256": "sha256:d4205b83e9cbcfba3762a45ed536cbb45ee2feb7bf58363ed219c9ead721c456"
+    "ci_receipt_sha256": "sha256:9da0a77698b6e497e95495bf811051384faee196a6830a8b53a75acc0f21c7aa",
+    "source_inventory_sha256": "sha256:569660042619d76a8698b9065e859ddd5bea1d6c95bb3009c2a77b6a051fd247",
+    "tracked_files_verified": 2313,
+    "merged_profile_sha256": "sha256:bae128527e664e2aeafa3ef816490401eb7052766e48d032d2a3d71e83876d5d"
   },
   "ci_expected_python_skips": {
     "core": 2,
@@ -264,7 +314,7 @@
     ]
   },
   "ci_environment": {
-    "source_copy": "All 2312 source files and modes verified against the worktree, including the 23 approved measurement and CI paths.",
+    "source_copy": "All 2313 tracked files and modes verified against the worktree, including 26 audited PR paths. Only this compact evidence is refreshed after tests.",
     "GOFLAGS": "-p=1",
     "GOMAXPROCS": "8",
     "RYUK_RECONNECTION_TIMEOUT": "1m",
@@ -272,14 +322,15 @@
     "docker_observer": "Temporary network-only observer forwards original output and semantics."
   },
   "diagnostics": {
-    "verified_at": "2026-11-05T01:14:40.367062+00:00",
-    "head_sha": "b0c758db8700941442c41692453b3d30ce30932d",
+    "verified_at": "2026-11-05T16:11:18.600677+00:00",
+    "head_sha": "bae13ef288aaae59e04e4e3092aecb90993c7789",
     "audit_base_sha": "ae74da64892347e3c981ac40fb06d83a04f7012a",
     "actual_logger_events": 102,
     "go_test_output_fragments_rejoined": true,
     "retry_http_status": 503,
     "retry_severity": "WARN",
     "reconstructed_payloads": 6,
+    "all_reconstructed_chunk_groups": 23,
     "every_chunk_count_and_hash_verified": true,
     "credentials_and_authentication_headers_absent": true,
     "failed_predecessor_and_final_counts_preserved": true,
@@ -290,8 +341,8 @@
       "client_error": 3
     },
     "capture_rejections": 20,
-    "log_sha256": "sha256:ea48ccf456e2f4cd3a1e5865b5f4da98d951071ebafef26dfcbbdf4e6e556120",
-    "conclusion": "Logs alone reconstruct protected 503 cause, bounded retry and successful operation; malformed response, request/backoff cancellation and corrupt capture retain causes, identities and counts."
+    "log_sha256": "sha256:0f8a34d8333179d31fbdc4d8a32d4d19ce34be958921d4ceb601b130672b2433",
+    "conclusion": "Actual logs reconstruct protected HTTP 503, bounded retry and successful operation; malformed response, request/backoff cancellation and corrupt capture retain causes, identities and counts."
   },
   "replay_alias_probes": [
     {
@@ -366,7 +417,7 @@
       "cases": 7,
       "ir_measures_cases": 3,
       "fixture_sha256": "sha256:fdcc6738c9b45f75dfb1f5b08080f52ed819f379c7ee4b9eb9fc2dd2e47ecb76",
-      "go_log_sha256": "sha256:291f1cb49d84834301cb5900788e71760b563cb262ea7be5f6ebf16f5d96bf98",
+      "go_log_sha256": "sha256:9d407d8a372fb3191afcab0754b2f2561433f23c4e617ad8d5a038649812a745",
       "group_semantics": "Hand-checked source coverage and one displayed result per slot; grouped and repeated slots are not treated as ordinary TREC documents."
     },
     "replays": [
@@ -475,5 +526,43 @@
     "Client attempts remain distinct from durable source/provider receipts and complete monetary costs; unified reporting remains #685."
   ],
   "prior_ci_evidence_limit": "The first failed clean-CI full log was overwritten; its labelled excerpt, profile hash and guarded teardown receipts survive. Later failure logs are complete. Original Docker failure cause remains unconfirmed.",
-  "verified_at": "2026-11-05T12:57:07.909467+00:00"
+  "verified_at": "2026-11-05T17:44:48.573112+00:00",
+  "tested_published_head_sha": "bae13ef288aaae59e04e4e3092aecb90993c7789",
+  "score_dependency_distributions": [
+    {
+      "name": "ir_measures",
+      "version": "0.4.3",
+      "metadata_sha256": "sha256:67544ab3b4f1352ab8ac8b9418ce20664455925a4e92b2b222435ae4ad564831"
+    },
+    {
+      "name": "numpy",
+      "version": "2.5.4",
+      "metadata_sha256": "sha256:e2b909d6a37d76c2bc130f528d7fed0c517322bce16dc7846b6a6df30e200403"
+    },
+    {
+      "name": "pip",
+      "version": "24.0",
+      "metadata_sha256": "sha256:90d11f277fd5868da679ee257c97656dde511c8aac7d025231407e6ce90839e2"
+    },
+    {
+      "name": "pytrec_eval-terrier",
+      "version": "0.5.11",
+      "metadata_sha256": "sha256:0a76693c022262e14b96235c804e104fecf7927f8ef006cb50501519e5b66f8e"
+    },
+    {
+      "name": "scipy",
+      "version": "1.18.1",
+      "metadata_sha256": "sha256:6d1ebfbce110009e25e8249fea05e21c0449735144e9bd8df1a52931f957c1ea"
+    }
+  ],
+  "review_fix_verification": {
+    "quality_gate_failure": "Completed execution remains sealed and independently replayable before a quality rejection.",
+    "control_credentials": "Actual CLI output and custom per-arm shell bindings protect configured evaluator control tokens.",
+    "frozen_inventory": "Independent scorer rejects missing, duplicate and unexpected frozen case IDs and missing or unexpected slices.",
+    "startup_errors": "Actual CLI startup rejects invalid LOG_LEVEL without echoing presented, configured or control credentials.",
+    "guide": "Reference scorer instructions initialize their private temporary directory.",
+    "CodeQL_alerts_34_35": "Verified false positives dismissed; distinct context keys/sanitization and reconstruction SHA-256 do not expose credentials or hash passwords.",
+    "superseded_ci14": "Ordinary Go child exited 0; the Bash sequencer was deliberately terminated before coverage for the startup privacy correction. Full CI14 is not a passing gate."
+  },
+  "replay_alias_probes_scope": "Original published implementation; retained historical probe receipts. Current audit-15 focused tests separately cover measured replay alias rejection."
 }

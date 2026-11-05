@@ -264,6 +264,63 @@ pair_native "$PAIR_RUNNER" --mode validate --seed "$(jq -er '.seed_manifest' "$P
 		require.NoError(t, FinishPairStage(c, stage.Directory))
 		require.NoError(t, VerifyPairStage(c, stage.Directory))
 	})
+	t.Run("native_custom_control_credentials", func(t *testing.T) {
+		for _, side := range []string{"baseline", "candidate"} {
+			t.Run(side, func(t *testing.T) {
+				const prefix = "paired-native-private-control-"
+				secret := prefix + side
+				t.Setenv("PAIR_BASELINE_CONTROL_TOKEN", prefix+"baseline")
+				t.Setenv("PAIR_CANDIDATE_CONTROL_TOKEN", prefix+"candidate")
+				t.Setenv("DENSE_MEM_CONTROL_TOKEN", "")
+				t.Setenv("LOG_LEVEL", "debug")
+				var calls atomic.Int32
+				server := measurementServer(t, func(w http.ResponseWriter, r *http.Request, _ map[string]any) {
+					calls.Add(1)
+					require.Equal(t, "Bearer fixture", r.Header.Get("Authorization"))
+					http.Error(w, "admitted rejection: "+secret, http.StatusBadRequest)
+				})
+				defer server.Close()
+				c := pairedFixture(t)
+				c.Baseline.Runtime.ControlTokenEnv = "PAIR_BASELINE_CONTROL_TOKEN"
+				c.Candidate.Runtime.ControlTokenEnv = "PAIR_CANDIDATE_CONTROL_TOKEN"
+				configPath := filepath.Join(t.TempDir(), "pair.json")
+				require.NoError(t, writePairJSON(configPath, c))
+				process, err := PairProcessIdentity(os.Getpid())
+				require.NoError(t, err)
+				stage, err := BeginPairStage(c, side, "validate", process)
+				require.NoError(t, err)
+				mapping := newKnowledgeMapping()
+				for _, name := range []string{"alpha", "beta"} {
+					addSourceMapping(&mapping, Ref{Type: "fragment", ID: "frag-" + name, SourceDocID: "doc-" + name}, true)
+				}
+				mappingPath := filepath.Join(t.TempDir(), "mapping.json")
+				require.NoError(t, writeJSONFile(mappingPath, mapping))
+				t.Setenv("PAIR_NATIVE_CONTROL_SIDE", side)
+				t.Setenv("PAIR_NATIVE_CONTROL_STAGE", stage.Directory)
+				t.Setenv("PAIR_NATIVE_CONTROL_URL", server.URL)
+				t.Setenv("PAIR_NATIVE_CONTROL_MAPPING", mappingPath)
+				output, err := run(configPath, `set -Eeuo pipefail
+source "$PAIR_SCRIPT"
+pair_side="$PAIR_NATIVE_CONTROL_SIDE"; pair_stage=validate; pair_stage_dir="$PAIR_NATIVE_CONTROL_STAGE"; pair_interrupted=false
+pair_native "$PAIR_RUNNER" --mode "$pair_side" --seed "$(jq -er '.seed_manifest' "$PAIR_CONFIG")" --suite "$(jq -er '.suite' "$PAIR_CONFIG")" --base-url "$PAIR_NATIVE_CONTROL_URL" --mapping "$PAIR_NATIVE_CONTROL_MAPPING" --out "$pair_stage_dir/native"`)
+				require.Error(t, err)
+				require.Equal(t, int32(1), calls.Load())
+				log, err := os.ReadFile(filepath.Join(stage.Directory, "native.log"))
+				require.NoError(t, err)
+				require.Contains(t, string(log), "admitted rejection")
+				require.Contains(t, string(log), "[REDACTED]")
+				retained := string(output) + string(log)
+				entries, err := os.ReadDir(filepath.Join(stage.Directory, "native"))
+				require.NoError(t, err)
+				for _, entry := range entries {
+					body, err := os.ReadFile(filepath.Join(stage.Directory, "native", entry.Name()))
+					require.NoError(t, err)
+					retained += string(body)
+				}
+				require.NotContains(t, retained, secret)
+			})
+		}
+	})
 	c := pairedFixture(t)
 	c.Deadline = time.Now().Add(3 * time.Second)
 	configPath := filepath.Join(t.TempDir(), "pair.json")
