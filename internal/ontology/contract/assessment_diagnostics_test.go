@@ -1,7 +1,9 @@
 package contract
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -61,4 +63,51 @@ func TestOrganizationReceiptValidationDiagnostics(t *testing.T) {
 	encoded, err = json.Marshal(receipt.Result.Attempts[0])
 	require.NoError(t, err)
 	require.NotContains(t, string(encoded), `"validation"`)
+}
+
+func TestOrganizationContextDiagnosticSnapshotPreservesHash(t *testing.T) {
+	id := policyID("context-record")
+	context := OrganizationContext{Records: []RecordView{{Record: Record{ID: id, Version: 3}, Current: true}}}
+	legacyJSON := fmt.Sprintf(`{"Records":[{"ID":%q,"Version":3,"Current":true}],"Candidates":[]}`, id)
+	expected := fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(legacyJSON)))
+	actual, err := OrganizationContextHash(context)
+	require.NoError(t, err)
+	require.Equal(t, expected, actual)
+	snapshot := SnapshotOrganizationContext(context)
+	context.Records[0].Version = 4
+	require.Equal(t, int64(3), snapshot.Records[0].Version)
+}
+
+func TestOrganizationFreshnessDiagnosticsValidateAndPreserveLegacyReceipts(t *testing.T) {
+	source := sourceDependency(t, policySnapshot("freshness-source", EvidenceSource, "source"))
+	id := policyID("freshness-assessment")
+	receipt := OrganizationReceipt{ID: id, OperationKey: "freshness", InputHash: source.Fingerprint, BatchHash: source.Fingerprint,
+		ContextHash: source.Fingerprint, ProviderIdentity: "provider", Sources: []SourceDependency{source},
+		Result: OrganizationResult{AssessmentID: id, FailureCode: "stale_input", Outcomes: []OrganizationOutcome{{Source: source.SourceHandle, Status: "failed", Reason: "stale_input"}}}}
+	require.NoError(t, ValidateOrganizationReceipt(receipt))
+	historical, err := json.Marshal(receipt)
+	require.NoError(t, err)
+	require.NotContains(t, string(historical), "freshness_rejection")
+	receipt.Result.FreshnessRejection = &FreshnessRejection{Check: "source_fingerprint", Source: &source.SourceHandle,
+		Expected: source.Fingerprint, Observed: "sha256:" + strings.Repeat("a", 64)}
+	require.NoError(t, ValidateOrganizationReceipt(receipt))
+	encoded, err := json.Marshal(receipt)
+	require.NoError(t, err)
+	var decoded OrganizationReceipt
+	require.NoError(t, jsonstrict.Decode(strings.NewReader(string(encoded)), &decoded, MaxPublicationBytes))
+	require.Equal(t, receipt.Result.FreshnessRejection, decoded.Result.FreshnessRejection)
+	for _, change := range []func(*FreshnessRejection){
+		func(d *FreshnessRejection) { d.Check = "unknown" },
+		func(d *FreshnessRejection) { d.Expected = "invalid fingerprint" },
+		func(d *FreshnessRejection) { d.Source = nil },
+		func(d *FreshnessRejection) { d.RecordID = "not-an-id" },
+		func(d *FreshnessRejection) { d.Observed = strings.Repeat("x", 129) },
+	} {
+		invalid := *receipt.Result.FreshnessRejection
+		change(&invalid)
+		require.False(t, invalid.Valid())
+	}
+	require.ErrorIs(t, &FreshnessError{Rejection: *receipt.Result.FreshnessRejection}, ErrSourceStale)
+	receipt.Result.FailureCode = "provider_response_invalid"
+	require.ErrorIs(t, ValidateOrganizationReceipt(receipt), ErrInvalid)
 }

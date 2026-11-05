@@ -24,7 +24,7 @@ func TestRememberExchangeRecorderMarksOversizedResponseUnavailable(t *testing.T)
 	require.Len(t, exchanges, 1)
 	require.Equal(t, "captured", exchanges[0].Outcome)
 	require.Equal(t, "unavailable", exchanges[0].CaptureState)
-	require.Equal(t, "credential_protection_2", exchanges[0].CaptureReason)
+	require.Equal(t, "credential_protection_13:body_bytes_exceeded:body_bytes=16777216", exchanges[0].CaptureReason)
 	require.Equal(t, "request", string(exchanges[0].RequestBody))
 	require.Empty(t, exchanges[0].ResponseBody)
 }
@@ -74,7 +74,7 @@ func TestRememberDiagnosticCaptureProtectsCredentialsAcrossBodyLimit(t *testing.
 			capture := captureRememberDiagnosticBody(body, observability.NewCredentialProtector(), test.secret)
 
 			require.Equal(t, "unavailable", capture.state)
-			require.Equal(t, "credential_protection_2", capture.reason)
+			require.Equal(t, "credential_protection_13:body_bytes_exceeded:body_bytes=16777216", capture.reason)
 			require.Empty(t, capture.body)
 
 			withinBudget := captureRememberDiagnosticBody([]byte(test.encoded), observability.NewCredentialProtector(), test.secret)
@@ -115,7 +115,7 @@ func TestRememberDiagnosticCaptureBoundsRedactionAllocation(t *testing.T) {
 
 	runtime.ReadMemStats(&after)
 	require.Equal(t, "unavailable", capture.state)
-	require.Equal(t, "credential_protection_2", capture.reason)
+	require.Equal(t, "credential_protection_11:encoded_bytes_exceeded:encoded_bytes=16777218", capture.reason)
 	require.Empty(t, capture.body)
 	require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(256<<20))
 }

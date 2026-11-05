@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"time"
 	"unicode/utf8"
 )
 
@@ -26,13 +27,17 @@ type DiagnosticBodyChunk struct {
 	SHA256        string `json:"sha256"`
 	State         string `json:"state"`
 	Reason        int    `json:"reason,omitempty"`
+	ReasonCode    string `json:"reason_code,omitempty"`
+	Limit         int    `json:"limit,omitempty"`
+	LimitUnit     string `json:"limit_unit,omitempty"`
 	OriginalBytes int    `json:"original_bytes"`
 }
 
 func (c DiagnosticBodyChunk) LogValue() slog.Value {
 	return slog.GroupValue(slog.Int("index", c.Index), slog.Int("count", c.Count),
 		slog.String("body", c.Body), slog.String("sha256", c.SHA256),
-		slog.String("state", c.State), slog.Int("reason", c.Reason), slog.Int("original_bytes", c.OriginalBytes))
+		slog.String("state", c.State), slog.Int("reason", c.Reason), slog.Int("original_bytes", c.OriginalBytes),
+		slog.String("reason_code", c.ReasonCode), slog.Int("limit", c.Limit), slog.String("limit_unit", c.LimitUnit))
 }
 
 func CaptureDiagnosticBody(ctx context.Context, protector DiagnosticProtector, body []byte, maxBytes int) []DiagnosticBodyChunk {
@@ -40,6 +45,8 @@ func CaptureDiagnosticBody(ctx context.Context, protector DiagnosticProtector, b
 	protected, reason := ProtectDiagnosticText(ctx, protector, body, maxBytes)
 	if reason != CredentialProtectionAvailable {
 		chunk.State, chunk.Reason = "unavailable", int(reason)
+		chunk.ReasonCode = reason.Code()
+		chunk.LimitUnit, chunk.Limit = reason.diagnosticLimit(maxBytes)
 		return []DiagnosticBodyChunk{chunk}
 	}
 	return chunkDiagnosticBody(protected, chunk)
@@ -50,11 +57,14 @@ func ChunkProtectedDiagnosticBody(body []byte, maxBytes int) []DiagnosticBodyChu
 	chunk := DiagnosticBodyChunk{Count: 1, State: "captured", OriginalBytes: len(body)}
 	if len(body) > 0 {
 		if maxBytes <= 0 || len(body) > maxBytes {
-			chunk.State, chunk.Reason = "unavailable", int(CredentialProtectionBudgetExceeded)
+			chunk.State, chunk.Reason = "unavailable", int(CredentialProtectionBodyBudgetExceeded)
+			chunk.ReasonCode = CredentialProtectionBodyBudgetExceeded.Code()
+			chunk.LimitUnit, chunk.Limit = "body_bytes", max(0, maxBytes)
 			return []DiagnosticBodyChunk{chunk}
 		}
 		if !utf8.Valid(body) {
 			chunk.State, chunk.Reason = "unavailable", int(CredentialProtectionInvalidEncoding)
+			chunk.ReasonCode = CredentialProtectionInvalidEncoding.Code()
 			return []DiagnosticBodyChunk{chunk}
 		}
 	}
@@ -96,7 +106,7 @@ func ProtectDiagnosticText(ctx context.Context, protector DiagnosticProtector, b
 		return nil, CredentialProtectionUnsupported
 	}
 	if maxBytes <= 0 || len(body) > maxBytes {
-		return nil, CredentialProtectionBudgetExceeded
+		return nil, CredentialProtectionBodyBudgetExceeded
 	}
 	if !utf8.Valid(body) {
 		return nil, CredentialProtectionInvalidEncoding
@@ -115,7 +125,7 @@ func ProtectDiagnosticText(ctx context.Context, protector DiagnosticProtector, b
 		return nil, CredentialProtectionFormattingFailed
 	}
 	if len(text) > maxBytes {
-		return nil, CredentialProtectionBudgetExceeded
+		return nil, CredentialProtectionBodyBudgetExceeded
 	}
 	return []byte(text), CredentialProtectionAvailable
 }
@@ -125,9 +135,18 @@ func LogDiagnosticBody(ctx context.Context, logger *slog.Logger, protector Diagn
 		return
 	}
 	ctx = WithSinkSuppressed(ctx)
-	for _, chunk := range CaptureDiagnosticBody(ctx, protector, body, maxBytes) {
+	started := time.Now()
+	chunks := CaptureDiagnosticBody(ctx, protector, body, maxBytes)
+	for _, chunk := range chunks {
 		fields := append(append([]slog.Attr{}, attrs...), slog.Any("payload_chunk", chunk))
 		logger.LogAttrs(ctx, slog.LevelDebug, event, fields...)
+		if chunk.State == "unavailable" {
+			fields := append(append([]slog.Attr{}, attrs...), slog.String("capture_event", event),
+				slog.String("reason_code", chunk.ReasonCode), slog.Int("reason", chunk.Reason),
+				slog.Int("original_bytes", chunk.OriginalBytes), slog.Int("limit", chunk.Limit),
+				slog.String("limit_unit", chunk.LimitUnit), slog.Float64("protection_ms", float64(time.Since(started))/float64(time.Millisecond)))
+			logger.LogAttrs(ctx, slog.LevelWarn, "diagnostic_body_unavailable", fields...)
+		}
 	}
 }
 
@@ -142,7 +161,7 @@ func (p *CredentialProtector) ProtectDiagnosticBytes(body []byte, maxBytes int, 
 		return nil, CredentialProtectionInvalidBudget
 	}
 	if len(body) > maxBytes {
-		return nil, CredentialProtectionBudgetExceeded
+		return nil, CredentialProtectionEncodedBudgetExceeded
 	}
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.UseNumber()

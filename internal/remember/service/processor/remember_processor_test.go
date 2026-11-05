@@ -335,7 +335,7 @@ func TestRememberFailureDiagnosticsMarksOversizedRequestUnavailable(t *testing.T
 	input := rememberapp.RememberProcessRequest{OriginalRequest: []byte(strings.Repeat("x", rememberDiagnosticMaxBodyBytes+1))}
 	items := rememberFailureDiagnostics(input, nil, nil, nil, true, "assessment", observability.NewCredentialProtector())
 	require.Equal(t, "unavailable", items[0].CaptureState)
-	require.Equal(t, "credential_protection_2", items[0].CaptureReason)
+	require.Equal(t, "credential_protection_13:body_bytes_exceeded:body_bytes=16777216", items[0].CaptureReason)
 	require.Empty(t, items[0].RequestBody)
 }
 

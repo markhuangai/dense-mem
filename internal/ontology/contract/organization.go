@@ -64,18 +64,20 @@ type OrganizationResult struct {
 	Publication          *PublicationResult    `json:"publication,omitempty"`
 	FailureCode          string                `json:"failure_code,omitempty"`
 	AmbiguousComparisons []AmbiguousComparison `json:"ambiguous_comparisons,omitempty"`
+	FreshnessRejection   *FreshnessRejection   `json:"freshness_rejection,omitempty"`
 }
 
 type OrganizationReceipt struct {
-	ID               string             `json:"id"`
-	OperationKey     string             `json:"operation_key"`
-	InputHash        string             `json:"input_hash"`
-	BatchHash        string             `json:"batch_hash"`
-	ProviderIdentity string             `json:"provider_identity"`
-	ContextHash      string             `json:"context_hash"`
-	Sources          []SourceDependency `json:"sources"`
-	Dependencies     []RevisionRef      `json:"dependencies"`
-	Result           OrganizationResult `json:"result"`
+	ID               string                    `json:"id"`
+	OperationKey     string                    `json:"operation_key"`
+	InputHash        string                    `json:"input_hash"`
+	BatchHash        string                    `json:"batch_hash"`
+	ProviderIdentity string                    `json:"provider_identity"`
+	ContextHash      string                    `json:"context_hash"`
+	Sources          []SourceDependency        `json:"sources"`
+	Dependencies     []RevisionRef             `json:"dependencies"`
+	Result           OrganizationResult        `json:"result"`
+	ContextState     *OrganizationContextState `json:"-"`
 }
 
 type OrganizationRepository interface {
@@ -171,20 +173,7 @@ func OrganizationDependencies(context OrganizationContext) ([]RevisionRef, error
 }
 
 func OrganizationContextHash(context OrganizationContext) (string, error) {
-	type revision struct {
-		ID      string
-		Version int64
-		Current bool
-	}
-	refs := func(views []RecordView) []revision {
-		result := make([]revision, 0, len(views))
-		for _, view := range views {
-			result = append(result, revision{view.ID, view.Version, view.Current})
-		}
-		sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
-		return result
-	}
-	return hashJSON(struct{ Records, Candidates []revision }{refs(context.Records), refs(context.Candidates)})
+	return hashJSON(SnapshotOrganizationContext(context))
 }
 
 func VocabularyQuery(sources []SourceSnapshot) (string, []string) {
@@ -204,6 +193,9 @@ func VocabularyQuery(sources []SourceSnapshot) (string, []string) {
 }
 
 func ValidateOrganizationReceipt(receipt OrganizationReceipt) error {
+	if !receipt.Result.FreshnessRejection.Valid() || receipt.Result.FreshnessRejection != nil && receipt.Result.FailureCode != "stale_input" {
+		return fmt.Errorf("%w: organization freshness diagnostics", ErrInvalid)
+	}
 	if !validID(receipt.ID) || receipt.Result.AssessmentID != receipt.ID || !boundedText(receipt.OperationKey, 128) ||
 		!validFingerprint(receipt.InputHash) || !validFingerprint(receipt.BatchHash) || !validFingerprint(receipt.ContextHash) || !boundedText(receipt.ProviderIdentity, 128) ||
 		len(receipt.Sources) < 1 || len(receipt.Sources) > MaxOrganizationSources || len(receipt.Dependencies) > MaxDependencyRecords ||

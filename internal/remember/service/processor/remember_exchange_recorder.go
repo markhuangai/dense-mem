@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -47,7 +46,7 @@ func captureRememberDiagnosticBody(body []byte, protector observability.Diagnost
 	if protector == nil {
 		return rememberDiagnosticCapture{
 			state:  "unavailable",
-			reason: "credential_protection_" + strconv.Itoa(int(observability.CredentialProtectionUnsupported)),
+			reason: observability.CredentialProtectionUnsupported.CaptureReason(rememberDiagnosticMaxBodyBytes),
 		}
 	}
 	ctx := observability.WithAuthenticationSecrets(context.Background(), authenticatedSecrets...)
@@ -55,7 +54,7 @@ func captureRememberDiagnosticBody(body []byte, protector observability.Diagnost
 	if reason != observability.CredentialProtectionAvailable {
 		return rememberDiagnosticCapture{
 			state:  "unavailable",
-			reason: "credential_protection_" + strconv.Itoa(int(reason)),
+			reason: reason.CaptureReason(rememberDiagnosticMaxBodyBytes),
 		}
 	}
 	captured, protectedTruncated := boundedRememberDiagnosticBody(protected)

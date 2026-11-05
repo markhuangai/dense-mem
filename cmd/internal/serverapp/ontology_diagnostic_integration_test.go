@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -25,6 +26,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/ontology/assessment"
+	contract "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	ontologypg "github.com/markhuangai/dense-mem/internal/ontology/postgres"
 	operations "github.com/markhuangai/dense-mem/internal/operations"
 	operationspg "github.com/markhuangai/dense-mem/internal/operations/postgres"
@@ -35,7 +37,7 @@ import (
 )
 
 func TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads(t *testing.T) {
-	for _, mode := range []string{"invalid_response", "canceled", "success", "repair_success", "repair_exhausted"} {
+	for _, mode := range []string{"invalid_response", "canceled", "success", "repair_success", "repair_exhausted", "unused_exhausted", "stale_source"} {
 		t.Run(mode, func(t *testing.T) {
 			admin, app, rls, cleanup := setupRememberProcessorIntegrationDB(t)
 			defer cleanup()
@@ -51,9 +53,10 @@ func TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads(t *testing.T)
 			require.NoError(t, admin.Raw(`SELECT id::text,generation FROM memory_spaces WHERE team_id=?::uuid AND kind='team_shared'`, teamID).Row().Scan(&sharedSpaceID, &generation))
 			content := "Diagnostic source canary uses PostgreSQL."
 			contentHash := sha256.Sum256([]byte(content))
+			evidenceID := uuid.NewString()
 			_, err := store.CreateIngestForTest(ctx, knowledge.CreateIngestInput{TeamID: teamID.String(), OwnerProfileID: ownerID.String(),
 				SpaceID: sharedSpaceID, SpaceGeneration: generation, IdempotencyKey: uuid.NewString(), RequestHash: hex.EncodeToString(contentHash[:]),
-				Evidence: []knowledge.EvidenceInput{{FragmentID: uuid.NewString(), Content: content, ForceInsert: true}}})
+				Evidence: []knowledge.EvidenceInput{{FragmentID: evidenceID, Content: content, ForceInsert: true}}})
 			require.NoError(t, err)
 			configuration := settings.NewAppConfigService(settingspg.NewAppConfigRepository(app, rls), nil)
 			_, err = configuration.UpdateOntologyMaintenanceSettings(ctx, map[string]string{domain.AppConfigOntologyEnabled: "true", domain.AppConfigOntologyModel: "fixture-model", domain.AppConfigOntologyContextWindow: "300000"}, "control", "", "")
@@ -73,13 +76,31 @@ func TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads(t *testing.T)
 					cancel()
 					return
 				}
-				if mode == "success" || strings.HasPrefix(mode, "repair_") {
+				if mode == "success" || mode == "stale_source" || mode == "unused_exhausted" || strings.HasPrefix(mode, "repair_") {
 					var input assessment.Request
 					if err := json.Unmarshal([]byte(envelope.Messages[1].Content), &input); err != nil {
 						http.Error(w, "invalid fixture assessment", 400)
 						return
 					}
 					response := pairedOrganizationResponse(input)
+					if mode == "unused_exhausted" {
+						if calls.Load() > 1 {
+							var feedback struct {
+								ValidationErrors []assessor.SemanticValidationError `json:"validation_errors"`
+							}
+							require.NoError(t, json.Unmarshal([]byte(envelope.Messages[len(envelope.Messages)-1].Content), &feedback))
+							require.Len(t, feedback.ValidationErrors, 1)
+							require.Contains(t, feedback.ValidationErrors[0].Message, "has no source assignment")
+						}
+						ref := fmt.Sprintf("unused_%d", calls.Load())
+						response.Definitions = append(response.Definitions, assessment.Definition{Ref: ref, Kind: contract.Topic,
+							Key: ref, Label: "Unused definition", Description: "A new unused proposal on each complete regeneration.", Aliases: []string{}})
+					}
+					if mode == "stale_source" && calls.Load() == 1 {
+						_, err := store.RetractEvidence(context.Background(), knowledge.RetractEvidenceInput{TeamID: teamID.String(), OwnerProfileID: ownerID.String(),
+							EvidenceIDs: []string{evidenceID}, Reason: "withdrawn during provider exchange", IdempotencyKey: uuid.NewString(), RequestHash: hex.EncodeToString(contentHash[:])})
+						require.NoError(t, err)
+					}
 					if strings.HasPrefix(mode, "repair_") {
 						if calls.Load() > 1 {
 							var feedback struct {
@@ -116,12 +137,16 @@ func TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads(t *testing.T)
 			}))
 			defer upstream.Close()
 			protector := observability.NewCredentialProtector(secret)
-			logger := observability.NewWithProtector(slog.LevelInfo, protector)
+			level := slog.LevelInfo
+			if mode == "stale_source" || mode == "repair_exhausted" || mode == "unused_exhausted" {
+				level = slog.LevelDebug
+			}
+			logger := observability.NewWithProtector(level, protector)
 			logs := operations.NewOperationLogService(operationspg.NewOperationLogRepository(app, rls), nil)
 			require.NoError(t, logger.AttachSink(logs))
 			client := observability.DiagnosticHTTPClient(upstream.Client(), rootDiagnosticLogger(logger), protector)
 			provider := assessorprovider.NewOpenAIAssessor(&config.Config{AIVerifierAPIURL: upstream.URL, AIVerifierAPIKey: secret, AIVerifierModel: "fixture-model"}, client)
-			maintenance := buildOntologyMaintenance(ontologypg.NewStore(app, rls), configuration, provider, assessor.DefaultSemanticAssessmentLimits(), "fixture-model", time.Minute, nil, rootSlogLogger(logger), ontologyDiagnosticCapture(logs, protector))
+			maintenance := buildOntologyMaintenance(ontologypg.NewStore(app, rls), configuration, provider, assessor.DefaultSemanticAssessmentLimits(), "fixture-model", time.Minute, nil, rootSlogLogger(logger), ontologyDiagnosticCapture(logs, protector, rootDiagnosticLogger(logger)))
 			var failure *domain.OperationLog
 			for range 12 {
 				_, runErr := maintenance.RunTurn(ctx)
@@ -144,7 +169,40 @@ func TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads(t *testing.T)
 				return
 			}
 			require.NotNil(t, failure, "native maintenance must retain the failed provider exchanges")
-			if mode == "invalid_response" || mode == "repair_exhausted" {
+			if mode == "stale_source" {
+				require.Equal(t, "stale_input", failure.Attrs["failure_code"])
+				warnings, err := logs.ListOperationLogs(context.Background(), domain.OperationLogFilter{Event: "ontology_freshness_rejected", TeamID: &teamID})
+				require.NoError(t, err)
+				require.Len(t, warnings.Items, 1)
+				require.Equal(t, "WARN", warnings.Items[0].Severity)
+				require.Equal(t, "source_fingerprint", warnings.Items[0].Attrs["check"])
+				comparisonFilter := domain.OperationLogFilter{Event: "ontology_freshness_payload", TeamID: &teamID,
+					ReferenceType: "ontology_run", ReferenceID: failure.Attrs["reference_id"].(string), AttemptID: failure.Attrs["attempt_id"].(string), Limit: 500}
+				comparison, err := logs.ListOperationLogs(context.Background(), comparisonFilter)
+				require.NoError(t, err)
+				require.EqualValues(t, failure.Attrs["freshness_record_count"], comparison.Total)
+				require.Len(t, comparison.Items, 1)
+				encoded, err := json.Marshal(comparison.Items[0].Attrs["payload_chunk"])
+				require.NoError(t, err)
+				var chunk observability.DiagnosticBodyChunk
+				require.NoError(t, json.Unmarshal(encoded, &chunk))
+				require.Equal(t, "captured", chunk.State)
+				require.Equal(t, 1, chunk.Count)
+				digest := sha256.Sum256([]byte(chunk.Body))
+				require.Equal(t, hex.EncodeToString(digest[:]), chunk.SHA256)
+				var rejection contract.FreshnessRejection
+				require.NoError(t, json.Unmarshal([]byte(chunk.Body), &rejection))
+				require.True(t, rejection.Valid())
+				require.Equal(t, evidenceID, rejection.Source.ID)
+				require.NotEqual(t, rejection.Expected, rejection.Observed)
+				require.NotContains(t, chunk.Body, secret)
+				foreign := uuid.New()
+				comparisonFilter.TeamID = &foreign
+				invisible, err := logs.ListOperationLogs(context.Background(), comparisonFilter)
+				require.NoError(t, err)
+				require.Zero(t, invisible.Total)
+			}
+			if mode == "invalid_response" || mode == "repair_exhausted" || mode == "unused_exhausted" {
 				require.Equal(t, "provider_response_invalid", failure.Attrs["failure_code"])
 				attempts, err := logs.ListOperationLogs(context.Background(), domain.OperationLogFilter{Event: "ontology maintenance assessment attempt", TeamID: &teamID})
 				require.NoError(t, err)
@@ -160,6 +218,10 @@ func TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads(t *testing.T)
 						stage = "validate"
 						require.Equal(t, "item_reason_limit", validation["code"])
 					}
+					if mode == "unused_exhausted" {
+						stage = "validate"
+						require.Equal(t, "definition_unused", validation["code"])
+					}
 					require.Equal(t, stage, validation["stage"])
 					require.NotEmpty(t, validation["code"])
 				}
@@ -171,7 +233,7 @@ func TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads(t *testing.T)
 			require.NoError(t, err)
 			require.EqualValues(t, failure.Attrs["record_count"], page.Total)
 			minimumRecords := int64(6)
-			if mode == "canceled" {
+			if mode == "canceled" || mode == "stale_source" {
 				minimumRecords = 2
 			}
 			require.GreaterOrEqual(t, page.Total, minimumRecords)
@@ -184,6 +246,11 @@ func TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads(t *testing.T)
 				require.Contains(t, string(encoded), "validation_errors")
 				require.Contains(t, string(encoded), "expected topic")
 				require.Contains(t, string(encoded), "entity_class")
+			}
+			if mode == "unused_exhausted" {
+				require.Contains(t, string(encoded), "validation_errors")
+				require.Contains(t, string(encoded), "has no source assignment")
+				require.Contains(t, string(encoded), "unused_3")
 			}
 			require.NotContains(t, string(encoded), secret)
 			otherTeam := uuid.New()

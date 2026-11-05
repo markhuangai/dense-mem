@@ -3,7 +3,9 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/google/uuid"
@@ -69,6 +71,44 @@ func testOntologyOrganizationAtomicReplayAndIsolation(t *testing.T) {
 }
 
 func testOntologyOrganizationRejectsStaleAndMalformedPublication(t *testing.T) {
+	t.Run("freshness comparison diagnostics", testOrganizationFreshnessComparisons)
+	for _, mode := range []string{"item_source_kind", "definition_unused"} {
+		t.Run("bounded complete rejection "+mode, func(t *testing.T) {
+			f := newOrganizationFixture(t)
+			a := f.organizationEvidence(t, 0, "Atlas uses PostgreSQL.", nil)
+			b := f.organizationEvidence(t, 1, "PostgreSQL stores Atlas data.", nil)
+			before := f.canonicalSnapshot(t)
+			var turns atomic.Int32
+			service, calls := organizationFixtureService(t, f, nil, func(_ assessment.Request, response *assessment.Response) {
+				turn := turns.Add(1)
+				if mode == "item_source_kind" {
+					response.Definitions[0].Kind = ontology.PredicateConcept
+				} else {
+					response.Definitions = append(response.Definitions, assessment.Definition{Ref: fmt.Sprintf("unused%d", turn), Kind: ontology.Topic,
+						Key: fmt.Sprintf("unused_topic_%d", turn), Label: "Unused proposal", Description: "New unused definition", Aliases: []string{}})
+				}
+			})
+			input := ontology.OrganizationInput{OperationKey: "exhausted-" + mode, Sources: []ontology.SourceHandle{a, b}}
+			result, err := service.Organize(context.Background(), f.team, input)
+			require.ErrorContains(t, err, "provider_response_invalid")
+			require.Equal(t, int32(3), calls.Load())
+			require.Len(t, result.Attempts, 3)
+			require.Equal(t, mode, result.Attempts[2].Validation.Code)
+			require.Nil(t, result.Publication)
+			for _, outcome := range result.Outcomes {
+				require.Equal(t, "failed", outcome.Status)
+			}
+			replay, err := service.Organize(context.Background(), f.team, input)
+			require.Error(t, err)
+			require.True(t, replay.Existing)
+			require.Equal(t, result.AssessmentID, replay.AssessmentID)
+			require.Equal(t, int32(3), calls.Load())
+			page, err := f.store.ListRecords(context.Background(), f.team, "", "", 20)
+			require.NoError(t, err)
+			require.Empty(t, page.Records)
+			require.Equal(t, before, f.canonicalSnapshot(t))
+		})
+	}
 	t.Run("stale source", func(t *testing.T) {
 		f := newOrganizationFixture(t)
 		source := f.organizationEvidence(t, 0, "Atlas uses PostgreSQL.", nil)
@@ -79,6 +119,11 @@ func testOntologyOrganizationRejectsStaleAndMalformedPublication(t *testing.T) {
 		result, err := service.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: "stale", Sources: []ontology.SourceHandle{source}})
 		require.Error(t, err)
 		require.Equal(t, "stale_input", result.FailureCode)
+		require.NotNil(t, result.FreshnessRejection)
+		require.True(t, result.FreshnessRejection.Valid())
+		require.Equal(t, "source_fingerprint", result.FreshnessRejection.Check)
+		require.Equal(t, source, *result.FreshnessRejection.Source)
+		require.NotEqual(t, result.FreshnessRejection.Expected, result.FreshnessRejection.Observed)
 		require.Equal(t, int32(1), calls.Load())
 		require.Equal(t, 1, receiptCount(t, f))
 		page, err := f.store.ListRecords(context.Background(), f.team, "", "", 20)
