@@ -131,6 +131,8 @@ def retained_pair(original, replayed, seed):
     suite_ids = [row["case_id"] for row in suite]
     if len(suite_ids) != len(set(suite_ids)) or set(suite_ids) != set(cases):
         raise ValueError("missing, duplicate or unexpected frozen suite cases")
+    if file_hash(replayed / "suite.jsonl") != file_hash(original / "suite.jsonl"):
+        raise ValueError("retained suite changed")
     slices = {}
     for row in suite:
         axes = row.get("slices", []) + cases[row["case_id"]].get("slices", [])

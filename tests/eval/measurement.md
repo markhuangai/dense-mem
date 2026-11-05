@@ -100,6 +100,12 @@ one completed logical operation. Malformed JSON or cancellation must identify
 the affected operation, retain prior successes and leave incomplete work visible.
 A missing journal requires restoring the original capture, not retrying ingestion.
 
+Use `eval-runner --mode validate-capture --capture-dir "$capture"` to check saved
+execution measurements without dispatching requests or changing artifacts.
+Live runs validate a saved mapping's capture before starting work. The non-paired
+monitor also validates imports and baselines when reusing cached results.
+Legacy captures retain their existing unavailable measurements.
+
 ## Independent scoring verification
 
 Use the pinned reference packages in an isolated environment:

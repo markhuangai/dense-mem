@@ -58,7 +58,7 @@ class MeasurementAggregatesTest(unittest.TestCase):
             directory.mkdir()
             (directory / "retrieval_scores.jsonl").write_text("".join(json.dumps(row) + "\n" for row in scores))
             (directory / "summary.json").write_text(json.dumps(summary))
-        (replay / "suite.jsonl").write_text("".join(json.dumps(row) + "\n" for row in suite))
+            (directory / "suite.jsonl").write_text("".join(json.dumps(row) + "\n" for row in suite))
         return original, replay, seed
 
     def test_retained_scores_and_suite_require_the_frozen_cohort(self):
@@ -96,6 +96,20 @@ class MeasurementAggregatesTest(unittest.TestCase):
                 (replay / "summary.json").write_text(json.dumps(summary))
                 with self.assertRaisesRegex(ValueError, "summary slices"):
                     verification.retained_pair(original, replay, seed)
+
+    def test_retained_suite_rejects_coherent_slice_mutation(self):
+        original, replay, seed = self.retained_example()
+        suite = verification.rows(replay / "suite.jsonl")
+        suite[0]["slices"] = ["moved-suite-only"]
+        (replay / "suite.jsonl").write_text("".join(json.dumps(row) + "\n" for row in suite))
+        summary = json.loads((replay / "summary.json").read_text())
+        summary["slices"]["moved-suite-only"] = copy.deepcopy(summary["slices"]["suite-only"])
+        for field in ("case_count", "scored_case_count", "evidence_scored_case_count"):
+            summary["slices"]["suite-only"][field] = 203
+            summary["slices"]["moved-suite-only"][field] = 1
+        (replay / "summary.json").write_text(json.dumps(summary))
+        with self.assertRaisesRegex(ValueError, "retained suite changed"):
+            verification.retained_pair(original, replay, seed)
 
 
 if __name__ == "__main__":

@@ -21,6 +21,7 @@ func main() {
 	var opts evalharness.RunOptions
 	var baselineRun string
 	var candidateRun string
+	var captureDir string
 	var relationshipLedgerPath string
 	var derivedSeedID string
 	var parentV1ManifestPath string
@@ -33,7 +34,7 @@ func main() {
 	var repairLockPath string
 	var metricsURL string
 	var experimentManifest string
-	flag.StringVar(&opts.Mode, "mode", "validate", "validate, import, baseline, candidate, compare, compare-v2-cohort, derive-v2, derive-v3, generate-recall-accuracy, recall-accuracy-report, validate-v2-cohort, token-diagnostics, or runtime")
+	flag.StringVar(&opts.Mode, "mode", "validate", "validate, validate-capture, import, baseline, candidate, compare, compare-v2-cohort, derive-v2, derive-v3, generate-recall-accuracy, recall-accuracy-report, validate-v2-cohort, token-diagnostics, or runtime")
 	flag.StringVar(&metricsURL, "metrics-url", "", "direct Prometheus scrape URL (or DENSE_MEM_EVAL_METRICS_URL) for token-diagnostics")
 	flag.StringVar(&experimentManifest, "experiment-manifest", "", "paired-run manifest for recall-accuracy-report")
 	flag.StringVar(&opts.SeedManifestPath, "seed", "", "seed manifest path (source seed for derive-v2; derive-v3 uses parent/filtered V1 inputs)")
@@ -61,6 +62,7 @@ func main() {
 	flag.StringVar(&opts.ReleaseGatePolicyPath, "release-gate-policy", "", "release gate policy JSON path for validate, baseline, or candidate mode")
 	flag.StringVar(&baselineRun, "baseline-run", "", "baseline run directory for compare mode")
 	flag.StringVar(&candidateRun, "candidate-run", "", "candidate run directory for compare mode")
+	flag.StringVar(&captureDir, "capture-dir", "", "existing run directory whose execution measurements validate-capture checks")
 	registerFloatGate("min-recall-at-k", "minimum average recall@k required for scoring modes", &opts.Gates.MinRecallAtK, validateRate)
 	registerFloatGate("min-required-rank1-rate", "minimum share of cases with a required ref ranked first", &opts.Gates.MinRequiredRank1Rate, validateRate)
 	registerFloatGate("max-average-bad-at-k", "maximum average bad refs@k allowed for scoring modes", &opts.Gates.MaxAverageBadAtK, validateNonNegative)
@@ -129,12 +131,26 @@ func main() {
 		fmt.Println("token diagnostics written")
 		return
 	}
-	if opts.Mode == "import" || opts.Mode == "baseline" || opts.Mode == "candidate" || opts.Mode == "compare" || opts.Mode == "compare-v2-cohort" {
+	if opts.Mode == "import" || opts.Mode == "baseline" || opts.Mode == "candidate" || opts.Mode == "compare" || opts.Mode == "compare-v2-cohort" || opts.Mode == "validate-capture" {
 		var err error
 		opts.Logger, opts.Protector, err = evaluationDiagnostics(opts.APIKey)
 		if err != nil {
 			exitf("evaluation diagnostics: %v", err)
 		}
+	}
+	if opts.Mode == "validate-capture" {
+		if captureDir == "" {
+			exitf("capture-dir is required for validate-capture")
+		}
+		info, err := os.Stat(captureDir)
+		if err != nil || !info.IsDir() {
+			exitf("capture-dir must name an existing directory")
+		}
+		if err := evalharness.ValidateExecutionCapture(captureDir, opts.Logger); err != nil {
+			exitf("capture measurement validation failed")
+		}
+		fmt.Println("capture measurement validation passed")
+		return
 	}
 	if opts.Mode == "compare" {
 		comparison, err := evalharness.CompareRunDirs(baselineRun, candidateRun, opts.OutDir, opts.Logger)

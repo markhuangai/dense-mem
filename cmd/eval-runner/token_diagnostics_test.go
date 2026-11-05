@@ -242,3 +242,28 @@ func TestEvalRunnerFailureProtectsCredentialsInBothOutputStreams(t *testing.T) {
 		require.NotContains(t, retained, secret)
 	}
 }
+
+func TestEvaluationCaptureValidationCLI(t *testing.T) {
+	for _, test := range []struct{ name, path string }{
+		{"missing_argument", ""},
+		{"missing_directory", filepath.Join(t.TempDir(), "missing")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, stderr, err := runTokenDiagnosticsCLI(t, nil, "--mode", "validate-capture", "--capture-dir", test.path)
+			require.Error(t, err)
+			require.Contains(t, stderr, "capture-dir")
+		})
+	}
+	capture := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(capture, "run_config.json"), []byte(`{"mode":"import"}`), 0o600))
+	stdout, stderr, err := runTokenDiagnosticsCLI(t, nil, "--mode", "validate-capture", "--capture-dir", capture)
+	require.NoError(t, err, "%s", stderr)
+	require.Contains(t, stdout, "capture measurement validation passed")
+	require.NoError(t, os.WriteFile(filepath.Join(capture, "run_config.json"), []byte(`{"mode":"import","measurement_schema":"dense-mem.eval.measurements.v1"}`), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(capture, "execution_measurements.json"), []byte(`{"status":"in_progress"}`), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(capture, "recall_traces.jsonl"), nil, 0o600))
+	stdout, stderr, err = runTokenDiagnosticsCLI(t, nil, "--mode", "validate-capture", "--capture-dir", capture)
+	require.Error(t, err)
+	require.Contains(t, stdout, "evaluation_capture_invalid")
+	require.Contains(t, stderr, "capture measurement validation failed")
+}

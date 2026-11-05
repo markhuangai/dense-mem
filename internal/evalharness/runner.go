@@ -180,6 +180,11 @@ func Run(ctx context.Context, opts RunOptions) (result Summary, runErr error) {
 			return inputSummary, nil
 		}
 	}
+	if opts.MappingPath != "" {
+		if err := ValidateExecutionCapture(filepath.Dir(opts.MappingPath), opts.Logger); err != nil {
+			return Summary{}, err
+		}
+	}
 	mapping := newKnowledgeMapping()
 	var journal *executionJournal
 	if opts.TracesPath != "" {
