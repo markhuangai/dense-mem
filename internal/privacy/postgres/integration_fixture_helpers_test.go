@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/markhuangai/dense-mem/internal/storage/postgres/testfixture"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -119,20 +120,7 @@ func setupLedgerRepositoryDSN(t testing.TB) (string, func()) {
 }
 
 func runLedgerPostgresContainer(ctx context.Context, options ...testcontainers.ContainerCustomizer) (*tcpostgres.PostgresContainer, error) {
-	const maxAttempts = 4
-	var lastErr error
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		container, err := tcpostgres.Run(ctx, "pgvector/pgvector:0.8.2-pg18-trixie", options...)
-		if err == nil {
-			return container, nil
-		}
-		lastErr = err
-		if !strings.Contains(strings.ToLower(err.Error()), "address already in use") || attempt == maxAttempts {
-			break
-		}
-		time.Sleep(time.Duration(attempt) * 250 * time.Millisecond)
-	}
-	return nil, lastErr
+	return testfixture.Run(ctx, "pgvector/pgvector:0.8.2-pg18-trixie", options...)
 }
 
 func postgresContainerDSN(ctx context.Context, container *tcpostgres.PostgresContainer, networkAlias string) (string, error) {

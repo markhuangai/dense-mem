@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/markhuangai/dense-mem/internal/storage/postgres/testfixture"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	testcontainerspostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -97,7 +98,7 @@ func openDemoCleanupDatabase(t *testing.T) *gorm.DB {
 	if networkName := strings.TrimSpace(os.Getenv("DENSE_MEM_CI_PRECHECK_NETWORK")); networkName != "" {
 		containerOptions = append(containerOptions, tcnetwork.WithNetworkName([]string{"postgres"}, networkName))
 	}
-	container, err := testcontainerspostgres.Run(
+	container, err := testfixture.Run(
 		ctx,
 		demoCleanupPostgresImage,
 		containerOptions...,

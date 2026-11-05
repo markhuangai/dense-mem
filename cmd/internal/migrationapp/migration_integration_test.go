@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/markhuangai/dense-mem/internal/storage/postgres/testfixture"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -124,7 +125,7 @@ func openMigrationIntegrationDB(t *testing.T) *gorm.DB {
 	if networkName := strings.TrimSpace(os.Getenv("DENSE_MEM_CI_PRECHECK_NETWORK")); networkName != "" {
 		containerOptions = append(containerOptions, tcnetwork.WithNetworkName([]string{"postgres"}, networkName))
 	}
-	container, err := tcpostgres.Run(ctx, "pgvector/pgvector:0.8.2-pg18-trixie", containerOptions...)
+	container, err := testfixture.Run(ctx, "pgvector/pgvector:0.8.2-pg18-trixie", containerOptions...)
 	if err != nil {
 		if os.Getenv("DENSE_MEM_REQUIRE_POSTGRES_TESTS") == "1" {
 			t.Fatalf("Postgres is required for this test run: %v", err)

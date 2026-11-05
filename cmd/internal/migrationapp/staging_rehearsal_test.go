@@ -22,6 +22,7 @@ import (
 	"github.com/markhuangai/dense-mem/cmd/internal/serverapp"
 	privacy "github.com/markhuangai/dense-mem/internal/privacy/contract"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
+	"github.com/markhuangai/dense-mem/internal/storage/postgres/testfixture"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -289,7 +290,7 @@ func TestValidateStagingDSN(t *testing.T) {
 
 func stagingMigrationTestDatabase(t *testing.T, ctx context.Context) (*gorm.DB, string) {
 	t.Helper()
-	container, err := tcpostgres.Run(ctx, "pgvector/pgvector:0.8.2-pg18-trixie",
+	container, err := testfixture.Run(ctx, "pgvector/pgvector:0.8.2-pg18-trixie",
 		tcpostgres.WithDatabase("rehearsal"), tcpostgres.WithUsername("testuser"), tcpostgres.WithPassword("testpass"),
 		testcontainers.WithWaitStrategy(wait.ForLog("database system is ready to accept connections").WithOccurrence(2).WithStartupTimeout(30*time.Second)))
 	require.NoError(t, err)

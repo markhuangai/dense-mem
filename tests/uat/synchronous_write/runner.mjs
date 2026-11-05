@@ -22,9 +22,30 @@ export async function runCases({ rpc = liveRPC, rawRPC = liveRawRPC, expect = as
   for (const url of await discoverCases()) {
     const module = await import(url);
     if (typeof module.run !== "function" || typeof module.name !== "string") throw new Error(`invalid synchronous-write case ${url}`);
-    modules.push({ name: module.name, result: await module.run({ rpc, rawRPC, expect }) });
+    modules.push({ name: module.name, result: await runStep(module.name,
+      () => module.run({ rpc, rawRPC, expect, runStep: (label, fn) => runStep(`${module.name}/${label}`, fn) })) });
   }
   return modules;
+}
+
+export async function runStep(label, fn) {
+  const started = performance.now();
+  const report = (outcome) => process.stderr.write(JSON.stringify({
+    event: "e2e_case_progress", level: outcome === "failed" ? "ERROR" : "INFO", time: new Date().toISOString(),
+    run_id: process.env.DENSE_MEM_E2E_RUN_ID || "", run_attempt: process.env.DENSE_MEM_E2E_RUN_ATTEMPT || "",
+    source_revision: process.env.DENSE_MEM_E2E_COMMIT_SHA || "", scenario: process.env.DENSE_MEM_E2E_SCENARIO || "",
+    case: label, outcome, elapsed_ms: Math.round(performance.now() - started),
+  }) + "\n");
+  report("started");
+  let result;
+  try {
+    result = await fn();
+  } catch (error) {
+    report("failed");
+    throw error;
+  }
+  report("passed");
+  return result;
 }
 
 if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
