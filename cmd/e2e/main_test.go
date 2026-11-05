@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +14,77 @@ import (
 	"testing"
 	"time"
 )
+
+func TestBatchProgressWithRealGo(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/progress\n\ngo 1.26\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	contents := "package progress\nimport (\"testing\"; \"time\")\nfunc TestPass(t *testing.T) {}\nfunc TestFail(t *testing.T) { t.Fatal(\"intentional failure\") }\nfunc TestBlocked(t *testing.T) { time.Sleep(time.Minute) }\n"
+	if err := os.WriteFile(filepath.Join(root, "progress_test.go"), []byte(contents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DENSE_MEM_CI_PRECHECK_RUN_ID", "691")
+	t.Setenv("DENSE_MEM_CI_PRECHECK_RUN_ATTEMPT", "2")
+	for _, tc := range []struct {
+		name    string
+		budget  time.Duration
+		outcome string
+	}{
+		{"TestPass", 10 * time.Second, "passed"},
+		{"TestFail", 10 * time.Second, "failed"},
+		{"TestBlocked", 500 * time.Millisecond, "failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var batchErr error
+			logs := captureBatchProgress(t, func() {
+				batchErr = runBatch(root, packageBatch{Package: ".", Cases: []databaseCase{{ID: "progress/" + tc.name, Run: "^" + tc.name + "$"}}}, tc.budget)
+			})
+			if (batchErr == nil) != (tc.outcome == "passed") {
+				t.Fatalf("batch error = %v, expected %s", batchErr, tc.outcome)
+			}
+			var outcomes []string
+			for _, line := range strings.Split(logs, "\n") {
+				var event map[string]any
+				if json.Unmarshal([]byte(line), &event) != nil || event["event"] != "database_batch_progress" {
+					continue
+				}
+				outcomes = append(outcomes, event["outcome"].(string))
+				if event["run_id"] != "691" || event["run_attempt"] != "2" || event["selected_count"] != float64(1) || event["budget_ms"] != float64(tc.budget.Milliseconds()) || event["remaining_ms"].(float64) < 0 {
+					t.Fatalf("incomplete batch progress: %s", line)
+				}
+			}
+			if strings.Join(outcomes, ",") != "started,"+tc.outcome {
+				t.Fatalf("progress outcomes = %v", outcomes)
+			}
+		})
+	}
+}
+
+func captureBatchProgress(t *testing.T, run func()) (captured string) {
+	t.Helper()
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := os.Stderr
+	os.Stderr = writer
+	var output bytes.Buffer
+	done := make(chan error, 1)
+	go func() { _, err := io.Copy(&output, reader); done <- err }()
+	defer func() {
+		os.Stderr = original
+		closeErr := writer.Close()
+		copyErr := <-done
+		readErr := reader.Close()
+		if closeErr != nil || copyErr != nil || readErr != nil {
+			t.Fatalf("collect batch progress: close=%v copy=%v reader=%v", closeErr, copyErr, readErr)
+		}
+		captured = output.String()
+	}()
+	run()
+	return
+}
 
 func TestGroupCasesCapsPackageBatches(t *testing.T) {
 	cases := make([]databaseCase, 0, maxDatabaseCasesPerBatch+1)

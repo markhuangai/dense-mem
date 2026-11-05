@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/markhuangai/dense-mem/internal/storage/postgres/testfixture"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
@@ -66,7 +67,7 @@ func skipIfNoPostgres(t *testing.T, ctx context.Context) (string, func()) {
 		if networkName := os.Getenv("DENSE_MEM_CI_PRECHECK_NETWORK"); networkName != "" {
 			containerOptions = append(containerOptions, tcnetwork.WithNetworkName([]string{"postgres"}, networkName))
 		}
-		container, err := tcpostgres.Run(ctx,
+		container, err := testfixture.Run(ctx,
 			"pgvector/pgvector:0.8.2-pg18-trixie",
 			containerOptions...,
 		)
@@ -84,7 +85,6 @@ func skipIfNoPostgres(t *testing.T, ctx context.Context) (string, func()) {
 		}
 		baseCleanup = func() { _ = container.Terminate(context.Background()) }
 	}
-
 	// Test connection
 	db, err := postgres.Open(ctx, &testConfig{dsn: dsn})
 	if err != nil {

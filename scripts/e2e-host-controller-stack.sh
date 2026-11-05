@@ -41,7 +41,18 @@ run_go_source_container() (
       -e "DOCKER_HOST=unix://${docker_socket}"
     )
   fi
-  docker_args+=("${environment_args[@]}" -e "GOPROXY=https://proxy.golang.org|direct" "$image" "${command[@]}")
+  local log_level source_revision
+  log_level="$(env_value LOG_LEVEL 2>/dev/null || true)"
+  source_revision="$(git -C "$source_dir" rev-parse HEAD)"
+  docker_args+=("${environment_args[@]}"
+    -e "LOG_LEVEL=${log_level}"
+    -e "DENSE_MEM_CI_PRECHECK_RUN_ID=${run_id}"
+    -e "DENSE_MEM_CI_PRECHECK_RUN_ATTEMPT=${attempt}"
+    -e "DENSE_MEM_CI_PRECHECK_PROJECT=${project}"
+    -e "DENSE_MEM_CI_PRECHECK_IMAGE_DIGEST=${digest}"
+    -e "DENSE_MEM_E2E_SCENARIO=${scenario}"
+    -e "DENSE_MEM_E2E_COMMIT_SHA=${source_revision}"
+    -e "GOPROXY=https://proxy.golang.org|direct" "$image" "${command[@]}")
 
   cleanup_go_container() {
     local status=$?

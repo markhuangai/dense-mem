@@ -143,6 +143,13 @@ function createRedactor(values, write, minimumLength = 4) {
         pending = pending.slice(match.index + match.length);
         continue;
       }
+      // Credential patterns are single-line, so complete lines cannot contain partial matches.
+      const lineEnd = pending.lastIndexOf("\n") + 1;
+      if (lineEnd > 0) {
+        output += pending.slice(0, lineEnd);
+        pending = pending.slice(lineEnd);
+        continue;
+      }
       if (pending.length < maxPatternLength) break;
       const length = match.index === -1 ? pending.length - maxPatternLength + 1 : 1;
       output += pending.slice(0, length);
