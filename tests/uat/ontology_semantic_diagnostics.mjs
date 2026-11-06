@@ -14,7 +14,7 @@ export function semanticPublicationRecords(window) {
   });
 }
 
-export function verifySemanticPublication(window, expected) {
+function scopedSemanticRecords(window, expected) {
   const records = semanticPublicationRecords(window).filter((record) => record.correlation_id === expected.correlationID && record.operation_key === expected.operationKey);
   assert(records.length > 0, "required publication capture is missing");
   const operations = new Set(records.map((record) => record.operation_id));
@@ -28,6 +28,11 @@ export function verifySemanticPublication(window, expected) {
   for (const credential of expected.credentials ?? []) {
     assert(!serialized.includes(credential), "publication capture exposed a credential canary");
   }
+  return records;
+}
+
+export function verifySemanticPublication(window, expected) {
+  const records = scopedSemanticRecords(window, expected);
   const outcomes = records.filter((record) => record.msg !== "ontology_semantic_publication");
   assert.equal(outcomes.length, 1, "publication must have one final outcome");
   assert.equal(outcomes[0].msg, "ontology_semantic_publication_rejected");
@@ -76,12 +81,16 @@ export function verifySemanticPublication(window, expected) {
 export function collectSemanticPublicationProof({ project, composeFile, since, directory, operations }) {
   const result = spawnSync("docker", ["compose", "-p", project, "-f", composeFile, "logs", "--no-color", "--no-log-prefix", "--since", since, "server"], { encoding: "utf8", maxBuffer: 128 * 1024 * 1024 });
   assert(!result.error && result.status === 0, "complete Compose publication log window is unavailable");
-  const proofs = operations.map((operation) => verifySemanticPublication(result.stdout, operation));
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   chmodSync(directory, 0o700);
+  const captures = operations.map((operation) => scopedSemanticRecords(result.stdout, operation));
+  for (const records of captures) {
+    writeFileSync(join(directory, `${records[0].operation_id}.private.jsonl`), records.map((record) => JSON.stringify(record)).join("\n") + "\n", { mode: 0o600 });
+    for (const record of records) console.log(`ontology_semantic_diagnostic_record ${JSON.stringify(record)}`);
+  }
+  const proofs = operations.map((operation) => verifySemanticPublication(result.stdout, operation));
   for (const proof of proofs) {
     writeFileSync(join(directory, `${proof.operation_id}.private.json`), JSON.stringify(proof), { mode: 0o600 });
-    for (const record of proof.records) console.log(`ontology_semantic_diagnostic_record ${JSON.stringify(record)}`);
   }
   return proofs;
 }

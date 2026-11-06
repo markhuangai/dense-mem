@@ -10,7 +10,10 @@ const teamID = process.env.DENSE_MEM_E2E_TEAM_ID!;
 
 for (const [kind, relation] of [["entity_class", "subclass_of"], ["predicate_concept", "subproperty_of"]] as const) {
   test(`existing editor preserves ${relation} through reparenting and rejects clearing its parent`, async ({ page, request }) => {
-    const created = await request.post(`${controlURL}/control/api/teams/${teamID}/credentials`, { headers: { Authorization: `Bearer ${controlToken}` }, data: { name: `semantic-browser-${randomUUID()}`, role: "manager", scopes: ["read", "write"], rate_limit: 300 } });
+    const createdTeam = await request.post(`${controlURL}/control/api/teams`, { headers: { Authorization: `Bearer ${controlToken}` }, data: { name: `semantic-browser-${randomUUID()}` } });
+    expect(createdTeam.status()).toBe(201);
+    const semanticTeamID = (await createdTeam.json()).data.id;
+    const created = await request.post(`${controlURL}/control/api/teams/${semanticTeamID}/credentials`, { headers: { Authorization: `Bearer ${controlToken}` }, data: { name: `semantic-browser-${randomUUID()}`, role: "manager", scopes: ["read", "write"], rate_limit: 300 } });
     expect(created.status()).toBe(201);
     const manager = (await created.json()).data;
     const headers = { Authorization: `Bearer ${manager.api_key}` };

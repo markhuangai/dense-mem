@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { collectSemanticPublicationProof } from "./ontology_semantic_diagnostics.mjs";
@@ -162,10 +162,11 @@ async function semanticHierarchyAcceptance(profileID) {
     await rejected([edit(kind, { ...restored.definition, parent_id: "" }, restored)], "parent_required");
     await rejected([edit(kind, { ...parent.definition, parent_id: child.id, parent_relation: relation }, parent)], "hierarchy_cycle", [parent.id, child.id]);
     if (kind === "entity_class") {
-      await rejected([edit(kind, { ...value, key: `${prefix}-incompatible`, base_entity_kind: "project" })], "class_parent_kind", [parent.id]);
+      await rejected([edit(kind, { ...value, key: `${prefix}-incompatible`, label: `${prefix}-incompatible`, base_entity_kind: "project" })], "class_parent_kind", [parent.id]);
       await rejected([edit(kind, { ...value, key: `${prefix}-stale` })], "catalog_revision", [], true);
     }
-    assert.deepEqual(await ui(`/records/${child.id}`), restored, "rejected edits must leave the accepted definition unchanged");
+    const fingerprint = (record) => createHash("sha256").update(JSON.stringify(record)).digest("hex");
+    assert.equal(fingerprint(await ui(`/records/${child.id}`)), fingerprint(restored), "rejected edits must leave the accepted definition unchanged");
   }
   const proof = collectSemanticPublicationProof({ project: required("DENSE_MEM_E2E_COMPOSE_PROJECT"), composeFile: required("DENSE_MEM_E2E_COMPOSE_FILE"), since,
     directory: fileURLToPath(new URL(`./test-results/semantic-private-${teamID}`, import.meta.url)), operations });
