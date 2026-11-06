@@ -128,4 +128,48 @@ func TestAuthMiddlewareRequiresPortalCSRFForUnsafeRequests(t *testing.T) {
 	require.Equal(t, []string{"opaque-session"}, requestctx.AuthenticationSecretsFromContext(observed))
 }
 
+func TestPrincipalAndActorContextRejectsInconsistentActor(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*domain.AuthenticatedActor)
+	}{
+		{name: "missing team", mutate: func(actor *domain.AuthenticatedActor) { actor.Team.ID = uuid.Nil }},
+		{name: "missing identity", mutate: func(actor *domain.AuthenticatedActor) { actor.Identity.ID = uuid.Nil }},
+		{name: "missing membership", mutate: func(actor *domain.AuthenticatedActor) { actor.Membership.ID = uuid.Nil }},
+		{name: "missing owner", mutate: func(actor *domain.AuthenticatedActor) { actor.OwnerID = uuid.Nil }},
+		{name: "membership team", mutate: func(actor *domain.AuthenticatedActor) { actor.Membership.TeamID = uuid.New() }},
+		{name: "membership identity", mutate: func(actor *domain.AuthenticatedActor) { actor.Membership.ActorIdentityID = uuid.New() }},
+		{name: "membership owner", mutate: func(actor *domain.AuthenticatedActor) { actor.Membership.OwnerID = uuid.New() }},
+		{name: "missing credential id", mutate: func(actor *domain.AuthenticatedActor) { actor.Credential.ID = uuid.Nil }},
+		{name: "credential team", mutate: func(actor *domain.AuthenticatedActor) { actor.Credential.TeamID = uuid.New() }},
+		{name: "credential identity", mutate: func(actor *domain.AuthenticatedActor) { actor.Credential.ActorIdentityID = uuid.New() }},
+		{name: "credential membership", mutate: func(actor *domain.AuthenticatedActor) { actor.Credential.MembershipID = uuid.New() }},
+		{name: "credential owner", mutate: func(actor *domain.AuthenticatedActor) { actor.Credential.OwnerID = uuid.New() }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			credential := &domain.Credential{
+				ID: uuid.New(), ActorIdentityID: uuid.New(), MembershipID: uuid.New(),
+				OwnerID: uuid.New(), TeamID: uuid.New(), Scopes: []string{"read"},
+			}
+			actor := domain.AuthenticatedActorFromCredential(credential)
+			principal, actorContext, err := principalAndActorContext(actor, "api_key", "prefix")
+			require.NoError(t, err)
+			require.Equal(t, credential.TeamID, principal.TeamID)
+			require.Equal(t, credential.ActorIdentityID, principal.IdentityID)
+			require.Equal(t, credential.MembershipID, principal.MembershipID)
+			require.Equal(t, credential.OwnerID, principal.OwnerID)
+			require.Equal(t, credential.OwnerID, actorContext.OwnerID)
+			require.Equal(t, credential.ID, *actorContext.CredentialID)
+
+			test.mutate(actor)
+			principal, actorContext, err = principalAndActorContext(actor, "api_key", "prefix")
+			var apiErr *httperr.APIError
+			require.ErrorAs(t, err, &apiErr)
+			require.Equal(t, httperr.AUTH_INVALID, apiErr.Code)
+			require.Nil(t, principal)
+			require.Equal(t, requestctx.Actor{}, actorContext)
+		})
+	}
+}
+
 var _ accesspostgres.CredentialRepository = (*mockCredentialRepository)(nil)
