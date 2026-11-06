@@ -32,7 +32,7 @@ func LoadActiveRelationshipConflictRecordsByIDBounded(ctx context.Context, tx *g
 }
 
 func LoadEvidenceConflictPositions(ctx context.Context, tx *gorm.DB, teamID, conflictID string) ([]conflictcontract.EvidenceConflictPositionRecord, error) {
-	return loadEvidenceConflictPositions(ctx, tx, teamID, conflictID)
+	return conflictread.LoadEvidenceConflictPositions(ctx, tx, teamID, conflictID)
 }
 
 func LoadEvidenceConflictEvents(ctx context.Context, tx *gorm.DB, input conflictcontract.EvidenceConflictGetInput) ([]conflictcontract.EvidenceConflictEventRecord, *conflictcontract.EvidenceConflictEventCursor, error) {
