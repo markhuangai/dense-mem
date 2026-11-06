@@ -57,3 +57,48 @@ func TestCredentialGettersExposeCanonicalFields(t *testing.T) {
 
 	require.Equal(t, "member", (&Credential{}).GetRole())
 }
+
+func TestAuthenticatedActorFromCredential(t *testing.T) {
+	require.Nil(t, AuthenticatedActorFromCredential(nil))
+
+	for _, test := range []struct {
+		name     string
+		role     string
+		wantRole string
+	}{
+		{name: "default role", wantRole: "member"},
+		{name: "member", role: "member", wantRole: "member"},
+		{name: "manager", role: "manager", wantRole: "manager"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			teamID, credentialID, identityID, membershipID, ownerID := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
+			credential := &Credential{
+				ID: credentialID, TeamID: teamID, TeamName: "team",
+				ActorIdentityID: identityID, MembershipID: membershipID, OwnerID: ownerID,
+				Name: "automation", Role: test.role, Scopes: []string{"read", "write"},
+			}
+
+			actor := AuthenticatedActorFromCredential(credential)
+			require.NotNil(t, actor)
+			require.Equal(t, Team{ID: teamID, Name: "team"}, actor.Team)
+			require.Equal(t, ActorIdentity{ID: identityID, Kind: "api_client", DisplayName: "automation"}, actor.Identity)
+			require.Equal(t, Membership{
+				ID: membershipID, ActorIdentityID: identityID, TeamID: teamID, OwnerID: ownerID,
+				Name: "automation", Grants: []string{"read", "write"}, Role: test.wantRole, Status: "active",
+			}, actor.Membership)
+			require.Equal(t, ownerID, actor.OwnerID)
+			require.Same(t, credential, actor.Credential)
+
+			actor.Membership.Grants[0] = "changed actor grant"
+			require.Equal(t, []string{"read", "write"}, credential.Scopes)
+			credential.Scopes[1] = "changed credential scope"
+			require.Equal(t, []string{"changed actor grant", "write"}, actor.Membership.Grants)
+		})
+	}
+
+	for _, scopes := range [][]string{nil, {}} {
+		actor := AuthenticatedActorFromCredential(&Credential{Scopes: scopes})
+		require.NotNil(t, actor)
+		require.Nil(t, actor.Membership.Grants)
+	}
+}

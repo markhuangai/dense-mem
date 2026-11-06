@@ -32,7 +32,7 @@ func (s *userPortalSessionAuthStub) AuthenticateSession(_ context.Context, sessi
 	if s.err != nil {
 		return nil, s.err
 	}
-	return authenticatedActorFromCredential(s.key), nil
+	return domain.AuthenticatedActorFromCredential(s.key), nil
 }
 
 func TestAuthMiddlewareAuthenticatesPortalSessionAndSetsAuthMethod(t *testing.T) {
