@@ -174,7 +174,8 @@ func TestEvidenceConflictSharedReadersPreserveFieldsAndIsolation(t *testing.T) {
 
 func evidenceReaderFixture(t *testing.T, ctx context.Context, tx *gorm.DB, input, canonical knowledgepostgres.SynchronousRememberCommitInput) EvidenceConflictCaseRecord {
 	t.Helper()
-	at := time.Date(2026, 11, 6, 1, 2, 3, 456000, time.UTC)
+	// pgx scans timestamptz into time.Local, so structural comparisons use that location for the same seeded instant.
+	at := time.Date(2026, 11, 6, 1, 2, 3, 456000, time.UTC).Local()
 	item := EvidenceConflictCaseRecord{TeamID: input.TeamID, ConflictID: uuid.NewString(), SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration, Kind: "evidence_conflict", Status: "open", Version: 1, CreatedAt: at, UpdatedAt: at.Add(time.Minute)}
 	for i, evidence := range input.Evidence {
 		position := EvidenceConflictPositionRecord{
