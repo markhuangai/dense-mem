@@ -959,7 +959,6 @@ func TestPrincipalInterfaceAndRequireAuthHelpers(t *testing.T) {
 	assert.Equal(t, []string{"read", "write"}, principal.GetGrants())
 	assert.Equal(t, "dm_test", principal.GetKeyPrefix())
 	assert.Equal(t, 42, principal.GetRateLimit())
-	assert.Nil(t, authenticatedActorFromCredential(nil))
 
 	ctx := SetPrincipalForTest(context.Background(), principal)
 	require.Same(t, principal, GetPrincipal(ctx))

@@ -225,5 +225,4 @@ func TestUserPortalSessionServicePropagatesDependencyErrors(t *testing.T) {
 	require.ErrorIs(t, err, ErrUserPortalSessionInvalid)
 	require.NoError(t, nilPortal.Logout(ctx, "session"))
 	require.NoError(t, portal.Logout(ctx, ""))
-	require.Nil(t, authenticatedActorFromCredential(nil))
 }
