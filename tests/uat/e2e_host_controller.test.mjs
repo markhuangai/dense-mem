@@ -1452,7 +1452,7 @@ test("six precheck shards preserve every real runner selection exactly once", as
   }
   assert.equal(new Set(actual).size, actual.length);
   assert.deepEqual(actual.sort(), inventory.sort());
-  assert.equal(actual.length, 682);
+  assert.equal(actual.length, 684);
   assert.equal((await run("bash", ["-c", command, "six-shards", root])).stdout, stdout);
   await assert.rejects(run("bash", ["-c", `${helper}\npartition_precheck_capabilities "$1" 4`, "bad-shards", root]), /three or six shards/);
 });
