@@ -150,7 +150,7 @@ func main() {
 		if err != nil || !info.IsDir() {
 			exitf("capture-dir must name an existing directory")
 		}
-		if err := evalharness.ValidateExecutionCapture(captureDir, opts.Logger); err != nil {
+		if err := evalharness.ValidateSavedExecutionCapture(captureDir, opts.Logger); err != nil {
 			exitf("capture measurement validation failed")
 		}
 		fmt.Println("capture measurement validation passed")

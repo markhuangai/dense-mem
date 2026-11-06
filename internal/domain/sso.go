@@ -145,3 +145,30 @@ type AuthenticatedActor struct {
 	OwnerID    uuid.UUID
 	Credential *Credential
 }
+
+// AuthenticatedActorFromCredential projects a validated credential without performing authentication.
+func AuthenticatedActorFromCredential(credential *Credential) *AuthenticatedActor {
+	if credential == nil {
+		return nil
+	}
+	return &AuthenticatedActor{
+		Team: Team{ID: credential.TeamID, Name: credential.TeamName},
+		Identity: ActorIdentity{
+			ID:          credential.ActorIdentityID,
+			Kind:        "api_client",
+			DisplayName: credential.Name,
+		},
+		Membership: Membership{
+			ID:              credential.MembershipID,
+			ActorIdentityID: credential.ActorIdentityID,
+			TeamID:          credential.TeamID,
+			OwnerID:         credential.OwnerID,
+			Name:            credential.Name,
+			Grants:          append([]string(nil), credential.Scopes...),
+			Role:            credential.GetRole(),
+			Status:          "active",
+		},
+		OwnerID:    credential.OwnerID,
+		Credential: credential,
+	}
+}

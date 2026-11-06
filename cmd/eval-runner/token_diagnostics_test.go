@@ -254,16 +254,97 @@ func TestEvaluationCaptureValidationCLI(t *testing.T) {
 			require.Contains(t, stderr, "capture-dir")
 		})
 	}
-	capture := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(capture, "run_config.json"), []byte(`{"mode":"import"}`), 0o600))
-	stdout, stderr, err := runTokenDiagnosticsCLI(t, nil, "--mode", "validate-capture", "--capture-dir", capture)
-	require.NoError(t, err, "%s", stderr)
-	require.Contains(t, stdout, "capture measurement validation passed")
-	require.NoError(t, os.WriteFile(filepath.Join(capture, "run_config.json"), []byte(`{"mode":"import","measurement_schema":"dense-mem.eval.measurements.v1"}`), 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(capture, "execution_measurements.json"), []byte(`{"status":"in_progress"}`), 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(capture, "recall_traces.jsonl"), nil, 0o600))
-	stdout, stderr, err = runTokenDiagnosticsCLI(t, nil, "--mode", "validate-capture", "--capture-dir", capture)
-	require.Error(t, err)
-	require.Contains(t, stdout, "evaluation_capture_invalid")
-	require.Contains(t, stderr, "capture measurement validation failed")
+	const key = "private-capture-validation-key"
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+	for _, level := range []string{"", "error"} {
+		for _, test := range []struct {
+			name            string
+			files           map[string]string
+			configDirectory bool
+			cause           string
+		}{
+			{name: "empty_directory", cause: "capture run config:"},
+			{name: "unrelated_files", files: map[string]string{"notes.txt": "ordinary content"}, cause: "capture run config:"},
+			{name: "empty_config", files: map[string]string{"run_config.json": ""}, cause: "EOF"},
+			{name: "malformed_config", files: map[string]string{"run_config.json": "{"}, cause: "unexpected EOF"},
+			{name: "trailing_garbage", files: map[string]string{"run_config.json": `{"run_id":"partial-run"}garbage`}, cause: "one complete JSON object"},
+			{name: "second_value", files: map[string]string{"run_config.json": `{"run_id":"partial-run"} {}`}, cause: "one complete JSON object"},
+			{name: "partial_config", files: map[string]string{"run_config.json": `{"run_id":"partial-run","mode":false}`}, cause: "cannot unmarshal bool"},
+			{name: "null_config", files: map[string]string{"run_config.json": "null"}, cause: "run config must be a JSON object"},
+			{name: "array_config", files: map[string]string{"run_config.json": "[]"}, cause: "cannot unmarshal array"},
+			{name: "unreadable_config", configDirectory: true, cause: "is a directory"},
+			{name: "legacy", files: map[string]string{"run_config.json": `{"mode":"import"}`}},
+			{name: "legacy_whitespace", files: map[string]string{"run_config.json": "{\"mode\":\"import\"}\n \t"}},
+			{name: "incomplete_measured", files: map[string]string{
+				"run_config.json":             `{"mode":"import","run_id":"measured-run","measurement_schema":"dense-mem.eval.measurements.v1"}`,
+				"execution_measurements.json": `{"status":"in_progress","capture_id":"incomplete-capture"}`,
+				"recall_traces.jsonl":         "",
+			}, cause: "measurement provenance is incompatible or incomplete"},
+		} {
+			t.Run(test.name+"/level="+level, func(t *testing.T) {
+				capture := filepath.Join(t.TempDir(), "ordinary-token-"+key)
+				require.NoError(t, os.Mkdir(capture, 0o700))
+				for name, body := range test.files {
+					require.NoError(t, os.WriteFile(filepath.Join(capture, name), []byte(body), 0o600))
+				}
+				if test.configDirectory {
+					require.NoError(t, os.Mkdir(filepath.Join(capture, "run_config.json"), 0o700))
+				}
+				snapshot := func() map[string]string {
+					files := map[string]string{}
+					err := filepath.WalkDir(capture, func(path string, entry os.DirEntry, err error) error {
+						require.NoError(t, err)
+						info, err := entry.Info()
+						require.NoError(t, err)
+						var body []byte
+						if !entry.IsDir() {
+							body, err = os.ReadFile(path)
+							require.NoError(t, err)
+						}
+						files[path] = fmt.Sprintf("%s:%s", info.Mode(), body)
+						return nil
+					})
+					require.NoError(t, err)
+					return files
+				}
+				before := snapshot()
+				stdout, stderr, err := runTokenDiagnosticsCLI(t, []string{"LOG_LEVEL=" + level, "DENSE_MEM_API_KEY=" + key},
+					"--mode", "validate-capture", "--capture-dir", capture, "--base-url", server.URL, "--metrics-url", server.URL)
+				require.Equal(t, before, snapshot())
+				require.Zero(t, calls.Load())
+				require.NotContains(t, stdout+stderr, key)
+				if test.cause == "" {
+					require.NoError(t, err, "%s", stderr)
+					require.Equal(t, "capture measurement validation passed\n", stdout)
+					require.Empty(t, stderr)
+					return
+				}
+				require.Error(t, err)
+				require.Equal(t, "capture measurement validation failed\n", stderr)
+				var record map[string]any
+				require.NoError(t, json.Unmarshal([]byte(stdout), &record))
+				require.Equal(t, "evaluation_capture_invalid", record["msg"])
+				require.Equal(t, "ERROR", record["level"])
+				require.Equal(t, strings.ReplaceAll(capture, key, "[REDACTED]"), record["capture_directory"])
+				require.Contains(t, record["error"], test.cause)
+				require.Contains(t, record, "observation_errors")
+				require.Equal(t, false, record["expected_cases_available"])
+				require.Equal(t, false, record["expected_seed_available"])
+				if test.name == "incomplete_measured" {
+					require.Equal(t, "measured-run", record["run_id"])
+					require.Equal(t, "incomplete-capture", record["capture_id"])
+					require.Equal(t, "in_progress", record["observed_capture_status"])
+				} else {
+					require.Equal(t, "unknown", record["run_id"])
+					require.Equal(t, "unknown", record["capture_id"])
+				}
+				t.Logf("stdout=%s stderr=%s", stdout, stderr)
+			})
+		}
+	}
 }
