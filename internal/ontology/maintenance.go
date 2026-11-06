@@ -311,6 +311,7 @@ func (s *MaintenanceService) executeBatch(ctx context.Context, work maintenanceW
 	organizer := s.deps.Organizer(work.policy.Model, work.policy.ContextWindowTokens, accounting)
 	assessmentCtx := observability.WithAIOperation(claimCtx, observability.AIOperationOntologyOrganization, len(claim.Sources))
 	result, runErr = organizer.Organize(assessmentCtx, claim.TeamID, contract.OrganizationInput{OperationKey: "maintenance:" + claim.ID, Sources: claim.Sources})
+	s.logFreshnessRejection(ctx, claim, result)
 	if s.deps.Logger != nil {
 		for _, attempt := range result.Attempts {
 			fields := []slog.Attr{slog.String("team_id", claim.TeamID), slog.String("batch_id", claim.ID), slog.String("run_id", claim.RunID),

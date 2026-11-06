@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -14,7 +15,7 @@ import (
 	remember "github.com/markhuangai/dense-mem/internal/remember/service/processor"
 )
 
-func ontologyDiagnosticCapture(sink observability.LogSink, protector observability.DiagnosticProtector) ontology.MaintenanceDiagnosticCapture {
+func ontologyDiagnosticCapture(sink observability.LogSink, protector observability.DiagnosticProtector, logger *slog.Logger) ontology.MaintenanceDiagnosticCapture {
 	return ontology.MaintenanceDiagnosticCapture{
 		NewRecorder: func() modelprovider.SnapshotRecorder { return remember.NewDiagnosticRecorder(protector) },
 		RecordFailure: func(ctx context.Context, claim contract.MaintenanceClaim, result contract.OrganizationResult, exchanges []modelprovider.ProviderExchange) error {
@@ -52,7 +53,7 @@ func ontologyDiagnosticCapture(sink observability.LogSink, protector observabili
 					if !ok || metadata["body"] != "" {
 						return errors.New("ontology diagnostic chunk metadata unavailable")
 					}
-					// NewDiagnosticRecorder protects the complete body before snapshots reach this writer.
+					// Complete bodies are protected before splitting so credential matches cannot cross chunk boundaries.
 					metadata["body"] = chunk.Body
 					body, err = json.Marshal(protected)
 					if err != nil || len(body) > observability.MaxOperationMetadataBytes {
@@ -78,7 +79,31 @@ func ontologyDiagnosticCapture(sink observability.LogSink, protector observabili
 					}
 				}
 			}
-			return write("ontology_failure_capture", map[string]any{"failure_code": result.FailureCode, "exchange_count": len(exchanges), "record_count": records, "attempts": result.Attempts}, nil)
+			manifest := map[string]any{"failure_code": result.FailureCode, "exchange_count": len(exchanges), "record_count": records, "attempts": result.Attempts}
+			if result.FreshnessRejection != nil {
+				if !result.FreshnessRejection.Valid() {
+					return errors.New("ontology freshness diagnostics invalid")
+				}
+				body, err := json.Marshal(result.FreshnessRejection)
+				if err != nil {
+					return err
+				}
+				chunks := observability.CaptureDiagnosticBody(ctx, protector, body, contract.MaxPublicationBytes)
+				for _, chunk := range chunks {
+					if err := write("ontology_freshness_payload", map[string]any{"check": result.FreshnessRejection.Check}, &chunk); err != nil {
+						return err
+					}
+					if logger != nil {
+						logger.LogAttrs(observability.WithSinkSuppressed(ctx), slog.LevelDebug, "ontology_freshness_payload",
+							slog.String("team_id", claim.TeamID), slog.String("run_id", claim.RunID), slog.String("batch_id", claim.ID),
+							slog.String("assessment_id", result.AssessmentID), slog.Any("payload_chunk", chunk))
+					}
+				}
+				summary := *result.FreshnessRejection
+				summary.ExpectedContext, summary.ObservedContext, summary.Dependencies = nil, nil, nil
+				manifest["freshness_rejection"], manifest["freshness_record_count"] = summary, len(chunks)
+			}
+			return write("ontology_failure_capture", manifest, nil)
 		},
 	}
 }

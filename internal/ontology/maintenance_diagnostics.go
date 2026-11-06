@@ -41,3 +41,15 @@ func (s *MaintenanceService) logMaintenancePreparation(ctx context.Context, turn
 		slog.Bool("batch_prepared", work != nil), slog.Bool("includes_discovery", true),
 		slog.Float64("duration_ms", float64(duration)/float64(time.Millisecond)), slog.String("error_code", maintenanceDiagnosticError(err)))
 }
+
+func (s *MaintenanceService) logFreshnessRejection(ctx context.Context, claim contract.MaintenanceClaim, result contract.OrganizationResult) {
+	if s.deps.Logger == nil || result.FreshnessRejection == nil {
+		return
+	}
+	rejection := result.FreshnessRejection
+	s.deps.Logger.LogAttrs(ctx, slog.LevelWarn, "ontology_freshness_rejected",
+		slog.String("team_id", claim.TeamID), slog.String("run_id", claim.RunID), slog.String("batch_id", claim.ID),
+		slog.String("assessment_id", result.AssessmentID), slog.String("check", rejection.Check),
+		slog.Any("source", rejection.Source), slog.String("record_id", rejection.RecordID),
+		slog.String("expected", rejection.Expected), slog.String("observed", rejection.Observed))
+}

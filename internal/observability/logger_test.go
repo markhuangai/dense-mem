@@ -867,7 +867,7 @@ func TestLoggerContextAndHandlerCompatibilityBranches(t *testing.T) {
 	require.NoError(t, largeRoot.AttachSink(largeSink))
 	largeRoot.Info("large", String("detail", strings.Repeat("x", MaxOperationMetadataBytes*2)))
 	require.Len(t, largeSink.records, 1)
-	assert.Equal(t, int(CredentialProtectionBudgetExceeded), largeSink.records[0].Attrs["diagnostic_unavailable_reason"])
+	assert.Equal(t, int(CredentialProtectionProcessingBudgetExceeded), largeSink.records[0].Attrs["diagnostic_unavailable_reason"])
 }
 
 func TestLoggerBoundsUnsupportedDiagnosticsAndNilProtectorSink(t *testing.T) {
