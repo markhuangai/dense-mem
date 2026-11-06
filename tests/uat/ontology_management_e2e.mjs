@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { collectSemanticPublicationProof } from "./ontology_semantic_diagnostics.mjs";
 
 const required = (name) => { assert(process.env[name], `${name} is required`); return process.env[name]; };
 const userURL = required("DENSE_MEM_USER_URL").replace(/\/$/, "");
@@ -103,6 +104,8 @@ try {
   await saveAndPublish([{ action: "remove_override", record_id: classification.id, expected_version: classification.version }]);
   assert((await ui(`/records/${classification.id}`)).retired, "the fixture correction must be removed before browser checks");
   assert.deepEqual(snapshot(), canonical, "corrections and rollback changed canonical facts or provenance");
+  await semanticHierarchyAcceptance(shared.credential.id);
+  assert.deepEqual(snapshot(), canonical, "semantic hierarchy changed canonical facts or provenance");
   await matchingAcceptance();
   console.log("ontology management production HTTP/MCP: permissions, isolation, replay, stale conflicts, provider-free preview, split persistence, pin/unpin and rollback passed");
 } finally {
@@ -112,6 +115,62 @@ try {
 
 async function request(base, path, key, body, method = body ? "POST" : "GET") {
   return fetch(`${base}${path}`, { method, headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", Accept: "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) });
+}
+
+async function semanticHierarchyAcceptance(profileID) {
+  const since = new Date(Date.now() - 1000).toISOString();
+  const operations = [];
+  const credentials = [manager, "dense-mem-ontology-e2e-key"];
+  const protectedInput = (input) => JSON.parse(credentials.reduce((body, credential) => body.replaceAll(credential, "[REDACTED]"), JSON.stringify(input, (key, value) =>
+    (key === "aliases" && value.length === 0) || (["parent_id", "parent_relation"].includes(key) && value === "") ? undefined : value)));
+  const definition = (key, kind, parent, relation) => ({ key, label: key, description: "Exact admitted semantic vocabulary", aliases: [], ...(kind === "entity_class" ? { base_entity_kind: "person" } : {}), ...(parent ? { parent_id: parent } : {}), ...(relation ? { parent_relation: relation } : {}) });
+  const edit = (kind, value, previous) => ({ action: "define", kind, expected_version: previous?.version ?? 0, ...(previous ? { record_id: previous.id } : {}), definition: value });
+  const find = async (kind, key) => {
+    const value = (await ui(`/records?kind=${kind}&limit=200`)).records.find((record) => record.definition?.key === key);
+    assert(value, "semantic definition was not published"); return value;
+  };
+  async function rejected(edits, reason, parents = [], stale = false) {
+    const observed = (await ui("/status")).revision;
+    const input = { operation_key: randomUUID(), expected_version: 0, expected_revision: observed - (stale ? 1 : 0), reason: "Log-only semantic rejection", edits };
+    const correlationID = randomUUID();
+    const response = await fetch(`${userURL}/ui/api/ontology/drafts`, { method: "POST", headers: { Authorization: `Bearer ${manager}`, "Content-Type": "application/json", "X-Correlation-ID": correlationID }, body: JSON.stringify(input) });
+    assert.equal(response.status, stale ? 409 : 422);
+    operations.push({ operationKey: input.operation_key, correlationID, teamID, profileID, reason, parents, credentials, input: protectedInput(input), ...(stale ? { expectedVersion: input.expected_revision, observedVersion: observed } : {}) });
+  }
+  for (const [kind, relation] of [["entity_class", "subclass_of"], ["predicate_concept", "subproperty_of"]]) {
+    const prefix = `semantic-${kind}-${randomUUID()}`;
+    await saveAndPublish([edit(kind, definition(`${prefix}-parent`, kind)), edit(kind, definition(`${prefix}-alternate`, kind))]);
+    const parent = await find(kind, `${prefix}-parent`);
+    const alternate = await find(kind, `${prefix}-alternate`);
+    assert(!Object.hasOwn(parent.definition, "parent_relation"), "legacy definitions must omit semantic metadata");
+    const value = definition(`${prefix}-child`, kind, parent.id, relation);
+    value.description = `Admitted {"token":"user token","password":"user password","secret":"user secret"} ${manager} dense-mem-ontology-e2e-key`;
+    await saveAndPublish([edit(kind, value)]);
+    const child = await find(kind, value.key);
+    assert.equal(child.definition.parent_relation, relation);
+    const changed = await saveAndPublish([edit(kind, { ...child.definition, label: `Edited ${kind}`, parent_id: alternate.id }, child)]);
+    const reparented = await ui(`/records/${child.id}`);
+    assert.equal(reparented.definition.parent_relation, relation);
+    assert.equal(reparented.definition.parent_id, alternate.id);
+    const rollback = { operation_key: randomUUID(), expected_revision: (await ui("/status")).revision, reason: "Restore semantic parent" };
+    const rolled = await ui(`/publications/${changed.publication.id}/rollback`, rollback);
+    assert.equal((await ui(`/publications/${changed.publication.id}/rollback`, rollback)).id, rolled.id);
+    const restored = await ui(`/records/${child.id}`);
+    assert.equal(restored.definition.parent_relation, relation);
+    assert.equal(restored.definition.parent_id, parent.id);
+    assert.equal((await ui(`/records/${child.id}?version=2`)).definition.parent_relation, relation);
+    await rejected([edit(kind, { ...restored.definition, parent_id: "" }, restored)], "parent_required");
+    await rejected([edit(kind, { ...parent.definition, parent_id: child.id, parent_relation: relation }, parent)], "hierarchy_cycle", [parent.id, child.id]);
+    if (kind === "entity_class") {
+      await rejected([edit(kind, { ...value, key: `${prefix}-incompatible`, base_entity_kind: "project" })], "class_parent_kind", [parent.id]);
+      await rejected([edit(kind, { ...value, key: `${prefix}-stale` })], "catalog_revision", [], true);
+    }
+    assert.deepEqual(await ui(`/records/${child.id}`), restored, "rejected edits must leave the accepted definition unchanged");
+  }
+  const proof = collectSemanticPublicationProof({ project: required("DENSE_MEM_E2E_COMPOSE_PROJECT"), composeFile: required("DENSE_MEM_E2E_COMPOSE_FILE"), since,
+    directory: fileURLToPath(new URL(`./test-results/semantic-private-${teamID}`, import.meta.url)), operations });
+  assert.equal(proof.length, operations.length);
+  console.log("ontology semantic hierarchy: both relations, legacy omission, edit/reparent, replay, rollback and complete protected log-only rejection proof passed");
 }
 async function data(response) { assert(response.ok, `request returned ${response.status}: ${(await response.clone().text()).slice(0, 500)}`); return (await response.json()).data; }
 async function control(path, body, method) { return data(await request(`${controlURL}/control/api`, path, controlToken, body, method)); }

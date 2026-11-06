@@ -63,13 +63,21 @@ type RevisionRef struct {
 	Version int64  `json:"version"`
 }
 
+type ParentRelation string
+
+const (
+	SubclassOf    ParentRelation = "subclass_of"
+	SubpropertyOf ParentRelation = "subproperty_of"
+)
+
 type Definition struct {
-	Key            string   `json:"key"`
-	Label          string   `json:"label"`
-	Description    string   `json:"description"`
-	Aliases        []string `json:"aliases,omitempty"`
-	ParentID       string   `json:"parent_id,omitempty"`
-	BaseEntityKind string   `json:"base_entity_kind,omitempty"`
+	Key            string         `json:"key"`
+	Label          string         `json:"label"`
+	Description    string         `json:"description"`
+	Aliases        []string       `json:"aliases,omitempty"`
+	ParentID       string         `json:"parent_id,omitempty"`
+	ParentRelation ParentRelation `json:"parent_relation,omitempty"`
+	BaseEntityKind string         `json:"base_entity_kind,omitempty"`
 }
 
 type Assignment struct {

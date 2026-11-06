@@ -399,15 +399,23 @@ func insertOrganization(tx *gorm.DB, fence scope, receipt ontology.OrganizationR
         VALUES (?::uuid,?::uuid,?, ?,?::uuid,?,?,?::jsonb)`, fence.TeamID, fence.SpaceID, fence.Generation, receipt.OperationKey, receipt.ID, receipt.InputHash, receipt.BatchHash, string(encoded)).Error
 }
 
-func (s *Store) CommitOrganization(ctx context.Context, teamID string, receipt ontology.OrganizationReceipt, input ontology.Publication) (ontology.OrganizationResult, error) {
+func (s *Store) CommitOrganization(ctx context.Context, teamID string, receipt ontology.OrganizationReceipt, input ontology.Publication) (result ontology.OrganizationResult, err error) {
 	if err := requireAutomatic(ctx); err != nil {
 		return ontology.OrganizationResult{}, err
 	}
+	ctx, diagnostic, finish := ontology.ObservePublication(ctx, s.publicationObserver, teamID, "automatic", input)
+	defer func() {
+		if diagnostic != nil {
+			diagnostic.Result = result.Publication
+			diagnostic.AssessmentID = receipt.ID
+			diagnostic.ProviderIdentity = receipt.ProviderIdentity
+		}
+		finish(err)
+	}()
 	if err := ontology.ValidateOrganizationReceipt(receipt); err != nil {
 		return ontology.OrganizationResult{}, err
 	}
-	var result ontology.OrganizationResult
-	err := s.withScope(ctx, teamID, false, func(tx *gorm.DB, fence scope) error {
+	err = s.withScope(ctx, teamID, false, func(tx *gorm.DB, fence scope) error {
 		if receipt.Result.FailureCode == "" {
 			if err := maintenancePublicationFence(ctx, tx, fence); err != nil {
 				return err

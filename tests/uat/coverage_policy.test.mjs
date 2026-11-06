@@ -351,11 +351,12 @@ test("real Go coverage parts retain cross-package and testless execution and rej
   writeFixture(fixture, "internal/decisiononly/value.go", "package decisiononly\nfunc Workflow() int { return 11 }\nfunc Settings() int { return 13 }\n");
   writeFixture(fixture, "internal/diagnosticonly/value.go", "package diagnosticonly\nfunc FailureCapture() int { return 17 }\nfunc AssessmentWitness() int { return 19 }\n");
   writeFixture(fixture, "internal/parallelonly/value.go", "package parallelonly\nfunc Value() int { return 23 }\n");
+  writeFixture(fixture, "internal/semanticonly/value.go", "package semanticonly\nfunc Hierarchy() int { return 27 }\nfunc Publication() int { return 29 }\n");
   const targets = {
-    "internal/ontology/postgres": ["TestOntologyMaintenanceCohort", "TestOntologyCoverageFailureWitnesses", "TestOntologyMaintenanceParallelClaimsAndLimits", "TestOntologyMaintenanceParallelSchedulerExecution"],
+    "internal/ontology/postgres": ["TestOntologyMaintenanceCohort", "TestOntologyCoverageFailureWitnesses", "TestOntologyMaintenanceParallelClaimsAndLimits", "TestOntologyMaintenanceParallelSchedulerExecution", "TestOntologySemanticHierarchyPublication", "TestOntologySemanticHierarchyDependencies", "TestOntologySemanticHierarchyRollbackAndPins", "TestOntologySemanticHierarchyRacesAndIsolation"],
     "internal/community/postgres": ["TestCommunityTopicOrdinary", "TestCommunityTopicLargeFanoutResumesAndRotates"],
     "internal/dream/postgres": ["TestRetiredDreamHistoryPreservesProvenanceIsolationAndRetention"],
-    "cmd/internal/serverapp": ["TestServerLifecycleCore", "TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads"],
+    "cmd/internal/serverapp": ["TestServerLifecycleCore", "TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads", "TestOntologySemanticPublicationLogOnlyDiagnostics"],
     "internal/service": ["TestAuditFixture"],
     "internal/knowledge/postgres": ["TestSessionFixture", "TestDecisionWorkflowFixture"],
     "internal/settings": ["TestDecisionSettingsFixture"],
@@ -365,10 +366,13 @@ test("real Go coverage parts retain cross-package and testless execution and rej
     const decisionImport = names.some((name) => name.startsWith("TestDecision")) ? '; "example.com/fixture/internal/decisiononly"' : "";
     const diagnosticImport = names.some((name) => name.startsWith("TestOntologyCoverage") || name.startsWith("TestOntologyFailureCapture")) ? '; "example.com/fixture/internal/diagnosticonly"' : "";
     const parallelImport = names.some((name) => name.startsWith("TestOntologyMaintenanceParallel")) ? '; "example.com/fixture/internal/parallelonly"' : "";
+    const semanticImport = names.some((name) => name.startsWith("TestOntologySemantic")) ? '; "example.com/fixture/internal/semanticonly"' : "";
     const tests = names.map((name) => {
       let expression = name.includes("DecisionSettings") ? "decisiononly.Settings() != 13" : name.includes("DecisionWorkflow") ? "decisiononly.Workflow() != 11" : "Value() != 8";
       if (name === "TestOntologyCoverageFailureWitnesses") expression = "diagnosticonly.AssessmentWitness() != 19";
       if (name === "TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads") expression = "diagnosticonly.FailureCapture() != 17";
+      if (name.startsWith("TestOntologySemanticHierarchy")) expression = "semanticonly.Hierarchy() != 27";
+      if (name === "TestOntologySemanticPublicationLogOnlyDiagnostics") expression = "semanticonly.Publication() != 29";
       if (name.startsWith("TestOntologyMaintenanceParallel")) expression = "parallelonly.Value() != 23";
       return `func ${name}(t *testing.T) { record(t); if ${expression} { t.Fatal("cross-package execution") } }`;
     });
@@ -382,7 +386,7 @@ test("real Go coverage parts retain cross-package and testless execution and rej
       if closeErr != nil { t.Fatal(closeErr) }
       if os.Getenv("COVERAGE_FAILURE_TEST") == t.Name() { t.Fatal("requested fixture failure") }
     }`;
-    writeFixture(fixture, `${directory}/value_test.go`, `//go:build integration\n\npackage fixture\nimport ("os"; "testing"${decisionImport}${diagnosticImport}${parallelImport})\n${record}\n${tests.join("\n")}\n`);
+    writeFixture(fixture, `${directory}/value_test.go`, `//go:build integration\n\npackage fixture\nimport ("os"; "testing"${decisionImport}${diagnosticImport}${parallelImport}${semanticImport})\n${record}\n${tests.join("\n")}\n`);
   }
   writeFixture(fixture, "cmd/e2e/go.mod", "module example.com/fixture/cmd/e2e\n\ngo 1.26\n");
   writeFixture(fixture, "cmd/e2e/value.go", "package e2e\nfunc Value() int { return 3 }\n");
@@ -409,7 +413,8 @@ test("real Go coverage parts retain cross-package and testless execution and rej
   for (const line of [2, 3]) assert.match(readFixture(join(outputDir, "core/postgres-support/go-session-complete.raw")), new RegExp(`fixture/internal/decisiononly/value.go:${line}\\.[^\\n]+ [1-9]`, "m"));
   requirePass(coverage("--merge-complete"));
   assert.match(readFixture(join(outputDir, "go-complete.txt")), /100\.0%/);
-  for (const name of ["TestOntologyMaintenanceCohort", "TestOntologyMaintenanceParallelClaimsAndLimits"]) {
+  for (const line of [2, 3]) assert.match(readFixture(join(outputDir, "postgres/go-postgres-complete.raw")), new RegExp(`fixture/internal/semanticonly/value.go:${line}\\.[^\\n]+ [1-9]`, "m"));
+  for (const name of ["TestOntologyMaintenanceCohort", "TestOntologyMaintenanceParallelClaimsAndLimits", "TestOntologySemanticPublicationLogOnlyDiagnostics"]) {
     const failed = run("bash", [script, "--complete-part", "postgres"], { cwd: fixture, env: { ...env, COVERAGE_FAILURE_TEST: name } });
     assert.notEqual(failed.status, 0);
     assert.match(failed.stdout + failed.stderr, /requested fixture failure/);

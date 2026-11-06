@@ -162,8 +162,11 @@ func (s *Store) SaveManagementDraft(ctx context.Context, teamID, id string, inpu
 			if err != nil {
 				return err
 			}
-			if result.Draft.Version != input.ExpectedVersion || result.Draft.State != "open" {
-				return ontology.ErrConflict
+			if result.Draft.Version != input.ExpectedVersion {
+				return ontology.PublicationVersionRejection("draft_version", id, input.ExpectedVersion, result.Draft.Version)
+			}
+			if result.Draft.State != "open" {
+				return &ontology.PublicationRejection{Cause: ontology.ErrConflict, Reason: "draft_state", RecordID: id, Expected: "open", Observed: result.Draft.State}
 			}
 		}
 		current, err := managementEditContext(tx, fence, id, input)
@@ -255,14 +258,17 @@ func (s *Store) CommandManagementDraft(ctx context.Context, teamID, id, action s
 		if err != nil {
 			return err
 		}
-		if result.Draft.Version != input.ExpectedVersion || result.Draft.State != "open" {
-			return ontology.ErrConflict
+		if result.Draft.Version != input.ExpectedVersion {
+			return ontology.PublicationVersionRejection("draft_version", id, input.ExpectedVersion, result.Draft.Version)
+		}
+		if result.Draft.State != "open" {
+			return &ontology.PublicationRejection{Cause: ontology.ErrConflict, Reason: "draft_state", RecordID: id, Expected: "open", Observed: result.Draft.State}
 		}
 		event := ontology.ManagementAuditEvent{Operation: "ONTOLOGY_DRAFT_DISCARD", EntityID: id, Reason: input.Reason, Version: input.ExpectedVersion + 1, Revision: input.ExpectedRevision}
 		result.Draft.State = "discarded"
 		if action == "publish" {
 			if result.Draft.BaseRevision != input.ExpectedRevision {
-				return ontology.ErrConflict
+				return ontology.PublicationVersionRejection("draft_revision", id, input.ExpectedRevision, result.Draft.BaseRevision)
 			}
 			publication := result.Prepared
 			publication.OperationKey, publication.Reason = input.OperationKey, input.Reason

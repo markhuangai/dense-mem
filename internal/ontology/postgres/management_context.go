@@ -16,7 +16,7 @@ func managementEditContext(tx *gorm.DB, fence scope, draftID string, input ontol
 		return current, err
 	}
 	if current.Revision != input.ExpectedRevision {
-		return current, ontology.ErrConflict
+		return current, ontology.PublicationVersionRejection("catalog_revision", "", input.ExpectedRevision, current.Revision)
 	}
 	var records []ontology.Record
 	var changedDefinitions []string
@@ -102,7 +102,7 @@ func validateManagementPublication(tx *gorm.DB, fence scope, input ontology.Publ
 		return nil, nil, err
 	}
 	if revision != input.ExpectedRevision {
-		return nil, nil, ontology.ErrConflict
+		return nil, nil, ontology.PublicationVersionRejection("catalog_revision", "", input.ExpectedRevision, revision)
 	}
 	var records []ontology.Record
 	var definitions []string

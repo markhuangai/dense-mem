@@ -1,11 +1,64 @@
 import { navigate, openNavigation, confirmAction, expectPageContained } from "../tests-support/portal";
 import { randomUUID } from "node:crypto";
 import { expect, test } from "@playwright/test";
+import type { OntologyDefinition, OntologyEdit, OntologyRecord } from "../src/user/ontology-types";
 
 const userURL = process.env.DENSE_MEM_USER_URL!;
 const controlURL = process.env.DENSE_MEM_CONTROL_URL!;
 const controlToken = process.env.DENSE_MEM_CONTROL_TOKEN!;
 const teamID = process.env.DENSE_MEM_E2E_TEAM_ID!;
+
+for (const [kind, relation] of [["entity_class", "subclass_of"], ["predicate_concept", "subproperty_of"]] as const) {
+  test(`existing editor preserves ${relation} through reparenting and rejects clearing its parent`, async ({ page, request }) => {
+    const created = await request.post(`${controlURL}/control/api/teams/${teamID}/credentials`, { headers: { Authorization: `Bearer ${controlToken}` }, data: { name: `semantic-browser-${randomUUID()}`, role: "manager", scopes: ["read", "write"], rate_limit: 300 } });
+    expect(created.status()).toBe(201);
+    const manager = (await created.json()).data;
+    const headers = { Authorization: `Bearer ${manager.api_key}` };
+    const prefix = `browser-semantic-${randomUUID()}`;
+    const definition = (suffix: string): OntologyDefinition => ({ key: `${prefix}-${suffix}`, label: `${prefix}-${suffix}`, description: "Accepted semantic definition", ...(kind === "entity_class" ? { base_entity_kind: "person" } : {}) });
+    async function publish(edits: OntologyEdit[]) {
+      const revision = (await (await request.get(`${userURL}/ui/api/ontology/status`, { headers })).json()).data.revision;
+      const saved = await request.post(`${userURL}/ui/api/ontology/drafts`, { headers, data: { operation_key: randomUUID(), expected_version: 0, expected_revision: revision, reason: "Seed semantic editor acceptance", edits } });
+      expect(saved.status()).toBe(200);
+      const draft = (await saved.json()).data;
+      const published = await request.post(`${userURL}/ui/api/ontology/drafts/${draft.id}/publish`, { headers, data: { operation_key: randomUUID(), expected_version: draft.version, expected_revision: revision, reason: draft.reason } });
+      expect(published.status()).toBe(200);
+    }
+    await publish(["parent", "alternate"].map((suffix) => ({ action: "define", kind, expected_version: 0, definition: definition(suffix) })));
+    const records: OntologyRecord[] = (await (await request.get(`${userURL}/ui/api/ontology/records?kind=${kind}&limit=200`, { headers })).json()).data.records;
+    const parent = records.find((record) => record.definition?.key === `${prefix}-parent`)!;
+    const alternate = records.find((record) => record.definition?.key === `${prefix}-alternate`)!;
+    await publish([{ action: "define", kind, expected_version: 0, definition: { ...definition("child"), parent_id: parent.id, parent_relation: relation } }]);
+    await page.goto(`${userURL}/ui/`);
+    await page.getByLabel("API key").fill(manager.api_key);
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Refresh session" })).toBeEnabled();
+    await navigate(page, "Ontology");
+    await page.getByLabel("Catalog type").selectOption(kind);
+    await page.getByRole("button", { name: `Edit ${prefix}-child`, exact: true }).click();
+    await page.getByLabel("Definition parent").fill("");
+    await expect(page.getByRole("alert")).toContainText("requires a parent");
+    await expect(page.getByRole("button", { name: "Add correction to draft" })).toBeDisabled();
+    await page.getByLabel("Definition parent").fill(alternate.id);
+    await page.getByLabel("Definition description").fill("Unrelated description edit with a valid new parent");
+    await page.getByRole("button", { name: "Add correction to draft" }).click();
+    await page.getByLabel("Audit reason").fill("Preserve accepted semantic relation");
+    const saving = page.waitForResponse((response) => response.request().method() === "POST" && response.url().endsWith("/drafts"));
+    await page.getByRole("button", { name: "Save draft", exact: true }).click();
+    const saved = await saving;
+    expect(saved.status()).toBe(200);
+    expect(saved.request().postDataJSON().edits[0].definition).toMatchObject({ parent_id: alternate.id, parent_relation: relation, description: "Unrelated description edit with a valid new parent" });
+    await expect(page.getByRole("status")).toContainText("Draft saved");
+    await page.getByRole("button", { name: "Preview impact" }).click();
+    await expect(page.getByRole("heading", { name: "Impact preview", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Publish correction", exact: true }).click();
+    await confirmAction(page, "Publish correction");
+    await expect(page.getByRole("status")).toContainText("Correction published");
+    const child: OntologyRecord = (await (await request.get(`${userURL}/ui/api/ontology/records?kind=${kind}&limit=200`, { headers })).json()).data.records.find((record: OntologyRecord) => record.definition?.key === `${prefix}-child`);
+    expect(child.definition).toMatchObject({ parent_id: alternate.id, parent_relation: relation });
+    await expectPageContained(page);
+  });
+}
 
 test("manager saves a cookie-authenticated draft across sign-out, handles a real conflict, previews and publishes", async ({ page, request }) => {
   async function credential(role: string) {

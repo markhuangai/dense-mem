@@ -610,6 +610,33 @@ Temporal requests omit current-only organization and report that degradation.
 Disabling ontology maintenance restores ordinary retrieval; pausing it retains
 current published organization.
 
+Ontology definitions may declare `parent_relation: "subclass_of"` on entity
+classes or `parent_relation: "subproperty_of"` on predicate concepts. Both require
+a compatible `parent_id`; an omitted relation keeps the parent organizational.
+The metadata does not expand Recall or alter canonical Knowledge. Existing
+editor actions preserve it, and clearing a required parent blocks the edit.
+See [ADR 0016](adr/0016-explicit-ontology-hierarchy-semantics.md).
+
+Stop incompatible application instances before saving semantic drafts or
+publications: older strict revision readers cannot read the new field. Once
+semantic revisions exist, recover forward with compatible readers. Do not erase
+history or restore an incompatible binary over those revisions.
+
+For publication diagnosis, DEBUG `ontology_semantic_publication` includes bounded
+admitted input, scoped parent revisions, and precise rejection comparisons.
+WARN `ontology_semantic_publication_rejected` preserves the public error class;
+ERROR `ontology_semantic_publication_failed` records required storage failures.
+INFO `ontology_semantic_publication_committed` is emitted only after the outer
+transaction, including audit, commits. Filter by trusted team/profile,
+correlation, and operation identity. Payload chunks remain on stdout independently
+of telemetry; collect the complete Compose operation window before teardown
+without `--tail`. Reconstruct every payload in index order and verify the count
+and SHA-256 against its manifest. Missing or unavailable detail is incomplete
+evidence, even when the summary is present. Existing credential protection,
+2 KiB chunks, 16 KiB metadata, and 1 MiB publication-body bounds apply. Retain
+protected captures in private ignored paths; the management acceptance scenario
+also emits protected operation records for its run receipt.
+
 Operators configure the ontology model and its **Model context window (tokens)** in
 **Operations → Ontology maintenance**. This is the selected model’s capacity for
 one complete request and response, including regeneration history. No capacity

@@ -40,7 +40,7 @@ func (s *Store) History(ctx context.Context, teamID string, after int64, limit i
 	return result, err
 }
 
-func (s *Store) Rollback(ctx context.Context, teamID, targetID, key string, expected int64, reason string) (ontology.PublicationResult, error) {
+func (s *Store) Rollback(ctx context.Context, teamID, targetID, key string, expected int64, reason string) (result ontology.PublicationResult, err error) {
 	actor, err := managerActor(ctx, teamID)
 	if err != nil {
 		return ontology.PublicationResult{}, err
@@ -52,6 +52,13 @@ func (s *Store) Rollback(ctx context.Context, teamID, targetID, key string, expe
 		return ontology.PublicationResult{}, err
 	}
 	input := ontology.Publication{OperationKey: key, ExpectedRevision: expected, Reason: reason, RollbackOf: targetID}
+	ctx, diagnostic, finish := ontology.ObservePublication(ctx, s.publicationObserver, teamID, "rollback", input)
+	defer func() {
+		if diagnostic != nil && result.ID != "" {
+			diagnostic.Result = &result
+		}
+		finish(err)
+	}()
 	hash, err := ontology.RequestHash(input, "rollback", actor)
 	if err != nil {
 		return ontology.PublicationResult{}, err
@@ -97,7 +104,7 @@ func prepareOntologyRollback(tx *gorm.DB, fence scope, input ontology.Publicatio
 		}
 		head, exists := current[ref.ID]
 		if !exists || head.Version != ref.Version {
-			return input, ontology.ErrConflict
+			return input, ontology.PublicationVersionRejection("rollback_revision", ref.ID, ref.Version, head.Version)
 		}
 		desired := head
 		if ref.Version == 1 {
