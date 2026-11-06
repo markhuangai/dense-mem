@@ -43,6 +43,79 @@ func TestPairNativeObservationRejectsMissingAndForeignState(t *testing.T) {
 	require.ErrorContains(t, err, "isolated")
 }
 
+func pairWindowRolloverSnapshot(t *testing.T, release PairRelease) PairNativeSnapshot {
+	t.Helper()
+	snapshot := commandNativeSnapshot(t, release, []PairImportAttempt{})
+	boundary := time.Now().UTC().Truncate(time.Hour)
+	var database map[string]any
+	require.NoError(t, json.Unmarshal(snapshot.Database, &database))
+	database["observed_at"] = boundary.Add(-time.Second)
+	database["legacy_window"] = map[string]any{"id": "11111111-1111-4111-8111-111111111111", "reserved_input": 0, "reserved_output": 0, "overrun": false}
+	var status ontology.MaintenanceStatus
+	require.NoError(t, json.Unmarshal(snapshot.Ontology, &status))
+	status.ObservedAt = boundary.Add(time.Second)
+	status.Window.ID = "22222222-2222-4222-8222-222222222222"
+	status.Window.StartsAt, status.Window.EndsAt = boundary, boundary.Add(12*time.Hour)
+	var err error
+	snapshot.Database, err = json.Marshal(database)
+	require.NoError(t, err)
+	snapshot.Ontology, err = json.Marshal(status)
+	require.NoError(t, err)
+	return snapshot
+}
+
+func TestPairNativeObservationClassifiesOnlyVerifiedWindowRollover(t *testing.T) {
+	c := pairedFixture(t)
+	for _, tc := range []struct {
+		name   string
+		change func(map[string]any, *ontology.MaintenanceStatus)
+	}{
+		{"verified", func(map[string]any, *ontology.MaintenanceStatus) {}},
+		{"invalid_database_id", func(d map[string]any, _ *ontology.MaintenanceStatus) {
+			d["legacy_window"].(map[string]any)["id"] = "invalid"
+		}},
+		{"invalid_status_id", func(_ map[string]any, s *ontology.MaintenanceStatus) { s.Window.ID = "invalid" }},
+		{"same_uuid_different_text", func(d map[string]any, s *ontology.MaintenanceStatus) {
+			d["legacy_window"].(map[string]any)["id"] = "{" + s.Window.ID + "}"
+		}},
+		{"nil_database_id", func(d map[string]any, _ *ontology.MaintenanceStatus) {
+			d["legacy_window"].(map[string]any)["id"] = "00000000-0000-0000-0000-000000000000"
+		}},
+		{"missing_database_time", func(d map[string]any, _ *ontology.MaintenanceStatus) { d["observed_at"] = time.Time{} }},
+		{"missing_status_time", func(_ map[string]any, s *ontology.MaintenanceStatus) { s.ObservedAt = time.Time{} }},
+		{"missing_window_start", func(_ map[string]any, s *ontology.MaintenanceStatus) { s.Window.StartsAt = time.Time{} }},
+		{"missing_window_end", func(_ map[string]any, s *ontology.MaintenanceStatus) { s.Window.EndsAt = time.Time{} }},
+		{"database_already_in_new_window", func(d map[string]any, s *ontology.MaintenanceStatus) {
+			d["observed_at"] = s.Window.StartsAt.Add(time.Second)
+		}},
+		{"status_before_window", func(_ map[string]any, s *ontology.MaintenanceStatus) {
+			s.ObservedAt = s.Window.StartsAt.Add(-time.Second)
+		}},
+		{"status_after_window", func(_ map[string]any, s *ontology.MaintenanceStatus) { s.ObservedAt = s.Window.EndsAt }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			snapshot := pairWindowRolloverSnapshot(t, c.Candidate)
+			var database map[string]any
+			var status ontology.MaintenanceStatus
+			require.NoError(t, json.Unmarshal(snapshot.Database, &database))
+			require.NoError(t, json.Unmarshal(snapshot.Ontology, &status))
+			tc.change(database, &status)
+			var err error
+			snapshot.Database, err = json.Marshal(database)
+			require.NoError(t, err)
+			snapshot.Ontology, err = json.Marshal(status)
+			require.NoError(t, err)
+			_, err = DecodePairObservation(c.Candidate, snapshot, false)
+			require.ErrorContains(t, err, "window changed")
+			if tc.name == "verified" {
+				require.ErrorIs(t, err, ErrPairSnapshotWindowChanged)
+			} else {
+				require.NotErrorIs(t, err, ErrPairSnapshotWindowChanged)
+			}
+		})
+	}
+}
+
 func TestPairNativeImportContractRequiresPinnedLegacyRelease(t *testing.T) {
 	c := pairedFixture(t)
 	row := PairImportAttempt{ContractVersion: "dense-mem.v2.6.3"}

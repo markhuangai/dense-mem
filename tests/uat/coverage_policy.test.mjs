@@ -166,7 +166,7 @@ test("complete Go coverage deduplicates profiles and rejects exact thresholds", 
   for (const flag of ["FAKE_SKIP_POSTGRES", "FAKE_EMPTY_POSTGRES"]) {
     const missingPostgres = runCoverage(fakeGo, join(fixture, flag), "--complete", { [flag]: "1" });
     assert.notEqual(missingPostgres.status, 0);
-    assert.match(missingPostgres.stderr, /coverage profile is missing or empty: .*go-postgres-complete\.raw/);
+    assert.match(missingPostgres.stderr, /coverage profile is missing or empty: .*go-postgres-ordinary\.raw/);
   }
   for (const flag of ["FAKE_SKIP_AUDIT", "FAKE_EMPTY_AUDIT"]) {
     const missingAudit = runCoverage(fakeGo, join(fixture, flag), "--complete", { [flag]: "1" });
@@ -275,7 +275,7 @@ function fakeGoScript() {
     "done",
     "if [[ -z \"${profile}\" ]]; then exit 0; fi",
     "if [[ \"${FAKE_SKIP_EVALUATION:-}\" == \"1\" && \"${profile}\" == *go-evaluation-complete.raw ]]; then exit 0; fi",
-    "if [[ \"${profile}\" == *go-postgres-complete.raw ]]; then",
+    "if [[ \"${profile}\" == *go-postgres-ordinary.raw || \"${profile}\" == *go-postgres-parallel.raw ]]; then",
     "  [[ \"${DENSE_MEM_REPOSITORY_TESTCONTAINERS:-}\" == \"1\" ]] || exit 1",
     "  if [[ \"${FAKE_SKIP_POSTGRES:-}\" == \"1\" ]]; then exit 0; fi",
     "fi",
@@ -308,7 +308,7 @@ function fakeGoScript() {
     "    *go-e2e-complete.raw)",
     "      printf 'example/e2e.go:1.1,1.2 1 1\\n'",
     "      ;;",
-    "    *go-postgres-complete.raw)",
+    "    *go-postgres-ordinary.raw|*go-postgres-parallel.raw)",
     "      if [[ \"${FAKE_EMPTY_POSTGRES:-}\" != \"1\" ]]; then",
     "        printf 'example/root.go:2.1,2.2 1 1\\n'",
     "        printf 'example/evaluation.go:1.1,1.2 1 1\\n'",
@@ -350,8 +350,9 @@ test("real Go coverage parts retain cross-package and testless execution and rej
   writeFixture(fixture, "internal/testless/value.go", "package testless\nfunc Value() int { return 7 }\n");
   writeFixture(fixture, "internal/decisiononly/value.go", "package decisiononly\nfunc Workflow() int { return 11 }\nfunc Settings() int { return 13 }\n");
   writeFixture(fixture, "internal/diagnosticonly/value.go", "package diagnosticonly\nfunc FailureCapture() int { return 17 }\nfunc AssessmentWitness() int { return 19 }\n");
+  writeFixture(fixture, "internal/parallelonly/value.go", "package parallelonly\nfunc Value() int { return 23 }\n");
   const targets = {
-    "internal/ontology/postgres": ["TestOntologyMaintenanceCohort", "TestOntologyCoverageFailureWitnesses"],
+    "internal/ontology/postgres": ["TestOntologyMaintenanceCohort", "TestOntologyCoverageFailureWitnesses", "TestOntologyMaintenanceParallelClaimsAndLimits", "TestOntologyMaintenanceParallelSchedulerExecution"],
     "internal/community/postgres": ["TestCommunityTopicOrdinary", "TestCommunityTopicLargeFanoutResumesAndRotates"],
     "internal/dream/postgres": ["TestRetiredDreamHistoryPreservesProvenanceIsolationAndRetention"],
     "cmd/internal/serverapp": ["TestServerLifecycleCore", "TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads"],
@@ -363,19 +364,32 @@ test("real Go coverage parts retain cross-package and testless execution and rej
     writeFixture(fixture, `${directory}/value.go`, '//go:build integration\n\npackage fixture\nimport ("example.com/fixture/internal/example"; "example.com/fixture/internal/testless")\nfunc Value() int { return example.Choose(true) + testless.Value() }\n');
     const decisionImport = names.some((name) => name.startsWith("TestDecision")) ? '; "example.com/fixture/internal/decisiononly"' : "";
     const diagnosticImport = names.some((name) => name.startsWith("TestOntologyCoverage") || name.startsWith("TestOntologyFailureCapture")) ? '; "example.com/fixture/internal/diagnosticonly"' : "";
+    const parallelImport = names.some((name) => name.startsWith("TestOntologyMaintenanceParallel")) ? '; "example.com/fixture/internal/parallelonly"' : "";
     const tests = names.map((name) => {
       let expression = name.includes("DecisionSettings") ? "decisiononly.Settings() != 13" : name.includes("DecisionWorkflow") ? "decisiononly.Workflow() != 11" : "Value() != 8";
       if (name === "TestOntologyCoverageFailureWitnesses") expression = "diagnosticonly.AssessmentWitness() != 19";
       if (name === "TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads") expression = "diagnosticonly.FailureCapture() != 17";
-      return `func ${name}(t *testing.T) { if ${expression} { t.Fatal("cross-package execution") } }`;
+      if (name.startsWith("TestOntologyMaintenanceParallel")) expression = "parallelonly.Value() != 23";
+      return `func ${name}(t *testing.T) { record(t); if ${expression} { t.Fatal("cross-package execution") } }`;
     });
-    writeFixture(fixture, `${directory}/value_test.go`, `//go:build integration\n\npackage fixture\nimport ("testing"${decisionImport}${diagnosticImport})\n${tests.join("\n")}\n`);
+    const record = `func record(t *testing.T) {
+      t.Helper()
+      file, err := os.OpenFile(os.Getenv("COVERAGE_SELECTION_LOG"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+      if err != nil { t.Fatal(err) }
+      _, writeErr := file.WriteString(t.Name()+"\\n")
+      closeErr := file.Close()
+      if writeErr != nil { t.Fatal(writeErr) }
+      if closeErr != nil { t.Fatal(closeErr) }
+      if os.Getenv("COVERAGE_FAILURE_TEST") == t.Name() { t.Fatal("requested fixture failure") }
+    }`;
+    writeFixture(fixture, `${directory}/value_test.go`, `//go:build integration\n\npackage fixture\nimport ("os"; "testing"${decisionImport}${diagnosticImport}${parallelImport})\n${record}\n${tests.join("\n")}\n`);
   }
   writeFixture(fixture, "cmd/e2e/go.mod", "module example.com/fixture/cmd/e2e\n\ngo 1.26\n");
   writeFixture(fixture, "cmd/e2e/value.go", "package e2e\nfunc Value() int { return 3 }\n");
   writeFixture(fixture, "cmd/e2e/value_test.go", 'package e2e\nimport "testing"\nfunc TestNested(t *testing.T) { if Value() != 3 { t.Fatal("nested") } }\n');
   const outputDir = join(fixture, "coverage");
-  const env = { ...fixtureGitEnvironment(fixture), COVERAGE_OUTPUT_DIR: outputDir, GITHUB_RUN_ID: "123", GITHUB_RUN_ATTEMPT: "1" };
+  const selectionLog = join(fixture, "selection.log");
+  const env = { ...fixtureGitEnvironment(fixture), COVERAGE_OUTPUT_DIR: outputDir, COVERAGE_SELECTION_LOG: selectionLog, GITHUB_RUN_ID: "123", GITHUB_RUN_ATTEMPT: "1" };
   const script = join(fixture, "scripts/coverage-report.sh");
   const coverage = (...args) => run("bash", [script, ...args], { cwd: fixture, env });
   const requirePass = (result) => assert.equal(result.status, 0, result.stdout + result.stderr);
@@ -387,12 +401,22 @@ test("real Go coverage parts retain cross-package and testless execution and rej
     writeFixture(outputDir, `postgres/${name}`, "mode: atomic\nexample.com/unused.go:1.1,1.2 1 0\n");
   }
   requirePass(coverage("--complete-part", "postgres"));
+  assert.deepEqual(readFixture(selectionLog).trim().split("\n").sort(), Object.values(targets).flat().sort());
   assert.match(readFixture(join(outputDir, "postgres/go-postgres-complete.raw")), /fixture\/internal\/testless\/value.go:[^\n]+ [1-9]/m);
+  assert.match(readFixture(join(outputDir, "postgres/go-postgres-complete.raw")), /fixture\/internal\/parallelonly\/value.go:[^\n]+ [1-9]/m);
   for (const line of [2, 3]) assert.match(readFixture(join(outputDir, "postgres/go-postgres-complete.raw")), new RegExp(`fixture/internal/diagnosticonly/value.go:${line}\\.[^\\n]+ [1-9]`, "m"));
   assert.doesNotMatch(readFixture(join(outputDir, "postgres/profiles.sha256")), /go-(audit|session|community-scale)-complete/);
   for (const line of [2, 3]) assert.match(readFixture(join(outputDir, "core/postgres-support/go-session-complete.raw")), new RegExp(`fixture/internal/decisiononly/value.go:${line}\\.[^\\n]+ [1-9]`, "m"));
   requirePass(coverage("--merge-complete"));
   assert.match(readFixture(join(outputDir, "go-complete.txt")), /100\.0%/);
+  for (const name of ["TestOntologyMaintenanceCohort", "TestOntologyMaintenanceParallelClaimsAndLimits"]) {
+    const failed = run("bash", [script, "--complete-part", "postgres"], { cwd: fixture, env: { ...env, COVERAGE_FAILURE_TEST: name } });
+    assert.notEqual(failed.status, 0);
+    assert.match(failed.stdout + failed.stderr, /requested fixture failure/);
+    assert.notEqual(coverage("--merge-complete").status, 0);
+  }
+  requirePass(coverage("--complete-part", "postgres"));
+  requirePass(coverage("--merge-complete"));
   const downloaded = join(fixture, "downloaded");
   for (const part of ["core", "postgres"]) cpSync(join(outputDir, part), join(downloaded, part), { recursive: true });
   const downloadedCoverage = () => run("bash", [script, "--merge-complete"], { cwd: fixture, env: { ...env, COVERAGE_OUTPUT_DIR: downloaded } });

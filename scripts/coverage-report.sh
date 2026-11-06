@@ -243,10 +243,15 @@ run_complete_part() {
 		seal_complete_part core "${core_profiles[@]}"
 		run_complete_part postgres-support
 	elif [[ "$part" == postgres ]]; then
+		local ordinary_profile="${directory}/go-postgres-ordinary.raw" parallel_profile="${directory}/go-postgres-parallel.raw"
 		DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test -tags integration ./internal/ontology/postgres ./internal/community/postgres ./internal/dream/postgres ./cmd/internal/serverapp \
 			-run '^(TestOntologyMaintenance(Finalization.*|Parallel.*|Revalidation.*|CurrentReceiptCompletion|DiscoveryCommittedDiagnostics|Cohort|MatchingCohort|RegenerationFailureRetry|ProviderPauseDrain|AccountingFailurePreventsPublication|ContextConfigurationAndManualReuse|BudgetRetirement.*|GlobalAccounting|LeaseInterruptionReturnsPending|ProgressBeyondFormerBudgets|ProviderFailureReleasesCapacity|DirectOrganizationRejectsMissingContext|ControlInterruptionResumesSameWindow|PauseCommandsAndWindows|OperatorHTTPAndScheduler|CommandAuditIsAtomic)|TestOntologyMatching.*|TestOntologyAutomaticRetirementPreservesGroupingOverrides|TestOntologyCurrentReadersDistinguishDependencyAndSourceChanges|TestOntologyGroupingOverridesPreserveAssignmentFreshness|TestOntologyCurrentReadersReportCanonicalFingerprintAndVersionChanges|TestOntologyVocabularyUsesCurrentCandidateWindow|TestOntologyVocabularyWindowPreservesTeamIsolationAndNameReuse|TestOntologyFollowupCohort|TestOntologyMaintenanceBoundedCompletionUsesPersistedOutcomes|TestOntologyMaintenanceEarlierAmbiguityKeepsBoundedRunIncomplete|TestOntologyMaintenanceScheduledRecoveryClearsCurrentReason|TestOntologyMaintenanceCompletedRunDoesNotHideUnrelatedFailures|TestOntologyMaintenanceConcurrentInterruptionPreservesRunWork|TestOntologyMixedSeparationOverrideProtectsEvidenceGroups|TestOntologyManagement.*|TestCommunityTopic.*|TestRetiredDreamHistoryPreservesProvenanceIsolationAndRetention|TestServerLifecycle.*|TestRunActiveServerCanceledBeforeWorkersDoesNotBuildRuntimeWorker|TestPrivateMemoryCommandsInspectFreshDatabaseWithoutStartingOrMigrating|TestPrivateMemoryPreflightCommandBoundsLegacyReportAndReturnsBlockers|TestPairedEvaluation.*|TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads|TestOntologyCoverageFailureWitnesses)$' \
-			-skip '^(TestCommunityTopicLargeFanoutResumesAndRotates|TestOntologyMaintenanceRevalidationDiscoveryMeasurement)$' \
-			-count=1 -timeout=30m -covermode=atomic -coverpkg="${coverpkg}" -coverprofile="${postgres_profile}"
+			-skip '^(TestCommunityTopicLargeFanoutResumesAndRotates|TestOntologyMaintenanceRevalidationDiscoveryMeasurement|TestOntologyMaintenanceParallel.*)$' \
+			-count=1 -timeout=30m -covermode=atomic -coverpkg="${coverpkg}" -coverprofile="${ordinary_profile}"
+		DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test -tags integration ./internal/ontology/postgres \
+			-run '^TestOntologyMaintenanceParallel.*$' \
+			-count=1 -timeout=30m -covermode=atomic -coverpkg="${coverpkg}" -coverprofile="${parallel_profile}"
+		merge_profiles "${postgres_profile}" "${ordinary_profile}" "${parallel_profile}"
 		seal_complete_part postgres "${postgres_profiles[@]}"
 	else
 		DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test -tags integration ./internal/community/postgres \

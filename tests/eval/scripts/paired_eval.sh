@@ -88,12 +88,29 @@ pair_snapshot() {
   rmdir "${temporary}"
 }
 
+pair_collect_snapshot() {
+  local destination="$1" attempt path code
+  shift
+  for attempt in 1 2 3; do
+    pair_remaining >/dev/null
+    path="$(dirname "${destination}")/snapshot-$(date -u +%s%N).json"
+    pair_snapshot "${path}"
+    pair_remaining >/dev/null
+    if pair_tool "$@" --pair-side "${pair_side}" --pair-input "${path}" > "${destination}.tmp"; then
+      mv "${destination}.tmp" "${destination}"
+      return 0
+    else
+      code=$?
+    fi
+    if (( code != 75 || attempt == 3 )); then return "${code}"; fi
+    printf '%s %s snapshot window rollover; recollecting (%d/3); rejected_snapshot=%s\n' \
+      "$(date -u +%FT%TZ)" "${pair_side}" "${attempt}" "${path}" >&2
+  done
+}
+
 pair_observe() {
-  local frozen="${1:-false}" path="${pair_stage_dir}/snapshot-$(date -u +%s%N).json"
-  pair_snapshot "${path}"
-  pair_tool observe --pair-side "${pair_side}" --pair-stage "${pair_stage}" --pair-input "${path}" \
-    --pair-frozen="${frozen}" > "${pair_stage_dir}/observation-result.tmp"
-  mv "${pair_stage_dir}/observation-result.tmp" "${pair_stage_dir}/observation-result.json"
+  local frozen="${1:-false}"
+  pair_collect_snapshot "${pair_stage_dir}/observation-result.json" observe --pair-stage "${pair_stage}" --pair-frozen="${frozen}"
   jq '.observation' "${pair_stage_dir}/observation-result.json" > "${pair_stage_dir}/observation.tmp"
   mv "${pair_stage_dir}/observation.tmp" "${pair_stage_dir}/observation.json"
 }
@@ -308,8 +325,7 @@ pair_main() {
         flock -n "${runtime_lock}" || { echo "another monitor owns the prepared container" >&2; return 1; }
       done
       pair_tool runtime-lifecycle --pair-side "${pair_side}" >/dev/null
-      pair_snapshot "${pair_out}/${pair_side}/preflight.json"
-      pair_tool claim-runtime --pair-side "${pair_side}" --pair-input "${pair_out}/${pair_side}/preflight.json" > "${pair_out}/${pair_side}/runtime-claim.json"
+      pair_collect_snapshot "${pair_out}/${pair_side}/runtime-claim.json" claim-runtime
     fi
   done
   for pair_side in baseline candidate; do
@@ -319,9 +335,8 @@ pair_main() {
       pair_import
       pair_drain
       pair_capture
-      pair_snapshot "${pair_out}/${pair_side}/after-capture-snapshot.json"
-      pair_tool observe --pair-side "${pair_side}" --pair-frozen --pair-input "${pair_out}/${pair_side}/after-capture-snapshot.json" |
-        jq '.observation' > "${pair_out}/${pair_side}/after-capture.json"
+      pair_collect_snapshot "${pair_out}/${pair_side}/after-capture-result.json" observe --pair-frozen
+      jq '.observation' "${pair_out}/${pair_side}/after-capture-result.json" > "${pair_out}/${pair_side}/after-capture.json"
       pair_tool capture-proof --pair-side "${pair_side}" --pair-directory "${pair_capture_dir}" --pair-input "${pair_out}/${pair_side}/after-capture.json" >/dev/null
     fi
     pair_score

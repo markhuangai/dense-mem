@@ -50,6 +50,140 @@ pair_http "$2" PAIR_HTTP_TEST_TOKEN POST '{"jsonrpc":"2.0","id":1,"method":"tool
 	require.JSONEq(t, `{"jsonrpc":"2.0","id":1,"result":{"tools":[]}}`, string(output))
 }
 
+func TestPairShellRecollectsOnlyVerifiedWindowRollover(t *testing.T) {
+	binary := filepath.Join(t.TempDir(), "eval-runner")
+	output, err := exec.Command("go", "build", "-o", binary, "../../cmd/eval-runner").CombinedOutput()
+	require.NoError(t, err, "%s", output)
+	script, err := filepath.Abs("../../tests/eval/scripts/paired_eval.sh")
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name     string
+		exitCode int
+		requests int32
+	}{
+		{"matching", 0, 1}, {"recover", 0, 2}, {"exhausted", 75, 3},
+		{"unverified_change", 1, 1}, {"foreign_scope", 1, 1}, {"missing_field", 1, 1},
+		{"bad_capacity", 1, 1}, {"negative_work", 1, 1}, {"bad_provider_receipt", 1, 1},
+		{"bad_import_receipt", 1, 1}, {"http_failure", 4, 1},
+		{"expired", 124, 0}, {"expires_during_collection", 124, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := pairedFixture(t)
+			configPath := filepath.Join(t.TempDir(), "pair.json")
+			snapshot := pairWindowRolloverSnapshot(t, c.Candidate)
+			var database map[string]any
+			var status ontology.MaintenanceStatus
+			require.NoError(t, json.Unmarshal(snapshot.Database, &database))
+			require.NoError(t, json.Unmarshal(snapshot.Ontology, &status))
+			switch tc.name {
+			case "unverified_change":
+				database["observed_at"] = status.Window.StartsAt.Add(time.Second)
+			case "foreign_scope":
+				database["scope"].(map[string]any)["generation"] = c.Candidate.Scope.Generation + 1
+			case "missing_field":
+				delete(database, "scope_verified")
+			case "bad_capacity":
+				status.Window.Policy.MaxConcurrency++
+			case "negative_work":
+				status.ActiveWork = -1
+			case "bad_provider_receipt":
+				database["provider_attempts"] = []any{map[string]any{}}
+			case "bad_import_receipt":
+				database["imports"] = []any{map[string]any{}}
+			}
+			var requests, mutations atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet {
+					mutations.Add(1)
+					http.Error(w, "unexpected mutation", http.StatusMethodNotAllowed)
+					return
+				}
+				n := requests.Add(1)
+				if r.Header.Get("Authorization") != "Bearer fixture-token" || r.URL.Path != "/control/api/snapshot-fixture" {
+					http.Error(w, "invalid fixture request", http.StatusForbidden)
+					return
+				}
+				if tc.name == "http_failure" {
+					http.Error(w, "fixture unavailable", http.StatusServiceUnavailable)
+					return
+				}
+				if tc.name == "matching" || (tc.name == "recover" && n > 1) {
+					database["legacy_window"].(map[string]any)["id"] = status.Window.ID
+					database["observed_at"] = status.ObservedAt
+				}
+				if tc.name == "expires_during_collection" {
+					expired := c
+					expired.Deadline = time.Now().Add(-time.Second)
+					if err := writePairJSON(configPath, expired); err != nil {
+						t.Error(err)
+						http.Error(w, "fixture deadline write failed", http.StatusInternalServerError)
+						return
+					}
+				}
+				current := map[string]any{"database": database, "ontology": status, "search": snapshot.Search, "community": snapshot.Community}
+				w.Header().Set("Content-Type", "application/json")
+				if err := json.NewEncoder(w).Encode(map[string]any{"data": current}); err != nil {
+					t.Error(err)
+				}
+			}))
+			defer server.Close()
+			c.Candidate.Runtime.ControlURL = server.URL
+			if tc.name == "expired" {
+				c.Deadline = time.Now().Add(-time.Second)
+			}
+			require.NoError(t, writePairJSON(configPath, c))
+			command := exec.Command("bash", "-c", `set -Eeuo pipefail
+source "$PAIR_SCRIPT"
+pair_side=candidate; pair_stage_dir=""; pair_interrupted=false
+trap 'pair_on_error "$?"' ERR
+pair_begin drain
+pair_snapshot() { pair_control /snapshot-fixture > "$1"; }
+pair_collect_snapshot "$pair_stage_dir/observation-result.json" observe --pair-stage drain`)
+			command.Env = append(os.Environ(), "PAIR_RUNNER="+binary, "PAIR_CONFIG="+configPath, "PAIR_SCRIPT="+script, "PAIR_CONTROL_TOKEN=fixture-token")
+			output, err := command.CombinedOutput()
+			if tc.exitCode == 0 {
+				require.NoError(t, err, "%s", output)
+			} else {
+				var exited *exec.ExitError
+				require.ErrorAs(t, err, &exited, "%s", output)
+				require.Equal(t, tc.exitCode, exited.ExitCode(), "%s", output)
+			}
+			require.Equal(t, tc.requests, requests.Load(), "%s", output)
+			require.Zero(t, mutations.Load(), "snapshot recollection must not submit provider or import work")
+			stage := filepath.Join(c.OutDir, "candidate", "drain", "attempt-0001")
+			paths, err := filepath.Glob(filepath.Join(stage, "snapshot-*.json"))
+			require.NoError(t, err)
+			require.Len(t, paths, int(tc.requests), "each full or rejected input must remain available")
+			if tc.exitCode == 0 {
+				var result struct {
+					Observation PairObservation    `json:"observation"`
+					Import      PairImportProgress `json:"import"`
+					Readiness   PairReadiness      `json:"readiness"`
+				}
+				require.NoError(t, readPairJSON(filepath.Join(stage, "observation-result.json"), &result))
+				require.Equal(t, status.Window.ID, result.Observation.WindowID)
+				require.NoFileExists(t, filepath.Join(stage, "failure.json"))
+				if tc.name == "recover" {
+					var rejected PairNativeSnapshot
+					require.NoError(t, readPairJSON(paths[0], &rejected))
+					_, err := DecodePairObservation(c.Candidate, rejected, false)
+					require.ErrorIs(t, err, ErrPairSnapshotWindowChanged)
+				}
+			} else {
+				require.NoFileExists(t, filepath.Join(stage, "observation-result.json"))
+				if tc.exitCode != 124 {
+					require.FileExists(t, filepath.Join(stage, "failure.json"))
+					process, err := PairProcessIdentity(os.Getpid())
+					require.NoError(t, err)
+					_, err = BeginPairStage(c, "candidate", "drain", process)
+					require.ErrorContains(t, err, "retained failure; automatic retry is forbidden")
+				}
+			}
+			require.NoDirExists(t, filepath.Join(c.OutDir, "candidate", "drain", "attempt-0002"))
+		})
+	}
+}
+
 func TestPairShellConvergenceReadDeadline(t *testing.T) {
 	script, err := filepath.Abs("../../tests/eval/scripts/paired_eval.sh")
 	require.NoError(t, err)
