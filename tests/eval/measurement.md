@@ -102,6 +102,8 @@ A missing journal requires restoring the original capture, not retrying ingestio
 
 Use `eval-runner --mode validate-capture --capture-dir "$capture"` to check saved
 execution measurements without dispatching requests or changing artifacts.
+The directory must contain a readable `run_config.json` object; empty directories
+and invalid configurations fail with protected `evaluation_capture_invalid` logs.
 Live runs validate a saved mapping's capture before starting work. The non-paired
 monitor also validates imports and baselines when reusing cached results.
 Legacy captures retain their existing unavailable measurements.

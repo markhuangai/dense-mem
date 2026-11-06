@@ -65,6 +65,7 @@ func TestExecutionMeasurementsSuccessRetryAndExactReplay(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 2, summary.ScoredCaseCount)
 	require.NoError(t, ValidateExecutionCapture(opts.OutDir))
+	require.NoError(t, ValidateSavedExecutionCapture(opts.OutDir))
 	traces, err := LoadRecallTraces(filepath.Join(opts.OutDir, "recall_traces.jsonl"))
 	require.NoError(t, err)
 	require.Len(t, traces, 2)
@@ -86,6 +87,8 @@ func TestExecutionMeasurementsSuccessRetryAndExactReplay(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int32(3), calls.Load())
 	require.NoError(t, ValidateExecutionCapture(replay.OutDir))
+	require.NoError(t, ValidateSavedExecutionCapture(replay.OutDir))
+	require.Equal(t, int32(3), calls.Load())
 	after, err := pairArtifactHashes(opts.OutDir)
 	require.NoError(t, err)
 	require.Equal(t, original, after)
@@ -304,11 +307,46 @@ func TestExecutionMeasurementsConcurrentImportsAndPersistenceBarrier(t *testing.
 	require.Error(t, journal.finish(errors.New("persistence failed")))
 }
 
+func TestValidateSavedExecutionCapture(t *testing.T) {
+	for _, test := range []struct {
+		body  string
+		valid bool
+	}{
+		{`{}`, true}, {`{"mode":"import","legacy_field":true}`, true}, {"{}\n \t", true},
+		{`null`, false}, {`[]`, false}, {`"config"`, false}, {`1`, false}, {`true`, false}, {``, false},
+		{`{}garbage`, false}, {`{} {}`, false}, {`{"run_id":"partial-run","mode":false}`, false},
+	} {
+		t.Run(test.body, func(t *testing.T) {
+			directory := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(directory, "run_config.json"), []byte(test.body), 0o600))
+			err := ValidateSavedExecutionCapture(directory)
+			if test.valid {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, "capture run config")
+			}
+		})
+	}
+	directory := t.TempDir()
+	path := filepath.Join(directory, "standalone_mapping.json")
+	body := []byte(`{"by_source_doc_id":{}}`)
+	require.NoError(t, os.WriteFile(path, body, 0o600))
+	require.NoError(t, ValidateExecutionCapture(directory))
+	require.ErrorContains(t, ValidateSavedExecutionCapture(directory), "capture run config")
+	after, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, body, after)
+}
+
 func TestExecutionMeasurementsRejectCorruptionAndCaseSet(t *testing.T) {
 	for _, corruption := range []string{"remove_journal", "duplicate_event", "missing_trace", "wrong_mapping", "unknown_case", "timing", "duplicate_trace"} {
 		t.Run(corruption, func(t *testing.T) {
 			opts, _ := measurementFixture(t)
-			server := measurementServer(t, func(w http.ResponseWriter, _ *http.Request, input map[string]any) { measurementRecall(w, input) })
+			var calls atomic.Int32
+			server := measurementServer(t, func(w http.ResponseWriter, _ *http.Request, input map[string]any) {
+				calls.Add(1)
+				measurementRecall(w, input)
+			})
 			defer server.Close()
 			opts.BaseURL = server.URL
 			_, err := Run(context.Background(), opts)
@@ -338,9 +376,17 @@ func TestExecutionMeasurementsRejectCorruptionAndCaseSet(t *testing.T) {
 				}
 				require.NoError(t, writeJSONL(filepath.Join(opts.OutDir, "recall_traces.jsonl"), traces))
 			}
+			original, err := pairArtifactHashes(opts.OutDir)
+			require.NoError(t, err)
+			beforeCalls := calls.Load()
 			require.Error(t, ValidateExecutionCapture(opts.OutDir))
+			require.Error(t, ValidateSavedExecutionCapture(opts.OutDir))
 			_, err = CompareRunDirs(opts.OutDir, opts.OutDir, "")
 			require.Error(t, err)
+			after, err := pairArtifactHashes(opts.OutDir)
+			require.NoError(t, err)
+			require.Equal(t, original, after)
+			require.Equal(t, beforeCalls, calls.Load())
 		})
 	}
 	suite := []SuiteCase{{CaseID: "a"}}
