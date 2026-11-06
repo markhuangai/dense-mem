@@ -65,7 +65,7 @@ func TestOntologySemanticHierarchyPublication(t *testing.T) {
 			}
 		}
 		var legacyHasRelation bool
-		require.NoError(t, f.admin.Raw(`SELECT (body->'definition') ? 'parent_relation' FROM ontology_record_revisions WHERE team_id=?::uuid AND record_id=?::uuid AND version=1`, f.team, child.ID).Row().Scan(&legacyHasRelation))
+		require.NoError(t, f.admin.Raw(`SELECT jsonb_exists(body->'definition','parent_relation') FROM ontology_record_revisions WHERE team_id=?::uuid AND record_id=?::uuid AND version=1`, f.team, child.ID).Row().Scan(&legacyHasRelation))
 		require.False(t, legacyHasRelation)
 		revision = published.Revision
 		for _, invalid := range []ontology.Record{

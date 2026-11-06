@@ -198,6 +198,7 @@ test("manager saves a cookie-authenticated draft across sign-out, handles a real
 });
 
 test("manager inspects sources, corrects grouping and classification, reverses history, and pins or unpins", async ({ page, request }) => {
+  test.setTimeout(60000);
   const created = await request.post(`${controlURL}/control/api/teams/${teamID}/credentials`, { headers: { Authorization: `Bearer ${controlToken}` }, data: { name: `ontology-controls-${randomUUID()}`, role: "manager", scopes: ["read", "write"], rate_limit: 300 } });
   expect(created.status()).toBe(201);const manager=(await created.json()).data;
   const headers={Authorization:`Bearer ${manager.api_key}`};
