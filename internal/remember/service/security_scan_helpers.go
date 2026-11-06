@@ -137,28 +137,35 @@ func readableTechnicalIdentifierCandidate(value string) bool {
 	if len(parts) < 2 {
 		return false
 	}
-	hasCamel := false
+	hasCamel, hasAcronym := false, false
 	for _, part := range parts {
 		if len(part) == 0 || len(part) > 64 {
 			return false
 		}
 		camel := camelEvidenceIdentifierPattern.MatchString(part)
-		if !camel && !looksLikeNaturalEvidenceWord(part) {
+		acronym := readableEvidenceAcronym(part)
+		if !camel && !acronym && !looksLikeNaturalEvidenceWord(part) {
 			return false
 		}
 		hasCamel = hasCamel || camel
+		hasAcronym = hasAcronym || acronym
 	}
-	if !hasCamel {
+	if !hasCamel && !hasAcronym {
 		return false
 	}
 	// Identifier syntax cannot exempt a meaningful or dangerous Base64 decode.
 	for _, candidate := range append(parts, value) {
-		if decoded, ok := decodeBase64(candidate); ok && (hasBinaryMagic(decoded) || printablePercentage(decoded) >= 60 ||
+		if decoded, ok := decodeBase64(candidate); ok && (hasBinaryMagic(decoded) ||
+			(len(decoded) >= 3 || !readableEvidenceAcronym(candidate)) && printablePercentage(decoded) >= 60 ||
 			len(dangerousSubmissionSignals(identitySecurityView(string(decoded)), true)) > 0) {
 			return false
 		}
 	}
 	return true
+}
+
+func readableEvidenceAcronym(value string) bool {
+	return len(value) >= 2 && len(value) <= 16 && strings.IndexFunc(value, func(r rune) bool { return r < 'A' || r > 'Z' }) == -1
 }
 
 func toolExfiltrationIsDirective(text string, start int) bool {

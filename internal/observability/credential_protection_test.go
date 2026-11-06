@@ -301,7 +301,7 @@ func TestCredentialProtectorBoundsStreamingMatchWork(t *testing.T) {
 	input := strings.Repeat("%61", 3000)
 
 	got := NewCredentialProtector(secret).Snapshot(input, len(input)*2)
-	require.Equal(t, CredentialProtectionBudgetExceeded, got.UnavailableReason)
+	require.Equal(t, CredentialProtectionMatchingBudgetExceeded, got.UnavailableReason)
 	require.Nil(t, got.Value)
 }
 
@@ -310,7 +310,7 @@ func TestCredentialProtectorBoundsFinalMatchWork(t *testing.T) {
 	input := strings.Repeat("\n", 3000)
 
 	got := NewCredentialProtector(secret).Snapshot(input, 6002)
-	require.Equal(t, CredentialProtectionBudgetExceeded, got.UnavailableReason)
+	require.Equal(t, CredentialProtectionMatchingBudgetExceeded, got.UnavailableReason)
 	require.Nil(t, got.Value)
 }
 
@@ -699,7 +699,7 @@ func TestCredentialProtectorRejectsUnsafeValuesWithoutRawFallback(t *testing.T) 
 		reason CredentialProtectionUnavailableReason
 	}{
 		{name: "invalid budget", value: "safe", budget: 0, reason: CredentialProtectionInvalidBudget},
-		{name: "budget exceeded", value: strings.Repeat("界", 10), budget: 3, reason: CredentialProtectionBudgetExceeded},
+		{name: "budget exceeded", value: strings.Repeat("界", 10), budget: 3, reason: CredentialProtectionProcessingBudgetExceeded},
 		{name: "unsupported struct", value: struct{ Value string }{Value: "safe"}, budget: 128, reason: CredentialProtectionUnsupported},
 		{name: "unsupported map key", value: map[int]string{1: "safe"}, budget: 128, reason: CredentialProtectionUnsupported},
 		{name: "invalid map key encoding", value: map[string]string{string([]byte{0xff}): "safe"}, budget: 128, reason: CredentialProtectionInvalidEncoding},
@@ -759,12 +759,12 @@ func TestCredentialProtectorRejectsExcessiveDepth(t *testing.T) {
 func TestCredentialProtectorBoundsTraversalBeforeLargeCopies(t *testing.T) {
 	largeBytes := make([]byte, 1<<20)
 	got := NewCredentialProtector("secret").Snapshot(largeBytes, 128)
-	require.Equal(t, CredentialProtectionBudgetExceeded, got.UnavailableReason)
+	require.Equal(t, CredentialProtectionProcessingBudgetExceeded, got.UnavailableReason)
 	require.Nil(t, got.Value)
 
 	largeSlice := make([]any, 1<<20)
 	got = NewCredentialProtector("secret").Snapshot(largeSlice, 32)
-	require.Equal(t, CredentialProtectionBudgetExceeded, got.UnavailableReason)
+	require.Equal(t, CredentialProtectionEncodedBudgetExceeded, got.UnavailableReason)
 	require.Nil(t, got.Value)
 }
 
@@ -808,7 +808,7 @@ func TestCredentialProtectorPreservesFloat32Precision(t *testing.T) {
 	encoded, err := json.Marshal(got.Value)
 	require.NoError(t, err)
 	require.Equal(t, "1.2", string(encoded))
-	require.Equal(t, CredentialProtectionBudgetExceeded, NewCredentialProtector("secret").Snapshot(float32(1.2), 2).UnavailableReason)
+	require.Equal(t, CredentialProtectionEncodedBudgetExceeded, NewCredentialProtector("secret").Snapshot(float32(1.2), 2).UnavailableReason)
 }
 
 func TestCredentialProtectorChecksGoFormattedFloatCredentials(t *testing.T) {
@@ -833,7 +833,7 @@ func TestCredentialProtectorChecksGoFormattedFloatCredentials(t *testing.T) {
 			require.Equal(t, CredentialProtectionAvailable, got.UnavailableReason)
 			require.Equal(t, value, got.Value)
 			require.Equal(t, secret, fmt.Sprint(got.Value))
-			require.Equal(t, CredentialProtectionBudgetExceeded,
+			require.Equal(t, CredentialProtectionEncodedBudgetExceeded,
 				NewCredentialProtector("unrelated").Snapshot(value, len(encoded)-1).UnavailableReason)
 		})
 	}
@@ -860,7 +860,7 @@ func TestCredentialProtectorDetachedAuthenticationSecretsAndUnicodeByteBudget(t 
 	encoded, err := json.Marshal(text)
 	require.NoError(t, err)
 	require.Empty(t, protector.Snapshot(text, len(encoded)).UnavailableReason)
-	require.Equal(t, CredentialProtectionBudgetExceeded, protector.Snapshot(text, len(encoded)-1).UnavailableReason)
+	require.Equal(t, CredentialProtectionEncodedBudgetExceeded, protector.Snapshot(text, len(encoded)-1).UnavailableReason)
 
 	if reflect.DeepEqual(got.Value, value) {
 		t.Fatal("snapshot unexpectedly retained the caller map")
@@ -872,7 +872,7 @@ func TestCredentialProtectorBudgetMatchesJSONEncoding(t *testing.T) {
 		encoded, err := json.Marshal(text)
 		require.NoError(t, err)
 		require.Empty(t, NewCredentialProtector("secret").Snapshot(text, len(encoded)).UnavailableReason)
-		require.Equal(t, CredentialProtectionBudgetExceeded, NewCredentialProtector("secret").Snapshot(text, len(encoded)-1).UnavailableReason)
+		require.Equal(t, CredentialProtectionEncodedBudgetExceeded, NewCredentialProtector("secret").Snapshot(text, len(encoded)-1).UnavailableReason)
 	}
 }
 
@@ -907,7 +907,7 @@ func TestCredentialProtectorBoundsRedactionExpansion(t *testing.T) {
 	require.Equal(t, CredentialProtectionRedacted, got.Value)
 
 	got = NewCredentialProtector("secret").Snapshot("secret", len(encoded)-1)
-	require.Equal(t, CredentialProtectionBudgetExceeded, got.UnavailableReason)
+	require.Equal(t, CredentialProtectionEncodedBudgetExceeded, got.UnavailableReason)
 	require.Nil(t, got.Value)
 }
 

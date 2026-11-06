@@ -176,6 +176,20 @@ func (p *rememberSynchronousProcessor) recordRememberInvocation(
 		if errorCode != "" {
 			attrs = append(attrs, observability.String("error_code", errorCode))
 		}
+		if status != nil && len(status.Errors) > 0 && status.Errors[0].ReasonCode == "security_rejection" {
+			details := status.Errors[0].Details
+			component, _ := details["component"].(string)
+			if component != "remember.initial_scan" && component != "remember.assessment" {
+				component = "unknown"
+			}
+			clientControlled, _ := details["client_controlled"].(bool)
+			security := rememberapp.TerminalStatusErrorWithDetails(rememberapp.TerminalErrorPolicyRejected, "security_rejection", map[string]any{
+				"component": component, "client_controlled": clientControlled,
+				"issues": details["issues"], "issues_truncated": details["issues_truncated"],
+			})
+			attrs = append(attrs, observability.String("reason_code", security.ReasonCode),
+				observability.LogAttr{Key: "security_diagnostics", Value: security.Details})
+		}
 		switch outcome {
 		case "failed", "cancelled", "conflict":
 			logErr := cause

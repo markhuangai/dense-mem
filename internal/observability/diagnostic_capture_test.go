@@ -57,8 +57,8 @@ func TestProtectedDiagnosticChunksKeepBoundsAndUTF8(t *testing.T) {
 	}{
 		{nil, 0, CredentialProtectionAvailable},
 		{[]byte(strings.Repeat("é😀", 1000) + CredentialProtectionRedacted), 1 << 20, CredentialProtectionAvailable},
-		{[]byte("retained"), 0, CredentialProtectionBudgetExceeded},
-		{[]byte("retained"), 1, CredentialProtectionBudgetExceeded},
+		{[]byte("retained"), 0, CredentialProtectionBodyBudgetExceeded},
+		{[]byte("retained"), 1, CredentialProtectionBodyBudgetExceeded},
 		{[]byte{0xff}, 100, CredentialProtectionInvalidEncoding},
 	} {
 		chunks := ChunkProtectedDiagnosticBody(test.body, test.limit)
@@ -103,11 +103,11 @@ func TestCredentialProtectorProtectDiagnosticBytesPreservesBoundedCaptureStates(
 
 	body, reason = protector.ProtectDiagnosticBytes([]byte(`{"message":"too large"}`), 2)
 	require.Nil(t, body)
-	require.Equal(t, CredentialProtectionBudgetExceeded, reason)
+	require.Equal(t, CredentialProtectionEncodedBudgetExceeded, reason)
 
 	body, reason = protector.ProtectDiagnosticBytes([]byte(strings.Repeat(" ", 129)+`{}`), 128)
 	require.Nil(t, body)
-	require.Equal(t, CredentialProtectionBudgetExceeded, reason)
+	require.Equal(t, CredentialProtectionEncodedBudgetExceeded, reason)
 
 	body, reason = protector.ProtectDiagnosticBytes([]byte(`{}`), 0)
 	require.Nil(t, body)

@@ -1,0 +1,197 @@
+{
+  "schema_version": "dense-mem.issues-700-704.investigation.v1",
+  "historical_source_revision": "631a6c71697785ba426cc5b7984f73c4278f3712",
+  "historical_snapshot_sha256": "795c62f231a43b49fff3909f370cb2eb81cb07eeda722ac0e72b40f2f61cb719",
+  "observed_at": "2026-11-04T14:47:12.115324+00:00",
+  "eligible_sources": 3659,
+  "final_outcomes": {
+    "organized": 3422,
+    "failed": 133,
+    "ambiguous": 104
+  },
+  "terminal_failure_reasons": {
+    "stale_input": 98,
+    "provider_response_invalid": 35
+  },
+  "terminal_invalid_validation_codes": {
+    "item_source_kind": 20,
+    "definition_unused": 15
+  },
+  "source_lineage_verified": true,
+  "repair_cohorts": {
+    "source_kind": {
+      "original_assessment_id": "e17c05d4-558f-4baa-aeec-6f41f1e0fa88",
+      "historical_sources": 20,
+      "final_outcomes": {
+        "failed:provider_response_invalid": 20
+      },
+      "original_complete_response_attempts": 3,
+      "final_original_validation_code": "item_source_kind"
+    },
+    "unused_definition": {
+      "original_assessment_id": "e43f3d0c-909b-41d5-af49-3c718216241d",
+      "historical_sources": 20,
+      "final_outcomes": {
+        "failed:provider_response_invalid": 15,
+        "organized:": 2,
+        "ambiguous:classification_ambiguous": 3
+      },
+      "original_complete_response_attempts": 3,
+      "final_original_validation_code": "definition_unused"
+    }
+  },
+  "original_stale_cohort": {
+    "original_sources": 113,
+    "final_outcomes": {
+      "organized:": 53,
+      "failed:stale_input": 48,
+      "failed:provider_response_invalid": 12
+    }
+  },
+  "native_ontology_complete": false,
+  "native_projection_complete": false,
+  "historical_complete_wire_bodies_available": false,
+  "historical_unavailable_request_bodies": 22,
+  "new_reproductions_are_reconstructed": true,
+  "new_provider_calls_for_this_reconciliation": 0,
+  "limitations": [
+    "The historical generic protection reason does not identify its exhausted sub-budget.",
+    "Structurally valid ambiguous reasons are not proof of legitimate semantic uncertainty.",
+    "Recovery and final writer identity do not prove retry-caused recovery.",
+    "The provider backing model revision is unknown."
+  ],
+  "ambiguity_reconciliation": {
+    "original_cutoff_snapshot_sha256": "4243260f040a4554fc2cc6afaa093994cd9a6572279a3e294c70ab098c30d0c0",
+    "original_ambiguous_sources": 112,
+    "original_cohort_final_outcomes": {
+      "organized:": 49,
+      "ambiguous:classification_ambiguous": 63
+    },
+    "final_ambiguous_sources": 104,
+    "final_ambiguous_historical_request_coverage": {
+      "historically_complete_request_capture": 89,
+      "historically_unavailable_request_body": 15
+    },
+    "current_full_wire_bodies_available_for_readjudication": false,
+    "verified_contradictory_witnesses": [
+      {
+        "original_assessment_id": "d745656f-c5f3-4b5e-8dcb-e9a34b284940",
+        "item_ref": "s19",
+        "historical_request_sha256": "0d27831115a7f8ef0fe30eb32d9012c19223289353cbfb8950ee32999fc9bbd4",
+        "observed_contradiction": "supplied_predicate_downregulated_in_reported_missing",
+        "source": {
+          "id": "downregulated_in",
+          "kind": "predicate",
+          "version": 1,
+          "fingerprint": "sha256:a83a2d7e421a96f7c76340e2d80b3e014690cbce234eae921f34bc94afe0cc33"
+        },
+        "final": {
+          "id": "downregulated_in",
+          "kind": "predicate",
+          "reason": "classification_ambiguous",
+          "status": "ambiguous",
+          "version": 1,
+          "fingerprint": "sha256:a83a2d7e421a96f7c76340e2d80b3e014690cbce234eae921f34bc94afe0cc33",
+          "assessment_id": "d745656f-c5f3-4b5e-8dcb-e9a34b284940",
+          "historical_capture_classification": "historically_complete_request_capture"
+        }
+      },
+      {
+        "original_assessment_id": "ff41b0ce-120d-4d94-8d97-9029681dbca2",
+        "item_ref": "s19",
+        "historical_request_sha256": "b6bdca9506018a10022f532c2a70816923f50b1b61086367cd48ff8316ded7ab",
+        "observed_contradiction": "supplied_predicate_pumps_to_reported_missing",
+        "source": {
+          "id": "pumps_to",
+          "kind": "predicate",
+          "version": 1,
+          "fingerprint": "sha256:8ade9754b6312fc566e2af162fc8dfd516fbd8c9e4769a917eaaf66e7caa89f7"
+        },
+        "final": {
+          "id": "pumps_to",
+          "kind": "predicate",
+          "reason": "classification_ambiguous",
+          "status": "ambiguous",
+          "version": 1,
+          "fingerprint": "sha256:8ade9754b6312fc566e2af162fc8dfd516fbd8c9e4769a917eaaf66e7caa89f7",
+          "assessment_id": "ff41b0ce-120d-4d94-8d97-9029681dbca2",
+          "historical_capture_classification": "historically_complete_request_capture"
+        }
+      },
+      {
+        "original_assessment_id": "5f0fe6c4-7e22-4e19-ae76-0d9b0f52d6ee",
+        "item_ref": "s8",
+        "historical_request_sha256": "de34bfa56e720341946b0f86a2d93a5a317d766c752ba97c8f5305bc43a369dc",
+        "observed_contradiction": "empty_lock_reported_as_d0",
+        "source": {
+          "id": "49a8907d-214b-4bc5-8836-ba52fc4f9472",
+          "kind": "evidence",
+          "version": 1,
+          "fingerprint": "sha256:6f65f3065d998b75dd22e04243cae0c34283eabde4da38883763eb67d6f2393b"
+        },
+        "final": {
+          "id": "49a8907d-214b-4bc5-8836-ba52fc4f9472",
+          "kind": "evidence",
+          "reason": "",
+          "status": "organized",
+          "version": 1,
+          "fingerprint": "sha256:6f65f3065d998b75dd22e04243cae0c34283eabde4da38883763eb67d6f2393b",
+          "assessment_id": "2b166b42-0c59-4650-b78e-c6b13064567b"
+        }
+      }
+    ],
+    "semantic_uncertainty_disposition": "Only the three captured contradictions have a verified semantic disposition; remaining source reasons are unverified, not presumed legitimate."
+  },
+  "remember_assessor_witness": {
+    "source_key": "public_6axis_v1:longmemeval_s:0f05491a:session:11:turn:1:chunk:0",
+    "content_sha256": "fe5093eef69f212aa9ac90e8df62cd641666badc85c8cb59ba70af6fc01e865f",
+    "content_characters": 670,
+    "original_security_signal": {
+      "kind": "instruction_override",
+      "start": 634,
+      "end": 669
+    },
+    "original_terminal": "submission_policy_rejected:security_rejection",
+    "original_retryable": false,
+    "explicit_new_key_resubmission": "completed",
+    "same_key_replay": "retains_original_terminal_rejection",
+    "disposition": "Context-dependent provider judgment remains unresolved; full requests differed in identity and supplied server context. No security-policy or retry change is justified by this witness."
+  },
+  "frozen_controls": {
+    "acronym_positive": [
+      "HTTP/deadline/native",
+      "retained-open-PR"
+    ],
+    "scanner_adverse": [
+      "encoded_instruction",
+      "meaningful_encoded_payload",
+      "binary_payload",
+      "folded_encoding",
+      "hostile_continuation"
+    ],
+    "ontology_positive": [
+      "present_downregulated_in",
+      "present_pumps_to",
+      "empty_lock",
+      "repair_succeeds"
+    ],
+    "ontology_adverse": [
+      "wrong_kind_exhausted",
+      "unused_definition_exhausted",
+      "contradictory_reason_is_not_coerced",
+      "legitimate_ambiguity"
+    ],
+    "reconstruction_notice": "New HTTP fixtures preserve the failure shapes and complete-history contract; they are synthetic reconstructions, not recovered historical wire bodies."
+  },
+  "preexisting_scanner_boundary": {
+    "baseline_source_revision": "f0a926e4aa3ec7a84e8f7f679f7bf07b13b0028a",
+    "reconstructed_token_sha256": "e80a909e960288166cdf581cd59245c1ea0443bdc8590d908e16aeafe56d5e53",
+    "token_bytes": 77,
+    "baseline_result": "admitted",
+    "candidate_result": "admitted",
+    "identifier_exemption_applies": false,
+    "mechanism": "Whole slash-wrapped token has Base64 length remainder 1. The existing scanner rejects neither version through this invalid-shape path. The acronym helper still declines to exempt its decoded instruction segment.",
+    "scope": "No new scanner policy is introduced for invalid-shape wrapped tokens; this is a baseline boundary, separate from the acronym fix and valid encoded-payload regressions."
+  },
+  "delivery_validation_evidence": "The PR description and head-fenced delivery receipts report current validation; this artifact records frozen historical findings, controls, and limitations."
+}

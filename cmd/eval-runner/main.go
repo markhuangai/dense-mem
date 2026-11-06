@@ -117,6 +117,10 @@ func main() {
 				fmt.Fprintf(os.Stderr, "paired evaluation: %v\n", err)
 				os.Exit(124)
 			}
+			if errors.Is(err, evalharness.ErrPairSnapshotWindowChanged) {
+				fmt.Fprintf(os.Stderr, "paired evaluation: %v\n", err)
+				os.Exit(75)
+			}
 			exitf("paired evaluation: %v", err)
 		}
 		return

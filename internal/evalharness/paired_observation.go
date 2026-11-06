@@ -3,6 +3,7 @@ package evalharness
 import (
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"slices"
@@ -10,8 +11,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 )
+
+// ErrPairSnapshotWindowChanged identifies a verified window rollover between native reads.
+var ErrPairSnapshotWindowChanged = errors.New("window changed while collecting the native snapshot; collect again before proceeding")
 
 //go:embed paired_import_snapshot.sql
 var PairImportSnapshotSQL string
@@ -171,14 +176,24 @@ func DecodePairObservation(release PairRelease, snapshot PairNativeSnapshot, fre
 		o.WindowID, o.Model = status.Window.ID, policy.Model
 		o.Policy = PairCapacity{Global: policy.MaxConcurrency, Team: policy.TeamConcurrency(release.Scope.TeamID), ContextWindowTokens: policy.ContextWindowTokens}
 	}
-	if db.LegacyWindow != nil {
-		if o.WindowID != db.LegacyWindow.ID {
-			return o, fmt.Errorf("window changed while collecting the native snapshot; collect again before proceeding")
-		}
-		o.ReservedInput, o.ReservedOutput, o.Overrun = db.LegacyWindow.ReservedInput, db.LegacyWindow.ReservedOutput, db.LegacyWindow.Overrun
-	}
 	if _, err := MeasurePairAttempts(o.ProviderAttempts); err != nil {
 		return o, err
+	}
+	if db.LegacyWindow != nil {
+		o.ReservedInput, o.ReservedOutput, o.Overrun = db.LegacyWindow.ReservedInput, db.LegacyWindow.ReservedOutput, db.LegacyWindow.Overrun
+		if o.WindowID != db.LegacyWindow.ID {
+			oldID, oldErr := uuid.Parse(db.LegacyWindow.ID)
+			newID, newErr := uuid.Parse(o.WindowID)
+			if oldErr == nil && newErr == nil && oldID != uuid.Nil && newID != uuid.Nil && oldID != newID &&
+				!db.ObservedAt.IsZero() && status.Window != nil &&
+				db.ObservedAt.Before(status.Window.StartsAt) &&
+				!status.ObservedAt.Before(status.Window.StartsAt) && status.ObservedAt.Before(status.Window.EndsAt) {
+				return o, fmt.Errorf("%w: database_window=%s database_observed_at=%s status_window=%s status_observed_at=%s window_starts_at=%s",
+					ErrPairSnapshotWindowChanged, oldID, db.ObservedAt.Format(time.RFC3339Nano), newID,
+					status.ObservedAt.Format(time.RFC3339Nano), status.Window.StartsAt.Format(time.RFC3339Nano))
+			}
+			return o, fmt.Errorf("window changed while collecting the native snapshot; collect again before proceeding")
+		}
 	}
 	return o, nil
 }

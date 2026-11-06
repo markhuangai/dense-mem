@@ -384,69 +384,6 @@ func (s *Store) organizationCurrent(tx *gorm.DB, fence scope, receipt ontology.O
 	return s.organizationInputsCurrent(tx, fence, receipt)
 }
 
-func (s *Store) organizationInputsCurrent(tx *gorm.DB, fence scope, receipt ontology.OrganizationReceipt) (bool, error) {
-	handles := make([]ontology.SourceHandle, 0, len(receipt.Sources))
-	for _, dependency := range receipt.Sources {
-		handles = append(handles, dependency.SourceHandle)
-	}
-	sources, err := organizationSources(tx, fence, handles)
-	if err != nil {
-		return false, err
-	}
-	for i, dependency := range receipt.Sources {
-		fingerprint, err := ontology.SourceFingerprint(sources[i])
-		if err != nil {
-			return false, err
-		}
-		if fingerprint != dependency.Fingerprint {
-			return false, nil
-		}
-	}
-	ids := []string{}
-	for _, dependency := range receipt.Dependencies {
-		ids = append(ids, dependency.ID)
-	}
-	catalog, err := loadHeads(tx, fence, ids, nil, nil)
-	if errors.Is(err, ontology.ErrContextBound) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	var records []ontology.Record
-	for _, dependency := range receipt.Dependencies {
-		record, ok := catalog[dependency.ID]
-		if !ok || record.Version != dependency.Version || record.Retired {
-			return false, nil
-		}
-		records = append(records, record)
-	}
-	for start := 0; start < len(records); start += ontology.MaxOrganizationSources {
-		end := min(start+ontology.MaxOrganizationSources, len(records))
-		views, err := s.organizationViews(tx, fence, records[start:end])
-		if errors.Is(err, ontology.ErrContextBound) {
-			return false, nil
-		}
-		if err != nil {
-			return false, err
-		}
-		for _, view := range views {
-			if !view.Current {
-				return false, nil
-			}
-		}
-	}
-	contextData, err := s.organizationContext(tx, fence, handles)
-	if errors.Is(err, ontology.ErrContextBound) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	hash, err := ontology.OrganizationContextHash(contextData)
-	return hash == receipt.ContextHash, err
-}
-
 func insertOrganization(tx *gorm.DB, fence scope, receipt ontology.OrganizationReceipt) error {
 	if err := ontology.ValidateOrganizationReceipt(receipt); err != nil {
 		return err
@@ -492,12 +429,12 @@ func (s *Store) CommitOrganization(ctx context.Context, teamID string, receipt o
 			return nil
 		}
 		if receipt.Result.FailureCode == "" {
-			current, err := s.organizationCurrent(tx, fence, receipt)
+			rejection, err := s.organizationInputRejection(tx, fence, receipt)
 			if err != nil {
 				return err
 			}
-			if !current {
-				return ontology.ErrSourceStale
+			if rejection != nil {
+				return &ontology.FreshnessError{Rejection: *rejection}
 			}
 			if len(input.Changes) > 0 {
 				if input.OperationKey != receipt.OperationKey {

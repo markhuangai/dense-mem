@@ -63,6 +63,10 @@ func (s *Service) Organize(ctx context.Context, teamID string, input contract.Or
 	if err != nil {
 		return contract.OrganizationResult{}, err
 	}
+	if contextErr == nil {
+		state := contract.SnapshotOrganizationContext(sourceContext)
+		receipt.ContextState = &state
+	}
 	receipt.Result = contract.OrganizationResult{AssessmentID: receipt.ID, Outcomes: []contract.OrganizationOutcome{}, Attempts: []contract.AssessmentAttempt{}}
 	for _, source := range sourceContext.Sources {
 		fingerprint, err := contract.SourceFingerprint(source)
@@ -189,6 +193,11 @@ func markFailure(receipt *contract.OrganizationReceipt, cause error) {
 		code = "invalid_publication"
 	}
 	receipt.Result.FailureCode = code
+	receipt.Result.FreshnessRejection = nil
+	var rejected *contract.FreshnessError
+	if code == "stale_input" && errors.As(cause, &rejected) {
+		receipt.Result.FreshnessRejection = &rejected.Rejection
+	}
 	receipt.Result.Publication = nil
 	receipt.Result.AmbiguousComparisons = nil
 	receipt.Result.Current = false

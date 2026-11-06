@@ -2,6 +2,7 @@ package evalharness
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -189,9 +190,9 @@ func RunPairCommand(cmd PairCommand, out io.Writer) error {
 		if err := readPairJSON(cmd.Input, &native); err != nil {
 			return err
 		}
-		observation, err := DecodePairObservation(r, native, cmd.Fresh)
-		if err != nil {
-			return err
+		observation, observationErr := DecodePairObservation(r, native, cmd.Fresh)
+		if observationErr != nil && !errors.Is(observationErr, ErrPairSnapshotWindowChanged) {
+			return observationErr
 		}
 		if r.Protocol == "adr0014" && cmd.Stage != "preflight" && cmd.Stage != "capacity" && (observation.WindowID == "" || observation.Policy != r.Capacity || observation.Model != r.Models.Ontology) {
 			return fmt.Errorf("required maintenance capacity is not active")
@@ -214,6 +215,9 @@ func RunPairCommand(cmd PairCommand, out io.Writer) error {
 		}
 		if cmd.Frozen && !ready.Ready {
 			return fmt.Errorf("runtime is not frozen: %v", ready.WaitingFor)
+		}
+		if observationErr != nil {
+			return observationErr
 		}
 		result = struct {
 			Observation PairObservation    `json:"observation"`
