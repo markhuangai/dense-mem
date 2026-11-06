@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/markhuangai/dense-mem/internal/observability"
 )
 
 type RunOptions struct {
@@ -27,6 +29,8 @@ type RunOptions struct {
 	RunID                  string
 	ReleaseGatePolicyPath  string
 	Gates                  GateOptions
+	Logger                 *observability.Logger
+	Protector              *observability.CredentialProtector
 }
 
 const (
@@ -44,7 +48,8 @@ func normalizeImportConcurrency(value int) (int, error) {
 	return value, nil
 }
 
-func Run(ctx context.Context, opts RunOptions) (Summary, error) {
+func Run(ctx context.Context, opts RunOptions) (result Summary, runErr error) {
+	defer func() { runErr = protectExecutionError(ctx, opts, runErr) }()
 	mode := strings.TrimSpace(opts.Mode)
 	if mode == "" {
 		mode = "validate"
@@ -118,6 +123,10 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 	if opts.ImportSeed {
 		importRoute = "remember"
 	}
+	baseURL, _, err := measurementEndpoint(opts.BaseURL)
+	if err != nil {
+		return Summary{}, err
+	}
 	runConfig := RunConfig{
 		RunID:                  runID,
 		Mode:                   mode,
@@ -126,7 +135,7 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 		SuitePath:              opts.SuitePath,
 		ReleaseGatePolicyPath:  opts.ReleaseGatePolicyPath,
 		ReleaseGatePolicyHash:  releaseGatePolicyHash,
-		BaseURL:                opts.BaseURL,
+		BaseURL:                baseURL,
 		ToolTransport:          "mcp",
 		ToolContract:           "mcp.tools/call.v1",
 		ImportSeed:             opts.ImportSeed,
@@ -135,6 +144,23 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 		ResumeSourceDocIDsPath: opts.ResumeSourceDocIDsPath,
 		TracesPath:             opts.TracesPath,
 		MappingPath:            opts.MappingPath,
+	}
+	if mode == "import" && opts.TracesPath != "" {
+		return Summary{}, fmt.Errorf("import mode cannot use --traces")
+	}
+	if mode == "import" && !opts.ImportSeed {
+		return Summary{}, fmt.Errorf("import mode requires --import-seed")
+	}
+	var traces []RecallTrace
+	if opts.TracesPath != "" {
+		traces, err = LoadRecallTraces(opts.TracesPath)
+		if err != nil {
+			logCaptureRejection(opts.Logger, filepath.Dir(opts.TracesPath), seedHash, len(suite), err)
+			return Summary{}, err
+		}
+		if err := validateMeasurementReplay(opts, manifest, traces, suite, seedHash); err != nil {
+			return Summary{}, err
+		}
 	}
 	if mode == "validate" || (releaseGateInput != nil && !releaseGateInput.Passed) {
 		if opts.OutDir != "" {
@@ -154,29 +180,32 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 			return inputSummary, nil
 		}
 	}
-	if mode == "import" && opts.TracesPath != "" {
-		return Summary{}, fmt.Errorf("import mode cannot use --traces")
-	}
-	if mode == "import" && !opts.ImportSeed {
-		return Summary{}, fmt.Errorf("import mode requires --import-seed")
-	}
-
-	var traces []RecallTrace
-	mapping := newKnowledgeMapping()
-	if opts.TracesPath != "" {
-		traces, err = LoadRecallTraces(opts.TracesPath)
-		if err != nil {
+	if opts.MappingPath != "" {
+		if err := ValidateExecutionCapture(filepath.Dir(opts.MappingPath), opts.Logger); err != nil {
 			return Summary{}, err
 		}
+	}
+	mapping := newKnowledgeMapping()
+	var journal *executionJournal
+	if opts.TracesPath != "" {
 		if opts.MappingPath != "" {
 			if err := readJSONFile(opts.MappingPath, &mapping); err != nil {
 				return Summary{}, err
 			}
 		}
 	} else {
+		if opts.OutDir != "" {
+			runConfig.MeasurementSchema = MeasurementSchema
+		}
+		journal, err = newExecutionJournal(opts, runConfig, corpus, suite)
+		if err != nil {
+			return Summary{}, err
+		}
+		defer func() { runErr = journal.finish(runErr) }()
 		client := &HTTPClient{
 			BaseURL: opts.BaseURL,
 			APIKey:  opts.APIKey,
+			journal: journal,
 		}
 		mappingLoadedFromPath := false
 		if opts.MappingPath != "" {
@@ -197,6 +226,15 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 			}
 			mergeKnowledgeMapping(&mapping, existing)
 			skipSourceDocIDs = completedMappedSourceDocIDs(checkpoint, existing)
+			for id := range skipSourceDocIDs {
+				_, op, err := journal.start(ctx, "import", id)
+				if err != nil {
+					return Summary{}, err
+				}
+				if err := op.finish(nil, "reused"); err != nil {
+					return Summary{}, err
+				}
+			}
 		}
 		if len(expectedDreams) > 0 {
 			return Summary{}, errors.New("legacy Dream evaluation is retired")
@@ -275,12 +313,26 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 
 	scores, summary, err := ScoreTraces(runID, mode, manifest.SeedID, seedHash, opts.SuitePath, suite, IndexCases(cases), IndexQrels(qrels), traces, mapping)
 	if err != nil {
+		if opts.TracesPath != "" {
+			logCaptureRejection(opts.Logger, filepath.Dir(opts.TracesPath), seedHash, len(suite), err)
+		}
 		return Summary{}, err
 	}
 	if opts.OutDir != "" {
 		if err := writeRunArtifacts(opts.OutDir, manifest, suite, runConfig, mapping, traces, scores, summary); err != nil {
 			return Summary{}, err
 		}
+		if opts.TracesPath != "" {
+			if err := copyMeasurementReplay(opts, traces); err != nil {
+				return Summary{}, err
+			}
+		}
+	}
+	// Quality gates do not change whether client execution completed.
+	finishErr := journal.finish(nil)
+	journal = nil
+	if finishErr != nil {
+		return Summary{}, finishErr
 	}
 	if opts.Gates.Any() {
 		gate := EvaluateGates(summary, opts.Gates)
@@ -339,7 +391,12 @@ func validateRequiredQRelMappings(qrels map[string]QRel, suite []SuiteCase, mapp
 	return nil
 }
 
-func CompareRunDirs(baselineRunDir, candidateRunDir, outDir string) (Comparison, error) {
+func CompareRunDirs(baselineRunDir, candidateRunDir, outDir string, loggers ...*observability.Logger) (Comparison, error) {
+	for _, directory := range []string{baselineRunDir, candidateRunDir} {
+		if err := ValidateExecutionCapture(directory, loggers...); err != nil {
+			return Comparison{}, err
+		}
+	}
 	var baseline Summary
 	if err := readJSONFile(filepath.Join(baselineRunDir, "summary.json"), &baseline); err != nil {
 		return Comparison{}, err
@@ -688,6 +745,9 @@ func runLiveSuite(ctx context.Context, client *HTTPClient, suite []SuiteCase, ca
 		if err != nil {
 			return traces, fmt.Errorf("run case %s: %w", suiteCase.CaseID, err)
 		}
+		if err := client.journal.trace(trace); err != nil {
+			return traces, err
+		}
 		traces = append(traces, trace)
 	}
 	return traces, nil
@@ -703,8 +763,10 @@ func writeValidationArtifacts(outDir string, manifest *SeedManifest, suite []Sui
 	if err := writeJSONFile(filepath.Join(outDir, "seed_manifest.json"), manifest); err != nil {
 		return err
 	}
-	if err := writeJSONL(filepath.Join(outDir, "suite.jsonl"), suite); err != nil {
-		return err
+	if runConfig.MeasurementSchema == "" || runConfig.TracesPath != "" {
+		if err := writeJSONL(filepath.Join(outDir, "suite.jsonl"), suite); err != nil {
+			return err
+		}
 	}
 	return writeJSONFile(filepath.Join(outDir, "summary.json"), summary)
 }
@@ -716,8 +778,10 @@ func writeRunArtifacts(outDir string, manifest *SeedManifest, suite []SuiteCase,
 	if err := writeJSONFile(filepath.Join(outDir, "knowledge_mapping.json"), mapping); err != nil {
 		return err
 	}
-	if err := writeJSONL(filepath.Join(outDir, "recall_traces.jsonl"), traces); err != nil {
-		return err
+	if runConfig.MeasurementSchema == "" || runConfig.TracesPath != "" {
+		if err := writeJSONL(filepath.Join(outDir, "recall_traces.jsonl"), traces); err != nil {
+			return err
+		}
 	}
 	return writeJSONL(filepath.Join(outDir, "retrieval_scores.jsonl"), scores)
 }

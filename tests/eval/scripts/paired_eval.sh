@@ -133,10 +133,13 @@ pair_finish() {
 pair_native() {
   local binary="$1" code=0
   shift
-  local key_name remaining
+  local key_name control_name remaining api_key control_token
   remaining="$(pair_remaining)" || return "$?"
   key_name="$(pair_value '.runtime.api_key_env')"
-  DENSE_MEM_API_KEY="${!key_name:-}" bash -ec '
+  control_name="$(pair_value '.runtime.control_token_env')"
+  api_key="${!key_name:-}"
+  control_token="${!control_name:-}"
+  DENSE_MEM_API_KEY="${api_key}" DENSE_MEM_CONTROL_TOKEN="${control_token}" bash -ec '
     "$1" --mode paired --pair-config "$2" --pair-action process --pair-pid "$$" > "$3/native-process.tmp"
     mv "$3/native-process.tmp" "$3/native-process.json"
     shift 3

@@ -24,7 +24,7 @@ production binary.
 
 The approved seed, generated diagnostic datasets, persistent databases,
 credentials, and run artifacts are local-only and ignored by git. The full
-release evaluation never runs in remote CI.
+release evaluation never runs in remote CI. See [client measurements](measurement.md) for capture, diagnostics and offline verification.
 
 ## Public Six-Axis Gate
 
@@ -415,11 +415,11 @@ Resume behavior is based on the latest Remember attempt for each
 | No attempt | Import the corpus row. |
 | Completed checkpoint but fragment is missing | Retry the corpus row. |
 
-One failed concurrent request stops scheduling new rows but allows already
-active requests to finish. The monitor then fails instead of retrying the
-stable idempotency key. After correcting the cause, use a fresh isolated
-team/runtime; non-failed interruptions still resume from the latest Remember
-attempts.
+One failed concurrent request stops new rows and lets active requests finish.
+The monitor then fails instead of retrying the stable idempotency key. After
+correcting the cause, use a fresh isolated team/runtime. Non-failed interruptions
+resume in fresh `runs/import/attempt-*` captures using latest Remember outcomes.
+`runs/import/current_capture` names the capture used for artifacts and recall.
 
 The runtime identity contains the seed and suite hashes, release-policy hash,
 MCP contract, runner binary hash, local server image ID, reviewer/verifier and
@@ -435,7 +435,7 @@ tests/eval/runtime/v1/monitor/status.json
 tests/eval/runtime/v1/monitor/attempt_summary.json
 tests/eval/runtime/v1/monitor/completed_source_doc_ids.txt
 tests/eval/runtime/v1/monitor/failed_source_doc_ids.txt
-tests/eval/runtime/v1/runs/import/knowledge_mapping.json
+tests/eval/runtime/v1/runs/import/current_capture
 tests/eval/runtime/v1/runs/baseline/summary.json
 ```
 
@@ -459,7 +459,7 @@ go run ./cmd/eval-runner \
   --mode baseline \
   --seed "${SEED}" --suite "${SUITE}" \
   --out tests/eval/runtime/v1/runs/baseline-rerun \
-  --mapping tests/eval/runtime/v1/runs/import/knowledge_mapping.json \
+  --mapping "$(cat tests/eval/runtime/v1/runs/import/current_capture)/knowledge_mapping.json" \
   --max-page-size 500
 ```
 

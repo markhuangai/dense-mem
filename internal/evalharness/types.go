@@ -1,6 +1,10 @@
 package evalharness
 
-import "time"
+import (
+	"time"
+
+	"github.com/markhuangai/dense-mem/internal/observability"
+)
 
 const (
 	SeedSchemaVersion   = "dense-mem.eval.seed.v1"
@@ -184,15 +188,19 @@ type KnowledgeMapping struct {
 }
 
 type RecallTrace struct {
-	CaseID              string         `json:"case_id"`
-	Query               string         `json:"query"`
-	RankedRefs          []Ref          `json:"ranked_refs"`
-	ContextRefs         []Ref          `json:"context_refs,omitempty"`
-	ContextEvidenceRefs []Ref          `json:"context_evidence_refs,omitempty"`
-	DreamRefs           []Ref          `json:"dream_refs,omitempty"`
-	LatencyMS           int64          `json:"latency_ms,omitempty"`
-	ContextBlockChars   int            `json:"context_block_chars,omitempty"`
-	Raw                 map[string]any `json:"raw,omitempty"`
+	MeasurementCaptureID string         `json:"measurement_capture_id,omitempty"`
+	ClientOperationID    string         `json:"client_operation_id,omitempty"`
+	ClientElapsedMS      *float64       `json:"client_elapsed_ms,omitempty"`
+	ClientPhase          string         `json:"client_phase,omitempty"`
+	CaseID               string         `json:"case_id"`
+	Query                string         `json:"query"`
+	RankedRefs           []Ref          `json:"ranked_refs"`
+	ContextRefs          []Ref          `json:"context_refs,omitempty"`
+	ContextEvidenceRefs  []Ref          `json:"context_evidence_refs,omitempty"`
+	DreamRefs            []Ref          `json:"dream_refs,omitempty"`
+	LatencyMS            int64          `json:"latency_ms,omitempty"`
+	ContextBlockChars    int            `json:"context_block_chars,omitempty"`
+	Raw                  map[string]any `json:"raw,omitempty"`
 }
 
 type RetrievalScore struct {
@@ -309,6 +317,7 @@ type SliceAvg struct {
 }
 
 type RunConfig struct {
+	MeasurementSchema      string `json:"measurement_schema,omitempty"`
 	RunID                  string `json:"run_id"`
 	Mode                   string `json:"mode"`
 	SeedManifest           string `json:"seed_manifest"`
@@ -354,6 +363,7 @@ type Comparison struct {
 // V2CohortComparisonOptions identifies a V1/V2 run pair and the evidence
 // inputs required to prove that their different seed hashes are comparable.
 type V2CohortComparisonOptions struct {
+	Logger          *observability.Logger
 	Cohort          V2CohortValidationOptions
 	BaselineRunDir  string
 	CandidateRunDir string
