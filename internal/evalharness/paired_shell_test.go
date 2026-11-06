@@ -398,6 +398,72 @@ pair_native "$PAIR_RUNNER" --mode validate --seed "$(jq -er '.seed_manifest' "$P
 		require.NoError(t, FinishPairStage(c, stage.Directory))
 		require.NoError(t, VerifyPairStage(c, stage.Directory))
 	})
+	t.Run("native_custom_control_credentials", func(t *testing.T) {
+		for _, selection := range []string{"baseline", "candidate", "baseline_cross", "candidate_cross"} {
+			t.Run(selection, func(t *testing.T) {
+				side := strings.TrimSuffix(selection, "_cross")
+				const prefix = "paired-native-private-control-"
+				secret := prefix + side
+				t.Setenv("PAIR_BASELINE_CONTROL_TOKEN", prefix+"baseline")
+				t.Setenv("PAIR_CANDIDATE_CONTROL_TOKEN", prefix+"candidate")
+				t.Setenv("DENSE_MEM_CONTROL_TOKEN", "")
+				t.Setenv("LOG_LEVEL", "debug")
+				var calls atomic.Int32
+				server := measurementServer(t, func(w http.ResponseWriter, r *http.Request, _ map[string]any) {
+					calls.Add(1)
+					require.Equal(t, "Bearer fixture", r.Header.Get("Authorization"))
+					http.Error(w, "admitted rejection: "+secret, http.StatusBadRequest)
+				})
+				defer server.Close()
+				c := pairedFixture(t)
+				c.Baseline.Runtime.ControlTokenEnv = "PAIR_BASELINE_CONTROL_TOKEN"
+				c.Candidate.Runtime.ControlTokenEnv = "PAIR_CANDIDATE_CONTROL_TOKEN"
+				if strings.HasSuffix(selection, "_cross") {
+					t.Setenv("DENSE_MEM_API_KEY", secret)
+					if side == "baseline" {
+						c.Baseline.Runtime.ControlTokenEnv = "DENSE_MEM_API_KEY"
+					} else {
+						c.Candidate.Runtime.ControlTokenEnv = "DENSE_MEM_API_KEY"
+					}
+				}
+				configPath := filepath.Join(t.TempDir(), "pair.json")
+				require.NoError(t, writePairJSON(configPath, c))
+				process, err := PairProcessIdentity(os.Getpid())
+				require.NoError(t, err)
+				stage, err := BeginPairStage(c, side, "validate", process)
+				require.NoError(t, err)
+				mapping := newKnowledgeMapping()
+				for _, name := range []string{"alpha", "beta"} {
+					addSourceMapping(&mapping, Ref{Type: "fragment", ID: "frag-" + name, SourceDocID: "doc-" + name}, true)
+				}
+				mappingPath := filepath.Join(t.TempDir(), "mapping.json")
+				require.NoError(t, writeJSONFile(mappingPath, mapping))
+				t.Setenv("PAIR_NATIVE_CONTROL_SIDE", side)
+				t.Setenv("PAIR_NATIVE_CONTROL_STAGE", stage.Directory)
+				t.Setenv("PAIR_NATIVE_CONTROL_URL", server.URL)
+				t.Setenv("PAIR_NATIVE_CONTROL_MAPPING", mappingPath)
+				output, err := run(configPath, `set -Eeuo pipefail
+source "$PAIR_SCRIPT"
+pair_side="$PAIR_NATIVE_CONTROL_SIDE"; pair_stage=validate; pair_stage_dir="$PAIR_NATIVE_CONTROL_STAGE"; pair_interrupted=false
+pair_native "$PAIR_RUNNER" --mode "$pair_side" --seed "$(jq -er '.seed_manifest' "$PAIR_CONFIG")" --suite "$(jq -er '.suite' "$PAIR_CONFIG")" --base-url "$PAIR_NATIVE_CONTROL_URL" --mapping "$PAIR_NATIVE_CONTROL_MAPPING" --out "$pair_stage_dir/native"`)
+				require.Error(t, err)
+				require.Equal(t, int32(1), calls.Load())
+				log, err := os.ReadFile(filepath.Join(stage.Directory, "native.log"))
+				require.NoError(t, err)
+				require.Contains(t, string(log), "admitted rejection")
+				require.Contains(t, string(log), "[REDACTED]")
+				retained := string(output) + string(log)
+				entries, err := os.ReadDir(filepath.Join(stage.Directory, "native"))
+				require.NoError(t, err)
+				for _, entry := range entries {
+					body, err := os.ReadFile(filepath.Join(stage.Directory, "native", entry.Name()))
+					require.NoError(t, err)
+					retained += string(body)
+				}
+				require.NotContains(t, retained, secret)
+			})
+		}
+	})
 	c := pairedFixture(t)
 	c.Deadline = time.Now().Add(3 * time.Second)
 	configPath := filepath.Join(t.TempDir(), "pair.json")
@@ -501,5 +567,177 @@ pair_begin validate`)
 			require.NoError(t, err)
 			require.Equal(t, before, after)
 		})
+	}
+}
+
+func TestNonPairedMonitorRetainsImportAttempts(t *testing.T) {
+	root := writeV2EvalImportFixture(t)
+	manifestPath := filepath.Join(root, "seed_manifest.json")
+	manifest, err := LoadSeedManifest(manifestPath)
+	require.NoError(t, err)
+	manifest.Counts = map[string]int{"corpus": 2, "cases": 2, "qrels": 2}
+	require.NoError(t, writeJSONFile(manifestPath, manifest))
+	seedHash, err := SeedHash(manifestPath, manifest)
+	require.NoError(t, err)
+	binary := filepath.Join(t.TempDir(), "eval-runner")
+	output, err := exec.Command("go", "build", "-o", binary, "../../cmd/eval-runner").CombinedOutput()
+	require.NoError(t, err, "%s", output)
+	var calls, remembered, recalled atomic.Int32
+	server := measurementServer(t, func(w http.ResponseWriter, r *http.Request, input map[string]any) {
+		if calls.Add(1) == 1 {
+			http.Error(w, "interrupted before source dispatch", http.StatusBadRequest)
+			return
+		}
+		switch r.URL.Path {
+		case "tool:remember":
+			remembered.Add(1)
+			source := strings.TrimPrefix(stringValue(input["idempotency_key"]), "eval:")
+			_ = json.NewEncoder(w).Encode(map[string]any{"contract_version": "dense-mem.v2.6.2", "submission_id": "attempt-" + source, "submission_kind": "remember", "processing_state": "completed", "search_state": "current", "correlation_id": "server-" + source, "evidence": []map[string]any{{"disposition": "stored", "evidence_id": "evidence-" + source, "evidence_index": 0, "search_state": "current"}}, "relationship_results": []any{}, "errors": []any{}})
+		case "tool:eval_list_knowledge_refs":
+			_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{}})
+		case "tool:eval_run_recall_case":
+			recalled.Add(1)
+			source := "doc-alpha"
+			if stringValue(input["case_id"]) == "case-2" {
+				source = "doc-beta"
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"case_id": input["case_id"], "query": input["query"], "latency_ms": 1, "ranked_refs": []map[string]any{{"type": "evidence", "id": "evidence-" + source}}})
+		default:
+			t.Errorf("unexpected tool %s", r.URL.Path)
+		}
+	})
+	defer server.Close()
+	script, err := filepath.Abs("../../tests/eval/scripts/run_full_public_rag_eval_until_done.sh")
+	require.NoError(t, err)
+	runtime := filepath.Join(t.TempDir(), "monitor with spaces")
+	t.Setenv("SEED", manifestPath)
+	t.Setenv("SUITE", filepath.Join(root, "suite.jsonl"))
+	t.Setenv("V1_DATA_DIR", runtime)
+	t.Setenv("IMPORT_DIR", filepath.Join(runtime, "runs", "import"))
+	t.Setenv("BASELINE_DIR", filepath.Join(runtime, "runs", "baseline"))
+	t.Setenv("MONITOR_DIR", filepath.Join(runtime, "monitor"))
+	t.Setenv("RUNNER", binary)
+	t.Setenv("RELEASE_GATE_POLICY", "")
+	t.Setenv("ALLOW_UNGATED_EVALUATION", "1")
+	t.Setenv("DENSE_MEM_BASE_URL", server.URL)
+	t.Setenv("DENSE_MEM_API_KEY", "fixture")
+	t.Setenv("DENSE_MEM_CONTROL_TOKEN", "")
+	t.Setenv("LOG_LEVEL", "debug")
+	t.Setenv("MONITOR_SCRIPT", script)
+	t.Setenv("MONITOR_SEED_HASH", seedHash)
+	run := func(body string) ([]byte, error) {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		command := exec.CommandContext(ctx, "bash", "-c", "set -Eeuo pipefail\nsource \"$MONITOR_SCRIPT\"\n"+body)
+		return command.CombinedOutput()
+	}
+	output, err = run(`[[ "$(import_capture_dir)" == "$IMPORT_DIR" ]]
+: > "$RESUME_SOURCE_DOC_IDS"
+start_import
+if wait "$(cat "$IMPORT_DIR/import.pid")"; then exit 42; fi`)
+	require.NoError(t, err, "%s", output)
+	importRoot := filepath.Join(runtime, "runs", "import")
+	first, err := os.ReadFile(filepath.Join(importRoot, "current_capture"))
+	require.NoError(t, err)
+	firstCapture := strings.TrimSpace(string(first))
+	journal, err := os.ReadFile(filepath.Join(firstCapture, measurementJournal))
+	require.NoError(t, err)
+	require.ErrorContains(t, ValidateExecutionCapture(firstCapture), "incomplete")
+	output, err = run(`start_import
+wait "$(cat "$IMPORT_DIR/import.pid")"
+SEED_HASH="$MONITOR_SEED_HASH"
+unset MIN_RECALL_AT_K MIN_REQUIRED_RANK1_RATE MAX_AVERAGE_BAD_AT_K MAX_BAD_RANK1_RATE MAX_UNMAPPED_SOURCE_REFS
+run_baseline`)
+	require.NoError(t, err, "%s", output)
+	selected, err := os.ReadFile(filepath.Join(importRoot, "current_capture"))
+	require.NoError(t, err)
+	current := strings.TrimSpace(string(selected))
+	require.NotEqual(t, firstCapture, current)
+	require.NoError(t, ValidateExecutionCapture(current))
+	after, err := os.ReadFile(filepath.Join(firstCapture, measurementJournal))
+	require.NoError(t, err)
+	require.Equal(t, journal, after)
+	require.Equal(t, int32(2), remembered.Load())
+	baseline := filepath.Join(runtime, "runs", "baseline")
+	require.NoError(t, ValidateExecutionCapture(baseline))
+	var config RunConfig
+	require.NoError(t, readJSONFile(filepath.Join(baseline, "run_config.json"), &config))
+	require.Equal(t, filepath.Join(current, "knowledge_mapping.json"), config.MappingPath)
+	require.Equal(t, int32(2), recalled.Load())
+	for _, test := range []struct{ name, directory, file string }{
+		{"missing_import_journal", current, measurementJournal},
+		{"incomplete_import_manifest", current, measurementManifest},
+		{"missing_baseline_journal", baseline, measurementJournal},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(test.directory, test.file)
+			original, err := os.ReadFile(path)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, os.WriteFile(path, original, 0o600)) })
+			if test.file == measurementManifest {
+				var manifest ExecutionMeasurements
+				require.NoError(t, readJSONFile(path, &manifest))
+				manifest.Status = "in_progress"
+				require.NoError(t, writeJSONFile(path, manifest))
+			} else {
+				require.NoError(t, os.Remove(path))
+			}
+			before := calls.Load()
+			_, err = run(`SEED_HASH="$MONITOR_SEED_HASH"; run_baseline`)
+			require.Error(t, err)
+			if test.directory == current {
+				beforeFiles, err := pairArtifactHashes(current)
+				require.NoError(t, err)
+				out := filepath.Join(t.TempDir(), "rejected")
+				command := exec.Command(binary, "--mode", "candidate", "--seed", manifestPath, "--suite", filepath.Join(root, "suite.jsonl"), "--mapping", filepath.Join(current, "knowledge_mapping.json"), "--out", out)
+				output, err := command.CombinedOutput()
+				require.Error(t, err, "%s", output)
+				require.NoDirExists(t, out)
+				afterFiles, err := pairArtifactHashes(current)
+				require.NoError(t, err)
+				require.Equal(t, beforeFiles, afterFiles)
+			}
+			require.Equal(t, before, calls.Load())
+			require.Equal(t, int32(2), recalled.Load())
+		})
+	}
+	log, err := os.ReadFile(filepath.Join(runtime, "monitor", "monitor.log"))
+	require.NoError(t, err)
+	require.Contains(t, string(log), "evaluation_capture_invalid")
+	legacy := t.TempDir()
+	for _, name := range []string{"knowledge_mapping.json", "summary.json", "run_config.json"} {
+		body, err := os.ReadFile(filepath.Join(current, name))
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(filepath.Join(legacy, name), body, 0o600))
+	}
+	var legacyConfig RunConfig
+	require.NoError(t, readJSONFile(filepath.Join(legacy, "run_config.json"), &legacyConfig))
+	legacyConfig.MeasurementSchema = ""
+	require.NoError(t, writeJSONFile(filepath.Join(legacy, "run_config.json"), legacyConfig))
+	t.Setenv("IMPORT_DIR", legacy)
+	before := calls.Load()
+	output, err = run(`SEED_HASH="$MONITOR_SEED_HASH"; run_baseline`)
+	require.NoError(t, err, "%s", output)
+	require.Equal(t, before, calls.Load())
+	for _, mappingDir := range []string{legacy, t.TempDir()} {
+		source := filepath.Join(mappingDir, "knowledge_mapping.json")
+		out := filepath.Join(t.TempDir(), "live")
+		if mappingDir != legacy {
+			body, err := os.ReadFile(filepath.Join(legacy, "knowledge_mapping.json"))
+			require.NoError(t, err)
+			source = filepath.Join(mappingDir, "standalone.json")
+			require.NoError(t, os.WriteFile(source, body, 0o600))
+			out = mappingDir
+		}
+		original, err := os.ReadFile(source)
+		require.NoError(t, err)
+		command := exec.Command(binary, "--mode", "candidate", "--seed", manifestPath, "--suite", filepath.Join(root, "suite.jsonl"), "--mapping", source, "--out", out)
+		output, err := command.CombinedOutput()
+		require.NoError(t, err, "%s", output)
+		require.NoError(t, ValidateExecutionCapture(out))
+		after, err := os.ReadFile(source)
+		require.NoError(t, err)
+		require.Equal(t, original, after)
 	}
 }

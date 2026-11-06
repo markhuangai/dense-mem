@@ -606,14 +606,26 @@ live_import_pid() {
   printf '%s\n' "${pid}"
 }
 
+import_capture_dir() {
+  if [[ -f "${IMPORT_DIR}/current_capture" ]]; then
+    cat "${IMPORT_DIR}/current_capture"
+  else
+    printf '%s\n' "${IMPORT_DIR}"
+  fi
+}
+
 start_import() {
+  local capture_dir
+  capture_dir="$(mktemp -d "${IMPORT_DIR}/attempt-XXXXXX")" || return "$?"
+  printf '%s\n' "${capture_dir}" > "${IMPORT_DIR}/current_capture.tmp" || return "$?"
+  mv "${IMPORT_DIR}/current_capture.tmp" "${IMPORT_DIR}/current_capture" || return "$?"
   local -a args
   args=(
     "${RUNNER}"
     --mode import
     --seed "${SEED}"
     --suite "${SUITE}"
-    --out "${IMPORT_DIR}"
+    --out "${capture_dir}"
     --import-seed
     --resume-source-doc-ids "${RESUME_SOURCE_DOC_IDS}"
     --max-page-size 500
@@ -629,32 +641,36 @@ start_import() {
 }
 
 run_baseline() {
-  if [[ ! -s "${IMPORT_DIR}/knowledge_mapping.json" || ! -s "${IMPORT_DIR}/summary.json" || ! -s "${IMPORT_DIR}/run_config.json" ]]; then
+  local import_capture
+  import_capture="$(import_capture_dir)" || return "$?"
+  if [[ ! -s "${import_capture}/knowledge_mapping.json" || ! -s "${import_capture}/summary.json" || ! -s "${import_capture}/run_config.json" ]]; then
     log "import_artifacts_missing"
     return 1
   fi
-  if [[ "$(jq -r '.seed_hash // empty' "${IMPORT_DIR}/summary.json")" != "${SEED_HASH}" ]]; then
+  if [[ "$(jq -r '.seed_hash // empty' "${import_capture}/summary.json")" != "${SEED_HASH}" ]]; then
     log "import_artifact_seed_hash_mismatch"
     return 1
   fi
-  if [[ "$(jq -r '.import_route // empty' "${IMPORT_DIR}/run_config.json")" != "remember" ]]; then
+  if [[ "$(jq -r '.import_route // empty' "${import_capture}/run_config.json")" != "remember" ]]; then
     log "import_artifact_route_is_not_remember"
     return 1
   fi
   local import_mapping_hash
-  if ! import_mapping_hash="$(canonical_json_sha256 "${IMPORT_DIR}/knowledge_mapping.json")"; then
-    log "import_mapping_invalid path=${IMPORT_DIR}/knowledge_mapping.json"
+  if ! import_mapping_hash="$(canonical_json_sha256 "${import_capture}/knowledge_mapping.json")"; then
+    log "import_mapping_invalid path=${import_capture}/knowledge_mapping.json"
     return 1
   fi
-  if [[ "$(jq -r '.mapping_sha256 // empty' "${IMPORT_DIR}/run_config.json")" != "${import_mapping_hash}" ]]; then
-    log "import_mapping_hash_mismatch path=${IMPORT_DIR}/knowledge_mapping.json"
+  if [[ "$(jq -r '.mapping_sha256 // empty' "${import_capture}/run_config.json")" != "${import_mapping_hash}" ]]; then
+    log "import_mapping_hash_mismatch path=${import_capture}/knowledge_mapping.json"
     return 1
   fi
-  if [[ "$(jq -r '.tool_transport // empty' "${IMPORT_DIR}/run_config.json")" != "mcp" || "$(jq -r '.tool_contract // empty' "${IMPORT_DIR}/run_config.json")" != "mcp.tools/call.v1" ]]; then
-    log "import_contract_mismatch path=${IMPORT_DIR}/run_config.json"
+  if [[ "$(jq -r '.tool_transport // empty' "${import_capture}/run_config.json")" != "mcp" || "$(jq -r '.tool_contract // empty' "${import_capture}/run_config.json")" != "mcp.tools/call.v1" ]]; then
+    log "import_contract_mismatch path=${import_capture}/run_config.json"
     return 1
   fi
   if [[ -s "${BASELINE_DIR}/summary.json" ]]; then
+    "${RUNNER}" --mode validate-capture --capture-dir "${import_capture}" >> "${LOG}" 2>&1 || return "$?"
+    "${RUNNER}" --mode validate-capture --capture-dir "${BASELINE_DIR}" >> "${LOG}" 2>&1 || return "$?"
     if [[ ! -s "${BASELINE_DIR}/run_config.json" || ! -s "${BASELINE_DIR}/knowledge_mapping.json" ]]; then
       log "baseline_identity_artifacts_missing path=${BASELINE_DIR}"
       return 1
@@ -718,7 +734,7 @@ run_baseline() {
     --seed "${SEED}"
     --suite "${SUITE}"
     --out "${BASELINE_DIR}"
-    --mapping "${IMPORT_DIR}/knowledge_mapping.json"
+    --mapping "${import_capture}/knowledge_mapping.json"
     --max-page-size 500
   )
   if [[ -n "${RELEASE_GATE_POLICY}" ]]; then
@@ -819,7 +835,9 @@ main() {
         sleep "${SLEEP_SECONDS}"
         continue
       fi
-      if [[ ! -s "${IMPORT_DIR}/knowledge_mapping.json" || ! -s "${IMPORT_DIR}/summary.json" ]]; then
+      local import_capture
+      import_capture="$(import_capture_dir)" || return "$?"
+      if [[ ! -s "${import_capture}/knowledge_mapping.json" || ! -s "${import_capture}/summary.json" ]]; then
         if [[ "${restarts}" -ge "${MAX_IMPORT_RESTARTS}" ]]; then
           log "max_import_restarts_reached while finalizing artifacts"
           write_import_gate_result "${fragments}" "${latest}" "${completed}" "${failed}" "${attempts}" "import_artifacts_missing"

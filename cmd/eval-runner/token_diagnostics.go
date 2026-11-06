@@ -14,6 +14,15 @@ import (
 	"github.com/markhuangai/dense-mem/internal/observability"
 )
 
+func evaluationDiagnostics(apiKey string) (*observability.Logger, *observability.CredentialProtector, error) {
+	level, err := observability.ParseLevel(os.Getenv("LOG_LEVEL"))
+	if err != nil {
+		return nil, nil, errors.New("invalid LOG_LEVEL")
+	}
+	protector := observability.NewCredentialProtector(apiKey, os.Getenv("DENSE_MEM_API_KEY"), os.Getenv("DENSE_MEM_CONTROL_TOKEN"))
+	return observability.NewWithProtector(level, protector), protector, nil
+}
+
 func resolveStringEnvironment(flags *flag.FlagSet, name, variable string, target *string) {
 	explicit := false
 	flags.Visit(func(value *flag.Flag) {

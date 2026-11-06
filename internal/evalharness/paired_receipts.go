@@ -439,6 +439,9 @@ func validatePairMapping(c PairConfig, dir string) error {
 }
 
 func ValidatePairCapture(c PairConfig, dir string) error {
+	if err := ValidateExecutionCapture(dir); err != nil {
+		return err
+	}
 	if err := validatePairMapping(c, dir); err != nil {
 		return err
 	}
@@ -573,6 +576,9 @@ func CompletePairImportMapping(c PairConfig, side, dir string) error {
 	if config.SeedHash != c.SeedHash || config.Mode != "import" {
 		return fmt.Errorf("incompatible native import")
 	}
+	if err := ValidateExecutionCapture(native); err != nil {
+		return err
+	}
 	var mapping KnowledgeMapping
 	if err := readPairJSON(filepath.Join(native, "knowledge_mapping.json"), &mapping); err != nil {
 		return err
@@ -615,5 +621,18 @@ func CompletePairImportMapping(c PairConfig, side, dir string) error {
 	if err := writePairJSON(filepath.Join(native, "knowledge_mapping.json"), mapping); err != nil {
 		return err
 	}
-	return writePairJSON(filepath.Join(native, "run_config.json"), config)
+	if err := writePairJSON(filepath.Join(native, "run_config.json"), config); err != nil {
+		return err
+	}
+	if config.MeasurementSchema == "" {
+		return nil
+	}
+	var measurements ExecutionMeasurements
+	if err := readJSONFile(filepath.Join(native, measurementManifest), &measurements); err != nil {
+		return err
+	}
+	if err := sealMeasurementArtifacts(native, &measurements, true); err != nil {
+		return err
+	}
+	return writeJSONFile(filepath.Join(native, measurementManifest), measurements)
 }

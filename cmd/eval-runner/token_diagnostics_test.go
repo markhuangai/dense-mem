@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -165,4 +166,104 @@ func runTokenDiagnosticsCLI(t *testing.T, env []string, args ...string) (string,
 	command.Stdout, command.Stderr = &stdout, &stderr
 	err := command.Run()
 	return stdout.String(), stderr.String(), err
+}
+
+func TestEvaluationDiagnosticsUsesExistingLevelParser(t *testing.T) {
+	t.Setenv("LOG_LEVEL", "debug")
+	logger, protector, err := evaluationDiagnostics("synthetic-evaluator-key")
+	require.NoError(t, err)
+	require.NotNil(t, logger)
+	require.NotNil(t, protector)
+	t.Setenv("LOG_LEVEL", "invalid-level")
+	_, _, err = evaluationDiagnostics("synthetic-evaluator-key")
+	require.ErrorContains(t, err, "invalid LOG_LEVEL")
+}
+
+func TestEvaluationDiagnosticsStartupFailureDoesNotEchoCredentials(t *testing.T) {
+	const presented = "private-startup-presented-credential"
+	const configured = "private-startup-configured-credential"
+	const control = "private-startup-control-credential"
+	for _, test := range []struct{ name, level string }{
+		{"presented", presented}, {"configured", configured}, {"control", control},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			stdout, stderr, err := runTokenDiagnosticsCLI(t, []string{
+				"DENSE_MEM_API_KEY=" + configured, "DENSE_MEM_CONTROL_TOKEN=" + control, "LOG_LEVEL=" + test.level,
+			}, "--mode", "candidate", "--api-key", presented)
+			require.Error(t, err)
+			require.Empty(t, stdout)
+			require.Contains(t, stderr, "invalid LOG_LEVEL")
+			for _, secret := range []string{presented, configured, control} {
+				require.NotContains(t, stderr, secret)
+			}
+		})
+	}
+}
+
+func TestEvalRunnerFailureProtectsCredentialsInBothOutputStreams(t *testing.T) {
+	const key = "private-cli-presented-credential"
+	const configured = "private-cli-environment-credential"
+	const control = "private-cli-control-credential"
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		require.Equal(t, "Bearer "+key, r.Header.Get("Authorization"))
+		http.Error(w, fmt.Sprintf("admitted rejection: %s %s %s", key, configured, control), http.StatusBadRequest)
+	}))
+	defer server.Close()
+	root := t.TempDir()
+	for name, contents := range map[string]string{
+		"seed_manifest.json": `{"schema_version":"dense-mem.eval.seed.v1","seed_id":"cli-failure","corpus_file":"corpus.jsonl","cases_file":"cases.jsonl","qrels_file":"qrels.jsonl"}`,
+		"corpus.jsonl":       `{"source_doc_id":"doc-1","content":"fixture content"}` + "\n",
+		"cases.jsonl":        `{"case_id":"case-1","query":"fixture query"}` + "\n",
+		"qrels.jsonl":        `{"case_id":"case-1","required_refs":[{"type":"fragment","source_doc_id":"doc-1"}]}` + "\n",
+		"suite.jsonl":        `{"case_id":"case-1","weight":1}` + "\n",
+		"mapping.json":       `{"by_source_doc_id":{"doc-1":{"type":"fragment","id":"frag-1","source_doc_id":"doc-1"}}}`,
+	} {
+		require.NoError(t, os.WriteFile(filepath.Join(root, name), []byte(contents), 0o600))
+	}
+	stdout, stderr, err := runTokenDiagnosticsCLI(t, []string{"DENSE_MEM_API_KEY=" + configured, "DENSE_MEM_CONTROL_TOKEN=" + control, "LOG_LEVEL=debug"},
+		"-mode", "candidate", "-seed", filepath.Join(root, "seed_manifest.json"), "-suite", filepath.Join(root, "suite.jsonl"),
+		"-mapping", filepath.Join(root, "mapping.json"), "-base-url", server.URL, "-api-key", key, "-out", filepath.Join(root, "capture"))
+	require.Error(t, err)
+	require.Equal(t, int32(1), calls.Load())
+	require.Contains(t, stderr, "returned 400")
+	require.Contains(t, stderr, "admitted rejection")
+	require.Contains(t, stderr, "[REDACTED]")
+	retained := stdout + stderr
+	entries, err := os.ReadDir(filepath.Join(root, "capture"))
+	require.NoError(t, err)
+	for _, entry := range entries {
+		body, err := os.ReadFile(filepath.Join(root, "capture", entry.Name()))
+		require.NoError(t, err)
+		retained += string(body)
+	}
+	for _, secret := range []string{key, configured, control} {
+		require.NotContains(t, retained, secret)
+	}
+}
+
+func TestEvaluationCaptureValidationCLI(t *testing.T) {
+	for _, test := range []struct{ name, path string }{
+		{"missing_argument", ""},
+		{"missing_directory", filepath.Join(t.TempDir(), "missing")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, stderr, err := runTokenDiagnosticsCLI(t, nil, "--mode", "validate-capture", "--capture-dir", test.path)
+			require.Error(t, err)
+			require.Contains(t, stderr, "capture-dir")
+		})
+	}
+	capture := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(capture, "run_config.json"), []byte(`{"mode":"import"}`), 0o600))
+	stdout, stderr, err := runTokenDiagnosticsCLI(t, nil, "--mode", "validate-capture", "--capture-dir", capture)
+	require.NoError(t, err, "%s", stderr)
+	require.Contains(t, stdout, "capture measurement validation passed")
+	require.NoError(t, os.WriteFile(filepath.Join(capture, "run_config.json"), []byte(`{"mode":"import","measurement_schema":"dense-mem.eval.measurements.v1"}`), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(capture, "execution_measurements.json"), []byte(`{"status":"in_progress"}`), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(capture, "recall_traces.jsonl"), nil, 0o600))
+	stdout, stderr, err = runTokenDiagnosticsCLI(t, nil, "--mode", "validate-capture", "--capture-dir", capture)
+	require.Error(t, err)
+	require.Contains(t, stdout, "evaluation_capture_invalid")
+	require.Contains(t, stderr, "capture measurement validation failed")
 }

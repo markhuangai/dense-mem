@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+
+	"github.com/markhuangai/dense-mem/internal/observability"
 )
 
 const v2CohortComparisonSchema = "dense-mem.eval.v2_cohort_comparison.v1"
@@ -24,11 +26,11 @@ func CompareV2CohortRunDirs(opts V2CohortComparisonOptions) (V2CohortComparison,
 	if cohort.RetainedCaseCount <= 0 {
 		return V2CohortComparison{}, fmt.Errorf("validated V2 cohort must retain at least one case")
 	}
-	baseline, err := readComparisonSummary("baseline", opts.BaselineRunDir)
+	baseline, err := readComparisonSummary("baseline", opts.BaselineRunDir, opts.Logger)
 	if err != nil {
 		return V2CohortComparison{}, err
 	}
-	candidate, err := readComparisonSummary("candidate", opts.CandidateRunDir)
+	candidate, err := readComparisonSummary("candidate", opts.CandidateRunDir, opts.Logger)
 	if err != nil {
 		return V2CohortComparison{}, err
 	}
@@ -60,7 +62,10 @@ func CompareV2CohortRunDirs(opts V2CohortComparisonOptions) (V2CohortComparison,
 	return comparison, nil
 }
 
-func readComparisonSummary(label, runDir string) (Summary, error) {
+func readComparisonSummary(label, runDir string, loggers ...*observability.Logger) (Summary, error) {
+	if err := ValidateExecutionCapture(runDir, loggers...); err != nil {
+		return Summary{}, err
+	}
 	var summary Summary
 	if err := readJSONFile(filepath.Join(runDir, "summary.json"), &summary); err != nil {
 		return Summary{}, fmt.Errorf("read %s run summary: %w", label, err)
