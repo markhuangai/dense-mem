@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "go": [
+    {
+      "advisories": [
+        "GO-2026-6875",
+        "GO-2026-6872"
+      ],
+      "module": "github.com/labstack/echo/v4",
+      "version": "v4.16.2",
+      "expires": "2026-11-20",
+      "reason": "Echo v4 has no Go vulnerability database fix for these advisories.",
+      "reference": "https://github.com/markhuangai/dense-mem/pull/707"
+    }
+  ],
+  "python": [
+    {
+      "advisories": [
+        "CVE-2026-114603",
+        "GHSA-xcq7-p3pf-p88h"
+      ],
+      "package": "opentelemetry-api",
+      "version": "1.43.0",
+      "requires": {
+        "package": "google-adk",
+        "version": "2.7.0"
+      },
+      "expires": "2026-11-21",
+      "reason": "google-adk==2.7.0 excludes patched OpenTelemetry 1.45.1; the malformed inbound tracestate header CPU denial of service risk is temporarily accepted.",
+      "reference": "https://github.com/markhuangai/dense-mem/pull/612"
+    }
+  ]
+}

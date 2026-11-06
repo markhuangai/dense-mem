@@ -29,7 +29,7 @@ func TestRecallOntologyFrozenCohort(t *testing.T) {
 		CaseCount    int    `json:"case_count"`
 		SourceCount  int    `json:"source_count"`
 	}
-	data, err := os.ReadFile("../../../tests/eval/baselines/ontology_organization_v1.json")
+	data, err := os.ReadFile("../../evalharness/testdata/organization_cohort.json")
 	require.NoError(t, err)
 	require.NoError(t, json.Unmarshal(data, &baseline))
 	require.Equal(t, baseline.CohortSHA256, cohortHash)

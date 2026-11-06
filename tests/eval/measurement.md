@@ -53,7 +53,8 @@ Set `LOG_LEVEL=debug` before starting an evaluation. Existing level parsing and
 defaults apply. Capture stdout/stderr in the paired stage's `native.log`, or
 redirect a direct runner invocation to a private file. Retain the run directory
 until validation and review finish. Delete only owned temporary evidence after
-its compact receipts have been retained; preserve historical captures.
+its compact receipts have been retained in issue/PR comments and project memory;
+preserve historical captures.
 
 ```bash
 jq -R 'fromjson? | select(.run_id == $run)' \

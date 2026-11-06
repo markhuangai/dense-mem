@@ -7,3 +7,4 @@ scripts/__pycache__/
 /seeds
 /suites/
 /.runtime
+/baselines/

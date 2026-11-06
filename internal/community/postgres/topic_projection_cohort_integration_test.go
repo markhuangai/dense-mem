@@ -40,7 +40,7 @@ func TestCommunityTopicFrozenOrganizationCohortThroughRecall(t *testing.T) {
 	var lock struct {
 		CohortSHA256 string `json:"cohort_sha256"`
 	}
-	data, err := os.ReadFile("../../../tests/eval/baselines/ontology_organization_v1.json")
+	data, err := os.ReadFile("../../evalharness/testdata/organization_cohort.json")
 	require.NoError(t, err)
 	require.NoError(t, json.Unmarshal(data, &lock))
 	require.Equal(t, lock.CohortSHA256, "sha256:"+hex.EncodeToString(digest[:]))

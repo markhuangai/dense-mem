@@ -39,9 +39,10 @@ release evaluation never runs in remote CI. See [client measurements](measuremen
 
 The current frozen comparison uses `public_6axis_1k_v3`: 991 documents,
 204 cases, original qrels and zero unmapped references. The historical V1 gate
-policy remains in `baselines/v2.1.1_public_6axis_1k_baseline.json`; it does not
-select or waive a current comparison. Evaluation approvals and run histories
-belong in project memory. Keep source locks and compact machine evidence here.
+policy remains in `policies/public_6axis_1k_v1.json`; it does not select or waive a current comparison.
+Keep only the latest overall result in `baseline.json`, including source identities, unavailable measurements, and limitations; tickets replace it only for a newer overall result.
+Ticket-specific reports, approvals, and historical receipts belong in issue/PR comments and concise project memory with immutable evidence links and hashes.
+Source locks, scoring, generators, and required policy/test fixtures remain versioned.
 
 A seed corpus row is plain evidence: `source_doc_id`, `content`, and optional
 source metadata. Content is split rather than truncated, and the Go harness
@@ -152,8 +153,7 @@ existing output untouched. Keep generated seeds and full run outputs ignored.
 
 The [Recall accuracy cohort](recall_accuracy_v1.md) supplies explicit negative
 judgments. [Recall accuracy reporting](recall_accuracy_experiment.md) explains
-how to reconcile retained paired captures. Historical results remain in compact
-JSON baselines and project memory; they do not certify a later source revision.
+how to reconcile retained paired captures. Historical results remain in issue/PR comments and project memory; they do not certify a later source revision.
 Publishing this generator does not establish a completed comparison or
 retrieval-quality equivalence. Use each pinned release's native runner to
 validate the frozen seed before import and retain its recorded readiness
@@ -537,8 +537,8 @@ workload, repetition, metric, or stable result is missing or when either
 latency limit is exceeded. GORM statement counts exclude driver transaction
 begin and commit calls; those are reported separately as transaction counts.
 Preserve raw benchmark output under the ignored
-`tests/eval/runs/issue-456` directory; commit only the compact baseline summary
-with the measured source commit.
+`tests/eval/runs/issue-456` directory; retain the compact summary in issue/PR
+comments with the measured source commit and add its link to project memory.
 
 ## Relationship projection query comparison
 
@@ -579,8 +579,8 @@ The base checkout's telemetry-mode result is recorded as a diagnostic; the
 candidate telemetry result and paired base-to-candidate comparison are gates.
 The additional source gate requires identical SQL, bound arguments, decoded
 results, statement counts, and transaction counts; each workload and mode must
-keep median p50 and p95 increases within the greater of 5% or 1 ms. Commit a
-compact comparison with the measured source fingerprints and keep raw logs,
+keep median p50 and p95 increases within the greater of 5% or 1 ms. Retain a
+compact comparison in issue/PR comments with source fingerprints and keep raw logs,
 query reports, plans, and comparison output ignored.
 
 ## Recall retrieval ownership comparison
@@ -600,8 +600,8 @@ database IDs against fixed seeded IDs and emits ordered IDs, contexts,
 ordering, scores, search states, and statement/transaction counts. Require
 byte-identical base and candidate reports. The benchmark comparator then
 requires unchanged SQL and transaction counts and median p50 and p95 increases
-within the greater of 5% or 1 ms across five measured runs. Commit only a
-compact comparison with both source fingerprints; keep raw reports ignored.
+within the greater of 5% or 1 ms across five measured runs. Retain the compact
+comparison in issue/PR comments with both source fingerprints; keep raw reports ignored.
 
 ## Usage flush scaling
 
@@ -620,9 +620,9 @@ record source hashes and Go, PostgreSQL, CPU and host-idleness provenance before
 and after the run. Each of the 45 workloads runs 20 warmups and 200 measured
 operations across five repetitions. Go also performs a one-operation calibration;
 only `usage_flush_scaling_result` records with `iterations: 200` belong to the
-measurement. Join each record to its Go benchmark allocation result. Commit the
-compact summary to `tests/eval/baselines/usage_flush_scaling.json`; raw runs stay
-ignored. Pending evidence is replaced only after verified measurement.
+measurement. Join each record to its Go benchmark allocation result. Retain the
+compact summary in issue/PR comments and link it from project memory; raw runs
+stay ignored. Pending evidence is replaced only after verified measurement.
 
 The matrix covers 1, 100 and 1,000 service buckets without credentials, with one
 credential per owner, and with ten credentials per owner. The one-bucket grouped
@@ -779,7 +779,7 @@ Compare historical measurements only when fixture identity and execution context
 Run registered `TestCommunityTopic*` PostgreSQL cases for current topic
 projection, large fanout, bounded previews, independent freshness, lifecycle and
 RLS. The former legacy detector comparison requires its archived source; current
-code does not expose that retired mode. Keep its compact baseline unchanged.
+code does not expose that retired mode. Retain its historical receipt in issue/PR comments and project memory without changing its observations.
 
 ## Private session evaluation
 
@@ -941,8 +941,8 @@ reads. `reconciliation_failed` can accompany an earlier transport failure.
 Historical receipts remain unchanged and need not contain these fields.
 
 Raw cohorts, reports, source manifests and stack resources stay ignored and
-are cleaned only after final delivery validation. Commit the generator, source
-lock and compact comparison evidence. Keep the selected pinned release protocol, provider deadlines/retries and
+are cleaned only after final delivery validation. Commit the generator and source lock; retain compact comparison evidence in issue/PR comments and project memory.
+Keep the selected pinned release protocol, provider deadlines/retries and
 original conflict cases unchanged. Real PostgreSQL regressions, local checks and final
 current-head production-image E2E remain required.
 
@@ -995,5 +995,5 @@ The frozen public v3 cohort requires 991 completed imports, 204 scored cases,
 zero unmapped references and complete readiness on both sides. Retain terminal
 failures, ambiguity and unknown usage in every report. Complete unfavorable
 results are not improvements. Keep run histories in project memory and generated
-raw evidence in ignored paths; compact baselines certify only their recorded
+raw evidence in ignored paths; retained receipts certify only their recorded
 source, input and protocol identities.

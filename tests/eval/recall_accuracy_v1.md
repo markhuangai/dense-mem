@@ -81,15 +81,11 @@ shard 5, and require every registered test to complete. Run the existing
 Focused checks do not replace final PR CI and full production-image E2E.
 The complete evaluator package suite runs in `ci-shared.yml`'s `go-tests` job.
 
-The [committed baseline](baselines/recall_accuracy_v1.json) names `e0ccd0b3`
-as its capture commit and preserves the identical first observations from
-`41f94067`. It records all 210 required observations, complete mappings,
-preservation and isolation checks, frozen hashes, and known ranking failures.
-
-| Mode | Recall@10 | MRR | nDCG@10 | Mean Bad@10 |
-| --- | ---: | ---: | ---: | ---: |
-| Ontology off | 0.1667 | 0.0622 | 0.0855 | 0.1250 |
-| Ontology on | 0.3750 | 0.3393 | 0.3472 | 0.7083 |
+The [historical capture receipt](https://github.com/markhuangai/dense-mem/blob/ab30bd5ce95ded93860b968c9f8fed56a5f5418c/tests/eval/baselines/recall_accuracy_v1.json)
+names `e0ccd0b3` as its capture commit and preserves the identical first
+observations from `41f94067`. It records all 210 required observations, complete
+mappings, preservation and isolation checks, frozen hashes, and known ranking
+failures. Retain new cohort measurements in issue/PR comments and project memory.
 
 Keep generated bundles and complete logs under ignored seed/run directories.
 This cohort establishes a reproducible retrieval-logic baseline; it does not
