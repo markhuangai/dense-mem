@@ -118,33 +118,7 @@ func (s *UserPortalSessionService) AuthenticateSession(ctx context.Context, sess
 	if credential == nil {
 		return nil, ErrUserPortalSessionInvalid
 	}
-	return authenticatedActorFromCredential(credential), nil
-}
-
-func authenticatedActorFromCredential(credential *domain.Credential) *domain.AuthenticatedActor {
-	if credential == nil {
-		return nil
-	}
-	return &domain.AuthenticatedActor{
-		Team: domain.Team{ID: credential.TeamID, Name: credential.TeamName},
-		Identity: domain.ActorIdentity{
-			ID:          credential.ActorIdentityID,
-			Kind:        "api_client",
-			DisplayName: credential.Name,
-		},
-		Membership: domain.Membership{
-			ID:              credential.MembershipID,
-			ActorIdentityID: credential.ActorIdentityID,
-			TeamID:          credential.TeamID,
-			OwnerID:         credential.OwnerID,
-			Name:            credential.Name,
-			Grants:          append([]string(nil), credential.Scopes...),
-			Role:            credential.GetRole(),
-			Status:          "active",
-		},
-		OwnerID:    credential.OwnerID,
-		Credential: credential,
-	}
+	return domain.AuthenticatedActorFromCredential(credential), nil
 }
 
 func (s *UserPortalSessionService) Logout(ctx context.Context, sessionToken string) error {

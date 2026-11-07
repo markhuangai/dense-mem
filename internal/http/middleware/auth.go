@@ -273,7 +273,7 @@ func AuthMiddlewareWithOptions(repo accessservice.CredentialStore, auditSvc acce
 				return httperr.New(httperr.AUTH_INVALID, "invalid api key")
 			}
 
-			actor := authenticatedActorFromCredential(key)
+			actor := domain.AuthenticatedActorFromCredential(key)
 			principal, actorContext, err := principalAndActorContext(actor, "api_key", prefix)
 			if err != nil {
 				return err
@@ -384,7 +384,7 @@ func authenticateUserPortalSession(c echo.Context, authenticator UserPortalSessi
 		if validated == nil {
 			return httperr.New(httperr.FORBIDDEN, "sso access denied")
 		}
-		actor = authenticatedActorFromCredential(validated)
+		actor = domain.AuthenticatedActorFromCredential(validated)
 	}
 	return setSessionPrincipal(c, actor, "credential_session", cookie.Value, csrfToken)
 }
@@ -400,32 +400,6 @@ func setSessionPrincipal(c echo.Context, actor *domain.AuthenticatedActor, authM
 	ctx = requestctx.WithAuthenticationVerified(ctx)
 	c.SetRequest(c.Request().WithContext(ctx))
 	return nil
-}
-
-func authenticatedActorFromCredential(credential *domain.Credential) *domain.AuthenticatedActor {
-	if credential == nil {
-		return nil
-	}
-	return &domain.AuthenticatedActor{
-		Team: domain.Team{ID: credential.TeamID, Name: credential.TeamName},
-		Identity: domain.ActorIdentity{
-			ID:          credential.ActorIdentityID,
-			Kind:        "api_client",
-			DisplayName: credential.Name,
-		},
-		Membership: domain.Membership{
-			ID:              credential.MembershipID,
-			ActorIdentityID: credential.ActorIdentityID,
-			TeamID:          credential.TeamID,
-			OwnerID:         credential.OwnerID,
-			Name:            credential.Name,
-			Grants:          append([]string(nil), credential.Scopes...),
-			Role:            credential.GetRole(),
-			Status:          "active",
-		},
-		OwnerID:    credential.OwnerID,
-		Credential: credential,
-	}
 }
 
 func principalAndActorContext(actor *domain.AuthenticatedActor, authMethod, keyPrefix string) (*Principal, requestctx.Actor, error) {

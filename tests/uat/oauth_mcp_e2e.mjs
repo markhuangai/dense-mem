@@ -23,6 +23,7 @@ const composeFile = requiredEnv("DENSE_MEM_E2E_COMPOSE_FILE");
 const runID = `oauth-mcp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 const logSentinel = `oauth-private-token-sentinel-${randomUUID()}`;
 const issuedTokens = [oauthFixtureToken];
+const credentialLogExpectations = [];
 let rpcID = 0;
 
 if (scenario !== "mcp_oauth") {
@@ -264,6 +265,9 @@ writeFileSync(resultFile, JSON.stringify({
   api_key_compatibility: true,
   sso_owned_credential_cache_refresh_and_owner_ceiling: true,
   sso_refresh_outage_and_unmapped_group_denied: true,
+  credential_actor_session_parity: true,
+  credential_actor_expiry_revocation_csrf: true,
+  credential_actor_correlated_logs: true,
   browser_cookie_rejected: true,
   token_persistence_and_log_scan: true,
 }, null, 2));
@@ -347,6 +351,62 @@ async function assertCredentialEntitlementRefresh() {
   await setMockState("generic", { groups: ["generic-team"] });
   expire();
   assertMCPTools(await mcpTools(key, "/mcp"), { present: ["remember", "recall_memory"] });
+  await assertCredentialSessionLifecycle(key, created.payload.data?.credential?.id, cookie);
+}
+
+async function assertCredentialSessionLifecycle(key, credentialID, cookie) {
+  assertUUID(credentialID, "credential identity");
+  const observe = (response, status, cause = "", route = "/ui/api/session") => {
+    assert(response.status === status, `credential authentication returned HTTP ${response.status}; expected ${status}`);
+    if (cause) assert(response.payload.message === cause, "credential authentication changed its bounded rejection cause");
+    const correlationID = response.headers.get("X-Correlation-ID");
+    assertUUID(correlationID, "authentication correlation");
+    credentialLogExpectations.push({ correlationID, status, cause, route, credentialID });
+    return response.payload.data;
+  };
+  const headers = [{ Authorization: `Bearer ${key}` }, { Cookie: cookie }];
+  const sessions = [];
+  for (const auth of headers) sessions.push(observe(await publicJSON("/ui/api/session", { headers: auth }), 200));
+  for (const field of ["team", "membership", "memory_access"]) {
+    assert(JSON.stringify(sessions[0][field]) === JSON.stringify(sessions[1][field]), `bearer and portal ${field} projections diverged`);
+  }
+  for (const session of sessions) {
+    assert(session.credential?.id === credentialID && session.membership?.team_id === seedTeamID, "credential actor identity or team changed");
+    assert(session.membership.role === "member" && session.membership.grants.join(",") === "read", "credential actor bypassed refreshed grants");
+    assert(session.memory_access.private.write === true && session.memory_access.team_shared.write === false, "credential actor lost its private/shared grant boundary");
+  }
+  const wrongCSRF = randomUUID();
+  issuedTokens.push(wrongCSRF);
+  for (const csrfHeaders of [{ Cookie: cookie }, { Cookie: cookie, "X-Dense-Mem-CSRF": wrongCSRF }]) {
+    observe(await publicJSON("/ui/api/credential/rotate", { method: "POST", headers: csrfHeaders, body: {} }),
+      403, "invalid user portal csrf token", "/ui/api/credential/rotate");
+  }
+
+  const expiredCredential = postgresCommand(`BEGIN; SELECT set_config('app.tx_mode','system',true);
+    UPDATE credentials SET expires_at=now()-interval '1 second' WHERE id=${sqlLiteral(credentialID)}::uuid; COMMIT;`);
+  assert(expiredCredential.status === 0, "could not expire the credential fixture");
+  observe(await publicJSON("/ui/api/session", { headers: headers[0] }), 401, "invalid api key");
+  observe(await publicJSON("/ui/api/session", { headers: headers[1] }), 401, "invalid user portal session");
+  const expiredSession = postgresCommand(`BEGIN; SELECT set_config('app.tx_mode','system',true);
+    UPDATE credentials SET expires_at=NULL WHERE id=${sqlLiteral(credentialID)}::uuid;
+    UPDATE user_portal_sessions SET expires_at=now()-interval '1 second' WHERE key_id=${sqlLiteral(credentialID)}::uuid; COMMIT;`);
+  assert(expiredSession.status === 0, "could not expire the portal session fixture");
+  observe(await publicJSON("/ui/api/session", { headers: headers[0] }), 200);
+  observe(await publicJSON("/ui/api/session", { headers: headers[1] }), 401, "invalid user portal session");
+
+  const signedIn = await publicJSON("/ui/api/session", { method: "POST", headers: headers[0], body: { remember: false } });
+  assert(signedIn.status === 200, "active credential could not replace its expired session");
+  const cookies = signedIn.headers.getSetCookie().map((item) => item.split(";")[0])
+    .filter((item) => item.startsWith("dense_mem_ui_session=") || item.startsWith("dense_mem_ui_csrf="));
+  assert(cookies.some((item) => item.startsWith("dense_mem_ui_session=")), "replacement portal session cookie was missing");
+  issuedTokens.push(...cookies.map((item) => item.slice(item.indexOf("=") + 1)));
+  const freshSession = { Cookie: cookies.join("; ") };
+  observe(await publicJSON("/ui/api/session", { headers: freshSession }), 200);
+  const revoked = postgresCommand(`BEGIN; SELECT set_config('app.tx_mode','system',true);
+    UPDATE credentials SET status='revoked',revoked_at=now() WHERE id=${sqlLiteral(credentialID)}::uuid; COMMIT;`);
+  assert(revoked.status === 0, "could not revoke the credential fixture");
+  observe(await publicJSON("/ui/api/session", { headers: headers[0] }), 401, "invalid api key");
+  observe(await publicJSON("/ui/api/session", { headers: freshSession }), 401, "invalid user portal session");
 }
 
 function providerInput({ name, kind, tenantID = "", identityClaim, audience, algorithm, scopeClaim, teamClaim = "", jwksSource = "discovery", mappings }) {
@@ -652,6 +712,25 @@ function assertNoOAuthSecretsInLogs() {
   const logs = `${result.stdout}\n${result.stderr}`;
   if (logs.includes(logSentinel) || issuedTokens.some((token) => logs.includes(token))) {
     throw new Error("OAuth bearer or claim material crossed the server log boundary");
+  }
+  const records = logs.split("\n").filter((line) => line.includes('{"time":'))
+    .map((line) => JSON.parse(line.slice(line.indexOf('{"time":'))));
+  let profileID;
+  assert(credentialLogExpectations.length > 0, "credential authentication log cases were not exercised");
+  for (const expected of credentialLogExpectations) {
+    const matching = records.filter((record) => record.msg === "http_request" && record.correlation_id === expected.correlationID);
+    assert(matching.length === 1, "credential authentication did not retain one correlated console outcome");
+    const record = matching[0];
+    assert(record.level === (expected.status === 200 ? "INFO" : "ERROR") && record.status === expected.status, "credential authentication log level or outcome changed");
+    assert(record.route === expected.route && Number.isFinite(record.duration_ms), "credential authentication log lost its route or timing");
+    if (expected.cause) {
+      assert(record.error?.endsWith(`: ${expected.cause}`), "credential authentication logs did not explain the bounded rejection cause");
+    } else {
+      assert(record.team_id === seedTeamID && record.credential_id === expected.credentialID, "credential authentication logs lost trusted team or credential context");
+      assertUUID(record.profile_id, "authenticated log profile");
+      profileID ??= record.profile_id;
+      assert(record.profile_id === profileID, "bearer and portal authentication logs disagree on the owner");
+    }
   }
 }
 
