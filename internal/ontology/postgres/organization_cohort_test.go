@@ -36,7 +36,7 @@ func testOntologyCohort(t *testing.T, maintenance bool, supplements ...[]evalhar
 func testOntologyCohortWithMatching(t *testing.T, maintenance bool, matching []evalharness.OrganizationMatchingCase, supplements ...[]evalharness.OrganizationFollowupCase) {
 	f := newOrganizationFixture(t)
 	cohort := evalharness.OntologyOrganizationCohort()
-	lockPath := "../../../tests/eval/baselines/ontology_organization_v1.json"
+	lockPath := "../../evalharness/testdata/organization_cohort.json"
 	followups := map[string]evalharness.OrganizationFollowupCase{}
 	var judgments any = cohort
 	matchingCases := map[string]evalharness.OrganizationMatchingCase{}

@@ -158,8 +158,17 @@
   implementation.
 - Generated evaluation seeds, suites, downloaded datasets, imports, runtime
   databases, run outputs, and comparison artifacts stay in ignored local paths.
-  Commit generator, source-lock, provenance, validation, scoring, and compact
-  baseline evidence instead.
+  Commit generators, source locks, provenance, validation, scoring, and required
+  policy/test fixtures. Keep only the latest overall measured result in
+  `tests/eval/baseline.json`; replace it when a ticket produces a newer overall
+  result, preserving source identities, unavailable measurements, and limitations.
+  Ticket-specific reports and historical receipts belong in issue/PR comments
+  and concise project-memory entries with immutable evidence links and hashes.
+- Dependency vulnerability exceptions live only in root
+  `dependency-exceptions.json`, with exact advisory/dependency/version scope,
+  prerequisites, reason, approval reference, and exclusive UTC expiry. Scanners
+  read that policy; never embed approvals in scripts or override them through
+  environment variables. Invalid policy and scanner failures remain blocking.
 
 ## Code Review Rules
 

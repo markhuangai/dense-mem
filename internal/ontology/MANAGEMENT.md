@@ -37,8 +37,9 @@ refuses populated history; production recovery rolls forward.
 Validate the unchanged nine-case/19-source organization cohort, actual Recall
 comparisons, the locked manager-correction cohort and the registered exclusive
 `ontology_management` scenario with desktop/mobile browser checks.
-Detailed reports remain in ignored paths. Verified compact evidence belongs in
-`tests/eval/baselines/`; full final-head CI and production-image E2E remain gates.
+Detailed reports remain in ignored paths. Retain verified ticket evidence in
+issue/PR comments and project memory. Only a newer overall result replaces
+`tests/eval/baseline.json`; full final-head CI and production-image E2E remain gates.
 
 ## Operator assessment diagnostics
 

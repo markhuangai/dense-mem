@@ -1,0 +1,66 @@
+{
+  "schema_version": "dense-mem.eval.overall_baseline.v1",
+  "completed_on": "2026-11-06",
+  "evidence": {
+    "pr": "https://github.com/markhuangai/dense-mem/pull/707",
+    "published_head": "d7e862f36dc8913abe13608d7eb388b5c1e83909",
+    "acceptance": "Maintainer-approved issue-specific gate passed; native completeness remains false.",
+    "role": "Latest overall measured result; enforcement thresholds are defined separately in policies/."
+  },
+  "native_status": "incomplete",
+  "seed_id": "public_6axis_1k_v3",
+  "documents_per_arm": 991,
+  "scored_cases_per_arm": 204,
+  "models": {
+    "assessment": "dense-mem-testing",
+    "backing_revision": null,
+    "embedding": "@cf/baai/bge-m3",
+    "embedding_dimensions": 1024
+  },
+  "baseline": {
+    "source_revision": "f0a926e4aa3ec7a84e8f7f679f7bf07b13b0028a",
+    "recall_at_k": 0.893545751633987,
+    "mrr": 0.8509589947089946,
+    "ndcg_at_k": 0.83260447545891,
+    "unmapped_source_refs": 0,
+    "elapsed_seconds": 32095.637,
+    "ontology": {
+      "eligible": 3576,
+      "organized": 3337,
+      "ambiguous": 118,
+      "failed": 121,
+      "complete": false
+    },
+    "provider_admissions": 1532,
+    "usage_unavailable_records": 2
+  },
+  "candidate": {
+    "source_revision": "6234b0560379ce610b20973de7b50832e0668516",
+    "recall_at_k": 0.893545751633987,
+    "mrr": 0.8510134609399315,
+    "ndcg_at_k": 0.8327336250026222,
+    "unmapped_source_refs": 0,
+    "elapsed_seconds": 28487.584,
+    "ontology": {
+      "eligible": 3622,
+      "organized": 3383,
+      "ambiguous": 19,
+      "failed": 220,
+      "complete": false
+    },
+    "provider_admissions": 1430,
+    "usage_unavailable_records": 2
+  },
+  "total_elapsed_seconds": 60730.676,
+  "token_usage_total": null,
+  "embedding_usage_total": null,
+  "monetary_cost": null,
+  "limitations": [
+    "Both native readiness, ontology and projection completeness flags remain false; the native paired report exits 1.",
+    "This records the compared source revisions, not a fresh run of the published PR head or later commits.",
+    "The public qrels contain no explicit negative judgments; zero public Bad@K is not safety proof.",
+    "Unavailable usage and absent complete cost totals remain unavailable; admissions are not a complete token or cost measurement.",
+    "Provider backing revision is unknown, and observed arm durations do not establish a controlled speedup.",
+    "The comparison predates PR #708 measurement journaling and does not test the later compress dependency update."
+  ]
+}

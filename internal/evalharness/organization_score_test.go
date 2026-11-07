@@ -45,6 +45,17 @@ func TestOntologyOrganizationBaseline(t *testing.T) {
 	require.Equal(t, lock.SourceCount, sources)
 	require.Equal(t, 4, repetitions)
 	require.Equal(t, 14, facts)
+	fixture, err := os.ReadFile("testdata/organization_cohort.json")
+	require.NoError(t, err)
+	var expected struct {
+		CohortSHA256 string `json:"cohort_sha256"`
+		CaseCount    int    `json:"case_count"`
+		SourceCount  int    `json:"source_count"`
+	}
+	require.NoError(t, json.Unmarshal(fixture, &expected))
+	require.Equal(t, expected.CohortSHA256, "sha256:"+hex.EncodeToString(digest[:]))
+	require.Equal(t, lock.CaseCount, expected.CaseCount)
+	require.Equal(t, lock.SourceCount, expected.SourceCount)
 	if directory := os.Getenv("DENSE_MEM_ORGANIZATION_REPORT_DIR"); directory != "" {
 		require.NoError(t, os.MkdirAll(directory, 0700))
 		report := map[string]any{"schema_version": "dense-mem.ontology.baseline.v1", "scope": "synthetic unorganized baseline; no active retrieval improvement claimed", "cohort_sha256": "sha256:" + hex.EncodeToString(digest[:]), "case_count": len(cohort), "source_count": sources, "repeated_slots": repetitions, "distinct_facts": facts, "scores": scores}

@@ -65,7 +65,7 @@ func TestRunValidateChecksReleaseGateInputBeforeLiveWork(t *testing.T) {
 }
 
 func TestCommittedReleaseGatePolicyMatchesApprovedBaseline(t *testing.T) {
-	policyPath := filepath.Join("..", "..", "tests", "eval", "baselines", "v2.1.1_public_6axis_1k_baseline.json")
+	policyPath := filepath.Join("..", "..", "tests", "eval", "policies", "public_6axis_1k_v1.json")
 	policy, err := LoadReleaseGatePolicy(policyPath)
 	if err != nil {
 		t.Fatalf("LoadReleaseGatePolicy: %v", err)

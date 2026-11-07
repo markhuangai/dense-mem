@@ -56,7 +56,7 @@ func TestOntologyMatchingBaseline(t *testing.T) {
 	require.Equal(t, lock.SourceCount, sources)
 	unorganized.SourcePreservation = float64(unorganized.RetainedSources) / float64(unorganized.OriginalSources)
 	unorganized.DistinctFactCoverage = float64(unorganized.RetainedFacts) / float64(unorganized.DistinctFacts)
-	data, err = os.ReadFile("../../tests/eval/baselines/ontology_matching_v1.json")
+	data, err = os.ReadFile("testdata/matching_cohort.json")
 	require.NoError(t, err)
 	var baseline struct {
 		CohortSHA256 string            `json:"cohort_sha256"`
