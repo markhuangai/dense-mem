@@ -2,6 +2,7 @@ package evalharness
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -163,6 +164,40 @@ func ValidateExecutionCapture(directory string, loggers ...*observability.Logger
 		}
 	}()
 	return validateExecutionCapture(directory)
+}
+
+// ValidateSavedExecutionCapture distinguishes saved runs from standalone mapping inputs.
+func ValidateSavedExecutionCapture(directory string, loggers ...*observability.Logger) error {
+	_, err := readSavedRunConfig(directory)
+	if err == nil {
+		return ValidateExecutionCapture(directory, loggers...)
+	}
+	err = fmt.Errorf("capture run config: %w", err)
+	var logger *observability.Logger
+	if len(loggers) > 0 {
+		logger = loggers[0]
+	}
+	logCaptureRejection(logger, directory, "", 0, err)
+	return err
+}
+
+func readSavedRunConfig(directory string) (*RunConfig, error) {
+	path := filepath.Join(directory, "run_config.json")
+	var config *RunConfig
+	if err := readJSONFile(path, &config); err != nil {
+		return nil, err
+	}
+	if config == nil {
+		return nil, errors.New("run config must be a JSON object")
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if !json.Valid(body) {
+		return nil, errors.New("run config must contain one complete JSON object")
+	}
+	return config, nil
 }
 
 func validateExecutionCapture(directory string) error {
@@ -383,8 +418,10 @@ func logCaptureRejection(logger *observability.Logger, directory, expectedSeed s
 	if logger == nil {
 		logger = observability.New(slog.LevelInfo)
 	}
-	var config RunConfig
-	configErr := readJSONFile(filepath.Join(directory, "run_config.json"), &config)
+	config, configErr := readSavedRunConfig(directory)
+	if configErr != nil {
+		config = &RunConfig{}
+	}
 	var plan ExecutionMeasurements
 	planErr := readJSONFile(filepath.Join(directory, measurementManifest), &plan)
 	traces, traceErr := LoadRecallTraces(filepath.Join(directory, "recall_traces.jsonl"))

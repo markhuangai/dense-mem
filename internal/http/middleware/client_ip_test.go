@@ -11,23 +11,38 @@ import (
 )
 
 func TestClientIPMiddlewareStoresRealIPInContext(t *testing.T) {
-	e := echo.New()
-	e.Use(ClientIPMiddleware())
-	e.GET("/test", func(c echo.Context) error {
-		got := requestctx.ClientIPFromContext(c.Request().Context())
-		if got != "203.0.113.10" {
-			t.Errorf("ClientIPFromContext() = %q; want 203.0.113.10", got)
-		}
-		return c.NoContent(http.StatusNoContent)
-	})
+	for _, tc := range []struct {
+		name       string
+		remoteAddr string
+		extractor  echo.IPExtractor
+		wantIP     string
+	}{
+		{"direct_peer", "192.0.2.1:12345", nil, "192.0.2.1"},
+		{"configured_trusted_proxy", "127.0.0.1:12345", echo.ExtractIPFromXFFHeader(), "203.0.113.10"},
+		{"configured_untrusted_peer", "192.0.2.1:12345", echo.ExtractIPFromXFFHeader(), "192.0.2.1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := echo.New()
+			e.IPExtractor = tc.extractor
+			e.Use(ClientIPMiddleware())
+			e.GET("/test", func(c echo.Context) error {
+				got := requestctx.ClientIPFromContext(c.Request().Context())
+				if got != tc.wantIP {
+					t.Errorf("ClientIPFromContext() = %q; want %q", got, tc.wantIP)
+				}
+				return c.NoContent(http.StatusNoContent)
+			})
 
-	req := httptest.NewRequest(http.MethodGet, "/test", nil)
-	req.Header.Set(echo.HeaderXForwardedFor, "203.0.113.10")
-	rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/test", nil)
+			req.RemoteAddr = tc.remoteAddr
+			req.Header.Set(echo.HeaderXForwardedFor, "203.0.113.10")
+			rec := httptest.NewRecorder()
 
-	e.ServeHTTP(rec, req)
+			e.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusNoContent {
-		t.Errorf("status = %d; want %d", rec.Code, http.StatusNoContent)
+			if rec.Code != http.StatusNoContent {
+				t.Errorf("status = %d; want %d", rec.Code, http.StatusNoContent)
+			}
+		})
 	}
 }

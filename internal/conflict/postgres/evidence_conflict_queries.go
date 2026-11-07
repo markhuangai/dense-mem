@@ -2,7 +2,6 @@ package postgres
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	conflictcontract "github.com/markhuangai/dense-mem/internal/conflict/contract"
+	"github.com/markhuangai/dense-mem/internal/storage/postgres/conflictread"
 	"gorm.io/gorm"
 )
 
@@ -113,7 +113,7 @@ func (r *Store) ListEvidenceConflicts(ctx context.Context, input EvidenceConflic
 			result.NextCursor = &cursor
 		}
 		for index := range result.Items {
-			result.Items[index].Positions, err = loadEvidenceConflictPositions(ctx, tx, input.TeamID, result.Items[index].ConflictID)
+			result.Items[index].Positions, err = conflictread.LoadEvidenceConflictPositions(ctx, tx, input.TeamID, result.Items[index].ConflictID)
 			if err != nil {
 				return err
 			}
@@ -142,26 +142,16 @@ func (r *Store) GetEvidenceConflict(ctx context.Context, input EvidenceConflictG
 	}
 	result := &EvidenceConflictGetResult{}
 	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
-		var item EvidenceConflictCaseRecord
-		err := tx.WithContext(ctx).Raw(`SELECT team_id::text, conflict_id::text, space_id::text, space_generation, status, version, COALESCE(preferred_position_id::text, ''), resolved_at, resolution_reason, created_at, updated_at FROM evidence_conflict_cases WHERE team_id = ?::uuid AND conflict_id = ?::uuid`, input.TeamID, input.ConflictID).Row().Scan(&item.TeamID, &item.ConflictID, &item.SpaceID, &item.SpaceGeneration, &item.Status, &item.Version, &item.PreferredPositionID, &item.ResolvedAt, &item.ResolutionReason, &item.CreatedAt, &item.UpdatedAt)
-		if errors.Is(err, sql.ErrNoRows) {
-			return ErrEvidenceConflictNotFound
-		}
+		item, err := conflictread.LoadCurrentEvidenceConflictCase(ctx, tx, input.TeamID, input.ConflictID)
 		if err != nil {
 			return err
 		}
-		item.Kind = "evidence_conflict"
-		positions, err := loadEvidenceConflictPositions(ctx, tx, input.TeamID, input.ConflictID)
-		if err != nil {
-			return err
-		}
-		item.Positions = positions
 		events, next, err := loadEvidenceConflictEvents(ctx, tx, input, item.SpaceID)
 		if err != nil {
 			return err
 		}
 		item.Events = events
-		result.Conflict = &item
+		result.Conflict = item
 		result.NextEventCursor = next
 		return nil
 	})
@@ -169,23 +159,6 @@ func (r *Store) GetEvidenceConflict(ctx context.Context, input EvidenceConflictG
 		return nil, err
 	}
 	return result, nil
-}
-
-func loadEvidenceConflictPositions(ctx context.Context, tx *gorm.DB, teamID, conflictID string) ([]EvidenceConflictPositionRecord, error) {
-	rows, err := tx.WithContext(ctx).Raw(`SELECT conflict_id::text, position_id::text, position_key, canonical_evidence_id::text, canonical_owner_profile_id::text, occurrence_id::text, occurrence_owner_profile_id::text, quote, span_start, span_end, authority, submitted, created_at FROM evidence_conflict_positions WHERE team_id = ?::uuid AND conflict_id = ?::uuid ORDER BY position_key, position_id`, teamID, conflictID).Rows()
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []EvidenceConflictPositionRecord{}
-	for rows.Next() {
-		var item EvidenceConflictPositionRecord
-		if err := rows.Scan(&item.ConflictID, &item.PositionID, &item.PositionKey, &item.CanonicalEvidenceID, &item.CanonicalOwnerProfileID, &item.OccurrenceID, &item.OccurrenceOwnerProfileID, &item.Quote, &item.SpanStart, &item.SpanEnd, &item.Authority, &item.Submitted, &item.CreatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, item)
-	}
-	return out, rows.Err()
 }
 
 func loadEvidenceConflictEvents(ctx context.Context, tx *gorm.DB, input EvidenceConflictGetInput, _ string) ([]EvidenceConflictEventRecord, *EvidenceConflictEventCursor, error) {
@@ -235,21 +208,4 @@ func (r *Store) ResolveEvidenceConflict(ctx context.Context, input EvidenceConfl
 		return nil, errors.New("conflict: persistence owner is required")
 	}
 	return r.persistence.ResolveEvidenceConflict(ctx, input)
-}
-
-func loadEvidenceConflictCaseForSystem(ctx context.Context, tx *gorm.DB, teamID, conflictID string) (*EvidenceConflictCaseRecord, error) {
-	var item EvidenceConflictCaseRecord
-	err := tx.WithContext(ctx).Raw(`SELECT team_id::text, conflict_id::text, space_id::text, space_generation, status, version, COALESCE(preferred_position_id::text, ''), resolved_at, resolution_reason, created_at, updated_at FROM evidence_conflict_cases WHERE team_id = ?::uuid AND conflict_id = ?::uuid`, teamID, conflictID).Row().Scan(&item.TeamID, &item.ConflictID, &item.SpaceID, &item.SpaceGeneration, &item.Status, &item.Version, &item.PreferredPositionID, &item.ResolvedAt, &item.ResolutionReason, &item.CreatedAt, &item.UpdatedAt)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrEvidenceConflictNotFound
-	}
-	if err != nil {
-		return nil, err
-	}
-	item.Kind = "evidence_conflict"
-	item.Positions, err = loadEvidenceConflictPositions(ctx, tx, teamID, conflictID)
-	if err != nil {
-		return nil, err
-	}
-	return &item, nil
 }
