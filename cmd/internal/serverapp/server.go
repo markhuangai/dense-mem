@@ -239,6 +239,8 @@ func RunActiveServer(
 	if err != nil {
 		return fmt.Errorf("configure diagnostic protection: %w", err)
 	}
+	publicationDiagnostics := ontologyPublicationDiagnostics(rootDiagnosticLogger(logger), diagnosticProtector)
+	ontologyStore.WithPublicationDiagnostics(publicationDiagnostics)
 	telemetry, err := buildTelemetryApplication(startupCtx, cfg, appConfigService, conflictStore, telemetryLifecycleRepo, logger, diagnosticProtector)
 	if err != nil {
 		return fmt.Errorf("failed to build telemetry application: %w", err)
@@ -399,7 +401,7 @@ func RunActiveServer(
 		recallFeedback:           recallFeedbackEventService,
 		community:                communitySvc,
 		ontologyMaintenance:      ontologyMaintenance,
-		ontologyManagement:       ontology.NewManagementService(ontologyStore, auditService),
+		ontologyManagement:       ontology.NewManagementService(ontologyStore, auditService).WithPublicationDiagnostics(publicationDiagnostics),
 		controlDream:             controlDreamSvc,
 		controlDreamDiagnostics:  applications.ControlDreamDiagnostics,
 		graph:                    graphViewSvc,

@@ -13,19 +13,30 @@ func DependencyRecords(records []Record, catalog map[string]Record) ([]Record, e
 	var visit func(Record, int) error
 	visit = func(record Record, depth int) error {
 		if state[record.ID] == 1 {
-			return fmt.Errorf("%w: dependency cycle", ErrInvalid)
+			reason := "dependency_cycle"
+			if record.Definition != nil {
+				reason = "hierarchy_cycle"
+			}
+			return &PublicationRejection{Cause: fmt.Errorf("%w: dependency cycle", ErrInvalid), Reason: reason, RecordID: record.ID}
 		}
 		if state[record.ID] == 2 {
 			return nil
 		}
 		if depth > MaxParentDepth || len(state) >= MaxDependencyRecords {
-			return fmt.Errorf("%w: dependency traversal bound", ErrContextBound)
+			reason := "dependency_bound"
+			if depth > MaxParentDepth && record.Definition != nil {
+				reason = "hierarchy_depth"
+			}
+			return &PublicationRejection{Cause: fmt.Errorf("%w: dependency traversal bound", ErrContextBound), Reason: reason, RecordID: record.ID}
 		}
 		state[record.ID] = 1
 		if !record.Retired {
 			for _, ref := range dependenciesFor(record, catalog) {
 				dependency, exists := catalog[ref.ID]
 				if !exists || dependency.Retired {
+					if record.Definition != nil && record.Definition.ParentID == ref.ID {
+						return &PublicationRejection{Cause: ErrDependencyStale, Reason: "parent_unavailable", RecordID: record.ID, ParentID: ref.ID}
+					}
 					return ErrDependencyStale
 				}
 				if err := visit(dependency, depth+1); err != nil {

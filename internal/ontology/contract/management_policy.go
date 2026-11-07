@@ -76,7 +76,7 @@ func CompileManagementEdits(input SaveDraftInput, current ManagementContext) (Pu
 		return publication, err
 	}
 	if current.Revision != input.ExpectedRevision {
-		return publication, ErrConflict
+		return publication, PublicationVersionRejection("catalog_revision", "", input.ExpectedRevision, current.Revision)
 	}
 	changes := map[string]Change{}
 	add := func(record Record, expected int64) error {
@@ -98,7 +98,7 @@ func CompileManagementEdits(input SaveDraftInput, current ManagementContext) (Pu
 				return publication, ErrNotFound
 			}
 			if previous.Version != edit.ExpectedVersion {
-				return publication, ErrConflict
+				return publication, PublicationVersionRejection("record_version", id, edit.ExpectedVersion, previous.Version)
 			}
 			record = previous
 		} else if edit.ExpectedVersion != 0 {

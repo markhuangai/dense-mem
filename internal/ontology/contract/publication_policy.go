@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"strconv"
 )
 
 func PreparePublication(current map[string]Record, snapshots map[string]SourceSnapshot, input Publication, automatic bool) ([]Record, error) {
@@ -28,8 +29,11 @@ func PreparePublication(current map[string]Record, snapshots map[string]SourceSn
 				return nil, fmt.Errorf("%w: retirement must retain accepted record contents", ErrInvalid)
 			}
 		}
-		if (exists && (previous.Version != change.ExpectedVersion || previous.Kind != change.Record.Kind)) || (!exists && change.ExpectedVersion != 0) {
-			return nil, fmt.Errorf("%w: record expected version or kind changed", ErrConflict)
+		if (exists && previous.Version != change.ExpectedVersion) || (!exists && change.ExpectedVersion != 0) {
+			return nil, &PublicationRejection{Cause: fmt.Errorf("%w: record expected version or kind changed", ErrConflict), Reason: "record_version", RecordID: change.Record.ID, Expected: strconv.FormatInt(change.ExpectedVersion, 10), Observed: strconv.FormatInt(previous.Version, 10)}
+		}
+		if exists && previous.Kind != change.Record.Kind {
+			return nil, &PublicationRejection{Cause: fmt.Errorf("%w: record expected version or kind changed", ErrConflict), Reason: "record_kind", RecordID: change.Record.ID, Expected: string(previous.Kind), Observed: string(change.Record.Kind)}
 		}
 		if automatic && change.Record.Kind == OverrideKind {
 			return nil, ErrOverride
@@ -60,7 +64,7 @@ func PreparePublication(current map[string]Record, snapshots map[string]SourceSn
 				continue
 			}
 			if dependency, ok := catalog[ref.ID]; !ok || dependency.Retired || dependency.Version != ref.Version {
-				return nil, fmt.Errorf("%w: referenced revision changed", ErrConflict)
+				return nil, &PublicationRejection{Cause: fmt.Errorf("%w: referenced revision changed", ErrConflict), Reason: "dependency_revision", RecordID: ref.ID, Expected: strconv.FormatInt(ref.Version, 10), Observed: strconv.FormatInt(dependency.Version, 10)}
 			}
 		}
 		if !record.Retired {
@@ -105,11 +109,22 @@ func ValidateDefinitions(catalog map[string]Record) error {
 		parentID := record.Definition.ParentID
 		for depth := 0; parentID != ""; depth++ {
 			parent, exists := catalog[parentID]
-			if depth >= MaxParentDepth || seen[parentID] || !exists || parent.Retired || parent.Definition == nil || parent.Kind != record.Kind {
-				return fmt.Errorf("%w: missing parent, hierarchy cycle or depth bound", ErrInvalid)
+			reason := ""
+			switch {
+			case depth >= MaxParentDepth:
+				reason = "hierarchy_depth"
+			case seen[parentID]:
+				reason = "hierarchy_cycle"
+			case !exists || parent.Retired || parent.Definition == nil:
+				reason = "parent_unavailable"
+			case parent.Kind != record.Kind:
+				reason = "parent_kind"
+			}
+			if reason != "" {
+				return &PublicationRejection{Cause: fmt.Errorf("%w: missing parent, hierarchy cycle or depth bound", ErrInvalid), Reason: reason, RecordID: record.ID, ParentID: parentID, Expected: string(record.Kind), Observed: string(parent.Kind)}
 			}
 			if record.Kind == EntityClass && parent.Definition.BaseEntityKind != record.Definition.BaseEntityKind {
-				return fmt.Errorf("%w: parent class has a different entity kind", ErrInvalid)
+				return &PublicationRejection{Cause: fmt.Errorf("%w: parent class has a different entity kind", ErrInvalid), Reason: "class_parent_kind", RecordID: record.ID, ParentID: parentID, Expected: record.Definition.BaseEntityKind, Observed: parent.Definition.BaseEntityKind}
 			}
 			seen[parentID] = true
 			parentID = parent.Definition.ParentID

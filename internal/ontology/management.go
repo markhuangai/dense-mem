@@ -30,8 +30,9 @@ var (
 )
 
 type ManagementService struct {
-	repository contract.ManagementRepository
-	audit      MaintenanceAuditPreparer
+	repository          contract.ManagementRepository
+	audit               MaintenanceAuditPreparer
+	publicationObserver contract.PublicationObserver
 }
 
 type managementAuditContextKey struct{}
@@ -43,6 +44,11 @@ func WithManagementAuditContext(ctx context.Context, clientIP, correlationID str
 
 func NewManagementService(repository contract.ManagementRepository, audit MaintenanceAuditPreparer) *ManagementService {
 	return &ManagementService{repository: repository, audit: audit}
+}
+
+func (s *ManagementService) WithPublicationDiagnostics(observer contract.PublicationObserver) *ManagementService {
+	s.publicationObserver = observer
+	return s
 }
 
 func (s *ManagementService) actor(ctx context.Context, write bool) (requestctx.Actor, error) {
@@ -114,11 +120,13 @@ func (s *ManagementService) Status(ctx context.Context) (contract.TeamOntologySt
 	return s.repository.TeamOntologyStatus(ctx, actor.TeamID.String())
 }
 
-func (s *ManagementService) SaveDraft(ctx context.Context, id string, input contract.SaveDraftInput) (contract.ManagementDraft, error) {
+func (s *ManagementService) SaveDraft(ctx context.Context, id string, input contract.SaveDraftInput) (result contract.ManagementDraft, err error) {
 	actor, err := s.actor(ctx, true)
 	if err != nil {
 		return contract.ManagementDraft{}, err
 	}
+	ctx, _, finish := contract.ObservePublication(ctx, s.publicationObserver, actor.TeamID.String(), "save_draft", input)
+	defer func() { finish(err) }()
 	if err := contract.ValidateSaveDraft(input); err != nil {
 		return contract.ManagementDraft{}, err
 	}
@@ -154,11 +162,18 @@ func (s *ManagementService) Preview(ctx context.Context, id string, version int6
 	return s.repository.PreviewManagementDraft(ctx, actor.TeamID.String(), id, version)
 }
 
-func (s *ManagementService) CommandDraft(ctx context.Context, id, action string, input contract.DraftCommand) (contract.ManagementDraft, error) {
+func (s *ManagementService) CommandDraft(ctx context.Context, id, action string, input contract.DraftCommand) (result contract.ManagementDraft, err error) {
 	actor, err := s.actor(ctx, true)
 	if err != nil {
 		return contract.ManagementDraft{}, err
 	}
+	ctx, diagnostic, finish := contract.ObservePublication(ctx, s.publicationObserver, actor.TeamID.String(), "draft_command", input)
+	defer func() {
+		if diagnostic != nil {
+			diagnostic.Result = result.Publication
+		}
+		finish(err)
+	}()
 	if action != "publish" && action != "discard" {
 		return contract.ManagementDraft{}, contract.ErrInvalid
 	}
@@ -187,11 +202,18 @@ func (s *ManagementService) Publication(ctx context.Context, id string) (contrac
 	return s.repository.GetManagementPublication(ctx, actor.TeamID.String(), id)
 }
 
-func (s *ManagementService) Rollback(ctx context.Context, id string, input contract.DraftCommand) (contract.PublicationResult, error) {
+func (s *ManagementService) Rollback(ctx context.Context, id string, input contract.DraftCommand) (result contract.PublicationResult, err error) {
 	actor, err := s.actor(ctx, true)
 	if err != nil {
 		return contract.PublicationResult{}, err
 	}
+	ctx, diagnostic, finish := contract.ObservePublication(ctx, s.publicationObserver, actor.TeamID.String(), "rollback", input)
+	defer func() {
+		if diagnostic != nil && result.ID != "" {
+			diagnostic.Result = &result
+		}
+		finish(err)
+	}()
 	if err := contract.ValidateOperation(input.OperationKey, input.ExpectedRevision, input.Reason); err != nil {
 		return contract.PublicationResult{}, err
 	}

@@ -48,7 +48,7 @@ func CheckOverrides(record Record, catalog map[string]Record) error {
 		switch override.Action {
 		case PinDefinition:
 			if record.Definition != nil {
-				return fmt.Errorf("%w: definition is pinned", ErrOverride)
+				return &PublicationRejection{Cause: fmt.Errorf("%w: definition is pinned", ErrOverride), Reason: "definition_pinned", RecordID: record.ID, Expected: "manager_publication", Observed: "automatic_publication"}
 			}
 		case SetClassification:
 			if record.Assignment != nil && (record.Retired || record.Assignment.DefinitionID != override.DefinitionID) {

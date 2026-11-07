@@ -31,7 +31,8 @@ export function OntologyEditor({ records, selected, target, disabled, onAdd, onD
   const definitions = records.filter((record) => record.definition && !record.retired);
   const sourceKind = selected[0]?.kind;
   const compatible = definitions.filter((record) => action === "pin_definition" || (sourceKind === "entity" ? record.kind === "entity_class" : sourceKind === "predicate" ? record.kind === "predicate_concept" : record.kind === "topic"));
-  const valid = action === "define" ? key.trim() && label.trim() && description.trim() : action === "classify" ? selected.length === 1 && definitionId : action === "pin_definition" ? definitionId : selected.length >= 2 && selected.length <= 128;
+  const semanticParentRequired = action === "define" && target?.kind === kind && target.definition?.parent_relation && !parent.trim();
+  const valid = action === "define" ? key.trim() && label.trim() && description.trim() && !semanticParentRequired : action === "classify" ? selected.length === 1 && definitionId : action === "pin_definition" ? definitionId : selected.length >= 2 && selected.length <= 128;
 
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -41,6 +42,7 @@ export function OntologyEditor({ records, selected, target, disabled, onAdd, onD
       const editing = target?.definition && target.kind === kind;
       edit = { action, expected_version: editing ? target.version : 0, ...(editing ? { record_id: target.id } : {}), kind,
         definition: { key: key.trim(), label: label.trim(), description: description.trim(), aliases: aliases.split(",").map((alias) => alias.trim()).filter(Boolean),
+          ...(editing && target.definition?.parent_relation ? { parent_relation: target.definition.parent_relation } : {}),
           ...(parent ? { parent_id: parent } : {}), ...(kind === "entity_class" ? { base_entity_kind: entityKind } : {}) } };
     } else if (action === "classify") {
       edit = { action, expected_version: 0, source: selected[0], definition_id: definitionId };
@@ -65,6 +67,7 @@ export function OntologyEditor({ records, selected, target, disabled, onAdd, onD
         <FieldRow label="Description" htmlFor="ontology-definition-description"><Textarea id="ontology-definition-description" aria-label="Definition description" value={description} maxLength={512} onChange={(event) => setDescription(event.target.value)} /></FieldRow>
         <FieldRow label="Aliases, separated by commas" htmlFor="ontology-definition-aliases"><Input id="ontology-definition-aliases" aria-label="Definition aliases" value={aliases} onChange={(event) => setAliases(event.target.value)} /></FieldRow>
         <FieldRow label="Parent definition ID" htmlFor="ontology-definition-parent"><Input id="ontology-definition-parent" aria-label="Definition parent" list="ontology-parents" value={parent} onChange={(event) => setParent(event.target.value)} /><datalist id="ontology-parents">{definitions.filter((record) => record.kind === kind && record.id !== target?.id).map((record) => <NativeSelectOption key={record.id} value={record.id}>{record.definition!.label}</NativeSelectOption>)}</datalist></FieldRow>
+        {semanticParentRequired && <p role="alert">This definition requires a parent. Its hierarchy meaning will be preserved.</p>}
         {kind === "entity_class" && <FieldRow label="Entity kind" htmlFor="ontology-class-entity-kind"><NativeSelect id="ontology-class-entity-kind" aria-label="Class entity kind" value={entityKind} onChange={(event) => setEntityKind(event.target.value)}>{["person", "organization", "project", "product", "place", "document", "concept", "other"].map((value) => <NativeSelectOption key={value}>{value}</NativeSelectOption>)}</NativeSelect></FieldRow>}
         <p>Definition edits stay pinned until you explicitly unpin them.</p>
       </> : action === "classify" || action === "pin_definition" ? <FieldRow label="Definition ID" htmlFor="ontology-target-definition"><Input id="ontology-target-definition" aria-label="Target definition" list="ontology-definitions" value={definitionId} onChange={(event) => setDefinitionId(event.target.value)} /><datalist id="ontology-definitions">{compatible.map((record) => <NativeSelectOption key={record.id} value={record.id}>{record.definition!.label}</NativeSelectOption>)}</datalist></FieldRow> : <p>Selected sources must satisfy the existing grouping rules. Keeping sources separate applies to each selected pair.</p>}

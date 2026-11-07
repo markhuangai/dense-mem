@@ -15,9 +15,10 @@ import (
 )
 
 type Store struct {
-	db          *gorm.DB
-	rls         storage.RLSHelper
-	recallCache *recallReadCache
+	db                  *gorm.DB
+	rls                 storage.RLSHelper
+	recallCache         *recallReadCache
+	publicationObserver ontology.PublicationObserver
 }
 type scope struct {
 	TeamID     string
@@ -26,6 +27,11 @@ type scope struct {
 }
 
 func NewStore(db *gorm.DB, rls storage.RLSHelper) *Store { return &Store{db: db, rls: rls} }
+
+func (s *Store) WithPublicationDiagnostics(observer ontology.PublicationObserver) *Store {
+	s.publicationObserver = observer
+	return s
+}
 
 func (s *Store) withScope(ctx context.Context, teamID string, readOnly bool, fn func(*gorm.DB, scope) error) error {
 	if s == nil || s.db == nil || s.rls == nil {

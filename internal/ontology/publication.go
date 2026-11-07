@@ -32,7 +32,7 @@ func buildPublication(teamID string, context contract.OrganizationContext, reque
 		if previous, ok := current[record.ID]; ok && previous.Current && reflect.DeepEqual(previous.Record, record) {
 			continue
 		}
-		if definition.ParentRef != "" {
+		if definition.ParentRef != "" && record.Definition.ParentRelation == "" {
 			record.Definition.ParentID = definitions[definition.ParentRef].ID
 		}
 		for _, decision := range response.Items {
@@ -224,6 +224,10 @@ func resolveDefinition(record contract.Record, records []contract.RecordView) (c
 		}
 		record.ID = matched.ID
 		record.Definition.Key = matched.Definition.Key
+		if matched.Definition.ParentRelation != "" {
+			record.Definition.ParentID = matched.Definition.ParentID
+			record.Definition.ParentRelation = matched.Definition.ParentRelation
+		}
 	}
 	return record, nil
 }

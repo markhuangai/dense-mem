@@ -911,6 +911,7 @@ test("community, ontology, and conflict fixtures forward healthy embeddings upst
   assert.match(communityBlock, /AI_API_URL: "http:\/\/synchronous-write-provider:8787\/v1"/);
   assert.match(stack, /const fixtureEmbeddingProvider = [^;]*\["ontology_organization", "ontology_management", "ontology_upgrade"\]\.includes\(scenario\)/);
   assert.match(stack, /if \(\["ontology_organization", "ontology_management", "ontology_upgrade"\]\.includes\(scenario\)\) \{[\s\S]*?AI_API_URL: "http:\/\/synchronous-write-provider:8787\/v1"/);
+  assert.ok(stack.includes('if (scenario === "ontology_management") serverEnvironment.set("LOG_LEVEL", "debug");'));
   assert.match(stack, /DENSE_MEM_E2E_EMBEDDING_BASE_URL/);
   assert.match(stack, /DENSE_MEM_E2E_EMBEDDING_API_KEY/);
   assert.match(stack, /embedding_upstream\.mjs/);
@@ -1447,12 +1448,15 @@ test("six precheck shards preserve every real runner selection exactly once", as
     if (selection === selections[1]) assert.deepEqual(ids, [measurement]);
     if (selection === selections[2]) {
       assert.ok([...dedicated, measurement].every((id) => !ids.includes(id)));
+      for (const name of ["HierarchyPublication", "HierarchyDependencies", "HierarchyRollbackAndPins", "HierarchyRacesAndIsolation", "PublicationLogOnlyDiagnostics"]) {
+        assert.ok(ids.includes(`repository/TestOntologySemantic${name}`), `semantic case ${name} must execute in shard 2`);
+      }
     }
     actual.push(...ids);
   }
   assert.equal(new Set(actual).size, actual.length);
   assert.deepEqual(actual.sort(), inventory.sort());
-  assert.equal(actual.length, 684);
+  assert.equal(actual.length, 689);
   assert.equal((await run("bash", ["-c", command, "six-shards", root])).stdout, stdout);
   await assert.rejects(run("bash", ["-c", `${helper}\npartition_precheck_capabilities "$1" 4`, "bad-shards", root]), /three or six shards/);
 });

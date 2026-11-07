@@ -2,6 +2,7 @@ package contract
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -102,6 +103,15 @@ func ValidateRecord(record Record) error {
 		return fmt.Errorf("%w: unknown record kind", ErrInvalid)
 	}
 	if err != nil {
+		var rejection *PublicationRejection
+		if errors.As(err, &rejection) {
+			copy := *rejection
+			copy.RecordID = record.ID
+			if record.Definition != nil {
+				copy.ParentID = record.Definition.ParentID
+			}
+			return &copy
+		}
 		return err
 	}
 	seen := map[string]bool{}
@@ -132,7 +142,18 @@ func validateDefinition(kind Kind, definition Definition) error {
 		return fmt.Errorf("%w: definition text or alias bounds", ErrInvalid)
 	}
 	if definition.ParentID != "" && !validID(definition.ParentID) {
-		return fmt.Errorf("%w: parent ID", ErrInvalid)
+		return &PublicationRejection{Cause: fmt.Errorf("%w: parent ID", ErrInvalid), Reason: "parent_id", ParentID: definition.ParentID}
+	}
+	if definition.ParentRelation != "" {
+		if definition.ParentRelation != SubclassOf && definition.ParentRelation != SubpropertyOf {
+			return &PublicationRejection{Cause: fmt.Errorf("%w: unknown parent relation", ErrInvalid), Reason: "parent_relation", Observed: string(definition.ParentRelation)}
+		}
+		if (definition.ParentRelation == SubclassOf && kind != EntityClass) || (definition.ParentRelation == SubpropertyOf && kind != PredicateConcept) {
+			return &PublicationRejection{Cause: fmt.Errorf("%w: parent relation is incompatible with definition kind", ErrInvalid), Reason: "parent_relation_kind", Expected: string(definition.ParentRelation), Observed: string(kind)}
+		}
+		if definition.ParentID == "" {
+			return &PublicationRejection{Cause: fmt.Errorf("%w: semantic parent relation requires a parent", ErrInvalid), Reason: "parent_required", Expected: "parent_id", Observed: "missing"}
+		}
 	}
 	if kind == EntityClass {
 		if !slices.Contains(domain.EntityKinds(), definition.BaseEntityKind) {
