@@ -127,6 +127,20 @@
       "run": "^TestOverdueConflictResolutionRetainsEvidenceUsedByLosingOwner$",
       "phase": "precheck",
       "source": "internal/knowledge/postgres/conflict_review_synchronous_integration_test.go"
+    },
+    {
+      "id": "repository/TestEvidenceConflictSharedReadersPreserveFieldsAndIsolation",
+      "package": "./internal/conflict/postgres",
+      "run": "^TestEvidenceConflictSharedReadersPreserveFieldsAndIsolation$",
+      "phase": "precheck",
+      "source": "internal/conflict/postgres/evidence_conflict_readers_integration_test.go"
+    },
+    {
+      "id": "repository/TestEvidenceConflictSharedReaderQueryFailurePreservesDiagnostics",
+      "package": "./internal/conflict/postgres",
+      "run": "^TestEvidenceConflictSharedReaderQueryFailurePreservesDiagnostics$",
+      "phase": "precheck",
+      "source": "internal/conflict/postgres/evidence_conflict_readers_integration_test.go"
     }
   ]
 }

@@ -7,25 +7,9 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/markhuangai/dense-mem/internal/storage/postgres/conflictread"
 	"gorm.io/gorm"
 )
-
-func loadEvidenceConflictPositions(ctx context.Context, tx *gorm.DB, teamID, conflictID string) ([]EvidenceConflictPositionRecord, error) {
-	rows, err := tx.WithContext(ctx).Raw(`SELECT conflict_id::text, position_id::text, position_key, canonical_evidence_id::text, canonical_owner_profile_id::text, occurrence_id::text, occurrence_owner_profile_id::text, quote, span_start, span_end, authority, submitted, created_at FROM evidence_conflict_positions WHERE team_id = ?::uuid AND conflict_id = ?::uuid ORDER BY position_key, position_id`, teamID, conflictID).Rows()
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []EvidenceConflictPositionRecord{}
-	for rows.Next() {
-		var item EvidenceConflictPositionRecord
-		if err := rows.Scan(&item.ConflictID, &item.PositionID, &item.PositionKey, &item.CanonicalEvidenceID, &item.CanonicalOwnerProfileID, &item.OccurrenceID, &item.OccurrenceOwnerProfileID, &item.Quote, &item.SpanStart, &item.SpanEnd, &item.Authority, &item.Submitted, &item.CreatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, item)
-	}
-	return out, rows.Err()
-}
 
 func (r *Store) ResolveEvidenceConflict(ctx context.Context, input EvidenceConflictResolutionInput) (*EvidenceConflictCaseRecord, error) {
 	input.TeamID, input.ConflictID, input.Decision, input.Reason = strings.TrimSpace(input.TeamID), strings.TrimSpace(input.ConflictID), strings.ToLower(strings.TrimSpace(input.Decision)), strings.TrimSpace(input.Reason)
@@ -98,7 +82,7 @@ func (r *Store) ResolveEvidenceConflict(ctx context.Context, input EvidenceConfl
 			newStatus = "dismissed"
 			action = "dismissed"
 		}
-		positions, err := loadEvidenceConflictPositions(ctx, tx, input.TeamID, input.ConflictID)
+		positions, err := conflictread.LoadEvidenceConflictPositions(ctx, tx, input.TeamID, input.ConflictID)
 		if err != nil {
 			return err
 		}
@@ -113,7 +97,7 @@ func (r *Store) ResolveEvidenceConflict(ctx context.Context, input EvidenceConfl
 		if err := insertEvidenceConflictEvent(ctx, tx, SynchronousRememberCommitInput{TeamID: input.TeamID, SpaceID: spaceID, SpaceGeneration: generation}, input.ConflictID, ordinal, action, newStatus, newVersion, input.ActorKind, input.ActorID, input.Reason, input.PreferredPositionID, positions); err != nil {
 			return err
 		}
-		loaded, err := loadEvidenceConflictCaseForSystem(ctx, tx, input.TeamID, input.ConflictID)
+		loaded, err := conflictread.LoadCurrentEvidenceConflictCase(ctx, tx, input.TeamID, input.ConflictID)
 		if err != nil {
 			return err
 		}
@@ -124,21 +108,4 @@ func (r *Store) ResolveEvidenceConflict(ctx context.Context, input EvidenceConfl
 		return nil, err
 	}
 	return result, nil
-}
-
-func loadEvidenceConflictCaseForSystem(ctx context.Context, tx *gorm.DB, teamID, conflictID string) (*EvidenceConflictCaseRecord, error) {
-	var item EvidenceConflictCaseRecord
-	err := tx.WithContext(ctx).Raw(`SELECT team_id::text, conflict_id::text, space_id::text, space_generation, status, version, COALESCE(preferred_position_id::text, ''), resolved_at, resolution_reason, created_at, updated_at FROM evidence_conflict_cases WHERE team_id = ?::uuid AND conflict_id = ?::uuid`, teamID, conflictID).Row().Scan(&item.TeamID, &item.ConflictID, &item.SpaceID, &item.SpaceGeneration, &item.Status, &item.Version, &item.PreferredPositionID, &item.ResolvedAt, &item.ResolutionReason, &item.CreatedAt, &item.UpdatedAt)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrEvidenceConflictNotFound
-	}
-	if err != nil {
-		return nil, err
-	}
-	item.Kind = "evidence_conflict"
-	item.Positions, err = loadEvidenceConflictPositions(ctx, tx, teamID, conflictID)
-	if err != nil {
-		return nil, err
-	}
-	return &item, nil
 }
