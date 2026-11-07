@@ -16,6 +16,7 @@ import (
 	"gorm.io/gorm"
 
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
+	"github.com/markhuangai/dense-mem/internal/storage/postgres/conflictread"
 )
 
 const (
@@ -583,7 +584,7 @@ func (r *Store) upsertRememberEvidenceConflictCase(
 				return err
 			}
 		}
-		storedPositions, err := loadEvidenceConflictPositions(ctx, tx, input.TeamID, conflictID)
+		storedPositions, err := conflictread.LoadEvidenceConflictPositions(ctx, tx, input.TeamID, conflictID)
 		if err != nil {
 			return err
 		}
@@ -592,7 +593,7 @@ func (r *Store) upsertRememberEvidenceConflictCase(
 	if err != nil {
 		return err
 	}
-	storedPositions, err := loadEvidenceConflictPositions(ctx, tx, input.TeamID, conflictID)
+	storedPositions, err := conflictread.LoadEvidenceConflictPositions(ctx, tx, input.TeamID, conflictID)
 	if err != nil {
 		return err
 	}

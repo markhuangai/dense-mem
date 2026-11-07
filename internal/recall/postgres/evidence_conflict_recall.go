@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/lib/pq"
+	"github.com/markhuangai/dense-mem/internal/storage/postgres/conflictread"
 	"gorm.io/gorm"
 )
 
@@ -232,28 +233,12 @@ func LoadRecallEvidenceConflictCase(ctx context.Context, tx *gorm.DB, teamID, co
 }
 
 func loadRecallEvidenceConflictCase(ctx context.Context, tx *gorm.DB, teamID, conflictID string, knownAt *time.Time) (*EvidenceConflictCaseRecord, error) {
-	var item EvidenceConflictCaseRecord
-	err := tx.WithContext(ctx).Raw(`
-		SELECT team_id::text, conflict_id::text, space_id::text, space_generation,
-		       status, version, COALESCE(preferred_position_id::text, ''),
-		       resolved_at, resolution_reason, created_at, updated_at
-		FROM evidence_conflict_cases
-		WHERE team_id = ?::uuid AND conflict_id = ?::uuid
-	`, teamID, conflictID).Row().Scan(&item.TeamID, &item.ConflictID, &item.SpaceID, &item.SpaceGeneration, &item.Status, &item.Version, &item.PreferredPositionID, &item.ResolvedAt, &item.ResolutionReason, &item.CreatedAt, &item.UpdatedAt)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrEvidenceConflictNotFound
-	}
+	item, err := conflictread.LoadCurrentEvidenceConflictCase(ctx, tx, teamID, conflictID)
 	if err != nil {
 		return nil, err
 	}
-	item.Kind = "evidence_conflict"
-	positions, err := loadEvidenceConflictPositions(ctx, tx, teamID, conflictID)
-	if err != nil {
-		return nil, err
-	}
-	item.Positions = positions
 	if knownAt == nil {
-		return &item, nil
+		return item, nil
 	}
 	events, err := loadEvidenceConflictEventsAt(ctx, tx, teamID, conflictID, knownAt)
 	if err != nil {
@@ -277,7 +262,7 @@ func loadRecallEvidenceConflictCase(ctx context.Context, tx *gorm.DB, teamID, co
 	item.Version = last.CaseVersion
 	item.PreferredPositionID = last.PreferredPositionID
 	item.UpdatedAt = last.CreatedAt
-	return &item, nil
+	return item, nil
 }
 
 // LoadRecallEvidenceConflictEventsAt preserves the bounded fixture read while
