@@ -336,6 +336,45 @@ describe("OntologyPanel", () => {
     await userEvent.click(screen.getByRole("button",{name:"New draft"}));fireEvent.change(screen.getByLabelText("Definition type"),{target:{value:"topic"}});expect(screen.getByLabelText("Definition parent")).toHaveValue("");
   });
 
+  it.each([
+    ["entity_class", "subclass_of"],
+    ["predicate_concept", "subproperty_of"],
+  ])("preserves %s semantics through unrelated edits and reparenting, and rejects clearing its parent", async (kind, relation) => {
+    const definition = { key: "people", label: "People", description: "Accepted definition", parent_id: "parent-a", parent_relation: relation,
+      ...(kind === "entity_class" ? { base_entity_kind: "person" } : {}) };
+    const records = [{ id: "semantic-a", kind, version: 3, current: true, definition }];
+    const response = (data: unknown) => new Response(JSON.stringify({ data }), { status: 200 });
+    const fetcher = vi.fn(async (url: string, options?: RequestInit) => {
+      const path = new URL(url, "http://localhost").pathname;
+      if (options?.method === "POST") {
+        const body = JSON.parse(options.body as string);
+        return response({ ...draft, reason: body.reason, edits: body.edits });
+      }
+      if (path.endsWith("/records")) return response({ records, revision: 1 });
+      if (path.endsWith("/status")) return response(coverage);
+      if (path.endsWith("/sources")) return response({ sources: [] });
+      if (path.endsWith("/publications")) return response({ publications: [] });
+      return response({ drafts: [] });
+    });
+    vi.stubGlobal("fetch", fetcher);
+    render(<OntologyPanel api={new UserApi("key")} session={session} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit People" }));
+    await waitFor(() => expect(screen.getByLabelText("Definition parent")).toHaveValue("parent-a"));
+    fireEvent.change(screen.getByLabelText("Definition parent"), { target: { value: "" } });
+    expect(screen.getByRole("button", { name: "Add correction to draft" })).toBeDisabled();
+    expect(screen.getByRole("alert")).toHaveTextContent("requires a parent");
+    expect(fetcher.mock.calls.filter(([, options]) => options?.method === "POST")).toHaveLength(0);
+    fireEvent.change(screen.getByLabelText("Definition parent"), { target: { value: "parent-b" } });
+    fireEvent.change(screen.getByLabelText("Definition label"), { target: { value: "Revised people" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add correction to draft" }));
+    fireEvent.change(screen.getByLabelText("Audit reason"), { target: { value: "Preserve accepted meaning" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    await screen.findByText("Draft saved. Preview its impact before publishing.");
+    const body = JSON.parse(fetcher.mock.calls.find(([, options]) => options?.method === "POST")![1]!.body as string);
+    expect(body.edits[0]).toMatchObject({ record_id: "semantic-a", expected_version: 3, kind,
+      definition: { label: "Revised people", parent_id: "parent-b", parent_relation: relation } });
+  });
+
   it("refreshes current record and source versions while preserving the manager's unsaved reason",async()=>{
     const response=(data:unknown)=>new Response(JSON.stringify({data}),{status:200});
     const saved={...draft,base_revision:0,edits:[{action:"classify",record_id:"override-a",expected_version:1,source:{kind:"relationship",id:"relationship-a",version:1},definition_id:"topic-a"}]};

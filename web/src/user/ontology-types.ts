@@ -2,7 +2,7 @@ export type OntologyKind = "entity_class" | "predicate_concept" | "topic" | "ass
 export type SourceKind = "entity" | "predicate" | "evidence" | "relationship";
 export type SourceHandle = { kind: SourceKind; id: string; version: number };
 export type OntologySource = SourceHandle & { text: string; truncated: boolean; owner_id?: string };
-export type OntologyDefinition = { key: string; label: string; description: string; aliases?: string[]; parent_id?: string; base_entity_kind?: string };
+export type OntologyDefinition = { key: string; label: string; description: string; aliases?: string[]; parent_id?: string; parent_relation?: "subclass_of" | "subproperty_of"; base_entity_kind?: string };
 export type OntologyRecord = {
   id: string; version: number; kind: OntologyKind; retired: boolean; current: boolean; stale_reason?: string;
   definition?: OntologyDefinition;

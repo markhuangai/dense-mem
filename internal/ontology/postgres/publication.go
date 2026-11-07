@@ -28,7 +28,14 @@ func (s *Store) PublishManager(ctx context.Context, teamID string, input ontolog
 	return s.publish(ctx, teamID, input, "manager", actor)
 }
 
-func (s *Store) publish(ctx context.Context, teamID string, input ontology.Publication, origin, actor string) (ontology.PublicationResult, error) {
+func (s *Store) publish(ctx context.Context, teamID string, input ontology.Publication, origin, actor string) (result ontology.PublicationResult, err error) {
+	ctx, diagnostic, finish := ontology.ObservePublication(ctx, s.publicationObserver, teamID, origin, input)
+	defer func() {
+		if diagnostic != nil && result.ID != "" {
+			diagnostic.Result = &result
+		}
+		finish(err)
+	}()
 	if err := ontology.ValidatePublication(input); err != nil {
 		return ontology.PublicationResult{}, err
 	}
@@ -39,9 +46,15 @@ func (s *Store) publish(ctx context.Context, teamID string, input ontology.Publi
 	return s.commit(ctx, teamID, input, origin, actor, hash, "")
 }
 
-func (s *Store) commit(ctx context.Context, teamID string, input ontology.Publication, origin, actor, hash, nextPredicate string) (ontology.PublicationResult, error) {
-	var result ontology.PublicationResult
-	err := s.withScope(ctx, teamID, false, func(tx *gorm.DB, fence scope) error {
+func (s *Store) commit(ctx context.Context, teamID string, input ontology.Publication, origin, actor, hash, nextPredicate string) (result ontology.PublicationResult, err error) {
+	ctx, diagnostic, finish := ontology.ObservePublication(ctx, s.publicationObserver, teamID, origin, input)
+	defer func() {
+		if diagnostic != nil && result.ID != "" {
+			diagnostic.Result = &result
+		}
+		finish(err)
+	}()
+	err = s.withScope(ctx, teamID, false, func(tx *gorm.DB, fence scope) error {
 		if err := maintenancePublicationFence(ctx, tx, fence); err != nil {
 			return err
 		}
@@ -56,6 +69,10 @@ func (s *Store) commit(ctx context.Context, teamID string, input ontology.Public
 }
 
 func (s *Store) commitPublication(tx *gorm.DB, fence scope, input ontology.Publication, origin, actor, hash, nextPredicate, assessmentID string) (ontology.PublicationResult, error) {
+	if diagnostic := ontology.PublicationDiagnosticFromContext(tx.Statement.Context); diagnostic != nil {
+		diagnostic.Publication = &input
+		diagnostic.AssessmentID = assessmentID
+	}
 	if err := tx.Exec(`INSERT INTO ontology_catalog_heads(team_id,shared_space_id,space_generation)
 		VALUES (?::uuid,?::uuid,?) ON CONFLICT DO NOTHING`, fence.TeamID, fence.SpaceID, fence.Generation).Error; err != nil {
 		return ontology.PublicationResult{}, err
@@ -72,8 +89,9 @@ func (s *Store) commitPublication(tx *gorm.DB, fence scope, input ontology.Publi
 	if found {
 		return existing, nil
 	}
+	notePublicationRevision(tx, revision)
 	if revision != input.ExpectedRevision {
-		return ontology.PublicationResult{}, ontology.ErrConflict
+		return ontology.PublicationResult{}, ontology.PublicationVersionRejection("catalog_revision", "", input.ExpectedRevision, revision)
 	}
 	records := make([]ontology.Record, 0, len(input.Changes))
 	var changedDefinitions []string

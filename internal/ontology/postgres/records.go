@@ -57,7 +57,11 @@ func catalogRevision(tx *gorm.DB, fence scope) (int64, error) {
 	var revision int64
 	err := tx.Raw(`SELECT revision FROM ontology_catalog_heads WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=?`, fence.TeamID, fence.SpaceID, fence.Generation).Row().Scan(&revision)
 	if errors.Is(err, sql.ErrNoRows) {
+		notePublicationRevision(tx, 0)
 		return 0, nil
+	}
+	if err == nil {
+		notePublicationRevision(tx, revision)
 	}
 	return revision, err
 }
@@ -101,7 +105,9 @@ func loadHeads(tx *gorm.DB, fence scope, ids, names, sourceKeys []string) (map[s
 
 func validationCatalog(tx *gorm.DB, fence scope, records []ontology.Record, changedDefinitions []string) (map[string]ontology.Record, error) {
 	return validationCatalogWithLoader(tx, fence, records, changedDefinitions, func(ids, names, keys []string) (map[string]ontology.Record, error) {
-		return loadHeads(tx, fence, ids, names, keys)
+		loaded, err := loadHeads(tx, fence, ids, names, keys)
+		notePublicationDefinitions(tx, loaded)
+		return loaded, err
 	})
 }
 
@@ -188,7 +194,7 @@ func validationCatalogWithLoader(tx *gorm.DB, fence scope, records []ontology.Re
 			return nil, fmt.Errorf("%w: dependency context exceeds its bound", ontology.ErrContextBound)
 		}
 	}
-	return nil, fmt.Errorf("%w: dependency depth exceeds its bound", ontology.ErrContextBound)
+	return nil, &ontology.PublicationRejection{Cause: fmt.Errorf("%w: dependency depth exceeds its bound", ontology.ErrContextBound), Reason: "hierarchy_depth"}
 }
 
 func (s *Store) GetRecord(ctx context.Context, teamID, recordID string, version int64) (ontology.RecordView, error) {
