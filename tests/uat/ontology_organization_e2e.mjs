@@ -4,6 +4,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { captureRememberFailure } from "./synchronous_write/cases/diagnostics.mjs";
 import { automaticRefinementAcceptance } from "./ontology_refinement_e2e.mjs";
+import { assessmentRecords, captureSemanticAssessmentWindow } from "./ontology_assessment_diagnostics.mjs";
 
 const userURL = required("DENSE_MEM_USER_URL").replace(/\/$/, "");
 const controlURL = required("DENSE_MEM_CONTROL_URL").replace(/\/$/, "");
@@ -12,6 +13,7 @@ const apiKey = required("DENSE_MEM_E2E_API_KEY");
 const teamID = required("DENSE_MEM_E2E_TEAM_ID");
 const failureDirectory = process.env.DENSE_MEM_E2E_REMEMBER_FAILURE_DIR || `/tmp/dense-mem-remember-failures-${randomUUID()}`;
 const credentialTeams = new Map([[apiKey, teamID]]);
+const diagnosticSince = new Date().toISOString();
 const original = (await control("/config/ontology-maintenance")).data;
 const summaryCallsBefore = await summaryCalls();
 let paused = false;
@@ -421,12 +423,22 @@ async function rememberFixture(key, content) {
   assert.equal(result.processing_state, "completed");
 }
 async function terminalRun(id) {
-  for (let index = 0; index < 150; index++) {
+  const started = Date.now();
+  console.log(JSON.stringify({ scenario: "ontology_organization", phase: "maintenance_run_wait", run_id: id }));
+  for (let index = 0; index < 300; index++) {
     const page = (await control("/ontology/runs?limit=200")).data;
     const run = page.runs.find((run) => run.id === id);
-    if (run && ["completed", "incomplete"].includes(run.status)) return run;
+    if (run && ["completed", "incomplete"].includes(run.status)) {
+      console.log(JSON.stringify({ scenario: "ontology_organization", phase: "maintenance_run_terminal", run_id: id, status: run.status, failure_code: run.failure_code, elapsed_ms: Date.now() - started }));
+      return run;
+    }
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
+  try {
+    const window = captureSemanticAssessmentWindow({ project: required("DENSE_MEM_E2E_COMPOSE_PROJECT"), composeFile: required("DENSE_MEM_E2E_COMPOSE_FILE"), since: diagnosticSince,
+      directory: `${failureDirectory}/ontology-run-${id}` });
+    for (const record of assessmentRecords(window).filter((record) => record.run_id === id)) console.log(`ontology_semantic_diagnostic_record ${JSON.stringify(record)}`);
+  } catch (captureError) { throw new AggregateError([new Error(`maintenance run ${id} did not finish`), captureError], "maintenance run failure capture is incomplete"); }
   assert.fail(`maintenance run ${id} did not finish`);
 }
 

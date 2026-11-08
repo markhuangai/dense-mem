@@ -7,8 +7,8 @@ export async function automaticRefinementAcceptance({ control, mcp, postgresQuer
   const assessments = [];
   const cases = [];
   const literal = (text) => `'${String(text).replaceAll("'", "''")}'`;
-  const poll = async (read, label) => {
-    for (let i = 0; i < 150; i++) { const value = await read(); if (value) return value; await new Promise((resolve) => setTimeout(resolve, 1000)); }
+  const poll = async (read, label, attempts = 150) => {
+    for (let i = 0; i < attempts; i++) { const value = await read(); if (value) return value; await new Promise((resolve) => setTimeout(resolve, 1000)); }
     assert.fail(`refinement acceptance timed out: ${label}`);
   };
   const pause = async () => {
@@ -42,7 +42,9 @@ export async function automaticRefinementAcceptance({ control, mcp, postgresQuer
       cases.push({ mode, team, owner, ui, publish, sourceCanary, sourceID, queue });
     }
     await control("/ontology/resume", { operation_key: randomUUID() });
-    await poll(() => cases.every(({ queue }) => queue()?.status === "organized"), "initial automatic classifications");
+    await poll(() => cases.every(({ queue }) => queue()?.status === "organized") &&
+      postgresQuery(`SELECT count(*) FROM ontology_maintenance_sources WHERE team_id IN (${cases.map(({ team }) => `${literal(team.id)}::uuid`).join(",")}) AND eligible AND status<>'organized'`) === "0",
+    "initial automatic classifications", 300);
     await pause();
     for (const { mode, team, owner, ui, publish, sourceCanary, sourceID, queue } of cases) {
       console.log(JSON.stringify({ scenario: "ontology_refinement", mode, phase: "started", team_id: team.id, source_id: sourceID }));
