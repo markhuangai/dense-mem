@@ -138,6 +138,7 @@ func TestOntologySemanticPublicationLogOnlyDiagnostics(t *testing.T) {
 			require.Contains(t, console, "ontology_semantic_publication_failed")
 			require.Contains(t, console, "fixture semantic audit rejection")
 			require.NotContains(t, console, "ontology_semantic_publication_committed")
+			require.NotContains(t, console, "ontology_semantic_manager_command")
 			unchanged, err := service.Draft(ctx, draft.ID)
 			require.NoError(t, err)
 			require.Equal(t, draft, unchanged)
@@ -208,6 +209,112 @@ func TestOntologySemanticPublicationLogOnlyDiagnostics(t *testing.T) {
 			if level <= slog.LevelDebug {
 				ontologyPublicationPayloads(t, records)
 			}
+			t.Run("manager_workflow", func(t *testing.T) {
+				observe := func(run func()) (string, []map[string]any) {
+					return capture(func() {
+						service.WithPublicationDiagnostics(ontologyPublicationDiagnostics(root.ContextSlog(), protector))
+						run()
+					})
+				}
+				input := contract.SaveDraftInput{OperationKey: uuid.NewString(), ExpectedRevision: depthRevision, Reason: "Exact admitted manager reason " + secret,
+					Edits: []contract.ManagementEdit{{Action: "define", Kind: contract.EntityClass, Definition: record("manager-child", "person", parent.ID, contract.SubclassOf).Definition}}}
+				var saved contract.ManagementDraft
+				console, records := observe(func() {
+					var err error
+					saved, err = service.SaveDraft(ctx, "", input)
+					require.NoError(t, err)
+				})
+				require.Contains(t, console, "ontology_semantic_manager_command")
+				require.Contains(t, console, saved.ID)
+				require.NotContains(t, console, secret)
+				require.NotContains(t, console, auth)
+				if level <= slog.LevelDebug {
+					payloads := ontologyPublicationPayloads(t, records)
+					require.Contains(t, payloads, "draft:")
+					require.Contains(t, payloads, "publication:")
+					require.Contains(t, payloads, "definition:"+parent.ID)
+				}
+				input.ExpectedVersion, input.OperationKey = saved.Version, uuid.NewString()
+				observe(func() {
+					var err error
+					saved, err = service.SaveDraft(ctx, saved.ID, input)
+					require.NoError(t, err)
+				})
+				console, records = observe(func() {
+					preview, err := service.Preview(ctx, saved.ID, saved.Version)
+					require.NoError(t, err)
+					require.True(t, preview.Complete)
+				})
+				if level <= slog.LevelDebug {
+					require.Contains(t, console, "ontology_semantic_draft_preview")
+					payloads := ontologyPublicationPayloads(t, records)
+					require.Contains(t, payloads, "preview:")
+					require.Contains(t, payloads, "draft:")
+					require.Contains(t, payloads, "definition:"+parent.ID)
+				} else {
+					require.Empty(t, console)
+				}
+				console, records = observe(func() {
+					_, err := service.Preview(ctx, saved.ID, saved.Version-1)
+					require.ErrorIs(t, err, contract.ErrConflict)
+				})
+				require.Contains(t, console, "ontology_semantic_manager_rejected")
+				require.Contains(t, console, "draft_version")
+				if level <= slog.LevelDebug {
+					payloads := ontologyPublicationPayloads(t, records)
+					var rejected contract.PublicationRejection
+					require.NoError(t, json.Unmarshal(payloads["rejection:"], &rejected))
+					require.Equal(t, "1", rejected.Expected)
+					require.Equal(t, "2", rejected.Observed)
+				}
+				var published contract.ManagementDraft
+				console, _ = observe(func() {
+					var err error
+					published, err = service.CommandDraft(ctx, saved.ID, "publish", contract.DraftCommand{OperationKey: uuid.NewString(), ExpectedVersion: saved.Version, ExpectedRevision: saved.BaseRevision, Reason: saved.Reason})
+					require.NoError(t, err)
+					require.NotNil(t, published.Publication)
+				})
+				require.Contains(t, console, "ontology_semantic_manager_command")
+				require.Contains(t, console, "\"transaction_outcome\":\"committed\"")
+				stored, err := logs.ListOperationLogs(context.Background(), domain.OperationLogFilter{Event: "ontology_semantic_manager_command", TeamID: &team})
+				require.NoError(t, err)
+				require.EqualValues(t, 3, stored.Total)
+				history, err := service.Publication(ctx, published.Publication.ID)
+				require.NoError(t, err)
+				var changed contract.Record
+				for _, view := range history.RecordsView {
+					if view.Definition != nil {
+						changed = view.Record
+					}
+				}
+				require.NotNil(t, changed.Definition)
+				changed.Definition.Description = "Intervening manager edit"
+				var advanced contract.ManagementDraft
+				observe(func() {
+					draft, err := service.SaveDraft(ctx, "", contract.SaveDraftInput{OperationKey: uuid.NewString(), ExpectedRevision: published.Publication.Revision, Reason: "Advance the rollback target", Edits: []contract.ManagementEdit{{Action: "define", Kind: changed.Kind, RecordID: changed.ID, ExpectedVersion: changed.Version, Definition: changed.Definition}}})
+					require.NoError(t, err)
+					advanced, err = service.CommandDraft(ctx, draft.ID, "publish", contract.DraftCommand{OperationKey: uuid.NewString(), ExpectedVersion: draft.Version, ExpectedRevision: draft.BaseRevision, Reason: draft.Reason})
+					require.NoError(t, err)
+				})
+				console, records = observe(func() {
+					_, err := service.Rollback(ctx, published.Publication.ID, contract.DraftCommand{OperationKey: uuid.NewString(), ExpectedRevision: advanced.Publication.Revision, Reason: "Reject the stale rollback"})
+					require.ErrorIs(t, err, contract.ErrConflict)
+				})
+				require.Contains(t, console, "ontology_semantic_manager_rejected")
+				require.Contains(t, console, "rollback_revision")
+				require.NotContains(t, console, "ontology_semantic_manager_command")
+				for _, entry := range records {
+					require.Equal(t, published.Publication.ID, entry["target_publication_id"])
+				}
+				unknown := uuid.NewString()
+				console, records = observe(func() {
+					_, err := service.Rollback(ctx, unknown, contract.DraftCommand{OperationKey: uuid.NewString(), ExpectedRevision: advanced.Publication.Revision, Reason: "Unavailable rollback canary"})
+					require.ErrorIs(t, err, contract.ErrNotFound)
+				})
+				require.Len(t, records, 1)
+				require.NotContains(t, console, unknown)
+				require.NotContains(t, console, "Unavailable rollback canary")
+			})
 		})
 	}
 }

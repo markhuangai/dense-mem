@@ -19,8 +19,14 @@ func (s *Store) PreviewManagementDraft(ctx context.Context, teamID, id string, v
 		if err != nil {
 			return err
 		}
-		if draft.Draft.State != "open" || draft.Draft.Version != version {
-			return ontology.ErrConflict
+		if draft.Draft.Version != version {
+			return ontology.PublicationVersionRejection("draft_version", id, version, draft.Draft.Version)
+		}
+		if draft.Draft.State != "open" {
+			return &ontology.PublicationRejection{Cause: ontology.ErrConflict, Reason: "draft_state", RecordID: id, Expected: "open", Observed: draft.Draft.State}
+		}
+		if diagnostic := ontology.PublicationDiagnosticFromContext(ctx); diagnostic != nil {
+			diagnostic.Publication = &draft.Prepared
 		}
 		if _, _, err := validateManagementPublication(tx, fence, draft.Prepared); err != nil {
 			return err

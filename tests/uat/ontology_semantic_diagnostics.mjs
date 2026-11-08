@@ -10,12 +10,14 @@ export function semanticPublicationRecords(window) {
     if (offset < 0) return [];
     let record;
     try { record = JSON.parse(line.slice(offset)); } catch { return []; }
-    return String(record.msg).startsWith("ontology_semantic_publication") ? [record] : [];
+    return /^ontology_semantic_(publication|manager_|draft_preview)/.test(String(record.msg)) ? [record] : [];
   });
 }
 
 function scopedSemanticRecords(window, expected) {
-  const records = semanticPublicationRecords(window).filter((record) => record.correlation_id === expected.correlationID && record.operation_key === expected.operationKey);
+  assert(expected.operationKey || expected.draftID || expected.contentFree, "a trusted operation selector is required");
+  const records = semanticPublicationRecords(window).filter((record) => record.correlation_id === expected.correlationID &&
+    (expected.operationKey ? record.operation_key === expected.operationKey : expected.draftID ? record.draft_id === expected.draftID : true));
   assert(records.length > 0, "required publication capture is missing");
   const operations = new Set(records.map((record) => record.operation_id));
   assert.equal(operations.size, 1, "publication operation identity changed");
@@ -35,10 +37,18 @@ export function verifySemanticPublication(window, expected) {
   const records = scopedSemanticRecords(window, expected);
   const outcomes = records.filter((record) => record.msg !== "ontology_semantic_publication");
   assert.equal(outcomes.length, 1, "publication must have one final outcome");
-  assert.equal(outcomes[0].msg, "ontology_semantic_publication_rejected");
-  assert.equal(outcomes[0].level, "WARN");
+  const event = expected.outcomeEvent ?? "ontology_semantic_publication_rejected";
+  const rejected = event.endsWith("_rejected");
+  const preview = event === "ontology_semantic_draft_preview";
+  assert.equal(outcomes[0].msg, event);
+  assert.equal(outcomes[0].level, preview ? "DEBUG" : rejected ? "WARN" : "INFO");
   assert.equal(outcomes[0].reason, expected.reason);
-  assert.equal(outcomes[0].transaction_outcome, "not_committed");
+  assert.equal(outcomes[0].transaction_outcome, preview ? "read_only" : rejected ? "not_committed" : "committed");
+  if (expected.contentFree) {
+    assert.equal(records.length, 1, "authorization rejection must not capture content");
+    for (const key of ["draft_id", "operation_key", "payload_chunk", "error"]) assert(!Object.hasOwn(records[0], key), "authorization rejection exposed untrusted detail");
+    return { operation_id: records[0].operation_id, reason: expected.reason, records, bodies: {} };
+  }
   const manifests = records.filter((record) => record.msg === "ontology_semantic_publication" && !record.payload_chunk);
   assert.equal(manifests.length, 1, "required publication manifest is missing");
   const manifest = manifests[0];
@@ -68,7 +78,13 @@ export function verifySemanticPublication(window, expected) {
     bodies[key] = JSON.parse(body);
   }
   assert(bodies["input:"], "admitted publication input is missing");
-  assert.equal(bodies["rejection:"]?.reason, expected.reason);
+  if (rejected) assert.equal(bodies["rejection:"]?.reason, expected.reason);
+  if (expected.draftID) assert.equal(bodies["draft:"]?.id, expected.draftID);
+  if (expected.preview) {
+    assert.deepEqual(bodies["preview:"], expected.preview);
+    assert.equal(outcomes[0].affected_sources, expected.preview.affected_sources);
+    assert.equal(outcomes[0].complete, expected.preview.complete);
+  }
   if (expected.input) assert.deepEqual(bodies["input:"], expected.input, "admitted fields did not round trip exactly");
   for (const parent of expected.parents ?? []) assert(bodies[`definition:${parent}`], "required parent revision is missing");
   if (expected.expectedVersion !== undefined) {

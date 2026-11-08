@@ -70,6 +70,11 @@ func loadManagementDraft(tx *gorm.DB, fence scope, owner, id string, lock bool) 
 		return result, err
 	}
 	err = json.Unmarshal(body, &result)
+	if err == nil {
+		if diagnostic := ontology.PublicationDiagnosticFromContext(tx.Statement.Context); diagnostic != nil {
+			diagnostic.DraftID, diagnostic.Draft = id, &result.Draft
+		}
+	}
 	return result, err
 }
 
@@ -169,6 +174,9 @@ func (s *Store) SaveManagementDraft(ctx context.Context, teamID, id string, inpu
 				return &ontology.PublicationRejection{Cause: ontology.ErrConflict, Reason: "draft_state", RecordID: id, Expected: "open", Observed: result.Draft.State}
 			}
 		}
+		if diagnostic := ontology.PublicationDiagnosticFromContext(ctx); diagnostic != nil {
+			diagnostic.DraftID = id
+		}
 		current, err := managementEditContext(tx, fence, id, input)
 		if err != nil {
 			return err
@@ -176,6 +184,9 @@ func (s *Store) SaveManagementDraft(ctx context.Context, teamID, id string, inpu
 		publication, err := prepare(current)
 		if err != nil {
 			return err
+		}
+		if diagnostic := ontology.PublicationDiagnosticFromContext(ctx); diagnostic != nil {
+			diagnostic.Publication = &publication
 		}
 		result = storedManagementDraft{Draft: ontology.ManagementDraft{ID: id, Version: input.ExpectedVersion + 1, State: "open", BaseRevision: input.ExpectedRevision, Reason: input.Reason, Edits: input.Edits, UpdatedAt: time.Now().UTC()}, Prepared: publication}
 		if err := persistManagementDraft(tx, fence, owner, input.OperationKey, hash, input.ExpectedVersion, result); err != nil {

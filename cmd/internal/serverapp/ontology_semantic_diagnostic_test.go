@@ -151,3 +151,100 @@ func TestOntologySemanticPublicationExhaustionIsExplicit(t *testing.T) {
 	require.Contains(t, console, "ontology_semantic_publication_capture_incomplete")
 	require.NotContains(t, console, strings.Repeat("x", 100))
 }
+
+func TestOntologySemanticManagerRealLoggerCommandsAndProtection(t *testing.T) {
+	for _, level := range []slog.Level{observability.LevelTrace, slog.LevelDebug, slog.LevelInfo} {
+		for _, action := range []string{"save_draft", "publish", "rollback", "preview_draft", "rejected", "denied", "unavailable", "audit_failure"} {
+			t.Run(level.String()+"/"+action, func(t *testing.T) {
+				const secret = "manager-configured-credential"
+				team, profile, draftID := uuid.New(), uuid.New(), uuid.NewString()
+				ctx := requestctx.WithActor(context.Background(), requestctx.Actor{TeamID: team, OwnerID: profile})
+				ctx = correlation.WithID(ctx, "manager-command-test")
+				input := contract.SaveDraftInput{OperationKey: "manager-command-key", ExpectedVersion: 1, ExpectedRevision: 2, Reason: "Admitted token password secret " + secret,
+					Edits: []contract.ManagementEdit{{Action: "define", Kind: contract.EntityClass, Definition: &contract.Definition{Key: "people", Label: "People", Description: "Admitted description", BaseEntityKind: "person", ParentID: uuid.NewString(), ParentRelation: contract.SubclassOf}}}}
+				sink := &ontologyDiagnosticTestSink{}
+				console, records := captureOntologyPublicationConsole(t, func() {
+					protector := observability.NewCredentialProtector(secret)
+					root := observability.NewWithProtector(level, protector)
+					require.NoError(t, root.AttachSink(sink))
+					_, diagnostic, finish := contract.ObservePublication(ctx, ontologyPublicationDiagnostics(root.ContextSlog(), protector), team.String(), action, input)
+					diagnostic.Management, diagnostic.DraftID = true, draftID
+					diagnostic.Draft = &contract.ManagementDraft{ID: draftID, Version: 2, BaseRevision: 2, State: "open", Edits: input.Edits}
+					switch action {
+					case "publish", "rollback":
+						diagnostic.Result = &contract.PublicationResult{ID: uuid.NewString(), Revision: 3}
+					case "preview_draft":
+						diagnostic.Preview = &contract.ImpactPreview{DraftID: draftID, DraftVersion: 2, Revision: 2, ChangedRecords: 2, AffectedSources: 3, Complete: true}
+					case "rejected":
+						finish(contract.PublicationVersionRejection("draft_version", draftID, 1, 2))
+						return
+					case "denied":
+						finish(contract.ErrUnauthorized)
+						return
+					case "unavailable":
+						finish(contract.ErrNotFound)
+						return
+					case "audit_failure":
+						finish(contract.ErrAuditUnavailable)
+						return
+					}
+					finish(nil)
+				})
+				require.NotContains(t, console, secret)
+				for _, record := range records {
+					require.Equal(t, team.String(), record["team_id"])
+					require.Equal(t, profile.String(), record["profile_id"])
+					require.Equal(t, "manager-command-test", record["correlation_id"])
+				}
+				if action == "denied" || action == "unavailable" {
+					require.Len(t, records, 1)
+					require.Equal(t, "ontology_semantic_manager_rejected", records[0]["msg"])
+					require.NotContains(t, console, draftID)
+					require.NotContains(t, console, "Admitted")
+					return
+				}
+				if level <= slog.LevelDebug {
+					payloads := ontologyPublicationPayloads(t, records)
+					require.Contains(t, string(payloads["input:"]), "Admitted token password secret [REDACTED]")
+					require.Contains(t, payloads, "draft:")
+				} else {
+					require.NotContains(t, console, "payload_chunk")
+				}
+				for _, record := range sink.records {
+					require.NotContains(t, record.Attrs, "payload_chunk")
+				}
+				var outcomes []map[string]any
+				for _, record := range records {
+					if record["msg"] != "ontology_semantic_publication" {
+						outcomes = append(outcomes, record)
+					}
+				}
+				if action == "preview_draft" && level > slog.LevelDebug {
+					require.Empty(t, outcomes)
+					return
+				}
+				require.Len(t, outcomes, 1)
+				outcome := outcomes[0]
+				require.Equal(t, draftID, outcome["draft_id"])
+				switch action {
+				case "preview_draft":
+					require.Equal(t, "ontology_semantic_draft_preview", outcome["msg"])
+					require.Equal(t, "DEBUG", outcome["level"])
+					require.Equal(t, "read_only", outcome["transaction_outcome"])
+					require.EqualValues(t, 3, outcome["affected_sources"])
+				case "rejected":
+					require.Equal(t, "ontology_semantic_manager_rejected", outcome["msg"])
+					require.Equal(t, "draft_version", outcome["reason"])
+				case "audit_failure":
+					require.Equal(t, "ontology_semantic_publication_failed", outcome["msg"])
+					require.Equal(t, "ERROR", outcome["level"])
+					require.Equal(t, "not_committed", outcome["transaction_outcome"])
+				default:
+					require.Equal(t, "ontology_semantic_manager_command", outcome["msg"])
+					require.Equal(t, "INFO", outcome["level"])
+					require.Equal(t, "committed", outcome["transaction_outcome"])
+				}
+			})
+		}
+	}
+}

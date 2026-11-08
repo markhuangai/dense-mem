@@ -223,7 +223,7 @@ func ValidateManagementOverrides(current map[string]Record, input Publication) e
 		switch override.Action {
 		case PinDefinition:
 			if pins[override.TargetID] {
-				return fmt.Errorf("%w: duplicate definition pin", ErrInvalid)
+				return &PublicationRejection{Cause: fmt.Errorf("%w: duplicate definition pin", ErrInvalid), Reason: "duplicate_definition_pin", RecordID: record.ID, Expected: "one_active_pin", Observed: "duplicate_active_pin"}
 			}
 			pins[override.TargetID] = true
 		case SetClassification:

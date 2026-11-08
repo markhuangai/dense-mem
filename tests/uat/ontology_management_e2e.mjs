@@ -104,7 +104,7 @@ try {
   await saveAndPublish([{ action: "remove_override", record_id: classification.id, expected_version: classification.version }]);
   assert((await ui(`/records/${classification.id}`)).retired, "the fixture correction must be removed before browser checks");
   assert.deepEqual(snapshot(), canonical, "corrections and rollback changed canonical facts or provenance");
-  await semanticHierarchyAcceptance(shared.credential.id);
+  await semanticHierarchyAcceptance(shared.credential.id, [c, readonly]);
   assert.deepEqual(snapshot(), canonical, "semantic hierarchy changed canonical facts or provenance");
   await matchingAcceptance();
   console.log("ontology management production HTTP/MCP: permissions, isolation, replay, stale conflicts, provider-free preview, split persistence, pin/unpin and rollback passed");
@@ -117,7 +117,7 @@ async function request(base, path, key, body, method = body ? "POST" : "GET") {
   return fetch(`${base}${path}`, { method, headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", Accept: "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) });
 }
 
-async function semanticHierarchyAcceptance(profileID) {
+async function semanticHierarchyAcceptance(profileID, deniedActors) {
   const since = new Date(Date.now() - 1000).toISOString();
   const operations = [];
   const credentials = [manager, "dense-mem-ontology-e2e-key"];
@@ -129,13 +129,19 @@ async function semanticHierarchyAcceptance(profileID) {
     const value = (await ui(`/records?kind=${kind}&limit=200`)).records.find((record) => record.definition?.key === key);
     assert(value, "semantic definition was not published"); return value;
   };
+  for (const actor of deniedActors) {
+    const correlationID = randomUUID();
+    const response = await fetch(`${userURL}/ui/api/ontology/drafts`, { method: "POST", headers: { Authorization: `Bearer ${actor.api_key}`, "Content-Type": "application/json", "X-Correlation-ID": correlationID }, body: JSON.stringify({ reason: "unauthorized-content-canary" }) });
+    assert.equal(response.status, 403);
+    operations.push({ correlationID, teamID, profileID: actor.credential.id, reason: "unauthorized", contentFree: true, outcomeEvent: "ontology_semantic_manager_rejected", credentials: [...credentials, actor.api_key, "unauthorized-content-canary"] });
+  }
   async function rejected(edits, reason, parents = [], stale = false) {
     const observed = (await ui("/status")).revision;
     const input = { operation_key: randomUUID(), expected_version: 0, expected_revision: observed - (stale ? 1 : 0), reason: "Log-only semantic rejection", edits };
     const correlationID = randomUUID();
     const response = await fetch(`${userURL}/ui/api/ontology/drafts`, { method: "POST", headers: { Authorization: `Bearer ${manager}`, "Content-Type": "application/json", "X-Correlation-ID": correlationID }, body: JSON.stringify(input) });
     assert.equal(response.status, stale ? 409 : 422);
-    operations.push({ operationKey: input.operation_key, correlationID, teamID, profileID, reason, parents, credentials, input: protectedInput(input), ...(stale ? { expectedVersion: input.expected_revision, observedVersion: observed } : {}) });
+    operations.push({ operationKey: input.operation_key, correlationID, teamID, profileID, reason, parents, credentials, outcomeEvent: "ontology_semantic_manager_rejected", input: protectedInput(input), ...(stale ? { expectedVersion: input.expected_revision, observedVersion: observed } : {}) });
   }
   for (const [kind, relation] of [["entity_class", "subclass_of"], ["predicate_concept", "subproperty_of"]]) {
     const prefix = `semantic-${kind}-${randomUUID()}`;
@@ -167,6 +173,33 @@ async function semanticHierarchyAcceptance(profileID) {
     }
     const fingerprint = (record) => createHash("sha256").update(JSON.stringify(record)).digest("hex");
     assert.equal(fingerprint(await ui(`/records/${child.id}`)), fingerprint(restored), "rejected edits must leave the accepted definition unchanged");
+    await rejected([{ action: "pin_definition", expected_version: 0, definition_id: restored.id }], "duplicate_definition_pin");
+    if (kind === "entity_class") {
+      const input = { operation_key: randomUUID(), expected_version: 0, expected_revision: (await ui("/status")).revision, reason: "Protected manager draft acceptance", edits: [edit(kind, { ...restored.definition, description: value.description }, restored)] };
+      const correlationID = randomUUID();
+      const savedResponse = await fetch(`${userURL}/ui/api/ontology/drafts`, { method: "POST", headers: { Authorization: `Bearer ${manager}`, "Content-Type": "application/json", "X-Correlation-ID": correlationID }, body: JSON.stringify(input) });
+      const saved = await data(savedResponse);
+      operations.push({ operationKey: input.operation_key, correlationID, teamID, profileID, reason: "accepted", credentials, input: protectedInput(input), draftID: saved.id, outcomeEvent: "ontology_semantic_manager_command" });
+      const updated = await ui(`/drafts/${saved.id}`, { ...input, expected_version: saved.version, operation_key: randomUUID() }, manager, "PUT");
+      for (const stale of [false, true]) {
+        const expectedVersion = stale ? saved.version : updated.version;
+        const previewInput = { expected_version: expectedVersion };
+        const correlationID = randomUUID();
+        const response = await fetch(`${userURL}/ui/api/ontology/drafts/${saved.id}/preview`, { method: "POST", headers: { Authorization: `Bearer ${manager}`, "Content-Type": "application/json", "X-Correlation-ID": correlationID }, body: JSON.stringify(previewInput) });
+        assert.equal(response.status, stale ? 409 : 200);
+        const preview = stale ? undefined : (await response.json()).data;
+        operations.push({ correlationID, teamID, profileID, credentials, draftID: saved.id, input: previewInput, reason: stale ? "draft_version" : "accepted", outcomeEvent: stale ? "ontology_semantic_manager_rejected" : "ontology_semantic_draft_preview", ...(stale ? { expectedVersion, observedVersion: updated.version } : { preview, parents: [parent.id] }) });
+      }
+      const command = { operation_key: randomUUID(), expected_version: updated.version, expected_revision: updated.base_revision, reason: "Discard diagnostic draft" };
+      const discardCorrelation = randomUUID();
+      const discarded = await data(await fetch(`${userURL}/ui/api/ontology/drafts/${saved.id}/discard`, { method: "POST", headers: { Authorization: `Bearer ${manager}`, "Content-Type": "application/json", "X-Correlation-ID": discardCorrelation }, body: JSON.stringify(command) }));
+      assert.equal(discarded.state, "discarded");
+      operations.push({ operationKey: command.operation_key, correlationID: discardCorrelation, teamID, profileID, credentials, draftID: saved.id, input: command, reason: "accepted", outcomeEvent: "ontology_semantic_manager_command" });
+    }
+    await saveAndPublish([edit(kind, { ...restored.definition, parent_id: undefined, parent_relation: undefined }, restored)]);
+    const cleared = await ui(`/records/${child.id}`);
+    assert(!Object.hasOwn(cleared.definition, "parent_id"));
+    assert(!Object.hasOwn(cleared.definition, "parent_relation"));
   }
   const proof = collectSemanticPublicationProof({ project: required("DENSE_MEM_E2E_COMPOSE_PROJECT"), composeFile: required("DENSE_MEM_E2E_COMPOSE_FILE"), since,
     directory: fileURLToPath(new URL(`./test-results/semantic-private-${teamID}`, import.meta.url)), operations });

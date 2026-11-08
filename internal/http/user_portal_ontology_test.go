@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -41,7 +42,11 @@ func TestOntologyManagementHTTPClosedInputsAndPermissions(t *testing.T) {
 		t.Run(tc.method+tc.path+tc.role+tc.body, func(t *testing.T) {
 			router := echo.New()
 			router.HTTPErrorHandler = httperr.ErrorHandler
-			registerOntologyManagementRoutes(router.Group("/ui/api"), ontology.NewManagementService(nil, nil))
+			var diagnostics []contract.PublicationDiagnostic
+			service := ontology.NewManagementService(nil, nil).WithPublicationDiagnostics(func(_ context.Context, diagnostic contract.PublicationDiagnostic) {
+				diagnostics = append(diagnostics, diagnostic)
+			})
+			registerOntologyManagementRoutes(router.Group("/ui/api"), service)
 			req := httptest.NewRequest(tc.method, "/ui/api/ontology"+tc.path, strings.NewReader(tc.body))
 			req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 			ctx := mw.SetPrincipalForTest(req.Context(), &mw.Principal{Role: tc.role, Grants: tc.grants})
@@ -49,6 +54,13 @@ func TestOntologyManagementHTTPClosedInputsAndPermissions(t *testing.T) {
 			rec := httptest.NewRecorder()
 			router.ServeHTTP(rec, req.WithContext(ctx))
 			require.Equal(t, tc.status, rec.Code, rec.Body.String())
+			if tc.status == http.StatusForbidden {
+				require.Len(t, diagnostics, 1)
+				require.True(t, diagnostics[0].Management)
+				require.ErrorIs(t, diagnostics[0].Failure, contract.ErrUnauthorized)
+				require.Equal(t, "null", string(diagnostics[0].Input))
+				require.Empty(t, diagnostics[0].DraftID)
+			}
 		})
 	}
 }

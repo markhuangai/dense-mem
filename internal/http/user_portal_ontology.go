@@ -31,7 +31,16 @@ type ontologyManagementHandler struct{ service *ontology.ManagementService }
 
 func registerOntologyManagementRoutes(api *echo.Group, service *ontology.ManagementService) {
 	h := &ontologyManagementHandler{service: service}
-	group := api.Group("/ontology", mw.RequireRole(access.CredentialRoleManager), userPortalServiceAvailable(service != nil, "ontology management unavailable"), func(next echo.HandlerFunc) echo.HandlerFunc {
+	group := api.Group("/ontology", func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			err := next(c)
+			var publicError *httperr.APIError
+			if errors.As(err, &publicError) && publicError.Code == httperr.FORBIDDEN {
+				service.ObserveAuthorizationRejection(c.Request().Context(), c.Request().Method+" "+c.Path())
+			}
+			return err
+		}
+	}, mw.RequireRole(access.CredentialRoleManager), userPortalServiceAvailable(service != nil, "ontology management unavailable"), func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			c.Response().Header().Set(echo.HeaderCacheControl, "no-store")
 			ctx := ontology.WithManagementAuditContext(c.Request().Context(), c.RealIP(), mw.GetCorrelationID(c.Request().Context()))
