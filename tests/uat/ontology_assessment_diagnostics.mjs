@@ -87,13 +87,18 @@ export function verifySemanticAssessment(window, expected) {
   return { records, stages: Object.fromEntries(stages), exchanges: bodies };
 }
 
-export function collectSemanticAssessmentProof({ project, composeFile, since, directory, assessments }) {
+export function captureSemanticAssessmentWindow({ project, composeFile, since, directory }) {
   const result = spawnSync("docker", ["compose", "-p", project, "-f", composeFile, "logs", "--no-color", "--no-log-prefix", "--since", since, "server"], { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
   assert(!result.error && result.status === 0, "complete Compose assessment log window is unavailable");
   mkdirSync(directory, { recursive: true, mode: 0o700 }); chmodSync(directory, 0o700);
   writeFileSync(join(directory, "complete-assessment-window.private.jsonl"), result.stdout, { mode: 0o600 });
+  return result.stdout;
+}
+
+export function collectSemanticAssessmentProof({ project, composeFile, since, directory, assessments }) {
+  const window = captureSemanticAssessmentWindow({ project, composeFile, since, directory });
   const proofs = assessments.map((expected) => {
-    const proof = verifySemanticAssessment(result.stdout, expected);
+    const proof = verifySemanticAssessment(window, expected);
     writeFileSync(join(directory, `${expected.assessmentID}.private.json`), JSON.stringify({ ...proof, retain_until: new Date(Date.now()+7*86400000).toISOString() }), { mode: 0o600 });
     for (const record of proof.records) console.log(`ontology_semantic_diagnostic_record ${JSON.stringify(record)}`);
     return proof;

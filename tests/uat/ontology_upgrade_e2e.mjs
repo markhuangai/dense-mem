@@ -41,10 +41,11 @@ await control("/config/ontology-maintenance", {
 let status;
 for (let attempt = 0; attempt < 120; attempt++) {
   status = await control("/ontology/status");
-  if (status.counts.organized > 0 && status.usage.attempts > 0) break;
+  if (status.counts.organized > 0 && status.usage.attempts > 0 && status.active_work === 0 && status.usage.unreconciled_attempts === 0) break;
   await new Promise((resolve) => setTimeout(resolve, 1000));
 }
 assert.equal(status.paused, false);
 assert(status.counts.organized > 0 && status.usage.attempts > 0, "normal maintenance must progress after configuration without an upgrade command");
+assert.equal(status.active_work, 0);
 assert.equal(status.usage.unreconciled_attempts, 0);
 console.log(JSON.stringify({ scenario: "ontology_upgrade", status: "ok", control_available: true, missing_capacity_explicit: true, automatic_progress: true }));
