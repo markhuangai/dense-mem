@@ -12,7 +12,8 @@ import (
 func buildPublication(teamID string, context contract.OrganizationContext, request assessment.Request, response assessment.Response, binding requestBinding, receipt *contract.OrganizationReceipt) (contract.Publication, error) {
 	publication := contract.Publication{OperationKey: receipt.OperationKey, ExpectedRevision: context.Revision, Reason: "validated existing-memory organization"}
 	current := map[string]contract.RecordView{}
-	for _, record := range append(append([]contract.RecordView(nil), context.Candidates...), context.Records...) {
+	records := append(append([]contract.RecordView(nil), context.Candidates...), context.Records...)
+	for _, record := range records {
 		current[record.ID] = record
 	}
 	changes := map[string]contract.Record{}
@@ -21,7 +22,7 @@ func buildPublication(teamID string, context contract.OrganizationContext, reque
 		definitions[ref] = record
 	}
 	for _, definition := range response.Definitions {
-		record, err := resolveDefinition(proposedDefinition(teamID, definition), context.Records)
+		record, err := resolveDefinition(proposedDefinition(teamID, definition), records)
 		if err != nil {
 			return publication, err
 		}

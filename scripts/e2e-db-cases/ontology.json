@@ -993,6 +993,7 @@
     {"id": "repository/TestOntologyRefinementRefreshMigration", "package": "./internal/ontology/postgres", "run": "^TestOntologyRefinementRefreshMigration$", "phase": "precheck", "source": "internal/ontology/postgres/refinement_migration_integration_test.go"},
     {"id": "repository/TestOntologyRefinementRebuildsStoredAncestry", "package": "./internal/ontology/postgres", "run": "^TestOntologyRefinementRebuildsStoredAncestry$", "phase": "precheck", "source": "internal/ontology/postgres/refinement_integration_test.go"},
     {"id": "repository/TestOntologyRefinementCoarseAncestryBound", "package": "./internal/ontology/postgres", "run": "^TestOntologyRefinementCoarseAncestryBound$", "phase": "precheck", "source": "internal/ontology/postgres/refinement_integration_test.go"},
-    {"id": "repository/TestOntologyRefinementDefinitionAliasRace", "package": "./internal/ontology/postgres", "run": "^TestOntologyRefinementDefinitionAliasRace$", "phase": "precheck", "source": "internal/ontology/postgres/refinement_integration_test.go"}
+    {"id": "repository/TestOntologyRefinementDefinitionAliasRace", "package": "./internal/ontology/postgres", "run": "^TestOntologyRefinementDefinitionAliasRace$", "phase": "precheck", "source": "internal/ontology/postgres/refinement_integration_test.go"},
+    {"id": "repository/TestOntologyRefinementReusesBoundedCandidate", "package": "./internal/ontology/postgres", "run": "^TestOntologyRefinementReusesBoundedCandidate$", "phase": "precheck", "source": "internal/ontology/postgres/refinement_integration_test.go"}
   ]
 }

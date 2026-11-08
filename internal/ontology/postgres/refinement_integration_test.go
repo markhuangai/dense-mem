@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -447,4 +448,63 @@ func TestOntologyRefinementDefinitionAliasRace(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, history, 2, "only initial setup and manager alias publication may commit")
 	require.Equal(t, before, f.canonicalSnapshot(t))
+}
+
+func TestOntologyRefinementReusesBoundedCandidate(t *testing.T) {
+	for _, relation := range []ontology.ParentRelation{"", ontology.SubclassOf} {
+		t.Run(string(relation), func(t *testing.T) {
+			f := newOrganizationFixture(t)
+			oldSource := maintenanceEntity(t, f, "Original software project")
+			source := maintenanceEntity(t, f, "Atlas explicitly identified as a software project")
+			parent := ontology.Record{ID: uuid.NewString(), Kind: ontology.EntityClass, Definition: &ontology.Definition{Key: "project", Label: "Project", BaseEntityKind: "project"}}
+			accepted := ontology.Record{ID: ontology.OrganizationRecordID(f.team, ontology.EntityClass, "software-project"), Kind: ontology.EntityClass,
+				Definition: &ontology.Definition{Key: "software-project", Label: "Software project", Description: strings.Repeat("meaning ", 100), Aliases: []string{"software initiative"}, BaseEntityKind: "project", ParentID: parent.ID, ParentRelation: relation},
+				Sources:    []ontology.SourceDependency{f.source(t, oldSource)}}
+			revalidationPublish(t, f, ontology.Change{Record: parent}, ontology.Change{Record: accepted})
+			before, err := f.store.GetRecord(context.Background(), f.team, accepted.ID, 0)
+			require.NoError(t, err)
+			snapshot, err := f.store.ReadOrganization(context.Background(), f.team, []ontology.SourceHandle{source})
+			require.NoError(t, err)
+			var candidateFound bool
+			for _, view := range snapshot.Candidates {
+				candidateFound = candidateFound || view.ID == accepted.ID
+			}
+			require.True(t, candidateFound)
+			for _, view := range snapshot.Records {
+				require.NotEqual(t, accepted.ID, view.ID)
+			}
+			canonical := f.canonicalSnapshot(t)
+			limits := assessor.DefaultSemanticAssessmentLimits()
+			limits.MaxCandidateContextTokens = 128
+			service, calls := organizationFixtureServiceWithIdentity(t, f, nil, func(q assessment.Request, r *assessment.Response) {
+				for _, definition := range q.Definitions {
+					if definition.Key == accepted.Definition.Key {
+						t.Error("bounded request retained the optional candidate")
+					}
+				}
+				r.Definitions = []assessment.Definition{{Ref: "fresh", Kind: accepted.Kind, Key: accepted.Definition.Key, Label: "Replacement metadata", Aliases: []string{}, BaseEntityKind: "project"}}
+				r.Items[0] = assessment.Decision{Ref: q.Items[0].Ref, Status: "classified", DefinitionRef: "fresh"}
+			}, "bounded-candidate-fixture", limits)
+			input := ontology.OrganizationInput{OperationKey: "bounded-candidate-reuse", Sources: []ontology.SourceHandle{source}}
+			result, err := service.Organize(context.Background(), f.team, input)
+			require.NoError(t, err)
+			require.True(t, result.Current)
+			require.EqualValues(t, 1, calls.Load())
+			require.NotNil(t, result.Publication)
+			require.Len(t, result.Publication.Records, 1)
+			assignment, err := f.store.GetRecord(context.Background(), f.team, result.Publication.Records[0].ID, 0)
+			require.NoError(t, err)
+			require.Equal(t, accepted.ID, assignment.Assignment.DefinitionID)
+			after, err := f.store.GetRecord(context.Background(), f.team, accepted.ID, 0)
+			require.NoError(t, err)
+			require.Equal(t, before, after)
+			input.OperationKey = "bounded-candidate-replay"
+			replay, err := service.Organize(context.Background(), f.team, input)
+			require.NoError(t, err)
+			require.True(t, replay.Existing)
+			require.Equal(t, result.AssessmentID, replay.AssessmentID)
+			require.EqualValues(t, 1, calls.Load())
+			require.Equal(t, canonical, f.canonicalSnapshot(t))
+		})
+	}
 }
