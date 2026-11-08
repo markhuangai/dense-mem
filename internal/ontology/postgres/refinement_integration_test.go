@@ -25,6 +25,82 @@ type refinementFixture struct {
 	parent, child, assignment ontology.Record
 }
 
+func TestOntologyRefinementAmbiguityRetainsEligiblePredicateVersion(t *testing.T) {
+	f := newOrganizationFixture(t)
+	ctx := context.Background()
+	object := maintenanceEntity(t, f, "Atlas project dependency")
+	createPredicate := func(key, subjectKind string) ontology.SourceHandle {
+		t.Helper()
+		subject, err := f.knowledge.CreateEntity(ctx, knowledge.CreateEntityInput{TeamID: f.team, OwnerProfileID: f.owners[0], EntityKind: subjectKind, CanonicalName: "Dependency subject " + key + subjectKind})
+		require.NoError(t, err)
+		predicate, err := f.knowledge.EnsureSemanticReviewPredicateCandidate(ctx, knowledge.EnsureSemanticPredicateCandidateInput{TeamID: f.team, OwnerProfileID: f.owners[0], Predicate: key, RelationshipKind: "state", SubjectKind: subjectKind, ObjectKind: "project"})
+		require.NoError(t, err)
+		text := "The subject uses Atlas as an explicit project dependency."
+		evidence := f.evidence(t, 0, text)
+		decision, err := f.knowledge.ApplyRelationshipDecision(ctx, knowledge.ApplyRelationshipDecisionInput{TeamID: f.team, OwnerProfileID: f.owners[0], IngestID: evidence.IngestID, SubjectEntityID: subject.EntityID, PredicateKey: predicate.PredicateKey, PredicateVersion: predicate.Version, ObjectEntityID: object.ID, Polarity: "+", Support: &knowledge.EvidenceSupportInput{FragmentID: evidence.Evidence[0].FragmentID, SourceGroupKey: uuid.NewString(), SpanEnd: len(text), Authority: "primary"}})
+		require.NoError(t, err)
+		require.NotNil(t, decision.Relationship)
+		return ontology.SourceHandle{Kind: ontology.PredicateSource, ID: predicate.PredicateKey, Version: int64(predicate.Version)}
+	}
+	old := createPredicate("aa112233445566778899aabbccddeeff", "project")
+	latest := createPredicate(old.ID, "person")
+	require.Equal(t, old.ID, latest.ID)
+	require.Greater(t, latest.Version, old.Version)
+	other := createPredicate("utilizes", "project")
+	parent := ontology.Record{ID: uuid.NewString(), Kind: ontology.PredicateConcept, Definition: &ontology.Definition{Key: other.ID, Label: "Utilizes"}}
+	child := ontology.Record{ID: uuid.NewString(), Kind: ontology.PredicateConcept, Definition: &ontology.Definition{Key: "project-dependency-use", Label: "Project dependency use"}}
+	assignment := ontology.Record{ID: uuid.NewString(), Kind: ontology.AssignmentKind, Assignment: &ontology.Assignment{Source: old, DefinitionID: child.ID}, Sources: []ontology.SourceDependency{f.source(t, old)}}
+	revalidationPublish(t, f, ontology.Change{Record: parent}, ontology.Change{Record: child}, ontology.Change{Record: assignment})
+	beforeAssignment, err := f.store.GetRecord(ctx, f.team, assignment.ID, 0)
+	require.NoError(t, err)
+	require.True(t, beforeAssignment.Current)
+	before := f.canonicalSnapshot(t)
+	service, calls := organizationFixtureService(t, f, nil, func(q assessment.Request, r *assessment.Response) {
+		childRef, parentRef := "", ""
+		for _, definition := range q.Definitions {
+			if definition.Key == child.Definition.Key {
+				childRef = definition.Ref
+			} else if definition.Key == parent.Definition.Key {
+				parentRef = definition.Ref
+			}
+		}
+		r.Definitions = []assessment.Definition{}
+		for index, item := range q.Items {
+			if item.Context["predicate"] == latest.ID {
+				r.Items[index] = assessment.Decision{Ref: item.Ref, Status: "ambiguous", Reason: "The new version's context does not justify refinement."}
+			} else {
+				r.Items[index] = assessment.Decision{Ref: item.Ref, Status: "classified", DefinitionRef: childRef, Reason: "The supplied context describes explicit project dependency use."}
+			}
+		}
+		r.HierarchyUpdates = []assessment.HierarchyUpdate{{DefinitionRef: childRef, ParentRef: parentRef, ParentRelation: ontology.SubpropertyOf, Reason: "The supplied project dependency use specializes utilizes."}}
+	})
+	result, err := service.Organize(ctx, f.team, ontology.OrganizationInput{OperationKey: "ambiguous-new-predicate-version", Sources: []ontology.SourceHandle{latest, other}})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, calls.Load())
+	updatedChild, err := f.store.GetRecord(ctx, f.team, child.ID, 0)
+	require.NoError(t, err)
+	require.EqualValues(t, 2, updatedChild.Version)
+	require.Equal(t, parent.ID, updatedChild.Definition.ParentID)
+	require.Equal(t, ontology.SubpropertyOf, updatedChild.Definition.ParentRelation)
+	retained, err := f.store.GetRecord(ctx, f.team, assignment.ID, 0)
+	require.NoError(t, err)
+	require.True(t, retained.Current)
+	require.Equal(t, beforeAssignment.Assignment, retained.Assignment)
+	require.Equal(t, beforeAssignment.Sources, retained.Sources)
+	require.EqualValues(t, 2, retained.Version)
+	require.Contains(t, retained.Dependencies, ontology.RevisionRef{ID: child.ID, Version: updatedChild.Version})
+	ambiguous := false
+	for _, outcome := range result.Outcomes {
+		if outcome.Source == latest {
+			ambiguous = true
+			require.Equal(t, "ambiguous", outcome.Status)
+			require.Contains(t, outcome.RecordIDs, assignment.ID)
+		}
+	}
+	require.True(t, ambiguous)
+	require.Equal(t, before, f.canonicalSnapshot(t))
+}
+
 func newRefinementFixture(t *testing.T, predicate, legacy bool) refinementFixture {
 	t.Helper()
 	f := newOrganizationFixture(t)

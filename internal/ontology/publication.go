@@ -96,7 +96,7 @@ func buildPublication(teamID string, context contract.OrganizationContext, reque
 			outcome.Status = "ambiguous"
 			outcome.Reason = "classification_ambiguous"
 			for _, view := range context.Records {
-				if !view.Current || view.Assignment == nil || view.Assignment.Source != binding.sources[decision.Ref].SourceHandle {
+				if !view.Current || view.Assignment == nil || contract.SourceKey(view.Assignment.Source) != contract.SourceKey(binding.sources[decision.Ref].SourceHandle) {
 					continue
 				}
 				changed, err := refreshOrganizationDefinition(view.Assignment.DefinitionID, definitionRecords, changes, nil)

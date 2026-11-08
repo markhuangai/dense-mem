@@ -119,3 +119,58 @@ func TestOrganizationReproposedCandidatePreservesAcceptedDefinition(t *testing.T
 		})
 	}
 }
+
+func TestOrganizationAmbiguityRetainsEligiblePredicateVersion(t *testing.T) {
+	old := unitSource("predicate-version", "An active project dependency.")
+	old.Kind, old.ID = contract.PredicateSource, "dependency"
+	latest := old
+	latest.Version++
+	other := old
+	other.ID = "utilizes"
+	parent := contract.Record{ID: uuid.NewString(), Version: 1, Kind: contract.PredicateConcept, Definition: &contract.Definition{Key: "utilizes", Label: "Utilizes"}}
+	var err error
+	parent.Fingerprint, err = contract.RecordFingerprint(parent, nil, nil)
+	require.NoError(t, err)
+	child := contract.Record{ID: uuid.NewString(), Version: 1, Kind: contract.PredicateConcept, Definition: &contract.Definition{Key: "project-dependency-use", Label: "Project dependency use"}}
+	assignment := contract.Record{ID: uuid.NewString(), Version: 1, Kind: contract.AssignmentKind, Assignment: &contract.Assignment{Source: old.SourceHandle, DefinitionID: child.ID}, Sources: unitReceipt(t, []contract.SourceSnapshot{old}).Sources, Dependencies: []contract.RevisionRef{{ID: child.ID, Version: 1}}}
+	ctx := contract.OrganizationContext{Revision: 1, Sources: []contract.SourceSnapshot{latest, other}, Records: []contract.RecordView{{Record: assignment, Current: true}}, Candidates: []contract.RecordView{{Record: child, Current: true}, {Record: parent, Current: true}}}
+	receipt := unitReceipt(t, ctx.Sources)
+	request, binding, err := NewService(nil, assessment.NewProvider(nil, "model", assessor.DefaultSemanticAssessmentLimits(), 300000)).request(ctx, &receipt)
+	require.NoError(t, err)
+	childRef, parentRef := "", ""
+	for _, definition := range request.Definitions {
+		if definition.Key == child.Definition.Key {
+			childRef = definition.Ref
+		} else if definition.Key == parent.Definition.Key {
+			parentRef = definition.Ref
+		}
+	}
+	response := assessment.Response{RequestID: request.RequestID, Definitions: []assessment.Definition{}, Equivalence: []assessment.Equivalence{}, HierarchyUpdates: []assessment.HierarchyUpdate{{DefinitionRef: childRef, ParentRef: parentRef, ParentRelation: contract.SubpropertyOf, Reason: "The supplied project dependency use specializes utilizes."}}}
+	for _, item := range request.Items {
+		decision := assessment.Decision{Ref: item.Ref, Status: "classified", DefinitionRef: childRef, Reason: "The supplied context describes project dependency use."}
+		if item.Context["predicate"] == latest.ID {
+			decision = assessment.Decision{Ref: item.Ref, Status: "ambiguous", Reason: "The new version's context does not justify refinement."}
+		}
+		response.Items = append(response.Items, decision)
+	}
+	require.NoError(t, assessment.Validate(request, response))
+	publication, err := buildPublication(old.TeamID, ctx, request, response, binding, &receipt)
+	require.NoError(t, err)
+	require.Equal(t, "ambiguous", receipt.Result.Outcomes[0].Status)
+	require.Equal(t, []string{assignment.ID}, receipt.Result.Outcomes[0].RecordIDs)
+	snapshots := map[string]contract.SourceSnapshot{contract.SourceKey(old.SourceHandle): old, contract.SourceKey(other.SourceHandle): other}
+	for _, change := range publication.Changes {
+		require.NoError(t, contract.CheckSourceDependencies(change.Record, snapshots), "%+v", change.Record)
+	}
+	prepared, err := contract.PreparePublication(map[string]contract.Record{parent.ID: parent, child.ID: child, assignment.ID: assignment}, snapshots, publication, true)
+	require.NoError(t, err)
+	require.Len(t, prepared, 3)
+	for _, record := range prepared {
+		if record.ID == assignment.ID {
+			require.Equal(t, assignment.Assignment, record.Assignment)
+			require.Equal(t, assignment.Sources, record.Sources)
+			require.EqualValues(t, 2, record.Version)
+			require.Contains(t, record.Dependencies, contract.RevisionRef{ID: child.ID, Version: 2})
+		}
+	}
+}
