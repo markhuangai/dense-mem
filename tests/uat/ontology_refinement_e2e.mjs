@@ -15,9 +15,10 @@ export async function automaticRefinementAcceptance({ control, mcp, postgresQuer
     await poll(() => postgresQuery("SELECT count(*) FROM ontology_maintenance_batches WHERE status='running'") === "0", "drain");
   };
   try {
+    const cases = [];
+    await pause();
+    await fixtureMode("normal");
     for (const mode of ["refine", "normal", "ambiguous", "refine-repair", "refine-malformed", "pin-race", "freshness-race"]) {
-      await pause();
-      await fixtureMode("normal");
       const team = (await control("/teams", { name: `refinement-${mode}-${randomUUID()}` })).data;
       const owner = (await control(`/teams/${team.id}/credentials`, { name: "refinement manager", role: "manager", scopes: ["read", "write"], rate_limit: 300 })).data;
       const ui = async (path, body) => {
@@ -38,9 +39,12 @@ export async function automaticRefinementAcceptance({ control, mcp, postgresQuer
       const sourceID = postgresQuery(`SELECT entity_id::text FROM entity_records WHERE team_id=${literal(team.id)}::uuid AND entity_kind='project'`);
       assert.match(sourceID, /^[0-9a-f-]{36}$/);
       const queue = () => JSON.parse(postgresQuery(`SELECT jsonb_build_object('status',status,'assessment',assessment_id,'revision',revision) FROM ontology_maintenance_sources WHERE team_id=${literal(team.id)}::uuid AND source_kind='entity' AND source_id=${literal(sourceID)}`) || "null");
-      await control("/ontology/resume", { operation_key: randomUUID() });
-      await poll(() => queue()?.status === "organized", "initial automatic classification");
-      await pause();
+      cases.push({ mode, team, owner, ui, publish, sourceCanary, sourceID, queue });
+    }
+    await control("/ontology/resume", { operation_key: randomUUID() });
+    await poll(() => cases.every(({ queue }) => queue()?.status === "organized"), "initial automatic classifications");
+    await pause();
+    for (const { mode, team, owner, ui, publish, sourceCanary, sourceID, queue } of cases) {
       const initialAssessment = queue().assessment;
       const definitions = (await ui("/records?kind=entity_class&limit=200")).records;
       const parent = definitions.find((record) => record.definition.key === "project");

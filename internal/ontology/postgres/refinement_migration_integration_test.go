@@ -22,8 +22,8 @@ func TestOntologyRefinementRefreshMigration(t *testing.T) {
 	service, _ := organizationFixtureService(t, f, nil, nil)
 	receipt, err := service.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: "preserved-v2-receipt", Sources: []ontology.SourceHandle{source}})
 	require.NoError(t, err)
-	historical, deleted, inactive := maintenanceOtherTeam(t, f), maintenanceOtherTeam(t, f), maintenanceOtherTeam(t, f)
-	for _, x := range []*ontologyFixture{f, historical, deleted, inactive} {
+	historical, deleted, archived := maintenanceOtherTeam(t, f), maintenanceOtherTeam(t, f), maintenanceOtherTeam(t, f)
+	for _, x := range []*ontologyFixture{f, historical, deleted, archived} {
 		for _, kind := range []string{"entity", "predicate", "evidence", "relationship"} {
 			for _, status := range []string{"organized", "pending", "failed", "ambiguous", "unavailable"} {
 				for _, eligible := range []bool{true, false} {
@@ -37,7 +37,7 @@ func TestOntologyRefinementRefreshMigration(t *testing.T) {
 	require.NoError(t, f.admin.Exec(`UPDATE ontology_maintenance_sources SET assessment_id=?::uuid`, receipt.AssessmentID).Error)
 	require.NoError(t, f.admin.Exec(`UPDATE memory_spaces SET generation=generation+1 WHERE id=?::uuid`, historical.space).Error)
 	require.NoError(t, f.admin.Exec(`UPDATE teams SET deleted_at=clock_timestamp() WHERE id=?::uuid`, deleted.team).Error)
-	require.NoError(t, f.admin.Exec(`UPDATE teams SET status='inactive' WHERE id=?::uuid`, inactive.team).Error)
+	require.NoError(t, f.admin.Exec(`UPDATE teams SET status='archived' WHERE id=?::uuid`, archived.team).Error)
 	// Queue scope itself excludes private spaces, independent of the refresh filter.
 	require.Error(t, f.admin.Exec(`INSERT INTO ontology_maintenance_sources(team_id,shared_space_id,space_generation,source_kind,source_id,source_version,eligible,status)
 	 VALUES(?::uuid,?::uuid,?,'entity',?,1,true,'organized')`, f.team, f.credentials[0].MemorySpaceID, f.credentials[0].MemorySpaceGeneration, uuid.NewString()).Error)
