@@ -3,7 +3,6 @@ import { randomUUID } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { captureRememberFailure } from "./synchronous_write/cases/diagnostics.mjs";
-import { automaticRefinementAcceptance } from "./ontology_refinement_e2e.mjs";
 import { assessmentRecords, captureSemanticAssessmentWindow } from "./ontology_assessment_diagnostics.mjs";
 
 const userURL = required("DENSE_MEM_USER_URL").replace(/\/$/, "");
@@ -309,8 +308,6 @@ try {
       assert(!Object.hasOwn(attempt, "validation"), "successful and transport-failed attempts must omit validation rejection details");
     }
   }
-  paused = true;
-  await automaticRefinementAcceptance({ control, mcp, postgresQuery, fixtureMode, canonicalFingerprints, directory: `${failureDirectory}/ontology-refinement` });
   console.log(JSON.stringify({ status: "ok", scenario: "ontology_organization", window_id: status.window.id, counts: status.counts, durable_command_replay: true, operator_isolation: true, grouped_recall: true, original_sources_retained: true, private_and_foreign_isolation: true, stale_group_fallback: true, recall_organization_provider_tokens: 0, bounded_ambiguity_run: ambiguousRun.id, retryable_failure_run: failedRun.id }));
 } catch (error) {
   failure = error;
