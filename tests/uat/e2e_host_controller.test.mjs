@@ -1441,6 +1441,14 @@ test("six precheck shards account for package batches while the legacy route ret
 });
 
 test("six precheck shards preserve every real runner selection exactly once", async () => {
+  const discoveryStart = controller.indexOf("\ndatabase_case_capabilities()") + 1;
+  const discovery = controller.slice(discoveryStart, controller.indexOf("\npartition_precheck_capabilities()", discoveryStart));
+  for (const scenario of ["ontology_organization", "ontology_management"]) {
+    const result = await run("bash", ["-c", `${discovery}\ndatabase_case_capabilities "$1" scenario "$2"`, "case-discovery", root, scenario]);
+    assert.equal(result.stdout, "");
+  }
+  const upgrade = await run("bash", ["-c", `${discovery}\ndatabase_case_capabilities "$1" scenario ontology_upgrade`, "case-discovery", root]);
+  assert.notEqual(upgrade.stdout.trim(), "");
   const start = controller.indexOf("\npartition_precheck_capabilities()") + 1;
   const helper = controller.slice(start, controller.indexOf("\nprecheck() {", start));
   const command = `${helper}\npartition_precheck_capabilities "$1" 6`;
@@ -1462,6 +1470,41 @@ test("six precheck shards preserve every real runner selection exactly once", as
     "repository/TestOntologyRefinementRebuildsStoredAncestry",
     "repository/TestOntologyRefinementCoarseAncestryBound",
     "repository/TestOntologyRefinementDefinitionAliasRace",
+    "repository/TestOntologyManagementAuditFailureIsAtomic",
+    "repository/TestOntologyManagementCompetingDraftsAndPublications",
+    "repository/TestOntologyManagementCompetingSavesKeepLosingEdits",
+    "repository/TestOntologyManagementCorrectionWhileMaintenanceInFlight",
+    "repository/TestOntologyManagementDraftIsolationReplayAndRLS",
+    "repository/TestOntologyManagementEditAndUnpinTogether",
+    "repository/TestOntologyManagementExcludesManagersOwnPrivateSpaces",
+    "repository/TestOntologyManagementHTTPPersistedWorkflow",
+    "repository/TestOntologyManagementPinUnpinRollbackAndHistory",
+    "repository/TestOntologyManagementPredicateLookupBeyondFirstPage",
+    "repository/TestOntologyManagementPreviewsAreBoundedAndPreserveOtherGroups",
+    "repository/TestOntologyManagementPrivateForeignAndStaleSources",
+    "repository/TestOntologyManagementRejectsCyclesAndExplicitReplacementCollisions",
+    "repository/TestOntologyManagementReplacesAdvancedSourceAndRemovesWithdrawnCorrection",
+    "repository/TestOntologyManagementRetiredGroupSplitsIntoDistinctRecords",
+    "repository/TestOntologyManagementStatusCountsOnlyAuthenticatedTeam",
+    "repository/TestOntologyOrganizationPreservesPerRecordDependencyBounds",
+    "repository/TestOntologyOrganizationPreservesValidLargeSourceContext",
+    "repository/TestOntologyUnavailableSnapshotRetainsScopedHandleForMaintenance",
+    "repository/TestRecallOntologyBatchKeepsActivePredicateVersions",
+    "repository/TestRecallOntologyDiscoveryAliasesAndTemporalFallback",
+    "repository/TestRecallOntologyDiscoveryHydrationEnforcesEligibilityAndState",
+    "repository/TestRecallOntologyFeedbackAlternatesDoNotInflateResults",
+    "repository/TestRecallOntologyFrozenCohort",
+    "repository/TestRecallOntologyGroupingKnownIDsAndStaleSources",
+    "repository/TestRecallOntologyHydrationUsesOneSnapshotAcrossRetraction",
+    "repository/TestRecallOntologyManagementLockedCohort",
+    "repository/TestRecallOntologyMigratedAliasRemainsIneligibleWithCurrentProjection",
+    "repository/TestRecallOntologyOptionalFailureAndRequiredFailureRemainDistinct",
+    "repository/TestRecallOntologyPrefetchedGroupsReadNewEvidenceAndReauthorize",
+    "repository/TestRecallOntologyPrivateForeignAndOldGenerationSources",
+    "repository/TestRecallOntologyPunctuatedKeysAndAliases",
+    "repository/TestRecallOntologyReaderResetsBetweenTransactions",
+    "repository/TestRecallOntologyRelationshipDiscoveryPreservesSemanticGroups",
+    "repository/TestRecallOntologySourceRevisionCorrectionAndDefinitionStaleness",
   ].sort();
   const measurement = "repository/TestOntologyMaintenanceRevalidationDiscoveryMeasurement";
   assert.equal(selections[1], `cases:${measurement}`);
@@ -1491,7 +1534,7 @@ test("six precheck shards preserve every real runner selection exactly once", as
   }
   assert.equal(new Set(actual).size, actual.length);
   assert.deepEqual(actual.sort(), inventory.sort());
-  assert.equal(actual.length, 699);
+  assert.equal(actual.length, 734);
   assert.equal((await run("bash", ["-c", command, "six-shards", root])).stdout, stdout);
   await assert.rejects(run("bash", ["-c", `${helper}\npartition_precheck_capabilities "$1" 4`, "bad-shards", root]), /three or six shards/);
 });

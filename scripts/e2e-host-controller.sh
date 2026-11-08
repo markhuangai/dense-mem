@@ -530,6 +530,7 @@ const groups = Array.from({ length: shardCount }, () => ({
   capabilities: [],
 }));
 const records = [];
+const recallOntology = [];
 
 for (const entry of fs.readdirSync(directory).filter((item) => item.endsWith(".json")).sort()) {
   const capability = path.basename(entry, ".json");
@@ -538,14 +539,25 @@ for (const entry of fs.readdirSync(directory).filter((item) => item.endsWith(".j
     throw new Error(`invalid database case registry ${entry}`);
   }
   const packageCounts = new Map();
+  const selectedCases = [];
   for (const item of fragment.cases) {
     if (item.phase !== "precheck") continue;
+    if (shardCount === 6 && capability === "recall" && [
+      "internal/recall/postgres/recall_ontology_integration_test.go",
+      "internal/recall/postgres/recall_ontology_scope_integration_test.go",
+      "internal/recall/postgres/recall_ontology_cohort_integration_test.go",
+      "internal/recall/postgres/ontology_management_cohort_integration_test.go",
+    ].includes(item.source)) {
+      recallOntology.push(item.id);
+      continue;
+    }
+    selectedCases.push(item);
     packageCounts.set(item.package, (packageCounts.get(item.package) || 0) + 1);
   }
   if (packageCounts.size === 0) continue;
   const cases = [...packageCounts.values()].reduce((total, count) => total + count, 0);
   const weight = [...packageCounts.values()].reduce((total, count) => total + Math.ceil(count / batchSize), 0);
-  const caseIds = fragment.cases.filter((item) => item.phase === "precheck").map((item) => item.id);
+  const caseIds = selectedCases.map((item) => item.id);
   // Community's fanout cohort needs more room than its case count suggests in the bounded six-shard route.
   const load = shardCount === 6 && capability === "community" ? cases * 4 : cases;
   records.push({ capability, cases, load, packageCounts, weight, caseIds });
@@ -565,11 +577,19 @@ if (shardCount === 6) {
     "repository/TestOntologyMaintenanceLargeBacklogAndFairTurns",
     "repository/TestOntologyMaintenanceReadMeasurement",
     "repository/TestOntologyOrganizationVocabularyAndSourceFences",
+    ...[
+      "repository/TestOntologyUnavailableSnapshotRetainsScopedHandleForMaintenance",
+      "repository/TestOntologyOrganizationPreservesValidLargeSourceContext",
+      "repository/TestOntologyOrganizationPreservesPerRecordDependencyBounds",
+    ].filter((id) => ontology?.caseIds.includes(id)),
+    ...(ontology?.caseIds.filter((id) => /^repository\/TestOntologyManagement/.test(id)) || []),
+    ...recallOntology,
     ...refinement,
   ].sort();
   const measurement = "repository/TestOntologyMaintenanceRevalidationDiscoveryMeasurement";
   const isolated = [...dedicated, measurement];
-  if (!ontology || isolated.some((id) => !ontology.caseIds.includes(id)) || ontology.caseIds.length <= isolated.length || records.length < 5) {
+  const isolatedOntology = isolated.filter((id) => !recallOntology.includes(id));
+  if (!ontology || isolatedOntology.some((id) => !ontology.caseIds.includes(id)) || ontology.caseIds.length <= isolatedOntology.length || records.length < 5) {
     throw new Error("six precheck shards require dedicated ontology cases, discovery measurement, remaining ontology, and four populated capability groups");
   }
   caseSelections.push(dedicated.join(","), measurement, ontology.caseIds.filter((id) => !isolated.includes(id)).sort().join(","));
@@ -620,7 +640,13 @@ if (shardCount === 6 && groups.some((group) => group.capabilities.length === 0))
 for (const ids of caseSelections) process.stdout.write(`cases:${ids}\n`);
 if (isolateOntology && shardCount === 3) process.stdout.write("ontology\n");
 for (const group of groups) {
-  if (group.capabilities.length > 0) process.stdout.write(`${group.capabilities.join(",")}\n`);
+  if (shardCount === 6 && recallOntology.length > 0 && group.capabilities.includes("recall")) {
+    // A capability selector would include the ontology cases already assigned above.
+    const ids = records.filter((record) => group.capabilities.includes(record.capability)).flatMap((record) => record.caseIds).sort();
+    process.stdout.write(`cases:${ids.join(",")}\n`);
+  } else if (group.capabilities.length > 0) {
+    process.stdout.write(`${group.capabilities.join(",")}\n`);
+  }
 }
 NODE
 }
