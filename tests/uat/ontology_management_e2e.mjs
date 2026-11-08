@@ -3,7 +3,6 @@ import { createHash, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { collectSemanticPublicationProof } from "./ontology_semantic_diagnostics.mjs";
-import { automaticRefinementAcceptance } from "./ontology_refinement_e2e.mjs";
 
 const required = (name) => { assert(process.env[name], `${name} is required`); return process.env[name]; };
 const userURL = required("DENSE_MEM_USER_URL").replace(/\/$/, "");
@@ -114,16 +113,7 @@ try {
   await semanticHierarchyAcceptance(shared.credential.id, [c, readonly]);
   assert.deepEqual(snapshot(), canonical, "semantic hierarchy changed canonical facts or provenance");
   await matchingAcceptance();
-  await automaticRefinementAcceptance({
-    control: async (...args) => ({ data: await control(...args) }), mcp,
-    postgresQuery: (sql) => executeFixtureSQL(`BEGIN; SET LOCAL app.tx_mode='system'; ${sql}; COMMIT;`),
-    fixtureMode: async (mode) => {
-      const response = await fetch(`${required("DENSE_MEM_E2E_PROVIDER_URL")}/ontology-fixture`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode }) });
-      assert.equal(response.status, 200);
-    },
-    canonicalFingerprints: snapshot,
-    directory: `${process.env.DENSE_MEM_E2E_REMEMBER_FAILURE_DIR || "/tmp/dense-mem-remember-failures"}/ontology-refinement-debug`,
-  });
+
   console.log("ontology management production HTTP/MCP: permissions, isolation, replay, stale conflicts, provider-free preview, split persistence, pin/unpin and rollback passed");
 } finally {
   await control(initial.paused ? "/ontology/pause" : "/ontology/resume", { operation_key: randomUUID() });

@@ -114,7 +114,7 @@ export async function automaticRefinementAcceptance({ control, mcp, postgresQuer
       console.log(JSON.stringify({ scenario: "ontology_refinement", mode, phase: "completed", team_id: team.id, assessment_id: receipt.assessment, batch_id: receipt.batch }));
     }
     collectSemanticAssessmentProof({ project: process.env.DENSE_MEM_E2E_COMPOSE_PROJECT, composeFile: process.env.DENSE_MEM_E2E_COMPOSE_FILE, since, directory, assessments });
-    console.log(JSON.stringify({ scenario: "ontology_organization", automatic_refinement: true, preference_reuse: true, ambiguity_preserved: true, complete_regeneration: true, atomic_rejection: true, pin_and_freshness_races: true, log_only_assessments: assessments.length }));
+    console.log(JSON.stringify({ scenario: "ontology_upgrade", automatic_refinement: true, preference_reuse: true, ambiguity_preserved: true, complete_regeneration: true, atomic_rejection: true, pin_and_freshness_races: true, log_only_assessments: assessments.length }));
   } catch (error) {
     try {
       const window = captureSemanticAssessmentWindow({ project: process.env.DENSE_MEM_E2E_COMPOSE_PROJECT, composeFile: process.env.DENSE_MEM_E2E_COMPOSE_FILE, since, directory });

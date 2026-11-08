@@ -530,7 +530,6 @@ const groups = Array.from({ length: shardCount }, () => ({
   capabilities: [],
 }));
 const records = [];
-const recallOntology = [];
 
 for (const entry of fs.readdirSync(directory).filter((item) => item.endsWith(".json")).sort()) {
   const capability = path.basename(entry, ".json");
@@ -542,15 +541,6 @@ for (const entry of fs.readdirSync(directory).filter((item) => item.endsWith(".j
   const selectedCases = [];
   for (const item of fragment.cases) {
     if (item.phase !== "precheck") continue;
-    if (shardCount === 6 && capability === "recall" && [
-      "internal/recall/postgres/recall_ontology_integration_test.go",
-      "internal/recall/postgres/recall_ontology_scope_integration_test.go",
-      "internal/recall/postgres/recall_ontology_cohort_integration_test.go",
-      "internal/recall/postgres/ontology_management_cohort_integration_test.go",
-    ].includes(item.source)) {
-      recallOntology.push(item.id);
-      continue;
-    }
     selectedCases.push(item);
     packageCounts.set(item.package, (packageCounts.get(item.package) || 0) + 1);
   }
@@ -582,14 +572,11 @@ if (shardCount === 6) {
       "repository/TestOntologyOrganizationPreservesValidLargeSourceContext",
       "repository/TestOntologyOrganizationPreservesPerRecordDependencyBounds",
     ].filter((id) => ontology?.caseIds.includes(id)),
-    ...(ontology?.caseIds.filter((id) => /^repository\/TestOntologyManagement/.test(id)) || []),
-    ...recallOntology,
     ...refinement,
   ].sort();
   const measurement = "repository/TestOntologyMaintenanceRevalidationDiscoveryMeasurement";
   const isolated = [...dedicated, measurement];
-  const isolatedOntology = isolated.filter((id) => !recallOntology.includes(id));
-  if (!ontology || isolatedOntology.some((id) => !ontology.caseIds.includes(id)) || ontology.caseIds.length <= isolatedOntology.length || records.length < 5) {
+  if (!ontology || isolated.some((id) => !ontology.caseIds.includes(id)) || ontology.caseIds.length <= isolated.length || records.length < 5) {
     throw new Error("six precheck shards require dedicated ontology cases, discovery measurement, remaining ontology, and four populated capability groups");
   }
   caseSelections.push(dedicated.join(","), measurement, ontology.caseIds.filter((id) => !isolated.includes(id)).sort().join(","));
@@ -640,11 +627,7 @@ if (shardCount === 6 && groups.some((group) => group.capabilities.length === 0))
 for (const ids of caseSelections) process.stdout.write(`cases:${ids}\n`);
 if (isolateOntology && shardCount === 3) process.stdout.write("ontology\n");
 for (const group of groups) {
-  if (shardCount === 6 && recallOntology.length > 0 && group.capabilities.includes("recall")) {
-    // A capability selector would include the ontology cases already assigned above.
-    const ids = records.filter((record) => group.capabilities.includes(record.capability)).flatMap((record) => record.caseIds).sort();
-    process.stdout.write(`cases:${ids.join(",")}\n`);
-  } else if (group.capabilities.length > 0) {
+  if (group.capabilities.length > 0) {
     process.stdout.write(`${group.capabilities.join(",")}\n`);
   }
 }
