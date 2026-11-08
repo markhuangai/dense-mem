@@ -57,6 +57,13 @@ export async function automaticRefinementAcceptance({ control, mcp, postgresQuer
       const pin = (await ui("/records?kind=override&limit=200")).records.find((record) => !record.retired && record.override?.action === "pin_definition" && record.override.target_id === target.id);
       assert(pin);
       await publish([{ action: "remove_override", record_id: pin.id, expected_version: pin.version }]);
+      const beforeRefresh = queue();
+      const refreshed = JSON.parse(postgresQuery(`UPDATE ontology_maintenance_sources SET status='pending',reason='organization_policy_v2',revision=revision+1,pending_at=clock_timestamp(),updated_at=clock_timestamp()
+        WHERE team_id=${literal(team.id)}::uuid AND source_kind='entity' AND source_id=${literal(sourceID)} AND eligible AND status='organized'
+        RETURNING jsonb_build_object('status',status,'assessment',assessment_id,'revision',revision)`));
+      assert.equal(refreshed.status, "pending");
+      assert.equal(refreshed.assessment, initialAssessment);
+      assert.equal(refreshed.revision, beforeRefresh.revision + 1);
       const racing = mode.endsWith("-race");
       await fixtureMode(racing ? "refine-hold" : mode);
       let canonical = canonicalFingerprints(team.id);

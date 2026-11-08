@@ -8,6 +8,12 @@ const REDACTION = "[REDACTED]";
 
 function publicConfigurationValue(name, value) {
   switch (name) {
+    case "AI_VERIFIER_MODEL":
+    case "AI_REMEMBER_MODEL":
+    case "AI_CONFLICT_REVIEW_MODEL":
+    case "AI_API_EMBEDDING_MODEL":
+    case "ONTOLOGY_MAINTENANCE_MODEL":
+      return /^[A-Za-z0-9@][A-Za-z0-9_./:@+-]{0,255}$/.test(value);
     case "TELEMETRY_ENABLED":
     case "AI_VERIFIER_DISABLE_TEMPERATURE":
       return /^(true|false)$/.test(value);

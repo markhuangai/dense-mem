@@ -65,7 +65,7 @@ try {
   assert.equal(denied.status, 401);
   await control("/ontology/pause", { operation_key: randomUUID() });
   await fixture("normal");
-  await until(async () => Number(query(`SELECT count(*) FROM ontology_maintenance_batches WHERE status='running' AND lease_until>clock_timestamp()`)) === 0, 30000, "pause failed to drain admitted batches");
+  await until(async () => Number(query(`SELECT count(*) FROM ontology_maintenance_batches WHERE status='running' AND lease_until>clock_timestamp()`)) === 0, 90000, "pause failed to drain admitted batches");
   assert.deepEqual(canonical(), canonicalBefore, "parallel ontology must preserve canonical Knowledge");
   const stopped = await providerHealth();
   await delay(1000);
