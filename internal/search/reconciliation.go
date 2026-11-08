@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"strings"
 	"time"
 
@@ -12,10 +11,11 @@ import (
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	searchcontract "github.com/markhuangai/dense-mem/internal/search/contract"
+	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
 )
 
 const (
-	searchReconciliationDocumentLimit = 256
+	searchReconciliationDocumentLimit = semanticwrite.MaxDocuments
 	searchReconciliationProviderCap   = 10 * time.Second
 	searchReconciliationFinalizeCap   = 5 * time.Second
 )
@@ -43,7 +43,8 @@ type SearchReconciliationService interface {
 type SearchReconciliationDependencies struct {
 	Repository      searchcontract.SearchRepository
 	Projection      knowledgecontract.SearchProjectionRepository
-	Provider        embeddingcontract.EmbeddingProviderInterface
+	Executor        *semanticwrite.Executor
+	Logger          observability.LogProvider
 	Now             func() time.Time
 	ProviderTimeout time.Duration
 	BatchLimit      int
@@ -52,7 +53,8 @@ type SearchReconciliationDependencies struct {
 type searchReconciliationService struct {
 	repository      searchcontract.SearchRepository
 	projection      knowledgecontract.SearchProjectionRepository
-	provider        embeddingcontract.EmbeddingProviderInterface
+	executor        *semanticwrite.Executor
+	logger          observability.LogProvider
 	now             func() time.Time
 	providerTimeout time.Duration
 	batchLimit      int
@@ -72,20 +74,50 @@ func NewSearchReconciliationService(deps SearchReconciliationDependencies) Searc
 		limit = searchReconciliationDocumentLimit
 	}
 	return &searchReconciliationService{
-		repository: deps.Repository, projection: deps.Projection, provider: deps.Provider,
+		repository: deps.Repository, projection: deps.Projection, executor: deps.Executor, logger: deps.Logger,
 		now: now, providerTimeout: timeout, batchLimit: limit,
 	}
 }
 
-func (s *searchReconciliationService) Run(ctx context.Context) (SearchReconciliationResult, error) {
-	result := SearchReconciliationResult{}
-	if s == nil || s.repository == nil || s.projection == nil || s.provider == nil {
+func (s *searchReconciliationService) Run(ctx context.Context) (result SearchReconciliationResult, runErr error) {
+	started := time.Now()
+	var fence semanticwrite.Fence
+	var sources []map[string]any
+	defer func() {
+		if runErr == nil || s == nil || s.logger == nil {
+			return
+		}
+		cause := runErr
+		var failure *reconciliationFailure
+		if errors.As(runErr, &failure) && failure.cause != nil {
+			cause = failure.cause
+		}
+		metadata := embeddingcontract.ClassifyFailure(cause)
+		if errors.Is(cause, semanticwrite.ErrProviderTimeout) {
+			metadata = embeddingcontract.ClassifyFailure(context.DeadlineExceeded)
+		}
+		attrs := []observability.LogAttr{
+			observability.String("run_id", result.RunID), observability.String("error_code", result.ErrorCode),
+			observability.String("failure_class", metadata.Class), observability.String("failure_code", metadata.Code),
+			{Key: "embedding_fence", Value: fence.LogFields()}, {Key: "sources", Value: sources},
+			{Key: "selected_count", Value: result.SelectedCount}, {Key: "embedded_count", Value: result.EmbeddedCount},
+			{Key: "updated_count", Value: result.UpdatedCount}, {Key: "duration_ms", Value: time.Since(started).Milliseconds()},
+			observability.String("outcome", "failed"),
+		}
+		if contextual, ok := s.logger.(observability.ContextLogProvider); ok {
+			contextual.ErrorContext(ctx, "search_reconciliation_failed", cause, attrs...)
+		} else {
+			s.logger.Error("search_reconciliation_failed", errors.New("[diagnostic unavailable]"), attrs...)
+		}
+	}()
+	if s == nil || s.repository == nil || s.projection == nil {
 		return result, fmt.Errorf("%w: service unavailable", ErrSearchReconciliationFailed)
 	}
 	contract, err := s.repository.GetActiveSearchContract(ctx)
 	if err != nil {
-		return result, fmt.Errorf("%w: active contract unavailable", ErrSearchReconciliationFailed)
+		return result, &reconciliationFailure{code: "active contract unavailable", cause: err}
 	}
+	fence = semanticwrite.Fence{Model: contract.EmbeddingModel, Dimensions: contract.EmbeddingDimensions, EmbeddingContractID: contract.EmbeddingContractID, SearchGenerationID: contract.SearchIndexGenerationID, SearchGenerationVersion: int64(contract.IndexGeneration)}
 	now := s.now().UTC()
 	run, claimed, err := s.projection.ReserveSearchReconciliationRun(ctx, knowledgecontract.SearchReconciliationRunInput{
 		EmbeddingContractID: contract.EmbeddingContractID,
@@ -93,7 +125,7 @@ func (s *searchReconciliationService) Run(ctx context.Context) (SearchReconcilia
 		Now:                 now,
 	})
 	if err != nil {
-		return result, fmt.Errorf("%w: run reservation failed", ErrSearchReconciliationFailed)
+		return result, &reconciliationFailure{code: "run reservation failed", cause: err}
 	}
 	if !claimed || run == nil {
 		result.Status = "skipped"
@@ -102,6 +134,7 @@ func (s *searchReconciliationService) Run(ctx context.Context) (SearchReconcilia
 	}
 	result.RunID = run.RunID
 	result.Status = "running"
+	ctx = observability.WithExchangeScope(ctx, observability.ExchangeScope{RunID: run.RunID})
 
 	documents, err := s.projection.SelectSearchReconciliationDocuments(ctx, knowledgecontract.SearchReconciliationSelectionInput{
 		RunID:               run.RunID,
@@ -113,6 +146,12 @@ func (s *searchReconciliationService) Run(ctx context.Context) (SearchReconcilia
 		return s.fail(ctx, result, 0, 0, "reconciliation_selection_failed", err)
 	}
 	result.SelectedCount = int64(len(documents))
+	for _, document := range documents {
+		sources = append(sources, map[string]any{"team_id": document.TeamID, "owner_profile_id": document.OwnerProfileID, "source_kind": document.SourceKind, "source_id": document.SourceID, "source_version": document.SourceVersion, "search_document_id": document.SearchDocumentID, "document_hash": document.DocumentHash, "document_version": document.DocumentVersion, "space_id": document.SpaceID, "space_generation": document.SpaceGeneration, "retired": document.Retired})
+	}
+	if contextual, ok := s.logger.(observability.ContextLogProvider); ok {
+		contextual.DebugContext(ctx, "search_reconciliation_planned", observability.String("run_id", result.RunID), observability.LogAttr{Key: "embedding_fence", Value: fence.LogFields()}, observability.LogAttr{Key: "sources", Value: sources})
+	}
 	if len(documents) == 0 {
 		return s.finish(ctx, result, "completed", "")
 	}
@@ -121,53 +160,45 @@ func (s *searchReconciliationService) Run(ctx context.Context) (SearchReconcilia
 	if err != nil {
 		return s.fail(ctx, result, result.SelectedCount, 0, "reconciliation_snapshot_invalid", err)
 	}
-	var vectors [][]float32
-	if len(texts) > 0 {
-		if !s.provider.IsAvailable() {
-			return s.fail(ctx, result, result.SelectedCount, 0, "embedding_unavailable", nil)
-		}
-		if model := strings.TrimSpace(s.provider.ModelName()); model != contract.EmbeddingModel {
-			return s.fail(ctx, result, result.SelectedCount, 0, "embedding_contract_mismatch", nil)
-		}
-		if dimensions := s.provider.Dimensions(); dimensions != 0 && dimensions != contract.EmbeddingDimensions {
-			return s.fail(ctx, result, result.SelectedCount, 0, "embedding_contract_mismatch", nil)
-		}
-
-		embedCtx, cancel := context.WithTimeout(observability.WithAIOperation(ctx, observability.AIOperationSearchDocumentEmbedding, len(texts)), s.providerTimeout)
-		var model string
-		var providerErr error
-		vectors, model, providerErr = s.provider.EmbedBatch(embedCtx, texts)
-		providerCtxErr := embedCtx.Err()
-		cancel()
-		if providerErr != nil {
-			if errors.Is(providerCtxErr, context.DeadlineExceeded) || errors.Is(providerErr, context.DeadlineExceeded) {
-				return s.fail(ctx, result, result.SelectedCount, 0, "embedding_timeout", providerErr)
-			}
-			if errors.Is(providerCtxErr, context.Canceled) || errors.Is(providerErr, context.Canceled) {
-				return s.fail(ctx, result, result.SelectedCount, 0, "embedding_cancelled", providerErr)
-			}
-			return s.fail(ctx, result, result.SelectedCount, 0, "embedding_provider_failed", providerErr)
-		}
-		if strings.TrimSpace(model) != contract.EmbeddingModel || len(vectors) != len(texts) {
-			return s.fail(ctx, result, result.SelectedCount, 0, "embedding_response_invalid", nil)
-		}
-		for _, vector := range vectors {
-			if len(vector) != contract.EmbeddingDimensions {
-				return s.fail(ctx, result, result.SelectedCount, 0, "embedding_response_invalid", nil)
-			}
-			for _, value := range vector {
-				if math.IsNaN(float64(value)) || math.IsInf(float64(value), 0) {
-					return s.fail(ctx, result, result.SelectedCount, 0, "embedding_response_invalid", nil)
-				}
-			}
-		}
-		result.EmbeddedCount = int64(len(vectors))
-	}
-
 	byHash := make(map[string][]float32, len(hashes))
-	for index, hash := range hashes {
-		byHash[hash] = vectors[index]
+	if len(texts) > 0 {
+		planned := make([]semanticwrite.Document, len(texts))
+		for index, text := range texts {
+			planned[index] = semanticwrite.Document{Hash: hashes[index], Text: text}
+		}
+		embedded, providerErr := s.executor.Execute(observability.WithAIOperation(ctx, observability.AIOperationSearchDocumentEmbedding, len(texts)), semanticwrite.Plan{Documents: planned, Fence: fence, Timeout: s.providerTimeout})
+		if providerErr != nil {
+			code := "embedding_provider_failed"
+			var executionError *semanticwrite.ExecutionError
+			hasExecutionError := errors.As(providerErr, &executionError)
+			switch {
+			case errors.Is(providerErr, context.DeadlineExceeded), (errors.Is(providerErr, semanticwrite.ErrProviderTimeout) && !hasExecutionError):
+				code = "embedding_timeout"
+			case errors.Is(providerErr, context.Canceled):
+				code = "embedding_cancelled"
+			case hasExecutionError:
+				switch executionError.Reason {
+				case semanticwrite.ReasonProviderUnavailable:
+					code = "embedding_unavailable"
+				case semanticwrite.ReasonContractMismatch:
+					code = "embedding_contract_mismatch"
+				case semanticwrite.ReasonInvalidResponse:
+					code = "embedding_response_invalid"
+				}
+				if executionError.Cause != nil {
+					providerErr = executionError.Cause
+				}
+			case errors.Is(providerErr, semanticwrite.ErrInvalidPlan):
+				code = "reconciliation_snapshot_invalid"
+			}
+			return s.fail(ctx, result, result.SelectedCount, 0, code, providerErr)
+		}
+		for _, embedding := range embedded.Embeddings {
+			byHash[embedding.DocumentHash] = embedding.Vector
+		}
+		result.EmbeddedCount = int64(len(embedded.Embeddings))
 	}
+
 	embeddings := make([]SearchDocumentEmbedding, 0, len(documents))
 	for _, document := range documents {
 		embeddings = append(embeddings, SearchDocumentEmbedding{
@@ -246,19 +277,32 @@ func (s *searchReconciliationService) finish(ctx context.Context, result SearchR
 		LastError:     lastError,
 	})
 	if err != nil {
-		return result, fmt.Errorf("%w: run finalization failed", ErrSearchReconciliationFailed)
+		return result, &reconciliationFailure{code: "run finalization failed", cause: err}
 	}
 	result.Status = status
 	result.ErrorCode = lastError
-	if status == "failed" {
-		return result, fmt.Errorf("%w: %s", ErrSearchReconciliationFailed, lastError)
-	}
 	return result, nil
 }
 
-func (s *searchReconciliationService) fail(ctx context.Context, result SearchReconciliationResult, selected, embedded int64, code string, _ error) (SearchReconciliationResult, error) {
+func (s *searchReconciliationService) fail(ctx context.Context, result SearchReconciliationResult, selected, embedded int64, code string, cause error) (SearchReconciliationResult, error) {
 	result.SelectedCount = selected
 	result.EmbeddedCount = embedded
 	result.ErrorCode = code
-	return s.finish(ctx, result, "failed", code)
+	finished, err := s.finish(ctx, result, "failed", code)
+	if err != nil {
+		cause = errors.Join(cause, err)
+	}
+	return finished, &reconciliationFailure{code: code, cause: cause}
+}
+
+type reconciliationFailure struct {
+	code  string
+	cause error
+}
+
+func (e *reconciliationFailure) Error() string {
+	return ErrSearchReconciliationFailed.Error() + ": " + e.code
+}
+func (e *reconciliationFailure) Unwrap() []error {
+	return []error{ErrSearchReconciliationFailed, e.cause}
 }

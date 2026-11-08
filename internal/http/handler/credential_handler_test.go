@@ -3,7 +3,6 @@ package handler
 import (
 	"context"
 	"encoding/json"
-	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,12 +11,13 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
-	"github.com/stretchr/testify/require"
-
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/http/dto"
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
+	"github.com/markhuangai/dense-mem/internal/http/response"
 	"github.com/markhuangai/dense-mem/internal/httperr"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
+	"github.com/stretchr/testify/require"
 )
 
 type apiKeyHandlerService struct {
@@ -176,7 +176,7 @@ func TestCredentialHandlerCreateListGetRotateDelete(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d; want 200", rec.Code)
 		}
-		var out PaginationEnvelope
+		var out response.PaginatedEnvelope
 		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 			t.Fatalf("decode response: %v", err)
 		}
@@ -602,10 +602,31 @@ func TestCredentialResponseHelpersPreferCanonicalFields(t *testing.T) {
 		t.Fatalf("CredentialResponse = %+v", resp)
 	}
 
-	item := toCredentialListItem(key)
-	if item.TeamID != teamID || item.Name != "canonical" || item.LastUsedAt == nil || item.ExpiresAt == nil {
-		t.Fatalf("CredentialListItem = %+v", item)
+	require.Equal(t, "2026-05-30T12:01:00Z", *resp.LastUsedAt)
+	require.Equal(t, "2026-05-30T13:01:00Z", *resp.ExpiresAt)
+	require.Equal(t, "2026-05-30T12:01:00Z", resp.CreatedAt)
+	key.LastUsedAt, key.ExpiresAt, key.Scopes = nil, nil, nil
+	key.KeyHash = "must-not-leak"
+	h := NewCredentialHandler(&apiKeyHandlerService{key: key, keys: []*domain.Credential{key}, total: 1})
+	listed, err := runCredentialHandler(t, http.MethodGet, "/ui/api/team/credentials", "/ui/api/team/credentials", []string{"teamId"}, []string{teamID.String()}, h.List)
+	require.NoError(t, err)
+	fetched, err := runCredentialHandler(t, http.MethodGet, "/ui/api/team/credentials/"+keyID.String(), "/ui/api/team/credentials/:credentialId", []string{"teamId", "credentialId"}, []string{teamID.String(), keyID.String()}, h.Get)
+	require.NoError(t, err)
+	var list struct{ Data []map[string]any }
+	var get struct{ Data map[string]any }
+	require.NoError(t, json.Unmarshal(listed.Body.Bytes(), &list))
+	require.NoError(t, json.Unmarshal(fetched.Body.Bytes(), &get))
+	require.Len(t, list.Data, 1)
+	require.Equal(t, get.Data, list.Data[0])
+	keys := make([]string, 0, len(get.Data))
+	for key := range get.Data {
+		keys = append(keys, key)
 	}
+	require.ElementsMatch(t, []string{"id", "team_id", "name", "key_suffix", "scopes", "role", "rate_limit", "last_used_at", "expires_at", "created_at", "memory_access"}, keys)
+	require.Equal(t, []any{}, list.Data[0]["scopes"])
+	require.Nil(t, list.Data[0]["last_used_at"])
+	require.Nil(t, list.Data[0]["expires_at"])
+	require.NotContains(t, listed.Body.String(), key.KeyHash)
 }
 
 func runCredentialHandlerWithBody(t *testing.T, method, target, path string, paramNames, paramVals []string, body string, handler echo.HandlerFunc) (*httptest.ResponseRecorder, error) {

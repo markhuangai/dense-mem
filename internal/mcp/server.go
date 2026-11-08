@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-
 	"github.com/markhuangai/dense-mem/internal/promptcatalog"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/markhuangai/dense-mem/internal/tools"
@@ -239,22 +238,7 @@ func (s *Server) logToolInputRejected(ctx context.Context, toolName, reasonCode 
 }
 
 func (s *Server) canUseTool(tool registry.Tool) bool {
-	if s.scopes == nil {
-		return true
-	}
-	if len(tool.RequiredScopes) == 0 {
-		return true
-	}
-	scopeSet := make(map[string]struct{}, len(s.scopes))
-	for _, scope := range s.scopes {
-		scopeSet[scope] = struct{}{}
-	}
-	for _, required := range tool.RequiredScopes {
-		if _, ok := scopeSet[required]; !ok {
-			return false
-		}
-	}
-	return true
+	return s.scopes == nil || registry.ToolScopesSatisfied(tool, s.scopes)
 }
 
 func (s *Server) validationScopes(tool registry.Tool) []string {

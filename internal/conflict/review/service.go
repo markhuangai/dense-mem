@@ -83,34 +83,6 @@ type Service struct {
 	now              func() time.Time
 }
 
-type conflictEmbeddingBatchProvider struct {
-	provider EmbeddingProvider
-}
-
-func (p conflictEmbeddingBatchProvider) EmbedBatch(ctx context.Context, texts []string) ([]semanticwrite.IndexedEmbedding, string, error) {
-	vectors, model, err := p.provider.EmbedBatch(ctx, texts)
-	if err != nil {
-		return nil, model, err
-	}
-	indexed := make([]semanticwrite.IndexedEmbedding, len(vectors))
-	for index, vector := range vectors {
-		indexed[index] = semanticwrite.IndexedEmbedding{Index: index, Vector: append([]float32(nil), vector...)}
-	}
-	return indexed, model, nil
-}
-
-func (p conflictEmbeddingBatchProvider) ModelName() string {
-	return p.provider.ModelName()
-}
-
-func (p conflictEmbeddingBatchProvider) Dimensions() int {
-	return p.provider.Dimensions()
-}
-
-func (p conflictEmbeddingBatchProvider) IsAvailable() bool {
-	return p.provider.IsAvailable()
-}
-
 func New(deps Dependencies) (*Service, error) {
 	if deps.Repository == nil {
 		return nil, errors.New("conflict review service: repository is required")
@@ -153,7 +125,7 @@ func New(deps Dependencies) (*Service, error) {
 		decisions: deps.Decisions, decisionSettings: deps.DecisionSettings, logger: deps.Logger,
 		repository:       deps.Repository,
 		provider:         deps.Provider,
-		embeddings:       semanticwrite.NewExecutor(conflictEmbeddingBatchProvider{provider: deps.Embeddings}),
+		embeddings:       semanticwrite.NewProviderExecutor(deps.Embeddings),
 		embeddingTimeout: deps.EmbeddingTimeout,
 		metrics:          metrics,
 		location:         location,
@@ -269,6 +241,7 @@ func (s *Service) ReviewRelationshipConflictCase(
 
 	providerCtx := observability.WithMetricIdentity(ctx, input.TeamID, "")
 	providerCtx = observability.WithAIOperation(providerCtx, observability.AIOperationConflictReview, 1)
+	providerCtx = observability.WithExchangeScope(providerCtx, observability.ExchangeScope{TeamID: input.TeamID, RunID: input.ReviewRunID, BatchID: reservation.AssessmentAttemptID})
 	response, err := s.assessConflict(providerCtx, prepared, snapshot)
 	if err != nil {
 		if snapshot != nil && snapshot.Effective.ConflictReview {

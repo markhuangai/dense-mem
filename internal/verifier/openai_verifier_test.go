@@ -15,8 +15,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/config"
-	"github.com/markhuangai/dense-mem/internal/modelprovider"
-	"github.com/markhuangai/dense-mem/internal/observability"
+	assessorprovider "github.com/markhuangai/dense-mem/internal/provider/assessor"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -32,44 +31,21 @@ func newTestVerifierConfig(serverURL, apiKey, model string) *config.Config {
 	}
 }
 
-func TestOpenAIVerifierSetMetricsNormalizesNil(t *testing.T) {
-	v := NewOpenAIVerifier(newTestVerifierConfig("", "", "m"), nil)
-
-	v.SetMetrics(nil)
-	require.NotNil(t, v.metrics)
-
-	metrics := observability.NewInMemoryDiscoverabilityMetrics()
-	v.SetMetrics(metrics)
-	require.Same(t, metrics, v.metrics)
-}
-
-func TestOpenAIVerifierUsesSharedSemanticAssessmentLimits(t *testing.T) {
-	cfg := newTestVerifierConfig("https://example.com/v1", "sk-test", "model")
-	cfg.AIVerifierMaxInputTokens = 1234
-	cfg.AIVerifierMaxOutputTokens = 567
-	cfg.AIVerifierMaxCandidateContextTokens = 789
-	cfg.AIVerifierMaxPredicateOptions = 456
-	cfg.AIVerifierTokenizer = "cl100k_base"
-	limits := SemanticAssessmentLimitsForConfig(cfg)
-	wantLimits := limits
-	wantLimits.ProviderModel = "model"
-
-	provider := NewOpenAIVerifierWithAssessmentLimits(cfg, nil, limits)
-	assert.Equal(t, wantLimits, provider.assessmentLimits)
-	assert.Equal(t, wantLimits, NewOpenAIVerifier(cfg, nil).assessmentLimits)
-}
-
-func TestOpenAIVerifierUsesProvidedConcurrencyGate(t *testing.T) {
-	gate := modelprovider.NewConcurrencyGate(2)
-	provider := NewOpenAIVerifierWithAssessmentLimitsAndConcurrencyGate(
-		newTestVerifierConfig("https://example.com/v1", "sk-test", "model"), nil,
-		DefaultSemanticAssessmentLimits(), gate,
-	)
-	assert.Equal(t, gate, provider.sem)
+func TestOpenAIVerifierKeepsLegacyLimitsWithInjectedTransport(t *testing.T) {
+	limits := DefaultSemanticAssessmentLimits()
+	limits.MaxInputTokens = 1234
+	limits.MaxOutputTokens = 567
+	limits.MaxCandidateContextTokens = 789
+	limits.MaxPredicateOptions = 456
+	limits.Tokenizer = "cl100k_base"
+	provider := NewOpenAIVerifier(nil, "model", limits, nil)
+	limits.ProviderModel = "model"
+	limits.LegacyProviderFraming = true
+	assert.Equal(t, limits, provider.assessmentLimits)
 }
 
 func TestOpenAIVerifierAdapterHelpers(t *testing.T) {
-	v := NewOpenAIVerifier(newTestVerifierConfig("https://example.com/v1", "sk-test", "gpt-4.1-mini"), nil)
+	v := newTestOpenAIVerifier(newTestVerifierConfig("https://example.com/v1", "sk-test", "gpt-4.1-mini"), nil)
 	require.Equal(t, "gpt-4.1-mini", v.ModelName())
 
 	summary := openAIValidationSummary([]SemanticValidationError{
@@ -102,16 +78,6 @@ func TestOpenAIValidationSummaryIsBounded(t *testing.T) {
 		assert.True(t, utf8.ValidString(summary))
 		assert.True(t, strings.HasSuffix(summary, openAIValidationSummaryOmission))
 	})
-}
-
-func TestOpenAIRetryAfterSeconds(t *testing.T) {
-	now := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
-	assert.Equal(t, 17, openAIRetryAfterSeconds("17", now))
-	assert.Equal(t, 30, openAIRetryAfterSeconds(now.Add(30*time.Second).Format(http.TimeFormat), now))
-	assert.Equal(t, 300, openAIRetryAfterSeconds("999999999999", now))
-	assert.Equal(t, 300, openAIRetryAfterSeconds(now.Add(time.Hour).Format(http.TimeFormat), now))
-	assert.Zero(t, openAIRetryAfterSeconds("-1", now))
-	assert.Zero(t, openAIRetryAfterSeconds("invalid", now))
 }
 
 func TestBoundedSemanticAssessmentCorrectionErrors(t *testing.T) {
@@ -196,7 +162,7 @@ func TestOpenAIVerifier(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "sk-test", "gpt-4o-mini"), srv.Client())
+		v := newTestOpenAIVerifier(newTestVerifierConfig(srv.URL, "sk-test", "gpt-4o-mini"), srv.Client())
 
 		got, err := v.Verify(context.Background(), Request{
 			ProfileID: "profile-A",
@@ -233,7 +199,7 @@ func TestOpenAIVerifier(t *testing.T) {
 			AIVerifierAPIKey: "verifier-key",
 			AIVerifierModel:  "verifier-model",
 		}
-		v := NewOpenAIVerifier(cfg, srv.Client())
+		v := newTestOpenAIVerifier(cfg, srv.Client())
 
 		got, err := v.Verify(context.Background(), Request{ProfileID: "p", Predicate: "claim"})
 
@@ -258,7 +224,7 @@ func TestOpenAIVerifier(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "k", "m"), srv.Client())
+		v := newTestOpenAIVerifier(newTestVerifierConfig(srv.URL, "k", "m"), srv.Client())
 
 		got, err := v.Verify(context.Background(), Request{
 			ProfileID: "p",
@@ -286,7 +252,7 @@ func TestOpenAIVerifier(t *testing.T) {
 
 		cfg := newTestVerifierConfig(srv.URL, "k", "m")
 		cfg.AIVerifierDisableTemperature = true
-		v := NewOpenAIVerifier(cfg, srv.Client())
+		v := newTestOpenAIVerifier(cfg, srv.Client())
 
 		got, err := v.Verify(context.Background(), Request{ProfileID: "p", Predicate: "claim"})
 
@@ -298,7 +264,7 @@ func TestOpenAIVerifier(t *testing.T) {
 		srv := httptest.NewServer(verifierSuccessHandler("contradicted", 0.8, "Evidence contradicts the claim."))
 		defer srv.Close()
 
-		v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "k", "m"), srv.Client())
+		v := newTestOpenAIVerifier(newTestVerifierConfig(srv.URL, "k", "m"), srv.Client())
 		got, err := v.Verify(context.Background(), Request{ProfileID: "p", Predicate: "claim"})
 		require.NoError(t, err)
 		assert.Equal(t, "contradicted", got.Verdict)
@@ -308,7 +274,7 @@ func TestOpenAIVerifier(t *testing.T) {
 		srv := httptest.NewServer(verifierSuccessHandler("insufficient", 0.3, "Not enough evidence."))
 		defer srv.Close()
 
-		v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "k", "m"), srv.Client())
+		v := newTestOpenAIVerifier(newTestVerifierConfig(srv.URL, "k", "m"), srv.Client())
 		got, err := v.Verify(context.Background(), Request{ProfileID: "p", Predicate: "claim"})
 		require.NoError(t, err)
 		assert.Equal(t, "insufficient", got.Verdict)
@@ -325,7 +291,7 @@ func TestOpenAIVerifier(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "k", "m"), srv.Client())
+		v := newTestOpenAIVerifier(newTestVerifierConfig(srv.URL, "k", "m"), srv.Client())
 		_, err := v.Verify(context.Background(), Request{ProfileID: "p", Predicate: "claim"})
 		assert.ErrorIs(t, err, ErrVerifierMalformedResponse)
 	})
@@ -341,7 +307,7 @@ func TestOpenAIVerifier(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "k", "m"), srv.Client())
+		v := newTestOpenAIVerifier(newTestVerifierConfig(srv.URL, "k", "m"), srv.Client())
 		_, err := v.Verify(context.Background(), Request{ProfileID: "p", Predicate: "claim"})
 		assert.ErrorIs(t, err, ErrVerifierMalformedResponse)
 	})
@@ -357,7 +323,7 @@ func TestOpenAIVerifier(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "k", "m"), srv.Client())
+		v := newTestOpenAIVerifier(newTestVerifierConfig(srv.URL, "k", "m"), srv.Client())
 		_, err := v.Verify(context.Background(), Request{ProfileID: "p", Predicate: "claim"})
 		assert.ErrorIs(t, err, ErrVerifierMalformedResponse)
 	})
@@ -373,7 +339,7 @@ func TestOpenAIVerifier(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "k", "m"), srv.Client())
+		v := newTestOpenAIVerifier(newTestVerifierConfig(srv.URL, "k", "m"), srv.Client())
 		_, err := v.Verify(context.Background(), Request{ProfileID: "p", Predicate: "claim"})
 		assert.ErrorIs(t, err, ErrVerifierMalformedResponse)
 	})
@@ -389,21 +355,21 @@ func TestOpenAIVerifier(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "k", "m"), srv.Client())
+		v := newTestOpenAIVerifier(newTestVerifierConfig(srv.URL, "k", "m"), srv.Client())
 		_, err := v.Verify(context.Background(), Request{ProfileID: "p", Predicate: "claim"})
 		assert.ErrorIs(t, err, ErrVerifierMalformedResponse)
 	})
 
-	t.Run("NoChoices_ReturnsErrMalformed", func(t *testing.T) {
+	t.Run("NoChoices_ReturnsProtocolError", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{}})
 		}))
 		defer srv.Close()
 
-		v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "k", "m"), srv.Client())
+		v := newTestOpenAIVerifier(newTestVerifierConfig(srv.URL, "k", "m"), srv.Client())
 		_, err := v.Verify(context.Background(), Request{ProfileID: "p", Predicate: "claim"})
-		assert.ErrorIs(t, err, ErrVerifierMalformedResponse)
+		assert.ErrorIs(t, err, ErrVerifierProvider)
 	})
 
 	t.Run("RateLimitResponse_ReturnsErrRateLimit", func(t *testing.T) {
@@ -415,7 +381,7 @@ func TestOpenAIVerifier(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "k", "m"), srv.Client())
+		v := newTestOpenAIVerifier(newTestVerifierConfig(srv.URL, "k", "m"), srv.Client())
 		_, err := v.Verify(context.Background(), Request{ProfileID: "p", Predicate: "claim"})
 		assert.ErrorIs(t, err, ErrVerifierRateLimit)
 	})
@@ -429,7 +395,7 @@ func TestOpenAIVerifier(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "k", "m"), srv.Client())
+		v := newTestOpenAIVerifier(newTestVerifierConfig(srv.URL, "k", "m"), srv.Client())
 		_, err := v.Verify(context.Background(), Request{ProfileID: "p", Predicate: "claim"})
 		assert.ErrorIs(t, err, ErrVerifierProvider)
 	})
@@ -442,7 +408,7 @@ func TestOpenAIVerifier(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "k", "m"), srv.Client())
+		v := newTestOpenAIVerifier(newTestVerifierConfig(srv.URL, "k", "m"), srv.Client())
 
 		longContext := strings.Repeat("a", openAIVerifierMaxItemChars+500)
 		_, err := v.Verify(context.Background(), Request{
@@ -470,7 +436,7 @@ func TestOpenAIVerifier(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "k", "m"), srv.Client())
+		v := newTestOpenAIVerifier(newTestVerifierConfig(srv.URL, "k", "m"), srv.Client())
 
 		// \x00 and \x01 are control characters that should be stripped.
 		// \t and \n should be preserved.
@@ -501,7 +467,7 @@ func TestOpenAIVerifier(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "k", "m"), srv.Client())
+		v := newTestOpenAIVerifier(newTestVerifierConfig(srv.URL, "k", "m"), srv.Client())
 		_, err := v.Verify(context.Background(), Request{ProfileID: "p", Predicate: "claim"})
 		require.NoError(t, err)
 
@@ -520,7 +486,7 @@ func TestOpenAIVerifier(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL+"/", "k", "m"), srv.Client())
+		v := newTestOpenAIVerifier(newTestVerifierConfig(srv.URL+"/", "k", "m"), srv.Client())
 		_, err := v.Verify(context.Background(), Request{ProfileID: "p", Predicate: "claim"})
 		require.NoError(t, err)
 		assert.Equal(t, "/chat/completions", gotPath)
@@ -528,8 +494,8 @@ func TestOpenAIVerifier(t *testing.T) {
 
 	t.Run("NilHTTPClient_UsesDefault", func(t *testing.T) {
 		cfg := newTestVerifierConfig("https://api.example.com", "k", "m")
-		v := NewOpenAIVerifier(cfg, nil)
-		assert.NotNil(t, v.httpClient)
+		v := newTestOpenAIVerifier(cfg, nil)
+		assert.NotNil(t, v.transport)
 	})
 
 	t.Run("ImplementsVerifierInterface", func(t *testing.T) {
@@ -582,7 +548,7 @@ func TestOpenAIVerifier_CrossProfileIsolation(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "k", "m"), srv.Client())
+	v := newTestOpenAIVerifier(newTestVerifierConfig(srv.URL, "k", "m"), srv.Client())
 
 	// Verify for profile A.
 	respA, err := v.Verify(context.Background(), Request{
@@ -634,7 +600,7 @@ func TestOpenAIVerifierSharesConcurrencyGateAcrossOperations(t *testing.T) {
 
 	cfg := newTestVerifierConfig(srv.URL, "key", "model")
 	cfg.AIVerifierMaxConcurrency = 2
-	v := NewOpenAIVerifier(cfg, srv.Client())
+	v := newTestOpenAIVerifier(cfg, srv.Client())
 
 	errs := make(chan error, 3)
 	var calls sync.WaitGroup
@@ -679,4 +645,26 @@ func TestOpenAIVerifierSharesConcurrencyGateAcrossOperations(t *testing.T) {
 		require.NoError(t, err)
 	}
 	assert.Equal(t, int64(2), maximum.Load())
+}
+
+func newTestOpenAIVerifier(cfg config.ConfigProvider, client *http.Client) *OpenAIVerifier {
+	limits := assessorprovider.SemanticAssessmentLimitsForConfig(cfg)
+	transport := assessorprovider.NewOpenAIAssessorWithAssessmentLimits(cfg, client, limits)
+	return NewOpenAIVerifier(transport, cfg.GetAIVerifierModel(), SemanticAssessmentLimits(limits), nil)
+}
+
+type openAIVerifierJSONSchema struct {
+	Name   string          `json:"name"`
+	Strict bool            `json:"strict"`
+	Schema json.RawMessage `json:"schema"`
+}
+type openAIVerifierResponseFormat struct {
+	Type       string                   `json:"type"`
+	JSONSchema openAIVerifierJSONSchema `json:"json_schema"`
+}
+type openAIVerifierRequest struct {
+	Model          string                       `json:"model"`
+	Messages       []openAIVerifierMessage      `json:"messages"`
+	Temperature    *float64                     `json:"temperature,omitempty"`
+	ResponseFormat openAIVerifierResponseFormat `json:"response_format"`
 }

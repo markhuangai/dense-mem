@@ -5,14 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
-
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/mcp"
@@ -33,14 +31,6 @@ type MCPHandler struct {
 func (h *MCPHandler) SetOperationObserver(observer mcp.OperationObserver) {
 	h.operationObserver = observer
 }
-
-// MCPHandlerInterface is the companion interface for MCPHandler.
-type MCPHandlerInterface interface {
-	HandlePost(c echo.Context) error
-	HandleGet(c echo.Context) error
-}
-
-var _ MCPHandlerInterface = (*MCPHandler)(nil)
 
 // NewMCPHandler constructs a Streamable HTTP MCP handler.
 func NewMCPHandler(reg registry.Registry, logger mcp.Logger) *MCPHandler {
@@ -246,31 +236,4 @@ func acceptsEventStream(accept string) bool {
 		}
 	}
 	return false
-}
-
-func writeMCPSSE(c echo.Context, payload []byte) error {
-	headers := c.Response().Header()
-	headers.Set(echo.HeaderContentType, "text/event-stream")
-	headers.Set(echo.HeaderCacheControl, "no-cache")
-	headers.Set(echo.HeaderConnection, "keep-alive")
-	c.Response().WriteHeader(http.StatusOK)
-	if _, err := fmt.Fprintf(c.Response(), "event: message\ndata: %s\n\n", payload); err != nil {
-		return err
-	}
-	flushSSE(c)
-	return nil
-}
-
-func writeSSEComment(c echo.Context, text string) error {
-	if _, err := fmt.Fprintf(c.Response(), ": %s\n\n", text); err != nil {
-		return err
-	}
-	flushSSE(c)
-	return nil
-}
-
-func flushSSE(c echo.Context) {
-	if flusher, ok := c.Response().Writer.(http.Flusher); ok {
-		flusher.Flush()
-	}
 }

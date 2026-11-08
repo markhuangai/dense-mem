@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/conflict/assessment"
 	conflictcontract "github.com/markhuangai/dense-mem/internal/conflict/contract"
@@ -25,6 +26,7 @@ import (
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	assessorprovider "github.com/markhuangai/dense-mem/internal/provider/assessor"
 	decisionprovider "github.com/markhuangai/dense-mem/internal/provider/decision"
 	"github.com/markhuangai/dense-mem/internal/settings"
 	settingspostgres "github.com/markhuangai/dense-mem/internal/settings/postgres"
@@ -112,13 +114,9 @@ func main() {
 	})
 	conflictStore := conflictpostgres.NewStore(db, rls, knowledgeStore)
 	limits := conflictassessment.DefaultSemanticAssessmentLimits()
-	provider := verifier.NewOpenAIVerifierWithAssessmentLimitsAndConcurrencyGateAndModel(
-		&cfg,
-		diagnosticClient(time.Duration(cfg.GetAIVerifierTimeoutSeconds())*time.Second),
-		verifier.SemanticAssessmentLimits(limits),
-		nil,
-		cfg.GetAIConflictReviewModel(),
-	)
+	transport := assessorprovider.NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGateAndModel(&cfg,
+		diagnosticClient(time.Duration(cfg.GetAIVerifierTimeoutSeconds())*time.Second), assessor.SemanticAssessmentLimits(limits), nil, cfg.GetAIConflictReviewModel())
+	provider := verifier.NewOpenAIVerifier(transport, cfg.GetAIConflictReviewModel(), verifier.SemanticAssessmentLimits(limits), nil)
 	embeddingProvider := embedding.NewRetryEmbeddingProviderWithKey(
 		embedding.NewOpenAIEmbeddingProvider(&cfg, diagnosticClient(time.Duration(cfg.GetAIEmbeddingTimeoutSeconds())*time.Second)),
 		nil,

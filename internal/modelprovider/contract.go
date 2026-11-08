@@ -32,6 +32,7 @@ type StructuredResult struct {
 	PromptTokens     int
 	CompletionTokens int
 	TotalTokens      int
+	UsageAvailable   bool
 	Diagnostics      *CallDiagnostics
 }
 

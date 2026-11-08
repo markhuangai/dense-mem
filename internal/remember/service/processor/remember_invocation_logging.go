@@ -161,20 +161,24 @@ func (p *rememberSynchronousProcessor) recordRememberInvocation(
 			p.logger.Warn(warningEvent, append(warningAttrs, observability.String("error", "[diagnostic unavailable]"))...)
 		}
 	}
+	p.logRememberInvocation(writeCtx, input, record, classification, phase, cause, status)
+}
+
+func (p *rememberSynchronousProcessor) logRememberInvocation(ctx context.Context, input rememberapp.RememberProcessRequest, record repository.RememberInvocationDiagnosticInput, classification, phase string, cause error, status *rememberapp.SubmissionStatusResult) {
 	if p.logger != nil {
 		attrs := []observability.LogAttr{
-			observability.String("invocation_id", invocationID),
+			observability.String("invocation_id", record.InvocationID),
 			observability.String("classification", classification),
-			observability.String("outcome", outcome),
-			observability.Bool("retryable", retryable),
+			observability.String("outcome", record.Outcome),
+			observability.Bool("retryable", record.Retryable),
 			observability.String("phase", phase),
-			observability.String("canonical_attempt_id", canonicalAttemptID),
+			observability.String("canonical_attempt_id", record.CanonicalAttemptID),
 			observability.String("request_hash", input.RequestHash),
 			observability.Int("duration_ms", int(record.Duration/time.Millisecond)),
 			observability.CorrelationID(rememberProcessCorrelationID(input.Metadata)),
 		}
-		if errorCode != "" {
-			attrs = append(attrs, observability.String("error_code", errorCode))
+		if record.ErrorCode != "" {
+			attrs = append(attrs, observability.String("error_code", record.ErrorCode))
 		}
 		if status != nil && len(status.Errors) > 0 && status.Errors[0].ReasonCode == "security_rejection" {
 			details := status.Errors[0].Details
@@ -190,20 +194,20 @@ func (p *rememberSynchronousProcessor) recordRememberInvocation(
 			attrs = append(attrs, observability.String("reason_code", security.ReasonCode),
 				observability.LogAttr{Key: "security_diagnostics", Value: security.Details})
 		}
-		switch outcome {
+		switch record.Outcome {
 		case "failed", "cancelled", "conflict":
 			logErr := cause
 			if logErr == nil {
 				logErr = errors.New("remember invocation completed with an error outcome")
 			}
 			if contextual, ok := p.logger.(observability.ContextLogProvider); ok {
-				contextual.ErrorContext(writeCtx, "remember_invocation_completed", logErr, attrs...)
+				contextual.ErrorContext(ctx, "remember_invocation_completed", logErr, attrs...)
 			} else {
 				p.logger.Error("remember_invocation_completed", errors.New("[diagnostic unavailable]"), attrs...)
 			}
 		default:
 			if contextual, ok := p.logger.(observability.ContextLogProvider); ok {
-				contextual.InfoContext(writeCtx, "remember_invocation_completed", attrs...)
+				contextual.InfoContext(ctx, "remember_invocation_completed", attrs...)
 			} else {
 				p.logger.Info("remember_invocation_completed", attrs...)
 			}

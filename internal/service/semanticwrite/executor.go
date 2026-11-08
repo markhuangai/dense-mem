@@ -20,6 +20,30 @@ var (
 	ErrProviderTimeout         = errors.New("semantic write: embedding provider timed out")
 )
 
+type FailureReason string
+
+const (
+	ReasonProviderUnavailable FailureReason = "provider_unavailable"
+	ReasonContractMismatch    FailureReason = "provider_contract_mismatch"
+	ReasonProviderCall        FailureReason = "provider_call_failed"
+	ReasonInvalidResponse     FailureReason = "provider_response_invalid"
+)
+
+// ExecutionError keeps diagnostic causes separate from bounded public text.
+type ExecutionError struct {
+	Reason FailureReason
+	Kind   error
+	Cause  error
+}
+
+func (e *ExecutionError) Error() string { return e.Kind.Error() }
+func (e *ExecutionError) Unwrap() []error {
+	if e.Cause == nil {
+		return []error{e.Kind}
+	}
+	return []error{e.Kind, e.Cause}
+}
+
 // Document is one rendered search document. Hash is the canonical document
 // identity used to associate the provider result with its planned source.
 type Document = semanticcontract.Document
@@ -41,24 +65,24 @@ func NewExecutor(provider BatchProvider) *Executor {
 // Execute performs at most one provider call. An empty plan is a valid
 // not-required path and therefore does not call the provider.
 func (e *Executor) Execute(ctx context.Context, plan Plan) (Result, error) {
-	if err := validatePlan(plan); err != nil {
-		return Result{}, err
-	}
 	result := Result{Fence: plan.Fence, Model: plan.Fence.Model, Embeddings: []Embedding{}}
 	if len(plan.Documents) == 0 {
 		return result, nil
 	}
+	if err := validatePlan(plan); err != nil {
+		return Result{}, err
+	}
 	if e == nil || e.provider == nil {
-		return Result{}, fmt.Errorf("%w: provider is required", ErrProviderUnavailable)
+		return Result{}, &ExecutionError{Reason: ReasonProviderUnavailable, Kind: ErrProviderUnavailable}
 	}
 	if !e.provider.IsAvailable() {
-		return Result{}, ErrProviderUnavailable
+		return Result{}, &ExecutionError{Reason: ReasonProviderUnavailable, Kind: ErrProviderUnavailable}
 	}
 	if model := strings.TrimSpace(e.provider.ModelName()); model != plan.Fence.Model {
-		return Result{}, ErrProviderResponseInvalid
+		return Result{}, &ExecutionError{Reason: ReasonContractMismatch, Kind: ErrProviderResponseInvalid}
 	}
 	if dimensions := e.provider.Dimensions(); dimensions != plan.Fence.Dimensions {
-		return Result{}, ErrProviderResponseInvalid
+		return Result{}, &ExecutionError{Reason: ReasonContractMismatch, Kind: ErrProviderResponseInvalid}
 	}
 
 	texts := make([]string, 0, len(plan.Documents))
@@ -75,36 +99,41 @@ func (e *Executor) Execute(ctx context.Context, plan Plan) (Result, error) {
 		if providerCtx.Err() != nil {
 			return Result{}, providerContextError(ctx, providerCtx, providerCtx.Err())
 		}
+		var executionError *ExecutionError
+		if errors.As(err, &executionError) {
+			return Result{}, err
+		}
+		kind := ErrProviderUnavailable
 		if errors.Is(err, ErrProviderResponseInvalid) {
-			return Result{}, ErrProviderResponseInvalid
+			kind = ErrProviderResponseInvalid
 		}
 		if errors.Is(err, ErrProviderTimeout) {
-			return Result{}, ErrProviderTimeout
+			kind = ErrProviderTimeout
 		}
-		return Result{}, fmt.Errorf("%w: provider call failed", ErrProviderUnavailable)
+		return Result{}, &ExecutionError{Reason: ReasonProviderCall, Kind: kind, Cause: err}
 	}
 	if err := providerCtx.Err(); err != nil {
 		return Result{}, providerContextError(ctx, providerCtx, err)
 	}
 	if model != plan.Fence.Model {
-		return Result{}, ErrProviderResponseInvalid
+		return Result{}, &ExecutionError{Reason: ReasonInvalidResponse, Kind: ErrProviderResponseInvalid}
 	}
 	if len(vectors) != len(plan.Documents) {
-		return Result{}, ErrProviderResponseInvalid
+		return Result{}, &ExecutionError{Reason: ReasonInvalidResponse, Kind: ErrProviderResponseInvalid}
 	}
 
 	result.Embeddings = make([]Embedding, len(plan.Documents))
 	seenIndices := make(map[int]struct{}, len(vectors))
 	for responseIndex, item := range vectors {
 		if item.Index < 0 || item.Index >= len(plan.Documents) {
-			return Result{}, ErrProviderResponseInvalid
+			return Result{}, &ExecutionError{Reason: ReasonInvalidResponse, Kind: ErrProviderResponseInvalid}
 		}
 		if _, ok := seenIndices[item.Index]; ok || item.Index != responseIndex {
-			return Result{}, ErrProviderResponseInvalid
+			return Result{}, &ExecutionError{Reason: ReasonInvalidResponse, Kind: ErrProviderResponseInvalid}
 		}
 		seenIndices[item.Index] = struct{}{}
 		if err := validateVector(item.Vector, plan.Fence.Dimensions); err != nil {
-			return Result{}, ErrProviderResponseInvalid
+			return Result{}, &ExecutionError{Reason: ReasonInvalidResponse, Kind: ErrProviderResponseInvalid}
 		}
 		result.Embeddings[responseIndex] = Embedding{
 			DocumentHash: plan.Documents[item.Index].Hash,

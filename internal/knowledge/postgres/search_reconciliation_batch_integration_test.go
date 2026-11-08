@@ -16,6 +16,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/embedding"
 	searchapp "github.com/markhuangai/dense-mem/internal/search"
+	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -75,7 +76,7 @@ func TestSearchReconciliationConfiguredBatchUsesRealAdapterAndDurableCursor(t *t
 		AIEmbeddingDimensions: 2, AIEmbeddingMaxBatchItems: 100,
 	}, server.Client())
 	service := searchapp.NewSearchReconciliationService(searchapp.SearchReconciliationDependencies{
-		Repository: repo, Projection: repo, Provider: provider, BatchLimit: 100, ProviderTimeout: 200 * time.Millisecond,
+		Repository: repo, Projection: repo, Executor: semanticwrite.NewProviderExecutor(provider), BatchLimit: 100, ProviderTimeout: 200 * time.Millisecond,
 	})
 	first, err := service.Run(ctx)
 	require.NoError(t, err)

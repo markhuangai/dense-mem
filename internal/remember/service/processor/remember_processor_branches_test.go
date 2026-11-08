@@ -9,8 +9,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/stretchr/testify/require"
-
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	embeddingcontract "github.com/markhuangai/dense-mem/internal/embedding/contract"
@@ -18,6 +16,8 @@ import (
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
+	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
+	"github.com/stretchr/testify/require"
 )
 
 func TestInlineEmbeddingResultsFromDocumentsCopiesPlanMetadataAndVectors(t *testing.T) {
@@ -268,7 +268,7 @@ func TestRememberProcessorCoversPipelineFailurePhases(t *testing.T) {
 		ledger := &rememberPipelineLedgerStub{
 			rememberFailureLedgerStub: &rememberFailureLedgerStub{},
 			duplicatePlan: &knowledgecontract.RememberDuplicateEmbeddingPlan{
-				EmbeddingModel: "model", Documents: []knowledgecontract.SearchDocumentForEmbedding{processorEmbeddingDocument(2)},
+				EmbeddingModel: "model", EmbeddingDimensions: 2, EmbeddingContractID: "contract", SearchIndexGenerationID: "generation", IndexGeneration: 1, Documents: []knowledgecontract.SearchDocumentForEmbedding{processorEmbeddingDocument(2)},
 			},
 		}
 		_, err := (&rememberSynchronousProcessor{ledger: ledger}).ProcessRemember(context.Background(), input)
@@ -704,66 +704,66 @@ func TestEmbedSearchDocumentBatchValidatesProviderAndVectors(t *testing.T) {
 	processor := &rememberSynchronousProcessor{}
 	require.Empty(t, mustEmbedDocuments(t, processor, nil, "model", nil))
 	tooMany := make([]knowledgecontract.SearchDocumentForEmbedding, 257)
-	_, err := processor.embedSearchDocumentBatch(context.Background(), "team", "owner", "model", tooMany)
+	_, err := processor.embedSearchDocumentBatch(context.Background(), "team", "owner", processorEmbeddingFence("model"), tooMany)
 	require.ErrorIs(t, err, rememberapp.ErrRememberInputBudgetExceeded)
 
 	document := processorEmbeddingDocument(2)
-	_, err = processor.embedSearchDocumentBatch(context.Background(), "team", "owner", "model", []knowledgecontract.SearchDocumentForEmbedding{document})
+	_, err = processor.embedSearchDocumentBatch(context.Background(), "team", "owner", processorEmbeddingFence("model"), []knowledgecontract.SearchDocumentForEmbedding{document})
 	require.ErrorIs(t, err, rememberapp.ErrRememberEmbeddingUnavailable)
 
 	provider := &processorEmbeddingProviderStub{available: true, model: "model", vectors: [][]float32{{1, 2}}}
-	processor.embedder = provider
-	_, err = processor.embedSearchDocumentBatch(context.Background(), "team", "owner", "", []knowledgecontract.SearchDocumentForEmbedding{document})
+	processor.embeddingExecutor = semanticwrite.NewProviderExecutor(provider)
+	_, err = processor.embedSearchDocumentBatch(context.Background(), "team", "owner", processorEmbeddingFence(""), []knowledgecontract.SearchDocumentForEmbedding{document})
 	require.ErrorIs(t, err, rememberapp.ErrRememberEmbeddingInvalid)
-	_, err = processor.embedSearchDocumentBatch(context.Background(), "team", "owner", "other", []knowledgecontract.SearchDocumentForEmbedding{document})
+	_, err = processor.embedSearchDocumentBatch(context.Background(), "team", "owner", processorEmbeddingFence("other"), []knowledgecontract.SearchDocumentForEmbedding{document})
 	require.ErrorIs(t, err, rememberapp.ErrRememberEmbeddingInvalid)
 	require.Zero(t, provider.called)
 
 	provider.err = errors.New("provider unavailable")
-	_, err = processor.embedSearchDocumentBatch(context.Background(), "team", "owner", "model", []knowledgecontract.SearchDocumentForEmbedding{document})
+	_, err = processor.embedSearchDocumentBatch(context.Background(), "team", "owner", processorEmbeddingFence("model"), []knowledgecontract.SearchDocumentForEmbedding{document})
 	var providerFailure *rememberEmbeddingProviderFailure
 	require.ErrorAs(t, err, &providerFailure)
 	require.ErrorIs(t, err, rememberapp.ErrRememberEmbeddingUnavailable)
 	provider.err = context.Canceled
-	_, err = processor.embedSearchDocumentBatch(context.Background(), "team", "owner", "model", []knowledgecontract.SearchDocumentForEmbedding{document})
+	_, err = processor.embedSearchDocumentBatch(context.Background(), "team", "owner", processorEmbeddingFence("model"), []knowledgecontract.SearchDocumentForEmbedding{document})
 	require.ErrorIs(t, err, rememberapp.ErrRememberRequestCancelled)
 	provider.err = rememberapp.ErrRememberRequestCancelled
-	_, err = processor.embedSearchDocumentBatch(context.Background(), "team", "owner", "model", []knowledgecontract.SearchDocumentForEmbedding{document})
+	_, err = processor.embedSearchDocumentBatch(context.Background(), "team", "owner", processorEmbeddingFence("model"), []knowledgecontract.SearchDocumentForEmbedding{document})
 	require.ErrorIs(t, err, rememberapp.ErrRememberRequestCancelled)
 
 	provider.err = errors.New("provider timeout")
 	expired, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
 	cancel()
-	_, err = processor.embedSearchDocumentBatch(expired, "team", "owner", "model", []knowledgecontract.SearchDocumentForEmbedding{document})
+	_, err = processor.embedSearchDocumentBatch(expired, "team", "owner", processorEmbeddingFence("model"), []knowledgecontract.SearchDocumentForEmbedding{document})
 	require.ErrorIs(t, err, rememberapp.ErrRememberRequestTimeout)
 	provider.err = rememberapp.ErrRememberRequestTimeout
-	_, err = processor.embedSearchDocumentBatch(context.Background(), "team", "owner", "model", []knowledgecontract.SearchDocumentForEmbedding{document})
+	_, err = processor.embedSearchDocumentBatch(context.Background(), "team", "owner", processorEmbeddingFence("model"), []knowledgecontract.SearchDocumentForEmbedding{document})
 	require.ErrorIs(t, err, rememberapp.ErrRememberRequestTimeout)
 	provider.err = context.DeadlineExceeded
-	_, err = processor.embedSearchDocumentBatch(context.Background(), "team", "owner", "model", []knowledgecontract.SearchDocumentForEmbedding{document})
+	_, err = processor.embedSearchDocumentBatch(context.Background(), "team", "owner", processorEmbeddingFence("model"), []knowledgecontract.SearchDocumentForEmbedding{document})
 	require.ErrorIs(t, err, rememberapp.ErrRememberRequestTimeout)
 
 	provider.err = nil
 	provider.vectors = [][]float32{}
-	_, err = processor.embedSearchDocumentBatch(context.Background(), "team", "owner", "model", []knowledgecontract.SearchDocumentForEmbedding{document})
+	_, err = processor.embedSearchDocumentBatch(context.Background(), "team", "owner", processorEmbeddingFence("model"), []knowledgecontract.SearchDocumentForEmbedding{document})
 	require.ErrorIs(t, err, rememberapp.ErrRememberEmbeddingInvalid)
 	provider.vectors = [][]float32{{1, 2}}
 	provider.model = "other"
-	_, err = processor.embedSearchDocumentBatch(context.Background(), "team", "owner", "model", []knowledgecontract.SearchDocumentForEmbedding{document})
+	_, err = processor.embedSearchDocumentBatch(context.Background(), "team", "owner", processorEmbeddingFence("model"), []knowledgecontract.SearchDocumentForEmbedding{document})
 	require.ErrorIs(t, err, rememberapp.ErrRememberEmbeddingInvalid)
 	provider.model = "model"
 	provider.vectors = [][]float32{{1}}
-	_, err = processor.embedSearchDocumentBatch(context.Background(), "team", "owner", "model", []knowledgecontract.SearchDocumentForEmbedding{document})
+	_, err = processor.embedSearchDocumentBatch(context.Background(), "team", "owner", processorEmbeddingFence("model"), []knowledgecontract.SearchDocumentForEmbedding{document})
 	require.ErrorIs(t, err, rememberapp.ErrRememberEmbeddingInvalid)
 	provider.vectors = [][]float32{{float32(math.NaN()), 2}}
-	_, err = processor.embedSearchDocumentBatch(context.Background(), "team", "owner", "model", []knowledgecontract.SearchDocumentForEmbedding{document})
+	_, err = processor.embedSearchDocumentBatch(context.Background(), "team", "owner", processorEmbeddingFence("model"), []knowledgecontract.SearchDocumentForEmbedding{document})
 	require.ErrorIs(t, err, rememberapp.ErrRememberEmbeddingInvalid)
 	provider.vectors = [][]float32{{float32(math.Inf(1)), 2}}
-	_, err = processor.embedSearchDocumentBatch(context.Background(), "team", "owner", "model", []knowledgecontract.SearchDocumentForEmbedding{document})
+	_, err = processor.embedSearchDocumentBatch(context.Background(), "team", "owner", processorEmbeddingFence("model"), []knowledgecontract.SearchDocumentForEmbedding{document})
 	require.ErrorIs(t, err, rememberapp.ErrRememberEmbeddingInvalid)
 
 	provider.vectors = [][]float32{{1, 2}}
-	completed, err := processor.embedSearchDocumentBatch(context.Background(), "team", "owner", "model", []knowledgecontract.SearchDocumentForEmbedding{document})
+	completed, err := processor.embedSearchDocumentBatch(context.Background(), "team", "owner", processorEmbeddingFence("model"), []knowledgecontract.SearchDocumentForEmbedding{document})
 	require.NoError(t, err)
 	require.Len(t, completed, 1)
 	require.Equal(t, document.SearchDocumentID, completed[0].SearchDocumentID)
@@ -773,8 +773,8 @@ func TestEmbedSearchDocumentBatchValidatesProviderAndVectors(t *testing.T) {
 
 func mustEmbedDocuments(t *testing.T, processor *rememberSynchronousProcessor, provider embeddingcontract.EmbeddingProviderInterface, model string, documents []knowledgecontract.SearchDocumentForEmbedding) []knowledgecontract.SearchDocumentEmbedding {
 	t.Helper()
-	processor.embedder = provider
-	result, err := processor.embedSearchDocumentBatch(context.Background(), "team", "owner", model, documents)
+	processor.embeddingExecutor = semanticwrite.NewProviderExecutor(provider)
+	result, err := processor.embedSearchDocumentBatch(context.Background(), "team", "owner", processorEmbeddingFence(model), documents)
 	require.NoError(t, err)
 	return result
 }
@@ -958,4 +958,8 @@ func TestRememberInvocationLoggingDistinguishesRetentionDegradation(t *testing.T
 	}, "33333333-3333-4333-8333-333333333333", "execution", "", "commit", errors.New("remember failed"), nil, nil)
 
 	require.Equal(t, []string{"remember_invocation_retention_degraded"}, logger.warns)
+}
+
+func processorEmbeddingFence(model string) semanticwrite.Fence {
+	return semanticwrite.Fence{Model: model, Dimensions: 2, EmbeddingContractID: "contract", SearchGenerationID: "generation", SearchGenerationVersion: 1}
 }

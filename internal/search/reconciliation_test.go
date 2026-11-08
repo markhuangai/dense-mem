@@ -3,12 +3,14 @@ package search
 import (
 	"context"
 	"errors"
+	"math"
 	"testing"
-
-	"github.com/stretchr/testify/require"
+	"time"
 
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	searchcontract "github.com/markhuangai/dense-mem/internal/search/contract"
+	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSearchReconciliationRunsOneBatchAndFencesEveryDocument(t *testing.T) {
@@ -18,7 +20,7 @@ func TestSearchReconciliationRunsOneBatchAndFencesEveryDocument(t *testing.T) {
 	ownerA := "44444444-4444-4444-4444-444444444444"
 	ownerB := "55555555-5555-5555-5555-555555555555"
 	repo := &searchReconciliationRepositoryStub{
-		contract: &searchcontract.ActiveSearchContract{EmbeddingContractID: contractID, EmbeddingDimensions: 2, EmbeddingModel: "model"},
+		contract: &searchcontract.ActiveSearchContract{EmbeddingContractID: contractID, EmbeddingDimensions: 2, EmbeddingModel: "model", SearchIndexGenerationID: "generation", IndexGeneration: 1},
 		run:      &knowledgecontract.SearchReconciliationRun{RunID: "66666666-6666-6666-6666-666666666666", Status: "running"},
 		documents: []knowledgecontract.SearchDocumentForEmbedding{
 			{SearchDocumentResult: knowledgecontract.SearchDocumentResult{TeamID: teamA, SearchDocumentID: "77777777-7777-7777-7777-777777777777", OwnerProfileID: ownerA, SourceVersion: 2, ProjectionFormat: 2, DocumentVersion: 3, EmbeddingContractID: contractID, EmbeddingDimensions: 2, SpaceGeneration: 1}, DocumentText: "same", DocumentHash: "hash-a"},
@@ -49,7 +51,7 @@ func TestSearchReconciliationRunsOneBatchAndFencesEveryDocument(t *testing.T) {
 
 func TestSearchReconciliationProviderFailureLeavesDocumentsUnchanged(t *testing.T) {
 	repo := &searchReconciliationRepositoryStub{
-		contract: &searchcontract.ActiveSearchContract{EmbeddingContractID: "11111111-1111-1111-1111-111111111111", EmbeddingDimensions: 2, EmbeddingModel: "model"},
+		contract: &searchcontract.ActiveSearchContract{EmbeddingContractID: "11111111-1111-1111-1111-111111111111", EmbeddingDimensions: 2, EmbeddingModel: "model", SearchIndexGenerationID: "generation", IndexGeneration: 1},
 		run:      &knowledgecontract.SearchReconciliationRun{RunID: "66666666-6666-6666-6666-666666666666", Status: "running"},
 		documents: []knowledgecontract.SearchDocumentForEmbedding{{
 			SearchDocumentResult: knowledgecontract.SearchDocumentResult{TeamID: "22222222-2222-2222-2222-222222222222", SearchDocumentID: "77777777-7777-7777-7777-777777777777", OwnerProfileID: "44444444-4444-4444-4444-444444444444", SourceVersion: 1, ProjectionFormat: 1, DocumentVersion: 1, EmbeddingContractID: "11111111-1111-1111-1111-111111111111", EmbeddingDimensions: 2, SpaceGeneration: 1}, DocumentText: "drift", DocumentHash: "hash"},
@@ -70,7 +72,7 @@ func TestSearchReconciliationProviderFailureLeavesDocumentsUnchanged(t *testing.
 
 func TestSearchReconciliationRetiredDocumentsFinalizeWithoutEmbedding(t *testing.T) {
 	repo := &searchReconciliationRepositoryStub{
-		contract: &searchcontract.ActiveSearchContract{EmbeddingContractID: "11111111-1111-1111-1111-111111111111", EmbeddingDimensions: 2, EmbeddingModel: "model"},
+		contract: &searchcontract.ActiveSearchContract{EmbeddingContractID: "11111111-1111-1111-1111-111111111111", EmbeddingDimensions: 2, EmbeddingModel: "model", SearchIndexGenerationID: "generation", IndexGeneration: 1},
 		run:      &knowledgecontract.SearchReconciliationRun{RunID: "66666666-6666-6666-6666-666666666666", Status: "running"},
 		documents: []knowledgecontract.SearchDocumentForEmbedding{{
 			SearchDocumentResult: knowledgecontract.SearchDocumentResult{
@@ -100,7 +102,7 @@ func TestSearchReconciliationRetiredDocumentsFinalizeWithoutEmbedding(t *testing
 
 func TestSearchReconciliationSkipsWhenAnotherRunOwnsTheWindow(t *testing.T) {
 	repo := &searchReconciliationRepositoryStub{
-		contract:       &searchcontract.ActiveSearchContract{EmbeddingContractID: "11111111-1111-1111-1111-111111111111", EmbeddingDimensions: 2, EmbeddingModel: "model"},
+		contract:       &searchcontract.ActiveSearchContract{EmbeddingContractID: "11111111-1111-1111-1111-111111111111", EmbeddingDimensions: 2, EmbeddingModel: "model", SearchIndexGenerationID: "generation", IndexGeneration: 1},
 		run:            &knowledgecontract.SearchReconciliationRun{RunID: "66666666-6666-6666-6666-666666666666", Status: "running"},
 		reserveClaimed: false, reserveClaimedSet: true,
 	}
@@ -113,7 +115,7 @@ func TestSearchReconciliationSkipsWhenAnotherRunOwnsTheWindow(t *testing.T) {
 }
 
 func TestSearchReconciliationRejectsContractAndDocumentDrift(t *testing.T) {
-	baseContract := &searchcontract.ActiveSearchContract{EmbeddingContractID: "11111111-1111-1111-1111-111111111111", EmbeddingDimensions: 2, EmbeddingModel: "model"}
+	baseContract := &searchcontract.ActiveSearchContract{EmbeddingContractID: "11111111-1111-1111-1111-111111111111", EmbeddingDimensions: 2, EmbeddingModel: "model", SearchIndexGenerationID: "generation", IndexGeneration: 1}
 	for _, test := range []struct {
 		name     string
 		repo     *searchReconciliationRepositoryStub
@@ -146,7 +148,7 @@ func TestSearchReconciliationRejectsContractAndDocumentDrift(t *testing.T) {
 }
 
 func TestSearchReconciliationReportsCommitAndFinalizationFailures(t *testing.T) {
-	contract := &searchcontract.ActiveSearchContract{EmbeddingContractID: "11111111-1111-1111-1111-111111111111", EmbeddingDimensions: 2, EmbeddingModel: "model"}
+	contract := &searchcontract.ActiveSearchContract{EmbeddingContractID: "11111111-1111-1111-1111-111111111111", EmbeddingDimensions: 2, EmbeddingModel: "model", SearchIndexGenerationID: "generation", IndexGeneration: 1}
 	base := func() *searchReconciliationRepositoryStub {
 		return &searchReconciliationRepositoryStub{
 			contract: contract, run: &knowledgecontract.SearchReconciliationRun{RunID: "66666666-6666-6666-6666-666666666666"},
@@ -183,7 +185,7 @@ type searchReconciliationRepositoryStub struct {
 }
 
 func newTestSearchReconciliationService(repo *searchReconciliationRepositoryStub, provider *searchReconciliationProviderStub) SearchReconciliationService {
-	return NewSearchReconciliationService(SearchReconciliationDependencies{Repository: repo, Projection: repo, Provider: provider})
+	return NewSearchReconciliationService(SearchReconciliationDependencies{Repository: repo, Projection: repo, Executor: semanticwrite.NewProviderExecutor(provider)})
 }
 
 func (s *searchReconciliationRepositoryStub) GetActiveSearchContract(context.Context) (*searchcontract.ActiveSearchContract, error) {
@@ -257,3 +259,72 @@ func (s *searchReconciliationProviderStub) IsAvailable() bool {
 
 var _ searchcontract.SearchRepository = (*searchReconciliationRepositoryStub)(nil)
 var _ knowledgecontract.SearchProjectionRepository = (*searchReconciliationRepositoryStub)(nil)
+
+func TestSearchReconciliationRejectsMalformedAndLateEmbeddings(t *testing.T) {
+	for _, mode := range []string{"model", "count", "nan", "infinity", "dimensions_unknown", "cancelled", "late_success"} {
+		t.Run(mode, func(t *testing.T) {
+			repo := &searchReconciliationRepositoryStub{contract: &searchcontract.ActiveSearchContract{EmbeddingContractID: "contract", EmbeddingDimensions: 2, EmbeddingModel: "model", SearchIndexGenerationID: "generation", IndexGeneration: 3}, run: &knowledgecontract.SearchReconciliationRun{RunID: "run"}, documents: []knowledgecontract.SearchDocumentForEmbedding{{DocumentText: "text", DocumentHash: "hash"}}}
+			provider := &searchReconciliationProviderStub{model: "model", dimensions: 2}
+			want := "embedding_response_invalid"
+			ctx := context.Background()
+			var cancel context.CancelFunc
+			if mode == "cancelled" {
+				ctx, cancel = context.WithCancel(ctx)
+				defer cancel()
+			}
+			provider.embedBatch = func(callCtx context.Context, _ []string) ([][]float32, string, error) {
+				switch mode {
+				case "model":
+					return [][]float32{{1, 2}}, "wrong", nil
+				case "count":
+					return nil, "model", nil
+				case "nan":
+					return [][]float32{{float32(math.NaN()), 2}}, "model", nil
+				case "infinity":
+					return [][]float32{{float32(math.Inf(1)), 2}}, "model", nil
+				case "cancelled":
+					cancel()
+					return [][]float32{{1, 2}}, "model", nil
+				case "late_success":
+					<-callCtx.Done()
+					return [][]float32{{1, 2}}, "model", nil
+				default:
+					t.Fatal("metadata mismatch must fail before calling the provider")
+					return nil, "", nil
+				}
+			}
+			if mode == "dimensions_unknown" {
+				provider.dimensions = 0
+				want = "embedding_contract_mismatch"
+			}
+			if mode == "cancelled" {
+				want = "embedding_cancelled"
+			}
+			if mode == "late_success" {
+				want = "embedding_timeout"
+			}
+			svc := NewSearchReconciliationService(SearchReconciliationDependencies{Repository: repo, Projection: repo, Executor: semanticwrite.NewProviderExecutor(provider), ProviderTimeout: time.Millisecond})
+			result, err := svc.Run(ctx)
+			require.ErrorIs(t, err, ErrSearchReconciliationFailed)
+			require.Equal(t, want, result.ErrorCode)
+			require.Nil(t, repo.applied)
+			require.Equal(t, "failed", repo.finished.Status)
+		})
+	}
+}
+
+func TestSearchReconciliationEmptyAndRetiredPlansNeedNoExecutor(t *testing.T) {
+	for _, retired := range []bool{false, true} {
+		repo := &searchReconciliationRepositoryStub{contract: &searchcontract.ActiveSearchContract{}, run: &knowledgecontract.SearchReconciliationRun{RunID: "run"}}
+		if retired {
+			repo.documents = []knowledgecontract.SearchDocumentForEmbedding{{Retired: true}}
+		}
+		result, err := NewSearchReconciliationService(SearchReconciliationDependencies{Repository: repo, Projection: repo}).Run(context.Background())
+		require.NoError(t, err)
+		require.Equal(t, "completed", result.Status)
+		require.Zero(t, result.EmbeddedCount)
+		if retired {
+			require.True(t, repo.applied.Documents[0].Retired)
+		}
+	}
+}

@@ -1,14 +1,9 @@
 package verifier
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"net/http"
-	"strconv"
 	"strings"
-	"time"
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
 )
@@ -153,49 +148,4 @@ func semanticAssessmentResponseForCorrection(
 		return normalized, validationErrors, "response_contract"
 	}
 	return normalized, nil, ""
-}
-
-func openAIHTTPFailureClass(statusCode int) string {
-	switch {
-	case statusCode >= 400 && statusCode < 500:
-		return ProviderFailureClassHTTPClient
-	case statusCode >= 500 && statusCode < 600:
-		return ProviderFailureClassHTTPServer
-	default:
-		return ProviderFailureClassHTTPUnexpected
-	}
-}
-
-func openAIRetryAfterSeconds(value string, now time.Time) int {
-	value = strings.TrimSpace(value)
-	if seconds, err := strconv.Atoi(value); err == nil {
-		if seconds >= int(providerFailureMaxRetryAfter/time.Second) {
-			return int(providerFailureMaxRetryAfter / time.Second)
-		}
-		if seconds > 0 {
-			return seconds
-		}
-		return 0
-	}
-	retryAt, err := http.ParseTime(value)
-	if err != nil {
-		return 0
-	}
-	delay := retryAt.Sub(now)
-	if delay <= 0 {
-		return 0
-	}
-	seconds := int((delay + time.Second - 1) / time.Second)
-	if seconds >= int(providerFailureMaxRetryAfter/time.Second) {
-		return int(providerFailureMaxRetryAfter / time.Second)
-	}
-	return seconds
-}
-
-func openAIRequestTimedOutOrCanceled(ctx context.Context, err error) bool {
-	if ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) {
-		return true
-	}
-	var timeout interface{ Timeout() bool }
-	return errors.As(err, &timeout) && timeout.Timeout()
 }

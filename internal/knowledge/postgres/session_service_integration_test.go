@@ -23,6 +23,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/observability"
 	assessorprovider "github.com/markhuangai/dense-mem/internal/provider/assessor"
 	processor "github.com/markhuangai/dense-mem/internal/remember/service/processor"
+	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
 	session "github.com/markhuangai/dense-mem/internal/session/contract"
 	"github.com/markhuangai/dense-mem/internal/session/extraction"
 	service "github.com/markhuangai/dense-mem/internal/session/service"
@@ -341,7 +342,7 @@ func TestSessionServiceFactsDiagnosticsAndCheckpointRecoveryThroughPostgres(t *t
 	store := NewStore(app, rls, ConflictRuntimeConfig{})
 	embedder := &sessionFactsEmbedder{}
 	protector := observability.NewCredentialProtector("fixture-provider-key")
-	preparer := processor.NewSynchronousProcessor(processor.ProcessorDependencies{Ledger: store, Catalog: store, Assessor: transport, Embedder: embedder, Limits: assessor.DefaultSemanticAssessmentLimits(), DiagnosticProtector: protector})
+	preparer := processor.NewSynchronousProcessor(processor.ProcessorDependencies{Ledger: store, Catalog: store, Assessor: transport, EmbeddingExecutor: semanticwrite.NewProviderExecutor(embedder), Limits: assessor.DefaultSemanticAssessmentLimits(), DiagnosticProtector: protector})
 	api := service.NewService(service.Dependencies{
 		Enabled: true, Repository: store, Preparer: preparer, Tokenizer: "o200k_base",
 		Extractor: extraction.NewProvider(transport, "fixture", assessor.DefaultSemanticAssessmentLimits()), DiagnosticProtector: protector,

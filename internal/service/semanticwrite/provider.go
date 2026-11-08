@@ -1,24 +1,31 @@
-package serverapp
+package semanticwrite
 
 import (
 	"context"
 	"errors"
 
 	embeddingcontract "github.com/markhuangai/dense-mem/internal/embedding/contract"
-	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
 )
 
+// PlainBatchProvider is the existing ordered-vector provider boundary.
+type PlainBatchProvider interface {
+	EmbedBatch(context.Context, []string) ([][]float32, string, error)
+	ModelName() string
+	Dimensions() int
+	IsAvailable() bool
+}
+
 type semanticwriteEmbeddingAdapter struct {
-	provider embeddingcontract.EmbeddingProviderInterface
+	provider PlainBatchProvider
 }
 
-var _ semanticwrite.BatchProvider = semanticwriteEmbeddingAdapter{}
+var _ BatchProvider = semanticwriteEmbeddingAdapter{}
 
-func newSemanticwriteEmbeddingExecutor(provider embeddingcontract.EmbeddingProviderInterface) *semanticwrite.Executor {
-	return semanticwrite.NewExecutor(semanticwriteEmbeddingAdapter{provider: provider})
+func NewProviderExecutor(provider PlainBatchProvider) *Executor {
+	return NewExecutor(semanticwriteEmbeddingAdapter{provider: provider})
 }
 
-func (a semanticwriteEmbeddingAdapter) EmbedBatch(ctx context.Context, texts []string) ([]semanticwrite.IndexedEmbedding, string, error) {
+func (a semanticwriteEmbeddingAdapter) EmbedBatch(ctx context.Context, texts []string) ([]IndexedEmbedding, string, error) {
 	if a.provider == nil {
 		return nil, "", errors.New("embedding provider is required")
 	}
@@ -26,16 +33,16 @@ func (a semanticwriteEmbeddingAdapter) EmbedBatch(ctx context.Context, texts []s
 	if err != nil {
 		metadata := embeddingcontract.ClassifyFailure(err)
 		if metadata.Code == "provider_response_invalid" {
-			return nil, "", semanticwrite.ErrProviderResponseInvalid
+			return nil, "", &ExecutionError{Reason: ReasonProviderCall, Kind: ErrProviderResponseInvalid, Cause: err}
 		}
 		if metadata.Code == "provider_timeout" {
-			return nil, "", semanticwrite.ErrProviderTimeout
+			return nil, "", &ExecutionError{Reason: ReasonProviderCall, Kind: ErrProviderTimeout, Cause: err}
 		}
 		return nil, "", err
 	}
-	result := make([]semanticwrite.IndexedEmbedding, len(vectors))
+	result := make([]IndexedEmbedding, len(vectors))
 	for index, vector := range vectors {
-		result[index] = semanticwrite.IndexedEmbedding{Index: index, Vector: append([]float32(nil), vector...)}
+		result[index] = IndexedEmbedding{Index: index, Vector: append([]float32(nil), vector...)}
 	}
 	return result, model, nil
 }

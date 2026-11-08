@@ -20,9 +20,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
-	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
-
 	accesspostgres "github.com/markhuangai/dense-mem/internal/access/postgres"
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -35,8 +32,11 @@ import (
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 	rememberprocessor "github.com/markhuangai/dense-mem/internal/remember/service/processor"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
+	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
+	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func TestRememberEvaluationImporterAdmission(t *testing.T) {
@@ -278,8 +278,8 @@ func newImportAdmissionHarness(t *testing.T, pool int) *importAdmissionHarness {
 	store := knowledgepostgres.NewStore(app, rls, knowledgecontract.ConflictRuntimeConfig{})
 	processor := rememberprocessor.NewSynchronousProcessor(rememberprocessor.ProcessorDependencies{
 		Ledger: store, Catalog: store, Assessor: h.provider,
-		Embedder: rememberProcessorIntegrationSearchEmbedder{model: model, dimensions: dimensions},
-		Limits:   assessor.DefaultSemanticAssessmentLimits(), Metrics: observability.NoopDiscoverabilityMetrics(),
+		EmbeddingExecutor: semanticwrite.NewProviderExecutor(rememberProcessorIntegrationSearchEmbedder{model: model, dimensions: dimensions}),
+		Limits:            assessor.DefaultSemanticAssessmentLimits(), Metrics: observability.NoopDiscoverabilityMetrics(),
 	})
 	reg, err := registry.BuildActive(registry.Dependencies{RememberBindings: registry.RememberBindings{
 		Service: rememberapp.NewService(rememberapp.Dependencies{Synchronous: processor}),

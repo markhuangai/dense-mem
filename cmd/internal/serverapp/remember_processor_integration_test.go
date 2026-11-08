@@ -17,10 +17,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/stretchr/testify/require"
-	gormpostgres "gorm.io/driver/postgres"
-	"gorm.io/gorm"
-
 	accesspostgres "github.com/markhuangai/dense-mem/internal/access/postgres"
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -32,7 +28,11 @@ import (
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 	rememberprocessor "github.com/markhuangai/dense-mem/internal/remember/service/processor"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
+	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
+	"github.com/stretchr/testify/require"
+	gormpostgres "gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
 const (
@@ -63,7 +63,7 @@ func TestRememberServiceRejectsHistoricalOutcomesThroughPostgres(t *testing.T) {
 
 	ledger := knowledgepostgres.NewStore(appDB, rls, knowledgecontract.ConflictRuntimeConfig{})
 	processor := rememberprocessor.NewSynchronousProcessor(rememberprocessor.ProcessorDependencies{
-		Ledger: ledger, Assessor: nil, Embedder: nil, Limits: assessor.DefaultSemanticAssessmentLimits(),
+		Ledger: ledger, Assessor: nil, EmbeddingExecutor: nil, Limits: assessor.DefaultSemanticAssessmentLimits(),
 		Metrics: observability.NoopDiscoverabilityMetrics(),
 	})
 	service := rememberapp.NewService(rememberapp.Dependencies{Synchronous: processor})
@@ -158,7 +158,7 @@ func TestRememberServiceRejectsMigratedAttemptThroughPostgres(t *testing.T) {
 	}))
 
 	processor := rememberprocessor.NewSynchronousProcessor(rememberprocessor.ProcessorDependencies{
-		Ledger: ledger, Assessor: nil, Embedder: nil, Limits: assessor.DefaultSemanticAssessmentLimits(),
+		Ledger: ledger, Assessor: nil, EmbeddingExecutor: nil, Limits: assessor.DefaultSemanticAssessmentLimits(),
 		Metrics: observability.NoopDiscoverabilityMetrics(),
 	})
 	service := rememberapp.NewService(rememberapp.Dependencies{Synchronous: processor})
@@ -196,7 +196,7 @@ func TestRememberServiceRejectsMigratedAttemptThroughPostgres(t *testing.T) {
 			ledger.recordFailureDelay = testCase.recordFailureDelay
 			processor := rememberprocessor.NewSynchronousProcessor(rememberprocessor.ProcessorDependencies{
 				Ledger: ledger, Catalog: realLedger, Assessor: &rememberProcessorIntegrationRegistrationAssessor{},
-				Embedder: rememberProcessorIntegrationEmbedder{}, Limits: assessor.DefaultSemanticAssessmentLimits(),
+				EmbeddingExecutor: semanticwrite.NewProviderExecutor(rememberProcessorIntegrationEmbedder{}), Limits: assessor.DefaultSemanticAssessmentLimits(),
 				Metrics: observability.NoopDiscoverabilityMetrics(), IsStaleInput: rememberapp.IsRememberStaleInputError,
 			})
 			service := rememberapp.NewService(rememberapp.Dependencies{Synchronous: processor})
@@ -277,8 +277,8 @@ func TestRememberPredicateRegistrationCatalogDriftThroughPostgres(t *testing.T) 
 	provider := &rememberProcessorIntegrationRegistrationAssessor{}
 	processor := rememberprocessor.NewSynchronousProcessor(rememberprocessor.ProcessorDependencies{
 		Ledger: store, Catalog: catalog, Assessor: provider,
-		Embedder: rememberProcessorIntegrationSearchEmbedder{model: model, dimensions: dimensions},
-		Limits:   assessor.DefaultSemanticAssessmentLimits(), Metrics: observability.NoopDiscoverabilityMetrics(),
+		EmbeddingExecutor: semanticwrite.NewProviderExecutor(rememberProcessorIntegrationSearchEmbedder{model: model, dimensions: dimensions}),
+		Limits:            assessor.DefaultSemanticAssessmentLimits(), Metrics: observability.NoopDiscoverabilityMetrics(),
 	})
 	service := rememberapp.NewService(rememberapp.Dependencies{Synchronous: processor})
 	actorCtx := rememberProcessorActorContext(t, ctx, adminDB, rls, teamID, ownerID)

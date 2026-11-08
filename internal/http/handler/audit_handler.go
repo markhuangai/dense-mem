@@ -2,13 +2,12 @@ package handler
 
 import (
 	"context"
-	"net/http"
 	"strconv"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
-
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
+	"github.com/markhuangai/dense-mem/internal/http/response"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 )
@@ -24,15 +23,6 @@ type AuditServiceInterface interface {
 type AuditHandler struct {
 	svc AuditServiceInterface
 }
-
-// AuditHandlerInterface is the companion interface for AuditHandler.
-// Consumers and tests depend on this abstraction rather than the concrete struct.
-type AuditHandlerInterface interface {
-	Get(c echo.Context) error
-}
-
-// Ensure AuditHandler implements AuditHandlerInterface
-var _ AuditHandlerInterface = (*AuditHandler)(nil)
 
 // NewAuditHandler creates a new audit handler with the given service.
 func NewAuditHandler(svc AuditServiceInterface) *AuditHandler {
@@ -87,13 +77,10 @@ func (h *AuditHandler) Get(c echo.Context) error {
 	}
 
 	// Return 200 with pagination envelope
-	return c.JSON(http.StatusOK, PaginationEnvelope{
-		Data: data,
-		Pagination: Pagination{
-			Limit:  limit,
-			Offset: offset,
-			Total:  int64(total),
-		},
+	return response.PaginatedOK(c, data, response.Pagination{
+		Limit:  limit,
+		Offset: offset,
+		Total:  int64(total),
 	})
 }
 

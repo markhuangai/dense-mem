@@ -119,9 +119,7 @@ func TestConfiguredSessionProvidersShareConcurrencyGate(t *testing.T) {
 	assessorProvider := assessorprovider.NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGateAndModel(
 		cfg, server.Client(), assessor.DefaultSemanticAssessmentLimits(), gate, "remember-model",
 	)
-	verifierProvider := verifier.NewOpenAIVerifierWithAssessmentLimitsAndConcurrencyGateAndModel(
-		cfg, server.Client(), verifier.DefaultSemanticAssessmentLimits(), gate, "conflict-model",
-	)
+	verifierProvider := verifier.NewOpenAIVerifier(assessorProvider, "conflict-model", verifier.DefaultSemanticAssessmentLimits(), nil)
 
 	if err := modelprovider.AcquireConcurrency(context.Background(), gate); err != nil {
 		t.Fatalf("acquire shared gate: %v", err)
@@ -212,9 +210,7 @@ func TestConfiguredSessionModelsDoNotFallbackAfterProviderFailure(t *testing.T) 
 	assessorProvider := assessorprovider.NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGateAndModel(
 		cfg, server.Client(), assessor.DefaultSemanticAssessmentLimits(), gate, models.remember,
 	)
-	verifierProvider := verifier.NewOpenAIVerifierWithAssessmentLimitsAndConcurrencyGateAndModel(
-		cfg, server.Client(), verifier.DefaultSemanticAssessmentLimits(), gate, models.conflictReview,
-	)
+	verifierProvider := verifier.NewOpenAIVerifier(assessorProvider, models.conflictReview, verifier.DefaultSemanticAssessmentLimits(), nil)
 
 	calls := []func() error{
 		func() error {
