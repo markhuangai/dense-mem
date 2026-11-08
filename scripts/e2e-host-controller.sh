@@ -548,8 +548,8 @@ for (const entry of fs.readdirSync(directory).filter((item) => item.endsWith(".j
   const cases = [...packageCounts.values()].reduce((total, count) => total + count, 0);
   const weight = [...packageCounts.values()].reduce((total, count) => total + Math.ceil(count / batchSize), 0);
   const caseIds = selectedCases.map((item) => item.id);
-  // Community's fanout cohort needs more room than its case count suggests in the bounded six-shard route.
-  const load = shardCount === 6 && capability === "community" ? cases * 4 : cases;
+  // Community fanout and ontology-heavy Recall need more room than their case counts suggest in the bounded six-shard route.
+  const load = shardCount === 6 ? cases * (capability === "community" ? 5 : capability === "recall" ? 2 : 1) : cases;
   records.push({ capability, cases, load, packageCounts, weight, caseIds });
 }
 
