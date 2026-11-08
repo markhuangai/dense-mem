@@ -6,7 +6,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
-
 	"github.com/markhuangai/dense-mem/internal/domain"
 	dto "github.com/markhuangai/dense-mem/internal/http/dto"
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
@@ -32,33 +31,9 @@ type TeamHandler struct {
 	svc TeamServiceInterface
 }
 
-// TeamHandlerInterface is the companion interface for TeamHandler.
-// Consumers and tests depend on this abstraction rather than the concrete struct.
-type TeamHandlerInterface interface {
-	Get(c echo.Context) error
-	Patch(c echo.Context) error
-	Delete(c echo.Context) error
-}
-
-// Ensure TeamHandler implements TeamHandlerInterface
-var _ TeamHandlerInterface = (*TeamHandler)(nil)
-
 // NewTeamHandler creates a new team handler with the given service.
 func NewTeamHandler(svc TeamServiceInterface) *TeamHandler {
 	return &TeamHandler{svc: svc}
-}
-
-// PaginationEnvelope is the JSON envelope for paginated responses.
-type PaginationEnvelope struct {
-	Data       interface{} `json:"data"`
-	Pagination Pagination  `json:"pagination"`
-}
-
-// Pagination holds pagination metadata.
-type Pagination struct {
-	Limit  int   `json:"limit"`
-	Offset int   `json:"offset"`
-	Total  int64 `json:"total"`
 }
 
 // Get handles GET /ui/api/team.

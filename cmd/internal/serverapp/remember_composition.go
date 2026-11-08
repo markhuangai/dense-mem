@@ -2,13 +2,13 @@ package serverapp
 
 import (
 	"github.com/markhuangai/dense-mem/internal/assessor"
-	embeddingcontract "github.com/markhuangai/dense-mem/internal/embedding/contract"
 	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	remembercontract "github.com/markhuangai/dense-mem/internal/remember/contract"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 	rememberprocessor "github.com/markhuangai/dense-mem/internal/remember/service/processor"
+	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
 )
 
 type rememberApplicationDependencies struct {
@@ -17,7 +17,7 @@ type rememberApplicationDependencies struct {
 	Assessor            assessor.Provider
 	Decisions           modelprovider.DecisionProvider
 	DecisionSettings    modelprovider.DecisionSettings
-	Embedder            embeddingcontract.EmbeddingProviderInterface
+	EmbeddingExecutor   *semanticwrite.Executor
 	Limits              assessor.SemanticAssessmentLimits
 	Metrics             observability.DiscoverabilityMetrics
 	Logger              observability.LogProvider
@@ -29,7 +29,7 @@ func buildRememberApplication(deps rememberApplicationDependencies) rememberapp.
 	processor := rememberprocessor.NewSynchronousProcessor(rememberprocessor.ProcessorDependencies{
 		Ledger: deps.Persistence, Catalog: deps.Catalog, Assessor: deps.Assessor,
 		Decisions: deps.Decisions, DecisionSettings: deps.DecisionSettings,
-		Embedder: deps.Embedder, Limits: deps.Limits, Metrics: deps.Metrics,
+		EmbeddingExecutor: deps.EmbeddingExecutor, Limits: deps.Limits, Metrics: deps.Metrics,
 		Logger: deps.Logger, DiagnosticProtector: deps.DiagnosticProtector, IsStaleInput: rememberapp.IsRememberStaleInputError,
 		CommitFailureStage: knowledgepostgres.RememberCommitFailureStage,
 	})

@@ -8,11 +8,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
-
 	"github.com/markhuangai/dense-mem/internal/domain"
 	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
-	"github.com/markhuangai/dense-mem/internal/http/handler"
 	httpmw "github.com/markhuangai/dense-mem/internal/http/middleware"
+	"github.com/markhuangai/dense-mem/internal/http/response"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 )
@@ -40,10 +39,7 @@ func (h *controlPortalHandler) listRememberInvocationDiagnostics(c echo.Context)
 	if err != nil {
 		return err
 	}
-	return c.JSON(200, handler.PaginationEnvelope{
-		Data:       page.Items,
-		Pagination: handler.Pagination{Limit: filter.Limit, Offset: filter.Offset, Total: page.Total},
-	})
+	return response.PaginatedOK(c, page.Items, response.Pagination{Limit: filter.Limit, Offset: filter.Offset, Total: page.Total})
 }
 
 func (h *controlPortalHandler) getRememberInvocationDiagnostic(c echo.Context) error {

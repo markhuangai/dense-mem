@@ -3,13 +3,11 @@ package handler
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
-
 	"github.com/markhuangai/dense-mem/internal/domain"
 	dto "github.com/markhuangai/dense-mem/internal/http/dto"
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
@@ -37,20 +35,6 @@ type CredentialServiceInterface interface {
 type CredentialHandler struct {
 	svc CredentialServiceInterface
 }
-
-// CredentialHandlerInterface is the companion interface for CredentialHandler.
-// Consumers and tests depend on this abstraction rather than the concrete struct.
-type CredentialHandlerInterface interface {
-	Create(c echo.Context) error
-	List(c echo.Context) error
-	Get(c echo.Context) error
-	Update(c echo.Context) error
-	Rotate(c echo.Context) error
-	Delete(c echo.Context) error
-}
-
-// Ensure CredentialHandler implements CredentialHandlerInterface
-var _ CredentialHandlerInterface = (*CredentialHandler)(nil)
 
 // NewCredentialHandler creates a new API credential handler with the given service.
 func NewCredentialHandler(svc CredentialServiceInterface) *CredentialHandler {
@@ -171,19 +155,16 @@ func (h *CredentialHandler) List(c echo.Context) error {
 	}
 
 	// Convert to response format (never includes key_hash or plaintext)
-	data := make([]dto.CredentialListItem, len(credentials))
+	data := make([]dto.CredentialResponse, len(credentials))
 	for i, credential := range credentials {
-		data[i] = toCredentialListItem(credential)
+		data[i] = toCredentialResponse(credential)
 	}
 
 	// Return 200 with pagination envelope
-	return c.JSON(http.StatusOK, PaginationEnvelope{
-		Data: data,
-		Pagination: Pagination{
-			Limit:  limit,
-			Offset: offset,
-			Total:  total,
-		},
+	return response.PaginatedOK(c, data, response.Pagination{
+		Limit:  limit,
+		Offset: offset,
+		Total:  total,
 	})
 }
 
@@ -447,36 +428,6 @@ func toCredentialResponse(k *domain.Credential) dto.CredentialResponse {
 	}
 
 	return dto.CredentialResponse{
-		ID:           k.ID,
-		TeamID:       k.GetTeamID(),
-		Name:         k.Name,
-		KeySuffix:    k.KeySuffix,
-		Scopes:       append([]string{}, k.Scopes...),
-		Role:         k.GetRole(),
-		RateLimit:    k.RateLimit,
-		LastUsedAt:   lastUsedAt,
-		ExpiresAt:    expiresAt,
-		CreatedAt:    k.CreatedAt.Format("2006-01-02T15:04:05Z"),
-		MemoryAccess: k.MemoryCapabilities(),
-	}
-}
-
-// toCredentialListItem converts a domain.Credential to dto.CredentialListItem.
-// Never includes key_hash or plaintext.
-func toCredentialListItem(k *domain.Credential) dto.CredentialListItem {
-	var lastUsedAt *string
-	if k.LastUsedAt != nil {
-		formatted := k.LastUsedAt.Format("2006-01-02T15:04:05Z")
-		lastUsedAt = &formatted
-	}
-
-	var expiresAt *string
-	if k.ExpiresAt != nil {
-		formatted := k.ExpiresAt.Format("2006-01-02T15:04:05Z")
-		expiresAt = &formatted
-	}
-
-	return dto.CredentialListItem{
 		ID:           k.ID,
 		TeamID:       k.GetTeamID(),
 		Name:         k.Name,

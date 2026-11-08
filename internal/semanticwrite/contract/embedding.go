@@ -20,6 +20,13 @@ type Fence struct {
 	SearchGenerationVersion int64
 }
 
+func (f Fence) LogFields() map[string]any {
+	return map[string]any{
+		"model": f.Model, "dimensions": f.Dimensions, "embedding_contract_id": f.EmbeddingContractID,
+		"search_generation_id": f.SearchGenerationID, "search_generation_version": f.SearchGenerationVersion,
+	}
+}
+
 type Plan struct {
 	Documents []Document
 	Fence     Fence

@@ -22,6 +22,7 @@ import (
 	remembercontract "github.com/markhuangai/dense-mem/internal/remember/contract"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 	searchcontract "github.com/markhuangai/dense-mem/internal/search/contract"
+	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
 	session "github.com/markhuangai/dense-mem/internal/session/contract"
 	settings "github.com/markhuangai/dense-mem/internal/settings"
 	traceapp "github.com/markhuangai/dense-mem/internal/trace"
@@ -76,13 +77,14 @@ type applicationBundle struct {
 }
 
 func buildApplicationBundle(deps applicationCompositionDependencies) applicationBundle {
+	embeddingExecutor := semanticwrite.NewProviderExecutor(deps.EmbeddingProvider)
 	rememberService := buildRememberApplication(rememberApplicationDependencies{
 		Persistence:         deps.RememberPersistence,
 		Catalog:             deps.RememberCatalog,
 		Assessor:            deps.Assessor,
 		Decisions:           deps.Decisions,
 		DecisionSettings:    deps.DecisionSettings,
-		Embedder:            deps.EmbeddingProvider,
+		EmbeddingExecutor:   embeddingExecutor,
 		Limits:              deps.AssessmentLimits,
 		Metrics:             deps.Metrics,
 		Logger:              deps.Logger,
@@ -92,7 +94,7 @@ func buildApplicationBundle(deps applicationCompositionDependencies) application
 	sessionService := buildSessionApplication(rememberApplicationDependencies{
 		Persistence: deps.RememberPersistence, Catalog: deps.RememberCatalog, Assessor: deps.SessionAssessor,
 		Decisions: deps.Decisions, DecisionSettings: deps.DecisionSettings,
-		Embedder: deps.EmbeddingProvider, Limits: deps.AssessmentLimits, Metrics: deps.Metrics,
+		EmbeddingExecutor: embeddingExecutor, Limits: deps.AssessmentLimits, Metrics: deps.Metrics,
 		Logger: deps.Logger, DiagnosticProtector: deps.DiagnosticProtector, Audit: deps.Audit,
 	}, deps.Knowledge, deps.GeneratorTransport, deps.RememberModel, deps.SessionEnabled)
 	recallService := buildRecallApplication(recallApplicationDependencies{

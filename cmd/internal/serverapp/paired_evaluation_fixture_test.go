@@ -41,6 +41,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	searchapp "github.com/markhuangai/dense-mem/internal/search"
 	searchpg "github.com/markhuangai/dense-mem/internal/search/postgres"
+	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
 	"github.com/markhuangai/dense-mem/internal/settings"
 	settingspg "github.com/markhuangai/dense-mem/internal/settings/postgres"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
@@ -73,7 +74,7 @@ func newPairedServiceFixture(t *testing.T, side string) *pairedServiceFixture {
 	store := knowledgepg.NewStore(app, rls, knowledge.ConflictRuntimeConfig{})
 	provider := &pairedRememberAssessor{failures: 1}
 	embedder := rememberProcessorIntegrationSearchEmbedder{model: model, dimensions: dimensions}
-	writer := remember.NewService(remember.Dependencies{Synchronous: processor.NewSynchronousProcessor(processor.ProcessorDependencies{Ledger: store, Catalog: store, Assessor: provider, Embedder: embedder, Limits: assessor.DefaultSemanticAssessmentLimits()})})
+	writer := remember.NewService(remember.Dependencies{Synchronous: processor.NewSynchronousProcessor(processor.ProcessorDependencies{Ledger: store, Catalog: store, Assessor: provider, EmbeddingExecutor: semanticwrite.NewProviderExecutor(embedder), Limits: assessor.DefaultSemanticAssessmentLimits()})})
 	actorCtx := rememberProcessorActorContext(t, ctx, admin, rls, teamID, ownerID)
 	actor, ok := requestctx.ActorFromContext(actorCtx)
 	require.True(t, ok)
@@ -182,7 +183,7 @@ func newPairedServiceFixture(t *testing.T, side string) *pairedServiceFixture {
 	t.Cleanup(control.Close)
 	r := evalharness.PairRelease{Release: side, Protocol: "adr0014", Scope: evalharness.PairScope{TeamID: teamID.String(), OwnerID: ownerID.String()}, Capacity: evalharness.PairCapacity{Global: 4, Team: 4, ContextWindowTokens: 300000}, Models: evalharness.PairModels{Provider: "test", EmbeddingModel: model, EmbeddingDimensions: dimensions, EmbeddingIndexStrategy: "exact", Ontology: "paired-ontology", BackingRevision: "unknown"}, Runtime: evalharness.PairRuntime{CredentialID: ownerID.String(), BaseURL: mcp.URL, APIKeyEnv: "PAIR_FIXTURE_API_KEY"}}
 	require.NoError(t, admin.Raw(`SELECT id::text,generation FROM memory_spaces WHERE team_id=? AND kind='team_shared'`, teamID).Row().Scan(&r.Scope.SpaceID, &r.Scope.Generation))
-	return &pairedServiceFixture{admin: admin, release: r, mcp: mcp, control: control, maintenance: maintenance, projections: projections, provider: provider, reconciliation: searchapp.NewSearchReconciliationService(searchapp.SearchReconciliationDependencies{Repository: search, Projection: store, Provider: embedder})}
+	return &pairedServiceFixture{admin: admin, release: r, mcp: mcp, control: control, maintenance: maintenance, projections: projections, provider: provider, reconciliation: searchapp.NewSearchReconciliationService(searchapp.SearchReconciliationDependencies{Repository: search, Projection: store, Executor: semanticwrite.NewProviderExecutor(embedder)})}
 }
 
 type pairedRememberAssessor struct {

@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/conflict/assessment"
+	"github.com/markhuangai/dense-mem/internal/observability"
 )
 
 const (
@@ -66,9 +68,28 @@ func legacyConflictValidationErrors(errs []assessor.SemanticValidationError) []S
 // AssessRelationshipConflict keeps the transitional verifier API while the
 // canonical Conflict request, response, schema, and validation contract lives
 // in the conflictassessment package.
-func (v *OpenAIVerifier) AssessRelationshipConflict(ctx context.Context, req ConflictAssessmentRequest) (ConflictAssessmentResponse, error) {
+func (v *OpenAIVerifier) AssessRelationshipConflict(ctx context.Context, req ConflictAssessmentRequest) (final ConflictAssessmentResponse, finalErr error) {
+	started := time.Now()
+	attempts := 0
+	var validation []SemanticValidationError
+	attrs := []observability.LogAttr{observability.String("request_id", req.RequestID), observability.String("case_id", req.CaseID), observability.Int("case_version", req.Version), observability.String("model", v.model), observability.String("schema", ConflictAssessmentSchemaName)}
+	defer func() {
+		contextual, ok := v.logger.(observability.ContextLogProvider)
+		if !ok {
+			return
+		}
+		terminal := append(append([]observability.LogAttr{}, attrs...), observability.Int("attempts", attempts), observability.LogAttr{Key: "duration_ms", Value: time.Since(started).Milliseconds()})
+		if finalErr != nil {
+			terminal = append(terminal, observability.String("failure_class", ProviderFailureDetails(finalErr).Class), observability.LogAttr{Key: "validation_errors", Value: assessor.BoundSemanticAssessmentCorrectionErrors(validation)}, observability.String("outcome", "failed"))
+			contextual.ErrorContext(ctx, "conflict_assessment_failed", finalErr, terminal...)
+		} else {
+			terminal = append(terminal, observability.String("decision", final.Decision), observability.String("outcome", "completed"))
+			contextual.InfoContext(ctx, "conflict_assessment_completed", terminal...)
+		}
+	}()
 	prepared, validationErrors := PrepareConflictAssessmentRequest(req, v.assessmentLimits)
 	if len(validationErrors) > 0 {
+		validation = validationErrors
 		return ConflictAssessmentResponse{}, &ProviderError{
 			Provider:     openAIVerifierProvider,
 			Message:      "invalid conflict assessment request: " + openAIValidationSummary(validationErrors),
@@ -88,7 +109,16 @@ func (v *OpenAIVerifier) AssessRelationshipConflict(ctx context.Context, req Con
 		if inputTokens > v.assessmentLimits.MaxInputTokens {
 			return ConflictAssessmentResponse{}, &MalformedResponseError{Provider: openAIVerifierProvider, Message: "conflict assessment exceeds input token budget", FailureClass: "input_budget", Attempts: turn - 1}
 		}
+		attempts = turn
 		result, err := v.openAIStructuredChatMessagesJSONWithUsage(ctx, v.model, ConflictAssessmentSchemaName, ConflictAssessmentResponseSchema(), messages)
+		if contextual, ok := v.logger.(observability.ContextLogProvider); ok {
+			var usage map[string]any
+			if result.ReportedUsage != nil {
+				usage = map[string]any{"prompt_tokens": result.ReportedUsage.PromptTokens, "completion_tokens": result.ReportedUsage.CompletionTokens, "total_tokens": result.ReportedUsage.TotalTokens}
+			}
+			fields := append(append([]observability.LogAttr{}, attrs...), observability.Int("attempt", turn), observability.LogAttr{Key: "transport", Value: result.Diagnostics.LogFields()}, observability.LogAttr{Key: "usage_available", Value: result.ReportedUsage != nil}, observability.LogAttr{Key: "reported_usage", Value: usage})
+			contextual.DebugContext(ctx, "conflict_assessment_provider_response", fields...)
+		}
 		if err != nil {
 			return ConflictAssessmentResponse{}, err
 		}
@@ -123,6 +153,11 @@ func (v *OpenAIVerifier) AssessRelationshipConflict(ctx context.Context, req Con
 			}
 			response.ProviderTurns = turn
 			return response, nil
+		}
+		validation = responseErrors
+		if contextual, ok := v.logger.(observability.ContextLogProvider); ok {
+			fields := append(append([]observability.LogAttr{}, attrs...), observability.Int("attempt", turn), observability.LogAttr{Key: "validation_errors", Value: assessor.BoundSemanticAssessmentCorrectionErrors(responseErrors)})
+			contextual.DebugContext(ctx, "conflict_assessment_response_invalid", fields...)
 		}
 		if turn == SemanticAssessmentMaxProviderTurns {
 			return ConflictAssessmentResponse{}, &MalformedResponseError{Provider: openAIVerifierProvider, Message: "conflict assessment response remained invalid after bounded correction", FailureClass: "malformed_exhausted", Attempts: turn}

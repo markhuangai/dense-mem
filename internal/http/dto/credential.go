@@ -2,6 +2,7 @@ package dto
 
 import (
 	"encoding/json"
+
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/httperr"
@@ -37,21 +38,6 @@ type UpdateCredentialRequest struct {
 
 // CredentialResponse represents a credential and its single active API credential in API responses.
 type CredentialResponse struct {
-	ID           uuid.UUID           `json:"id"`
-	TeamID       uuid.UUID           `json:"team_id"`
-	Name         string              `json:"name"`
-	KeySuffix    string              `json:"key_suffix"`
-	Scopes       []string            `json:"scopes"`
-	Role         string              `json:"role"`
-	RateLimit    int                 `json:"rate_limit"`
-	LastUsedAt   *string             `json:"last_used_at"`
-	ExpiresAt    *string             `json:"expires_at"`
-	CreatedAt    string              `json:"created_at"`
-	MemoryAccess domain.MemoryAccess `json:"memory_access"`
-}
-
-// CredentialListItem represents a single credential in a list response.
-type CredentialListItem struct {
 	ID           uuid.UUID           `json:"id"`
 	TeamID       uuid.UUID           `json:"team_id"`
 	Name         string              `json:"name"`

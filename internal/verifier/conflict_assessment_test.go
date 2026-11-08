@@ -200,13 +200,7 @@ func TestOpenAIVerifierAssessesRelationshipConflict(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	provider := NewOpenAIVerifierWithAssessmentLimitsAndConcurrencyGateAndModel(
-		newTestVerifierConfig(srv.URL, "key", "verifier-fallback-model"),
-		srv.Client(),
-		DefaultSemanticAssessmentLimits(),
-		nil,
-		"conflict-review-override-model",
-	)
+	provider := NewOpenAIVerifier(newTestOpenAIVerifier(newTestVerifierConfig(srv.URL, "key", "verifier-fallback-model"), srv.Client()).transport, "conflict-review-override-model", DefaultSemanticAssessmentLimits(), nil)
 	response, err := provider.AssessRelationshipConflict(context.Background(), conflictAssessmentTestRequest(t))
 	require.NoError(t, err)
 	assert.Equal(t, ConflictAssessmentDecisionSelect, response.Decision)
@@ -227,7 +221,7 @@ func TestOpenAIVerifierCorrectsInvalidRelationshipConflictAssessment(t *testing.
 		require.NoError(t, json.NewDecoder(request.Body).Decode(&received))
 		requests = append(requests, received)
 		content := `{"decision":"select","position_id":"position-a","confidence":0.9,"rationale":"Initial invalid selection.","unexpected":true}`
-		if len(requests) == 2 {
+		if len(requests) == 3 {
 			content = `{"decision":"abstain","position_id":null,"confidence":0,"rationale":"The dossier is not clear enough."}`
 		}
 		assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
@@ -236,16 +230,18 @@ func TestOpenAIVerifierCorrectsInvalidRelationshipConflictAssessment(t *testing.
 	}))
 	defer srv.Close()
 
-	provider := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "key", "assessor-model"), srv.Client())
+	provider := newTestOpenAIVerifier(newTestVerifierConfig(srv.URL, "key", "assessor-model"), srv.Client())
 	response, err := provider.AssessRelationshipConflict(context.Background(), conflictAssessmentTestRequest(t))
 	require.NoError(t, err)
 	assert.Equal(t, ConflictAssessmentDecisionAbstain, response.Decision)
 	assert.Nil(t, response.PositionID)
-	assert.Equal(t, 2, response.ProviderTurns)
-	require.Len(t, requests, 2)
+	assert.Equal(t, 3, response.ProviderTurns)
+	require.Len(t, requests, 3)
 	assert.Equal(t, []string{"system", "user"}, assessmentMessageRoles(requests[0].Messages))
 	assert.Equal(t, []string{"system", "user", "assistant", "user"}, assessmentMessageRoles(requests[1].Messages))
 	assert.Contains(t, requests[1].Messages[3].Content, "position_id")
+	assert.Equal(t, []string{"system", "user", "assistant", "user", "assistant", "user"}, assessmentMessageRoles(requests[2].Messages))
+	assert.Equal(t, requests[1].Messages[2], requests[2].Messages[2])
 }
 
 func TestOpenAIVerifierStopsAfterBoundedInvalidConflictAssessmentResponses(t *testing.T) {
@@ -258,7 +254,7 @@ func TestOpenAIVerifierStopsAfterBoundedInvalidConflictAssessmentResponses(t *te
 	}))
 	defer srv.Close()
 
-	provider := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "key", "assessor-model"), srv.Client())
+	provider := newTestOpenAIVerifier(newTestVerifierConfig(srv.URL, "key", "assessor-model"), srv.Client())
 	_, err := provider.AssessRelationshipConflict(context.Background(), conflictAssessmentTestRequest(t))
 	require.ErrorIs(t, err, ErrVerifierMalformedResponse)
 	assert.Equal(t, SemanticAssessmentMaxProviderTurns, requestCount)
@@ -306,7 +302,7 @@ func TestOpenAIVerifierRejectsReportedConflictAssessmentTokenOverage(t *testing.
 			}))
 			defer srv.Close()
 
-			provider := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "key", "assessor-model"), srv.Client())
+			provider := newTestOpenAIVerifier(newTestVerifierConfig(srv.URL, "key", "assessor-model"), srv.Client())
 			_, err := provider.AssessRelationshipConflict(context.Background(), conflictAssessmentTestRequest(t))
 			require.ErrorIs(t, err, ErrVerifierMalformedResponse)
 			var malformed *MalformedResponseError
@@ -320,7 +316,7 @@ func TestOpenAIVerifierRejectsReportedConflictAssessmentTokenOverage(t *testing.
 }
 
 func TestOpenAIVerifierRejectsInvalidRelationshipConflictDossierBeforeProviderCall(t *testing.T) {
-	provider := NewOpenAIVerifier(newTestVerifierConfig("https://example.invalid", "key", "assessor-model"), nil)
+	provider := newTestOpenAIVerifier(newTestVerifierConfig("https://example.invalid", "key", "assessor-model"), nil)
 	_, err := provider.AssessRelationshipConflict(context.Background(), ConflictAssessmentRequest{})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrVerifierProvider)

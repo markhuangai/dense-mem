@@ -6,9 +6,12 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	repository "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
+	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
 	session "github.com/markhuangai/dense-mem/internal/session/contract"
 )
 
@@ -68,7 +71,7 @@ func (p *rememberSynchronousProcessor) prepareRemember(ctx context.Context, inpu
 	}
 	duplicateDocuments, err := p.embedSearchDocumentBatch(
 		duplicateEmbeddingCtx, input.TeamID, input.OwnerProfileID,
-		duplicatePlan.EmbeddingModel, duplicatePlan.Documents,
+		semanticwrite.Fence{Model: duplicatePlan.EmbeddingModel, Dimensions: duplicatePlan.EmbeddingDimensions, EmbeddingContractID: duplicatePlan.EmbeddingContractID, SearchGenerationID: duplicatePlan.SearchIndexGenerationID, SearchGenerationVersion: int64(duplicatePlan.IndexGeneration)}, duplicatePlan.Documents,
 	)
 	duplicateEmbeddingCancel()
 	if err != nil {
@@ -138,7 +141,7 @@ func (p *rememberSynchronousProcessor) prepareRemember(ctx context.Context, inpu
 		embeddingCtx,
 		input.TeamID,
 		input.OwnerProfileID,
-		plan.EmbeddingModel,
+		semanticwrite.Fence{Model: plan.EmbeddingModel, Dimensions: plan.EmbeddingDimensions, EmbeddingContractID: plan.EmbeddingContractID, SearchGenerationID: plan.SearchIndexGenerationID, SearchGenerationVersion: int64(plan.IndexGeneration)},
 		plan.Documents,
 	)
 	p.observeRememberPhase(ctx, input, ingestID, "embedding", err, embeddingStarted, nil)
@@ -155,6 +158,9 @@ func (p *rememberSynchronousProcessor) PrepareSession(ctx context.Context, req s
 		return nil, errors.New("session: preparation dependencies are required")
 	}
 	started := time.Now()
+	invocationID := uuid.NewString()
+	ctx = requestctx.WithRememberInvocationIDSink(ctx)
+	requestctx.SetRememberInvocationID(ctx, invocationID)
 	input := rememberapp.RememberProcessRequest{
 		SpaceKind:           domain.MemorySpacePrivate,
 		InvocationStartedAt: started, TeamID: req.Scope.TeamID, OwnerProfileID: req.Scope.OwnerProfileID,
@@ -171,7 +177,13 @@ func (p *rememberSynchronousProcessor) PrepareSession(ctx context.Context, req s
 		if errors.As(err, &failure) {
 			phase = failure.Phase
 		}
-		return nil, &session.ProcessingError{Code: string(rememberFailureCode(phase, err)), Cause: err}
+		code := rememberFailureCode(phase, err)
+		p.logRememberFailure(ctx, input, req.SubmissionID, started, phase, string(code), rememberProcessCorrelationID(input.Metadata), rememberapp.SynchronousAssessmentProviderTurns(err), err)
+		p.logRememberInvocation(ctx, input, repository.RememberInvocationDiagnosticInput{
+			InvocationID: invocationID, CanonicalAttemptID: req.SubmissionID, ErrorCode: string(code), Retryable: rememberapp.StatusError(code).Retryable,
+			Outcome: rememberInvocationMetricOutcome("execution", err, nil), Duration: time.Since(started),
+		}, "execution", phase, err, nil)
+		return nil, &session.ProcessingError{Code: string(code), Cause: err}
 	}
 	return &session.Prepared{Commit: prepared.Commit, Embeddings: prepared.Embeddings}, nil
 }

@@ -12,10 +12,8 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
-
 	accesspostgres "github.com/markhuangai/dense-mem/internal/access/postgres"
 	communitypostgres "github.com/markhuangai/dense-mem/internal/community/postgres"
-
 	"github.com/markhuangai/dense-mem/internal/config"
 	conflictassessment "github.com/markhuangai/dense-mem/internal/conflict/assessment"
 	conflictpostgres "github.com/markhuangai/dense-mem/internal/conflict/postgres"
@@ -262,7 +260,8 @@ func RunActiveServer(
 	conflictAssessmentLimits.ProviderModel = sessionModels.conflictReview
 	aiHTTPClient := observability.DiagnosticHTTPClient(&nethttp.Client{Timeout: time.Duration(cfg.GetAIVerifierTimeoutSeconds()) * time.Second}, rootDiagnosticLogger(logger), diagnosticProtector)
 	aiConcurrencyGate := modelprovider.NewConcurrencyGate(config.AIVerifierMaxConcurrency(&cfg))
-	verifierProvider := verifier.NewOpenAIVerifierWithAssessmentLimitsAndConcurrencyGateAndModel(&cfg, aiHTTPClient, verifier.SemanticAssessmentLimits(conflictAssessmentLimits), aiConcurrencyGate, sessionModels.conflictReview)
+	conflictTransport := assessorprovider.NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGateAndModel(&cfg, aiHTTPClient, conflictAssessmentLimits, aiConcurrencyGate, sessionModels.conflictReview)
+	verifierProvider := verifier.NewOpenAIVerifier(conflictTransport, sessionModels.conflictReview, verifier.SemanticAssessmentLimits(conflictAssessmentLimits), logger)
 	verifierProvider.SetMetrics(discoverabilityMetrics)
 	assessorProvider := assessorprovider.NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGateAndModel(&cfg, aiHTTPClient, assessmentLimits, aiConcurrencyGate, sessionModels.remember)
 	assessorProvider.SetMetrics(discoverabilityMetrics)

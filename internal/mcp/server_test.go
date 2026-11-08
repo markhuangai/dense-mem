@@ -12,14 +12,12 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/stretchr/testify/require"
-
 	"github.com/markhuangai/dense-mem/internal/domain"
-
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/promptcatalog"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
+	"github.com/stretchr/testify/require"
 )
 
 type recallFeedbackConfigStub struct {
@@ -895,5 +893,36 @@ func TestMCP_ToolsCallHandlesNilArgumentsAndMarshalFailure(t *testing.T) {
 	}
 	if resp.Error == nil || resp.Error.Code != errCodeToolFailure {
 		t.Fatalf("expected marshal failure, got %+v", resp.Error)
+	}
+}
+
+func TestMCPScopeDiscoveryAndInvocationPreserveNilCompatibility(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		scopes  []string
+		allowed bool
+	}{
+		{"nil compatibility", nil, true}, {"empty constructor compatibility", []string{}, true}, {"read denied", []string{"read"}, false}, {"write allowed", []string{"write"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			logger, _ := testLogger(t)
+			reg := registry.New()
+			calls := 0
+			require.NoError(t, reg.Register(registry.Tool{Name: "scoped_tool", RequiredScopes: []string{"write"}, Invoke: func(context.Context, string, map[string]any) (map[string]any, error) {
+				calls++
+				return map[string]any{"ok": true}, nil
+			}}))
+			s := NewServerWithScopes(reg, "team", tc.scopes, logger)
+			listed := runRPC(t, s, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
+			require.Equal(t, tc.allowed, strings.Contains(listed, `"scoped_tool"`))
+			called := runRPC(t, s, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"scoped_tool","arguments":{}}}`)
+			if tc.allowed {
+				require.Equal(t, 1, calls)
+				require.Contains(t, called, `"ok":true`)
+			} else {
+				require.Zero(t, calls)
+				require.Contains(t, called, `"error"`)
+			}
+		})
 	}
 }

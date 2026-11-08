@@ -4,74 +4,70 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"strings"
 
 	repository "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
+	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
 )
 
 func (p *rememberSynchronousProcessor) embedSearchDocumentBatch(
 	ctx context.Context,
 	teamID string,
 	ownerProfileID string,
-	embeddingModel string,
+	fence semanticwrite.Fence,
 	documents []repository.SearchDocumentForEmbedding,
 ) ([]repository.SearchDocumentEmbedding, error) {
 	if len(documents) == 0 {
 		return []repository.SearchDocumentEmbedding{}, nil
 	}
-	if len(documents) > 256 {
+	if len(documents) > semanticwrite.MaxDocuments {
 		return nil, fmt.Errorf("%w: more than 256 search documents", rememberapp.ErrRememberInputBudgetExceeded)
 	}
-	texts := make([]string, len(documents))
-	for i := range documents {
-		texts[i] = documents[i].DocumentText
+	planned := make([]semanticwrite.Document, len(documents))
+	for i, document := range documents {
+		if document.EmbeddingDimensions != fence.Dimensions {
+			return nil, fmt.Errorf("%w: document dimensions differ from the plan", rememberapp.ErrRememberEmbeddingInvalid)
+		}
+		planned[i] = semanticwrite.Document{Hash: document.DocumentHash, Text: document.DocumentText}
 	}
 	embedCtx, cancel := rememberapp.ContextForPhase(ctx, rememberapp.RememberPhaseEmbedding)
 	defer cancel()
 	embedCtx = observability.WithMetricIdentity(embedCtx, teamID, ownerProfileID)
-	embedCtx = observability.WithAIOperation(embedCtx, observability.AIOperationSearchDocumentEmbedding, len(texts))
-	if p.embedder == nil || !p.embedder.IsAvailable() {
-		return nil, &rememberEmbeddingConfigurationFailure{}
+	embedCtx = observability.WithAIOperation(embedCtx, observability.AIOperationSearchDocumentEmbedding, len(documents))
+	if contextual, ok := p.logger.(observability.ContextLogProvider); ok {
+		contextual.DebugContext(embedCtx, "remember_embedding_planned", observability.LogAttr{Key: "embedding_fence", Value: fence.LogFields()}, observability.Int("document_count", len(documents)))
 	}
-	embeddingModel = strings.TrimSpace(embeddingModel)
-	if embeddingModel == "" || strings.TrimSpace(p.embedder.ModelName()) != embeddingModel {
-		return nil, fmt.Errorf("%w: configured model does not match the embedding plan", rememberapp.ErrRememberEmbeddingInvalid)
-	}
-	vectors, model, err := p.embedder.EmbedBatch(embedCtx, texts)
+	result, err := p.embeddingExecutor.Execute(embedCtx, semanticwrite.Plan{Documents: planned, Fence: fence, Timeout: rememberapp.RememberEmbeddingBudget})
 	if err != nil {
-		if errors.Is(embedCtx.Err(), context.Canceled) || errors.Is(embedCtx.Err(), rememberapp.ErrRememberRequestCancelled) ||
-			errors.Is(err, context.Canceled) || errors.Is(err, rememberapp.ErrRememberRequestCancelled) {
+		var executionError *semanticwrite.ExecutionError
+		hasExecutionError := errors.As(err, &executionError)
+		if errors.Is(embedCtx.Err(), context.Canceled) || errors.Is(err, context.Canceled) || errors.Is(err, rememberapp.ErrRememberRequestCancelled) {
 			return nil, fmt.Errorf("%w: embedding phase canceled", rememberapp.ErrRememberRequestCancelled)
 		}
-		if errors.Is(embedCtx.Err(), context.DeadlineExceeded) || errors.Is(embedCtx.Err(), rememberapp.ErrRememberRequestTimeout) ||
-			errors.Is(err, context.DeadlineExceeded) || errors.Is(err, rememberapp.ErrRememberRequestTimeout) {
+		if errors.Is(embedCtx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) || (errors.Is(err, semanticwrite.ErrProviderTimeout) && !hasExecutionError) || errors.Is(err, rememberapp.ErrRememberRequestTimeout) {
 			return nil, fmt.Errorf("%w: embedding phase exceeded 10 seconds", rememberapp.ErrRememberRequestTimeout)
 		}
-		return nil, &rememberEmbeddingProviderFailure{cause: err}
-	}
-	if len(vectors) != len(documents) || strings.TrimSpace(model) != embeddingModel {
-		return nil, fmt.Errorf("%w: count or model mismatch", rememberapp.ErrRememberEmbeddingInvalid)
+		if hasExecutionError {
+			if executionError.Reason == semanticwrite.ReasonProviderUnavailable {
+				return nil, &rememberEmbeddingConfigurationFailure{}
+			}
+			if executionError.Reason == semanticwrite.ReasonProviderCall {
+				return nil, &rememberEmbeddingProviderFailure{cause: executionError.Cause}
+			}
+		}
+		return nil, fmt.Errorf("%w: %w", rememberapp.ErrRememberEmbeddingInvalid, err)
 	}
 	completed := make([]repository.SearchDocumentEmbedding, len(documents))
 	for i, document := range documents {
-		if len(vectors[i]) != document.EmbeddingDimensions {
-			return nil, fmt.Errorf("%w: dimensions mismatch", rememberapp.ErrRememberEmbeddingInvalid)
-		}
-		for _, value := range vectors[i] {
-			if math.IsNaN(float64(value)) || math.IsInf(float64(value), 0) {
-				return nil, fmt.Errorf("%w: non-finite vector", rememberapp.ErrRememberEmbeddingInvalid)
-			}
-		}
 		completed[i] = repository.SearchDocumentEmbedding{
 			SearchDocumentID: document.SearchDocumentID, SourceKind: document.SourceKind, SourceID: document.SourceID,
 			SourceVersion: document.SourceVersion, DocumentText: document.DocumentText,
 			DocumentHash: document.DocumentHash, StoredDocumentHash: document.StoredDocumentHash,
 			ProjectionFormat: document.ProjectionFormat, ProjectionGenerationID: document.ProjectionGenerationID,
 			DocumentVersion: document.DocumentVersion, EmbeddingContractID: document.EmbeddingContractID,
-			EmbeddingDimensions: document.EmbeddingDimensions, Embedding: vectors[i], SpaceID: document.SpaceID,
+			EmbeddingDimensions: document.EmbeddingDimensions, Embedding: result.Embeddings[i].Vector, SpaceID: document.SpaceID,
 			SpaceGeneration: document.SpaceGeneration,
 		}
 	}

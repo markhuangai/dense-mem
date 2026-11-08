@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	embeddingcontract "github.com/markhuangai/dense-mem/internal/embedding/contract"
@@ -19,6 +18,7 @@ import (
 	remembercontract "github.com/markhuangai/dense-mem/internal/remember/contract"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
+	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
 )
 
 // rememberSynchronousProcessor owns the request-scoped Remember boundary:
@@ -29,7 +29,7 @@ type rememberSynchronousProcessor struct {
 	provider           assessor.Provider
 	decisions          modelprovider.DecisionProvider
 	decisionSettings   modelprovider.DecisionSettings
-	embedder           embeddingcontract.EmbeddingProviderInterface
+	embeddingExecutor  *semanticwrite.Executor
 	limits             assessor.SemanticAssessmentLimits
 	metrics            observability.DiscoverabilityMetrics
 	logger             observability.LogProvider
@@ -52,7 +52,7 @@ type ProcessorDependencies struct {
 	Assessor            assessor.Provider
 	Decisions           modelprovider.DecisionProvider
 	DecisionSettings    modelprovider.DecisionSettings
-	Embedder            embeddingcontract.EmbeddingProviderInterface
+	EmbeddingExecutor   *semanticwrite.Executor
 	Limits              assessor.SemanticAssessmentLimits
 	Metrics             observability.DiscoverabilityMetrics
 	Logger              observability.LogProvider
@@ -75,7 +75,7 @@ func NewSynchronousProcessor(deps ProcessorDependencies) *rememberSynchronousPro
 		staleInput = rememberapp.IsRememberStaleInputError
 	}
 	return &rememberSynchronousProcessor{
-		ledger: deps.Ledger, catalog: deps.Catalog, provider: deps.Assessor, embedder: deps.Embedder,
+		ledger: deps.Ledger, catalog: deps.Catalog, provider: deps.Assessor, embeddingExecutor: deps.EmbeddingExecutor,
 		limits: deps.Limits, metrics: deps.Metrics, logger: deps.Logger, protector: deps.DiagnosticProtector,
 		isStaleInput: staleInput, commitFailureStage: deps.CommitFailureStage,
 		decisions: deps.Decisions, decisionSettings: deps.DecisionSettings,

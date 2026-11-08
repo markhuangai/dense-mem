@@ -16,13 +16,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	echomw "github.com/labstack/echo/v4/middleware"
-
 	"github.com/markhuangai/dense-mem/internal/domain"
-
 	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
 	dto "github.com/markhuangai/dense-mem/internal/http/dto"
 	"github.com/markhuangai/dense-mem/internal/http/handler"
 	httpmw "github.com/markhuangai/dense-mem/internal/http/middleware"
+	"github.com/markhuangai/dense-mem/internal/http/response"
 	httpvalidation "github.com/markhuangai/dense-mem/internal/http/validation"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	operations "github.com/markhuangai/dense-mem/internal/operations"
@@ -315,10 +314,7 @@ func (h *controlPortalHandler) listTeams(c echo.Context) error {
 		}
 		items = append(items, item)
 	}
-	return c.JSON(nethttp.StatusOK, handler.PaginationEnvelope{
-		Data:       items,
-		Pagination: handler.Pagination{Limit: limit, Offset: offset, Total: total},
-	})
+	return response.PaginatedOK(c, items, response.Pagination{Limit: limit, Offset: offset, Total: total})
 }
 
 func (h *controlPortalHandler) createTeam(c echo.Context) error {
@@ -409,10 +405,7 @@ func (h *controlPortalHandler) listCredentials(c echo.Context) error {
 	for _, credential := range credentials {
 		items = append(items, toControlCredential(credential))
 	}
-	return c.JSON(nethttp.StatusOK, handler.PaginationEnvelope{
-		Data:       items,
-		Pagination: handler.Pagination{Limit: limit, Offset: offset, Total: total},
-	})
+	return response.PaginatedOK(c, items, response.Pagination{Limit: limit, Offset: offset, Total: total})
 }
 
 func (h *controlPortalHandler) createCredential(c echo.Context) error {
@@ -626,10 +619,7 @@ func (h *controlPortalHandler) listSecurityBans(c echo.Context) error {
 	for _, ban := range bans {
 		items = append(items, toControlSecurityBan(ban))
 	}
-	return c.JSON(nethttp.StatusOK, handler.PaginationEnvelope{
-		Data:       items,
-		Pagination: handler.Pagination{Limit: limit, Offset: offset, Total: total},
-	})
+	return response.PaginatedOK(c, items, response.Pagination{Limit: limit, Offset: offset, Total: total})
 }
 
 func (h *controlPortalHandler) createSecurityBan(c echo.Context) error {

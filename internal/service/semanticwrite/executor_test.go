@@ -252,3 +252,51 @@ func TestExecutorAllowsEmptyNotRequiredPlanWithoutProviderCall(t *testing.T) {
 	require.Empty(t, result.Embeddings)
 	require.Zero(t, provider.calls)
 }
+
+func TestExecutorRetainsInternalCauseWithBoundedPublicText(t *testing.T) {
+	provider := validProvider()
+	cause := errors.New("private upstream diagnostic")
+	provider.err = cause
+	_, err := NewExecutor(provider).Execute(context.Background(), validPlan())
+	require.ErrorIs(t, err, ErrProviderUnavailable)
+	require.ErrorIs(t, err, cause)
+	require.NotContains(t, err.Error(), cause.Error())
+	var failure *ExecutionError
+	require.ErrorAs(t, err, &failure)
+	require.Equal(t, ReasonProviderCall, failure.Reason)
+	require.Same(t, cause, failure.Cause)
+}
+
+type lateSuccessProvider struct{ providerStub }
+
+func (p *lateSuccessProvider) EmbedBatch(ctx context.Context, _ []string) ([]IndexedEmbedding, string, error) {
+	<-ctx.Done()
+	return p.vectors, p.returned, nil
+}
+
+func TestExecutorRejectsLateSuccessAfterDeadlineAndCancellation(t *testing.T) {
+	for _, canceled := range []bool{false, true} {
+		provider := &lateSuccessProvider{providerStub: *validProvider()}
+		plan := validPlan()
+		plan.Timeout = time.Millisecond
+		ctx := context.Background()
+		want := ErrProviderTimeout
+		if canceled {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithCancel(ctx)
+			time.AfterFunc(time.Millisecond, cancel)
+			defer cancel()
+			plan.Timeout = time.Second
+			want = context.Canceled
+		}
+		result, err := NewExecutor(provider).Execute(ctx, plan)
+		require.ErrorIs(t, err, want)
+		require.Empty(t, result.Embeddings)
+	}
+}
+
+func TestExecutorEmptyPlanNeedsNeitherFenceNorProvider(t *testing.T) {
+	result, err := NewExecutor(nil).Execute(context.Background(), Plan{})
+	require.NoError(t, err)
+	require.Empty(t, result.Embeddings)
+}

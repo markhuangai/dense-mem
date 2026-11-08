@@ -6,10 +6,10 @@
       "path": "cmd/internal/serverapp/semanticwrite_composition.go"
     },
     {
-      "path": "cmd/internal/serverapp/semanticwrite_embedding_adapter.go"
+      "path": "internal/service/semanticwrite/provider.go"
     },
     {
-      "path": "cmd/internal/serverapp/semanticwrite_embedding_adapter_test.go"
+      "path": "internal/service/semanticwrite/provider_test.go"
     },
     {
       "path": "internal/knowledge/postgres/evidence_lifecycle_repository_integration_test.go"
