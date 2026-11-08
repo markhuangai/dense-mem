@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { collectSemanticAssessmentProof } from "./ontology_assessment_diagnostics.mjs";
+import { assessmentRecords, captureSemanticAssessmentWindow, collectSemanticAssessmentProof } from "./ontology_assessment_diagnostics.mjs";
 
 export async function automaticRefinementAcceptance({ control, mcp, postgresQuery, fixtureMode, canonicalFingerprints, directory }) {
   const since = new Date().toISOString();
   const assessments = [];
+  const cases = [];
   const literal = (text) => `'${String(text).replaceAll("'", "''")}'`;
   const poll = async (read, label) => {
     for (let i = 0; i < 150; i++) { const value = await read(); if (value) return value; await new Promise((resolve) => setTimeout(resolve, 1000)); }
@@ -15,7 +16,6 @@ export async function automaticRefinementAcceptance({ control, mcp, postgresQuer
     await poll(() => postgresQuery("SELECT count(*) FROM ontology_maintenance_batches WHERE status='running'") === "0", "drain");
   };
   try {
-    const cases = [];
     await pause();
     await fixtureMode("normal");
     for (const mode of ["refine", "normal", "ambiguous", "refine-repair", "refine-malformed", "pin-race", "freshness-race"]) {
@@ -45,6 +45,7 @@ export async function automaticRefinementAcceptance({ control, mcp, postgresQuer
     await poll(() => cases.every(({ queue }) => queue()?.status === "organized"), "initial automatic classifications");
     await pause();
     for (const { mode, team, owner, ui, publish, sourceCanary, sourceID, queue } of cases) {
+      console.log(JSON.stringify({ scenario: "ontology_refinement", mode, phase: "started", team_id: team.id, source_id: sourceID }));
       const initialAssessment = queue().assessment;
       const definitions = (await ui("/records?kind=entity_class&limit=200")).records;
       const parent = definitions.find((record) => record.definition.key === "project");
@@ -101,8 +102,17 @@ export async function automaticRefinementAcceptance({ control, mcp, postgresQuer
       }
       assessments.push({ assessmentID: receipt.assessment, teamID: team.id, batchID: receipt.batch, runID: receipt.run, sourceID, sourceCanary,
         failure, regeneration: ["refine-repair", "refine-malformed"].includes(mode), credentials: [owner.api_key, process.env.DENSE_MEM_CONTROL_TOKEN, "dense-mem-e2e-verifier-key", "dense-mem-ontology-e2e-key"] });
+      console.log(JSON.stringify({ scenario: "ontology_refinement", mode, phase: "completed", team_id: team.id, assessment_id: receipt.assessment, batch_id: receipt.batch }));
     }
     collectSemanticAssessmentProof({ project: process.env.DENSE_MEM_E2E_COMPOSE_PROJECT, composeFile: process.env.DENSE_MEM_E2E_COMPOSE_FILE, since, directory, assessments });
     console.log(JSON.stringify({ scenario: "ontology_organization", automatic_refinement: true, preference_reuse: true, ambiguity_preserved: true, complete_regeneration: true, atomic_rejection: true, pin_and_freshness_races: true, log_only_assessments: assessments.length }));
+  } catch (error) {
+    try {
+      const window = captureSemanticAssessmentWindow({ project: process.env.DENSE_MEM_E2E_COMPOSE_PROJECT, composeFile: process.env.DENSE_MEM_E2E_COMPOSE_FILE, since, directory });
+      for (const record of assessmentRecords(window).filter((record) => cases.some(({ team }) => record.team_id === team.id))) {
+        console.log(`ontology_semantic_diagnostic_record ${JSON.stringify(record)}`);
+      }
+    } catch (captureError) { throw new AggregateError([error, captureError], "ontology refinement failure capture is incomplete"); }
+    throw error;
   } finally { await fixtureMode("normal"); await pause(); }
 }
