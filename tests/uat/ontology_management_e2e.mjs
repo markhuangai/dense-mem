@@ -15,8 +15,12 @@ const original = await control("/config/ontology-maintenance");
 const initial = await control("/ontology/status");
 
 try {
+  assert.equal(initial.window, undefined, "management acceptance configures the fresh stack before its first window");
   await control("/ontology/pause", { operation_key: randomUUID() });
-  await control("/config/ontology-maintenance", { items: [{ key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "true" }, { key: "ONTOLOGY_MAINTENANCE_CONTEXT_WINDOW_TOKENS", value: "300000" }] }, "PATCH");
+  await control("/config/ontology-maintenance", { items: [
+    { key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "true" }, { key: "ONTOLOGY_MAINTENANCE_CONTEXT_WINDOW_TOKENS", value: "300000" },
+    { key: "ONTOLOGY_MAINTENANCE_MAX_CONCURRENCY", value: "8" }, { key: "ONTOLOGY_MAINTENANCE_TEAM_MAX_CONCURRENCY", value: "8" },
+  ] }, "PATCH");
   const shared = await credential(teamID, "manager", ["read", "write"]);
   assert.equal(shared.credential.memory_access.team_shared.write, true);
   manager = shared.api_key;
