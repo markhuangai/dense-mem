@@ -36,7 +36,12 @@ type ExecutionError struct {
 	Cause  error
 }
 
-func (e *ExecutionError) Error() string { return e.Kind.Error() }
+func (e *ExecutionError) Error() string {
+	if e.Reason == ReasonProviderCall && e.Kind == ErrProviderUnavailable {
+		return e.Kind.Error() + ": provider call failed"
+	}
+	return e.Kind.Error()
+}
 func (e *ExecutionError) Unwrap() []error {
 	if e.Cause == nil {
 		return []error{e.Kind}

@@ -121,6 +121,9 @@ func TestSemanticwriteEmbeddingExecutorPreservesHTTPFailureClassification(t *tes
 			require.ErrorIs(t, err, test.want)
 			require.Empty(t, result.Embeddings)
 			require.NotContains(t, err.Error(), "private provider failure")
+			if test.want == ErrProviderUnavailable {
+				require.EqualError(t, err, "semantic write: embedding provider unavailable: provider call failed")
+			}
 			if test.want == ErrProviderTimeout {
 				require.NotErrorIs(t, err, ErrProviderUnavailable)
 			}
