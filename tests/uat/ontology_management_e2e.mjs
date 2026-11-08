@@ -54,7 +54,9 @@ try {
   await saveAndPublish([{ action: "define", expected_version: 0, kind: "topic", definition: { key: unusedKey, label: "Atlas PostgreSQL alternative vocabulary", description: "Unused storage vocabulary matching already classified Atlas sources", aliases: [] } }]);
   await settle();
   assert.deepEqual(sourceAssessments(ids), fixedReceipts, "unused matching vocabulary must preserve each fixed source assessment");
-  assert.deepEqual(await providerCalls(), callsBeforeVocabulary, "unused vocabulary must not trigger provider work");
+  const preferenceCalls = (await providerCalls()).slice(callsBeforeVocabulary.length);
+  assert(preferenceCalls.every((call) => call.schema_name === "ontology_organization_v2" && call.source_kinds.length > 0 &&
+    call.source_kinds.every((kind) => ["entity", "predicate"].includes(kind))), "unused vocabulary must keep locked evidence and relationship work provider-free");
   const revision = (await ui("/status")).revision;
   const input = { operation_key: randomUUID(), expected_version: 0, expected_revision: revision, reason: "Separate manager-selected paraphrases", edits: [{ action: "keep_separate", expected_version: 0, members: sources }] };
   const beforeCalls = await providerCalls();

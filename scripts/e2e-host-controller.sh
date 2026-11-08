@@ -844,7 +844,9 @@ start_stack() (
     fail "failed to write the non-secret client runtime environment"
   fi
 
-  start_stack_helpers "$project" "$source_dir" "$helpers"
+  if [[ "$scenario" != "ontology_upgrade" ]]; then
+    start_stack_helpers "$project" "$source_dir" "$helpers"
+  fi
   write_runtime_compose "$runtime_compose_path" "$project" "$compose_image"
 
   report_phase fixture_preparation "$phase_started" 0

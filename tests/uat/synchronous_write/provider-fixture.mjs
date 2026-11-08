@@ -107,6 +107,8 @@ const server = createServer(async (request, response) => {
       schema_name: typeof payload.response_format?.json_schema?.name === "string" ? payload.response_format.json_schema.name : "",
       fault: routeFault,
       generated_fields: Object.keys(payload.response_format?.json_schema?.schema?.properties || {}),
+      source_kinds: payload.response_format?.json_schema?.name === "ontology_organization_v2"
+        ? [...new Set((assessmentInput(payload).items || []).map((item) => item.kind))] : [],
     });
   }
   let embeddingFaultCall = 0;
