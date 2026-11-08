@@ -31,6 +31,9 @@
     },
     {
       "path": "cmd/internal/serverapp/ontology_diagnostic_composition.go"
+    },
+    {
+      "path": "cmd/internal/serverapp/ontology_assessment_diagnostics.go"
     }
   ],
   "workers": [

@@ -84,7 +84,7 @@ func TestOntologyContextAndRepairWitnessesUseNativeHTTPHistory(t *testing.T) {
 						}
 					}
 				}
-				response := assessment.Response{RequestID: request.RequestID, Definitions: []assessment.Definition{}, Items: []assessment.Decision{}, Equivalence: []assessment.Equivalence{}}
+				response := assessment.Response{HierarchyUpdates: []assessment.HierarchyUpdate{}, RequestID: request.RequestID, Definitions: []assessment.Definition{}, Items: []assessment.Decision{}, Equivalence: []assessment.Equivalence{}}
 				for _, item := range request.Items {
 					response.Items = append(response.Items, assessment.Decision{Ref: item.Ref, Status: "classified", DefinitionRef: topicRef})
 				}

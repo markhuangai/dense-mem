@@ -268,7 +268,7 @@ retryTest("loaded older retry actions follow successful work and server eligibil
       const inspect = diagnostics.getByRole("button", { name: /View failed assessment/ }).first();
       await inspect.click();
       await expect(diagnostics.locator(".remember-diagnostic-exchange")).toHaveCount(3);
-      await expect(diagnostics.locator(".remember-diagnostic-body pre").first()).toContainText("ontology_organization_v1");
+      await expect(diagnostics.locator(".remember-diagnostic-body pre").first()).toContainText("ontology_organization_v2");
       const wireResponse = JSON.parse((await diagnostics.locator(".remember-diagnostic-body pre").nth(1).textContent())!);
       expect(JSON.parse(wireResponse.choices[0].message.content).items).toEqual([]);
       await diagnostics.getByText("Validation and provider attempts", { exact: true }).click();

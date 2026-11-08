@@ -4,10 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/ontology/assessment"
 	contract "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
@@ -16,10 +20,20 @@ import (
 type Service struct {
 	repository contract.OrganizationRepository
 	provider   *assessment.Provider
+	observer   assessment.Observer
+	policy     *domain.OntologyMaintenanceConfig
 }
 
 func NewService(repository contract.OrganizationRepository, provider *assessment.Provider) *Service {
 	return &Service{repository: repository, provider: provider}
+}
+
+func (s *Service) WithDiagnostics(observer assessment.Observer) *Service {
+	s.observer = observer
+	if s.provider != nil {
+		s.provider.WithDiagnostics(observer)
+	}
+	return s
 }
 
 type OrganizationError struct {
@@ -30,7 +44,7 @@ type OrganizationError struct {
 func (e *OrganizationError) Error() string { return "ontology organization failed: " + e.Code }
 func (e *OrganizationError) Unwrap() error { return e.Cause }
 
-func (s *Service) Organize(ctx context.Context, teamID string, input contract.OrganizationInput) (contract.OrganizationResult, error) {
+func (s *Service) Organize(ctx context.Context, teamID string, input contract.OrganizationInput) (result contract.OrganizationResult, returnedErr error) {
 	if _, ok := requestctx.ActorFromContext(ctx); ok {
 		return contract.OrganizationResult{}, contract.ErrUnauthorized
 	}
@@ -44,13 +58,43 @@ func (s *Service) Organize(ctx context.Context, teamID string, input contract.Or
 	if err != nil {
 		return contract.OrganizationResult{}, err
 	}
+	started := time.Now()
+	scope := observability.ExchangeScopeFromContext(ctx)
+	scope.TeamID, scope.OperationID = teamID, uuid.NewString()
+	ctx = observability.WithExchangeScope(ctx, scope)
+	observation := assessment.Diagnostic{TeamID: teamID, OperationKey: input.OperationKey, Input: &input, Policy: s.policy}
+	defer func() {
+		observation.Stage, observation.Result, observation.Error = "completed", &result, returnedErr
+		observation.Duration = time.Since(started)
+		s.provider.Observe(ctx, observation)
+	}()
 	identity := s.provider.Identity()
 	if cached, found, err := s.repository.FindOrganization(ctx, teamID, input, identity); err != nil {
 		return cached, err
 	} else if found {
+		if s.observer != nil {
+			snapshot, snapshotErr := s.repository.ReadOrganization(ctx, teamID, input.Sources)
+			observation.SourceContext, observation.SnapshotError = &snapshot, snapshotErr
+			if snapshotErr == nil {
+				diagnosticReceipt := contract.OrganizationReceipt{ID: cached.AssessmentID, Result: cached}
+				diagnosticReceipt.Result.Outcomes = append([]contract.OrganizationOutcome(nil), cached.Outcomes...)
+				request, _, requestErr := s.request(snapshot, &diagnosticReceipt)
+				observation.Request, observation.SnapshotError = &request, requestErr
+			}
+		}
 		return organizationResult(cached, nil)
 	}
 	sourceContext, contextErr := s.repository.ReadOrganization(ctx, teamID, input.Sources)
+	observation.SourceContext, observation.SnapshotError = &sourceContext, contextErr
+	owners := map[string]bool{}
+	for _, source := range sourceContext.Sources {
+		if source.OwnerID != "" && !owners[source.OwnerID] {
+			scope.SourceOwnerIDs = append(scope.SourceOwnerIDs, source.OwnerID)
+			owners[source.OwnerID] = true
+		}
+	}
+	sort.Strings(scope.SourceOwnerIDs)
+	ctx = observability.WithExchangeScope(ctx, scope)
 	if contextErr != nil && !errors.Is(contextErr, contract.ErrContextBound) {
 		return contract.OrganizationResult{}, contextErr
 	}
@@ -91,7 +135,10 @@ func (s *Service) Organize(ctx context.Context, teamID string, input contract.Or
 	if err != nil {
 		return s.finish(ctx, teamID, receipt, contract.Publication{}, err)
 	}
-	response := assessment.Response{RequestID: request.RequestID, Definitions: []assessment.Definition{}, Items: []assessment.Decision{}, Equivalence: []assessment.Equivalence{}}
+	observation.Request, observation.SourceDependencies = &request, receipt.Sources
+	observation.Stage = "prepared"
+	s.provider.Observe(ctx, observation)
+	response := assessment.Response{HierarchyUpdates: []assessment.HierarchyUpdate{}, RequestID: request.RequestID, Definitions: []assessment.Definition{}, Items: []assessment.Decision{}, Equivalence: []assessment.Equivalence{}}
 	if len(request.Items) > 0 {
 		deterministic := true
 		for _, item := range request.Items {
@@ -115,12 +162,34 @@ func (s *Service) Organize(ctx context.Context, teamID string, input contract.Or
 			return s.finish(ctx, teamID, receipt, contract.Publication{}, err)
 		}
 	}
+	knownHeads := map[string]int64{}
+	for _, view := range append(append([]contract.RecordView(nil), sourceContext.Records...), sourceContext.Candidates...) {
+		knownHeads[view.ID] = view.Version
+	}
 	for _, definition := range response.Definitions {
 		heads, err := s.repository.ReadDefinitionHeads(ctx, teamID, proposedDefinition(teamID, definition))
 		if err != nil {
 			return s.finish(ctx, teamID, receipt, contract.Publication{}, err)
 		}
-		sourceContext.Records = append(sourceContext.Records, heads...)
+		for _, head := range heads {
+			if version, known := knownHeads[head.ID]; known {
+				if version != head.Version {
+					return s.finish(ctx, teamID, receipt, contract.Publication{}, &contract.FreshnessError{Rejection: contract.FreshnessRejection{
+						Check: "dependency_version", RecordID: head.ID, Expected: strconv.FormatInt(version, 10), Observed: strconv.FormatInt(head.Version, 10),
+					}})
+				}
+				continue
+			}
+			if len(sourceContext.Records) == contract.MaxDependencyRecords {
+				return s.finish(ctx, teamID, receipt, contract.Publication{}, contract.ErrContextBound)
+			}
+			knownHeads[head.ID] = head.Version
+			sourceContext.Records = append(sourceContext.Records, head)
+		}
+	}
+	receipt.Dependencies, err = contract.OrganizationDependencies(sourceContext)
+	if err != nil {
+		return s.finish(ctx, teamID, receipt, contract.Publication{}, err)
 	}
 	publication, err := buildPublication(teamID, sourceContext, request, response, binding, &receipt)
 	return s.finish(ctx, teamID, receipt, publication, err)
@@ -189,6 +258,8 @@ func markFailure(receipt *contract.OrganizationReceipt, cause error) {
 		code = "commit_conflict"
 	case errors.Is(cause, contract.ErrOverride):
 		code = "manager_override_conflict"
+	case errors.Is(cause, contract.ErrContextBound):
+		code = "organization_context_bound"
 	case errors.Is(cause, contract.ErrInvalid):
 		code = "invalid_publication"
 	}

@@ -14,7 +14,7 @@ import (
 const (
 	MaxOrganizationSources    = 20
 	MaxVocabularyCandidates   = 20
-	OrganizationPolicyVersion = "ontology-organization-v1"
+	OrganizationPolicyVersion = "ontology-organization-v2"
 )
 
 type OrganizationInput struct {
@@ -125,16 +125,22 @@ func OrganizationRecordID(teamID string, kind Kind, key string) string {
 	return uuid.NewSHA1(uuid.NameSpaceURL, []byte("dense-mem:organization:"+teamID+":"+string(kind)+":"+key)).String()
 }
 
-func OrganizationClassification(source SourceSnapshot, records, candidates []RecordView) (string, bool) {
+func OrganizationClassification(source SourceSnapshot, records, candidates []RecordView) (locked, preferred string) {
 	key := SourceKey(source.SourceHandle)
 	for _, view := range records {
-		if view.Override != nil && view.Override.Action == SetClassification && SourceKey(view.Override.Members[0]) == key {
-			return view.Override.DefinitionID, true
+		if !view.Retired && view.Override != nil && view.Override.Action == SetClassification && SourceKey(view.Override.Members[0]) == key {
+			return view.Override.DefinitionID, ""
 		}
+	}
+	automatic := func(id string) (string, string) {
+		if source.Kind == EntitySource || source.Kind == PredicateSource {
+			return "", id
+		}
+		return id, ""
 	}
 	for _, view := range records {
 		if view.Current && view.Assignment != nil && SourceKey(view.Assignment.Source) == key {
-			return view.Assignment.DefinitionID, true
+			return automatic(view.Assignment.DefinitionID)
 		}
 	}
 	name := ""
@@ -146,14 +152,28 @@ func OrganizationClassification(source SourceSnapshot, records, candidates []Rec
 	}
 	if name != "" {
 		for _, view := range candidates {
+			if !view.Current || view.Definition == nil {
+				continue
+			}
 			for _, candidate := range DefinitionNames(view.Record) {
 				if candidate == name && ((source.Kind == EntitySource && view.Kind == EntityClass && view.Definition.BaseEntityKind == source.EntityKind) || (source.Kind == PredicateSource && view.Kind == PredicateConcept)) {
-					return view.ID, true
+					return automatic(view.ID)
 				}
 			}
 		}
 	}
-	return "", false
+	return "", ""
+}
+
+func OrganizationHierarchyEditable(view RecordView, records []RecordView) bool {
+	if !view.Current || view.Retired || view.Definition == nil || (view.Kind != EntityClass && view.Kind != PredicateConcept) {
+		return false
+	}
+	catalog := make(map[string]Record, len(records))
+	for _, record := range records {
+		catalog[record.ID] = record.Record
+	}
+	return CheckOverrides(view.Record, catalog) == nil
 }
 
 func OrganizationDependencies(context OrganizationContext) ([]RevisionRef, error) {
@@ -164,7 +184,7 @@ func OrganizationDependencies(context OrganizationContext) ([]RevisionRef, error
 			continue
 		}
 		if len(result) == MaxDependencyRecords {
-			return nil, fmt.Errorf("%w: organization dependency context exceeds bound", ErrInvalid)
+			return nil, fmt.Errorf("%w: organization dependency context exceeds bound", ErrContextBound)
 		}
 		seen[view.ID] = true
 		result = append(result, RevisionRef{ID: view.ID, Version: view.Version})

@@ -44,7 +44,7 @@ func (s *Store) ReadDefinitionHeads(ctx context.Context, teamID string, definiti
 	}
 	var result []ontology.RecordView
 	err := s.withScope(ctx, teamID, true, func(tx *gorm.DB, fence scope) error {
-		heads, err := loadHeads(tx, fence, []string{definition.ID}, ontology.DefinitionNames(definition), nil)
+		heads, err := validationCatalog(tx, fence, []ontology.Record{definition}, nil)
 		if err != nil {
 			return err
 		}
@@ -120,14 +120,28 @@ func (s *Store) organizationContext(tx *gorm.DB, fence scope, handles []ontology
 	forced := []string{}
 	unclassified := []ontology.SourceSnapshot{}
 	for _, source := range result.Sources {
-		if definition, fixed := ontology.OrganizationClassification(source, result.Records, nil); fixed {
-			forced = append(forced, definition)
-		} else {
+		locked, preferred := ontology.OrganizationClassification(source, result.Records, nil)
+		if locked != "" {
+			forced = append(forced, locked)
+		}
+		if preferred != "" {
+			forced = append(forced, preferred)
+		}
+		if locked == "" {
 			unclassified = append(unclassified, source)
 		}
 	}
 	result.Candidates, err = s.organizationVocabulary(tx, fence, unclassified, forced)
 	if err != nil {
+		return result, err
+	}
+	for _, source := range result.Sources {
+		_, preferred := ontology.OrganizationClassification(source, result.Records, result.Candidates)
+		if preferred != "" {
+			forced = append(forced, preferred)
+		}
+	}
+	if err := s.organizationDefinitionContext(tx, fence, &result, forced); err != nil {
 		return result, err
 	}
 	result.Revision, err = catalogRevision(tx, fence)

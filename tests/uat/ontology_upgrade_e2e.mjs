@@ -24,9 +24,12 @@ assert.equal(initial.historical_usage.unavailable_usage_attempts, 1);
 assert.equal(initial.usage.unreconciled_attempts, 0);
 const refresh = spawnSync("docker", ["compose", "-p", process.env.DENSE_MEM_E2E_COMPOSE_PROJECT, "-f", process.env.DENSE_MEM_E2E_COMPOSE_FILE,
   "exec", "-T", "postgres", "sh", "-ec", 'psql -q -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -c "$1"', "ontology-matching-upgrade",
-  "BEGIN; SET LOCAL app.tx_mode='system'; SELECT count(*) FROM ontology_maintenance_markers AS marker JOIN ontology_record_heads AS head ON head.team_id=marker.team_id AND head.shared_space_id=marker.shared_space_id AND head.space_generation=marker.space_generation AND head.record_id::text=marker.anchor_id WHERE marker.anchor_kind='ontology_record_heads' AND head.names && ARRAY['upgrade-matching']::text[]; COMMIT;"], { encoding: "utf8" });
+  "BEGIN; SET LOCAL app.tx_mode='system'; SELECT jsonb_build_object('matching',(SELECT count(*) FROM ontology_maintenance_markers AS marker JOIN ontology_record_heads AS head ON head.team_id=marker.team_id AND head.shared_space_id=marker.shared_space_id AND head.space_generation=marker.space_generation AND head.record_id::text=marker.anchor_id WHERE marker.anchor_kind='ontology_record_heads' AND head.names && ARRAY['upgrade-matching']::text[]),'refinement',(SELECT count(*) FROM ontology_maintenance_sources WHERE source_kind IN ('entity','predicate') AND eligible AND status='pending' AND reason='organization_policy_v2' AND revision=6),'assignments',(SELECT count(*) FROM ontology_record_heads WHERE kind='assignment' AND version=1)); COMMIT;"], { encoding: "utf8" });
 assert.equal(refresh.status, 0, refresh.stderr);
-assert.equal(Number(refresh.stdout.trim()), 1, "upgrade must enqueue the preserved definition without an existing notification");
+const refreshed = JSON.parse(refresh.stdout.trim());
+assert.equal(refreshed.matching, 1, "upgrade must enqueue the preserved definition without an existing notification");
+assert.equal(refreshed.refinement, 2, "upgrade must refresh organized entity and predicate queue rows exactly once");
+assert.equal(refreshed.assignments, 2, "upgrade must retain both current assignment revisions");
 assert.equal(initial.discovery_complete, false, "queued policy refresh must not report readiness");
 const provider = await fetch("http://synchronous-write-provider:8787/health", { signal: AbortSignal.timeout(10000) });
 assert.equal(provider.status, 200);

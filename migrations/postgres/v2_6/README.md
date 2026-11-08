@@ -164,3 +164,24 @@ definition heads without rewriting canonical tables or adding indexes or
 constraints. The enqueue is atomic; a failure rolls back and can be retried after
 diagnosing the blocker. The existing bounded discovery pages drain the committed
 queue on restart.
+
+## Automatic ontology refinement refresh (#711)
+
+`20261108010000_ontology_refinement_refresh.sql` changes only eligible `organized`
+entity/predicate queue rows in active teams' current active shared generations to
+`pending`. It advances each queue revision once and records
+`organization_policy_v2`. Pending, failed, ambiguous, unavailable, ineligible,
+private, and historical-generation work remains unchanged. Current assignments,
+immutable receipts, canonical records, source versions, and fingerprints are
+retained. Policy/provider v2 identities prevent historical v1 work from being
+reused as a v2 assessment; unchanged completed v2 work converges through receipt
+reuse.
+
+Pause maintenance, drain admitted work, and stop all old workers before applying
+the migration. Start only the compatible v2 policy workers after Up. The
+transaction takes teams policy DDL locks and UPDATE locks on eligible queue rows,
+with `lock_timeout = '5s'`; it performs no canonical rewrite, index build, or
+receipt backfill. The temporary migration-only teams read policy is dropped
+inside the transaction. A lock timeout rolls back the complete refresh; diagnose
+the blocking session before retrying. Down always refuses reversal. Retain
+compatible binaries and recover forward instead of restoring prior queue states.

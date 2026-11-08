@@ -15,7 +15,7 @@ type requestBinding struct {
 }
 
 func (s *Service) request(context contract.OrganizationContext, receipt *contract.OrganizationReceipt) (assessment.Request, requestBinding, error) {
-	request := assessment.Request{RequestID: receipt.ID, Items: []assessment.Item{}, Definitions: []assessment.Definition{}, Pairs: []assessment.Pair{}}
+	request := assessment.Request{RequestID: receipt.ID, Items: []assessment.Item{}, Definitions: []assessment.Definition{}, Pairs: []assessment.Pair{}, HierarchyUpdateRefs: []string{}}
 	binding := requestBinding{sources: map[string]contract.SourceSnapshot{}, definitions: map[string]contract.Record{}, outcomeIndices: map[string]int{}}
 	definitionRefs := map[string]string{}
 	for i, view := range context.Candidates {
@@ -24,7 +24,7 @@ func (s *Service) request(context contract.OrganizationContext, receipt *contrac
 	for _, view := range context.Candidates {
 		d := view.Definition
 		ref := definitionRefs[view.ID]
-		request.Definitions = append(request.Definitions, assessment.Definition{Ref: ref, Kind: view.Kind, Key: d.Key, Label: d.Label, Description: d.Description, Aliases: append([]string{}, d.Aliases...), ParentRef: definitionRefs[d.ParentID], BaseEntityKind: d.BaseEntityKind})
+		request.Definitions = append(request.Definitions, assessment.Definition{Ref: ref, Kind: view.Kind, Key: d.Key, Label: d.Label, Description: d.Description, Aliases: append([]string{}, d.Aliases...), ParentRef: definitionRefs[d.ParentID], ParentRelation: d.ParentRelation, BaseEntityKind: d.BaseEntityKind})
 		binding.definitions[ref] = view.Record
 	}
 	for len(request.Definitions) > 0 {
@@ -40,9 +40,35 @@ func (s *Service) request(context contract.OrganizationContext, receipt *contrac
 		delete(binding.definitions, last.Ref)
 		request.Definitions = request.Definitions[:len(request.Definitions)-1]
 	}
-	for i := range request.Definitions {
-		if _, retained := binding.definitions[request.Definitions[i].ParentRef]; !retained {
-			request.Definitions[i].ParentRef = ""
+	for changed := true; changed; {
+		changed = false
+		retained := request.Definitions[:0]
+		for _, definition := range request.Definitions {
+			stored := binding.definitions[definition.Ref]
+			if definition.Kind != contract.Topic && stored.Definition.ParentID != "" && definition.ParentRef == "" {
+				delete(definitionRefs, stored.ID)
+				delete(binding.definitions, definition.Ref)
+				changed = true
+				continue
+			}
+			if definition.ParentRef != "" {
+				if _, exists := binding.definitions[definition.ParentRef]; !exists {
+					if definition.Kind != contract.Topic {
+						delete(definitionRefs, binding.definitions[definition.Ref].ID)
+						delete(binding.definitions, definition.Ref)
+						changed = true
+						continue
+					}
+					definition.ParentRef = ""
+				}
+			}
+			retained = append(retained, definition)
+		}
+		request.Definitions = retained
+	}
+	for _, view := range context.Candidates {
+		if ref := definitionRefs[view.ID]; ref != "" && contract.OrganizationHierarchyEditable(view, context.Records) {
+			request.HierarchyUpdateRefs = append(request.HierarchyUpdateRefs, ref)
 		}
 	}
 	keys := map[string]bool{}
@@ -71,11 +97,17 @@ func (s *Service) request(context contract.OrganizationContext, receipt *contrac
 			displayContext["predicate"] = source.ID
 		}
 		item := assessment.Item{Ref: ref, Kind: source.Kind, Text: contract.SourceDisplayText(source), OwnerRef: owners[source.OwnerID], EntityKind: source.EntityKind, Context: displayContext}
-		locked, required := contract.OrganizationClassification(source, context.Records, context.Candidates)
+		locked, preferred := contract.OrganizationClassification(source, context.Records, context.Candidates)
+		item.PreferredDefinitionRef = definitionRefs[preferred]
 		item.LockedDefinitionRef = definitionRefs[locked]
-		if required && item.LockedDefinitionRef == "" {
+		if locked != "" && item.LockedDefinitionRef == "" {
 			outcome.Status = "ambiguous"
 			outcome.Reason = "required_classification_unavailable"
+			continue
+		}
+		if preferred != "" && item.PreferredDefinitionRef == "" {
+			outcome.Status = "oversized"
+			outcome.Reason = "preferred_classification_context_bound"
 			continue
 		}
 		request.Items = append(request.Items, item)

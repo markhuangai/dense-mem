@@ -225,7 +225,7 @@ func pairArgumentString(arguments map[string]any, key string) string {
 }
 
 func pairedOrganizationResponse(request assessment.Request) assessment.Response {
-	response := assessment.Response{RequestID: request.RequestID, Definitions: []assessment.Definition{}, Items: []assessment.Decision{}, Equivalence: []assessment.Equivalence{}}
+	response := assessment.Response{HierarchyUpdates: []assessment.HierarchyUpdate{}, RequestID: request.RequestID, Definitions: []assessment.Definition{}, Items: []assessment.Decision{}, Equivalence: []assessment.Equivalence{}}
 	created := map[string]string{}
 	for _, item := range request.Items {
 		kind, key, base := ontology.Topic, "paired-storage", ""
@@ -236,6 +236,9 @@ func pairedOrganizationResponse(request assessment.Request) assessment.Response 
 			kind, key = ontology.PredicateConcept, "paired-predicate"
 		}
 		ref := item.LockedDefinitionRef
+		if ref == "" {
+			ref = item.PreferredDefinitionRef
+		}
 		if ref == "" {
 			for _, definition := range request.Definitions {
 				if definition.Kind == kind {

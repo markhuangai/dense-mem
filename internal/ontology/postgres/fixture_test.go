@@ -207,6 +207,10 @@ func ontologyMigrationProvider(t *testing.T, db *gorm.DB) *goose.Provider {
 	require.NotEmpty(t, paths)
 	files := fstest.MapFS{}
 	for _, path := range paths {
+		// This queue-only migration has no schema to unwind and explicitly refuses Down.
+		if filepath.Base(path) == "20261108010000_ontology_refinement_refresh.sql" {
+			continue
+		}
 		contents, err := os.ReadFile(path)
 		require.NoError(t, err)
 		files[filepath.Base(path)] = &fstest.MapFile{Data: contents}
