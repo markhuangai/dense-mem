@@ -483,7 +483,7 @@ func TestOntologyRefinementReusesBoundedCandidate(t *testing.T) {
 					}
 				}
 				r.Definitions = []assessment.Definition{{Ref: "fresh", Kind: accepted.Kind, Key: accepted.Definition.Key, Label: "Replacement metadata", Aliases: []string{}, BaseEntityKind: "project"}}
-				r.Items[0] = assessment.Decision{Ref: q.Items[0].Ref, Status: "classified", DefinitionRef: "fresh"}
+				r.Items[0] = assessment.Decision{Ref: q.Items[0].Ref, Status: "classified", DefinitionRef: "fresh", Reason: "The supplied name explicitly identifies a software project."}
 			}, "bounded-candidate-fixture", limits)
 			input := ontology.OrganizationInput{OperationKey: "bounded-candidate-reuse", Sources: []ontology.SourceHandle{source}}
 			result, err := service.Organize(context.Background(), f.team, input)

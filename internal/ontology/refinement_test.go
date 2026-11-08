@@ -89,12 +89,12 @@ func TestOrganizationReproposedCandidatePreservesAcceptedDefinition(t *testing.T
 		t.Run(string(kind), func(t *testing.T) {
 			source := unitSource("reproposed", "Atlas is a software project.")
 			source.Kind, source.EntityKind = contract.EntitySource, "project"
-			relation, base := contract.SubclassOf, "project"
+			relation, base, parentKey := contract.SubclassOf, "project", "project"
 			if kind == contract.PredicateConcept {
 				source.Kind, source.ID, source.EntityKind = contract.PredicateSource, "uses", ""
-				relation, base = contract.SubpropertyOf, ""
+				relation, base, parentKey = contract.SubpropertyOf, "", "uses"
 			}
-			parent := contract.Record{ID: uuid.NewString(), Version: 1, Kind: kind, Definition: &contract.Definition{Key: "parent", Label: "Parent", BaseEntityKind: base}}
+			parent := contract.Record{ID: uuid.NewString(), Version: 1, Kind: kind, Definition: &contract.Definition{Key: parentKey, Label: "Parent", BaseEntityKind: base}}
 			accepted := contract.Record{ID: contract.OrganizationRecordID(source.TeamID, kind, "specific"), Version: 3, Kind: kind,
 				Definition: &contract.Definition{Key: "specific", Label: "Accepted meaning", Description: strings.Repeat("meaning ", 100), Aliases: []string{"accepted alias"}, BaseEntityKind: base, ParentID: parent.ID, ParentRelation: relation},
 				Sources:    unitReceipt(t, []contract.SourceSnapshot{unitSource("other-source", "Accepted provenance")}).Sources}
@@ -106,8 +106,9 @@ func TestOrganizationReproposedCandidatePreservesAcceptedDefinition(t *testing.T
 			require.NoError(t, err)
 			require.Len(t, request.Definitions, 1)
 			require.Equal(t, parent.Definition.Key, request.Definitions[0].Key)
+			require.Equal(t, request.Definitions[0].Ref, request.Items[0].PreferredDefinitionRef)
 			response := assessment.Response{RequestID: request.RequestID, Definitions: []assessment.Definition{{Ref: "fresh", Kind: kind, Key: "specific", Label: "Replacement metadata", Aliases: []string{}, BaseEntityKind: base}},
-				Items: []assessment.Decision{{Ref: "s0", Status: "classified", DefinitionRef: "fresh"}}, Equivalence: []assessment.Equivalence{}, HierarchyUpdates: []assessment.HierarchyUpdate{}}
+				Items: []assessment.Decision{{Ref: "s0", Status: "classified", DefinitionRef: "fresh", Reason: "The supplied context supports the more specific classification."}}, Equivalence: []assessment.Equivalence{}, HierarchyUpdates: []assessment.HierarchyUpdate{}}
 			require.NoError(t, assessment.Validate(request, response))
 			publication, err := buildPublication(source.TeamID, ctx, request, response, binding, &receipt)
 			require.NoError(t, err)
