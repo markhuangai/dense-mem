@@ -32,7 +32,9 @@ func TestSearchReconciliationFailureCanBeDiagnosedFromLogsAlone(t *testing.T) {
 				const requestSecret = "search-request-credential-canary"
 				admitted := `{"secret":"admitted exact source ` + strings.Repeat("α", 1600) + `"}`
 				responseBody := `{"error":{"code":"invalid_api_key","message":"configured deployment credential expired ` + secret + `"}}`
+				providerTimeout := searchReconciliationProviderCap
 				if mode == "timeout" {
+					providerTimeout = 50 * time.Millisecond
 					responseBody = `{"interrupted":"waiting for provider`
 				}
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -63,7 +65,7 @@ func TestSearchReconciliationFailureCanBeDiagnosedFromLogsAlone(t *testing.T) {
 				}
 				ctx := correlation.WithID(context.Background(), "search-diagnostic-correlation")
 				ctx = observability.WithAuthenticationSecrets(ctx, secret, requestSecret)
-				_, err := NewSearchReconciliationService(SearchReconciliationDependencies{Repository: repo, Projection: repo, Executor: semanticwrite.NewProviderExecutor(provider), Logger: logger, ProviderTimeout: 50 * time.Millisecond}).Run(ctx)
+				_, err := NewSearchReconciliationService(SearchReconciliationDependencies{Repository: repo, Projection: repo, Executor: semanticwrite.NewProviderExecutor(provider), Logger: logger, ProviderTimeout: providerTimeout}).Run(ctx)
 				require.ErrorIs(t, err, ErrSearchReconciliationFailed)
 				require.NotContains(t, output.String(), secret)
 				require.NotContains(t, output.String(), requestSecret)
