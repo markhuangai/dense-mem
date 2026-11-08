@@ -114,6 +114,9 @@ func (s *Store) RollbackManagementPublication(ctx context.Context, teamID, id st
 		if err != nil {
 			return err
 		}
+		if diagnostic := ontology.PublicationDiagnosticFromContext(ctx); diagnostic != nil {
+			diagnostic.RollbackOf = id
+		}
 		if origin != "manager" && origin != "rollback" {
 			return ontology.ErrInvalid
 		}

@@ -30,6 +30,11 @@ type PublicationDiagnostic struct {
 	OperationID      string
 	TeamID           string
 	Action           string
+	Management       bool
+	DraftID          string
+	RollbackOf       string
+	Draft            *ManagementDraft
+	Preview          *ImpactPreview
 	Input            json.RawMessage
 	InputState       string
 	InputBytes       int
@@ -80,6 +85,7 @@ func ObservePublication(ctx context.Context, observer PublicationObserver, teamI
 		if err != nil {
 			errors.As(err, &value.Rejection)
 			value.Result = nil
+			value.Preview = nil
 		}
 		observer(ctx, *value)
 	}

@@ -12,7 +12,7 @@ import { useEffect, useRef, useState } from "react";
 import { FieldRow, LoadingState, SectionHeading, UsageMeter } from "../ui/components";
 import { ApiError, newIdempotencyKey, UserApi, UserSession } from "./api";
 import { OntologyEditor } from "./OntologyEditor";
-import type { OntologyCoverage, OntologyDraft, OntologyEdit, OntologyKind, OntologyPreview, OntologyPublication, OntologyRecord, OntologySource, SourceHandle, SourceKind } from "./ontology-types";
+import { ontologyParentMeaningLabels, type OntologyDefinition, type OntologyCoverage, type OntologyDraft, type OntologyEdit, type OntologyKind, type OntologyPreview, type OntologyPublication, type OntologyRecord, type OntologySource, type SourceHandle, type SourceKind } from "./ontology-types";
 
 const sourceKey = (source: SourceHandle) => `${source.kind}:${source.id}`;
 const recordLabel = (record: OntologyRecord) => record.definition?.label ?? (record.group ? `${record.group.members.length} ${record.kind === "evidence_group" ? "evidence" : "relationship"} sources` : record.override?.action.replaceAll("_", " ") ?? record.kind.replaceAll("_", " "));
@@ -235,9 +235,13 @@ function SourceDetails({ source }: { source: SourceHandle }) {
   return <span>{source.kind} {source.id} · version {source.version}</span>;
 }
 
+function DefinitionParent({ definition, records }: { definition: OntologyDefinition; records: OntologyRecord[] }) {
+  return <p>{definition.parent_id ? `${ontologyParentMeaningLabels[definition.parent_relation ?? ""]}: ${definitionLabel(definition.parent_id, records)}` : "No parent"}</p>;
+}
+
 function RecordDetails({ record, records }: { record: OntologyRecord; records: OntologyRecord[] }) {
   return <div>
-    {record.definition && <><p>Key: {record.definition.key}</p><p>Aliases: {record.definition.aliases?.join(", ") || "None"}</p>{record.definition.parent_id && <p>Parent: {definitionLabel(record.definition.parent_id, records)}</p>}</>}
+    {record.definition && <><p>Key: {record.definition.key}</p><p>Aliases: {record.definition.aliases?.join(", ") || "None"}</p><DefinitionParent definition={record.definition} records={records} /></>}
     {record.assignment && <p><SourceDetails source={record.assignment.source} /> → {definitionLabel(record.assignment.definition_id, records)}</p>}
     {record.override?.target_id && <p>Target: {definitionLabel(record.override.target_id, records)}</p>}
     {record.override?.definition_id && <p>Classification: {definitionLabel(record.override.definition_id, records)}</p>}
@@ -247,7 +251,7 @@ function RecordDetails({ record, records }: { record: OntologyRecord; records: O
 
 function EditDetails({ edit, records }: { edit: OntologyEdit; records: OntologyRecord[] }) {
   return <div>{edit.action.replaceAll("_", " ")}
-    {edit.definition && <p>{edit.definition.label} · {edit.definition.description} · aliases: {edit.definition.aliases?.join(", ") || "None"}{edit.definition.parent_id && ` · parent: ${definitionLabel(edit.definition.parent_id, records)}`}</p>}
+    {edit.definition && <><p>{edit.definition.label} · {edit.definition.description} · aliases: {edit.definition.aliases?.join(", ") || "None"}</p><DefinitionParent definition={edit.definition} records={records} /></>}
     {edit.record_id && <p>Target record: {edit.record_id} · expected version {edit.expected_version}</p>}
     {edit.definition_id && <p>Definition: {definitionLabel(edit.definition_id, records)}</p>}
     {edit.source && <p><SourceDetails source={edit.source} /></p>}

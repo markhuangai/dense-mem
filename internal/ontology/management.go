@@ -51,6 +51,18 @@ func (s *ManagementService) WithPublicationDiagnostics(observer contract.Publica
 	return s
 }
 
+func (s *ManagementService) ObserveAuthorizationRejection(ctx context.Context, action string) {
+	actor, ok := requestctx.ActorFromContext(ctx)
+	if s == nil || !ok || actor.TeamID == uuid.Nil {
+		return
+	}
+	_, diagnostic, finish := contract.ObservePublication(ctx, s.publicationObserver, actor.TeamID.String(), action, nil)
+	if diagnostic != nil {
+		diagnostic.Management = true
+	}
+	finish(contract.ErrUnauthorized)
+}
+
 func (s *ManagementService) actor(ctx context.Context, write bool) (requestctx.Actor, error) {
 	actor, ok := requestctx.ActorFromContext(ctx)
 	grant := "read"
@@ -125,8 +137,16 @@ func (s *ManagementService) SaveDraft(ctx context.Context, id string, input cont
 	if err != nil {
 		return contract.ManagementDraft{}, err
 	}
-	ctx, _, finish := contract.ObservePublication(ctx, s.publicationObserver, actor.TeamID.String(), "save_draft", input)
-	defer func() { finish(err) }()
+	ctx, diagnostic, finish := contract.ObservePublication(ctx, s.publicationObserver, actor.TeamID.String(), "save_draft", input)
+	if diagnostic != nil {
+		diagnostic.Management, diagnostic.DraftID = true, id
+	}
+	defer func() {
+		if diagnostic != nil && err == nil {
+			diagnostic.DraftID, diagnostic.Draft = result.ID, &result
+		}
+		finish(err)
+	}()
 	if err := contract.ValidateSaveDraft(input); err != nil {
 		return contract.ManagementDraft{}, err
 	}
@@ -151,11 +171,23 @@ func (s *ManagementService) Drafts(ctx context.Context, cursor string, limit int
 	return s.repository.ListManagementDrafts(ctx, actor.TeamID.String(), cursor, limit)
 }
 
-func (s *ManagementService) Preview(ctx context.Context, id string, version int64) (contract.ImpactPreview, error) {
+func (s *ManagementService) Preview(ctx context.Context, id string, version int64) (result contract.ImpactPreview, err error) {
 	actor, err := s.actor(ctx, false)
 	if err != nil {
 		return contract.ImpactPreview{}, err
 	}
+	ctx, diagnostic, finish := contract.ObservePublication(ctx, s.publicationObserver, actor.TeamID.String(), "preview_draft", struct {
+		ExpectedVersion int64 `json:"expected_version"`
+	}{version})
+	if diagnostic != nil {
+		diagnostic.Management, diagnostic.DraftID = true, id
+	}
+	defer func() {
+		if diagnostic != nil && err == nil {
+			diagnostic.Preview = &result
+		}
+		finish(err)
+	}()
 	if version < 1 {
 		return contract.ImpactPreview{}, contract.ErrInvalid
 	}
@@ -168,9 +200,16 @@ func (s *ManagementService) CommandDraft(ctx context.Context, id, action string,
 		return contract.ManagementDraft{}, err
 	}
 	ctx, diagnostic, finish := contract.ObservePublication(ctx, s.publicationObserver, actor.TeamID.String(), "draft_command", input)
+	if diagnostic != nil {
+		diagnostic.Management, diagnostic.DraftID = true, id
+		if action == "publish" || action == "discard" {
+			diagnostic.Action = action
+		}
+	}
 	defer func() {
-		if diagnostic != nil {
+		if diagnostic != nil && err == nil {
 			diagnostic.Result = result.Publication
+			diagnostic.Draft = &result
 		}
 		finish(err)
 	}()
@@ -208,6 +247,9 @@ func (s *ManagementService) Rollback(ctx context.Context, id string, input contr
 		return contract.PublicationResult{}, err
 	}
 	ctx, diagnostic, finish := contract.ObservePublication(ctx, s.publicationObserver, actor.TeamID.String(), "rollback", input)
+	if diagnostic != nil {
+		diagnostic.Management = true
+	}
 	defer func() {
 		if diagnostic != nil && result.ID != "" {
 			diagnostic.Result = &result

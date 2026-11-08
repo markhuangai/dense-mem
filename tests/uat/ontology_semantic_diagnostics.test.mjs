@@ -28,6 +28,21 @@ test("semantic parser reconstructs complete protected stdout without relying on 
   assert.equal(semanticPublicationRecords("unrelated startup\n" + window(records)).length, records.length);
 });
 
+test("manager parser requires content-free authorization rejection", () => {
+  const record = { operation_id: "00000000-0000-4000-8000-000000000001", team_id: "team", profile_id: "profile", correlation_id: "correlation", msg: "ontology_semantic_manager_rejected", level: "WARN", reason: "unauthorized", transaction_outcome: "not_committed" };
+  const denied = { ...expected, operationKey: undefined, contentFree: true, reason: "unauthorized", outcomeEvent: record.msg };
+  verifySemanticPublication(window([record]), denied);
+  assert.throws(() => verifySemanticPublication(window([{ ...record, draft_id: "foreign-draft" }]), denied));
+  assert.throws(() => verifySemanticPublication(window([{ ...record, error: "denied body" }]), denied));
+});
+
+test("manager parser retains precise stale-draft rejection", () => {
+  const { records } = fixture();
+  records.at(-1).msg = "ontology_semantic_manager_rejected";
+  for (const record of records) record.draft_id = "draft";
+  verifySemanticPublication(window(records), { ...expected, outcomeEvent: "ontology_semantic_manager_rejected" });
+});
+
 for (const [name, mutate] of [
   ["missing window", () => []],
   ["missing chunk", (records) => records.filter((_, index) => index !== 0)],

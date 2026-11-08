@@ -17,6 +17,29 @@ Removing the pin override explicitly unpins the definition. Existing corrections
 must be replaced using their ID and version or explicitly removed. Grouping
 retains the existing compatibility policy and every original source handle.
 
+## Definition parent meanings
+
+The existing definition editor offers Organization only for topics, entity
+classes, and predicate concepts. Entity classes additionally offer Subclass of:
+every member of the child class is also a member of its parent class. Predicate
+concepts additionally offer Subproperty of: each use of the child predicate is a
+more specific use of its parent predicate. These edits do not expand Recall.
+
+An absent `parent_relation` remains organizational; loading or saving a legacy
+parent never infers semantic meaning. A semantic relation requires a compatible
+parent. The server still checks the definition kind, matching class EntityKind,
+active parents, cycles, and the 32-link depth bound. Catalog pages are partial:
+an existing parent ID and meaning remain intact even when that parent is not in
+the loaded page.
+
+Choosing Organization only retains the parent and omits `parent_relation` from
+the replacement definition. Clearing the parent clears both `parent_id` and
+`parent_relation`; changing definition kind clears both editor choices. Other
+definition fields remain in the replacement. Details, draft review, and
+publication history show the stored meaning, or No parent for a root definition.
+Save, reload, preview, and publish the draft through the existing workflow.
+Rollback appends a new revision restoring the prior parent and meaning.
+
 Preview shares publication validation, changes no state, and calls no provider.
 Counts cover the currently eligible stored dependency set; examples contain at
 most ten sources and report truncation. Definition changes may affect additional
@@ -40,6 +63,35 @@ comparisons, the locked manager-correction cohort and the registered exclusive
 Detailed reports remain in ignored paths. Retain verified ticket evidence in
 issue/PR comments and project memory. Only a newer overall result replaces
 `tests/eval/baseline.json`; full final-head CI and production-image E2E remain gates.
+
+## Manager command diagnostics
+
+The existing context-aware logger records DEBUG
+`ontology_semantic_draft_preview`, INFO `ontology_semantic_manager_command`,
+and WARN `ontology_semantic_manager_rejected`. Required storage or audit failure
+uses ERROR `ontology_semantic_publication_failed`. Successful save, publication,
+pin, discard, and rollback commands are observed after their surrounding
+transaction and audit finish. Preview is read-only and provider-free.
+
+Use trusted team/profile, correlation, operation, draft, and publication IDs to
+join outcomes with `ontology_semantic_publication` protected payload chunks.
+The payloads retain admitted edits, loaded definitions, prepared publication,
+draft state, and preview results. Rejection captures include specific reasons
+and expected/observed versions. Role/scope denials and unavailable foreign or
+owner-scoped items expose no body or foreign-state detail.
+
+Production keeps its TRACE default. DEBUG also retains complete diagnostic
+payloads; INFO filters those details. Complete protected chunks are stdout-only,
+independent of optional telemetry and database operation-log summaries. Collect
+the entire operation window before teardown, then filter by correlation and
+draft or operation ID. Verify each manifest, chunk index/count, and SHA-256.
+An unavailable or truncated required capture is incomplete diagnostic evidence.
+
+The disposable management E2E scenario explicitly uses DEBUG, verifies stale
+draft and incompatible-parent causes from logs alone, and checks credential
+canaries. Keep protected proof in ignored private storage or protected artifacts
+for seven days. Ordinary operation metadata retains its configured retention,
+default 30 days; stdout retention remains deployment-owned.
 
 ## Operator assessment diagnostics
 

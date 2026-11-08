@@ -240,13 +240,14 @@ for (const width of [1440, 900, 390]) for (const theme of ["light", "dark"] as c
     expect(pageErrors).toEqual([]);
   });
 }
-
-for (const theme of ["light", "dark"] as const) {
-  test(`ontology long draft and history labels stay usable in ${theme} mode`, async ({ page }) => {
+for (const width of [1440, 768, 390]) for (const theme of ["light", "dark"] as const) {
+  test(`ontology semantic controls and long draft/history labels ${width}px ${theme}`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 1000 });
     await page.emulateMedia({ colorScheme: theme });
     await mockUserApi(page, { key: managerKey, canManageTeam: true });
     const reason = "Browser correction ".padEnd(512, "x");
-    const publication = { id: "publication-long", revision: 1, origin: "manager", reason, records: [], record_views: [] };
+    const records = [{ id: "people", version: 1, kind: "entity_class", current: true, definition: { key: "people", label: "People", description: "People vocabulary", base_entity_kind: "person" } }, { id: "researchers", version: 1, kind: "entity_class", current: true, definition: { key: "researchers", label: "Researchers", description: "Researcher vocabulary", base_entity_kind: "person", parent_id: "people", parent_relation: "subclass_of" } }];
+    const publication = { id: "publication-long", revision: 1, origin: "manager", reason, records: [], record_views: records };
     const otherPublication = { ...publication, id: "publication-other", revision: 2, reason: "Another reviewed publication" };
     let draft: OntologyDraft | null = null;
     await page.route("**/ui/api/ontology/**", async (route) => {
@@ -265,7 +266,7 @@ for (const theme of ["light", "dark"] as const) {
       const data = path.endsWith("/status") ? { observed_at: "2026-10-18T12:00:00Z", revision: 1, coverage_complete: true, discovery_complete: true, pending_markers: 0, counts: { eligible: 0, organized: 0, pending: 0, ambiguous: 0, failed: 0 } }
         : path.endsWith("/publications/publication-long") ? publication
           : path.endsWith("/publications/publication-other") ? otherPublication
-          : { records: [], sources: [], drafts: draft ? [draft] : [], publications: [publication, otherPublication] };
+          : { records, sources: [], drafts: draft ? [draft] : [], publications: [publication, otherPublication] };
       await route.fulfill({ json: { data } });
     });
     await openUserPortal(page, "dm_manager");
@@ -274,10 +275,16 @@ for (const theme of ["light", "dark"] as const) {
     await page.getByLabel("Definition key").fill("browser-long");
     await page.getByLabel("Definition label").fill("Vocabulary ".padEnd(256, "y"));
     await page.getByLabel("Definition description").fill("Review a saved correction on a narrow screen.");
+    await page.getByLabel("Definition type").selectOption("entity_class");
+    await page.getByLabel("Definition parent").fill("people");
+    await page.getByLabel("Parent meaning").press("ArrowDown");
+    await page.getByLabel("Parent meaning").press("Enter");
+    await expect(page.getByLabel("Parent meaning")).toHaveValue("subclass_of");
     await page.getByLabel("Audit reason").fill(reason);
     await page.getByRole("button", { name: "Add correction to draft" }).click();
     await page.getByRole("button", { name: "Save draft", exact: true }).click();
     await expect(page.getByRole("status")).toContainText("Draft saved");
+    await page.screenshot({ path: testInfo.outputPath("ontology-semantic-draft.png"), fullPage: true });
     await expectPageContained(page);
     await expect(page.getByRole("button", { name: `${reason} · open · revision 1`, exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Discard draft", exact: true }).click();
@@ -292,6 +299,8 @@ for (const theme of ["light", "dark"] as const) {
     await expectPageContained(page);
     await page.getByRole("button", { name: `Revision 1 · manager · ${reason}`, exact: true }).click();
     await expect(page.getByRole("heading", { name: "Publication revision 1", exact: true })).toBeVisible();
+    await expect(page.locator('[aria-label="Publication detail"]')).toContainText("Subclass of: People (people)");
+    await page.screenshot({ path: testInfo.outputPath("ontology-semantic-history.png"), fullPage: true });
     await page.getByLabel("Rollback reason", { exact: true }).fill("Keep this unsaved reason");
     const other = page.getByRole("button", { name: "Revision 2 · manager · Another reviewed publication", exact: true });
     await other.click();

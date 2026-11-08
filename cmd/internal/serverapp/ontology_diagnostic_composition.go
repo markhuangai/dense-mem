@@ -28,16 +28,41 @@ func ontologyPublicationDiagnostics(logger *slog.Logger, protector observability
 			base = append(base, slog.String("run_id", claim.RunID), slog.String("batch_id", claim.ID), slog.String("window_id", claim.WindowID),
 				slog.String("shared_space_id", claim.SpaceID), slog.Int64("space_generation", claim.Generation))
 		}
-		if errors.Is(diagnostic.Failure, contract.ErrUnauthorized) {
-			logger.LogAttrs(ctx, slog.LevelWarn, "ontology_semantic_publication_rejected", append(base, slog.String("reason", "unauthorized"))...)
+		if errors.Is(diagnostic.Failure, contract.ErrUnauthorized) || (diagnostic.Management && errors.Is(diagnostic.Failure, contract.ErrNotFound)) {
+			event, reason := "ontology_semantic_publication_rejected", "unauthorized"
+			if diagnostic.Management {
+				event = "ontology_semantic_manager_rejected"
+			}
+			if errors.Is(diagnostic.Failure, contract.ErrNotFound) {
+				reason = "unavailable"
+			}
+			logger.LogAttrs(ctx, slog.LevelWarn, event, append(base, slog.String("reason", reason), slog.String("transaction_outcome", "not_committed"))...)
 			return
 		}
 		var input struct {
 			OperationKey     string `json:"operation_key"`
-			ExpectedRevision int64  `json:"expected_revision"`
+			ExpectedRevision *int64 `json:"expected_revision"`
+			ExpectedVersion  *int64 `json:"expected_version"`
 		}
 		if diagnostic.InputState == "captured" && json.Unmarshal(diagnostic.Input, &input) == nil {
-			base = append(base, slog.String("operation_key", input.OperationKey), slog.Int64("expected_revision", input.ExpectedRevision))
+			if input.OperationKey != "" {
+				base = append(base, slog.String("operation_key", input.OperationKey))
+			}
+			if input.ExpectedRevision != nil {
+				base = append(base, slog.Int64("expected_revision", *input.ExpectedRevision))
+			}
+			if input.ExpectedVersion != nil {
+				base = append(base, slog.Int64("expected_version", *input.ExpectedVersion))
+			}
+		}
+		if diagnostic.DraftID != "" {
+			base = append(base, slog.String("draft_id", diagnostic.DraftID))
+		}
+		if diagnostic.RollbackOf != "" {
+			base = append(base, slog.String("target_publication_id", diagnostic.RollbackOf))
+		}
+		if diagnostic.Draft != nil {
+			base = append(base, slog.Int64("draft_version", diagnostic.Draft.Version), slog.Int64("draft_revision", diagnostic.Draft.BaseRevision), slog.String("draft_state", diagnostic.Draft.State))
 		}
 		if diagnostic.ObservedRevision != nil {
 			base = append(base, slog.Int64("observed_revision", *diagnostic.ObservedRevision))
@@ -57,6 +82,16 @@ func ontologyPublicationDiagnostics(logger *slog.Logger, protector observability
 			}
 			if diagnostic.Rejection != nil {
 				reason = diagnostic.Rejection.Reason
+			}
+		}
+		if diagnostic.Management {
+			if diagnostic.Failure == nil {
+				event = "ontology_semantic_manager_command"
+				if diagnostic.Preview != nil {
+					level, event = slog.LevelDebug, "ontology_semantic_draft_preview"
+				}
+			} else if level == slog.LevelWarn {
+				event = "ontology_semantic_manager_rejected"
 			}
 		}
 		base = append(base, slog.String("reason", reason))
@@ -95,6 +130,12 @@ func ontologyPublicationDiagnostics(logger *slog.Logger, protector observability
 			if diagnostic.Publication != nil {
 				marshal("publication", "", diagnostic.Publication)
 			}
+			if diagnostic.Draft != nil {
+				marshal("draft", "", diagnostic.Draft)
+			}
+			if diagnostic.Preview != nil {
+				marshal("preview", "", diagnostic.Preview)
+			}
 			ids := make([]string, 0, len(diagnostic.Definitions))
 			for id := range diagnostic.Definitions {
 				ids = append(ids, id)
@@ -118,9 +159,18 @@ func ontologyPublicationDiagnostics(logger *slog.Logger, protector observability
 		base = append(base, slog.String("capture_state", captureState))
 		if diagnostic.Failure != nil {
 			logger.LogAttrs(ctx, level, event, append(base, slog.String("transaction_outcome", "not_committed"), slog.String("error", diagnostic.Failure.Error()))...)
-		} else if diagnostic.Result != nil && diagnostic.Result.ID != "" {
-			logger.LogAttrs(ctx, level, event, append(base, slog.String("transaction_outcome", "committed"), slog.String("publication_id", diagnostic.Result.ID),
-				slog.Int64("revision", diagnostic.Result.Revision), slog.Bool("existing", diagnostic.Result.Existing), slog.Any("revisions", diagnostic.Result.Records))...)
+		} else {
+			if diagnostic.Result != nil && diagnostic.Result.ID != "" {
+				base = append(base, slog.String("publication_id", diagnostic.Result.ID), slog.Int64("revision", diagnostic.Result.Revision), slog.Bool("existing", diagnostic.Result.Existing), slog.Any("revisions", diagnostic.Result.Records))
+			} else if diagnostic.Draft == nil && diagnostic.Preview == nil {
+				return
+			}
+			outcome := "committed"
+			if preview := diagnostic.Preview; preview != nil {
+				outcome = "read_only"
+				base = append(base, slog.Int("changed_records", preview.ChangedRecords), slog.Int64("affected_records", preview.AffectedRecords), slog.Int64("affected_sources", preview.AffectedSources), slog.Bool("complete", preview.Complete))
+			}
+			logger.LogAttrs(ctx, level, event, append(base, slog.String("transaction_outcome", outcome))...)
 		}
 	}
 }

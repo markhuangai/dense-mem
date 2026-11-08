@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { UserApi, type UserSession } from "./api";
 import { OntologyPanel } from "./OntologyPanel";
+import { OntologyEditor } from "./OntologyEditor";
 import type { OntologyCoverage, OntologyDraft } from "./ontology-types";
 
 const session = { team: { id: "team-a" }, membership: { role: "manager", grants: ["read", "write"] } } as UserSession;
@@ -339,7 +340,7 @@ describe("OntologyPanel", () => {
   it.each([
     ["entity_class", "subclass_of"],
     ["predicate_concept", "subproperty_of"],
-  ])("preserves %s semantics through unrelated edits and reparenting, and rejects clearing its parent", async (kind, relation) => {
+  ])("loads and preserves %s semantics through unrelated edits and reparenting outside the catalog page", async (kind, relation) => {
     const definition = { key: "people", label: "People", description: "Accepted definition", parent_id: "parent-a", parent_relation: relation,
       ...(kind === "entity_class" ? { base_entity_kind: "person" } : {}) };
     const records = [{ id: "semantic-a", kind, version: 3, current: true, definition }];
@@ -360,9 +361,7 @@ describe("OntologyPanel", () => {
     render(<OntologyPanel api={new UserApi("key")} session={session} />);
     fireEvent.click(await screen.findByRole("button", { name: "Edit People" }));
     await waitFor(() => expect(screen.getByLabelText("Definition parent")).toHaveValue("parent-a"));
-    fireEvent.change(screen.getByLabelText("Definition parent"), { target: { value: "" } });
-    expect(screen.getByRole("button", { name: "Add correction to draft" })).toBeDisabled();
-    expect(screen.getByRole("alert")).toHaveTextContent("requires a parent");
+    expect(screen.getByLabelText("Parent meaning")).toHaveValue(relation);
     expect(fetcher.mock.calls.filter(([, options]) => options?.method === "POST")).toHaveLength(0);
     fireEvent.change(screen.getByLabelText("Definition parent"), { target: { value: "parent-b" } });
     fireEvent.change(screen.getByLabelText("Definition label"), { target: { value: "Revised people" } });
@@ -373,6 +372,52 @@ describe("OntologyPanel", () => {
     const body = JSON.parse(fetcher.mock.calls.find(([, options]) => options?.method === "POST")![1]!.body as string);
     expect(body.edits[0]).toMatchObject({ record_id: "semantic-a", expected_version: 3, kind,
       definition: { label: "Revised people", parent_id: "parent-b", parent_relation: relation } });
+  });
+
+  it.each(["entity_class", "predicate_concept", "topic"] as const)("keeps legacy %s parents organizational and clears both parent fields deliberately", (kind) => {
+    const onAdd = vi.fn();
+    const target = { id: "legacy-a", kind, version: 3, retired: false, current: true,
+      definition: { key: "legacy", label: "Legacy", description: "Organizational definition", parent_id: "outside-page", ...(kind === "entity_class" ? { base_entity_kind: "person" } : {}) } };
+    render(<OntologyEditor records={[]} selected={[]} target={target} disabled={false} onAdd={onAdd} />);
+    expect(screen.getByLabelText("Parent meaning")).toHaveValue("");
+    expect(within(screen.getByLabelText("Parent meaning")).getAllByRole("option")).toHaveLength(kind === "topic" ? 1 : 2);
+    fireEvent.change(screen.getByLabelText("Definition label"), { target: { value: "Revised legacy" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add correction to draft" }));
+    expect(onAdd.mock.calls[0][0].definition).toMatchObject({ parent_id: "outside-page", label: "Revised legacy" });
+    expect(onAdd.mock.calls[0][0].definition).not.toHaveProperty("parent_relation");
+    fireEvent.change(screen.getByLabelText("Definition parent"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add correction to draft" }));
+    expect(onAdd.mock.calls[1][0]).toMatchObject({ record_id: "legacy-a", expected_version: 3, kind });
+    expect(onAdd.mock.calls[1][0].definition).not.toHaveProperty("parent_id");
+    expect(onAdd.mock.calls[1][0].definition).not.toHaveProperty("parent_relation");
+  });
+
+  it.each([["entity_class", "subclass_of"], ["predicate_concept", "subproperty_of"]] as const)("edits and clears %s meaning without retaining incompatible choices", (kind, relation) => {
+    const onAdd = vi.fn();
+    const target = { id: "semantic-a", kind, version: 3, retired: false, current: true,
+      definition: { key: "semantic", label: "Semantic", description: "Accepted definition", parent_id: "parent-a", parent_relation: relation, ...(kind === "entity_class" ? { base_entity_kind: "person" } : {}) } };
+    render(<OntologyEditor records={[]} selected={[]} target={target} disabled={false} onAdd={onAdd} />);
+    fireEvent.change(screen.getByLabelText("Parent meaning"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add correction to draft" }));
+    expect(onAdd.mock.calls[0][0].definition.parent_id).toBe("parent-a");
+    expect(onAdd.mock.calls[0][0].definition).not.toHaveProperty("parent_relation");
+    fireEvent.change(screen.getByLabelText("Parent meaning"), { target: { value: relation } });
+    fireEvent.change(screen.getByLabelText("Definition parent"), { target: { value: "" } });
+    expect(screen.getByLabelText("Parent meaning")).toHaveValue("");
+    expect(screen.getByRole("button", { name: "Add correction to draft" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Add correction to draft" }));
+    expect(onAdd.mock.calls[1][0].definition).not.toHaveProperty("parent_id");
+    expect(onAdd.mock.calls[1][0].definition).not.toHaveProperty("parent_relation");
+    fireEvent.change(screen.getByLabelText("Parent meaning"), { target: { value: relation } });
+    expect(screen.getByRole("button", { name: "Add correction to draft" })).toBeDisabled();
+    expect(screen.getByRole("alert")).toHaveTextContent("Choose a parent");
+    fireEvent.change(screen.getByLabelText("Definition parent"), { target: { value: "parent-b" } });
+    fireEvent.change(screen.getByLabelText("Definition type"), { target: { value: "topic" } });
+    expect(screen.getByLabelText("Definition parent")).toHaveValue("");
+    expect(screen.getByLabelText("Parent meaning")).toHaveValue("");
+    fireEvent.click(screen.getByRole("button", { name: "Add correction to draft" }));
+    expect(onAdd.mock.calls[2][0]).toMatchObject({ kind: "topic", expected_version: 0 });
+    expect(onAdd.mock.calls[2][0].definition).not.toHaveProperty("parent_relation");
   });
 
   it("refreshes current record and source versions while preserving the manager's unsaved reason",async()=>{
