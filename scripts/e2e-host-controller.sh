@@ -558,15 +558,17 @@ const isolateOntology = ontologyIndex >= 0 && records.length >= 3;
 const caseSelections = [];
 if (shardCount === 6) {
   // Keep discovery measurement isolated and balance measured ontology work across the other two selections.
+  const ontology = records[ontologyIndex];
+  const refinement = ontology?.caseIds.filter((id) => /^repository\/TestOntology(?:AutomaticRefinement|Refinement)/.test(id)) || [];
   const dedicated = [
     "repository/TestOntologyMaintenanceFinalizationAdmissionAndIsolation",
     "repository/TestOntologyMaintenanceLargeBacklogAndFairTurns",
     "repository/TestOntologyMaintenanceReadMeasurement",
     "repository/TestOntologyOrganizationVocabularyAndSourceFences",
-  ];
+    ...refinement,
+  ].sort();
   const measurement = "repository/TestOntologyMaintenanceRevalidationDiscoveryMeasurement";
   const isolated = [...dedicated, measurement];
-  const ontology = records[ontologyIndex];
   if (!ontology || isolated.some((id) => !ontology.caseIds.includes(id)) || ontology.caseIds.length <= isolated.length || records.length < 5) {
     throw new Error("six precheck shards require dedicated ontology cases, discovery measurement, remaining ontology, and four populated capability groups");
   }

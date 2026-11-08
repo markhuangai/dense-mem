@@ -1423,11 +1423,21 @@ test("six precheck shards preserve every real runner selection exactly once", as
   const selections = stdout.trim().split(/\r?\n/);
   assert.equal(selections.length, 6);
   const dedicated = [
+    "repository/TestOntologyAutomaticRefinement",
     "repository/TestOntologyMaintenanceFinalizationAdmissionAndIsolation",
     "repository/TestOntologyMaintenanceLargeBacklogAndFairTurns",
     "repository/TestOntologyMaintenanceReadMeasurement",
     "repository/TestOntologyOrganizationVocabularyAndSourceFences",
-  ];
+    "repository/TestOntologyRefinementPreservesLegacyAndAmbiguity",
+    "repository/TestOntologyRefinementPublicationRaces",
+    "repository/TestOntologyRefinementLeaseRecovery",
+    "repository/TestOntologyRefinementIsolationAndAncestryBound",
+    "repository/TestOntologyRefinementKeepsHistoricalReceipts",
+    "repository/TestOntologyRefinementRefreshMigration",
+    "repository/TestOntologyRefinementRebuildsStoredAncestry",
+    "repository/TestOntologyRefinementCoarseAncestryBound",
+    "repository/TestOntologyRefinementDefinitionAliasRace",
+  ].sort();
   const measurement = "repository/TestOntologyMaintenanceRevalidationDiscoveryMeasurement";
   assert.equal(selections[1], `cases:${measurement}`);
   assert.equal(selections[0], `cases:${dedicated.join(",")}`);
@@ -1456,7 +1466,7 @@ test("six precheck shards preserve every real runner selection exactly once", as
   }
   assert.equal(new Set(actual).size, actual.length);
   assert.deepEqual(actual.sort(), inventory.sort());
-  assert.equal(actual.length, 689);
+  assert.equal(actual.length, 699);
   assert.equal((await run("bash", ["-c", command, "six-shards", root])).stdout, stdout);
   await assert.rejects(run("bash", ["-c", `${helper}\npartition_precheck_capabilities "$1" 4`, "bad-shards", root]), /three or six shards/);
 });
