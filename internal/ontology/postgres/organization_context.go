@@ -34,7 +34,7 @@ func (s *Store) organizationDefinitionContext(tx *gorm.DB, fence scope, result *
 			}
 		}
 		if err != nil || len(ordered)+len(closure) > ontology.MaxVocabularyCandidates || len(dependencies)+len(additional) > ontology.MaxDependencyRecords {
-			if required[view.ID] {
+			if required[view.ID] || view.Kind == ontology.Topic {
 				return ontology.ErrContextBound
 			}
 			continue

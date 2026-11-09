@@ -233,13 +233,21 @@ func TestOntologyOrganizationFreshnessStopsAfterStaleBatch(t *testing.T) {
 
 func TestOntologyOrganizationBatchedDependencyBounds(t *testing.T) {
 	f := newOrganizationFixture(t)
-	source := f.organizationEvidence(t, 1, "bounded-left bounded-right", nil)
-	records := []ontology.Record{testTopic("bounded-left"), testTopic("bounded-right")}
-	publication, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication(uuid.NewString(), 0,
-		ontology.Change{Record: records[0]}, ontology.Change{Record: records[1]}))
+	source := maintenanceEntity(t, f, "child-bounded-left child-bounded-right")
+	var records, children []ontology.Record
+	var changes []ontology.Change
+	for _, key := range []string{"bounded-left", "bounded-right"} {
+		parent := ontology.Record{ID: uuid.NewString(), Kind: ontology.EntityClass, Definition: &ontology.Definition{Key: key, Label: key, BaseEntityKind: "project"}}
+		child := ontology.Record{ID: uuid.NewString(), Kind: ontology.EntityClass, Definition: &ontology.Definition{Key: "child-" + key, Label: "child-" + key, BaseEntityKind: "project", ParentID: parent.ID, ParentRelation: ontology.SubclassOf}}
+		records = append(records, parent)
+		children = append(children, child)
+		changes = append(changes, ontology.Change{Record: parent}, ontology.Change{Record: child})
+	}
+	publication, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication(uuid.NewString(), 0, changes...))
 	require.NoError(t, err)
 	for i := range records {
 		records[i].Version = 1
+		children[i].Version = 1
 	}
 	addPins := func(target string, count int) {
 		t.Helper()
@@ -275,35 +283,46 @@ func TestOntologyOrganizationBatchedDependencyBounds(t *testing.T) {
 			require.Equal(t, singleton, view)
 			require.True(t, view.Current)
 		}
-		for _, forced := range [][]string{nil, {records[1].ID}} {
+		views, err = f.store.organizationViews(tx, fence, children)
+		require.NoError(t, err)
+		for _, forced := range [][]string{nil, {children[1].ID}} {
 			contextData := ontology.OrganizationContext{Candidates: views}
 			require.NoError(t, f.store.organizationDefinitionContext(tx, fence, &contextData, forced))
-			require.Len(t, contextData.Candidates, 1)
-			expected := records[0].ID
+			require.Len(t, contextData.Candidates, 2)
+			expected := children[0].ID
 			if len(forced) > 0 {
 				expected = forced[0]
 			}
 			require.Equal(t, expected, contextData.Candidates[0].ID)
+			require.Equal(t, contextData.Candidates[0].Definition.ParentID, contextData.Candidates[1].ID)
+			require.Equal(t, ontology.SubclassOf, contextData.Candidates[0].Definition.ParentRelation)
 			require.Len(t, contextData.Records, ontology.MaxDependencyRecords/2)
 			for _, pin := range contextData.Records {
 				require.True(t, pin.Current)
-				require.Equal(t, expected, pin.Override.TargetID)
+				require.Equal(t, contextData.Candidates[1].ID, pin.Override.TargetID)
 			}
 			dependencies, err := ontology.OrganizationDependencies(contextData)
 			require.NoError(t, err)
-			require.Len(t, dependencies, 1+ontology.MaxDependencyRecords/2)
+			require.Len(t, dependencies, 2+ontology.MaxDependencyRecords/2)
 		}
 		contextData := ontology.OrganizationContext{Candidates: views}
-		require.ErrorIs(t, f.store.organizationDefinitionContext(tx, fence, &contextData, ids), ontology.ErrContextBound)
+		require.ErrorIs(t, f.store.organizationDefinitionContext(tx, fence, &contextData, []string{children[0].ID, children[1].ID}), ontology.ErrContextBound)
 		return nil
 	}))
 	contextData, err := f.store.ReadOrganization(context.Background(), f.team, []ontology.SourceHandle{source})
 	require.NoError(t, err)
-	require.Len(t, contextData.Candidates, 1)
+	require.Len(t, contextData.Candidates, 2)
 	require.Len(t, contextData.Records, ontology.MaxDependencyRecords/2)
+	parentID := ""
+	for _, candidate := range contextData.Candidates {
+		if candidate.Definition.ParentID == "" {
+			parentID = candidate.ID
+		}
+	}
+	require.NotEmpty(t, parentID)
 	for _, pin := range contextData.Records {
 		require.True(t, pin.Current)
-		require.Equal(t, contextData.Candidates[0].ID, pin.Override.TargetID)
+		require.Equal(t, parentID, pin.Override.TargetID)
 	}
 	addPins(records[0].ID, ontology.MaxDependencyRecords/2)
 	require.NoError(t, f.store.withScope(context.Background(), f.team, true, func(tx *gorm.DB, fence scope) error {
