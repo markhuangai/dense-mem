@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-
 	accesscontract "github.com/markhuangai/dense-mem/internal/access/contract"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	privacycontract "github.com/markhuangai/dense-mem/internal/privacy/contract"
@@ -193,11 +192,6 @@ type TeamStatePurger interface {
 }
 
 type CredentialSessionInvalidator interface {
-	InvalidateCredentialSessions(context.Context, string, string) error
-}
-
-type CleanupStore interface {
-	PurgeTeamState(context.Context, string) error
 	InvalidateCredentialSessions(context.Context, string, string) error
 }
 

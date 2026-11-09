@@ -13,6 +13,7 @@ import (
 	"github.com/markhuangai/dense-mem/cmd/internal/migrationapp"
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	privacy "github.com/markhuangai/dense-mem/internal/privacy/contract"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
@@ -41,6 +42,6 @@ func RunPrivateMemoryMigration(ctx context.Context, args []string, output io.Wri
 	if err := migrationapp.RunPrivateMemoryMigration(ctx, db.GetDB(), *fingerprint, logger.Slog()); err != nil {
 		return err
 	}
-	_, err = fmt.Fprintln(output, `{"planner_version":"private-memory.v2.7.0.1","status":"complete"}`)
+	_, err = fmt.Fprintf(output, "{\"planner_version\":%q,\"status\":\"complete\"}\n", privacy.PrivateMemoryPlannerVersion)
 	return err
 }

@@ -130,6 +130,7 @@ func (v *OpenAIAssessor) Complete(
 		return structured, err
 	}
 	if result.ReportedUsage != nil {
+		structured.UsageAvailable = true
 		structured.PromptTokens = int(result.ReportedUsage.PromptTokens)
 		structured.CompletionTokens = int(result.ReportedUsage.CompletionTokens)
 		structured.TotalTokens = int(result.ReportedUsage.TotalTokens)

@@ -13,7 +13,7 @@ func buildSessionApplication(deps rememberApplicationDependencies, repository se
 	limits := assessor.NormalizeSemanticAssessmentLimits(deps.Limits)
 	limits.MaxEvidenceItems = session.MaxExcerpts
 	preparer := remember.NewSynchronousProcessor(remember.ProcessorDependencies{
-		Ledger: deps.Persistence, Catalog: deps.Catalog, Assessor: deps.Assessor, Embedder: deps.Embedder,
+		Ledger: deps.Persistence, Catalog: deps.Catalog, Assessor: deps.Assessor, EmbeddingExecutor: deps.EmbeddingExecutor,
 		Decisions: deps.Decisions, DecisionSettings: deps.DecisionSettings,
 		Limits: limits, Metrics: deps.Metrics, Logger: deps.Logger, DiagnosticProtector: deps.DiagnosticProtector,
 	})

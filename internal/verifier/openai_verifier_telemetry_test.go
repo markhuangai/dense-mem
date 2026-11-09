@@ -3,6 +3,7 @@ package verifier
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -47,7 +48,7 @@ func TestOpenAIStructuredChatUsesTokenizerForIncompleteProviderUsage(t *testing.
 			}))
 			defer srv.Close()
 
-			v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "key", "assessor-model"), srv.Client())
+			v := newTestOpenAIVerifier(newTestVerifierConfig(srv.URL, "key", "assessor-model"), srv.Client())
 			v.SetMetrics(metrics)
 			ctx := observability.WithAIOperation(context.Background(), observability.AIOperationSemanticAssessment, 1)
 			result, err := v.openAIStructuredChatJSONWithUsage(ctx, "assessor-model", "schema", map[string]any{}, "system", map[string]any{})
@@ -95,7 +96,7 @@ func TestOpenAIStructuredChatAggregatesProviderTokensOnce(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "key", "assessor-model"), srv.Client())
+	v := newTestOpenAIVerifier(newTestVerifierConfig(srv.URL, "key", "assessor-model"), srv.Client())
 	v.SetMetrics(metrics)
 	ctx := observability.WithAIOperation(context.Background(), observability.AIOperationSemanticAssessment, 1)
 	_, err := v.openAIStructuredChatJSONWithUsage(ctx, "assessor-model", "schema", map[string]any{}, "system", map[string]any{})
@@ -138,7 +139,7 @@ func TestOpenAIStructuredChatDerivesMissingProviderTotal(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "key", "assessor-model"), srv.Client())
+	v := newTestOpenAIVerifier(newTestVerifierConfig(srv.URL, "key", "assessor-model"), srv.Client())
 	v.SetMetrics(metrics)
 	ctx := observability.WithAIOperation(context.Background(), observability.AIOperationSemanticAssessment, 1)
 	_, err := v.openAIStructuredChatJSONWithUsage(ctx, "assessor-model", "schema", map[string]any{}, "system", map[string]any{})
@@ -185,7 +186,7 @@ func TestOpenAICommunitySummaryTelemetryRecordsProviderTokenizerAndUnpricedUsage
 	}))
 	defer srv.Close()
 
-	v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "key", "community-model"), srv.Client())
+	v := newTestOpenAIVerifier(newTestVerifierConfig(srv.URL, "key", "community-model"), srv.Client())
 	v.SetMetrics(metrics)
 	operationCtx := observability.WithAIOperation(context.Background(), observability.AIOperationCommunitySummary, 2)
 	_, err := v.openAIStructuredChatJSONWithUsage(operationCtx, "community-model", "schema", map[string]any{}, "system", map[string]any{})
@@ -218,7 +219,7 @@ func TestOpenAIStructuredChatDoesNotMarkMissingUsageForMalformedProviderError(t 
 	}))
 	defer srv.Close()
 
-	v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "key", "assessor-model"), srv.Client())
+	v := newTestOpenAIVerifier(newTestVerifierConfig(srv.URL, "key", "assessor-model"), srv.Client())
 	v.SetMetrics(metrics)
 	ctx := observability.WithAIOperation(context.Background(), observability.AIOperationSemanticAssessment, 1)
 	_, err := v.openAIStructuredChatMessagesJSONWithUsage(
@@ -251,7 +252,7 @@ func TestOpenAIStructuredChatMarksMissingUsageForMalformedOKResponse(t *testing.
 	}))
 	defer srv.Close()
 
-	v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "key", "assessor-model"), srv.Client())
+	v := newTestOpenAIVerifier(newTestVerifierConfig(srv.URL, "key", "assessor-model"), srv.Client())
 	v.SetMetrics(metrics)
 	ctx := observability.WithAIOperation(context.Background(), observability.AIOperationSemanticAssessment, 1)
 	_, err := v.openAIStructuredChatMessagesJSONWithUsage(
@@ -279,45 +280,29 @@ func TestOpenAIStructuredChatMarksMissingUsageForMalformedOKResponse(t *testing.
 
 func TestRecordVerifierTokenizerUsageIncludesStructuredSchema(t *testing.T) {
 	metrics := observability.NewPrometheusMetrics()
-	v := NewOpenAIVerifier(newTestVerifierConfig("", "", "assessor-model"), nil)
+	var requestBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var err error
+		requestBody, err = io.ReadAll(r.Body)
+		require.NoError(t, err)
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"{}"}}]}`)
+	}))
+	defer server.Close()
+	v := newTestOpenAIVerifier(newTestVerifierConfig(server.URL, "fixture-key", "assessor-model"), server.Client())
 	v.SetMetrics(metrics)
-	request := openAIVerifierRequest{
-		Model: "assessor-model",
-		Messages: []openAIVerifierMessage{
-			{Role: "system", Content: "Return structured JSON."},
-			{Role: "user", Content: `{"evidence":"schema bytes must be priced"}`},
-		},
-		ResponseFormat: openAIVerifierResponseFormat{
-			Type: "json_schema",
-			JSONSchema: openAIVerifierJSONSchema{
-				Name:   "large_schema",
-				Strict: true,
-				Schema: json.RawMessage(`{"type":"object","properties":{"explanation":{"type":"string","description":"` + strings.Repeat("bounded schema detail ", 64) + `"}}}`),
-			},
-		},
-	}
-	requestJSON, err := json.Marshal(request)
+	schema := map[string]any{"type": "object", "properties": map[string]any{"explanation": map[string]any{"type": "string", "description": strings.Repeat("bounded schema detail ", 64)}}}
+	messages := []openAIVerifierMessage{{Role: "system", Content: "Return structured JSON."}, {Role: "user", Content: `{"evidence":"schema bytes must be priced"}`}}
+	ctx := observability.WithAIOperation(context.Background(), observability.AIOperationSemanticAssessment, 1)
+	_, err := v.openAIStructuredChatMessagesJSONWithUsage(ctx, "assessor-model", "large_schema", schema, messages)
 	require.NoError(t, err)
-	wantInputTokens, err := CountTokens(string(requestJSON), v.assessmentLimits.Tokenizer)
+	wantInputTokens, err := CountTokens(string(requestBody), v.assessmentLimits.Tokenizer)
 	require.NoError(t, err)
-	messageTokens, err := semanticAssessmentMessageTokens(request.Messages, v.assessmentLimits.Tokenizer)
+	messageTokens, err := semanticAssessmentMessageTokens(messages, v.assessmentLimits.Tokenizer)
 	require.NoError(t, err)
 	require.Greater(t, wantInputTokens, messageTokens)
-
-	ctx := observability.WithAIOperation(context.Background(), observability.AIOperationSemanticAssessment, 1)
-	v.recordVerifierTokenizerUsage(ctx, "assessor-model", request, `{}`)
-
 	recorder := httptest.NewRecorder()
 	metrics.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
-	got, found := verifierMetricLineValue(
-		recorder.Body.String(),
-		"densemem_ai_operation_tokens_total",
-		`operation="semantic_assessment"`,
-		`component="verifier"`,
-		`model="assessor-model"`,
-		`kind="input"`,
-		`source="tokenizer"`,
-	)
+	got, found := verifierMetricLineValue(recorder.Body.String(), "densemem_ai_operation_tokens_total", `operation="semantic_assessment"`, `component="verifier"`, `model="assessor-model"`, `kind="input"`, `source="tokenizer"`)
 	require.True(t, found)
 	assert.Equal(t, float64(wantInputTokens), got)
 }

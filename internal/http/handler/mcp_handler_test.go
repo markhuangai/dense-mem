@@ -10,12 +10,11 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
-	"github.com/stretchr/testify/require"
-
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/mcp"
 	"github.com/markhuangai/dense-mem/internal/sse"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
+	"github.com/stretchr/testify/require"
 )
 
 func TestMCPHandlerPostInitializeJSON(t *testing.T) {
@@ -416,16 +415,6 @@ func TestMCPHandlerGetBranches(t *testing.T) {
 		require.NoError(t, h.HandleGet(c))
 		require.Contains(t, rec.Body.String(), ": dense-mem MCP stream ready")
 	})
-}
-
-func TestWriteSSEComment(t *testing.T) {
-	e := echo.New()
-	req := httptest.NewRequest(http.MethodGet, "/mcp", nil)
-	rec := httptest.NewRecorder()
-	c := e.NewContext(req, rec)
-
-	require.NoError(t, writeSSEComment(c, "hello"))
-	require.Equal(t, ": hello\n\n", rec.Body.String())
 }
 
 func mcpTestContext(ctx context.Context, profileID uuid.UUID, scopes []string) context.Context {

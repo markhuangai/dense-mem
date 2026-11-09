@@ -6,9 +6,7 @@ import (
 	"strings"
 
 	"github.com/labstack/echo/v4"
-
 	"github.com/markhuangai/dense-mem/internal/domain"
-
 	dto "github.com/markhuangai/dense-mem/internal/http/dto"
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/http/response"
@@ -17,17 +15,10 @@ import (
 	"github.com/markhuangai/dense-mem/internal/recall"
 )
 
-// RecallHandlerInterface is the companion interface for recall handlers.
-type RecallHandlerInterface interface {
-	Handle(c echo.Context) error
-}
-
 // RecallHandler serves GET /ui/api/recall from the active recall pipeline.
 type RecallHandler struct {
 	svc recall.RecallService
 }
-
-var _ RecallHandlerInterface = (*RecallHandler)(nil)
 
 func NewRecallHandler(svc recall.RecallService) *RecallHandler {
 	return &RecallHandler{svc: svc}

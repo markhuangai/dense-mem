@@ -1,13 +1,8 @@
 package verifier
 
 import (
-	"bytes"
-	"context"
-	"errors"
-	"net/http"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/stretchr/testify/require"
@@ -40,33 +35,7 @@ func TestSemanticAssessmentConversationHelpersCoverFamiliesAndBounds(t *testing.
 	}
 	require.Equal(t, "field", semanticAssessmentValidationLeaf("prefix.field[0]"))
 
-	require.Equal(t, ProviderFailureClassHTTPClient, openAIHTTPFailureClass(http.StatusBadRequest))
-	require.Equal(t, ProviderFailureClassHTTPServer, openAIHTTPFailureClass(http.StatusBadGateway))
-	require.Equal(t, ProviderFailureClassHTTPUnexpected, openAIHTTPFailureClass(http.StatusOK))
-	require.Equal(t, 12, openAIRetryAfterSeconds("12", time.Now()))
-	require.Equal(t, 0, openAIRetryAfterSeconds("0", time.Now()))
-	require.Equal(t, 300, openAIRetryAfterSeconds("999", time.Now()))
-	require.Equal(t, 0, openAIRetryAfterSeconds("not-a-date", time.Now()))
-	future := time.Now().UTC().Add(2 * time.Second)
-	require.GreaterOrEqual(t, openAIRetryAfterSeconds(future.Format(http.TimeFormat), time.Now().UTC()), 1)
-	require.True(t, openAIRequestTimedOutOrCanceled(context.Background(), context.DeadlineExceeded))
-	require.False(t, openAIRequestTimedOutOrCanceled(context.Background(), context.Canceled))
 }
-
-func TestDecodeOpenAIVerifierResponseRejectsTransportAndJSONErrors(t *testing.T) {
-	_, err := decodeOpenAIVerifierAPIResponse(errorReader{})
-	require.ErrorContains(t, err, "read failed")
-	_, err = decodeOpenAIVerifierAPIResponse(bytes.NewReader([]byte("not-json")))
-	require.Error(t, err)
-	_, err = decodeOpenAIVerifierAPIResponse(bytes.NewReader(bytes.Repeat([]byte("x"), openAIVerifierMaxResponseBytes+1)))
-	require.ErrorContains(t, err, "transport limit")
-	_, err = decodeOpenAIVerifierAPIResponse(bytes.NewReader([]byte(`{"choices":[]}`)))
-	require.NoError(t, err)
-}
-
-type errorReader struct{}
-
-func (errorReader) Read([]byte) (int, error) { return 0, errors.New("read failed") }
 
 func TestSemanticAssessmentResponseCorrectionStages(t *testing.T) {
 	req, limits := semanticAssessmentTestRequest(t)

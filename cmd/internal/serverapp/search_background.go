@@ -48,9 +48,6 @@ func startSearchReconciliation(ctx context.Context, runner searchReconciliationR
 	run := func() {
 		result, err := runner.Run(ctx)
 		if err != nil {
-			if logger != nil {
-				logger.Warn("search_reconciliation_failed", observability.String("error_code", result.ErrorCode))
-			}
 			return
 		}
 		if result.Skipped && logger != nil {

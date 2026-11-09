@@ -27,7 +27,7 @@ test("fork receipt binds approved source, image, preview attempt, workflow revis
   assert.equal(receipt.fork_run_id, "200");
   assert.equal(receipt.trusted_revision, approved.trusted_revision);
   assert.deepEqual(receipt.postgres_prechecks, Array(6).fill("success"));
-  assert.equal(receipt.scenarios.length, 33);
+  assert.equal(receipt.scenarios.length, scenarios.length);
   assert.ok(receipt.scenarios.every((entry) => entry.result === "success" && entry.cleanup === "success"));
 });
 
@@ -48,8 +48,8 @@ test("every scenario, PostgreSQL shard, rootless precheck, and signer job is man
     }
   }
   assert.throws(() => policy.requireCompleteForkJobs([...jobs, jobs[0]], scenarios), /ambiguous/);
-  assert.throws(() => policy.successReceipt(approved, run, scenarios.slice(1)), /all 33/);
-  assert.throws(() => policy.successReceipt(approved, run, [...scenarios.slice(1), scenarios[1]]), /all 33/);
+  assert.notEqual(policy.receiptBytes(policy.successReceipt(approved, run, scenarios.slice(1))), policy.receiptBytes(policy.successReceipt(approved, run, scenarios)));
+  assert.throws(() => policy.successReceipt(approved, run, [...scenarios.slice(1), scenarios[1]]), /unique trusted scenario names/);
 });
 
 test("attestation verification constrains signer, source, repository, and hosted runner identity", () => {
@@ -116,4 +116,22 @@ test("approval requires a current open public fork with the exact PR head", () =
     { head: { ...pull.head, repo: { ...pull.head.repo, private: true } } }]) {
     assert.throws(() => policy.requireForkPull({ ...pull, ...changes }, approved.source_sha));
   }
+});
+
+test("the trusted registry can grow without changing receipt policy and every added job and cleanup remains required", () => {
+  const extended = [...scenarios, "additional_approved_scenario"];
+  const extendedJobs = policy.requiredForkJobs(extended).map((name) => ({ name, conclusion: "success",
+    steps: name.startsWith("Fork scenario ") ? ["Run scenario", "Stop scenario stack"].map((name) => ({ name, conclusion: "success" })) : [] }));
+  policy.requireCompleteForkJobs(extendedJobs, extended);
+  const receipt = policy.successReceipt(approved, run, extended);
+  assert.deepEqual(receipt.scenarios.map((entry) => entry.name), extended);
+  assert.notEqual(policy.receiptBytes(receipt), policy.receiptBytes(policy.successReceipt(approved, run, scenarios)));
+  const added = extendedJobs.find((job) => job.name === "Fork scenario additional_approved_scenario");
+  assert.throws(() => policy.requireCompleteForkJobs(jobs, extended), /required fork job/);
+  assert.throws(() => policy.requireCompleteForkJobs([...extendedJobs, added], extended), /ambiguous/);
+  for (const conclusion of ["failure", "skipped", "cancelled", null]) {
+    assert.throws(() => policy.requireCompleteForkJobs(extendedJobs.map((job) => job === added ? { ...job, conclusion } : job), extended));
+    assert.throws(() => policy.requireCompleteForkJobs(extendedJobs.map((job) => job === added ? { ...job, steps: [{ name: "Run scenario", conclusion: "success" }, { name: "Stop scenario stack", conclusion }] } : job), extended));
+  }
+  assert.throws(() => policy.successReceipt(approved, run, []), /unique trusted scenario names/);
 });

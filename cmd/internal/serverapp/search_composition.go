@@ -20,6 +20,7 @@ import (
 	searchcontract "github.com/markhuangai/dense-mem/internal/search/contract"
 	searchmaintenance "github.com/markhuangai/dense-mem/internal/search/maintenance"
 	searchpostgres "github.com/markhuangai/dense-mem/internal/search/postgres"
+	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 	tracecontract "github.com/markhuangai/dense-mem/internal/trace/contract"
 	"gorm.io/gorm"
@@ -114,7 +115,8 @@ func buildSearchProviders(
 		Reconciliation: searchapp.NewSearchReconciliationService(searchapp.SearchReconciliationDependencies{
 			Repository:      searchOwner,
 			Projection:      projection,
-			Provider:        openaiProvider,
+			Executor:        semanticwrite.NewProviderExecutor(openaiProvider),
+			Logger:          logger,
 			ProviderTimeout: time.Duration(cfg.GetAIEmbeddingTimeoutSeconds()) * time.Second,
 			BatchLimit:      config.AIEmbeddingMaxBatchItems(&cfg),
 		}),

@@ -1,4 +1,4 @@
-package serverapp
+package semanticwrite
 
 import (
 	"context"
@@ -12,7 +12,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/embedding"
 	embeddingcontract "github.com/markhuangai/dense-mem/internal/embedding/contract"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
 	"github.com/stretchr/testify/require"
 )
 
@@ -33,7 +32,7 @@ func TestSemanticwriteEmbeddingAdapterClassifiesProviderResponseContractErrors(t
 		err: &embeddingcontract.ProviderError{FailureCode: "provider_response_invalid", FailureClass: "provider_action_required"},
 	}}
 	_, _, err := adapter.EmbedBatch(context.Background(), []string{"invalid"})
-	require.ErrorIs(t, err, semanticwrite.ErrProviderResponseInvalid)
+	require.ErrorIs(t, err, ErrProviderResponseInvalid)
 }
 
 func TestSemanticwriteEmbeddingAdapterClassifiesSanitizedRetryProviderErrors(t *testing.T) {
@@ -44,24 +43,24 @@ func TestSemanticwriteEmbeddingAdapterClassifiesSanitizedRetryProviderErrors(t *
 	adapter := semanticwriteEmbeddingAdapter{provider: retry}
 
 	_, _, err := adapter.EmbedBatch(context.Background(), []string{"invalid"})
-	require.ErrorIs(t, err, semanticwrite.ErrProviderResponseInvalid)
+	require.ErrorIs(t, err, ErrProviderResponseInvalid)
 }
 
 func TestSemanticwriteEmbeddingExecutorBoundsProviderActionFailuresAsUnavailable(t *testing.T) {
-	executor := newSemanticwriteEmbeddingExecutor(semanticwriteEmbeddingProviderStub{
+	executor := NewProviderExecutor(semanticwriteEmbeddingProviderStub{
 		err: &embeddingcontract.ProviderError{FailureCode: "provider_authentication_failed", FailureClass: "provider_action_required"},
 	})
 
-	_, err := executor.Execute(context.Background(), semanticwrite.Plan{
-		Documents: []semanticwrite.Document{{Hash: "document-hash", Text: "document text"}},
-		Fence: semanticwrite.Fence{
+	_, err := executor.Execute(context.Background(), Plan{
+		Documents: []Document{{Hash: "document-hash", Text: "document text"}},
+		Fence: Fence{
 			Model: "fixture", Dimensions: 2, EmbeddingContractID: "contract",
 			SearchGenerationID: "generation", SearchGenerationVersion: 1,
 		},
 		Timeout: time.Second,
 	})
 
-	require.ErrorIs(t, err, semanticwrite.ErrProviderUnavailable)
+	require.ErrorIs(t, err, ErrProviderUnavailable)
 	require.NotContains(t, err.Error(), "provider_authentication_failed")
 }
 
@@ -73,10 +72,10 @@ func TestSemanticwriteEmbeddingExecutorPreservesHTTPFailureClassification(t *tes
 		want          error
 	}{
 		{name: "success", status: http.StatusOK},
-		{name: "provider timeout", status: http.StatusRequestTimeout, want: semanticwrite.ErrProviderTimeout},
-		{name: "client timeout", clientTimeout: true, want: semanticwrite.ErrProviderTimeout},
-		{name: "unavailable", status: http.StatusServiceUnavailable, want: semanticwrite.ErrProviderUnavailable},
-		{name: "rate limited", status: http.StatusTooManyRequests, want: semanticwrite.ErrProviderUnavailable},
+		{name: "provider timeout", status: http.StatusRequestTimeout, want: ErrProviderTimeout},
+		{name: "client timeout", clientTimeout: true, want: ErrProviderTimeout},
+		{name: "unavailable", status: http.StatusServiceUnavailable, want: ErrProviderUnavailable},
+		{name: "rate limited", status: http.StatusTooManyRequests, want: ErrProviderUnavailable},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -105,10 +104,10 @@ func TestSemanticwriteEmbeddingExecutorPreservesHTTPFailureClassification(t *tes
 			retry := embedding.NewRetryEmbeddingProviderWithKeyAndOptions(provider, semanticwriteEmbeddingTestLogger{}, "fixture-key", embedding.RetryEmbeddingOptions{
 				MaxRetries: 1, BaseDelay: time.Millisecond, MaxDelay: time.Millisecond,
 			})
-			executor := newSemanticwriteEmbeddingExecutor(retry)
-			result, err := executor.Execute(context.Background(), semanticwrite.Plan{
-				Documents: []semanticwrite.Document{{Hash: "document-hash", Text: "document text"}},
-				Fence: semanticwrite.Fence{
+			executor := NewProviderExecutor(retry)
+			result, err := executor.Execute(context.Background(), Plan{
+				Documents: []Document{{Hash: "document-hash", Text: "document text"}},
+				Fence: Fence{
 					Model: "fixture", Dimensions: 2, EmbeddingContractID: "contract",
 					SearchGenerationID: "generation", SearchGenerationVersion: 1,
 				},
@@ -122,8 +121,11 @@ func TestSemanticwriteEmbeddingExecutorPreservesHTTPFailureClassification(t *tes
 			require.ErrorIs(t, err, test.want)
 			require.Empty(t, result.Embeddings)
 			require.NotContains(t, err.Error(), "private provider failure")
-			if test.want == semanticwrite.ErrProviderTimeout {
-				require.NotErrorIs(t, err, semanticwrite.ErrProviderUnavailable)
+			if test.want == ErrProviderUnavailable {
+				require.EqualError(t, err, "semantic write: embedding provider unavailable: provider call failed")
+			}
+			if test.want == ErrProviderTimeout {
+				require.NotErrorIs(t, err, ErrProviderUnavailable)
 			}
 		})
 	}

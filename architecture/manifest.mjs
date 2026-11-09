@@ -68,7 +68,7 @@ const requiredSourceOwnership = Object.freeze([
   ["cmd/internal/serverapp/usage_metrics_composition.go", "application-services"],
   ["cmd/internal/serverapp/telemetry_composition.go", "application-services"],
   ["cmd/internal/serverapp/semanticwrite_composition.go", "semantic-write-application"],
-  ["cmd/internal/serverapp/semanticwrite_embedding_adapter.go", "semantic-write-application"],
+  ["internal/service/semanticwrite/provider.go", "semantic-write-application"],
   ["cmd/internal/serverapp/search_composition.go", "embedding-provider"],
   ["cmd/internal/serverapp/search_background.go", "embedding-provider"],
   ["cmd/internal/serverapp/conflict_queue_composition.go", "conflict-application"],
