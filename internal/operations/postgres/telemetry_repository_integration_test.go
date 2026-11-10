@@ -103,6 +103,10 @@ func TestEvidenceOnlyPostgresOperationalTelemetryFailureIsVisible(t *testing.T) 
 func insertTelemetryAttempt(t *testing.T, db *gorm.DB, rls *storagepostgres.RLS, teamID, ownerID string, space *domain.MemorySpace, outcome, canonicalID string, createdAt time.Time) string {
 	t.Helper()
 	id := uuid.NewString()
+	requestID := id
+	if canonicalID != "" {
+		requestID = canonicalID
+	}
 	require.NoError(t, rls.WithSystemTx(context.Background(), db, func(tx *gorm.DB) error {
 		var spaceID string
 		var generation int64
@@ -116,7 +120,7 @@ func insertTelemetryAttempt(t *testing.T, db *gorm.DB, rls *storagepostgres.RLS,
             team_id, attempt_id, owner_profile_id, space_id, space_generation, idempotency_key,
             request_hash, contract_version, submission_kind, outcome, canonical_attempt_id, created_at
         ) VALUES (?::uuid, ?::uuid, ?::uuid, ?::uuid, ?, ?, ?, ?, 'remember', ?, NULLIF(?, '')::uuid, ?)`,
-			teamID, id, ownerID, spaceID, generation, "telemetry-"+id, "hash-"+id, domain.ContractVersion, outcome, canonicalID, createdAt).Error
+			teamID, id, ownerID, spaceID, generation, "telemetry-"+requestID, "hash-"+requestID, domain.ContractVersion, outcome, canonicalID, createdAt).Error
 	}))
 	return id
 }

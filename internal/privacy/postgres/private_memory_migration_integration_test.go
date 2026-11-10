@@ -194,6 +194,8 @@ func (f *privateMigrationFixture) seedDependentRelationship(t *testing.T) {
 			{`INSERT INTO relationship_support_decision_events(team_id,support_id,relationship_id,owner_profile_id,decision,reason,space_id) VALUES(?,?,?,?,'grant','original support',?)`, []any{f.team, support, f.relationship, f.ownerB, f.legacy}},
 			{`INSERT INTO search_documents(team_id,owner_profile_id,source_kind,source_id,source_version,embedding_contract_id,embedding_dimensions,document_text,document_hash,space_id)
  VALUES(?,?,'relationship',?,1,?,3,'old mixed projection','original-hash',?)`, []any{f.team, f.ownerB, f.relationship, contract, f.legacy}},
+			{`INSERT INTO search_documents(team_id,owner_profile_id,source_kind,source_id,source_version,embedding_contract_id,embedding_dimensions,document_text,document_hash,space_id)
+ VALUES(?,?,'evidence',?,1,?,3,'B independent evidence','independent-hash',?)`, []any{f.team, f.ownerB, f.independent, contract, f.legacy}},
 		} {
 			if err := tx.Exec(statement.query, statement.args...).Error; err != nil {
 				return err
@@ -374,7 +376,8 @@ func TestPrivateMigrationFingerprintResumeHandlesAndCopiedErasure(t *testing.T) 
 		if err := tx.Exec(`SELECT set_config('app.private_erasure_rebase_space_id',?,true),set_config('app.private_erasure_operation_id',?,true)`, spaceB.String(), claim.ID.String()).Error; err != nil {
 			return err
 		}
-		return tx.Exec(`UPDATE search_documents SET space_generation=space_generation+1,document_text='changed during rebase' WHERE team_id=? AND source_id=?`, f.team, f.independent).Error
+		var id uuid.UUID
+		return tx.Raw(`UPDATE search_documents SET space_generation=space_generation+1,document_text='changed during rebase' WHERE team_id=? AND source_id=? RETURNING source_id`, f.team, f.independent).Row().Scan(&id)
 	})
 	require.ErrorContains(t, err, "private erasure rebase can change only the placement generation")
 	_, err = f.repo.ExecuteClaim(ctx, claim.ID, claim.WorkerID, claim.Fence)
