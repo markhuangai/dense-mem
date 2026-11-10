@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/google/uuid"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
@@ -38,6 +40,51 @@ func TestEvidenceOnlyUnitAnswerJudgmentsRequireCompleteCitationCoverage(t *testi
 	require.Error(t, validateAnswerJudgmentFields([]byte(strings.Replace(string(raw), `"answer_correct":true,`, "", 1))))
 	judgment.Citations = append(judgment.Citations, judgment.Citations[0])
 	require.Error(t, validateAnswerJudgment(judgment, 2))
+}
+
+func TestEvidenceOnlyUnitAnswerCapturesPreserveTypedReceiptsAndProtectCredentials(t *testing.T) {
+	const secret = "answer-capture-operational-credential-canary"
+	const admitted = "Exact source text with token and password field names."
+	protector := observability.NewCredentialProtector(secret)
+	started := time.Date(2026, time.November, 10, 13, 56, 47, 762892419, time.UTC)
+	score := PairAnswerScore{SchemaVersion: "dense-mem.eval.answers.v5", StartedAt: started, Policies: map[string]AnswerPolicyScore{
+		"one_call": {Policy: "one_call", Cases: 82, Correct: 77, CasesDetail: []AnswerScoredCase{{
+			CaseID: "case-one", Judgment: AnswerJudgment{Reason: admitted},
+			Attempts: []modelprovider.StructuredResult{{Content: secret, PromptTokens: 123, UsageAvailable: true}},
+		}}},
+	}}
+	for name, value := range map[string]any{"score": score, "failure": map[string]any{"score": score, "error": "provider failed: " + secret}} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "capture.json")
+			require.NoError(t, writeProtectedAnswerJSON(path, value, protector))
+			raw, err := os.ReadFile(path)
+			require.NoError(t, err)
+			require.NotContains(t, string(raw), secret)
+			require.Contains(t, string(raw), admitted)
+			if name == "failure" {
+				var failure map[string]json.RawMessage
+				require.NoError(t, json.Unmarshal(raw, &failure))
+				raw = failure["score"]
+			}
+			var decoded PairAnswerScore
+			require.NoError(t, json.Unmarshal(raw, &decoded))
+			require.Equal(t, started, decoded.StartedAt)
+			require.Equal(t, 82, decoded.Policies["one_call"].Cases)
+			require.Equal(t, 123, decoded.Policies["one_call"].CasesDetail[0].Attempts[0].PromptTokens)
+		})
+	}
+	host := EvidenceOnlyHostResult{CaseID: "case-one", Answer: admitted, Usage: []map[string]any{{"input_tokens": json.Number("9007199254740993"), "credential": secret}}}
+	raw, err := protectAnswerJSON(host, protector)
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), secret)
+	require.Contains(t, string(raw), admitted)
+	require.Contains(t, string(raw), `"input_tokens":9007199254740993`)
+	var decoded EvidenceOnlyHostResult
+	require.NoError(t, json.Unmarshal(raw, &decoded))
+	require.Equal(t, host.Answer, decoded.Answer)
+	path := filepath.Join(t.TempDir(), "unavailable.json")
+	require.Error(t, writeProtectedAnswerJSON(path, map[string]any{"invalid": make(chan int)}, protector))
+	require.NoFileExists(t, path)
 }
 
 func TestEvidenceOnlyUnitIntakeResubmissionKeepsEvidenceAndOriginalIdentity(t *testing.T) {

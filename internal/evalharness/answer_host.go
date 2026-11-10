@@ -114,11 +114,11 @@ func RunEvidenceOnlyHost(ctx context.Context, opts RunOptions, transport modelpr
 			result.Error = protected.Error()
 			result.Outcome = "failed"
 		}
-		protectedResult := opts.Protector.Snapshot(result, 64<<20)
-		if protectedResult.UnavailableReason != observability.CredentialProtectionAvailable {
-			return errors.New("answer capture unavailable after credential protection")
+		protectedResult, err := protectAnswerJSON(result, opts.Protector)
+		if err != nil {
+			return err
 		}
-		if err := encoder.Encode(protectedResult.Value); err != nil {
+		if err := encoder.Encode(protectedResult); err != nil {
 			return err
 		}
 		if err := file.Sync(); err != nil {

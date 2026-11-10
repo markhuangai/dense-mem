@@ -550,11 +550,23 @@ func RunPairAnswerScoring(ctx context.Context, c PairConfig, side string, transp
 }
 
 func writeProtectedAnswerJSON(path string, value any, protector *observability.CredentialProtector) error {
-	protected := protector.Snapshot(value, 64<<20)
-	if protected.UnavailableReason != observability.CredentialProtectionAvailable {
-		return fmt.Errorf("answer capture unavailable: %s", protected.UnavailableReason.Code())
+	protected, err := protectAnswerJSON(value, protector)
+	if err != nil {
+		return err
 	}
-	return writePairJSON(path, protected.Value)
+	return writePairJSON(path, protected)
+}
+
+func protectAnswerJSON(value any, protector *observability.CredentialProtector) (json.RawMessage, error) {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	protected, reason := protector.ProtectDiagnosticBytes(raw, 64<<20)
+	if reason != observability.CredentialProtectionAvailable {
+		return nil, fmt.Errorf("answer capture unavailable: %s", reason.Code())
+	}
+	return json.RawMessage(protected), nil
 }
 
 func VerifyBaselineAnswerScoring(c PairConfig) error {
