@@ -161,8 +161,6 @@ volumes:
   client-env:
     name: ${DENSE_MEM_CI_CLIENT_VOLUME_NAME:?DENSE_MEM_CI_CLIENT_VOLUME_NAME is required}
     labels: *ci-labels
-    name: ${DENSE_MEM_CI_CONFLICT_VOLUME_NAME:?DENSE_MEM_CI_CONFLICT_VOLUME_NAME is required}
-    labels: *ci-labels
   oauth-provider-files:
     name: ${DENSE_MEM_CI_OAUTH_VOLUME_NAME:?DENSE_MEM_CI_OAUTH_VOLUME_NAME is required}
     labels: *ci-labels

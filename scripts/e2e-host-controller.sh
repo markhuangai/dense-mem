@@ -290,7 +290,6 @@ compose_base_env() {
   export DENSE_MEM_CI_PROMETHEUS_CONFIG_VOLUME_NAME="${project}_prometheus-config"
   export DENSE_MEM_CI_TELEMETRY_TOKEN_VOLUME_NAME="${project}_telemetry-scrape-token"
   export DENSE_MEM_CI_CLIENT_VOLUME_NAME="${project}_client-env"
-  export DENSE_MEM_CI_CONFLICT_VOLUME_NAME="${project}_conflict-provider-files"
   export DENSE_MEM_CI_OAUTH_VOLUME_NAME="${project}_oauth-provider-files"
   export DENSE_MEM_CI_SYNCHRONOUS_WRITE_VOLUME_NAME="${project}_synchronous-write-provider-files"
 }

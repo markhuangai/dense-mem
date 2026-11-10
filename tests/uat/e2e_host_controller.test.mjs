@@ -45,6 +45,29 @@ async function executable(path, contents) {
   await chmod(path, 0o700);
 }
 
+test("production Compose bundle renders with distinct retained volume identities", async () => {
+  const fixture = await mkdtemp(join(tmpdir(), "dense-mem-compose-contract-"));
+  try {
+    const envFile = join(fixture, ".env");
+    await writeFile(envFile, "");
+    const environment = { ...process.env };
+    for (const [, name] of compose.matchAll(/\$\{([A-Z0-9_]+):\?/g)) {
+      environment[name] = `densemem-static-${name.toLowerCase().replaceAll("_", "-")}`;
+    }
+    environment.DENSE_MEM_CI_ENV_FILE = envFile;
+    environment.DENSE_MEM_IMAGE = "densemem-static:fixture";
+    const { stdout } = await run("docker", ["compose", "--env-file", envFile, "--project-name", "densemem-static", "--profile", "*", "--file", join(scripts, "e2e-stack.yml"), "config", "--format", "json"], { env: environment });
+    const rendered = JSON.parse(stdout);
+    assert.equal(rendered.volumes["client-env"].name, environment.DENSE_MEM_CI_CLIENT_VOLUME_NAME);
+    assert.equal(rendered.volumes["postgres-data"].name, environment.DENSE_MEM_CI_POSTGRES_VOLUME_NAME);
+    const names = Object.values(rendered.volumes).map((volume) => volume.name);
+    assert.equal(new Set(names).size, names.length);
+    assert(Object.values(rendered.services).every((service) => !(service.ports?.length)));
+  } finally {
+    await rm(fixture, { recursive: true, force: true });
+  }
+});
+
 test("ADK scenario enables private intake and dispatches its installed-wheel harness", () => {
   assert.match(stack, /scenario === "google_adk_memory"[^\n]*serverEnvironment.set\("SESSION_INGEST_ENABLED", "true"\)/);
   assert.match(scenario, /google_adk_memory\) bash "\$\{ROOT_DIR\}\/packages\/python\/scripts\/e2e.sh" google_adk_memory ;;/);
