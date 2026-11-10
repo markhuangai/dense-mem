@@ -282,7 +282,8 @@ func TestPrivateMigrationFingerprintResumeHandlesAndCopiedErasure(t *testing.T) 
 		}
 		require.Equal(t, "unchanged-targetless-hash", hash)
 		require.Contains(t, receipt, `"processing_state": "completed"`)
-		require.Contains(t, receipt, `"contract_version": "dense-mem.v2.7.0"`)
+		require.Contains(t, receipt, `"contract_version": "dense-mem.v2.8.0"`)
+		require.Contains(t, receipt, `"original_contract_version": "dense-mem.v2.7.0"`)
 		if err := tx.Raw(`SELECT convert_from(request_bytes,'UTF8') FROM remember_attempt_diagnostics WHERE team_id=? AND attempt_id=?`, f.team, f.ingestA).Row().Scan(&request); err != nil {
 			return err
 		}

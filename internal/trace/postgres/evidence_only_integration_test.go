@@ -150,6 +150,14 @@ func TestEvidenceOnlyPostgresTraceBudgetsAndMemoryPackCanonicalProvenance(t *tes
 	logger := observability.NewWithProtector(slog.LevelDebug, observability.NewCredentialProtector("trace-export-credential-canary"))
 	os.Stdout = previous
 	service := traceapp.NewSemantic(adapter, logger)
+	active, err := registry.BuildActive(registry.Dependencies{TraceBindings: registry.TraceBindings{Service: service}})
+	require.NoError(t, err)
+	tool, present := active.Get(registry.ToolTraceMemory)
+	require.True(t, present)
+	wire, err := tool.Invoke(actorCtx, team, map[string]any{"evidence_id": id})
+	require.NoError(t, err)
+	require.NoError(t, registry.ValidateInput(registry.Tool{InputSchema: tool.OutputSchema}, wire))
+	require.Equal(t, []any{}, wire["lifecycle"])
 	for _, maximum := range []int{1, 2000, 8000, 99999} {
 		request := traceapp.TraceRequest{EvidenceID: id, MaxFragmentContentRunes: maximum}
 		result, err := service.Trace(actorCtx, "", request)

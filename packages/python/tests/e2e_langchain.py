@@ -66,7 +66,8 @@ def semantic_snapshot():
         "knowledge_ingests",
         "evidence_fragments",
         "evidence_occurrences",
-        "evidence_decisions",
+        "evidence_security_events",
+        "semantic_assessments",
         "evidence_lifecycle_events",
     )
     return {

@@ -35,6 +35,12 @@ func TestEvidenceOnlyPostgresPrivateErasureCleansEvidenceAndDiagnosticLineage(t 
 		})
 	}
 	ledger := knowledgepostgres.NewStore(app, rls)
+	peerStored, err := ledger.CreateIngestForTest(actor(peer), knowledge.CreateIngestInput{
+		TeamID: team.String(), OwnerProfileID: peer.ID.String(), SpaceID: peer.MemorySpaceID.String(), SpaceGeneration: peer.MemorySpaceGeneration,
+		IdempotencyKey: "peer-evidence-source", RequestHash: sha256Hex("peer-evidence-source"),
+		Evidence: []knowledge.EvidenceInput{{Content: "Other private Evidence survives.", SourceKey: "doc://private-lineage", SourceRevisionToken: "r1"}},
+	})
+	require.NoError(t, err)
 	input := knowledge.CreateIngestInput{TeamID: team.String(), OwnerProfileID: target.ID.String(),
 		SpaceID: target.MemorySpaceID.String(), SpaceGeneration: target.MemorySpaceGeneration,
 		IdempotencyKey: "private-evidence-source", RequestHash: sha256Hex("private-evidence-source"),
@@ -90,4 +96,8 @@ func TestEvidenceOnlyPostgresPrivateErasureCleansEvidenceAndDiagnosticLineage(t 
 	}))
 	_, err = traces.TraceEvidence(actor(target), tracecontract.Input{TeamID: team.String(), EvidenceID: evidence})
 	require.ErrorIs(t, err, tracecontract.ErrEvidenceNotFound)
+	preserved, err := traces.TraceEvidence(actor(peer), tracecontract.Input{TeamID: team.String(), EvidenceID: peerStored.Evidence[0].FragmentID})
+	require.NoError(t, err)
+	require.Equal(t, "Other private Evidence survives.", preserved.Evidence.Content)
+	require.Len(t, preserved.SourceRevisions, 1)
 }

@@ -238,7 +238,7 @@ if (scenario === "full") {
     AI_API_KEY: "dense-mem-grafana-e2e-key",
   })) serverEnvironment.set(key, value);
 }
-if (scenario === "google_adk_memory" || scenario === "session_ingest" || scenario === "python_client" || scenario === "full") serverEnvironment.set("SESSION_INGEST_ENABLED", "true");
+if (scenario === "google_adk_memory" || scenario === "session_ingest" || scenario === "python_client" || scenario === "full" || scenario === "synchronous_write" || scenario === "synchronous_write_telemetry_disabled") serverEnvironment.set("SESSION_INGEST_ENABLED", "true");
 if (["google_adk_memory", "langchain_retriever"].includes(scenario)) serverEnvironment.set("RATE_LIMIT_PER_MINUTE", "1000");
 if (has("synchronous_write")) {
   for (const [key, value] of Object.entries({

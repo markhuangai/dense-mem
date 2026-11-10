@@ -48,10 +48,11 @@ type Store struct {
 	snapshotTeam        string
 	organizationFailure string
 	topicLogger         observability.LogProvider
+	topicProtector      observability.DiagnosticProtector
 }
 
-func (r *Store) WithTopicDiagnostics(logger observability.LogProvider) *Store {
-	r.topicLogger = logger
+func (r *Store) WithTopicDiagnostics(logger observability.LogProvider, protector observability.DiagnosticProtector) *Store {
+	r.topicLogger, r.topicProtector = logger, protector
 	return r
 }
 

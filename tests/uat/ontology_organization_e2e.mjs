@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { captureRememberFailure } from "./synchronous_write/cases/diagnostics.mjs";
-import { assessmentRecords, captureSemanticAssessmentWindow } from "./ontology_assessment_diagnostics.mjs";
+import { assessmentRecords, captureSemanticAssessmentWindow, reconstructDiagnosticBody } from "./ontology_assessment_diagnostics.mjs";
 
 const userURL = required("DENSE_MEM_USER_URL").replace(/\/$/, "");
 const controlURL = required("DENSE_MEM_CONTROL_URL").replace(/\/$/, "");
@@ -260,11 +260,32 @@ try {
   }
   const topicWindow = captureSemanticAssessmentWindow({ project: required("DENSE_MEM_E2E_COMPOSE_PROJECT"), composeFile: required("DENSE_MEM_E2E_COMPOSE_FILE"), since: diagnosticSince, directory: failureDirectory+"/topic-selection" });
   const topicRecords=topicWindow.split(/\r?\n/).filter(Boolean).map((line)=>JSON.parse(line)).filter((row)=>row.team_id===teamID);
-  for (const credential of credentialTeams.keys()) assert(!topicWindow.includes(credential),"topic diagnostic capture exposed credentials");
-  const selectedLog=topicRecords.find((row)=>row.msg==="recall_topic_selection"&&row.outcome==="selected"&&row.selection?.memberships?.length);
-  assert(selectedLog && selectedLog.level==="DEBUG" && selectedLog.selection.generation>0 && selectedLog.topics.length>0,"current memberships/counts/generation must be diagnosable from stdout");
-  for (const id of [...unavailableTopicIDs, topicIDs[0]]) {
-    const rejectedLog = topicRecords.find((row) => row.msg === "recall_topic_degraded" && Object.keys(row.rejected ?? {}).length > 0 && row.requested_ids?.includes(id) && row.rejected[id] === "unavailable");
+  for (const credential of [controlToken, ...credentialTeams.keys()]) assert(!topicWindow.includes(credential),"topic diagnostic capture exposed credentials");
+  const topicChunks = new Map();
+  for (const row of topicRecords.filter((row) => ["recall_topic_filter_payload", "recall_topic_selection_payload"].includes(row.msg))) {
+    assert(row.diagnostic_capture_id, "topic payload must identify its summary");
+    const chunks = topicChunks.get(row.diagnostic_capture_id) ?? [];
+    chunks.push(row);
+    topicChunks.set(row.diagnostic_capture_id, chunks);
+  }
+  const topicPayloads = new Map([...topicChunks].map(([id, chunks]) => {
+    chunks.sort((left, right) => left.payload_chunk.index - right.payload_chunk.index);
+    return [id, reconstructDiagnosticBody(chunks)];
+  }));
+  const selectedLog = topicRecords.find((row) => row.msg === "recall_topic_selection" && row.outcome === "selected" && row.recall_id === topicRecall.recall_id);
+  assert(selectedLog && selectedLog.level === "DEBUG", "topic selection must be correlated to its Recall");
+  const selection = topicPayloads.get(selectedLog.diagnostic_capture_id);
+  assert(selection?.Diagnostics.generation > 0 && selection.Diagnostics.memberships.length > 0 && selection.Topics.length > 0, "current memberships/counts/generation must be diagnosable from stdout");
+  assert.deepEqual(selection.Topics, topicRecall.related_topics);
+  for (const topic of selection.Topics) {
+    const counts = selection.Diagnostics.counts[topic.topic_id];
+    assert.equal(counts.eligible_evidence_count, topic.eligible_evidence_count);
+    assert(counts.matching_result_count > 0);
+    assert.equal(counts.matching_result_count + counts.additional_evidence_count, topic.eligible_evidence_count);
+  }
+  assert(!selection.Diagnostics.eligible_ids.some((id) => [privateID, foreignID].includes(id)), "topic diagnostic eligibility must retain isolation");
+  for (const id of [...unavailableTopicIDs, retiredTopic.id]) {
+    const rejectedLog = topicRecords.find((row) => row.msg === "recall_topic_degraded" && row.requested_ids?.includes(id) && topicPayloads.get(row.diagnostic_capture_id)?.Rejected?.[id] === "unavailable");
     assert(rejectedLog && rejectedLog.level === "WARN" && rejectedLog.reason, "missing, foreign, and retired topic reasons must be diagnosable from stdout");
   }
   console.log(JSON.stringify({ status: "ok", scenario: "ontology_organization", window_id: status.window.id, counts: status.counts, durable_command_replay: true, operator_isolation: true, grouped_recall: true, original_sources_retained: true, private_and_foreign_isolation: true, stale_group_fallback: true, recall_organization_provider_tokens: 0, bounded_ambiguity_run: ambiguousRun.id, retryable_failure_run: failedRun.id }));

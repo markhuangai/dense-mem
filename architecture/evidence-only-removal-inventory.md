@@ -2,6 +2,7 @@
 
 Governing decision: `adr/0017-evidence-only-memory-without-factual-relationships.md`.
 Deployed migrations and retained #681 experimental captures are immutable.
+The new migration preserves the current-source revision foreign key with immediate validation by default and allows explicit transaction deferral so private erasure can remove both sides of the source/revision cycle atomically.
 
 | Owner | Existing purpose and consumers | Disposition |
 |---|---|---|

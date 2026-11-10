@@ -323,7 +323,7 @@ func migrationMutationColumns(table *privateMigrationTable) []string {
 func (r *PrivateMemoryRepositoryImpl) movePrivateMigrationBatch(ctx context.Context, copies bool) (int, error) {
 	count := 0
 	err := r.privateMigrationTx(ctx, func(tx *gorm.DB) error {
-		tables, err := inspectPrivateMigrationSchema(tx)
+		tables, err := inspectPrivateMigrationSchema(tx, privateMemoryMigrationTables())
 		if err != nil {
 			return err
 		}

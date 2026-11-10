@@ -245,7 +245,7 @@ func TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads(t *testing.T)
 			}
 			if mode == "repair_exhausted" {
 				require.Contains(t, string(encoded), "validation_errors")
-				require.Contains(t, string(encoded), "expected topic")
+				require.Contains(t, string(encoded), "requires an Evidence topic")
 				require.Contains(t, string(encoded), "entity_class")
 			}
 			if mode == "unused_exhausted" {

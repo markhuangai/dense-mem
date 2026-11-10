@@ -4,7 +4,10 @@ package postgres
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -141,23 +144,33 @@ func (c evidenceOnlyTopicConfig) OntologyMaintenanceRuntimeConfig(context.Contex
 
 func TestEvidenceOnlyPostgresTopicLogDiagnosis(t *testing.T) {
 	f := newRecallOntologyFixture(t)
-	source := f.evidence(t, 0, "Topic diagnosis admitted Evidence.", nil)
-	topic := ontology.Record{ID: uuid.NewString(), Kind: ontology.Topic, Definition: &ontology.Definition{Key: "diagnosis", Label: "Diagnosis"}}
-	f.publication(t, topic, f.assignment(t, topic.ID, source))
+	const credential, presentedCredential = "topic-credential-canary", "topic-request-credential-canary"
+	topic := ontology.Record{ID: uuid.NewString(), Kind: ontology.Topic, Definition: &ontology.Definition{Key: "diagnosis", Label: "Diagnosis", Description: "Topic diagnosis admitted detail. " + credential + " " + presentedCredential}}
+	records := []ontology.Record{topic}
+	evidenceIDs, assignmentIDs := []string{}, []string{}
+	for index := range 60 {
+		source := f.evidence(t, index%2, fmt.Sprintf("Topic diagnosis admitted Evidence %d.", index), nil)
+		assignment := f.assignment(t, topic.ID, source)
+		records = append(records, assignment)
+		evidenceIDs, assignmentIDs = append(evidenceIDs, source.ID), append(assignmentIDs, assignment.ID)
+	}
+	f.publication(t, records...)
 	path := filepath.Join(t.TempDir(), "topics.jsonl")
 	output, err := os.Create(path)
 	require.NoError(t, err)
 	defer output.Close()
 	previous := os.Stdout
 	os.Stdout = output
-	logger := observability.NewWithProtector(slog.LevelDebug, observability.NewCredentialProtector("topic-credential-canary"))
+	protector := observability.NewCredentialProtector(credential)
+	logger := observability.NewWithProtector(slog.LevelDebug, protector)
 	os.Stdout = previous
-	f.search.recall.WithTopicDiagnostics(logger)
-	api := recall.NewRecallService(recall.RecallDependencies{Search: f.search.recall, OntologyConfig: evidenceOnlyTopicConfig(true), Logger: logger})
-	ctx := f.actor(2, "member")
+	f.search.recall.WithTopicDiagnostics(logger, protector)
+	api := recall.NewRecallService(recall.RecallDependencies{Search: f.search.recall, OntologyConfig: evidenceOnlyTopicConfig(true), Logger: logger, DiagnosticProtector: protector})
+	ctx := observability.WithAuthenticationSecrets(f.actor(2, "member"), presentedCredential)
 	selected, err := api.Recall(ctx, recall.RecallRequest{TopicIDs: []string{topic.ID}})
 	require.NoError(t, err)
 	require.Len(t, selected.RelatedTopics, 1)
+	require.Equal(t, 60, selected.RelatedTopics[0].EligibleEvidenceCount)
 	missing := uuid.NewString()
 	_, err = api.Recall(ctx, recall.RecallRequest{TopicIDs: []string{missing}})
 	require.ErrorIs(t, err, recallcontract.ErrTopicUnavailable)
@@ -168,32 +181,85 @@ func TestEvidenceOnlyPostgresTopicLogDiagnosis(t *testing.T) {
 	require.NoError(t, output.Close())
 	body, err := os.ReadFile(path)
 	require.NoError(t, err)
-	require.NotContains(t, string(body), "topic-credential-canary")
-	filter, hints, rejected, optional := false, false, false, false
+	require.NotContains(t, string(body), credential)
+	require.NotContains(t, string(body), presentedCredential)
+	summaries := []map[string]any{}
+	captures := map[string][]observability.DiagnosticBodyChunk{}
 	for _, line := range strings.Split(strings.TrimSpace(string(body)), "\n") {
-		var record map[string]any
-		require.NoError(t, json.Unmarshal([]byte(line), &record))
-		require.NotEqual(t, "TRACE", record["level"])
-		if record["msg"] != "recall_topic_selection" && record["msg"] != "recall_topic_degraded" {
-			continue
+		var record struct {
+			Message   string                             `json:"msg"`
+			Level     string                             `json:"level"`
+			TeamID    string                             `json:"team_id"`
+			CaptureID string                             `json:"diagnostic_capture_id"`
+			Chunk     *observability.DiagnosticBodyChunk `json:"payload_chunk"`
 		}
+		require.NoError(t, json.Unmarshal([]byte(line), &record))
+		require.NotEqual(t, "TRACE", record.Level)
+		require.NotEqual(t, "diagnostic_body_unavailable", record.Message)
+		if record.Chunk != nil {
+			require.Contains(t, []string{"recall_topic_filter_payload", "recall_topic_selection_payload"}, record.Message)
+			require.Equal(t, "DEBUG", record.Level)
+			require.Equal(t, f.team, record.TeamID)
+			require.NotEmpty(t, record.CaptureID)
+			captures[record.CaptureID] = append(captures[record.CaptureID], *record.Chunk)
+		} else if record.Message == "recall_topic_selection" || record.Message == "recall_topic_degraded" {
+			var summary map[string]any
+			require.NoError(t, json.Unmarshal([]byte(line), &summary))
+			summaries = append(summaries, summary)
+		}
+	}
+	payloads := map[string][]byte{}
+	for id, chunks := range captures {
+		var reconstructed strings.Builder
+		for index, chunk := range chunks {
+			require.Equal(t, index, chunk.Index)
+			require.Equal(t, len(chunks), chunk.Count)
+			require.Equal(t, "captured", chunk.State)
+			require.LessOrEqual(t, len(chunk.Body), 2048)
+			require.Equal(t, chunks[0].SHA256, chunk.SHA256)
+			reconstructed.WriteString(chunk.Body)
+		}
+		digest := sha256.Sum256([]byte(reconstructed.String()))
+		require.Equal(t, hex.EncodeToString(digest[:]), chunks[0].SHA256)
+		payloads[id] = []byte(reconstructed.String())
+	}
+	filter, hints, rejected, optional := false, false, false, false
+	for _, record := range summaries {
 		require.Equal(t, f.team, record["team_id"])
+		captureID, ok := record["diagnostic_capture_id"].(string)
+		require.True(t, ok)
+		require.Contains(t, payloads, captureID)
 		switch record["outcome"] {
 		case "filter_selected":
 			filter = true
 			require.Equal(t, "DEBUG", record["level"])
 			require.Equal(t, []any{topic.ID}, record["requested_ids"])
 			require.Equal(t, float64(f.generation), record["generation"])
-			require.NotEmpty(t, record["memberships"])
+			var selection ontology.TopicReadResult
+			require.NoError(t, json.Unmarshal(payloads[captureID], &selection))
+			require.Len(t, selection.Topics, 1)
+			require.ElementsMatch(t, evidenceIDs, selection.Topics[0].EvidenceIDs)
+			require.ElementsMatch(t, assignmentIDs, selection.Topics[0].AssignmentIDs)
+			require.Contains(t, selection.Topics[0].Description, "Topic diagnosis admitted detail.")
+			require.Contains(t, selection.Topics[0].Description, observability.CredentialProtectionRedacted)
+			require.Greater(t, len(payloads[captureID]), 4096)
 		case "selected":
 			hints = true
 			require.Equal(t, "DEBUG", record["level"])
 			require.Equal(t, selected.RecallID, record["recall_id"])
-			require.NotEmpty(t, record["topics"])
-			selection := record["selection"].(map[string]any)
-			require.Equal(t, float64(f.generation), selection["generation"])
-			require.NotEmpty(t, selection["eligible_ids"])
-			require.NotEmpty(t, selection["memberships"])
+			var selection recallcontract.RelatedTopicResult
+			require.NoError(t, json.Unmarshal(payloads[captureID], &selection))
+			require.Equal(t, float64(f.generation), selection.Diagnostics["generation"])
+			require.Len(t, selection.Topics, 1)
+			require.Equal(t, 60, selection.Topics[0].EligibleEvidenceCount)
+			counts := selection.Diagnostics["counts"].(map[string]any)[topic.ID].(map[string]any)
+			require.Equal(t, float64(len(selected.Results)), counts["matching_result_count"])
+			require.Equal(t, float64(60-len(selected.Results)), counts["additional_evidence_count"])
+			require.Len(t, selection.Diagnostics["eligible_ids"], 60)
+			memberships := selection.Diagnostics["memberships"].([]any)
+			require.Len(t, memberships, 1)
+			require.Len(t, memberships[0].(map[string]any)["EvidenceIDs"], 60)
+			require.Greater(t, len(payloads[captureID]), 4096)
 		case "unavailable":
 			require.Equal(t, "WARN", record["level"])
 			require.NotEmpty(t, record["reason"])
@@ -201,7 +267,9 @@ func TestEvidenceOnlyPostgresTopicLogDiagnosis(t *testing.T) {
 				optional = true
 			} else if record["requested_ids"] != nil {
 				rejected = true
-				require.NotEmpty(t, record["rejected"])
+				var selection ontology.TopicReadResult
+				require.NoError(t, json.Unmarshal(payloads[captureID], &selection))
+				require.Equal(t, "unavailable", selection.Rejected[missing])
 			}
 		}
 	}

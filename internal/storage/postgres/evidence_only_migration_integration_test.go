@@ -106,13 +106,29 @@ func assertEvidenceOnlyCatalog(t *testing.T, ctx context.Context, db *sql.DB) {
 	var temporary int
 	require.NoError(t, db.QueryRowContext(ctx, `SELECT count(*) FROM pg_policy WHERE polname IN ('evidence_only_inventory_read','evidence_only_migration_repair','evidence_only_marker_insert')`).Scan(&temporary))
 	require.Zero(t, temporary)
+	var deleteAction string
+	var deferrable, initiallyDeferred bool
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT confdeltype::text,condeferrable,condeferred FROM pg_constraint
+ WHERE conrelid='evidence_sources'::regclass AND conname='evidence_sources_current_revision_fk'`).Scan(&deleteAction, &deferrable, &initiallyDeferred))
+	require.Equal(t, "a", deleteAction)
+	require.True(t, deferrable)
+	require.False(t, initiallyDeferred)
+}
+
+func evidenceOnlyMigrationUpTo(ctx context.Context, db *sql.DB, version int64) error {
+	provider, err := newRuntimeMigrationProvider(MigrationsDir(), db, false)
+	if err != nil {
+		return err
+	}
+	_, err = provider.UpTo(ctx, version)
+	return err
 }
 
 func TestEvidenceOnlyPostgresFreshInstall(t *testing.T) {
 	ctx := context.Background()
 	db, cleanup := openMigrationSQLDB(t, ctx)
 	defer cleanup()
-	runGooseUpTo(t, ctx, db, evidenceOnlyMigrationVersion)
+	require.NoError(t, NewMigratorWithDB(db).RunUp(ctx))
 	assertEvidenceOnlyCatalog(t, ctx, db)
 	require.NoError(t, ValidateStartupMigrationState(ctx, db, MigrationsDir()))
 	require.ErrorContains(t, migrationDown(ctx, db), "irreversible after commit")
@@ -137,10 +153,10 @@ func TestEvidenceOnlyPostgresPopulatedUpgradePreservesEvidenceAndLegacyIdentity(
 	ctx := context.Background()
 	db, cleanup := openMigrationSQLDB(t, ctx)
 	defer cleanup()
-	runGooseUpTo(t, ctx, db, evidenceOnlyMigrationBase)
+	require.NoError(t, evidenceOnlyMigrationUpTo(ctx, db, evidenceOnlyMigrationBase))
 	fixture := insertEvidenceOnlyMigrationFixture(t, ctx, db, false)
 	before := evidenceOnlyFingerprints(t, ctx, db)
-	runGooseUpTo(t, ctx, db, evidenceOnlyMigrationVersion)
+	require.NoError(t, evidenceOnlyMigrationUpTo(ctx, db, evidenceOnlyMigrationVersion))
 	require.Equal(t, before, evidenceOnlyFingerprints(t, ctx, db))
 	assertEvidenceOnlyCatalog(t, ctx, db)
 	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
@@ -169,14 +185,14 @@ func TestEvidenceOnlyPostgresLegalHoldBlocksAndRollsBack(t *testing.T) {
 	ctx := context.Background()
 	db, cleanup := openMigrationSQLDB(t, ctx)
 	defer cleanup()
-	runGooseUpTo(t, ctx, db, evidenceOnlyMigrationBase)
+	require.NoError(t, evidenceOnlyMigrationUpTo(ctx, db, evidenceOnlyMigrationBase))
 	fixture := insertEvidenceOnlyMigrationFixture(t, ctx, db, true)
 	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `INSERT INTO private_memory_legal_holds(team_id,space_id,reason_code,actor_class) VALUES($1::uuid,$2::uuid,'evidence_only_test','control')`, fixture.team, fixture.space)
 		return err
 	}))
 	before := evidenceOnlyFingerprints(t, ctx, db)
-	require.ErrorContains(t, migrationUpTo(ctx, db, evidenceOnlyMigrationVersion), "legal hold")
+	require.ErrorContains(t, evidenceOnlyMigrationUpTo(ctx, db, evidenceOnlyMigrationVersion), "legal hold")
 	require.Equal(t, before, evidenceOnlyFingerprints(t, ctx, db))
 	var graphExists bool
 	require.NoError(t, db.QueryRowContext(ctx, `SELECT to_regclass('public.relationship_records') IS NOT NULL`).Scan(&graphExists))
@@ -185,7 +201,7 @@ func TestEvidenceOnlyPostgresLegalHoldBlocksAndRollsBack(t *testing.T) {
 		_, err := tx.ExecContext(ctx, `UPDATE private_memory_legal_holds SET released_at=clock_timestamp() WHERE team_id=$1::uuid AND space_id=$2::uuid`, fixture.team, fixture.space)
 		return err
 	}))
-	runGooseUpTo(t, ctx, db, evidenceOnlyMigrationVersion)
+	require.NoError(t, evidenceOnlyMigrationUpTo(ctx, db, evidenceOnlyMigrationVersion))
 	require.Equal(t, before, evidenceOnlyFingerprints(t, ctx, db))
 	assertEvidenceOnlyCatalog(t, ctx, db)
 }
@@ -194,7 +210,7 @@ func TestEvidenceOnlyPostgresCancellationAfterRemovalRollsBack(t *testing.T) {
 	ctx := context.Background()
 	db, cleanup := openMigrationSQLDB(t, ctx)
 	defer cleanup()
-	runGooseUpTo(t, ctx, db, evidenceOnlyMigrationBase)
+	require.NoError(t, evidenceOnlyMigrationUpTo(ctx, db, evidenceOnlyMigrationBase))
 	insertEvidenceOnlyMigrationFixture(t, ctx, db, false)
 	before := evidenceOnlyFingerprints(t, ctx, db)
 	blocker, err := db.BeginTx(ctx, nil)
@@ -205,7 +221,7 @@ func TestEvidenceOnlyPostgresCancellationAfterRemovalRollsBack(t *testing.T) {
 	migrationCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	outcome := make(chan error, 1)
-	go func() { outcome <- migrationUpTo(migrationCtx, db, evidenceOnlyMigrationVersion) }()
+	go func() { outcome <- evidenceOnlyMigrationUpTo(migrationCtx, db, evidenceOnlyMigrationVersion) }()
 	require.Eventually(t, func() bool {
 		select {
 		case err := <-outcome:
@@ -230,7 +246,7 @@ func TestEvidenceOnlyPostgresCancellationAfterRemovalRollsBack(t *testing.T) {
 	var exists bool
 	require.NoError(t, db.QueryRowContext(ctx, `SELECT to_regclass('public.relationship_records') IS NOT NULL`).Scan(&exists))
 	require.True(t, exists)
-	runGooseUpTo(t, ctx, db, evidenceOnlyMigrationVersion)
+	require.NoError(t, evidenceOnlyMigrationUpTo(ctx, db, evidenceOnlyMigrationVersion))
 	require.Equal(t, before, evidenceOnlyFingerprints(t, ctx, db))
 	assertEvidenceOnlyCatalog(t, ctx, db)
 }
@@ -239,13 +255,13 @@ func TestEvidenceOnlyPostgresUnexpectedDependencyBlocksBeforeRemoval(t *testing.
 	ctx := context.Background()
 	db, cleanup := openMigrationSQLDB(t, ctx)
 	defer cleanup()
-	runGooseUpTo(t, ctx, db, evidenceOnlyMigrationBase)
+	require.NoError(t, evidenceOnlyMigrationUpTo(ctx, db, evidenceOnlyMigrationBase))
 	_, err := db.ExecContext(ctx, `CREATE TABLE evidence_only_test_dependency(team_id uuid,relationship_id uuid,FOREIGN KEY(team_id,relationship_id) REFERENCES relationship_records(team_id,relationship_id))`)
 	require.NoError(t, err)
-	require.ErrorContains(t, migrationUpTo(ctx, db, evidenceOnlyMigrationVersion), "unhandled retained dependency")
+	require.ErrorContains(t, evidenceOnlyMigrationUpTo(ctx, db, evidenceOnlyMigrationVersion), "unhandled retained dependency")
 	_, err = db.ExecContext(ctx, `DROP TABLE evidence_only_test_dependency`)
 	require.NoError(t, err)
-	runGooseUpTo(t, ctx, db, evidenceOnlyMigrationVersion)
+	require.NoError(t, evidenceOnlyMigrationUpTo(ctx, db, evidenceOnlyMigrationVersion))
 	assertEvidenceOnlyCatalog(t, ctx, db)
 }
 
@@ -253,7 +269,7 @@ func TestEvidenceOnlyPostgresSessionMigrationPreservesRawIdentityAndTerminalOutc
 	ctx := context.Background()
 	db, cleanup := openMigrationSQLDB(t, ctx)
 	defer cleanup()
-	runGooseUpTo(t, ctx, db, evidenceOnlyMigrationBase)
+	require.NoError(t, evidenceOnlyMigrationUpTo(ctx, db, evidenceOnlyMigrationBase))
 	fixture := insertEvidenceOnlyMigrationFixture(t, ctx, db, true)
 	hashes := map[string]string{}
 	for index, result := range []string{"null", `{"contract_version":"dense-mem.v2.7.0","processing_state":"failed","errors":[{"code":"provider_unavailable","retryable":true}]}`, `{"contract_version":"dense-mem.v2.7.0","processing_state":"completed","events":[],"errors":[]}`, `{"contract_version":"dense-mem.v2.7.0","processing_state":"failed","errors":[{"code":"submission_policy_rejected","retryable":false}]}`} {
@@ -270,7 +286,7 @@ func TestEvidenceOnlyPostgresSessionMigrationPreservesRawIdentityAndTerminalOutc
 			return err
 		}))
 	}
-	runGooseUpTo(t, ctx, db, evidenceOnlyMigrationVersion)
+	require.NoError(t, evidenceOnlyMigrationUpTo(ctx, db, evidenceOnlyMigrationVersion))
 	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
 		rows, err := tx.QueryContext(ctx, `SELECT submission_id::text,request_hash,intake->>'ExtractionVersion',result IS NULL,intake->'Request'->'events'->0->>'text',COALESCE(result->>'processing_state',''),COALESCE(result->>'retired_payload','') FROM session_submissions WHERE team_id=$1::uuid`, fixture.team)
 		if err != nil {
@@ -306,7 +322,7 @@ func TestEvidenceOnlyPostgresMixedOntologyReceiptsAndDrafts(t *testing.T) {
 	ctx := context.Background()
 	db, cleanup := openMigrationSQLDB(t, ctx)
 	defer cleanup()
-	runGooseUpTo(t, ctx, db, evidenceOnlyMigrationBase)
+	require.NoError(t, evidenceOnlyMigrationUpTo(ctx, db, evidenceOnlyMigrationBase))
 	fixture := insertEvidenceOnlyMigrationFixture(t, ctx, db, false)
 	assessmentID, publicationID, groupID, retiredID := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
 	digest := "sha256:" + strings.Repeat("a", 64)
@@ -367,7 +383,7 @@ func TestEvidenceOnlyPostgresMixedOntologyReceiptsAndDrafts(t *testing.T) {
 		return nil
 	}))
 	before := evidenceOnlyFingerprints(t, ctx, db)
-	runGooseUpTo(t, ctx, db, evidenceOnlyMigrationVersion)
+	require.NoError(t, evidenceOnlyMigrationUpTo(ctx, db, evidenceOnlyMigrationVersion))
 	require.Equal(t, before, evidenceOnlyFingerprints(t, ctx, db))
 	assertEvidenceOnlyCatalog(t, ctx, db)
 	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {

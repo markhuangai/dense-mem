@@ -51,11 +51,11 @@ func (s *semanticTraceService) Trace(ctx context.Context, _ string, req TraceReq
 		err = ErrTraceRepositoryTeamMismatch
 	}
 	if s.logger != nil {
-		attrs := []observability.LogAttr{observability.String("team_id", actor.TeamID.String()), observability.String("owner_profile_id", actor.OwnerID.String()), observability.String("evidence_id", input.EvidenceID), {Key: "limits", Value: input}, {Key: "outcome", Value: "completed"}}
+		attrs := []observability.LogAttr{observability.String("team_id", actor.TeamID.String()), observability.String("owner_profile_id", actor.OwnerID.String()), observability.String("evidence_id", input.EvidenceID), {Key: "limits", Value: observability.DecisionLogValue(input)}}
 		if err != nil {
 			attrs = append(attrs, observability.String("outcome", "failed"), observability.String("reason", err.Error()))
 		} else {
-			attrs = append(attrs, observability.LogAttr{Key: "omissions", Value: result.Omissions}, observability.LogAttr{Key: "selection", Value: result.Selection})
+			attrs = append(attrs, observability.String("outcome", "completed"), observability.LogAttr{Key: "omissions", Value: result.Omissions}, observability.LogAttr{Key: "selection", Value: result.Selection})
 		}
 		if logger, ok := s.logger.(observability.ContextLogProvider); ok {
 			logger.LogContext(ctx, slog.LevelDebug, "trace_evidence_selection", attrs...)

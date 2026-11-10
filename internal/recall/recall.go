@@ -32,23 +32,25 @@ type RecallOntologyConfigProvider interface {
 	OntologyMaintenanceRuntimeConfig(context.Context) (domain.OntologyMaintenanceConfig, error)
 }
 type RecallDependencies struct {
-	Decisions        modelprovider.DecisionProvider
-	DecisionSettings modelprovider.DecisionSettings
-	Logger           observability.LogProvider
-	Search           RecallSearchRepository
-	Provider         embeddingcontract.EmbeddingProviderInterface
-	OntologyConfig   RecallOntologyConfigProvider
-	Metrics          observability.DiscoverabilityMetrics
+	Decisions           modelprovider.DecisionProvider
+	DecisionSettings    modelprovider.DecisionSettings
+	Logger              observability.LogProvider
+	DiagnosticProtector observability.DiagnosticProtector
+	Search              RecallSearchRepository
+	Provider            embeddingcontract.EmbeddingProviderInterface
+	OntologyConfig      RecallOntologyConfigProvider
+	Metrics             observability.DiscoverabilityMetrics
 }
 type recallService struct {
-	decisions        modelprovider.DecisionProvider
-	decisionSettings modelprovider.DecisionSettings
-	logger           observability.LogProvider
-	search           RecallSearchRepository
-	retrieval        *Retrieval
-	provider         embeddingcontract.EmbeddingProviderInterface
-	ontologyConfig   RecallOntologyConfigProvider
-	metrics          observability.DiscoverabilityMetrics
+	decisions           modelprovider.DecisionProvider
+	decisionSettings    modelprovider.DecisionSettings
+	logger              observability.LogProvider
+	diagnosticProtector observability.DiagnosticProtector
+	search              RecallSearchRepository
+	retrieval           *Retrieval
+	provider            embeddingcontract.EmbeddingProviderInterface
+	ontologyConfig      RecallOntologyConfigProvider
+	metrics             observability.DiscoverabilityMetrics
 }
 
 func NewRecallService(deps RecallDependencies) RecallService {
@@ -56,7 +58,7 @@ func NewRecallService(deps RecallDependencies) RecallService {
 	if metrics == nil {
 		metrics = observability.NoopDiscoverabilityMetrics()
 	}
-	return &recallService{decisions: deps.Decisions, decisionSettings: deps.DecisionSettings, logger: deps.Logger, search: deps.Search,
+	return &recallService{decisions: deps.Decisions, decisionSettings: deps.DecisionSettings, logger: deps.Logger, diagnosticProtector: deps.DiagnosticProtector, search: deps.Search,
 		retrieval: &Retrieval{repository: deps.Search, decisions: deps.Decisions, logger: deps.Logger}, provider: deps.Provider, ontologyConfig: deps.OntologyConfig, metrics: metrics}
 }
 

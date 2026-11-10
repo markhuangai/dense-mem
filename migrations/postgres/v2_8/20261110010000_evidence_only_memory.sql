@@ -305,6 +305,13 @@ BEGIN
  END LOOP;
 END $retire$;
 
+-- Defer the source/revision cycle only within transactions that explicitly request it.
+ALTER TABLE evidence_sources DROP CONSTRAINT evidence_sources_current_revision_fk;
+ALTER TABLE evidence_sources ADD CONSTRAINT evidence_sources_current_revision_fk
+ FOREIGN KEY (team_id,source_id,current_revision_id,owner_profile_id)
+ REFERENCES evidence_source_revisions(team_id,source_id,source_revision_id,owner_profile_id)
+ ON DELETE NO ACTION DEFERRABLE INITIALLY IMMEDIATE;
+
 CREATE OR REPLACE FUNCTION prevent_append_only_mutation()
 RETURNS TRIGGER AS $$
 BEGIN

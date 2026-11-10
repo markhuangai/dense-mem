@@ -2,6 +2,9 @@ package recall
 
 import (
 	"context"
+	"encoding/json"
+	"github.com/google/uuid"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"log/slog"
@@ -171,7 +174,17 @@ func (s *recallService) relatedTopics(ctx context.Context, req RecallRequest, re
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	attrs := []observability.LogAttr{observability.String("team_id", input.TeamID), observability.String("owner_profile_id", actor.OwnerID.String()), observability.String("recall_id", result.RecallID), {Key: "requested_ids", Value: req.TopicIDs}, {Key: "known_evidence_ids", Value: req.KnownEvidenceIDs}, {Key: "returned_evidence_ids", Value: recallResultEvidenceIDs(result.Results)}, {Key: "selection", Value: selection.Diagnostics}, {Key: "topic_limit", Value: limit}, {Key: "topics", Value: selection.Topics}, {Key: "truncated", Value: selection.Truncated}}
+	captureID := uuid.NewString()
+	attrs := []observability.LogAttr{observability.String("team_id", input.TeamID), observability.String("owner_profile_id", actor.OwnerID.String()), observability.String("recall_id", result.RecallID), observability.String("diagnostic_capture_id", captureID), {Key: "requested_ids", Value: req.TopicIDs}, {Key: "known_evidence_ids", Value: req.KnownEvidenceIDs}, {Key: "returned_evidence_ids", Value: recallResultEvidenceIDs(result.Results)}, {Key: "topic_limit", Value: limit}, {Key: "topic_count", Value: len(selection.Topics)}, {Key: "truncated", Value: selection.Truncated}}
+	if root, ok := s.logger.(interface{ ContextSlog() *slog.Logger }); ok {
+		body, encodeErr := json.Marshal(selection)
+		if encodeErr != nil {
+			s.logTopics(ctx, slog.LevelWarn, "diagnostic_body_unavailable", append(attrs, observability.String("reason_code", "diagnostic_encoding_failed")))
+		} else {
+			observability.LogDiagnosticBody(ctx, root.ContextSlog(), s.diagnosticProtector, "recall_topic_selection_payload", body, modelprovider.MaxProviderDiagnosticBodyBytes,
+				slog.String("team_id", input.TeamID), slog.String("recall_id", result.RecallID), slog.String("diagnostic_capture_id", captureID))
+		}
+	}
 	if err != nil {
 		attrs = append(attrs, observability.String("reason", err.Error()), observability.String("outcome", "unavailable"))
 		s.logTopics(ctx, slog.LevelWarn, "recall_topic_degraded", attrs)

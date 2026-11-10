@@ -2,8 +2,11 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/google/uuid"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"log/slog"
@@ -170,11 +173,22 @@ func (r *Store) resolveTopicFilter(ctx context.Context, tx *gorm.DB, input *Reca
 		if r.topicLogger == nil {
 			return
 		}
+		captureID := uuid.NewString()
 		attrs := []observability.LogAttr{
 			observability.String("team_id", input.TeamID), observability.String("space_id", input.SpaceID),
+			observability.String("diagnostic_capture_id", captureID),
 			{Key: "requested_ids", Value: input.TopicIDs}, {Key: "generation", Value: selection.Generation},
-			{Key: "memberships", Value: selection.Topics}, {Key: "rejected", Value: selection.Rejected},
+			{Key: "topic_count", Value: len(selection.Topics)},
 			{Key: "known_exclusions", Value: input.KnownEvidenceIDs}, {Key: "organization_enabled", Value: input.OrganizationEnabled},
+		}
+		if root, ok := r.topicLogger.(interface{ ContextSlog() *slog.Logger }); ok {
+			body, encodeErr := json.Marshal(selection)
+			if encodeErr != nil {
+				r.topicLogger.Warn("diagnostic_body_unavailable", append(attrs, observability.String("reason_code", "diagnostic_encoding_failed"))...)
+			} else {
+				observability.LogDiagnosticBody(ctx, root.ContextSlog(), r.topicProtector, "recall_topic_filter_payload", body, modelprovider.MaxProviderDiagnosticBodyBytes,
+					slog.String("team_id", input.TeamID), slog.String("space_id", input.SpaceID), slog.String("diagnostic_capture_id", captureID))
+			}
 		}
 		level, event := slog.LevelDebug, "recall_topic_selection"
 		if err != nil {
@@ -308,6 +322,11 @@ func (r *Store) RelatedEvidenceTopics(ctx context.Context, input RecallEvidenceI
 			}
 			return left.TopicID < right.TopicID
 		})
+		counts := map[string]map[string]int{}
+		for _, topic := range result.Topics {
+			counts[topic.TopicID] = map[string]int{"eligible_evidence_count": topic.EligibleEvidenceCount, "matching_result_count": topic.MatchingResultCount, "additional_evidence_count": topic.AdditionalEvidenceCount}
+		}
+		result.Diagnostics["counts"] = counts
 		result.Truncated = len(result.Topics) > limit
 		if result.Truncated {
 			result.Topics = result.Topics[:limit]

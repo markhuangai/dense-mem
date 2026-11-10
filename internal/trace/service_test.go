@@ -2,13 +2,52 @@ package trace
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"github.com/google/uuid"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	tracecontract "github.com/markhuangai/dense-mem/internal/trace/contract"
 	"github.com/stretchr/testify/require"
+	"log/slog"
+	"os"
+	"path/filepath"
 	"testing"
 )
+
+func TestEvidenceOnlyUnitTraceDiagnosticsPreserveLimitsThroughProtection(t *testing.T) {
+	team, owner, evidence := uuid.New(), uuid.New(), uuid.NewString()
+	ctx := requestctx.WithActor(t.Context(), requestctx.Actor{TeamID: team, OwnerID: owner})
+	path := filepath.Join(t.TempDir(), "trace.jsonl")
+	output, err := os.Create(path)
+	require.NoError(t, err)
+	defer output.Close()
+	previous := os.Stdout
+	os.Stdout = output
+	logger := observability.NewWithProtector(slog.LevelDebug, observability.NewCredentialProtector("trace-credential-canary"))
+	os.Stdout = previous
+	store := &semanticTraceStoreStub{result: &tracecontract.EvidenceTraceResult{
+		Evidence:  &tracecontract.TraceEvidenceFragment{FragmentID: evidence, TeamID: team.String()},
+		Selection: map[string]any{"token": "exact admitted diagnostic text", "configured_credential": "trace-credential-canary"},
+	}}
+	_, err = NewSemantic(store, logger).Trace(ctx, "", TraceRequest{EvidenceID: evidence, MaxEvents: 7})
+	require.NoError(t, err)
+	require.NoError(t, output.Close())
+	body, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.NotContains(t, string(body), "trace-credential-canary")
+	var record map[string]any
+	require.NoError(t, json.Unmarshal(body, &record))
+	require.Equal(t, "DEBUG", record["level"])
+	require.Equal(t, "completed", record["outcome"])
+	limits, ok := record["limits"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, float64(7), limits["MaxEvents"])
+	require.Equal(t, evidence, limits["EvidenceID"])
+	selection, ok := record["selection"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "exact admitted diagnostic text", selection["token"])
+}
 
 type semanticTraceStoreStub struct {
 	result *tracecontract.EvidenceTraceResult

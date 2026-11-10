@@ -16,7 +16,7 @@ func loadTraceEvidenceLifecycleEvents(
 	limit int,
 ) ([]TraceEvidenceLifecycleEvent, error) {
 	if len(fragmentIDs) == 0 {
-		return nil, nil
+		return []TraceEvidenceLifecycleEvent{}, nil
 	}
 	rows, err := tx.WithContext(ctx).Raw(`
 		SELECT lifecycle.lifecycle_event_id::text,
@@ -47,7 +47,7 @@ func loadTraceEvidenceLifecycleEvents(
 		return nil, err
 	}
 	defer rows.Close()
-	var out []TraceEvidenceLifecycleEvent
+	out := []TraceEvidenceLifecycleEvent{}
 	for rows.Next() {
 		var event TraceEvidenceLifecycleEvent
 		if err := rows.Scan(

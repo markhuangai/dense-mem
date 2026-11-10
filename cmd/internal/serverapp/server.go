@@ -131,7 +131,7 @@ func RunActiveServer(
 	recallStore := recallpostgres.NewStore(
 		pgDB.GetDB(), rlsHelper, searchRepo,
 		recallpostgres.LoadRecallEvidenceConflictRecords,
-	).WithOntology(func() recallpostgres.OntologyReader { return ontologyStore.NewRecallReader() }).WithTopics(ontologyStore.NewTopicReader()).WithTopicDiagnostics(logger)
+	).WithOntology(func() recallpostgres.OntologyReader { return ontologyStore.NewRecallReader() }).WithTopics(ontologyStore.NewTopicReader())
 	operationLogDB, err := postgres.OpenOperationLogClient(startupCtx, &cfg, logger)
 	if err != nil {
 		return fmt.Errorf("open operation log sink pool: %w", err)
@@ -221,6 +221,7 @@ func RunActiveServer(
 	if err != nil {
 		return fmt.Errorf("configure diagnostic protection: %w", err)
 	}
+	recallStore.WithTopicDiagnostics(logger, diagnosticProtector)
 	publicationDiagnostics := ontologyPublicationDiagnostics(rootDiagnosticLogger(logger), diagnosticProtector)
 	ontologyStore.WithPublicationDiagnostics(publicationDiagnostics)
 	telemetry, err := buildTelemetryApplication(startupCtx, cfg, appConfigService, telemetryLifecycleRepo, logger, diagnosticProtector)

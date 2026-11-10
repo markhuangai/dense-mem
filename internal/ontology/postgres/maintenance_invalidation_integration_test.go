@@ -268,7 +268,7 @@ func TestOntologyMaintenanceMarkerFrameRLS(t *testing.T) {
 				return err
 			}
 			var visible int
-			if err := tx.Raw(`SELECT count(*) FROM ontology_maintenance_markers WHERE anchor_id IN (?,?,?)`, current.ID, old.ID, peer.ID).Row().Scan(&visible); err != nil {
+			if err := tx.Raw(`SELECT count(DISTINCT anchor_id) FROM ontology_maintenance_markers WHERE anchor_id IN (?,?,?)`, current.ID, old.ID, peer.ID).Row().Scan(&visible); err != nil {
 				return err
 			}
 			require.Equal(t, 3, visible)

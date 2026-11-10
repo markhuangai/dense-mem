@@ -31,5 +31,5 @@ func TestRecallDoesNotPromptForOptionalFeedback(t *testing.T) {
 	output := recallContractOutput(&recall.RecallResult{RecallID: "rec-1"})
 	require.NotContains(t, output, "related_hypotheses")
 	require.Empty(t, output["suggested_actions"])
-	require.Equal(t, "dense-mem.v2.7.0", domain.ContractVersion)
+	require.Equal(t, "dense-mem.v2.8.0", domain.ContractVersion)
 }

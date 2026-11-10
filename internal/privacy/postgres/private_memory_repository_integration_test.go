@@ -34,7 +34,7 @@ func TestPrivateMemoryManifestMatchesCatalog(t *testing.T) {
 	require.Contains(t, PrivateMemoryErasureManifest(), "evidence_conflict_events")
 	require.NotContains(t, PrivateMemoryErasureManifest(), "dream_path_evaluation_run_links")
 	for _, table := range []string{"community_topic_versions", "community_topic_dependencies", "community_topic_work"} {
-		require.Contains(t, PrivateMemoryErasureManifest(), table)
+		require.NotContains(t, PrivateMemoryErasureManifest(), table)
 	}
 }
 
@@ -692,8 +692,8 @@ func seedPrivateMemoryIngestAt(t *testing.T, db *gorm.DB, rls interface {
 		return tx.Exec(`
 			INSERT INTO knowledge_ingests (
 				team_id, ingest_id, owner_profile_id, request_hash, source_summary,
-				status, proposal, metadata, space_id, created_at, updated_at
-			) VALUES (?, ?, ?, ?, ?, 'queued', '{}'::jsonb, '{}'::jsonb, ?, ?, ?)
+					status, metadata, space_id, created_at, updated_at
+				) VALUES (?, ?, ?, ?, ?, 'queued', '{}'::jsonb, ?, ?, ?)
 		`, teamID, ingestID, ownerID, "hash-"+ingestID.String(), content, spaceID, createdAt, createdAt).Error
 	})
 	require.NoError(t, err)

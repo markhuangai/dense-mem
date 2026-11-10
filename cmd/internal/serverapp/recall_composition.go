@@ -9,11 +9,12 @@ import (
 )
 
 type recallApplicationDependencies struct {
-	Decisions        modelprovider.DecisionProvider
-	DecisionSettings modelprovider.DecisionSettings
-	Logger           observability.LogProvider
-	Search           recallcontract.SearchRepository
-	Provider         embeddingcontract.EmbeddingProviderInterface
+	Decisions           modelprovider.DecisionProvider
+	DecisionSettings    modelprovider.DecisionSettings
+	Logger              observability.LogProvider
+	DiagnosticProtector observability.DiagnosticProtector
+	Search              recallcontract.SearchRepository
+	Provider            embeddingcontract.EmbeddingProviderInterface
 
 	OntologyConfig recall.RecallOntologyConfigProvider
 	Metrics        observability.DiscoverabilityMetrics
@@ -22,9 +23,10 @@ type recallApplicationDependencies struct {
 func buildRecallApplication(deps recallApplicationDependencies) recall.RecallService {
 	return recall.NewRecallService(recall.RecallDependencies{
 		Decisions: deps.Decisions, DecisionSettings: deps.DecisionSettings, Logger: deps.Logger,
-		Search:         deps.Search,
-		Provider:       deps.Provider,
-		OntologyConfig: deps.OntologyConfig,
-		Metrics:        deps.Metrics,
+		DiagnosticProtector: deps.DiagnosticProtector,
+		Search:              deps.Search,
+		Provider:            deps.Provider,
+		OntologyConfig:      deps.OntologyConfig,
+		Metrics:             deps.Metrics,
 	})
 }
