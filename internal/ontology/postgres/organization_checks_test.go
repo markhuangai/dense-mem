@@ -71,7 +71,7 @@ func testOntologyOrganizationAtomicReplayAndIsolation(t *testing.T) {
 
 func testOntologyOrganizationRejectsStaleAndMalformedPublication(t *testing.T) {
 	t.Run("freshness comparison diagnostics", testOrganizationFreshnessComparisons)
-	for _, mode := range []string{"item_source_kind", "definition_unused"} {
+	for _, mode := range []string{"definition_record", "definition_unused"} {
 		t.Run("bounded complete rejection "+mode, func(t *testing.T) {
 			f := newOrganizationFixture(t)
 			a := f.organizationEvidence(t, 0, "Atlas uses PostgreSQL.", nil)
@@ -80,7 +80,7 @@ func testOntologyOrganizationRejectsStaleAndMalformedPublication(t *testing.T) {
 			var turns atomic.Int32
 			service, calls := organizationFixtureService(t, f, nil, func(_ assessment.Request, response *assessment.Response) {
 				turn := turns.Add(1)
-				if mode == "item_source_kind" {
+				if mode == "definition_record" {
 					response.Definitions[0].Kind = ontology.Kind("predicate_concept")
 				} else {
 					response.Definitions = append(response.Definitions, assessment.Definition{Ref: fmt.Sprintf("unused%d", turn), Kind: ontology.Topic,

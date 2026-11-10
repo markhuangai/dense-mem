@@ -26,8 +26,10 @@ func TestOntologyOrganizationBatchedSources(t *testing.T) {
 	privateContext := requestctx.WithAllowedSpaces(context.Background(), []domain.MemorySpaceAccess{{ID: credential.MemorySpaceID, Kind: domain.MemorySpacePrivate, Generation: credential.MemorySpaceGeneration}})
 	private, err := f.knowledge.CreateIngestForTest(privateContext, knowledge.CreateIngestInput{TeamID: f.team, OwnerProfileID: f.owners[0], SpaceID: credential.MemorySpaceID.String(), SpaceGeneration: credential.MemorySpaceGeneration, Evidence: []knowledge.EvidenceInput{{Content: "Private PostgreSQL evidence."}}})
 	require.NoError(t, err)
-	stale := handles[0]
-	stale.Version++
+	stale := f.organizationEvidence(t, 0, "Retracted PostgreSQL batch evidence.", nil)
+	_, err = f.knowledge.RetractEvidence(f.actor(0, "member"), knowledge.RetractEvidenceInput{
+		TeamID: f.team, OwnerProfileID: f.owners[0], EvidenceIDs: []string{stale.ID}, Reason: "withdraw batch fixture", IdempotencyKey: uuid.NewString(), RequestHash: testHash("initial batch source retraction")})
+	require.NoError(t, err)
 	input := []ontology.SourceHandle{handles[3], handles[2], handles[0], handles[1], handles[4], handles[3], stale,
 		{Kind: ontology.EvidenceSource, ID: uuid.NewString(), Version: 1}, foreign,
 		{Kind: ontology.EvidenceSource, ID: private.Evidence[0].FragmentID, Version: 1}}
@@ -48,6 +50,10 @@ func TestOntologyOrganizationBatchedSources(t *testing.T) {
 				actual, err := organizationSources(tx, fence, input)
 				require.NoError(t, err)
 				require.Equal(t, expected, actual)
+				invalid := handles[0]
+				invalid.Version++
+				_, err = organizationSources(tx, fence, []ontology.SourceHandle{invalid})
+				require.ErrorIs(t, err, ontology.ErrInvalid)
 				count := 0
 				for i, snapshot := range actual {
 					require.Equal(t, input[i], snapshot.SourceHandle)
