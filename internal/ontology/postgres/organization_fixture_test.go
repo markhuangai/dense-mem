@@ -43,12 +43,15 @@ func (f *ontologyFixture) organizationEvidence(t *testing.T, owner int, text str
 }
 
 func organizationFixtureResponse(request assessment.Request, equivalent func(assessment.Item, assessment.Item) bool) assessment.Response {
-	response := assessment.Response{RequestID: request.RequestID, Definitions: []assessment.Definition{}, Items: []assessment.Decision{}, Equivalence: []assessment.Equivalence{}}
+	response := assessment.Response{HierarchyUpdates: []assessment.HierarchyUpdate{}, RequestID: request.RequestID, Definitions: []assessment.Definition{}, Items: []assessment.Decision{}, Equivalence: []assessment.Equivalence{}}
 	definitions := map[string]string{}
 	items := map[string]assessment.Item{}
 	for _, item := range request.Items {
 		items[item.Ref] = item
 		ref := item.LockedDefinitionRef
+		if ref == "" {
+			ref = item.PreferredDefinitionRef
+		}
 		if ref == "" {
 			for _, d := range request.Definitions {
 				if (item.Kind == ontology.EvidenceSource || item.Kind == ontology.RelationshipSource) && d.Kind == ontology.Topic {

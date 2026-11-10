@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { test } from "node:test";
 import { execFile, spawn } from "node:child_process";
@@ -1238,13 +1239,37 @@ test("diagnostics retain credential collisions, unknown settings and malformed p
       "POSTGRES_PASSWORD=true", "AI_API_KEY=100", "CUSTOM_SETTING=unknown-protected-value",
       "AI_VERIFIER_DISABLE_TEMPERATURE=invalid-boolean-secret", "AI_API_EMBEDDING_DIMENSIONS=invalid-integer-secret",
       "AI_API_EMBEDDING_MAX_CONCURRENCY=999999999999999999999999",
+      "AI_VERIFIER_MODEL=fixture-model", "AI_VERIFIER_API_KEY=fixture-model",
+      "ONTOLOGY_MAINTENANCE_MODEL=private?token=credential",
     ].join("\n") + "\n");
-    const input = "true 100 unknown-protected-value invalid-boolean-secret invalid-integer-secret 999999999999999999999999 extra-protected-pattern";
+    const input = "true 100 unknown-protected-value invalid-boolean-secret invalid-integer-secret 999999999999999999999999 extra-protected-pattern fixture-model private?token=credential";
     const { stdout } = await run("bash", ["-c", 'printf \'%s\\n\' "$1" | node "$2"', "credential-collisions", input, join(scripts, "e2e-redact-diagnostics.mjs")], {
       env: { DENSE_MEM_CI_REDACT_ENV_FILE: envFile, DENSE_MEM_CI_REDACT_ALLOW_SHORT: "1", DENSE_MEM_CI_REDACT_EXTRA_VALUES: "extra-protected-pattern" },
     });
-    assert.equal(stdout.trim(), Array(7).fill("[REDACTED]").join(" "));
+    assert.equal(stdout.trim(), Array(9).fill("[REDACTED]").join(" "));
     assert.equal(valueFromEnvFile(envFile, "TELEMETRY_ENABLED"), "true");
+  } finally {
+    await rm(fixture, { recursive: true, force: true });
+  }
+});
+
+test("diagnostics preserve protected assessment hashes and effective model identities", async () => {
+  const fixture = await mkdtemp(join(tmpdir(), "dense-mem-assessment-diagnostics-"));
+  try {
+    const envFile = join(fixture, ".env");
+    const models = { AI_VERIFIER_MODEL: "dense-mem-ontology-e2e", AI_REMEMBER_MODEL: "dense-mem-ontology-e2e",
+      AI_CONFLICT_REVIEW_MODEL: "dense-mem-ontology-e2e", ONTOLOGY_MAINTENANCE_MODEL: "dense-mem-ontology-e2e",
+      AI_API_EMBEDDING_MODEL: "@cf/baai/bge-m3" };
+    await writeFile(envFile, [...Object.entries(models).map(([key, value]) => `${key}=${value}`),
+      "AI_API_KEY=dense-mem-ontology-e2e-key", "POSTGRES_PASSWORD=fixture-database-secret"].join("\n") + "\n");
+    const body = JSON.stringify({ models, password: "ordinary admitted text", credentials: "[REDACTED]" });
+    const record = { payload_chunk: { body, sha256: createHash("sha256").update(body).digest("hex") } };
+    const { stdout } = await run("bash", ["-c", 'printf \'%s\\n\' "$1" | node "$2"', "assessment-hash", JSON.stringify(record), join(scripts, "e2e-redact-diagnostics.mjs")], {
+      env: { DENSE_MEM_CI_REDACT_ENV_FILE: envFile, DENSE_MEM_CI_REDACT_EXTRA_VALUES: "" },
+    });
+    const observed = JSON.parse(stdout).payload_chunk;
+    assert.equal(observed.body, body);
+    assert.equal(createHash("sha256").update(observed.body).digest("hex"), observed.sha256);
   } finally {
     await rm(fixture, { recursive: true, force: true });
   }
@@ -1416,6 +1441,14 @@ test("six precheck shards account for package batches while the legacy route ret
 });
 
 test("six precheck shards preserve every real runner selection exactly once", async () => {
+  const discoveryStart = controller.indexOf("\ndatabase_case_capabilities()") + 1;
+  const discovery = controller.slice(discoveryStart, controller.indexOf("\npartition_precheck_capabilities()", discoveryStart));
+  for (const scenario of ["ontology_organization", "ontology_management"]) {
+    const result = await run("bash", ["-c", `${discovery}\ndatabase_case_capabilities "$1" scenario "$2"`, "case-discovery", root, scenario]);
+    assert.equal(result.stdout, "");
+  }
+  const upgrade = await run("bash", ["-c", `${discovery}\ndatabase_case_capabilities "$1" scenario ontology_upgrade`, "case-discovery", root]);
+  assert.notEqual(upgrade.stdout.trim(), "");
   const start = controller.indexOf("\npartition_precheck_capabilities()") + 1;
   const helper = controller.slice(start, controller.indexOf("\nprecheck() {", start));
   const command = `${helper}\npartition_precheck_capabilities "$1" 6`;
@@ -1423,11 +1456,26 @@ test("six precheck shards preserve every real runner selection exactly once", as
   const selections = stdout.trim().split(/\r?\n/);
   assert.equal(selections.length, 6);
   const dedicated = [
+    "repository/TestOntologyAutomaticRefinement",
     "repository/TestOntologyMaintenanceFinalizationAdmissionAndIsolation",
     "repository/TestOntologyMaintenanceLargeBacklogAndFairTurns",
     "repository/TestOntologyMaintenanceReadMeasurement",
     "repository/TestOntologyOrganizationVocabularyAndSourceFences",
-  ];
+    "repository/TestOntologyRefinementPreservesLegacyAndAmbiguity",
+    "repository/TestOntologyRefinementPublicationRaces",
+    "repository/TestOntologyRefinementLeaseRecovery",
+    "repository/TestOntologyRefinementIsolationAndAncestryBound",
+    "repository/TestOntologyRefinementKeepsHistoricalReceipts",
+    "repository/TestOntologyRefinementRefreshMigration",
+    "repository/TestOntologyRefinementRebuildsStoredAncestry",
+    "repository/TestOntologyRefinementCoarseAncestryBound",
+    "repository/TestOntologyRefinementDefinitionAliasRace",
+    "repository/TestOntologyRefinementReusesBoundedCandidate",
+    "repository/TestOntologyRefinementAmbiguityRetainsEligiblePredicateVersion",
+    "repository/TestOntologyOrganizationPreservesPerRecordDependencyBounds",
+    "repository/TestOntologyOrganizationPreservesValidLargeSourceContext",
+    "repository/TestOntologyUnavailableSnapshotRetainsScopedHandleForMaintenance",
+  ].sort();
   const measurement = "repository/TestOntologyMaintenanceRevalidationDiscoveryMeasurement";
   assert.equal(selections[1], `cases:${measurement}`);
   assert.equal(selections[0], `cases:${dedicated.join(",")}`);
@@ -1456,7 +1504,7 @@ test("six precheck shards preserve every real runner selection exactly once", as
   }
   assert.equal(new Set(actual).size, actual.length);
   assert.deepEqual(actual.sort(), inventory.sort());
-  assert.equal(actual.length, 689);
+  assert.equal(actual.length, 736);
   assert.equal((await run("bash", ["-c", command, "six-shards", root])).stdout, stdout);
   await assert.rejects(run("bash", ["-c", `${helper}\npartition_precheck_capabilities "$1" 4`, "bad-shards", root]), /three or six shards/);
 });

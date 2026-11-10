@@ -136,16 +136,34 @@ func TestOrganizationClassificationPreservesOverrideAndAssignmentPrecedence(t *t
 			source := policySnapshot("fixed-source", kind, "fixed meaning")
 			assignment := RecordView{Record: Record{ID: policyID("assignment"), Assignment: &Assignment{Source: source.SourceHandle, DefinitionID: policyID("assigned")}}, Current: true}
 			override := RecordView{Record: Record{ID: policyID("override"), Override: &Override{Action: SetClassification, DefinitionID: policyID("chosen"), Members: []SourceHandle{source.SourceHandle}}}}
-			id, fixed := OrganizationClassification(source, []RecordView{assignment, override}, nil)
-			require.True(t, fixed)
-			require.Equal(t, override.Override.DefinitionID, id)
-			id, fixed = OrganizationClassification(source, []RecordView{assignment}, nil)
-			require.True(t, fixed)
-			require.Equal(t, assignment.Assignment.DefinitionID, id)
+			locked, preferred := OrganizationClassification(source, []RecordView{assignment, override}, nil)
+			require.Equal(t, override.Override.DefinitionID, locked)
+			require.Empty(t, preferred)
+			locked, preferred = OrganizationClassification(source, []RecordView{assignment}, nil)
+			if kind == EntitySource || kind == PredicateSource {
+				require.Empty(t, locked)
+				require.Equal(t, assignment.Assignment.DefinitionID, preferred)
+			} else {
+				require.Equal(t, assignment.Assignment.DefinitionID, locked)
+				require.Empty(t, preferred)
+			}
 			assignment.Current = false
-			id, fixed = OrganizationClassification(source, []RecordView{assignment}, nil)
-			require.False(t, fixed)
-			require.Empty(t, id)
+			locked, preferred = OrganizationClassification(source, []RecordView{assignment}, nil)
+			require.Empty(t, locked)
+			require.Empty(t, preferred)
 		})
 	}
+}
+
+func TestOrganizationHierarchyEligibilityRetainsPinsAndKinds(t *testing.T) {
+	definition := RecordView{Record: Record{ID: policyID("editable"), Kind: EntityClass, Definition: &Definition{Key: "person", Label: "Person", BaseEntityKind: "person"}}, Current: true}
+	require.True(t, OrganizationHierarchyEditable(definition, nil))
+	pin := RecordView{Record: Record{ID: policyID("pin"), Kind: OverrideKind, Override: &Override{Action: PinDefinition, TargetID: definition.ID}}}
+	require.False(t, OrganizationHierarchyEditable(definition, []RecordView{pin}))
+	pin.Retired = true
+	require.True(t, OrganizationHierarchyEditable(definition, []RecordView{pin}))
+	definition.Current = false
+	require.False(t, OrganizationHierarchyEditable(definition, nil))
+	definition.Current, definition.Kind = true, Topic
+	require.False(t, OrganizationHierarchyEditable(definition, nil))
 }

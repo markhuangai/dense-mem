@@ -293,7 +293,9 @@ if (["ontology_organization", "ontology_management", "ontology_upgrade"].include
     AI_API_KEY: "dense-mem-ontology-e2e-key",
   })) serverEnvironment.set(key, value);
 }
+if (scenario === "ontology_organization") serverEnvironment.set("LOG_LEVEL", "trace");
 if (scenario === "ontology_management") serverEnvironment.set("LOG_LEVEL", "debug");
+if (scenario === "ontology_upgrade") serverEnvironment.set("LOG_LEVEL", "debug");
 if (scenario === "full") {
   for (const [key, value] of Object.entries({
     AI_API_URL: "http://synchronous-write-provider:8787/v1",

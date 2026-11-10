@@ -168,7 +168,7 @@ func TestOrganizationContextWindowIncludesRegenerationHistory(t *testing.T) {
 
 func assessmentFixture() (Request, Response) {
 	request := Request{RequestID: "request", Items: []Item{{Ref: "a", Kind: ontology.EvidenceSource, Text: "Atlas stores data in PostgreSQL."}, {Ref: "b", Kind: ontology.EvidenceSource, Text: "PostgreSQL is Atlas's data store."}}, Definitions: []Definition{}, Pairs: []Pair{{Ref: "pair", LeftRef: "a", RightRef: "b"}}}
-	response := Response{RequestID: "request", Definitions: []Definition{{Ref: "new-topic", Kind: ontology.Topic, Key: "storage", Label: "Storage", Description: "Data storage", Aliases: []string{}}}, Items: []Decision{{Ref: "a", Status: "classified", DefinitionRef: "new-topic"}, {Ref: "b", Status: "classified", DefinitionRef: "new-topic"}}, Equivalence: []Equivalence{{Ref: "pair", Relation: "equivalent"}}}
+	response := Response{HierarchyUpdates: []HierarchyUpdate{}, RequestID: "request", Definitions: []Definition{{Ref: "new-topic", Kind: ontology.Topic, Key: "storage", Label: "Storage", Description: "Data storage", Aliases: []string{}}}, Items: []Decision{{Ref: "a", Status: "classified", DefinitionRef: "new-topic"}, {Ref: "b", Status: "classified", DefinitionRef: "new-topic"}}, Equivalence: []Equivalence{{Ref: "pair", Relation: "equivalent"}}}
 	return request, response
 }
 
@@ -177,7 +177,7 @@ func TestOrganizationResponseRequiresCompleteClosedAllowlists(t *testing.T) {
 	require.NoError(t, Validate(request, response))
 	encoded, err := json.Marshal(response)
 	require.NoError(t, err)
-	for name, raw := range map[string]string{"unknown": strings.Replace(string(encoded), "{", `{"team_id":"chosen",`, 1), "duplicate": strings.Replace(string(encoded), "{", `{"request_id":"first",`, 1), "trailing": string(encoded) + " {}", "null": "null", "missing": `{"request_id":"request","items":[],"equivalence":[]}`, "missing_nested": strings.Replace(string(encoded), `"parent_ref":"",`, "", 1)} {
+	for name, raw := range map[string]string{"unknown": strings.Replace(string(encoded), "{", `{"team_id":"chosen",`, 1), "duplicate": strings.Replace(string(encoded), "{", `{"request_id":"first",`, 1), "trailing": string(encoded) + " {}", "null": "null", "missing": `{"request_id":"request","items":[],"equivalence":[],"hierarchy_updates":[]}`, "missing_nested": strings.Replace(string(encoded), `"parent_ref":"",`, "", 1)} {
 		t.Run(name, func(t *testing.T) { _, err := Decode(raw); require.Error(t, err) })
 	}
 	for _, change := range []func(*Response){
@@ -278,7 +278,7 @@ func TestOrganizationCompleteRegenerationAndTokenAccounting(t *testing.T) {
 		require.Equal(t, SchemaName, req.SchemaName)
 		require.Equal(t, ResponseSchema(request.RequestID), req.Schema)
 		if calls == 1 {
-			return modelprovider.StructuredResult{Content: `{"request_id":"request","definitions":[],"items":[],"equivalence":[]}`}, nil
+			return modelprovider.StructuredResult{Content: `{"request_id":"request","definitions":[],"items":[],"equivalence":[],"hierarchy_updates":[]}`}, nil
 		}
 		require.Len(t, req.Messages, 4)
 		require.Contains(t, req.Messages[3].Content, "validation_errors")

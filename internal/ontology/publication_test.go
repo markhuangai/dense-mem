@@ -138,7 +138,7 @@ func TestOrganizationRejectsConflictingDefinitionIdentities(t *testing.T) {
 		receipt := unitReceipt(t, ctx.Sources)
 		request, binding, err := NewService(nil, assessment.NewProvider(nil, "model", assessor.DefaultSemanticAssessmentLimits(), 300000)).request(ctx, &receipt)
 		require.NoError(t, err)
-		response := assessment.Response{RequestID: request.RequestID, Definitions: []assessment.Definition{{Ref: "new", Kind: contract.Topic, Key: "alpha", Label: "Beta", Aliases: []string{}}}, Items: []assessment.Decision{{Ref: "s0", Status: "classified", DefinitionRef: "new"}}, Equivalence: []assessment.Equivalence{}}
+		response := assessment.Response{HierarchyUpdates: []assessment.HierarchyUpdate{}, RequestID: request.RequestID, Definitions: []assessment.Definition{{Ref: "new", Kind: contract.Topic, Key: "alpha", Label: "Beta", Aliases: []string{}}}, Items: []assessment.Decision{{Ref: "s0", Status: "classified", DefinitionRef: "new"}}, Equivalence: []assessment.Equivalence{}}
 		require.NoError(t, assessment.Validate(request, response))
 		publication, err := buildPublication(source.TeamID, ctx, request, response, binding, &receipt)
 		require.ErrorIs(t, err, contract.ErrConflict)
@@ -161,7 +161,7 @@ func TestOrganizationRejectsDuplicateResolvedDefinitionWrites(t *testing.T) {
 			request, binding, err := NewService(nil, assessment.NewProvider(nil, "model", assessor.DefaultSemanticAssessmentLimits(), 300000)).request(ctx, &receipt)
 			require.NoError(t, err)
 			require.Empty(t, request.Definitions)
-			response := assessment.Response{RequestID: request.RequestID, Definitions: []assessment.Definition{
+			response := assessment.Response{HierarchyUpdates: []assessment.HierarchyUpdate{}, RequestID: request.RequestID, Definitions: []assessment.Definition{
 				{Ref: "new-alpha", Kind: contract.Topic, Key: "alpha", Label: "Alpha metadata", Aliases: []string{}},
 				{Ref: "new-gamma", Kind: contract.Topic, Key: "gamma", Label: "Gamma metadata", Aliases: []string{}},
 			}, Items: []assessment.Decision{{Ref: "s0", Status: "classified", DefinitionRef: "new-alpha"}, {Ref: "s1", Status: "classified", DefinitionRef: "new-gamma"}}, Equivalence: []assessment.Equivalence{}}
@@ -239,7 +239,7 @@ func TestOrganizationRequestTrimsParentRefsWithoutChangingStoredHierarchy(t *tes
 				require.Equal(t, "d1", request.Definitions[0].ParentRef)
 			}
 			require.Equal(t, parent.ID, binding.definitions["d0"].Definition.ParentID)
-			response := assessment.Response{RequestID: request.RequestID, Definitions: []assessment.Definition{}, Items: []assessment.Decision{{Ref: "s0", Status: "classified", DefinitionRef: "d0"}}, Equivalence: []assessment.Equivalence{}}
+			response := assessment.Response{HierarchyUpdates: []assessment.HierarchyUpdate{}, RequestID: request.RequestID, Definitions: []assessment.Definition{}, Items: []assessment.Decision{{Ref: "s0", Status: "classified", DefinitionRef: "d0"}}, Equivalence: []assessment.Equivalence{}}
 			require.NoError(t, assessment.Validate(request, response))
 			publication, err := buildPublication(source.TeamID, ctx, request, response, binding, &receipt)
 			require.NoError(t, err)
@@ -299,7 +299,7 @@ func TestOrganizationPublicationPreservesOriginalSourcesAndStableIDs(t *testing.
 	receipt := unitReceipt(t, ctx.Sources)
 	request, binding, err := service.request(ctx, &receipt)
 	require.NoError(t, err)
-	response := assessment.Response{RequestID: request.RequestID, Definitions: []assessment.Definition{{Ref: "new", Kind: contract.Topic, Key: "storage", Label: "Storage", Aliases: []string{}}}, Items: []assessment.Decision{{Ref: "s0", Status: "classified", DefinitionRef: "new"}, {Ref: "s1", Status: "classified", DefinitionRef: "new"}}, Equivalence: []assessment.Equivalence{{Ref: "p0", Relation: "equivalent"}}}
+	response := assessment.Response{HierarchyUpdates: []assessment.HierarchyUpdate{}, RequestID: request.RequestID, Definitions: []assessment.Definition{{Ref: "new", Kind: contract.Topic, Key: "storage", Label: "Storage", Aliases: []string{}}}, Items: []assessment.Decision{{Ref: "s0", Status: "classified", DefinitionRef: "new"}, {Ref: "s1", Status: "classified", DefinitionRef: "new"}}, Equivalence: []assessment.Equivalence{{Ref: "p0", Relation: "equivalent"}}}
 	require.NoError(t, assessment.Validate(request, response))
 	publication, err := buildPublication(a.TeamID, ctx, request, response, binding, &receipt)
 	require.NoError(t, err)
@@ -330,7 +330,7 @@ func TestOrganizationPublicationPreservesOriginalSourcesAndStableIDs(t *testing.
 	receipt = unitReceipt(t, ctx.Sources)
 	request, binding, err = service.request(ctx, &receipt)
 	require.NoError(t, err)
-	response = assessment.Response{RequestID: request.RequestID, Definitions: []assessment.Definition{}, Items: []assessment.Decision{{Ref: "s0", Status: "classified", DefinitionRef: "d0"}, {Ref: "s1", Status: "classified", DefinitionRef: "d0"}}, Equivalence: []assessment.Equivalence{{Ref: "p0", Relation: "equivalent"}}}
+	response = assessment.Response{HierarchyUpdates: []assessment.HierarchyUpdate{}, RequestID: request.RequestID, Definitions: []assessment.Definition{}, Items: []assessment.Decision{{Ref: "s0", Status: "classified", DefinitionRef: "d0"}, {Ref: "s1", Status: "classified", DefinitionRef: "d0"}}, Equivalence: []assessment.Equivalence{{Ref: "p0", Relation: "equivalent"}}}
 	publication, err = buildPublication(a.TeamID, ctx, request, response, binding, &receipt)
 	require.NoError(t, err)
 	require.Empty(t, publication.Changes)

@@ -108,7 +108,7 @@ test("an interrupted nested fault identifies its active step before completion",
 });
 
 test("provider fixture routes organization requests and retains locked classifications and pair constraints", () => {
-  const request = structuredRequest("ontology_organization_v1", {
+  const request = structuredRequest("ontology_organization_v2", {
     request_id: "organization-fixture",
     definitions: [{ ref: "locked-topic", kind: "topic", base_entity_kind: "" }],
     items: [{ ref: "evidence-a", kind: "evidence", locked_definition_ref: "locked-topic" }, { ref: "entity-a", kind: "entity", entity_kind: "project" }],
@@ -116,6 +116,7 @@ test("provider fixture routes organization requests and retains locked classific
   });
   const response = fixtureChatResponse(request);
   assert.equal(response.request_id, "organization-fixture");
+  assert.deepEqual(response.hierarchy_updates, []);
   assert.equal(response.items[0].definition_ref, "locked-topic");
   assert.equal(response.definitions[0].base_entity_kind, "project");
   assert.deepEqual(response.equivalence.map((pair) => pair.relation), ["distinct", "equivalent", "distinct"]);

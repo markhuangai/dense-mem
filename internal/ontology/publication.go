@@ -12,7 +12,8 @@ import (
 func buildPublication(teamID string, context contract.OrganizationContext, request assessment.Request, response assessment.Response, binding requestBinding, receipt *contract.OrganizationReceipt) (contract.Publication, error) {
 	publication := contract.Publication{OperationKey: receipt.OperationKey, ExpectedRevision: context.Revision, Reason: "validated existing-memory organization"}
 	current := map[string]contract.RecordView{}
-	for _, record := range context.Records {
+	records := append(append([]contract.RecordView(nil), context.Candidates...), context.Records...)
+	for _, record := range records {
 		current[record.ID] = record
 	}
 	changes := map[string]contract.Record{}
@@ -21,7 +22,7 @@ func buildPublication(teamID string, context contract.OrganizationContext, reque
 		definitions[ref] = record
 	}
 	for _, definition := range response.Definitions {
-		record, err := resolveDefinition(proposedDefinition(teamID, definition), context.Records)
+		record, err := resolveDefinition(proposedDefinition(teamID, definition), records)
 		if err != nil {
 			return publication, err
 		}
@@ -32,8 +33,11 @@ func buildPublication(teamID string, context contract.OrganizationContext, reque
 		if previous, ok := current[record.ID]; ok && previous.Current && reflect.DeepEqual(previous.Record, record) {
 			continue
 		}
-		if definition.ParentRef != "" && record.Definition.ParentRelation == "" {
-			record.Definition.ParentID = definitions[definition.ParentRef].ID
+		if _, accepted := current[record.ID]; !accepted {
+			record.Definition.ParentRelation = definition.ParentRelation
+			if definition.ParentRef != "" {
+				record.Definition.ParentID = definitions[definition.ParentRef].ID
+			}
 		}
 		for _, decision := range response.Items {
 			if decision.DefinitionRef == definition.Ref {
@@ -47,6 +51,38 @@ func buildPublication(teamID string, context contract.OrganizationContext, reque
 		changes[record.ID] = record
 		definitions[definition.Ref] = record
 	}
+	for _, update := range response.HierarchyUpdates {
+		record, exists := definitions[update.DefinitionRef]
+		if !exists || record.Definition == nil {
+			return publication, contract.ErrInvalid
+		}
+		if _, duplicate := changes[record.ID]; duplicate {
+			return publication, contract.ErrConflict
+		}
+		definition := *record.Definition
+		definition.ParentID, definition.ParentRelation = "", update.ParentRelation
+		if update.ParentRef != "" {
+			parent, exists := definitions[update.ParentRef]
+			if !exists || parent.Definition == nil {
+				return publication, contract.ErrInvalid
+			}
+			definition.ParentID = parent.ID
+		}
+		if reflect.DeepEqual(record.Definition, &definition) {
+			continue
+		}
+		record.Definition, record.Dependencies = &definition, nil
+		changes[record.ID], definitions[update.DefinitionRef] = record, record
+	}
+	definitionRecords := map[string]contract.Record{}
+	for id, view := range current {
+		if view.Definition != nil && !view.Retired {
+			definitionRecords[id] = view.Record
+		}
+	}
+	for _, record := range definitions {
+		definitionRecords[record.ID] = record
+	}
 	add := func(record contract.Record) {
 		previous, ok := current[record.ID]
 		if ok && previous.Current && sameOrganizationRecord(previous.Record, record) {
@@ -59,6 +95,21 @@ func buildPublication(teamID string, context contract.OrganizationContext, reque
 		if decision.Status == "ambiguous" {
 			outcome.Status = "ambiguous"
 			outcome.Reason = "classification_ambiguous"
+			for _, view := range context.Records {
+				if !view.Current || view.Assignment == nil || contract.SourceKey(view.Assignment.Source) != contract.SourceKey(binding.sources[decision.Ref].SourceHandle) {
+					continue
+				}
+				changed, err := refreshOrganizationDefinition(view.Assignment.DefinitionID, definitionRecords, changes, nil)
+				if err != nil {
+					return publication, err
+				}
+				if changed {
+					record := view.Record
+					record.Dependencies = nil
+					changes[record.ID] = record
+				}
+				outcome.RecordIDs = append(outcome.RecordIDs, view.ID)
+			}
 			continue
 		}
 		source := binding.sources[decision.Ref]
@@ -71,7 +122,15 @@ func buildPublication(teamID string, context contract.OrganizationContext, reque
 			}
 		}
 		record := contract.Record{ID: id, Kind: contract.AssignmentKind, Assignment: &contract.Assignment{Source: source.SourceHandle, DefinitionID: definition.ID}, Sources: []contract.SourceDependency{dependencyFor(source, receipt.Sources)}}
-		add(record)
+		definitionChanged, err := refreshOrganizationDefinition(definition.ID, definitionRecords, changes, nil)
+		if err != nil {
+			return publication, err
+		}
+		if definitionChanged {
+			changes[record.ID] = record
+		} else {
+			add(record)
+		}
 		outcome.RecordIDs = append(outcome.RecordIDs, id)
 		if _, changed := changes[id]; changed {
 			outcome.Status = "organized"
@@ -187,6 +246,33 @@ func buildPublication(teamID string, context contract.OrganizationContext, reque
 	return publication, nil
 }
 
+func refreshOrganizationDefinition(id string, definitions, changes map[string]contract.Record, path map[string]bool) (bool, error) {
+	record, exists := definitions[id]
+	if !exists || record.Definition == nil {
+		return false, contract.ErrInvalid
+	}
+	if path == nil {
+		path = map[string]bool{}
+	}
+	if path[id] || len(path) > contract.MaxParentDepth {
+		return false, contract.ErrInvalid
+	}
+	path[id] = true
+	defer delete(path, id)
+	if record.Kind != contract.Topic && record.Definition.ParentID != "" {
+		parentChanged, err := refreshOrganizationDefinition(record.Definition.ParentID, definitions, changes, path)
+		if err != nil {
+			return false, err
+		}
+		if _, changed := changes[id]; parentChanged && !changed {
+			record.Dependencies = nil
+			changes[id] = record
+		}
+	}
+	_, changed := changes[id]
+	return changed, nil
+}
+
 func proposedDefinition(teamID string, definition assessment.Definition) contract.Record {
 	return contract.Record{ID: contract.OrganizationRecordID(teamID, definition.Kind, contract.NormalizeName(definition.Key)), Kind: definition.Kind,
 		Definition: &contract.Definition{Key: definition.Key, Label: definition.Label, Description: definition.Description, Aliases: definition.Aliases, BaseEntityKind: definition.BaseEntityKind}}
@@ -224,10 +310,8 @@ func resolveDefinition(record contract.Record, records []contract.RecordView) (c
 		}
 		record.ID = matched.ID
 		record.Definition.Key = matched.Definition.Key
-		if matched.Definition.ParentRelation != "" {
-			record.Definition.ParentID = matched.Definition.ParentID
-			record.Definition.ParentRelation = matched.Definition.ParentRelation
-		}
+		record.Definition.ParentID = matched.Definition.ParentID
+		record.Definition.ParentRelation = matched.Definition.ParentRelation
 	}
 	return record, nil
 }

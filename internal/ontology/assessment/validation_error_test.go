@@ -17,8 +17,8 @@ func TestOrganizationDecodeValidationDiagnostics(t *testing.T) {
 	encoded, err := json.Marshal(response)
 	require.NoError(t, err)
 	for name, raw := range map[string]string{
-		"syntax": `{`, "wrong_type": `{"request_id":[],"definitions":[],"items":[],"equivalence":[]}`, "trailing": string(encoded) + " {}", "null": "null",
-		"unknown":   `{"request_id":"request","definitions":[],"items":[],"equivalence":[],"synthetic-provider-secret raw-source-canary":true}`,
+		"syntax": `{`, "wrong_type": `{"request_id":[],"definitions":[],"items":[],"equivalence":[],"hierarchy_updates":[]}`, "trailing": string(encoded) + " {}", "null": "null",
+		"unknown":   `{"request_id":"request","definitions":[],"items":[],"equivalence":[],"hierarchy_updates":[],"synthetic-provider-secret raw-source-canary":true}`,
 		"duplicate": `{"synthetic-provider-secret":1,"synthetic-provider-secret":2}`,
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -32,7 +32,7 @@ func TestOrganizationDecodeValidationDiagnostics(t *testing.T) {
 	}
 	for _, tc := range []struct{ raw, field, family, message string }{
 		{`{}`, "request_id", "request_id", "is required"},
-		{`{"request_id":"request","items":[],"equivalence":[]}`, "definitions", "definitions", "is required"},
+		{`{"request_id":"request","items":[],"equivalence":[],"hierarchy_updates":[]}`, "definitions", "definitions", "is required"},
 		{strings.Replace(string(encoded), `"parent_ref":"",`, "", 1), "definitions[0].parent_ref", "definitions.parent_ref", "is required"},
 		{strings.Replace(string(encoded), `"reason":""`, `"reason":null`, 1), "items[0].reason", "items.reason", "must not be null"},
 	} {

@@ -2394,98 +2394,82 @@
     {
       "id": "repository/TestOntologyManagementAuditFailureIsAtomic",
       "run": "^TestOntologyManagementAuditFailureIsAtomic$",
-      "phase": "scenario",
-      "scenario": "ontology_management"
+      "phase": "precheck"
     },
     {
       "id": "repository/TestOntologyManagementCompetingDraftsAndPublications",
       "run": "^TestOntologyManagementCompetingDraftsAndPublications$",
-      "phase": "scenario",
-      "scenario": "ontology_management"
+      "phase": "precheck"
     },
     {
       "id": "repository/TestOntologyManagementCompetingSavesKeepLosingEdits",
       "run": "^TestOntologyManagementCompetingSavesKeepLosingEdits$",
-      "phase": "scenario",
-      "scenario": "ontology_management"
+      "phase": "precheck"
     },
     {
       "id": "repository/TestOntologyManagementCorrectionWhileMaintenanceInFlight",
       "run": "^TestOntologyManagementCorrectionWhileMaintenanceInFlight$",
-      "phase": "scenario",
-      "scenario": "ontology_management"
+      "phase": "precheck"
     },
     {
       "id": "repository/TestOntologyManagementDraftIsolationReplayAndRLS",
       "run": "^TestOntologyManagementDraftIsolationReplayAndRLS$",
-      "phase": "scenario",
-      "scenario": "ontology_management"
+      "phase": "precheck"
     },
     {
       "id": "repository/TestOntologyManagementEditAndUnpinTogether",
       "run": "^TestOntologyManagementEditAndUnpinTogether$",
-      "phase": "scenario",
-      "scenario": "ontology_management"
+      "phase": "precheck"
     },
     {
       "id": "repository/TestOntologyManagementExcludesManagersOwnPrivateSpaces",
       "run": "^TestOntologyManagementExcludesManagersOwnPrivateSpaces$",
-      "phase": "scenario",
-      "scenario": "ontology_management"
+      "phase": "precheck"
     },
     {
       "id": "repository/TestOntologyManagementHTTPPersistedWorkflow",
       "run": "^TestOntologyManagementHTTPPersistedWorkflow$",
-      "phase": "scenario",
-      "scenario": "ontology_management"
+      "phase": "precheck"
     },
     {
       "id": "repository/TestOntologyManagementPinUnpinRollbackAndHistory",
       "run": "^TestOntologyManagementPinUnpinRollbackAndHistory$",
-      "phase": "scenario",
-      "scenario": "ontology_management"
+      "phase": "precheck"
     },
     {
       "id": "repository/TestOntologyManagementPredicateLookupBeyondFirstPage",
       "run": "^TestOntologyManagementPredicateLookupBeyondFirstPage$",
-      "phase": "scenario",
-      "scenario": "ontology_management"
+      "phase": "precheck"
     },
     {
       "id": "repository/TestOntologyManagementPreviewsAreBoundedAndPreserveOtherGroups",
       "run": "^TestOntologyManagementPreviewsAreBoundedAndPreserveOtherGroups$",
-      "phase": "scenario",
-      "scenario": "ontology_management"
+      "phase": "precheck"
     },
     {
       "id": "repository/TestOntologyManagementPrivateForeignAndStaleSources",
       "run": "^TestOntologyManagementPrivateForeignAndStaleSources$",
-      "phase": "scenario",
-      "scenario": "ontology_management"
+      "phase": "precheck"
     },
     {
       "id": "repository/TestOntologyManagementRejectsCyclesAndExplicitReplacementCollisions",
       "run": "^TestOntologyManagementRejectsCyclesAndExplicitReplacementCollisions$",
-      "phase": "scenario",
-      "scenario": "ontology_management"
+      "phase": "precheck"
     },
     {
       "id": "repository/TestOntologyManagementReplacesAdvancedSourceAndRemovesWithdrawnCorrection",
       "run": "^TestOntologyManagementReplacesAdvancedSourceAndRemovesWithdrawnCorrection$",
-      "phase": "scenario",
-      "scenario": "ontology_management"
+      "phase": "precheck"
     },
     {
       "id": "repository/TestOntologyManagementRetiredGroupSplitsIntoDistinctRecords",
       "run": "^TestOntologyManagementRetiredGroupSplitsIntoDistinctRecords$",
-      "phase": "scenario",
-      "scenario": "ontology_management"
+      "phase": "precheck"
     },
     {
       "id": "repository/TestOntologyManagementStatusCountsOnlyAuthenticatedTeam",
       "run": "^TestOntologyManagementStatusCountsOnlyAuthenticatedTeam$",
-      "phase": "scenario",
-      "scenario": "ontology_management"
+      "phase": "precheck"
     },
     {
       "id": "repository/TestOntologyManagerOverridesAndRollback",
@@ -2540,14 +2524,12 @@
     {
       "id": "repository/TestOntologyOrganizationPreservesPerRecordDependencyBounds",
       "run": "^TestOntologyOrganizationPreservesPerRecordDependencyBounds$",
-      "phase": "scenario",
-      "scenario": "ontology_organization"
+      "phase": "precheck"
     },
     {
       "id": "repository/TestOntologyOrganizationPreservesValidLargeSourceContext",
       "run": "^TestOntologyOrganizationPreservesValidLargeSourceContext$",
-      "phase": "scenario",
-      "scenario": "ontology_organization"
+      "phase": "precheck"
     },
     {
       "id": "repository/TestOntologyOrganizationRejectsSplitGroupIdentityConflict",
@@ -2597,8 +2579,7 @@
     {
       "id": "repository/TestOntologyUnavailableSnapshotRetainsScopedHandleForMaintenance",
       "run": "^TestOntologyUnavailableSnapshotRetainsScopedHandleForMaintenance$",
-      "phase": "scenario",
-      "scenario": "ontology_organization"
+      "phase": "precheck"
     },
     {
       "id": "repository/TestOntologyVocabularyUsesCurrentCandidateWindow",
@@ -2673,98 +2654,82 @@
     {
       "id": "repository/TestRecallOntologyBatchKeepsActivePredicateVersions",
       "run": "^TestRecallOntologyBatchKeepsActivePredicateVersions$",
-      "phase": "scenario",
-      "scenario": "ontology_organization"
+      "phase": "precheck"
     },
     {
       "id": "repository/TestRecallOntologyDiscoveryAliasesAndTemporalFallback",
       "run": "^TestRecallOntologyDiscoveryAliasesAndTemporalFallback$",
-      "phase": "scenario",
-      "scenario": "ontology_organization"
+      "phase": "precheck"
     },
     {
       "id": "repository/TestRecallOntologyDiscoveryHydrationEnforcesEligibilityAndState",
       "run": "^TestRecallOntologyDiscoveryHydrationEnforcesEligibilityAndState$",
-      "phase": "scenario",
-      "scenario": "ontology_organization"
+      "phase": "precheck"
     },
     {
       "id": "repository/TestRecallOntologyFeedbackAlternatesDoNotInflateResults",
       "run": "^TestRecallOntologyFeedbackAlternatesDoNotInflateResults$",
-      "phase": "scenario",
-      "scenario": "ontology_organization"
+      "phase": "precheck"
     },
     {
       "id": "repository/TestRecallOntologyFrozenCohort",
       "run": "^TestRecallOntologyFrozenCohort$",
-      "phase": "scenario",
-      "scenario": "ontology_organization"
+      "phase": "precheck"
     },
     {
       "id": "repository/TestRecallOntologyGroupingKnownIDsAndStaleSources",
       "run": "^TestRecallOntologyGroupingKnownIDsAndStaleSources$",
-      "phase": "scenario",
-      "scenario": "ontology_organization"
+      "phase": "precheck"
     },
     {
       "id": "repository/TestRecallOntologyHydrationUsesOneSnapshotAcrossRetraction",
       "run": "^TestRecallOntologyHydrationUsesOneSnapshotAcrossRetraction$",
-      "phase": "scenario",
-      "scenario": "ontology_organization"
+      "phase": "precheck"
     },
     {
       "id": "repository/TestRecallOntologyManagementLockedCohort",
       "run": "^TestRecallOntologyManagementLockedCohort$",
-      "phase": "scenario",
-      "scenario": "ontology_management"
+      "phase": "precheck"
     },
     {
       "id": "repository/TestRecallOntologyMigratedAliasRemainsIneligibleWithCurrentProjection",
       "run": "^TestRecallOntologyMigratedAliasRemainsIneligibleWithCurrentProjection$",
-      "phase": "scenario",
-      "scenario": "ontology_organization"
+      "phase": "precheck"
     },
     {
       "id": "repository/TestRecallOntologyOptionalFailureAndRequiredFailureRemainDistinct",
       "run": "^TestRecallOntologyOptionalFailureAndRequiredFailureRemainDistinct$",
-      "phase": "scenario",
-      "scenario": "ontology_organization"
+      "phase": "precheck"
     },
     {
       "id": "repository/TestRecallOntologyPrefetchedGroupsReadNewEvidenceAndReauthorize",
       "run": "^TestRecallOntologyPrefetchedGroupsReadNewEvidenceAndReauthorize$",
-      "phase": "scenario",
-      "scenario": "ontology_organization"
+      "phase": "precheck"
     },
     {
       "id": "repository/TestRecallOntologyPrivateForeignAndOldGenerationSources",
       "run": "^TestRecallOntologyPrivateForeignAndOldGenerationSources$",
-      "phase": "scenario",
-      "scenario": "ontology_organization"
+      "phase": "precheck"
     },
     {
       "id": "repository/TestRecallOntologyPunctuatedKeysAndAliases",
       "run": "^TestRecallOntologyPunctuatedKeysAndAliases$",
-      "phase": "scenario",
-      "scenario": "ontology_organization"
+      "phase": "precheck"
     },
     {
       "id": "repository/TestRecallOntologyReaderResetsBetweenTransactions",
       "run": "^TestRecallOntologyReaderResetsBetweenTransactions$",
-      "phase": "scenario",
-      "scenario": "ontology_organization"
+      "phase": "precheck"
     },
     {
       "id": "repository/TestRecallOntologyRelationshipDiscoveryPreservesSemanticGroups",
       "run": "^TestRecallOntologyRelationshipDiscoveryPreservesSemanticGroups$",
-      "phase": "scenario",
-      "scenario": "ontology_organization"
+      "phase": "precheck"
     },
     {
       "id": "repository/TestRecallOntologySourceRevisionCorrectionAndDefinitionStaleness",
       "run": "^TestRecallOntologySourceRevisionCorrectionAndDefinitionStaleness$",
-      "phase": "scenario",
-      "scenario": "ontology_organization"
+      "phase": "precheck"
     },
     {
       "id": "repository/TestRecallReadBenchmarkCountsTransactionStatements",

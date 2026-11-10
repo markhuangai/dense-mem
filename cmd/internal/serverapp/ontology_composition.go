@@ -21,7 +21,7 @@ func buildOntologyMaintenance(store ontologyMaintenanceStore, config ontology.Ma
 		Diagnostics: diagnostics, Organizer: func(model string, contextWindowTokens int64, accounting assessment.AttemptAccounting) *ontology.Service {
 			configured := limits
 			configured.ProviderModel = model
-			return ontology.NewService(store, assessment.NewProviderWithAccounting(transport, model, configured, accounting, int(contextWindowTokens)))
+			return ontology.NewService(store, assessment.NewProviderWithAccounting(transport, model, configured, accounting, int(contextWindowTokens))).WithDiagnostics(diagnostics.Observe)
 		},
 	})
 }

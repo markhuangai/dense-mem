@@ -40,6 +40,7 @@ type MaintenanceDependencies struct {
 }
 
 type MaintenanceDiagnosticCapture struct {
+	Observe       assessment.Observer
 	NewRecorder   func() modelprovider.SnapshotRecorder
 	RecordFailure func(context.Context, contract.MaintenanceClaim, contract.OrganizationResult, []modelprovider.ProviderExchange) error
 }
@@ -309,6 +310,7 @@ func (s *MaintenanceService) executeBatch(ctx context.Context, work maintenanceW
 	}()
 	accounting := &maintenanceAttemptAccounting{repository: s.deps.Repository, claim: claim, now: s.deps.Now, admitted: map[int]bool{}}
 	organizer := s.deps.Organizer(work.policy.Model, work.policy.ContextWindowTokens, accounting)
+	organizer.policy = &work.policy
 	assessmentCtx := observability.WithAIOperation(claimCtx, observability.AIOperationOntologyOrganization, len(claim.Sources))
 	result, runErr = organizer.Organize(assessmentCtx, claim.TeamID, contract.OrganizationInput{OperationKey: "maintenance:" + claim.ID, Sources: claim.Sources})
 	s.logFreshnessRejection(ctx, claim, result)

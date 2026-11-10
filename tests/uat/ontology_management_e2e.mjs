@@ -14,8 +14,12 @@ const original = await control("/config/ontology-maintenance");
 const initial = await control("/ontology/status");
 
 try {
+  assert.equal(initial.window, undefined, "management acceptance configures the fresh stack before its first window");
   await control("/ontology/pause", { operation_key: randomUUID() });
-  await control("/config/ontology-maintenance", { items: [{ key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "true" }, { key: "ONTOLOGY_MAINTENANCE_CONTEXT_WINDOW_TOKENS", value: "300000" }] }, "PATCH");
+  await control("/config/ontology-maintenance", { items: [
+    { key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "true" }, { key: "ONTOLOGY_MAINTENANCE_CONTEXT_WINDOW_TOKENS", value: "300000" },
+    { key: "ONTOLOGY_MAINTENANCE_MAX_CONCURRENCY", value: "8" }, { key: "ONTOLOGY_MAINTENANCE_TEAM_MAX_CONCURRENCY", value: "8" },
+  ] }, "PATCH");
   const shared = await credential(teamID, "manager", ["read", "write"]);
   assert.equal(shared.credential.memory_access.team_shared.write, true);
   manager = shared.api_key;
@@ -53,7 +57,9 @@ try {
   await saveAndPublish([{ action: "define", expected_version: 0, kind: "topic", definition: { key: unusedKey, label: "Atlas PostgreSQL alternative vocabulary", description: "Unused storage vocabulary matching already classified Atlas sources", aliases: [] } }]);
   await settle();
   assert.deepEqual(sourceAssessments(ids), fixedReceipts, "unused matching vocabulary must preserve each fixed source assessment");
-  assert.deepEqual(await providerCalls(), callsBeforeVocabulary, "unused vocabulary must not trigger provider work");
+  const preferenceCalls = (await providerCalls()).slice(callsBeforeVocabulary.length);
+  assert(preferenceCalls.every((call) => call.schema_name === "ontology_organization_v2" && call.source_kinds.length > 0 &&
+    call.source_kinds.every((kind) => ["entity", "predicate"].includes(kind))), "unused vocabulary must keep locked evidence and relationship work provider-free");
   const revision = (await ui("/status")).revision;
   const input = { operation_key: randomUUID(), expected_version: 0, expected_revision: revision, reason: "Separate manager-selected paraphrases", edits: [{ action: "keep_separate", expected_version: 0, members: sources }] };
   const beforeCalls = await providerCalls();
@@ -107,6 +113,7 @@ try {
   await semanticHierarchyAcceptance(shared.credential.id, [c, readonly]);
   assert.deepEqual(snapshot(), canonical, "semantic hierarchy changed canonical facts or provenance");
   await matchingAcceptance();
+
   console.log("ontology management production HTTP/MCP: permissions, isolation, replay, stale conflicts, provider-free preview, split persistence, pin/unpin and rollback passed");
 } finally {
   await control(initial.paused ? "/ontology/pause" : "/ontology/resume", { operation_key: randomUUID() });

@@ -113,7 +113,7 @@ func TestOrganizationServiceWithPostgres(t *testing.T) {
 				w.WriteHeader(http.StatusBadRequest)
 				return
 			}
-			response := assessment.Response{RequestID: request.RequestID, Definitions: []assessment.Definition{}, Items: []assessment.Decision{}, Equivalence: []assessment.Equivalence{}}
+			response := assessment.Response{HierarchyUpdates: []assessment.HierarchyUpdate{}, RequestID: request.RequestID, Definitions: []assessment.Definition{}, Items: []assessment.Decision{}, Equivalence: []assessment.Equivalence{}}
 			kind, key, baseKind := contract.Topic, "postgresql", ""
 			if request.Items[0].Kind == contract.EntitySource {
 				kind, key, baseKind = contract.EntityClass, request.Items[0].EntityKind, request.Items[0].EntityKind

@@ -86,13 +86,13 @@ const server = createServer(async (request, response) => {
   if (handleDecisionFixture(request, response, payload)) return;
 
   if (request.method === "POST" && request.url === "/ontology-fixture") {
-    if (!["normal", "matching", "ambiguous", "fail-three-then-success", "hold"].includes(payload.mode)) {
+    if (!["normal", "matching", "ambiguous", "fail-three-then-success", "hold", "refine", "refine-repair", "refine-malformed", "refine-hold"].includes(payload.mode)) {
       sendJSON(response, 400, { error: "invalid ontology fixture mode" });
       return;
     }
     ontologyMode = payload.mode;
-    if (payload.mode !== "hold") for (const release of heldOntologyRequests) release();
-    if (payload.mode === "hold") maxActiveOntologyRequests = activeOntologyRequests;
+    if (!["hold", "refine-hold"].includes(payload.mode)) for (const release of heldOntologyRequests) release();
+    if (["hold", "refine-hold"].includes(payload.mode)) maxActiveOntologyRequests = activeOntologyRequests;
     ontologyFailuresRemaining = payload.mode === "fail-three-then-success" ? 3 : 0;
     sendJSON(response, 200, { mode: ontologyMode });
     return;
@@ -107,6 +107,8 @@ const server = createServer(async (request, response) => {
       schema_name: typeof payload.response_format?.json_schema?.name === "string" ? payload.response_format.json_schema.name : "",
       fault: routeFault,
       generated_fields: Object.keys(payload.response_format?.json_schema?.schema?.properties || {}),
+      source_kinds: payload.response_format?.json_schema?.name === "ontology_organization_v2"
+        ? [...new Set((assessmentInput(payload).items || []).map((item) => item.kind))] : [],
     });
   }
   let embeddingFaultCall = 0;
@@ -208,11 +210,11 @@ const server = createServer(async (request, response) => {
       return;
     }
     let assessment;
-    if (payload.response_format?.json_schema?.name === "ontology_organization_v1") {
+    if (payload.response_format?.json_schema?.name === "ontology_organization_v2") {
       activeOntologyRequests += 1;
       maxActiveOntologyRequests = Math.max(maxActiveOntologyRequests, activeOntologyRequests);
       try {
-        if (ontologyMode === "hold") await new Promise((resolve) => {
+        if (["hold", "refine-hold"].includes(ontologyMode)) await new Promise((resolve) => {
           const release = () => { clearTimeout(timer); heldOntologyRequests.delete(release); resolve(); };
           const timer = setTimeout(release, 30000);
           heldOntologyRequests.add(release);
@@ -295,7 +297,7 @@ function fixtureChatResponse(payload, requestFault = "none", attempt = 1) {
   if (schemaName === "dense_mem_session_linking_v1") return fixtureSessionLinking(structuredInput(payload, (input) => Array.isArray(input.entities)));
   if (schemaName === "community_summary") return fixtureCommunitySummary(payload);
   if (schemaName === "dense_mem_dream_generation_response") return fixtureDreamGeneration(payload);
-  if (schemaName === "ontology_organization_v1") return fixtureOntologyOrganization(payload);
+  if (schemaName === "ontology_organization_v2") return fixtureOntologyOrganization(payload, attempt);
   const assessment = fixtureAssessment(assessmentInput(payload), requestFault, attempt);
   if (requestFault === "routed-field-repair" || requestFault === "routed-field-exhausted") {
     const repair = structuredInput(payload, (input) => Array.isArray(input.validation_errors));
@@ -400,15 +402,15 @@ function fixtureChatResponse(payload, requestFault = "none", attempt = 1) {
   };
 }
 
-function fixtureOntologyOrganization(payload) {
+function fixtureOntologyOrganization(payload, attempt = 1) {
   const input = structuredInput(payload, (value) => Array.isArray(value.items) && Array.isArray(value.pairs));
   if (ontologyFailuresRemaining > 0) {
     ontologyFailuresRemaining -= 1;
-    return { request_id: input.request_id, definitions: [], items: [], equivalence: [] };
+    return { request_id: input.request_id, definitions: [], items: [], equivalence: [], hierarchy_updates: [] };
   }
   if (ontologyMode === "ambiguous") {
     return {
-      request_id: input.request_id, definitions: [],
+      request_id: input.request_id, definitions: [], hierarchy_updates: [],
       items: input.items.map((item) => item.locked_definition_ref
         ? { ref: item.ref, status: "classified", definition_ref: item.locked_definition_ref, reason: "" }
         : { ref: item.ref, status: "ambiguous", definition_ref: "", reason: "classification_uncertain" }),
@@ -425,18 +427,32 @@ function fixtureOntologyOrganization(payload) {
       ? (/\bheliostat\b/i.test(item.text) ? "suntracker" : /\babout\b/i.test(item.text) ? "about" : /\band\b/i.test(item.text) ? "conjunctioncatalog" : "grammarnoise")
       : topicKey;
     const signature = `${kind}:${base}:${kind === "topic" ? topicKey : ""}`;
-    let ref = item.locked_definition_ref || input.definitions.find((definition) => definition.kind === kind && (kind !== "entity_class" || definition.base_entity_kind === base) && (kind !== "topic" || definition.key === candidateKey))?.ref || created.get(signature);
+    let ref = item.locked_definition_ref || item.preferred_definition_ref || input.definitions.find((definition) => definition.kind === kind && (kind !== "entity_class" || definition.base_entity_kind === base) && (kind !== "topic" || definition.key === candidateKey))?.ref || created.get(signature);
     if (!ref) {
       ref = `new-definition-${definitions.length}`;
       created.set(signature, ref);
       const key = base || (kind === "predicate_concept" ? "registered-predicates" : topicKey);
-      definitions.push({ ref, kind, key, label: key.replaceAll("-", " "), description: "Synthetic organization vocabulary", aliases: kind === "topic" ? [topicKey === "memory-storage" ? "database platform" : "coordination platform"] : [], parent_ref: "", base_entity_kind: base });
+      definitions.push({ ref, kind, key, label: key.replaceAll("-", " "), description: "Synthetic organization vocabulary", aliases: kind === "topic" ? [topicKey === "memory-storage" ? "database platform" : "coordination platform"] : [], parent_ref: "", parent_relation: "", base_entity_kind: base });
     }
     return { ref: item.ref, status: "classified", definition_ref: ref, reason: "" };
   });
+  const hierarchy_updates = [];
+  if (ontologyMode.startsWith("refine")) {
+    for (const item of input.items) {
+      if (item.kind !== "entity" || item.entity_kind !== "project" || !JSON.stringify(item).includes("RefinementV2") || item.locked_definition_ref) continue;
+      const target = input.definitions.find((definition) => definition.key === "refinement-v2-project");
+      const parent = input.definitions.find((definition) => definition.key === "project");
+      if (!target || !parent) continue;
+      const decision = items.find((decision) => decision.ref === item.ref);
+      decision.definition_ref = target.ref;
+      decision.reason = "The supplied project name explicitly identifies a software project.";
+      if (!hierarchy_updates.some((update) => update.definition_ref === target.ref)) hierarchy_updates.push({ definition_ref: target.ref, parent_ref: parent.ref, parent_relation: "subclass_of", reason: "The explicit software project is a project." });
+    }
+    if (hierarchy_updates.length && (ontologyMode === "refine-malformed" || (ontologyMode === "refine-repair" && attempt === 1))) hierarchy_updates[0].parent_ref = "outside-allowlist";
+  }
   const sourceItems = new Map(input.items.map((item) => [item.ref, item]));
   const equivalentFixtureTexts = new Set(["Atlas stores PostgreSQL data.", "Atlas uses PostgreSQL for data storage."]);
-  return { request_id: input.request_id, definitions, items, equivalence: input.pairs.map((pair) => {
+  return { request_id: input.request_id, definitions, items, hierarchy_updates, equivalence: input.pairs.map((pair) => {
     const left = sourceItems.get(pair.left_ref);
     const right = sourceItems.get(pair.right_ref);
     const equivalent = left?.kind === "evidence" && right?.kind === "evidence" && equivalentFixtureTexts.has(left.text) && equivalentFixtureTexts.has(right.text);

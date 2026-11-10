@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { captureRememberFailure } from "./synchronous_write/cases/diagnostics.mjs";
+import { assessmentRecords, captureSemanticAssessmentWindow } from "./ontology_assessment_diagnostics.mjs";
 
 const userURL = required("DENSE_MEM_USER_URL").replace(/\/$/, "");
 const controlURL = required("DENSE_MEM_CONTROL_URL").replace(/\/$/, "");
@@ -11,6 +12,8 @@ const apiKey = required("DENSE_MEM_E2E_API_KEY");
 const teamID = required("DENSE_MEM_E2E_TEAM_ID");
 const failureDirectory = process.env.DENSE_MEM_E2E_REMEMBER_FAILURE_DIR || `/tmp/dense-mem-remember-failures-${randomUUID()}`;
 const credentialTeams = new Map([[apiKey, teamID]]);
+const diagnosticSince = new Date().toISOString();
+const maintenanceObservationAttempts = 300;
 const original = (await control("/config/ontology-maintenance")).data;
 const summaryCallsBefore = await summaryCalls();
 let paused = false;
@@ -59,7 +62,7 @@ try {
   await expectStatus("/ontology/runs", { operation_key: key, max_batches: 2 }, 409);
   let status;
   let projectionCoverage;
-  for (let index = 0; index < 150; index++) {
+  for (let index = 0; index < maintenanceObservationAttempts; index++) {
     status = (await control("/ontology/status")).data;
     if (status.discovery_complete && status.counts.pending === 0 && status.counts.organized > initial.counts.organized) {
       projectionCoverage = (await control(`/teams/${teamID}/community/status`)).data.projection_coverage;
@@ -308,6 +311,12 @@ try {
   console.log(JSON.stringify({ status: "ok", scenario: "ontology_organization", window_id: status.window.id, counts: status.counts, durable_command_replay: true, operator_isolation: true, grouped_recall: true, original_sources_retained: true, private_and_foreign_isolation: true, stale_group_fallback: true, recall_organization_provider_tokens: 0, bounded_ambiguity_run: ambiguousRun.id, retryable_failure_run: failedRun.id }));
 } catch (error) {
   failure = error;
+  try {
+    const window = captureSemanticAssessmentWindow({ project: required("DENSE_MEM_E2E_COMPOSE_PROJECT"), composeFile: required("DENSE_MEM_E2E_COMPOSE_FILE"), since: diagnosticSince,
+      directory: `${failureDirectory}/ontology-organization` });
+    const diagnosticTeams = new Set(credentialTeams.values());
+    for (const record of assessmentRecords(window).filter((record) => diagnosticTeams.has(record.team_id))) console.log(`ontology_semantic_diagnostic_record ${JSON.stringify(record)}`);
+  } catch (captureError) { failure = new AggregateError([error, captureError], "ontology organization failure capture is incomplete"); }
 } finally {
   const failures = failure ? [failure] : [];
   for (const restore of [
@@ -418,10 +427,15 @@ async function rememberFixture(key, content) {
   assert.equal(result.processing_state, "completed");
 }
 async function terminalRun(id) {
-  for (let index = 0; index < 150; index++) {
+  const started = Date.now();
+  console.log(JSON.stringify({ scenario: "ontology_organization", phase: "maintenance_run_wait", run_id: id }));
+  for (let index = 0; index < maintenanceObservationAttempts; index++) {
     const page = (await control("/ontology/runs?limit=200")).data;
     const run = page.runs.find((run) => run.id === id);
-    if (run && ["completed", "incomplete"].includes(run.status)) return run;
+    if (run && ["completed", "incomplete"].includes(run.status)) {
+      console.log(JSON.stringify({ scenario: "ontology_organization", phase: "maintenance_run_terminal", run_id: id, status: run.status, failure_code: run.failure_code, elapsed_ms: Date.now() - started }));
+      return run;
+    }
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
   assert.fail(`maintenance run ${id} did not finish`);
@@ -522,7 +536,7 @@ function assertCompletionTimestamps(batchID, earliest) {
   assert.equal(counts.invalid, 0, "native completion timestamps must follow creation, receipt, and barrier time");
 }
 
-async function pollFinalization(check, label, seconds = 150) {
+async function pollFinalization(check, label, seconds = maintenanceObservationAttempts) {
   for (let index = 0; index < seconds; index++) {
     if (check()) return;
     await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -530,9 +544,9 @@ async function pollFinalization(check, label, seconds = 150) {
   assert.fail(`timed out waiting for ${label}`);
 }
 
-function canonicalFingerprints() {
+function canonicalFingerprints(scopeTeam = teamID) {
   const tables = ["evidence_fragments", "evidence_occurrences", "evidence_sources", "evidence_source_revisions", "entity_records", "entity_names", "value_records", "relationship_records", "relationship_evidence_supports", "relationship_support_decision_events", "evidence_lifecycle_events", "evidence_quarantines"];
-  return postgresQuery(tables.map((table) => `SELECT '${table}',md5(COALESCE(jsonb_agg(to_jsonb(record) ORDER BY to_jsonb(record)::text)::text,'[]')) FROM ${table} AS record WHERE team_id=${sqlLiteral(teamID)}::uuid`).join(";\n"));
+  return postgresQuery(tables.map((table) => `SELECT '${table}',md5(COALESCE(jsonb_agg(to_jsonb(record) ORDER BY to_jsonb(record)::text)::text,'[]')) FROM ${table} AS record WHERE team_id=${sqlLiteral(scopeTeam)}::uuid`).join(";\n"));
 }
 
 async function finalizationBlocker() {

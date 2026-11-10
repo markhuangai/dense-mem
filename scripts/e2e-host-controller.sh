@@ -538,16 +538,18 @@ for (const entry of fs.readdirSync(directory).filter((item) => item.endsWith(".j
     throw new Error(`invalid database case registry ${entry}`);
   }
   const packageCounts = new Map();
+  const selectedCases = [];
   for (const item of fragment.cases) {
     if (item.phase !== "precheck") continue;
+    selectedCases.push(item);
     packageCounts.set(item.package, (packageCounts.get(item.package) || 0) + 1);
   }
   if (packageCounts.size === 0) continue;
   const cases = [...packageCounts.values()].reduce((total, count) => total + count, 0);
   const weight = [...packageCounts.values()].reduce((total, count) => total + Math.ceil(count / batchSize), 0);
-  const caseIds = fragment.cases.filter((item) => item.phase === "precheck").map((item) => item.id);
-  // Community's fanout cohort needs more room than its case count suggests in the bounded six-shard route.
-  const load = shardCount === 6 && capability === "community" ? cases * 4 : cases;
+  const caseIds = selectedCases.map((item) => item.id);
+  // Community fanout and ontology-heavy Recall need more room than their case counts suggest in the bounded six-shard route.
+  const load = shardCount === 6 ? cases * (capability === "community" ? 5 : capability === "recall" ? 2 : 1) : cases;
   records.push({ capability, cases, load, packageCounts, weight, caseIds });
 }
 
@@ -558,15 +560,22 @@ const isolateOntology = ontologyIndex >= 0 && records.length >= 3;
 const caseSelections = [];
 if (shardCount === 6) {
   // Keep discovery measurement isolated and balance measured ontology work across the other two selections.
+  const ontology = records[ontologyIndex];
+  const refinement = ontology?.caseIds.filter((id) => /^repository\/TestOntology(?:AutomaticRefinement|Refinement)/.test(id)) || [];
   const dedicated = [
     "repository/TestOntologyMaintenanceFinalizationAdmissionAndIsolation",
     "repository/TestOntologyMaintenanceLargeBacklogAndFairTurns",
     "repository/TestOntologyMaintenanceReadMeasurement",
     "repository/TestOntologyOrganizationVocabularyAndSourceFences",
-  ];
+    ...[
+      "repository/TestOntologyUnavailableSnapshotRetainsScopedHandleForMaintenance",
+      "repository/TestOntologyOrganizationPreservesValidLargeSourceContext",
+      "repository/TestOntologyOrganizationPreservesPerRecordDependencyBounds",
+    ].filter((id) => ontology?.caseIds.includes(id)),
+    ...refinement,
+  ].sort();
   const measurement = "repository/TestOntologyMaintenanceRevalidationDiscoveryMeasurement";
   const isolated = [...dedicated, measurement];
-  const ontology = records[ontologyIndex];
   if (!ontology || isolated.some((id) => !ontology.caseIds.includes(id)) || ontology.caseIds.length <= isolated.length || records.length < 5) {
     throw new Error("six precheck shards require dedicated ontology cases, discovery measurement, remaining ontology, and four populated capability groups");
   }
@@ -618,7 +627,9 @@ if (shardCount === 6 && groups.some((group) => group.capabilities.length === 0))
 for (const ids of caseSelections) process.stdout.write(`cases:${ids}\n`);
 if (isolateOntology && shardCount === 3) process.stdout.write("ontology\n");
 for (const group of groups) {
-  if (group.capabilities.length > 0) process.stdout.write(`${group.capabilities.join(",")}\n`);
+  if (group.capabilities.length > 0) {
+    process.stdout.write(`${group.capabilities.join(",")}\n`);
+  }
 }
 NODE
 }
@@ -844,7 +855,9 @@ start_stack() (
     fail "failed to write the non-secret client runtime environment"
   fi
 
-  start_stack_helpers "$project" "$source_dir" "$helpers"
+  if [[ "$scenario" != "ontology_upgrade" ]]; then
+    start_stack_helpers "$project" "$source_dir" "$helpers"
+  fi
   write_runtime_compose "$runtime_compose_path" "$project" "$compose_image"
 
   report_phase fixture_preparation "$phase_started" 0

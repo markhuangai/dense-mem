@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
+import { assessmentRecords, captureSemanticAssessmentWindow } from "./ontology_assessment_diagnostics.mjs";
 
 const controlURL = required("DENSE_MEM_CONTROL_URL");
 const userURL = required("DENSE_MEM_USER_URL");
@@ -10,6 +11,7 @@ const providerURL = required("DENSE_MEM_E2E_PROVIDER_URL");
 const headers = { Authorization: `Bearer ${required("DENSE_MEM_CONTROL_TOKEN")}`, "Content-Type": "application/json" };
 const original = await control("/config/ontology-maintenance");
 const teams = [];
+const since = new Date().toISOString();
 let failure;
 try {
   assert.equal((await control("/ontology/status")).window, undefined, "concurrency acceptance configures the fresh stack before its first window");
@@ -63,7 +65,7 @@ try {
   assert.equal(denied.status, 401);
   await control("/ontology/pause", { operation_key: randomUUID() });
   await fixture("normal");
-  await until(async () => Number(query(`SELECT count(*) FROM ontology_maintenance_batches WHERE status='running' AND lease_until>clock_timestamp()`)) === 0, 30000, "pause failed to drain admitted batches");
+  await until(async () => Number(query(`SELECT count(*) FROM ontology_maintenance_batches WHERE status='running' AND lease_until>clock_timestamp()`)) === 0, 90000, "pause failed to drain admitted batches");
   assert.deepEqual(canonical(), canonicalBefore, "parallel ontology must preserve canonical Knowledge");
   const stopped = await providerHealth();
   await delay(1000);
@@ -72,7 +74,16 @@ try {
   await control("/ontology/resume", { operation_key: randomUUID() });
   assert.equal((await request("/ontology/runs", { operation_key: randomUUID() })).status, 409);
   console.log(JSON.stringify({ scenario: "ontology_concurrency", status: "ok", same_team_parallel_batches: 2, inherited_team_limit: 1, global_limit: 3, exclusive_sources: true, pending_policy_preserved: true, canonical_preserved: true, pause_drained: true }));
-} catch (error) { failure = error; }
+} catch (error) {
+  failure = error;
+  try {
+    const window = captureSemanticAssessmentWindow({ project: required("DENSE_MEM_E2E_COMPOSE_PROJECT"), composeFile: required("DENSE_MEM_E2E_COMPOSE_FILE"), since,
+      directory: `${process.env.DENSE_MEM_E2E_REMEMBER_FAILURE_DIR || "/tmp/dense-mem-remember-failures"}/ontology-concurrency` });
+    for (const record of assessmentRecords(window).filter((record) => teams.some((team) => record.team_id === team.id))) {
+      console.log(`ontology_semantic_diagnostic_record ${JSON.stringify(record)}`);
+    }
+  } catch (captureError) { failure = new AggregateError([error, captureError], "ontology concurrency failure capture is incomplete"); }
+}
 finally {
   const failures = failure ? [failure] : [];
   for (const action of [

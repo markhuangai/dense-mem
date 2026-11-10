@@ -184,7 +184,12 @@ run_scenario() {
   docker_cli_paths
   local docker_socket
   docker_socket="$(docker_socket_path)"
+  local ontology_database_capabilities=""
   if [[ "$scenario" == "ontology_organization" || "$scenario" == "ontology_management" ]]; then
+    ontology_database_capabilities="$(database_case_capabilities "$source_dir" scenario "$scenario")" ||
+      fail "ontology database case discovery failed for $scenario"
+  fi
+  if [[ -n "$ontology_database_capabilities" ]]; then
     local go_image
     go_image="$(env_value DENSE_MEM_CI_GO_TEST_IMAGE 2>/dev/null || printf '%s' golang:1.26.9-bookworm)"
     run_go_source_container \

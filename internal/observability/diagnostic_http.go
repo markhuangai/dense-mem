@@ -15,10 +15,25 @@ import (
 
 type exchangeScopeKey struct{}
 
-type ExchangeScope struct{ TeamID, RunID, BatchID string }
+type ExchangeScope struct {
+	TeamID, RunID, BatchID, OperationID, AssessmentID string
+	Attempt                                           int
+	SourceOwnerIDs                                    []string
+}
 
 func WithExchangeScope(ctx context.Context, scope ExchangeScope) context.Context {
 	return context.WithValue(ctx, exchangeScopeKey{}, scope)
+}
+
+func ExchangeScopeFromContext(ctx context.Context) ExchangeScope {
+	scope, _ := ctx.Value(exchangeScopeKey{}).(ExchangeScope)
+	return scope
+}
+
+func WithExchangeAttempt(ctx context.Context, assessmentID string, attempt int) context.Context {
+	scope := ExchangeScopeFromContext(ctx)
+	scope.AssessmentID, scope.Attempt = assessmentID, attempt
+	return WithExchangeScope(ctx, scope)
 }
 
 // DiagnosticHTTPClient preserves transport behavior and only observes bodies
@@ -49,7 +64,7 @@ func (t *diagnosticTransport) RoundTrip(request *http.Request) (*http.Response, 
 	}
 	attrs := []slog.Attr{slog.String("exchange_id", uuid.NewString()), slog.String("invocation_id", requestctx.RememberInvocationIDFromContext(ctx))}
 	if scope, ok := ctx.Value(exchangeScopeKey{}).(ExchangeScope); ok {
-		attrs = append(attrs, slog.String("team_id", scope.TeamID), slog.String("run_id", scope.RunID), slog.String("batch_id", scope.BatchID))
+		attrs = append(attrs, slog.String("team_id", scope.TeamID), slog.String("run_id", scope.RunID), slog.String("batch_id", scope.BatchID), slog.String("operation_id", scope.OperationID), slog.String("assessment_id", scope.AssessmentID), slog.Int("attempt", scope.Attempt), slog.Any("source_owner_ids", scope.SourceOwnerIDs))
 	}
 	var body []byte
 	state := "captured"

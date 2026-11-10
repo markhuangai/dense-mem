@@ -18,7 +18,7 @@ func (d *AssessmentValidation) Valid() bool {
 		(d.ExpectedCount != nil && (*d.ExpectedCount < 0 || *d.ActualCount < 0)) {
 		return false
 	}
-	counted := slices.Contains([]string{"definition_limit", "item_count_mismatch", "equivalence_coverage", "output_limit"}, d.Code)
+	counted := slices.Contains([]string{"definition_limit", "item_count_mismatch", "equivalence_coverage", "hierarchy_update_limit", "output_limit"}, d.Code)
 	if counted != (d.ExpectedCount != nil) {
 		return false
 	}
@@ -28,14 +28,15 @@ func (d *AssessmentValidation) Valid() bool {
 		case "strict_json", "object_decode":
 			return d.FieldFamily == "response"
 		case "array_decode":
-			return slices.Contains([]string{"definitions", "items", "equivalence"}, d.FieldFamily)
+			return slices.Contains([]string{"definitions", "items", "equivalence", "hierarchy_updates"}, d.FieldFamily)
 		case "missing_field":
 			return slices.Contains([]string{
-				"request_id", "definitions", "items", "equivalence",
+				"request_id", "definitions", "items", "equivalence", "hierarchy_updates",
 				"definitions.ref", "definitions.kind", "definitions.key", "definitions.label",
-				"definitions.description", "definitions.aliases", "definitions.parent_ref", "definitions.base_entity_kind",
+				"definitions.description", "definitions.aliases", "definitions.parent_ref", "definitions.parent_relation", "definitions.base_entity_kind",
 				"items.ref", "items.status", "items.definition_ref", "items.reason",
 				"equivalence.ref", "equivalence.relation",
+				"hierarchy_updates.definition_ref", "hierarchy_updates.parent_ref", "hierarchy_updates.parent_relation", "hierarchy_updates.reason",
 			}, d.FieldFamily)
 		}
 	case "validate":
@@ -43,13 +44,15 @@ func (d *AssessmentValidation) Valid() bool {
 		case "request_id_mismatch":
 			return d.FieldFamily == "request_id"
 		case "missing_array":
-			return slices.Contains([]string{"definitions", "items", "equivalence"}, d.FieldFamily)
+			return slices.Contains([]string{"definitions", "items", "equivalence", "hierarchy_updates"}, d.FieldFamily)
 		case "definition_limit", "definition_ref_invalid", "definition_ref_duplicate", "definition_ref_supplied",
 			"definition_parent_ref", "definition_record", "definition_catalog", "definition_unused":
 			return d.FieldFamily == "definitions"
 		case "item_count_mismatch", "item_ref_unknown", "item_ref_duplicate", "item_reason_limit",
-			"item_ambiguous_classification", "item_definition_ref", "item_locked_classification", "item_source_kind", "item_status":
+			"item_ambiguous_classification", "item_definition_ref", "item_locked_classification", "item_source_kind", "item_status", "item_refinement_reason":
 			return d.FieldFamily == "items"
+		case "hierarchy_update_limit", "hierarchy_update_ref", "hierarchy_update_duplicate", "hierarchy_update_unrelated", "hierarchy_update_reason", "hierarchy_update_parent_ref", "hierarchy_update_record":
+			return d.FieldFamily == "hierarchy_updates"
 		case "equivalence_ref", "equivalence_relation", "equivalence_required_relation", "equivalence_coverage", "equivalence_transitivity":
 			return d.FieldFamily == "equivalence"
 		}

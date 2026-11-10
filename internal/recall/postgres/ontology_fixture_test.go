@@ -131,7 +131,7 @@ func (f *recallOntologyFixture) organizerWithAccounting(t testing.TB, meanings m
 		var request assessment.Request
 		require.GreaterOrEqual(t, len(envelope.Messages), 2)
 		require.NoError(t, json.Unmarshal([]byte(envelope.Messages[1].Content), &request))
-		response := assessment.Response{RequestID: request.RequestID, Definitions: []assessment.Definition{}, Items: []assessment.Decision{}, Equivalence: []assessment.Equivalence{}}
+		response := assessment.Response{RequestID: request.RequestID, Definitions: []assessment.Definition{}, Items: []assessment.Decision{}, Equivalence: []assessment.Equivalence{}, HierarchyUpdates: []assessment.HierarchyUpdate{}}
 		definitionRef := ""
 		for _, definition := range request.Definitions {
 			if definition.Kind == ontology.Topic {
