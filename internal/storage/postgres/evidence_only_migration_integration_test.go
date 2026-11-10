@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/markhuangai/dense-mem/internal/jsonstrict"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	"github.com/stretchr/testify/require"
@@ -103,7 +104,7 @@ func assertEvidenceOnlyCatalog(t *testing.T, ctx context.Context, db *sql.DB) {
 	require.Equal(t, true, metadata["retained_fingerprints_verified"])
 	require.Equal(t, "committed", metadata["transaction_outcome"])
 	var temporary int
-	require.NoError(t, db.QueryRowContext(ctx, `SELECT count(*) FROM pg_policy WHERE polname IN ('evidence_only_inventory_read','evidence_only_migration_repair')`).Scan(&temporary))
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT count(*) FROM pg_policy WHERE polname IN ('evidence_only_inventory_read','evidence_only_migration_repair','evidence_only_marker_insert')`).Scan(&temporary))
 	require.Zero(t, temporary)
 }
 
@@ -115,6 +116,21 @@ func TestEvidenceOnlyPostgresFreshInstall(t *testing.T) {
 	assertEvidenceOnlyCatalog(t, ctx, db)
 	require.NoError(t, ValidateStartupMigrationState(ctx, db, MigrationsDir()))
 	require.ErrorContains(t, migrationDown(ctx, db), "irreversible after commit")
+	_, err := db.ExecContext(ctx, `CREATE ROLE evidence_only_marker_writer NOSUPERUSER NOBYPASSRLS;
+ GRANT USAGE ON SCHEMA public TO evidence_only_marker_writer;
+ GRANT INSERT ON v2_compatibility_markers TO evidence_only_marker_writer;
+ GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO evidence_only_marker_writer`)
+	require.NoError(t, err)
+	err = execPostgresTxMode(ctx, db, "migration", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `SET LOCAL ROLE evidence_only_marker_writer`); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO v2_compatibility_markers(marker_kind,version,status) VALUES('evidence_only','dense-mem.v3.0.0','compatible')`)
+		return err
+	})
+	var databaseError *pgconn.PgError
+	require.ErrorAs(t, err, &databaseError)
+	require.Equal(t, "42501", databaseError.Code)
 }
 
 func TestEvidenceOnlyPostgresPopulatedUpgradePreservesEvidenceAndLegacyIdentity(t *testing.T) {
@@ -128,6 +144,11 @@ func TestEvidenceOnlyPostgresPopulatedUpgradePreservesEvidenceAndLegacyIdentity(
 	require.Equal(t, before, evidenceOnlyFingerprints(t, ctx, db))
 	assertEvidenceOnlyCatalog(t, ctx, db)
 	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+		var legacyKeys int
+		if err := tx.QueryRowContext(ctx, `SELECT (metadata->>'legacy_operation_keys')::int FROM v2_compatibility_markers WHERE marker_kind='evidence_only' AND version='dense-mem.v3.0.0'`).Scan(&legacyKeys); err != nil {
+			return err
+		}
+		require.Equal(t, 1, legacyKeys)
 		var key, hash, status, retired string
 		if err := tx.QueryRowContext(ctx, `SELECT idempotency_key,request_hash,status,metadata->>'retired_payload' FROM knowledge_ingests WHERE team_id=$1::uuid AND ingest_id=$2::uuid`, fixture.team, fixture.ingest).Scan(&key, &hash, &status, &retired); err != nil {
 			return err
@@ -193,7 +214,7 @@ func TestEvidenceOnlyPostgresCancellationAfterRemovalRollsBack(t *testing.T) {
 		default:
 		}
 		var waiting bool
-		err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pg_locks WHERE relation='public.v2_compatibility_markers'::regclass AND NOT granted AND mode='RowExclusiveLock')`).Scan(&waiting)
+		err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pg_locks WHERE relation='public.v2_compatibility_markers'::regclass AND NOT granted)`).Scan(&waiting)
 		require.NoError(t, err)
 		return waiting
 	}, 30*time.Second, 20*time.Millisecond)

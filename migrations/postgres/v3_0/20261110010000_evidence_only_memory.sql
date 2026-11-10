@@ -423,9 +423,10 @@ BEGIN
  END IF;
  IF EXISTS(SELECT 1 FROM evidence_only_inventory WHERE disposition='remove' AND to_regclass('public.'||name) IS NOT NULL) THEN RAISE EXCEPTION 'evidence_only_migration_failed: graph catalog remains'; END IF;
  FOR item IN SELECT * FROM evidence_only_triggers LOOP EXECUTE format('ALTER TABLE %I ENABLE TRIGGER %I',item.table_name,item.trigger_name); END LOOP;
- FOR item IN SELECT name FROM evidence_only_inventory WHERE disposition='mixed' LOOP EXECUTE format('DROP POLICY evidence_only_migration_repair ON %I',item.name); END LOOP;
- FOR item IN SELECT name FROM evidence_only_inventory WHERE disposition<>'remove' LOOP EXECUTE format('DROP POLICY evidence_only_inventory_read ON %I',item.name); END LOOP;
 END $verify$;
+CREATE POLICY evidence_only_marker_insert ON v2_compatibility_markers FOR INSERT WITH CHECK (
+ current_setting('app.tx_mode',true)='migration' AND marker_kind='evidence_only'
+ AND version='dense-mem.v3.0.0' AND status='compatible');
 INSERT INTO v2_compatibility_markers(marker_kind,version,status,metadata) VALUES('evidence_only','dense-mem.v3.0.0','compatible',jsonb_build_object(
  'inventory_sha256','a8c4cd81d2538b989553d05f6d4b5559b3de0edcccc706efb7b32b6894089286', 'retained_counts',(SELECT jsonb_object_agg(name,row_count) FROM evidence_only_inventory WHERE disposition='retain'),
  'removed_counts',(SELECT jsonb_object_agg(name,row_count) FROM evidence_only_inventory WHERE disposition='remove'),
@@ -433,6 +434,13 @@ INSERT INTO v2_compatibility_markers(marker_kind,version,status,metadata) VALUES
  'retained_fingerprints_verified',true,'legacy_operation_keys',(SELECT count(*) FROM knowledge_ingests WHERE idempotency_key<>''),
  'rebound_ontology_records',(SELECT count(*) FROM evidence_only_rebind_records),
  'resumable_sessions',(SELECT count(*) FROM evidence_only_sessions WHERE resumable),'transaction_outcome','committed'));
+DROP POLICY evidence_only_marker_insert ON v2_compatibility_markers;
+DO $restore_policies$
+DECLARE item record;
+BEGIN
+ FOR item IN SELECT name FROM evidence_only_inventory WHERE disposition='mixed' LOOP EXECUTE format('DROP POLICY evidence_only_migration_repair ON %I',item.name); END LOOP;
+ FOR item IN SELECT name FROM evidence_only_inventory WHERE disposition<>'remove' LOOP EXECUTE format('DROP POLICY evidence_only_inventory_read ON %I',item.name); END LOOP;
+END $restore_policies$;
 -- +goose StatementEnd
 
 -- +goose Down

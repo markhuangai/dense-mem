@@ -168,7 +168,7 @@ func TestEvidenceOnlyPostgresMigrationRollbackLogs(t *testing.T) {
 				go func() { done <- migrateEvidenceOnly(operation, db, migrator, logger.Slog()) }()
 				require.Eventually(t, func() bool {
 					var waiting bool
-					require.NoError(t, db.Raw(`SELECT EXISTS(SELECT 1 FROM pg_locks WHERE relation='public.v2_compatibility_markers'::regclass AND NOT granted AND mode='RowExclusiveLock')`).Row().Scan(&waiting))
+					require.NoError(t, db.Raw(`SELECT EXISTS(SELECT 1 FROM pg_locks WHERE relation='public.v2_compatibility_markers'::regclass AND NOT granted)`).Row().Scan(&waiting))
 					return waiting
 				}, 30*time.Second, 20*time.Millisecond)
 				cancel()

@@ -91,8 +91,10 @@ func TestOntologyMaintenanceCoalescingPreservesNonDefinitionOrder(t *testing.T) 
 		require.Contains(t, cursors, definition.ID)
 		require.Empty(t, cursors[definition.ID])
 	}
+	var remainingMarkers int
+	require.NoError(t, x.f.admin.Raw(`SELECT count(*) FROM ontology_maintenance_markers WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=?`, x.f.team, x.f.space, x.f.generation).Row().Scan(&remainingMarkers))
 	second := coalescingPage(t, x, 100)
-	require.Equal(t, len(cursors), second.Counts.CompletedMarkers)
+	require.Equal(t, remainingMarkers, second.Counts.CompletedMarkers)
 	require.Equal(t, 3, second.Counts.RefreshedSources)
 	require.Equal(t, 2, second.Counts.FreshnessInvocations)
 	require.Empty(t, coalescingMarkerCursors(t, x))

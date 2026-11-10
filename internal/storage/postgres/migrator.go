@@ -331,6 +331,15 @@ func (m *Migrator) PreparePrivateMemoryMigration(ctx context.Context) error {
 	return err
 }
 
+func (m *Migrator) IncludesEvidenceOnlyMigration() (bool, error) {
+	filesystem, err := runtimeMigrationFilesystem(m.dir)
+	if err != nil {
+		return false, err
+	}
+	_, included := filesystem[evidenceOnlyMigrationSQLName]
+	return included, nil
+}
+
 func (m *Migrator) PrepareEvidenceOnlyMigration(ctx context.Context) error {
 	provider, err := newRuntimeMigrationProvider(m.dir, m.db, true)
 	if err != nil {

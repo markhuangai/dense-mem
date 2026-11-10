@@ -23,8 +23,8 @@ func (f *ontologyFixture) organizationEvidenceAt(t *testing.T, owner int, text, 
 	ingestID, fragmentID := uuid.NewString(), uuid.NewString()
 	require.NoError(t, f.rls.WithSystemTx(context.Background(), f.admin, func(tx *gorm.DB) error {
 		if err := tx.Exec(`INSERT INTO knowledge_ingests
-			(ingest_id,team_id,owner_profile_id,space_id,space_generation,request_hash,source_summary,status,proposal,metadata,created_at,updated_at,completed_at)
-			SELECT ?::uuid,team_id,owner_profile_id,space_id,space_generation,request_hash,source_summary,status,proposal,metadata,?::timestamptz,?::timestamptz,?::timestamptz
+			(ingest_id,team_id,owner_profile_id,space_id,space_generation,request_hash,source_summary,status,metadata,created_at,updated_at,completed_at)
+			SELECT ?::uuid,team_id,owner_profile_id,space_id,space_generation,request_hash,source_summary,status,metadata,?::timestamptz,?::timestamptz,?::timestamptz
 			FROM knowledge_ingests WHERE team_id=?::uuid AND ingest_id=(SELECT ingest_id FROM evidence_fragments WHERE team_id=?::uuid AND fragment_id=?::uuid)`, ingestID, created, created, created, f.team, f.team, seed.ID).Error; err != nil {
 			return err
 		}

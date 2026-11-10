@@ -43,6 +43,14 @@ func sessionIntakeFixture(t *testing.T, admin, app *gorm.DB, rls *storage.RLS, t
 	return ctx, session.Intake{Scope: session.Scope{TeamID: team, OwnerProfileID: owner, SpaceID: space.ID.String(), SpaceGeneration: generation}, Request: req, RequestHash: hash, Windows: windows, ExtractionVersion: session.ExtractionVersion}
 }
 
+func sessionCheckpointFixture(id string, window session.Window) session.ExtractionResponse {
+	response := session.ExtractionResponse{RequestID: fmt.Sprintf("session:%s:window:%d", id, window.Index), Coverage: []string{}, Excerpts: []session.Excerpt{}, SecuritySignals: []session.ExtractionSignal{}}
+	for _, segment := range window.Core {
+		response.Coverage = append(response.Coverage, segment.Ref)
+	}
+	return response
+}
+
 func TestSessionIntakeExactReplayAndMixedConflictAreAtomic(t *testing.T) {
 	admin, app, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
@@ -104,9 +112,11 @@ func TestSessionIntakeExactReplayAndMixedConflictAreAtomic(t *testing.T) {
 	batch, err := store.StageSession(ctx, ordered)
 	require.NoError(t, err)
 	for _, window := range batch.Intake.Windows {
-		require.NoError(t, store.SaveSessionExtraction(ctx, ordered.Scope, batch.ID, window.Index, json.RawMessage(`{}`)))
+		body, err := json.Marshal(sessionCheckpointFixture(batch.ID, window))
+		require.NoError(t, err)
+		require.NoError(t, store.SaveSessionExtraction(ctx, ordered.Scope, batch.ID, window.Index, body))
 	}
-	terminal := session.Result{SubmissionID: batch.ID, AcceptedEventCount: 12, ProcessingState: "completed", SearchState: "not_required", Events: []session.EventResult{}}
+	terminal := session.Result{SubmissionID: batch.ID, AcceptedEventCount: 12, ProcessingState: "completed", MemoryOutcome: "no_memory", SearchState: "not_required", Events: []session.EventResult{}}
 	for _, event := range ordered.Request.Events {
 		terminal.Events = append(terminal.Events, session.EventResult{EventID: event.EventID, Disposition: "accepted", ProcessingState: "completed", EvidenceIDs: []string{}})
 	}

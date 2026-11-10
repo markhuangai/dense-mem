@@ -107,12 +107,14 @@ func TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads(t *testing.T)
 								ValidationErrors []assessor.SemanticValidationError `json:"validation_errors"`
 							}
 							require.NoError(t, json.Unmarshal([]byte(envelope.Messages[len(envelope.Messages)-1].Content), &feedback))
-							require.Len(t, feedback.ValidationErrors, 2)
-							require.Contains(t, feedback.ValidationErrors[0].Field, "items[0]")
+							require.Len(t, feedback.ValidationErrors, 3)
+							require.Equal(t, "definitions[0]", feedback.ValidationErrors[0].Field)
+							require.Equal(t, "items[0].definition_ref", feedback.ValidationErrors[1].Field)
+							require.Equal(t, "items[0].reason", feedback.ValidationErrors[2].Field)
 							detail := (&assessor.SemanticAssessmentResponseValidationError{Errors: feedback.ValidationErrors}).Error()
 							require.Contains(t, detail, input.Items[0].Ref)
-							require.Contains(t, detail, "expected topic")
-							require.Contains(t, detail, `selects kind "entity_class"`)
+							require.Contains(t, detail, "requires an Evidence topic")
+							require.Contains(t, detail, `received kind "entity_class"`)
 							require.Contains(t, detail, "at most 128 bytes")
 							for _, issue := range feedback.ValidationErrors {
 								require.Empty(t, issue.Code)

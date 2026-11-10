@@ -439,7 +439,7 @@ func TestOntologyMaintenanceClaimRefreshesCurrentVersion(t *testing.T) {
 	window := maintenanceWindow(t, f, maintenanceSettings(t, f))
 	turn, claim := maintenanceClaim(t, f, window)
 	before := f.source(t, source).Fingerprint
-	require.NoError(t, f.rls.WithTeamTx(context.Background(), f.app, f.team, func(tx *gorm.DB) error {
+	require.NoError(t, f.rls.WithTeamProfileTx(f.actor(0, "member"), f.app, f.team, f.owners[0], func(tx *gorm.DB) error {
 		if err := appendMaintenanceOccurrence(tx, f, source); err != nil {
 			return err
 		}

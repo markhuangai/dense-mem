@@ -118,7 +118,7 @@ func (s *Service) boundedPriorContext(events []session.PriorEvent, tokenizer str
 	for left, right := 0, len(selected)-1; left < right; left, right = left+1, right-1 {
 		selected[left], selected[right] = selected[right], selected[left]
 	}
-	warnings := []string{}
+	var warnings []string
 	if len(selected) < len(events) {
 		warnings = append(warnings, "Earlier session context was omitted to fit the bounded context budget.")
 	}

@@ -38,13 +38,23 @@ func TestSessionReceiptFailureRollsBackKnowledgeAndRecoversOriginalIntake(t *tes
 	input.IngestID, input.Commit.IngestID = submission.ID, submission.ID
 	input.IdempotencyKey, input.RequestHash = "session:"+submission.ID, intake.RequestHash
 	input.SpaceID, input.SpaceGeneration = intake.Scope.SpaceID, intake.Scope.SpaceGeneration
-	input.Evidence[0].Metadata = map[string]any{"session": map[string]any{"event_index": 0, "span_start": 0, "span_end": len([]rune(input.Evidence[0].Content)), "event_id": "one", "session_id": intake.Request.SessionID}}
-	checkpoint := json.RawMessage(`{"request_id":"fixture","coverage":[],"excerpts":[],"security_signals":[],"overflow":false}`)
+	input.Evidence[0].SourceType = "conversation"
+	input.Evidence[0].SourceRef = intake.Request.Framework + ":" + intake.Request.AppName
+	input.Evidence[0].Metadata = map[string]any{
+		"contract_source_group": "session:" + session.IdentityHash(intake.Request, ""),
+		"session": map[string]any{"event_index": 0, "span_start": 0, "span_end": len([]rune(input.Evidence[0].Content)),
+			"event_id": "one", "session_id": intake.Request.SessionID, "framework": intake.Request.Framework,
+			"app_name": intake.Request.AppName, "user_id": intake.Request.UserID},
+	}
+	response := sessionCheckpointFixture(submission.ID, submission.Intake.Windows[0])
+	response.Excerpts = []session.Excerpt{{EventIndex: 0, Start: 0, End: len([]rune(input.Evidence[0].Content)), Content: input.Evidence[0].Content}}
+	checkpoint, err := json.Marshal(response)
+	require.NoError(t, err)
 	require.NoError(t, store.SaveSessionExtraction(ctx, intake.Scope, submission.ID, 0, checkpoint))
 	plan, err := store.PlanRememberEmbeddings(ctx, input)
 	require.NoError(t, err)
 	prepared := &session.Prepared{Commit: input, Embeddings: ownerEmbeddings(plan, false)}
-	result := session.Result{ContractVersion: domain.ContractVersion, SubmissionID: submission.ID, SubmissionKind: "session_ingest", CorrelationID: "fixture", AcceptedEventCount: 1, ProcessingState: "completed", SearchState: "not_required", Events: []session.EventResult{{EventID: "one", Disposition: "accepted", ProcessingState: "completed", EvidenceIDs: []string{}}}, Errors: []session.Error{}}
+	result := session.Result{ContractVersion: domain.ContractVersion, SubmissionID: submission.ID, SubmissionKind: "session_ingest", CorrelationID: "fixture", AcceptedEventCount: 1, ProcessingState: "completed", MemoryOutcome: "stored", SearchState: "not_required", Events: []session.EventResult{{EventID: "one", Disposition: "accepted", ProcessingState: "completed", EvidenceIDs: []string{}}}, Errors: []session.Error{}}
 	originalResult, err := json.Marshal(result)
 	require.NoError(t, err)
 	require.NoError(t, rls.WithSystemTx(ctx, admin, func(tx *gorm.DB) error {
@@ -99,11 +109,13 @@ func TestSessionCheckpointAndSuccessfulReceiptAreImmutable(t *testing.T) {
 	store := NewStore(app, rls)
 	submission, err := store.StageSession(ctx, intake)
 	require.NoError(t, err)
-	body := json.RawMessage(`{"request_id":"one"}`)
+	response := sessionCheckpointFixture(submission.ID, submission.Intake.Windows[0])
+	body, err := json.Marshal(response)
+	require.NoError(t, err)
 	require.NoError(t, store.SaveSessionExtraction(ctx, intake.Scope, submission.ID, 0, body))
 	require.NoError(t, store.SaveSessionExtraction(ctx, intake.Scope, submission.ID, 0, body))
 	require.ErrorIs(t, store.SaveSessionExtraction(ctx, intake.Scope, submission.ID, 0, json.RawMessage(`{"request_id":"changed"}`)), session.ErrRequestConflict)
-	result := session.Result{ContractVersion: domain.ContractVersion, SubmissionID: submission.ID, SubmissionKind: "session_ingest", CorrelationID: "fixture", AcceptedEventCount: 1, ProcessingState: "completed", SearchState: "not_required", Events: []session.EventResult{{EventID: "one", Disposition: "accepted", ProcessingState: "completed", EvidenceIDs: []string{}}}, Errors: []session.Error{}}
+	result := session.Result{ContractVersion: domain.ContractVersion, SubmissionID: submission.ID, SubmissionKind: "session_ingest", CorrelationID: "fixture", AcceptedEventCount: 1, ProcessingState: "completed", MemoryOutcome: "no_memory", SearchState: "not_required", Events: []session.EventResult{{EventID: "one", Disposition: "accepted", ProcessingState: "completed", EvidenceIDs: []string{}}}, Errors: []session.Error{}}
 	completed, err := store.CommitSession(ctx, intake.Scope, submission.ID, nil, result)
 	require.NoError(t, err)
 	require.Equal(t, "not_required", completed.SearchState)

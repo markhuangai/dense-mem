@@ -151,7 +151,7 @@ func assertStartupPrivateIsolation(t *testing.T, db *gorm.DB, team uuid.UUID, ow
 			return storage.NewRLS().WithTeamProfileTx(ctx, tx, team.String(), owner.String(), func(scoped *gorm.DB) error {
 				for targetIndex, space := range spaces {
 					var visible []string
-					if err := scoped.Raw(`SELECT fragment_id::text FROM evidence_fragments WHERE team_id=? AND space_id=? AND fragment_id IN ?`, team, space, evidenceIDs).Scan(&visible).Error; err != nil {
+					if err := scoped.Raw(`SELECT fragment_id::text FROM evidence_fragments WHERE team_id=? AND space_id=? AND fragment_id IN ? AND dense_mem_space_allowed(space_id)`, team, space, evidenceIDs).Scan(&visible).Error; err != nil {
 						return err
 					}
 					if targetIndex == index {

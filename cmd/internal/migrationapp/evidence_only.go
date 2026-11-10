@@ -16,6 +16,13 @@ import (
 const evidenceOnlyMigrationVersion int64 = 20261110010000
 
 func migrateEvidenceOnly(ctx context.Context, db *gorm.DB, migrator *postgres.Migrator, logger infoLogger) (err error) {
+	included, err := migrator.IncludesEvidenceOnlyMigration()
+	if err != nil {
+		return err
+	}
+	if !included {
+		return migrator.RunUp(ctx)
+	}
 	started := time.Now()
 	phase, outcome := "prepare", "not_started"
 	logInfo(ctx, logger, "evidence_only_migration_started", "migration_version", evidenceOnlyMigrationVersion,

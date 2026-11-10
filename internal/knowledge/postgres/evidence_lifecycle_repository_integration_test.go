@@ -70,7 +70,7 @@ func TestEvidenceOnlyPostgresSupersessionRetainsLineageForQuarantinedReplacement
 	owner := createLedgerProfile(t, admin, rls, team, "owner")
 	store := NewStore(app, rls)
 	original := createSemanticIngest(t, ctx, store, team, owner, "before", "Original exact Evidence.")
-	input := CreateIngestInput{TeamID: team, OwnerProfileID: owner, IdempotencyKey: "replacement", RequestHash: sha256Hex("replacement"), Evidence: []EvidenceInput{{Content: "Exact replacement Evidence.", SupersedesEvidenceIDs: []string{original.Evidence[0].FragmentID}, InitialEvent: &SecurityEventDraft{EventKind: "deterministic_scan", Decision: "quarantine", Reason: "Needs security review"}}}}
+	input := CreateIngestInput{TeamID: team, OwnerProfileID: owner, IdempotencyKey: "replacement", RequestHash: sha256Hex("replacement"), Evidence: []EvidenceInput{{Content: "Exact replacement Evidence.", IdempotencyKey: "replacement-evidence", SupersedesEvidenceIDs: []string{original.Evidence[0].FragmentID}, InitialEvent: &SecurityEventDraft{EventKind: "deterministic_scan", Decision: "quarantine", Reason: "Needs security review"}}}}
 	replacement, err := store.CreateIngestForTest(ctx, input)
 	require.NoError(t, err)
 	trace, err := tracepostgres.New(app, rls).TraceEvidence(ctx, tracecontract.Input{TeamID: team, EvidenceID: original.Evidence[0].FragmentID})
@@ -111,8 +111,8 @@ func TestLedgerEvidenceLifecyclePersistsTargetSpaceAndRejectsMixedSpaces(t *test
 		if err := tx.Exec(`
 			INSERT INTO knowledge_ingests (
 				team_id, ingest_id, owner_profile_id, request_hash, source_summary,
-				status, proposal, metadata, space_id, created_at, updated_at
-			) VALUES (?, ?, ?, ?, 'Private lifecycle evidence.', 'queued', '{}'::jsonb, '{}'::jsonb, ?, ?, ?)
+				status, metadata, space_id, created_at, updated_at
+			) VALUES (?, ?, ?, ?, 'Private lifecycle evidence.', 'queued', '{}'::jsonb, ?, ?, ?)
 		`, teamID, privateIngestID, ownerID, "hash-"+privateIngestID.String(), privateSpaceID, now, now).Error; err != nil {
 			return err
 		}
@@ -179,8 +179,8 @@ func TestLedgerDirectEvidenceSupersessionRejectsCrossSpaceReplacement(t *testing
 		if err := tx.Exec(`
 			INSERT INTO knowledge_ingests (
 				team_id, ingest_id, owner_profile_id, request_hash, source_summary,
-				status, proposal, metadata, space_id, created_at, updated_at
-			) VALUES (?, ?, ?, ?, 'Private replacement evidence.', 'queued', '{}'::jsonb, '{}'::jsonb, ?, ?, ?)
+				status, metadata, space_id, created_at, updated_at
+			) VALUES (?, ?, ?, ?, 'Private replacement evidence.', 'queued', '{}'::jsonb, ?, ?, ?)
 		`, teamID, privateIngestID, ownerID, "hash-"+privateIngestID.String(), privateSpaceID, now, now).Error; err != nil {
 			return err
 		}

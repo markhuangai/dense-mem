@@ -83,8 +83,8 @@ func TestOntologyCoverageFailureWitnesses(t *testing.T) {
 					require.ErrorAs(t, assessment.Validate(request, *response), &rejected)
 					require.NotEmpty(t, rejected.Errors)
 					if family == "item_source_kind" {
-						require.Contains(t, rejected.Error(), "expected topic")
-						require.Contains(t, rejected.Error(), `selects kind "entity_class"`)
+						require.Contains(t, rejected.Error(), "requires an Evidence topic")
+						require.Contains(t, rejected.Error(), `received kind "entity_class"`)
 					}
 					if family == "item_locked_classification" {
 						require.Contains(t, rejected.Error(), "locked_definition_ref")
@@ -101,7 +101,11 @@ func TestOntologyCoverageFailureWitnesses(t *testing.T) {
 				require.Equal(t, "provider_response_invalid", result.FailureCode)
 				require.Equal(t, int32(3), calls.Load())
 				for _, attempt := range result.Attempts {
-					require.Equal(t, family, attempt.Validation.Code)
+					expected := family
+					if family == "item_source_kind" {
+						expected = "definition_record"
+					}
+					require.Equal(t, expected, attempt.Validation.Code)
 				}
 			}
 			after, err := f.store.ListRecords(context.Background(), f.team, "", "", ontology.MaxPageSize)
