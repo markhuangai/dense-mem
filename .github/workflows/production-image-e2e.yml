@@ -178,8 +178,8 @@ jobs:
       contents: read
     uses: ./.github/workflows/ci-shared.yml
     with:
-      source-repository: ${{ needs.authorize.outputs.source_repository }}
-      source-revision: ${{ needs.authorize.outputs.source_revision }}
+      source-repository: ${{ github.repository }}
+      source-revision: ${{ github.sha }}
       migration-base-ref: ${{ needs.authorize.outputs.migration_base_ref }}
 
   prechecks:
