@@ -341,7 +341,7 @@ jobs:
           persist-credentials: false
           repository: ${{ inputs.source-repository || github.repository }}
           ref: ${{ inputs.source-revision }}
-      - name: Validate installed Python package in release container
+      - name: Validate installed Python package
         run: bash packages/python/scripts/matrix.sh "$RUNNER_TEMP/python-matrix" '${{ matrix.python }}' '${{ matrix.sdk }}'
 
   result:

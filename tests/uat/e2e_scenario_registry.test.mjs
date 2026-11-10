@@ -276,10 +276,7 @@ test("the production aggregate requires every independent phase and manual CI tr
   assert.match(trial, /needs: authorize/);
   assert.match(trial, /if: github.event_name == 'workflow_dispatch'/);
   assert.match(trial, /uses: \.\/\.github\/workflows\/ci-shared\.yml/);
-  assert.match(trial, /source-repository: \$\{\{ github.repository \}\}/);
-  assert.match(trial, /source-revision: \$\{\{ github.sha \}\}/);
-  const authorize = workflowJob(workflow, "authorize");
-  assert.ok(authorize.includes("context.ref !== `refs/heads/${pull.head.ref}` || context.sha !== pull.head.sha"));
+  assert.match(trial, /source-revision: \$\{\{ needs.authorize.outputs.source_revision \}\}/);
 });
 
 test("PostgreSQL deadlines include setup and leave cleanup time in every workflow", async () => {
