@@ -284,7 +284,7 @@ DELETE FROM operation_logs WHERE attrs->>'component' IN ('graph','dream','commun
 
 -- Remove trigger/function dependencies before explicit RESTRICT table drops; unexpected retained dependencies block the transaction.
 DO $retire$
-DECLARE guard record; constraint_row record; item record; function_row record;
+DECLARE guard record; removed_constraint record; item record; removed_function record;
 BEGIN
  FOR guard IN SELECT table_row.relname,tgname FROM pg_trigger trigger_row JOIN pg_class table_row ON table_row.oid=trigger_row.tgrelid
  JOIN pg_proc function_row ON function_row.oid=trigger_row.tgfoid WHERE table_row.relnamespace='public'::regnamespace AND NOT tgisinternal
@@ -292,16 +292,16 @@ BEGIN
   EXECUTE format('DROP TRIGGER %I ON %I',guard.tgname,guard.relname);
   DELETE FROM evidence_only_triggers WHERE table_name=guard.relname AND trigger_name=guard.tgname;
  END LOOP;
- FOR constraint_row IN SELECT child.relname,constraint_row.conname FROM pg_constraint constraint_row JOIN pg_class child ON child.oid=constraint_row.conrelid
+ FOR removed_constraint IN SELECT child.relname,constraint_row.conname FROM pg_constraint constraint_row JOIN pg_class child ON child.oid=constraint_row.conrelid
  JOIN pg_class parent ON parent.oid=constraint_row.confrelid WHERE constraint_row.contype='f'
  AND child.relnamespace='public'::regnamespace AND parent.relnamespace='public'::regnamespace
  AND child.relname IN (SELECT name FROM evidence_only_inventory WHERE disposition='remove') AND parent.relname IN (SELECT name FROM evidence_only_inventory WHERE disposition='remove') LOOP
-  EXECUTE format('ALTER TABLE %I DROP CONSTRAINT %I',constraint_row.relname,constraint_row.conname);
+  EXECUTE format('ALTER TABLE %I DROP CONSTRAINT %I',removed_constraint.relname,removed_constraint.conname);
  END LOOP;
  DROP VIEW IF EXISTS semantic_edges;
  FOR item IN SELECT name FROM evidence_only_inventory WHERE disposition='remove' ORDER BY name LOOP EXECUTE format('DROP TABLE IF EXISTS %I RESTRICT',item.name); END LOOP;
- FOR function_row IN SELECT oid::regprocedure::text AS signature FROM pg_proc WHERE pronamespace='public'::regnamespace AND proname=ANY(ARRAY['hypotheses_guard_provenance','community_record_search_vector','submission_relationship_result_shape_valid','dense_mem_relationship_support_evidence_owner_defaults','dense_mem_relationship_support_occurrence_defaults','dense_mem_touch_community_topic_dependency','dense_mem_community_predicate_membership_dirty','dense_mem_community_topic_assignment_dirty','dense_mem_community_evidence_membership_dirty','dense_mem_community_topic_override_dirty','dense_mem_community_topic_current','dense_mem_community_dirty_entity_records','dense_mem_community_dirty_entity_names','dense_mem_community_dirty_evidence_fragments','dense_mem_community_dirty_knowledge_ingests','dense_mem_community_dirty_evidence_sources','dense_mem_community_dirty_evidence_occurrences','dense_mem_community_dirty_evidence_quarantines','dense_mem_community_dirty_evidence_lifecycle_events','dense_mem_community_dirty_relationship_records','dense_mem_community_dirty_relationship_evidence_supports','dense_mem_community_dirty_relationship_support_decision_events','dense_mem_community_dirty_team_predicate_definitions','dense_mem_community_dirty_ontology_record_heads','dense_mem_community_dirty_value_records','dense_mem_ontology_dirty_entity_records','dense_mem_ontology_dirty_entity_names','dense_mem_ontology_dirty_relationship_records','dense_mem_ontology_dirty_relationship_evidence_supports','dense_mem_ontology_dirty_relationship_support_decision_events','dense_mem_ontology_dirty_team_predicate_definitions']::text[]) LOOP
-  EXECUTE 'DROP FUNCTION '||function_row.signature||' RESTRICT';
+ FOR removed_function IN SELECT oid::regprocedure::text AS signature FROM pg_proc WHERE pronamespace='public'::regnamespace AND proname=ANY(ARRAY['hypotheses_guard_provenance','community_record_search_vector','submission_relationship_result_shape_valid','dense_mem_relationship_support_evidence_owner_defaults','dense_mem_relationship_support_occurrence_defaults','dense_mem_touch_community_topic_dependency','dense_mem_community_predicate_membership_dirty','dense_mem_community_topic_assignment_dirty','dense_mem_community_evidence_membership_dirty','dense_mem_community_topic_override_dirty','dense_mem_community_topic_current','dense_mem_community_dirty_entity_records','dense_mem_community_dirty_entity_names','dense_mem_community_dirty_evidence_fragments','dense_mem_community_dirty_knowledge_ingests','dense_mem_community_dirty_evidence_sources','dense_mem_community_dirty_evidence_occurrences','dense_mem_community_dirty_evidence_quarantines','dense_mem_community_dirty_evidence_lifecycle_events','dense_mem_community_dirty_relationship_records','dense_mem_community_dirty_relationship_evidence_supports','dense_mem_community_dirty_relationship_support_decision_events','dense_mem_community_dirty_team_predicate_definitions','dense_mem_community_dirty_ontology_record_heads','dense_mem_community_dirty_value_records','dense_mem_ontology_dirty_entity_records','dense_mem_ontology_dirty_entity_names','dense_mem_ontology_dirty_relationship_records','dense_mem_ontology_dirty_relationship_evidence_supports','dense_mem_ontology_dirty_relationship_support_decision_events','dense_mem_ontology_dirty_team_predicate_definitions']::text[]) LOOP
+  EXECUTE 'DROP FUNCTION '||removed_function.signature||' RESTRICT';
  END LOOP;
 END $retire$;
 
