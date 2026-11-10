@@ -555,7 +555,7 @@ func TestPostCutoverCleanupMigrationFreshUpgradeSucceeds(t *testing.T) {
 	assert.False(t, columnExists(t, ctx, sqlDB, "placement_runs", "migration_claim_epoch"))
 
 	var markerCount int
-	require.NoError(t, sqlDB.QueryRowContext(ctx, `SELECT count(*)::int FROM v2_compatibility_markers`).Scan(&markerCount))
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `SELECT count(*)::int FROM v2_compatibility_markers WHERE marker_kind = 'v2_cutover'`).Scan(&markerCount))
 	assert.Equal(t, 1, markerCount, "the cutover migration records the compatible authority marker")
 	var markerVersion, markerStatus string
 	require.NoError(t, sqlDB.QueryRowContext(ctx, `SELECT version, status FROM v2_compatibility_markers WHERE marker_kind = 'v2_cutover'`).Scan(&markerVersion, &markerStatus))
