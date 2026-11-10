@@ -3,7 +3,6 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import {
-  dreamStatusSnapshot,
   jsonResponse,
   metricsSnapshot,
   mockPortalFetch,
@@ -80,7 +79,6 @@ describe("App coverage additions", () => {
       if (url.endsWith("/teams") && method === "POST") return jsonResponse({ message: "team create failed" }, 500);
       if (url.includes("/credentials") && method === "GET") return jsonResponse(page([]));
       if (url.includes("/metrics")) return jsonResponse({ data: metricsSnapshot });
-      if (url.includes("/dreaming/status")) return jsonResponse({ data: dreamStatusSnapshot });
       if (method === "PATCH") return jsonResponse({ message: "team update failed" }, 500);
       if (method === "DELETE") return jsonResponse({ message: "team delete failed" }, 500);
       return jsonResponse({ data: {} });

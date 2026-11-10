@@ -8,8 +8,6 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
-	knowledgepg "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	ontologypostgres "github.com/markhuangai/dense-mem/internal/ontology/postgres"
 	storage "github.com/markhuangai/dense-mem/internal/storage/postgres"

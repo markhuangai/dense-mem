@@ -26,7 +26,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/evalharness"
 	"github.com/markhuangai/dense-mem/internal/http/handler"
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
-	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
