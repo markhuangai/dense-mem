@@ -341,11 +341,8 @@ jobs:
           persist-credentials: false
           repository: ${{ inputs.source-repository || github.repository }}
           ref: ${{ inputs.source-revision }}
-      - uses: actions/setup-python@v7
-        with:
-          python-version: ${{ matrix.python }}
-      - name: Validate installed Python package
-        run: bash packages/python/scripts/check.sh --sdk '${{ matrix.sdk }}'
+      - name: Validate installed Python package in release container
+        run: bash packages/python/scripts/matrix.sh "$RUNNER_TEMP/python-matrix" '${{ matrix.python }}' '${{ matrix.sdk }}'
 
   result:
     name: Aggregate repository CI
