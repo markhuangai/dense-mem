@@ -214,6 +214,8 @@ END $$;
 UPDATE ontology_draft_heads SET body=pg_temp.evidence_only_draft(team_id,shared_space_id,space_generation,body);
 UPDATE ontology_draft_heads SET state=body->'draft'->>'state';
 UPDATE ontology_draft_revisions SET body=pg_temp.evidence_only_draft(team_id,shared_space_id,space_generation,body);
+-- Drain deferred draft checks after both tables are consistent so trigger restoration can acquire its ALTER TABLE lock.
+SET CONSTRAINTS ontology_draft_head_revision_fk IMMEDIATE;
 UPDATE ontology_assessments assessment SET body=jsonb_set(jsonb_set(jsonb_set(body,'{sources}',
  COALESCE((SELECT jsonb_agg(source ORDER BY ordinal) FROM jsonb_array_elements(body->'sources') WITH ORDINALITY entries(source,ordinal) WHERE source->>'kind'='evidence'),'[]'::jsonb)),
  '{dependencies}',pg_temp.evidence_only_record_refs(team_id,shared_space_id,space_generation,body->'dependencies')),

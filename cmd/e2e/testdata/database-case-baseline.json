@@ -1125,11 +1125,6 @@
       "phase": "precheck"
     },
     {
-      "id": "repository/TestReferenceDefinitionGuardRequiresSystemOrMigrationMode",
-      "run": "^TestReferenceDefinitionGuardRequiresSystemOrMigrationMode$",
-      "phase": "precheck"
-    },
-    {
       "id": "repository/TestRememberAttemptLockBoundsDifferentKeysByPoolAdmission",
       "run": "^TestRememberAttemptLockBoundsDifferentKeysByPoolAdmission$",
       "phase": "precheck"

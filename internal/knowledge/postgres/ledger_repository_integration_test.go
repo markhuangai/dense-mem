@@ -6,10 +6,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"testing"
 
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -90,38 +88,4 @@ func TestLedgerAuthorityConstraintsUseCanonicalValues(t *testing.T) {
 	assert.Contains(t, err.Error(), "evidence_sources_authority_check")
 
 	_ = appDB
-}
-
-func TestReferenceDefinitionGuardRequiresSystemOrMigrationMode(t *testing.T) {
-	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
-	defer cleanup()
-	ctx := context.Background()
-	teamID := createLedgerTeam(t, adminDB, rls, "team-reference-guard")
-	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "owner-reference-guard")
-
-	err := insertPredicateDefinitionForTest(adminDB, "test_missing_mode_"+strings.ReplaceAll(uuid.NewString(), "-", ""))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "requires system or migration mode")
-
-	err = rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
-		return insertPredicateDefinitionForTest(tx, "test_profile_mode_"+strings.ReplaceAll(uuid.NewString(), "-", ""))
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "requires system or migration mode")
-
-	err = rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
-		return insertPredicateDefinitionForTest(tx, "test_system_mode_"+strings.ReplaceAll(uuid.NewString(), "-", ""))
-	})
-	require.NoError(t, err)
-}
-
-func insertPredicateDefinitionForTest(db *gorm.DB, predicateKey string) error {
-	return db.Exec(`
-		INSERT INTO predicate_definitions (
-			predicate_key, version, allowed_subject_kinds, allowed_object_kinds,
-			relationship_kind, current_cardinality
-		) VALUES (
-			?, 1, ARRAY['project']::text[], ARRAY['product']::text[], 'state', 'many'
-		)
-	`, predicateKey).Error
 }

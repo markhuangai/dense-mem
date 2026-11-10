@@ -35,3 +35,8 @@ Remember scenario and the Evidence-conflict browser journey; direct Evidence
 topics and organizational hierarchy remain in the ontology scenarios. The full
 scenario retains operational telemetry and Evidence export. Historical sealed
 evaluation captures and experimental artifacts are unchanged.
+
+The predicate-reference write guard and its SQL seed tested privileged writes to
+the retired factual predicate catalog. Its test, case registration and baseline
+entry are removed with that catalog; Evidence authority and source-revision
+authorization remain covered by their existing ledger cases.

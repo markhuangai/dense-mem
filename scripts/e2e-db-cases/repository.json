@@ -67,13 +67,6 @@
       "source": "internal/knowledge/postgres/ledger_repository_integration_test.go"
     },
     {
-      "id": "repository/TestReferenceDefinitionGuardRequiresSystemOrMigrationMode",
-      "package": "./internal/knowledge/postgres",
-      "run": "^TestReferenceDefinitionGuardRequiresSystemOrMigrationMode$",
-      "phase": "precheck",
-      "source": "internal/knowledge/postgres/ledger_repository_integration_test.go"
-    },
-    {
       "id": "repository/TestRememberAttemptLockBoundsDifferentKeysByPoolAdmission",
       "package": "./internal/knowledge/postgres",
       "run": "^TestRememberAttemptLockBoundsDifferentKeysByPoolAdmission$",

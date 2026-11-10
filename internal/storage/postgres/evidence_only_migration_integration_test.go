@@ -272,7 +272,7 @@ func TestEvidenceOnlyPostgresSessionMigrationPreservesRawIdentityAndTerminalOutc
 	require.NoError(t, evidenceOnlyMigrationUpTo(ctx, db, evidenceOnlyMigrationBase))
 	fixture := insertEvidenceOnlyMigrationFixture(t, ctx, db, true)
 	hashes := map[string]string{}
-	for index, result := range []string{"null", `{"contract_version":"dense-mem.v2.7.0","processing_state":"failed","errors":[{"code":"provider_unavailable","retryable":true}]}`, `{"contract_version":"dense-mem.v2.7.0","processing_state":"completed","events":[],"errors":[]}`, `{"contract_version":"dense-mem.v2.7.0","processing_state":"failed","errors":[{"code":"submission_policy_rejected","retryable":false}]}`} {
+	for index, result := range []any{nil, `{"contract_version":"dense-mem.v2.7.0","processing_state":"failed","errors":[{"code":"provider_unavailable","retryable":true}]}`, `{"contract_version":"dense-mem.v2.7.0","processing_state":"completed","events":[],"errors":[]}`, `{"contract_version":"dense-mem.v2.7.0","processing_state":"failed","errors":[{"code":"submission_policy_rejected","retryable":false}]}`} {
 		id := uuid.NewString()
 		hash := "sha256:" + strings.Repeat(fmt.Sprint(index), 64)
 		hashes[id] = hash

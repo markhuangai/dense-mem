@@ -286,7 +286,7 @@ func TestPrivateMigrationFingerprintResumeHandlesAndCopiedErasure(t *testing.T) 
 		if err := tx.Raw(`SELECT convert_from(request_bytes,'UTF8') FROM remember_attempt_diagnostics WHERE team_id=? AND attempt_id=?`, f.team, f.ingestA).Row().Scan(&request); err != nil {
 			return err
 		}
-		require.Equal(t, `{"legacy_request":"A exact supporting evidence"}`, request)
+		require.JSONEq(t, `{"legacy_request":"A exact supporting evidence","retired_payload":true}`, request)
 		return nil
 	}))
 	actor := requestctx.Actor{TeamID: f.team, IdentityID: f.ownerB, MembershipID: f.memberB, OwnerID: f.ownerB, Grants: []string{"read"}, AllowedSpaces: []domain.MemorySpaceAccess{{ID: spaceB, Kind: domain.MemorySpacePrivate, Generation: 1}}}
