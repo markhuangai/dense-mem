@@ -32,7 +32,8 @@ type evidenceOnlyMigrationFixture struct {
 func insertEvidenceOnlyMigrationFixture(t *testing.T, ctx context.Context, db *sql.DB, private bool) evidenceOnlyMigrationFixture {
 	t.Helper()
 	team, owner := insertMigrationTeamProfile(t, ctx, db)
-	fixture := evidenceOnlyMigrationFixture{team: team, owner: owner, ingest: uuid.NewString(), evidence: uuid.NewString(), source: uuid.NewString(), revision: uuid.NewString(), occurrence: uuid.NewString()}
+	fixture := evidenceOnlyMigrationFixture{team: team, owner: owner, ingest: uuid.NewString(), evidence: uuid.NewString(), source: uuid.NewString(), revision: uuid.NewString()}
+	fixture.occurrence = fixture.evidence
 	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
 		kind := "team_shared"
 		if private {
@@ -52,7 +53,6 @@ func insertEvidenceOnlyMigrationFixture(t *testing.T, ctx context.Context, db *s
 			{`INSERT INTO evidence_source_revisions(team_id,source_revision_id,source_id,owner_profile_id,space_id,space_generation,revision_token,content_hash,envelope) VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::uuid,$6,'revision-1',$7,'{"exact":"original source envelope"}')`, []any{team, fixture.revision, fixture.source, owner, fixture.space, fixture.generation, hash}},
 			{`UPDATE evidence_sources SET current_revision_id=$1::uuid,current_revision_token='revision-1' WHERE team_id=$2::uuid AND source_id=$3::uuid`, []any{fixture.revision, team, fixture.source}},
 			{`INSERT INTO evidence_fragments(team_id,fragment_id,ingest_id,owner_profile_id,space_id,space_generation,source_id,source_revision_id,evidence_index,content,content_hash,source_type,authority,metadata) VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::uuid,$6,$7::uuid,$8::uuid,0,'Exact migration Evidence. 🧭',$9,'document','primary','{"original":"provenance"}')`, []any{team, fixture.evidence, fixture.ingest, owner, fixture.space, fixture.generation, fixture.source, fixture.revision, hash}},
-			{`INSERT INTO evidence_occurrences(team_id,occurrence_id,canonical_fragment_id,canonical_owner_profile_id,ingest_id,owner_profile_id,space_id,space_generation,evidence_index,content,content_hash,source_type,authority,source_id,source_revision_id,metadata) VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::uuid,$4::uuid,$6::uuid,$7,0,'Exact migration Evidence. 🧭',$8,'document','primary',$9::uuid,$10::uuid,'{"original":"occurrence"}')`, []any{team, fixture.occurrence, fixture.evidence, owner, fixture.ingest, fixture.space, fixture.generation, hash, fixture.source, fixture.revision}},
 			{`INSERT INTO evidence_security_events(team_id,fragment_id,ingest_id,owner_profile_id,occurrence_id,evidence_owner_profile_id,event_kind,decision,reason,space_id,space_generation) VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::uuid,$4::uuid,'deterministic_scan','pass','original security admission',$6::uuid,$7)`, []any{team, fixture.evidence, fixture.ingest, owner, fixture.occurrence, fixture.space, fixture.generation}},
 		}
 		for _, statement := range statements {

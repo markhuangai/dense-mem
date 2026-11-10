@@ -282,8 +282,7 @@ func TestPrivateMigrationFingerprintResumeHandlesAndCopiedErasure(t *testing.T) 
 		}
 		require.Equal(t, "unchanged-targetless-hash", hash)
 		require.Contains(t, receipt, `"processing_state": "completed"`)
-		require.Contains(t, receipt, `"contract_version": "dense-mem.v2.8.0"`)
-		require.Contains(t, receipt, `"original_contract_version": "dense-mem.v2.7.0"`)
+		require.JSONEq(t, `{"contract_version":"dense-mem.v2.7.0","processing_state":"completed","submission_kind":"remember","retired_payload":true,"retirement_reason":"factual_graph_removed"}`, receipt)
 		if err := tx.Raw(`SELECT convert_from(request_bytes,'UTF8') FROM remember_attempt_diagnostics WHERE team_id=? AND attempt_id=?`, f.team, f.ingestA).Row().Scan(&request); err != nil {
 			return err
 		}
@@ -488,6 +487,15 @@ func TestPrivateMigrationResumesEachCommittedPhase(t *testing.T) {
 				require.Error(t, migrator.RunUp(ctx), "incomplete migration cannot serve")
 			}
 			require.NoError(t, NewPrivateMemoryRepository(f.db, f.rls).MigratePrivateMemory(ctx, report.SourceFingerprint))
+			require.NoError(t, f.rls.WithSystemTx(ctx, f.db, func(tx *gorm.DB) error {
+				var hash, proposal string
+				if err := tx.Raw(`SELECT request_hash,proposal::text FROM knowledge_ingests WHERE team_id=? AND ingest_id=?`, f.team, f.ingestA).Row().Scan(&hash, &proposal); err != nil {
+					return err
+				}
+				require.Equal(t, "unchanged-hash:"+f.ingestA.String(), hash)
+				require.JSONEq(t, `{"historical_targetless":true}`, proposal)
+				return nil
+			}))
 			require.NoError(t, migrator.RunUp(ctx))
 			require.NoError(t, f.rls.WithSystemTx(ctx, f.db, func(tx *gorm.DB) error {
 				var incomplete int
@@ -495,12 +503,13 @@ func TestPrivateMigrationResumesEachCommittedPhase(t *testing.T) {
 					return err
 				}
 				require.Zero(t, incomplete)
-				var hash, proposal string
-				if err := tx.Raw(`SELECT request_hash,proposal::text FROM knowledge_ingests WHERE team_id=? AND ingest_id=?`, f.team, f.ingestA).Row().Scan(&hash, &proposal); err != nil {
+				var hash, retired, originalStatus string
+				if err := tx.Raw(`SELECT request_hash,metadata->>'retired_payload',metadata->>'original_status' FROM knowledge_ingests WHERE team_id=? AND ingest_id=?`, f.team, f.ingestA).Row().Scan(&hash, &retired, &originalStatus); err != nil {
 					return err
 				}
 				require.Equal(t, "unchanged-hash:"+f.ingestA.String(), hash)
-				require.JSONEq(t, `{"historical_targetless":true}`, proposal)
+				require.Equal(t, "true", retired)
+				require.Equal(t, "completed", originalStatus)
 				return nil
 			}))
 		})

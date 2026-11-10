@@ -99,7 +99,7 @@ func TestOntologyManagerOverridesAndRollback(t *testing.T) {
 	classID := topic.ID
 	wrongOverride := ontology.Record{ID: uuid.NewString(), Kind: ontology.OverrideKind, Override: &ontology.Override{Action: ontology.SetClassification, DefinitionID: uuid.NewString(), Members: []ontology.SourceHandle{handle}}, Sources: []ontology.SourceDependency{dependency}}
 	_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("wrong-class", seed.Revision, ontology.Change{Record: wrongOverride}))
-	require.ErrorIs(t, err, ontology.ErrInvalid)
+	require.ErrorIs(t, err, ontology.ErrDependencyStale)
 	history, err := f.store.History(f.actor(0, "manager"), f.team, 0, 20)
 	require.NoError(t, err)
 	require.Len(t, history, 1)

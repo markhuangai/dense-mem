@@ -12,7 +12,7 @@ test("Evidence view resolves a case, handles stale review, and stays keyboard-sa
   await navigate(page, "Evidence conflicts");
 
   await expect(page.getByRole("heading", { name: "Evidence conflicts" })).toBeVisible();
-  await expect(page.getByLabel("Evidence conflicts")).toBeVisible();
+  await expect(page.getByLabel("Evidence conflicts", { exact: true })).toBeVisible();
 
   const initial = await listOpenConflicts(page);
   expect(initial.length).toBeGreaterThanOrEqual(2);

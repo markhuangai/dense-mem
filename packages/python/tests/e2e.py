@@ -290,7 +290,9 @@ async def wait_for_failure(query):
 async def session_recovery(client):
     request = example("session").make_request(str(uuid4()))
     request["session_id"] = str(uuid4())
-    request["events"][0]["text"] += " [fixture-fault:embedding-session-cancel]"
+    request["events"][0]["text"] = (
+        "Ari uses Elixir. [fixture-fault:embedding-session-cancel]"
+    )
     before = (await provider_health())["embedding_calls"]
     pending = asyncio.create_task(client.ingest_session(request))
     await wait_for_embedding(before)
