@@ -130,6 +130,14 @@ try {
   assert(union.results.some((item) => item.evidence_id === coordinationID));
   assert(union.results.some((item) => item.evidence_id === coordinationAlternativeID));
   assert(union.results.some((item) => sourceIDs.includes(item.evidence_id)));
+  const browserParams = new URLSearchParams({ limit: "50" });
+  for (const id of topicIDs) browserParams.append("topic_ids", id);
+  const browserUnion = await browserRecall(browserParams, reader.api_key);
+  assert.deepEqual(browserUnion.results.map((item) => item.evidence_id).sort(), union.results.map((item) => item.evidence_id).sort(), "browser topic union must match MCP selection");
+  const knownUnion = [...new Set(union.results.flatMap((item) => [item.evidence_id, ...item.equivalent_evidence_ids]))];
+  assert(knownUnion.length > 1, "browser exclusions must exercise multiple Evidence IDs");
+  for (const id of knownUnion) browserParams.append("known_evidence_ids", id);
+  assert.deepEqual((await browserRecall(browserParams, reader.api_key)).results, [], "browser must bind every known-Evidence exclusion");
   const limitedTopics = await mcp("recall_memory", { query: "Atlas", limit: 20, topic_limit: 1 }, reader.api_key);
   assert.equal(limitedTopics.related_topics.length, 1);
   assert.equal(limitedTopics.topics_truncated, true);
@@ -145,15 +153,19 @@ try {
     assert(unavailable.result?.isError && unavailable.result.structuredContent.reason_code === "topic_unavailable", "foreign and missing topics must share bounded rejection");
     assert(!JSON.stringify(unavailable.result).includes(id));
   }
-  const topicHeads = postgresQuery(`SELECT jsonb_agg(jsonb_build_object('record_id',record_id,'retired',retired)) FROM ontology_record_heads WHERE team_id=${sqlLiteral(teamID)}::uuid AND record_id=${sqlLiteral(topicIDs[0])}::uuid`);
-  assert(JSON.parse(topicHeads)?.length === 1);
-  postgresQuery(`UPDATE ontology_record_heads SET retired=true WHERE team_id=${sqlLiteral(teamID)}::uuid AND record_id=${sqlLiteral(topicIDs[0])}::uuid`);
-  try {
-    const unavailable = await rpc("recall_memory", { topic_ids: [topicIDs[0]] }, reader.api_key);
-    assert(unavailable.result?.isError && unavailable.result.structuredContent.reason_code === "topic_unavailable", "retired topic must fail explicit filtering");
-  } finally {
-    postgresQuery(`UPDATE ontology_record_heads SET retired=false WHERE team_id=${sqlLiteral(teamID)}::uuid AND record_id=${sqlLiteral(topicIDs[0])}::uuid`);
-  }
+  const topicManager = (await control(`/teams/${teamID}/credentials`, { name: "Retired topic acceptance", role: "manager", scopes: ["read", "write"], rate_limit: 300 })).data;
+  const revision = (await organization("/status", topicManager.api_key)).revision;
+  const retiredKey = `retired-topic-${randomUUID()}`;
+  const draft = await organization("/drafts", topicManager.api_key, {
+    operation_key: randomUUID(), expected_version: 0, expected_revision: revision, reason: "Retired topic visibility fixture",
+    edits: [{ action: "define", expected_version: 0, kind: "topic", definition: { key: retiredKey, label: "Retired fixture topic", description: "Temporary unassigned topic for retirement acceptance" } }],
+  });
+  const published = await organization(`/drafts/${draft.id}/publish`, topicManager.api_key, { operation_key: randomUUID(), expected_version: draft.version, expected_revision: revision, reason: draft.reason });
+  const retiredTopic = (await organization("/records?kind=topic&limit=200", topicManager.api_key)).records.find((record) => record.definition?.key === retiredKey);
+  assert(retiredTopic, "published retirement fixture topic must be available");
+  await organization(`/publications/${published.publication.id}/rollback`, topicManager.api_key, { operation_key: randomUUID(), expected_revision: (await organization("/status", topicManager.api_key)).revision, reason: "Retire unused fixture topic" });
+  const retiredResult = await rpc("recall_memory", { topic_ids: [retiredTopic.id] }, reader.api_key);
+  assert(retiredResult.result?.isError && retiredResult.result.structuredContent.reason_code === "topic_unavailable", "retired topic must fail explicit filtering");
   for (const temporalField of ["valid_at", "known_at"]) {
     const temporal = await mcp("recall_memory", { topic_ids: topicIDs, limit: 50, [temporalField]: new Date().toISOString() }, reader.api_key);
     assert(temporal.results.some((item) => sourceIDs.includes(item.evidence_id)), "temporal Evidence must use current direct topic membership");
@@ -287,6 +299,18 @@ async function control(path, body, method) {
   return response.json();
 }
 async function expectStatus(path, body, status, method) { assert.equal((await request(path, body, method)).status, status); }
+
+async function organization(path, key, body) {
+  const response = await fetch(`${userURL}/ui/api/ontology${path}`, { method: body ? "POST" : "GET", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) });
+  assert(response.ok, `organization ${path} returned ${response.status}: ${(await response.clone().text()).slice(0, 500)}`);
+  return (await response.json()).data;
+}
+
+async function browserRecall(params, key) {
+  const response = await fetch(`${userURL}/ui/api/recall?${params}`, { headers: { Authorization: `Bearer ${key}` } });
+  assert(response.ok, `browser Recall returned ${response.status}: ${(await response.clone().text()).slice(0, 500)}`);
+  return (await response.json()).data;
+}
 
 async function rpc(name, args, key) {
   const response = await fetch(`${userURL}/mcp`, { method: "POST", headers: { Authorization: `Bearer ${key}`, Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: randomUUID(), method: "tools/call", params: { name, arguments: args } }) });

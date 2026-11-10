@@ -120,7 +120,7 @@ func TestEvidenceOnlyUnitPairNativeObservationRejectsRetiredContracts(t *testing
 	row := PairImportAttempt{ContractVersion: "dense-mem.v2.7.0"}
 	_, err := DecodePairObservation(c.Candidate, commandNativeSnapshot(t, c.Candidate, []PairImportAttempt{row}), false)
 	require.ErrorContains(t, err, "Evidence-only runtime")
-	row.ContractVersion = "dense-mem.v3.0.0"
+	row.ContractVersion = "dense-mem.v2.8.0"
 	_, err = DecodePairObservation(c.Candidate, commandNativeSnapshot(t, c.Candidate, []PairImportAttempt{row}), false)
 	require.NoError(t, err)
 	_, err = DecodePairObservation(c.Baseline, commandNativeSnapshot(t, c.Baseline, []PairImportAttempt{}), false)

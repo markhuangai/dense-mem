@@ -57,7 +57,7 @@ if (zeroSemanticWrites.length !== 3 || zeroSemanticWrites.some((count) => count 
 }
 
 function assertTerminalErrors(status) {
-  if (status.contract_version !== "dense-mem.v3.0.0" || status.processing_state !== "failed" || !status.errors?.length) throw new Error("v3 failure must have a terminal typed outcome");
+  if (status.contract_version !== "dense-mem.v2.8.0" || status.processing_state !== "failed" || !status.errors?.length) throw new Error("Evidence-only failure must have a terminal typed outcome");
   if (Object.hasOwn(status, "relationship_results")) throw new Error("retired factual results returned");
   for (const item of status.errors) {
     if (item.code !== "input_budget_exceeded" || !item.message || item.message.length > 512 || !item.remediation || item.remediation.length > 512 || item.retryable !== false) throw new Error("Evidence budget error must be bounded, typed and non-retryable");

@@ -14,7 +14,7 @@ import (
 
 const maxSubmissionDiagnosticIssues = 20
 
-var diagnosticInputPath = regexp.MustCompile(`^/evidence(?:/[0-9]+(?:/(?:content|source_key|source_revision|previous_source_revision))?)?$`)
+var diagnosticInputPath = regexp.MustCompile(`^/evidence(?:/[0-9]+(?:/(?:content|source|source_key|source_revision|previous_source_revision))?)?$`)
 
 var securityDiagnosticMessages = map[string]string{
 	"role_control_spoofing":    "The security check detected text presented as a system or developer instruction.",
@@ -37,7 +37,7 @@ func submissionErrorRemediationForCode(code SubmissionErrorCode, action Submissi
 	case SubmissionErrorStaleInput:
 		return "Refresh the authorized source revisions and exact references, check that the intended change still applies, then submit the complete updated request with a new idempotency_key."
 	case SubmissionErrorRetiredContract:
-		return "This key belongs to a retired memory contract. Preserve the original receipt; use v3 Evidence-only remember with a new idempotency_key for an intentional new submission."
+		return "This key belongs to a retired memory contract. Preserve the original receipt; use v2.8.0 Evidence-only remember with a new idempotency_key for an intentional new submission."
 	case SubmissionErrorIdempotencyConflict:
 		return "Reuse this idempotency_key only for the original unchanged request. Submit a deliberately changed request with a new idempotency_key."
 	case SubmissionErrorInputBudgetExceeded:

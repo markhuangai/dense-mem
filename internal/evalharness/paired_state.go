@@ -97,7 +97,7 @@ func EvaluatePairImport(scope PairScope, corpus []CorpusItem, attempts []PairImp
 			return result, fmt.Errorf("import receipt references unknown source %q", row.SourceDocID)
 		}
 		expected := requests[row.SourceDocID]
-		if (!retained && row.ContractVersion != "dense-mem.v3.0.0") || (retained && row.ContractVersion != "dense-mem.v2.7.0") {
+		if (!retained && row.ContractVersion != "dense-mem.v2.8.0") || (retained && row.ContractVersion != "dense-mem.v2.7.0") {
 			return result, fmt.Errorf("import receipt uses a different contract")
 		}
 		if row.AttemptID == "" || row.RequestHash != expected {

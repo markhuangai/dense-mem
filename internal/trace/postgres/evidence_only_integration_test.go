@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -20,11 +21,106 @@ import (
 	"github.com/markhuangai/dense-mem/internal/memorypack"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
+	"github.com/markhuangai/dense-mem/internal/tools/registry"
 	traceapp "github.com/markhuangai/dense-mem/internal/trace"
 	tracecontract "github.com/markhuangai/dense-mem/internal/trace/contract"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
+
+func TestEvidenceOnlyPostgresMemoryPackMaximumOmissionCardinality(t *testing.T) {
+	admin, app, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := t.Context()
+	team := createLedgerTeam(t, admin, rls, "maximum-evidence-export")
+	owner := createLedgerProfile(t, admin, rls, team, "export owner")
+	store := knowledge.NewStore(app, rls)
+	ids := make([]string, 0, 500)
+	var originalIngest string
+	for batch := range 25 {
+		evidence := make([]knowledge.EvidenceInput, 20)
+		for index := range evidence {
+			evidence[index] = knowledge.EvidenceInput{Content: fmt.Sprintf("Exact export Evidence %d.", batch*20+index), ForceInsert: true}
+		}
+		if batch == 0 {
+			evidence[0].InitialEvent = &knowledge.SecurityEventDraft{EventKind: "deterministic_scan", Decision: "pass", Reason: "accepted"}
+		}
+		key := fmt.Sprintf("export-batch-%d", batch)
+		ingest, err := store.CreateIngestForTest(ctx, knowledge.CreateIngestInput{TeamID: team, OwnerProfileID: owner, IdempotencyKey: key, RequestHash: key, Evidence: evidence})
+		require.NoError(t, err)
+		if batch == 0 {
+			originalIngest = ingest.IngestID
+		}
+		for _, item := range ingest.Evidence {
+			ids = append(ids, item.FragmentID)
+		}
+	}
+	var space string
+	var generation int64
+	require.NoError(t, rls.WithSystemTx(ctx, admin, func(tx *gorm.DB) error {
+		return tx.Raw(`SELECT space_id::text,space_generation FROM evidence_fragments WHERE team_id=?::uuid AND fragment_id=?::uuid`, team, ids[0]).Row().Scan(&space, &generation)
+	}))
+	actorCtx := requestctx.WithActor(ctx, requestctx.Actor{TeamID: uuid.MustParse(team), OwnerID: uuid.MustParse(owner), Grants: []string{"read", "write"}, AllowedSpaces: []domain.MemorySpaceAccess{{ID: uuid.MustParse(space), Kind: domain.MemorySpaceTeamShared, Generation: generation}}})
+	require.NoError(t, rls.WithTeamProfileTx(actorCtx, app, team, owner, func(tx *gorm.DB) error {
+		for range 99 {
+			ingestID := uuid.NewString()
+			if err := tx.Exec(`INSERT INTO knowledge_ingests
+ SELECT (jsonb_populate_record(NULL::knowledge_ingests,to_jsonb(ingest)||jsonb_build_object('ingest_id',?::uuid,'idempotency_key',?::text))).*
+ FROM knowledge_ingests ingest WHERE team_id=?::uuid AND ingest_id=?::uuid`, ingestID, "export-history:"+ingestID, team, originalIngest).Error; err != nil {
+				return err
+			}
+			if err := tx.Exec(`INSERT INTO evidence_occurrences
+ SELECT (jsonb_populate_record(NULL::evidence_occurrences,to_jsonb(occurrence)||jsonb_build_object('occurrence_id',?::uuid,'ingest_id',?::uuid))).*
+ FROM evidence_occurrences occurrence WHERE team_id=?::uuid AND occurrence_id=?::uuid`, uuid.NewString(), ingestID, team, ids[0]).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	}))
+	exporter := memorypack.NewMemoryPackService(memorypack.MemoryPackDependencies{Semantic: New(app, rls)})
+	active, err := registry.BuildActive(registry.Dependencies{MemoryPackBindings: registry.MemoryPackBindings{Service: exporter}})
+	require.NoError(t, err)
+	tool, ok := active.Get(registry.ToolExportMemoryPack)
+	require.True(t, ok)
+	output, err := tool.Invoke(actorCtx, team, map[string]any{"name": "Maximum Evidence export", "evidence_ids": ids, "include_evidence": false})
+	require.NoError(t, err)
+	require.NoError(t, registry.ValidateInput(registry.Tool{InputSchema: tool.OutputSchema}, output))
+	omissions := output["omissions"].([]map[string]any)
+	require.Len(t, omissions, 500)
+	projected := make(map[string]string, len(omissions))
+	for _, omission := range omissions {
+		projected[omission["item_id"].(string)] = omission["reason"].(string)
+		require.Contains(t, ids, omission["item_id"])
+		require.Contains(t, omission["reason"], "evidence_content_excluded_by_request")
+		if omission["item_id"] == ids[0] {
+			require.Contains(t, omission["reason"], "decisions_max_events")
+		}
+	}
+	var artifact memorypack.MemoryPackArtifact
+	require.NoError(t, json.Unmarshal([]byte(output["artifact_json"].(string)), &artifact))
+	require.Len(t, artifact.Evidence, 500)
+	require.Greater(t, len(artifact.Omissions), 500)
+	require.Contains(t, artifact.Omissions, ids[0]+":decisions_max_events")
+	for _, omission := range artifact.Omissions {
+		id, reason, scoped := strings.Cut(omission, ":")
+		require.True(t, scoped)
+		require.Contains(t, projected[id], reason)
+	}
+	for _, item := range artifact.Evidence {
+		require.True(t, item.ContentOmitted)
+		if item.FragmentID == ids[0] {
+			require.Len(t, item.Occurrences, 100)
+			require.Contains(t, item.Omissions, "decisions_max_events")
+		}
+	}
+	hash := artifact.ContentSHA256
+	artifact.ContentSHA256 = ""
+	canonical, err := json.Marshal(artifact)
+	require.NoError(t, err)
+	digest := sha256.Sum256(canonical)
+	require.Equal(t, hex.EncodeToString(digest[:]), hash)
+	require.Equal(t, hash, output["content_sha256"])
+}
 
 func TestEvidenceOnlyPostgresTraceBudgetsAndMemoryPackCanonicalProvenance(t *testing.T) {
 	admin, app, rls, cleanup := setupLedgerRepositoryDB(t)

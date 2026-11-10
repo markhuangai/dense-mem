@@ -166,7 +166,7 @@ AI_VERIFIER_TIMEOUT_SECONDS=300
 
 ## 证据生命周期
 
-公共契约为 `dense-mem.v3.0.0`。`remember` 接收精确 Evidence 和来源，整批必须显式选择
+公共契约为 `dense-mem.v2.8.0`。`remember` 接收精确 Evidence 和来源，整批必须显式选择
 `target_space: "private"` 或 `"team_shared"`。认证决定实际团队、owner 和空间 ID。
 每条 Evidence 最多 999 个 Unicode code point。已退役的图提议字段会在 provider 调用前拒绝。
 
@@ -234,7 +234,7 @@ enable/pause/disable 与 generation fence 保留。暂停保留有效发布，�
 
 评估 build 另有 `eval_list_knowledge_refs` 与 `eval_run_recall_case`。
 正式 build 不能通过配置注册评估工具。事实图、Dream 与 community 契约从两个 profile 中退役。
-Python core、ADK 和 LangChain 使用相同 v3 schema，示例见 [Python README](packages/python/README.md)。
+Python core、ADK 和 LangChain 使用相同 Evidence-only schema，示例见 [Python README](packages/python/README.md)。
 
 升级前停止不兼容实例并验证匹配备份可恢复。普通启动在 workers/listeners 前执行有序 migration，
 保留 Evidence fingerprint 与 scoped operation identity，删除图专用数据并清理 mixed payload。

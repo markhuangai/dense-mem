@@ -326,7 +326,7 @@ show effective `memory_access.private.{read,write}` and
 `memory_access.team_shared.{read,write}`. Supplied `memory_binding` fields are
 rejected, including null and empty values.
 
-The public contract is `dense-mem.v3.0.0`. Refresh `tools/list` after upgrading.
+The public contract is `dense-mem.v2.8.0`. Refresh `tools/list` after upgrading.
 Retired fields fail validation before provider work. Legacy Remember operation
 keys retain their original identity and outcome and return non-retryable
 `retired_contract` guidance.
@@ -382,7 +382,7 @@ bindings. Deploying the new server also runs its required data migrations.
 
 ## Evidence Lifecycle
 
-`remember` accepts exact Evidence and provenance under `dense-mem.v3.0.0`.
+`remember` accepts exact Evidence and provenance under `dense-mem.v2.8.0`.
 Choose an explicit authenticated destination for the whole batch. Each item is
 bounded to 999 Unicode code points. Retired graph proposal fields fail
 validation before provider work.
@@ -458,7 +458,7 @@ content bounds, and explicit omissions. Authorization applies to every target.
 
 The [Python package](packages/python) uses the official MCP SDK 1.x and supports
 Python 3.11–3.14. It provides async/sync clients, Google ADK ingestion, and a
-LangChain retriever using the same v3 schemas. See its README for complete
+LangChain retriever using the same Evidence-only schemas. See its README for complete
 requests, terminal handling, and unchanged-request replay.
 
 ## MCP Tool Catalog

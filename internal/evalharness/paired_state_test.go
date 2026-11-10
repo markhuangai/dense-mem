@@ -15,7 +15,7 @@ func pairFixtureImportAttempt(t *testing.T, scope PairScope, item CorpusItem, id
 	t.Helper()
 	hash, err := pairRequestHash(item)
 	require.NoError(t, err)
-	return PairImportAttempt{Scope: scope, SourceDocID: item.SourceDocID, AttemptID: id, RequestHash: hash, ContractVersion: "dense-mem.v3.0.0", Outcome: "completed", EvidenceIDs: []string{"evidence-" + id}, ContentHashes: []string{pairBytesHash([]byte(item.Content))}, Live: true, IdempotencyKey: "eval:" + item.SourceDocID, Retryable: boolPointer(false), CreatedAt: timePointer(created)}
+	return PairImportAttempt{Scope: scope, SourceDocID: item.SourceDocID, AttemptID: id, RequestHash: hash, ContractVersion: "dense-mem.v2.8.0", Outcome: "completed", EvidenceIDs: []string{"evidence-" + id}, ContentHashes: []string{pairBytesHash([]byte(item.Content))}, Live: true, IdempotencyKey: "eval:" + item.SourceDocID, Retryable: boolPointer(false), CreatedAt: timePointer(created)}
 }
 
 func TestEvidenceOnlyUnitPairImportRequiresExactScopeAndTerminalEvidence(t *testing.T) {

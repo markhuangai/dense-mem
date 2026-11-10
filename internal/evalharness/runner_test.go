@@ -211,7 +211,7 @@ func TestRunBaselineLiveHTTPFlow(t *testing.T) {
 			callsMu.Unlock()
 			submissionID := strings.TrimPrefix(idempotencyKey, "eval:")
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"contract_version": "dense-mem.v3.0.0",
+				"contract_version": "dense-mem.v2.8.0",
 				"submission_id":    submissionID,
 				"submission_kind":  "remember",
 				"processing_state": "completed",

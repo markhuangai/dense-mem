@@ -373,17 +373,17 @@ describe("App", () => {
     const attempts = ["attempt-a", "attempt-b"].map((attemptID) => ({
       summary: {
         team_id: profileA.id, team_name: profileA.name, owner_profile_id: "owner-1", attempt_id: attemptID,
-        contract_version: "dense-mem.v3.0.0", submission_kind: "remember", outcome: "completed",
+        contract_version: "dense-mem.v2.8.0", submission_kind: "remember", outcome: "completed",
         evidence_count: 0, document_count: 0, assessor_turns: 0,
         duration_ms: 1, created_at: "2026-08-18T01:00:00Z",
       },
       detail: {
         team_id: profileA.id, team_name: profileA.name, owner_profile_id: "owner-1", attempt_id: attemptID,
-        contract_version: "dense-mem.v3.0.0", submission_kind: "remember", outcome: "completed",
+        contract_version: "dense-mem.v2.8.0", submission_kind: "remember", outcome: "completed",
         evidence_count: 0, document_count: 0, assessor_turns: 0,
         duration_ms: 1, created_at: "2026-08-18T01:00:00Z",
         public_result: {
-          contract_version: "dense-mem.v3.0.0", submission_id: attemptID, submission_kind: "remember",
+          contract_version: "dense-mem.v2.8.0", submission_id: attemptID, submission_kind: "remember",
           processing_state: "completed", search_state: "current", correlation_id: "corr",
           evidence: [], errors: [],
         },

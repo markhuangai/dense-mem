@@ -1,7 +1,7 @@
 # Historical Typed-Value Relationship corrections
 
 This document records the retired v2 factual graph contract. None of the tools
-or storage paths below is available under `dense-mem.v3.0.0`. The governing
+or storage paths below is available under `dense-mem.v2.8.0`. The governing
 decision is [Evidence-only memory](../adr/0017-evidence-only-memory-without-factual-relationships.md).
 Current corrections submit exact new Evidence through `remember` with an explicit
 owned supersession target; retraction uses the Evidence lifecycle contract.

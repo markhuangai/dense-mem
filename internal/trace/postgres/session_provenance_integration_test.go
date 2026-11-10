@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
+	"github.com/markhuangai/dense-mem/internal/memorypack"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	session "github.com/markhuangai/dense-mem/internal/session/contract"
 	sessionservice "github.com/markhuangai/dense-mem/internal/session/service"
@@ -90,8 +91,13 @@ func TestEvidenceOnlyPostgresTraceSessionProvenanceRequiresAuthenticatedPrivateO
 						isolatedTeam = createLedgerTeam(t, admin, rls, "trace-session-C-"+string(kind)+"-"+ingestID)
 					}
 					isolatedOwner := createLedgerProfile(t, admin, rls, isolatedTeam, "isolated-"+ingestID)
-					isolatedCtx := requestctx.WithActor(context.Background(), requestctx.Actor{TeamID: uuid.MustParse(isolatedTeam), OwnerID: uuid.MustParse(isolatedOwner), Grants: []string{"read"}})
+					isolatedSpace, err := ensurePrivateSpaceForOwner(t, app, rls, context.Background(), uuid.MustParse(isolatedTeam), uuid.MustParse(isolatedOwner))
+					require.NoError(t, err)
+					isolatedCtx := requestctx.WithActor(context.Background(), requestctx.Actor{TeamID: uuid.MustParse(isolatedTeam), OwnerID: uuid.MustParse(isolatedOwner), Grants: []string{"read"}, AllowedSpaces: []domain.MemorySpaceAccess{{ID: isolatedSpace.ID, Kind: domain.MemorySpacePrivate, Generation: isolatedSpace.Generation}}})
 					_, err = store.TraceEvidence(isolatedCtx, TraceEvidenceInput{TeamID: isolatedTeam, EvidenceID: ingest.Evidence[0].FragmentID})
+					require.ErrorIs(t, err, tracecontract.ErrEvidenceNotFound)
+					exporter := memorypack.NewMemoryPackService(memorypack.MemoryPackDependencies{Semantic: store})
+					_, err = exporter.Export(isolatedCtx, memorypack.ExportRequest{Name: "Private session", EvidenceIDs: []string{ingest.Evidence[0].FragmentID}})
 					require.ErrorIs(t, err, tracecontract.ErrEvidenceNotFound)
 				}
 			}

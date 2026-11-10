@@ -15,7 +15,7 @@ import (
 
 func TestEvidenceOnlyUnitMigrationSourceSelection(t *testing.T) {
 	directory := t.TempDir()
-	release := filepath.Join(directory, "v3_0")
+	release := filepath.Join(directory, "v2_8")
 	require.NoError(t, os.MkdirAll(release, 0o700))
 	body := []byte("-- +goose Up\nSELECT 1;\n-- +goose Down\nSELECT 1;\n")
 	require.NoError(t, os.WriteFile(filepath.Join(release, "20261108010000_baseline.sql"), body, 0o600))

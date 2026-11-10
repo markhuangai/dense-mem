@@ -33,7 +33,9 @@ def wire_server():
                 inputSchema={"type": "object"},
                 outputSchema={"type": "object"},
             )
-            for name in ("remember", "ingest_session", "recall_memory", "trace_memory", "export_memory_pack")
+            for name in (
+                "remember", "ingest_session", "recall_memory", "trace_memory", "export_memory_pack"
+            )
         ]
 
     @server.call_tool()

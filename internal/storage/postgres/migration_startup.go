@@ -200,7 +200,7 @@ func ValidateStartupMigrationState(ctx context.Context, db *sql.DB, migrationsDi
 			return err
 		}
 		var compatible bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM v2_compatibility_markers WHERE marker_kind='evidence_only' AND version='dense-mem.v3.0.0' AND status='compatible' AND metadata->>'retained_fingerprints_verified'='true' AND metadata->>'transaction_outcome'='committed')`).Scan(&compatible); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM v2_compatibility_markers WHERE marker_kind='evidence_only' AND version='dense-mem.v2.8.0' AND status='compatible' AND metadata->>'retained_fingerprints_verified'='true' AND metadata->>'transaction_outcome'='committed')`).Scan(&compatible); err != nil {
 			return err
 		}
 		if !compatible {

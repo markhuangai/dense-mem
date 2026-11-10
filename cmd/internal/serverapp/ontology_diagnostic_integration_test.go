@@ -217,7 +217,7 @@ func TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads(t *testing.T)
 					stage := "decode"
 					if mode == "repair_exhausted" {
 						stage = "validate"
-						require.Equal(t, "item_reason_limit", validation["code"])
+						require.Equal(t, "definition_record", validation["code"])
 					}
 					if mode == "unused_exhausted" {
 						stage = "validate"

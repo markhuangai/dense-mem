@@ -36,7 +36,7 @@ use inside an active event loop.
 Methods are initialize, list_tools, remember, ingest_session, recall_memory and
 trace_memory. Requests/results are typed dictionaries with py.typed. Server
 validation and authenticated discovery remain authoritative. Current-server
-compatibility is dense-mem.v3.0.0. Refresh tool discovery after upgrading.
+compatibility is dense-mem.v2.8.0. Refresh tool discovery after upgrading.
 Retired proposal fields fail validation before provider work.
 
 ## Complete Remember request and safe replay

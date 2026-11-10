@@ -32,6 +32,9 @@ for (const include of [undefined, true, false]) {
     assert(!Object.hasOwn(item, "content") && item.content_omitted);
     assert(!result.artifact_json.includes(content));
     assert(result.omissions.length > 0);
+    assert.equal(result.omissions.length, 1);
+    assert.equal(result.omissions[0].item_id, evidenceID);
+    assert(result.omissions[0].reason.includes("evidence_content_excluded_by_request"));
   } else assert.equal(item.content, content);
   const hash = artifact.content_sha256;
   delete artifact.content_sha256;

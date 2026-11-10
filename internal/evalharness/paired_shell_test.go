@@ -592,7 +592,7 @@ func TestNonPairedMonitorRetainsImportAttempts(t *testing.T) {
 		case "tool:remember":
 			remembered.Add(1)
 			source := strings.TrimPrefix(stringValue(input["idempotency_key"]), "eval:")
-			_ = json.NewEncoder(w).Encode(map[string]any{"contract_version": "dense-mem.v3.0.0", "submission_id": "attempt-" + source, "submission_kind": "remember", "processing_state": "completed", "search_state": "current", "correlation_id": "server-" + source, "evidence": []map[string]any{{"disposition": "stored", "evidence_id": "evidence-" + source, "evidence_index": 0, "search_state": "current"}}, "errors": []any{}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"contract_version": "dense-mem.v2.8.0", "submission_id": "attempt-" + source, "submission_kind": "remember", "processing_state": "completed", "search_state": "current", "correlation_id": "server-" + source, "evidence": []map[string]any{{"disposition": "stored", "evidence_id": "evidence-" + source, "evidence_index": 0, "search_state": "current"}}, "errors": []any{}})
 		case "tool:eval_list_knowledge_refs":
 			_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{}})
 		case "tool:eval_run_recall_case":

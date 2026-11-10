@@ -54,7 +54,7 @@ func pairFixtureObservation(t *testing.T, c PairConfig, r PairRelease) PairObser
 	require.NoError(t, err)
 	for _, item := range corpus {
 		hash, err := pairRequestHash(item)
-		version := "dense-mem.v3.0.0"
+		version := "dense-mem.v2.8.0"
 		if r.Mode == PairModeRetainedBaseline {
 			hash, err = retainedCEvidenceRequestHash(item)
 			version = "dense-mem.v2.7.0"

@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"html"
 	"math"
 	"regexp"
@@ -168,6 +169,17 @@ func ScanSubmissionBatch(contents []string) (SubmissionSecurityBatchScan, error)
 			source:        submissionSecuritySourceEvidence,
 			evidenceIndex: index,
 		})
+	}
+	return scanSubmissionInputs(inputs)
+}
+
+func scanRememberEvidence(evidence []RememberEvidenceInput) (SubmissionSecurityBatchScan, error) {
+	inputs := make([]submissionSecurityInput, 0, 2*len(evidence))
+	for index, item := range evidence {
+		inputs = append(inputs, submissionSecurityInput{content: item.Content, source: submissionSecuritySourceEvidence, evidenceIndex: index})
+		if item.Source != "" {
+			inputs = append(inputs, submissionSecurityInput{content: item.Source, source: "provenance", evidenceIndex: index, path: fmt.Sprintf("/evidence/%d/source", index)})
+		}
 	}
 	return scanSubmissionInputs(inputs)
 }

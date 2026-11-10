@@ -42,11 +42,21 @@ func exportMemoryPackContractOutput(res *memorypack.ExportResult) map[string]any
 
 func memoryPackOmissionsContractOutput(omissions []string) []map[string]any {
 	out := make([]map[string]any, 0, len(omissions))
+	indices := make(map[string]int)
 	for _, omission := range omissions {
 		if strings.TrimSpace(omission) == "" {
 			continue
 		}
-		out = append(out, map[string]any{"item_id": "artifact", "reason": omission})
+		id, reason, scoped := strings.Cut(omission, ":")
+		if !scoped {
+			id, reason = "artifact", omission
+		}
+		if index, exists := indices[id]; exists {
+			out[index]["reason"] = out[index]["reason"].(string) + "; " + reason
+			continue
+		}
+		indices[id] = len(out)
+		out = append(out, map[string]any{"item_id": id, "reason": reason})
 	}
 	return out
 }

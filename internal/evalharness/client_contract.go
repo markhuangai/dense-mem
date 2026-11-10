@@ -15,7 +15,7 @@ import (
 type contractMode string
 
 const (
-	contractModeV3 contractMode = "v3.0.0"
+	contractModeEvidenceOnly contractMode = "v2.8.0"
 )
 
 type mcpToolsListResponse struct {
@@ -88,7 +88,7 @@ func classifyContract(tools []mcpToolDefinition) (contractMode, error) {
 	}
 	version := contractVersionFromSchema(rememberSchema)
 	if domain.ContractVersionCompatible(version) && matchesContractToolSet(names, registry.ContractToolNames()) {
-		return contractModeV3, nil
+		return contractModeEvidenceOnly, nil
 	}
 	return "", fmt.Errorf("unsupported or mixed MCP contract: remember=%q", version)
 }

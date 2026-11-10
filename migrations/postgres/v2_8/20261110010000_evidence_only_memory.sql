@@ -3,7 +3,7 @@
 -- Backfill: retire mixed graph payloads and unfinished extraction checkpoints while retaining original Evidence and operation identity.
 -- Preconditions: stop incompatible instances and verify a matching restore-tested backup before normal startup.
 -- Recovery: before commit the transaction rolls back; after commit restore that backup, and after new writes recover forward unless separately approved.
--- Inventory identity: sha256:a8c4cd81d2538b989553d05f6d4b5559b3de0edcccc706efb7b32b6894089286
+-- Inventory identity: sha256:4d4269d72e53f44fa47476c7cf2ed658fa270e65339256c73b2f73faabe494d2
 -- +goose Up
 -- +goose StatementBegin
 SET LOCAL lock_timeout = '5s';
@@ -90,7 +90,7 @@ BEGIN
 END $$;
 
 UPDATE knowledge_ingests SET metadata=metadata || jsonb_build_object('retired_payload',true,'retirement_reason','factual_graph_removed','original_status',status)
- WHERE COALESCE(metadata->>'contract_version','')<>'dense-mem.v3.0.0';
+ WHERE COALESCE(metadata->>'contract_version','')<>'dense-mem.v2.8.0';
 ALTER TABLE knowledge_ingests DROP COLUMN proposal;
 UPDATE remember_attempts SET public_result=pg_temp.evidence_only_result(public_result);
 ALTER TABLE remember_attempts DROP CONSTRAINT remember_attempts_counts_check;
@@ -114,7 +114,7 @@ UPDATE remember_failure_artifacts SET content_bytes=convert_to('{"retired_payloa
  content_sha256='sha256:'||encode(sha256(convert_to('{"retired_payload":true,"availability":"legacy_failure_payload_unavailable"}','UTF8')),'hex');
 
 CREATE FUNCTION pg_temp.evidence_only_session_result(body jsonb) RETURNS jsonb LANGUAGE sql IMMUTABLE AS $$
- SELECT pg_temp.evidence_only_result(body)||jsonb_build_object('original_contract_version',body->>'contract_version','contract_version','dense-mem.v3.0.0','memory_outcome','retired_contract');
+ SELECT pg_temp.evidence_only_result(body)||jsonb_build_object('original_contract_version',body->>'contract_version','contract_version','dense-mem.v2.8.0','memory_outcome','retired_contract');
 $$;
 
 CREATE TEMP TABLE evidence_only_sessions ON COMMIT DROP AS
@@ -426,9 +426,9 @@ BEGIN
 END $verify$;
 CREATE POLICY evidence_only_marker_insert ON v2_compatibility_markers FOR INSERT WITH CHECK (
  current_setting('app.tx_mode',true)='migration' AND marker_kind='evidence_only'
- AND version='dense-mem.v3.0.0' AND status='compatible');
-INSERT INTO v2_compatibility_markers(marker_kind,version,status,metadata) VALUES('evidence_only','dense-mem.v3.0.0','compatible',jsonb_build_object(
- 'inventory_sha256','a8c4cd81d2538b989553d05f6d4b5559b3de0edcccc706efb7b32b6894089286', 'retained_counts',(SELECT jsonb_object_agg(name,row_count) FROM evidence_only_inventory WHERE disposition='retain'),
+ AND version='dense-mem.v2.8.0' AND status='compatible');
+INSERT INTO v2_compatibility_markers(marker_kind,version,status,metadata) VALUES('evidence_only','dense-mem.v2.8.0','compatible',jsonb_build_object(
+ 'inventory_sha256','4d4269d72e53f44fa47476c7cf2ed658fa270e65339256c73b2f73faabe494d2', 'retained_counts',(SELECT jsonb_object_agg(name,row_count) FROM evidence_only_inventory WHERE disposition='retain'),
  'removed_counts',(SELECT jsonb_object_agg(name,row_count) FROM evidence_only_inventory WHERE disposition='remove'),
  'retained_fingerprint_sha256',(SELECT jsonb_object_agg(name,hash) FROM (SELECT inventory.name,encode(sha256(convert_to(COALESCE(string_agg(fingerprint,',' ORDER BY fingerprint),''),'UTF8')),'hex') AS hash FROM evidence_only_inventory inventory LEFT JOIN evidence_only_after hashes ON hashes.table_name=inventory.name WHERE disposition='retain' GROUP BY inventory.name) summaries),
  'retained_fingerprints_verified',true,'legacy_operation_keys',(SELECT count(*) FROM knowledge_ingests WHERE idempotency_key<>''),

@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	EvidenceOnlyMigrationInventorySHA256       = "a8c4cd81d2538b989553d05f6d4b5559b3de0edcccc706efb7b32b6894089286"
+	EvidenceOnlyMigrationInventorySHA256       = "4d4269d72e53f44fa47476c7cf2ed658fa270e65339256c73b2f73faabe494d2"
 	evidenceOnlyMigrationVersion         int64 = 20261110010000
 	evidenceOnlyMigrationSQLName               = "20261110010000_evidence_only_memory.sql"
 	evidenceOnlyFingerprintBoundary            = "-- EVIDENCE_ONLY_REBIND_FINGERPRINTS"

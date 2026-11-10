@@ -387,7 +387,7 @@ describe("RememberAttemptsPanel", () => {
     const listRememberAttemptDiagnostics = vi.fn().mockResolvedValue({
       data: [{
         team_id: "team-1", team_name: "Staging", owner_profile_id: "owner-1", attempt_id: "attempt-1",
-        contract_version: "dense-mem.v3.0.0", submission_kind: "remember", outcome: "failed",
+        contract_version: "dense-mem.v2.8.0", submission_kind: "remember", outcome: "failed",
         failed_phase: "assessment", error_code: "provider_unavailable", evidence_count: 1,
         retryable: true, document_count: 0, assessor_turns: 1, duration_ms: 24,
         created_at: "2026-08-18T01:00:00Z",
@@ -400,7 +400,7 @@ describe("RememberAttemptsPanel", () => {
       failed_phase: "assessment", error_code: "provider_unavailable", evidence_count: 1,
       retryable: true, document_count: 0, assessor_turns: 1, duration_ms: 24,
       created_at: "2026-08-18T01:00:00Z", public_result: {
-        contract_version: "dense-mem.v3.0.0", submission_id: "attempt-1", submission_kind: "remember",
+        contract_version: "dense-mem.v2.8.0", submission_id: "attempt-1", submission_kind: "remember",
         processing_state: "failed", search_state: "not_required", correlation_id: "corr-1",
         evidence: [{ disposition: "not_stored", evidence_index: 0, superseded_evidence_ids: [], search_state: "not_required", reason: "<script>alert(1)</script>" }],
         errors: [],
@@ -468,7 +468,7 @@ describe("RememberAttemptsPanel", () => {
     let resolveTeamTwo!: (value: unknown) => void;
     const teamTwo = new Promise((resolve) => { resolveTeamTwo = resolve; });
     const listRememberAttemptDiagnostics = vi.fn().mockImplementation(({ team_id }: { team_id: string }) => team_id === "team-2" ? teamTwo : Promise.resolve({
-      data: [{ team_id: "team-1", team_name: "Staging", owner_profile_id: "owner-1", attempt_id: "attempt-1", contract_version: "dense-mem.v3.0.0", submission_kind: "remember", outcome: "completed", evidence_count: 0, document_count: 0, assessor_turns: 0, duration_ms: 1, created_at: "2026-08-18T01:00:00Z" }],
+      data: [{ team_id: "team-1", team_name: "Staging", owner_profile_id: "owner-1", attempt_id: "attempt-1", contract_version: "dense-mem.v2.8.0", submission_kind: "remember", outcome: "completed", evidence_count: 0, document_count: 0, assessor_turns: 0, duration_ms: 1, created_at: "2026-08-18T01:00:00Z" }],
       pagination: { limit: 50, offset: 0, total: 1 },
     }));
     const api = {
@@ -583,7 +583,7 @@ function team(): Team {
 function summary(attemptID: string, outcome: RememberAttemptDiagnosticSummary["outcome"] = "completed"): RememberAttemptDiagnosticSummary {
   return {
     team_id: "team-1", team_name: "Staging", owner_profile_id: "owner-1", attempt_id: attemptID,
-    contract_version: "dense-mem.v3.0.0", submission_kind: "remember", outcome,
+    contract_version: "dense-mem.v2.8.0", submission_kind: "remember", outcome,
     retryable: outcome === "failed", evidence_count: 0, document_count: 0, assessor_turns: 0, duration_ms: 1,
     created_at: "2026-08-18T01:00:00Z",
   };
@@ -603,6 +603,6 @@ function baseDetail(attemptID: string): RememberAttemptDiagnosticDetail {
     team_id: "team-1", team_name: "Staging", owner_profile_id: "owner-1", attempt_id: attemptID,
     contract_version: "remember_request_hash_v1", submission_kind: "remember", outcome: "completed",
     retryable: false, evidence_count: 0, document_count: 0, assessor_turns: 0, duration_ms: 1,
-    created_at: "2026-08-18T01:00:00Z", public_result: { contract_version: "dense-mem.v3.0.0", submission_id: attemptID, submission_kind: "remember", processing_state: "completed", search_state: "current", correlation_id: "corr", evidence: [], errors: [] }, events: [], diagnostics: { original_request: null, provider_exchanges: [], caller_response: null },
+    created_at: "2026-08-18T01:00:00Z", public_result: { contract_version: "dense-mem.v2.8.0", submission_id: attemptID, submission_kind: "remember", processing_state: "completed", search_state: "current", correlation_id: "corr", evidence: [], errors: [] }, events: [], diagnostics: { original_request: null, provider_exchanges: [], caller_response: null },
   };
 }

@@ -254,12 +254,24 @@ func TestEvidenceOnlyPostgresMigratedSessionResumesUnchangedRequest(t *testing.T
 		require.Empty(t, diagnostic.Payload.Result.Errors)
 		require.Len(t, diagnostic.Payload.Result.Events[0].EvidenceIDs, 1)
 		require.GreaterOrEqual(t, len(diagnostic.Payload.Exchanges), 2)
+		exactText, err := json.Marshal(item.intake.Request.Events[0].Text)
+		require.NoError(t, err)
 		for _, exchange := range diagnostic.Payload.Exchanges {
 			require.Equal(t, "captured", exchange.CaptureState)
 			require.Equal(t, http.StatusOK, exchange.StatusCode)
 			require.NotEmpty(t, exchange.RequestBody)
 			require.NotEmpty(t, exchange.ResponseBody)
-			require.Contains(t, string(exchange.RequestBody), item.intake.Request.Events[0].Text)
+			var request struct {
+				Messages []modelprovider.Message `json:"messages"`
+			}
+			require.NoError(t, json.Unmarshal(exchange.RequestBody, &request))
+			var userMessage string
+			for _, message := range request.Messages {
+				if message.Role == "user" {
+					userMessage += message.Content
+				}
+			}
+			require.Contains(t, userMessage, string(exactText))
 			require.False(t, exchange.StartedAt.IsZero())
 			require.False(t, exchange.CompletedAt.Before(exchange.StartedAt))
 		}

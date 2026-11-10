@@ -79,7 +79,9 @@ async def main():
     client = DenseMemClient(USER_URL + "/mcp", token=token_a)
     assert (await client.initialize()).serverInfo.name
     tools = {tool.name for tool in (await client.list_tools()).tools}
-    assert {"remember", "ingest_session", "recall_memory", "trace_memory", "export_memory_pack"} <= tools
+    assert {
+        "remember", "ingest_session", "recall_memory", "trace_memory", "export_memory_pack"
+    } <= tools
     assert not {"correct_relationship", "query_graph", "list_dreams"} & tools
     assert "get_submission_status" not in tools
     for token in (shared, readonly):
@@ -160,7 +162,9 @@ async def main():
         await rejected(client.remember(retired), DenseMemProtocolError)
         no_canonical_write(retired["idempotency_key"])
         assert await provider_health() == before
-    pack = await client.export_memory_pack({"name": "Python Evidence", "evidence_ids": evidence_ids(session_result)})
+    pack = await client.export_memory_pack(
+        {"name": "Python Evidence", "evidence_ids": evidence_ids(session_result)}
+    )
     artifact = json.loads(pack["artifact_json"])
     assert artifact["format"] == "dense-mem.memory-pack.v3.0"
     assert pack["counts"]["evidence"] == len(evidence_ids(session_result))

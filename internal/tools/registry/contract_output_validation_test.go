@@ -5,6 +5,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/memorypack"
 	tracecontract "github.com/markhuangai/dense-mem/internal/trace/contract"
+	"github.com/stretchr/testify/require"
 )
 
 func TestExportMemoryPackContractOutputMatchesClosedSchema(t *testing.T) {
@@ -20,4 +21,15 @@ func TestExportMemoryPackContractOutputMatchesClosedSchema(t *testing.T) {
 	if err := ValidateInput(Tool{InputSchema: exportMemoryPackOutputSchema()}, output); err != nil {
 		t.Fatalf("export output validation: %v", err)
 	}
+}
+
+func TestEvidenceOnlyCatalogMemoryPackOmissionsRetainEveryReason(t *testing.T) {
+	input := []string{"one:evidence_content_excluded_by_request", "one:decisions_max_events", "two:artifact_byte_limit"}
+	output := memoryPackOmissionsContractOutput(input)
+	require.Equal(t, []map[string]any{
+		{"item_id": "one", "reason": "evidence_content_excluded_by_request; decisions_max_events"},
+		{"item_id": "two", "reason": "artifact_byte_limit"},
+	}, output)
+	require.Equal(t, []string{"one:evidence_content_excluded_by_request", "one:decisions_max_events", "two:artifact_byte_limit"}, input)
+	require.NoError(t, validateSchemaValue("omissions", output, exportMemoryPackOutputSchema()["properties"].(map[string]any)["omissions"].(map[string]any)))
 }

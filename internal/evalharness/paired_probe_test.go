@@ -111,7 +111,7 @@ func TestPairProbeSingleSubmissionsAndNativeSerialization(t *testing.T) {
 				imports := []PairImportAttempt{}
 				for i, item := range items {
 					hash, err := pairRequestHash(item)
-					version := "dense-mem.v3.0.0"
+					version := "dense-mem.v2.8.0"
 					require.NoError(t, err)
 					imports = append(imports, PairImportAttempt{Scope: c.Candidate.Scope, SourceDocID: item.SourceDocID, AttemptID: stringValue(rows[i].Response["submission_id"]),
 						RequestHash: hash, ContractVersion: version, CreatedAt: timePointer(rows[i].StartedAt), Retryable: boolPointer(false), IdempotencyKey: "eval:" + item.SourceDocID, Outcome: "completed", EvidenceIDs: []string{"evidence-" + item.SourceDocID}, ContentHashes: []string{pairBytesHash([]byte(item.Content))}, Live: true})

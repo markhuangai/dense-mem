@@ -43,7 +43,10 @@ def recall():
             },
         ],
         "related_topics": [
-            {"topic_id": "topic-1", "name": "Languages", "description": "Tools", "eligible_evidence_count": 2, "rank": 1},
+            {
+                "topic_id": "topic-1", "name": "Languages", "description": "Tools",
+                "eligible_evidence_count": 2, "rank": 1,
+            },
         ],
         "topics_truncated": True,
         "conflicts": [{"conflict_id": "conflict-1", "status": "open"}],
@@ -96,7 +99,9 @@ def assert_mapping(documents, result):
     assert result["related_topics"]
 
 
-def test_evidence_only_sync_real_interface_order_metadata_callbacks_and_read_only(wire_server, recall):
+def test_evidence_only_sync_real_interface_order_metadata_callbacks_and_read_only(
+    wire_server, recall
+):
     endpoint, state = wire_server
     state["result"] = recall
     callback = Callbacks()
@@ -157,7 +162,13 @@ def test_invalid_k_fails_before_network(wire_server, k):
     assert not state["calls"]
 
 
-@pytest.mark.parametrize("key", ["query", "limit", "k", "team_id", "space_id", "target_space", "x", "relationship_limit", "community_limit", "known_relationship_ids", "expand_from_entity_ids"])
+@pytest.mark.parametrize(
+    "key",
+    [
+        "query", "limit", "k", "team_id", "space_id", "target_space", "x",
+        "relationship_limit", "community_limit", "known_relationship_ids", "expand_from_entity_ids",
+    ],
+)
 async def test_evidence_only_options_cannot_override_authorization_or_invocation(wire_server, key):
     endpoint, state = wire_server
     with pytest.raises(ValueError):
@@ -189,7 +200,9 @@ def test_credentials_are_absent_from_pydantic_and_langchain_serialization(wire_s
 
 
 @pytest.mark.parametrize("empty", [True, False])
-async def test_evidence_only_optional_warning_preserves_response_even_when_empty(wire_server, recall, empty):
+async def test_evidence_only_optional_warning_preserves_response_even_when_empty(
+    wire_server, recall, empty
+):
     endpoint, state = wire_server
     recall["degradations"] = [
         {

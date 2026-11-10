@@ -183,11 +183,7 @@ func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberR
 	if strings.TrimSpace(req.IdempotencyKey) == "" {
 		return nil, errors.New("remember: idempotency_key is required")
 	}
-	contents := make([]string, 0, len(req.Evidence))
-	for _, evidence := range req.Evidence {
-		contents = append(contents, evidence.Content)
-	}
-	scan, scanErr := ScanSubmissionBatch(contents)
+	scan, scanErr := scanRememberEvidence(req.Evidence)
 	if scanErr != nil {
 		if err := recordSubmissionSecurityRejection(ctx, s.auditor, s.logger, actor, "remember", scan, scanErr); err != nil {
 			observability.RecordRememberAcknowledgement(ctx, s.metrics, time.Since(started), "error")

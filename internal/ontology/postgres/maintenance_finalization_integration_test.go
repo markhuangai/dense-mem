@@ -32,7 +32,7 @@ func TestOntologyMaintenanceFinalizationCancellationAndDiscovery(t *testing.T) {
 			calls, receipts := x.calls.Load(), receiptCount(t, f)
 			statusBefore, err := f.store.MaintenanceStatus(ctx, time.Now())
 			require.NoError(t, err)
-			require.NoError(t, f.admin.Exec(`UPDATE ontology_maintenance_teams SET discovery_kind=1,discovery_cursor='' WHERE team_id=?::uuid`, f.team).Error)
+			require.NoError(t, f.admin.Exec(`UPDATE ontology_maintenance_teams SET discovery_kind=0,discovery_cursor='' WHERE team_id=?::uuid`, f.team).Error)
 			second := uuid.MustParse(x.claim.Sources[1].ID).String()
 			require.NoError(t, f.admin.Exec(fmt.Sprintf(`CREATE FUNCTION finalization_discovery_barrier() RETURNS trigger LANGUAGE plpgsql AS $$
 			 BEGIN IF NEW.source_id='%s' THEN PERFORM pg_advisory_xact_lock(603001); END IF; RETURN NEW; END $$;

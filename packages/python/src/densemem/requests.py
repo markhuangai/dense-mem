@@ -1,5 +1,6 @@
 from typing import Any, Literal, NotRequired, TypedDict
 
+
 class Evidence(TypedDict):
     content: str
     source_type: NotRequired[Literal["conversation", "document", "observation", "manual"]]

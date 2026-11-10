@@ -290,9 +290,9 @@ export class UserApi {
 
   async recall(query: string, limit = 10, options: RecallOptions = {}): Promise<RecallPayload> {
     const params = new URLSearchParams({ query, limit: String(limit) });
-    if (options.topicIDs) params.set("topic_ids", options.topicIDs.join(","));
+    for (const id of options.topicIDs ?? []) params.append("topic_ids", id);
     if (options.topicLimit !== undefined) params.set("topic_limit", String(options.topicLimit));
-    if (options.knownEvidenceIDs) params.set("known_evidence_ids", options.knownEvidenceIDs.join(","));
+    for (const id of options.knownEvidenceIDs ?? []) params.append("known_evidence_ids", id);
     if (options.knownAt) params.set("known_at", options.knownAt);
     if (options.validAt) params.set("valid_at", options.validAt);
     const payload = await this.request<Envelope<unknown>>(`/ui/api/recall?${params.toString()}`);

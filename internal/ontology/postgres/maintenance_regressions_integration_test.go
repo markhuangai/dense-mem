@@ -24,7 +24,7 @@ import (
 )
 
 func TestOntologyMaintenanceIndexMigrationRestoresLockTimeout(t *testing.T) {
-	f := newOrganizationFixture(t)
+	f := newHistoricalOntologyFixture(t)
 	ctx := context.Background()
 	db, err := f.admin.DB()
 	require.NoError(t, err)

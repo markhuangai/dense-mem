@@ -83,7 +83,7 @@ func DecodePairObservation(release PairRelease, snapshot PairNativeSnapshot, fre
 		return o, fmt.Errorf("retained baseline is offline only")
 	}
 	for _, row := range db.Imports {
-		if row.ContractVersion != "dense-mem.v3.0.0" {
+		if row.ContractVersion != "dense-mem.v2.8.0" {
 			return o, fmt.Errorf("import contract does not match the Evidence-only runtime")
 		}
 	}

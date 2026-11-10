@@ -14,28 +14,16 @@ func TestValidateContractInputIssuesAggregatesRememberProblems(t *testing.T) {
 	remember, err := requireTool(toolMap(t), ToolRemember)
 	require.NoError(t, err)
 
+	evidence := make([]any, 21)
+	for index := range evidence {
+		evidence[index] = map[string]any{
+			"content": "", "source_key": "source-1", "unknown": true,
+			"supersedes_evidence_ids": []any{"evidence-old"},
+		}
+	}
 	args := map[string]any{
-		"unknown": true,
-		"evidence": []any{
-			map[string]any{
-				"content":                 "",
-				"source_key":              "source-1",
-				"supersedes_evidence_ids": []any{"evidence-old"},
-				"unknown":                 true,
-			},
-			"not-an-object",
-		},
-		"relationships": []any{
-			map[string]any{
-				"ref":              "duplicate",
-				"evidence_indices": []any{"bad"},
-				"unknown":          true,
-			},
-			map[string]any{
-				"ref":              "duplicate",
-				"evidence_indices": []any{0},
-			},
-		},
+		"unknown":  true,
+		"evidence": evidence,
 	}
 
 	result := ValidateContractInputIssues(remember, args, []string{"read", "write"})

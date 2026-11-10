@@ -802,7 +802,7 @@ function seedSpaceContent({ teamID, ownerID, keyID, spaceID, label, rich = false
          ${sqlLiteral(teamID)}::uuid, ${sqlLiteral(ids.ingestID)}::uuid, ${sqlLiteral(ownerID)}::uuid,
          ${sqlLiteral(spaceID)}::uuid, (SELECT generation FROM memory_spaces WHERE id = ${sqlLiteral(spaceID)}::uuid),
          ${sqlLiteral(`${runID}-${label}-policy`)}, ${sqlLiteral(`sha256:${ids.ingestID}`)},
-         'dense-mem.v3.0.0', 'remember', 'failed', 'preflight', 'submission_policy_rejected',
+         'dense-mem.v2.8.0', 'remember', 'failed', 'preflight', 'submission_policy_rejected',
          '{}'::jsonb, 0, 0, 0, 0, now() - interval '8 days', now() - interval '8 days'
        )`,
       `INSERT INTO remember_attempt_diagnostics (

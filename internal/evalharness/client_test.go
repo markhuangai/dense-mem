@@ -65,7 +65,7 @@ func TestHTTPClientEvaluationFlow(t *testing.T) {
 				t.Fatalf("remember input = %#v", input)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"contract_version": "dense-mem.v3.0.0",
+				"contract_version": "dense-mem.v2.8.0",
 				"submission_id":    "submission-alpha",
 				"submission_kind":  "remember",
 				"processing_state": "completed",
@@ -474,7 +474,7 @@ func TestHTTPClientImportCorpusMapsSubmissionEvidenceID(t *testing.T) {
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"contract_version": "dense-mem.v3.0.0", "submission_id": "submission-canonical",
+			"contract_version": "dense-mem.v2.8.0", "submission_id": "submission-canonical",
 			"submission_kind": "remember", "processing_state": "completed", "search_state": "current",
 			"correlation_id": "correlation-canonical",
 			"evidence":       []map[string]any{{"disposition": "stored", "evidence_id": "evidence-canonical", "evidence_index": 0, "superseded_evidence_ids": []string{}, "search_state": "current"}},
@@ -503,7 +503,7 @@ func TestHTTPClientImportCorpusReportsSubmissionErrorCause(t *testing.T) {
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"contract_version": "dense-mem.v3.0.0", "submission_id": "submission-failed",
+			"contract_version": "dense-mem.v2.8.0", "submission_id": "submission-failed",
 			"submission_kind": "remember", "processing_state": "failed", "search_state": "not_required",
 			"correlation_id": "correlation-failed", "evidence": []map[string]any{}, "errors": []map[string]any{{"code": "provider_unavailable", "message": "verifier unavailable", "retryable": true, "next_action": "retry_same_request", "remediation": "retry"}},
 		})
@@ -523,7 +523,7 @@ func TestHTTPClientImportCorpusAllowsCompletedSubmission(t *testing.T) {
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"contract_version": "dense-mem.v3.0.0", "submission_id": "submission-review",
+			"contract_version": "dense-mem.v2.8.0", "submission_id": "submission-review",
 			"submission_kind": "remember", "processing_state": "completed", "search_state": "current",
 			"correlation_id": "correlation-review",
 			"evidence":       []map[string]any{{"disposition": "stored", "evidence_id": "evidence-review", "evidence_index": 0, "superseded_evidence_ids": []string{}, "search_state": "current"}},
@@ -552,7 +552,7 @@ func TestHTTPClientImportCorpusReportsSubmissionFailureCause(t *testing.T) {
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"contract_version": "dense-mem.v3.0.0", "submission_id": "submission-canonical-failed",
+			"contract_version": "dense-mem.v2.8.0", "submission_id": "submission-canonical-failed",
 			"submission_kind": "remember", "processing_state": "failed", "search_state": "not_required",
 			"correlation_id": "correlation-canonical-failed", "evidence": []map[string]any{}, "errors": []map[string]any{{"code": "provider_unavailable", "message": "verifier unavailable", "retryable": true, "next_action": "retry_same_request", "remediation": "retry"}},
 		})
@@ -589,7 +589,7 @@ func TestHTTPClientImportCorpusWithConcurrency(t *testing.T) {
 		}
 		sourceDocID := strings.TrimPrefix(input["idempotency_key"].(string), "eval:")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"contract_version": "dense-mem.v3.0.0", "submission_id": "submission-" + sourceDocID,
+			"contract_version": "dense-mem.v2.8.0", "submission_id": "submission-" + sourceDocID,
 			"submission_kind": "remember", "processing_state": "completed", "search_state": "current",
 			"correlation_id": "correlation-" + sourceDocID,
 			"evidence":       []map[string]any{{"disposition": "stored", "evidence_id": "fragment-" + sourceDocID, "evidence_index": 0, "superseded_evidence_ids": []string{}, "search_state": "current"}},
@@ -654,7 +654,7 @@ func TestHTTPClientConcurrentFileImportDrainsActiveRequestsAfterError(t *testing
 		case <-time.After(40 * time.Millisecond):
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"contract_version": "dense-mem.v3.0.0", "submission_id": "submission-doc-2",
+			"contract_version": "dense-mem.v2.8.0", "submission_id": "submission-doc-2",
 			"submission_kind": "remember", "processing_state": "completed", "search_state": "current",
 			"correlation_id": "correlation-doc-2",
 			"evidence":       []map[string]any{{"disposition": "stored", "evidence_id": "fragment-doc-2", "evidence_index": 0, "superseded_evidence_ids": []string{}, "search_state": "current"}},

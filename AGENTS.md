@@ -72,7 +72,7 @@
   derived organizational metadata. Topic filters select the union of current
   direct memberships without descendant expansion. Stored memory and search
   context never become submitted Evidence.
-- Remember accepts Evidence and provenance under `dense-mem.v3.0.0`, rejecting
+- Remember accepts Evidence and provenance under `dense-mem.v2.8.0`, rejecting
   retired graph fields before provider work. It durably stages exact input and
   intent, then completes assessment, required embeddings, and atomic commit
   before returning success. Provider calls stay outside that transaction.

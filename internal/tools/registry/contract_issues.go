@@ -186,8 +186,10 @@ func collectRememberContractIssues(tool Tool, args map[string]any, collector *co
 			collector.add("/"+jsonPointerToken(key), "unknown_field", "unknown field: "+key)
 		}
 	}
-	if _, ok := args["idempotency_key"]; !ok {
-		collector.add("/idempotency_key", "required", "idempotency_key is required")
+	for _, field := range schemaRequiredFields(tool.InputSchema) {
+		if _, ok := args[field]; !ok {
+			collector.add("/"+jsonPointerToken(field), "required", field+" is required")
+		}
 	}
 
 	evidence := collectAnyArray(args["evidence"])
@@ -240,7 +242,7 @@ func collectRememberContractIssues(tool Tool, args map[string]any, collector *co
 	}
 
 	if err := ValidateInput(tool, args); err != nil {
-		collector.add("", classifyContractIssue(err.Error()), err.Error())
+		collector.add(contractIssuePath(err, ""), classifyContractIssue(err.Error()), err.Error())
 	}
 }
 
@@ -268,7 +270,7 @@ func contractIssuePath(err error, fallback string) string {
 		}
 		return path[:dot] + suffix
 	}
-	if !strings.HasPrefix(path, "evidence[") {
+	if path != "evidence" && path != "idempotency_key" && path != "target_space" && !strings.HasPrefix(path, "evidence[") {
 		return fallback
 	}
 	pointer, ok := contractDotPathPointer(path)

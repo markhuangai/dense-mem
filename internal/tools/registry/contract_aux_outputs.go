@@ -44,8 +44,8 @@ func memoryPackOmissionSchema() map[string]any {
 	return closedObject(
 		[]string{"item_id", "reason"},
 		map[string]any{
-			"item_id": schemaString("Artifact-local item ID.", 128),
-			"reason":  schemaString("Bounded omission reason.", 1000),
+			"item_id": schemaString("Evidence ID, or artifact for an unscoped omission.", 128),
+			"reason":  schemaString("All omission reasons for this item, separated by semicolons.", 1000),
 		},
 	)
 }

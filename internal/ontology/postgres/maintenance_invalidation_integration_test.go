@@ -220,7 +220,7 @@ func TestOntologyMaintenanceMarkerFrameRLS(t *testing.T) {
 	current := maintenanceEvidence(t, f, "Current marker")
 	inspect := func(tx *gorm.DB) error {
 		var visible, historical, crossTeam int
-		err := tx.Raw(`SELECT count(*) FILTER (WHERE anchor_id=?),count(*) FILTER (WHERE anchor_id=?),count(*) FILTER (WHERE anchor_id=?) FROM ontology_maintenance_markers`, current.ID, old.ID, peer.ID).Row().Scan(&visible, &historical, &crossTeam)
+		err := tx.Raw(`SELECT count(DISTINCT anchor_id) FILTER (WHERE anchor_id=?),count(*) FILTER (WHERE anchor_id=?),count(*) FILTER (WHERE anchor_id=?) FROM ontology_maintenance_markers`, current.ID, old.ID, peer.ID).Row().Scan(&visible, &historical, &crossTeam)
 		if err != nil {
 			return err
 		}

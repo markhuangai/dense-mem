@@ -192,7 +192,7 @@ func assertStagingEvidenceOnlyCatalog(t *testing.T, ctx context.Context, db *gor
 	require.Zero(t, remaining, "factual graph catalog remains after rehearsal")
 	var metadata []byte
 	require.NoError(t, storagepostgres.NewRLS().WithSystemReadOnlyRepeatableTx(ctx, db, func(tx *gorm.DB) error {
-		return tx.Raw(`SELECT metadata FROM v2_compatibility_markers WHERE marker_kind='evidence_only' AND version='dense-mem.v3.0.0' AND status='compatible'`).Row().Scan(&metadata)
+		return tx.Raw(`SELECT metadata FROM v2_compatibility_markers WHERE marker_kind='evidence_only' AND version='dense-mem.v2.8.0' AND status='compatible'`).Row().Scan(&metadata)
 	}))
 	var receipt struct {
 		Verified bool             `json:"retained_fingerprints_verified"`

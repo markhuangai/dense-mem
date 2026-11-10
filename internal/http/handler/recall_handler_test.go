@@ -73,7 +73,7 @@ func TestRecallHandlerRoutesHTTPToRecall(t *testing.T) {
 	e.Use(injectActorMiddleware(teamID, profileID))
 	e.GET("/ui/api/recall", h.Handle)
 
-	req := httptest.NewRequest(http.MethodGet, "/ui/api/recall?query=postgres&limit=3&known_evidence_ids=11111111-1111-4111-8111-111111111111&topic_ids=22222222-2222-4222-8222-222222222222&topic_limit=1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/recall?query=postgres&limit=3&known_evidence_ids=11111111-1111-4111-8111-111111111111&known_evidence_ids=33333333-3333-4333-8333-333333333333&topic_ids=22222222-2222-4222-8222-222222222222&topic_ids=44444444-4444-4444-8444-444444444444&topic_limit=1", nil)
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 
@@ -83,10 +83,10 @@ func TestRecallHandlerRoutesHTTPToRecall(t *testing.T) {
 	if captured.Query != "postgres" || captured.Limit != 3 {
 		t.Fatalf("captured request = %#v", captured)
 	}
-	if got := captured.KnownEvidenceIDs; len(got) != 1 || got[0] != "11111111-1111-4111-8111-111111111111" {
+	if got := captured.KnownEvidenceIDs; len(got) != 2 || got[0] != "11111111-1111-4111-8111-111111111111" || got[1] != "33333333-3333-4333-8333-333333333333" {
 		t.Fatalf("known_evidence_ids = %#v", got)
 	}
-	if len(captured.TopicIDs) != 1 || captured.TopicIDs[0] != "22222222-2222-4222-8222-222222222222" || captured.TopicLimit == nil || *captured.TopicLimit != 1 {
+	if len(captured.TopicIDs) != 2 || captured.TopicIDs[0] != "22222222-2222-4222-8222-222222222222" || captured.TopicIDs[1] != "44444444-4444-4444-8444-444444444444" || captured.TopicLimit == nil || *captured.TopicLimit != 1 {
 		t.Fatalf("topic input=%+v", captured)
 	}
 	if capturedActor.TeamID != teamID || capturedActor.OwnerID != profileID {
@@ -267,6 +267,8 @@ func TestEvidenceOnlyRecallHTTPRejectsRetiredAndInvalidTopics(t *testing.T) {
 		"query=memory&relationship_limit=1", "query=memory&community_limit=1",
 		"query=memory&expand_from_entity_ids=" + id, "query=memory&known_relationship_ids=" + id,
 		"topic_ids=not-a-uuid", "topic_ids=" + uuid.Nil.String(),
+		"topic_ids=" + id + "," + uuid.NewString(),
+		"query=memory&known_evidence_ids=" + id + "," + uuid.NewString(),
 		"topic_ids=" + id + "&topic_ids=" + strings.ToUpper(id),
 		"topic_ids=" + id + "&topic_limit=11", "topic_ids=" + id + "&topic_limit=-1",
 	} {

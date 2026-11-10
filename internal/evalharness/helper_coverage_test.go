@@ -89,7 +89,7 @@ func TestEvaluationContractAndRetryHelpers(t *testing.T) {
 		{"oneOf": []any{map[string]any{"properties": map[string]any{"contract_version": map[string]any{"enum": []any{domain.ContractVersion}}}}}},
 	} {
 		if contractVersionFromSchema(schema) != domain.ContractVersion {
-			t.Fatalf("v3 contract missing: %#v", schema)
+			t.Fatalf("Evidence-only contract missing: %#v", schema)
 		}
 	}
 	if preferredContractVersion([]any{domain.PreviousContractVersion}) != "" || preferredContractVersion([]any{domain.ContractVersion, domain.PreviousContractVersion}) != "" {

@@ -195,7 +195,7 @@ func TestOntologyMaintenanceExpiredLeaseAndNewInvalidation(t *testing.T) {
 	require.ErrorIs(t, f.store.AdmitMaintenanceAttempt(ctx, *claim, uuid.NewString(), 1, 100, 100, time.Now().UTC()), ontology.ErrLeaseLost)
 	require.NoError(t, f.store.ReleaseMaintenanceTurn(ctx, *turn))
 	turn, claim = maintenanceClaim(t, f, window)
-	require.NoError(t, f.rls.WithTeamTx(ctx, f.app, f.team, func(tx *gorm.DB) error {
+	require.NoError(t, f.rls.WithTeamProfileTx(f.actor(0, "member"), f.app, f.team, f.owners[0], func(tx *gorm.DB) error {
 		return appendMaintenanceOccurrence(tx, f, source)
 	}))
 	discovery, err := f.store.ClaimMaintenanceTurn(ctx, window.ID, time.Now(), time.Minute)
@@ -232,7 +232,7 @@ func TestOntologyMaintenanceMarkerRollbackAndRLS(t *testing.T) {
 	var before, after int64
 	require.NoError(t, f.admin.Raw(`SELECT COALESCE(max(marker_sequence),0) FROM ontology_maintenance_markers WHERE team_id=?::uuid`, f.team).Row().Scan(&before))
 	abort := errors.New("abort authoritative transaction")
-	err := f.rls.WithTeamTx(ctx, f.app, f.team, func(tx *gorm.DB) error {
+	err := f.rls.WithTeamProfileTx(f.actor(0, "member"), f.app, f.team, f.owners[0], func(tx *gorm.DB) error {
 		if err := appendMaintenanceOccurrence(tx, f, source); err != nil {
 			return err
 		}

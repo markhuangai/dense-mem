@@ -97,7 +97,7 @@ func assertEvidenceOnlyCatalog(t *testing.T, ctx context.Context, db *sql.DB) {
 	require.Empty(t, remaining)
 	var receipt []byte
 	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
-		return tx.QueryRowContext(ctx, `SELECT metadata FROM v2_compatibility_markers WHERE marker_kind='evidence_only' AND version='dense-mem.v3.0.0' AND status='compatible'`).Scan(&receipt)
+		return tx.QueryRowContext(ctx, `SELECT metadata FROM v2_compatibility_markers WHERE marker_kind='evidence_only' AND version='dense-mem.v2.8.0' AND status='compatible'`).Scan(&receipt)
 	}))
 	var metadata map[string]any
 	require.NoError(t, json.Unmarshal(receipt, &metadata))
@@ -125,7 +125,7 @@ func TestEvidenceOnlyPostgresFreshInstall(t *testing.T) {
 		if _, err := tx.ExecContext(ctx, `SET LOCAL ROLE evidence_only_marker_writer`); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO v2_compatibility_markers(marker_kind,version,status) VALUES('evidence_only','dense-mem.v3.0.0','compatible')`)
+		_, err := tx.ExecContext(ctx, `INSERT INTO v2_compatibility_markers(marker_kind,version,status) VALUES('evidence_only','dense-mem.v2.8.0','compatible')`)
 		return err
 	})
 	var databaseError *pgconn.PgError
@@ -145,7 +145,7 @@ func TestEvidenceOnlyPostgresPopulatedUpgradePreservesEvidenceAndLegacyIdentity(
 	assertEvidenceOnlyCatalog(t, ctx, db)
 	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
 		var legacyKeys int
-		if err := tx.QueryRowContext(ctx, `SELECT (metadata->>'legacy_operation_keys')::int FROM v2_compatibility_markers WHERE marker_kind='evidence_only' AND version='dense-mem.v3.0.0'`).Scan(&legacyKeys); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT (metadata->>'legacy_operation_keys')::int FROM v2_compatibility_markers WHERE marker_kind='evidence_only' AND version='dense-mem.v2.8.0'`).Scan(&legacyKeys); err != nil {
 			return err
 		}
 		require.Equal(t, 1, legacyKeys)

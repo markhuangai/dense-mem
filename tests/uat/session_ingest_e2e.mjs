@@ -71,7 +71,7 @@ assert.equal(noFacts.processing_state, "completed");
 assert.equal(noFacts.search_state, "not_required");
 assert.deepEqual(noFacts.events[0].evidence_ids, []);
 assert.equal(noFacts.memory_outcome, "no_memory");
-assert.equal(first.contract_version, "dense-mem.v3.0.0");
+assert.equal(first.contract_version, "dense-mem.v2.8.0");
 const longEvent = { event_id: "long", text: (" ".repeat(506) + "Morgan uses Go.").padEnd(32_000) };
 const long = await call("ingest_session", request([longEvent]), a.api_key);
 assert.equal(long.processing_state, "completed");

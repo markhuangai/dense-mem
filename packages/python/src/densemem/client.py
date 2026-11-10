@@ -109,7 +109,9 @@ class DenseMemClient:
         return cast(TraceResult, await self._execute("trace_memory", cast(dict[str, Any], request)))
 
     async def export_memory_pack(self, request: ExportRequest) -> ExportResult:
-        return cast(ExportResult, await self._execute("export_memory_pack", cast(dict[str, Any], request)))
+        return cast(
+            ExportResult, await self._execute("export_memory_pack", cast(dict[str, Any], request))
+        )
 
     async def _execute(self, method: str, request: dict[str, Any] | None = None) -> Any:
         payload = copy.deepcopy(request)

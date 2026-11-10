@@ -77,7 +77,7 @@ func migrateEvidenceOnly(ctx context.Context, db *gorm.DB, migrator *postgres.Mi
 	phase, outcome = "read_receipt", "committed"
 	var receipt []byte
 	err = postgres.NewRLS().WithSystemReadOnlyRepeatableTx(ctx, db, func(tx *gorm.DB) error {
-		return tx.Raw(`SELECT metadata FROM v2_compatibility_markers WHERE marker_kind='evidence_only' AND version='dense-mem.v3.0.0' AND status='compatible'`).Row().Scan(&receipt)
+		return tx.Raw(`SELECT metadata FROM v2_compatibility_markers WHERE marker_kind='evidence_only' AND version='dense-mem.v2.8.0' AND status='compatible'`).Row().Scan(&receipt)
 	})
 	if err != nil {
 		return fmt.Errorf("Evidence-only migration receipt: %w", err)

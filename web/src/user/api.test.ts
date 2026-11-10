@@ -105,12 +105,14 @@ describe("UserApi", () => {
     const data={recall_id:"rec-1",results:[{evidence_id:"e-1",rank:1,context:"Exact café Evidence.",equivalent_evidence_ids:[],equivalents_truncated:false}],related_topics:[{topic_id:"11111111-1111-4111-8111-111111111111",name:"Storage",description:"Durable storage",eligible_evidence_count:2,rank:1}],topics_truncated:true,conflicts:[],degradations:[],search_states:{evidence:"current"}};
     const fetcher=vi.fn().mockResolvedValue(new Response(JSON.stringify({data}),{status:200}));
     vi.stubGlobal("fetch",fetcher);
-    const result=await new UserApi("key").recall("",10,{topicIDs:[data.related_topics[0].topic_id],topicLimit:0,knownEvidenceIDs:["e-known"],knownAt:"2026-11-01T00:00:00Z",validAt:"2026-10-01T00:00:00Z"});
+    const topicIDs = [data.related_topics[0].topic_id, "22222222-2222-4222-8222-222222222222"];
+    const knownEvidenceIDs = ["33333333-3333-4333-8333-333333333333", "44444444-4444-4444-8444-444444444444"];
+    const result=await new UserApi("key").recall("",10,{topicIDs,topicLimit:0,knownEvidenceIDs,knownAt:"2026-11-01T00:00:00Z",validAt:"2026-10-01T00:00:00Z"});
     expect(result).toEqual(data);
     const url=new URL(fetcher.mock.calls[0][0],"http://localhost");
-    expect(url.searchParams.get("topic_ids")).toBe(data.related_topics[0].topic_id);
+    expect(url.searchParams.getAll("topic_ids")).toEqual(topicIDs);
     expect(url.searchParams.get("topic_limit")).toBe("0");
-    expect(url.searchParams.get("known_evidence_ids")).toBe("e-known");
+    expect(url.searchParams.getAll("known_evidence_ids")).toEqual(knownEvidenceIDs);
     expect(url.searchParams.get("known_at")).toBe("2026-11-01T00:00:00Z");
     expect(url.searchParams.get("valid_at")).toBe("2026-10-01T00:00:00Z");
     expect(url.searchParams.has("relationship_limit")).toBe(false);

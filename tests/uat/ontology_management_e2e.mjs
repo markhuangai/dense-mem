@@ -146,7 +146,7 @@ async function topicHierarchyAcceptance(profileID, deniedActors) {
     const input = { operation_key: randomUUID(), expected_version: 0, expected_revision: observed - (stale ? 1 : 0), reason: "Log-only semantic rejection", edits };
     const correlationID = randomUUID();
     const response = await fetch(`${userURL}/ui/api/ontology/drafts`, { method: "POST", headers: { Authorization: `Bearer ${manager}`, "Content-Type": "application/json", "X-Correlation-ID": correlationID }, body: JSON.stringify(input) });
-    assert.equal(response.status, stale ? 409 : 422);
+    assert.equal(response.status, stale || reason === "parent_unavailable" ? 409 : 422);
     operations.push({ operationKey: input.operation_key, correlationID, teamID, profileID, reason, parents, credentials, outcomeEvent: "ontology_semantic_manager_rejected", input: protectedInput(input), ...(stale ? { expectedVersion: input.expected_revision, observedVersion: observed } : {}) });
   }
   for (const kind of ["topic"]) {

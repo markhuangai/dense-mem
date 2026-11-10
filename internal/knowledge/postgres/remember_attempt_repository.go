@@ -105,7 +105,7 @@ func (r *Store) LoadRememberAttempt(ctx context.Context, input RememberAttemptLo
 			 jsonb_build_object('retired_payload', true, 'original_status', status), created_at
 			 FROM knowledge_ingests ingest
 			 WHERE team_id = ?::uuid AND owner_profile_id = ?::uuid AND idempotency_key = ?
-			 AND COALESCE(metadata->>'contract_version','') <> 'dense-mem.v3.0.0'
+			 AND COALESCE(metadata->>'contract_version','') <> 'dense-mem.v2.8.0'
 			 AND NOT EXISTS (SELECT 1 FROM remember_attempts attempt WHERE attempt.team_id=ingest.team_id
 			  AND attempt.owner_profile_id=ingest.owner_profile_id AND attempt.idempotency_key=ingest.idempotency_key)
 			) history

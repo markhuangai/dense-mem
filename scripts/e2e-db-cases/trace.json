@@ -3,6 +3,13 @@
   "capability": "trace",
   "cases": [
     {
+      "id": "trace/TestEvidenceOnlyPostgresMemoryPackMaximumOmissionCardinality",
+      "package": "./internal/trace/postgres",
+      "run": "^TestEvidenceOnlyPostgresMemoryPackMaximumOmissionCardinality$",
+      "phase": "precheck",
+      "source": "internal/trace/postgres/evidence_only_integration_test.go"
+    },
+    {
       "id": "trace/TestEvidenceOnlyPostgresTraceBudgetsAndMemoryPackCanonicalProvenance",
       "package": "./internal/trace/postgres",
       "run": "^TestEvidenceOnlyPostgresTraceBudgetsAndMemoryPackCanonicalProvenance$",

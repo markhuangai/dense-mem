@@ -37,7 +37,9 @@ def test_url_cannot_carry_credentials(endpoint):
         DenseMemClient(endpoint, token="x")
 
 
-async def test_evidence_only_sdk_discovery_and_every_method_preserve_payload_and_result(wire_server):
+async def test_evidence_only_sdk_discovery_and_every_method_preserve_payload_and_result(
+    wire_server,
+):
     endpoint, state = wire_server
     client = DenseMemClient(endpoint, token="static-secret")
     initialized = await client.initialize()
@@ -52,11 +54,14 @@ async def test_evidence_only_sdk_discovery_and_every_method_preserve_payload_and
     response = {
         "processing_state": "completed",
         "search_state": "not_required",
-        "contract_version": "dense-mem.v3.0.0",
+        "contract_version": "dense-mem.v2.8.0",
         "evidence": [{"evidence_id": "stored", "disposition": "stored"}],
         "results": [{"context": " café 🧭\n", "equivalent_evidence_ids": ["B", "A"]}],
         "conflicts": [{"positions": ["second", "first"]}],
-        "related_topics": [{"topic_id": "topic", "name": "Languages", "description": "Tools", "eligible_evidence_count": 2, "rank": 1}],
+        "related_topics": [{
+            "topic_id": "topic", "name": "Languages", "description": "Tools",
+            "eligible_evidence_count": 2, "rank": 1,
+        }],
         "topics_truncated": False,
         "degradations": [{"code": "optional_context_omitted"}],
         "warnings": ["context omitted"],
@@ -123,7 +128,9 @@ async def test_evidence_only_request_is_snapshotted_before_credential_await(wire
     assert state["calls"][0][1] == original
 
 
-async def test_evidence_only_failed_receipt_preserves_identifiers_and_actionable_fields(wire_server):
+async def test_evidence_only_failed_receipt_preserves_identifiers_and_actionable_fields(
+    wire_server,
+):
     endpoint, state = wire_server
     state["result"] = {
         "processing_state": "failed",
@@ -347,13 +354,13 @@ def test_sync_uses_the_same_sdk_transport(wire_server):
 async def test_evidence_only_retired_contract_preserves_original_outcome(wire_server):
     endpoint, state = wire_server
     result = {
-        "contract_version": "dense-mem.v3.0.0",
+        "contract_version": "dense-mem.v2.8.0",
         "submission_id": "original-submission",
         "processing_state": "failed",
         "original_contract_version": "dense-mem.v2.7.0",
         "memory_outcome": "retired_contract",
         "retired_payload": True,
-        "errors": [{"code": "retired_contract", "message": "Use a new v3 request.",
+        "errors": [{"code": "retired_contract", "message": "Use a new v2.8.0 request.",
                     "retryable": False, "next_action": "new_request"}],
     }
     state.update(result=result, is_error=True)

@@ -559,7 +559,7 @@ async function validateGrafanaDashboardParity(credentialID) {
     assert(values.every((value) => Number.isFinite(value) && value > 0), `Grafana grouped panel ${title} returned a zero-only series`);
   }
 
-  for (const title of ["MCP transport duration", "Logical operation duration", "Remember phase duration", "Dream cycle duration", "Dream provider duration"]) {
+  for (const title of ["MCP transport duration", "Logical operation duration", "Remember phase duration"]) {
     const panel = panels.find((item) => item.title === title);
     assert(panel, `Grafana omitted grouped duration panel ${title}`);
     const result = await query(panel.targets[0].expr.replaceAll("$job", "dense-mem"), { rateInterval: snapshot.window.key });

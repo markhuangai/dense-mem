@@ -718,7 +718,7 @@ function terminalPayload(result) {
 
 function assertStrictTerminalRemember(result, expect) {
   assertTerminalRememberResult(result);
-  expect(result.contract_version === "dense-mem.v3.0.0", "terminal Remember must include contract_version");
+  expect(result.contract_version === "dense-mem.v2.8.0", "terminal Remember must include contract_version");
   expect(typeof result.submission_id === "string" && result.submission_id.length > 0, "terminal Remember must include a submission id");
   expect(result.submission_kind === "remember", "terminal Remember must include remember submission_kind");
   expect(typeof result.correlation_id === "string" && result.correlation_id.length > 0, "terminal Remember must include correlation_id");

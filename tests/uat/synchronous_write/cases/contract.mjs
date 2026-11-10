@@ -2,20 +2,20 @@ import { randomUUID } from "node:crypto";
 import { TERMINAL_TOOLS, assertContractInvalidInput, assertTerminalRememberResult } from "../surface.mjs";
 
 export const name = "contract";
-const CURRENT_CONTRACT_VERSION = "dense-mem.v3.0.0";
+const CURRENT_CONTRACT_VERSION = "dense-mem.v2.8.0";
 
 export async function run({ rpc, expect }) {
   await enableTargetFeatureGates();
   const tools = (await rpc("tools/list", {})).tools || [];
   const names = tools.map((tool) => tool.name);
-  expect(names.length === TERMINAL_TOOLS.length && TERMINAL_TOOLS.every((name) => names.includes(name)), "v3 must expose exactly seven Evidence tools");
+  expect(names.length === TERMINAL_TOOLS.length && TERMINAL_TOOLS.every((name) => names.includes(name)), "Evidence-only memory must expose exactly seven Evidence tools");
   for (const name of ["correct_relationship", "get_submission_status", "list_dreams", "get_dream", "resolve_dream_feedback"]) {
     expect(!names.includes(name), `${name} must be absent from the catalog`);
     const raw = await rpcRaw(name, {});
     expect(raw.error?.code === -32601 && !raw.result, `${name} must return bounded method-not-found`);
   }
   const remember = tools.find((tool) => tool.name === "remember");
-  expect(JSON.stringify(remember.outputSchema.properties.contract_version.enum) === JSON.stringify([CURRENT_CONTRACT_VERSION]), "v3 must advertise only its current executable contract");
+  expect(JSON.stringify(remember.outputSchema.properties.contract_version.enum) === JSON.stringify([CURRENT_CONTRACT_VERSION]), "Evidence-only memory must advertise only its current executable contract");
   expect(!Object.hasOwn(remember.inputSchema.properties, "relationships"), "Remember must accept Evidence without graph proposals");
   const traceTool = tools.find((tool) => tool.name === "trace_memory");
   expect(traceTool.inputSchema.required.includes("evidence_id") && !Object.hasOwn(traceTool.inputSchema.properties, "relationship_id"), "Trace must use Evidence identity");

@@ -1,7 +1,7 @@
 package domain
 
 const (
-	ContractVersion         = "dense-mem.v3.0.0"
+	ContractVersion         = "dense-mem.v2.8.0"
 	PreviousContractVersion = "dense-mem.v2.6.2"
 	FeatureGate             = "memory"
 	ToolVisibility          = "active"

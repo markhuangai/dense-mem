@@ -123,6 +123,7 @@ func loadTraceEvidenceRoot(ctx context.Context, tx *gorm.DB, input TraceEvidence
         LEFT JOIN evidence_exact_aliases AS alias ON alias.team_id=selected.team_id AND alias.alias_fragment_id=selected.fragment_id
         JOIN evidence_fragments AS fragment ON fragment.team_id=selected.team_id AND fragment.fragment_id=COALESCE(alias.canonical_fragment_id,selected.fragment_id)
           AND fragment.space_id=selected.space_id
+        JOIN memory_spaces AS space ON space.team_id=fragment.team_id AND space.id=fragment.space_id
         LEFT JOIN evidence_sources AS source ON source.team_id=fragment.team_id AND source.source_id=fragment.source_id
           AND source.owner_profile_id=fragment.owner_profile_id AND source.space_id=fragment.space_id
         LEFT JOIN evidence_source_revisions AS revision ON revision.team_id=fragment.team_id AND revision.source_revision_id=fragment.source_revision_id
@@ -130,6 +131,7 @@ func loadTraceEvidenceRoot(ctx context.Context, tx *gorm.DB, input TraceEvidence
         LEFT JOIN session_submissions AS session ON session.team_id=fragment.team_id AND session.submission_id=fragment.ingest_id
           AND session.owner_profile_id=fragment.owner_profile_id AND session.space_id=fragment.space_id AND session.space_generation=fragment.space_generation
         WHERE selected.team_id=?::uuid AND selected.fragment_id=?::uuid
+          AND (space.kind='team_shared' OR dense_mem_space_allowed(space.id))
           AND `+activeSemanticSpaceGenerationSQL("selected")+` AND `+activeSemanticSpaceGenerationSQL("fragment")+`
           AND (source.source_id IS NULL OR `+activeSemanticSpaceGenerationSQL("source")+`)
           AND (revision.source_revision_id IS NULL OR `+activeSemanticSpaceGenerationSQL("revision")+`)
