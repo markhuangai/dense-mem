@@ -27,7 +27,7 @@ type legacyV261RememberResult struct {
 	Evidence            []remember.TerminalEvidenceResult `json:"evidence"`
 	Errors              []remember.SubmissionStatusError  `json:"errors"`
 	RelationshipResults []struct {
-		RelationshipRef string `json:"relationship_ref"`
+		RelationshipRef string `json:"ref"`
 		Disposition     string `json:"disposition"`
 		Reason          string `json:"reason"`
 		Splits          []struct {

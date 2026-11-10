@@ -74,7 +74,11 @@ func (r *Store) TraceEvidence(ctx context.Context, input TraceEvidenceInput) (*E
 		}
 		result.Decisions = tracecontract.BoundEvents(decisions, &remaining, result, "decisions")
 		if boolDefault(input.IncludeTransitions, true) {
-			lifecycle, err := loadTraceEvidenceLifecycleEvents(ctx, tx, input.TeamID, root.SpaceID, []string{root.FragmentID}, remaining+1)
+			lifecycleIDs := []string{root.FragmentID}
+			for _, occurrence := range occurrences {
+				lifecycleIDs = append(lifecycleIDs, occurrence.OccurrenceID)
+			}
+			lifecycle, err := loadTraceEvidenceLifecycleEvents(ctx, tx, input.TeamID, root.SpaceID, lifecycleIDs, remaining+1)
 			if err != nil {
 				return err
 			}

@@ -129,8 +129,7 @@ func TestTeamOwnedDreamingMigrationCanonicalizesLegacyRows(t *testing.T) {
 	`).Scan(&seededLegacyConfigCount))
 	require.Equal(t, 3, seededLegacyConfigCount)
 
-	m := NewMigratorWithDB(sqlDB)
-	require.NoError(t, m.RunUp(ctx))
+	require.NoError(t, migrationUpTo(ctx, sqlDB, 2026073104))
 
 	var (
 		canonicalRunCount        int

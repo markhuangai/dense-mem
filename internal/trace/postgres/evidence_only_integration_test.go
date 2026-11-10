@@ -243,4 +243,63 @@ func TestEvidenceOnlyPostgresTraceBudgetsAndMemoryPackCanonicalProvenance(t *tes
 	require.Equal(t, 2, exported)
 	require.Equal(t, 1, failed)
 
+	t.Run("historical_alias_lifecycle", func(t *testing.T) {
+		aliases := []string{uuid.NewString(), uuid.NewString()}
+		ownerCtx := requestctx.WithActor(ctx, requestctx.Actor{TeamID: uuid.MustParse(team), OwnerID: uuid.MustParse(owner), Grants: []string{"read", "write"}, AllowedSpaces: []domain.MemorySpaceAccess{{ID: uuid.MustParse(spaceID), Kind: domain.MemorySpaceTeamShared, Generation: generation}}})
+		require.NoError(t, rls.WithSystemTx(ctx, admin, func(tx *gorm.DB) error {
+			for index, alias := range aliases {
+				if err := tx.Exec(`INSERT INTO evidence_occurrences
+ SELECT (jsonb_populate_record(NULL::evidence_occurrences,to_jsonb(occurrence)||jsonb_build_object('occurrence_id',?::uuid,'evidence_index',?::int))).*
+ FROM evidence_occurrences occurrence WHERE team_id=?::uuid AND occurrence_id=?::uuid`, alias, index+1, team, id).Error; err != nil {
+					return err
+				}
+				if err := tx.Exec(`INSERT INTO evidence_fragments
+ SELECT (jsonb_populate_record(NULL::evidence_fragments,to_jsonb(fragment)||jsonb_build_object('fragment_id',?::uuid,'evidence_index',?::int))).*
+ FROM evidence_fragments fragment WHERE team_id=?::uuid AND fragment_id=?::uuid`, alias, index+1, team, id).Error; err != nil {
+					return err
+				}
+				if err := tx.Exec(`INSERT INTO evidence_exact_aliases(team_id,alias_fragment_id,alias_owner_profile_id,canonical_fragment_id,canonical_owner_profile_id,space_id,space_generation)
+ SELECT team_id,?::uuid,owner_profile_id,fragment_id,owner_profile_id,space_id,space_generation
+ FROM evidence_fragments WHERE team_id=?::uuid AND fragment_id=?::uuid`, alias, team, id).Error; err != nil {
+					return err
+				}
+			}
+			return nil
+		}))
+		_, err := store.RetractEvidence(actorCtx, knowledge.RetractEvidenceInput{TeamID: team, OwnerProfileID: peer, EvidenceIDs: []string{aliases[0]}, Reason: "Foreign owner", IdempotencyKey: "alias-peer-retraction", RequestHash: "alias-peer-retraction"})
+		require.Error(t, err)
+		retracted, err := store.RetractEvidence(ownerCtx, knowledge.RetractEvidenceInput{TeamID: team, OwnerProfileID: owner, EvidenceIDs: []string{aliases[0]}, Reason: "Historical alias retraction", IdempotencyKey: "alias-retraction", RequestHash: "alias-retraction"})
+		require.NoError(t, err)
+		require.Equal(t, "completed", retracted.ProcessingState)
+		replacement, err := store.CreateIngestForTest(ownerCtx, knowledge.CreateIngestInput{TeamID: team, OwnerProfileID: owner, SpaceID: spaceID, SpaceGeneration: generation, IdempotencyKey: "alias-replacement", RequestHash: "alias-replacement", Evidence: []knowledge.EvidenceInput{{Content: "Replacement for a historical alias.", SupersedesEvidenceIDs: []string{aliases[1]}}}})
+		require.NoError(t, err)
+		for _, evidenceID := range append([]string{id}, aliases...) {
+			traced, err := adapter.TraceEvidence(actorCtx, tracecontract.Input{TeamID: team, EvidenceID: evidenceID})
+			require.NoError(t, err)
+			require.Equal(t, id, traced.Evidence.FragmentID)
+			require.Len(t, traced.Lifecycle, 2)
+			events := map[string]tracecontract.TraceEvidenceLifecycleEvent{}
+			for _, event := range traced.Lifecycle {
+				events[event.TargetFragmentID] = event
+			}
+			require.Equal(t, "retract", events[aliases[0]].Action)
+			require.Equal(t, "supersede", events[aliases[1]].Action)
+			require.Equal(t, replacement.Evidence[0].FragmentID, events[aliases[1]].ReplacementFragmentID)
+			_, err = adapter.TraceEvidence(foreignCtx, tracecontract.Input{TeamID: foreign, EvidenceID: evidenceID})
+			require.ErrorIs(t, err, tracecontract.ErrEvidenceNotFound)
+		}
+		withoutTransitions, err := adapter.TraceEvidence(actorCtx, tracecontract.Input{TeamID: team, EvidenceID: aliases[0], IncludeTransitions: &no})
+		require.NoError(t, err)
+		require.Empty(t, withoutTransitions.Lifecycle)
+		require.Contains(t, withoutTransitions.Omissions, "lifecycle_excluded_by_request")
+		limited, err := adapter.TraceEvidence(actorCtx, tracecontract.Input{TeamID: team, EvidenceID: aliases[0], MaxEvents: 1})
+		require.NoError(t, err)
+		require.LessOrEqual(t, len(limited.Occurrences)+len(limited.SourceRevisions)+len(limited.Decisions)+len(limited.Lifecycle)+len(limited.SearchDocuments), 1)
+		require.True(t, limited.Truncated)
+		aliasExporter := memorypack.NewMemoryPackService(memorypack.MemoryPackDependencies{Semantic: adapter})
+		aliasPack, err := aliasExporter.Export(actorCtx, memorypack.ExportRequest{Name: "Historical alias history", EvidenceIDs: append([]string{id}, aliases...)})
+		require.NoError(t, err)
+		require.Len(t, aliasPack.Artifact.Evidence, 1)
+		require.Len(t, aliasPack.Artifact.Evidence[0].Lifecycle, 2)
+	})
 }

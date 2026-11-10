@@ -748,6 +748,22 @@ async function runHistoricalEvidenceHandlesCase({ expect }) {
     assertStrictTerminalRemember(denied, expect);
     expect(denied.processing_state === "failed" && denied.evidence.every((item) => item.disposition === "not_stored"), `${name} must not supersede a mapped private Evidence target`);
   }
+  const aliasRetraction = await mcpSuccessWithKey(owner.apiKey, "retract_evidence", { evidence_ids: [alias], reason: "Historical alias retraction", idempotency_key: `${label}-alias-retraction` });
+  expect(aliasRetraction.processing_state === "completed", "owner must retract a historical exact alias");
+  for (const evidenceID of [canonical, alias]) {
+    const traced = await mcpSuccessWithKey(owner.apiKey, "trace_memory", { evidence_id: evidenceID });
+    expect(traced.lifecycle.some((event) => event.target_evidence_id === alias && event.action === "retract"), "Trace must retain the historical alias retraction");
+  }
+  const retractedPack = JSON.parse((await mcpSuccessWithKey(owner.apiKey, "export_memory_pack", exportArgs)).artifact_json);
+  expect(retractedPack.evidence.length === 1 && retractedPack.evidence[0].lifecycle.some((event) => event.target_evidence_id === alias && event.action === "retract"), "canonical export must retain alias lifecycle history");
+  const excluded = await mcpSuccessWithKey(owner.apiKey, "trace_memory", { evidence_id: alias, include_transitions: false });
+  expect(excluded.lifecycle.length === 0 && excluded.omissions.includes("lifecycle_excluded_by_request"), "transition exclusion must remain explicit for historical alias events");
+  const boundedTrace = await mcpSuccessWithKey(owner.apiKey, "trace_memory", { evidence_id: alias, max_events: 1 });
+  expect(["occurrences", "source_revisions", "decisions", "lifecycle", "search_documents"].reduce((count, field) => count + boundedTrace[field].length, 0) <= 1 && boundedTrace.truncated, "alias history must honor the total event budget");
+  for (const [name, actor] of [["B", peer], ["C", foreign]]) {
+    const deniedTrace = await rawRPCWithKey(actor.apiKey, "tools/call", { name: "trace_memory", arguments: { evidence_id: alias } });
+    expect(deniedTrace.result?.isError === true && !JSON.stringify(deniedTrace.result).includes(alias), `${name} must not read private alias lifecycle history`);
+  }
   const correction = singleItemArguments("historical-owner-replacement", "", "private");
   correction.evidence[0].supersedes_evidence_ids = [historical];
   const replaced = await rememberWithKey(owner.apiKey, correction);
