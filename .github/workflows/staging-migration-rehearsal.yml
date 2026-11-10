@@ -29,7 +29,7 @@ jobs:
     permissions:
       contents: read
     runs-on: [home-server, bash, non-root]
-    timeout-minutes: 75
+    timeout-minutes: 90
     environment: staging-migration
     outputs:
       revision: ${{ steps.rehearsal.outputs.revision }}
@@ -80,7 +80,7 @@ jobs:
             echo "- Workflow: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           } >> "${GITHUB_STEP_SUMMARY}"
 
-          timeout --signal=TERM --kill-after=30s 10m "${sync_script}"
+          timeout --signal=TERM --kill-after=30s 20m "${sync_script}"
           echo "- Restore completed (UTC): $(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "${GITHUB_STEP_SUMMARY}"
           DENSE_MEM_STAGE_POSTGRES_DSN="${stage_postgres_dsn}" \
             go test -tags=staging_rehearsal ./cmd/internal/migrationapp \
