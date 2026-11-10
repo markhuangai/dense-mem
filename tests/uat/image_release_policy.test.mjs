@@ -639,7 +639,7 @@ test("prerelease publication waits for the staging migration rehearsal", async (
   assert.match(rehearsalCall, /^    secrets: inherit$/m);
   assert.doesNotMatch(rehearsalCall, /PGVECTOR_STAGE_DSN|sync\.sh|go test/);
   assert.match(rehearsal, /^    runs-on: \[home-server, bash, non-root\]$/m);
-  assert.match(rehearsal, /^    timeout-minutes: 75$/m);
+  assert.match(rehearsal, /^    timeout-minutes: 90$/m);
   assert.match(rehearsal, /^    environment: staging-migration$/m);
   assert.match(rehearsal, /persist-credentials: false/);
   assert.match(
@@ -650,7 +650,7 @@ test("prerelease publication waits for the staging migration rehearsal", async (
   assert.doesNotMatch(rehearsal, /DENSE_MEM_STAGE_POSTGRES_PORT/);
   assert.match(rehearsal, /"\$\{HOME\}\/dense-mem-stage\/sync\.sh"/);
   assert.match(rehearsal, /flock --wait 600 9/);
-  assert.match(rehearsal, /timeout --signal=TERM --kill-after=30s 10m/);
+  assert.match(rehearsal, /timeout --signal=TERM --kill-after=30s 20m/);
   assert.doesNotMatch(rehearsal, /\b(?:docker|testcontainers)\b/i);
   assert.match(
     rehearsal,
