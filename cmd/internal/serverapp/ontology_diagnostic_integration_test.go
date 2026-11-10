@@ -121,7 +121,6 @@ func TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads(t *testing.T)
 						if mode == "repair_exhausted" || calls.Load() < 3 {
 							require.Len(t, response.Definitions, 1)
 							response.Definitions[0].Kind = "entity_class"
-							response.Definitions[0].BaseEntityKind = "project"
 							response.Items[0].Reason = strings.Repeat("x", 129)
 						}
 					}

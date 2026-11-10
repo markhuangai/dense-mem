@@ -3,10 +3,12 @@ package migrationapp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"gorm.io/gorm"
 )
@@ -26,9 +28,16 @@ func migrateEvidenceOnly(ctx context.Context, db *gorm.DB, migrator *postgres.Mi
 		if strings.Contains(err.Error(), "evidence_only_migration_blocked") {
 			event = "evidence_only_migration_blocked"
 		}
-		logError(ctx, logger, event, "migration_version", evidenceOnlyMigrationVersion,
+		attrs := []any{"migration_version", evidenceOnlyMigrationVersion,
 			"inventory_identity", postgres.EvidenceOnlyMigrationInventorySHA256, "phase", phase,
-			"error", err, "elapsed_ms", time.Since(started).Milliseconds(), "transaction_outcome", outcome)
+			"error", err, "elapsed_ms", time.Since(started).Milliseconds(), "transaction_outcome", outcome}
+		var databaseError *pgconn.PgError
+		if errors.As(err, &databaseError) {
+			attrs = append(attrs, "sqlstate", databaseError.Code, "database_detail", databaseError.Detail,
+				"database_context", databaseError.Where, "statement_position", databaseError.Position,
+				"internal_statement_position", databaseError.InternalPosition, "internal_statement", databaseError.InternalQuery)
+		}
+		logError(ctx, logger, event, attrs...)
 	}()
 	if err = migrator.PrepareEvidenceOnlyMigration(ctx); err != nil {
 		return err

@@ -13,8 +13,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/domain"
-	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
-	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 	privacy "github.com/markhuangai/dense-mem/internal/privacy/contract"
 	privacypostgres "github.com/markhuangai/dense-mem/internal/privacy/postgres"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
@@ -150,21 +148,20 @@ func assertStartupPrivateIsolation(t *testing.T, db *gorm.DB, team uuid.UUID, ow
 				return err
 			}
 			require.False(t, bypass)
-			store := knowledgepostgres.NewStore(tx, storage.NewRLS())
-			for targetIndex, space := range spaces {
-				visible, err := store.ListSubmissionAssessmentKnownEvidence(ctx, knowledge.SubmissionAssessmentKnownEvidenceInput{
-					TeamID: team.String(), OwnerProfileID: owner.String(), SpaceID: space, EvidenceIDs: evidenceIDs,
-				})
-				if err != nil {
-					return err
+			return storage.NewRLS().WithTeamProfileTx(ctx, tx, team.String(), owner.String(), func(scoped *gorm.DB) error {
+				for targetIndex, space := range spaces {
+					var visible []string
+					if err := scoped.Raw(`SELECT fragment_id::text FROM evidence_fragments WHERE team_id=? AND space_id=? AND fragment_id IN ?`, team, space, evidenceIDs).Scan(&visible).Error; err != nil {
+						return err
+					}
+					if targetIndex == index {
+						require.Len(t, visible, 1)
+					} else {
+						require.Empty(t, visible)
+					}
 				}
-				if targetIndex == index {
-					require.Len(t, visible.Evidence, 1)
-				} else {
-					require.Empty(t, visible.Evidence)
-				}
-			}
-			return nil
+				return nil
+			})
 		}))
 	}
 }

@@ -776,6 +776,14 @@ start_stack() (
     set +e
     [[ -z "$current_phase" ]] || report_phase "$current_phase" "$phase_started" "$status"
     local cleanup_status=0
+    printf 'dense-mem CI controller: startup server log window for %s\n' "$project" >&2
+    ci_compose logs --no-color --timestamps server 2>&1 |
+      redact_diagnostics "$ENV_FILE" "${DENSE_MEM_CI_TELEMETRY_SCRAPE_TOKEN:-}" "${DENSE_MEM_CI_IDENTITY_POSTGRES_PASSWORD:-}" >&2
+    local -a diagnostics_pipeline_status=("${PIPESTATUS[@]}")
+    if ((diagnostics_pipeline_status[0] != 0 || diagnostics_pipeline_status[1] != 0)); then
+      printf 'dense-mem CI controller: startup diagnostic capture incomplete for %s\n' "$project" >&2
+      cleanup_status=1
+    fi
     cleanup_identity_cleanup_lock || cleanup_status=1
     stop_stack "$project" || cleanup_status=1
     if [[ -n "$runtime_compose_path" && -e "$runtime_compose_path" ]]; then

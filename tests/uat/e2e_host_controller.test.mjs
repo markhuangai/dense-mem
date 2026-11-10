@@ -1046,6 +1046,63 @@ ${runtime.slice(diagnosticsStart, diagnosticsEnd)}`;
   }
 });
 
+test("startup failures preserve protected server logs before stack cleanup", async (t) => {
+  const start = controller.indexOf("  cleanup_failed_start() {");
+  const end = controller.indexOf("\n  prepare_stack_helpers", start);
+  const redactorStart = controller.indexOf("\nredact_diagnostics() {") + 1;
+  const redactorEnd = controller.indexOf("\n}\n", redactorStart) + 2;
+  assert(start >= 0 && end > start && redactorStart > 0 && redactorEnd > redactorStart);
+  for (const mode of ["complete", "collection failure", "redaction failure"]) {
+    await t.test(mode, async () => {
+      const fixture = await mkdtemp(join(tmpdir(), "dense-mem-startup-diagnostics-"));
+      try {
+        const envFile = join(fixture, "e2e.env");
+        const eventsFile = join(fixture, "events");
+        await writeFile(envFile, "CONTROL_PORTAL_TOKEN=fixture-startup-credential\n");
+        const script = `set -euo pipefail
+${controller.slice(redactorStart, redactorEnd)}
+ci_compose() {
+  printf 'capture:%s\\n' "$*" >> "$FIXTURE_EVENTS"
+  printf '%s\\n' 'migration failed: fixture-startup-credential' 'exact admitted text survives'
+  return "$FIXTURE_COLLECTION_STATUS"
+}
+report_phase() { :; }
+cleanup_identity_cleanup_lock() { printf 'unlock\\n' >> "$FIXTURE_EVENTS"; }
+stop_stack() { printf 'stop\\n' >> "$FIXTURE_EVENTS"; }
+run_fixture() {
+  local current_phase=fixture_preparation phase_started=$SECONDS project=fixture-project
+  local runtime_compose_path="" DENSE_MEM_CI_HELPER_DIR="" DENSE_MEM_CI_PRIVATE_DIR=""
+${controller.slice(start, end)}
+  exit 17
+}
+run_fixture`;
+        const result = await new Promise((resolve, reject) => {
+          execFile("bash", ["-c", script], { env: {
+            ...process.env, CONTROLLER_DIR: mode === "redaction failure" ? join(fixture, "missing") : scripts,
+            ENV_FILE: envFile, FIXTURE_EVENTS: eventsFile,
+            FIXTURE_COLLECTION_STATUS: mode === "collection failure" ? "24" : "0",
+          } }, (error, stdout, stderr) => {
+            if (error && typeof error.code !== "number") reject(error);
+            else resolve({ code: error?.code || 0, stdout, stderr });
+          });
+        });
+        assert.equal(result.code, 17, result.stderr);
+        assert.deepEqual((await readFile(eventsFile, "utf8")).trim().split("\n"), [
+          "capture:logs --no-color --timestamps server", "unlock", "stop",
+        ]);
+        assert.doesNotMatch(result.stdout + result.stderr, /fixture-startup-credential/);
+        if (mode !== "redaction failure") {
+          assert.match(result.stderr, /migration failed: \[REDACTED\]/);
+          assert.match(result.stderr, /exact admitted text survives/);
+        }
+        assert.equal(result.stderr.includes("startup diagnostic capture incomplete"), mode !== "complete");
+      } finally {
+        await rm(fixture, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
 test("scenario failures collect protected evidence before removing the client", { timeout: 20000 }, async (t) => {
   const lifecycleStart = runtime.indexOf('  local container="" failure_diagnostics_collected=0');
   const lifecycleEnd = runtime.indexOf("\n}\n\ncontrol_api_request()", lifecycleStart);

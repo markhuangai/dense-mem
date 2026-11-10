@@ -217,7 +217,7 @@ UPDATE ontology_draft_revisions SET body=pg_temp.evidence_only_draft(team_id,sha
 UPDATE ontology_assessments assessment SET body=jsonb_set(jsonb_set(jsonb_set(body,'{sources}',
  COALESCE((SELECT jsonb_agg(source ORDER BY ordinal) FROM jsonb_array_elements(body->'sources') WITH ORDINALITY entries(source,ordinal) WHERE source->>'kind'='evidence'),'[]'::jsonb)),
  '{dependencies}',pg_temp.evidence_only_record_refs(team_id,shared_space_id,space_generation,body->'dependencies')),
- '{result}',(body->'result'-ARRAY['outcomes','publication','ambiguous_comparisons','freshness_rejection']) || jsonb_build_object(
+ '{result}',((body->'result')-ARRAY['outcomes','publication','ambiguous_comparisons','freshness_rejection']) || jsonb_build_object(
  'outcomes',COALESCE((SELECT jsonb_agg(jsonb_set(outcome,'{record_ids}',COALESCE((SELECT jsonb_agg(id ORDER BY id_ordinal)
   FROM jsonb_array_elements(COALESCE(outcome->'record_ids','[]'::jsonb)) WITH ORDINALITY ids(id,id_ordinal)
   WHERE NOT EXISTS(SELECT 1 FROM evidence_only_retired_records retired
@@ -228,7 +228,7 @@ UPDATE ontology_assessments assessment SET body=jsonb_set(jsonb_set(jsonb_set(bo
  || CASE WHEN body->'result' ? 'publication' THEN jsonb_build_object('publication',jsonb_set(body->'result'->'publication','{records}',pg_temp.evidence_only_record_refs(team_id,shared_space_id,space_generation,body->'result'->'publication'->'records'))) ELSE '{}'::jsonb END
  || CASE WHEN body->'result' ? 'freshness_rejection' AND COALESCE(body->'result'->'freshness_rejection'->'source'->>'kind','evidence')='evidence'
   AND NOT EXISTS(SELECT 1 FROM evidence_only_retired_records retired WHERE (retired.team_id,retired.shared_space_id,retired.space_generation,retired.record_id::text)=(assessment.team_id,assessment.shared_space_id,assessment.space_generation,body->'result'->'freshness_rejection'->>'record_id'))
-  THEN jsonb_build_object('freshness_rejection',jsonb_set(body->'result'->'freshness_rejection'-ARRAY['expected_context','observed_context'],'{dependencies}',pg_temp.evidence_only_record_refs(team_id,shared_space_id,space_generation,body->'result'->'freshness_rejection'->'dependencies'))) ELSE '{}'::jsonb END);
+  THEN jsonb_build_object('freshness_rejection',jsonb_set((body->'result'->'freshness_rejection')-ARRAY['expected_context','observed_context'],'{dependencies}',pg_temp.evidence_only_record_refs(team_id,shared_space_id,space_generation,body->'result'->'freshness_rejection'->'dependencies'))) ELSE '{}'::jsonb END);
 UPDATE ontology_assessments SET body=body||jsonb_build_object('retired_payload',true,'availability','legacy_organization_payload_retired') WHERE jsonb_array_length(body->'sources')=0;
 
 DELETE FROM ontology_maintenance_sources WHERE source_kind<>'evidence';

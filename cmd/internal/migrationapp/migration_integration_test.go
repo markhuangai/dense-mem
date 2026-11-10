@@ -82,6 +82,8 @@ func TestEvidenceOnlyPostgresMigrationDiagnostics(t *testing.T) {
 	blocked := seen["evidence_only_migration_blocked"]
 	require.Equal(t, "ERROR", blocked["level"])
 	require.Contains(t, blocked["error"], "unhandled retained dependency")
+	require.Equal(t, "P0001", blocked["sqlstate"])
+	require.Contains(t, blocked["database_context"], "RAISE")
 	require.Equal(t, "apply", blocked["phase"])
 	completed := seen["evidence_only_migration_completed"]
 	require.Equal(t, "INFO", completed["level"])
