@@ -450,7 +450,7 @@ func TestEvidenceOnlyPostgresMixedOntologyReceiptsAndDrafts(t *testing.T) {
 		var rebound ontology.Record
 		require.NoError(t, json.Unmarshal(body, &rebound))
 		require.NoError(t, ontology.ValidateRecord(rebound))
-		expected, err := ontology.RecordFingerprintWithAcceptedSources(rebound, map[string]ontology.Record{groupID: rebound})
+		expected, err := ontology.RecordFingerprintWithAcceptedSources(rebound, map[string]ontology.Record{groupID: rebound, overrideID: retainedOverride})
 		require.NoError(t, err)
 		require.Equal(t, expected, rebound.Fingerprint)
 		require.NotEqual(t, digest, rebound.Fingerprint)

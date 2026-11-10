@@ -708,18 +708,18 @@ async function runHistoricalEvidenceHandlesCase({ expect }) {
   const canonical = target.evidence[0].evidence_id;
   const alias = randomUUID(), historical = randomUUID(), mapping = randomUUID();
   const fixture = postgresExec(`
-    INSERT INTO evidence_fragments(team_id,fragment_id,ingest_id,owner_profile_id,space_id,space_generation,evidence_index,
-      content,content_hash,source_type,authority,source_ref,source_id,source_revision_id,labels,metadata)
-    SELECT team_id,'${alias}'::uuid,ingest_id,owner_profile_id,space_id,space_generation,1,
-      content,content_hash,source_type,authority,source_ref,source_id,source_revision_id,labels,metadata
-    FROM evidence_fragments WHERE team_id='${sqlLiteral(teamID)}'::uuid AND fragment_id='${sqlLiteral(canonical)}'::uuid AND owner_profile_id='${sqlLiteral(owner.profileID)}'::uuid
-    RETURNING fragment_id;
     INSERT INTO evidence_occurrences(team_id,occurrence_id,canonical_fragment_id,canonical_owner_profile_id,ingest_id,owner_profile_id,
       space_id,space_generation,evidence_index,content,content_hash,source_type,authority,source_ref,source_id,source_revision_id,labels,metadata)
     SELECT team_id,'${alias}'::uuid,canonical_fragment_id,canonical_owner_profile_id,ingest_id,owner_profile_id,
       space_id,space_generation,1,content,content_hash,source_type,authority,source_ref,source_id,source_revision_id,labels,metadata
     FROM evidence_occurrences WHERE team_id='${sqlLiteral(teamID)}'::uuid AND occurrence_id='${sqlLiteral(canonical)}'::uuid AND owner_profile_id='${sqlLiteral(owner.profileID)}'::uuid
     RETURNING occurrence_id;
+    INSERT INTO evidence_fragments(team_id,fragment_id,ingest_id,owner_profile_id,space_id,space_generation,evidence_index,
+      content,content_hash,source_type,authority,source_ref,source_id,source_revision_id,labels,metadata)
+    SELECT team_id,'${alias}'::uuid,ingest_id,owner_profile_id,space_id,space_generation,1,
+      content,content_hash,source_type,authority,source_ref,source_id,source_revision_id,labels,metadata
+    FROM evidence_fragments WHERE team_id='${sqlLiteral(teamID)}'::uuid AND fragment_id='${sqlLiteral(canonical)}'::uuid AND owner_profile_id='${sqlLiteral(owner.profileID)}'::uuid
+    RETURNING fragment_id;
     INSERT INTO evidence_exact_aliases(team_id,alias_fragment_id,alias_owner_profile_id,canonical_fragment_id,canonical_owner_profile_id,space_id,space_generation)
     SELECT team_id,'${alias}'::uuid,owner_profile_id,fragment_id,owner_profile_id,space_id,space_generation
     FROM evidence_fragments WHERE team_id='${sqlLiteral(teamID)}'::uuid AND fragment_id='${sqlLiteral(canonical)}'::uuid AND owner_profile_id='${sqlLiteral(owner.profileID)}'::uuid

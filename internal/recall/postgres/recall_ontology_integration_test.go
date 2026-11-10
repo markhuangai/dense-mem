@@ -88,10 +88,14 @@ func TestRecallOntologyDiscoveryAliasesAndTemporalFallback(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, discovered.Results, 1)
 	require.Len(t, discovered.Results[0].EquivalentEvidenceIDs, 1)
-	f.publication(t, ontology.Record{ID: uuid.NewString(), Kind: ontology.Topic, Definition: &ontology.Definition{Key: "database-class", Label: "Database class", Aliases: []string{"database"}}})
-	ambiguous, err := f.search.RecallEvidence(f.actor(2, "member"), input)
+	page, err := f.ontology.ListRecords(context.Background(), f.team, "", "", 1)
 	require.NoError(t, err)
-	require.Empty(t, ambiguous.Results, "ambiguous aliases cannot discover arbitrary topics")
+	duplicate := ontology.Record{ID: uuid.NewString(), Kind: ontology.Topic, Definition: &ontology.Definition{Key: "database-alias-conflict", Label: "Database alias conflict", Aliases: []string{"database"}}}
+	_, err = f.ontology.PublishManager(f.actor(0, "manager"), f.team, ontology.Publication{OperationKey: uuid.NewString(), ExpectedRevision: page.Revision, Reason: "reject duplicate topic alias", Changes: []ontology.Change{{ExpectedVersion: duplicate.Version, Record: duplicate}}})
+	require.ErrorIs(t, err, ontology.ErrInvalid)
+	unchanged, err := f.search.RecallEvidence(f.actor(2, "member"), input)
+	require.NoError(t, err)
+	require.Len(t, unchanged.Results, 1, "rejected aliases must not change current discovery")
 	input.Query = "PostgreSQL"
 	for _, knownTime := range []bool{false, true} {
 		t.Run(map[bool]string{false: "valid_at", true: "known_at"}[knownTime], func(t *testing.T) {
