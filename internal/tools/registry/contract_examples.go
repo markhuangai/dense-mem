@@ -7,12 +7,9 @@ import (
 
 const (
 	returnedEvidenceID        = "<returned_evidence_id>"
-	returnedRelationshipID    = "<returned_relationship_id>"
 	returnedRecallID          = "<returned_recall_id>"
-	returnedHypothesisID      = "<returned_hypothesis_id>"
 	returnedSubmissionID      = "<returned_submission_id>"
 	returnedConfirmationToken = "<returned_confirmation_token>"
-	returnedObjectCandidateID = "<returned_object_candidate_entity_id>"
 	newOperationKey           = "<new_retained_operation_key>"
 	newConfirmationKey        = "<new_retained_confirmation_key>"
 
@@ -70,137 +67,46 @@ func contractExampleJSON(request map[string]any) string {
 
 func contractToolExamples() map[string]contractToolExample {
 	return map[string]contractToolExample{
-		ToolIngestSession: {
-			WhenToUse:     "Save incremental user-authored session events in the authenticated private space. Send original events; Dense-Mem owns chunking, extraction, grounding, and atomic completion.",
-			Prerequisites: "The tool must appear in tools/list for an authorized private write credential. Create a fresh operation key and retain the complete request before sending it.",
-			Request: map[string]any{
-				"idempotency_key": newOperationKey, "framework": "generic", "app_name": "notes", "user_id": "external-user", "session_id": "external-session",
-				"events": []any{map[string]any{"event_id": "user-event-1", "text": "Ari uses Go.", "occurred_at": "2026-10-10T10:00:00Z"}},
-			},
-			Result:     "The terminal result provides submission_id, durable accepted/duplicate event counts, per-event outcomes, and relationship dispositions. Failed processing commits no new semantic knowledge. completed with not_required may mean no facts were extracted.",
-			NextAction: "On retry_same_request, resend the unchanged complete original request with its retained key. session_event_retry_required requires the unfinished original request. Do not rotate keys or alter immutable events to bypass conflicts. Use returned relationship_id values with trace_memory and inspect source event IDs and offsets.",
-		},
 		ToolRemember: {
-			WhenToUse:     "Store exact evidence with required client Relationship proposals in one synchronous terminal operation. Every evidence item must be cited by a proposal through evidence_indices; the server owns grounding and acceptance. Use exactly one object shape: {\"object\":{\"entity\":{\"name\":\"PostgreSQL\",\"entity_kind\":\"product\"}}} or {\"object\":{\"value\":{\"type\":\"string\",\"value\":\"PostgreSQL\"}}}.",
-			Prerequisites: "Choose target_space from the user intent: private for personal or automation memory, team_shared for shared team knowledge. Team-read-only callers can write only private memory. Create a fresh operation key and retain the complete request. Refresh tools/list after upgrading; requests without target_space are invalid, including historical retries.",
-			Request: map[string]any{
-				"target_space":    "private",
-				"idempotency_key": newOperationKey,
-				"evidence": []any{map[string]any{
-					"content":         "Dense-Mem stores durable knowledge in PostgreSQL.",
-					"source_type":     "manual",
-					"source":          "architecture note",
-					"source_key":      "example:durable-knowledge",
-					"source_revision": "1",
-					"metadata":        map[string]any{"origin": "contract-example"},
-				}},
-				"relationships": []any{map[string]any{
-					"ref":              "stores-durable-knowledge",
-					"subject":          map[string]any{"name": "Dense-Mem", "entity_kind": "project"},
-					"predicate":        map[string]any{"proposed_key": "stores_in"},
-					"object":           map[string]any{"entity": map[string]any{"name": "PostgreSQL", "entity_kind": "product"}},
-					"polarity":         "+",
-					"evidence_indices": []any{0},
-				}},
-			},
-			Result:     "The terminal result reports the selected space_kind and completed or failed processing. Stored evidence has an evidence_id; stored Relationship splits have relationship_id values.",
-			NextAction: "On retry_same_request, resend the unchanged entire original request, including target_space, metadata, and idempotency_key. A deliberate changed operation is distinct from a retry: use a fresh key and never rotate a key to bypass a conflict.",
+			WhenToUse:     "Store exact Evidence and provenance in one synchronous operation.",
+			Prerequisites: "Choose private or team_shared from user intent. Retain a fresh operation key and complete request before sending. Refresh tools/list after upgrading.",
+			Request:       map[string]any{"target_space": "private", "idempotency_key": newOperationKey, "evidence": []any{map[string]any{"content": "Dense-Mem stores durable knowledge in PostgreSQL.", "source_type": "manual", "source": "architecture note", "source_key": "example:durable-knowledge", "source_revision": "1"}}},
+			Result:        "Completed returns durable Evidence IDs after assessment and required embeddings commit atomically. Failure commits no new memory.",
+			NextAction:    "Retry only the unchanged complete request with its retained key when instructed. retired_contract cannot be replayed; inspect its retained original outcome before starting a distinct v3 operation. To supersede owned Evidence, submit exact replacement Evidence with supersedes_evidence_ids and a new retained key.",
 		},
-		ToolRetractEvidence: {
-			WhenToUse:     "Retract caller-owned evidence while preserving append-only provenance.",
-			Prerequisites: "Use an evidence_id returned by remember or trace, and create a fresh retained operation key.",
-			Request: map[string]any{
-				"evidence_ids":    []any{returnedEvidenceID},
-				"reason":          "The source is no longer valid.",
-				"idempotency_key": newOperationKey,
-			},
-			Result:     "The completed result returns a decision_id, the retracted IDs, and counts for affected, pending, and retained active Relationships.",
-			NextAction: "Use the counts to explain the durable effect. Retry only with the saved unchanged request; refresh state before a deliberately changed retraction.",
-		},
-		ToolCorrectRelationship: {
-			WhenToUse:     "Replace one caller-owned active Relationship while preserving its evidence provenance and superseding the original atomically.",
-			Prerequisites: "Start with an owned active Relationship trace whose stopped_reason is null. Trace evidence_supports is lineage, not a correction-ready set: for each evidence_support_id, retain a support only when its latest evidence_support_decision_events decision is grant or reinstate; exclude revoke. Map its evidence_id, span_start, and span_end to supports[].evidence_id, start, and end. If a support has no latest decision or trace state is bounded or ambiguous, refresh trace or stop. The numeric values in this valid example only show field shapes: replace expected_version and the complete supports array with the current trace values; create and retain a fresh operation key.",
-			Request: map[string]any{
-				"action":           "submit",
-				"relationship_id":  returnedRelationshipID,
-				"expected_version": 1,
-				"patch":            map[string]any{"predicate": map[string]any{"key": "uses"}},
-				"supports": []any{map[string]any{
-					"evidence_id": returnedEvidenceID,
-					"start":       0,
-					"end":         43,
-				}},
-				"reason":          "The predicate was resolved incorrectly.",
-				"idempotency_key": newOperationKey,
-			},
-			Result:     "A completed result names the superseded original and active successor. An awaiting_confirmation result supplies a submission_id, confirmation_token, and candidate Entity IDs.",
-			NextAction: "Use the supplied continuation only when confirmation is requested. For stale state or support_set_mismatch, refresh trace and submit a new correction with a new key.",
-			Continuations: []contractToolExampleContinuation{{
-				When:          "the submit result has processing_state awaiting_confirmation",
-				Prerequisites: "This valid example illustrates object_entity candidates. Use submission_id and confirmation_token returned by submit. For every endpoint represented in candidates, choose exactly one returned entity_id: place a subject_entity choice in subject_entity_id and an object_entity choice in object_entity_id; include no selection field for an endpoint that is not represented. Generate and retain a distinct confirmation key.",
-				Request: map[string]any{
-					"action":             "confirm",
-					"submission_id":      returnedSubmissionID,
-					"confirmation_token": returnedConfirmationToken,
-					"selection":          map[string]any{"object_entity_id": returnedObjectCandidateID},
-					"idempotency_key":    newConfirmationKey,
-				},
-				Result:     "The terminal result either completes the correction or returns bounded rejection or failure guidance.",
-				NextAction: "Retry a confirmation only with its exact saved payload and confirmation key; a new submission is required after expiration or changed state.",
-			}},
+		ToolIngestSession: {
+			WhenToUse:     "Save exact current user-authored session events in private memory. Dense-Mem selects verbatim excerpts and preserves original Unicode-rune offsets.",
+			Prerequisites: "Use an authorized private credential. Retain a fresh operation key and all original events.",
+			Request:       map[string]any{"idempotency_key": newOperationKey, "framework": "generic", "app_name": "notes", "user_id": "external-user", "session_id": "external-session", "events": []any{map[string]any{"event_id": "user-event-1", "text": "Ari uses Go.", "occurred_at": "2026-10-10T10:00:00Z"}}},
+			Result:        "The terminal result includes accepted/duplicate event counts, Evidence IDs, and memory_outcome. no_memory explicitly means no excerpts were selected.",
+			NextAction:    "Use returned Evidence IDs for trace_memory. Retry unfinished work only with the unchanged original events and retained request key.",
 		},
 		ToolRecallMemory: {
-			WhenToUse:     "Recall active evidence contexts and graph-shaped Relationship handles for a bounded question.",
-			Prerequisites: "None. Use a specific question and preserve returned handles for any follow-up.",
-			Request: map[string]any{
-				"query":              "Where does Dense-Mem store durable knowledge?",
-				"limit":              5,
-				"relationship_limit": 5,
-				"community_limit":    0,
-			},
-			Result:     "Results provide bounded evidence context; related_relationships provide relationship_id values; recall_id and suggested_actions identify supported follow-ups. Degradations are explicit.",
-			NextAction: "Use a returned relationship_id for trace_memory and retain equivalent_evidence_ids as alternate source references. Report degradations instead of treating an empty or partial result as complete.",
+			WhenToUse: "Find eligible Evidence and useful current related-topic hints.", Prerequisites: "Use a specific question or 1–10 current topic IDs returned by Recall.",
+			Request:    map[string]any{"query": "Where does Dense-Mem store durable knowledge?", "limit": 5, "topic_limit": 3},
+			Result:     "Results contain exact bounded Evidence contexts and alternate equivalent Evidence IDs. related_topics includes identity, name, description, eligible Evidence count and rank; topics_truncated is explicit.",
+			NextAction: "Follow a returned topic with topic_ids and known_evidence_ids to exclude seen Evidence. Topic filters select the direct union without descendants. Refresh unavailable topics and report optional degradations.",
 		},
 		ToolTraceMemory: {
-			WhenToUse:     "Trace one same-team Relationship through supporting evidence, decisions, transitions, and lineage.",
-			Prerequisites: "Use a relationship_id returned by remember or recall_memory.",
-			Request: map[string]any{
-				"relationship_id":          returnedRelationshipID,
-				"include_evidence_content": false,
-				"include_verification":     true,
-				"include_transitions":      true,
-				"max_depth":                2,
-				"max_edges":                50,
-			},
-			Result:     "The result connects the Relationship to evidence_supports, evidence, verification events, transitions, conflicts, and lineage within the requested bounds.",
-			NextAction: "Trace returns support lineage, not a correction-ready set. For an owned correction, use correct_relationship's latest-decision selection and span_start/span_end mapping. A non-null stopped_reason is a bound: refresh trace or stop; never infer a complete support set.",
+			WhenToUse: "Inspect authorized Evidence provenance, decisions and lifecycle.", Prerequisites: "Use an Evidence ID returned by Remember, a session or Recall.",
+			Request:    map[string]any{"evidence_id": returnedEvidenceID, "include_evidence_content": true, "include_transitions": true, "max_events": 100, "max_fragment_content_runes": 2000},
+			Result:     "The result includes Evidence, exact occurrences, source revisions, decisions, lifecycle and search projection metadata within a shared event budget.",
+			NextAction: "Report omissions and truncation. Do not infer that a bounded history is complete.",
+		},
+		ToolRetractEvidence: {
+			WhenToUse: "Retract caller-owned Evidence while retaining provenance.", Prerequisites: "Use owned Evidence IDs and retain a new operation key.",
+			Request: map[string]any{"evidence_ids": []any{returnedEvidenceID}, "reason": "The source is no longer valid.", "idempotency_key": newOperationKey},
+			Result:  "The completed result returns an append-only decision ID and retracted Evidence IDs.", NextAction: "Retry only the saved unchanged request. Trace the Evidence to inspect its retained lifecycle.",
 		},
 		ToolSubmitRecallSessionFeedback: {
-			WhenToUse:     "Record bounded, truthful feedback about a recall session.",
-			Prerequisites: "Feedback is voluntary. After using a recall, set recall_event_id to the recall_id returned by recall_memory.",
-			Request: map[string]any{
-				"recalls": []any{map[string]any{
-					"recall_event_id":  returnedRecallID,
-					"used":             true,
-					"answer_supported": true,
-					"quality":          "high",
-				}},
-			},
-			Result:     "The result reports recorded and recorded_count, or a bounded partial failure with the failed index and remediation.",
-			NextAction: "For a partial failure, use failed_index with the returned next_action and remediation. Items before failed_index were recorded; omit them. For correct_and_resubmit, correct the failed item and submit it with all later unprocessed items. For retry_same_request, resend the failed item and all later unprocessed items unchanged; stop only when instructed. Do not invent feedback for a recall you did not use.",
+			WhenToUse: "Record voluntary truthful feedback after using a Recall.", Prerequisites: "Use its returned recall_id as recall_event_id.",
+			Request: map[string]any{"recalls": []any{map[string]any{"recall_event_id": returnedRecallID, "used": true, "answer_supported": true, "quality": "high"}}},
+			Result:  "Returns recorded_count or an explicit partial failure and failed_index.", NextAction: "For partial failure, omit recorded items before failed_index and follow next_action for the failed and later items. Never invent feedback.",
 		},
 		ToolExportMemoryPack: {
-			WhenToUse:     "Export selected active Relationships with support provenance.",
-			Prerequisites: "Use active relationship_id values returned by remember, recall_memory, or trace_memory.",
-			Request: map[string]any{
-				"name":                 "project-memory-pack",
-				"description":          "Active project relationships with support provenance.",
-				"relationship_ids":     []any{returnedRelationshipID},
-				"include_evidence":     true,
-				"include_entity_names": true,
-			},
-			Result:     "The result returns artifact_json, content_sha256, filename, counts, and explicit omissions.",
-			NextAction: "Use the hash and counts to verify the returned artifact. Resolve or report omissions; do not infer that omitted or inactive Relationships were exported.",
+			WhenToUse: "Export 1–500 authorized Evidence IDs with provenance.", Prerequisites: "Use Evidence IDs returned by supported memory tools.",
+			Request: map[string]any{"name": "project-memory-pack", "description": "Project Evidence and provenance.", "evidence_ids": []any{returnedEvidenceID}, "include_evidence": true},
+			Result:  "Returns canonical dense-mem.memory-pack.v3.0 JSON, content_sha256, counts and explicit omissions.", NextAction: "Verify the hash and counts and report all omissions.",
 		},
 	}
 }

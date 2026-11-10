@@ -8,117 +8,118 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestPairImportResumeRequiresExactScopeAndTerminalEvidence(t *testing.T) {
-	scope := PairScope{TeamID: "team-a", OwnerID: "owner-a", SpaceID: "shared-a", Generation: 2}
-	corpus := []CorpusItem{{SourceDocID: "one", Content: "first"}, {SourceDocID: "two", Content: "second"}}
-	hash, err := pairRequestHash(corpus[0])
+func boolPointer(value bool) *bool           { return &value }
+func timePointer(value time.Time) *time.Time { return &value }
+
+func pairFixtureImportAttempt(t *testing.T, scope PairScope, item CorpusItem, id string, created time.Time) PairImportAttempt {
+	t.Helper()
+	hash, err := pairRequestHash(item)
 	require.NoError(t, err)
-	rows := []PairImportAttempt{{Scope: scope, SourceDocID: "one", AttemptID: "attempt-one", RequestHash: hash, Outcome: "completed", EvidenceIDs: []string{"evidence-one"}, ContentHashes: []string{pairBytesHash([]byte("first"))}, Live: true}}
-	result, err := EvaluatePairImport(scope, corpus, rows, false)
+	return PairImportAttempt{Scope: scope, SourceDocID: item.SourceDocID, AttemptID: id, RequestHash: hash, ContractVersion: "dense-mem.v3.0.0", Outcome: "completed", EvidenceIDs: []string{"evidence-" + id}, ContentHashes: []string{pairBytesHash([]byte(item.Content))}, Live: true, IdempotencyKey: "eval:" + item.SourceDocID, Retryable: boolPointer(false), CreatedAt: timePointer(created)}
+}
+
+func TestEvidenceOnlyUnitPairImportRequiresExactScopeAndTerminalEvidence(t *testing.T) {
+	scope := PairScope{TeamID: "a", OwnerID: "b", SpaceID: "s", Generation: 2}
+	corpus := []CorpusItem{{SourceDocID: "one", Content: "first"}, {SourceDocID: "two", Content: "second"}}
+	row := pairFixtureImportAttempt(t, scope, corpus[0], "one", time.Now())
+	result, err := EvaluatePairImport(scope, corpus, []PairImportAttempt{row}, false)
 	require.NoError(t, err)
 	require.Equal(t, []string{"one"}, result.CompletedSourceIDs)
 	require.Equal(t, []string{"two"}, result.PendingSourceIDs)
 	require.False(t, result.Complete)
-
 	for _, change := range []func(*PairImportAttempt){
-		func(row *PairImportAttempt) { row.Scope.OwnerID = "owner-b" },
-		func(row *PairImportAttempt) { row.Scope.Generation++ },
-		func(row *PairImportAttempt) { row.Outcome = "failed" },
-		func(row *PairImportAttempt) { row.Live = false },
-		func(row *PairImportAttempt) { row.RequestHash = "" },
-		func(row *PairImportAttempt) { row.RequestHash = "sha256:other-request" },
-		func(row *PairImportAttempt) { row.SourceDocID = "unknown" },
+		func(r *PairImportAttempt) { r.Scope.OwnerID = "foreign" },
+		func(r *PairImportAttempt) { r.Scope.Generation++ },
+		func(r *PairImportAttempt) { r.Live = false },
+		func(r *PairImportAttempt) { r.RequestHash = "changed" },
+		func(r *PairImportAttempt) { r.ContractVersion = "dense-mem.v2.7.0" },
+		func(r *PairImportAttempt) { r.SourceDocID = "unknown" },
+		func(r *PairImportAttempt) { r.Retryable = nil },
+		func(r *PairImportAttempt) { r.CreatedAt = nil },
+		func(r *PairImportAttempt) { r.IdempotencyKey = "different" },
 	} {
-		row := rows[0]
-		change(&row)
-		_, err := EvaluatePairImport(scope, corpus, []PairImportAttempt{row}, false)
+		changed := row
+		change(&changed)
+		_, err := EvaluatePairImport(scope, corpus, []PairImportAttempt{changed}, false)
 		require.Error(t, err)
 	}
-	_, err = EvaluatePairImport(scope, corpus, rows, true)
+	_, err = EvaluatePairImport(scope, corpus, []PairImportAttempt{row}, true)
 	require.ErrorContains(t, err, "fresh")
-	_, err = EvaluatePairImport(scope, corpus, append(rows, rows[0]), false)
+	_, err = EvaluatePairImport(scope, corpus, []PairImportAttempt{row, row}, false)
 	require.ErrorContains(t, err, "duplicate")
 }
 
-func TestPairImportUsesNativeRequestHashContract(t *testing.T) {
-	scope := PairScope{TeamID: "team", OwnerID: "owner", SpaceID: "shared", Generation: 1}
-	item := CorpusItem{SourceDocID: "document", Content: "Exact café evidence"}
-	legacy, err := pairLegacyRequestHash(item)
+func TestEvidenceOnlyUnitPairImportSeparatesRetainedCRequestHash(t *testing.T) {
+	scope := PairScope{TeamID: "a", OwnerID: "b", SpaceID: "s", Generation: 1}
+	item := CorpusItem{SourceDocID: "document", Content: "Exact café Evidence"}
+	row := pairFixtureImportAttempt(t, scope, item, "one", time.Now())
+	current := row.RequestHash
+	retained, err := retainedCEvidenceRequestHash(item)
 	require.NoError(t, err)
-	current, err := pairRequestHash(item)
+	require.NotEqual(t, current, retained)
+	release := PairRelease{Mode: PairModeRetainedBaseline}
+	row.ContractVersion, row.RequestHash = "dense-mem.v2.7.0", retained
+	row.CreatedAt, row.Retryable = nil, nil
+	progress, err := EvaluatePairImport(scope, []CorpusItem{item}, []PairImportAttempt{row}, false, release)
 	require.NoError(t, err)
-	require.NotEqual(t, legacy, current)
-	row := PairImportAttempt{Scope: scope, SourceDocID: item.SourceDocID, AttemptID: "attempt", ContractVersion: "dense-mem.v2.6.3", RequestHash: legacy,
-		Outcome: "completed", EvidenceIDs: []string{"evidence"}, ContentHashes: []string{pairBytesHash([]byte(item.Content))}, Live: true}
-	result, err := EvaluatePairImport(scope, []CorpusItem{item}, []PairImportAttempt{row}, false)
-	require.NoError(t, err)
-	require.True(t, result.Complete)
+	require.True(t, progress.Complete)
 	row.RequestHash = current
-	_, err = EvaluatePairImport(scope, []CorpusItem{item}, []PairImportAttempt{row}, false)
+	_, err = EvaluatePairImport(scope, []CorpusItem{item}, []PairImportAttempt{row}, false, release)
 	require.ErrorContains(t, err, "exact request")
-	row.ContractVersion = "dense-mem.v2.7.0"
-	_, err = EvaluatePairImport(scope, []CorpusItem{item}, []PairImportAttempt{row}, false)
-	require.NoError(t, err)
-	row.RequestHash = legacy
+	row = pairFixtureImportAttempt(t, scope, item, "one", time.Now())
+	row.RequestHash = retained
 	_, err = EvaluatePairImport(scope, []CorpusItem{item}, []PairImportAttempt{row}, false)
 	require.ErrorContains(t, err, "exact request")
 }
 
-func TestPairImportRetainsRecoveredFailuresWithinNativeBound(t *testing.T) {
-	scope := PairScope{TeamID: "team", OwnerID: "owner", SpaceID: "shared", Generation: 1}
-	corpus := []CorpusItem{{SourceDocID: "one", Content: "first"}, {SourceDocID: "two", Content: "second"}}
-	hash, err := pairRequestHash(corpus[0])
-	require.NoError(t, err)
-	completed := PairImportAttempt{Scope: scope, SourceDocID: "one", AttemptID: "completed", RequestHash: hash,
-		Outcome: "completed", Live: true, EvidenceIDs: []string{"evidence"}, ContentHashes: []string{pairBytesHash([]byte("first"))}}
-	failed := PairImportAttempt{Scope: scope, SourceDocID: "one", AttemptID: "failed", RequestHash: hash, Outcome: "failed"}
-	rows := []PairImportAttempt{completed}
-	for index := 0; index < 5; index++ {
-		attempt := failed
-		attempt.AttemptID = fmt.Sprintf("failed-%d", index)
-		rows = append(rows, attempt)
-	}
-	for _, history := range [][]PairImportAttempt{rows, append(append([]PairImportAttempt(nil), rows[1:]...), completed)} {
-		progress, err := EvaluatePairImport(scope, corpus, history, false)
-		require.NoError(t, err)
-		require.Equal(t, []string{"one"}, progress.CompletedSourceIDs)
-		require.Equal(t, []string{"two"}, progress.PendingSourceIDs)
-		require.Len(t, history, 6)
-		_, err = EvaluatePairImport(scope, corpus, history, true)
-		require.ErrorContains(t, err, "fresh")
-	}
-	_, err = EvaluatePairImport(scope, corpus, append(rows, failed), false)
-	require.ErrorContains(t, err, "native retry bound")
-	_, err = EvaluatePairImport(scope, corpus, []PairImportAttempt{failed}, false)
-	require.ErrorContains(t, err, "automatic retry is forbidden")
-
-	for _, test := range []struct {
-		name string
-		edit func(*PairImportAttempt)
-	}{
-		{"owner", func(row *PairImportAttempt) { row.Scope.OwnerID = "other" }},
-		{"generation", func(row *PairImportAttempt) { row.Scope.Generation++ }},
-		{"request", func(row *PairImportAttempt) { row.RequestHash = "different" }},
-		{"unknown_source", func(row *PairImportAttempt) { row.SourceDocID = "unknown" }},
-		{"duplicate_identity", func(row *PairImportAttempt) { row.AttemptID = completed.AttemptID }},
-		{"live_failure", func(row *PairImportAttempt) { row.Live = true }},
-		{"failed_evidence", func(row *PairImportAttempt) { row.EvidenceIDs = completed.EvidenceIDs }},
-		{"failed_hashes", func(row *PairImportAttempt) { row.ContentHashes = completed.ContentHashes }},
-		{"unsupported_outcome", func(row *PairImportAttempt) { row.Outcome = "quarantined" }},
-		{"duplicate_completion", func(row *PairImportAttempt) {
-			*row = completed
-			row.AttemptID = "another-completion"
-		}},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			attempt := failed
-			test.edit(&attempt)
-			_, err := EvaluatePairImport(scope, corpus, []PairImportAttempt{attempt, completed}, false)
+func TestEvidenceOnlyUnitPairImportAllowsOneSupportedRecovery(t *testing.T) {
+	scope := PairScope{TeamID: "a", OwnerID: "b", SpaceID: "s", Generation: 1}
+	item := CorpusItem{SourceDocID: "one", Content: "Exact original Evidence"}
+	for _, retryable := range []bool{true, false} {
+		t.Run(fmt.Sprint(retryable), func(t *testing.T) {
+			created := time.Now()
+			failed := pairFixtureImportAttempt(t, scope, item, "failed", created)
+			failed.Outcome, failed.Live = "failed", false
+			failed.EvidenceIDs, failed.ContentHashes = nil, nil
+			failed.Retryable = boolPointer(retryable)
+			completed := pairFixtureImportAttempt(t, scope, item, "completed", created.Add(time.Second))
+			if !retryable {
+				completed.ResubmissionOf = failed.AttemptID
+				completed.IdempotencyKey += ":resubmit1"
+			}
+			for _, rows := range [][]PairImportAttempt{{failed, completed}, {completed, failed}} {
+				progress, err := EvaluatePairImport(scope, []CorpusItem{item}, rows, false)
+				require.NoError(t, err)
+				require.True(t, progress.Complete)
+			}
+			third := completed
+			third.AttemptID = "third"
+			third.CreatedAt = timePointer(created.Add(2 * time.Second))
+			_, err := EvaluatePairImport(scope, []CorpusItem{item}, []PairImportAttempt{failed, completed, third}, false)
 			require.Error(t, err)
+			_, err = EvaluatePairImport(scope, []CorpusItem{item}, []PairImportAttempt{failed}, false)
+			require.ErrorContains(t, err, "automatic retry is forbidden")
+			for _, change := range []func(*PairImportAttempt){
+				func(r *PairImportAttempt) { r.Scope.OwnerID = "foreign" },
+				func(r *PairImportAttempt) { r.RequestHash = "changed" },
+				func(r *PairImportAttempt) { r.ResubmissionOf = "unknown"; r.IdempotencyKey = "eval:one:resubmit1" },
+				func(r *PairImportAttempt) { r.AttemptID = failed.AttemptID },
+				func(r *PairImportAttempt) { r.IdempotencyKey = "unsupported-key" },
+			} {
+				changed := completed
+				change(&changed)
+				_, err := EvaluatePairImport(scope, []CorpusItem{item}, []PairImportAttempt{failed, changed}, false)
+				require.Error(t, err)
+			}
+			if !retryable {
+				changed := completed
+				changed.ResubmissionOf = ""
+				changed.IdempotencyKey = "eval:one"
+				_, err := EvaluatePairImport(scope, []CorpusItem{item}, []PairImportAttempt{failed, changed}, false)
+				require.ErrorContains(t, err, "linked fresh-key")
+			}
 		})
 	}
-	_, err = EvaluatePairImport(scope, corpus, []PairImportAttempt{failed, failed, completed}, false)
-	require.ErrorContains(t, err, "duplicate")
 }
 
 func drainedPairObservation() PairObservation {

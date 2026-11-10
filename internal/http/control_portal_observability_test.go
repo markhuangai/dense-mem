@@ -15,7 +15,6 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/dream"
 )
 
 type controlOperationLogReaderStub struct {
@@ -55,51 +54,6 @@ func (s *controlRecallFeedbackReaderStub) GetRecallFeedbackEvent(_ context.Conte
 	return s.event, nil
 }
 
-type controlDreamServiceStub struct {
-	status     *dream.StatusResult
-	runs       []*dream.RunCycleResult
-	dreams     []*domain.Dream
-	dream      *domain.Dream
-	nextCursor string
-	listOpts   dream.ListOptions
-	runsLimit  int
-	profileID  string
-	getErr     error
-	listErr    error
-}
-
-func (s *controlDreamServiceStub) List(_ context.Context, profileID string, opts dream.ListOptions) ([]*domain.Dream, string, error) {
-	s.profileID = profileID
-	s.listOpts = opts
-	if s.listErr != nil {
-		return nil, "", s.listErr
-	}
-	return s.dreams, s.nextCursor, nil
-}
-
-func (s *controlDreamServiceStub) Get(_ context.Context, profileID, dreamID string) (*domain.Dream, error) {
-	s.profileID = profileID
-	if s.getErr != nil {
-		return nil, s.getErr
-	}
-	if s.dream != nil {
-		s.dream.DreamID = dreamID
-		return s.dream, nil
-	}
-	return &domain.Dream{DreamID: dreamID, TeamID: profileID, Status: domain.DreamStatusProposed}, nil
-}
-
-func (s *controlDreamServiceStub) ListRuns(_ context.Context, profileID string, limit int) ([]*dream.RunCycleResult, error) {
-	s.profileID = profileID
-	s.runsLimit = limit
-	return s.runs, nil
-}
-
-func (s *controlDreamServiceStub) Status(_ context.Context, profileID string) (*dream.StatusResult, error) {
-	s.profileID = profileID
-	return s.status, nil
-}
-
 func TestControlPortalObservabilityRoutes(t *testing.T) {
 	teamID := uuid.New()
 	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
@@ -108,7 +62,7 @@ func TestControlPortalObservabilityRoutes(t *testing.T) {
 			ID:        uuid.New(),
 			Timestamp: now,
 			Severity:  "WARN",
-			Message:   "dream cycle completed",
+			Message:   "Evidence assessment completed",
 		}},
 		Total: 1,
 	}}
@@ -126,34 +80,9 @@ func TestControlPortalObservabilityRoutes(t *testing.T) {
 		RecallID:      "rec_1",
 		CreatedAt:     now,
 		Query:         "why was recall bad?",
-		ResultRefs:    []domain.RecallFeedbackResultRef{{Type: domain.RecallFeedbackResultTypeRelationship, ID: "relationship-1", Rank: 1}},
+		ResultRefs:    []domain.RecallFeedbackResultRef{{Type: domain.RecallFeedbackResultTypeEvidence, ID: "evidence-1", Rank: 1}},
 		SnapshotState: domain.RecallFeedbackSnapshotCaptured,
 	}}
-	dreams := &controlDreamServiceStub{
-		status: &dream.StatusResult{Retired: true, HistoricalProposedCount: 1},
-		runs: []*dream.RunCycleResult{{
-			RunID:   "run-1",
-			TeamID:  teamID.String(),
-			RunDate: "2026-06-14",
-			Status:  "completed",
-		}},
-		dreams: []*domain.Dream{{
-			DreamID:    "dream-1",
-			TeamID:     teamID.String(),
-			Hypothesis: "A control dream appears",
-			Status:     domain.DreamStatusProposed,
-			CreatedAt:  now,
-			UpdatedAt:  now,
-		}},
-		nextCursor: "after-control-dream-1",
-		dream: &domain.Dream{
-			TeamID:     teamID.String(),
-			Hypothesis: "A control dream appears",
-			Status:     domain.DreamStatusProposed,
-			CreatedAt:  now,
-			UpdatedAt:  now,
-		},
-	}
 	profiles := &controlProfileSvc{profiles: []*domain.Team{{ID: teamID, Name: "Default"}}}
 	server, err := newControlPortalServerWithMetricsAndTelemetry(&config.Config{
 		ControlHTTPAddr:    "127.0.0.1:8090",
@@ -161,7 +90,6 @@ func TestControlPortalObservabilityRoutes(t *testing.T) {
 	}, profiles, &controlKeySvc{}, nil, ControlPortalTelemetry{
 		Logs:           logs,
 		RecallFeedback: feedback,
-		Dreams:         dreams,
 	}, HealthConfig{}, nil)
 	require.NoError(t, err)
 
@@ -177,7 +105,7 @@ func TestControlPortalObservabilityRoutes(t *testing.T) {
 	logTo := "2026-06-23T00:00:00Z"
 	rec := do("/control/api/logs?limit=5&offset=2&severity=warn&sort=severity&direction=asc&event=submission_failed&team_id=" + teamID.String() + "&reference_type=submission&reference_id=submission-1&from=" + logFrom + "&to=" + logTo + "&correlation_id=corr-1&invocation_id=inv-1&request_hash=hash-1&attempt_id=attempt-1&classification=replay&retryable=true")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	assert.Contains(t, rec.Body.String(), "dream cycle completed")
+	assert.Contains(t, rec.Body.String(), "Evidence assessment completed")
 	expectedLogFrom, expectedLogTo := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 6, 23, 0, 0, 0, 0, time.UTC)
 	assert.Equal(t, domain.OperationLogFilter{
 		Limit:          5,
@@ -215,35 +143,8 @@ func TestControlPortalObservabilityRoutes(t *testing.T) {
 
 	rec = do("/control/api/recall-feedback-events/rec_1")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	assert.Contains(t, rec.Body.String(), "relationship-1")
+	assert.Contains(t, rec.Body.String(), "evidence-1")
 	assert.Equal(t, "rec_1", feedback.recallID)
-
-	rec = do("/control/api/teams/" + teamID.String() + "/dreaming/status")
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	assert.Contains(t, rec.Body.String(), `"retired":true`)
-	assert.Contains(t, rec.Body.String(), `"historical_proposed_count":1`)
-	assert.NotContains(t, rec.Body.String(), `"pending_count"`)
-
-	rec = do("/control/api/teams/" + teamID.String() + "/dreaming/runs?limit=3")
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	assert.Contains(t, rec.Body.String(), `"run_id":"run-1"`)
-	assert.Equal(t, 3, dreams.runsLimit)
-
-	dreams.runs = nil
-	rec = do("/control/api/teams/" + teamID.String() + "/dreaming/runs")
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	assert.JSONEq(t, `{"data":[]}`, rec.Body.String())
-
-	rec = do("/control/api/teams/" + teamID.String() + "/dreams?limit=4&status=proposed&cursor=next&sort=created_at&direction=asc")
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	assert.Contains(t, rec.Body.String(), "A control dream appears")
-	assert.Contains(t, rec.Body.String(), `"next_cursor":"after-control-dream-1"`)
-	assert.Equal(t, teamID.String(), dreams.profileID)
-	assert.Equal(t, dream.ListOptions{Limit: 4, Status: "proposed", Cursor: "next", Sort: "created_at", Direction: "asc"}, dreams.listOpts)
-
-	rec = do("/control/api/teams/" + teamID.String() + "/dreams/dream-1")
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	assert.Contains(t, rec.Body.String(), `"dream_id":"dream-1"`)
 
 }
 
@@ -339,26 +240,6 @@ func TestControlPortalObservabilityValidation(t *testing.T) {
 	_, err = controlRecallFeedbackEventsFilter(c)
 	require.ErrorContains(t, err, "from must be before or equal to to")
 
-	limit, err := controlDreamLimit("")
-	require.NoError(t, err)
-	assert.Equal(t, 20, limit)
-	_, err = controlDreamLimit("101")
-	require.ErrorContains(t, err, "limit must be between 1 and 100")
-
-	req = httptest.NewRequest(http.MethodGet, "/control/api/dreams?status=unknown", nil)
-	c = e.NewContext(req, rec)
-	_, err = controlDreamListOptions(c)
-	require.ErrorContains(t, err, "status must be one of")
-
-	req = httptest.NewRequest(http.MethodGet, "/control/api/dreams?sort=bad", nil)
-	c = e.NewContext(req, rec)
-	_, err = controlDreamListOptions(c)
-	require.ErrorContains(t, err, "sort must be updated_at")
-
-	req = httptest.NewRequest(http.MethodGet, "/control/api/dreams?direction=sideways", nil)
-	c = e.NewContext(req, rec)
-	_, err = controlDreamListOptions(c)
-	require.ErrorContains(t, err, "direction must be asc or desc")
 }
 
 func TestControlPortalRequestLogURIOmitsCallbackCredentials(t *testing.T) {
@@ -367,8 +248,6 @@ func TestControlPortalRequestLogURIOmitsCallbackCredentials(t *testing.T) {
 	c := e.NewContext(req, httptest.NewRecorder())
 	assert.Equal(t, "/control/auth/callback", requestLogURI(c))
 }
-
-var _ dream.ControlService = (*controlDreamServiceStub)(nil)
 
 func TestControlPortalObservabilityUnavailableAndNotFound(t *testing.T) {
 	e := echo.New()
@@ -380,37 +259,13 @@ func TestControlPortalObservabilityUnavailableAndNotFound(t *testing.T) {
 	require.ErrorContains(t, h.listOperationLogs(c), "operation logs unavailable")
 	require.ErrorContains(t, h.listRecallFeedbackEvents(c), "recall feedback events unavailable")
 	require.ErrorContains(t, h.getRecallFeedbackEvent(c), "recall feedback events unavailable")
-	require.ErrorContains(t, h.getTeamDreamingStatus(c), "dream service unavailable")
-	require.ErrorContains(t, h.listTeamDreamingRuns(c), "dream service unavailable")
-	require.ErrorContains(t, h.listTeamDreams(c), "dream service unavailable")
-	require.ErrorContains(t, h.getTeamDream(c), "dream service unavailable")
-
-	teamID := uuid.New()
-	h.dreams = &controlDreamServiceStub{getErr: dream.ErrDreamNotFound}
-	req = httptest.NewRequest(http.MethodGet, "/control/api/teams/"+teamID.String()+"/dreams/dream-missing", nil)
-	rec = httptest.NewRecorder()
-	c = e.NewContext(req, rec)
-	c.SetParamNames("teamId", "dreamId")
-	c.SetParamValues(teamID.String(), "dream-missing")
-	err := h.getTeamDream(c)
-	require.ErrorContains(t, err, "dream not found")
-
-	h.dreams = &controlDreamServiceStub{listErr: dream.ErrInvalidDreamCursor}
-	req = httptest.NewRequest(http.MethodGet, "/control/api/teams/"+teamID.String()+"/dreams?cursor=bad", nil)
-	rec = httptest.NewRecorder()
-	c = e.NewContext(req, rec)
-	c.SetParamNames("teamId")
-	c.SetParamValues(teamID.String())
-	err = h.listTeamDreams(c)
-	require.ErrorContains(t, err, "invalid cursor")
-
 	h.recallFeedback = &controlRecallFeedbackReaderStub{}
 	req = httptest.NewRequest(http.MethodGet, "/control/api/recall-feedback-events/rec_missing", nil)
 	rec = httptest.NewRecorder()
 	c = e.NewContext(req, rec)
 	c.SetParamNames("recallId")
 	c.SetParamValues("rec_missing")
-	err = h.getRecallFeedbackEvent(c)
+	err := h.getRecallFeedbackEvent(c)
 	require.ErrorContains(t, err, "recall feedback event not found")
 }
 
@@ -437,4 +292,3 @@ func TestControlDependencySnapshotErrorAndDegraded(t *testing.T) {
 }
 
 var _ operations.OperationLogReader = (*controlOperationLogReaderStub)(nil)
-var _ dream.ControlService = (*controlDreamServiceStub)(nil)

@@ -77,7 +77,7 @@ func TestOrganizationServiceWithPostgres(t *testing.T) {
 		return tx.Raw(`SELECT id::text,generation FROM memory_spaces WHERE team_id=?::uuid AND kind='team_shared'`, team.ID).Row().Scan(&spaceID, &generation)
 	}))
 	actor := requestctx.WithActor(context.Background(), requestctx.Actor{TeamID: team.ID, IdentityID: credential.ActorIdentityID, MembershipID: credential.MembershipID, CredentialID: &credential.ID, OwnerID: credential.OwnerID, Role: "member", Grants: []string{"read", "write"}, AllowedSpaces: []domain.MemorySpaceAccess{{ID: uuid.MustParse(spaceID), Kind: domain.MemorySpaceTeamShared, Generation: generation}}})
-	canonical := knowledge.NewStore(app, rls, knowledgecontract.ConflictRuntimeConfig{})
+	canonical := knowledge.NewStore(app, rls)
 	source := func(text string) contract.SourceHandle {
 		result, err := canonical.CreateIngestForTest(context.Background(), knowledgecontract.CreateIngestInput{TeamID: team.ID.String(), OwnerProfileID: credential.ID.String(), Evidence: []knowledgecontract.EvidenceInput{{FragmentID: uuid.NewString(), Content: text, ForceInsert: true}}})
 		require.NoError(t, err)
@@ -113,11 +113,8 @@ func TestOrganizationServiceWithPostgres(t *testing.T) {
 				w.WriteHeader(http.StatusBadRequest)
 				return
 			}
-			response := assessment.Response{HierarchyUpdates: []assessment.HierarchyUpdate{}, RequestID: request.RequestID, Definitions: []assessment.Definition{}, Items: []assessment.Decision{}, Equivalence: []assessment.Equivalence{}}
-			kind, key, baseKind := contract.Topic, "postgresql", ""
-			if request.Items[0].Kind == contract.EntitySource {
-				kind, key, baseKind = contract.EntityClass, request.Items[0].EntityKind, request.Items[0].EntityKind
-			}
+			response := assessment.Response{RequestID: request.RequestID, Definitions: []assessment.Definition{}, Items: []assessment.Decision{}, Equivalence: []assessment.Equivalence{}}
+			kind, key := contract.Topic, "postgresql"
 			ref := "new-topic"
 			for _, definition := range request.Definitions {
 				if definition.Kind == kind {
@@ -126,7 +123,7 @@ func TestOrganizationServiceWithPostgres(t *testing.T) {
 				}
 			}
 			if ref == "new-topic" {
-				response.Definitions = append(response.Definitions, assessment.Definition{Ref: ref, Kind: kind, Key: key, Label: key, Aliases: []string{}, BaseEntityKind: baseKind})
+				response.Definitions = append(response.Definitions, assessment.Definition{Ref: ref, Kind: kind, Key: key, Label: key, Aliases: []string{}})
 			}
 			for _, item := range request.Items {
 				definitionRef := ref
@@ -215,14 +212,13 @@ func TestOrganizationServiceWithPostgres(t *testing.T) {
 	require.Nil(t, incomplete.Publication)
 	require.Empty(t, incomplete.Attempts)
 	require.Equal(t, int32(1), calls.Load())
-	entity, err := canonical.CreateEntity(context.Background(), knowledgecontract.CreateEntityInput{TeamID: team.ID.String(), OwnerProfileID: credential.ID.String(), EntityKind: "person", CanonicalName: "Ada"})
-	require.NoError(t, err)
-	classified, err := service.Organize(context.Background(), team.ID.String(), contract.OrganizationInput{OperationKey: "service-entity-class", Sources: []contract.SourceHandle{{Kind: contract.EntitySource, ID: entity.EntityID, Version: int64(entity.Version)}}})
+	standalone := source("Ada works on Atlas.")
+	classified, err := service.Organize(context.Background(), team.ID.String(), contract.OrganizationInput{OperationKey: "service-evidence-topic", Sources: []contract.SourceHandle{standalone}})
 	require.NoError(t, err)
 	require.Equal(t, "organized", classified.Outcomes[0].Status)
-	var entityKind string
-	require.NoError(t, admin.Raw(`SELECT entity_kind FROM entity_records WHERE team_id=?::uuid AND entity_id=?::uuid`, team.ID, entity.EntityID).Row().Scan(&entityKind))
-	require.Equal(t, "person", entityKind)
+	preservedStandalone, err := repository.ReadSources(context.Background(), team.ID.String(), []contract.SourceHandle{standalone})
+	require.NoError(t, err)
+	require.Equal(t, "Ada works on Atlas.", preservedStandalone[0].State["content"])
 	mode.Store(4)
 	e, f := source("Atlas stores data in PostgreSQL."), source("PostgreSQL is Atlas's data store.")
 	ambiguous, err := service.Organize(context.Background(), team.ID.String(), contract.OrganizationInput{OperationKey: "service-ambiguous-comparison", Sources: []contract.SourceHandle{e, f}})

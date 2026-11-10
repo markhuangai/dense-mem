@@ -91,186 +91,29 @@ describe("UserApi", () => {
   });
 
 
-  it("requests graph snapshots with scoped query params", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      data: {
-        scope: "local",
-        depth: 2,
-        limit: 40,
-        truncated: false,
-        nodes: [],
-        edges: [],
-      },
-    }), { status: 200 }));
-    vi.stubGlobal("fetch", fetchMock);
 
-    const result = await new UserApi("dm_key").graph({
-      scope: "local",
-      q: "project graph",
-      types: ["entity", "value"],
-      anchorType: "entity",
-      anchorId: "entity-1",
-      depth: 2,
-      limit: 40,
-    });
 
-    expect(result.scope).toBe("local");
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/ui/api/graph?scope=local&q=project+graph&types=entity%2Cvalue&anchor_type=entity&anchor_id=entity-1&depth=2&limit=40",
-      expect.objectContaining({
-        cache: "no-store",
-        headers: expect.objectContaining({ Authorization: "Bearer dm_key" }),
-      }),
-    );
-  });
 
-  it("requests graph node details", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      data: {
-        key: "entity:entity-1",
-        id: "entity-1",
-        type: "entity",
-        title: "entity title",
-        body: "entity detail",
-      },
-    }), { status: 200 }));
-    vi.stubGlobal("fetch", fetchMock);
 
-    const result = await new UserApi("dm_key").nodeDetail("entity", "entity-1");
 
-    expect(result.body).toBe("entity detail");
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/ui/api/node-detail?type=entity&id=entity-1",
-      expect.objectContaining({
-        cache: "no-store",
-        headers: expect.objectContaining({ Authorization: "Bearer dm_key" }),
-      }),
-    );
-  });
 
-  it("maps canonical recall payloads to evidence display hits", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      data: {
-        recall_id: "rec_canonical",
-        results: [
-          {
-            evidence_id: "11111111-1111-4111-8111-111111111111",
-            relationship_ids: ["22222222-2222-4222-8222-222222222222"],
-            rank: 2,
-            context: "Dense-Mem uses PostgreSQL as the durable authority.",
-          },
-        ],
-        conflicts: [],
-        related_relationships: [],
-        related_communities: [
-          {
-            community_id: "community-1",
-            logical_community_id: "logical-community-1",
-            rank: 1,
-            summary: "Dense-Mem community",
-            top_entities: [{ entity_id: "33333333-3333-4333-8333-333333333333", name: "Dense-Mem" }],
-            top_predicates: ["uses"],
-            entity_count: 2,
-            relationship_count: 1,
-            relationships: [
-              {
-                relationship_id: "22222222-2222-4222-8222-222222222222",
-                subject: { entity_id: "33333333-3333-4333-8333-333333333333", name: "Dense-Mem" },
-                predicate: "uses",
-                object: { name: "PostgreSQL" },
-                polarity: "positive",
-                evidence_ids: ["11111111-1111-4111-8111-111111111111"],
-              },
-            ],
-            relationships_truncated: false,
-          },
-        ],
-            search_states: { evidence: "current", relationships: "current" },
-        degradations: [],
-      },
-    }), { status: 200 }));
-    vi.stubGlobal("fetch", fetchMock);
 
-    const result = await new UserApi("dm_key").recall("postgres", 3);
 
-    expect(result).toHaveLength(2);
-    expect(result[0].community?.community_id).toBe("community-1");
-    expect(result[0].community?.logical_community_id).toBe("logical-community-1");
-    const evidenceHit = result.find((hit) => hit.evidence);
-    expect(evidenceHit?.evidence?.evidence_id).toBe("11111111-1111-4111-8111-111111111111");
-    expect(evidenceHit?.evidence?.context).toContain("PostgreSQL");
-    expect(evidenceHit?.relationships?.[0].relationship_id).toBe("22222222-2222-4222-8222-222222222222");
-    expect(evidenceHit?.semantic_rank).toBe(2);
-    expect(evidenceHit?.final_score).toBe(0.5);
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/ui/api/recall?query=postgres&limit=3",
-      expect.objectContaining({
-        headers: expect.objectContaining({ Authorization: "Bearer dm_key" }),
-      }),
-    );
-  });
 
-  it("does not associate community relationships without evidence IDs to every evidence hit", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      data: {
-        results: [{ evidence_id: "evidence-target", rank: 1, context: "target" }],
-        related_relationships: [],
-        related_communities: [{
-          community_id: "community-no-evidence",
-          logical_community_id: "logical-community-no-evidence",
-          rank: 1,
-          summary: "community",
-          top_entities: [],
-          top_predicates: [],
-          entity_count: 0,
-          relationship_count: 1,
-          relationships: [{ relationship_id: "relationship-no-evidence" }],
-          relationships_truncated: false,
-        }],
-      },
-    }), { status: 200 }));
-    vi.stubGlobal("fetch", fetchMock);
 
-    const result = await new UserApi("dm_key").recall("target", 1);
-
-    const communityHit = result.find((hit) => hit.community);
-    expect(communityHit?.community?.relationships?.[0].relationship_id).toBe("relationship-no-evidence");
-    expect(result.find((hit) => hit.evidence)?.relationships).toEqual([]);
-  });
-
-  it("maps canonical related relationship recall hits", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      data: {
-        recall_id: "rec_relationships",
-        results: [],
-        conflicts: [],
-        related_relationships: [
-          {
-            relationship_id: "33333333-3333-4333-8333-333333333333",
-            tier: "verified",
-            subject: { entity_id: "44444444-4444-4444-8444-444444444444", name: "Dense-Mem" },
-            predicate: "uses",
-            object: { name: "PostgreSQL" },
-            polarity: "+",
-            evidence_ids: ["11111111-1111-4111-8111-111111111111"],
-            search_state: "current",
-          },
-        ],
-        related_communities: [],
-            search_states: { evidence: "current", relationships: "current" },
-        degradations: [],
-      },
-    }), { status: 200 }));
-    vi.stubGlobal("fetch", fetchMock);
-
-    const result = await new UserApi("dm_key").recall("postgres", 3);
-
-    expect(result).toHaveLength(1);
-    expect(result[0].tier).toBe("verified");
-    expect(result[0].relationship?.relationship_id).toBe("33333333-3333-4333-8333-333333333333");
-    expect(result[0].relationships?.[0].evidence_ids).toEqual(["11111111-1111-4111-8111-111111111111"]);
-    expect(result[0].semantic_rank).toBe(1);
-    expect(result[0].final_score).toBe(1);
+  it("returns Evidence and direct topic hints with scoped follow-up parameters", async () => {
+    const data={recall_id:"rec-1",results:[{evidence_id:"e-1",rank:1,context:"Exact café Evidence.",equivalent_evidence_ids:[],equivalents_truncated:false}],related_topics:[{topic_id:"11111111-1111-4111-8111-111111111111",name:"Storage",description:"Durable storage",eligible_evidence_count:2,rank:1}],topics_truncated:true,conflicts:[],degradations:[],search_states:{evidence:"current"}};
+    const fetcher=vi.fn().mockResolvedValue(new Response(JSON.stringify({data}),{status:200}));
+    vi.stubGlobal("fetch",fetcher);
+    const result=await new UserApi("key").recall("",10,{topicIDs:[data.related_topics[0].topic_id],topicLimit:0,knownEvidenceIDs:["e-known"],knownAt:"2026-11-01T00:00:00Z",validAt:"2026-10-01T00:00:00Z"});
+    expect(result).toEqual(data);
+    const url=new URL(fetcher.mock.calls[0][0],"http://localhost");
+    expect(url.searchParams.get("topic_ids")).toBe(data.related_topics[0].topic_id);
+    expect(url.searchParams.get("topic_limit")).toBe("0");
+    expect(url.searchParams.get("known_evidence_ids")).toBe("e-known");
+    expect(url.searchParams.get("known_at")).toBe("2026-11-01T00:00:00Z");
+    expect(url.searchParams.get("valid_at")).toBe("2026-10-01T00:00:00Z");
+    expect(url.searchParams.has("relationship_limit")).toBe(false);
   });
 
   it("throws a typed error for unknown successful recall payloads", async () => {

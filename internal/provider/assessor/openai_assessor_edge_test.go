@@ -110,9 +110,9 @@ func TestOpenAIAssessorAssessSemanticUsesOneTurnForValidResponse(t *testing.T) {
 			return
 		}
 		assert.Equal(t, "assessor-model", request.Model)
-		assert.Equal(t, "dense_mem_semantic_assessment_response", request.ResponseFormat.JSONSchema.Name)
-		assert.Contains(t, request.Messages[0].Content, "structure, normalization, evidence-security, and duplicate-equivalence assessor")
-		assert.Contains(t, request.Messages[0].Content, "registration_required predicate requires null predicate_key and predicate_version")
+		assert.Equal(t, "dense_mem_evidence_assessment_response", request.ResponseFormat.JSONSchema.Name)
+		assert.Contains(t, request.Messages[0].Content, "Evidence security, equivalence, and conflict assessor")
+		assert.Contains(t, request.Messages[0].Content, "Never search other memory, extract facts, invent Evidence")
 		var payload map[string]any
 		if !assert.NoError(t, json.Unmarshal([]byte(request.Messages[1].Content), &payload)) {
 			http.Error(w, "invalid assessor payload", http.StatusBadRequest)
@@ -139,7 +139,7 @@ func TestOpenAIAssessorAssessSemanticUsesOneTurnForValidResponse(t *testing.T) {
 	response, err := runSemanticAssessmentSessionForTest(context.Background(), v, req)
 	require.NoError(t, err)
 	assert.Equal(t, "assess-1", response.RequestID)
-	require.Len(t, response.RelationshipResults, 1)
+	require.Len(t, response.EvidenceSecurityResults, 1)
 	assert.Equal(t, 1, response.ProviderTurns)
 	assert.Equal(t, 200, response.InputTokens)
 }
@@ -154,7 +154,7 @@ func TestOpenAIAssessorRememberSessionRepairsWithoutRepeatingCandidates(t *testi
 		candidateID := "candidate-evidence"
 		response.EvidenceEquivalenceResults = []SemanticAssessmentEvidenceEquivalenceResult{{EvidenceID: "ev-1", Action: "reuse", CandidateEvidenceID: &candidateID}}
 		if len(requests) == 1 {
-			response.EntityResults[0].GroundingRef = nil
+			response.RequestID = "wrong-request"
 		}
 		content, err := json.Marshal(response)
 		require.NoError(t, err)
@@ -171,7 +171,7 @@ func TestOpenAIAssessorRememberSessionRepairsWithoutRepeatingCandidates(t *testi
 		nil,
 		"remember-override-model",
 	)
-	request, _ := semanticAssessmentSubmissionContractTestRequest(t)
+	request, _ := semanticAssessmentPreparedTestRequest(t)
 	request.EvidenceEquivalenceCandidates = []assessor.SemanticAssessmentEvidenceEquivalenceCandidateGroup{{
 		EvidenceID: "ev-1",
 		Candidates: []assessor.SemanticAssessmentEvidenceEquivalenceCandidate{{EvidenceID: "candidate-evidence", Content: "Historical candidate evidence."}},
@@ -180,12 +180,10 @@ func TestOpenAIAssessorRememberSessionRepairsWithoutRepeatingCandidates(t *testi
 	require.NoError(t, err)
 	require.NotNil(t, session)
 	require.NotEmpty(t, first.ValidationErrors)
-	assert.True(t, semanticAssessmentTestHasValidationField(first.ValidationErrors, "entity_results[0].grounding_ref"))
+	assert.True(t, semanticAssessmentTestHasValidationField(first.ValidationErrors, "request_id"))
 	assert.Equal(t, 1, first.Turn)
 
 	refreshed := request
-	refreshed.EntityCandidateGroups = append([]SemanticAssessmentEntityCandidateGroup(nil), request.EntityCandidateGroups...)
-	refreshed.EntityCandidateGroups[0].Candidates[0].IdentityContext = map[string]any{"source": "refreshed-catalog"}
 	refreshed.EvidenceEquivalenceCandidates = append([]assessor.SemanticAssessmentEvidenceEquivalenceCandidateGroup(nil), request.EvidenceEquivalenceCandidates...)
 	refreshed.EvidenceEquivalenceCandidates[0].Candidates = append([]assessor.SemanticAssessmentEvidenceEquivalenceCandidate(nil), request.EvidenceEquivalenceCandidates[0].Candidates...)
 	refreshed.EvidenceEquivalenceCandidates[0].Candidates[0].Content = "Refreshed candidate evidence."
@@ -205,7 +203,7 @@ func TestOpenAIAssessorRememberSessionRepairsWithoutRepeatingCandidates(t *testi
 	assert.NotContains(t, requests[1].Messages[3].Content, "refreshed_candidate_context")
 	assert.NotContains(t, requests[1].Messages[3].Content, "refreshed-catalog")
 	assert.NotContains(t, requests[1].Messages[3].Content, "Refreshed candidate evidence.")
-	assert.Contains(t, requests[1].Messages[3].Content, "Return evidence_conflict_results")
+	assert.Contains(t, requests[1].Messages[3].Content, "complete replacement JSON object")
 }
 
 func TestOpenAIAssessorExplicitSessionModelFailureDoesNotFallback(t *testing.T) {
@@ -236,59 +234,12 @@ func TestOpenAIAssessorExplicitSessionModelFailureDoesNotFallback(t *testing.T) 
 	assert.Equal(t, []string{"remember-override-model"}, models)
 }
 
-func TestOpenAIAssessorRememberSessionRepairsMultipleCandidatesAsAmbiguous(t *testing.T) {
-	var requests []openAIVerifierRequest
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request openAIVerifierRequest
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
-		requests = append(requests, request)
-
-		response := semanticAssessmentTestResponse()
-		if len(requests) > 1 {
-			response.EntityResults[0].Action = "ambiguous"
-			response.EntityResults[0].CandidateEntityID = nil
-			reason := "not_supported_by_evidence"
-			response.RelationshipResults[0].Disposition = "not_supported"
-			response.RelationshipResults[0].Reason = &reason
-			response.RelationshipResults[0].Splits = []SemanticAssessmentRelationshipSplit{}
-		}
-		content, err := json.Marshal(response)
-		require.NoError(t, err)
-		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
-			"choices": []map[string]any{{"message": map[string]any{"content": string(content)}}},
-		}))
-	}))
-	defer srv.Close()
-
-	v := NewOpenAIAssessor(newTestVerifierConfig(srv.URL, "key", "assessor-model"), srv.Client())
-	request, _ := semanticAssessmentSubmissionContractTestRequest(t)
-	request.EntityCandidateGroups[0].Candidates = append(request.EntityCandidateGroups[0].Candidates, SemanticAssessmentEntityCandidate{
-		EntityID:      "entity-other-mark",
-		CanonicalName: "Mark Other",
-		Kind:          "person",
-	})
-	response, err := runSemanticAssessmentSessionForTest(context.Background(), v, request)
-	require.NoError(t, err)
-	require.Len(t, requests, 2)
-	assert.Equal(t, 2, response.ProviderTurns)
-	assert.Equal(t, "ambiguous", response.EntityResults[0].Action)
-	assert.Nil(t, response.EntityResults[0].CandidateEntityID)
-	assert.Equal(t, "not_supported", response.RelationshipResults[0].Disposition)
-
-	var correction semanticAssessmentSessionRepair
-	require.NoError(t, json.Unmarshal([]byte(requests[1].Messages[3].Content), &correction))
-	require.True(t, semanticAssessmentTestHasValidationField(correction.ValidationErrors, "entity_results[0].candidate_entity_id"))
-	assert.Contains(t, correction.Instruction, "without known_entity_id")
-	assert.Contains(t, correction.Instruction, "multiple compatible candidates")
-	assert.Contains(t, correction.Instruction, "mark every dependent Relationship not_supported")
-}
-
 func TestOpenAIAssessorRememberSessionRejectsInvalidRepairState(t *testing.T) {
 	var nilSession *openAISemanticAssessmentSession
 	assert.Empty(t, nilSession.SessionID())
 
 	v := NewOpenAIAssessor(newTestVerifierConfig("", "key", "assessor-model"), nil)
-	request, _ := semanticAssessmentSubmissionContractTestRequest(t)
+	request, _ := semanticAssessmentPreparedTestRequest(t)
 	prepared, validationErrors := PrepareSemanticAssessmentRequest(request, v.assessmentLimits)
 	require.Empty(t, validationErrors)
 
@@ -337,7 +288,7 @@ func TestOpenAIAssessorRememberSessionRejectsProviderReportedInputOverflow(t *te
 	defer srv.Close()
 
 	v := NewOpenAIAssessor(newTestVerifierConfig(srv.URL, "key", "assessor-model"), srv.Client())
-	request, _ := semanticAssessmentSubmissionContractTestRequest(t)
+	request, _ := semanticAssessmentPreparedTestRequest(t)
 	_, _, err := v.Assess(context.Background(), request)
 	var malformed *MalformedResponseError
 	require.ErrorAs(t, err, &malformed)
@@ -465,10 +416,10 @@ func TestOpenAIAssessorAssessSemanticCorrectsMalformedContentInSameHistory(t *te
 	assert.Equal(t, "request_id", correction.ValidationErrors[0].Field)
 	assert.Contains(t, correction.ValidationErrors[0].Message, `expected "assess-1"`)
 	assert.Contains(t, correction.Instruction, "complete replacement JSON object")
-	assert.Contains(t, correction.Instruction, "complete predicate_registration")
+	assert.Contains(t, correction.Instruction, "Preserve valid unrelated results")
 }
 
-func TestOpenAIAssessorAssessSemanticRegeneratesInvalidGroundingReference(t *testing.T) {
+func TestOpenAIAssessorAssessSemanticRegeneratesInvalidSecurityReference(t *testing.T) {
 	var requests []openAIVerifierRequest
 	var invalidContent string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -481,8 +432,8 @@ func TestOpenAIAssessorAssessSemanticRegeneratesInvalidGroundingReference(t *tes
 
 		response := semanticAssessmentTestResponse()
 		if len(requests) == 1 {
-			invalidGrounding := "invented-grounding"
-			response.EntityResults[0].GroundingRef = &invalidGrounding
+			response.EvidenceSecurityResults[0].Decision = "reject"
+			response.EvidenceSecurityResults[0].Signals = []SemanticAssessmentSecuritySignal{{Kind: "instruction_override", StartRef: "invented", EndRef: "invented-end"}}
 		}
 		content, err := json.Marshal(response)
 		if !assert.NoError(t, err) {
@@ -499,7 +450,7 @@ func TestOpenAIAssessorAssessSemanticRegeneratesInvalidGroundingReference(t *tes
 	defer srv.Close()
 
 	v := NewOpenAIAssessor(newTestVerifierConfig(srv.URL, "key", "assessor-model"), srv.Client())
-	req, _ := semanticAssessmentSubmissionContractTestRequest(t)
+	req, _ := semanticAssessmentPreparedTestRequest(t)
 	response, err := runSemanticAssessmentSessionForTest(context.Background(), v, req)
 	require.NoError(t, err)
 	require.Len(t, requests, 2)
@@ -508,50 +459,11 @@ func TestOpenAIAssessorAssessSemanticRegeneratesInvalidGroundingReference(t *tes
 
 	var correction semanticAssessmentSessionRepair
 	require.NoError(t, json.Unmarshal([]byte(requests[1].Messages[3].Content), &correction))
-	assert.True(t, semanticAssessmentTestHasValidationField(correction.ValidationErrors, "entity_results[0].grounding_ref"))
+	assert.True(t, semanticAssessmentTestHasValidationField(correction.ValidationErrors, "evidence_security_results[0].signals[0]"))
 	assert.NotContains(t, requests[1].Messages[3].Content, "span_hints")
 	assert.NotContains(t, requests[1].Messages[3].Content, "entity_selection_hints")
 	assert.Contains(t, correction.Instruction, "one complete replacement JSON object")
-	assert.Contains(t, correction.Instruction, "Copy only grounding_ref, start_ref, and end_ref")
-}
-
-func TestOpenAIAssessorAssessSemanticRegeneratesInvalidEntitySelection(t *testing.T) {
-	var requests []openAIVerifierRequest
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request openAIVerifierRequest
-		if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&request)) {
-			http.Error(w, "invalid assessor request", http.StatusBadRequest)
-			return
-		}
-		requests = append(requests, request)
-
-		response := semanticAssessmentTestResponse()
-		if len(requests) == 1 {
-			response.EntityResults[0].Action = "create"
-			response.EntityResults[0].CandidateEntityID = nil
-		}
-		content, err := json.Marshal(response)
-		if !assert.NoError(t, err) {
-			http.Error(w, "invalid assessor response", http.StatusInternalServerError)
-			return
-		}
-		assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
-			"choices": []map[string]any{{"message": map[string]any{"content": string(content)}}},
-		}))
-	}))
-	defer srv.Close()
-
-	v := NewOpenAIAssessor(newTestVerifierConfig(srv.URL, "key", "assessor-model"), srv.Client())
-	req, _ := semanticAssessmentSubmissionContractTestRequest(t)
-	response, err := runSemanticAssessmentSessionForTest(context.Background(), v, req)
-	require.NoError(t, err)
-	require.Len(t, requests, 2)
-	assert.Equal(t, 2, response.ProviderTurns)
-
-	var correction semanticAssessmentSessionRepair
-	require.NoError(t, json.Unmarshal([]byte(requests[1].Messages[3].Content), &correction))
-	assert.True(t, semanticAssessmentTestHasValidationField(correction.ValidationErrors, "entity_results[0].action"))
-	assert.NotContains(t, requests[1].Messages[3].Content, "entity_selection_hints")
+	assert.Contains(t, correction.Instruction, "Copy only supplied evidence_id, candidate_evidence_id, start_ref, and end_ref")
 }
 
 func semanticAssessmentTestHasValidationField(errs []SemanticValidationError, field string) bool {
@@ -586,29 +498,10 @@ func TestSemanticAssessmentValidationFieldFamilyIsBounded(t *testing.T) {
 }
 
 func TestSemanticAssessmentInstructionsExposeRequestDependentRules(t *testing.T) {
-	for _, expected := range []string{
-		"Never return numeric text offsets",
-		"start_ref is inclusive and end_ref is exclusive",
-		"return exactly one result for each submitted ref",
-		"Every stored split requires exactly one of object_ref and object_value",
-		`otherwise use predicate_status "registration_required" with a complete predicate_registration`,
-		"registration_required predicate requires null predicate_key and predicate_version",
-		"contiguous split_index entries starting at zero",
-		"not_supported_by_evidence",
-		"Pronouns and inferred coreference are not grounding options",
-		"RFC3339",
-		"hidden control rune or active markup",
-	} {
+	for _, expected := range []string{"Never search other memory, extract facts, invent Evidence", "Return exactly one evidence_security_results entry", "Read-only known and candidate Evidence never receives security results", "For every evidence_equivalence_candidates group return exactly one", "includes submitted Evidence", "Never return numeric offsets"} {
 		assert.Contains(t, semanticAssessmentSystemPrompt, expected)
 	}
-	for _, expected := range []string{
-		"Never return numeric offsets",
-		"Copy only grounding_ref, start_ref, and end_ref values present in the immutable request",
-		"same array index",
-		"Preserve every submitted ref, endpoint, typed value, polarity, and submitted temporal bounds",
-		"registration_required with a complete predicate_registration",
-		"one complete replacement JSON object",
-	} {
+	for _, expected := range []string{"complete replacement JSON object", "Preserve valid unrelated results", "Copy only supplied evidence_id, candidate_evidence_id, start_ref, and end_ref"} {
 		assert.Contains(t, semanticAssessmentCorrectionInstruction, expected)
 	}
 }

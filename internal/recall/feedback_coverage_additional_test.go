@@ -26,12 +26,11 @@ func TestRecallFeedbackAdditionalValidationBranches(t *testing.T) {
 	require.Equal(t, "request_timeout", guidance.reasonCode)
 
 	refs := FeedbackResultRefs(&RecallResult{
-		Results:              []RecallResultItem{{EvidenceID: "", RelationshipIDs: []string{"relationship"}, Rank: 0}},
-		RelatedRelationships: []RelatedRelationshipSummary{{RelationshipID: "related", SearchState: ""}},
-		RelatedCommunities:   []RecallDiscoveryPath{{CommunityID: "", CommunityRelationships: []RelatedRelationshipSummary{{RelationshipID: ""}}}},
+		Results:       []RecallResultItem{{EvidenceID: ""}, {EvidenceID: "evidence", Rank: 0}},
+		RelatedTopics: []recallcontract.RelatedTopic{{TopicID: "related", Rank: 1}, {TopicID: ""}},
 	})
 	require.Len(t, refs, 2)
-	require.Equal(t, 1, refs[0].Rank)
+	require.Equal(t, 2, refs[0].Rank)
 	require.Equal(t, "", recallFeedbackFirstNonEmpty(" ", ""))
 
 	returned := []domain.RecallFeedbackResultRef{{Type: domain.RecallFeedbackResultTypeEvidence, ID: "evidence-1"}}
@@ -46,7 +45,7 @@ func TestRecallFeedbackAdditionalValidationBranches(t *testing.T) {
 	require.True(t, lookup.contains(domain.RecallFeedbackResultTypeEvidence, "e", 0))
 	require.False(t, lookup.contains(domain.RecallFeedbackResultTypeEvidence, "e", 1))
 	require.Empty(t, recallFeedbackRefKey("unknown", "id"))
-	require.Equal(t, domain.RecallFeedbackResultTypeHypothesis, recallFeedbackCanonicalResultType(domain.RecallFeedbackResultTypeDream))
+	require.Empty(t, recallFeedbackCanonicalResultType("dream"))
 
 	teamID, profileID, spaceID := uuid.New(), uuid.New(), uuid.New()
 	actor := requestctx.Actor{TeamID: teamID, OwnerID: profileID, AllowedSpaces: []domain.MemorySpaceAccess{

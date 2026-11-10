@@ -8,7 +8,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/correlation"
 	"github.com/markhuangai/dense-mem/internal/domain"
-	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	remember "github.com/markhuangai/dense-mem/internal/remember/service"
@@ -26,6 +25,7 @@ type Dependencies struct {
 	Logger              observability.LogProvider
 	DiagnosticProtector observability.DiagnosticProtector
 	DiagnosticRecorder  func() modelprovider.SnapshotRecorder
+	DiagnosticLog       func(context.Context, session.Scope, string, []byte)
 }
 
 type Service struct{ deps Dependencies }
@@ -103,12 +103,27 @@ func (s *Service) Ingest(ctx context.Context, req session.Request) (*session.Res
 			return session.ErrRequestConflict
 		}
 
+		if submission.Result != nil && (submission.Result.RetiredPayload || submission.Result.ProcessingState == "completed" || !retryableResult(submission.Result)) {
+			result = submission.Result
+			return nil
+		}
 		if submission.Intake.ExtractionVersion != session.ExtractionVersion {
 			return session.ErrStale
 		}
-		if submission.Result != nil && (submission.Result.ProcessingState == "completed" || !retryableResult(submission.Result)) {
-			result = submission.Result
-			return nil
+		if transition := submission.Intake.EvidenceOnlyResume; transition != nil && s.deps.Logger != nil {
+			attrs := []observability.LogAttr{
+				observability.String("submission_id", submission.ID), observability.String("idempotency_key", req.IdempotencyKey),
+				observability.String("request_hash", hash), observability.String("team_id", scope.TeamID),
+				observability.String("owner_profile_id", scope.OwnerProfileID), observability.String("original_version", transition.OriginalVersion),
+				observability.String("original_outcome", transition.OriginalOutcome), observability.String("extraction_version", session.ExtractionVersion),
+				observability.Int("cleared_checkpoints", transition.ClearedCheckpoints), observability.LogAttr{Key: "space_generation", Value: scope.SpaceGeneration},
+				observability.String("reason", "factual_graph_removed"), observability.String("outcome", "resume_authorized"),
+			}
+			if logger, ok := s.deps.Logger.(observability.ContextLogProvider); ok {
+				logger.InfoContext(ctx, "session_evidence_only_resume", attrs...)
+			} else {
+				s.deps.Logger.Info("session_evidence_only_resume", attrs...)
+			}
 		}
 		processCtx := ctx
 		var recorder modelprovider.SnapshotRecorder
@@ -124,12 +139,15 @@ func (s *Service) Ingest(ctx context.Context, req session.Request) (*session.Res
 }
 
 func retryableResult(result *session.Result) bool {
+	retryable := false
 	for _, failure := range result.Errors {
-		if failure.Retryable {
-			return true
+		switch failure.Code {
+		case "submission_policy_rejected", "stale_input", "input_budget_exceeded":
+			return false
 		}
+		retryable = retryable || failure.Retryable
 	}
-	return false
+	return retryable
 }
 
 func (s *Service) process(ctx context.Context, submission *session.Submission) (*session.Result, error) {
@@ -139,6 +157,7 @@ func (s *Service) process(ctx context.Context, submission *session.Submission) (
 			cause = errors.Join(ctx.Err(), cause)
 		}
 		result.ProcessingState = "failed"
+		result.MemoryOutcome = "failed"
 		result.SearchState = "not_required"
 		result.Errors = []session.Error{classifySessionError(cause)}
 		persistenceCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), remember.RememberFailurePersistenceBudget)
@@ -155,31 +174,23 @@ func (s *Service) process(ctx context.Context, submission *session.Submission) (
 	}
 	result.Warnings = warnings
 	var prepared *session.Prepared
-	if len(responses) > 0 {
-		linkRequest, err := buildLinkingRequest(submission, responses)
+	evidence, err := buildSessionAssessment(submission, responses)
+	if err != nil {
+		return fail(err)
+	}
+	result.MemoryOutcome = "no_memory"
+	if len(evidence) > 0 {
+		result.MemoryOutcome = "stored"
+		actor, _ := requestctx.ActorFromContext(ctx)
+		metadata := map[string]any{"target_space": string(domain.MemorySpacePrivate), "contract_version": domain.ContractVersion, "actor": map[string]any{
+			"team_id": actor.TeamID.String(), "owner_id": actor.OwnerID.String(), "correlation_id": correlation.FromContext(ctx), "role": actor.Role, "auth_method": actor.AuthMethod,
+		}, "session_submission_id": submission.ID, "extraction_version": session.ExtractionVersion}
+		prepared, err = s.deps.Preparer.PrepareSession(ctx, session.PrepareInput{
+			Scope: submission.Intake.Scope, SubmissionID: submission.ID, RequestHash: submission.Intake.RequestHash,
+			Evidence: evidence, Metadata: metadata,
+		})
 		if err != nil {
 			return fail(err)
-		}
-		if len(linkRequest.Relationships) > 0 {
-			linked, err := s.linkEntities(ctx, submission, linkRequest)
-			if err != nil {
-				return fail(err)
-			}
-			evidence, proposal, err := buildSessionAssessment(submission, linkRequest, linked)
-			if err != nil {
-				return fail(err)
-			}
-			actor, _ := requestctx.ActorFromContext(ctx)
-			metadata := map[string]any{"target_space": string(domain.MemorySpacePrivate), "contract_version": domain.ContractVersion, "actor": map[string]any{
-				"team_id": actor.TeamID.String(), "owner_id": actor.OwnerID.String(), "correlation_id": correlation.FromContext(ctx), "role": actor.Role, "auth_method": actor.AuthMethod,
-			}, "session_submission_id": submission.ID, "extraction_version": session.ExtractionVersion}
-			prepared, err = s.deps.Preparer.PrepareSession(ctx, session.PrepareInput{
-				Scope: submission.Intake.Scope, SubmissionID: submission.ID, RequestHash: submission.Intake.RequestHash,
-				Evidence: evidence, Proposal: proposal, Metadata: metadata,
-			})
-			if err != nil {
-				return fail(err)
-			}
 		}
 	}
 	result.ProcessingState = "completed"
@@ -205,7 +216,7 @@ func baseSessionResult(ctx context.Context, submission *session.Submission) sess
 		ContractVersion: domain.ContractVersion, SubmissionID: submission.ID, SubmissionKind: "session_ingest",
 		CorrelationID: correlation.FromContext(ctx), AcceptedEventCount: submission.AcceptedEventCount,
 		DuplicateEventCount: submission.DuplicateEventCount, ProcessingState: "failed", SearchState: "not_required",
-		Events: []session.EventResult{}, RelationshipResults: []knowledge.SubmissionRelationshipResult{}, Errors: []session.Error{},
+		Events: []session.EventResult{}, Errors: []session.Error{}, MemoryOutcome: "no_memory",
 	}
 	newIndices := map[int]bool{}
 	for _, index := range submission.NewEventIndices {

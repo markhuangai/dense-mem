@@ -58,9 +58,9 @@ func newRecallOntologyFixture(t testing.TB) *recallOntologyFixture {
 	}))
 	insertSearchTestContract(t, admin, rls, "ontology recall", 3, "exact", "")
 	f.search = newSearchFixtureStore(app, rls)
-	f.knowledge = knowledgepostgres.NewStore(app, rls, knowledge.ConflictRuntimeConfig{})
+	f.knowledge = knowledgepostgres.NewStore(app, rls)
 	f.ontology = ontologypostgres.NewStore(app, rls)
-	f.search.recall.WithOntology(func() OntologyReader { return f.ontology.NewRecallReader() })
+	f.search.recall.WithOntology(func() OntologyReader { return f.ontology.NewRecallReader() }).WithTopics(f.ontology.NewTopicReader())
 	return f
 }
 
@@ -131,7 +131,7 @@ func (f *recallOntologyFixture) organizerWithAccounting(t testing.TB, meanings m
 		var request assessment.Request
 		require.GreaterOrEqual(t, len(envelope.Messages), 2)
 		require.NoError(t, json.Unmarshal([]byte(envelope.Messages[1].Content), &request))
-		response := assessment.Response{RequestID: request.RequestID, Definitions: []assessment.Definition{}, Items: []assessment.Decision{}, Equivalence: []assessment.Equivalence{}, HierarchyUpdates: []assessment.HierarchyUpdate{}}
+		response := assessment.Response{RequestID: request.RequestID, Definitions: []assessment.Definition{}, Items: []assessment.Decision{}, Equivalence: []assessment.Equivalence{}}
 		definitionRef := ""
 		for _, definition := range request.Definitions {
 			if definition.Kind == ontology.Topic {

@@ -131,59 +131,13 @@ func NormalizeTelemetryQueryTimeout(timeout time.Duration) time.Duration {
 	return timeout
 }
 
-// TelemetryLifecycleReader reads authoritative lifecycle aggregates.
-type TelemetryLifecycleReader interface {
-	ReadTelemetryLifecycle(context.Context, TelemetryLifecycleFilter, time.Time, time.Time) (TelemetryLifecycleSnapshot, error)
-}
-
-type TelemetryLifecycleFilter struct {
-	TeamID    *uuid.UUID
-	ProfileID *uuid.UUID
-}
-
-type TelemetryLifecycleSnapshot struct {
-	Transitions map[string]float64
-	Corrections float64
-	Current     map[string]float64
-}
-
 // OperationalTelemetryReader reads bounded system-wide aggregates from the
 // canonical ledgers. It never returns tenant or profile identifiers.
 type OperationalTelemetryReader interface {
 	ReadOperationalTelemetry(context.Context) (OperationalTelemetrySnapshot, error)
 }
 
-type OperationalTelemetrySnapshot struct {
-	DreamRuns               []DreamRunTelemetry
-	Hypotheses              []HypothesisTelemetry
-	Feedback                []WindowedTelemetryCount
-	RememberAttempts        []WindowedTelemetryCount
-	ConfirmedRelationships  []WindowedTelemetryCount
-	RelationshipTransitions []WindowedTelemetryCount
-	RelationshipCorrections []WindowedTelemetryCount
-	RelationshipsCurrent    []NamedTelemetryCount
-}
-
-type DreamRunTelemetry struct {
-	Window             string
-	Lane               string
-	Status             string
-	Runs               float64
-	InputTargets       float64
-	EvidenceTargets    float64
-	EvaluatedTargets   float64
-	ProviderProposals  float64
-	CreatedHypotheses  float64
-	RejectedHypotheses float64
-}
-
-type HypothesisTelemetry struct {
-	Lane             string
-	Status           string
-	Count            float64
-	BacklogCount     float64
-	OldestBacklogAge float64
-}
+type OperationalTelemetrySnapshot struct{ RememberAttempts []WindowedTelemetryCount }
 
 type WindowedTelemetryCount struct {
 	Window string

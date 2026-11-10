@@ -1,0 +1,31 @@
+package postgres
+
+// This inventory is used only before the ordered membership-private and Evidence-only upgrades.
+var privateMemoryLegacyMigrationManifest = []string{
+	"session_submissions", "session_events", "session_extraction_checkpoints", "session_submission_receipts",
+	"session_submission_diagnostics",
+	"knowledge_ingests", "evidence_sources", "evidence_source_revisions",
+	"evidence_exact_aliases", "evidence_occurrences", "evidence_fragments", "evidence_security_events", "evidence_security_signals",
+	"evidence_quarantines", "evidence_lifecycle_operations", "evidence_lifecycle_events",
+	"submission_relationship_results",
+	"predicate_registration_events",
+	"entity_records", "entity_names", "entity_resolution_events",
+	"entity_correction_plans", "entity_correction_events", "value_records",
+	"relationship_records", "relationship_observations", "relationship_evidence_supports",
+	"relationship_support_decision_events", "relationship_transition_events",
+	"relationship_cross_references", "relationship_correction_submissions",
+	"relationship_correction_events", "verification_events", "review_tasks",
+	"hypotheses", "hypothesis_derivation_sources", "hypothesis_feedback_events",
+	"remember_attempts", "remember_attempt_events", "remember_attempt_diagnostics", "remember_failure_artifacts", "remember_invocation_diagnostics", "semantic_assessments", "relationship_conflict_cases",
+	"relationship_conflict_positions", "relationship_conflict_position_members",
+	"relationship_conflict_events", "relationship_conflict_review_runs",
+	"relationship_conflict_derived_evidence_tasks", "relationship_conflict_evidence_derivations",
+	"relationship_conflict_resolution_plans", "relationship_conflict_ai_assessment_attempts",
+	"relationship_conflict_ai_assessment_events", "search_documents",
+	"evidence_conflict_cases", "evidence_conflict_positions", "evidence_conflict_events",
+	"community_snapshot_runs", "community_records", "community_memberships",
+	"community_sources", "community_summary_attempts", "community_topic_versions",
+	"community_topic_dependencies", "community_topic_work", "dream_cycle_runs",
+	"dream_path_evaluations", "dream_path_evaluation_run_links", "dream_evidence_target_attempts", "dream_evidence_target_evaluations",
+	"hypothesis_evidence_derivation_sources", "recall_feedback_events",
+}

@@ -2,7 +2,6 @@ package recall
 
 import (
 	"context"
-	"errors"
 	"sort"
 	"strings"
 	"time"
@@ -10,9 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
@@ -60,7 +57,6 @@ func (s *recallService) recallAcrossSpaces(ctx context.Context, req recallExecut
 		}
 		if fused != nil {
 			resultCount = len(fused.Results)
-			recordRecallCommunityMetric(ctx, s.metrics, fused)
 		}
 		observability.RecordRecall(ctx, s.metrics, float64(time.Since(started).Microseconds())/1000, resultCount, outcome)
 	}()
@@ -91,6 +87,9 @@ func (s *recallService) recallAcrossSpaces(ctx context.Context, req recallExecut
 	results := make([]*RecallResult, 0, len(branches))
 	var teamErr error
 	for _, branch := range branches {
+		if req.TopicIDs != nil && branch.Kind != domain.MemorySpaceTeamShared {
+			continue
+		}
 		branchResult, err := s.recallWithExecution(withRecallBranch(ctx, branch), req)
 		if err != nil {
 			if branch.Kind == domain.MemorySpaceTeamShared || branch.Kind == "" {
@@ -98,17 +97,20 @@ func (s *recallService) recallAcrossSpaces(ctx context.Context, req recallExecut
 				break
 			}
 			results = append(results, &RecallResult{
-				Results: []RecallResultItem{}, RelatedRelationships: []RelatedRelationshipSummary{},
+				Results:      []RecallResultItem{},
 				Degradations: []RecallDegradationResult{{Frontier: "evidence", Optional: true, Code: "space_branch_unavailable", Message: "authorized memory-space branch was unavailable"}},
 			})
 			continue
 		}
 		results = append(results, branchResult)
 	}
+	if req.TopicIDs != nil && len(results) == 0 && teamErr == nil {
+		return nil, ErrTopicUnavailable
+	}
 	if teamErr != nil {
 		return nil, teamErr
 	}
-	fused = fuseRecallResults(results, req.Limit, recallOptionalLimitValue(req.RelationshipLimit))
+	fused = fuseRecallResults(results, req.Limit)
 	if embeddingDegradation != nil {
 		fused.Degradations = append([]RecallDegradationResult{*embeddingDegradation}, fused.Degradations...)
 		fused.Degradation = &fused.Degradations[0]
@@ -126,39 +128,22 @@ func applyRecallSpaceKind(result *RecallResult, kind string) {
 	for i := range result.Results {
 		result.Results[i].SpaceKind = kind
 	}
-	for i := range result.RelatedRelationships {
-		result.RelatedRelationships[i].SpaceKind = kind
-	}
-	for i := range result.RelatedCommunities {
-		for j := range result.RelatedCommunities[i].CommunityRelationships {
-			result.RelatedCommunities[i].CommunityRelationships[j].SpaceKind = kind
-		}
-	}
+
 }
 
-func fuseRecallResults(branches []*RecallResult, resultLimit, relationshipLimit int) *RecallResult {
+func fuseRecallResults(branches []*RecallResult, resultLimit int) *RecallResult {
 	fused := &RecallResult{
-		RecallID:             "rec_" + uuid.NewString(),
-		Results:              []RecallResultItem{},
-		Conflicts:            []RecallConflictSummary{},
-		RelatedRelationships: []RelatedRelationshipSummary{},
-		RelatedCommunities:   []RecallDiscoveryPath{},
-		SearchStates:         RecallSearchStates{},
-		Degradations:         []RecallDegradationResult{},
-		DiscoveryPaths:       []RecallDiscoveryPath{},
-		DiscoveryGuidance:    "No additional discovery guidance.",
+		RecallID:     "rec_" + uuid.NewString(),
+		Results:      []RecallResultItem{},
+		Conflicts:    []RecallConflictSummary{},
+		SearchStates: RecallSearchStates{},
+		Degradations: []RecallDegradationResult{},
 	}
 	type evidenceScore struct {
 		item  RecallResultItem
 		score float64
 	}
 	evidence := map[string]evidenceScore{}
-	type relationshipScore struct {
-		item     RelatedRelationshipSummary
-		score    float64
-		bestRank int
-	}
-	relationships := map[string]relationshipScore{}
 	degradationSeen := map[RecallDegradationResult]struct{}{}
 	seenBranch := false
 	for _, branch := range branches {
@@ -173,12 +158,9 @@ func fuseRecallResults(branches []*RecallResult, resultLimit, relationshipLimit 
 			seenBranch = true
 		} else {
 			fused.SearchStates.Evidence = domain.CombineSearchProjectionStates(fused.SearchStates.Evidence, branch.SearchStates.Evidence)
-			fused.SearchStates.Relationships = domain.CombineSearchProjectionStates(fused.SearchStates.Relationships, branch.SearchStates.Relationships)
 		}
 		fused.Conflicts = append(fused.Conflicts, branch.Conflicts...)
 		fused.DecisionStages = append(fused.DecisionStages, branch.DecisionStages...)
-		fused.RelatedCommunities = append(fused.RelatedCommunities, branch.RelatedCommunities...)
-		fused.DiscoveryPaths = append(fused.DiscoveryPaths, branch.DiscoveryPaths...)
 		for _, degradation := range branch.Degradations {
 			if _, seen := degradationSeen[degradation]; seen {
 				continue
@@ -199,26 +181,10 @@ func fuseRecallResults(branches []*RecallResult, resultLimit, relationshipLimit 
 				evidence[key] = current
 			}
 		}
-		for rank, item := range branch.RelatedRelationships {
-			key := item.SpaceKind + ":" + item.RelationshipID
-			score := 1 / (recallFusionRRFConstant + float64(rank+1))
-			if current, ok := relationships[key]; !ok {
-				relationships[key] = relationshipScore{item: item, score: score, bestRank: rank + 1}
-			} else {
-				current.score += score
-				if rank+1 < current.bestRank {
-					current.item = item
-					current.bestRank = rank + 1
-				}
-				relationships[key] = current
-			}
-		}
+
 	}
 	if strings.TrimSpace(fused.SearchStates.Evidence) == "" {
 		fused.SearchStates.Evidence = string(domain.SearchProjectionCurrent)
-	}
-	if strings.TrimSpace(fused.SearchStates.Relationships) == "" {
-		fused.SearchStates.Relationships = string(domain.SearchProjectionCurrent)
 	}
 	evidenceItems := make([]evidenceScore, 0, len(evidence))
 	for _, item := range evidence {
@@ -244,28 +210,6 @@ func fuseRecallResults(branches []*RecallResult, resultLimit, relationshipLimit 
 	}
 	for i := range fused.Results {
 		fused.Results[i].Rank = i + 1
-	}
-	relationshipItems := make([]relationshipScore, 0, len(relationships))
-	for _, item := range relationships {
-		relationshipItems = append(relationshipItems, item)
-	}
-	sort.SliceStable(relationshipItems, func(i, j int) bool {
-		if relationshipItems[i].score != relationshipItems[j].score {
-			return relationshipItems[i].score > relationshipItems[j].score
-		}
-		if kindRank := compareRecallSpaceKinds(relationshipItems[i].item.SpaceKind, relationshipItems[j].item.SpaceKind); kindRank != 0 {
-			return kindRank < 0
-		}
-		return relationshipItems[i].item.RelationshipID < relationshipItems[j].item.RelationshipID
-	})
-	if relationshipLimit > len(relationshipItems) {
-		relationshipLimit = len(relationshipItems)
-	}
-	if relationshipLimit < 0 {
-		relationshipLimit = 0
-	}
-	for _, item := range relationshipItems[:relationshipLimit] {
-		fused.RelatedRelationships = append(fused.RelatedRelationships, item.item)
 	}
 	fused.Conflicts = limitRecallConflictSummaries(fused.Conflicts, 20)
 	if len(fused.Degradations) > 0 {
@@ -304,79 +248,4 @@ func maxInt(a, b int) int {
 		return a
 	}
 	return b
-}
-
-func (s *recallService) recallRelatedRelationships(
-	ctx context.Context,
-	teamID string,
-	req RecallRequest,
-	queryEmbedding []float32,
-	excludedGroups map[string]struct{},
-	organizationEnabled bool,
-) ([]RelatedRelationshipSummary, string, []RecallDegradationResult, map[string]struct{}, []modelprovider.DecisionStage, error) {
-	relationshipLimit := recallOptionalLimitValue(req.RelationshipLimit)
-	if relationshipLimit <= 0 {
-		return []RelatedRelationshipSummary{}, string(domain.SearchProjectionNotRequired), nil, map[string]struct{}{}, nil, nil
-	}
-	branch, _ := recallBranchFromContext(ctx)
-	recalled, err := s.retrieval.RecallRelationships(ctx, recallcontract.RecallRelationshipsInput{
-		OrganizationEnabled:  organizationEnabled,
-		TeamID:               teamID,
-		Query:                req.Query,
-		QueryEmbedding:       queryEmbedding,
-		Limit:                relationshipLimit,
-		ValidAt:              req.ValidAt,
-		KnownAt:              req.KnownAt,
-		KnownEvidenceIDs:     req.KnownEvidenceIDs,
-		KnownRelationshipIDs: req.KnownRelationshipIDs,
-		ExpandFromEntityIDs:  req.ExpandFromEntityIDs,
-		ExcludedGroupKeys:    sortedGroupKeys(excludedGroups),
-		SpaceID:              branchID(branch),
-		SpaceKind:            branchKind(branch),
-	})
-	if err != nil {
-		return []RelatedRelationshipSummary{}, string(domain.SearchProjectionFailed), []RecallDegradationResult{{
-			Frontier: "relationships",
-			Optional: true,
-			Code:     "relationship_discovery_unavailable",
-			Message:  "relationship discovery was unavailable; primary evidence recall was used",
-		}}, map[string]struct{}{}, nil, recallRelationshipCancellation(ctx, err)
-	}
-	state := string(domain.SearchProjectionCurrent)
-	if recalled != nil && recalled.SearchState != "" {
-		state = recalled.SearchState
-	}
-	var degradation *RecallDegradationResult
-	if strings.TrimSpace(req.Query) != "" && len(queryEmbedding) == 0 {
-		degradation = relationshipVectorDegradation(state)
-	} else if recalled != nil && recalled.VectorOmitted {
-		degradation = relationshipVectorDegradation(state)
-	}
-	degradations := []RecallDegradationResult{}
-	if degradation != nil {
-		degradations = append(degradations, *degradation)
-	}
-	if recalled != nil {
-		degradations = append(degradations, recalled.Degradations...)
-	}
-	groups := map[string]struct{}{}
-	if recalled != nil {
-		for _, hit := range recalled.Results {
-			if hit.SemanticGroupKey != "" {
-				groups[hit.SemanticGroupKey] = struct{}{}
-			}
-		}
-	}
-	var stages []modelprovider.DecisionStage
-	if recalled != nil {
-		stages = recalled.DecisionStages
-	}
-	return relatedRelationshipSummaries(recalled), state, degradations, groups, stages, nil
-}
-
-func recallRelationshipCancellation(ctx context.Context, err error) error {
-	if errors.Is(err, context.Canceled) || ctx.Err() != nil {
-		return err
-	}
-	return nil
 }

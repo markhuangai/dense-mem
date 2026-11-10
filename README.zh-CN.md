@@ -25,13 +25,12 @@
 </p>
 
 Dense-Mem 是独立的、使用 Streamable HTTP 的 MCP 记忆服务器。它先持久化精确
-证据，再通过经过校验的服务端策略派生语义状态，并返回仍然有效的证据上下文和图形化
-Relationship 句柄。PostgreSQL 是知识、生命周期、来源、搜索、授权和审计的唯一持久
+证据，再通过经过校验的服务端策略派生语义状态，并返回仍然有效的 Evidence、来源和主题线索。PostgreSQL 是知识、生命周期、来源、搜索、授权和审计的唯一持久
 权威；Redis 只用于协调。单节点部署可使用进程内协调；多实例部署需要 Redis 或等效的
 分布式协调实现。
 
 宿主 LLM 负责对话和判断。Dense-Mem 负责证据持久化、所有者授权、生命周期事件、
-支持有效性和有界检索。面向外部自动化的记忆契约只有 `/mcp`；浏览器路由是第一方
+Evidence 有效性和有界检索。面向外部自动化的记忆契约只有 `/mcp`；浏览器路由是第一方
 产品界面，不是另一套公共自动化 API。
 
 Dense-Mem 也是这篇研究预印本的一部分：
@@ -44,18 +43,16 @@ Knowledge Graphs](https://zenodo.org/records/21403316)。
 创建临时隔离团队后可用一次性测试数据体验核心流程。
 
 <p align="center">
-  <img src="assets/readme-hero.jpg" alt="AI 客户端提交证据，受治理的记忆服务记录生命周期并返回带来源的活跃关系。" />
+  <img src="assets/readme-hero.jpg" alt="AI 客户端提交证据，受治理的记忆服务记录生命周期并返回带来源的 Evidence。" />
 </p>
 
 ## 为什么使用 Dense-Mem
 
 - 证据精确、可持久保存且只追加。生命周期动作只改变有效状态，不删除来源或追踪链路。
-- Entity 和带类型的 Value 是语义节点。只有证据支持仍有效时，永久 owner alias
-  所有的 Relationship 才会成为活跃图边。
-- Provider 输出只是提议。封闭 schema 校验和确定性的服务端策略决定持久状态。
-- 默认检索排除候选项和 Hypothesis；只有对请求时间仍有效的 Relationship 支持路径
-  存在时，才返回证据上下文。
-- 团队可见性和 owner 修改权限不同。作者只能修改自己的证据和归属语义记录。
+- 精确 Evidence、occurrence 和 source revision 保留原始来源；更替和撤回只追加生命周期事件。
+- Provider 输出只是提议。闭合 schema 校验和确定性服务端策略决定持久状态。
+- Recall 直接检索有效 Evidence。主题只组织共享 Evidence，不建立新的事实支持。
+- 团队可见性与 owner 修改权限不同。共享读取不会授予修改其他作者 Evidence 的权限。
 
 认证会解析出不可变的调用者上下文：`team + identity + membership + 永久 owner alias +
 可选 credential`。SSO 浏览器 session 使用所选 membership 的永久 owner alias，且没有
@@ -92,7 +89,7 @@ MCP:            http://127.0.0.1:8080/mcp
 ```
 
 使用 `CONTROL_PORTAL_TOKEN` 打开控制门户，从 **All teams** 创建团队，再进入 **Credentials** 创建第一个 API key。
-侧边栏按团队、运维和管理分组，团队选择器用于切换工作区。用户门户提供 **Search memory**、**Graph** 以及当前权限允许的管理页面；**Connect** 显示团队 ID、MCP 地址和内存访问权限。两个门户均支持跟随系统、浅色和深色主题，导航可折叠，页面链接支持刷新和浏览器前进/后退。
+侧边栏按团队、运维和管理分组，团队选择器用于切换工作区。用户门户提供 **Search memory**、**Ontology** 以及当前权限允许的管理页面；**Connect** 显示团队 ID、MCP 地址和内存访问权限。两个门户均支持跟随系统、浅色和深色主题，导航可折叠，页面链接支持刷新和浏览器前进/后退。
 控制面自动化使用同一个私有 API：
 
 ```bash
@@ -169,196 +166,86 @@ AI_VERIFIER_TIMEOUT_SECONDS=300
 
 ## 证据生命周期
 
-`remember` 会持久化精确证据、完成 provider 校验和语义提交后再返回；响应包含按所有者
-隔离的终态处理与搜索状态，不会暴露 provider 输出或内部 run ID。
-
-调用方提交逻辑层的 Entity、predicate 和 Value 提议，不提交文本 offset。
-`remember` 不接受 `span`、`surface` 或 Relationship 的 `supports` 字段。Relationship
-提议必须通过非空 `relationships` 数组提交，并列出支持它的从零开始的 `evidence_indices`。
-每条证据必须被至少一个提议引用；缺少提议或引用覆盖不完整时，在 intake 或 provider 调用前返回详细校验错误。
-单个 assessor 会话会审查每条 evidence 的安全性，并且只针对调用方
-提交的 Relationship、依据其引用的 evidence 做 grounding 或规范化，不搜索 memory，也不发现新
-Relationship。闭合 Schema 校验和确定性服务端策略决定哪些内容可以安全提交。
-
-每条 Relationship 还可以列出最多 20 个明确的 `known_evidence_ids`。服务端只从调用方可见的
-证据中解析这些 UUID，并将其作为只读 assessor 上下文，不为其生成安全结果；被存储的
-Relationship 仍必须至少包含一个提交证据的 `evidence_indices` 支持范围。Entity grounding 支持当前
-canonical 名称或 alias；代词只有在 assessor 收到服务端为更早精确名称范围签发的 anchor 时才可用。
-不可访问或在评估后变为陈旧的 known evidence 只会让该 Relationship 变为不支持，不泄露 ID 是否存在。
-单个请求中的 known evidence 文本总量在 assessor 边界展开前限制为 20,000 个 Unicode 码点；
-超过限制的请求会返回 `input_budget_exceeded`。当前公共契约为 `dense-mem.v2.7.0`；
-v2.6.8、v2.6.7、v2.6.6、v2.6.3 和 v2.6.2 仍接受用于兼容 Remember 终态重放。旧请求若缺少提议或完整引用，
-即使使用原有 key 重试也会被拒绝，已存储历史仍保留。
-
-Dream 生成、客户端 Hypothesis 读取和确认、旧社区聚类均已退役。私有控制门户仅保留
-Dream 历史、来源、诊断及诊断保留管理。运行退役 migration 前必须停止所有旧服务实例，
-然后启动匹配的 v2.7.0 binary；未完成的旧运行和预留会不可逆取消，已完成历史及规范知识保持不变。
-Down 不会恢复已退役工作。
-
-现有 ontology 开关是唯一组织控制。保留所有已存储值；缺失时默认关闭。启用后在下一次分钟
-tick 按暂停、调度、并发及全局 token 预算纳入活跃团队；关闭后停止接纳并排空已派发工作。
-社区读取仅使用当前 topic projection；ontology 关闭时仍可读取普通证据，不恢复旧社区快照。
-旧团队 Dream 开关不影响纳入。
-
-若要替换自己拥有的一条当前证据，把其 UUID 放入新证据的
-`supersedes_evidence_ids`。直接指定目标与通过 `previous_source_revision` 推进
-来源修订是两条独立流程，不能混用。
+公共契约为 `dense-mem.v3.0.0`。`remember` 接收精确 Evidence 和来源，整批必须显式选择
+`target_space: "private"` 或 `"team_shared"`。认证决定实际团队、owner 和空间 ID。
+每条 Evidence 最多 999 个 Unicode code point。已退役的图提议字段会在 provider 调用前拒绝。
 
 ```json
 {
-  "evidence": [
-    {
-      "content": "Dense-Mem 现在仅使用 PostgreSQL 作为部署目标。",
-      "source_type": "manual",
-      "supersedes_evidence_ids": ["<owned-current-evidence-uuid>"]
-    }
-  ],
-  "relationships": [
-    {
-      "ref": "deployment-target",
-      "subject": {
-        "name": "Dense-Mem",
-        "entity_kind": "project"
-      },
-      "predicate": {
-        "proposed_key": "uses_as_only_deployment_target"
-      },
-      "object": {
-        "entity": {
-          "name": "PostgreSQL",
-          "entity_kind": "product"
-        }
-      },
-      "polarity": "+",
-      "evidence_indices": [0]
-    }
-  ],
-  "idempotency_key": "deployment-target-correction-batch-20260729"
+  "target_space": "team_shared",
+  "idempotency_key": "deployment-source-20261110",
+  "evidence": [{
+    "content": "Dense-Mem stores durable memory in PostgreSQL.",
+    "source_type": "manual",
+    "source": "Deployment decision"
+  }]
 }
 ```
 
-直接 supersession 会随完整 batch 暂存。只有在语义提交被接受的同一事务中，目标才会
-退役；失败的提交会让目标继续有效。这样，未成为受支持记忆的替换不会使当前证据失效。
+服务端先持久化原始 Evidence 与处理意图，在事务外完成安全、等价性和 Evidence 冲突评估，
+再完成必需的 embedding。校验整份响应后，Evidence、occurrence、source revision、生命周期、
+search document 和终态 receipt 原子提交。必需 provider 失败或取消不会部分接受整批。
 
-Remember 使用一个覆盖完整 batch 的 assessor 会话。每条 evidence
-都会得到安全结果；任何不安全 evidence 都以 `submission_policy_rejected` 使整个 batch 失败，
-且不写入语义、搜索或 embedding。安全 evidence 即使全部 Relationship 提议不被支持，
-仍会存储并建立索引。assessor 只对调用方提交的 Relationship、依据其引用的 evidence 做
-grounding 和规范化，不搜索 memory、寻找 evidence 支持或发现新 Relationship。每个 Relationship
-ref 都会得到 `stored` 或 `not_stored` disposition；不支持的提议返回带有原因、消息和修复建议的 `not_stored` 结果；客户端必须检查结果，并使用新 key 提交修正请求。暂存后发生的
-客户端自有约束变化会以 `stale_input` 报告。provider、配置、数据库和内部故障使用有界的运维
-错误码。所有接受的语义效果原子提交，不提供部分替换或交互式 placement review。
+调用前保留完整请求和 operation key。未知结果用完全相同的请求与 key 重放；同 key 改变请求会冲突。
+旧 Remember key 保留原始身份、hash 和结果，返回不可重试的 `retired_contract` 指引。
 
-Remember 只接受一个顶层 `idempotency_key`，不接受 evidence 级或派生 key。若完整
-batch 需要修正，请使用新的 key 重新提交整个 batch。
+替换自己的当前 Evidence 时，在新条目中传 `supersedes_evidence_ids`；也可使用
+`previous_source_revision` 推进来源版本，两者不能混用。成功接受替换时才会退役旧条目。
+`retract_evidence` 接收自己的 ID、有限原因和 idempotency key。两种操作均保留精确内容和追踪链路。
 
-若无需替代证据，请使用 `retract_evidence`，提供自己拥有的当前 ID、有界原因和
-幂等键：
+功能开关控制的 `ingest_session` 接收精确用户事件并写入认证私有空间。
+`session_evidence_excerpts_v2` 只选择当前事件中的原文摘录，保留原始 Unicode offset。
+先前上下文只读；空提取显式返回 `memory_outcome: "no_memory"`。事件身份、重放、取消与 generation fence 仍生效。
 
-```json
-{
-  "evidence_ids": ["<owned-current-evidence-uuid>"],
-  "reason": "来源已撤回。",
-  "idempotency_key": "withdrawn-source-20260729"
-}
-```
+## Recall、主题、Trace 与导出
 
-这两种操作都会追加生命周期事件，绝不会物理删除证据或追踪链路。当前检索会排除
-已退役证据；事件发生前的历史 `known_at` 视图仍可以显示当时系统知道的内容。
+`recall_memory` 直接返回有效 Evidence、精确有界上下文、等价 ID、Evidence 冲突、search state
+与显式 degradation。`known_evidence_ids` 排除已知有效结果。
 
-`correct_relationship` 用于替换调用者永久 owner alias 所拥有的一条活跃 Relationship，
-不会重写或删除原记录。调用者必须提供当前版本、精确的有效证据 span、有界原因，
-以及需要更正的端点或 predicate：
+`related_topics` 包含 `topic_id`、名称、描述、有效未见 Evidence 数量和 rank；
+`topics_truncated` 显式表示省略。`topic_limit` 默认 3，范围 0–10。
+后续用 1–10 个唯一 UUID 的 `topic_ids` 选择当前直接 membership 的并集，不扩展子主题。
+计数与选择前应用授权、生命周期、时间、freshness 和已知 Evidence 排除。
+缺失、外团队或陈旧主题统一返回有界 `topic_unavailable`；普通 Recall 的可选主题故障显式降级。
+时间检索仍使用当前主题元数据。
 
-```json
-{
-  "action": "submit",
-  "relationship_id": "<自己拥有的活跃-relationship-uuid>",
-  "expected_version": 1,
-  "patch": {
-    "object_entity": {
-      "entity_id": "<正确的同团队-entity-uuid>"
-    }
-  },
-  "supports": [
-    { "evidence_id": "<支持证据-uuid>", "start": 0, "end": 38 }
-  ],
-  "reason": "对象被解析成了错误的 Entity。",
-  "idempotency_key": "relationship-correction-20260808"
-}
-```
+Ontology 只组织共享 Evidence；私有记忆不参与。主题、等价分组、manager override、
+enable/pause/disable 与 generation fence 保留。暂停保留有效发布，禁用后 Recall 不使用组织信息。
+主题 parent 链只表示组织层级，不建立事实支持。
 
-接受后，Dense-Mem 会原子地 supersede 原 Relationship、创建或复用活跃后继、复制
-有效支持链路，并追加 correction event 与 `corrects` cross-reference。同团队的其他
-owner 可以读取团队可见记忆，但不能更正作者的 Relationship。若 Entity 名称存在
-歧义，只允许作者确认一次；确认成功前原 Relationship 保持活跃。
-
-## 检索与图状态
-
-`recall_memory` 是证据优先但受支持路径约束的接口。只有最终 hydration 证明存在
-活跃、与查询相关且在请求 `valid_at` 与 `known_at` 下仍有效的 Relationship 支持路径时，
-`results[]` 才包含证据上下文。相关 Relationship、community 和 Hypothesis 是独立的
-有界字段；候选项和 Hypothesis 不会作为默认记忆结果返回。
-
-```text
-remember 证据（可选 Entity/Relationship 提议）
-        |
-        v
-持久化暂存 -> 校验后的终态提交 -> 活跃且有效的 Relationships
-        |                                      |
-        +-- 生命周期事件 -----------------------+
-                                               |
-                                               v
-                          按支持路径约束的证据检索与追踪链路
-```
+`trace_memory` 接收 `evidence_id`，返回 Evidence 决策、occurrence、source revision 与生命周期。
+保留内容和 transition 开关；默认最多 100 个事件与 2,000 rune，硬上限 500 与 8,000。
+`export_memory_pack` 接收名称和 1–500 个 Evidence ID，生成
+`dense-mem.memory-pack.v3.0`，保留来源、canonical hash、边界和显式 omission。
 
 ## MCP 工具目录
 
-用 MCP `tools/list` 发现当前闭合 Schema 目录；调用方不能选择契约版本。服务端对
-`tools/call` 施加相同的 scope、功能和可见性检查。
+用 `tools/list` 发现闭合 schema；`tools/call` 使用相同 registry 与授权检查。
 
-| 工具 | 使用方 | 注册方式 | 用途与能力 |
-|------|--------|----------|------------|
-| `remember` | 两者 | 正式与评估镜像 | 正式证据写入；评估 harness 也通过真实 intake 导入 corpus。 |
-| `retract_evidence` | 正式 | 正式与评估镜像 | 退役调用者拥有的证据，同时保留只追加来源。 |
-| `correct_relationship` | 正式 | 正式与评估镜像 | 仅作者可替换活跃且有支持的 Relationship；supersede 原记录并保留支持链路。 |
-| `recall_memory` | 正式 | 正式与评估镜像 | 检索活跃证据上下文和 Relationship；有可执行后续动作时返回 `suggested_actions`。 |
-| `trace_memory` | 正式 | 正式与评估镜像 | 沿证据、决策和生命周期追踪一条同团队 Relationship。 |
-| `submit_recall_session_feedback` | 正式 | 两种镜像中均为条件注册 | 记录有界的 session 级检索质量反馈；只有 recall feedback 启用时才注册。 |
-| `export_memory_pack` | 正式 | 正式与评估镜像 | 导出选定活跃 Relationships 及其支持来源。 |
-| `eval_list_knowledge_refs` | 评估 harness | 仅评估镜像 | 分页列出稳定、团队隔离的知识引用，用于 seed 文档映射。 |
-| `eval_run_recall_case` | 评估 harness | 仅评估镜像 | 执行当前 recall 逻辑并返回用于确定性评分的 ranked/context refs。 |
+| 工具 | 用途 |
+| --- | --- |
+| `remember` | 精确 Evidence 和来源，显式选择 private/team_shared。 |
+| `ingest_session` | 功能开关控制的私有原文摘录。 |
+| `retract_evidence` | Owner 授权的 Evidence 撤回。 |
+| `recall_memory` | 有效 Evidence、主题线索及直接主题后续检索。 |
+| `trace_memory` | Evidence 决策、来源与生命周期。 |
+| `submit_recall_session_feedback` | 启用时接收可选的有界反馈。 |
+| `export_memory_pack` | 有界 Evidence 和来源导出。 |
 
-正式发布 binary 不带 `evaluation` build tag，因此任何环境变量或控制面设置都无法在
-线上注册评估工具。评估 target 只增加上表两个 harness 工具。
-`eval_get_manifest`、`eval_get_knowledge_item`、
-`eval_list_recall_feedback_events`、`eval_get_recall_feedback_event` 和
-`eval_score_retrieval_case` 已删除，因为当前 harness 不使用它们。
+评估 build 另有 `eval_list_knowledge_refs` 与 `eval_run_recall_case`。
+正式 build 不能通过配置注册评估工具。事实图、Dream 与 community 契约从两个 profile 中退役。
+Python core、ADK 和 LangChain 使用相同 v3 schema，示例见 [Python README](packages/python/README.md)。
 
-一般 Recall 反馈保持可选，不提示客户端提交。启用反馈且 snapshot 保存成功后返回的 recall ID
-可用于 `submit_recall_session_feedback`；写入不会覆盖历史 Dream 反馈。公共结果不包含
-`related_hypotheses`，也不接受 Hypothesis 专用反馈。
+升级前停止不兼容实例并验证匹配备份可恢复。普通启动在 workers/listeners 前执行有序 migration，
+保留 Evidence fingerprint 与 scoped operation identity，删除图专用数据并清理 mixed payload。
+Legal hold 或未知依赖会阻止迁移；迁移不调用 provider。提交前失败回滚；破坏性提交后必须恢复匹配备份，
+有新写入后默认向前恢复。不可在迁移后的数据库上重启旧 binary。
 
-本地评估使用已提交的 compose 示例。它会构建评估 target，并默认读取仓库根目录中
-未提交的 `.env`：
-
-```bash
-docker compose -p densemem_eval \
-  -f examples/docker-compose.evaluation.yml up -d --build
-
-go run ./cmd/eval-seedgen \
-  --preset local_eval_100 \
-  --out tests/eval/seeds/local_eval_100 \
-  --suite tests/eval/suites/local_eval_100.jsonl
-```
-
-`local_eval_100_v2` 包含 100 条 corpus 与 25 个评分 case。它只用于检查评估镜像和
-harness plumbing，不能替代已批准的确定性 1k release gate。导入默认并发数为 4，
-可通过 `IMPORT_CONCURRENCY` 将 monitor 的并发数配置为 1 至 30。
-服务端仍按数据库连接池容量限制准入；若 Remember 返回 `idempotency_lock_busy`，请降低并发数。
-
-memory-pack 仅导出当前的 `dense-mem.memory-pack.v2.4` artifact。导入和候选发现
-流程不属于公共契约。
+生产日志默认 TRACE。DEBUG 保留受 credential protection 保护的完整评估 exchange、已接受原文、
+主题选择原因与 Trace/export 边界。WARN 标记主题降级与 retired contract；INFO 记录 session resume
+和迁移里程碑；ERROR 记录迁移阻塞/失败。Teardown 前收集完整 stdout 窗口，校验 2,048-byte chunk、
+hash 和数量。保留 16 MiB provider body、64 MiB session envelope 与七天诊断保留边界。
+不完整、截断或中断 capture 必须显式报告。
 
 ## 支持的 HTTP 表面
 
@@ -375,7 +262,7 @@ memory-pack 仅导出当前的 `dense-mem.memory-pack.v2.4` artifact。导入和
 ## Telemetry And Grafana
 
 Prometheus telemetry 默认关闭。若要收集 HTTP、embedding、verifier、assessor、
-recall feedback、Remember、Dream、cost 和 Relationship 生命周期指标，请和基础
+recall feedback、Remember、cost 和 Evidence 生命周期指标，请和基础
 stack 一起启动 telemetry overlay。Grafana operator dashboard 是可选的：
 
 ```bash
@@ -392,7 +279,7 @@ Prometheus 和 Grafana 分别在 `127.0.0.1:9090` 和 `127.0.0.1:3000` 提供服
 都只绑定 loopback。Grafana 使用 `GRAFANA_ADMIN_PASSWORD`，并从
 `examples/grafana/provisioning` 自动加载已检查的 dashboards。Datasource ID 由安装生成。
 
-Grafana 提供 HTTP、AI、recall、Remember、Dream 和 lifecycle measures。顶部时间选择器
+Grafana 提供 HTTP、AI、recall、Remember 和 Evidence lifecycle measures。顶部时间选择器
 控制图表范围；`Rolling totals` 选择器控制 counter 窗口和 canonical ledger gauge 窗口。
 缺少 provider usage、pricing 或 recall feedback 会显示为无数据，而不是伪造零值。
 ledger collector 失败时会抑制对应 gauges 并显示 collection 状态。Replica 会使用
@@ -404,8 +291,7 @@ request text。Lifecycle dashboard 是 system-wide，因为 canonical collector 
 credential 维度。
 
 控制端的 Metrics 和用户端的 Usage dashboard 已在真实 Prometheus 数据与 Grafana
-13.2.2 完成逐项 parity 验证后移除。Team overview 的请求汇总、控制端 conflict queue
-健康信息、私有诊断与设置仍保留。Provisioning 和 series 对照见
+13.2.2 完成逐项 parity 验证后移除。Team overview 请求汇总、私有诊断与设置仍保留。Provisioning 和 series 对照见
 [`examples/grafana/README.md`](examples/grafana/README.md)。
 
 ## 职责边界
@@ -413,14 +299,14 @@ credential 维度。
 | 范围 | Dense-Mem 负责 | 宿主 LLM 负责 |
 |------|----------------|---------------|
 | 证据 | 精确暂存、来源、生命周期和所有者检查 | 决定提交哪些来源材料 |
-| 语义状态 | 校验、确定性策略和支持有效性 | 提出可选 Entity/Relationship 提议 |
-| 检索 | 活跃证据上下文和 Relationship 句柄 | 决定对话中引用或追问什么 |
+| 评估 | 完整校验、确定性策略与原子接受 | 选择精确 Evidence 和来源 |
+| 检索 | 有效 Evidence 和主题线索 | 决定对话中引用或追问什么 |
 | 更正 | 已授权的 supersession、retraction 和只追加链路 | 判断是否应当更正 |
 | 运维 | teams、memberships、credentials、API keys、审计和门户 | MCP 客户端配置 |
 
 ## 数据出站与一致性
 
-Dense-Mem 可以向配置的 embedding 与 verifier provider 发送证据文本、提议上下文和
+Dense-Mem 可以向配置的 embedding 与 verifier provider 发送 Evidence 文本、评估上下文和
 检索查询。自托管 provider 会把这些流量留在你的边界内；托管 provider 不会。Embedding
 是派生且带版本的状态，不能覆盖更新的来源。启动检查会阻止混用不兼容的 embedding
 模型或维度。

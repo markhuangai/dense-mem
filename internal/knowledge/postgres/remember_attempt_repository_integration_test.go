@@ -29,7 +29,7 @@ func TestRecordRememberFailurePreservesUnavailableCaptureStateAfterAttemptBudget
 		log.New(os.Stderr, "\r\n", log.LstdFlags),
 		gormlogger.Config{LogLevel: gormlogger.Error, ParameterizedQueries: true},
 	)})
-	repo := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	repo := NewStore(appDB, rls)
 
 	body := bytes.Repeat([]byte("x"), maxRememberDiagnosticBodyBytes)
 	diagnostics := make([]RememberAttemptDiagnosticInput, 5)

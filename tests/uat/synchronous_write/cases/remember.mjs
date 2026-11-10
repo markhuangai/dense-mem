@@ -1,119 +1,75 @@
 import assert from "node:assert/strict";
-import { spawn, spawnSync } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
+import { spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { assertTerminalRememberResult } from "../surface.mjs";
-import { diagnoseRememberFailure } from "./diagnostics.mjs";
 
 export const name = "remember";
 
 const repositoryRoot = fileURLToPath(new URL("../../../..", import.meta.url));
 const rememberModel = "dense-mem-synchronous-write-e2e-remember";
-const heldPredicateKey = "retired_memory_store_fixture";
-const repairedPredicateKey = "stores_durable_memory_in_fixture";
-const incompatiblePredicateKey = "incompatible_memory_store_fixture";
 
 export async function run({ rpc, rawRPC = rpc, expect, runStep }) {
   const selectedFault = (process.env.DENSE_MEM_E2E_PROVIDER_FAULT || "none").trim();
   const providerRequestOffset = await providerFixtureRequestCount(expect);
-  const faults = selectedFault === "none" ? [
-    "none",
-    "multi",
-    "mixed-objects",
-    "mixed",
-    "repair",
-    "repair-exhausted",
-    "security",
-    "no-supported",
-    "unavailable",
-    "malformed",
-    "timeout",
-    "embedding-count",
-    "embedding-model",
-    "embedding-dimension",
-    "embedding-non-finite",
-    "embedding-timeout",
-    "embedding-cancel",
-  ] : [selectedFault];
-
-  const listed = await rpc("tools/list", {});
-  const tools = listed.tools || [];
-  const rememberTool = tools.find((tool) => tool.name === "remember");
-  expect(rememberTool, "selected E2E catalog must expose remember");
-  const rememberProperties = rememberTool.outputSchema?.properties || rememberTool.output_schema?.properties || {};
-  expect(!Object.hasOwn(rememberProperties, "status_tool") && !Object.hasOwn(rememberProperties, "check_after_seconds"), "selected Remember schema must not expose polling fields");
-  expect(!tools.some((tool) => tool.name === "get_submission_status"), "selected catalog must remove the status tool");
-
+  const faults = selectedFault === "none" ? ["none", "multi", "repair", "repair-exhausted", "security", "unavailable", "malformed", "timeout", "embedding-count", "embedding-model", "embedding-dimension", "embedding-non-finite", "embedding-timeout", "embedding-cancel"] : [selectedFault];
+  const tools = (await rpc("tools/list", {})).tools || [];
+  expect(tools.some((tool) => tool.name === "remember"), "catalog must expose Remember");
+  expect(!tools.some((tool) => tool.name === "get_submission_status"), "catalog must remove polling");
   const results = [];
-  if (selectedFault === "none") results.push(await runStep("required-relationship", () => runRequiredRelationshipCase({ rawRPC, expect })));
+  if (selectedFault === "none") results.push(await runStep("evidence-contract", () => runEvidenceContractCase({ rawRPC, expect })));
   for (const fault of faults) {
-    await runStep(fault, async () => {
-      if (fault === "embedding-cancel") {
-        results.push(await runCancellationCase({ rpc, rawRPC, expect }));
-      } else if (fault === "multi") {
-        results.push(await runMultiItemCase({ rpc, expect }));
-      } else if (fault === "mixed-objects") {
-        results.push(await runMixedObjectCase({ expect }));
-      } else if (fault === "mixed") {
-        results.push(await runMixedDispositionCase({ rpc, expect }));
-      } else if (fault === "repair" || fault === "repair-exhausted") {
-        results.push(await runRepairCase({ rpc, expect, fault }));
-      } else if (fault === "predicate-registration-drift") {
-        results.push(await runPredicateRegistrationDriftCase({ expect }));
-      } else if (fault.startsWith("predicate-registration-")) {
-        results.push(...await runPredicateRegistrationCases({ expect, selectedFault: fault, runStep }));
-      } else if (fault === "security" || fault === "no-supported") {
-        results.push(await runTerminalDomainCase({ rpc, expect, fault }));
-      } else if (fault.startsWith("embedding-")) {
-        results.push(await runEmbeddingFaultCase({ rpc, expect, fault }));
-      } else {
-        results.push(await runProviderFaultCase({ rpc, expect, fault }));
-      }
-    });
+    results.push(await runStep(fault, () => {
+      if (fault === "embedding-cancel") return runCancellationCase({ rpc, rawRPC, expect });
+      if (fault === "multi") return runMultiItemCase({ rpc, expect });
+      if (fault === "repair" || fault === "repair-exhausted") return runRepairCase({ rpc, expect, fault });
+      if (fault === "security") return runTerminalDomainCase({ rpc, expect, fault });
+      if (fault.startsWith("embedding-")) return runEmbeddingFaultCase({ rpc, expect, fault });
+      return runProviderFaultCase({ rpc, expect, fault });
+    }));
   }
-
   if (selectedFault === "none") {
-    results.push(...await runStep("predicate-registration", () => runPredicateRegistrationCases({ expect, runStep })));
-    results.push(await runStep("predicate-registration-drift", () => runPredicateRegistrationDriftCase({ expect })));
-    results.push(await runStep("known-evidence", () => runKnownEvidenceCase({ expect })));
-    results.push(await runStep("semantic-duplicate", () => runSemanticDuplicateCase({ expect })));
-    results.push(await runStep("budget-context", () => runBudgetContextCase({ expect })));
-    results.push(await runStep("evidence-conflict", () => runEvidenceConflictCase({ rpc, expect })));
-    results.push(await runStep("concurrent-winner", () => runConcurrentWinnerCase({ rpc, expect })));
-    results.push(await runStep("admission-capacity", () => runAdmissionCapacityCase({ rpc, rawRPC, expect })));
-    results.push(await runStep("changed-hash-conflict", () => runChangedHashConflictCase({ rawRPC, expect })));
-    results.push(await runStep("predicate-wording-bounds", () => runPredicateWordingBoundsCase({ rpc, expect })));
-    results.push(await runStep("supersession-fence", () => runSupersessionFenceCase({ rpc, expect })));
-    results.push(await runStep("cardinality-search-retirement", () => runCardinalitySearchRetirementCase({ rpc, expect })));
-    results.push(await runStep("assert-remember-session-model-routing", () => assertRememberSessionModelRouting(expect, providerRequestOffset)));
+    for (const [label, fn] of [
+      ["semantic-duplicate", () => runSemanticDuplicateCase({ expect })],
+      ["budget-context", () => runBudgetContextCase({ expect })],
+      ["evidence-conflict", () => runEvidenceConflictCase({ rpc, expect })],
+      ["concurrent-winner", () => runConcurrentWinnerCase({ rpc, expect })],
+      ["admission-capacity", () => runAdmissionCapacityCase({ rpc, rawRPC, expect })],
+      ["changed-hash-conflict", () => runChangedHashConflictCase({ rawRPC, expect })],
+      ["supersession-fence", () => runSupersessionFenceCase({ rpc, expect })],
+      ["model-routing", () => assertRememberSessionModelRouting(expect, providerRequestOffset)],
+    ]) results.push(await runStep(label, fn));
   }
   return { mode: name, results };
 }
 
-async function runRequiredRelationshipCase({ rawRPC, expect }) {
+async function runEvidenceContractCase({ rawRPC, expect }) {
   const teamID = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
   const providerBefore = await providerFixtureRequestCount(expect);
-  for (const [label, mutate, path, code] of [
-    ["missing", (args) => { delete args.relationships; }, "/relationships", "required"],
-    ["empty", (args) => { args.relationships = []; }, "/relationships", "required"],
-    ["uncited", (args) => { args.evidence.push({ content: "A second evidence item is uncited.", source_type: "manual" }); }, "/evidence/1", "coverage"],
-    ["malformed", (args) => { args.relationships[0].evidence_indices = [true]; }, "/relationships/0/evidence_indices/0", "type"],
+  for (const [label, mutate, path] of [
+    ["missing", (args) => { delete args.evidence; }, "/evidence"],
+    ["empty", (args) => { args.evidence = []; }, "/evidence"],
+    ["oversized", (args) => { args.evidence[0].content = "x".repeat(1000); }, "/evidence/0/content"],
+    ...["relationships", "entities", "predicates", "proposal"].map((field) => [field, (args) => { args[field] = []; }, `/${field}`]),
   ]) {
-    const args = singleItemArguments(`required-${label}`, "");
+    const args = singleItemArguments(`invalid-${label}`, "");
     mutate(args);
     const response = await rawRPC("tools/call", { name: "remember", arguments: args });
     const error = response.error?.data;
     expect(response.error?.code === -32602 && error?.code === "invalid_input" && error.reason_code === "validation_failed", `${label} must return structured validation: ${JSON.stringify(response)}`);
-    expect(error.issues?.some((issue) => issue.path === path && issue.code === code), `${label} must identify ${path}: ${JSON.stringify(error)}`);
-    expect(error.retryable === false && error.next_action === "correct_and_resubmit" && Boolean(error.remediation) && Boolean(error.correlation_id), `${label} must return actionable correction guidance`);
-    const intakes = Number(postgresQuery(`SELECT count(*) FROM knowledge_ingests WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND idempotency_key = '${sqlLiteral(args.idempotency_key)}'`));
-    expect(intakes === 0, `${label} must reject before durable intake`);
+    expect(error.issues?.some((issue) => issue.path === path), `${label} must identify ${path}: ${JSON.stringify(error)}`);
+    expect(error.retryable === false && error.next_action === "correct_and_resubmit", `${label} must return actionable correction guidance`);
+    expect(Number(postgresQuery(`SELECT count(*) FROM knowledge_ingests WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND idempotency_key = '${sqlLiteral(args.idempotency_key)}'`)) === 0, `${label} must reject before durable intake`);
   }
-  const providerAfter = await providerFixtureRequestCount(expect);
-  expect(providerBefore === providerAfter, "invalid relationship requirements must not call the provider");
-  return { fault: "required-relationships", detailed_errors: true, zero_intake: true, zero_provider_calls: true };
+  expect(providerBefore === await providerFixtureRequestCount(expect), "retired fields and invalid Evidence must reject before provider work");
+  const boundary = singleItemArguments("evidence-bound", "");
+  boundary.evidence[0].content = "x".repeat(999);
+  const accepted = terminalPayload((await rawRPC("tools/call", { name: "remember", arguments: boundary })).result);
+  assertStrictTerminalRemember(accepted, expect);
+  expect(accepted.processing_state === "completed", "999-rune Evidence must remain supported");
+  return { fault: "evidence-contract", retired_fields_rejected: true, zero_provider_calls_for_invalid: true, bounds: true };
 }
 
 async function providerFixtureRequestCount(expect) {
@@ -132,7 +88,7 @@ async function assertRememberSessionModelRouting(expect, providerRequestOffset) 
   const state = await response.json();
   expect(response.ok, `provider fixture health returned HTTP ${response.status}`);
   const assessments = (state.chat_requests || []).slice(providerRequestOffset)
-    .filter((request) => request.schema_name === "dense_mem_semantic_assessment_response");
+    .filter((request) => request.schema_name === "dense_mem_evidence_assessment_response");
   expect(assessments.length > 0, "Remember must make semantic-assessment provider calls");
   expect(assessments.every((request) => request.model === rememberModel), `Remember used a fallback or unexpected model: ${JSON.stringify(assessments)}`);
   expect(assessments.some((request) => request.fault === "unavailable"), "Remember provider failure must reach the configured session model");
@@ -151,12 +107,11 @@ async function runBudgetContextCase({ expect }) {
   const actor = await createKnownEvidenceCredential(teamID, `assessor-budget-${Date.now()}`);
   const candidateContents = [];
   for (let index = 0; index < 10; index += 1) {
-    const content = `Large stored candidate ${index} ${"candidate context material ".repeat(35)} [fixture-fault:no-supported]`;
+    const content = `Large stored candidate ${index} ${"candidate context material ".repeat(28)} [fixture:budget-candidate]`;
     candidateContents.push(content);
     const seeded = await rememberWithKey(actor.apiKey, {
       target_space: "team_shared",
       evidence: [{ content, source_type: "manual", force_insert: true }],
-      relationships: [relationship("budget-seed", `Large stored candidate ${index}`, "document", { value: { type: "string", value: "candidate context material" } }, [0], "contains_text")],
       idempotency_key: `assessor-budget-seed-${index}-${Date.now()}-${Math.random()}`,
     });
     assertStrictTerminalRemember(seeded, expect);
@@ -166,7 +121,6 @@ async function runBudgetContextCase({ expect }) {
   const shortRequest = {
     target_space: "team_shared",
     evidence: [{ content: "Short note for bounded server-selected context.", source_type: "manual" }],
-    relationships: [relationship("budget-note", "Short note", "document", { value: { type: "string", value: "bounded server-selected context" } }, [0], "has_purpose")],
     idempotency_key: `assessor-budget-short-${Date.now()}-${Math.random()}`,
   };
   const first = await rememberWithKey(actor.apiKey, shortRequest);
@@ -201,7 +155,6 @@ async function runEvidenceConflictCase({ rpc, expect }) {
   const actor = await createKnownEvidenceCredential(teamID, `evidence-conflict-${Date.now()}`);
   const firstArgs = singleItemArguments("cited-evidence-conflict", "[fixture:cited-evidence-conflict]");
   firstArgs.evidence.push({ content: "The same change was rejected by the reviewer. [fixture:cited-evidence-conflict]", source_type: "manual" });
-  firstArgs.relationships[0].evidence_indices = [0, 1];
   const first = await rememberWithKey(actor.apiKey, firstArgs);
   assertStrictTerminalRemember(first, expect);
   expect(first.processing_state === "completed", `cited evidence conflict must complete: ${JSON.stringify(first)}`);
@@ -254,7 +207,6 @@ async function runEvidenceConflictCase({ rpc, expect }) {
 
   const dismissArgs = singleItemArguments("cited-evidence-conflict-dismiss", "[fixture:cited-evidence-conflict]");
   dismissArgs.evidence.push({ content: "This cited conflict is intentionally dismissed. [fixture:cited-evidence-conflict-dismiss]", source_type: "manual" });
-  dismissArgs.relationships[0].evidence_indices = [0, 1];
   const dismissSubmission = await rememberWithKey(actor.apiKey, dismissArgs);
   assertStrictTerminalRemember(dismissSubmission, expect);
   expect(dismissSubmission.processing_state === "completed", `dismiss fixture must complete: ${JSON.stringify(dismissSubmission)}`);
@@ -284,7 +236,6 @@ async function runEvidenceConflictCase({ rpc, expect }) {
   const beforeSimilarity = Number(postgresQuery(`SELECT count(*) FROM evidence_conflict_cases WHERE team_id = '${sqlLiteral(teamID)}'::uuid;`));
   const similarityArgs = singleItemArguments("cited-evidence-similarity-only", "");
   similarityArgs.evidence.push({ content: "A similar statement about the same change.", source_type: "manual" });
-  similarityArgs.relationships[0].evidence_indices = [0, 1];
   const similarity = await rememberWithKey(actor.apiKey, similarityArgs);
   assertStrictTerminalRemember(similarity, expect);
   expect(similarity.processing_state === "completed", `similarity-only evidence must still complete: ${JSON.stringify(similarity)}`);
@@ -298,7 +249,6 @@ async function runEvidenceConflictCase({ rpc, expect }) {
   for (let index = 0; index < 4; index += 1) {
     const browserArgs = singleItemArguments(`evidence-conflict-browser-${index}`, "[fixture:cited-evidence-conflict]");
     browserArgs.evidence.push({ content: `The browser review fixture rejects this change ${index}. [fixture:cited-evidence-conflict]`, source_type: "manual" });
-  browserArgs.relationships[0].evidence_indices = [0, 1];
     const browser = await rememberWithKey(actor.apiKey, browserArgs);
     assertStrictTerminalRemember(browser, expect);
     expect(browser.processing_state === "completed", `browser evidence conflict fixture ${index} must complete: ${JSON.stringify(browser)}`);
@@ -313,171 +263,6 @@ async function runEvidenceConflictCase({ rpc, expect }) {
     browserFixtures.push(browserConflictID);
   }
   return { fault: "cited-evidence-conflict", created: true, recurrence: true, resolved: true, dismissed: true, similarity_only_no_case: true, browser_fixtures: browserFixtures.length };
-}
-
-async function runKnownEvidenceCase({ expect }) {
-  const teamID = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
-  const actorA = await createKnownEvidenceCredential(teamID, `known-evidence-${Date.now()}-A`);
-  const actorAKey = actorA.apiKey;
-  const actorB = await createKnownEvidenceCredential(teamID, `known-evidence-${Date.now()}-B`);
-  const privateActor = await createKnownEvidenceCredential(teamID, `known-evidence-${Date.now()}-private`);
-  const teamC = await createKnownEvidenceTeam(`known-evidence-${Date.now()}-C`);
-  const actorC = await createKnownEvidenceCredential(teamC, `known-evidence-${Date.now()}-C`);
-
-  const source = await rememberWithKey(actorAKey, singleItemArguments("known-evidence-source", "[fixture:known-evidence-source]"));
-  assertStrictTerminalRemember(source, expect);
-  expect(source.processing_state === "completed", `known evidence source must complete: ${JSON.stringify(source)}`);
-  const knownEvidenceID = source.evidence.find((item) => item.disposition === "stored")?.evidence_id;
-  expect(knownEvidenceID, "known evidence source must return a stored evidence id");
-  const sourceRelationshipID = source.relationship_results[0]?.splits?.[0]?.relationship_id;
-  expect(sourceRelationshipID, "known evidence source must return a relationship id");
-  const sourceTrace = await mcpSuccessWithKey(actorAKey, "trace_memory", { relationship_id: sourceRelationshipID });
-  const sourceOwnerProfileID = sourceTrace.relationship?.owner_profile_id;
-  const subjectEntityID = sourceTrace.relationship?.subject_entity_id;
-  expect(sourceOwnerProfileID && subjectEntityID, "known evidence source trace must expose owner and subject identity");
-  postgresCommand(`
-    INSERT INTO entity_names (
-      team_id, entity_id, owner_profile_id, display_name, normalized_name, name_kind,
-      space_id, space_generation
-    )
-    SELECT
-      '${sqlLiteral(teamID)}'::uuid,
-      '${sqlLiteral(subjectEntityID)}'::uuid,
-      '${sqlLiteral(sourceOwnerProfileID)}'::uuid,
-      'Dense Memory', 'dense memory', 'alias',
-      relationship.space_id, relationship.space_generation
-    FROM relationship_records AS relationship
-    WHERE relationship.team_id = '${sqlLiteral(teamID)}'::uuid
-      AND relationship.relationship_id = '${sqlLiteral(sourceRelationshipID)}'::uuid
-    ON CONFLICT DO NOTHING;
-  `);
-
-  const canonicalGrounding = source.evidence.find((item) => item.evidence_id === knownEvidenceID);
-  expect(canonicalGrounding, "canonical source evidence must be returned");
-  expect(groundingSurfaceCount(teamID, source.submission_id, "Dense-Mem") >= 1, "canonical mention must be grounded at its exact span");
-
-  const aliasArgs = singleItemArguments("known-evidence-alias", "[fixture:known-evidence-alias]");
-  aliasArgs.evidence[0].content = "Dense Memory stores durable memory in PostgreSQL. [fixture:known-evidence-alias]";
-  const alias = await rememberWithKey(actorB.apiKey, aliasArgs);
-  assertStrictTerminalRemember(alias, expect);
-  expect(alias.processing_state === "completed" && alias.relationship_results[0]?.disposition === "stored", `alias grounding must store the relationship: ${JSON.stringify(alias)}`);
-  expect(groundingSurfaceCount(teamID, alias.submission_id, "Dense Memory") >= 1, "active alias must be grounded at its exact span");
-
-  const anchoredArgs = singleItemArguments("known-evidence-anchored", "[fixture:known-evidence-anchored]");
-  anchoredArgs.evidence[0].content = "It stores durable memory in PostgreSQL. [fixture:known-evidence-anchored]";
-  anchoredArgs.relationships[0].known_evidence_ids = [knownEvidenceID];
-  const anchored = await rememberWithKey(actorB.apiKey, anchoredArgs);
-  assertStrictTerminalRemember(anchored, expect);
-  expect(anchored.processing_state === "completed" && anchored.relationship_results[0]?.disposition === "stored", `anchored coreference must store the relationship: ${JSON.stringify(anchored)}`);
-  expect(groundingSurfaceCount(teamID, anchored.submission_id, "It") >= 1, "anchored pronoun must be grounded at its exact span");
-
-  const anchoredRelationshipID = anchored.relationship_results[0]?.splits?.[0]?.relationship_id;
-  expect(anchoredRelationshipID, "anchored relationship must return a relationship id");
-  const anchoredTrace = await mcpSuccessWithKey(actorB.apiKey, "trace_memory", { relationship_id: anchoredRelationshipID });
-  const anchoredSupport = anchoredTrace.evidence_supports?.find((support) => support.evidence_id === anchored.evidence[0]?.evidence_id);
-  expect(anchoredSupport, "anchored trace must expose submitted support");
-  const crossOwner = postgresQuery(`
-    SELECT count(*)
-    FROM relationship_evidence_supports AS support
-    JOIN relationship_observations AS observation
-      ON observation.team_id = support.team_id
-     AND observation.observation_id = support.observation_id
-    WHERE observation.team_id = '${sqlLiteral(teamID)}'::uuid
-      AND observation.ingest_id = '${sqlLiteral(anchored.submission_id)}'::uuid
-      AND support.fragment_id = '${sqlLiteral(knownEvidenceID)}'::uuid
-      AND support.owner_profile_id <> support.evidence_owner_profile_id;
-  `);
-  expect(Number(crossOwner) === 1, "known evidence support must retain distinct relationship and evidence owners");
-
-  const correctionArguments = {
-    action: "submit",
-    relationship_id: anchoredRelationshipID,
-    expected_version: anchoredTrace.relationship?.version,
-    patch: { object_entity: { name: "unauthorized known-evidence successor", entity_kind: "project" } },
-    supports: [{ evidence_id: anchoredSupport.evidence_id, start: anchoredSupport.span_start, end: anchoredSupport.span_end }],
-    reason: "Known-evidence ownership must not grant relationship mutation authority.",
-  };
-  for (const [label, apiKey] of [["same-team evidence owner", actorAKey], ["separate-team actor", actorC.apiKey]]) {
-    const denied = await rawRPCWithKey(apiKey, "tools/call", {
-      name: "correct_relationship",
-      arguments: { ...correctionArguments, idempotency_key: `known-evidence-${label}-${Date.now()}-${Math.random()}` },
-    });
-    assertMutationDenied(denied, anchoredRelationshipID, expect, label);
-  }
-
-  const randomUnavailable = await assertUnavailableKnownEvidence(actorB.apiKey, "known-evidence-random-unavailable", randomUUID(), expect);
-  const privateSource = await rememberWithKey(privateActor.apiKey, singleItemArguments("known-evidence-private-source", "[fixture:known-evidence-private-source]", "private"));
-  assertStrictTerminalRemember(privateSource, expect);
-  const privateEvidenceID = privateSource.evidence.find((item) => item.disposition === "stored")?.evidence_id;
-  expect(privateEvidenceID, "private known evidence source must return a stored evidence id");
-  const privateUnavailable = await assertUnavailableKnownEvidence(actorB.apiKey, "known-evidence-private-unavailable", privateEvidenceID, expect);
-  const foreignSource = await rememberWithKey(actorC.apiKey, singleItemArguments("known-evidence-foreign-source", "[fixture:known-evidence-foreign-source]"));
-  assertStrictTerminalRemember(foreignSource, expect);
-  const foreignEvidenceID = foreignSource.evidence.find((item) => item.disposition === "stored")?.evidence_id;
-  expect(foreignEvidenceID, "foreign known evidence source must return a stored evidence id");
-  const foreignUnavailable = await assertUnavailableKnownEvidence(actorB.apiKey, "known-evidence-foreign-unavailable", foreignEvidenceID, expect);
-
-  const twentyIDs = Array.from({ length: 20 }, () => randomUUID());
-  const twentyArgs = singleItemArguments("known-evidence-twenty", "[fixture:known-evidence-twenty]");
-  twentyArgs.relationships[0].known_evidence_ids = twentyIDs;
-  const twenty = await rememberWithKey(actorB.apiKey, twentyArgs);
-  assertStrictTerminalRemember(twenty, expect);
-  expect(twenty.processing_state === "completed" && twenty.relationship_results[0]?.disposition === "not_stored", `20 known evidence IDs must be accepted and remain unsupported when unavailable: ${JSON.stringify(twenty)}`);
-
-  const twentyOneArgs = singleItemArguments("known-evidence-twenty-one", "[fixture:known-evidence-twenty-one]");
-  twentyOneArgs.relationships[0].known_evidence_ids = [...twentyIDs, randomUUID()];
-  const twentyOne = await rawRPCWithKey(actorB.apiKey, "tools/call", { name: "remember", arguments: twentyOneArgs });
-  expect(twentyOne.error?.code === -32602, "21 known evidence IDs must fail contract validation");
-  const twentyOneIssues = twentyOne.error?.data?.issues ?? [];
-  expect(twentyOneIssues.some((issue) => issue.message.includes("exceeds maximum item count of 20")), "21-ID validation must report the maximum item count");
-  expect(twentyOneIssues.some((issue) => issue.path.includes("known_evidence_ids")), "21-ID validation must identify the known_evidence_ids bound");
-
-  const unreferencedArgs = {
-    target_space: "team_shared",
-    evidence: [{
-      content: "Dense-Mem stores durable memory in PostgreSQL. Unreferenced Candidate stores durable memory in PostgreSQL. [fixture-fault:unreferenced-known]",
-      source_type: "manual",
-    }],
-    relationships: [
-      relationship("known-evidence-allowlisted", "Dense-Mem", "project", { value: { type: "string", value: "PostgreSQL" } }, [0]),
-      relationship("known-evidence-unreferenced", "Unreferenced Candidate", "project", { value: { type: "string", value: "PostgreSQL" } }, [0]),
-    ],
-    idempotency_key: `synchronous-write-remember-known-evidence-unreferenced-${Date.now()}-${Math.random()}`,
-  };
-  unreferencedArgs.relationships[0].known_evidence_ids = [knownEvidenceID];
-  const unreferencedRaw = await rawRPCWithKey(actorB.apiKey, "tools/call", { name: "remember", arguments: unreferencedArgs });
-  const unreferenced = terminalPayload(unreferencedRaw.result);
-  assertStrictTerminalRemember(unreferenced, expect);
-  expect(unreferenced.processing_state === "failed" && unreferenced.errors[0]?.code === "provider_response_invalid", "unreferenced known evidence support must be rejected by the closed contract");
-  expect(unreferenced.evidence.every((item) => item.disposition === "not_stored"), "unreferenced known evidence rejection must not commit submitted evidence");
-
-  for (const [label, content, marker] of [
-    ["unanchored-pronoun", "It stores durable memory in PostgreSQL.", "unanchored-pronoun"],
-    ["ambiguous-pronoun", "Dense-Mem and Dense Memory are mentioned. It stores durable memory in PostgreSQL.", "ambiguous-pronoun"],
-  ]) {
-    const pronounArgs = singleItemArguments(`known-evidence-${label}`, `[fixture-fault:${marker}]`);
-    pronounArgs.evidence[0].content = `${content} [fixture-fault:${marker}]`;
-    const pronoun = await rememberWithKey(actorB.apiKey, pronounArgs);
-    assertStrictTerminalRemember(pronoun, expect);
-    expect(pronoun.processing_state === "completed", `${label} must complete with a warning: ${JSON.stringify(pronoun)}`);
-    expect(pronoun.relationship_results[0]?.disposition === "not_stored" && pronoun.relationship_results[0]?.splits.length === 0, `${label} must not create relationship support`);
-    expect(pronoun.evidence.every((item) => item.disposition === "stored"), `${label} must still store submitted evidence`);
-    expect(groundingSurfaceCount(teamID, pronoun.submission_id, "It") === 0, `${label} must not persist a pronoun entity grounding`);
-  }
-
-  return {
-    fault: "known-evidence",
-    processing_state: anchored.processing_state,
-    canonical_grounding: true,
-    alias_grounding: true,
-    anchored_coreference: true,
-    cross_owner_support: true,
-    mutation_isolation: true,
-    unavailable_ids: [randomUnavailable, privateUnavailable, foreignUnavailable],
-    id_boundaries: true,
-    unreferenced_candidate_rejected: true,
-    unanchored_and_ambiguous_rejected: true,
-  };
 }
 
 async function runSemanticDuplicateCase({ expect }) {
@@ -541,7 +326,6 @@ async function runSemanticDuplicateCase({ expect }) {
   expect(reused.evidence[0]?.evidence_id === canonicalID, `semantic duplicate reuse must return the canonical evidence id: ${JSON.stringify(reused)}`);
   expect(reused.search_state === "current", `semantic duplicate reuse must report current batch search state: ${JSON.stringify(reused)}`);
   expect(reused.evidence[0]?.search_state === "current", `semantic duplicate reuse must report current evidence search state: ${JSON.stringify(reused)}`);
-  expect(reused.relationship_results[0]?.disposition === "stored", `semantic duplicate reuse must preserve relationship storage: ${JSON.stringify(reused)}`);
 
   const fragmentCount = postgresQuery(`
     SELECT count(*)
@@ -558,15 +342,10 @@ async function runSemanticDuplicateCase({ expect }) {
   expect(Number(fragmentCount) === 1, `semantic duplicate reuse must create one fragment: ${fragmentCount}`);
   expect(Number(occurrenceCount) === 2, `semantic duplicate reuse must create two occurrences: ${occurrenceCount}`);
 
-  const relationshipID = reused.relationship_results[0]?.splits?.[0]?.relationship_id;
-  expect(relationshipID, "semantic duplicate reuse must return a relationship id");
-  const trace = await mcpSuccessWithKey(actor.apiKey, "trace_memory", { relationship_id: relationshipID });
-  const support = trace.evidence_supports?.find((item) => item.evidence_id === canonicalID && item.occurrence_id && item.quote?.includes("retains durable memory"));
-  expect(support, `semantic duplicate trace must expose occurrence provenance: ${JSON.stringify(trace)}`);
-  const traceEvidence = trace.evidence?.find((item) => item.occurrence_id === support.occurrence_id);
-  expect(traceEvidence, `semantic duplicate trace must hydrate the supporting occurrence: ${JSON.stringify(trace)}`);
-  expect(traceEvidence.evidence_id === canonicalID && traceEvidence.content.includes("retains durable memory"), `semantic duplicate trace must pair canonical identity with occurrence content: ${JSON.stringify({ support, traceEvidence })}`);
-  expect(support.quote === traceEvidence.content, `semantic duplicate trace quote must match occurrence content: ${JSON.stringify({ support, traceEvidence })}`);
+  const trace = await mcpSuccessWithKey(actor.apiKey, "trace_memory", { evidence_id: canonicalID });
+  const occurrence = trace.occurrences?.find((item) => item.content?.includes("retains durable memory"));
+  expect(occurrence?.occurrence_id && occurrence.evidence_id === canonicalID, `semantic duplicate Trace must preserve exact occurrence provenance: ${JSON.stringify(trace)}`);
+  expect(trace.evidence.content === canonicalArgs.evidence[0].content, "canonical Evidence content must remain unchanged by semantic reuse");
 
   const unauthorizedArgs = singleItemArguments("semantic-duplicate-unauthorized", "[fixture-fault:semantic-reuse-unauthorized]", "private");
   unauthorizedArgs.evidence[0].content = "Dense-Mem keeps durable memory in PostgreSQL. [fixture:semantic-duplicate-canonical] [fixture-fault:semantic-reuse-unauthorized]";
@@ -602,25 +381,6 @@ async function mcpSuccessWithKey(apiKey, name, args) {
   const raw = await rawRPCWithKey(apiKey, "tools/call", { name, arguments: args });
   if (raw.error || raw.result?.isError === true) throw new Error(`MCP ${name} returned a bounded error`);
   return terminalPayload(raw.result);
-}
-
-async function assertUnavailableKnownEvidence(apiKey, label, evidenceID, expect) {
-  const args = singleItemArguments(label, `[fixture:${label}]`);
-  args.relationships[0].known_evidence_ids = [evidenceID];
-  const result = await rememberWithKey(apiKey, args);
-  assertStrictTerminalRemember(result, expect);
-  expect(result.processing_state === "completed", `${label} must complete with a warning: ${JSON.stringify(result)}`);
-  expect(result.relationship_results[0]?.disposition === "not_stored" && result.relationship_results[0]?.splits.length === 0, `${label} must not store a relationship`);
-  expect(result.evidence.every((item) => item.disposition === "stored"), `${label} must store submitted evidence`);
-  return { label, state: result.processing_state };
-}
-
-function assertMutationDenied(raw, relationshipID, expect, label) {
-  expect(!raw.error && raw.result?.isError === true, `${label} mutation must return a structured denial`);
-  const denied = terminalPayload(raw.result);
-  expect(denied.processing_state === "failed", `${label} mutation must fail`);
-  expect(denied.errors?.[0]?.code === "entity_not_found", `${label} mutation must use bounded not-found classification: ${JSON.stringify(denied)}`);
-  expect(!JSON.stringify(denied).includes(relationshipID), `${label} mutation must not disclose the relationship ID`);
 }
 
 async function createKnownEvidenceTeam(label) {
@@ -676,141 +436,16 @@ async function runProviderFaultCase({ rpc, expect, fault }) {
 }
 
 async function runMultiItemCase({ rpc, expect }) {
-  const suffix = Date.now();
-  const subject = `Dense-Mem Multi ${suffix}`;
-  const database = `PostgreSQL Multi ${suffix}`;
-  const protocol = `MCP Multi ${suffix}`;
-  const predicate = `stores_memory_in_multi_${suffix}`;
-  const args = {
-    target_space: "team_shared",
-    evidence: [
-      { content: `${subject} stores its durable memory in ${database}. [fixture:multi-a]`, source_type: "manual" },
-      { content: `${subject} exposes a stable ${protocol} contract. [fixture:multi-b]`, source_type: "manual" },
-    ],
-    relationships: [
-      relationship("database", subject, "project", { entity: { name: database, entity_kind: "product" } }, [0, 1], predicate),
-      relationship("protocol", subject, "project", { entity: { name: protocol, entity_kind: "product" } }, [1], predicate),
-    ],
-    idempotency_key: `synchronous-write-remember-multi-${Date.now()}`,
-  };
+  const args = singleItemArguments("multi", "");
+  args.evidence.push({ content: `Dense-Mem exposes MCP. [fixture:multi-${randomUUID()}]`, source_type: "manual" });
   const result = terminalPayload(await rpc("tools/call", { name: "remember", arguments: args }));
   assertStrictTerminalRemember(result, expect);
-  expect(result.processing_state === "completed", `mixed Entity batch must complete: ${JSON.stringify(result)}`);
-  expect(result.evidence.length === 2, "multi-item batch must return every evidence disposition");
-  expect(result.evidence.every((item) => item.disposition === "stored" && item.search_state === "current"), "multi-item evidence must be current");
-  expect(result.relationship_results.length === 2, "multi-item batch must return every relationship disposition");
-  const relationshipSummary = result.relationship_results.map((item) => ({
-    ref: item.ref,
-    disposition: item.disposition,
-    reason: item.reason,
-    split_count: item.splits?.length ?? null,
-  }));
-  expect(
-    result.relationship_results.every((item) => item.disposition === "stored" && item.splits.length > 0),
-    `multi-item relationships must be stored with splits: ${JSON.stringify(relationshipSummary)}`,
-  );
+  expect(result.processing_state === "completed" && result.evidence.length === 2 && result.evidence.every((item) => item.disposition === "stored" && item.search_state === "current"), "every exact Evidence item must commit and become searchable");
+  for (const [index, item] of result.evidence.entries()) {
+    const trace = terminalPayload(await rpc("tools/call", { name: "trace_memory", arguments: { evidence_id: item.evidence_id } }));
+    expect(trace.evidence.content === args.evidence[index].content, "Evidence content must remain exact without graph proposals");
+  }
   return { fault: "multi", processing_state: result.processing_state, evidence_count: result.evidence.length };
-}
-
-async function runMixedObjectCase({ expect }) {
-  const suffix = Date.now();
-  const subject = `Dense-Mem Mixed Objects ${suffix}`;
-  const database = `PostgreSQL Mixed Objects ${suffix}`;
-  const teamID = await createKnownEvidenceTeam(`mixed-objects-${suffix}`);
-  const actor = await createKnownEvidenceCredential(teamID, `mixed-objects-${suffix}`);
-  const entityPredicate = `stores_memory_in_mixed_objects_entity_${suffix}`;
-  const values = [
-    { type: "string", value: "stable", display: "Stable contract" },
-    { type: "number", value: 42, display: "42 ms", unit: "ms" },
-    { type: "boolean", value: true, display: "Yes" },
-    { type: "date", value: "2026-09-13", display: "13 September 2026" },
-    { type: "date_time", value: "2026-09-13T10:45:28Z", display: "13 September 2026 at 10:45:28 UTC" },
-  ];
-  const args = {
-    target_space: "team_shared",
-    evidence: [
-      { content: `${subject} stores its durable memory in ${database}. [fixture:mixed-objects-entity]`, source_type: "manual" },
-      ...values.map((value) => ({
-        content: `${subject} records ${value.type} value ${value.value}, displayed as ${value.display}. [fixture:mixed-objects-value]`,
-        source_type: "manual",
-      })),
-    ],
-    relationships: [
-      relationship("entity-object", subject, "project", { entity: { name: database, entity_kind: "product" } }, [0], entityPredicate),
-      ...values.map((value, index) => relationship(`typed-${value.type}`, subject, "project", { value }, [index + 1], `mixed_objects_${value.type}_${suffix}`)),
-    ],
-    idempotency_key: `synchronous-write-remember-mixed-objects-${Date.now()}`,
-  };
-  const result = await rememberWithKey(actor.apiKey, args);
-  assertStrictTerminalRemember(result, expect);
-  expect(result.processing_state === "completed", `mixed Entity and typed-Value batch must complete: ${JSON.stringify(result)}`);
-  expect(result.evidence.length === args.evidence.length && result.evidence.every((item) => item.disposition === "stored" && item.search_state === "current"), "mixed object evidence must be current");
-  const byRef = new Map(result.relationship_results.map((item) => [item.ref, item]));
-  expect(byRef.get("entity-object")?.disposition === "stored" && byRef.get("entity-object")?.splits.length > 0, "Entity-object relationship must be stored");
-  for (const value of values) {
-    const item = byRef.get(`typed-${value.type}`);
-    expect(item?.disposition === "stored" && item.splits.length === 1, `${value.type} relationship must be stored`);
-  }
-  expect(Number(postgresQuery(`
-    SELECT count(*) FROM value_records
-    WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND canonical_value <> display;
-  `)) === values.length, "typed values must retain their distinct display forms in PostgreSQL");
-
-  const exportArgs = {
-    name: `mixed-objects-${suffix}`,
-    relationship_ids: result.relationship_results.flatMap((item) => item.splits.map((split) => split.relationship_id)),
-  };
-  const exported = await mcpSuccessWithKey(actor.apiKey, "export_memory_pack", exportArgs);
-  const artifact = JSON.parse(exported.artifact_json);
-  expect(artifact.format === "dense-mem.memory-pack.v2.4", "mixed-object export must preserve the artifact format");
-  expect(exported.counts.relationships === args.relationships.length && exported.counts.evidence === args.evidence.length, "mixed-object export must include every relationship and evidence item");
-  for (const value of values) {
-    const relationshipID = byRef.get(`typed-${value.type}`).splits[0].relationship_id;
-    const item = artifact.relationships.find((item) => item.source_relationship_id === relationshipID);
-    expect(item?.object.kind === "value" && item.object.value_type === value.type, `${value.type} export must retain the typed endpoint`);
-    expect(item.object.value === String(value.value), `${value.type} export must use canonical data, not its display form`);
-  }
-  expect(artifact.content_sha256 === exported.content_sha256, "mixed-object artifact hash must match its envelope");
-  delete artifact.content_sha256;
-  expect(createHash("sha256").update(JSON.stringify(artifact)).digest("hex") === exported.content_sha256, "mixed-object hash must cover the canonical artifact");
-
-  const missing = await rawRPCWithKey(actor.apiKey, "tools/call", {
-    name: "export_memory_pack",
-    arguments: { ...exportArgs, relationship_ids: [...exportArgs.relationship_ids, randomUUID()] },
-  });
-  expect(!missing.error && missing.result?.isError === true, "one missing relationship must fail the complete export");
-  const denied = terminalPayload(missing.result);
-  expect(denied.reason_code === "reference_not_found" && denied.retryable === false && !Object.hasOwn(denied, "artifact_json"), "missing-reference export must return a bounded denial without a partial artifact");
-  return { fault: "mixed-objects", processing_state: result.processing_state, relationship_count: result.relationship_results.length, canonical_typed_export: true, missing_reference_rejected: true };
-}
-
-async function runMixedDispositionCase({ rpc, expect }) {
-  const suffix = Date.now();
-  const subject = `Dense-Mem Mixed ${suffix}`;
-  const database = `PostgreSQL Mixed ${suffix}`;
-  const annotation = `annotation Mixed ${suffix}`;
-  const predicate = `stores_memory_in_mixed_${suffix}`;
-  const args = {
-    target_space: "team_shared",
-    evidence: [
-      { content: `${subject} stores its durable memory in ${database}. [fixture:mixed-a]`, source_type: "manual" },
-      { content: `The unsupported ${annotation} is not a durable claim by ${subject}. [fixture:mixed-b]`, source_type: "manual" },
-    ],
-    relationships: [
-      relationship("supported", subject, "project", { entity: { name: database, entity_kind: "product" } }, [0, 1], predicate),
-      relationship("unsupported", subject, "project", { entity: { name: annotation, entity_kind: "concept" } }, [1], predicate),
-    ],
-    idempotency_key: `synchronous-write-remember-mixed-${Date.now()}`,
-  };
-  const marked = { ...args, evidence: args.evidence.map((item) => ({ ...item, content: `${item.content} [fixture-fault:mixed]` })) };
-  const result = terminalPayload(await rpc("tools/call", { name: "remember", arguments: marked }));
-  assertStrictTerminalRemember(result, expect);
-  expect(result.processing_state === "completed", "mixed stored/not-stored batch must complete");
-  const byRef = new Map(result.relationship_results.map((item) => [item.ref, item]));
-  expect(byRef.get("supported")?.disposition === "stored", "supported relationship must be stored");
-  expect(byRef.get("unsupported")?.disposition === "not_stored", "unsupported relationship must be not_stored");
-  expect(byRef.get("unsupported")?.splits.length === 0, "not-stored relationship must have no splits");
-  return { fault: "mixed", processing_state: result.processing_state, dispositions: [...byRef].map(([ref, item]) => [ref, item.disposition]) };
 }
 
 async function runRepairCase({ rpc, expect, fault }) {
@@ -842,227 +477,15 @@ async function runRepairCase({ rpc, expect, fault }) {
   };
 }
 
-async function runPredicateRegistrationCases({ expect, selectedFault = "none", runStep }) {
-  const teamID = await createKnownEvidenceTeam(`predicate-registration-${Date.now()}`);
-  const actor = await createKnownEvidenceCredential(teamID, `predicate-registration-${Date.now()}`);
-  postgresExec(`
-    INSERT INTO team_predicate_definitions (
-      team_id, predicate_key, version, aliases, allowed_subject_kinds,
-      allowed_object_kinds, relationship_kind, current_cardinality,
-      lifecycle_state, origin, metadata
-    ) VALUES (
-      '${sqlLiteral(teamID)}'::uuid, '${heldPredicateKey}', 1, ARRAY[]::text[],
-      ARRAY['concept']::text[], ARRAY['product']::text[], 'event', 'one',
-      'retired', 'fixture', '{}'::jsonb
-    ), (
-      '${sqlLiteral(teamID)}'::uuid, '${incompatiblePredicateKey}', 1, ARRAY['Incompatible Memory Store Fixture']::text[],
-      ARRAY['organization']::text[], ARRAY['string']::text[], 'state', 'many',
-      'active', 'fixture', '{}'::jsonb
-    );
-  `, "synchronous-write-predicate-registration-seed");
-
-  const faults = selectedFault === "none"
-    ? ["predicate-registration-exhausted", "predicate-registration-repair", "predicate-registration-reuse", "predicate-registration-kind-repair"]
-    : selectedFault === "predicate-registration-reuse"
-      ? ["predicate-registration-repair", selectedFault]
-      : [selectedFault];
-  const results = [];
-  for (const fault of faults) {
-    await runStep(fault, async () => {
-      const args = singleItemArguments(fault, `[fixture-fault:${fault}]`);
-      args.relationships[0].predicate.proposed_key = repairedPredicateKey;
-      const result = await rememberWithKey(actor.apiKey, args);
-      assertStrictTerminalRemember(result, expect);
-      const exhausted = fault === "predicate-registration-exhausted";
-      expect(result.processing_state === (exhausted ? "failed" : "completed"), `${fault} must reach its terminal state: ${JSON.stringify(result)}`);
-      expect(exhausted ? result.errors[0]?.code === "provider_response_invalid" : result.errors.length === 0, `${fault} must classify the provider response accurately: ${JSON.stringify(result.errors)}`);
-      expect(result.search_state === (exhausted ? "not_required" : "current"), `${fault} returned unexpected search state`);
-      const assessorTurns = Number(postgresQuery(`
-        SELECT assessor_turns FROM remember_attempts
-        WHERE team_id = '${sqlLiteral(teamID)}'::uuid
-          AND attempt_id = '${sqlLiteral(result.submission_id)}'::uuid;
-      `));
-      expect(assessorTurns === (exhausted ? 3 : fault === "predicate-registration-reuse" ? 1 : 2), `${fault} must retain its complete assessor turn count: ${assessorTurns}`);
-      if (fault === "predicate-registration-kind-repair") {
-        const code = postgresQuery(`
-          SELECT metadata->'assessor_diagnostics'->'turns'->0->'issues'->0->>'code'
-          FROM remember_attempt_events
-          WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND attempt_id = '${sqlLiteral(result.submission_id)}'::uuid
-            AND metadata ? 'assessor_diagnostics';
-        `);
-        expect(code === "predicate_subject_kind_mismatch", `canonical/alias repair must retain its subject-kind reason: ${code}`);
-      }
-
-      const canonicalCounts = rememberCanonicalCounts(teamID, result.submission_id);
-      expect(canonicalCounts.length === 5 && canonicalCounts.slice(0, 4).every((count) => count === (exhausted ? 0 : 1)) &&
-        (exhausted ? canonicalCounts[4] === 0 : canonicalCounts[4] > 0), `${fault} must commit all canonical rows and search documents or none: ${canonicalCounts.join(",")}`);
-      expect(result.evidence.length === 1 && result.evidence[0].disposition === (exhausted ? "not_stored" : "stored"), `${fault} returned unexpected evidence disposition`);
-      expect(result.relationship_results.length === 1 && result.relationship_results[0].disposition === (exhausted ? "not_stored" : "stored"), `${fault} returned unexpected relationship disposition`);
-      if (!exhausted) {
-        const committedPredicate = postgresQuery(`
-          SELECT predicate_key FROM relationship_observations
-          WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND ingest_id = '${sqlLiteral(result.submission_id)}'::uuid;
-        `);
-        expect(committedPredicate === repairedPredicateKey, `${fault} must store the repaired predicate: ${committedPredicate}`);
-      }
-      const repairedVersionCount = Number(postgresQuery(`
-        SELECT count(*) FROM team_predicate_definitions
-        WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND predicate_key = '${repairedPredicateKey}';
-      `));
-      expect(repairedVersionCount === (exhausted ? 0 : 1), `${fault} must leave the repaired predicate absent or create/reuse exactly one version: ${repairedVersionCount}`);
-      if (exhausted) {
-        expect(result.errors[0]?.retryable === true && result.errors[0]?.next_action === "retry_same_request", "exhausted provider output must retain same-key retry guidance");
-        const retry = await rememberWithKey(actor.apiKey, args);
-        assertStrictTerminalRemember(retry, expect);
-        expect(retry.processing_state === "failed" && retry.errors[0]?.code === "provider_response_invalid", "same-key retry must report the repeated invalid provider response");
-        expect(retry.submission_id !== result.submission_id, "retryable failed attempt must be processed again under the same key");
-        const retryTurns = Number(postgresQuery(`
-          SELECT assessor_turns FROM remember_attempts
-          WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND attempt_id = '${sqlLiteral(retry.submission_id)}'::uuid;
-        `));
-        expect(retryTurns === 3, `same-key retry must perform three bounded assessor turns: ${retryTurns}`);
-        const retryCanonicalCount = Number(postgresQuery(`
-          SELECT count(*) FROM knowledge_ingests
-          WHERE team_id = '${sqlLiteral(teamID)}'::uuid;
-        `));
-        expect(retryCanonicalCount === 0, "repeated invalid provider responses must leave the team without an ingest");
-      } else if (fault === "predicate-registration-repair") {
-        const replay = await rememberWithKey(actor.apiKey, args);
-        assertStrictTerminalRemember(replay, expect);
-        expect(stableJSON(replay) === stableJSON(result) && replay.submission_id === result.submission_id, "completed repair must replay the exact terminal result");
-        const attemptCount = Number(postgresQuery(`
-          SELECT count(*) FROM remember_attempts
-          WHERE team_id = '${sqlLiteral(teamID)}'::uuid
-            AND idempotency_key = '${sqlLiteral(args.idempotency_key)}';
-        `));
-        expect(attemptCount === 1, "completed repair replay must not create another assessor attempt");
-      }
-      results.push({ fault, processing_state: result.processing_state, assessor_turns: assessorTurns, canonical_counts: canonicalCounts });
-    });
-  }
-
-  const heldRows = postgresQuery(`
-    SELECT version || ':' || lifecycle_state FROM team_predicate_definitions
-    WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND predicate_key = '${heldPredicateKey}'
-    ORDER BY version;
-  `);
-  expect(heldRows === "1:retired", `rejected registration must not mutate the retired definition: ${heldRows}`);
-  const incompatibleRows = postgresQuery(`
-    SELECT version || ':' || lifecycle_state || ':' || array_to_string(allowed_subject_kinds, ',')
-    FROM team_predicate_definitions
-    WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND predicate_key = '${incompatiblePredicateKey}'
-    ORDER BY version;
-  `);
-  expect(incompatibleRows === "1:active:organization", `repair must not widen the incompatible predicate: ${incompatibleRows}`);
-  const repairedRows = postgresQuery(`
-    SELECT version || ':' || lifecycle_state FROM team_predicate_definitions
-    WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND predicate_key = '${repairedPredicateKey}'
-    ORDER BY version;
-  `);
-  expect(repairedRows === (faults.some((fault) => fault !== "predicate-registration-exhausted") ? "1:active" : ""), `repaired registration must be created once and reused: ${repairedRows}`);
-  return results;
-}
-
-async function runPredicateRegistrationDriftCase({ expect }) {
-  const teamID = await createKnownEvidenceTeam(`predicate-drift-${Date.now()}`);
-  const actor = await createKnownEvidenceCredential(teamID, `predicate-drift-${Date.now()}`);
-  const predicateKey = `stores_durable_memory_in_drift_${Date.now()}`;
-  const insertVersion = (version, state) => postgresExec(`
-    INSERT INTO team_predicate_definitions (
-      team_id, predicate_key, version, aliases, allowed_subject_kinds,
-      allowed_object_kinds, relationship_kind, current_cardinality,
-      lifecycle_state, origin, metadata
-    ) VALUES (
-      '${sqlLiteral(teamID)}'::uuid, '${sqlLiteral(predicateKey)}', ${version}, ARRAY[]::text[],
-      ARRAY['project']::text[], ARRAY['string']::text[], 'state', 'many',
-      '${state}', 'fixture', '{}'::jsonb
-    );
-  `, "synchronous-write-predicate-drift-seed");
-  insertVersion(1, "active");
-
-  const args = singleItemArguments("predicate-registration-drift", "[fixture-fault:predicate-registration-drift]");
-  args.relationships[0].predicate.proposed_key = predicateKey;
-  const holder = await holdPredicateCommitLock(teamID, predicateKey);
-  const pending = rememberWithKey(actor.apiKey, args);
-  let settled = false;
-  pending.then(() => { settled = true; }, () => { settled = true; });
-  try {
-    await waitForPredicateCommitWaiter(holder.pid, () => settled);
-    insertVersion(2, "retired");
-  } finally {
-    await releasePredicateCommitLock(holder.child);
-  }
-
-  const result = await pending;
-  assertStrictTerminalRemember(result, expect);
-  expect(result.processing_state === "failed" && result.search_state === "not_required", "catalog drift must fail without requiring search");
-  expect(result.errors.length === 1 && result.errors[0].code === "commit_conflict" &&
-    result.errors[0].reason_code === "predicate_catalog_changed" && result.errors[0].retryable === true &&
-    result.errors[0].next_action === "retry_same_request", `catalog drift must return a retryable predicate conflict: ${JSON.stringify(result.errors)}`);
-  expect(result.evidence.length === 1 && result.evidence[0].disposition === "not_stored" &&
-    result.relationship_results.length === 1 && result.relationship_results[0].disposition === "not_stored", "catalog drift must reject the whole submission");
-  const canonicalCounts = rememberCanonicalCounts(teamID, result.submission_id);
-  expect(canonicalCounts.length === 5 && canonicalCounts.every((count) => count === 0), `catalog drift must leave zero canonical writes: ${canonicalCounts.join(",")}`);
-  return { fault: "predicate-registration-drift", processing_state: result.processing_state, error_code: result.errors[0].code, reason_code: result.errors[0].reason_code, canonical_counts: canonicalCounts };
-}
-
 async function runTerminalDomainCase({ rpc, expect, fault }) {
-  const args = fault === "security"
-    ? multiEvidenceSecurityArguments(`domain-${fault}`)
-    : singleItemArguments(`domain-${fault}`, `[fixture-fault:${fault}]`);
+  const args = multiEvidenceSecurityArguments(`domain-${fault}`);
   const result = terminalPayload(await rpc("tools/call", { name: "remember", arguments: args }));
   assertStrictTerminalRemember(result, expect);
-  const expectedState = fault === "security" ? "failed" : "completed";
-  const expectedCode = fault === "security" ? "submission_policy_rejected" : "";
-  expect(result.processing_state === expectedState, `${fault} must return ${expectedState}`);
-  if (fault === "security") {
-    expect(result.search_state === "not_required", `${fault} must not require search`);
-    expect(result.errors[0]?.code === expectedCode, `${fault} must return ${expectedCode}: ${JSON.stringify(result)}`);
-    expect(result.evidence.length === 2, `${fault} must return every submitted evidence disposition`);
-    expect(result.evidence.every((item) => item.disposition === "not_stored"), `${fault} must not store evidence`);
-    expect(result.relationship_results.every((item) => item.disposition === "not_stored" && item.splits.length === 0), `${fault} must not store relationships`);
-    const zeroWriteCounts = postgresQuery(`
-      SELECT count(*) FROM knowledge_ingests
-      WHERE team_id = '${sqlLiteral(requiredEnv("DENSE_MEM_E2E_TEAM_ID"))}'::uuid
-        AND ingest_id = '${sqlLiteral(result.submission_id)}'::uuid
-      UNION ALL
-      SELECT count(*) FROM evidence_fragments
-      WHERE team_id = '${sqlLiteral(requiredEnv("DENSE_MEM_E2E_TEAM_ID"))}'::uuid
-        AND ingest_id = '${sqlLiteral(result.submission_id)}'::uuid
-      UNION ALL
-      SELECT count(*) FROM semantic_assessments
-      WHERE team_id = '${sqlLiteral(requiredEnv("DENSE_MEM_E2E_TEAM_ID"))}'::uuid
-        AND attempt_id = '${sqlLiteral(result.submission_id)}'::uuid
-      UNION ALL
-      SELECT count(*) FROM relationship_observations
-      WHERE team_id = '${sqlLiteral(requiredEnv("DENSE_MEM_E2E_TEAM_ID"))}'::uuid
-        AND ingest_id = '${sqlLiteral(result.submission_id)}'::uuid
-      UNION ALL
-      SELECT count(*)
-      FROM search_documents AS document
-      WHERE document.team_id = '${sqlLiteral(requiredEnv("DENSE_MEM_E2E_TEAM_ID"))}'::uuid
-        AND document.source_id IN (
-          SELECT fragment_id FROM evidence_fragments
-          WHERE team_id = '${sqlLiteral(requiredEnv("DENSE_MEM_E2E_TEAM_ID"))}'::uuid
-            AND ingest_id = '${sqlLiteral(result.submission_id)}'::uuid
-          UNION ALL
-          SELECT observation.relationship_id
-          FROM relationship_observations AS observation
-          WHERE observation.team_id = '${sqlLiteral(requiredEnv("DENSE_MEM_E2E_TEAM_ID"))}'::uuid
-            AND observation.ingest_id = '${sqlLiteral(result.submission_id)}'::uuid
-        );
-    `).split(/\r?\n/).filter(Boolean).map(Number);
-    expect(zeroWriteCounts.length === 5 && zeroWriteCounts.every((count) => count === 0), `${fault} must not create semantic or search rows: ${zeroWriteCounts.join(",")}`);
-  } else {
-    expect(result.search_state === "current", `${fault} must index safe evidence`);
-    expect(result.errors.length === 0, `${fault} must not return a batch error`);
-    expect(result.evidence.every((item) => item.disposition === "stored"), `${fault} must store safe evidence`);
-    expect(result.relationship_results.every((item) => item.disposition === "not_stored" && item.splits.length === 0), `${fault} must return unsupported relationship warnings`);
-  }
+  expect(result.processing_state === "failed" && result.search_state === "not_required" && result.errors[0]?.code === "submission_policy_rejected", "one rejected Evidence must reject the complete batch");
+  expect(result.evidence.length === 2 && result.evidence.every((item) => item.disposition === "not_stored"), "policy rejection must not partially commit Evidence");
+  expect(rememberCanonicalCounts(requiredEnv("DENSE_MEM_E2E_TEAM_ID"), result.submission_id).every((count) => count === 0), "policy rejection must commit zero canonical state");
   const replay = terminalPayload(await rpc("tools/call", { name: "remember", arguments: args }));
-  assertStrictTerminalRemember(replay, expect);
-  expect(stableJSON(replay) === stableJSON(result), `${fault} terminal replay must be byte-equivalent`);
-  expect(replay.submission_id === result.submission_id && replay.correlation_id === result.correlation_id, `${fault} terminal replay must reuse identity`);
+  expect(stableJSON(replay) === stableJSON(result), "terminal policy rejection replay must retain its identity and outcome");
   return { fault, processing_state: result.processing_state };
 }
 
@@ -1133,7 +556,6 @@ async function runAdmissionCapacityCase({ rpc, rawRPC, expect }) {
     return {
       target_space: "team_shared",
       evidence: [{ content: `${subject} has ${value}. [fixture-fault:admission-hold]`, source_type: "manual" }],
-      relationships: [relationship("state", subject, "document", { value: { type: "string", value } }, [0], `admission_${suffix}_${index}`)],
       idempotency_key: `admission-${suffix}-${index}`,
     };
   });
@@ -1232,54 +654,17 @@ async function runChangedHashConflictCase({ rawRPC, expect }) {
   expect(stableJSON(terminalPayload(response.result)) === stableJSON(conflict), "conflict text and structured result must match");
   const error = conflict.errors[0];
   expect(error.retryable === false && error.next_action === "resubmit_remember" && error.remediation.includes("new idempotency_key"), "conflict must require an unchanged replay or a deliberately new key");
-  expect(conflict.evidence.length === secondArgs.evidence.length && conflict.relationship_results.length === secondArgs.relationships.length, "conflict must cover every submitted item");
-  for (const item of [...conflict.evidence, ...conflict.relationship_results]) {
+  expect(conflict.evidence.length === secondArgs.evidence.length, "conflict must cover every submitted item");
+  for (const item of conflict.evidence) {
     expect(item.disposition === "not_stored" && item.reason === "idempotency_conflict", "conflict items must retain their actual cause");
     expect(item.message === error.message && item.remediation === error.remediation, "conflict item guidance must match the terminal error");
-    expect(!item.evidence_id && (!item.splits || item.splits.length === 0), "conflict must not return stored evidence or relationship splits");
+    expect(!item.evidence_id && (!item.splits || item.splits.length === 0), "conflict must not return stored Evidence");
   }
   expect(rememberCanonicalCounts(teamID, conflict.submission_id).every((count) => count === 0), "conflict must apply zero canonical writes");
   const replay = terminalPayload((await rawRPC("tools/call", { name: "remember", arguments: firstArgs })).result);
   expect(stableJSON(replay) === stableJSON(first), "original request replay must retain its authoritative result after a conflict");
   expect(stableJSON(rememberCanonicalCounts(teamID, first.submission_id)) === stableJSON(originalCounts), "conflict and original replay must preserve canonical state");
   return { fault: "changed-hash", conflict: true };
-}
-
-async function runPredicateWordingBoundsCase({ rpc, expect }) {
-  const tools = (await rpc("tools/list", {})).tools || [];
-  const schema = tools.find((tool) => tool.name === "trace_memory")?.outputSchema;
-  const successSchema = schema?.oneOf?.find((branch) => branch.properties?.observations);
-  const maxLength = successSchema?.properties.observations.items.properties.original_predicate.maxLength;
-  expect(maxLength === 256, "Trace must advertise the accepted original predicate bound");
-  const teamID = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
-  const prefix = "Dense-Mem stores durable memory in PostgreSQL. ";
-  const results = [];
-  for (const [length, filler] of [[229, "x"], [256, "界"], [257, "界"]]) {
-    const args = singleItemArguments(`predicate-bound-${length}`, "");
-    const content = prefix + filler.repeat(length - [...prefix].length);
-    args.evidence[0].content = content;
-    const providerOffset = await providerFixtureRequestCount(expect);
-    const result = terminalPayload(await rpc("tools/call", { name: "remember", arguments: args }));
-    assertStrictTerminalRemember(result, expect);
-    if (length > maxLength) {
-      expect(result.processing_state === "failed" && result.errors[0]?.code === "provider_response_invalid", "over-limit predicate wording must fail complete provider validation");
-      expect(rememberCanonicalCounts(teamID, result.submission_id).every((count) => count === 0), "over-limit predicate must apply zero canonical writes");
-      const providerEnd = await providerFixtureRequestCount(expect);
-      expect(providerOffset !== null && providerEnd - providerOffset === 3, "over-limit predicate must exhaust three bounded complete-response attempts");
-    } else {
-      expect(result.processing_state === "completed", "in-bound predicate wording must be accepted");
-      const relationshipID = result.relationship_results[0]?.splits[0]?.relationship_id;
-      expect(relationshipID, "accepted predicate must return a relationship");
-      const raw = await rpc("tools/call", { name: "trace_memory", arguments: { relationship_id: relationshipID, include_evidence_content: false } });
-      const trace = terminalPayload(raw);
-      expect(stableJSON(trace) === stableJSON(raw.structuredContent), "Trace text and structured result must match");
-      const observation = trace.observations?.find((item) => item.submission_id === result.submission_id);
-      expect(observation?.original_predicate === content, "Trace must preserve accepted original predicate wording exactly");
-      expect([...observation.original_predicate].length === length && length <= maxLength, "Trace must satisfy its advertised Unicode-character bound");
-    }
-    results.push({ length, processing_state: result.processing_state });
-  }
-  return { fault: "predicate-wording-bounds", results };
 }
 
 async function runSupersessionFenceCase({ rpc, expect }) {
@@ -1309,82 +694,11 @@ async function runSupersessionFenceCase({ rpc, expect }) {
   return { fault: "supersession-stale", processing_state: stale.processing_state };
 }
 
-async function runCardinalitySearchRetirementCase({ rpc, expect }) {
-  const subject = `Cardinality ${randomUUID()}`;
-  const teamID = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
-  const args = (label, object, targetSpace = "team_shared", marker = "") => ({
-    target_space: targetSpace, idempotency_key: `cardinality-${label}-${randomUUID()}`,
-    evidence: [{ content: `${subject} uses ${object} as its primary database. [fixture:cardinality-${label}] ${marker}`, source_type: "manual" }],
-    relationships: [relationship("primary", subject, "project", { entity: { name: object, entity_kind: "product" } }, [0], "primary_database")],
-  });
-  const remember = async (input) => {
-    const result = terminalPayload(await rpc("tools/call", { name: "remember", arguments: input }));
-    assertStrictTerminalRemember(result, expect);
-    return result;
-  };
-  const relationshipID = (result) => {
-    const id = result.relationship_results[0]?.splits[0]?.relationship_id;
-    expect(Boolean(id), "cardinality fixture must return a stored Relationship");
-    return id;
-  };
-  const state = (id) => JSON.parse(postgresQuery(`
-    SELECT json_build_object('status', relationship.status, 'version', relationship.version,
-      'search_state', document.search_state, 'source_version', document.source_version,
-      'has_embedding', document.embedding IS NOT NULL, 'space', space.kind)
-    FROM relationship_records relationship JOIN search_documents document
-      ON document.team_id=relationship.team_id AND document.source_kind='relationship' AND document.source_id=relationship.relationship_id
-    JOIN memory_spaces space ON space.id=relationship.space_id
-    WHERE relationship.team_id='${sqlLiteral(teamID)}'::uuid AND relationship.relationship_id='${sqlLiteral(id)}'::uuid
-    ORDER BY document.updated_at DESC LIMIT 1
-  `));
-  const first = await remember(args("first", "PostgreSQL"));
-  expect(first.processing_state === "completed", "cardinality source must complete");
-  const firstID = relationshipID(first);
-  const privateResult = await remember(args("private", "PostgreSQL", "private"));
-  expect(privateResult.processing_state === "completed", "private cardinality source must complete");
-  const privateID = relationshipID(privateResult);
-  const original = state(firstID);
-  const privateBefore = state(privateID);
-  expect(privateBefore.space === "private" && privateID !== firstID, "private source must use its authenticated separate space");
-  const failed = await remember(args("failure", "GraphDB", "team_shared", "[fixture-fault:embedding-count]"));
-  expect(failed.processing_state === "failed" && failed.errors[0]?.code === "embedding_response_invalid", "failed cardinality replacement must retain its embedding failure");
-  assert.deepEqual(state(firstID), original, "failed replacement must preserve the active source and current vector");
-  const replacementArgs = args("replacement", "GraphDB");
-  const replacement = await remember(replacementArgs);
-  try {
-    expect(replacement.processing_state === "completed", "cardinality replacement must complete");
-  } catch (error) {
-    try {
-      const detail = (await controlJSON(`/teams/${teamID}/remember-attempts/${encodeURIComponent(replacement.submission_id)}`, { signal: AbortSignal.timeout(5000) })).data;
-      console.error(JSON.stringify(diagnoseRememberFailure(detail)));
-    } catch {
-      console.error(JSON.stringify({ type: "remember_failure_diagnostics_unavailable", attempt_id: replacement.submission_id,
-        correlation_id: replacement.correlation_id, reason: "control_diagnostic_read_failed" }));
-    }
-    throw error;
-  }
-  const retired = state(firstID);
-  expect(retired.status === "superseded" && retired.search_state === "not_required" && !retired.has_embedding, "superseded predecessor must have no current search projection or vector");
-  expect(retired.source_version === retired.version, "retirement must fence the current canonical source version");
-  assert.deepEqual(state(privateID), privateBefore, "shared replacement must preserve the private source");
-  const providerBefore = await providerFixtureRequestCount(expect);
-  const replay = await remember(replacementArgs);
-  expect(stableJSON(replay) === stableJSON(replacement), "cardinality replacement must replay its exact terminal result");
-  expect(await providerFixtureRequestCount(expect) === providerBefore, "replay must not call the assessment provider");
-  const reactivated = await remember(args("reactivated", "PostgreSQL"));
-  expect(reactivated.processing_state === "completed" && relationshipID(reactivated) === firstID, "reactivation must reuse the original Relationship identity");
-  const current = state(firstID);
-  expect(current.status === "active" && current.search_state === "current" && current.has_embedding && current.source_version === current.version, "reactivation must publish a current versioned vector");
-  expect(state(relationshipID(replacement)).search_state === "not_required", "reactivation must retire the other predecessor");
-  return { fault: "cardinality-search-retirement", retired_version: retired.version, current_version: current.version, private_preserved: true, failed_replacement_preserved: true, replayed: true };
-}
-
 function singleItemArguments(label, marker, targetSpace = "team_shared") {
   const content = `Dense-Mem stores durable memory in PostgreSQL. [fixture:${label}]${marker ? ` ${marker}` : ""}`;
   return {
     target_space: targetSpace,
     evidence: [{ content, source_type: "manual" }],
-    relationships: [relationship("durable-store", "Dense-Mem", "project", { value: { type: "string", value: "PostgreSQL" } }, [0])],
     idempotency_key: `synchronous-write-remember-${label}-${Date.now()}-${Math.random()}`,
   };
 }
@@ -1395,19 +709,7 @@ function multiEvidenceSecurityArguments(label) {
     content: "A second safe evidence item must not be partially committed.",
     source_type: "manual",
   });
-  args.relationships[0].evidence_indices = [0, 1];
   return args;
-}
-
-function relationship(ref, subjectName, subjectKind, object, evidenceIndices, predicateKey = "stores_memory_in") {
-  return {
-    ref,
-    subject: { name: subjectName, entity_kind: subjectKind },
-    predicate: { proposed_key: predicateKey },
-    object,
-    polarity: "+",
-    evidence_indices: evidenceIndices,
-  };
 }
 
 function terminalPayload(result) {
@@ -1416,7 +718,7 @@ function terminalPayload(result) {
 
 function assertStrictTerminalRemember(result, expect) {
   assertTerminalRememberResult(result);
-  expect(typeof result.contract_version === "string" && result.contract_version.length > 0, "terminal Remember must include contract_version");
+  expect(result.contract_version === "dense-mem.v3.0.0", "terminal Remember must include contract_version");
   expect(typeof result.submission_id === "string" && result.submission_id.length > 0, "terminal Remember must include a submission id");
   expect(result.submission_kind === "remember", "terminal Remember must include remember submission_kind");
   expect(typeof result.correlation_id === "string" && result.correlation_id.length > 0, "terminal Remember must include correlation_id");
@@ -1427,9 +729,6 @@ function assertStrictTerminalRemember(result, expect) {
   for (const evidence of result.evidence) {
     expect(typeof evidence.disposition === "string" && Number.isInteger(evidence.evidence_index), "terminal evidence must have disposition and index");
     expect(Array.isArray(evidence.superseded_evidence_ids) && typeof evidence.search_state === "string", "terminal evidence must have supersession and search state");
-  }
-  for (const relationship of result.relationship_results) {
-    expect(typeof relationship.ref === "string" && typeof relationship.disposition === "string" && Array.isArray(relationship.splits), "terminal relationship result must have ref, disposition, and splits");
   }
   for (const error of result.errors) {
     expect(typeof error.code === "string" && typeof error.message === "string" && typeof error.retryable === "boolean" && typeof error.next_action === "string" && typeof error.remediation === "string", "terminal error must have complete bounded guidance");
@@ -1494,21 +793,6 @@ function assertControlError(result, status, code, label, expect) {
   }
 }
 
-function groundingSurfaceCount(teamID, submissionID, surface) {
-  return Number(postgresQuery(`
-    SELECT count(*)
-    FROM entity_resolution_events AS event
-    JOIN evidence_fragments AS fragment
-      ON fragment.team_id = event.team_id
-     AND fragment.fragment_id = event.fragment_id
-    WHERE event.team_id = '${sqlLiteral(teamID)}'::uuid
-      AND event.ingest_id = '${sqlLiteral(submissionID)}'::uuid
-      AND event.span_start IS NOT NULL
-      AND event.span_end IS NOT NULL
-      AND substring(fragment.content FROM event.span_start + 1 FOR event.span_end - event.span_start) = '${sqlLiteral(surface)}';
-  `));
-}
-
 function postgresQuery(sql) {
   if (!/^(SELECT|WITH)\b/i.test(sql.trim())) {
     throw new Error("known-evidence PostgreSQL query helper only permits read queries");
@@ -1535,97 +819,11 @@ function rememberCanonicalCounts(teamID, submissionID) {
     WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND ingest_id = '${sqlLiteral(submissionID)}'::uuid
     UNION ALL SELECT count(*) FROM semantic_assessments
     WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND attempt_id = '${sqlLiteral(submissionID)}'::uuid
-    UNION ALL SELECT count(*) FROM relationship_observations
-    WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND ingest_id = '${sqlLiteral(submissionID)}'::uuid
     UNION ALL SELECT count(*) FROM search_documents
     WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND source_id IN (
       SELECT fragment_id FROM evidence_fragments WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND ingest_id = '${sqlLiteral(submissionID)}'::uuid
-      UNION ALL SELECT relationship_id FROM relationship_observations WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND ingest_id = '${sqlLiteral(submissionID)}'::uuid
     );
   `).split(/\r?\n/).filter(Boolean).map(Number);
-}
-
-function postgresCommand(sql) {
-  if (!/^INSERT\s+INTO\s+entity_names\b/i.test(sql.trim())) {
-    throw new Error("known-evidence PostgreSQL mutation helper only permits alias setup");
-  }
-  postgresExec(sql, "synchronous-write-remember-command");
-}
-
-async function holdPredicateCommitLock(teamID, predicateKey) {
-  const child = spawn("docker", [
-    "compose", "-p", requiredEnv("DENSE_MEM_E2E_COMPOSE_PROJECT"),
-    "-f", requiredEnv("DENSE_MEM_E2E_COMPOSE_FILE"),
-    "-f", requiredEnv("DENSE_MEM_E2E_COMPOSE_OVERLAY_FILE"),
-    "exec", "-T", "postgres", "sh", "-ec",
-    'exec psql -X -q -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At',
-  ], { cwd: repositoryRoot, stdio: ["pipe", "pipe", "pipe"] });
-  child.stderr.resume();
-  child.stdin.on("error", () => {});
-  const acquired = new Promise((resolve, reject) => {
-    let output = "";
-    const timer = setTimeout(() => finish(new Error("predicate commit lock acquisition timed out")), 10_000);
-    const finish = (error, pid) => {
-      clearTimeout(timer);
-      child.stdout.off("data", onData);
-      child.off("exit", onExit);
-      child.off("error", onError);
-      if (error) reject(error);
-      else resolve(pid);
-    };
-    const onData = (chunk) => {
-      output += chunk;
-      const match = output.match(/LOCK:(\d+)/);
-      if (match) finish(null, Number(match[1]));
-      else if (output.length > 1024) finish(new Error("predicate commit lock holder returned unexpected output"));
-    };
-    const onExit = (code) => finish(new Error(`predicate commit lock holder exited before acquisition (${code})`));
-    const onError = (error) => finish(new Error(`predicate commit lock holder could not start (${error.code || "unknown"})`));
-    child.stdout.on("data", onData);
-    child.once("exit", onExit);
-    child.once("error", onError);
-  });
-  const lockKey = sqlLiteral(`${teamID}:${predicateKey}`);
-  child.stdin.write(`SET idle_session_timeout = '180s';\nSELECT pg_advisory_lock(hashtext('${lockKey}'));\nSELECT 'LOCK:' || pg_backend_pid();\n`);
-  try {
-    return { child, pid: await acquired };
-  } catch (error) {
-    child.stdin.end();
-    child.kill("SIGTERM");
-    throw error;
-  }
-}
-
-async function waitForPredicateCommitWaiter(holderPID, requestSettled) {
-  const deadline = Date.now() + 90_000;
-  while (Date.now() < deadline) {
-    const waiters = Number(postgresQuery(`
-      SELECT count(*) FROM pg_locks AS holder
-      JOIN pg_locks AS waiter USING (locktype, database, classid, objid, objsubid)
-      WHERE holder.pid = ${holderPID} AND holder.locktype = 'advisory' AND holder.granted
-        AND waiter.pid <> holder.pid AND NOT waiter.granted;
-    `));
-    if (waiters === 1) return;
-    if (requestSettled()) throw new Error("Remember finished before reaching the predicate commit lock");
-    await delay(250);
-  }
-  throw new Error("Remember did not reach the predicate commit lock within 90 seconds");
-}
-
-async function releasePredicateCommitLock(child) {
-  if (child.exitCode !== null) return;
-  await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      child.kill("SIGTERM");
-      reject(new Error("predicate commit lock holder did not exit"));
-    }, 5000);
-    child.once("exit", (code) => {
-      clearTimeout(timer);
-      if (code === 0) resolve();
-      else reject(new Error(`predicate commit lock holder exited with code ${code}`));
-    });
-    child.stdin.end();
-  });
 }
 
 function postgresExec(sql, label) {

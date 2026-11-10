@@ -89,7 +89,7 @@ export type RememberError = {
   code: string;
   message: string;
   retryable: boolean;
-  next_action: "retry_same_request" | "resubmit_remember" | "retry_dream_feedback" | "retry_correction" | "contact_operator" | "none";
+  next_action: "retry_same_request" | "resubmit_remember" | "contact_operator" | "none";
   remediation: string;
 };
 
@@ -112,7 +112,7 @@ export type RememberAttemptDiagnosticSummary = {
   correlation_id?: string;
   invocation_id?: string;
   evidence_count: number;
-  relationship_count: number;
+
   document_count: number;
   assessor_turns: number;
   duration_ms: number;
@@ -168,12 +168,7 @@ export type RememberAttemptPublicResult = {
     search_state: string;
     reason?: string;
   }>;
-  relationship_results: Array<{
-    ref: string;
-    disposition: string;
-    reason?: string;
-    splits: Array<{ split_index: number; relationship_id: string; relationship_version: number; status: string }>;
-  }>;
+
   errors: RememberError[];
 };
 

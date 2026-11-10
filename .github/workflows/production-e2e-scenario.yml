@@ -46,7 +46,7 @@ permissions:
 
 jobs:
   scenario:
-    name: ${{ inputs.receipt_job_prefix }}${{ inputs.scenario == 'full' && 'dreaming_telemetry_portal' || inputs.scenario }}
+    name: ${{ inputs.receipt_job_prefix }}${{ inputs.scenario == 'full' && 'evidence_telemetry_portal' || inputs.scenario }}
     runs-on: ubuntu-latest
     timeout-minutes: ${{ inputs.timeout_minutes > 30 && 30 || inputs.timeout_minutes }}
     env:

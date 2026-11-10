@@ -96,11 +96,22 @@ func (r *Store) LoadRememberAttempt(ctx context.Context, input RememberAttemptLo
 		err := tx.WithContext(ctx).Raw(`
 			SELECT attempt_id::text, request_hash, contract_version, outcome,
 			       COALESCE(retryable, outcome = 'failed'), public_result
-			FROM remember_attempts
-			WHERE team_id = ?::uuid AND owner_profile_id = ?::uuid AND idempotency_key = ?
+			FROM (
+			 SELECT attempt_id, request_hash, contract_version, outcome, retryable, public_result, created_at
+			 FROM remember_attempts
+			 WHERE team_id = ?::uuid AND owner_profile_id = ?::uuid AND idempotency_key = ?
+			 UNION ALL
+			 SELECT ingest_id, request_hash, COALESCE(metadata->>'contract_version', 'retired'), status, false,
+			 jsonb_build_object('retired_payload', true, 'original_status', status), created_at
+			 FROM knowledge_ingests ingest
+			 WHERE team_id = ?::uuid AND owner_profile_id = ?::uuid AND idempotency_key = ?
+			 AND COALESCE(metadata->>'contract_version','') <> 'dense-mem.v3.0.0'
+			 AND NOT EXISTS (SELECT 1 FROM remember_attempts attempt WHERE attempt.team_id=ingest.team_id
+			  AND attempt.owner_profile_id=ingest.owner_profile_id AND attempt.idempotency_key=ingest.idempotency_key)
+			) history
 			ORDER BY CASE WHEN outcome IN ('completed', 'rejected', 'quarantined', 'replayed') THEN 0 ELSE 1 END,
 			         created_at DESC, attempt_id DESC LIMIT 1
-		`, input.TeamID, input.OwnerProfileID, input.IdempotencyKey).Row().Scan(&stored.AttemptID, &stored.RequestHash, &stored.ContractVersion, &stored.Outcome, &stored.Retryable, &raw)
+		`, input.TeamID, input.OwnerProfileID, input.IdempotencyKey, input.TeamID, input.OwnerProfileID, input.IdempotencyKey).Row().Scan(&stored.AttemptID, &stored.RequestHash, &stored.ContractVersion, &stored.Outcome, &stored.Retryable, &raw)
 		if err != nil {
 			return err
 		}
@@ -351,7 +362,7 @@ func validateRememberAttemptRecord(input RememberAttemptRecordInput) error {
 	if input.Retryable && input.Outcome != "failed" {
 		return errors.New("remember attempt: retryable is only valid for failed outcomes")
 	}
-	if input.EvidenceCount < 0 || input.RelationshipCount < 0 || input.DocumentCount < 0 || input.AssessorTurns < 0 || input.Duration < 0 {
+	if input.EvidenceCount < 0 || input.DocumentCount < 0 || input.AssessorTurns < 0 || input.Duration < 0 {
 		return errors.New("remember attempt: counters and duration cannot be negative")
 	}
 	return nil
@@ -390,9 +401,9 @@ func insertRememberAttemptInTx(ctx context.Context, tx *gorm.DB, input RememberA
 	result := tx.WithContext(ctx).Exec(`
 		INSERT INTO remember_attempts (team_id, attempt_id, owner_profile_id, space_id, space_generation,
 		 idempotency_key, request_hash, contract_version, submission_kind, outcome, failed_phase, error_code, retryable,
-		 correlation_id, public_result, evidence_count, relationship_count, document_count, assessor_turns, duration_ms, completed_at)
-		VALUES (?::uuid, ?::uuid, ?::uuid, NULLIF(?, '')::uuid, NULLIF(?, 0), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, now())
-	`, input.TeamID, input.AttemptID, input.OwnerProfileID, input.SpaceID, input.SpaceGeneration, input.IdempotencyKey, input.RequestHash, input.ContractVersion, input.SubmissionKind, input.Outcome, input.FailedPhase, input.ErrorCode, input.Retryable, input.CorrelationID, string(encoded), input.EvidenceCount, input.RelationshipCount, input.DocumentCount, input.AssessorTurns, input.Duration.Milliseconds())
+		 correlation_id, public_result, evidence_count, document_count, assessor_turns, duration_ms, completed_at)
+		VALUES (?::uuid, ?::uuid, ?::uuid, NULLIF(?, '')::uuid, NULLIF(?, 0), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, now())
+	`, input.TeamID, input.AttemptID, input.OwnerProfileID, input.SpaceID, input.SpaceGeneration, input.IdempotencyKey, input.RequestHash, input.ContractVersion, input.SubmissionKind, input.Outcome, input.FailedPhase, input.ErrorCode, input.Retryable, input.CorrelationID, string(encoded), input.EvidenceCount, input.DocumentCount, input.AssessorTurns, input.Duration.Milliseconds())
 	if result.Error != nil {
 		return result.Error
 	}
@@ -454,7 +465,7 @@ func (r *Store) ListRememberAttemptDiagnostics(
 			       attempt.submission_kind, attempt.outcome, attempt.failed_phase,
 			       attempt.error_code, COALESCE(attempt.retryable, attempt.outcome = 'failed'), attempt.correlation_id,
 			       COALESCE(attempt.canonical_attempt_id::text, ''),
-			       attempt.evidence_count, attempt.relationship_count,
+			       attempt.evidence_count,
 			       attempt.document_count, attempt.assessor_turns, attempt.duration_ms,
 			       attempt.created_at, attempt.completed_at
 			FROM remember_attempts AS attempt
@@ -500,7 +511,7 @@ func (r *Store) GetRememberAttemptDiagnostic(ctx context.Context, teamID, attemp
 			       attempt.submission_kind, attempt.outcome, attempt.failed_phase,
 			       attempt.error_code, COALESCE(attempt.retryable, attempt.outcome = 'failed'), attempt.correlation_id,
 			       COALESCE(attempt.canonical_attempt_id::text, ''),
-			       attempt.evidence_count, attempt.relationship_count,
+			       attempt.evidence_count,
 			       attempt.document_count, attempt.assessor_turns, attempt.duration_ms,
 			       attempt.created_at, attempt.completed_at, attempt.public_result
 			FROM remember_attempts AS attempt
@@ -591,7 +602,7 @@ func scanRememberAttemptDiagnosticSummary(scanner rememberAttemptDiagnosticScann
 		&record.TeamID, &record.TeamName, &record.OwnerProfileID, &record.AttemptID,
 		&record.SpaceID, &spaceGeneration, &record.ContractVersion, &record.SubmissionKind,
 		&record.Outcome, &record.FailedPhase, &record.ErrorCode, &record.Retryable, &record.CorrelationID,
-		&record.CanonicalAttemptID, &record.EvidenceCount, &record.RelationshipCount,
+		&record.CanonicalAttemptID, &record.EvidenceCount,
 		&record.DocumentCount, &record.AssessorTurns, &durationMS, &record.CreatedAt,
 		&completedAt,
 	); err != nil {
@@ -620,7 +631,7 @@ func scanRememberAttemptDiagnosticSummaryWithResult(scanner rememberAttemptDiagn
 		&record.TeamID, &record.TeamName, &record.OwnerProfileID, &record.AttemptID,
 		&record.SpaceID, &spaceGeneration, &record.ContractVersion, &record.SubmissionKind,
 		&record.Outcome, &record.FailedPhase, &record.ErrorCode, &record.Retryable, &record.CorrelationID,
-		&record.CanonicalAttemptID, &record.EvidenceCount, &record.RelationshipCount,
+		&record.CanonicalAttemptID, &record.EvidenceCount,
 		&record.DocumentCount, &record.AssessorTurns, &durationMS, &record.CreatedAt,
 		&completedAt, &publicJSON,
 	); err != nil {

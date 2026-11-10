@@ -300,9 +300,7 @@ func normalizeRecallFeedbackEvent(event domain.RecallFeedbackEvent) domain.Recal
 	if event.IrrelevantRefs == nil {
 		event.IrrelevantRefs = []domain.RecallFeedbackJudgedResultRef{}
 	}
-	if event.DreamFeedback == nil {
-		event.DreamFeedback = []domain.RecallFeedbackDreamFeedback{}
-	}
+
 	if event.Degradation == nil {
 		event.Degradation = map[string]any{}
 	}
@@ -382,7 +380,7 @@ func recallFeedbackEventColumns() string {
 		embedding_contract_version, search_index_profile_version, search_state,
 		degradation, snapshot_metadata, used, answer_supported,
 		quality, missing_context, irrelevant, feedback_comment,
-		irrelevant_result_refs, dream_feedback
+		irrelevant_result_refs
 	`
 }
 
@@ -404,7 +402,6 @@ func scanRecallFeedbackEvent(rows *sql.Rows) (domain.RecallFeedbackEvent, error)
 		missingContextRaw   sql.NullBool
 		irrelevantRaw       sql.NullBool
 		irrelevantRefsRaw   []byte
-		dreamFeedbackRaw    []byte
 	)
 	if err := rows.Scan(
 		&event.RecallID,
@@ -437,7 +434,6 @@ func scanRecallFeedbackEvent(rows *sql.Rows) (domain.RecallFeedbackEvent, error)
 		&irrelevantRaw,
 		&event.FeedbackComment,
 		&irrelevantRefsRaw,
-		&dreamFeedbackRaw,
 	); err != nil {
 		return domain.RecallFeedbackEvent{}, err
 	}
@@ -485,12 +481,7 @@ func scanRecallFeedbackEvent(rows *sql.Rows) (domain.RecallFeedbackEvent, error)
 			return domain.RecallFeedbackEvent{}, fmt.Errorf("invalid recall_feedback_events.irrelevant_result_refs JSON: %w", err)
 		}
 	}
-	event.DreamFeedback = []domain.RecallFeedbackDreamFeedback{}
-	if len(dreamFeedbackRaw) > 0 {
-		if err := json.Unmarshal(dreamFeedbackRaw, &event.DreamFeedback); err != nil {
-			return domain.RecallFeedbackEvent{}, fmt.Errorf("invalid recall_feedback_events.dream_feedback JSON: %w", err)
-		}
-	}
+
 	return event, nil
 }
 
@@ -525,17 +516,6 @@ func marshalRecallFeedbackJudgedRefs(refs []domain.RecallFeedbackJudgedResultRef
 	encoded, err := json.Marshal(refs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to encode recall feedback irrelevant result refs: %w", err)
-	}
-	return encoded, nil
-}
-
-func marshalRecallFeedbackDreamFeedback(feedback []domain.RecallFeedbackDreamFeedback) ([]byte, error) {
-	if feedback == nil {
-		feedback = []domain.RecallFeedbackDreamFeedback{}
-	}
-	encoded, err := json.Marshal(feedback)
-	if err != nil {
-		return nil, fmt.Errorf("failed to encode recall feedback dream feedback: %w", err)
 	}
 	return encoded, nil
 }

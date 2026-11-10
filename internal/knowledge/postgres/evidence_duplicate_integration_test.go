@@ -120,7 +120,7 @@ func TestRememberDuplicateExactReuseCreatesOneCanonicalAndTwoOccurrences(t *test
 	teamID := createLedgerTeam(t, adminDB, rls, "duplicate-exact-team")
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "duplicate-exact-owner")
 	spaceID, generation := duplicateTeamSharedSpace(t, adminDB, rls, teamID)
-	repo := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	repo := NewStore(appDB, rls)
 
 	content := "The exact byte sequence is retained."
 	first := duplicateRememberInput(teamID, ownerID, "duplicate-exact-first", content, false)
@@ -183,7 +183,7 @@ func TestRememberDuplicateIdenticalItemsInOneBatchShareCanonical(t *testing.T) {
 	insertSearchTestContract(t, adminDB, rls, "duplicate-batch-identical", 2, "exact", "")
 	teamID := createLedgerTeam(t, adminDB, rls, "duplicate-batch-identical-team")
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "duplicate-batch-identical-owner")
-	repo := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	repo := NewStore(appDB, rls)
 
 	input := duplicateRememberInput(teamID, ownerID, "duplicate-batch-identical", "identical items in one Remember batch", false)
 	second := input.Evidence[0]
@@ -224,7 +224,7 @@ func TestRememberDuplicateConcurrentSameContentConverges(t *testing.T) {
 	content := "concurrent exact evidence"
 	left := duplicateRememberInput(teamID, ownerID, "duplicate-concurrent-left", content, false)
 	right := duplicateRememberInput(teamID, ownerID, "duplicate-concurrent-right", content, false)
-	repo := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	repo := NewStore(appDB, rls)
 	leftPlan, err := repo.PlanRememberEmbeddings(ctx, left)
 	require.NoError(t, err)
 	rightPlan, err := repo.PlanRememberEmbeddings(ctx, right)
@@ -298,7 +298,7 @@ func TestRememberDuplicateForceAndLifecycleBearingEvidenceStayNew(t *testing.T) 
 	insertSearchTestContract(t, adminDB, rls, "duplicate-controls", 2, "exact", "")
 	teamID := createLedgerTeam(t, adminDB, rls, "duplicate-controls-team")
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "duplicate-controls-owner")
-	repo := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	repo := NewStore(appDB, rls)
 	candidate := duplicateRememberInput(teamID, ownerID, "duplicate-controls-candidate", "canonical semantic candidate", false)
 	commitDuplicateFixture(t, ctx, repo, candidate)
 
@@ -357,7 +357,7 @@ func TestRememberDuplicateSourceLessCanonicalStaysIndependentFromSourceAdvance(t
 	teamID := createLedgerTeam(t, adminDB, rls, "duplicate-source-less-canonical-team")
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "duplicate-source-less-canonical-owner")
 	spaceID, generation := duplicateTeamSharedSpace(t, adminDB, rls, teamID)
-	repo := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	repo := NewStore(appDB, rls)
 
 	content := "source-backed content must not become a source-less canonical"
 	source := duplicateRememberInput(teamID, ownerID, "duplicate-source-less-source", content, false)
@@ -424,7 +424,7 @@ func TestRememberDuplicateCandidateIsolationAndBound(t *testing.T) {
 	otherTeam := createLedgerTeam(t, adminDB, rls, "duplicate-isolation-other-team")
 	otherOwner := createLedgerProfile(t, adminDB, rls, otherTeam, "duplicate-isolation-other-owner")
 	sharedSpaceID, sharedGeneration := duplicateTeamSharedSpace(t, adminDB, rls, teamID)
-	repo := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	repo := NewStore(appDB, rls)
 
 	shared := duplicateRememberInput(teamID, ownerB, "duplicate-isolation-shared", "shared semantic candidate", false)
 	shared.SpaceID, shared.SpaceGeneration = sharedSpaceID, sharedGeneration
@@ -495,7 +495,7 @@ func TestRememberDuplicateCrossOwnerReusePreservesOccurrenceLineage(t *testing.T
 	ownerA := createLedgerProfile(t, adminDB, rls, teamID, "duplicate-lineage-a")
 	ownerB := createLedgerProfile(t, adminDB, rls, teamID, "duplicate-lineage-b")
 	spaceID, generation := duplicateTeamSharedSpace(t, adminDB, rls, teamID)
-	repo := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	repo := NewStore(appDB, rls)
 	candidate := duplicateRememberInput(teamID, ownerB, "duplicate-lineage-candidate", "team shared canonical", false)
 	candidate.SpaceID, candidate.SpaceGeneration = spaceID, generation
 	commitDuplicateFixture(t, ctx, repo, candidate)
@@ -535,7 +535,7 @@ func TestRememberDuplicateCrossOwnerReusePreservesOccurrenceLineage(t *testing.T
 	require.Equal(t, ownerB, eventEvidenceOwner)
 }
 
-func TestRememberDuplicateRepeatedCanonicalKeepsRelationshipSupportOccurrences(t *testing.T) {
+func TestEvidenceOnlyPostgresRepeatedCanonicalKeepsExactOccurrences(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
 	ctx := context.Background()
@@ -544,7 +544,7 @@ func TestRememberDuplicateRepeatedCanonicalKeepsRelationshipSupportOccurrences(t
 	ownerA := createLedgerProfile(t, adminDB, rls, teamID, "duplicate-support-lineage-a")
 	ownerB := createLedgerProfile(t, adminDB, rls, teamID, "duplicate-support-lineage-b")
 	spaceID, generation := duplicateTeamSharedSpace(t, adminDB, rls, teamID)
-	repo := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	repo := NewStore(appDB, rls)
 	candidate := duplicateRememberInput(teamID, ownerB, "duplicate-support-lineage-candidate", "shared canonical support", false)
 	candidate.SpaceID, candidate.SpaceGeneration = spaceID, generation
 	commitDuplicateFixture(t, ctx, repo, candidate)
@@ -561,40 +561,13 @@ func TestRememberDuplicateRepeatedCanonicalKeepsRelationshipSupportOccurrences(t
 	})
 	first.Commit.AssessmentID = assessmentID
 	first.Commit.Items = append(first.Commit.Items, SubmissionAssessmentItemInput{FragmentID: secondItem.FragmentID})
-	first.Commit.EntityResolutions = []SubmissionAssessmentEntityResolutionInput{
-		{Resolution: SemanticEntityResolutionInput{MentionRef: "subject", Action: string(domain.EntityResolutionCreate), EntityKind: "project", CanonicalName: "Support subject", FragmentID: first.Evidence[0].FragmentID, AssessmentID: assessmentID}},
-		{Resolution: SemanticEntityResolutionInput{MentionRef: "object", Action: string(domain.EntityResolutionCreate), EntityKind: "product", CanonicalName: "Support object", FragmentID: first.Evidence[0].FragmentID, AssessmentID: assessmentID}},
-	}
-	relationshipInputs := []SubmissionAssessmentRelationshipObservationInput{
-		{
-			RelationshipRef: "support-lineage-relationship-0", SplitIndex: 0,
-			Observation: SemanticRelationshipDecisionInput{
-				Ref: "support-lineage-observation-0", SubjectRef: "subject", OriginalPredicate: "uses", PredicateKey: "uses", PredicateVersion: 1,
-				ObjectRef: "object", Polarity: "+", AssessorAccepted: true, AssessmentID: assessmentID,
-				Support: &EvidenceSupportInput{FragmentID: first.Evidence[0].FragmentID, SourceGroupKey: "support-lineage-group-0", SpanStart: 0, SpanEnd: len(first.Evidence[0].Content), Quote: first.Evidence[0].Content, Authority: "primary"},
-			},
-		},
-		{
-			RelationshipRef: "support-lineage-relationship-1", SplitIndex: 0,
-			Observation: SemanticRelationshipDecisionInput{
-				Ref: "support-lineage-observation-1", SubjectRef: "subject", OriginalPredicate: "uses", PredicateKey: "uses", PredicateVersion: 1,
-				ObjectRef: "object", Polarity: "+", AssessorAccepted: true, AssessmentID: assessmentID,
-				Support: &EvidenceSupportInput{FragmentID: secondItem.FragmentID, SourceGroupKey: "support-lineage-group-1", SpanStart: 0, SpanEnd: len(secondItem.Content), Quote: secondItem.Content, Authority: "primary"},
-			},
-		},
-	}
-	first.Commit.RelationshipObservations = relationshipInputs
-	first.Commit.RelationshipResults = []SubmissionRelationshipResultInput{
-		{RelationshipRef: "support-lineage-relationship-0", Disposition: "stored"},
-		{RelationshipRef: "support-lineage-relationship-1", Disposition: "stored"},
-	}
 	first.DuplicateResolutions = []RememberDuplicateResolution{
 		{EvidenceIndex: 0, EvidenceID: "evidence:0", InputFragmentID: first.Evidence[0].FragmentID, Disposition: "reuse", CandidateFragmentID: candidate.Evidence[0].FragmentID, CandidateOwnerID: ownerB},
 		{EvidenceIndex: 1, EvidenceID: "evidence:1", InputFragmentID: secondItem.FragmentID, Disposition: "reuse", CandidateFragmentID: candidate.Evidence[0].FragmentID, CandidateOwnerID: ownerB},
 	}
 	plan, err := repo.PlanRememberEmbeddings(ctx, first)
 	require.NoError(t, err)
-	require.Len(t, plan.Documents, 1, "identical relationship projections share one provider vector")
+	require.Empty(t, plan.Documents, "reusing current Evidence needs no new search vector")
 	_, err = repo.CommitRememberWithEmbeddings(ctx, first, duplicatePlanToInline(plan))
 	require.NoError(t, err)
 
@@ -628,41 +601,6 @@ func TestRememberDuplicateRepeatedCanonicalKeepsRelationshipSupportOccurrences(t
 		}
 		return nil
 	}))
-	type supportLineage struct {
-		Group, Occurrence, EvidenceOwner, OccurrenceOwner string
-	}
-	var supports []supportLineage
-	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
-		rows, err := tx.Raw(`
-			SELECT support.source_group_key, support.occurrence_id::text,
-			       support.evidence_owner_profile_id::text, support.occurrence_owner_profile_id::text
-			FROM relationship_evidence_supports AS support
-			JOIN relationship_observations AS observation
-			  ON observation.team_id = support.team_id AND observation.observation_id = support.observation_id
-			WHERE observation.team_id = ?::uuid AND observation.ingest_id = ?::uuid
-			ORDER BY support.source_group_key
-		`, teamID, first.IngestID).Rows()
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var item supportLineage
-			if err := rows.Scan(&item.Group, &item.Occurrence, &item.EvidenceOwner, &item.OccurrenceOwner); err != nil {
-				return err
-			}
-			supports = append(supports, item)
-		}
-		return rows.Err()
-	}))
-	require.Len(t, supports, 2)
-	require.Equal(t, occurrences[0], supports[0].Occurrence)
-	require.Equal(t, occurrences[1], supports[1].Occurrence)
-	for _, support := range supports {
-		require.Equal(t, ownerB, support.EvidenceOwner)
-		require.Equal(t, ownerA, support.OccurrenceOwner)
-	}
-
 	assertDuplicateTraceOccurrences(t, ctx, adminDB, appDB, rls, teamID, first, occurrences)
 }
 
@@ -682,7 +620,7 @@ func TestRememberDuplicateFinalReauthorizationRejectsQuarantinedCandidateAtomica
 	ownerA := createLedgerProfile(t, adminDB, rls, teamID, "duplicate-reauthorize-a")
 	ownerB := createLedgerProfile(t, adminDB, rls, teamID, "duplicate-reauthorize-b")
 	spaceID, generation := duplicateTeamSharedSpace(t, adminDB, rls, teamID)
-	repo := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	repo := NewStore(appDB, rls)
 	candidate := duplicateRememberInput(teamID, ownerB, "duplicate-reauthorize-candidate", "candidate becomes stale", false)
 	candidate.SpaceID, candidate.SpaceGeneration = spaceID, generation
 	commitDuplicateFixture(t, ctx, repo, candidate)
@@ -719,7 +657,7 @@ func TestRememberDuplicateExactReuseSerializesWithConcurrentQuarantine(t *testin
 	teamID := createLedgerTeam(t, adminDB, rls, "duplicate-exact-quarantine-race-team")
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "duplicate-exact-quarantine-race-owner")
 	spaceID, generation := duplicateTeamSharedSpace(t, adminDB, rls, teamID)
-	repo := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	repo := NewStore(appDB, rls)
 
 	content := "exact candidate held by a lifecycle writer"
 	first := duplicateRememberInput(teamID, ownerID, "duplicate-exact-quarantine-race-first", content, false)
@@ -778,7 +716,7 @@ func TestRememberDuplicateSemanticReuseSerializesWithConcurrentQuarantine(t *tes
 	ownerA := createLedgerProfile(t, adminDB, rls, teamID, "duplicate-semantic-quarantine-race-a")
 	ownerB := createLedgerProfile(t, adminDB, rls, teamID, "duplicate-semantic-quarantine-race-b")
 	spaceID, generation := duplicateTeamSharedSpace(t, adminDB, rls, teamID)
-	repo := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	repo := NewStore(appDB, rls)
 
 	candidate := duplicateRememberInput(teamID, ownerB, "duplicate-semantic-quarantine-race-candidate", "semantic candidate held by a lifecycle writer", false)
 	candidate.SpaceID, candidate.SpaceGeneration = spaceID, generation
@@ -839,7 +777,7 @@ func TestRememberDuplicateExactReuseRejectsConcurrentPrivateSpaceSeal(t *testing
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "duplicate-private-space-race-owner")
 	spaceID, generation := duplicatePrivateSpace(t, adminDB, rls, teamID, ownerID)
 	privateCtx := requestctx.WithAllowedSpaces(ctx, []domain.MemorySpaceAccess{{ID: uuid.MustParse(spaceID), Kind: domain.MemorySpacePrivate}})
-	repo := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	repo := NewStore(appDB, rls)
 
 	content := "private-space exact candidate"
 	candidate := duplicateRememberInput(teamID, ownerID, "duplicate-private-space-race-candidate", content, false)
@@ -910,7 +848,7 @@ func TestRememberDuplicateEmbeddingPlanUsesCanonicalRenderedBytesAndRejectsContr
 	insertSearchTestContract(t, adminDB, rls, "duplicate-embedding-fence", 2, "exact", "")
 	teamID := createLedgerTeam(t, adminDB, rls, "duplicate-embedding-fence-team")
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "duplicate-embedding-fence-owner")
-	repo := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	repo := NewStore(appDB, rls)
 	input := duplicateRememberInput(teamID, ownerID, "duplicate-embedding-padding", "  padded rendered evidence  ", false)
 	duplicateInput := duplicateCandidateInput(input)
 	plan, err := repo.PlanRememberDuplicateEmbeddings(ctx, duplicateInput)

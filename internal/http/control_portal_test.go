@@ -984,7 +984,7 @@ func TestControlPortalTeamsIgnoreRetiredDreamingConfig(t *testing.T) {
 		ControlHTTPAddr:    "127.0.0.1:8090",
 		ControlPortalToken: "secret",
 	}, profiles, &controlKeySvc{}, nil, ControlPortalTelemetry{
-		Config: &controlAppConfigSvc{dreamingRuntimeErr: errors.New("config failed")},
+		Config: &controlAppConfigSvc{},
 	}, HealthConfig{}, nil)
 	require.NoError(t, err)
 

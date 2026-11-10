@@ -46,16 +46,16 @@ func GenerateRecallAccuracy(outputDir string) (RecallAccuracyLock, error) {
 			corpus = append(corpus, source.CorpusItem())
 		}
 	}
-	manifest := SeedManifest{SchemaVersion: SeedSchemaVersionV2, SeedID: RecallAccuracySeedID,
+	manifest := SeedManifest{SchemaVersion: SeedSchemaVersion, SeedID: RecallAccuracySeedID,
 		Description: "Frozen synthetic Recall relevance judgments; PostgreSQL baselines use synthetic embeddings, not model-quality evidence.",
 		CorpusFile:  "corpus.jsonl", CasesFile: "cases.jsonl", QrelsFile: "qrels.jsonl",
 		Counts:  map[string]int{"corpus": len(corpus), "cases": len(cases), "qrels": len(qrels)},
 		Sources: []SeedSource{{Name: "Manual synthetic recall accuracy cases", License: "Repository license", Notes: "Judgments and provenance never enter Remember inputs."}}}
-	if err := validateV2CorpusRelationships(&manifest, corpus); err != nil {
+	if err := validateEvidenceCorpus(&manifest, corpus); err != nil {
 		return lock, err
 	}
 	for _, item := range corpus {
-		if _, err := remember.ScanSubmissionWithProviderProposal([]string{item.Content}, map[string]any{"relationships": item.Relationships}); err != nil {
+		if _, err := remember.ScanSubmissionBatch([]string{item.Content}); err != nil {
 			return lock, fmt.Errorf("production admission rejected %s: %w", item.SourceDocID, err)
 		}
 	}
@@ -108,7 +108,7 @@ func GenerateRecallAccuracy(outputDir string) (RecallAccuracyLock, error) {
 	if err != nil {
 		return lock, err
 	}
-	if err = validateRunInputs(manifestPath, &manifest, corpus, cases, qrels, nil, suite, seedHash); err != nil {
+	if err = validateRunInputs(manifestPath, &manifest, corpus, cases, qrels, suite, seedHash); err != nil {
 		return lock, err
 	}
 	lock = RecallAccuracyLock{SchemaVersion: "dense-mem.eval.recall_accuracy.v1", SeedID: RecallAccuracySeedID,

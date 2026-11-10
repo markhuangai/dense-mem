@@ -1,44 +1,25 @@
 package contract
 
-const TopicProjectionPageSize = 100
+import "errors"
 
-type TopicProjectionAdmission uint8
+var ErrTopicUnavailable = errors.New("topic_unavailable")
 
-const (
-	TopicProjectionUnavailable TopicProjectionAdmission = iota
-	TopicProjectionAdmitted
-	TopicProjectionTeamBusy
-)
-
-type TopicCatalogCursor struct {
-	TeamID  string
-	TopicID string
+type TopicReadInput struct {
+	SpaceID     string
+	TopicIDs    []string
+	EvidenceIDs []string
 }
-
-type TopicCatalogEntry struct {
-	TeamID     string
+type EvidenceTopic struct {
+	ID            string
+	Version       int64
+	Name          string
+	Description   string
+	EvidenceIDs   []string
+	AssignmentIDs []string
+}
+type TopicReadResult struct {
+	Topics     []EvidenceTopic
 	SpaceID    string
 	Generation int64
-	TopicID    string
-	Version    int64
-}
-
-type TopicCatalogPage struct {
-	Topics []TopicCatalogEntry
-	Next   TopicCatalogCursor
-	More   bool
-}
-
-type TopicMembershipCursor struct {
-	AssignmentID   string
-	RelationshipID string
-}
-
-type TopicMembershipPage struct {
-	Topic           RecordView
-	RelationshipIDs []string
-	Records         []Record
-	Sources         []SourceHandle
-	Next            TopicMembershipCursor
-	More            bool
+	Rejected   map[string]string
 }

@@ -13,16 +13,9 @@ import (
 
 	"github.com/labstack/echo/v4"
 	accesspostgres "github.com/markhuangai/dense-mem/internal/access/postgres"
-	communitypostgres "github.com/markhuangai/dense-mem/internal/community/postgres"
 	"github.com/markhuangai/dense-mem/internal/config"
-	conflictassessment "github.com/markhuangai/dense-mem/internal/conflict/assessment"
 	conflictpostgres "github.com/markhuangai/dense-mem/internal/conflict/postgres"
-	conflictreview "github.com/markhuangai/dense-mem/internal/conflict/review"
 	"github.com/markhuangai/dense-mem/internal/crypto"
-	"github.com/markhuangai/dense-mem/internal/dream"
-	dreampostgres "github.com/markhuangai/dense-mem/internal/dream/postgres"
-	graphpostgres "github.com/markhuangai/dense-mem/internal/graph/postgres"
-	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
@@ -37,7 +30,6 @@ import (
 	settingspostgres "github.com/markhuangai/dense-mem/internal/settings/postgres"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
-	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
 // runtimeWorkerFailure keeps the underlying cause for control flow while exposing a bounded message to logs.
@@ -50,8 +42,7 @@ func (e runtimeWorkerFailure) Error() string { return "runtime worker failed" }
 func (e runtimeWorkerFailure) Unwrap() error { return e.cause }
 
 type aiSessionModels struct {
-	remember       string
-	conflictReview string
+	remember string
 }
 
 func aiSessionModelsForConfig(cfg *config.Config) aiSessionModels {
@@ -59,8 +50,7 @@ func aiSessionModelsForConfig(cfg *config.Config) aiSessionModels {
 		return aiSessionModels{}
 	}
 	return aiSessionModels{
-		remember:       cfg.GetAIRememberModel(),
-		conflictReview: cfg.GetAIConflictReviewModel(),
+		remember: cfg.GetAIRememberModel(),
 	}
 }
 
@@ -126,15 +116,9 @@ func RunActiveServer(
 	telemetryLifecycleRepo := operationspostgres.NewTelemetryLifecycleRepository(pgDB.GetDB(), rlsHelper)
 	recallFeedbackEventRepo := recallpostgres.NewFeedbackStore(pgDB.GetDB(), rlsHelper)
 	privateMemoryRepo := privacy.NewStore(pgDB.GetDB(), rlsHelper)
-	knowledgeStore := knowledgepostgres.NewStore(pgDB.GetDB(), rlsHelper, knowledgecontract.ConflictRuntimeConfig{
-		ReviewTTLDays: cfg.GetConflictReviewTTLDays(),
-		Timezone:      cfg.GetAppTimezone(),
-	})
-	dreamStore := dreampostgres.NewStore(pgDB.GetDB(), rlsHelper)
+	knowledgeStore := knowledgepostgres.NewStore(pgDB.GetDB(), rlsHelper)
 	conflictStore := conflictpostgres.NewStore(pgDB.GetDB(), rlsHelper, knowledgeStore)
-	graphStore := graphpostgres.NewStore(pgDB.GetDB(), rlsHelper)
 	traceStore := buildTraceStore(pgDB.GetDB(), rlsHelper)
-	conflictQueueService := buildConflictQueueApplication(conflictStore)
 	evidenceConflictService := buildEvidenceConflictApplication(conflictStore)
 	if err := checkActiveAuthority(authority); err != nil {
 		return fmt.Errorf("active boot blocked: %w", err)
@@ -146,8 +130,8 @@ func RunActiveServer(
 	ontologyStore := ontologypostgres.NewStore(pgDB.GetDB(), rlsHelper)
 	recallStore := recallpostgres.NewStore(
 		pgDB.GetDB(), rlsHelper, searchRepo,
-		searchRecallConflictReader(), recallpostgres.LoadRecallEvidenceConflictRecords,
-	).WithOntology(func() recallpostgres.OntologyReader { return ontologyStore.NewRecallReader() })
+		recallpostgres.LoadRecallEvidenceConflictRecords,
+	).WithOntology(func() recallpostgres.OntologyReader { return ontologyStore.NewRecallReader() }).WithTopics(ontologyStore.NewTopicReader()).WithTopicDiagnostics(logger)
 	operationLogDB, err := postgres.OpenOperationLogClient(startupCtx, &cfg, logger)
 	if err != nil {
 		return fmt.Errorf("open operation log sink pool: %w", err)
@@ -239,7 +223,7 @@ func RunActiveServer(
 	}
 	publicationDiagnostics := ontologyPublicationDiagnostics(rootDiagnosticLogger(logger), diagnosticProtector)
 	ontologyStore.WithPublicationDiagnostics(publicationDiagnostics)
-	telemetry, err := buildTelemetryApplication(startupCtx, cfg, appConfigService, conflictStore, telemetryLifecycleRepo, logger, diagnosticProtector)
+	telemetry, err := buildTelemetryApplication(startupCtx, cfg, appConfigService, telemetryLifecycleRepo, logger, diagnosticProtector)
 	if err != nil {
 		return fmt.Errorf("failed to build telemetry application: %w", err)
 	}
@@ -256,13 +240,8 @@ func RunActiveServer(
 	sessionModels := aiSessionModelsForConfig(&cfg)
 	assessmentLimits := assessorprovider.SemanticAssessmentLimitsForConfig(&cfg)
 	assessmentLimits.ProviderModel = sessionModels.remember
-	conflictAssessmentLimits := assessmentLimits
-	conflictAssessmentLimits.ProviderModel = sessionModels.conflictReview
 	aiHTTPClient := observability.DiagnosticHTTPClient(&nethttp.Client{Timeout: time.Duration(cfg.GetAIVerifierTimeoutSeconds()) * time.Second}, rootDiagnosticLogger(logger), diagnosticProtector)
 	aiConcurrencyGate := modelprovider.NewConcurrencyGate(config.AIVerifierMaxConcurrency(&cfg))
-	conflictTransport := assessorprovider.NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGateAndModel(&cfg, aiHTTPClient, conflictAssessmentLimits, aiConcurrencyGate, sessionModels.conflictReview)
-	verifierProvider := verifier.NewOpenAIVerifier(conflictTransport, sessionModels.conflictReview, verifier.SemanticAssessmentLimits(conflictAssessmentLimits), logger)
-	verifierProvider.SetMetrics(discoverabilityMetrics)
 	assessorProvider := assessorprovider.NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGateAndModel(&cfg, aiHTTPClient, assessmentLimits, aiConcurrencyGate, sessionModels.remember)
 	assessorProvider.SetMetrics(discoverabilityMetrics)
 	var decisions modelprovider.DecisionProvider
@@ -282,27 +261,10 @@ func RunActiveServer(
 	sessionAssessor := assessorprovider.NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGateAndModel(&cfg, aiHTTPClient, sessionAssessmentLimits, aiConcurrencyGate, sessionModels.remember)
 	sessionAssessor.SetMetrics(discoverabilityMetrics)
 	ontologyMaintenance := buildOntologyMaintenance(ontologyStore, appConfigService, assessorProvider, assessmentLimits, sessionModels.remember, time.Duration(cfg.GetAIVerifierTimeoutSeconds())*time.Second, auditService, rootSlogLogger(logger), ontologyDiagnosticCapture(operationLogService, diagnosticProtector, rootDiagnosticLogger(logger)))
-	conflictReviewRunner, err := buildConflictReviewApplication(conflictReviewApplicationDependencies{
-		Store:     conflictStore,
-		Provider:  verifierProvider,
-		Decisions: decisions, DecisionSettings: appConfigService, Logger: logger,
-		Embeddings:       retryEmbedder,
-		EmbeddingTimeout: time.Duration(cfg.GetAIEmbeddingTimeoutSeconds()) * time.Second,
-		Timezone:         cfg.GetAppTimezone(),
-		Limits:           conflictassessment.SemanticAssessmentLimits(conflictAssessmentLimits),
-		Metrics:          discoverabilityMetrics,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to build conflict review runner: %w", err)
-	}
 	applications := buildApplicationBundle(applicationCompositionDependencies{
 		Knowledge:            knowledgeStore,
-		Dream:                dreamStore,
 		RememberPersistence:  knowledgeStore,
-		GraphStore:           graphStore,
 		TraceStore:           traceStore,
-		CommunityStore:       communitypostgres.NewStore(pgDB.GetDB(), rlsHelper).WithTopics(ontologyStore.NewTopicCatalogReader(), ontologyStore.NewTopicMembershipReader(), ontologyStore.NewTopicProjectionAdmission(), ontologyStore.NewTopicProjectionRelease()),
-		RememberCatalog:      knowledgeStore,
 		Search:               searchRepo,
 		RecallSearch:         recallStore,
 		RecallFeedbackEvents: recallFeedbackEventRepo,
@@ -320,22 +282,16 @@ func RunActiveServer(
 		DiagnosticProtector:    diagnosticProtector,
 		Audit:                  auditService,
 		AppConfig:              appConfigService,
-		CorrectionTimeout:      time.Duration(cfg.GetAIEmbeddingTimeoutSeconds()) * time.Second,
-		CorrectionExecutor:     buildSemanticWriteCorrectionExecutor(openaiProvider),
 		TelemetryPrometheus:    telemetryPrometheusService,
 	})
 	rememberSvc := applications.Remember
 	recallSvc := applications.Recall
-	communitySvc := applications.Community
-	ontologyMaintenance.SetProjectionRunner(communitySvc)
 	lifecycleSvc := applications.Lifecycle
 	contextSvc := applications.Context
-	controlDreamSvc := applications.ControlDream
-	graphViewSvc := applications.Graph
 	memoryPackSvc := applications.MemoryPack
 	recallFeedbackEventService := applications.RecallFeedback
 
-	evaluationBindings, err := buildEvaluationRegistryBindings(pgDB.GetDB(), rlsHelper, communitypostgres.NewStore(pgDB.GetDB(), rlsHelper), auditService)
+	evaluationBindings, err := buildEvaluationRegistryBindings(pgDB.GetDB(), rlsHelper, auditService)
 	if err != nil {
 		return fmt.Errorf("failed to build evaluation registry bindings: %w", err)
 	}
@@ -395,15 +351,10 @@ func RunActiveServer(
 		operationLogs:            operationLogService,
 		operationLogHealth:       operationLogService.CheckReadiness,
 		usageMetrics:             usageMetricsService,
-		conflictQueue:            conflictQueueService,
 		evidenceConflicts:        evidenceConflictService,
 		recallFeedback:           recallFeedbackEventService,
-		community:                communitySvc,
 		ontologyMaintenance:      ontologyMaintenance,
 		ontologyManagement:       ontology.NewManagementService(ontologyStore, auditService).WithPublicationDiagnostics(publicationDiagnostics),
-		controlDream:             controlDreamSvc,
-		controlDreamDiagnostics:  applications.ControlDreamDiagnostics,
-		graph:                    graphViewSvc,
 		recall:                   recallSvc,
 	})
 	if err != nil {
@@ -545,9 +496,6 @@ func RunActiveServer(
 	}
 	diagnosticDone := knowledgeStore.StartRememberAttemptDiagnosticPurger(lifecycle.Context(), time.Hour, rootSlogLogger(logger))
 	lifecycle.add(managedRuntimeWorker{name: "remember diagnostics", done: diagnosticDone, shutdown: knowledgeStore.ShutdownRememberAttemptDiagnosticPurger})
-	lifecycle.start("dream diagnostics", func(ctx context.Context) {
-		dream.RunDiagnosticPurger(ctx, dreamStore, time.Hour, rootSlogLogger(logger))
-	})
 	if err := startupCheck(); err != nil {
 		return abortStartup(err)
 	}
@@ -557,8 +505,6 @@ func RunActiveServer(
 	if err := startupCheck(); err != nil {
 		return abortStartup(err)
 	}
-	conflictReviewScheduler := conflictreview.NewReviewService(teamService, conflictReviewRunner, &cfg, logger, discoverabilityMetrics)
-	lifecycle.start("conflict review", conflictReviewScheduler.Run)
 	if err := startupCheck(); err != nil {
 		return abortStartup(err)
 	}

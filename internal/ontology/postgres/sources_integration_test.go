@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	access "github.com/markhuangai/dense-mem/internal/access/postgres"
@@ -92,14 +91,13 @@ func TestOntologySharedSourceIsolationAndFreshness(t *testing.T) {
 
 func TestOntologyManagerOverridesAndRollback(t *testing.T) {
 	f := newOntologyFixture(t)
-	seed, err := f.store.SeedDefinitions(context.Background(), f.team, ontology.SeedInput{OperationKey: "seed", Limit: 20})
+	topic := testTopic("people")
+	seed, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("seed", 0, ontology.Change{Record: topic}))
 	require.NoError(t, err)
-	entity, err := f.knowledge.CreateEntity(context.Background(), knowledge.CreateEntityInput{TeamID: f.team, OwnerProfileID: f.owners[0], EntityKind: "person", CanonicalName: "Ada"})
-	require.NoError(t, err)
-	handle := ontology.SourceHandle{Kind: ontology.EntitySource, ID: entity.EntityID, Version: int64(entity.Version)}
+	handle := f.organizationEvidence(t, 0, "Ada works on Atlas.", nil)
 	dependency := f.source(t, handle)
-	classID := ontology.SeedDefinitionID(f.team, ontology.EntityClass, "person")
-	wrongOverride := ontology.Record{ID: uuid.NewString(), Kind: ontology.OverrideKind, Override: &ontology.Override{Action: ontology.SetClassification, DefinitionID: ontology.SeedDefinitionID(f.team, ontology.EntityClass, "project"), Members: []ontology.SourceHandle{handle}}, Sources: []ontology.SourceDependency{dependency}}
+	classID := topic.ID
+	wrongOverride := ontology.Record{ID: uuid.NewString(), Kind: ontology.OverrideKind, Override: &ontology.Override{Action: ontology.SetClassification, DefinitionID: uuid.NewString(), Members: []ontology.SourceHandle{handle}}, Sources: []ontology.SourceDependency{dependency}}
 	_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("wrong-class", seed.Revision, ontology.Change{Record: wrongOverride}))
 	require.ErrorIs(t, err, ontology.ErrInvalid)
 	history, err := f.store.History(f.actor(0, "manager"), f.team, 0, 20)
@@ -108,7 +106,7 @@ func TestOntologyManagerOverridesAndRollback(t *testing.T) {
 	override := ontology.Record{ID: uuid.NewString(), Kind: ontology.OverrideKind, Override: &ontology.Override{Action: ontology.SetClassification, DefinitionID: classID, Members: []ontology.SourceHandle{handle}}, Sources: []ontology.SourceDependency{dependency}}
 	pin, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("pin", seed.Revision, ontology.Change{Record: override}))
 	require.NoError(t, err)
-	other := ontology.Record{ID: uuid.NewString(), Kind: ontology.EntityClass, Definition: &ontology.Definition{Key: "engineer", Label: "Engineer", ParentID: classID, BaseEntityKind: "person"}}
+	other := ontology.Record{ID: uuid.NewString(), Kind: ontology.Topic, Definition: &ontology.Definition{Key: "engineer", Label: "Engineer", ParentID: classID}}
 	newClass, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("new-class", pin.Revision, ontology.Change{Record: other}))
 	require.NoError(t, err)
 	assignment := ontology.Record{ID: uuid.NewString(), Kind: ontology.AssignmentKind, Assignment: &ontology.Assignment{Source: handle, DefinitionID: other.ID}, Sources: []ontology.SourceDependency{dependency}}
@@ -162,7 +160,7 @@ func TestOntologyExcludesOldSharedGeneration(t *testing.T) {
 	evidence := f.evidence(t, 0, "Old generation source.")
 	handle := ontology.SourceHandle{Kind: ontology.EvidenceSource, ID: evidence.Evidence[0].FragmentID, Version: 1}
 	dependency := f.source(t, handle)
-	seed, err := f.store.SeedDefinitions(context.Background(), f.team, ontology.SeedInput{OperationKey: "seed", Limit: 20})
+	seed, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("seed", 0, ontology.Change{Record: testTopic("existing-generation")}))
 	require.NoError(t, err)
 	require.NoError(t, f.rls.WithSystemTx(context.Background(), f.admin, func(tx *gorm.DB) error {
 		return tx.Exec(`UPDATE memory_spaces SET generation=generation+1 WHERE team_id=?::uuid AND id=?::uuid`, f.team, f.space).Error
@@ -185,115 +183,9 @@ func TestOntologyExcludesOldSharedGeneration(t *testing.T) {
 	}))
 }
 
-func TestOntologyRelationshipProvenanceAndPredicateSeeds(t *testing.T) {
-	f := newOntologyFixture(t)
-	ctx := context.Background()
-	subject, err := f.knowledge.CreateEntity(ctx, knowledge.CreateEntityInput{TeamID: f.team, OwnerProfileID: f.owners[0], EntityKind: "person", CanonicalName: "Ada"})
-	require.NoError(t, err)
-	object, err := f.knowledge.CreateEntity(ctx, knowledge.CreateEntityInput{TeamID: f.team, OwnerProfileID: f.owners[0], EntityKind: "project", CanonicalName: "Atlas"})
-	require.NoError(t, err)
-	predicate, err := f.knowledge.EnsureSemanticReviewPredicateCandidate(ctx, knowledge.EnsureSemanticPredicateCandidateInput{TeamID: f.team, OwnerProfileID: f.owners[0], Predicate: "works_on", RelationshipKind: "state", SubjectKind: "person", ObjectKind: "project"})
-	require.NoError(t, err)
-	from := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	var handles []ontology.SourceHandle
-	var evidenceIDs []string
-	for index, owner := range []int{0, 1, 0} {
-		text := []string{"Ada works on Atlas.", "An independent source confirms Ada works on Atlas.", "Ada does not work on Atlas."}[index]
-		ingest := f.evidence(t, owner, text)
-		polarity := "+"
-		if index == 2 {
-			polarity = "-"
-		}
-		decision, err := f.knowledge.ApplyRelationshipDecision(ctx, knowledge.ApplyRelationshipDecisionInput{
-			TeamID: f.team, OwnerProfileID: f.owners[owner], IngestID: ingest.IngestID,
-			SubjectEntityID: subject.EntityID, PredicateKey: predicate.PredicateKey, PredicateVersion: predicate.Version,
-			ObjectEntityID: object.EntityID, Polarity: polarity, ValidFrom: &from,
-			Support: &knowledge.EvidenceSupportInput{FragmentID: ingest.Evidence[0].FragmentID, SourceGroupKey: uuid.NewString(), SpanEnd: len(text), Authority: "primary"},
-		})
-		require.NoError(t, err)
-		require.NotNil(t, decision.Relationship)
-		handles = append(handles, ontology.SourceHandle{Kind: ontology.RelationshipSource, ID: decision.Relationship.RelationshipID, Version: int64(decision.Relationship.Version)})
-		evidenceIDs = append(evidenceIDs, ingest.Evidence[0].FragmentID)
-	}
-	require.NotEqual(t, handles[0].ID, handles[1].ID)
-	snapshots, err := f.store.ReadSources(f.actor(1, "member"), f.team, handles)
-	require.NoError(t, err)
-	require.Equal(t, f.owners[0], snapshots[0].OwnerID)
-	require.Equal(t, f.owners[1], snapshots[1].OwnerID)
-	require.Equal(t, snapshots[0].MeaningKey, snapshots[1].MeaningKey)
-	require.NotEqual(t, snapshots[0].MeaningKey, snapshots[2].MeaningKey)
-	var zoned ontology.SourceSnapshot
-	require.NoError(t, f.rls.WithTeamTx(ctx, f.app, f.team, func(tx *gorm.DB) error {
-		if err := tx.Exec(`SET LOCAL TIME ZONE 'Pacific/Auckland'`).Error; err != nil {
-			return err
-		}
-		var err error
-		zoned, err = readSource(tx, scope{TeamID: f.team, SpaceID: f.space, Generation: f.generation}, handles[0])
-		return err
-	}))
-	require.Equal(t, snapshots[0], zoned)
-	before := f.canonicalSnapshot(t)
-	seed, err := f.store.SeedDefinitions(ctx, f.team, ontology.SeedInput{OperationKey: "seed-predicates", Limit: 20})
-	require.NoError(t, err)
-	conceptID := ontology.SeedDefinitionID(f.team, ontology.PredicateConcept, predicate.PredicateKey)
-	concept, err := f.store.GetRecord(ctx, f.team, conceptID, 0)
-	require.NoError(t, err)
-	require.True(t, concept.Current)
-	group := ontology.Record{ID: uuid.NewString(), Kind: ontology.RelationshipGroup, Group: &ontology.Group{Members: handles[:2]}, Sources: []ontology.SourceDependency{f.source(t, handles[0]), f.source(t, handles[1])}}
-	assignment := ontology.Record{ID: uuid.NewString(), Kind: ontology.AssignmentKind, Assignment: &ontology.Assignment{Source: ontology.SourceHandle{Kind: ontology.PredicateSource, ID: predicate.PredicateKey, Version: int64(predicate.Version)}, DefinitionID: conceptID}}
-	assignment.Sources = []ontology.SourceDependency{f.source(t, assignment.Assignment.Source)}
-	assignment.Dependencies = []ontology.RevisionRef{{ID: group.ID, Version: 1}}
-	publication, err := f.store.PublishAutomatic(ctx, f.team, testPublication("equivalent-owners", seed.Revision, ontology.Change{Record: group}, ontology.Change{Record: assignment}))
-	require.NoError(t, err)
-	view, err := f.store.GetRecord(f.actor(0, "manager"), f.team, group.ID, 0)
-	require.NoError(t, err)
-	require.True(t, view.Current)
-	require.Equal(t, handles[:2], view.Group.Members)
-	bad := group
-	bad.ID = uuid.NewString()
-	bad.Group = &ontology.Group{Members: []ontology.SourceHandle{handles[0], handles[2]}}
-	bad.Sources = []ontology.SourceDependency{f.source(t, handles[0]), f.source(t, handles[2])}
-	_, err = f.store.PublishAutomatic(ctx, f.team, testPublication("distinct-polarity", publication.Revision, ontology.Change{Record: bad}))
-	require.ErrorIs(t, err, ontology.ErrInvalid)
-	require.Equal(t, before, f.canonicalSnapshot(t))
-	separation := ontology.Record{ID: uuid.NewString(), Kind: ontology.OverrideKind, Override: &ontology.Override{Action: ontology.KeepSeparate, Members: handles[:2]}, Sources: group.Sources}
-	overridden, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("separate-group", publication.Revision, ontology.Change{Record: separation}))
-	require.NoError(t, err)
-	view, err = f.store.GetRecord(context.Background(), f.team, group.ID, 0)
-	require.NoError(t, err)
-	require.False(t, view.Current)
-	dependent, err := f.store.GetRecord(context.Background(), f.team, assignment.ID, 0)
-	require.NoError(t, err)
-	require.False(t, dependent.Current)
-	newAssignment := assignment
-	newAssignment.ID = uuid.NewString()
-	_, err = f.store.PublishAutomatic(context.Background(), f.team, testPublication("stale-group-dependency", overridden.Revision, ontology.Change{Record: newAssignment}))
-	require.ErrorIs(t, err, ontology.ErrSourceStale)
-	history, err := f.store.History(context.Background(), f.team, 0, 20)
-	require.NoError(t, err)
-	require.Len(t, history, 3)
-	require.Equal(t, before, f.canonicalSnapshot(t))
-	for index, id := range evidenceIDs {
-		owner := 0
-		if index == 1 {
-			owner = 1
-		}
-		_, err = f.knowledge.RetractEvidence(f.actor(owner, "member"), knowledge.RetractEvidenceInput{TeamID: f.team, OwnerProfileID: f.owners[owner], EvidenceIDs: []string{id}, Reason: "withdrawn fixture support", IdempotencyKey: uuid.NewString(), RequestHash: testHash(id)})
-		require.NoError(t, err)
-	}
-	view, err = f.store.GetRecord(ctx, f.team, group.ID, 0)
-	require.NoError(t, err)
-	require.False(t, view.Current)
-	_, err = f.store.ReadSources(ctx, f.team, []ontology.SourceHandle{assignment.Assignment.Source})
-	require.ErrorIs(t, err, ontology.ErrSourceStale)
-	seedAfter, err := f.store.SeedDefinitions(ctx, f.team, ontology.SeedInput{OperationKey: "seed-withdrawn", ExpectedRevision: overridden.Revision, Limit: 20})
-	require.NoError(t, err)
-	require.Empty(t, seedAfter.Records)
-}
-
 func TestOntologyUnavailableSnapshotRetainsScopedHandleForMaintenance(t *testing.T) {
 	f := newOntologyFixture(t)
-	handle := ontology.SourceHandle{Kind: ontology.RelationshipSource, ID: uuid.NewString(), Version: 1}
+	handle := ontology.SourceHandle{Kind: ontology.EvidenceSource, ID: uuid.NewString(), Version: 1}
 	require.NoError(t, f.rls.WithTeamTx(context.Background(), f.app, f.team, func(tx *gorm.DB) error {
 		fence := scope{TeamID: f.team, SpaceID: f.space, Generation: f.generation}
 		snapshot, err := readSource(tx, fence, handle)

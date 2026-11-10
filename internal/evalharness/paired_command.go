@@ -1,6 +1,7 @@
 package evalharness
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,6 +28,12 @@ func RunPairCommand(cmd PairCommand, out io.Writer) error {
 	c, err := LoadPairConfig(cmd.ConfigPath)
 	if err != nil {
 		return err
+	}
+	if cmd.Side == "baseline" && c.Baseline.Mode == PairModeRetainedBaseline {
+		switch cmd.Action {
+		case "observe", "probe", "verify-probe", "containers", "session", "tools", "claim-runtime", "runtime-lifecycle", "protocol":
+			return fmt.Errorf("retained baseline is offline only")
+		}
 	}
 	if cmd.Action == "sql-import" {
 		_, err := fmt.Fprintln(out, PairImportSnapshotSQL)
@@ -70,6 +77,25 @@ func RunPairCommand(cmd PairCommand, out io.Writer) error {
 			return err
 		}
 		if err := VerifyPairProtocol(r, response.Status, []byte(response.Body)); err != nil {
+			return err
+		}
+	case "campaign-start":
+		if c.Campaign != "issue_681_evidence_only_v5" {
+			return fmt.Errorf("campaign controller requires v5")
+		}
+		if !time.Now().Before(c.Deadline.Add(-30 * time.Minute)) {
+			return context.DeadlineExceeded
+		}
+		file, err := os.OpenFile(filepath.Join(c.OutDir, "controller.json"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+		if err != nil {
+			return err
+		}
+		encodeErr := json.NewEncoder(file).Encode(map[string]any{"campaign": c.Campaign, "launch": c.Answers.Launch, "controller_started_at": time.Now().UTC(), "deadline": c.Deadline})
+		if err := errors.Join(encodeErr, file.Sync(), file.Close()); err != nil {
+			return err
+		}
+	case "verify-answer-score":
+		if _, err := readAndVerifyAnswerScore(c, cmd.Side); err != nil {
 			return err
 		}
 	case "check-config":
@@ -123,7 +149,7 @@ func RunPairCommand(cmd PairCommand, out io.Writer) error {
 			return err
 		}
 	case "validate":
-		for _, binary := range []PairBinary{c.Baseline.Runner, c.Candidate.Runner, c.Scorer} {
+		for _, binary := range []PairBinary{c.Candidate.Runner, c.Scorer} {
 			if err := VerifyPairBinary(binary); err != nil {
 				return err
 			}
@@ -194,14 +220,14 @@ func RunPairCommand(cmd PairCommand, out io.Writer) error {
 		if observationErr != nil && !errors.Is(observationErr, ErrPairSnapshotWindowChanged) {
 			return observationErr
 		}
-		if r.Protocol == "adr0014" && cmd.Stage != "preflight" && cmd.Stage != "capacity" && (observation.WindowID == "" || observation.Policy != r.Capacity || observation.Model != r.Models.Ontology) {
+		if (r.Protocol == "adr0014" || r.Protocol == PairModeEvidenceOnlyV5) && cmd.Stage != "preflight" && cmd.Stage != "capacity" && (observation.WindowID == "" || observation.Policy != r.Capacity || observation.Model != r.Models.Ontology) {
 			return fmt.Errorf("required maintenance capacity is not active")
 		}
-		_, corpus, _, _, _, _, _, err := loadRunInputs(c.SeedManifest, c.Suite)
+		_, corpus, _, _, _, _, err := loadRunInputs(c.SeedManifest, c.Suite)
 		if err != nil {
 			return err
 		}
-		progress, err := EvaluatePairImport(r.Scope, corpus, observation.Imports, cmd.Fresh)
+		progress, err := EvaluatePairImport(r.Scope, corpus, observation.Imports, cmd.Fresh, r)
 		if err != nil {
 			return err
 		}

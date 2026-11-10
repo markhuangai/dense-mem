@@ -3,33 +3,9 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { UserPortalApp } from "./App";
 import { authorizationHeader, expectCurrentWorkspace, isRecallSequence, jsonResponse, optionValue, recallPayloadForHits, ssoSessions } from "./App.test-helpers";
-import { GraphNode, GraphSnapshot, RecallHit, UserCredential, UserSession } from "./api";
+import { RecallEvidenceContext, UserCredential, UserSession } from "./api";
 
-vi.mock("react-force-graph-2d", async () => {
-  const React = await import("react");
-  return {
-    default: React.forwardRef(function MockForceGraph(props: {
-      graphData?: { nodes?: Array<{ key: string; title: string }> };
-      onNodeClick?: (node: { key: string; title: string }) => void;
-    }, ref) {
-      React.useImperativeHandle(ref, () => ({
-        d3Force: () => ({ distance: () => undefined }),
-        d3ReheatSimulation: () => undefined,
-        zoomToFit: () => undefined,
-      }));
-      const nodes = props.graphData?.nodes ?? [];
-      return (
-        <div data-testid="force-graph">
-          {nodes.map((node) => (
-            <button key={node.key} type="button" onClick={() => props.onNodeClick?.(node)}>
-              {node.title}
-            </button>
-          ))}
-        </div>
-      );
-    }),
-  };
-});
+
 
 const baseSession: UserSession = {
   memory_access: { private: { read: true, write: true }, team_shared: { read: true, write: false } },
@@ -78,110 +54,11 @@ const memberCredential: UserCredential = {
   memory_access: { private: { read: true, write: true }, team_shared: { read: true, write: false } },
 };
 
-const recallHits: RecallHit[] = [
-  {
-    score: 0.94,
-    semantic_rank: 1,
-    keyword_rank: 1,
-    final_score: 0.94,
-    evidence: {
-      evidence_id: "evidence-1",
-      context: "Alice is working on project-x with Dense-Mem.",
-      source: "notes",
-      source_type: "manual",
-      created_at: "2026-05-02T12:00:00Z",
-    },
-    relationships: [{
-      relationship_id: "relationship-1",
-      subject: { entity_id: "entity-alice", name: "Alice" },
-      predicate: "works_on",
-      object: { value_id: "value-project-x", value: "project-x" },
-      search_state: "current",
-    }],
-  },
-  {
-    score: 0.84,
-    semantic_rank: 2,
-    keyword_rank: 2,
-    final_score: 0.84,
-    evidence: {
-      evidence_id: "evidence-2",
-      context: "Alice uses: Dense-Mem",
-      source: "knowledge graph",
-      created_at: "2026-05-02T12:00:00Z",
-    },
-  },
-  {
-    score: 0.74,
-    semantic_rank: 3,
-    keyword_rank: 3,
-    final_score: 0.74,
-    evidence: {
-      evidence_id: "evidence-3",
-      context: "Project-x uses Dense-Mem.",
-      source: "notes",
-      source_type: "manual",
-      created_at: "2026-05-02T12:00:00Z",
-    },
-  },
+const recallHits: RecallEvidenceContext[] = [
+ { evidence_id:"evidence-1",rank:1,context:"Alice is working on project-x with Dense-Mem.",source:"notes",source_type:"manual",created_at:"2026-05-02T12:00:00Z",equivalent_evidence_ids:[],equivalents_truncated:false },
+ { evidence_id:"evidence-2",rank:2,context:"Alice uses: Dense-Mem",source:"journal",created_at:"2026-05-02T12:00:00Z",equivalent_evidence_ids:[],equivalents_truncated:false },
+ { evidence_id:"evidence-3",rank:3,context:"Project-x uses Dense-Mem.",source:"notes",source_type:"manual",created_at:"2026-05-02T12:00:00Z",equivalent_evidence_ids:[],equivalents_truncated:false },
 ];
-
-const overviewGraph: GraphSnapshot = {
-  scope: "overview",
-  depth: 1,
-  limit: 80,
-  truncated: false,
-  nodes: [
-    {
-      key: "entity:entity-alice",
-      id: "entity-alice",
-      type: "entity",
-      title: "Alice",
-    },
-    {
-      key: "value:value-project-x",
-      id: "value-project-x",
-      type: "value",
-      title: "project-x",
-    },
-  ],
-  edges: [
-    { id: "edge-1", source: "entity:entity-alice", target: "value:value-project-x", relationship: "works_on", directed: true },
-  ],
-};
-
-const graphNodeDetails: Record<string, GraphNode> = {
-  "entity:entity-alice": {
-    key: "entity:entity-alice",
-    id: "entity-alice",
-    type: "entity",
-    title: "Alice",
-    body: "Person",
-    status: "active",
-    community_id: "community-1",
-    score: 0.94,
-    recorded_at: "2026-05-02T12:00:00Z",
-  },
-  "value:value-project-x": {
-    key: "value:value-project-x",
-    id: "value-project-x",
-    type: "value",
-    title: "project-x",
-    body: "project-x",
-    status: "active",
-    community_id: "community-1",
-    score: 0.88,
-    recorded_at: "2026-05-02T12:00:00Z",
-  },
-};
-
-const localGraph: GraphSnapshot = {
-  ...overviewGraph,
-  scope: "local",
-  anchor: { type: "entity", id: "entity-alice", key: "entity:entity-alice" },
-  depth: 1,
-  limit: 48,
-};
 
 beforeEach(() => {
   sessionStorage.clear();
@@ -252,177 +129,21 @@ describe("UserPortalApp", () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith("/ui/api/telemetry"))).toBe(false);
   });
 
-  it("filters recall results and updates the inspector selection", async () => {
+  it("filters exact Evidence and selects its details", async () => {
     mockUserFetch(baseSession, [], { recallHits });
     sessionStorage.setItem("denseMem.userApiKey", "dm_read");
-
     render(<UserPortalApp />);
     await expectCurrentWorkspace("Research Team");
-    await userEvent.type(screen.getByLabelText("Keyword"), "project");
-    await userEvent.click(screen.getByRole("button", { name: "Search" }));
-
-    const resultList = await screen.findByRole("listbox", { name: "Recall result list" });
-    expect(within(resultList).getAllByRole("option")).toHaveLength(3);
-    expect(screen.queryByRole("button", { name: /star/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /more actions/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Add to collection" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Create claim" })).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Open details" }));
-    expect(screen.getByLabelText("Inspector")).toHaveTextContent("Evidence");
-    await userEvent.click(screen.getByRole("button", { name: "Close details panel" }));
-
-    const claimResult = within(resultList).getAllByText("Alice uses: Dense-Mem")[0]?.closest("[role='option']");
-    expect(claimResult).not.toBeNull();
-    await userEvent.click(claimResult as HTMLElement);
-    expect(screen.getByLabelText("Inspector")).toHaveTextContent("Evidence");
-    expect(screen.getByLabelText("Inspector")).toHaveTextContent("Alice uses: Dense-Mem");
-
-    await userEvent.click(screen.getByRole("button", { name: "Close details panel" }));
-    await userEvent.click(screen.getByRole("button", { name: "Filters" }));
-    await userEvent.click(screen.getByRole("checkbox", { name: /evidence/i }));
-    expect(screen.getByText("No recall results")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("checkbox", { name: /evidence/i }));
-    expect(screen.getByRole("listbox", { name: "Recall result list" })).toHaveTextContent("Alice uses: Dense-Mem");
-
-    await userEvent.keyboard("{Escape}");
-    await userEvent.click(screen.getByRole("button", { name: "Open details" }));
-    await userEvent.click(screen.getByRole("tab", { name: "Recall" }));
-    expect(screen.getByLabelText("Inspector")).toHaveTextContent("Final score");
-    await userEvent.click(screen.getByRole("button", { name: "Close details panel" }));
-    await userEvent.click(screen.getByRole("button", { name: "Sort by date" }));
-    expect(screen.getByRole("button", { name: "Sort by relevance" })).toHaveTextContent("Sort: Date");
-    await userEvent.click(screen.getByRole("button", { name: "Use compact density" }));
-    expect(screen.getByRole("button", { name: "Use comfortable density" })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.queryByLabelText("Inspector")).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Open details" }));
-    expect(screen.getByLabelText("Inspector")).toBeInTheDocument();
-  });
-
-  it("opens the graph tab and loads the overview graph", async () => {
-    const fetchMock = mockUserFetch(baseSession, [], { graphSnapshot: overviewGraph });
-    sessionStorage.setItem("denseMem.userApiKey", "dm_read");
-
-    render(<UserPortalApp />);
-    await expectCurrentWorkspace("Research Team");
-    await userEvent.click(screen.getByRole("link", { name: "Graph" }));
-
-    expect(await screen.findByLabelText("Knowledge graph")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Graph controls" }));
-    const controls = screen.getByLabelText("Graph controls");
-    expect(within(controls).getByLabelText("Relationship limit")).toHaveValue(80);
-    expect((await screen.findAllByText("Alice")).length).toBeGreaterThanOrEqual(1);
-    await userEvent.keyboard("{Escape}");
-    await userEvent.click(screen.getByRole("button", { name: "Open details" }));
-    expect(screen.getByLabelText("Graph totals")).toHaveTextContent("2");
-    expect(screen.getByLabelText("Graph inspector")).toHaveTextContent("Select a node");
-    await userEvent.click(screen.getByRole("button", { name: "Close details panel" }));
-    await userEvent.click(within(screen.getByTestId("force-graph")).getByRole("button", { name: "Alice" }));
-    await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/ui/api/node-detail?type=entity&id=entity-alice", expect.any(Object));
-    });
-    expect(screen.getByLabelText("Graph inspector")).toHaveTextContent("community-1");
-    expect(screen.getByLabelText("Graph inspector")).toHaveTextContent("0.940");
-    await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith(
-        "/ui/api/graph?scope=overview&types=entity%2Cvalue&depth=2&limit=80",
-        expect.any(Object),
-      );
-    });
-    await userEvent.keyboard("{Escape}");
-    await userEvent.click(screen.getByRole("button", { name: "Graph controls" }));
-    await userEvent.click(within(screen.getByLabelText("Graph controls")).getByRole("button", { name: "Refresh" }));
-    await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith(
-        "/ui/api/graph?scope=overview&types=entity%2Cvalue&depth=2&limit=80",
-        expect.any(Object),
-      );
-    });
-  });
-
-  it("refreshes selected graph node details when the graph reloads", async () => {
-    const refreshedDetails = {
-      ...graphNodeDetails,
-      "entity:entity-alice": {
-        ...graphNodeDetails["entity:entity-alice"],
-        body: "project-y",
-        community_id: "community-2",
-        score: 0.67,
-      },
-    };
-    const fetchMock = mockUserFetch(baseSession, [], { graphSnapshot: [overviewGraph, overviewGraph], graphNodeDetails: [graphNodeDetails, refreshedDetails] });
-    sessionStorage.setItem("denseMem.userApiKey", "dm_read");
-
-    render(<UserPortalApp />);
-    await expectCurrentWorkspace("Research Team");
-    await userEvent.click(screen.getByRole("link", { name: "Graph" }));
-    await userEvent.click(screen.getByRole("button", { name: "Graph controls" }));
-    const controls = await screen.findByLabelText("Graph controls");
-
-    await userEvent.click(within(screen.getByTestId("force-graph")).getByRole("button", { name: "Alice" }));
-    await waitFor(() => {
-      expect(screen.getByLabelText("Graph inspector")).toHaveTextContent("0.940");
-    });
-
-    await userEvent.keyboard("{Escape}");
-    await userEvent.click(screen.getByRole("button", { name: "Graph controls" }));
-    await userEvent.click(within(screen.getByLabelText("Graph controls")).getByRole("button", { name: "Refresh" }));
-
-    await waitFor(() => {
-      expect(fetchMock.mock.calls.filter(([url]) => String(url).startsWith("/ui/api/node-detail?type=entity&id=entity-alice"))).toHaveLength(2);
-    });
-    await userEvent.keyboard("{Escape}");
-    await userEvent.click(screen.getByRole("button", { name: "Open details" }));
-    expect(screen.getByLabelText("Graph inspector")).toHaveTextContent("community-2");
-    expect(screen.getByLabelText("Graph inspector")).toHaveTextContent("0.670");
-  });
-
-  it("blocks graph refresh when every type filter is disabled", async () => {
-    const fetchMock = mockUserFetch(baseSession, [], { graphSnapshot: overviewGraph });
-    sessionStorage.setItem("denseMem.userApiKey", "dm_read");
-
-    render(<UserPortalApp />);
-    await expectCurrentWorkspace("Research Team");
-    await userEvent.click(screen.getByRole("link", { name: "Graph" }));
-    await userEvent.click(screen.getByRole("button", { name: "Graph controls" }));
-    const controls = await screen.findByLabelText("Graph controls");
-    await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith(
-        "/ui/api/graph?scope=overview&types=entity%2Cvalue&depth=2&limit=80",
-        expect.any(Object),
-      );
-    });
-    const graphCallCount = () => fetchMock.mock.calls.filter(([url]) => String(url).startsWith("/ui/api/graph")).length;
-    const beforeDisabledRefresh = graphCallCount();
-
-    for (const label of ["Entity", "Value"]) {
-      await userEvent.click(within(controls).getByRole("checkbox", { name: label }));
-    }
-
-    const refresh = within(controls).getByRole("button", { name: "Refresh" });
-    expect(refresh).toBeDisabled();
-    await userEvent.click(refresh);
-    expect(graphCallCount()).toBe(beforeDisabledRefresh);
-  });
-
-  it("loads a local graph from the recall inspector", async () => {
-    const fetchMock = mockUserFetch(baseSession, [], { recallHits, graphSnapshot: localGraph });
-    sessionStorage.setItem("denseMem.userApiKey", "dm_read");
-
-    render(<UserPortalApp />);
-    await expectCurrentWorkspace("Research Team");
-    await userEvent.type(screen.getByLabelText("Keyword"), "project");
-    await userEvent.click(screen.getByRole("button", { name: "Search" }));
-    await screen.findByRole("listbox", { name: "Recall result list" });
-    await userEvent.click(screen.getByRole("button", { name: "Open details" }));
-    await userEvent.click(screen.getByRole("tab", { name: "Graph" }));
-
-    expect(await screen.findByTestId("force-graph")).toHaveTextContent("Alice");
-    await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith(
-        "/ui/api/graph?scope=local&types=entity%2Cvalue&anchor_type=entity&anchor_id=entity-alice&depth=2&limit=48",
-        expect.any(Object),
-      );
-    });
+    expect(screen.queryByRole("link",{name:"Graph"})).not.toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText("Keyword"),"project");
+    await userEvent.click(screen.getByRole("button",{name:"Search"}));
+    const list=await screen.findByRole("listbox",{name:"Recall result list"});
+    expect(within(list).getAllByRole("option")).toHaveLength(3);
+    await userEvent.selectOptions(screen.getByLabelText("Source"),"journal");
+    const option=within(list).getByRole("option");
+    expect(option).toHaveTextContent("Alice uses: Dense-Mem");
+    await userEvent.click(option);
+    expect(screen.getByLabelText("Inspector")).toHaveTextContent("evidence-2");
   });
 
   it("resets stale source filters after a new recall search", async () => {
@@ -434,17 +155,14 @@ describe("UserPortalApp", () => {
     await userEvent.type(screen.getByLabelText("Keyword"), "project");
     await userEvent.click(screen.getByRole("button", { name: "Search" }));
 
-    await userEvent.click(screen.getByRole("button", { name: "Filters" }));
     await userEvent.selectOptions(await screen.findByLabelText("Source"), "notes");
     expect(screen.getByRole("listbox", { name: "Recall result list" })).toHaveTextContent("Alice is working on project-x with Dense-Mem.");
     expect(screen.getByRole("listbox", { name: "Recall result list" })).not.toHaveTextContent("Alice uses: Dense-Mem");
 
-    await userEvent.keyboard("{Escape}");
     await userEvent.clear(screen.getByLabelText("Keyword"));
     await userEvent.type(screen.getByLabelText("Keyword"), "alice");
     await userEvent.click(screen.getByRole("button", { name: "Search" }));
 
-    await userEvent.click(screen.getByRole("button", { name: "Filters" }));
     expect(await screen.findByLabelText("Source")).toHaveValue("all");
     expect(screen.getByRole("listbox", { name: "Recall result list" })).toHaveTextContent("Alice is working on project-x with Dense-Mem.");
   });
@@ -618,7 +336,7 @@ describe("UserPortalApp", () => {
     await userEvent.click(screen.getByRole("button", { name: "Choose team" }));
     await userEvent.click(screen.getByRole("button", { name: secondTeam.name }));
     await expectCurrentWorkspace(secondTeam.name);
-    release!(jsonResponse({ data: recallPayloadForHits([{ evidence: { evidence_id: "old", context: "Old team result" } }] as RecallHit[]) }));
+    release!(jsonResponse({ data: recallPayloadForHits([{ evidence_id:"old",context:"Old team result",rank:1,equivalent_evidence_ids:[],equivalents_truncated:false }]) }));
     await waitFor(() => expect(screen.queryByText("Old team result")).not.toBeInTheDocument());
     expect(screen.getByLabelText("Keyword")).toHaveValue("");
     expect(window.location.href).not.toContain("private");
@@ -672,7 +390,6 @@ describe("UserPortalApp", () => {
     expect(teamSelect).toHaveTextContent(initial.team.name);
     await userEvent.click(screen.getByRole("button", { name: "Connect" }));
     expect(screen.getByText(`https://memory.example.test/teams/${initial.team.id}/mcp`)).toBeInTheDocument();
-    await userEvent.keyboard("{Escape}");
 
     await userEvent.click(teamSelect);
     await userEvent.click(screen.getByRole("button", { name: secondTeam.name }));
@@ -680,7 +397,6 @@ describe("UserPortalApp", () => {
     await expectCurrentWorkspace("Analytics Team");
     await userEvent.click(screen.getByRole("button", { name: "Connect" }));
     expect(screen.getByText(`https://memory.example.test/teams/${secondTeam.id}/mcp`)).toBeInTheDocument();
-    await userEvent.keyboard("{Escape}");
     expect(screen.queryByRole("link", { name: "My credentials" })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Team" })).toBeInTheDocument();
     await waitFor(() => {
@@ -809,12 +525,10 @@ describe("UserPortalApp", () => {
     expect(screen.getByRole("button", { name: /regenerate key/i })).toBeDisabled();
   });
 });
-function mockUserFetch(session: UserSession, credentials: UserCredential[] = [], options: { recallHits?: RecallHit[] | RecallHit[][]; graphSnapshot?: GraphSnapshot | GraphSnapshot[]; graphNodeDetails?: Record<string, GraphNode> | Record<string, GraphNode>[] } = {}) {
+function mockUserFetch(session: UserSession, credentials: UserCredential[] = [], options: { recallHits?: RecallEvidenceContext[] | RecallEvidenceContext[][] } = {}) {
   let currentTeam = session.team;
   let currentCredentials = credentials;
   let recallCallCount = 0;
-  let graphCallCount = 0;
-  let graphNodeDetailCallCount = 0;
   let portalSessionCreated = false;
   const rotatedSession = {
     ...session,
@@ -852,15 +566,6 @@ function mockUserFetch(session: UserSession, credentials: UserCredential[] = [],
           credential: rotatedSession.credential,
         },
       });
-    }
-    if (url.startsWith("/ui/api/node-detail") && method === "GET") {
-      const params = new URLSearchParams(url.split("?")[1] ?? "");
-      const key = `${params.get("type")}:${params.get("id")}`;
-      const details = optionValue(options.graphNodeDetails ?? graphNodeDetails, graphNodeDetailCallCount++);
-      return jsonResponse({ data: details[key] ?? graphNodeDetails["entity:entity-alice"] });
-    }
-    if (url.startsWith("/ui/api/graph") && method === "GET") {
-      return jsonResponse({ data: optionValue(options.graphSnapshot ?? overviewGraph, graphCallCount++) });
     }
     if (url === "/ui/api/team" && method === "PATCH") {
       const body = JSON.parse(String(init?.body));
@@ -968,7 +673,7 @@ function mockSSOUserFetch(initial: UserSession, switched: UserSession, options: 
       return jsonResponse({ data: { status: "signed_out" } });
     }
     if (url.startsWith("/ui/api/recall")) {
-      return jsonResponse({ data: [] });
+      return jsonResponse({ data: recallPayloadForHits([]) });
     }
     return jsonResponse({ message: "not found" }, 404);
   });

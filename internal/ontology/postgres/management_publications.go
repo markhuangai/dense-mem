@@ -127,7 +127,7 @@ func (s *Store) RollbackManagementPublication(ctx context.Context, teamID, id st
 		if _, _, err = validateManagementPublication(tx, fence, publication); err != nil {
 			return err
 		}
-		result, err = s.commitPublication(tx, fence, publication, "rollback", owner, hash, "", "")
+		result, err = s.commitPublication(tx, fence, publication, "rollback", owner, hash, "")
 		if err != nil {
 			return err
 		}

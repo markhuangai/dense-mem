@@ -42,7 +42,7 @@ func (r *Store) CreateIngestForTest(ctx context.Context, input CreateIngestInput
 			if err := rows.Err(); err != nil {
 				return err
 			}
-			result = &EvidenceIngestResult{TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IngestID: ingestID, Existing: true, Proposal: input.Proposal, Evidence: evidence}
+			result = &EvidenceIngestResult{TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IngestID: ingestID, Existing: true, Evidence: evidence}
 			return nil
 		}
 		evidence := make([]EvidenceFragment, 0, len(input.Evidence))
@@ -80,7 +80,7 @@ func (r *Store) CreateIngestForTest(ctx context.Context, input CreateIngestInput
 		if err := applyEvidenceSupersessions(ctx, tx, input, ingestID, evidence); err != nil {
 			return err
 		}
-		result = &EvidenceIngestResult{TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IngestID: ingestID, Existing: false, Proposal: input.Proposal, Evidence: evidence}
+		result = &EvidenceIngestResult{TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IngestID: ingestID, Existing: false, Evidence: evidence}
 		return nil
 	})
 	if err != nil {

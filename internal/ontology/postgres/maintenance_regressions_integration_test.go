@@ -93,7 +93,7 @@ func TestOntologyMaintenanceRunCompletionUsesActiveScope(t *testing.T) {
 func TestOntologyMaintenanceQueuedMarkerCoalescingAndConsumption(t *testing.T) {
 	f := newOrganizationFixture(t)
 	ctx := context.Background()
-	source := maintenanceEntity(t, f, "Queued marker source")
+	source := maintenanceEvidence(t, f, "Queued marker source")
 	config := maintenanceSettings(t, f)
 	window := maintenanceWindow(t, f, config)
 	turn, err := f.store.ClaimMaintenanceTurn(ctx, window.ID, time.Now().UTC(), time.Minute)
@@ -105,14 +105,14 @@ func TestOntologyMaintenanceQueuedMarkerCoalescingAndConsumption(t *testing.T) {
 	}
 	mutate := func(ctx context.Context, revision int) error {
 		return f.rls.WithTeamTx(ctx, f.app, f.team, func(tx *gorm.DB) error {
-			return tx.Exec(`UPDATE entity_records SET identity_context=jsonb_build_object('queued_revision',?::integer),version=version+1 WHERE team_id=?::uuid AND entity_id=?::uuid`, revision, f.team, source.ID).Error
+			return tx.Exec(`SELECT dense_mem_enqueue_ontology_marker(?::uuid,?::uuid,?,'evidence_fragments',?,'evidence',?)`, f.team, f.space, f.generation, source.ID, source.ID).Error
 		})
 	}
 	marker := func() (int64, string) {
 		t.Helper()
 		var sequence int64
 		var cursor string
-		require.NoError(t, f.admin.Raw(`SELECT marker_sequence,cursor FROM ontology_maintenance_markers WHERE team_id=?::uuid AND anchor_kind='entity_records' AND anchor_id=?`, f.team, source.ID).Row().Scan(&sequence, &cursor))
+		require.NoError(t, f.admin.Raw(`SELECT marker_sequence,cursor FROM ontology_maintenance_markers WHERE team_id=?::uuid AND anchor_kind='evidence_fragments' AND anchor_id=?`, f.team, source.ID).Row().Scan(&sequence, &cursor))
 		return sequence, cursor
 	}
 	require.NoError(t, mutate(ctx, 1))
@@ -127,7 +127,7 @@ func TestOntologyMaintenanceQueuedMarkerCoalescingAndConsumption(t *testing.T) {
 	require.NoError(t, f.admin.Raw(`SELECT last_value FROM ontology_maintenance_marker_seq`).Row().Scan(&coalescedSequence))
 	require.Equal(t, allocatedSequence, coalescedSequence, "coalesced writes avoid allocating a global queue sequence")
 	require.NoError(t, f.rls.WithTeamTx(ctx, f.app, f.team, func(tx *gorm.DB) error {
-		return tx.Exec(`UPDATE ontology_maintenance_markers SET cursor=? WHERE team_id=?::uuid AND anchor_kind='entity_records' AND anchor_id=?`, ontology.SourceKey(source), f.team, source.ID).Error
+		return tx.Exec(`UPDATE ontology_maintenance_markers SET cursor=? WHERE team_id=?::uuid AND anchor_kind='evidence_fragments' AND anchor_id=?`, ontology.SourceKey(source), f.team, source.ID).Error
 	}))
 	require.NoError(t, mutate(ctx, 3))
 	reset, cursor := marker()
@@ -138,14 +138,14 @@ func TestOntologyMaintenanceQueuedMarkerCoalescingAndConsumption(t *testing.T) {
 	started, finished := make(chan struct{}), make(chan error, 1)
 	require.NoError(t, f.rls.WithTeamTx(ctx, f.app, f.team, func(tx *gorm.DB) error {
 		var current maintenanceMarker
-		if err := tx.Raw(`SELECT anchor_kind,anchor_id,target_kind,target_id,marker_sequence,cursor FROM ontology_maintenance_markers WHERE team_id=?::uuid AND anchor_kind='entity_records' AND anchor_id=? FOR UPDATE`, f.team, source.ID).Row().Scan(&current.AnchorKind, &current.AnchorID, &current.TargetKind, &current.TargetID, &current.Sequence, &current.Cursor); err != nil {
+		if err := tx.Raw(`SELECT anchor_kind,anchor_id,target_kind,target_id,marker_sequence,cursor FROM ontology_maintenance_markers WHERE team_id=?::uuid AND anchor_kind='evidence_fragments' AND anchor_id=? FOR UPDATE`, f.team, source.ID).Row().Scan(&current.AnchorKind, &current.AnchorID, &current.TargetKind, &current.TargetID, &current.Sequence, &current.Cursor); err != nil {
 			return err
 		}
 		go func() { close(started); finished <- mutate(writerCtx, 4) }()
 		<-started
 		require.Eventually(t, func() bool {
 			var blocked bool
-			err := f.admin.Raw(`SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' AND query LIKE '%queued_revision%' AND pid<>pg_backend_pid())`).Row().Scan(&blocked)
+			err := f.admin.Raw(`SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' AND query LIKE '%dense_mem_enqueue_ontology_marker%' AND pid<>pg_backend_pid())`).Row().Scan(&blocked)
 			return err == nil && blocked
 		}, 3*time.Second, 10*time.Millisecond)
 		fence := scope{TeamID: f.team, SpaceID: f.space, Generation: f.generation}
@@ -160,8 +160,8 @@ func TestOntologyMaintenanceQueuedMarkerCoalescingAndConsumption(t *testing.T) {
 	require.Empty(t, cursor)
 	require.NoError(t, f.store.discoverMaintenanceError(ctx, *turn, ontology.MaintenancePageSize))
 	var version int64
-	require.NoError(t, f.admin.Raw(`SELECT source_version FROM ontology_maintenance_sources WHERE team_id=?::uuid AND source_kind='entity' AND source_id=?`, f.team, source.ID).Row().Scan(&version))
-	require.EqualValues(t, 5, version, "the write blocked by consumption must be rediscovered")
+	require.NoError(t, f.admin.Raw(`SELECT source_version FROM ontology_maintenance_sources WHERE team_id=?::uuid AND source_kind='evidence' AND source_id=?`, f.team, source.ID).Row().Scan(&version))
+	require.EqualValues(t, 1, version, "Evidence retains its immutable source version after rediscovery")
 }
 
 func TestOntologyMaintenanceDefinitionMarkersTargetReceiptsAndVocabulary(t *testing.T) {
@@ -435,17 +435,18 @@ func TestOntologyMaintenanceCompetingAdmissionAndCrashRecovery(t *testing.T) {
 
 func TestOntologyMaintenanceClaimRefreshesCurrentVersion(t *testing.T) {
 	f := newOrganizationFixture(t)
-	source := maintenanceEntity(t, f, "Atlas")
-	config := maintenanceSettings(t, f)
-	window := maintenanceWindow(t, f, config)
+	source := maintenanceEvidence(t, f, "Atlas")
+	window := maintenanceWindow(t, f, maintenanceSettings(t, f))
 	turn, claim := maintenanceClaim(t, f, window)
+	before := f.source(t, source).Fingerprint
 	require.NoError(t, f.rls.WithTeamTx(context.Background(), f.app, f.team, func(tx *gorm.DB) error {
-		if err := tx.Exec(`UPDATE entity_records SET version=version+1,identity_context='{"new":true}' WHERE team_id=?::uuid AND entity_id=?::uuid`, f.team, source.ID).Error; err != nil {
+		if err := appendMaintenanceOccurrence(tx, f, source); err != nil {
 			return err
 		}
 		return collectMaintenanceRevisions(tx, scope{TeamID: f.team, SpaceID: f.space, Generation: f.generation}, claim)
 	}))
-	require.EqualValues(t, source.Version+1, claim.Sources[0].Version)
+	require.Equal(t, source, claim.Sources[0])
+	require.NotEqual(t, before, f.source(t, source).Fingerprint)
 	require.NoError(t, f.store.ReleaseMaintenanceTurn(context.Background(), *turn))
 }
 
@@ -456,10 +457,10 @@ func assertNativeMaintenanceSeek(t *testing.T, f *ontologyFixture, cursor string
 		if err := tx.Exec(`SET LOCAL enable_seqscan=off`).Error; err != nil {
 			return err
 		}
-		return tx.Raw(`EXPLAIN(ANALYZE,FORMAT JSON) `+maintenanceEntityPageSQL, f.team, f.space, f.generation, cursor, 101).Row().Scan(&plan)
+		return tx.Raw(`EXPLAIN(ANALYZE,FORMAT JSON) `+maintenanceEvidencePageSQL, f.team, f.space, f.generation, cursor, 101).Row().Scan(&plan)
 	}))
 	require.Contains(t, string(plan), "Index Cond")
-	require.Contains(t, string(plan), "entity_id >")
-	require.NotContains(t, string(plan), "((entity_id)::text)")
+	require.Contains(t, string(plan), "fragment_id >")
+	require.NotContains(t, string(plan), "((fragment_id)::text)")
 	require.False(t, strings.Contains(string(plan), "Seq Scan"))
 }

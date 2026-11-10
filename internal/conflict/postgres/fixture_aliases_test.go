@@ -1,37 +1,19 @@
 package postgres
 
 import (
-	"github.com/markhuangai/dense-mem/internal/domain"
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
 )
 
-const (
-	ConflictReviewOutcomeResolve = domain.ConflictReviewOutcomeResolve
-	ConflictReviewOutcomeOverdue = domain.ConflictReviewOutcomeOverdue
-	ConflictReviewStageDueMajority = domain.ConflictReviewStageDueMajority
-)
-
 type EvidenceInput = knowledgepostgres.EvidenceInput
-type ApplyRelationshipDecisionInput = knowledgepostgres.ApplyRelationshipDecisionInput
 type SynchronousRememberCommitInput = knowledgepostgres.SynchronousRememberCommitInput
 type SynchronousRememberCommitResult = knowledgepostgres.SynchronousRememberCommitResult
 type EvidenceSecurityResult = knowledgepostgres.EvidenceSecurityResult
 type CommitSubmissionAssessmentInput = knowledgepostgres.CommitSubmissionAssessmentInput
 type SubmissionAssessmentItemInput = knowledgepostgres.SubmissionAssessmentItemInput
-type SubmissionAssessmentEntityResolutionInput = knowledgepostgres.SubmissionAssessmentEntityResolutionInput
-type SubmissionAssessmentRelationshipObservationInput = knowledgepostgres.SubmissionAssessmentRelationshipObservationInput
-type SubmissionAssessmentKnownEvidenceInput = knowledgepostgres.SubmissionAssessmentKnownEvidenceInput
 type EvidenceConflictPositionInput = knowledgepostgres.EvidenceConflictPositionInput
 type EvidenceConflictResultInput = knowledgepostgres.EvidenceConflictResultInput
-type EvidenceSupportInput = knowledgepostgres.EvidenceSupportInput
-type SemanticEntityResolutionInput = knowledgepostgres.SemanticEntityResolutionInput
-type SemanticRelationshipDecisionInput = knowledgepostgres.SemanticRelationshipDecisionInput
-type SubmissionRelationshipResultInput = knowledgepostgres.SubmissionRelationshipResultInput
-type RelationshipCorrectionEntityPatch = knowledgepostgres.RelationshipCorrectionEntityPatch
-type RelationshipCorrectionPatch = knowledgepostgres.RelationshipCorrectionPatch
-type RelationshipCorrectionSupport = knowledgepostgres.RelationshipCorrectionSupport
 type RememberDuplicateResolution = knowledgepostgres.RememberDuplicateResolution
 type InlineEmbeddingPlan = knowledgepostgres.InlineEmbeddingPlan
 type InlineEmbeddingResult = knowledgepostgres.InlineEmbeddingResult

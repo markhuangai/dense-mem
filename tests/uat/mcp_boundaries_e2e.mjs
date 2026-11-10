@@ -13,6 +13,7 @@ const feedbackTool = "submit_recall_session_feedback";
 const dreamTools = ["list_dreams", "get_dream", "resolve_dream_feedback"];
 const activeEvalTools = ["eval_list_knowledge_refs", "eval_run_recall_case"];
 const removedTools = [
+  "correct_relationship",
   "eval_run_dream_cycle",
   "correct_entity_resolution",
   "eval_get_manifest",
@@ -24,10 +25,9 @@ const removedTools = [
 let rpcID = 0;
 
 await updateRecallFeedback(false);
-await updateTeamDreaming(false);
 
 let names = await listedToolNames();
-for (const required of ["remember", "retract_evidence", "correct_relationship", "recall_memory", "trace_memory", "export_memory_pack"]) {
+for (const required of ["remember", "retract_evidence", "recall_memory", "trace_memory", "export_memory_pack"]) {
   assertHas(names, required, "production core tool");
 }
 for (const absent of [feedbackTool, ...dreamTools, ...activeEvalTools, ...removedTools]) {
@@ -53,17 +53,9 @@ if ((recall.suggested_actions ?? []).some((item) => item?.tool === feedbackTool)
 const voluntary = await mcpSuccess(feedbackTool, { recalls: [{ recall_event_id: recall.recall_id, used: false, answer_supported: false, quality: "medium" }] });
 if (!voluntary.recorded) throw new Error("voluntary recall feedback was not recorded");
 if ((recall.suggested_actions ?? []).some((item) => item?.tool === "resolve_dream_feedback")) {
-  throw new Error("recall suggested Dream feedback while team Dreaming was disabled");
+  throw new Error("recall suggested a retired Dream action");
 }
 
-for (const enabled of [true, false]) {
-  await updateTeamDreaming(enabled);
-  names = await listedToolNames();
-  for (const tool of dreamTools) {
-    assertMissing(names, tool, "retired Dream tool");
-    await assertToolNotFound(tool, {});
-  }
-}
 if (Object.hasOwn(recall, "related_hypotheses")) throw new Error("Recall exposed retired hypotheses");
 for (const path of ["/ui/api/dreams", "/ui/api/dreaming/status", "/ui/api/dreaming/runs"]) {
   const response = await fetch(`${userURL}${path}`, { headers: { Authorization: `Bearer ${apiKey}` } });
@@ -241,14 +233,7 @@ async function assertCancelledTransportOutcome(markerFrom) {
           content: `Dense-Mem stores durable memory in PostgreSQL. [fixture:transport-cancel] [fixture-fault:embedding-cancel] ${suffix}`,
           source_type: "manual",
         }],
-        relationships: [{
-          ref: "durable-store",
-          subject: { name: "Dense-Mem", entity_kind: "project" },
-          predicate: { proposed_key: "stores_memory_in" },
-          object: { value: { type: "string", value: "PostgreSQL" } },
-          polarity: "+",
-          evidence_indices: [0],
-        }],
+
         idempotency_key: `mcp-boundaries-transport-cancel-${suffix}`,
       },
       _meta: { "io.modelcontextprotocol/protocolVersion": "2026-07-28", "io.modelcontextprotocol/clientCapabilities": {} },
@@ -339,13 +324,6 @@ async function updateRecallFeedback(enabled) {
       { key: "RECALL_FEEDBACK_ENABLED", value: String(enabled) },
       { key: "RECALL_FEEDBACK_RETENTION_DAYS", value: "30" },
     ] }),
-  });
-}
-
-async function updateTeamDreaming(enabled) {
-  await controlJSON(`/teams/${teamID}`, {
-    method: "PATCH",
-    body: JSON.stringify({ config: { dreaming: { enabled } } }),
   });
 }
 

@@ -123,9 +123,6 @@ func ValidateDefinitions(catalog map[string]Record) error {
 			if reason != "" {
 				return &PublicationRejection{Cause: fmt.Errorf("%w: missing parent, hierarchy cycle or depth bound", ErrInvalid), Reason: reason, RecordID: record.ID, ParentID: parentID, Expected: string(record.Kind), Observed: string(parent.Kind)}
 			}
-			if record.Kind == EntityClass && parent.Definition.BaseEntityKind != record.Definition.BaseEntityKind {
-				return &PublicationRejection{Cause: fmt.Errorf("%w: parent class has a different entity kind", ErrInvalid), Reason: "class_parent_kind", RecordID: record.ID, ParentID: parentID, Expected: record.Definition.BaseEntityKind, Observed: parent.Definition.BaseEntityKind}
-			}
 			seen[parentID] = true
 			parentID = parent.Definition.ParentID
 		}
@@ -220,8 +217,7 @@ func compatibleAssignment(source SourceHandle, definition Record) error {
 	if definition.Definition == nil {
 		return fmt.Errorf("%w: assignment target must be a definition", ErrInvalid)
 	}
-	valid := (definition.Kind == EntityClass && source.Kind == EntitySource) || (definition.Kind == PredicateConcept && source.Kind == PredicateSource) ||
-		(definition.Kind == Topic && (source.Kind == EvidenceSource || source.Kind == RelationshipSource))
+	valid := definition.Kind == Topic && source.Kind == EvidenceSource
 	if !valid {
 		return fmt.Errorf("%w: incompatible assignment source kind", ErrInvalid)
 	}
@@ -244,16 +240,6 @@ func validateRecordSources(record Record, snapshots map[string]SourceSnapshot, c
 			return fmt.Errorf("%w: required source dependency missing", ErrInvalid)
 		}
 	}
-	if record.Assignment != nil {
-		if err := compatibleClass(record.Assignment.Source, catalog[record.Assignment.DefinitionID], snapshots); err != nil {
-			return err
-		}
-	}
-	if record.Override != nil && record.Override.Action == SetClassification {
-		if err := compatibleClass(record.Override.Members[0], catalog[record.Override.DefinitionID], snapshots); err != nil {
-			return err
-		}
-	}
 	if record.Group != nil {
 		if record.Group.AssessmentID != "" {
 			return AssessedGroupCompatible(record, snapshots)
@@ -262,33 +248,23 @@ func validateRecordSources(record Record, snapshots map[string]SourceSnapshot, c
 	}
 	if record.Override != nil && (record.Override.Action == GroupTogether || record.Override.Action == KeepSeparate) {
 		kind := EvidenceGroup
-		if record.Override.Members[0].Kind == RelationshipSource {
-			kind = RelationshipGroup
-		}
 		if record.Override.Action == GroupTogether {
 			return GroupCompatible(kind, record.Override.Members, snapshots)
 		}
 		for _, member := range record.Override.Members {
-			if member.Kind != EvidenceSource && member.Kind != RelationshipSource {
-				return fmt.Errorf("%w: only evidence or Relationships can be separated", ErrInvalid)
+			if member.Kind != EvidenceSource {
+				return fmt.Errorf("%w: only Evidence can be separated", ErrInvalid)
 			}
 		}
 	}
 	return nil
 }
 
-func compatibleClass(source SourceHandle, definition Record, snapshots map[string]SourceSnapshot) error {
-	if definition.Kind == EntityClass && snapshots[SourceKey(source)].EntityKind != definition.Definition.BaseEntityKind {
-		return fmt.Errorf("%w: entity kind is incompatible with class", ErrInvalid)
-	}
-	return nil
-}
-
 func GroupCompatible(kind Kind, members []SourceHandle, snapshots map[string]SourceSnapshot) error {
-	expectedKind := EvidenceSource
-	if kind == RelationshipGroup {
-		expectedKind = RelationshipSource
+	if kind != EvidenceGroup {
+		return ErrInvalid
 	}
+	expectedKind := EvidenceSource
 	meaning := ""
 	for _, member := range members {
 		snapshot := snapshots[SourceKey(member)]

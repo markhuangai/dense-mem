@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/stretchr/testify/require"
 
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 )
@@ -67,11 +66,11 @@ func TestRememberExampleRetainsTheWholePayloadForReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	originalHash, err := rememberapp.CanonicalRequestBodyHash(originalRequest.Evidence, originalRequest.EntityHints, originalRequest.RelationshipHints)
+	originalHash, err := rememberapp.CanonicalRequestBodyHash(originalRequest.Evidence)
 	if err != nil {
 		t.Fatal(err)
 	}
-	replayHash, err := rememberapp.CanonicalRequestBodyHash(replayRequest.Evidence, replayRequest.EntityHints, replayRequest.RelationshipHints)
+	replayHash, err := rememberapp.CanonicalRequestBodyHash(replayRequest.Evidence)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,88 +88,13 @@ func TestRememberExampleRetainsTheWholePayloadForReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	changedHash, err := rememberapp.CanonicalRequestBodyHash(changedRequest.Evidence, changedRequest.EntityHints, changedRequest.RelationshipHints)
+	changedHash, err := rememberapp.CanonicalRequestBodyHash(changedRequest.Evidence)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if original["idempotency_key"] != changed["idempotency_key"] || originalHash == changedHash {
 		t.Fatalf("metadata change did not distinguish the request")
 	}
-}
-
-func TestCorrectionExampleUsesReturnedTraceState(t *testing.T) {
-	description := contractToolDescription(ToolCorrectRelationship)
-	for _, want := range []string{
-		"owned active Relationship trace whose stopped_reason is null",
-		"Trace evidence_supports is lineage, not a correction-ready set",
-		"latest evidence_support_decision_events decision is grant or reinstate",
-		"exclude revoke",
-		"span_start, and span_end to supports[].evidence_id, start, and end",
-		"refresh trace or stop",
-		"numeric values in this valid example only",
-		"complete supports array",
-		"support_set_mismatch",
-	} {
-		if !strings.Contains(description, want) {
-			t.Fatalf("correction guidance missing %q", want)
-		}
-	}
-	traceDescription := contractToolDescription(ToolTraceMemory)
-	for _, want := range []string{"support lineage, not a correction-ready set", "latest-decision selection", "span_start/span_end mapping", "non-null stopped_reason", "refresh trace or stop"} {
-		if !strings.Contains(traceDescription, want) {
-			t.Fatalf("trace guidance missing %q", want)
-		}
-	}
-
-	example := contractToolExamples()[ToolCorrectRelationship].Request
-	if version, ok := example["expected_version"].(int); !ok || version != 1 {
-		t.Fatalf("correction version = %#v", example["expected_version"])
-	}
-	support := example["supports"].([]any)[0].(map[string]any)
-	if start, ok := support["start"].(int); !ok || start != 0 {
-		t.Fatalf("correction support start = %#v", support["start"])
-	}
-	if end, ok := support["end"].(int); !ok || end != 43 {
-		t.Fatalf("correction support end = %#v", support["end"])
-	}
-	tool, err := requireTool(toolMap(t), ToolCorrectRelationship)
-	if err != nil {
-		t.Fatal(err)
-	}
-	require.NoError(t, ValidateContractInput(tool, instantiateContractExampleRequest(t, example), tool.RequiredScopes))
-}
-
-func TestCorrectionContinuationMapsReturnedCandidateEndpoints(t *testing.T) {
-	description := contractToolDescription(ToolCorrectRelationship)
-	for _, want := range []string{
-		"valid example illustrates object_entity candidates",
-		"every endpoint represented in candidates",
-		"subject_entity choice in subject_entity_id",
-		"object_entity choice in object_entity_id",
-		"no selection field for an endpoint that is not represented",
-		"Generate and retain a distinct confirmation key",
-	} {
-		if !strings.Contains(description, want) {
-			t.Fatalf("correction continuation guidance missing %q", want)
-		}
-	}
-
-	continuations := contractToolExamples()[ToolCorrectRelationship].Continuations
-	if len(continuations) != 1 {
-		t.Fatalf("correction continuations = %d, want 1", len(continuations))
-	}
-	selection := continuations[0].Request["selection"].(map[string]any)
-	if got := selection["object_entity_id"]; got != returnedObjectCandidateID {
-		t.Fatalf("object candidate placeholder = %#v", got)
-	}
-	if _, exists := selection["subject_entity_id"]; exists {
-		t.Fatalf("object-only example included subject selection: %#v", selection)
-	}
-	tool, err := requireTool(toolMap(t), ToolCorrectRelationship)
-	if err != nil {
-		t.Fatal(err)
-	}
-	require.NoError(t, ValidateContractInput(tool, instantiateContractExampleRequest(t, continuations[0].Request), tool.RequiredScopes))
 }
 
 func TestContractToolExamplesDescribeBoundedRecovery(t *testing.T) {
@@ -205,12 +129,9 @@ func instantiateContractExampleRequest(t *testing.T, request map[string]any) map
 	t.Helper()
 	bindings := map[string]string{
 		returnedEvidenceID:        uuid.NewString(),
-		returnedRelationshipID:    uuid.NewString(),
 		returnedRecallID:          "rec_" + uuid.NewString(),
-		returnedHypothesisID:      uuid.NewString(),
 		returnedSubmissionID:      uuid.NewString(),
 		returnedConfirmationToken: uuid.NewString(),
-		returnedObjectCandidateID: uuid.NewString(),
 		newOperationKey:           "example-operation-" + uuid.NewString(),
 		newConfirmationKey:        "example-confirmation-" + uuid.NewString(),
 	}

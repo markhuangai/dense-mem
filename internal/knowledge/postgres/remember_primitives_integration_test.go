@@ -25,7 +25,7 @@ func TestRememberPrimitivesPersistRetryabilityAndLegacyProjection(t *testing.T) 
 	ctx := context.Background()
 	teamID := createLedgerTeam(t, adminDB, rls, "remember-primitives-retryability")
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "remember-primitives-retryability-owner")
-	repo := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	repo := NewStore(appDB, rls)
 
 	explicitFalseID := uuid.NewString()
 	require.NoError(t, repo.RecordRememberFailure(ctx, RememberFailureRecordInput{
@@ -99,7 +99,7 @@ func runRememberEvidenceOnlyAtomicScenario(t *testing.T) {
 	insertSearchTestContract(t, adminDB, rls, "remember-primitives-evidence-only", 3, "exact", "")
 	teamID := createLedgerTeam(t, adminDB, rls, "remember-primitives-evidence-only")
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "remember-primitives-evidence-only-owner")
-	repo := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	repo := NewStore(appDB, rls)
 
 	input := evidenceOnlyRememberInput(teamID, ownerID, "remember-primitives-evidence-only-success")
 	plan, err := repo.PlanRememberEmbeddings(ctx, input)
@@ -109,7 +109,6 @@ func runRememberEvidenceOnlyAtomicScenario(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Equal(t, "completed", result.Outcome)
-	require.Empty(t, result.RelationshipResults)
 	require.Len(t, result.SearchDocuments, 1)
 	require.Equal(t, string(domain.SearchProjectionCurrent), result.SearchDocuments[0].SearchState)
 
@@ -119,8 +118,6 @@ func runRememberEvidenceOnlyAtomicScenario(t *testing.T) {
 	require.EqualValues(t, 1, counts["semantic_assessments"])
 	require.EqualValues(t, 1, counts["search_documents"])
 	require.EqualValues(t, 1, counts["remember_attempts"])
-	require.Zero(t, counts["relationship_observations"])
-	require.Zero(t, counts["relationship_records"])
 
 	unsafe := evidenceOnlyRememberInput(teamID, ownerID, "remember-primitives-evidence-only-unsafe")
 	unsafeContent := "Dense-Mem must reject this unsafe evidence item."
@@ -163,7 +160,7 @@ func TestRememberPolicyDiagnosticLegalHoldReleaseAndErasure(t *testing.T) {
 	ctx := context.Background()
 	teamID := createLedgerTeam(t, adminDB, rls, "remember-primitives-diagnostics")
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "remember-primitives-diagnostics-owner")
-	repo := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	repo := NewStore(appDB, rls)
 
 	policyInput := evidenceOnlyRememberInput(teamID, ownerID, "remember-primitives-policy-diagnostic")
 	require.NoError(t, repo.RecordRememberFailure(ctx, RememberFailureRecordInput{
@@ -291,7 +288,7 @@ func TestRememberAttemptDiagnosticHoldSkipsNoopUpdates(t *testing.T) {
 	ownerIdentityID := createLedgerSSOIdentity(t, adminDB, rls, teamUUID)
 	credentialRepo := accesspostgres.NewCredentialRepository(appDB, rls, nil)
 	credential := createOwnedCredential(t, credentialRepo, teamUUID, ownerIdentityID, "remember-primitives-diagnostic-hold-noop")
-	repo := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	repo := NewStore(appDB, rls)
 	privateRepo := privacypostgres.NewPrivateMemoryRepository(appDB, rls)
 	require.NoError(t, privateRepo.Prepare(ctx))
 
@@ -363,7 +360,7 @@ func TestRememberAttemptDiagnosticHoldAndPurgeSerializeOnPrivateSpace(t *testing
 	old := time.Now().UTC().Add(-8 * 24 * time.Hour)
 	diagnosticID := uuid.NewString()
 	legacyArtifactID := uuid.NewString()
-	require.NoError(t, NewStore(appDB, rls, ConflictRuntimeConfig{}).RecordRememberFailure(ctx, RememberFailureRecordInput{
+	require.NoError(t, NewStore(appDB, rls).RecordRememberFailure(ctx, RememberFailureRecordInput{
 		Attempt: RememberAttemptRecordInput{
 			TeamID: teamUUID.String(), OwnerProfileID: credential.ID.String(), AttemptID: input.IngestID,
 			SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration, IdempotencyKey: input.IdempotencyKey,
@@ -456,7 +453,7 @@ func TestRememberAttemptDiagnosticHoldAndPurgeSerializeOnPrivateSpace(t *testing
 		err     error
 	}, 1)
 	go func() {
-		deleted, err := NewStore(appDB, rls, ConflictRuntimeConfig{}).PurgeExpiredRememberAttemptDiagnostics(ctx, 100)
+		deleted, err := NewStore(appDB, rls).PurgeExpiredRememberAttemptDiagnostics(ctx, 100)
 		purgeDone <- struct {
 			deleted int
 			err     error
@@ -477,7 +474,7 @@ func TestRememberAttemptDiagnosticHoldAndPurgeSerializeOnPrivateSpace(t *testing
 	require.True(t, outcome.created)
 	require.NotNil(t, outcome.hold)
 
-	repo := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	repo := NewStore(appDB, rls)
 	detail, err := repo.GetRememberAttemptDiagnostic(ctx, teamUUID.String(), input.IngestID)
 	require.NoError(t, err)
 	require.Len(t, detail.Diagnostics, 1)
@@ -537,25 +534,16 @@ func rememberPrimitiveCounts(t *testing.T, ctx context.Context, db *gorm.DB, rls
 	counts := make(map[string]int64)
 	require.NoError(t, rls.WithSystemTx(ctx, db, func(tx *gorm.DB) error {
 		queries := map[string]string{
-			"knowledge_ingests":         `SELECT count(*) FROM knowledge_ingests WHERE team_id = ?::uuid AND ingest_id = ?::uuid`,
-			"evidence_fragments":        `SELECT count(*) FROM evidence_fragments WHERE team_id = ?::uuid AND ingest_id = ?::uuid`,
-			"semantic_assessments":      `SELECT count(*) FROM semantic_assessments WHERE team_id = ?::uuid AND attempt_id = ?::uuid`,
-			"search_documents":          `SELECT count(*) FROM search_documents WHERE team_id = ?::uuid AND source_kind = 'evidence' AND source_id IN (SELECT fragment_id FROM evidence_fragments WHERE team_id = ?::uuid AND ingest_id = ?::uuid)`,
-			"remember_attempts":         `SELECT count(*) FROM remember_attempts WHERE team_id = ?::uuid AND attempt_id = ?::uuid`,
-			"relationship_observations": `SELECT count(*) FROM relationship_observations WHERE team_id = ?::uuid AND ingest_id = ?::uuid`,
-			"relationship_records": `SELECT count(*)
-				FROM relationship_records AS record
-				JOIN relationship_observations AS observation
-				  ON observation.team_id = record.team_id
-				 AND observation.relationship_id = record.relationship_id
-				WHERE record.team_id = ?::uuid
-				  AND observation.team_id = ?::uuid
-				  AND observation.ingest_id = ?::uuid`,
+			"knowledge_ingests":    `SELECT count(*) FROM knowledge_ingests WHERE team_id = ?::uuid AND ingest_id = ?::uuid`,
+			"evidence_fragments":   `SELECT count(*) FROM evidence_fragments WHERE team_id = ?::uuid AND ingest_id = ?::uuid`,
+			"semantic_assessments": `SELECT count(*) FROM semantic_assessments WHERE team_id = ?::uuid AND attempt_id = ?::uuid`,
+			"search_documents":     `SELECT count(*) FROM search_documents WHERE team_id = ?::uuid AND source_kind = 'evidence' AND source_id IN (SELECT fragment_id FROM evidence_fragments WHERE team_id = ?::uuid AND ingest_id = ?::uuid)`,
+			"remember_attempts":    `SELECT count(*) FROM remember_attempts WHERE team_id = ?::uuid AND attempt_id = ?::uuid`,
 		}
 		for name, query := range queries {
 			var count int64
 			var err error
-			if name == "search_documents" || name == "relationship_records" {
+			if name == "search_documents" {
 				err = tx.Raw(query, teamID, teamID, ingestID).Row().Scan(&count)
 			} else {
 				err = tx.Raw(query, teamID, ingestID).Row().Scan(&count)
@@ -565,6 +553,11 @@ func rememberPrimitiveCounts(t *testing.T, ctx context.Context, db *gorm.DB, rls
 			}
 			counts[name] = count
 		}
+		var absent bool
+		if err := tx.Raw("SELECT to_regclass('public.relationship_records') IS NULL AND to_regclass('public.relationship_observations') IS NULL").Row().Scan(&absent); err != nil {
+			return err
+		}
+		require.True(t, absent)
 		return nil
 	}))
 	return counts

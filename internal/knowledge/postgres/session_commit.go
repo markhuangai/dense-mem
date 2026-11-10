@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"strconv"
+	"strings"
+	"unicode/utf8"
 
 	session "github.com/markhuangai/dense-mem/internal/session/contract"
 	"gorm.io/gorm"
@@ -43,6 +45,21 @@ func (r *Store) CommitSession(ctx context.Context, scope session.Scope, id strin
 		if len(submission.Extractions) != len(submission.Intake.Windows) {
 			return errors.New("session: complete extraction checkpoints are required")
 		}
+		responses := make([]session.ExtractionResponse, len(submission.Intake.Windows))
+		for index, window := range submission.Intake.Windows {
+			response, err := session.DecodeExtraction(submission.Extractions[window.Index])
+			if err != nil {
+				return err
+			}
+			responses[index] = response
+		}
+		selected, err := session.SelectedExcerpts(submission, responses)
+		if err != nil {
+			return err
+		}
+		if (prepared == nil) != (len(selected) == 0) || (len(selected) == 0 && result.MemoryOutcome != "no_memory") || (len(selected) > 0 && result.MemoryOutcome != "stored") {
+			return session.ErrInvalidInput
+		}
 		if result.AcceptedEventCount != submission.AcceptedEventCount || result.DuplicateEventCount != submission.DuplicateEventCount {
 			return session.ErrInvalidInput
 		}
@@ -51,10 +68,7 @@ func (r *Store) CommitSession(ctx context.Context, scope session.Scope, id strin
 			if input.TeamID != scope.TeamID || input.OwnerProfileID != scope.OwnerProfileID || input.SpaceID != scope.SpaceID || input.SpaceGeneration != scope.SpaceGeneration || input.IngestID != id || input.RequestHash != submission.Intake.RequestHash || input.IdempotencyKey != "session:"+id {
 				return session.ErrStale
 			}
-			if len(submission.Linked) == 0 {
-				return errors.New("session: complete linking checkpoint is required")
-			}
-			if err := validateSessionEvidence(input.Evidence, submission); err != nil {
+			if err := validateSessionEvidence(input.Evidence, submission, selected); err != nil {
 				return err
 			}
 			committed, err := r.commitRememberInTx(ctx, tx, input, prepared.Embeddings)
@@ -106,12 +120,15 @@ func sessionInt(value any) (int, bool) {
 	}
 }
 
-func validateSessionEvidence(evidence []EvidenceInput, submission *session.Submission) error {
+func validateSessionEvidence(evidence []EvidenceInput, submission *session.Submission, selected []session.Excerpt) error {
+	if len(evidence) != len(selected) {
+		return session.ErrInvalidInput
+	}
 	allowed := map[int]bool{}
 	for _, index := range submission.NewEventIndices {
 		allowed[index] = true
 	}
-	for _, item := range evidence {
+	for position, item := range evidence {
 		provenance, ok := item.Metadata["session"].(map[string]any)
 		if !ok {
 			return session.ErrInvalidInput
@@ -122,12 +139,33 @@ func validateSessionEvidence(evidence []EvidenceInput, submission *session.Submi
 		if !indexOK || !startOK || !endOK || !allowed[index] {
 			return session.ErrInvalidInput
 		}
+		expected := selected[position]
+		if index != expected.EventIndex || start != expected.Start || end != expected.End || item.Content != expected.Content {
+			return session.ErrInvalidInput
+		}
 		event := submission.Intake.Request.Events[index]
 		runes := []rune(event.Text)
 		if start < 0 || end <= start || end > len(runes) || item.Content != string(runes[start:end]) {
 			return session.ErrInvalidInput
 		}
-		if provenance["event_id"] != event.EventID || provenance["session_id"] != submission.Intake.Request.SessionID {
+		request := submission.Intake.Request
+		if provenance["event_id"] != event.EventID || provenance["session_id"] != request.SessionID ||
+			provenance["framework"] != request.Framework || provenance["app_name"] != request.AppName || provenance["user_id"] != request.UserID {
+			return session.ErrInvalidInput
+		}
+		occurredAt, hasOccurredAt := provenance["occurred_at"]
+		if (event.OccurredAt == nil && hasOccurredAt) || (event.OccurredAt != nil && occurredAt != *event.OccurredAt) {
+			return session.ErrInvalidInput
+		}
+		source := request.Framework + ":" + request.AppName
+		if utf8.RuneCountInString(source) > 256 {
+			source = "session:" + session.IdentityHash(request, "")
+		}
+		if item.SourceType != "conversation" || item.Authority != "primary" || item.SourceRef != strings.TrimSpace(source) ||
+			item.SourceKey != "" || item.SourceRevisionToken != "" || item.ExpectedPreviousRevisionToken != "" || len(item.SupersedesEvidenceIDs) != 0 || item.ForceInsert {
+			return session.ErrInvalidInput
+		}
+		if item.Metadata["contract_source_group"] != "session:"+session.IdentityHash(request, "") {
 			return session.ErrInvalidInput
 		}
 	}
@@ -145,14 +183,12 @@ func applySessionSemanticResult(result *session.Result, prepared *session.Prepar
 			EvidenceIndex int    `json:"evidence_index"`
 			EvidenceID    string `json:"evidence_id"`
 		} `json:"evidence"`
-		RelationshipResults []SubmissionRelationshipResult `json:"relationship_results"`
-		Warnings            []string                       `json:"warnings"`
+		Warnings []string `json:"warnings"`
 	}
 	if err := json.Unmarshal(body, &terminal); err != nil {
 		return err
 	}
 	result.SearchState = terminal.SearchState
-	result.RelationshipResults = terminal.RelationshipResults
 	result.Warnings = append(result.Warnings, terminal.Warnings...)
 	for _, evidence := range terminal.Evidence {
 		if evidence.EvidenceIndex < 0 || evidence.EvidenceIndex >= len(prepared.Commit.Evidence) {

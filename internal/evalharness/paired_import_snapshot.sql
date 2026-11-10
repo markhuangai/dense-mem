@@ -5,7 +5,13 @@ WITH scope AS (
     SELECT jsonb_build_object(
         'scope', jsonb_build_object('team_id', a.team_id, 'owner_id', a.owner_profile_id,
             'space_id', a.space_id, 'generation', a.space_generation),
-        'source_doc_id', substring(a.idempotency_key FROM 6), 'attempt_id', a.attempt_id,
+        'source_doc_id', regexp_replace(substring(a.idempotency_key FROM 6),':resubmit1$',''), 'attempt_id', a.attempt_id,
+        'idempotency_key',a.idempotency_key,'retryable',COALESCE(a.retryable,a.outcome='failed'),'created_at',a.created_at,
+        'resubmission_of',COALESCE((SELECT original.attempt_id::text FROM remember_attempts original
+          WHERE a.idempotency_key LIKE '%:resubmit1' AND original.team_id=a.team_id AND original.owner_profile_id=a.owner_profile_id
+           AND original.idempotency_key=regexp_replace(a.idempotency_key,':resubmit1$','')
+           AND original.outcome='failed' AND NOT COALESCE(original.retryable,true) AND original.created_at<=a.created_at
+          ORDER BY original.created_at DESC,original.attempt_id DESC LIMIT 1),''),
         'request_hash', a.request_hash, 'contract_version', a.contract_version, 'outcome', a.outcome,
         'evidence_ids', COALESCE((SELECT jsonb_agg(e->>'evidence_id' ORDER BY e->>'evidence_id')
             FROM jsonb_array_elements(a.public_result->'evidence') e WHERE e->>'disposition'='stored'), '[]'::jsonb),
@@ -36,12 +42,6 @@ WITH scope AS (
     UNION ALL SELECT 'evidence_occurrences',to_jsonb(r)::text FROM evidence_occurrences r,scope s WHERE r.team_id=s.team_id
     UNION ALL SELECT 'evidence_sources',to_jsonb(r)::text FROM evidence_sources r,scope s WHERE r.team_id=s.team_id
     UNION ALL SELECT 'evidence_source_revisions',to_jsonb(r)::text FROM evidence_source_revisions r,scope s WHERE r.team_id=s.team_id
-    UNION ALL SELECT 'entity_records',to_jsonb(r)::text FROM entity_records r,scope s WHERE r.team_id=s.team_id
-    UNION ALL SELECT 'entity_names',to_jsonb(r)::text FROM entity_names r,scope s WHERE r.team_id=s.team_id
-    UNION ALL SELECT 'value_records',to_jsonb(r)::text FROM value_records r,scope s WHERE r.team_id=s.team_id
-    UNION ALL SELECT 'relationship_records',to_jsonb(r)::text FROM relationship_records r,scope s WHERE r.team_id=s.team_id
-    UNION ALL SELECT 'relationship_evidence_supports',to_jsonb(r)::text FROM relationship_evidence_supports r,scope s WHERE r.team_id=s.team_id
-    UNION ALL SELECT 'relationship_support_decision_events',to_jsonb(r)::text FROM relationship_support_decision_events r,scope s WHERE r.team_id=s.team_id
     UNION ALL SELECT 'evidence_lifecycle_events',to_jsonb(r)::text FROM evidence_lifecycle_events r,scope s WHERE r.team_id=s.team_id
     UNION ALL SELECT 'evidence_quarantines',to_jsonb(r)::text FROM evidence_quarantines r,scope s WHERE r.team_id=s.team_id
 )

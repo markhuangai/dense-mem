@@ -12,7 +12,8 @@ import (
 type SubmissionErrorCode string
 
 const (
-	SubmissionErrorStaleInput SubmissionErrorCode = "stale_input"
+	SubmissionErrorStaleInput      SubmissionErrorCode = "stale_input"
+	SubmissionErrorRetiredContract SubmissionErrorCode = "retired_contract"
 
 	SubmissionErrorProviderUnavailable      SubmissionErrorCode = "provider_unavailable"
 	SubmissionErrorProviderResponseInvalid  SubmissionErrorCode = "provider_response_invalid"
@@ -33,26 +34,11 @@ const (
 	SubmissionErrorAssessorInvalid     SubmissionErrorCode = SubmissionErrorProviderResponseInvalid
 	SubmissionErrorAssessorUnavailable SubmissionErrorCode = SubmissionErrorProviderUnavailable
 	SubmissionErrorProcessingFailed    SubmissionErrorCode = SubmissionErrorInternalFailure
-
-	SubmissionErrorRelationshipVersionStale      SubmissionErrorCode = "relationship_version_stale"
-	SubmissionErrorRelationshipNotActive         SubmissionErrorCode = "relationship_not_active"
-	SubmissionErrorObjectKindChangeForbidden     SubmissionErrorCode = "object_kind_change_forbidden"
-	SubmissionErrorSupportSetMismatch            SubmissionErrorCode = "support_set_mismatch"
-	SubmissionErrorEntityNotFound                SubmissionErrorCode = "entity_not_found"
-	SubmissionErrorTooManyEntityCandidates       SubmissionErrorCode = "too_many_entity_candidates"
-	SubmissionErrorPredicateNotFound             SubmissionErrorCode = "predicate_not_found"
-	SubmissionErrorPredicateSubjectKindMismatch  SubmissionErrorCode = "predicate_subject_kind_mismatch"
-	SubmissionErrorPredicateObjectKindMismatch   SubmissionErrorCode = "predicate_object_kind_mismatch"
-	SubmissionErrorNoChange                      SubmissionErrorCode = "no_change"
-	SubmissionErrorConfirmationExpired           SubmissionErrorCode = "confirmation_expired"
-	SubmissionErrorRelationshipChanged           SubmissionErrorCode = "relationship_changed"
-	SubmissionErrorSupportSetChanged             SubmissionErrorCode = "support_set_changed"
-	SubmissionErrorPersistentAmbiguity           SubmissionErrorCode = "persistent_ambiguity"
-	SubmissionErrorInactiveRelationshipCollision SubmissionErrorCode = "inactive_relationship_collision"
 )
 
 var submissionErrorCodes = []SubmissionErrorCode{
 	SubmissionErrorStaleInput,
+	SubmissionErrorRetiredContract,
 	SubmissionErrorProviderUnavailable,
 	SubmissionErrorProviderResponseInvalid,
 	SubmissionErrorInputBudgetExceeded,
@@ -66,21 +52,6 @@ var submissionErrorCodes = []SubmissionErrorCode{
 	SubmissionErrorRequestCancelled,
 	SubmissionErrorInternalFailure,
 	SubmissionErrorPolicyRejected,
-	SubmissionErrorRelationshipVersionStale,
-	SubmissionErrorRelationshipNotActive,
-	SubmissionErrorObjectKindChangeForbidden,
-	SubmissionErrorSupportSetMismatch,
-	SubmissionErrorEntityNotFound,
-	SubmissionErrorTooManyEntityCandidates,
-	SubmissionErrorPredicateNotFound,
-	SubmissionErrorPredicateSubjectKindMismatch,
-	SubmissionErrorPredicateObjectKindMismatch,
-	SubmissionErrorNoChange,
-	SubmissionErrorConfirmationExpired,
-	SubmissionErrorRelationshipChanged,
-	SubmissionErrorSupportSetChanged,
-	SubmissionErrorPersistentAmbiguity,
-	SubmissionErrorInactiveRelationshipCollision,
 }
 
 // SubmissionErrorCodes returns the public enum in deterministic schema order.
@@ -107,7 +78,6 @@ type SubmissionNextAction string
 const (
 	SubmissionNextActionRetrySameRequest SubmissionNextAction = "retry_same_request"
 	SubmissionNextActionResubmitRemember SubmissionNextAction = "resubmit_remember"
-	SubmissionNextActionRetryCorrection  SubmissionNextAction = "retry_correction"
 	SubmissionNextActionContactOperator  SubmissionNextAction = "contact_operator"
 	SubmissionNextActionNone             SubmissionNextAction = "none"
 )
@@ -115,7 +85,6 @@ const (
 var submissionNextActions = []SubmissionNextAction{
 	SubmissionNextActionRetrySameRequest,
 	SubmissionNextActionResubmitRemember,
-	SubmissionNextActionRetryCorrection,
 	SubmissionNextActionContactOperator,
 	SubmissionNextActionNone,
 }
@@ -129,10 +98,11 @@ func SubmissionNextActions() []string {
 }
 
 var submissionErrorMessages = map[SubmissionErrorCode]string{
+	SubmissionErrorRetiredContract:          "This operation belongs to a retired memory contract; its original outcome is retained and its graph payload is unavailable.",
 	SubmissionErrorStaleInput:               "A source revision or exact reference changed while Remember was processing this request.",
 	SubmissionErrorProviderUnavailable:      "Remember could not reach the required assessment service or obtain a usable response. This does not mean the submitted evidence is false.",
 	SubmissionErrorProviderResponseInvalid:  "The assessment service did not return a complete response that satisfied the required schema and validation checks.",
-	SubmissionErrorInputBudgetExceeded:      "The evidence, proposals, or assessment context exceeded a configured processing limit.",
+	SubmissionErrorInputBudgetExceeded:      "The Evidence or assessment context exceeded a configured processing limit.",
 	SubmissionErrorConfigurationInvalid:     "A required assessment or search provider is not configured correctly, so Dense-Mem cannot complete this operation.",
 	SubmissionErrorIdempotencyConflict:      "This idempotency_key was already used for a different request. The new request was not applied.",
 	SubmissionErrorEmbeddingUnavailable:     "The required embedding service could not produce the vectors needed to complete this operation.",
@@ -143,22 +113,6 @@ var submissionErrorMessages = map[SubmissionErrorCode]string{
 	SubmissionErrorRequestCancelled:         "The caller cancelled this operation before a terminal response could be confirmed.",
 	SubmissionErrorInternalFailure:          "Dense-Mem could not complete this operation, and the public result does not establish a more specific cause.",
 	SubmissionErrorPolicyRejected:           "A security check rejected text in the submitted batch. The batch was not accepted as memory.",
-
-	SubmissionErrorRelationshipVersionStale:      "The relationship's current version does not match expected_version in your request, so the correction was not applied.",
-	SubmissionErrorRelationshipNotActive:         "The selected relationship is not currently active, supported, and canonical, so it cannot be corrected.",
-	SubmissionErrorObjectKindChangeForbidden:     "The correction would replace a typed Value with an Entity, which this correction operation does not permit.",
-	SubmissionErrorSupportSetMismatch:            "The supplied supports do not exactly match the relationship's current effective evidence spans, so the correction was not applied.",
-	SubmissionErrorEntityNotFound:                "A referenced corrected Entity is not available in your authorized context. Its existence elsewhere is not disclosed.",
-	SubmissionErrorTooManyEntityCandidates:       "The corrected Entity name matches more candidates than can be offered for selection.",
-	SubmissionErrorPredicateNotFound:             "The requested predicate is not available as an active registered predicate in your team.",
-	SubmissionErrorPredicateSubjectKindMismatch:  "The registered predicate does not permit the corrected subject Entity kind.",
-	SubmissionErrorPredicateObjectKindMismatch:   "The registered predicate does not permit the corrected object Entity or Value kind.",
-	SubmissionErrorNoChange:                      "The proposed correction has the same effective relationship content as the current relationship, so no correction is needed.",
-	SubmissionErrorConfirmationExpired:           "The correction confirmation expired before it was submitted, so that confirmation cannot apply the correction.",
-	SubmissionErrorRelationshipChanged:           "The relationship changed after correction confirmation was requested, so that confirmation no longer describes current state.",
-	SubmissionErrorSupportSetChanged:             "The effective evidence supports changed after correction confirmation was requested, so those supports must be refreshed.",
-	SubmissionErrorPersistentAmbiguity:           "The selected Entity candidate is no longer available for this correction; a new candidate selection is required.",
-	SubmissionErrorInactiveRelationshipCollision: "The proposed correction matches an inactive or unsupported historical relationship and cannot create an active duplicate.",
 }
 
 func submissionStatusError(code SubmissionErrorCode) SubmissionStatusError {
@@ -294,18 +248,8 @@ func submissionErrorGuidance(code SubmissionErrorCode) (bool, SubmissionNextActi
 		SubmissionErrorInternalFailure:
 		return true, SubmissionNextActionRetrySameRequest
 	case SubmissionErrorPolicyRejected, SubmissionErrorStaleInput,
-		SubmissionErrorIdempotencyConflict, SubmissionErrorInputBudgetExceeded:
+		SubmissionErrorIdempotencyConflict, SubmissionErrorInputBudgetExceeded, SubmissionErrorRetiredContract:
 		return false, SubmissionNextActionResubmitRemember
-	case SubmissionErrorNoChange:
-		return false, SubmissionNextActionNone
-	case SubmissionErrorRelationshipVersionStale, SubmissionErrorRelationshipNotActive,
-		SubmissionErrorObjectKindChangeForbidden, SubmissionErrorSupportSetMismatch,
-		SubmissionErrorEntityNotFound, SubmissionErrorTooManyEntityCandidates,
-		SubmissionErrorPredicateNotFound, SubmissionErrorPredicateSubjectKindMismatch,
-		SubmissionErrorPredicateObjectKindMismatch, SubmissionErrorConfirmationExpired,
-		SubmissionErrorRelationshipChanged, SubmissionErrorSupportSetChanged,
-		SubmissionErrorPersistentAmbiguity, SubmissionErrorInactiveRelationshipCollision:
-		return true, SubmissionNextActionRetryCorrection
 	default:
 		return false, SubmissionNextActionContactOperator
 	}
@@ -317,8 +261,6 @@ func submissionErrorRemediation(action SubmissionNextAction) string {
 		return "Retry the same request with the same idempotency_key after the transient failure clears."
 	case SubmissionNextActionResubmitRemember:
 		return "Submit the complete batch again with remember and a new idempotency_key after correcting the input."
-	case SubmissionNextActionRetryCorrection:
-		return "Retry correct_relationship with current relationship state and a new idempotency_key."
 	case SubmissionNextActionNone:
 		return "No action is required."
 	default:
@@ -353,9 +295,9 @@ func submissionFailureCode(stage, class string) SubmissionErrorCode {
 		return SubmissionErrorInternalFailure
 	case stage == "input_budget" || stage == "input_budget_exceeded" || class == "input_budget":
 		return SubmissionErrorInputBudgetExceeded
-	case stage == "entity_catalog" || stage == "known_evidence_context" || stage == "catalog_context" ||
-		stage == "catalog_context_validation" || stage == "predicate_context" ||
-		stage == "predicate_options_overflow" || stage == "assessment_input" || stage == "assessment_budget" ||
+	case stage == "known_evidence_context" || stage == "catalog_context" ||
+		stage == "catalog_context_validation" ||
+		stage == "assessment_input" || stage == "assessment_budget" ||
 		stage == "provider_framing":
 		return SubmissionErrorInputBudgetExceeded
 	case stage == "configuration" || stage == "configuration_invalid":

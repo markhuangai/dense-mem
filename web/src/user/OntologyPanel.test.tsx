@@ -318,7 +318,7 @@ describe("OntologyPanel", () => {
 
   it("edits definition fields, removes draft edits, unpins explicitly, and discards the saved draft",async()=>{
     const response=(data:unknown)=>new Response(JSON.stringify({data}),{status:200});
-    const records=[{id:"class-a",kind:"entity_class",version:3,current:true,definition:{key:"people",label:"People",description:"People class",aliases:["humans"],parent_id:"parent-a",base_entity_kind:"person"}},{id:"parent-a",kind:"entity_class",version:1,current:true,definition:{key:"parent",label:"Parent class",description:"Parent",base_entity_kind:"person"}},{id:"pin-a",kind:"override",version:4,current:true,override:{action:"pin_definition",target_id:"class-a"}}];
+    const records=[{id:"class-a",kind:"topic",version:3,current:true,definition:{key:"people",label:"People",description:"People class",aliases:["humans"],parent_id:"parent-a"}},{id:"parent-a",kind:"topic",version:1,current:true,definition:{key:"parent",label:"Parent class",description:"Parent"}},{id:"pin-a",kind:"override",version:4,current:true,override:{action:"pin_definition",target_id:"class-a"}}];
     let saved:OntologyDraft|null=null;
     const fetcher=vi.fn(async(url:string,options?:RequestInit)=>{
       const path=new URL(url,"http://localhost").pathname;const body=options?.body?JSON.parse(options.body as string):{};
@@ -327,113 +327,50 @@ describe("OntologyPanel", () => {
     });vi.stubGlobal("fetch",fetcher);render(<OntologyPanel api={new UserApi("key")} session={session}/>);
     fireEvent.click(await screen.findByRole("button",{name:"Edit People"}));await waitFor(()=>expect(screen.getByLabelText("Definition label")).toHaveValue("People"));
     for(const [label,value] of [["Definition key","people-revised"],["Definition label","People revised"],["Definition description","Corrected people class"],["Definition aliases","humans, people"],["Definition parent","parent-a"]])fireEvent.change(screen.getByLabelText(label),{target:{value}});
-    fireEvent.change(screen.getByLabelText("Class entity kind"),{target:{value:"person"}});fireEvent.click(screen.getByRole("button",{name:"Add correction to draft"}));
+    fireEvent.click(screen.getByRole("button",{name:"Add correction to draft"}));
     fireEvent.click(screen.getByRole("button",{name:"Remove correction 1"}));expect(screen.queryByRole("button",{name:"Remove correction 1"})).toBeNull();
     fireEvent.click(screen.getByRole("button",{name:"Add correction to draft"}));await selectTab("Catalog");fireEvent.click(screen.getByRole("button",{name:"Unpin definition"}));fireEvent.change(screen.getByLabelText("Audit reason"),{target:{value:"Edit and unpin definition"}});
     fireEvent.click(screen.getByRole("button",{name:"Save draft"}));await screen.findByText("Draft saved. Preview its impact before publishing.");
     const body=JSON.parse(fetcher.mock.calls.find(([,options])=>options?.method==="POST")![1]!.body as string);
-    expect(body.edits).toEqual([{action:"define",record_id:"class-a",expected_version:3,kind:"entity_class",definition:{key:"people-revised",label:"People revised",description:"Corrected people class",aliases:["humans","people"],parent_id:"parent-a",base_entity_kind:"person"}},{action:"remove_override",record_id:"pin-a",expected_version:4}]);
+    expect(body.edits).toEqual([{action:"define",record_id:"class-a",expected_version:3,kind:"topic",definition:{key:"people-revised",label:"People revised",description:"Corrected people class",aliases:["humans","people"],parent_id:"parent-a"}},{action:"remove_override",record_id:"pin-a",expected_version:4}]);
     fireEvent.click(screen.getByRole("button",{name:"Discard draft"}));await screen.findByText("Draft discarded. Its history is retained.");expect(screen.queryByRole("button",{name:"Preview impact"})).toBeNull();
     await userEvent.click(screen.getByRole("button",{name:"New draft"}));fireEvent.change(screen.getByLabelText("Definition type"),{target:{value:"topic"}});expect(screen.getByLabelText("Definition parent")).toHaveValue("");
   });
 
-  it.each([
-    ["entity_class", "subclass_of"],
-    ["predicate_concept", "subproperty_of"],
-  ])("loads and preserves %s semantics through unrelated edits and reparenting outside the catalog page", async (kind, relation) => {
-    const definition = { key: "people", label: "People", description: "Accepted definition", parent_id: "parent-a", parent_relation: relation,
-      ...(kind === "entity_class" ? { base_entity_kind: "person" } : {}) };
-    const records = [{ id: "semantic-a", kind, version: 3, current: true, definition }];
-    const response = (data: unknown) => new Response(JSON.stringify({ data }), { status: 200 });
-    const fetcher = vi.fn(async (url: string, options?: RequestInit) => {
-      const path = new URL(url, "http://localhost").pathname;
-      if (options?.method === "POST") {
-        const body = JSON.parse(options.body as string);
-        return response({ ...draft, reason: body.reason, edits: body.edits });
-      }
-      if (path.endsWith("/records")) return response({ records, revision: 1 });
-      if (path.endsWith("/status")) return response(coverage);
-      if (path.endsWith("/sources")) return response({ sources: [] });
-      if (path.endsWith("/publications")) return response({ publications: [] });
-      return response({ drafts: [] });
-    });
-    vi.stubGlobal("fetch", fetcher);
-    render(<OntologyPanel api={new UserApi("key")} session={session} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Edit People" }));
-    await waitFor(() => expect(screen.getByLabelText("Definition parent")).toHaveValue("parent-a"));
-    expect(screen.getByLabelText("Parent meaning")).toHaveValue(relation);
-    expect(fetcher.mock.calls.filter(([, options]) => options?.method === "POST")).toHaveLength(0);
-    fireEvent.change(screen.getByLabelText("Definition parent"), { target: { value: "parent-b" } });
-    fireEvent.change(screen.getByLabelText("Definition label"), { target: { value: "Revised people" } });
-    fireEvent.click(screen.getByRole("button", { name: "Add correction to draft" }));
-    fireEvent.change(screen.getByLabelText("Audit reason"), { target: { value: "Preserve accepted meaning" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
-    await screen.findByText("Draft saved. Preview its impact before publishing.");
-    const body = JSON.parse(fetcher.mock.calls.find(([, options]) => options?.method === "POST")![1]!.body as string);
-    expect(body.edits[0]).toMatchObject({ record_id: "semantic-a", expected_version: 3, kind,
-      definition: { label: "Revised people", parent_id: "parent-b", parent_relation: relation } });
-  });
 
-  it.each(["entity_class", "predicate_concept", "topic"] as const)("keeps legacy %s parents organizational and clears both parent fields deliberately", (kind) => {
-    const onAdd = vi.fn();
-    const target = { id: "legacy-a", kind, version: 3, retired: false, current: true,
-      definition: { key: "legacy", label: "Legacy", description: "Organizational definition", parent_id: "outside-page", ...(kind === "entity_class" ? { base_entity_kind: "person" } : {}) } };
-    render(<OntologyEditor records={[]} selected={[]} target={target} disabled={false} onAdd={onAdd} />);
-    expect(screen.getByLabelText("Parent meaning")).toHaveValue("");
-    expect(within(screen.getByLabelText("Parent meaning")).getAllByRole("option")).toHaveLength(kind === "topic" ? 1 : 2);
-    fireEvent.change(screen.getByLabelText("Definition label"), { target: { value: "Revised legacy" } });
-    fireEvent.click(screen.getByRole("button", { name: "Add correction to draft" }));
-    expect(onAdd.mock.calls[0][0].definition).toMatchObject({ parent_id: "outside-page", label: "Revised legacy" });
-    expect(onAdd.mock.calls[0][0].definition).not.toHaveProperty("parent_relation");
-    fireEvent.change(screen.getByLabelText("Definition parent"), { target: { value: "" } });
-    fireEvent.click(screen.getByRole("button", { name: "Add correction to draft" }));
-    expect(onAdd.mock.calls[1][0]).toMatchObject({ record_id: "legacy-a", expected_version: 3, kind });
-    expect(onAdd.mock.calls[1][0].definition).not.toHaveProperty("parent_id");
-    expect(onAdd.mock.calls[1][0].definition).not.toHaveProperty("parent_relation");
-  });
 
-  it.each([["entity_class", "subclass_of"], ["predicate_concept", "subproperty_of"]] as const)("edits and clears %s meaning without retaining incompatible choices", (kind, relation) => {
-    const onAdd = vi.fn();
-    const target = { id: "semantic-a", kind, version: 3, retired: false, current: true,
-      definition: { key: "semantic", label: "Semantic", description: "Accepted definition", parent_id: "parent-a", parent_relation: relation, ...(kind === "entity_class" ? { base_entity_kind: "person" } : {}) } };
-    render(<OntologyEditor records={[]} selected={[]} target={target} disabled={false} onAdd={onAdd} />);
-    fireEvent.change(screen.getByLabelText("Parent meaning"), { target: { value: "" } });
-    fireEvent.click(screen.getByRole("button", { name: "Add correction to draft" }));
-    expect(onAdd.mock.calls[0][0].definition.parent_id).toBe("parent-a");
-    expect(onAdd.mock.calls[0][0].definition).not.toHaveProperty("parent_relation");
-    fireEvent.change(screen.getByLabelText("Parent meaning"), { target: { value: relation } });
-    fireEvent.change(screen.getByLabelText("Definition parent"), { target: { value: "" } });
-    expect(screen.getByLabelText("Parent meaning")).toHaveValue("");
-    expect(screen.getByRole("button", { name: "Add correction to draft" })).toBeEnabled();
-    fireEvent.click(screen.getByRole("button", { name: "Add correction to draft" }));
+
+
+
+
+  it("preserves and clears an organizational topic parent outside the catalog page", () => {
+    const onAdd=vi.fn();
+    const target={id:"topic-child",kind:"topic" as const,version:3,retired:false,current:true,definition:{key:"child",label:"Child",description:"Organizational topic",parent_id:"outside-page"}};
+    render(<OntologyEditor records={[]} selected={[]} target={target} disabled={false} onAdd={onAdd}/>);
+    expect(screen.getByLabelText("Definition parent")).toHaveValue("outside-page");
+    expect(screen.queryByLabelText("Parent meaning")).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Definition label"),{target:{value:"Revised"}});
+    fireEvent.click(screen.getByRole("button",{name:"Add correction to draft"}));
+    expect(onAdd.mock.calls[0][0].definition).toMatchObject({label:"Revised",parent_id:"outside-page"});
+    fireEvent.change(screen.getByLabelText("Definition parent"),{target:{value:""}});
+    fireEvent.click(screen.getByRole("button",{name:"Add correction to draft"}));
     expect(onAdd.mock.calls[1][0].definition).not.toHaveProperty("parent_id");
-    expect(onAdd.mock.calls[1][0].definition).not.toHaveProperty("parent_relation");
-    fireEvent.change(screen.getByLabelText("Parent meaning"), { target: { value: relation } });
-    expect(screen.getByRole("button", { name: "Add correction to draft" })).toBeDisabled();
-    expect(screen.getByRole("alert")).toHaveTextContent("Choose a parent");
-    fireEvent.change(screen.getByLabelText("Definition parent"), { target: { value: "parent-b" } });
-    fireEvent.change(screen.getByLabelText("Definition type"), { target: { value: "topic" } });
-    expect(screen.getByLabelText("Definition parent")).toHaveValue("");
-    expect(screen.getByLabelText("Parent meaning")).toHaveValue("");
-    fireEvent.click(screen.getByRole("button", { name: "Add correction to draft" }));
-    expect(onAdd.mock.calls[2][0]).toMatchObject({ kind: "topic", expected_version: 0 });
-    expect(onAdd.mock.calls[2][0].definition).not.toHaveProperty("parent_relation");
   });
 
   it("refreshes current record and source versions while preserving the manager's unsaved reason",async()=>{
     const response=(data:unknown)=>new Response(JSON.stringify({data}),{status:200});
-    const saved={...draft,base_revision:0,edits:[{action:"classify",record_id:"override-a",expected_version:1,source:{kind:"relationship",id:"relationship-a",version:1},definition_id:"topic-a"}]};
+    const saved={...draft,base_revision:0,edits:[{action:"classify",record_id:"override-a",expected_version:1,source:{kind:"evidence",id:"evidence-a",version:1},definition_id:"topic-a"}]};
     let refreshedBody:Record<string,unknown>|null=null;
     vi.stubGlobal("fetch",vi.fn(async(url:string,options?:RequestInit)=>{
       const path=new URL(url,"http://localhost").pathname;
       if(options?.method==="PUT"){refreshedBody=JSON.parse(options.body as string);return response({...saved,version:5,base_revision:1,reason:refreshedBody!.reason,edits:refreshedBody!.edits});}
-      if(path.endsWith("/records/override-a"))return response({version:3});if(path.endsWith("/records"))return response({records:[],revision:1});if(path.endsWith("/status"))return response(coverage);if(path.endsWith("/sources"))return response({sources:[{kind:"relationship",id:"relationship-a",version:2,text:"Updated source",truncated:false}]});if(path.endsWith("/publications"))return response({publications:[]});if(path.endsWith("/drafts"))return response({drafts:[saved]});return response({...saved,version:4});
+      if(path.endsWith("/records/override-a"))return response({version:3});if(path.endsWith("/records"))return response({records:[],revision:1});if(path.endsWith("/status"))return response(coverage);if(path.endsWith("/sources"))return response({sources:[{kind:"evidence",id:"evidence-a",version:2,text:"Updated source",truncated:false}]});if(path.endsWith("/publications"))return response({publications:[]});if(path.endsWith("/drafts"))return response({drafts:[saved]});return response({...saved,version:4});
     }));render(<OntologyPanel api={new UserApi("key")} session={session}/>);
     await selectTab("Drafts");
     fireEvent.click(await screen.findByRole("button",{name:/Storage correction/}));await screen.findByText("This draft uses an older catalog revision. Refresh it before publishing.");
     fireEvent.change(screen.getByLabelText("Audit reason"),{target:{value:"Keep my unsaved reason"}});fireEvent.click(screen.getByRole("button",{name:"Refresh draft before resubmitting"}));await screen.findByText("Draft refreshed. Review the corrections, save, and preview again.");
     fireEvent.click(screen.getByRole("button",{name:"Save draft"}));await screen.findByText("Draft saved. Preview its impact before publishing.");
-    expect(refreshedBody).toMatchObject({expected_version:4,expected_revision:1,reason:"Keep my unsaved reason",edits:[{expected_version:3,source:{kind:"relationship",id:"relationship-a",version:2}}]});
+    expect(refreshedBody).toMatchObject({expected_version:4,expected_revision:1,reason:"Keep my unsaved reason",edits:[{expected_version:3,source:{kind:"evidence",id:"evidence-a",version:2}}]});
   });
 });
 

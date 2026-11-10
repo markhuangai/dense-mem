@@ -75,8 +75,8 @@ test("an interrupted nested fault identifies its active step before completion",
   const runner = new URL("./runner.mjs", import.meta.url).href;
   const child = spawn(process.execPath, ["--input-type=module", "-e", `
     import { runStep } from ${JSON.stringify(runner)};
-    await runStep('remember/predicate-registration', () =>
-      runStep('remember/predicate-registration-repair', () => fetch('http://127.0.0.1:${server.address().port}')));
+    await runStep('remember/assessment', () =>
+      runStep('remember/assessment-repair', () => fetch('http://127.0.0.1:${server.address().port}')));
   `]);
   const closed = once(child, "close");
   let stderr = "";
@@ -84,7 +84,7 @@ test("an interrupted nested fault identifies its active step before completion",
   const progressStarted = new Promise(resolve => { started = resolve; });
   child.stderr.on("data", chunk => {
     stderr += chunk;
-    if (stderr.endsWith("\n") && stderr.includes('"case":"remember/predicate-registration-repair"')) started();
+    if (stderr.endsWith("\n") && stderr.includes('"case":"remember/assessment-repair"')) started();
   });
   try {
     await Promise.race([
@@ -92,7 +92,7 @@ test("an interrupted nested fault identifies its active step before completion",
       closed.then(result => { throw new Error(`case exited before blocking: ${JSON.stringify(result)} ${stderr}`); }),
     ]);
     const events = stderr.trim().split("\n").map(JSON.parse);
-    assert.deepEqual(events.map(event => event.case), ["remember/predicate-registration", "remember/predicate-registration-repair"]);
+    assert.deepEqual(events.map(event => event.case), ["remember/assessment", "remember/assessment-repair"]);
     assert.match(stderr, /"outcome":"started"/);
     assert.doesNotMatch(stderr, /"outcome":"(?:passed|failed)"/);
     child.kill("SIGTERM");
@@ -107,18 +107,17 @@ test("an interrupted nested fault identifies its active step before completion",
   }
 });
 
-test("provider fixture routes organization requests and retains locked classifications and pair constraints", () => {
-  const request = structuredRequest("ontology_organization_v2", {
-    request_id: "organization-fixture",
-    definitions: [{ ref: "locked-topic", kind: "topic", base_entity_kind: "" }],
-    items: [{ ref: "evidence-a", kind: "evidence", locked_definition_ref: "locked-topic" }, { ref: "entity-a", kind: "entity", entity_kind: "project" }],
+test("provider fixture routes topic organization with locked classifications and pair constraints", () => {
+  const request = structuredRequest("ontology_evidence_organization_v3", {
+    request_id: "organization-fixture", definitions: [{ ref: "locked-topic", kind: "topic" }],
+    items: [{ ref: "evidence-a", kind: "evidence", locked_definition_ref: "locked-topic" }, { ref: "evidence-b", kind: "evidence", text: "Atlas uses Redis." }],
     pairs: [{ ref: "separated", required_relation: "distinct" }, { ref: "joined", required_relation: "equivalent" }, { ref: "unconstrained", required_relation: "" }],
   });
   const response = fixtureChatResponse(request);
   assert.equal(response.request_id, "organization-fixture");
-  assert.deepEqual(response.hierarchy_updates, []);
+  assert.deepEqual(Object.keys(response).sort(), ["definitions", "equivalence", "items", "request_id"]);
   assert.equal(response.items[0].definition_ref, "locked-topic");
-  assert.equal(response.definitions[0].base_entity_kind, "project");
+  assert.equal(response.definitions[0].kind, "topic");
   assert.deepEqual(response.equivalence.map((pair) => pair.relation), ["distinct", "equivalent", "distinct"]);
 });
 
@@ -153,115 +152,39 @@ test("provider fixture retains bounded timeout and fault behavior", async () => 
   assert.match(fixture, /routeFault === "embedding-cancel" && embeddingFaultCall === 1/);
 });
 
-test("provider fixture emits a semantic assessor rejection for diagnostics coverage", () => {
-  const request = structuredRequest("dense_mem_semantic_assessment_response", {
+test("provider fixture emits complete Evidence assessment and invalid allowlist variants", () => {
+  const request = structuredRequest("dense_mem_evidence_assessment_response", {
     request_id: "assessment-invalid-request",
-    evidence: [{ evidence_id: "evidence-1", boundary_text: "⟦fixture-start⟧Dense-Mem uses PostgreSQL.⟦fixture-end⟧" }],
-    submitted_entities: [],
-    submitted_relationships: [{
-      ref: "durable-store",
-      subject_ref: "subject-1",
-      object_value: { type: "string", value: "PostgreSQL" },
-      predicate_hint: "stores_memory_in",
-      evidence_ids: ["evidence-1"],
-      polarity: "+",
-    }],
+    evidence: [{ evidence_id: "evidence-1", content: "Dense-Mem uses PostgreSQL.", boundary_text: "⟦fixture-start⟧Dense-Mem uses PostgreSQL.⟦fixture-end⟧" }],
   });
-  const response = fixtureChatResponse(request, "assessment-invalid", 1);
-  assert.equal(response.relationship_results[0].ref, "provider-forged-ref");
-  assert.equal(response.relationship_results[0].disposition, "stored");
-  assert.ok(Array.isArray(response.relationship_results[0].splits));
+  const response = fixtureChatResponse(request);
+  assert.deepEqual(Object.keys(response).sort(), ["evidence_conflict_results", "evidence_equivalence_results", "evidence_security_results", "request_id"]);
+  assert.deepEqual(response.evidence_security_results, [{ evidence_id: "evidence-1", decision: "pass", signals: [] }]);
+  assert.equal(fixtureChatResponse(request, "assessment-invalid").evidence_security_results[0].evidence_id, "provider-forged-ref");
+  assert.equal(fixtureChatResponse(request, "assessment-duplicate").evidence_security_results.length, 2);
+  assert.equal(fixtureChatResponse(request, "assessment-missing").evidence_security_results.length, 0);
 });
 
-test("provider fixture scopes assessment faults to the active schema input", () => {
-  const staleContext = {
-    messages: [
-      { role: "user", content: JSON.stringify({ evidence: [{ content: "[fixture-fault:no-supported] prior evidence" }] }) },
-      { role: "user", content: JSON.stringify({
-        evidence: [{ content: "Current evidence without a fixture fault." }],
-        known_evidence: [{ content: "[fixture-fault:security] recalled evidence" }],
-      }) },
-    ],
-  };
+test("provider fixture scopes faults to the active Evidence, topic or session input", () => {
+  const staleContext = structuredRequest("dense_mem_evidence_assessment_response", { evidence: [{ content: "[fixture-fault:security] stale" }] });
+  staleContext.messages.push({ role: "user", content: JSON.stringify({ evidence: [{ content: "Current evidence." }], known_evidence: [{ content: "[fixture-fault:security] recalled evidence" }] }) });
   assert.equal(fixtureFault(staleContext, "assessment"), "");
-
-  const activeEvidence = {
-    messages: [{ role: "user", content: JSON.stringify({ evidence: [{ content: "Current evidence [fixture-fault:no-supported]." }] }) }],
-  };
-  assert.equal(fixtureFault(activeEvidence, "assessment"), "no-supported");
-
-  const communitySummary = {
-    messages: [
-      { role: "user", content: JSON.stringify({ relationships: [{ support_quotes: [{ quote: "[fixture-fault:timeout] stale quote" }] }] }) },
-      { role: "user", content: JSON.stringify({ relationships: [{ support_quotes: [{ quote: "Current quote without a fault." }] }] }) },
-    ],
-    response_format: { json_schema: { name: "community_summary" } },
-  };
-  assert.equal(fixtureFault(communitySummary, "assessment"), "");
-  communitySummary.messages[1].content = JSON.stringify({
-    relationships: [{ support_quotes: [{ quote: "Current quote [fixture-fault:unavailable]." }] }],
-  });
-  assert.equal(fixtureFault(communitySummary, "assessment"), "unavailable");
-
-  const dreamGeneration = {
-    messages: [
-      { role: "user", content: JSON.stringify({ paths: [{ premises: [{ evidence: [{ content: "[fixture-fault:timeout] stale evidence" }] }] }] }) },
-      { role: "user", content: JSON.stringify({ paths: [{ premises: [{ evidence: [{ content: "Current evidence without a fault." }] }] }] }) },
-    ],
-    response_format: { json_schema: { name: "dense_mem_dream_generation_response" } },
-  };
-  assert.equal(fixtureFault(dreamGeneration, "assessment"), "");
-  dreamGeneration.messages[1].content = JSON.stringify({
-    paths: [{ premises: [{ evidence: [{ content: "Current evidence [fixture-fault:no-supported]." }] }] }],
-  });
-  assert.equal(fixtureFault(dreamGeneration, "assessment"), "no-supported");
-
+  for (const [schema, input] of [
+    ["dense_mem_evidence_assessment_response", { evidence: [{ content: "Current [fixture-fault:timeout]." }] }],
+    ["ontology_evidence_organization_v3", { items: [{ text: "Current [fixture-fault:timeout]." }] }],
+    ["session_evidence_excerpts_v2", { window: { core: [{ text: "Current [fixture-fault:timeout]." }] } }],
+  ]) assert.equal(fixtureFault(structuredRequest(schema, input), "assessment"), "timeout");
   assert.equal(fixtureFault({ input: ["Current embedding input [fixture-fault:embedding-count]."] }, "embedding"), "embedding-count");
 });
 
-test("provider fixture implements the community and graph dream schemas", () => {
-  const relationshipID = "11111111-1111-4111-8111-111111111111";
-  const evidenceID = "22222222-2222-4222-8222-222222222222";
-  const community = fixtureChatResponse(structuredRequest("community_summary", {
-    community_id: "community_1",
-    summary_input_hash: "sha256:community-input",
-    relationships: [{
-      relationship_id: relationshipID,
-      evidence_ids: [evidenceID],
-      support_quotes: [{ evidence_id: evidenceID, quote: "Dense-Mem uses PostgreSQL." }],
-      subject: "Dense-Mem",
-      predicate: "uses",
-      object: "PostgreSQL",
-    }],
+test("provider fixture emits exact current-event excerpts with original rune offsets", () => {
+  const text = "🧭  Ari uses Go. [fixture-fault:embedding-malformed]";
+  const result = fixtureChatResponse(structuredRequest("session_evidence_excerpts_v2", {
+    request_id: "session", window: { core: [{ event_index: 0, ref: "segment", start: 0, end: Array.from(text).length, text }] },
   }));
-  assert.deepEqual(community.admitted_relationship_ids, [relationshipID]);
-  assert.deepEqual(community.admitted_evidence_ids, [evidenceID]);
-  assert.deepEqual(community.admitted_support_quotes, [{ evidence_id: evidenceID, quote: "Dense-Mem uses PostgreSQL." }]);
-  assert.deepEqual(community.top_entities, ["Dense-Mem", "PostgreSQL"]);
-  assert.deepEqual(community.top_predicates, ["uses"]);
-
-  const dream = fixtureChatResponse(structuredRequest("dense_mem_dream_generation_response", {
-    request_id: "dream_request_1",
-    max_outputs: 1,
-    paths: [{
-      path_ref: "path_1",
-      subject: { ref: "node_1", display: "Dense-Mem", kind: "project" },
-      middle: { ref: "node_2", display: "Runtime", kind: "product" },
-      object: { ref: "node_3", display: "PostgreSQL", kind: "product" },
-      premises: [
-        { evidence: [{ evidence_ref: "evidence_1" }] },
-        { evidence: [{ evidence_ref: "evidence_2" }] },
-      ],
-      allowed_predicates: [{ predicate_ref: "predicate_1", label: "uses" }],
-    }],
-  }));
-  assert.equal(dream.request_id, "dream_request_1");
-  assert.equal(dream.proposals.length, 1);
-  assert.equal(dream.proposals[0].path_ref, "path_1");
-  assert.equal(dream.proposals[0].predicate_ref, "predicate_1");
-  assert.deepEqual(dream.proposals[0].evidence_refs, ["evidence_1", "evidence_2"]);
-
-
+  assert.deepEqual(result.excerpts, [{ event_index: 0, start: 3, end: Array.from(text).length, content: "Ari uses Go. [fixture-fault:embedding-malformed]" }]);
+  const empty = fixtureChatResponse(structuredRequest("session_evidence_excerpts_v2", { request_id: "empty", window: { core: [{ event_index: 0, ref: "empty", start: 0, end: 7, text: "Thanks." }] } }));
+  assert.deepEqual(empty.excerpts, []);
 });
 
 function structuredRequest(schemaName, input) {
@@ -284,7 +207,7 @@ test("synchronous-write provider remains a project-scoped Compose helper", async
   assert.match(stack, /--scenario synchronous_write_primitives/);
   assert.doesNotMatch(stack, /--capability repository,service,server/);
   assert.match(stack, /--scenario synchronous_write_primitives --timeout 20m --total-timeout 25m/);
-  assert.match(processor, /func TestRememberServiceRejectsHistoricalOutcomesThroughPostgres/);
+  assert.match(processor, /func TestEvidenceOnlyPostgresRetiredRememberReceipts/);
 });
 
 test("legacy local Compose fragments are no longer imported", async () => {
@@ -326,7 +249,6 @@ test("remember PostgreSQL fixtures use the consolidated production runner handof
   assert.match(remember, /DENSE_MEM_E2E_COMPOSE_OVERLAY_FILE/);
   assert.match(remember, /SET LOCAL app\.tx_mode = 'system'/);
   assert.match(remember, /only permits read queries/);
-  assert.match(remember, /only permits alias setup/);
   assert.match(remember, /psql -X -q -v ON_ERROR_STOP=1/);
   assert.match(remember, /Remember PostgreSQL fixture failed \(\$\{result\.status\}\):/);
   assert.match(remember, /requiredEnv\("DENSE_MEM_E2E_COMPOSE_OVERLAY_FILE"\)/);

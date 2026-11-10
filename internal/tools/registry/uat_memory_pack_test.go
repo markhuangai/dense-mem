@@ -20,7 +20,7 @@ func TestBuildActiveWiresExportMemoryPackOnly(t *testing.T) {
 	}
 	out, err := export.Invoke(contractInvokeContext("read"), "ignored-profile", map[string]any{
 		"name":             "PostgreSQL pack",
-		"relationship_ids": []any{"relationship-canonical"},
+		"evidence_ids":     []any{"00000000-0000-0000-0000-000000000001"},
 		"include_evidence": false,
 	})
 	if err != nil {
@@ -29,7 +29,7 @@ func TestBuildActiveWiresExportMemoryPackOnly(t *testing.T) {
 	if err := ValidateInput(Tool{InputSchema: export.OutputSchema}, out); err != nil {
 		t.Fatalf("export_memory_pack output schema: %v", err)
 	}
-	if stub.req.Name != "PostgreSQL pack" || len(stub.req.RelationshipIDs) != 1 {
+	if stub.req.Name != "PostgreSQL pack" || len(stub.req.EvidenceIDs) != 1 {
 		t.Fatalf("export request = %#v", stub.req)
 	}
 }
@@ -53,7 +53,7 @@ type exportOnlyMemoryPackStub struct {
 func (s *exportOnlyMemoryPackStub) Export(_ context.Context, req memorypack.ExportRequest) (*memorypack.ExportResult, error) {
 	s.req = req
 	return &memorypack.ExportResult{
-		CanonicalJSON: `{"format":"` + memorypack.MemoryPackFormat + `","relationships":[]}`,
+		CanonicalJSON: `{"format":"` + memorypack.MemoryPackFormat + `","evidence":[]}`,
 		SHA256:        strings.Repeat("a", 64),
 		ItemCount:     0,
 		Filename:      "postgresql-pack.memory-pack.json",

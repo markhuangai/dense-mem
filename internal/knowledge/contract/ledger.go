@@ -16,9 +16,9 @@ type CreateIngestInput struct {
 	SourceSummary     string
 	Status            string
 	TelemetryRemember bool
-	Proposal          map[string]any
-	Metadata          map[string]any
-	Evidence          []EvidenceInput
+
+	Metadata map[string]any
+	Evidence []EvidenceInput
 }
 
 type EvidenceInput struct {
@@ -69,15 +69,14 @@ type SecuritySignalInput struct {
 }
 
 type EvidenceIngestResult struct {
-	TeamID              string
-	OwnerProfileID      string
-	IngestID            string
-	Status              string
-	CorrelationID       string
-	Existing            bool
-	Proposal            map[string]any
-	Evidence            []EvidenceFragment
-	RelationshipResults []SubmissionRelationshipResult
+	TeamID         string
+	OwnerProfileID string
+	IngestID       string
+	Status         string
+	CorrelationID  string
+	Existing       bool
+
+	Evidence []EvidenceFragment
 }
 
 type EvidenceFragment struct {

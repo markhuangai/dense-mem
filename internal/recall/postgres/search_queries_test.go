@@ -11,8 +11,7 @@ import (
 )
 
 func TestRecallSearchBranchesBindQueriesAndDecodeHits(t *testing.T) {
-	input := RecallEvidenceInput{TeamID: recallTeam, Query: "O'Reilly", QueryEmbedding: []float32{1, 0}, ExpandFromEntityIDs: []string{recallID1}, KnownAt: &recallTime}
-	rel := RecallRelationshipsInput{TeamID: input.TeamID, Query: input.Query, QueryEmbedding: input.QueryEmbedding, ExpandFromEntityIDs: input.ExpandFromEntityIDs, KnownAt: input.KnownAt}
+	input := RecallEvidenceInput{TeamID: recallTeam, Query: "O'Reilly", QueryEmbedding: []float32{1, 0}, KnownAt: &recallTime}
 	contract := recallTestContract()
 	ann := *contract
 	ann.IndexStrategy = "vector_hnsw"
@@ -22,28 +21,13 @@ func TestRecallSearchBranchesBindQueriesAndDecodeHits(t *testing.T) {
 		ann               bool
 		call              func(*gorm.DB) ([]SearchHit, error)
 	}{
-		{"evidence text", `(?s)FROM search_documents.*source_kind = 'evidence'.*ORDER BY text_rank DESC`, "evidence", []driver.Value{input.Query, recallTeam, recallContract, recallTime, recallTime, input.Query, 10}, false, func(db *gorm.DB) ([]SearchHit, error) {
+		{"evidence text", `(?s)FROM search_documents.*source_kind\s*=\s*'evidence'.*ORDER BY text_rank DESC`, "evidence", []driver.Value{input.Query, recallTeam, recallContract, recallTime, input.Query, recallTime, recallTime, recallTime, recallTime, recallTime, recallTime, recallTime, 10}, false, func(db *gorm.DB) ([]SearchHit, error) {
 			return searchRecallFullText(t.Context(), db, input, contract, 10)
 		}},
-		{"evidence exact", `(?s)FROM search_documents.*embedding_dimensions = \$4.*search_state = 'current'.*ORDER BY search_documents.embedding`, "evidence", []driver.Value{"[1,0]", recallTeam, recallContract, 2, recallTime, "[1,0]", 10}, false, func(db *gorm.DB) ([]SearchHit, error) {
+		{"evidence exact", `(?s)FROM search_documents.*embedding_dimensions = \$4.*search_state = 'current'.*ORDER BY search_documents.embedding`, "evidence", []driver.Value{"[1,0]", recallTeam, recallContract, 2, recallTime, recallTime, recallTime, recallTime, recallTime, recallTime, recallTime, "[1,0]", 10}, false, func(db *gorm.DB) ([]SearchHit, error) {
 			return searchRecallVector(t.Context(), db, input, contract, 10)
 		}},
-		{"evidence ANN", `(?s)WITH ann_candidates AS MATERIALIZED.*embedding_contract_id = '` + recallContract + `'.*FROM ann_candidates AS candidate`, "evidence", []driver.Value{recallTeam, recallTime, "[1,0]", 80, "[1,0]", "[1,0]", 10}, true, func(db *gorm.DB) ([]SearchHit, error) { return searchRecallVector(t.Context(), db, input, &ann, 10) }},
-		{"evidence expansion", `(?s)FROM relationship_records AS relationship.*JOIN search_documents.*ORDER BY max\(relationship.updated_at\)`, "evidence", nil, false, func(db *gorm.DB) ([]SearchHit, error) {
-			return searchRecallEntityExpansion(t.Context(), db, input, contract, 10)
-		}},
-		{"relationship text", `(?s)WITH.*activated_at IS NOT NULL.*source_kind = 'relationship'.*ORDER BY text_rank DESC`, "relationship", []driver.Value{recallTeam, input.Query, recallTeam, recallContract, recallTime, input.Query, 10}, false, func(db *gorm.DB) ([]SearchHit, error) {
-			return searchRecallRelationshipFullText(t.Context(), db, rel, contract, 10)
-		}},
-		{"relationship exact", `(?s)WITH generation_count.*embedding_dimensions = \$6.*search_state = 'current'.*ORDER BY document.embedding`, "relationship", []driver.Value{recallTeam, recallTeam, "[1,0]", recallTeam, recallContract, 2, "[1,0]", 10}, false, func(db *gorm.DB) ([]SearchHit, error) {
-			return searchRecallRelationshipVector(t.Context(), db, rel, contract, 10)
-		}},
-		{"relationship ANN", `(?s)WITH generation_count.*ann_candidates AS MATERIALIZED.*embedding_contract_id = '` + recallContract + `'.*FROM ann_candidates AS candidate`, "relationship", []driver.Value{recallTeam, recallTeam, recallTeam, "[1,0]", 80, "[1,0]", "[1,0]", 10}, true, func(db *gorm.DB) ([]SearchHit, error) {
-			return searchRecallRelationshipVector(t.Context(), db, rel, &ann, 10)
-		}},
-		{"relationship expansion", `(?s)WITH.*JOIN relationship_records AS relationship.*ORDER BY relationship.updated_at DESC`, "relationship", nil, false, func(db *gorm.DB) ([]SearchHit, error) {
-			return searchRecallRelationshipEntityExpansion(t.Context(), db, rel, contract, 10)
-		}},
+		{"evidence ANN", `(?s)WITH ann_candidates AS MATERIALIZED.*embedding_contract_id = '` + recallContract + `'.*FROM ann_candidates AS candidate`, "evidence", []driver.Value{recallTeam, recallTime, recallTime, recallTime, recallTime, recallTime, recallTime, recallTime, "[1,0]", 80, "[1,0]", "[1,0]", 10}, true, func(db *gorm.DB) ([]SearchHit, error) { return searchRecallVector(t.Context(), db, input, &ann, 10) }},
 	} {
 		for _, fails := range []bool{false, true} {
 			name := tc.name + "/success"
@@ -97,7 +81,7 @@ func TestRecallSearchRejectsMalformedRowsAndIterationFailures(t *testing.T) {
 }
 
 func TestRecallVectorQueriesRejectInvalidContractsBeforeSQL(t *testing.T) {
-	for _, kind := range []string{"evidence", "relationship"} {
+	for _, kind := range []string{"evidence"} {
 		for _, strategy := range []string{"exact", "vector_hnsw"} {
 			for _, failure := range []string{"dimensions", "non_finite", "strategy", "contract_id", "ef_search"} {
 				if strategy == "exact" && (failure == "contract_id" || failure == "ef_search") {
@@ -121,11 +105,7 @@ func TestRecallVectorQueriesRejectInvalidContractsBeforeSQL(t *testing.T) {
 						mock.ExpectExec("SELECT set_config").WithArgs("80").WillReturnError(errRecallDB)
 					}
 					var err error
-					if kind == "evidence" {
-						_, err = searchRecallVector(t.Context(), db, RecallEvidenceInput{TeamID: recallTeam, QueryEmbedding: vector}, contract, 10)
-					} else {
-						_, err = searchRecallRelationshipVector(t.Context(), db, RecallRelationshipsInput{TeamID: recallTeam, QueryEmbedding: vector}, contract, 10)
-					}
+					_, err = searchRecallVector(t.Context(), db, RecallEvidenceInput{TeamID: recallTeam, QueryEmbedding: vector}, contract, 10)
 					require.Error(t, err)
 					if failure == "ef_search" {
 						require.ErrorIs(t, err, errRecallDB)
@@ -133,59 +113,5 @@ func TestRecallVectorQueriesRejectInvalidContractsBeforeSQL(t *testing.T) {
 				})
 			}
 		}
-	}
-}
-
-func TestRecallRelationshipExactSearchHonorsFallbackMetricAndRowBudget(t *testing.T) {
-	for _, state := range []string{"fallback_disabled", "metric", "count_error", "over_budget", "within_budget"} {
-		t.Run(state, func(t *testing.T) {
-			db, mock := newRecallSQLMockDB(t)
-			contract := recallTestContract()
-			contract.ExactMaxRows = 5
-			switch state {
-			case "fallback_disabled":
-				contract.IndexStrategy = "vector_hnsw"
-			case "metric":
-				contract.DistanceMetric = "euclidean"
-			default:
-				query := mock.ExpectQuery(`(?s)WITH generation_count.*SELECT count\(\*\).*LIMIT \$6`).WithArgs(recallTeam, recallTeam, recallTeam, recallContract, 2, 6)
-				if state == "count_error" {
-					query.WillReturnError(errRecallDB)
-				} else {
-					count := 6
-					if state == "within_budget" {
-						count = 5
-					}
-					query.WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(count))
-				}
-				if state == "within_budget" {
-					mock.ExpectQuery(`(?s)FROM current_generation.*ORDER BY document.embedding`).WillReturnRows(recallHitRows()).RowsWillBeClosed()
-				}
-			}
-			hits, err := searchRecallRelationshipExactVector(t.Context(), db, RecallRelationshipsInput{TeamID: recallTeam, QueryEmbedding: []float32{1, 0}}, contract, 10)
-			if state == "within_budget" {
-				require.NoError(t, err)
-				require.Empty(t, hits)
-			} else {
-				require.Error(t, err)
-			}
-		})
-	}
-}
-
-func TestRelationshipProjectionStateAccountsForEligibleCurrentAndFailedDocuments(t *testing.T) {
-	for _, tc := range []struct {
-		generation                string
-		eligible, current, failed int
-		want                      string
-	}{
-		{"current", 0, 0, 0, "current"}, {"current", 2, 2, 0, "current"}, {"current", 2, 1, 0, "pending"}, {"current", 2, 1, 1, "failed"},
-		{"failed", 0, 0, 0, "failed"}, {"building", 2, 2, 0, "pending"}, {"", 2, 1, 1, "failed"}, {"", 2, 2, 0, "current"}, {"", 2, 1, 0, "pending"},
-	} {
-		db, mock := newRecallSQLMockDB(t)
-		mock.ExpectQuery(`(?s)WITH.*COUNT\(eligible.relationship_id\)`).WithArgs(recallTeam, recallTeam, recallTeam, recallTeam, recallContract, 2).WillReturnRows(sqlmock.NewRows([]string{"latest_state", "eligible_count", "current_count", "failed_count"}).AddRow(tc.generation, tc.eligible, tc.current, tc.failed))
-		got, err := relationshipProjectionSearchState(t.Context(), db, RecallRelationshipsInput{TeamID: recallTeam}, recallTestContract())
-		require.NoError(t, err)
-		require.Equal(t, tc.want, got)
 	}
 }

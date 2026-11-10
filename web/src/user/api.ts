@@ -94,133 +94,42 @@ export type ListResponse<T> = {
   total?: number;
 };
 
-export type RecallCommunity = {
-  community_id: string;
-  logical_community_id: string;
-  rank: number;
-  summary: string;
-  top_entities: RecallEntity[];
-  top_predicates: string[];
-  entity_count: number;
-  relationship_count: number;
-  relationships: RecallRelationship[];
-  relationships_truncated: boolean;
-};
-
-export type RecallHit = {
-  tier?: string;
-  score?: number;
-  evidence?: RecallEvidenceContext;
-  relationship?: RecallRelationship;
-  relationships?: RecallRelationship[];
-  evidences?: RecallEvidenceContext[];
-  semantic_rank?: number;
-  keyword_rank?: number;
-  final_score?: number;
-  discovery_paths?: RecallDiscoveryPath[];
-  community?: RecallCommunity;
-};
-
-export type RecallEntity = {
-  entity_id?: string;
-  name?: string;
-  kind?: string;
-};
-
-export type RecallObject = {
-  entity_id?: string;
-  value_id?: string;
-  name?: string;
-  kind?: string;
-  value?: string;
-  type?: string;
-};
-
-export type RecallRelationship = {
-  relationship_id: string;
-  tier?: string;
-  equivalent_relationship_ids?: string[];
-  subject?: RecallEntity;
-  predicate?: string;
-  object?: RecallObject;
-  polarity?: string;
-  valid_from?: string;
-  valid_to?: string;
-  evidence_ids?: string[];
-  search_state?: string;
-  corroborating_relationship_ids?: string[];
-  conflicting_relationship_ids?: string[];
-};
-
 export type RecallEvidenceContext = {
   evidence_id: string;
-  relationship_ids?: string[];
-  rank?: number;
+  rank: number;
   context: string;
   source?: string;
   source_type?: string;
   created_at?: string;
+  space_kind?: "private" | "team_shared";
+  equivalent_evidence_ids: string[];
+  equivalents_truncated: boolean;
 };
 
-export type RecallDiscoveryPath = RecallCommunity;
+export type RelatedTopic = {
+  topic_id: string;
+  name: string;
+  description: string;
+  eligible_evidence_count: number;
+  rank: number;
+};
 
 export type RecallPayload = {
-  recall_id?: string;
+  recall_id: string;
   results: RecallEvidenceContext[];
-  conflicts?: unknown[];
-  related_relationships?: RecallRelationship[];
-  related_communities?: RecallCommunity[];
-  discovery_paths?: RecallDiscoveryPath[];
-  discovery_guidance?: string;
-  search_states?: {
-    evidence?: string;
-    relationships?: string;
-  };
-  degradations?: unknown[];
+  related_topics: RelatedTopic[];
+  topics_truncated: boolean;
+  conflicts: Array<{ conflict_id: string; status: string }>;
+  search_states: { evidence: string };
+  degradations: Array<{ code: string; message: string }>;
 };
 
-export type GraphNodeType = "entity" | "value";
-
-export type GraphNode = {
-  key: string;
-  id: string;
-  type: GraphNodeType | string;
-  title: string;
-  body?: string;
-  status?: string;
-  community_id?: string;
-  source?: string;
-  score?: number;
-  recorded_at?: string;
-};
-
-export type GraphEdge = {
-  id: string;
-  source: string;
-  target: string;
-  relationship: string;
-  directed: boolean;
-};
-
-export type GraphSnapshot = {
-  scope: "overview" | "local" | string;
-  query?: string;
-  anchor?: { type: GraphNodeType | string; id: string; key: string };
-  depth: number;
-  limit: number;
-  truncated: boolean;
-  nodes: GraphNode[];
-  edges: GraphEdge[];
-};
-
-export type GraphQuery = {
-  scope?: "overview" | "local";
-  q?: string;
-  types?: GraphNodeType[];
-  anchorType?: GraphNodeType;
-  anchorId?: string;
-  depth?: number;
-  limit?: number;
+export type RecallOptions = {
+  topicIDs?: string[];
+  topicLimit?: number;
+  knownEvidenceIDs?: string[];
+  knownAt?: string;
+  validAt?: string;
 };
 
 type RequestOptions = {
@@ -379,72 +288,15 @@ export class UserApi {
     return payload.data;
   }
 
-  async recall(query: string, limit = 10): Promise<RecallHit[]> {
+  async recall(query: string, limit = 10, options: RecallOptions = {}): Promise<RecallPayload> {
     const params = new URLSearchParams({ query, limit: String(limit) });
+    if (options.topicIDs) params.set("topic_ids", options.topicIDs.join(","));
+    if (options.topicLimit !== undefined) params.set("topic_limit", String(options.topicLimit));
+    if (options.knownEvidenceIDs) params.set("known_evidence_ids", options.knownEvidenceIDs.join(","));
+    if (options.knownAt) params.set("known_at", options.knownAt);
+    if (options.validAt) params.set("valid_at", options.validAt);
     const payload = await this.request<Envelope<unknown>>(`/ui/api/recall?${params.toString()}`);
-    const data = payload.data;
-    if (isRecallPayload(data)) {
-      const communityPaths = data.related_communities?.length ? data.related_communities : data.discovery_paths ?? [];
-      const communityHits = (data.related_communities ?? []).filter((community): community is RecallCommunity => Boolean(community.community_id)).map((community, index) => ({
-        community,
-        relationships: community.relationships ?? [],
-        discovery_paths: communityPaths,
-        semantic_rank: community.rank || index + 1,
-        final_score: community.rank ? 1 / community.rank : undefined,
-      }));
-      const relationshipHits = (data.related_relationships ?? []).map((relationship, index) => ({
-        tier: relationship.tier,
-        relationship,
-        relationships: [relationship],
-        evidences: [],
-        discovery_paths: communityPaths,
-        semantic_rank: index + 1,
-        final_score: relationship.search_state === "current" ? 1 : undefined,
-      }));
-      const evidenceHits = data.results.map((evidence) => ({
-        evidence,
-        evidences: [evidence],
-        relationships: relationshipsForEvidence(communityPaths, evidence.evidence_id),
-        discovery_paths: communityPaths,
-        final_score: evidence.rank ? 1 / evidence.rank : undefined,
-        semantic_rank: evidence.rank,
-      }));
-      return [...communityHits, ...evidenceHits, ...relationshipHits];
-    }
-    throw new ApiError(500, "Unexpected recall response format");
-  }
-
-  async graph(query: GraphQuery = {}): Promise<GraphSnapshot> {
-    const params = new URLSearchParams();
-    if (query.scope) {
-      params.set("scope", query.scope);
-    }
-    if (query.q) {
-      params.set("q", query.q);
-    }
-    if (query.types?.length) {
-      params.set("types", query.types.join(","));
-    }
-    if (query.anchorType) {
-      params.set("anchor_type", query.anchorType);
-    }
-    if (query.anchorId) {
-      params.set("anchor_id", query.anchorId);
-    }
-    if (query.depth !== undefined) {
-      params.set("depth", String(query.depth));
-    }
-    if (query.limit !== undefined) {
-      params.set("limit", String(query.limit));
-    }
-    const suffix = params.toString() ? `?${params.toString()}` : "";
-    const payload = await this.request<Envelope<GraphSnapshot>>(`/ui/api/graph${suffix}`, { cache: "no-store" });
-    return payload.data;
-  }
-
-  async nodeDetail(type: string, id: string): Promise<GraphNode> {
-    const params = new URLSearchParams({ type, id });
-    const payload = await this.request<Envelope<GraphNode>>(`/ui/api/node-detail?${params.toString()}`, { cache: "no-store" });
+    if (!isRecallPayload(payload.data)) throw new ApiError(500, "Unexpected recall response format");
     return payload.data;
   }
 
@@ -471,31 +323,10 @@ export function newIdempotencyKey(prefix: string): string {
   return `${prefix}-${randomUUID ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`}`;
 }
 
-function isRecallPayload(value: RecallPayload | unknown): value is RecallPayload {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
-  const payload = value as Partial<RecallPayload> & { evidences?: unknown };
-  return Array.isArray(payload.results) && !Array.isArray(payload.evidences);
-}
-
-function relationshipsForEvidence(paths: RecallDiscoveryPath[], evidenceID: string): RecallRelationship[] {
-  const seen = new Set<string>();
-  const out: RecallRelationship[] = [];
-  for (const path of paths) {
-    for (const relationship of path.relationships) {
-      if (path.community_id && !relationship.evidence_ids?.length) {
-        continue;
-      }
-      if (relationship.evidence_ids?.length && !relationship.evidence_ids.includes(evidenceID)) {
-        continue;
-      }
-      if (!relationship.relationship_id || seen.has(relationship.relationship_id)) {
-        continue;
-      }
-      seen.add(relationship.relationship_id);
-      out.push(relationship);
-    }
-  }
-  return out;
+function isRecallPayload(value: unknown): value is RecallPayload {
+  if (!value || typeof value !== "object") return false;
+  const payload = value as Partial<RecallPayload>;
+  return typeof payload.recall_id === "string" && Array.isArray(payload.results)
+    && Array.isArray(payload.related_topics) && typeof payload.topics_truncated === "boolean"
+    && Array.isArray(payload.conflicts) && Array.isArray(payload.degradations);
 }

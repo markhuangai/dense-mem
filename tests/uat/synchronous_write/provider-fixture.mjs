@@ -8,9 +8,6 @@ import { handleDecisionFixture } from "../decision_providers/protocol.mjs";
 const port = Number(process.env.PORT || 8787);
 const fault = (process.env.DENSE_MEM_E2E_PROVIDER_FAULT || "none").trim();
 const timeoutDelayMs = Number(process.env.DENSE_MEM_E2E_PROVIDER_TIMEOUT_DELAY_MS || 35_000);
-const correctionProviderFaultMarker = "e2e-correction-provider-fault";
-const correctionProviderTimeoutMarker = "e2e-correction-provider-timeout";
-const heldPredicateKey = "retired_memory_store_fixture";
 const assessmentAttempts = new Map();
 const embeddingCallsByFault = new Map();
 let ontologyMode = "normal";
@@ -86,13 +83,13 @@ const server = createServer(async (request, response) => {
   if (handleDecisionFixture(request, response, payload)) return;
 
   if (request.method === "POST" && request.url === "/ontology-fixture") {
-    if (!["normal", "matching", "ambiguous", "fail-three-then-success", "hold", "refine", "refine-repair", "refine-malformed", "refine-hold"].includes(payload.mode)) {
+    if (!["normal", "matching", "ambiguous", "fail-three-then-success", "hold"].includes(payload.mode)) {
       sendJSON(response, 400, { error: "invalid ontology fixture mode" });
       return;
     }
     ontologyMode = payload.mode;
-    if (!["hold", "refine-hold"].includes(payload.mode)) for (const release of heldOntologyRequests) release();
-    if (["hold", "refine-hold"].includes(payload.mode)) maxActiveOntologyRequests = activeOntologyRequests;
+    if (payload.mode !== "hold") for (const release of heldOntologyRequests) release();
+    if (payload.mode === "hold") maxActiveOntologyRequests = activeOntologyRequests;
     ontologyFailuresRemaining = payload.mode === "fail-three-then-success" ? 3 : 0;
     sendJSON(response, 200, { mode: ontologyMode });
     return;
@@ -107,7 +104,7 @@ const server = createServer(async (request, response) => {
       schema_name: typeof payload.response_format?.json_schema?.name === "string" ? payload.response_format.json_schema.name : "",
       fault: routeFault,
       generated_fields: Object.keys(payload.response_format?.json_schema?.schema?.properties || {}),
-      source_kinds: payload.response_format?.json_schema?.name === "ontology_organization_v2"
+      source_kinds: payload.response_format?.json_schema?.name === "ontology_evidence_organization_v3"
         ? [...new Set((assessmentInput(payload).items || []).map((item) => item.kind))] : [],
     });
   }
@@ -143,13 +140,6 @@ const server = createServer(async (request, response) => {
     if (inputs.every((input) => String(input).includes("[fixture-ranking:ontology]"))) {
       const embedding = Array.from({ length: payload.dimensions }, (_, index) => Number(index === 0));
       sendJSON(response, 200, { model: payload.model, data: inputs.map((_, index) => ({ index, embedding })) });
-      return;
-    }
-    if (inputs.some((input) => String(input).includes(correctionProviderTimeoutMarker))) {
-      await new Promise((resolve) => setTimeout(resolve, timeoutDelayMs));
-    }
-    if (inputs.some((input) => String(input).includes(correctionProviderFaultMarker))) {
-      response.destroy();
       return;
     }
     if (routeFault === "malformed" || routeFault === "embedding-malformed" || routeFault === "embedding-model") {
@@ -210,11 +200,11 @@ const server = createServer(async (request, response) => {
       return;
     }
     let assessment;
-    if (payload.response_format?.json_schema?.name === "ontology_organization_v2") {
+    if (payload.response_format?.json_schema?.name === "ontology_evidence_organization_v3") {
       activeOntologyRequests += 1;
       maxActiveOntologyRequests = Math.max(maxActiveOntologyRequests, activeOntologyRequests);
       try {
-        if (["hold", "refine-hold"].includes(ontologyMode)) await new Promise((resolve) => {
+        if (ontologyMode === "hold") await new Promise((resolve) => {
           const release = () => { clearTimeout(timer); heldOntologyRequests.delete(release); resolve(); };
           const timer = setTimeout(release, 30000);
           heldOntologyRequests.add(release);
@@ -237,44 +227,25 @@ const server = createServer(async (request, response) => {
 function fixtureSessionExtraction(input) {
   const core = input.window.core;
   const segments = [input.window.before, ...core, input.window.after].filter(Boolean);
-  const result = { request_id: input.request_id, overflow: false, coverage: core.map((item) => item.ref), entities: [], relationships: [], security_signals: [] };
+  const result = { request_id: input.request_id, overflow: false, coverage: core.map((item) => item.ref), excerpts: [], security_signals: [] };
   const byEvent = new Map();
   for (const segment of segments) {
     const list = byEvent.get(segment.event_index) || [];
-    list.push(segment); byEvent.set(segment.event_index, list);
+    list.push(segment);
+    byEvent.set(segment.event_index, list);
   }
-  const entities = new Map();
-  const entity = (name, kind) => {
-    const key = `${kind}:${name}`;
-    if (!entities.has(key)) {
-      const ref = `entity:${entities.size}`; entities.set(key, ref);
-      result.entities.push({ ref, name, entity_kind: kind });
-    }
-    return entities.get(key);
-  };
   for (const parts of byEvent.values()) {
+    parts.sort((left, right) => left.start - right.start);
     const text = parts.map((part) => part.text).join("");
     const offset = parts[0].start;
-    for (const match of text.matchAll(/([\p{L}\d]+) (?:also )?uses ([\p{L}\d]+)\./gu)) {
+    for (const match of text.matchAll(/([\p{L}\d]+) (?:also )?uses ([\p{L}\d]+)\.(?: \[fixture-fault:[a-z0-9_-]+\])?/gu)) {
       const start = offset + Array.from(text.slice(0, match.index)).length;
       const end = start + Array.from(match[0]).length;
       if (!core.some((part) => part.event_index === parts[0].event_index && part.start < end && part.end > start)) continue;
-      const first = parts.find((part) => part.start <= start && part.end > start);
-      const last = parts.find((part) => part.start < end && part.end >= end);
-      if (!first || !last) continue;
-      result.relationships.push({ ref: `fact:${result.relationships.length}`, subject_ref: entity(match[1],"person"), predicate: "uses", object_ref: entity(match[2],"product"), object_value: null, polarity: "+", citations: [{ start_ref: first.ref, end_ref: last.ref }], known_evidence_ids: [], valid_from: null, valid_to: null });
+      result.excerpts.push({ event_index: parts[0].event_index, start, end, content: match[0] });
     }
   }
   return result;
-}
-function fixtureSessionLinking(input) {
-  const groups = new Map();
-  for (const entity of input.entities) {
-    const key = `${entity.entity_kind}:${entity.name}`;
-    if (!groups.has(key)) groups.set(key, { ref: `group:${groups.size}`, canonical_ref: entity.ref, members: [] });
-    groups.get(key).members.push(entity.ref);
-  }
-  return { request_id: input.request_id, groups: [...groups.values()] };
 }
 
 function assessmentInput(payload) {
@@ -288,129 +259,36 @@ function assessmentInput(payload) {
       // Repair feedback is not an assessment request.
     }
   }
-  return { request_id: "fixture", submitted_entities: [], submitted_relationships: [], evidence: [] };
+  return { request_id: "fixture", evidence: [] };
 }
 
 function fixtureChatResponse(payload, requestFault = "none", attempt = 1) {
   const schemaName = payload.response_format?.json_schema?.name;
-  if (schemaName === "dense_mem_session_extraction_v1") return fixtureSessionExtraction(structuredInput(payload, (input) => input.window));
-  if (schemaName === "dense_mem_session_linking_v1") return fixtureSessionLinking(structuredInput(payload, (input) => Array.isArray(input.entities)));
-  if (schemaName === "community_summary") return fixtureCommunitySummary(payload);
-  if (schemaName === "dense_mem_dream_generation_response") return fixtureDreamGeneration(payload);
-  if (schemaName === "ontology_organization_v2") return fixtureOntologyOrganization(payload, attempt);
-  const assessment = fixtureAssessment(assessmentInput(payload), requestFault, attempt);
+  if (schemaName === "session_evidence_excerpts_v2") return fixtureSessionExtraction(structuredInput(payload, (input) => input.window));
+  if (schemaName === "ontology_evidence_organization_v3") return fixtureOntologyOrganization(payload);
+  if (schemaName !== "dense_mem_evidence_assessment_response") throw new Error(`unsupported fixture schema ${schemaName}`);
+  const assessment = fixtureAssessment(assessmentInput(payload), requestFault);
   if (requestFault === "routed-field-repair" || requestFault === "routed-field-exhausted") {
     const repair = structuredInput(payload, (input) => Array.isArray(input.validation_errors));
-    const actionable = repair.validation_errors?.some((error) => error.field === "relationship_results[0].disposition" && error.message === "is required");
-    if (requestFault === "routed-field-exhausted" || !actionable) delete assessment.relationship_results[0].disposition;
-    return assessment;
+    const actionable = repair.validation_errors?.some((error) => error.field === "request_id" && error.message === "is required");
+    if (requestFault === "routed-field-exhausted" || !actionable) delete assessment.request_id;
   }
-  if (requestFault === "predicate-registration-kind-repair") {
-    const repair = structuredInput(payload, (input) => Array.isArray(input.validation_errors));
-    const actionable = repair.validation_errors?.some((error) => error.field?.endsWith("predicate_registration.predicate_key") && error.message?.includes("submitted subject kind") && error.message?.includes("registration cannot change"));
-    if (!actionable) {
-      const split = assessment.relationship_results[0].splits[0];
-      split.predicate_status = "registration_required";
-      split.predicate_key = null;
-      split.predicate_version = null;
-      split.predicate_registration = { predicate_key: "Incompatible Memory Store Fixture", relationship_kind: "state", current_cardinality: "many" };
-    }
-    return assessment;
-  }
-  if (["assessment-span-marker-repair", "assessment-span-support-repair", "assessment-span-blank-repair"].includes(requestFault)) {
-    const repair = structuredInput(payload, (input) => Array.isArray(input.validation_errors));
-    const expectedMessage = requestFault === "assessment-span-marker-repair" ? "boundary_text" : requestFault === "assessment-span-support-repair" ? "same evidence_id" : "not whitespace";
-    const actionable = repair.validation_errors?.some((error) => error.field?.endsWith("predicate_range") && error.message?.includes(expectedMessage));
-    if (!actionable) {
-      const evidence = assessmentInput(payload).evidence[0];
-      const refs = [...evidence.boundary_text.matchAll(/⟦([^⟧]+)⟧/g)].map((match) => match[1]);
-      const split = assessment.relationship_results[0].splits[0];
-      if (requestFault === "assessment-span-marker-repair") split.predicate_range.start_ref = "unknown-marker-canary";
-      else if (requestFault === "assessment-span-support-repair") split.support_ranges[0] = { ...split.support_ranges[0], end_ref: refs[1] };
-      else {
-        const space = [...evidence.content].indexOf(" ");
-        if (space < 0) throw new Error("span-blank fixture needs a space");
-        split.predicate_range.start_ref = refs[space];
-        split.predicate_range.end_ref = refs[space + 1];
-      }
-    }
-    return assessment;
-  }
-  if (requestFault === "predicate-registration-repair" || requestFault === "predicate-registration-exhausted" || requestFault === "predicate-registration-reuse" || requestFault === "predicate-registration-drift") {
-    const original = assessmentInput(payload);
-    const split = assessment.relationship_results?.[0]?.splits?.[0];
-    if (!split) throw new Error("predicate-registration fixture requires one stored relationship split");
-    if (requestFault === "predicate-registration-reuse" || requestFault === "predicate-registration-drift") {
-      const key = original.submitted_relationships?.[0]?.predicate_hint;
-      if (!original.predicate_options?.some((option) => option.predicate_key === key)) {
-        throw new Error("predicate-registration fixture requires the existing predicate option");
-      }
-      split.predicate_status = "registration_required";
-      split.predicate_key = null;
-      split.predicate_version = null;
-      split.predicate_registration = { predicate_key: key, relationship_kind: "state", current_cardinality: "many" };
-      return assessment;
-    }
-    if (original.predicate_options?.some((option) => option.predicate_key === heldPredicateKey)) {
-      throw new Error("retired predicate must be omitted from assessor options");
-    }
-    const repair = structuredInput(payload, (input) => Array.isArray(input.validation_errors));
-    const actionable = repair.validation_errors?.some((error) => String(error.field || "").includes("predicate_registration"));
-    if (requestFault === "predicate-registration-repair" && actionable) return assessment;
-    split.predicate_status = "registration_required";
-    split.predicate_key = null;
-    split.predicate_version = null;
-    split.predicate_registration = { predicate_key: heldPredicateKey, relationship_kind: "state", current_cardinality: "many" };
-    return assessment;
-  }
-  if (requestFault === "assessment-predicate-key-repair") {
-    const repair = structuredInput(payload, (input) => Array.isArray(input.validation_errors));
-    if (!(repair.validation_errors || []).some((error) => error.field?.endsWith(".predicate_key") && error.message === "is outside predicate allowlist")) {
-      const split = assessment.relationship_results[0].splits[0];
-      split.predicate_status = "resolved";
-      split.predicate_key = "fixture_not_in_predicate_allowlist";
-      split.predicate_version = 1;
-      split.predicate_registration = null;
-    }
-    return assessment;
-  }
-  if (requestFault === "assessment-predicate-repair") {
-    const repair = structuredInput(payload, (input) => Array.isArray(input.validation_errors));
-    const actionable = (repair.validation_errors || []).some((error) => error.field?.endsWith(".predicate_range") && error.message?.includes("256"));
-    if (actionable) {
-      const evidence = assessmentInput(payload).evidence[0];
-      const phrase = "stores durable memory in";
-      const phraseIndex = evidence.content.indexOf(phrase);
-      if (phraseIndex < 0) throw new Error("predicate-repair fixture is missing its predicate phrase");
-      const start = [...evidence.content.slice(0, phraseIndex)].length;
-      const refs = [...evidence.boundary_text.matchAll(/⟦([^⟧]+)⟧/g)].map((match) => match[1]);
-      assessment.relationship_results[0].splits[0].predicate_range = {
-        evidence_id: evidence.evidence_id,
-        start_ref: refs[start],
-        end_ref: refs[start + [...phrase].length],
-      };
-    }
-    return assessment;
-  }
-  if (requestFault !== "assessment-invalid") return assessment;
-  const [firstRelationship, ...remainingRelationships] = assessment.relationship_results || [];
-  return {
-    ...assessment,
-    relationship_results: firstRelationship
-      ? [{ ...firstRelationship, ref: "provider-forged-ref" }, ...remainingRelationships]
-      : [{ ref: "provider-forged-ref", disposition: "stored", reason: null, splits: [] }],
-  };
+  if (requestFault === "assessment-invalid") assessment.evidence_security_results[0].evidence_id = "provider-forged-ref";
+  if (requestFault === "assessment-duplicate") assessment.evidence_security_results.push(structuredClone(assessment.evidence_security_results[0]));
+  if (requestFault === "assessment-missing") assessment.evidence_security_results = [];
+  if (requestFault === "assessment-unknown") assessment.retired_field = [];
+  return assessment;
 }
 
-function fixtureOntologyOrganization(payload, attempt = 1) {
+function fixtureOntologyOrganization(payload) {
   const input = structuredInput(payload, (value) => Array.isArray(value.items) && Array.isArray(value.pairs));
   if (ontologyFailuresRemaining > 0) {
     ontologyFailuresRemaining -= 1;
-    return { request_id: input.request_id, definitions: [], items: [], equivalence: [], hierarchy_updates: [] };
+    return { request_id: input.request_id, definitions: [], items: [], equivalence: [] };
   }
   if (ontologyMode === "ambiguous") {
     return {
-      request_id: input.request_id, definitions: [], hierarchy_updates: [],
+      request_id: input.request_id, definitions: [],
       items: input.items.map((item) => item.locked_definition_ref
         ? { ref: item.ref, status: "classified", definition_ref: item.locked_definition_ref, reason: "" }
         : { ref: item.ref, status: "ambiguous", definition_ref: "", reason: "classification_uncertain" }),
@@ -420,100 +298,26 @@ function fixtureOntologyOrganization(payload, attempt = 1) {
   const definitions = [];
   const created = new Map();
   const items = input.items.map((item) => {
-    const kind = item.kind === "entity" ? "entity_class" : item.kind === "predicate" ? "predicate_concept" : "topic";
-    const base = kind === "entity_class" ? item.entity_kind : "";
     const topicKey = /redis|keydb/i.test(JSON.stringify(item)) ? "memory-coordination" : "memory-storage";
-    const candidateKey = ontologyMode === "matching" && item.kind === "evidence"
+    const candidateKey = ontologyMode === "matching"
       ? (/\bheliostat\b/i.test(item.text) ? "suntracker" : /\babout\b/i.test(item.text) ? "about" : /\band\b/i.test(item.text) ? "conjunctioncatalog" : "grammarnoise")
       : topicKey;
-    const signature = `${kind}:${base}:${kind === "topic" ? topicKey : ""}`;
-    let ref = item.locked_definition_ref || item.preferred_definition_ref || input.definitions.find((definition) => definition.kind === kind && (kind !== "entity_class" || definition.base_entity_kind === base) && (kind !== "topic" || definition.key === candidateKey))?.ref || created.get(signature);
+    let ref = item.locked_definition_ref || item.preferred_definition_ref || input.definitions.find((definition) => definition.kind === "topic" && definition.key === candidateKey)?.ref || created.get(topicKey);
     if (!ref) {
       ref = `new-definition-${definitions.length}`;
-      created.set(signature, ref);
-      const key = base || (kind === "predicate_concept" ? "registered-predicates" : topicKey);
-      definitions.push({ ref, kind, key, label: key.replaceAll("-", " "), description: "Synthetic organization vocabulary", aliases: kind === "topic" ? [topicKey === "memory-storage" ? "database platform" : "coordination platform"] : [], parent_ref: "", parent_relation: "", base_entity_kind: base });
+      created.set(topicKey, ref);
+      definitions.push({ ref, kind: "topic", key: topicKey, label: topicKey.replaceAll("-", " "), description: "Synthetic organization vocabulary", aliases: [topicKey === "memory-storage" ? "database platform" : "coordination platform"], parent_ref: "" });
     }
     return { ref: item.ref, status: "classified", definition_ref: ref, reason: "" };
   });
-  const hierarchy_updates = [];
-  if (ontologyMode.startsWith("refine")) {
-    for (const item of input.items) {
-      if (item.kind !== "entity" || item.entity_kind !== "project" || !JSON.stringify(item).includes("RefinementV2") || item.locked_definition_ref) continue;
-      const target = input.definitions.find((definition) => definition.key === "refinement-v2-project");
-      const parent = input.definitions.find((definition) => definition.key === "project");
-      if (!target || !parent) continue;
-      const decision = items.find((decision) => decision.ref === item.ref);
-      decision.definition_ref = target.ref;
-      decision.reason = "The supplied project name explicitly identifies a software project.";
-      if (!hierarchy_updates.some((update) => update.definition_ref === target.ref)) hierarchy_updates.push({ definition_ref: target.ref, parent_ref: parent.ref, parent_relation: "subclass_of", reason: "The explicit software project is a project." });
-    }
-    if (hierarchy_updates.length && (ontologyMode === "refine-malformed" || (ontologyMode === "refine-repair" && attempt === 1))) hierarchy_updates[0].parent_ref = "outside-allowlist";
-  }
   const sourceItems = new Map(input.items.map((item) => [item.ref, item]));
   const equivalentFixtureTexts = new Set(["Atlas stores PostgreSQL data.", "Atlas uses PostgreSQL for data storage."]);
-  return { request_id: input.request_id, definitions, items, hierarchy_updates, equivalence: input.pairs.map((pair) => {
+  return { request_id: input.request_id, definitions, items, equivalence: input.pairs.map((pair) => {
     const left = sourceItems.get(pair.left_ref);
     const right = sourceItems.get(pair.right_ref);
-    const equivalent = left?.kind === "evidence" && right?.kind === "evidence" && equivalentFixtureTexts.has(left.text) && equivalentFixtureTexts.has(right.text);
+    const equivalent = equivalentFixtureTexts.has(left?.text) && equivalentFixtureTexts.has(right?.text);
     return { ref: pair.ref, relation: pair.required_relation || (equivalent ? "equivalent" : "distinct") };
   }) };
-}
-
-function fixtureCommunitySummary(payload) {
-  const input = structuredInput(payload, (value) => Array.isArray(value.relationships));
-  const relationships = input.relationships || [];
-  const facts = relationships
-    .map((relationship) => [relationship.subject, relationship.predicate, relationship.object].map((value) => String(value || "").trim()).filter(Boolean).join(" "))
-    .filter(Boolean);
-  const supportQuotes = [];
-  const seenQuoteEvidence = new Set();
-  for (const relationship of relationships) {
-    for (const quote of relationship.support_quotes || []) {
-      const evidenceID = String(quote?.evidence_id || "").trim();
-      const text = String(quote?.quote || "").trim();
-      if (!evidenceID || !text || seenQuoteEvidence.has(evidenceID)) continue;
-      seenQuoteEvidence.add(evidenceID);
-      supportQuotes.push({ evidence_id: evidenceID, quote: text });
-    }
-  }
-  return {
-    summary: facts.length > 0 ? `${facts.join("; ")}.` : "The supplied relationships form a community.",
-    top_entities: uniqueStrings(relationships.flatMap((relationship) => [relationship.subject, relationship.object])).slice(0, 5),
-    top_predicates: uniqueStrings(relationships.map((relationship) => relationship.predicate)).slice(0, 5),
-    admitted_relationship_ids: uniqueStrings(relationships.map((relationship) => relationship.relationship_id)),
-    admitted_evidence_ids: uniqueStrings(relationships.flatMap((relationship) => relationship.evidence_ids || [])),
-    admitted_support_quotes: supportQuotes,
-  };
-}
-
-function fixtureDreamGeneration(payload) {
-  const input = structuredInput(payload, (value) => Array.isArray(value.paths));
-  const maxOutputs = Number.isSafeInteger(input.max_outputs) && input.max_outputs > 0 ? input.max_outputs : 1;
-  const proposals = [];
-  for (const path of input.paths || []) {
-    const predicate = path.allowed_predicates?.[0];
-    const evidenceRefs = (path.premises || [])
-      .map((premise) => premise.evidence?.[0]?.evidence_ref)
-      .filter((value) => typeof value === "string" && value.length > 0);
-    if (!path.path_ref || !predicate?.predicate_ref || evidenceRefs.length !== 2) continue;
-    const subject = String(path.subject?.display || "the subject").trim();
-    const object = String(path.object?.display || "the object").trim();
-    const label = String(predicate.label || "the supplied predicate").trim();
-    proposals.push({
-      path_ref: path.path_ref,
-      predicate_ref: predicate.predicate_ref,
-      statement: `${subject} may be related to ${object} through ${label}.`,
-      rationale: "The supplied two-premise path supports evaluating this possibility.",
-      what_if: "What if the proposed relationship is useful?",
-      possible_outcome: "The hypothesis can be reviewed against its cited evidence.",
-      likelihood: 0.7,
-      confidence: 0.8,
-      evidence_refs: evidenceRefs,
-    });
-    if (proposals.length === maxOutputs) break;
-  }
-  return { request_id: input.request_id || "fixture", proposals };
 }
 
 function structuredInput(payload, matches) {
@@ -530,148 +334,25 @@ function structuredInput(payload, matches) {
   return {};
 }
 
-function uniqueStrings(values) {
-  return [...new Set(values.map((value) => String(value || "").trim()).filter(Boolean))];
-}
-
-function fixtureAssessment(request, requestFault, attempt) {
-  const evidenceByID = new Map([
-    ...(request.evidence || []),
-    ...(request.known_evidence || []),
-  ].map((item) => [item.evidence_id, item]));
-  const proposalRelationships = Array.isArray(request.client_proposal?.relationship_hints)
-    ? request.client_proposal.relationship_hints
-    : Array.isArray(request.client_proposal?.relationships)
-      ? request.client_proposal.relationships
-      : [];
-  const proposalByRef = new Map(proposalRelationships.map((relationship) => [relationship?.ref, relationship]));
-  const entities = (request.submitted_entities || []).map((entity) => {
-    const selectedGrounding = requestFault === "ambiguous-pronoun"
-      ? entity.groundings?.find((grounding) => grounding.surface === "It") || entity.groundings?.[0]
-      : entity.groundings?.[0];
-    const groundingRef = selectedGrounding?.grounding_ref ?? null;
-    const group = (request.entity_candidate_groups || []).find((candidate) => candidate.grounding_ref === groundingRef);
-    const candidates = (group?.candidates || []).filter((candidate) => candidate.kind === entity.kind);
-    const reusable = candidates.length === 1 ? candidates[0] : null;
-    const ambiguous = !groundingRef && (requestFault === "unanchored-pronoun" || requestFault === "ambiguous-pronoun");
-    const result = {
-      ref: entity.ref,
-      grounding_ref: groundingRef,
-      action: ambiguous ? "ambiguous" : reusable ? "reuse" : "create",
-      candidate_entity_id: reusable?.entity_id ?? null,
-    };
-    if (selectedGrounding?.anchor_ref) result.anchor_ref = selectedGrounding.anchor_ref;
-    return result;
-  });
-  const relationships = (request.submitted_relationships || []).map((relationship, index) => {
-    const evidenceIDs = Array.isArray(relationship.evidence_ids) ? relationship.evidence_ids : [];
-    const knownEvidenceIDs = Array.isArray(relationship.known_evidence_ids) ? relationship.known_evidence_ids : [];
-    const requestedKnownEvidenceIDs = Array.isArray(proposalByRef.get(relationship.ref)?.known_evidence_ids)
-      ? proposalByRef.get(relationship.ref).known_evidence_ids
-      : knownEvidenceIDs;
-    const unavailableKnownEvidence = requestedKnownEvidenceIDs.some((evidenceID) => !evidenceByID.has(evidenceID));
-    const ranges = [...evidenceIDs, ...knownEvidenceIDs]
-      .map((evidenceID) => wholeEvidenceRange(evidenceByID.get(evidenceID)))
-      .filter(Boolean);
-    if (requestFault === "unreferenced-known" && index > 0 && request.known_evidence?.[0]) {
-      ranges.push(wholeEvidenceRange(request.known_evidence[0]));
-    }
-    const range = ranges[0] || wholeEvidenceRange(request.evidence?.[0]);
-    const subject = (request.submitted_entities || []).find((entity) => entity.ref === relationship.subject_ref);
-    const noGrounding = !subject?.groundings?.length;
-    const unsupported = requestFault === "no-supported" || (requestFault === "mixed" && index > 0) ||
-      unavailableKnownEvidence ||
-      (requestFault === "ambiguous-pronoun") ||
-      (requestFault === "unanchored-pronoun" && noGrounding);
-    if (unsupported) {
-      return { ref: relationship.ref, disposition: "not_supported", reason: "not_supported_by_evidence", splits: [] };
-    }
-    const knownPredicate = relationship.known_predicate_key || "";
-    const predicateOptions = Array.isArray(request.predicate_options) ? request.predicate_options : [];
-    const resolved = predicateOptions.find((option) => option.predicate_key === (knownPredicate || relationship.predicate_hint));
-    return {
-      ref: relationship.ref,
-      disposition: "stored",
-      reason: null,
-      splits: [{
-        split_index: 0,
-        subject_ref: relationship.subject_ref,
-        predicate_range: range,
-        predicate_status: resolved ? "resolved" : "registration_required",
-        predicate_key: resolved?.predicate_key ?? null,
-        predicate_version: resolved?.version ?? null,
-        predicate_registration: resolved ? null : {
-          predicate_key: relationship.predicate_hint || "related_to",
-          relationship_kind: "state",
-          current_cardinality: "many",
-        },
-        object_ref: relationship.object_ref ?? null,
-        object_value: relationship.object_value ?? null,
-        value_range: relationship.object_value ? range : null,
-        polarity: relationship.polarity,
-        support_ranges: ranges.length > 0 ? ranges : [range],
-        valid_from: relationship.valid_from ?? null,
-        valid_to: relationship.valid_to ?? null,
-      }],
-    };
-  });
-  const securitySignals = requestFault === "security" && request.evidence?.length > 0 ? [{
-    kind: "instruction_override",
-    start_ref: wholeEvidenceRange(request.evidence[0]).start_ref,
-    end_ref: wholeEvidenceRange(request.evidence[0]).end_ref,
-  }] : [];
-  const securitySignalEvidenceIDs = requestFault === "security" && request.evidence?.length > 0
-    ? new Set([request.evidence[0].evidence_id])
-    : new Set();
+function fixtureAssessment(request, requestFault) {
   const securityResults = (request.evidence || []).map((evidence) => ({
     evidence_id: evidence.evidence_id,
-    decision: securitySignalEvidenceIDs.has(evidence.evidence_id) ? "reject" : "pass",
-    signals: securitySignalEvidenceIDs.has(evidence.evidence_id) ? securitySignals : [],
+    decision: requestFault === "security" ? "reject" : "pass",
+    signals: requestFault === "security" ? [{
+      kind: "instruction_override", start_ref: wholeEvidenceRange(evidence).start_ref, end_ref: wholeEvidenceRange(evidence).end_ref,
+    }] : [],
   }));
   const evidenceEquivalenceResults = (request.evidence_equivalence_candidates || []).map((group) => {
     if (requestFault === "semantic-reuse") {
       const candidate = group.candidates?.find((item) => String(item.content || "").includes("semantic-duplicate-canonical")) || group.candidates?.[0];
-      return {
-        evidence_id: group.evidence_id,
-        action: "reuse",
-        candidate_evidence_id: candidate?.evidence_id || "fixture-missing-candidate",
-      };
+      return { evidence_id: group.evidence_id, action: "reuse", candidate_evidence_id: candidate?.evidence_id || "fixture-missing-candidate" };
     }
-    if (requestFault === "semantic-reuse-unauthorized") {
-      return {
-        evidence_id: group.evidence_id,
-        action: "reuse",
-        candidate_evidence_id: "fixture-unauthorized-candidate",
-      };
-    }
-    return {
-      evidence_id: group.evidence_id,
-      action: "new",
-      candidate_evidence_id: null,
-    };
+    if (requestFault === "semantic-reuse-unauthorized") return { evidence_id: group.evidence_id, action: "reuse", candidate_evidence_id: "fixture-unauthorized-candidate" };
+    return { evidence_id: group.evidence_id, action: "new", candidate_evidence_id: null };
   });
-  const citedConflict = (request.evidence || []).length >= 2 && (request.evidence || []).some((item) => String(item?.content || "").includes("[fixture:cited-evidence-conflict]"));
-  const evidenceConflictResults = citedConflict ? [{
-    positions: request.evidence.slice(0, 2).map((evidence) => wholeEvidenceRange(evidence)),
-  }] : [];
-  if (requestFault === "repair" && attempt === 1) {
-    return {
-      request_id: request.request_id || "fixture",
-      evidence_security_results: securityResults,
-      evidence_equivalence_results: evidenceEquivalenceResults,
-      evidence_conflict_results: evidenceConflictResults,
-      entity_results: [],
-      relationship_results: relationships,
-    };
-  }
-  return {
-    request_id: request.request_id || "fixture",
-    evidence_security_results: securityResults,
-    evidence_equivalence_results: evidenceEquivalenceResults,
-    evidence_conflict_results: evidenceConflictResults,
-    entity_results: entities,
-    relationship_results: relationships,
-  };
+  const citedConflict = (request.evidence || []).length >= 2 && request.evidence.some((item) => String(item?.content || "").includes("[fixture:cited-evidence-conflict]"));
+  const evidenceConflictResults = citedConflict ? [{ positions: request.evidence.slice(0, 2).map(wholeEvidenceRange) }] : [];
+  return { request_id: request.request_id || "fixture", evidence_security_results: securityResults, evidence_equivalence_results: evidenceEquivalenceResults, evidence_conflict_results: evidenceConflictResults };
 }
 
 function wholeEvidenceRange(evidence) {
@@ -681,26 +362,18 @@ function wholeEvidenceRange(evidence) {
 }
 
 export function fixtureFault(payload, route) {
-  if (route === "embedding") {
-    return faultMarker(Array.isArray(payload.input) ? payload.input : [payload.input]);
-  }
+  if (route === "embedding") return faultMarker(Array.isArray(payload.input) ? payload.input : [payload.input]);
   if (route !== "assessment") return "";
-
   const schemaName = payload.response_format?.json_schema?.name;
-  let inputs = [];
-  if (schemaName === "community_summary") {
-    const input = structuredInput(payload, (value) => Array.isArray(value.relationships));
-    inputs = (input.relationships || []).flatMap((relationship) =>
-      (relationship.support_quotes || []).map((quote) => quote?.quote));
-  } else if (schemaName === "dense_mem_dream_generation_response") {
-    const input = structuredInput(payload, (value) => Array.isArray(value.paths));
-    inputs = (input.paths || []).flatMap((path) =>
-      (path.premises || []).flatMap((premise) =>
-        (premise.evidence || []).flatMap((evidence) => [evidence?.content, evidence?.boundary_text])));
-  } else {
-    inputs = (assessmentInput(payload).evidence || []).flatMap((item) => [item?.content, item?.boundary_text]);
+  if (schemaName === "session_evidence_excerpts_v2") {
+    const input = structuredInput(payload, (value) => value.window);
+    return faultMarker([input.window?.before, ...(input.window?.core || []), input.window?.after].filter(Boolean).map((segment) => segment.text));
   }
-  return faultMarker(inputs);
+  if (schemaName === "ontology_evidence_organization_v3") {
+    const input = structuredInput(payload, (value) => Array.isArray(value.items));
+    return faultMarker((input.items || []).map((item) => item.text));
+  }
+  return faultMarker((assessmentInput(payload).evidence || []).flatMap((item) => [item?.content, item?.boundary_text]));
 }
 
 function faultMarker(inputs) {
@@ -715,10 +388,9 @@ function faultForRoute(value, route) {
   const normalized = String(value || "").trim().toLowerCase();
   if (route === "embedding" && (
     normalized === "unavailable" || normalized === "malformed" || normalized === "timeout" || normalized.startsWith("assessment-") ||
-    normalized === "repair" || normalized === "repair-exhausted" || normalized.startsWith("predicate-registration-") ||
-    normalized === "security" || normalized === "no-supported" ||
-    normalized === "status-429" || normalized === "status-500" ||
-    normalized === "mixed"
+    normalized === "repair" || normalized === "repair-exhausted" ||
+    normalized === "security" ||
+    normalized === "status-429" || normalized === "status-500"
   )) return "";
   if (route === "assessment" && (normalized.startsWith("embedding-") || normalized === "embedding-only-timeout")) return "";
   return normalized;

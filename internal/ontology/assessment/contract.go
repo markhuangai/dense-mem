@@ -12,29 +12,26 @@ import (
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 )
 
-const SchemaName = "ontology_organization_v2"
+const SchemaName = "ontology_evidence_organization_v3"
 
 type Item struct {
 	Ref                    string              `json:"ref"`
 	Kind                   ontology.SourceKind `json:"kind"`
 	Text                   string              `json:"text"`
 	OwnerRef               string              `json:"owner_ref"`
-	EntityKind             string              `json:"entity_kind"`
 	Context                map[string]string   `json:"context"`
 	LockedDefinitionRef    string              `json:"locked_definition_ref"`
 	PreferredDefinitionRef string              `json:"preferred_definition_ref"`
 }
 
 type Definition struct {
-	Ref            string                  `json:"ref"`
-	Kind           ontology.Kind           `json:"kind"`
-	Key            string                  `json:"key"`
-	Label          string                  `json:"label"`
-	Description    string                  `json:"description"`
-	Aliases        []string                `json:"aliases"`
-	ParentRef      string                  `json:"parent_ref"`
-	ParentRelation ontology.ParentRelation `json:"parent_relation"`
-	BaseEntityKind string                  `json:"base_entity_kind"`
+	Ref         string        `json:"ref"`
+	Kind        ontology.Kind `json:"kind"`
+	Key         string        `json:"key"`
+	Label       string        `json:"label"`
+	Description string        `json:"description"`
+	Aliases     []string      `json:"aliases"`
+	ParentRef   string        `json:"parent_ref"`
 }
 
 type Pair struct {
@@ -45,11 +42,10 @@ type Pair struct {
 }
 
 type Request struct {
-	RequestID           string       `json:"request_id"`
-	Items               []Item       `json:"items"`
-	Definitions         []Definition `json:"definitions"`
-	Pairs               []Pair       `json:"pairs"`
-	HierarchyUpdateRefs []string     `json:"hierarchy_update_refs"`
+	RequestID   string       `json:"request_id"`
+	Items       []Item       `json:"items"`
+	Definitions []Definition `json:"definitions"`
+	Pairs       []Pair       `json:"pairs"`
 }
 
 type Decision struct {
@@ -64,34 +60,25 @@ type Equivalence struct {
 	Relation string `json:"relation"`
 }
 
-type HierarchyUpdate struct {
-	DefinitionRef  string                  `json:"definition_ref"`
-	ParentRef      string                  `json:"parent_ref"`
-	ParentRelation ontology.ParentRelation `json:"parent_relation"`
-	Reason         string                  `json:"reason"`
-}
-
 type Response struct {
-	RequestID        string            `json:"request_id"`
-	Definitions      []Definition      `json:"definitions"`
-	Items            []Decision        `json:"items"`
-	Equivalence      []Equivalence     `json:"equivalence"`
-	HierarchyUpdates []HierarchyUpdate `json:"hierarchy_updates"`
+	RequestID   string        `json:"request_id"`
+	Definitions []Definition  `json:"definitions"`
+	Items       []Decision    `json:"items"`
+	Equivalence []Equivalence `json:"equivalence"`
 }
 
 func Decode(raw string) (Response, error) {
 	if len(raw) > ontology.MaxPublicationBytes {
 		return Response{}, validationResult([]assessor.SemanticValidationError{validationIssue("response", "strict_json", "JSON input exceeds %d bytes", ontology.MaxPublicationBytes)}, nil)
 	}
-	fields, errs := assessor.ValidateResponseObject([]byte(raw), "", []string{"request_id", "definitions", "items", "equivalence", "hierarchy_updates"}, nil, nil)
+	fields, errs := assessor.ValidateResponseObject([]byte(raw), "", []string{"request_id", "definitions", "items", "equivalence"}, nil, nil)
 	for _, section := range []struct {
 		name   string
 		fields []string
 	}{
-		{"definitions", []string{"ref", "kind", "key", "label", "description", "aliases", "parent_ref", "parent_relation", "base_entity_kind"}},
+		{"definitions", []string{"ref", "kind", "key", "label", "description", "aliases", "parent_ref"}},
 		{"items", []string{"ref", "status", "definition_ref", "reason"}},
 		{"equivalence", []string{"ref", "relation"}},
-		{"hierarchy_updates", []string{"definition_ref", "parent_ref", "parent_relation", "reason"}},
 	} {
 		if value, ok := fields[section.name]; ok && !bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
 			errs = append(errs, assessor.ValidateResponseArrayObjects(value, section.name, section.fields, nil, nil)...)
@@ -123,7 +110,7 @@ func Decode(raw string) (Response, error) {
 		}
 	}
 	decode(fields["request_id"], "request_id", &response.RequestID)
-	for _, section := range []string{"definitions", "items", "equivalence", "hierarchy_updates"} {
+	for _, section := range []string{"definitions", "items", "equivalence"} {
 		var entries []json.RawMessage
 		_ = json.Unmarshal(fields[section], &entries)
 		switch section {
@@ -133,8 +120,6 @@ func Decode(raw string) (Response, error) {
 			response.Items = make([]Decision, len(entries))
 		case "equivalence":
 			response.Equivalence = make([]Equivalence, len(entries))
-		case "hierarchy_updates":
-			response.HierarchyUpdates = make([]HierarchyUpdate, len(entries))
 		}
 		for i, entry := range entries {
 			path := fmt.Sprintf("%s[%d]", section, i)
@@ -145,8 +130,6 @@ func Decode(raw string) (Response, error) {
 				decode(entry, path, &response.Items[i])
 			case "equivalence":
 				decode(entry, path, &response.Equivalence[i])
-			case "hierarchy_updates":
-				decode(entry, path, &response.HierarchyUpdates[i])
 			}
 		}
 	}
@@ -165,7 +148,7 @@ func Validate(request Request, response Response) error {
 	for _, section := range []struct {
 		name    string
 		missing bool
-	}{{"definitions", response.Definitions == nil}, {"items", response.Items == nil}, {"equivalence", response.Equivalence == nil}, {"hierarchy_updates", response.HierarchyUpdates == nil}} {
+	}{{"definitions", response.Definitions == nil}, {"items", response.Items == nil}, {"equivalence", response.Equivalence == nil}} {
 		if section.missing {
 			errs = append(errs, validationIssue(section.name, "missing_array", "must be an array, including when empty"))
 		}
@@ -176,10 +159,7 @@ func Validate(request Request, response Response) error {
 	if len(response.Items) != len(request.Items) {
 		errs = append(errs, validationIssue("items", "item_count_mismatch", "must contain exactly %d decisions, one per supplied item ref; received %d", len(request.Items), len(response.Items)))
 	}
-	if len(response.Definitions) > ontology.MaxVocabularyCandidates || len(response.Items) > 20 || len(response.Equivalence) > 190 || len(response.HierarchyUpdates) > ontology.MaxVocabularyCandidates {
-		if len(response.HierarchyUpdates) > ontology.MaxVocabularyCandidates {
-			errs = append(errs, validationIssue("hierarchy_updates", "hierarchy_update_limit", "must contain at most %d hierarchy updates; received %d", ontology.MaxVocabularyCandidates, len(response.HierarchyUpdates)))
-		}
+	if len(response.Definitions) > ontology.MaxVocabularyCandidates || len(response.Items) > 20 || len(response.Equivalence) > 190 {
 		if len(response.Equivalence) > 190 {
 			errs = append(errs, validationIssue("equivalence", "equivalence_coverage", "must contain exactly one decision per supplied pair ref; received %d", len(response.Equivalence)))
 		}
@@ -215,7 +195,6 @@ func Validate(request Request, response Response) error {
 		definitionOrder = append(definitionOrder, d.Ref)
 		newRefs = append(newRefs, d.Ref)
 	}
-	errs = append(errs, validateHierarchyUpdates(request, response, definitions, paths)...)
 	catalog := map[string]ontology.Record{}
 	catalogValid := true
 	for _, ref := range definitionOrder {
@@ -228,13 +207,10 @@ func Validate(request Request, response Response) error {
 			}
 			parentID = referenceID(d.ParentRef)
 		}
-		record := ontology.Record{ID: referenceID(ref), Kind: d.Kind, Definition: &ontology.Definition{Key: d.Key, Label: d.Label, Description: d.Description, Aliases: d.Aliases, ParentID: parentID, ParentRelation: d.ParentRelation, BaseEntityKind: d.BaseEntityKind}}
+		record := ontology.Record{ID: referenceID(ref), Kind: d.Kind, Definition: &ontology.Definition{Key: d.Key, Label: d.Label, Description: d.Description, Aliases: d.Aliases, ParentID: parentID}}
 		if err := ontology.ValidateRecord(record); err != nil {
 			encoded, _ := json.Marshal(d)
 			code := "definition_record"
-			if strings.HasPrefix(paths[ref], "hierarchy_updates[") {
-				code = "hierarchy_update_record"
-			}
 			errs = append(errs, validationIssue(paths[ref], code, "invalid definition %s: %v", encoded, err))
 			cause = ontology.ErrInvalid
 			catalogValid = false
@@ -283,14 +259,7 @@ func Validate(request Request, response Response) error {
 				continue
 			}
 			if !compatibleDefinition(item, d) {
-				expected := string(ontology.Topic)
-				if item.Kind == ontology.EntitySource {
-					expected = fmt.Sprintf("%s with base_entity_kind %q", ontology.EntityClass, item.EntityKind)
-				}
-				if item.Kind == ontology.PredicateSource {
-					expected = string(ontology.PredicateConcept)
-				}
-				errs = append(errs, validationIssue(path+".definition_ref", "item_source_kind", "item %q has incompatible source kind %q: expected %s; definition_ref %q selects kind %q with base_entity_kind %q", decision.Ref, item.Kind, expected, decision.DefinitionRef, d.Kind, d.BaseEntityKind))
+				errs = append(errs, validationIssue(path+".definition_ref", "item_source_kind", "item %q requires an Evidence topic; received kind %q", decision.Ref, d.Kind))
 			}
 			if item.PreferredDefinitionRef != "" && decision.DefinitionRef != item.PreferredDefinitionRef && strings.TrimSpace(decision.Reason) == "" {
 				errs = append(errs, validationIssue(path+".reason", "item_refinement_reason", "item %q refinement of preferred_definition_ref %q requires a reason grounded in its supplied context", decision.Ref, item.PreferredDefinitionRef))
@@ -368,71 +337,8 @@ func Validate(request Request, response Response) error {
 	return validationResult(errs, cause)
 }
 
-func validateHierarchyUpdates(request Request, response Response, definitions map[string]Definition, paths map[string]string) []assessor.SemanticValidationError {
-	var errs []assessor.SemanticValidationError
-	supplied := map[string]Definition{}
-	editable := map[string]bool{}
-	for _, definition := range request.Definitions {
-		supplied[definition.Ref] = definition
-	}
-	for _, ref := range request.HierarchyUpdateRefs {
-		editable[ref] = true
-	}
-	items := map[string]Item{}
-	for _, item := range request.Items {
-		items[item.Ref] = item
-	}
-	relevant := map[string]bool{}
-	for _, decision := range response.Items {
-		item, ok := items[decision.Ref]
-		if !ok || decision.Status != "classified" || (item.Kind != ontology.EntitySource && item.Kind != ontology.PredicateSource) || !compatibleDefinition(item, definitions[decision.DefinitionRef]) {
-			continue
-		}
-		relevant[decision.DefinitionRef] = true
-		if compatibleDefinition(item, supplied[item.PreferredDefinitionRef]) {
-			relevant[item.PreferredDefinitionRef] = true
-		}
-	}
-	seen := map[string]bool{}
-	for index, update := range response.HierarchyUpdates {
-		path := fmt.Sprintf("hierarchy_updates[%d]", index)
-		definition, suppliedRef := supplied[update.DefinitionRef]
-		if !suppliedRef || !editable[update.DefinitionRef] || (definition.Kind != ontology.EntityClass && definition.Kind != ontology.PredicateConcept) {
-			errs = append(errs, validationIssue(path+".definition_ref", "hierarchy_update_ref", "definition_ref %q must identify a supplied current unpinned entity_class or predicate_concept in hierarchy_update_refs", update.DefinitionRef))
-			continue
-		}
-		if seen[update.DefinitionRef] {
-			errs = append(errs, validationIssue(path+".definition_ref", "hierarchy_update_duplicate", "definition_ref %q occurs more than once", update.DefinitionRef))
-		}
-		seen[update.DefinitionRef] = true
-		if !relevant[update.DefinitionRef] {
-			errs = append(errs, validationIssue(path+".definition_ref", "hierarchy_update_unrelated", "definition_ref %q must be preferred or selected by a non-ambiguous compatible assessed source", update.DefinitionRef))
-		}
-		if strings.TrimSpace(update.Reason) == "" || len(update.Reason) > 128 {
-			errs = append(errs, validationIssue(path+".reason", "hierarchy_update_reason", "definition_ref %q requires a nonblank reason of at most 128 bytes grounded in supplied source context", update.DefinitionRef))
-		}
-		if update.ParentRef != "" {
-			if _, ok := definitions[update.ParentRef]; !ok {
-				errs = append(errs, validationIssue(path+".parent_ref", "hierarchy_update_parent_ref", "parent_ref %q is outside the complete supplied/proposed definition allowlist", update.ParentRef))
-			}
-		}
-		definition.ParentRef, definition.ParentRelation = update.ParentRef, update.ParentRelation
-		definitions[update.DefinitionRef] = definition
-		paths[update.DefinitionRef] = path
-	}
-	return errs
-}
-
 func compatibleDefinition(item Item, d Definition) bool {
-	switch item.Kind {
-	case ontology.EntitySource:
-		return d.Kind == ontology.EntityClass && d.BaseEntityKind == item.EntityKind
-	case ontology.PredicateSource:
-		return d.Kind == ontology.PredicateConcept
-	case ontology.EvidenceSource, ontology.RelationshipSource:
-		return d.Kind == ontology.Topic
-	}
-	return false
+	return item.Kind == ontology.EvidenceSource && d.Kind == ontology.Topic
 }
 
 func referenceID(ref string) string {
@@ -449,13 +355,11 @@ func pairKey(left, right string) string {
 }
 
 func ResponseSchema(requestID string) map[string]any {
-	text := map[string]any{"type": "string"}
 	ref := map[string]any{"type": "string", "maxLength": 64}
-	definition := closedObject(map[string]any{"ref": ref, "kind": map[string]any{"type": "string", "enum": []string{"entity_class", "predicate_concept", "topic"}}, "key": map[string]any{"type": "string", "minLength": 1, "maxLength": 128}, "label": map[string]any{"type": "string", "maxLength": 128}, "description": map[string]any{"type": "string", "maxLength": 1000}, "aliases": map[string]any{"type": "array", "maxItems": 20, "items": map[string]any{"type": "string", "maxLength": 128}}, "parent_ref": ref, "parent_relation": map[string]any{"type": "string", "enum": []string{"", "subclass_of", "subproperty_of"}}, "base_entity_kind": text})
+	definition := closedObject(map[string]any{"ref": ref, "kind": map[string]any{"type": "string", "enum": []string{"topic"}}, "key": map[string]any{"type": "string", "minLength": 1, "maxLength": 128}, "label": map[string]any{"type": "string", "maxLength": 128}, "description": map[string]any{"type": "string", "maxLength": 1000}, "aliases": map[string]any{"type": "array", "maxItems": 20, "items": map[string]any{"type": "string", "maxLength": 128}}, "parent_ref": ref})
 	item := closedObject(map[string]any{"ref": ref, "status": map[string]any{"type": "string", "enum": []string{"classified", "ambiguous"}}, "definition_ref": ref, "reason": map[string]any{"type": "string", "maxLength": 128}})
-	update := closedObject(map[string]any{"definition_ref": ref, "parent_ref": ref, "parent_relation": map[string]any{"type": "string", "enum": []string{"", "subclass_of", "subproperty_of"}}, "reason": map[string]any{"type": "string", "minLength": 1, "maxLength": 128}})
 	pair := closedObject(map[string]any{"ref": ref, "relation": map[string]any{"type": "string", "enum": []string{"equivalent", "distinct", "ambiguous"}}})
-	return closedObject(map[string]any{"request_id": map[string]any{"type": "string", "enum": []string{requestID}}, "definitions": map[string]any{"type": "array", "maxItems": 20, "items": definition}, "items": map[string]any{"type": "array", "maxItems": 20, "items": item}, "equivalence": map[string]any{"type": "array", "maxItems": 190, "items": pair}, "hierarchy_updates": map[string]any{"type": "array", "maxItems": ontology.MaxVocabularyCandidates, "items": update}})
+	return closedObject(map[string]any{"request_id": map[string]any{"type": "string", "enum": []string{requestID}}, "definitions": map[string]any{"type": "array", "maxItems": 20, "items": definition}, "items": map[string]any{"type": "array", "maxItems": 20, "items": item}, "equivalence": map[string]any{"type": "array", "maxItems": 190, "items": pair}})
 }
 
 func closedObject(properties map[string]any) map[string]any {

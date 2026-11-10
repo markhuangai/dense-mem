@@ -55,7 +55,6 @@ type pairedServiceFixture struct {
 	mcp            *httptest.Server
 	control        *httptest.Server
 	maintenance    *organization.MaintenanceService
-	projections    communityapp.Service
 	provider       *pairedRememberAssessor
 	reconciliation searchapp.SearchReconciliationService
 }
@@ -71,10 +70,10 @@ func newPairedServiceFixture(t *testing.T, side string) *pairedServiceFixture {
 	credential := &domain.Credential{ID: ownerID, TeamID: teamID, Name: "paired owner", KeyHash: "synthetic", KeyPrefix: strings.ReplaceAll(ownerID.String(), "-", "")[:24], KeySuffix: "owner", Scopes: []string{"read", "write"}}
 	require.NoError(t, accesspg.NewCredentialRepository(admin, rls, nil).CreateCredential(ctx, credential))
 	model, dimensions := ensureRememberProcessorIntegrationSearchContract(t, admin, rls)
-	store := knowledgepg.NewStore(app, rls, knowledge.ConflictRuntimeConfig{})
+	store := knowledgepg.NewStore(app, rls)
 	provider := &pairedRememberAssessor{failures: 1}
 	embedder := rememberProcessorIntegrationSearchEmbedder{model: model, dimensions: dimensions}
-	writer := remember.NewService(remember.Dependencies{Synchronous: processor.NewSynchronousProcessor(processor.ProcessorDependencies{Ledger: store, Catalog: store, Assessor: provider, EmbeddingExecutor: semanticwrite.NewProviderExecutor(embedder), Limits: assessor.DefaultSemanticAssessmentLimits()})})
+	writer := remember.NewService(remember.Dependencies{Synchronous: processor.NewSynchronousProcessor(processor.ProcessorDependencies{Ledger: store, Assessor: provider, EmbeddingExecutor: semanticwrite.NewProviderExecutor(embedder), Limits: assessor.DefaultSemanticAssessmentLimits()})})
 	actorCtx := rememberProcessorActorContext(t, ctx, admin, rls, teamID, ownerID)
 	actor, ok := requestctx.ActorFromContext(actorCtx)
 	require.True(t, ok)
@@ -88,8 +87,6 @@ func newPairedServiceFixture(t *testing.T, side string) *pairedServiceFixture {
 	require.NoError(t, err)
 	_, err = ontologyStore.EnsureMaintenanceWindow(ctx, policy, time.Now())
 	require.NoError(t, err)
-	communityStore := communitypg.NewStore(app, rls).WithTopics(ontologyStore.NewTopicCatalogReader(), ontologyStore.NewTopicMembershipReader(), ontologyStore.NewTopicProjectionAdmission(), ontologyStore.NewTopicProjectionRelease())
-	projections := communityapp.New(communityapp.Dependencies{Store: communityStore, AppConfig: configuration})
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var envelope struct {
 			Messages []modelprovider.Message `json:"messages"`
@@ -112,14 +109,14 @@ func newPairedServiceFixture(t *testing.T, side string) *pairedServiceFixture {
 	}))
 	t.Cleanup(upstream.Close)
 	transport := assessorprovider.NewOpenAIAssessor(&config.Config{AIVerifierAPIURL: upstream.URL, AIVerifierAPIKey: "synthetic", AIVerifierModel: "paired-ontology"}, upstream.Client())
-	maintenance := organization.NewMaintenanceService(organization.MaintenanceDependencies{Repository: ontologyStore, Config: configuration, Audit: audit, Projections: projections, DefaultModel: "paired-ontology", Organizer: func(model string, tokens int64, accounting assessment.AttemptAccounting) *organization.Service {
+	maintenance := organization.NewMaintenanceService(organization.MaintenanceDependencies{Repository: ontologyStore, Config: configuration, Audit: audit, DefaultModel: "paired-ontology", Organizer: func(model string, tokens int64, accounting assessment.AttemptAccounting) *organization.Service {
 		return organization.NewService(ontologyStore, assessment.NewProviderWithAccounting(transport, model, assessor.DefaultSemanticAssessmentLimits(), accounting, int(tokens)))
 	}})
 	_, err = maintenance.Command(ctx, domain.OntologyMaintenanceCommand{Action: "pause", OperationKey: uuid.NewString()}, "", "")
 	require.NoError(t, err)
-	recallStore := recallpg.NewStore(app, rls, search, searchRecallConflictReader(), recallpg.LoadRecallEvidenceConflictRecords).
+	recallStore := recallpg.NewStore(app, rls, search, recallpg.LoadRecallEvidenceConflictRecords).
 		WithOntology(func() recallpg.OntologyReader { return ontologyStore.NewRecallReader() })
-	reader := evaluation.New(evaluation.Dependencies{Repository: evaluationpg.NewReader(app, rls), Audit: audit, Recall: recall.NewRecallService(recall.RecallDependencies{Search: recallStore, Provider: embedder, OntologyConfig: configuration, Communities: communityStore})})
+	reader := evaluation.New(evaluation.Dependencies{Repository: evaluationpg.NewReader(app, rls), Audit: audit, Recall: recall.NewRecallService(recall.RecallDependencies{Search: recallStore, Provider: embedder, OntologyConfig: configuration})})
 	reg, err := registry.BuildActive(registry.Dependencies{RememberBindings: registry.RememberBindings{Service: writer}})
 	require.NoError(t, err)
 	mcp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -177,13 +174,13 @@ func newPairedServiceFixture(t *testing.T, side string) *pairedServiceFixture {
 		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": request.ID, "result": registry.ToolCallerResponse(result, err != nil)})
 	}))
 	t.Cleanup(mcp.Close)
-	portal, err := densehttp.NewControlPortalServerWithCapabilityBindings(&config.Config{ControlPortalToken: "paired-control"}, nil, nil, nil, densehttp.ControlPortalBindings{Telemetry: densehttp.ControlPortalTelemetry{Ontology: maintenance, Config: configuration, Communities: projections, Convergence: searchapp.NewSearchConvergenceService(search, store)}}, densehttp.HealthConfig{}, nil)
+	portal, err := densehttp.NewControlPortalServerWithCapabilityBindings(&config.Config{ControlPortalToken: "paired-control"}, nil, nil, nil, densehttp.ControlPortalBindings{Telemetry: densehttp.ControlPortalTelemetry{Ontology: maintenance, Config: configuration, Convergence: searchapp.NewSearchConvergenceService(search, store)}}, densehttp.HealthConfig{}, nil)
 	require.NoError(t, err)
 	control := httptest.NewServer(portal)
 	t.Cleanup(control.Close)
-	r := evalharness.PairRelease{Release: side, Protocol: "adr0014", Scope: evalharness.PairScope{TeamID: teamID.String(), OwnerID: ownerID.String()}, Capacity: evalharness.PairCapacity{Global: 4, Team: 4, ContextWindowTokens: 300000}, Models: evalharness.PairModels{Provider: "test", EmbeddingModel: model, EmbeddingDimensions: dimensions, EmbeddingIndexStrategy: "exact", Ontology: "paired-ontology", BackingRevision: "unknown"}, Runtime: evalharness.PairRuntime{CredentialID: ownerID.String(), BaseURL: mcp.URL, APIKeyEnv: "PAIR_FIXTURE_API_KEY"}}
+	r := evalharness.PairRelease{Release: side, Mode: evalharness.PairModeEvidenceOnlyV5, Protocol: evalharness.PairModeEvidenceOnlyV5, Scope: evalharness.PairScope{TeamID: teamID.String(), OwnerID: ownerID.String()}, Capacity: evalharness.PairCapacity{Global: 4, Team: 4, ContextWindowTokens: 300000}, Models: evalharness.PairModels{Provider: "test", EmbeddingModel: model, EmbeddingDimensions: dimensions, EmbeddingIndexStrategy: "exact", Ontology: "paired-ontology", BackingRevision: "unknown"}, Runtime: evalharness.PairRuntime{CredentialID: ownerID.String(), BaseURL: mcp.URL, APIKeyEnv: "PAIR_FIXTURE_API_KEY"}}
 	require.NoError(t, admin.Raw(`SELECT id::text,generation FROM memory_spaces WHERE team_id=? AND kind='team_shared'`, teamID).Row().Scan(&r.Scope.SpaceID, &r.Scope.Generation))
-	return &pairedServiceFixture{admin: admin, release: r, mcp: mcp, control: control, maintenance: maintenance, projections: projections, provider: provider, reconciliation: searchapp.NewSearchReconciliationService(searchapp.SearchReconciliationDependencies{Repository: search, Projection: store, Executor: semanticwrite.NewProviderExecutor(embedder)})}
+	return &pairedServiceFixture{admin: admin, release: r, mcp: mcp, control: control, maintenance: maintenance, provider: provider, reconciliation: searchapp.NewSearchReconciliationService(searchapp.SearchReconciliationDependencies{Repository: search, Projection: store, Executor: semanticwrite.NewProviderExecutor(embedder)})}
 }
 
 type pairedRememberAssessor struct {
@@ -226,16 +223,10 @@ func pairArgumentString(arguments map[string]any, key string) string {
 }
 
 func pairedOrganizationResponse(request assessment.Request) assessment.Response {
-	response := assessment.Response{HierarchyUpdates: []assessment.HierarchyUpdate{}, RequestID: request.RequestID, Definitions: []assessment.Definition{}, Items: []assessment.Decision{}, Equivalence: []assessment.Equivalence{}}
+	response := assessment.Response{RequestID: request.RequestID, Definitions: []assessment.Definition{}, Items: []assessment.Decision{}, Equivalence: []assessment.Equivalence{}}
 	created := map[string]string{}
 	for _, item := range request.Items {
-		kind, key, base := ontology.Topic, "paired-storage", ""
-		if item.Kind == ontology.EntitySource {
-			kind, key, base = ontology.EntityClass, item.EntityKind, item.EntityKind
-		}
-		if item.Kind == ontology.PredicateSource {
-			kind, key = ontology.PredicateConcept, "paired-predicate"
-		}
+		kind, key := ontology.Topic, "paired-storage"
 		ref := item.LockedDefinitionRef
 		if ref == "" {
 			ref = item.PreferredDefinitionRef
@@ -253,7 +244,7 @@ func pairedOrganizationResponse(request assessment.Request) assessment.Response 
 			if ref == "" {
 				ref = "new-" + key
 				created[key] = ref
-				response.Definitions = append(response.Definitions, assessment.Definition{Ref: ref, Kind: kind, Key: key, Label: key, Description: "Paired fixture classification", Aliases: []string{}, BaseEntityKind: base})
+				response.Definitions = append(response.Definitions, assessment.Definition{Ref: ref, Kind: kind, Key: key, Label: key, Description: "Paired fixture classification", Aliases: []string{}})
 			}
 		}
 		response.Items = append(response.Items, assessment.Decision{Ref: item.Ref, Status: "classified", DefinitionRef: ref})
@@ -296,7 +287,7 @@ func (f *pairedServiceFixture) snapshot(t *testing.T) evalharness.PairNativeSnap
 		return body.Data
 	}
 
-	return evalharness.PairNativeSnapshot{Database: encoded, Ontology: get("/ontology/status"), Search: get("/search/convergence"), Community: get("/teams/" + f.release.Scope.TeamID + "/community/status")}
+	return evalharness.PairNativeSnapshot{Database: encoded, Ontology: get("/ontology/status"), Search: get("/search/convergence")}
 }
 
 func (f *pairedServiceFixture) controlResponse(t *testing.T, path string) (int, []byte) {

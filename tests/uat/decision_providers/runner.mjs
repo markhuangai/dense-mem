@@ -54,12 +54,10 @@ try {
       assert.equal(result.processing_state, "completed", "field-specific feedback must enable a complete repair");
       assert.equal(calls.length, 2);
       assert(result.evidence.every((item) => item.disposition === "stored"));
-      assert(result.relationship_results.every((item) => item.disposition === "stored"));
     } else {
       assert.equal(result.processing_state, "failed");
       assert.equal(calls.length, 3, "malformed responses must stop at the existing turn bound");
       assert(result.evidence.every((item) => item.disposition === "not_stored"));
-      assert(result.relationship_results.every((item) => item.disposition === "not_stored"));
     }
   }
   await fixture("regenerate");
@@ -73,10 +71,9 @@ try {
     assert.equal(failed.processing_state, "failed", `required decision ${mode} must fail`);
     assert((await fixture()).exchanges.some((item) => item.mode === mode), `required decision ${mode} must reach the provider`);
     assert(failed.evidence.every((item) => item.disposition === "not_stored"));
-    assert(failed.relationship_results.every((item) => item.disposition === "not_stored"));
   }
   await fixture("normal");
-  const recalled = await rpc(userURL, "recall_memory", { query: `${prefix} Normal`, limit: 2, relationship_limit: 2, community_limit: 0 });
+  const recalled = await rpc(userURL, "recall_memory", { query: `${prefix} Normal`, limit: 2 });
   assert(recalled.results.some((item) => item.evidence_id === stored.result.evidence[0].evidence_id));
   await verifyReranking(userURL, "openai");
   await control(controlURL, [{ key: "DECISION_SECURITY_REVIEW_ENABLED", value: "false" }]);
@@ -98,7 +95,7 @@ try {
   await control(typesafeControl, [{ key: "DECISION_SECURITY_REVIEW_ENABLED", value: "true" }]);
   const jev = await remember(`http://${childName}:8080`, "TypeSafe");
   assert.equal(jev.result.processing_state, "completed");
-  await rpc(`http://${childName}:8080`, "recall_memory", { query: `${prefix} TypeSafe`, limit: 2, relationship_limit: 2, community_limit: 0 });
+  await rpc(`http://${childName}:8080`, "recall_memory", { query: `${prefix} TypeSafe`, limit: 2 });
   await verifyReranking(`http://${childName}:8080`, "typesafe");
   const exchanges = (await fixture()).exchanges;
   assert(exchanges.some((item) => item.vendor === "openai"));
@@ -152,17 +149,17 @@ function createTypeSafeInstance() {
 
 async function remember(base, suffix, fault = "") {
   const name = `${prefix} ${suffix}`;
-  const request = { target_space: "team_shared", idempotency_key: `decision-${randomUUID()}`, evidence: [{ content: `${name} uses PostgreSQL.`, source_type: "manual" }], relationships: [{ ref: "uses", subject: { name, entity_kind: "project" }, predicate: { proposed_key: "uses" }, object: { entity: { name: "PostgreSQL", entity_kind: "product" } }, polarity: "+", evidence_indices: [0] }] };
+  const request = { target_space: "team_shared", idempotency_key: `decision-${randomUUID()}`, evidence: [{ content: `${name} uses PostgreSQL.`, source_type: "manual" }] };
   if (fault) request.evidence[0].content += ` [fixture-fault:${fault}]`;
   return { request, result: await rpc(base, "remember", request) };
 }
 async function verifyReranking(base, vendor) {
-  for (const frontier of ["evidence", "relationships"]) {
+  for (const frontier of ["evidence"]) {
     await fixture("normal");
-    const args = { query: prefix, limit: frontier === "evidence" ? 3 : 1, relationship_limit: frontier === "relationships" ? 2 : 0, community_limit: 0 };
+    const args = { query: prefix, limit: 3 };
     const original = await rpc(base, "recall_memory", args);
-    const field = frontier === "evidence" ? "results" : "related_relationships";
-    const id = frontier === "evidence" ? "evidence_id" : "relationship_id";
+    const field = "results";
+    const id = "evidence_id";
     assert(original[field].length >= 2, `${vendor} ${frontier} needs distinguishable authorized candidates`);
     const preferred = original[field].at(-1)[id];
     assert.notEqual(preferred, original[field][0][id]);
@@ -172,7 +169,7 @@ async function verifyReranking(base, vendor) {
     assert.equal(ranked[field][0][id], preferred, `${vendor} ${frontier} must apply relevance scores before final selection`);
     if (frontier === "evidence") assert.equal(ranked.results.length, 1);
     const scoring = (await fixture()).exchanges.slice(start);
-    assert(scoring.some((item) => item.vendor === vendor && item.names.some((name) => name.startsWith(frontier === "evidence" ? "evidence_" : "relationship_")) && item.types.includes("score")), `${vendor} ${frontier} must reach the score endpoint`);
+    assert(scoring.some((item) => item.vendor === vendor && item.names.some((name) => name.startsWith("evidence_")) && item.types.includes("score")), `${vendor} ${frontier} must reach the score endpoint`);
     await fixture("429");
     const degraded = await rpc(base, "recall_memory", args);
     assert.deepEqual(degraded[field].map((item) => item[id]), original[field].map((item) => item[id]), `${vendor} ${frontier} failure must retain original ranking`);

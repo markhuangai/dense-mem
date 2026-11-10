@@ -1,12 +1,13 @@
 package postgres
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"github.com/google/uuid"
+	"strings"
 	"time"
-
-	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 )
 
 var privateMigrationJSONReferences = map[string][]string{
@@ -103,7 +104,7 @@ func applyPrivateMigrationReferences(move *privateMigrationMove, body map[string
 				return err
 			}
 		}
-		key := knowledge.RelationshipSemanticGroupKey(migrationString(body["subject_entity_id"]), migrationString(body["predicate_key"]), migrationString(body["object_entity_id"]), migrationString(body["object_value_id"]), migrationString(body["polarity"]), migrationString(body["scope_key"]), from)
+		key := legacyPrivateMigrationGroupKey(migrationString(body["subject_entity_id"]), migrationString(body["predicate_key"]), migrationString(body["object_entity_id"]), migrationString(body["object_value_id"]), migrationString(body["polarity"]), migrationString(body["scope_key"]), from)
 		body["semantic_group_key"], _ = json.Marshal(key)
 	}
 	return nil
@@ -178,4 +179,18 @@ func privateMigrationReferenceIDs(value any) []string {
 		}
 	}
 	return result
+}
+
+// The pre-v3 copy must satisfy its deployed uniqueness constraint until the ordered removal commits.
+func legacyPrivateMigrationGroupKey(subjectID, predicate, entityID, valueID, polarity, scope string, validFrom *time.Time) string {
+	object := "entity:" + entityID
+	if entityID == "" {
+		object = "value:" + valueID
+	}
+	from := ""
+	if validFrom != nil {
+		from = validFrom.UTC().Format(time.RFC3339Nano)
+	}
+	sum := sha256.Sum256([]byte(strings.Join([]string{subjectID, predicate, object, polarity, scope, from, ""}, "\x00")))
+	return "sg:" + hex.EncodeToString(sum[:])
 }

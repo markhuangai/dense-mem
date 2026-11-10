@@ -328,16 +328,6 @@ func TestRecallOntologyDiscoveryHydrationEnforcesEligibilityAndState(t *testing.
 		records = append(records, f.assignment(t, definition.ID, handle))
 	}
 	f.publication(t, records...)
-	subject := createSemanticEntity(t, context.Background(), f.knowledge, f.team, f.owners[0], "person", "Morgan")
-	object := createSemanticEntity(t, context.Background(), f.knowledge, f.team, f.owners[0], "project", "Atlas")
-	var ingestID string
-	require.NoError(t, f.admin.Raw(`SELECT ingest_id::text FROM evidence_fragments WHERE team_id=?::uuid AND fragment_id=?::uuid`, f.team, active.ID).Row().Scan(&ingestID))
-	decision := applySemanticDecision(t, f.actor(0, "member"), f.knowledge, ApplyRelationshipDecisionInput{
-		TeamID: f.team, OwnerProfileID: f.owners[0], IngestID: ingestID,
-		SubjectEntityID: subject.EntityID, PredicateKey: "works_on", ObjectEntityID: object.EntityID,
-		Support: &EvidenceSupportInput{FragmentID: active.ID, SourceGroupKey: uuid.NewString(), SpanStart: 0, SpanEnd: len(text), Authority: "primary"},
-	})
-	require.NotNil(t, decision.Relationship)
 	require.NoError(t, f.rls.WithTeamTx(context.Background(), f.app, f.team, func(tx *gorm.DB) error {
 		return tx.Exec(`UPDATE search_documents SET search_state='pending' WHERE team_id=?::uuid AND source_kind='evidence' AND source_id=?::uuid`, f.team, pending.ID).Error
 	}))
@@ -350,17 +340,16 @@ func TestRecallOntologyDiscoveryHydrationEnforcesEligibilityAndState(t *testing.
 	})
 	require.NoError(t, err)
 
-	for _, known := range [][]string{nil, {decision.Relationship.RelationshipID}} {
-		input := RecallEvidenceInput{TeamID: f.team, SpaceID: f.space, SpaceKind: "team_shared", Query: "database", Limit: 10, OrganizationEnabled: true, KnownRelationshipIDs: known}
+	for _, known := range [][]string{nil, {active.ID}} {
+		input := RecallEvidenceInput{TeamID: f.team, SpaceID: f.space, SpaceKind: "team_shared", Query: "database", Limit: 10, OrganizationEnabled: true, KnownEvidenceIDs: known}
 		result, err := f.search.RecallEvidence(f.actor(2, "member"), input)
 		require.NoError(t, err)
-		require.Len(t, result.Results, 3)
+		require.Len(t, result.Results, 3-len(known))
 		require.Equal(t, "failed", result.SearchState)
 		byID := map[string]RecallEvidenceHit{}
 		for _, hit := range result.Results {
 			byID[hit.EvidenceID] = hit
 		}
-		require.Contains(t, byID, active.ID)
 		require.Contains(t, byID, pending.ID)
 		require.Contains(t, byID, failed.ID)
 		require.NotContains(t, byID, retracted.ID)
@@ -369,9 +358,9 @@ func TestRecallOntologyDiscoveryHydrationEnforcesEligibilityAndState(t *testing.
 		require.Equal(t, "pending", byID[pending.ID].SearchState)
 		require.Equal(t, "failed", byID[failed.ID].SearchState)
 		if len(known) == 0 {
-			require.Contains(t, byID[active.ID].RelationshipIDs, decision.Relationship.RelationshipID)
+			require.Contains(t, byID, active.ID)
 		} else {
-			require.NotContains(t, byID[active.ID].RelationshipIDs, decision.Relationship.RelationshipID)
+			require.NotContains(t, byID, active.ID)
 		}
 	}
 }

@@ -47,7 +47,7 @@ func TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads(t *testing.T)
 			require.NoError(t, accesspg.NewTeamRepository(admin, rls).Create(ctx, &domain.Team{ID: teamID, Name: "diagnostic-" + uuid.NewString()}))
 			credential := &domain.Credential{ID: ownerID, TeamID: teamID, Name: "diagnostic owner", KeyHash: "synthetic", KeyPrefix: strings.ReplaceAll(ownerID.String(), "-", "")[:24], KeySuffix: "test", Scopes: []string{"read", "write"}}
 			require.NoError(t, accesspg.NewCredentialRepository(admin, rls, nil).CreateCredential(ctx, credential))
-			store := knowledgepg.NewStore(app, rls, knowledge.ConflictRuntimeConfig{})
+			store := knowledgepg.NewStore(app, rls)
 			var sharedSpaceID string
 			var generation int64
 			require.NoError(t, admin.Raw(`SELECT id::text,generation FROM memory_spaces WHERE team_id=?::uuid AND kind='team_shared'`, teamID).Row().Scan(&sharedSpaceID, &generation))

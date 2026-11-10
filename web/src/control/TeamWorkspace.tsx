@@ -5,10 +5,10 @@ import { useVisiblePolling } from "../telemetry/useVisiblePolling";
 import { SectionHeading, SummaryCard } from "../ui/components";
 import { credentialPermissionLabel, credentialRoleLabel, formatDate, shortId } from "./utils";
 
-export type TeamWorkspaceTab = "overview" | "remember-attempts" | "credentials" | "dreams" | "conflicts" | "settings";
+export type TeamWorkspaceTab = "overview" | "remember-attempts" | "credentials" | "evidence-conflicts" | "settings";
 
 export function TeamWorkspaceShell({ team, activeTab, children }: { team: Team; activeTab: TeamWorkspaceTab; children: ReactNode }) {
-  const labels: Record<TeamWorkspaceTab, string> = { overview: "Overview", credentials: "Credentials", "remember-attempts": "Remember history", conflicts: "Conflicts", dreams: "Dream history", settings: "Team settings" };
+  const labels: Record<TeamWorkspaceTab, string> = { overview: "Overview", credentials: "Credentials", "remember-attempts": "Remember history", "evidence-conflicts":"Evidence conflicts", settings: "Team settings" };
   return <section className="team-workspace">
     <header className="team-workspace-header"><SectionHeading title={team.name} subtitle={labels[activeTab]} meta={<span className="status-pill neutral">Active team</span>} /></header>
     <div className="team-workspace-body">{children}</div>
@@ -25,7 +25,7 @@ export function TeamOverviewPanel({
   const [credentials, setCredentials] = useState<Credential[]>([]);
   const [metrics, setMetrics] = useState<Awaited<ReturnType<ControlApi["getMetrics"]>> | null>(null);
   const [metricsUnavailable, setMetricsUnavailable] = useState(false);
-  const [communityStatus, setCommunityStatus] = useState<Awaited<ReturnType<ControlApi["getTeamCommunityStatus"]>> | null>(null);
+
   const [loading, setLoading] = useState(false);
   const [metricsLoading, setMetricsLoading] = useState(false);
   const metricsRequestRef = useRef(0);
@@ -36,14 +36,12 @@ export function TeamOverviewPanel({
     setMetricsUnavailable(false);
     Promise.all([
       api.listTeamCredentials(team.id).then((page) => page.data).catch(() => [] as Credential[]),
-      api.getTeamCommunityStatus(team.id).catch(() => null),
     ])
-      .then(([nextCredentials, nextCommunityStatus]) => {
+      .then(([nextCredentials]) => {
         if (!active) {
           return;
         }
         setCredentials(nextCredentials);
-        setCommunityStatus(nextCommunityStatus);
       })
       .finally(() => {
         if (active) {
@@ -74,16 +72,6 @@ export function TeamOverviewPanel({
 
   const metricsReady = metrics !== null && !metricsUnavailable;
   const metricsFailed = metricsUnavailable && !metricsLoading;
-  const communityUnavailable = communityStatus === null && !loading;
-  const communityEnabled = communityStatus?.effective_config.enabled === true;
-  const projection = communityStatus?.projection_coverage;
-  const communityTrend = loading ? "Loading" : !communityStatus ? "Status unavailable"
-    : !communityEnabled ? communityStatus.latest_run ? `Historical run: ${communityStatus.latest_run.status}` : "No historical runs"
-    : !projection ? "Projection status unavailable"
-    : projection.coverage_complete && projection.current_topics === 0 ? "No current topics"
-    : !projection.coverage_complete && projection.total_topics === 0 ? "Pending discovery"
-    : `${projection.current_topics} current · ${projection.pending_topics} pending · ${projection.stale_topics} stale · ${projection.failed_topics} failed${!projection.coverage_complete && projection.pending_topics + projection.stale_topics + projection.failed_topics === 0 ? " · discovery pending" : ""}`;
-  const communityWarning = communityUnavailable || (communityEnabled ? !projection || projection.failed_topics > 0 : communityStatus?.latest_run?.status === "failed");
   const teamMetrics = metricsReady ? metrics.teams.find((item) => item.team_id === team.id) : undefined;
   const requests = metricsReady ? teamMetrics?.requests ?? metrics.system.requests : 0;
   const errors = metricsReady ? teamMetrics?.errors ?? metrics.system.errors : 0;
@@ -108,7 +96,6 @@ export function TeamOverviewPanel({
     <div className="team-overview" aria-label="Team overview">
       <div className="summary-strip" aria-label="Summary">
         <SummaryCard label="Credentials" value={credentials.length} detail={`${managerCount} managers`} />
-        <SummaryCard label="Communities" value={communityStatus?.current_community_count ?? "n/a"} detail={loading ? "Loading" : communityUnavailable ? "Status unavailable" : communityEnabled ? "Ontology enabled" : "Ontology disabled"} tone={communityUnavailable || !communityEnabled ? "warning" : "neutral"} />
         <SummaryCard label="Requests" value={requestValue} detail="Last hour" tone={metricsFailed ? "warning" : "neutral"} />
         <SummaryCard label="Recall health" value={healthValue} detail={healthDetail} tone={metricsFailed ? "warning" : "neutral"} />
         <div className="health-stack" aria-label="Health summary">
@@ -124,7 +111,6 @@ export function TeamOverviewPanel({
           <MetricRow icon={<Activity size={15} aria-hidden="true" />} label="HTTP requests" value={requestValue} trend={metricsReady ? requests > 0 ? "+ active" : "idle" : "unavailable"} tone={metricsFailed ? "warning" : "neutral"} />
           <MetricRow icon={<Activity size={15} aria-hidden="true" />} label="Errors" value={errorValue} trend={metricsReady ? errors > 0 ? "review" : "clear" : "unavailable"} tone={errors > 0 ? "danger" : metricsFailed ? "warning" : "neutral"} />
           <MetricRow icon={<Users size={15} aria-hidden="true" />} label="Writable credentials" value={readWriteCount} trend={`${credentials.length} total`} />
-          <MetricRow icon={<Network size={15} aria-hidden="true" />} label={communityEnabled ? "Topic projections" : "Community history"} value={(communityEnabled ? communityStatus?.current_community_count : communityStatus?.latest_run?.community_count) ?? "n/a"} trend={communityTrend} tone={communityWarning ? "warning" : "neutral"} />
         </section>
 
         <section className="overview-panel" aria-label="Top signals">

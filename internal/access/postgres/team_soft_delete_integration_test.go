@@ -32,7 +32,7 @@ func TestTeamSoftDeletePreservesSemanticLedgerAndRejectsFutureWork(t *testing.T)
 	otherTeamID := createLedgerTeam(t, adminDB, rls, "team-delete-transfer-target")
 	insertSearchTestContract(t, adminDB, rls, "team-delete-search-read", 3, "exact", "")
 	secondaryProfileID := createLedgerProfile(t, adminDB, rls, teamID, "secondary-delete-tombstone")
-	ledger := knowledgepostgres.NewStore(appDB, rls, knowledgepostgres.ConflictRuntimeConfig{})
+	ledger := knowledgepostgres.NewStore(appDB, rls)
 
 	created, err := ledger.CreateIngestForTest(ctx, CreateIngestInput{
 		TeamID:         teamID,
@@ -45,7 +45,7 @@ func TestTeamSoftDeletePreservesSemanticLedgerAndRejectsFutureWork(t *testing.T)
 	})
 	require.NoError(t, err)
 	require.NotNil(t, created)
-	projectionRepo := knowledgepostgres.NewStore(appDB, rls, knowledgepostgres.ConflictRuntimeConfig{})
+	projectionRepo := knowledgepostgres.NewStore(appDB, rls)
 	searchDoc, err := projectionRepo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
 		TeamID:         teamID,
 		OwnerProfileID: ownerID,
@@ -185,7 +185,7 @@ func TestTeamHardDeleteRemovesEmptyTeamMemorySpaceCatalog(t *testing.T) {
 		`, teamID).Row().Scan(&spaceID, &spaceGeneration)
 	}))
 	invocationID := uuid.New()
-	require.NoError(t, knowledgepostgres.NewStore(appDB, rls, knowledgepostgres.ConflictRuntimeConfig{}).RecordRememberInvocationDiagnostic(ctx, knowledgecontract.RememberInvocationDiagnosticInput{
+	require.NoError(t, knowledgepostgres.NewStore(appDB, rls).RecordRememberInvocationDiagnostic(ctx, knowledgecontract.RememberInvocationDiagnosticInput{
 		TeamID: teamID.String(), OwnerProfileID: ownerID, InvocationID: invocationID.String(),
 		SpaceID: spaceID.String(), SpaceGeneration: spaceGeneration,
 		Classification: "execution", Outcome: "failed", RequestBody: []byte(`{"secret":"team-delete"}`), RequestCaptureState: "captured",

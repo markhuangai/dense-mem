@@ -32,7 +32,7 @@ func TestRememberCommitFailureStageExtractsOwnerError(t *testing.T) {
 		},
 	}
 
-	_, err := NewStore(nil, nil, ConflictRuntimeConfig{}).
+	_, err := NewStore(nil, nil).
 		CommitRememberWithEmbeddings(context.Background(), input, nil)
 	require.Error(t, err)
 	require.Equal(t, "transaction_setup", RememberCommitFailureStage(err))
@@ -40,9 +40,9 @@ func TestRememberCommitFailureStageExtractsOwnerError(t *testing.T) {
 
 func TestIsRememberStaleInputErrorClassifiesAdapterBoundaries(t *testing.T) {
 	for _, stale := range []error{
-		ErrConflictContextStale,
-		ErrRememberExactReferenceStale,
-		ErrCorrectionTargetStale,
+		knowledgecontract.ErrSubmissionAssessmentKnownEvidenceStale,
+		knowledgecontract.ErrRememberExactReferenceStale,
+		knowledgecontract.ErrRememberDuplicateCandidateStale,
 	} {
 		require.True(t, rememberapp.IsRememberStaleInputError(stale), stale)
 		require.True(t, rememberapp.IsRememberStaleInputError(errors.Join(errors.New("wrapped"), stale)), stale)

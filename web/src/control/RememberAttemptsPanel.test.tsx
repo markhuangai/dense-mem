@@ -387,9 +387,9 @@ describe("RememberAttemptsPanel", () => {
     const listRememberAttemptDiagnostics = vi.fn().mockResolvedValue({
       data: [{
         team_id: "team-1", team_name: "Staging", owner_profile_id: "owner-1", attempt_id: "attempt-1",
-        contract_version: "dense-mem.v2.6", submission_kind: "remember", outcome: "failed",
+        contract_version: "dense-mem.v3.0.0", submission_kind: "remember", outcome: "failed",
         failed_phase: "assessment", error_code: "provider_unavailable", evidence_count: 1,
-        retryable: true, relationship_count: 1, document_count: 0, assessor_turns: 1, duration_ms: 24,
+        retryable: true, document_count: 0, assessor_turns: 1, duration_ms: 24,
         created_at: "2026-08-18T01:00:00Z",
       }],
       pagination: { limit: 50, offset: 0, total: 1 },
@@ -398,14 +398,14 @@ describe("RememberAttemptsPanel", () => {
       team_id: "team-1", team_name: "Staging", owner_profile_id: "owner-1", attempt_id: "attempt-1",
       contract_version: "remember_request_hash_v1", submission_kind: "remember", outcome: "failed",
       failed_phase: "assessment", error_code: "provider_unavailable", evidence_count: 1,
-      retryable: true, relationship_count: 1, document_count: 0, assessor_turns: 1, duration_ms: 24,
+      retryable: true, document_count: 0, assessor_turns: 1, duration_ms: 24,
       created_at: "2026-08-18T01:00:00Z", public_result: {
-        contract_version: "dense-mem.v2.6", submission_id: "attempt-1", submission_kind: "remember",
+        contract_version: "dense-mem.v3.0.0", submission_id: "attempt-1", submission_kind: "remember",
         processing_state: "failed", search_state: "not_required", correlation_id: "corr-1",
         evidence: [{ disposition: "not_stored", evidence_index: 0, superseded_evidence_ids: [], search_state: "not_required", reason: "<script>alert(1)</script>" }],
-        relationship_results: [{ ref: "r1", disposition: "not_stored", splits: [], reason: "provider unavailable" }], errors: [],
+        errors: [],
       },
-      events: [{ sequence_no: 1, phase: "assessment", event_kind: "assessment_failed", outcome: "failed", metadata: { markup: "<script>bad()</script>", assessor_validation: { failure_class: "malformed_exhausted", turns: [{ attempt: 3, stage: "response_contract", fields: ["relationship_results.object"], field_families: ["relationship_results.object"], error_count: 1, truncated: false }] } }, created_at: "2026-08-18T01:00:01Z" }],
+      events: [{ sequence_no: 1, phase: "assessment", event_kind: "assessment_failed", outcome: "failed", metadata: { markup: "<script>bad()</script>", assessor_validation: { failure_class: "malformed_exhausted", turns: [{ attempt: 3, stage: "response_contract", fields: ["evidence_security_results"], field_families: ["evidence_security_results"], error_count: 1, truncated: false }] } }, created_at: "2026-08-18T01:00:01Z" }],
       diagnostics: {
         original_request: { diagnostic_id: "request-1", sequence_no: 1, kind: "original_request", component: "remember", request_body: `{"name":"remember","arguments":{"evidence":[]}}`, outcome: "captured", capture_state: "captured", captured_at: "2026-08-18T01:00:01Z", expires_at: "2026-08-25T01:00:01Z", retained_by_legal_hold: false },
         provider_exchanges: [{ diagnostic_id: "provider-1", sequence_no: 2, kind: "provider_exchange", component: "assessor", request_body: `{"model":"test"}`, response_body: `{"error":"unavailable"}`, outcome: "captured", capture_state: "captured", captured_at: "2026-08-18T01:00:01Z", expires_at: "2026-08-25T01:00:01Z", retained_by_legal_hold: false }],
@@ -425,7 +425,7 @@ describe("RememberAttemptsPanel", () => {
     expect(document.querySelector("script")).toBeNull();
     expect(detailRegion.querySelector(".remember-event-metadata")?.textContent).toContain('"markup": "<script>bad()</script>"');
     expect(within(detailRegion).getByRole("heading", { name: "Assessor validation" })).toBeInTheDocument();
-    expect(within(detailRegion).getAllByText("relationship_results.object").length).toBeGreaterThanOrEqual(1);
+    expect(within(detailRegion).getAllByText("evidence_security_results").length).toBeGreaterThanOrEqual(1);
     expect(within(detailRegion).getByText('{"name":"remember","arguments":{"evidence":[]}}')).toBeInTheDocument();
     expect(within(detailRegion).getByText('{"error":"unavailable"}')).toBeInTheDocument();
     expect(within(detailRegion).getByText('{"isError":true}')).toBeInTheDocument();
@@ -468,7 +468,7 @@ describe("RememberAttemptsPanel", () => {
     let resolveTeamTwo!: (value: unknown) => void;
     const teamTwo = new Promise((resolve) => { resolveTeamTwo = resolve; });
     const listRememberAttemptDiagnostics = vi.fn().mockImplementation(({ team_id }: { team_id: string }) => team_id === "team-2" ? teamTwo : Promise.resolve({
-      data: [{ team_id: "team-1", team_name: "Staging", owner_profile_id: "owner-1", attempt_id: "attempt-1", contract_version: "dense-mem.v2.6", submission_kind: "remember", outcome: "completed", evidence_count: 0, relationship_count: 0, document_count: 0, assessor_turns: 0, duration_ms: 1, created_at: "2026-08-18T01:00:00Z" }],
+      data: [{ team_id: "team-1", team_name: "Staging", owner_profile_id: "owner-1", attempt_id: "attempt-1", contract_version: "dense-mem.v3.0.0", submission_kind: "remember", outcome: "completed", evidence_count: 0, document_count: 0, assessor_turns: 0, duration_ms: 1, created_at: "2026-08-18T01:00:00Z" }],
       pagination: { limit: 50, offset: 0, total: 1 },
     }));
     const api = {
@@ -583,8 +583,8 @@ function team(): Team {
 function summary(attemptID: string, outcome: RememberAttemptDiagnosticSummary["outcome"] = "completed"): RememberAttemptDiagnosticSummary {
   return {
     team_id: "team-1", team_name: "Staging", owner_profile_id: "owner-1", attempt_id: attemptID,
-    contract_version: "dense-mem.v2.6", submission_kind: "remember", outcome,
-    retryable: outcome === "failed", evidence_count: 0, relationship_count: 0, document_count: 0, assessor_turns: 0, duration_ms: 1,
+    contract_version: "dense-mem.v3.0.0", submission_kind: "remember", outcome,
+    retryable: outcome === "failed", evidence_count: 0, document_count: 0, assessor_turns: 0, duration_ms: 1,
     created_at: "2026-08-18T01:00:00Z",
   };
 }
@@ -602,7 +602,7 @@ function baseDetail(attemptID: string): RememberAttemptDiagnosticDetail {
   return {
     team_id: "team-1", team_name: "Staging", owner_profile_id: "owner-1", attempt_id: attemptID,
     contract_version: "remember_request_hash_v1", submission_kind: "remember", outcome: "completed",
-    retryable: false, evidence_count: 0, relationship_count: 0, document_count: 0, assessor_turns: 0, duration_ms: 1,
-    created_at: "2026-08-18T01:00:00Z", public_result: { contract_version: "dense-mem.v2.6", submission_id: attemptID, submission_kind: "remember", processing_state: "completed", search_state: "current", correlation_id: "corr", evidence: [], relationship_results: [], errors: [] }, events: [], diagnostics: { original_request: null, provider_exchanges: [], caller_response: null },
+    retryable: false, evidence_count: 0, document_count: 0, assessor_turns: 0, duration_ms: 1,
+    created_at: "2026-08-18T01:00:00Z", public_result: { contract_version: "dense-mem.v3.0.0", submission_id: attemptID, submission_kind: "remember", processing_state: "completed", search_state: "current", correlation_id: "corr", evidence: [], errors: [] }, events: [], diagnostics: { original_request: null, provider_exchanges: [], caller_response: null },
   };
 }

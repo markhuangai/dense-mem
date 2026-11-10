@@ -9,7 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
+
 	"sync/atomic"
 	"testing"
 	"time"
@@ -46,16 +46,7 @@ func (r organizationPreparationReads) ClaimMaintenanceBatch(ctx context.Context,
 func organizationReadFixture(t *testing.T, catalogSize int) (*ontologyFixture, []ontology.SourceHandle, []ontology.Record) {
 	t.Helper()
 	f := newOrganizationFixture(t)
-	relationship := maintenanceRelationship(t, f)
-	snapshots, err := f.store.ReadSources(context.Background(), f.team, []ontology.SourceHandle{relationship})
-	require.NoError(t, err)
-	version, err := strconv.ParseInt(snapshots[0].State["predicate_version"], 10, 64)
-	require.NoError(t, err)
-	handles := []ontology.SourceHandle{
-		maintenanceEntity(t, f, "PostgreSQL read measurement"),
-		relationship,
-		{Kind: ontology.PredicateSource, ID: snapshots[0].State["predicate"], Version: version},
-	}
+	handles := []ontology.SourceHandle{}
 	for i := len(handles); i < ontology.MaxOrganizationSources; i++ {
 		handles = append(handles, f.organizationEvidence(t, i%len(f.owners), fmt.Sprintf("PostgreSQL read measurement %d.", i), nil))
 	}

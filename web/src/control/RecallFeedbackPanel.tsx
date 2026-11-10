@@ -427,16 +427,12 @@ function currentStatus(result: RecallFeedbackResolvedResult): string {
 
 function currentSummary(result: RecallFeedbackResolvedResult): string {
   if (result.resolution_status === "missing") {
-    return "Missing from graph";
+    return "Evidence unavailable";
   }
   const current = result.current ?? {};
   const context = String(current.context ?? current.content ?? "").trim();
   if (context) {
     return compact(context);
-  }
-  const triple = [current.subject, current.predicate, current.object].map((value) => String(value ?? "").trim()).filter(Boolean);
-  if (triple.length > 0) {
-    return compact(triple.join(" "));
   }
   return "Resolved";
 }
@@ -461,7 +457,7 @@ function rawEvent(event: RecallFeedbackEvent): Record<string, unknown> {
       irrelevant: event.irrelevant,
       feedback_comment: event.feedback_comment,
       irrelevant_result_refs: event.irrelevant_result_refs ?? [],
-      dream_feedback: event.dream_feedback ?? [],
+
     },
     result_refs: event.result_refs ?? [],
     resolved_results: event.resolved_results ?? [],

@@ -3,7 +3,6 @@ package registry
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/markhuangai/dense-mem/internal/lifecycle"
 )
@@ -28,35 +27,7 @@ func bindLifecycleTool(tool Tool, deps Dependencies) Tool {
 			}
 			return structToMap(res)
 		}
-	case ToolCorrectRelationship:
-		tool.Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
-			if deps.LifecycleBindings.Service == nil {
-				return nil, ErrToolUnavailable
-			}
-			if err := ValidateContractInput(tool, input, authenticatedScopes(ctx)); err != nil {
-				return nil, fmt.Errorf("correct_relationship: invalid input: %w", err)
-			}
-			var req lifecycle.CorrectRelationshipRequest
-			if err := remapInput(input, &req); err != nil {
-				return nil, fmt.Errorf("correct_relationship: invalid input: %w", err)
-			}
-			res, err := deps.LifecycleBindings.Service.CorrectRelationship(ctx, req)
-			if err != nil {
-				submissionID := ""
-				if req.Action == "confirm" {
-					submissionID = req.SubmissionID
-				}
-				return nil, correctionToolResultError(ctx, submissionID, err)
-			}
-			result, err := structToMap(res)
-			if err != nil {
-				return nil, err
-			}
-			if state := strings.TrimSpace(fmt.Sprint(result["processing_state"])); state == "rejected" || state == "failed" {
-				return nil, NewToolResultError(result)
-			}
-			return result, nil
-		}
+
 	}
 	return tool
 }

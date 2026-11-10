@@ -20,31 +20,20 @@ import (
 )
 
 func TestOntologyContextAndRepairWitnessesUseNativeHTTPHistory(t *testing.T) {
-	for _, mode := range []string{"wrong_kind_exhausted", "unused_definition_exhausted", "repair_succeeds", "present_context", "present_downregulated_in", "present_pumps_to", "empty_lock", "contradictory_reason_is_not_coerced", "legitimate_ambiguity"} {
+	for _, mode := range []string{"missing_decision_exhausted", "unused_definition_exhausted", "repair_succeeds", "present_context", "empty_lock", "legitimate_ambiguity"} {
 		t.Run(mode, func(t *testing.T) {
 			topicRef := "d19"
 			if mode == "empty_lock" {
 				topicRef = "d0"
 			}
-			predicateKey := "is_a_rock_band"
-			if mode == "present_downregulated_in" {
-				predicateKey = "downregulated_in"
-			}
-			if mode == "present_pumps_to" {
-				predicateKey = "pumps_to"
-			}
 			request := assessment.Request{RequestID: "reconstructed-" + mode, Definitions: []assessment.Definition{{Ref: topicRef, Kind: contract.Topic,
-				Key: "relationship_is_a_rock_band", Label: "Relationship record", Description: "A topic for relationship records", Aliases: []string{}}}, Pairs: []assessment.Pair{}}
+				Key: "storage", Label: "Storage", Description: "A topic for exact Evidence about storage", Aliases: []string{}}}, Pairs: []assessment.Pair{}}
 			for index := range 20 {
 				request.Items = append(request.Items, assessment.Item{Ref: fmt.Sprintf("s%d", index), Kind: contract.EvidenceSource,
 					Text: "Frozen reconstructed source.", OwnerRef: "owner", Context: map[string]string{}})
 			}
 			request.Items[0].LockedDefinitionRef = topicRef
-			request.Items[19].Kind = contract.PredicateSource
-			request.Items[19].Context["predicate"] = predicateKey
-			if mode == "legitimate_ambiguity" {
-				delete(request.Items[19].Context, "predicate")
-			}
+			request.Items[19].Context["source"] = "original exact document"
 			var calls int
 			var mu sync.Mutex
 			var previous []string
@@ -55,8 +44,8 @@ func TestOntologyContextAndRepairWitnessesUseNativeHTTPHistory(t *testing.T) {
 				var envelope struct{ Messages []modelprovider.Message }
 				require.NoError(t, json.NewDecoder(r.Body).Decode(&envelope))
 				require.Len(t, envelope.Messages, 2+2*(calls-1))
-				require.Contains(t, envelope.Messages[0].Content, "Use each item's own context")
-				require.Contains(t, envelope.Messages[0].Content, "An empty locked_definition_ref means")
+				require.Contains(t, envelope.Messages[0].Content, "supplied owner and provenance context")
+				require.Contains(t, envelope.Messages[0].Content, "Copy nonempty locked_definition_ref")
 				var immutable assessment.Request
 				require.NoError(t, json.Unmarshal([]byte(envelope.Messages[1].Content), &immutable))
 				require.Equal(t, request, immutable)
@@ -71,36 +60,23 @@ func TestOntologyContextAndRepairWitnessesUseNativeHTTPHistory(t *testing.T) {
 					}
 					require.NoError(t, json.Unmarshal([]byte(envelope.Messages[len(envelope.Messages)-1].Content), &feedback))
 					require.NotEmpty(t, feedback.ValidationErrors)
-					require.Contains(t, feedback.Instruction, "preserve valid unrelated item decisions")
+					require.Contains(t, feedback.Instruction, "complete corrected object")
 					encoded, err := json.Marshal(feedback.ValidationErrors)
 					require.NoError(t, err)
 					if mode == "unused_definition_exhausted" {
 						require.Contains(t, string(encoded), "has no source assignment")
 					} else {
-						require.Contains(t, string(encoded), "items[19].definition_ref")
-						require.Contains(t, string(encoded), "expected predicate_concept")
-						if calls == 3 {
-							require.Contains(t, string(encoded), "s17")
-						}
+						require.Contains(t, string(encoded), "missing decision")
 					}
 				}
-				response := assessment.Response{HierarchyUpdates: []assessment.HierarchyUpdate{}, RequestID: request.RequestID, Definitions: []assessment.Definition{}, Items: []assessment.Decision{}, Equivalence: []assessment.Equivalence{}}
+				response := assessment.Response{RequestID: request.RequestID, Definitions: []assessment.Definition{}, Items: []assessment.Decision{}, Equivalence: []assessment.Equivalence{}}
 				for _, item := range request.Items {
 					response.Items = append(response.Items, assessment.Decision{Ref: item.Ref, Status: "classified", DefinitionRef: topicRef})
 				}
-				if mode == "legitimate_ambiguity" || mode == "contradictory_reason_is_not_coerced" {
+				if mode == "legitimate_ambiguity" {
 					response.Items[19] = assessment.Decision{Ref: "s19", Status: "ambiguous", Reason: "The supplied meaning is insufficient."}
-				} else if mode == "wrong_kind_exhausted" || mode == "repair_succeeds" && calls < 3 {
-					if calls == 2 {
-						response.Items[17].Ref = ""
-					}
-				} else {
-					response.Definitions = append(response.Definitions, assessment.Definition{Ref: "predicate", Kind: contract.PredicateConcept,
-						Key: predicateKey, Label: "Is a rock band", Description: "The supplied registered predicate.", Aliases: []string{}})
-					response.Items[19].DefinitionRef = "predicate"
-				}
-				if mode == "contradictory_reason_is_not_coerced" {
-					response.Items[19].Reason = "context.predicate is unavailable"
+				} else if mode == "missing_decision_exhausted" || mode == "repair_succeeds" && calls < 3 {
+					response.Items = response.Items[:19]
 				}
 				if mode == "empty_lock" {
 					response.Items[8] = assessment.Decision{Ref: "s8", Status: "ambiguous", Reason: "The evidence does not establish a suitable topic."}
@@ -126,7 +102,7 @@ func TestOntologyContextAndRepairWitnessesUseNativeHTTPHistory(t *testing.T) {
 				require.Equal(t, 3, observedCalls)
 				require.Len(t, attempts, 3)
 				require.Empty(t, response.Items)
-				code := "item_source_kind"
+				code := "item_count_mismatch"
 				if mode == "unused_definition_exhausted" {
 					code = "definition_unused"
 				}
@@ -140,10 +116,10 @@ func TestOntologyContextAndRepairWitnessesUseNativeHTTPHistory(t *testing.T) {
 			} else {
 				require.Equal(t, 1, observedCalls)
 			}
-			if mode == "legitimate_ambiguity" || mode == "contradictory_reason_is_not_coerced" {
+			if mode == "legitimate_ambiguity" {
 				require.Equal(t, "ambiguous", response.Items[19].Status)
 			} else {
-				require.Equal(t, "predicate", response.Items[19].DefinitionRef)
+				require.Equal(t, topicRef, response.Items[19].DefinitionRef)
 			}
 			if mode == "empty_lock" {
 				require.Equal(t, "ambiguous", response.Items[8].Status)

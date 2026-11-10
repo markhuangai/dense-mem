@@ -9,15 +9,13 @@ import (
 )
 
 const (
-	AIOperationSemanticAssessment      = "semantic_assessment"
-	AIOperationConflictReview          = "conflict_review"
-	AIOperationDreamGeneration         = "dream_generation"
-	AIOperationEvidenceDiscovery       = "evidence_discovery"
+	AIOperationSemanticAssessment = "semantic_assessment"
+
 	AIOperationRecallEmbedding         = "recall_embedding"
 	AIOperationRecallReranking         = "recall_reranking"
 	AIOperationSearchDocumentEmbedding = "search_document_embedding"
-	AIOperationCommunitySummary        = "community_summary"
-	AIOperationOntologyOrganization    = "ontology_organization"
+
+	AIOperationOntologyOrganization = "ontology_organization"
 
 	AIComponentVerifier  = "verifier"
 	AIComponentEmbedding = "embedding"

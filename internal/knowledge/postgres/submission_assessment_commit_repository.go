@@ -1,19 +1,14 @@
 package postgres
 
 import (
-	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"sort"
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/lib/pq"
-	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 )
 
 func normalizeRememberCommitScope(scope RememberCommitScope) RememberCommitScope {
@@ -83,32 +78,6 @@ func normalizeCommitSubmissionAssessmentInput(input CommitSubmissionAssessmentIn
 		}
 		input.EvidenceConflictCandidateEvidenceIDs = normalizedCandidates
 	}
-	for i := range input.EntityResolutions {
-		entry := &input.EntityResolutions[i]
-		entry.Resolution = normalizeSubmissionEntityResolution(entry.Resolution)
-	}
-	for i := range input.RelationshipObservations {
-		entry := &input.RelationshipObservations[i]
-		entry.RelationshipRef = strings.TrimSpace(entry.RelationshipRef)
-		entry.Observation = normalizeSemanticRelationshipDecisionInput(entry.Observation)
-	}
-	for i := range input.PredicateRegistrations {
-		registration := &input.PredicateRegistrations[i]
-		registration.RelationshipRef = strings.TrimSpace(registration.RelationshipRef)
-		*registration = knowledgecontract.NormalizeSubmissionPredicateRegistration(*registration)
-	}
-	return input
-}
-
-func normalizeSubmissionEntityResolution(input SemanticEntityResolutionInput) SemanticEntityResolutionInput {
-	input.MentionRef = strings.TrimSpace(input.MentionRef)
-	input.Action = strings.TrimSpace(input.Action)
-	input.EntityID = strings.TrimSpace(input.EntityID)
-	input.ExactEntityID = strings.TrimSpace(input.ExactEntityID)
-	input.EntityKind = strings.TrimSpace(input.EntityKind)
-	input.CanonicalName = strings.TrimSpace(input.CanonicalName)
-	input.FragmentID = strings.TrimSpace(input.FragmentID)
-	input.AssessmentID = strings.TrimSpace(input.AssessmentID)
 	return input
 }
 
@@ -128,16 +97,8 @@ func validateCommitSubmissionAssessmentInput(input CommitSubmissionAssessmentInp
 		if len(input.KnownEvidenceSnapshot) != 0 {
 			return errors.New("terminal synchronous result cannot carry known evidence")
 		}
-		if len(input.EntityResolutions) != 0 || len(input.RelationshipObservations) != 0 || len(input.PredicateRegistrations) != 0 {
-			return errors.New("terminal synchronous result cannot carry semantic decisions")
-		}
 		if len(input.EvidenceConflictResults) != 0 {
 			return errors.New("terminal synchronous result cannot carry evidence conflicts")
-		}
-		for _, result := range input.RelationshipResults {
-			if result.Disposition != "not_stored" || !submissionRelationshipNotStoredReasonAllowed(strings.TrimSpace(result.Reason)) {
-				return fmt.Errorf("terminal synchronous relationship result %q is invalid", result.RelationshipRef)
-			}
 		}
 		return nil
 	}
@@ -186,114 +147,6 @@ func validateCommitSubmissionAssessmentInput(input CommitSubmissionAssessmentInp
 			}
 			seenPositions[key] = struct{}{}
 		}
-	}
-	seenEntities := map[string]struct{}{}
-	for _, entry := range input.EntityResolutions {
-		if _, err := uuid.Parse(entry.Resolution.FragmentID); err != nil {
-			return fmt.Errorf("entity resolution fragment_id is required: %w", err)
-		}
-		if entry.Resolution.Action == string(domain.EntityResolutionAmbiguous) {
-			return ErrSubmissionAssessmentNonPromotable
-		}
-		if err := validateSemanticEntityResolutionInput(entry.Resolution); err != nil {
-			return err
-		}
-		if entry.Resolution.AssessmentID != input.AssessmentID {
-			return errors.New("submission entity resolution assessment_id does not match the submission assessment")
-		}
-		if _, exists := seenEntities[entry.Resolution.MentionRef]; exists {
-			return errors.New("submission entity resolution mention_ref is duplicated")
-		}
-		seenEntities[entry.Resolution.MentionRef] = struct{}{}
-	}
-	seenRelationships := map[string]struct{}{}
-	splitsByRelationship := map[string]map[int]struct{}{}
-	registrationByRef := map[string]SubmissionPredicateRegistrationInput{}
-	for _, registration := range input.PredicateRegistrations {
-		registrationByRef[registration.RelationshipRef] = registration
-	}
-	for _, entry := range input.RelationshipObservations {
-		if _, err := rememberRelationshipFragmentID(entry); err != nil {
-			return fmt.Errorf("relationship observation support is required: %w", err)
-		}
-		if !entry.Observation.AssessorAccepted || entry.Observation.PredicateCandidate != nil || entry.Observation.SuppressSupport {
-			return ErrSubmissionAssessmentNonPromotable
-		}
-		validationObservation := entry.Observation
-		if registration, needsRegistration := registrationByRef[validationObservation.Ref]; needsRegistration {
-			validationObservation.PredicateKey = registration.PredicateKey
-			validationObservation.PredicateVersion = 1
-		}
-		if err := validateSemanticRelationshipDecisionInput(validationObservation); err != nil {
-			return err
-		}
-		if entry.Observation.AssessmentID != input.AssessmentID {
-			return errors.New("submission relationship observation assessment_id does not match the submission assessment")
-		}
-		if entry.RelationshipRef == "" {
-			return errors.New("submission relationship observation relationship_ref is required")
-		}
-		if entry.SplitIndex < 0 {
-			return errors.New("submission relationship observation split_index must be non-negative")
-		}
-		if _, exists := seenRelationships[entry.Observation.Ref]; exists {
-			return errors.New("submission relationship observation ref is duplicated")
-		}
-		seenRelationships[entry.Observation.Ref] = struct{}{}
-		splits := splitsByRelationship[entry.RelationshipRef]
-		if splits == nil {
-			splits = map[int]struct{}{}
-			splitsByRelationship[entry.RelationshipRef] = splits
-		}
-		if _, exists := splits[entry.SplitIndex]; exists {
-			return fmt.Errorf("submission relationship result %q split_index is duplicated", entry.RelationshipRef)
-		}
-		splits[entry.SplitIndex] = struct{}{}
-	}
-	seenResults := map[string]struct{}{}
-	for index := range input.RelationshipResults {
-		result := &input.RelationshipResults[index]
-		result.RelationshipRef = strings.TrimSpace(result.RelationshipRef)
-		if result.RelationshipRef == "" {
-			return errors.New("submission relationship result ref is required")
-		}
-		if _, exists := seenResults[result.RelationshipRef]; exists {
-			return errors.New("submission relationship result ref is duplicated")
-		}
-		seenResults[result.RelationshipRef] = struct{}{}
-		splits := splitsByRelationship[result.RelationshipRef]
-		switch result.Disposition {
-		case "stored":
-			if strings.TrimSpace(result.Reason) != "" || len(result.Splits) != 0 || len(splits) == 0 {
-				return fmt.Errorf("submission relationship result %q has invalid stored disposition", result.RelationshipRef)
-			}
-			for splitIndex := range len(splits) {
-				if _, exists := splits[splitIndex]; !exists {
-					return fmt.Errorf("submission relationship result %q split_index must be contiguous", result.RelationshipRef)
-				}
-			}
-		case "not_stored":
-			if len(splits) != 0 || len(result.Splits) > 0 || strings.TrimSpace(result.Reason) != "not_supported_by_evidence" {
-				return fmt.Errorf("submission relationship result %q has invalid not_stored disposition", result.RelationshipRef)
-			}
-		default:
-			return fmt.Errorf("submission relationship result %q has unsupported disposition", result.RelationshipRef)
-		}
-	}
-	for ref := range splitsByRelationship {
-		if _, exists := seenResults[ref]; !exists {
-			return fmt.Errorf("submission relationship result %q is missing", ref)
-		}
-	}
-	seenRegistrations := map[string]struct{}{}
-	for _, registration := range input.PredicateRegistrations {
-		if err := knowledgecontract.ValidateCommitSubmissionPredicateRegistration(registration); err != nil {
-			return err
-		}
-		if _, exists := seenRegistrations[registration.RelationshipRef]; exists {
-			return errors.New("submission predicate registration relationship_ref is duplicated")
-		}
-		seenRegistrations[registration.RelationshipRef] = struct{}{}
 	}
 	return nil
 }
@@ -360,138 +213,4 @@ func cloneSubmissionPayload(input map[string]any) map[string]any {
 		output[key] = value
 	}
 	return output
-}
-
-func resolveSubmissionPredicates(ctx context.Context, tx *gorm.DB, input *CommitSubmissionAssessmentInput) error {
-	registrations := make(map[string]SubmissionPredicateRegistrationInput, len(input.PredicateRegistrations))
-	for _, registration := range input.PredicateRegistrations {
-		registrations[registration.RelationshipRef] = registration
-	}
-	seen := make(map[string]struct{}, len(input.RelationshipObservations))
-	for index := range input.RelationshipObservations {
-		observation := &input.RelationshipObservations[index].Observation
-		if _, exists := seen[observation.Ref]; exists {
-			return errors.New("submission relationship observation ref is duplicated")
-		}
-		seen[observation.Ref] = struct{}{}
-		registration, needsRegistration := registrations[observation.Ref]
-		if needsRegistration && observation.ExactPredicateKey != "" {
-			return ErrRememberExactReferenceStale
-		}
-		if !needsRegistration {
-			if observation.PredicateKey == "" || observation.PredicateVersion < 1 {
-				return ErrSubmissionAssessmentNonPromotable
-			}
-			if observation.ExactPredicateKey != "" {
-				if observation.PredicateKey != observation.ExactPredicateKey {
-					return ErrRememberExactReferenceStale
-				}
-				version, err := loadCurrentExactSubmissionPredicateVersion(ctx, tx, input.TeamID, observation.ExactPredicateKey)
-				if err != nil {
-					return err
-				}
-				observation.PredicateVersion = version
-			}
-			continue
-		}
-		if observation.PredicateKey != "" {
-			return errors.New("submission predicate registration must not include a provider-selected predicate")
-		}
-		resolved, action, err := resolveSubmissionPredicateRegistration(ctx, tx, input, registration)
-		if err != nil {
-			return err
-		}
-		observation.PredicateKey, observation.PredicateVersion = resolved.PredicateKey, resolved.Version
-		if err := insertSubmissionPredicateRegistrationEvent(ctx, tx, input, registration.RelationshipRef, action, resolved); err != nil {
-			return err
-		}
-	}
-	for ref := range registrations {
-		if _, exists := seen[ref]; !exists {
-			return errors.New("submission predicate registration has no relationship observation")
-		}
-	}
-	return nil
-}
-
-func loadCurrentExactSubmissionPredicateVersion(ctx context.Context, tx *gorm.DB, teamID, predicateKey string) (int, error) {
-	var version int
-	err := tx.WithContext(ctx).Raw(`
-		SELECT version FROM team_predicate_definitions
-		WHERE team_id = ?::uuid AND predicate_key = ? AND lifecycle_state = 'active'
-		ORDER BY version DESC LIMIT 1
-	`, teamID, predicateKey).Row().Scan(&version)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, ErrRememberExactReferenceStale
-	}
-	if err != nil {
-		return 0, err
-	}
-	return version, nil
-}
-
-func resolveSubmissionPredicateRegistration(ctx context.Context, tx *gorm.DB, input *CommitSubmissionAssessmentInput, registration SubmissionPredicateRegistrationInput) (SemanticReviewPredicateCandidate, string, error) {
-	requestedKey := strings.TrimSpace(registration.PredicateKey)
-	canonicalKey := knowledgecontract.CanonicalGeneratedPredicateKey(requestedKey)
-	if err := tx.WithContext(ctx).Exec(`SELECT pg_advisory_xact_lock(hashtext(?))`, input.TeamID+":"+canonicalKey).Error; err != nil {
-		return SemanticReviewPredicateCandidate{}, "", err
-	}
-	loaded, err := loadLatestSubmissionPredicate(ctx, tx, input.TeamID, requestedKey, canonicalKey)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return SemanticReviewPredicateCandidate{}, "", err
-	}
-	if loaded != nil {
-		if field, _, _ := knowledgecontract.SubmissionPredicateRegistrationCompatibility(*loaded, registration); field != "" {
-			return SemanticReviewPredicateCandidate{}, "", ErrSubmissionPredicateRegistrationHeld
-		}
-		return *loaded, "reused", nil
-	}
-	metadata, err := marshalJSON(map[string]any{"source": "submission_assessment_registration", "assessment_id": input.AssessmentID, "ingest_id": input.IngestID, "relationship_ref": registration.RelationshipRef, "predicate_policy": domain.PredicatePolicyVersion})
-	if err != nil {
-		return SemanticReviewPredicateCandidate{}, "", err
-	}
-	rows, err := tx.WithContext(ctx).Raw(`
-		INSERT INTO team_predicate_definitions (
-		    team_id, predicate_key, version, aliases, allowed_subject_kinds,
-		    allowed_object_kinds, relationship_kind, current_cardinality,
-		    lifecycle_state, origin, metadata
-		) VALUES (?::uuid, ?, 1, ARRAY[]::text[], ?::text[], ?::text[], ?, ?, 'active', 'submission_registration', ?::jsonb)
-		RETURNING predicate_key, version, aliases, allowed_subject_kinds, allowed_object_kinds,
-		          relationship_kind, current_cardinality, lifecycle_state
-	`, input.TeamID, canonicalKey, pq.Array([]string{registration.SubjectKind}), pq.Array([]string{registration.ObjectKind}), registration.RelationshipKind, registration.CurrentCardinality, string(metadata)).Rows()
-	if err != nil {
-		return SemanticReviewPredicateCandidate{}, "", err
-	}
-	defer rows.Close()
-	if !rows.Next() {
-		return SemanticReviewPredicateCandidate{}, "", rows.Err()
-	}
-	created, err := scanSubmissionPredicateCandidate(rows)
-	if err != nil {
-		return SemanticReviewPredicateCandidate{}, "", err
-	}
-	return created, "created", rows.Err()
-}
-
-func scanSubmissionPredicateCandidate(rows *sql.Rows) (SemanticReviewPredicateCandidate, error) {
-	candidate := SemanticReviewPredicateCandidate{}
-	var aliases, subjectKinds, objectKinds pq.StringArray
-	if err := rows.Scan(&candidate.PredicateKey, &candidate.Version, &aliases, &subjectKinds, &objectKinds, &candidate.RelationshipKind, &candidate.CurrentCardinality, &candidate.LifecycleState); err != nil {
-		return SemanticReviewPredicateCandidate{}, err
-	}
-	candidate.Aliases, candidate.AllowedSubjectKinds, candidate.AllowedObjectKinds = []string(aliases), []string(subjectKinds), []string(objectKinds)
-	return candidate, nil
-}
-
-func insertSubmissionPredicateRegistrationEvent(ctx context.Context, tx *gorm.DB, input *CommitSubmissionAssessmentInput, relationshipRef, action string, predicate SemanticReviewPredicateCandidate) error {
-	metadata, err := marshalJSON(map[string]any{"source": "submission_assessment", "assessment_id": input.AssessmentID})
-	if err != nil {
-		return err
-	}
-	return tx.WithContext(ctx).Exec(`
-		INSERT INTO predicate_registration_events (
-		    team_id, ingest_id, assessment_id, owner_profile_id, relationship_ref,
-		    registration_action, predicate_key, predicate_version, metadata
-		) VALUES (?::uuid, ?::uuid, ?::uuid, ?::uuid, ?, ?, ?, ?, ?::jsonb)
-	`, input.TeamID, input.IngestID, input.AssessmentID, input.OwnerProfileID, relationshipRef, action, predicate.PredicateKey, predicate.Version, string(metadata)).Error
 }

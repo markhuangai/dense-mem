@@ -9,10 +9,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRecallOntologySelectionPreservesRanksFactsAndKnownGroups(t *testing.T) {
+func TestEvidenceOnlyUnitRecallOntologySelectionPreservesRanksEvidenceAndKnownGroups(t *testing.T) {
 	hydrated := &recallcontract.EvidenceHydration{Hits: map[string]recallcontract.RecallEvidenceHit{
-		"E1": {EvidenceID: "E1", Context: "Atlas uses PostgreSQL.", RelationshipIDs: []string{"R1"}},
-		"E2": {EvidenceID: "E2", Context: "PostgreSQL is Atlas's datastore.", RelationshipIDs: []string{"R2"}},
+		"E1": {EvidenceID: "E1", Context: "Atlas uses PostgreSQL."},
+		"E2": {EvidenceID: "E2", Context: "PostgreSQL is Atlas's datastore."},
 		"E3": {EvidenceID: "E3", Context: "Atlas uses PostgreSQL and Redis."},
 	}, Groups: []ontology.RecallEvidenceGroup{{ID: "G1", Members: []string{"E1", "E2", "ineligible"}}}}
 	candidates := []recallCandidate{{ID: "E2", Score: 0.9}, {ID: "E1", Score: 0.8}, {ID: "E3", Score: 0.7}}
@@ -22,7 +22,7 @@ func TestRecallOntologySelectionPreservesRanksFactsAndKnownGroups(t *testing.T) 
 	require.Equal(t, "E2", results[0].EvidenceID)
 	require.Equal(t, 0.9, results[0].Score)
 	require.Equal(t, []string{"E1"}, results[0].EquivalentEvidenceIDs)
-	require.ElementsMatch(t, []string{"R1", "R2"}, results[0].RelationshipIDs)
+	require.Equal(t, "PostgreSQL is Atlas's datastore.", results[0].Context)
 	require.Equal(t, "E3", results[1].EvidenceID)
 	require.Equal(t, 2, results[1].Rank)
 	require.Len(t, sources, 3)

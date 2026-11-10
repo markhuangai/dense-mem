@@ -75,34 +75,6 @@ func canonicalSearchDocument(ctx context.Context, tx *gorm.DB, document knowledg
 		expected.SpaceID = strings.TrimSpace(spaceID)
 		expected.SpaceGeneration = spaceGeneration
 		return &expected, true, nil
-	case "relationship":
-		relationship, err := loadRelationshipRecord(ctx, tx, document.TeamID, document.SourceID)
-		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, true, nil
-		}
-		if err != nil {
-			return nil, true, err
-		}
-		if !relationshipSearchEligible(relationship) {
-			return nil, true, nil
-		}
-		text, err := semanticRelationshipSearchText(ctx, tx, relationship)
-		if err != nil {
-			return nil, true, err
-		}
-		generationID, err := relationshipForegroundRecallGenerationID(ctx, tx, document.TeamID)
-		if err != nil {
-			return nil, true, err
-		}
-		expected := document
-		expected.SourceVersion = int64(relationship.Version)
-		expected.ProjectionFormat = 2
-		expected.ProjectionGenerationID = generationID
-		expected.DocumentText = strings.TrimSpace(text)
-		expected.DocumentHash = searchDocumentHash(expected.DocumentText)
-		expected.SpaceID = relationship.SpaceID
-		expected.SpaceGeneration = relationship.SpaceGeneration
-		return &expected, true, nil
 	default:
 		return nil, false, nil
 	}
@@ -228,78 +200,6 @@ func selectMissingCanonicalSearchDocuments(
 		item.DocumentHash = searchDocumentHash(item.DocumentText)
 		item.StoredDocumentHash = ""
 		*result = append(*result, item)
-	}
-	remaining := limit - len(*result)
-	if remaining <= 0 {
-		return nil
-	}
-	type missingRelationship struct {
-		teamID, ownerProfileID, sourceID string
-	}
-	rows, err = tx.WithContext(ctx).Raw(`
-		SELECT relationship.team_id::text, relationship.owner_profile_id::text,
-		       relationship.relationship_id::text
-		FROM relationship_records AS relationship
-		JOIN teams AS team
-		  ON team.id = relationship.team_id
-		 AND team.status = 'active'
-		 AND team.deleted_at IS NULL
-		WHERE relationship.status = 'active'
-		  AND relationship.support_count > 0
-		  AND relationship.identity_alias_of_relationship_id IS NULL
-		  AND NOT EXISTS (
-		          SELECT 1
-		          FROM search_documents AS document
-		          WHERE document.team_id = relationship.team_id
-		            AND document.source_kind = 'relationship'
-		            AND document.source_id = relationship.relationship_id
-		            AND document.embedding_contract_id = ?::uuid
-		      )
-		ORDER BY relationship.created_at, relationship.team_id, relationship.relationship_id
-		LIMIT ?
-	`, contract.EmbeddingContractID, remaining).Rows()
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	relationships := make([]missingRelationship, 0, remaining)
-	for rows.Next() {
-		var item missingRelationship
-		if err := rows.Scan(&item.teamID, &item.ownerProfileID, &item.sourceID); err != nil {
-			return err
-		}
-		relationships = append(relationships, item)
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	if err := rows.Close(); err != nil {
-		return err
-	}
-	for _, missing := range relationships {
-		if len(*result) >= limit {
-			return nil
-		}
-		item := knowledgecontract.SearchDocumentForEmbedding{
-			SearchDocumentResult: knowledgecontract.SearchDocumentResult{
-				TeamID: missing.teamID, OwnerProfileID: missing.ownerProfileID, SourceID: missing.sourceID,
-			},
-		}
-		item.SourceKind = "relationship"
-		item.SourceVersion = 1
-		item.ProjectionFormat = 2
-		item.EmbeddingContractID = contract.EmbeddingContractID
-		item.EmbeddingDimensions = contract.EmbeddingDimensions
-		item.DocumentVersion = 1
-		expected, known, err := canonicalSearchDocument(ctx, tx, item)
-		if err != nil {
-			return err
-		}
-		if !known || expected == nil {
-			continue
-		}
-		expected.StoredDocumentHash = ""
-		*result = append(*result, *expected)
 	}
 	return nil
 }

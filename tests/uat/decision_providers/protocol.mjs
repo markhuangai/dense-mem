@@ -39,7 +39,7 @@ export function handleDecisionFixture(request, response, payload) {
     const levels = vendor === "openai" ? question.levels : question.criteria.map((description) => ({ label: description, description }));
     const top = levels.length - 1;
     const candidate = state[question.name];
-    const candidateID = candidate?.evidence?.EvidenceID || candidate?.relationship?.RelationshipID;
+    const candidateID = candidate?.evidence?.EvidenceID;
     const score = mode === "ranking" && !preferredIDs.includes(candidateID) ? 0 : top;
     const probabilities = levels.map((level, value) => ({ value, label: level.label, probability: value === score ? 1 : 0 }));
     return { ...base, score, confidence: 1, probabilities: vendor === "openai" ? probabilities : Object.fromEntries(probabilities.map((item) => [String(item.value), item.probability])), ...(vendor === "typesafe" ? { legend: Object.fromEntries(question.criteria.map((description, index) => [String(index), description])) } : {}) };

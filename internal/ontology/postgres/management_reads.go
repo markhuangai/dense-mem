@@ -27,7 +27,7 @@ func (s *Store) ListManagementSources(ctx context.Context, teamID string, kind o
 	if limit < 1 || limit > ontology.MaxPageSize || utf8.RuneCountInString(query) > 128 {
 		return page, ontology.ErrInvalid
 	}
-	if cursor != "" && kind != ontology.PredicateSource {
+	if cursor != "" {
 		if id, err := uuid.Parse(cursor); err != nil || id.String() != cursor {
 			return page, ontology.ErrInvalid
 		}
@@ -40,17 +40,7 @@ func (s *Store) ListManagementSources(ctx context.Context, teamID string, kind o
 		if err != nil {
 			return err
 		}
-		if kind == ontology.PredicateSource && query != "" {
-			handle := ontology.SourceHandle{Kind: kind}
-			lookupErr := tx.Raw(eligiblePredicateSelect+` AND definition.predicate_key=? ORDER BY definition.predicate_key,definition.version DESC LIMIT 1`, fence.TeamID, fence.SpaceID, fence.Generation, query).Row().Scan(&handle.ID, &handle.Version)
-			if lookupErr != nil && !errors.Is(lookupErr, sql.ErrNoRows) {
-				return lookupErr
-			}
-			if lookupErr == nil {
-				handles = []ontology.SourceHandle{handle}
-			}
-		}
-		if parsed, parseErr := uuid.Parse(query); parseErr == nil && parsed.String() == query && kind != ontology.PredicateSource {
+		if parsed, parseErr := uuid.Parse(query); parseErr == nil && parsed.String() == query {
 			handle, lookupErr := latestMaintenanceHandle(tx, fence, ontology.SourceHandle{Kind: kind, ID: query, Version: 1})
 			if lookupErr != nil && !errors.Is(lookupErr, sql.ErrNoRows) {
 				return lookupErr
@@ -99,7 +89,7 @@ func (s *Store) TeamOntologyStatus(ctx context.Context, teamID string) (ontology
 		if err := tx.Raw(`SELECT count(*) FROM ontology_maintenance_markers WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=?`, fence.TeamID, fence.SpaceID, fence.Generation).Row().Scan(&result.PendingMarkers); err != nil {
 			return err
 		}
-		if err := tx.Raw(`SELECT EXISTS(SELECT 1 FROM ontology_maintenance_teams WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND discovery_kind=4)`, fence.TeamID, fence.SpaceID, fence.Generation).Row().Scan(&result.DiscoveryComplete); err != nil {
+		if err := tx.Raw(`SELECT EXISTS(SELECT 1 FROM ontology_maintenance_teams WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND discovery_kind=1)`, fence.TeamID, fence.SpaceID, fence.Generation).Row().Scan(&result.DiscoveryComplete); err != nil {
 			return err
 		}
 		result.DiscoveryComplete = result.DiscoveryComplete && result.PendingMarkers == 0

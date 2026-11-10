@@ -4,17 +4,17 @@ import (
 	"testing"
 
 	"github.com/markhuangai/dense-mem/internal/memorypack"
+	tracecontract "github.com/markhuangai/dense-mem/internal/trace/contract"
 )
 
 func TestExportMemoryPackContractOutputMatchesClosedSchema(t *testing.T) {
 	output := exportMemoryPackContractOutput(&memorypack.ExportResult{
-		CanonicalJSON: `{"format":"dense-mem.memory-pack.v2.4"}`,
+		CanonicalJSON: `{"format":"dense-mem.memory-pack.v3.0"}`,
 		SHA256:        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 		Filename:      "pack.memory-pack.json",
 		ItemCount:     1,
 		Artifact: memorypack.MemoryPackArtifact{
-			Evidence:         []memorypack.MemoryPackEvidence{{EvidenceID: "evidence-1"}},
-			EvidenceSupports: []memorypack.MemoryPackEvidenceSupport{{EvidenceID: "evidence-1"}},
+			Evidence: []memorypack.MemoryPackEvidence{{TraceEvidenceFragment: tracecontract.TraceEvidenceFragment{FragmentID: "evidence-1"}}},
 		},
 	})
 	if err := ValidateInput(Tool{InputSchema: exportMemoryPackOutputSchema()}, output); err != nil {

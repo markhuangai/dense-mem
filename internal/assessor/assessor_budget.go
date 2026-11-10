@@ -19,40 +19,7 @@ func cloneSemanticAssessmentRequestSlices(req *SemanticAssessmentRequest) {
 	}
 	req.Evidence = append([]SemanticReviewEvidence(nil), req.Evidence...)
 	req.KnownEvidence = append([]SemanticReviewEvidence(nil), req.KnownEvidence...)
-	req.EntityCandidateGroups = cloneSemanticAssessmentEntityCandidateGroups(req.EntityCandidateGroups)
-	req.PredicateOptions = append([]SemanticAssessmentPredicateOption(nil), req.PredicateOptions...)
 	req.EvidenceEquivalenceCandidates = cloneSemanticAssessmentEvidenceEquivalenceCandidateGroups(req.EvidenceEquivalenceCandidates)
-	req.RequiredRelationshipRefs = cloneSemanticAssessmentRequiredRelationshipRefs(req.RequiredRelationshipRefs)
-}
-
-func cloneSemanticAssessmentRequiredRelationshipRefs(refs []SemanticAssessmentRequiredRelationshipRef) []SemanticAssessmentRequiredRelationshipRef {
-	if refs == nil {
-		return nil
-	}
-	cloned := make([]SemanticAssessmentRequiredRelationshipRef, len(refs))
-	for index, ref := range refs {
-		cloned[index] = ref
-		cloned[index].EvidenceIDs = append([]string(nil), ref.EvidenceIDs...)
-		cloned[index].KnownEvidenceIDs = append([]string(nil), ref.KnownEvidenceIDs...)
-		cloned[index].Evidence = append([]SemanticAssessmentEvidenceSpan(nil), ref.Evidence...)
-		cloned[index].ObjectRef = cloneOptionalString(ref.ObjectRef)
-		cloned[index].ObjectValue = cloneSemanticAssessmentValue(ref.ObjectValue)
-		cloned[index].ValidFrom = cloneOptionalString(ref.ValidFrom)
-		cloned[index].ValidTo = cloneOptionalString(ref.ValidTo)
-	}
-	return cloned
-}
-
-func cloneSemanticAssessmentEntityCandidateGroups(groups []SemanticAssessmentEntityCandidateGroup) []SemanticAssessmentEntityCandidateGroup {
-	if groups == nil {
-		return nil
-	}
-	cloned := make([]SemanticAssessmentEntityCandidateGroup, len(groups))
-	for index, group := range groups {
-		cloned[index] = group
-		cloned[index].Candidates = append([]SemanticAssessmentEntityCandidate(nil), group.Candidates...)
-	}
-	return cloned
 }
 
 func cloneSemanticAssessmentEvidenceEquivalenceCandidateGroups(groups []SemanticAssessmentEvidenceEquivalenceCandidateGroup) []SemanticAssessmentEvidenceEquivalenceCandidateGroup {
@@ -77,8 +44,6 @@ func CountSemanticAssessmentRequestTokens(
 ) (inputTokens int, candidateContextTokens int, err error) {
 	limits = normalizeSemanticAssessmentLimits(limits)
 	contextPayload, err := json.Marshal(semanticAssessmentCandidateContext{
-		EntityCandidateGroups:         req.EntityCandidateGroups,
-		PredicateOptions:              req.PredicateOptions,
 		EvidenceEquivalenceCandidates: req.EvidenceEquivalenceCandidates,
 	})
 	if err != nil {
@@ -139,9 +104,6 @@ func minimumSemanticAssessmentRequest() SemanticAssessmentRequest {
 				Content:    "x",
 			}),
 		},
-		ClientProposal:                map[string]any{"entity_hints": nil, "relationship_hints": nil},
-		EntityCandidateGroups:         []SemanticAssessmentEntityCandidateGroup{},
-		PredicateOptions:              []SemanticAssessmentPredicateOption{},
 		EvidenceEquivalenceCandidates: []SemanticAssessmentEvidenceEquivalenceCandidateGroup{},
 	}
 }
@@ -159,35 +121,8 @@ func allocateSemanticAssessmentOptionalContext(
 	}
 	limits = normalizeSemanticAssessmentLimits(limits)
 	req.CandidateContextOmittedCandidates = 0
-	req.CandidateContextOmittedPredicateOptions = 0
 	preservedTruncation := req.CandidateContextTruncated
 	req.CandidateContextTruncated = preservedTruncation
-
-	mandatoryPredicate := make(map[string]struct{})
-	for _, relationship := range req.RequiredRelationshipRefs {
-		if key := strings.TrimSpace(relationship.KnownPredicateKey); key != "" {
-			mandatoryPredicate[key] = struct{}{}
-		}
-	}
-	if req.SubmissionContract != nil {
-		for _, relationship := range req.SubmissionContract.Relationships {
-			if key := strings.TrimSpace(relationship.KnownPredicateKey); key != "" {
-				mandatoryPredicate[key] = struct{}{}
-			}
-		}
-	}
-
-	allPredicates := append([]SemanticAssessmentPredicateOption(nil), req.PredicateOptions...)
-	req.PredicateOptions = req.PredicateOptions[:0]
-	optionalPredicates := make([]SemanticAssessmentPredicateOption, 0, len(allPredicates))
-	for _, option := range allPredicates {
-		key := strings.TrimSpace(option.PredicateKey)
-		if _, required := mandatoryPredicate[key]; required {
-			req.PredicateOptions = append(req.PredicateOptions, option)
-			continue
-		}
-		optionalPredicates = append(optionalPredicates, option)
-	}
 
 	// Candidate groups are emitted in submitted evidence-index order. The
 	// numeric order is part of the round-robin contract; lexical sorting would
@@ -227,27 +162,13 @@ func allocateSemanticAssessmentOptionalContext(
 	}
 	optionalInputLimit := conversationInputLimit
 
-	maxRounds := len(optionalPredicates)
+	maxRounds := 0
 	for _, candidates := range allCandidates {
 		if len(candidates) > maxRounds {
 			maxRounds = len(candidates)
 		}
 	}
 	for round := 0; round < maxRounds; round++ {
-		if round < len(optionalPredicates) {
-			option := optionalPredicates[round]
-			req.PredicateOptions = append(req.PredicateOptions, option)
-			candidateInput, candidateContext, countErr := CountSemanticAssessmentRequestTokens(*req, limits)
-			if countErr != nil {
-				return nil, countErr
-			}
-			if candidateContext <= limits.MaxCandidateContextTokens && candidateInput <= optionalInputLimit {
-				inputTokens, contextTokens = candidateInput, candidateContext
-			} else {
-				req.PredicateOptions = req.PredicateOptions[:len(req.PredicateOptions)-1]
-				req.CandidateContextOmittedPredicateOptions++
-			}
-		}
 		for groupIndex := range req.EvidenceEquivalenceCandidates {
 			if round >= len(allCandidates[groupIndex]) {
 				continue
@@ -267,7 +188,7 @@ func allocateSemanticAssessmentOptionalContext(
 			req.CandidateContextOmittedCandidates++
 		}
 	}
-	req.CandidateContextTruncated = preservedTruncation || req.CandidateContextOmittedCandidates > 0 || req.CandidateContextOmittedPredicateOptions > 0
+	req.CandidateContextTruncated = preservedTruncation || req.CandidateContextOmittedCandidates > 0
 	req.CandidateContextTokens = contextTokens
 	req.InputTokens = inputTokens
 	return nil, nil
@@ -348,74 +269,17 @@ func validateSemanticAssessmentLimits(limits SemanticAssessmentLimits) error {
 // returned stage is used only for safe operator diagnostics; it does not alter
 // the request or provider policy.
 func SemanticAssessmentBudgetFailureStage(req SemanticAssessmentRequest, field string, limits SemanticAssessmentLimits) string {
-	limits = normalizeSemanticAssessmentLimits(limits)
-	field = strings.TrimSpace(field)
 	if field == "candidate_context_tokens" {
-		if tokens := semanticAssessmentContextComponentTokens(req.EntityCandidateGroups, limits.Tokenizer); tokens > limits.MaxCandidateContextTokens {
-			return "entity_catalog"
-		}
-		if tokens := semanticAssessmentContextComponentTokens(req.PredicateOptions, limits.Tokenizer); tokens > limits.MaxCandidateContextTokens {
-			return "predicate_context"
-		}
-		// The entity catalog and exact predicate context are both required. If
-		// their combined serialized payload exceeds the cap while neither one
-		// does independently, attribute the failure to the first required
-		// component in the deterministic request order instead of calling it
-		// optional context.
-		if len(req.EntityCandidateGroups) > 0 {
-			return "entity_catalog"
-		}
-		if len(req.PredicateOptions) > 0 {
-			return "predicate_context"
-		}
 		return "catalog_context"
 	}
-	if field != "input_tokens" {
-		return "assessment_input"
-	}
-	inputLimit := semanticAssessmentConversationInputLimit(limits)
-	if framingTokens, err := CountSemanticAssessmentProviderFramingTokens(limits); err == nil && framingTokens > inputLimit {
+	if tokens, err := CountSemanticAssessmentProviderFramingTokens(limits); err == nil && tokens > semanticAssessmentConversationInputLimit(limits) {
 		return "provider_framing"
 	}
-	// A required known-evidence catalog is the narrowest server-owned cause
-	// when removing it makes the complete serialized request fit.
 	if len(req.KnownEvidence) > 0 {
 		withoutKnown := req
 		withoutKnown.KnownEvidence = nil
-		if input, _, err := CountSemanticAssessmentRequestTokens(withoutKnown, limits); err == nil && input <= inputLimit {
+		if input, _, err := CountSemanticAssessmentRequestTokens(withoutKnown, limits); err == nil && input <= semanticAssessmentConversationInputLimit(limits) {
 			return "known_evidence_context"
-		}
-	}
-	if len(req.EntityCandidateGroups) > 0 {
-		withoutCatalog := req
-		withoutCatalog.EntityCandidateGroups = nil
-		if input, _, err := CountSemanticAssessmentRequestTokens(withoutCatalog, limits); err == nil && input <= inputLimit {
-			return "entity_catalog"
-		}
-	}
-	if len(req.PredicateOptions) > 0 {
-		withoutPredicates := req
-		withoutPredicates.PredicateOptions = nil
-		if input, _, err := CountSemanticAssessmentRequestTokens(withoutPredicates, limits); err == nil && input <= inputLimit {
-			return "predicate_context"
-		}
-	}
-	// If no single required component accounts for the overflow, distinguish
-	// combined server-owned context from an independently oversized client
-	// payload. Only the former may be attributed to the server.
-	withoutRequired := req
-	withoutRequired.EntityCandidateGroups = nil
-	withoutRequired.KnownEvidence = nil
-	withoutRequired.PredicateOptions = nil
-	if input, _, err := CountSemanticAssessmentRequestTokens(withoutRequired, limits); err == nil && input <= inputLimit {
-		if len(req.EntityCandidateGroups) > 0 {
-			return "entity_catalog"
-		}
-		if len(req.KnownEvidence) > 0 {
-			return "known_evidence_context"
-		}
-		if len(req.PredicateOptions) > 0 {
-			return "predicate_context"
 		}
 	}
 	return "assessment_input"

@@ -16,6 +16,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/recall"
+	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
@@ -54,27 +55,15 @@ func TestRecallHandlerRoutesHTTPToRecall(t *testing.T) {
 				RecallID:    "rec_canonical",
 				SearchState: string(domain.SearchProjectionCurrent),
 				SearchStates: recall.RecallSearchStates{
-					Evidence:      string(domain.SearchProjectionCurrent),
-					Relationships: string(domain.SearchProjectionCurrent),
+					Evidence: string(domain.SearchProjectionCurrent),
 				},
 				Results: []recall.RecallResultItem{{
-					EvidenceID:      "ev-1",
-					RelationshipIDs: []string{"rel-1"},
-					Rank:            2,
-					Context:         "Dense-Mem uses PostgreSQL as the durable authority.",
+					EvidenceID: "ev-1",
+					Rank:       2,
+					Context:    "Dense-Mem uses PostgreSQL as the durable authority.",
 				}},
-				RelatedRelationships: []recall.RelatedRelationshipSummary{{
-					RelationshipID: "rel-1",
-					Predicate:      "uses",
-					EvidenceIDs:    []string{"ev-1"},
-				}},
-				RelatedCommunities: []recall.RecallDiscoveryPath{{
-					EvidenceIDs: []string{"ev-1"},
-					Relationships: []recall.RecallRelationshipHandle{{
-						RelationshipID: "rel-1",
-						Predicate:      "uses",
-					}},
-				}},
+				RelatedTopics:   []recallcontract.RelatedTopic{{TopicID: "22222222-2222-4222-8222-222222222222", Name: "PostgreSQL", Description: "Durable database Evidence", EligibleEvidenceCount: 4, Rank: 1}},
+				TopicsTruncated: true,
 			}, nil
 		},
 	}
@@ -84,7 +73,7 @@ func TestRecallHandlerRoutesHTTPToRecall(t *testing.T) {
 	e.Use(injectActorMiddleware(teamID, profileID))
 	e.GET("/ui/api/recall", h.Handle)
 
-	req := httptest.NewRequest(http.MethodGet, "/ui/api/recall?query=postgres&limit=3&known_evidence_ids=11111111-1111-4111-8111-111111111111&known_relationship_ids=22222222-2222-4222-8222-222222222222&expand_from_entity_ids=33333333-3333-4333-8333-333333333333", nil)
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/recall?query=postgres&limit=3&known_evidence_ids=11111111-1111-4111-8111-111111111111&topic_ids=22222222-2222-4222-8222-222222222222&topic_limit=1", nil)
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 
@@ -97,11 +86,8 @@ func TestRecallHandlerRoutesHTTPToRecall(t *testing.T) {
 	if got := captured.KnownEvidenceIDs; len(got) != 1 || got[0] != "11111111-1111-4111-8111-111111111111" {
 		t.Fatalf("known_evidence_ids = %#v", got)
 	}
-	if got := captured.KnownRelationshipIDs; len(got) != 1 || got[0] != "22222222-2222-4222-8222-222222222222" {
-		t.Fatalf("known_relationship_ids = %#v", got)
-	}
-	if got := captured.ExpandFromEntityIDs; len(got) != 1 || got[0] != "33333333-3333-4333-8333-333333333333" {
-		t.Fatalf("expand_from_entity_ids = %#v", got)
+	if len(captured.TopicIDs) != 1 || captured.TopicIDs[0] != "22222222-2222-4222-8222-222222222222" || captured.TopicLimit == nil || *captured.TopicLimit != 1 {
+		t.Fatalf("topic input=%+v", captured)
 	}
 	if capturedActor.TeamID != teamID || capturedActor.OwnerID != profileID {
 		t.Fatalf("actor = %#v; want team=%s profile=%s", capturedActor, teamID, profileID)
@@ -121,18 +107,18 @@ func TestRecallHandlerRoutesHTTPToRecall(t *testing.T) {
 	if item.EvidenceID != "ev-1" || item.Context == "" {
 		t.Fatalf("result = %#v; want ev-1 with context", item)
 	}
-	if len(item.RelationshipIDs) != 1 || item.RelationshipIDs[0] != "rel-1" {
-		t.Fatalf("relationship_ids = %#v; want rel-1", item.RelationshipIDs)
+	if len(resp.Data.RelatedTopics) != 1 || resp.Data.RelatedTopics[0].EligibleEvidenceCount != 4 || !resp.Data.TopicsTruncated {
+		t.Fatalf("topic result=%+v", resp.Data)
 	}
-	if len(resp.Data.RelatedRelationships) != 1 || resp.Data.RelatedRelationships[0].RelationshipID != "rel-1" {
-		t.Fatalf("related_relationships = %#v; want rel-1", resp.Data.RelatedRelationships)
+	if resp.Data.SearchStates.Evidence != string(domain.SearchProjectionCurrent) {
+		t.Fatalf("search states=%+v", resp.Data.SearchStates)
 	}
-	if len(resp.Data.RelatedCommunities) != 1 || len(resp.Data.RelatedCommunities[0].Relationships) != 1 {
-		t.Fatalf("related_communities = %#v; want one relationship path", resp.Data.RelatedCommunities)
+	for _, retired := range []string{"relationship_ids", "related_relationships", "related_communities"} {
+		if strings.Contains(rec.Body.String(), `"`+retired+`"`) {
+			t.Fatalf("retired field %s in %s", retired, rec.Body.String())
+		}
 	}
-	if resp.Data.SearchStates.Evidence != string(domain.SearchProjectionCurrent) || resp.Data.SearchStates.Relationships != string(domain.SearchProjectionCurrent) {
-		t.Fatalf("search_states = %#v; want current states", resp.Data.SearchStates)
-	}
+
 }
 
 func TestRecallHandlerRequiresTeamContext(t *testing.T) {
@@ -272,5 +258,47 @@ func injectActorMiddleware(teamID uuid.UUID, profileID uuid.UUID) echo.Middlewar
 			c.SetRequest(c.Request().WithContext(ctx))
 			return next(c)
 		}
+	}
+}
+
+func TestEvidenceOnlyRecallHTTPRejectsRetiredAndInvalidTopics(t *testing.T) {
+	id := uuid.NewString()
+	for _, query := range []string{
+		"query=memory&relationship_limit=1", "query=memory&community_limit=1",
+		"query=memory&expand_from_entity_ids=" + id, "query=memory&known_relationship_ids=" + id,
+		"topic_ids=not-a-uuid", "topic_ids=" + uuid.Nil.String(),
+		"topic_ids=" + id + "&topic_ids=" + strings.ToUpper(id),
+		"topic_ids=" + id + "&topic_limit=11", "topic_ids=" + id + "&topic_limit=-1",
+	} {
+		t.Run(query, func(t *testing.T) {
+			e := echo.New()
+			e.HTTPErrorHandler = httperr.ErrorHandler
+			e.Use(injectProfileMiddleware(uuid.New()))
+			e.GET("/ui/api/recall", NewRecallHandler(recall.NewRecallService(recall.RecallDependencies{})).Handle)
+			rec := httptest.NewRecorder()
+			e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui/api/recall?"+query, nil))
+			if rec.Code != http.StatusBadRequest && rec.Code != http.StatusUnprocessableEntity {
+				t.Fatalf("invalid query status=%d body=%s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestEvidenceOnlyRecallHTTPTopicUnavailableIsBounded(t *testing.T) {
+	id := uuid.NewString()
+	e := echo.New()
+	e.HTTPErrorHandler = httperr.ErrorHandler
+	e.Use(injectProfileMiddleware(uuid.New()))
+	h := NewRecallHandler(&stubRecallService{recallFunc: func(_ context.Context, req recall.RecallRequest) (*recall.RecallResult, error) {
+		if req.Query != "" || len(req.TopicIDs) != 1 || req.TopicIDs[0] != id {
+			t.Fatalf("topic-only input=%+v", req)
+		}
+		return nil, errors.Join(recallcontract.ErrTopicUnavailable, errors.New("protected membership details "+id))
+	}})
+	e.GET("/ui/api/recall", h.Handle)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui/api/recall?topic_ids="+id, nil))
+	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), `"reason_code":"topic_unavailable"`) || strings.Contains(rec.Body.String(), id) || strings.Contains(rec.Body.String(), "protected membership") {
+		t.Fatalf("unavailable topic response=%d %s", rec.Code, rec.Body.String())
 	}
 }

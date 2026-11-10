@@ -93,7 +93,7 @@ for (const failedTeam of ["fixture-team", "foreign-team"]) test(`ontology UAT pr
       const failed = failedTeam === "fixture-team" || request.headers.authorization === "Bearer foreign-key";
       const terminal = failed ? { submission_id: "unrelated-public-submission", processing_state: "failed", correlation_id: correlationID,
         errors: [{ code: "embedding_unavailable", reason_code: "embedding_request_rejected" }] } : {
-        processing_state: "completed", evidence: [{ disposition: "stored", evidence_id: `source-${calls.length}` }], relationship_results: [],
+        processing_state: "completed", evidence: [{ disposition: "stored", evidence_id: `source-${calls.length}` }],
       };
       response.end(JSON.stringify({ result: { isError: failed, content: [{ type: "text", text: JSON.stringify(terminal) }] } }));
     }

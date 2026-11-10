@@ -43,10 +43,10 @@ func (s *Store) publish(ctx context.Context, teamID string, input ontology.Publi
 	if err != nil {
 		return ontology.PublicationResult{}, err
 	}
-	return s.commit(ctx, teamID, input, origin, actor, hash, "")
+	return s.commit(ctx, teamID, input, origin, actor, hash)
 }
 
-func (s *Store) commit(ctx context.Context, teamID string, input ontology.Publication, origin, actor, hash, nextPredicate string) (result ontology.PublicationResult, err error) {
+func (s *Store) commit(ctx context.Context, teamID string, input ontology.Publication, origin, actor, hash string) (result ontology.PublicationResult, err error) {
 	ctx, diagnostic, finish := ontology.ObservePublication(ctx, s.publicationObserver, teamID, origin, input)
 	defer func() {
 		if diagnostic != nil && result.ID != "" {
@@ -59,7 +59,7 @@ func (s *Store) commit(ctx context.Context, teamID string, input ontology.Public
 			return err
 		}
 		var err error
-		result, err = s.commitPublication(tx, fence, input, origin, actor, hash, nextPredicate, "")
+		result, err = s.commitPublication(tx, fence, input, origin, actor, hash, "")
 		return err
 	})
 	if err != nil {
@@ -68,7 +68,7 @@ func (s *Store) commit(ctx context.Context, teamID string, input ontology.Public
 	return result, nil
 }
 
-func (s *Store) commitPublication(tx *gorm.DB, fence scope, input ontology.Publication, origin, actor, hash, nextPredicate, assessmentID string) (ontology.PublicationResult, error) {
+func (s *Store) commitPublication(tx *gorm.DB, fence scope, input ontology.Publication, origin, actor, hash, assessmentID string) (ontology.PublicationResult, error) {
 	if diagnostic := ontology.PublicationDiagnosticFromContext(tx.Statement.Context); diagnostic != nil {
 		diagnostic.Publication = &input
 		diagnostic.AssessmentID = assessmentID
@@ -128,14 +128,14 @@ func (s *Store) commitPublication(tx *gorm.DB, fence scope, input ontology.Publi
 	}
 	prepared := []ontology.Record{}
 	if len(input.Changes) > 0 {
-		prepared, err = ontology.PreparePublication(catalog, snapshots, input, origin == "automatic" || origin == "seed")
+		prepared, err = ontology.PreparePublication(catalog, snapshots, input, origin == "automatic")
 		if err != nil {
 			return ontology.PublicationResult{}, err
 		}
-	} else if origin != "seed" {
+	} else {
 		return ontology.PublicationResult{}, ontology.ErrInvalid
 	}
-	result := ontology.PublicationResult{ID: uuid.NewString(), Revision: revision + 1, Records: []ontology.RevisionRef{}, NextPredicate: nextPredicate}
+	result := ontology.PublicationResult{ID: uuid.NewString(), Revision: revision + 1, Records: []ontology.RevisionRef{}}
 	for _, record := range prepared {
 		result.Records = append(result.Records, ontology.RevisionRef{ID: record.ID, Version: record.Version})
 	}

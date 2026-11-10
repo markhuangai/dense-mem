@@ -209,28 +209,6 @@ func submissionStatusErrorArraySchema() map[string]any {
 	return array(submissionStatusErrorSchema(), 0, 50)
 }
 
-func submissionRelationshipResultsSchema() map[string]any {
-	return array(closedObject(
-		[]string{"ref", "disposition", "splits"},
-		map[string]any{
-			"ref":         schemaString("Client-local relationship reference.", 128),
-			"disposition": schemaEnum([]string{"stored", "not_stored"}),
-			"reason":      schemaString("Bounded server disposition reason.", 256),
-			"message":     schemaString("Verified explanation when a relationship is not stored.", 512),
-			"remediation": schemaString("Recovery guidance when a relationship is not stored.", 512),
-			"splits": array(closedObject(
-				[]string{"split_index", "relationship_id", "relationship_version", "status"},
-				map[string]any{
-					"split_index":          map[string]any{"type": "integer", "minimum": 0},
-					"relationship_id":      schemaString("Canonical Relationship ID.", 128),
-					"relationship_version": map[string]any{"type": "integer", "minimum": 1},
-					"status":               schemaString("Canonical Relationship status.", 64),
-				},
-			), 0, 50),
-		},
-	), 0, 200)
-}
-
 func submissionStatusErrorSchema() map[string]any {
 	return closedObject(
 		[]string{"code", "message", "retryable", "next_action", "remediation"},

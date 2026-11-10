@@ -11,7 +11,6 @@ func TestEvaluationMappingMergeAndResolutionBranches(t *testing.T) {
 	addSourceMapping(&mapping, Ref{SourceDocID: "doc", Type: "evidence", ID: "e-1"}, false)
 	addSourceMapping(&mapping, Ref{SourceDocID: "doc", Type: "evidence", ID: "e-1"}, false)
 	addSourceMapping(&mapping, Ref{}, false)
-	addDreamSourceRefs(&mapping, "dream", []Ref{{Type: "evidence", ID: "e-1"}, {Type: "", ID: "ignored"}})
 	if _, ok := resolveSourceMapping(mapping, "doc", "evidence"); !ok {
 		t.Fatal("source mapping was not resolved")
 	}
@@ -24,13 +23,6 @@ func TestEvaluationMappingMergeAndResolutionBranches(t *testing.T) {
 		t.Fatal("filtered mapping dropped retained source")
 	}
 	mergeKnowledgeMapping(&filtered, mapping)
-	if len(filtered.DreamSourceRefsByID["dream"]) != 1 {
-		t.Fatal("dream source mapping was not merged")
-	}
-	cycles := expectedDreamCycleSeeds(mapping, []ExpectedDream{{Hypothesis: "h", SourceRefs: []Ref{{Type: "evidence", ID: "e-1"}}}})
-	if len(cycles) != 1 || cycles[0].Hypothesis != "h" {
-		t.Fatalf("dream cycle seeds = %#v", cycles)
-	}
 }
 
 func TestEvaluationLoadHelpersHashAndJSONLBoundaries(t *testing.T) {

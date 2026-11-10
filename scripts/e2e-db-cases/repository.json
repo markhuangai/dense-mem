@@ -46,34 +46,6 @@
       "source": "internal/knowledge/postgres/known_evidence_support_integration_test.go"
     },
     {
-      "id": "repository/TestKnownEvidenceSupportAllowsOwnerCorrection",
-      "package": "./internal/knowledge/postgres",
-      "run": "^TestKnownEvidenceSupportAllowsOwnerCorrection$",
-      "phase": "precheck",
-      "source": "internal/knowledge/postgres/known_evidence_support_integration_test.go"
-    },
-    {
-      "id": "repository/TestKnownEvidenceSupportDoesNotRequireInlineEmbeddingProjection",
-      "package": "./internal/knowledge/postgres",
-      "run": "^TestKnownEvidenceSupportDoesNotRequireInlineEmbeddingProjection$",
-      "phase": "precheck",
-      "source": "internal/knowledge/postgres/known_evidence_support_integration_test.go"
-    },
-    {
-      "id": "repository/TestKnownEvidenceSupportPreservesABCOwnershipAndIsolation",
-      "package": "./internal/knowledge/postgres",
-      "run": "^TestKnownEvidenceSupportPreservesABCOwnershipAndIsolation$",
-      "phase": "precheck",
-      "source": "internal/knowledge/postgres/known_evidence_support_integration_test.go"
-    },
-    {
-      "id": "repository/TestKnownEvidenceSupportRejectsCrossSpacePrivateRelationship",
-      "package": "./internal/knowledge/postgres",
-      "run": "^TestKnownEvidenceSupportRejectsCrossSpacePrivateRelationship$",
-      "phase": "precheck",
-      "source": "internal/knowledge/postgres/known_evidence_support_integration_test.go"
-    },
-    {
       "id": "repository/TestLedgerAuthorityConstraintsUseCanonicalValues",
       "package": "./internal/knowledge/postgres",
       "run": "^TestLedgerAuthorityConstraintsUseCanonicalValues$",
@@ -242,13 +214,6 @@
       "source": "internal/knowledge/postgres/evidence_duplicate_integration_test.go"
     },
     {
-      "id": "repository/TestRememberDuplicateRepeatedCanonicalKeepsRelationshipSupportOccurrences",
-      "package": "./internal/knowledge/postgres",
-      "run": "^TestRememberDuplicateRepeatedCanonicalKeepsRelationshipSupportOccurrences$",
-      "phase": "precheck",
-      "source": "internal/knowledge/postgres/evidence_duplicate_integration_test.go"
-    },
-    {
       "id": "repository/TestRememberDuplicateSemanticReuseSerializesWithConcurrentQuarantine",
       "package": "./internal/knowledge/postgres",
       "run": "^TestRememberDuplicateSemanticReuseSerializesWithConcurrentQuarantine$",
@@ -312,11 +277,11 @@
       "source": "internal/knowledge/postgres/decision_workflows_integration_test.go"
     },
     {
-      "id": "repository/TestDecisionConflictPostgresSelectionFailureAndStaleFence",
+      "id": "repository/TestEvidenceOnlyPostgresRepeatedCanonicalKeepsExactOccurrences",
       "package": "./internal/knowledge/postgres",
-      "run": "^TestDecisionConflictPostgresSelectionFailureAndStaleFence$",
+      "run": "^TestEvidenceOnlyPostgresRepeatedCanonicalKeepsExactOccurrences$",
       "phase": "precheck",
-      "source": "internal/knowledge/postgres/decision_workflows_integration_test.go"
+      "source": "internal/knowledge/postgres/evidence_duplicate_integration_test.go"
     }
   ]
 }

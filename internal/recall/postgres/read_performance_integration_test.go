@@ -5,14 +5,13 @@ package postgres
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
 	accesspostgres "github.com/markhuangai/dense-mem/internal/access/postgres"
-	conflictpostgres "github.com/markhuangai/dense-mem/internal/conflict/postgres"
+
 	"github.com/markhuangai/dense-mem/internal/domain"
 	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 	"github.com/markhuangai/dense-mem/internal/observability"
@@ -56,19 +55,6 @@ func (p *cancelAfterRecallCandidates) LoadRecallConflicts(ctx context.Context, i
 
 func newReadPerformanceSearchFixtureStore(db *gorm.DB, rls storagepostgres.RLSHelper) *searchFixtureStore {
 	store := newSearchFixtureStore(db, rls)
-	store.recall.relationshipConflicts = func(
-		ctx context.Context,
-		tx *gorm.DB,
-		teamID string,
-		knownAt *time.Time,
-		results []RecallEvidenceHit,
-	) ([]RelationshipConflictCaseRecord, error) {
-		relationshipIDs := make([]string, 0)
-		for _, result := range results {
-			relationshipIDs = append(relationshipIDs, result.RelationshipIDs...)
-		}
-		return conflictpostgres.LoadRelationshipConflictRecordsInSpace(ctx, tx, teamID, relationshipIDs, knownAt, "")
-	}
 	return store
 }
 
@@ -82,7 +68,7 @@ func TestRecallRetrievalCancellationAfterCandidates(t *testing.T) {
 	counters := &readPerformanceBenchmarkCounters{}
 	countedDB := newReadPerformanceCountedDB(appDB, counters)
 	store := newReadPerformanceSearchFixtureStore(countedDB, rls)
-	ledger := knowledgepostgres.NewStore(countedDB, rls, knowledgepostgres.ConflictRuntimeConfig{})
+	ledger := knowledgepostgres.NewStore(countedDB, rls)
 	documents := createReadPerformanceBenchmarkDocuments(t, ctx, store, ledger, teamID, ownerID,
 		"cancel after candidates", 1, "", 0)
 	completeSearchDocumentsForTest(t, store, teamID, documents.documentIDs)
@@ -112,7 +98,7 @@ func TestRecallReadPerformanceMetricsMatchDisabledResults(t *testing.T) {
 	teamID := createLedgerTeam(t, adminDB, rls, "recall-read-performance-team")
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "recall-read-performance-owner")
 	insertSearchTestContract(t, adminDB, rls, "recall-read-performance", 3, "exact", "")
-	ledgerRepo := knowledgepostgres.NewStore(appDB, rls, knowledgepostgres.ConflictRuntimeConfig{})
+	ledgerRepo := knowledgepostgres.NewStore(appDB, rls)
 	searchRepo := newReadPerformanceSearchFixtureStore(appDB, rls)
 	content := "recall read performance PostgreSQL fixture"
 	ingest := createSemanticIngest(t, ctx, ledgerRepo, teamID, ownerID, "recall-read-performance", content)
@@ -271,7 +257,7 @@ func TestRecallReadPerformanceMetricsCountMultiSpaceStagesOnce(t *testing.T) {
 	sharedOwnerID := createLedgerProfile(t, adminDB, rls, teamID, "read-performance-shared-owner")
 	insertSearchTestContract(t, adminDB, rls, "read-performance-multi-space", 3, "exact", "")
 	searchRepo := newReadPerformanceSearchFixtureStore(appDB, rls)
-	ledgerRepo := knowledgepostgres.NewStore(appDB, rls, knowledgepostgres.ConflictRuntimeConfig{})
+	ledgerRepo := knowledgepostgres.NewStore(appDB, rls)
 	createReadPerformanceBenchmarkDocuments(t, ctx, searchRepo, ledgerRepo, teamID, sharedOwnerID,
 		"multispace performance marker shared", 1, "", 0)
 
@@ -302,7 +288,7 @@ func TestRecallReadPerformanceMetricsCountMultiSpaceStagesOnce(t *testing.T) {
 	service := recallservice.NewRecallService(recallservice.RecallDependencies{Search: searchRepo, Metrics: metrics})
 	relationshipLimit := 0
 	result, err := service.Recall(actorCtx, recallservice.RecallRequest{
-		Query: "multispace performance marker", Limit: 10, RelationshipLimit: &relationshipLimit,
+		Query: "multispace performance marker", Limit: 10, TopicLimit: &relationshipLimit,
 	})
 	require.NoError(t, err)
 	require.Len(t, result.Results, 2)

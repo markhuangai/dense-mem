@@ -834,7 +834,7 @@ test("verifier scenarios use the deterministic provider without replacing embedd
   assert.match(compose, /profiles: \[synchronous_write, verifier\]/);
   assert.match(realController, /"  synchronous-write-provider:"[\s\S]*"    profiles: \[synchronous_write, verifier\]"/);
   const verifierStart = stack.indexOf('if (has("verifier"))');
-  const verifierEnd = stack.indexOf('if (scenario === "community")', verifierStart);
+  const verifierEnd = stack.indexOf('if (scenario === "identity_cleanup")', verifierStart);
   assert.ok(verifierStart >= 0 && verifierEnd > verifierStart);
   const verifierBlock = stack.slice(verifierStart, verifierEnd);
   assert.match(verifierBlock, /AI_VERIFIER_API_URL: "http:\/\/synchronous-write-provider:8787\/v1"/);
@@ -890,6 +890,18 @@ test("Grafana component cost panels use only their own request activity", async 
   assert.doesNotMatch(embedding, /densemem_verifier_requests_total/);
 });
 
+test("Grafana retains Evidence intake and removes retired factual graph measures", async () => {
+  for (const name of ["dense-mem-service", "dense-mem-ai-recall", "dense-mem-workflows", "dense-mem-usage", "dense-mem-performance"]) {
+    const contents = await readFile(join(root, `examples/grafana/dashboards/${name}.json`), "utf8");
+    assert.doesNotMatch(contents, /densemem_(?:dream|recall_hypothes|operational_(?:dream|hypothes|relationship)|conflict_(?:review_duration|queue))/);
+    const dashboard = JSON.parse(contents);
+    if (name === "dense-mem-workflows") {
+      assert.equal(dashboard.title, "Dense-Mem Remember and Evidence");
+      assert(dashboard.panels.some((panel) => panel.targets.some((target) => target.expr.includes("densemem_operational_remember_attempts"))));
+    }
+  }
+});
+
 test("Grafana range panels use a scrape-safe lookback", async () => {
   for (const name of ["dense-mem-service", "dense-mem-ai-recall", "dense-mem-workflows"]) {
     const dashboard = JSON.parse(await readFile(join(root, `examples/grafana/dashboards/${name}.json`), "utf8"));
@@ -904,30 +916,24 @@ test("Grafana range panels use a scrape-safe lookback", async () => {
   }
 });
 
-test("community, ontology, and conflict fixtures forward healthy embeddings upstream", () => {
-  const communityStart = stack.indexOf('if (scenario === "community")');
-  const communityEnd = stack.indexOf('if (has("conflict_provider"))', communityStart);
-  const communityBlock = stack.slice(communityStart, communityEnd);
-  assert.ok(communityStart >= 0 && communityEnd > communityStart);
-  assert.match(communityBlock, /AI_API_URL: "http:\/\/synchronous-write-provider:8787\/v1"/);
+test("ontology fixtures forward healthy embeddings upstream", () => {
   assert.match(stack, /const fixtureEmbeddingProvider = [^;]*\["ontology_organization", "ontology_management", "ontology_upgrade"\]\.includes\(scenario\)/);
-  assert.match(stack, /if \(\["ontology_organization", "ontology_management", "ontology_upgrade"\]\.includes\(scenario\)\) \{[\s\S]*?AI_API_URL: "http:\/\/synchronous-write-provider:8787\/v1"/);
+  assert.match(stack, /AI_API_URL: "http:\/\/synchronous-write-provider:8787\/v1"/);
   assert.ok(stack.includes('if (scenario === "ontology_management") serverEnvironment.set("LOG_LEVEL", "debug");'));
   assert.match(stack, /DENSE_MEM_E2E_EMBEDDING_BASE_URL/);
   assert.match(stack, /DENSE_MEM_E2E_EMBEDDING_API_KEY/);
   assert.match(stack, /embedding_upstream\.mjs/);
   assert.match(stack, /DENSE_MEM_CI_HOSTED/);
-  assert.doesNotMatch(stack, /CONFLICT_PROVIDER_EMBEDDING_MODEL|DENSE_MEM_E2E_PROVIDER_DIMENSIONS/);
 });
 
-test("identity cleanup and conflict queue retain their deliberate chat and fault helpers", async () => {
+test("identity cleanup retains chat helpers and retired graph scenarios are absent", async () => {
   const registry = JSON.parse(await readFile(join(scripts, "e2e-scenarios.json"), "utf8"));
   const helpers = (name) => registry.scenarios.find((entry) => entry.name === name)?.helper_profiles;
   assert.deepEqual(helpers("identity_cleanup"), ["verifier"]);
-  assert.deepEqual(helpers("conflict_queue"), ["conflict_provider", "conflict_review", "playwright"]);
+  for (const name of ["community", "conflict", "conflict_queue"]) assert.equal(helpers(name), undefined);
   assert.match(stack, /if \(scenario === "identity_cleanup"\) \{[\s\S]*?AI_API_URL: "http:\/\/synchronous-write-provider:8787\/v1"/);
   assert.match(controller, /run_identity_cleanup_startup_matrix/);
-  assert.match(runtime, /if \[\[ "\$scenario" == "conflict" \|\| "\$scenario" == "conflict_queue" \]\]; then/);
+  assert.doesNotMatch(runtime, /CONFLICT_PROVIDER|CONFLICT_REVIEW/);
 });
 
 test("Go helper containers fall back from module proxy transport errors", () => {
@@ -1330,7 +1336,7 @@ test("production workflows give each hosted scenario its own stack", () => {
   assert.match(scenarioWorkflow, /scripts\/e2e-host-controller\.sh stop/);
   assert.match(scenarioWorkflow, /if: always\(\) && steps\.stack\.outputs\.project != ''.*/);
   assert.match(scenarioWorkflow, /stop-commands/);
-  assert.match(scenarioWorkflow, /dreaming_telemetry_portal/);
+  assert.match(scenarioWorkflow, /evidence_telemetry_portal/);
   assert.doesNotMatch(scenarioWorkflow, /continue-on-error|Preserve scenario result|Print failed scenario diagnostics/);
   assert.match(controller, /--timeout 40m --total-timeout 58m/);
 });
@@ -1456,22 +1462,10 @@ test("six precheck shards preserve every real runner selection exactly once", as
   const selections = stdout.trim().split(/\r?\n/);
   assert.equal(selections.length, 6);
   const dedicated = [
-    "repository/TestOntologyAutomaticRefinement",
     "repository/TestOntologyMaintenanceFinalizationAdmissionAndIsolation",
     "repository/TestOntologyMaintenanceLargeBacklogAndFairTurns",
     "repository/TestOntologyMaintenanceReadMeasurement",
     "repository/TestOntologyOrganizationVocabularyAndSourceFences",
-    "repository/TestOntologyRefinementPreservesLegacyAndAmbiguity",
-    "repository/TestOntologyRefinementPublicationRaces",
-    "repository/TestOntologyRefinementLeaseRecovery",
-    "repository/TestOntologyRefinementIsolationAndAncestryBound",
-    "repository/TestOntologyRefinementKeepsHistoricalReceipts",
-    "repository/TestOntologyRefinementRefreshMigration",
-    "repository/TestOntologyRefinementRebuildsStoredAncestry",
-    "repository/TestOntologyRefinementCoarseAncestryBound",
-    "repository/TestOntologyRefinementDefinitionAliasRace",
-    "repository/TestOntologyRefinementReusesBoundedCandidate",
-    "repository/TestOntologyRefinementAmbiguityRetainsEligiblePredicateVersion",
     "repository/TestOntologyOrganizationPreservesPerRecordDependencyBounds",
     "repository/TestOntologyOrganizationPreservesValidLargeSourceContext",
     "repository/TestOntologyUnavailableSnapshotRetainsScopedHandleForMaintenance",
@@ -1479,7 +1473,7 @@ test("six precheck shards preserve every real runner selection exactly once", as
   const measurement = "repository/TestOntologyMaintenanceRevalidationDiscoveryMeasurement";
   assert.equal(selections[1], `cases:${measurement}`);
   assert.equal(selections[0], `cases:${dedicated.join(",")}`);
-  assert.ok(selections[3].split(",").includes("community"));
+  assert.ok(selections.slice(3).every((selection) => !selection.split(",").includes("community")));
   const inventory = [];
   const directory = join(root, "scripts/e2e-db-cases");
   for (const file of await readdir(directory)) {
@@ -1496,15 +1490,15 @@ test("six precheck shards preserve every real runner selection exactly once", as
     if (selection === selections[1]) assert.deepEqual(ids, [measurement]);
     if (selection === selections[2]) {
       assert.ok([...dedicated, measurement].every((id) => !ids.includes(id)));
-      for (const name of ["HierarchyPublication", "HierarchyDependencies", "HierarchyRollbackAndPins", "HierarchyRacesAndIsolation", "PublicationLogOnlyDiagnostics"]) {
-        assert.ok(ids.includes(`repository/TestOntologySemantic${name}`), `semantic case ${name} must execute in shard 2`);
+      for (const name of ["TestOntologyAtomicPublicationReplayAndRaces", "TestOntologyDefinitionChangesValidateActiveChildren", "TestOntologySemanticPublicationLogOnlyDiagnostics"]) {
+        assert.ok(ids.includes(`repository/${name}`), `organizational case ${name} must execute in shard 2`);
       }
     }
     actual.push(...ids);
   }
   assert.equal(new Set(actual).size, actual.length);
   assert.deepEqual(actual.sort(), inventory.sort());
-  assert.equal(actual.length, 736);
+  assert.equal(actual.length, 595);
   assert.equal((await run("bash", ["-c", command, "six-shards", root])).stdout, stdout);
   await assert.rejects(run("bash", ["-c", `${helper}\npartition_precheck_capabilities "$1" 4`, "bad-shards", root]), /three or six shards/);
 });

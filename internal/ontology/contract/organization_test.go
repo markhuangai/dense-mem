@@ -36,9 +36,9 @@ func TestOrganizationInputAndFingerprints(t *testing.T) {
 	require.NotEqual(t, hash, changed)
 }
 
-func TestOrganizationPredicateSourceOrderDoesNotChangeItsHash(t *testing.T) {
-	a := SourceHandle{Kind: PredicateSource, ID: "a", Version: 12}
-	b := SourceHandle{Kind: PredicateSource, ID: "a1", Version: 2}
+func TestOrganizationEvidenceSourceOrderDoesNotChangeItsHash(t *testing.T) {
+	a := SourceHandle{Kind: EvidenceSource, ID: policyID("a"), Version: 12}
+	b := SourceHandle{Kind: EvidenceSource, ID: policyID("a1"), Version: 2}
 	forward, err := PrepareOrganizationInput(OrganizationInput{OperationKey: "same", Sources: []SourceHandle{a, b}})
 	require.NoError(t, err)
 	reverse, err := PrepareOrganizationInput(OrganizationInput{OperationKey: "same", Sources: []SourceHandle{b, a}})
@@ -83,17 +83,6 @@ func TestAssessedEquivalencePreservesContext(t *testing.T) {
 	b.State["content"] = "Atlas uses PostgreSQL."
 	b.State["metadata"] = `{"time":"2025"}`
 	require.False(t, CompatibleMeaningContext(a, b))
-	a = policySnapshot("relation-a", RelationshipSource, "tuple-a")
-	b = policySnapshot("relation-b", RelationshipSource, "tuple-b")
-	a.State = map[string]string{"subject": "Atlas", "object_value": "10", "polarity": "+", "valid_to": "2026", "predicate_contract": "state:one"}
-	b.State = map[string]string{"subject": "Atlas", "object_value": "10", "polarity": "+", "valid_to": "2026", "predicate_contract": "state:one"}
-	require.True(t, CompatibleMeaningContext(a, b))
-	for _, field := range []string{"subject", "object_value", "polarity", "valid_to", "predicate_contract"} {
-		before := b.State[field]
-		b.State[field] = "different"
-		require.False(t, CompatibleMeaningContext(a, b), field)
-		b.State[field] = before
-	}
 }
 
 func TestCrossOwnerRelativeTimeRequiresResolvedCalendarContext(t *testing.T) {
@@ -131,7 +120,7 @@ func TestCrossOwnerRelativeTimeRequiresResolvedCalendarContext(t *testing.T) {
 }
 
 func TestOrganizationClassificationPreservesOverrideAndAssignmentPrecedence(t *testing.T) {
-	for _, kind := range []SourceKind{EntitySource, PredicateSource, EvidenceSource, RelationshipSource} {
+	for _, kind := range []SourceKind{EvidenceSource} {
 		t.Run(string(kind), func(t *testing.T) {
 			source := policySnapshot("fixed-source", kind, "fixed meaning")
 			assignment := RecordView{Record: Record{ID: policyID("assignment"), Assignment: &Assignment{Source: source.SourceHandle, DefinitionID: policyID("assigned")}}, Current: true}
@@ -140,30 +129,12 @@ func TestOrganizationClassificationPreservesOverrideAndAssignmentPrecedence(t *t
 			require.Equal(t, override.Override.DefinitionID, locked)
 			require.Empty(t, preferred)
 			locked, preferred = OrganizationClassification(source, []RecordView{assignment}, nil)
-			if kind == EntitySource || kind == PredicateSource {
-				require.Empty(t, locked)
-				require.Equal(t, assignment.Assignment.DefinitionID, preferred)
-			} else {
-				require.Equal(t, assignment.Assignment.DefinitionID, locked)
-				require.Empty(t, preferred)
-			}
+			require.Equal(t, assignment.Assignment.DefinitionID, locked)
+			require.Empty(t, preferred)
 			assignment.Current = false
 			locked, preferred = OrganizationClassification(source, []RecordView{assignment}, nil)
 			require.Empty(t, locked)
 			require.Empty(t, preferred)
 		})
 	}
-}
-
-func TestOrganizationHierarchyEligibilityRetainsPinsAndKinds(t *testing.T) {
-	definition := RecordView{Record: Record{ID: policyID("editable"), Kind: EntityClass, Definition: &Definition{Key: "person", Label: "Person", BaseEntityKind: "person"}}, Current: true}
-	require.True(t, OrganizationHierarchyEditable(definition, nil))
-	pin := RecordView{Record: Record{ID: policyID("pin"), Kind: OverrideKind, Override: &Override{Action: PinDefinition, TargetID: definition.ID}}}
-	require.False(t, OrganizationHierarchyEditable(definition, []RecordView{pin}))
-	pin.Retired = true
-	require.True(t, OrganizationHierarchyEditable(definition, []RecordView{pin}))
-	definition.Current = false
-	require.False(t, OrganizationHierarchyEditable(definition, nil))
-	definition.Current, definition.Kind = true, Topic
-	require.False(t, OrganizationHierarchyEditable(definition, nil))
 }

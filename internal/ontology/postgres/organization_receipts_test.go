@@ -277,33 +277,7 @@ func testOntologyOrganizationCompletedReceiptInvalidation(t *testing.T) {
 		require.Equal(t, 2, receiptCount(t, f))
 		require.Equal(t, before, f.canonicalSnapshot(t))
 	})
-	t.Run("changed entity name", func(t *testing.T) {
-		f := newOrganizationFixture(t)
-		entity, err := f.knowledge.CreateEntity(context.Background(), knowledge.CreateEntityInput{TeamID: f.team, OwnerProfileID: f.owners[0], EntityKind: "project", CanonicalName: "Atlas"})
-		require.NoError(t, err)
-		source := ontology.SourceHandle{Kind: ontology.EntitySource, ID: entity.EntityID, Version: int64(entity.Version)}
-		service, calls := organizationFixtureService(t, f, nil, nil)
-		input := ontology.OrganizationInput{OperationKey: "before-occurrence", Sources: []ontology.SourceHandle{source}}
-		original, err := service.Organize(context.Background(), f.team, input)
-		require.NoError(t, err)
-		_, err = f.knowledge.AddEntityName(context.Background(), knowledge.AddEntityNameInput{TeamID: f.team, OwnerProfileID: f.owners[0], EntityID: entity.EntityID, DisplayName: "Atlas Platform", NameKind: "alias"})
-		require.NoError(t, err)
-		before := f.canonicalSnapshot(t)
-		historical, err := service.Organize(context.Background(), f.team, input)
-		require.NoError(t, err)
-		require.False(t, historical.Current)
-		require.Equal(t, original.AssessmentID, historical.AssessmentID)
-		input.OperationKey = "after-occurrence"
-		current, err := service.Organize(context.Background(), f.team, input)
-		require.NoError(t, err)
-		require.True(t, current.Current)
-		require.False(t, current.Existing)
-		require.NotEqual(t, original.AssessmentID, current.AssessmentID)
-		require.Equal(t, "organized", current.Outcomes[0].Status)
-		require.Equal(t, int32(2), calls.Load())
-		require.Equal(t, 2, receiptCount(t, f))
-		require.Equal(t, before, f.canonicalSnapshot(t))
-	})
+
 	t.Run("definition revision and unrelated edit", func(t *testing.T) {
 		f := newOrganizationFixture(t)
 		source := f.organizationEvidence(t, 0, "Atlas uses PostgreSQL.", nil)

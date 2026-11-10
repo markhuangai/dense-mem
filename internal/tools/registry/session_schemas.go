@@ -21,7 +21,7 @@ func sessionInputSchema() map[string]any {
 }
 
 func sessionOutputSchema() map[string]any {
-	return closedObject([]string{"contract_version", "submission_id", "submission_kind", "correlation_id", "accepted_event_count", "duplicate_event_count", "processing_state", "search_state", "events", "relationship_results", "errors"}, map[string]any{
+	return closedObject([]string{"contract_version", "submission_id", "submission_kind", "correlation_id", "accepted_event_count", "duplicate_event_count", "processing_state", "search_state", "memory_outcome", "events", "errors"}, map[string]any{
 		"contract_version":      schemaEnum([]string{domain.ContractVersion}),
 		"submission_id":         schemaString("Durable intake submission identifier.", 128),
 		"submission_kind":       schemaEnum([]string{"session_ingest"}),
@@ -30,13 +30,14 @@ func sessionOutputSchema() map[string]any {
 		"duplicate_event_count": map[string]any{"type": "integer", "minimum": 0, "maximum": 20},
 		"processing_state":      schemaEnum([]string{"completed", "failed"}),
 		"search_state":          schemaEnum([]string{"current", "not_required"}),
+		"memory_outcome":        schemaEnum([]string{"stored", "no_memory", "failed", "retired_contract"}), "retired_payload": map[string]any{"type": "boolean"},
+		"original_contract_version": schemaString("Original contract retained by a migrated terminal receipt.", 128),
 		"events": array(closedObject([]string{"event_id", "disposition", "processing_state", "evidence_ids"}, map[string]any{
 			"event_id":         schemaString("Original immutable event identifier.", 256),
 			"disposition":      schemaEnum([]string{"accepted", "duplicate"}),
 			"processing_state": schemaEnum([]string{"completed", "failed"}),
 			"evidence_ids":     stringArraySchema("Authorized canonical evidence ID derived from this event.", 100, 128),
 		}), 1, 20),
-		"relationship_results": submissionRelationshipResultsSchema(),
 		"errors": array(closedObject([]string{"code", "message", "retryable", "next_action", "remediation"}, map[string]any{
 			"code": schemaEnum(contractErrorCodes()), "message": schemaString("Bounded processing failure.", 512),
 			"retryable":   map[string]any{"type": "boolean"},

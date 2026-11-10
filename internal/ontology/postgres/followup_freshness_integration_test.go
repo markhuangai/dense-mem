@@ -146,7 +146,7 @@ func TestOntologyMixedSeparationOverrideProtectsEvidenceGroups(t *testing.T) {
 	f := newOrganizationFixture(t)
 	a := f.organizationEvidenceAt(t, 0, "Atlas uses PostgreSQL.", "2026-10-08T12:00:00Z", "")
 	b := f.organizationEvidenceAt(t, 0, "Atlas uses PostgreSQL.", "2026-10-08T12:00:00Z", "")
-	relationship := maintenanceRelationship(t, f)
+	relationship := f.organizationEvidence(t, 1, "Independent context must remain separately classified.", nil)
 	before := f.canonicalSnapshot(t)
 	override := ontology.Record{ID: uuid.NewString(), Kind: ontology.OverrideKind, Override: &ontology.Override{Action: ontology.KeepSeparate, Members: []ontology.SourceHandle{relationship, a, b}}, Sources: []ontology.SourceDependency{f.source(t, relationship), f.source(t, a), f.source(t, b)}}
 	publication, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("mixed-separation", 0, ontology.Change{Record: override}))
@@ -161,40 +161,6 @@ func TestOntologyMixedSeparationOverrideProtectsEvidenceGroups(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, history, 1)
 	require.Equal(t, before, f.canonicalSnapshot(t))
-}
-
-func TestOntologyCurrentReadersReportCanonicalFingerprintAndVersionChanges(t *testing.T) {
-	for _, change := range []string{"name", "version"} {
-		t.Run(change, func(t *testing.T) {
-			f := newOrganizationFixture(t)
-			entity, err := f.knowledge.CreateEntity(context.Background(), knowledge.CreateEntityInput{TeamID: f.team, OwnerProfileID: f.owners[0], EntityKind: "project", CanonicalName: "Atlas"})
-			require.NoError(t, err)
-			handle := ontology.SourceHandle{Kind: ontology.EntitySource, ID: entity.EntityID, Version: int64(entity.Version)}
-			class := testTopic("project-class")
-			class.Kind = ontology.EntityClass
-			class.Definition.BaseEntityKind = "project"
-			assignment := ontology.Record{ID: uuid.NewString(), Kind: ontology.AssignmentKind, Assignment: &ontology.Assignment{Source: handle, DefinitionID: class.ID}, Sources: []ontology.SourceDependency{f.source(t, handle)}}
-			_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("entity-assignment", 0, ontology.Change{Record: class}, ontology.Change{Record: assignment}))
-			require.NoError(t, err)
-			if change == "name" {
-				_, err = f.knowledge.AddEntityName(context.Background(), knowledge.AddEntityNameInput{TeamID: f.team, OwnerProfileID: f.owners[0], EntityID: entity.EntityID, DisplayName: "Atlas alias", NameKind: "alias"})
-				require.NoError(t, err)
-			} else {
-				require.NoError(t, f.rls.WithSystemTx(context.Background(), f.admin, func(tx *gorm.DB) error {
-					return tx.Exec(`UPDATE entity_records SET version=version+1 WHERE team_id=?::uuid AND entity_id=?::uuid`, f.team, entity.EntityID).Error
-				}))
-			}
-			view, err := f.store.GetRecord(context.Background(), f.team, assignment.ID, 0)
-			require.NoError(t, err)
-			require.False(t, view.Current)
-			require.Equal(t, "source_changed", view.StaleReason)
-			page, err := f.store.ListRecords(context.Background(), f.team, ontology.AssignmentKind, "", 20)
-			require.NoError(t, err)
-			require.Len(t, page.Records, 1)
-			require.False(t, page.Records[0].Current)
-			require.Equal(t, "source_changed", page.Records[0].StaleReason)
-		})
-	}
 }
 
 func TestOntologyCrossOwnerSpatialContextRemainsSeparate(t *testing.T) {

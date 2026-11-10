@@ -28,7 +28,7 @@ func TestRememberAttemptDiagnosticHoldTransactionRollback(t *testing.T) {
 	credentialRepo := accesspostgres.NewCredentialRepository(appDB, rls, nil)
 	credential := createOwnedCredential(t, credentialRepo, uuid.MustParse(teamID), identityID, "remember-primitives-hold-rollback")
 	ownerID := credential.ID.String()
-	repo := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	repo := NewStore(appDB, rls)
 	privateRepo := privacypostgres.NewPrivateMemoryRepository(appDB, rls)
 	require.NoError(t, privateRepo.Prepare(ctx))
 

@@ -19,7 +19,7 @@ func TestSessionDiagnosticsRetentionHonorsLegalHold(t *testing.T) {
 	team := createLedgerTeam(t, admin, rls, "session-diagnostic-hold")
 	owner := createLedgerProfile(t, admin, rls, team, "owner")
 	ctx, intake := sessionIntakeFixture(t, admin, app, rls, team, owner, domain.MemorySpacePrivate)
-	store := NewStore(app, rls, ConflictRuntimeConfig{})
+	store := NewStore(app, rls)
 	staged, err := store.StageSession(ctx, intake)
 	require.NoError(t, err)
 	require.NoError(t, store.RecordSessionDiagnostic(ctx, intake.Scope, staged.ID, json.RawMessage(`{"capture_state":"captured","payload":{}}`)))

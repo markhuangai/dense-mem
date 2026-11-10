@@ -54,7 +54,7 @@ export function AuthShell({ theme, title, icon, actions, children, onSubmit }: A
         <Badge variant="outline">{control ? "Service administration" : "Your memory workspace"}</Badge>
         <h1>{control ? "A clear view of your memory service." : "Find the context that matters."}</h1>
         <p>{control ? "Manage teams, access, and memory operations in one workspace." : "Explore evidence, follow connections, and understand what your team knows."}</p>
-        <div className="auth-provenance" aria-hidden="true"><span>Evidence</span><i /><span>Relationships</span><i /><span>Context</span></div>
+        <div className="auth-provenance" aria-hidden="true"><span>Evidence</span><i /><span>Topics</span><i /><span>Context</span></div>
       </section>
       <section className="auth-panel" aria-label={title}>
         <div><h2>{control ? "Sign in to Control" : "Sign in to Knowledge"}</h2><p className="section-subtitle">{control ? "Use your control token or an available identity provider." : "Use an API key or your organization’s sign-in."}</p></div>

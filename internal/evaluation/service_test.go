@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
+	evaluationcontract "github.com/markhuangai/dense-mem/internal/evaluation/contract"
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
@@ -16,7 +16,7 @@ import (
 
 func TestListKnowledgeRefsUsesActorTeamAndStripsOnlyCopy(t *testing.T) {
 	teamID := uuid.NewString()
-	repository := &evaluationRepositoryStub{page: &dreamcontract.EvaluationPage{
+	repository := &evaluationRepositoryStub{page: &evaluationcontract.EvaluationPage{
 		Items:      []map[string]any{{"type": "evidence", "id": "evidence-1", "content": "secret"}},
 		NextCursor: "next",
 		HasMore:    true,
@@ -41,7 +41,7 @@ func TestListKnowledgeRefsUsesActorTeamAndStripsOnlyCopy(t *testing.T) {
 }
 
 func TestListKnowledgeRefsRejectsInvalidFallbackWithoutActor(t *testing.T) {
-	svc := New(Dependencies{Repository: &evaluationRepositoryStub{page: &dreamcontract.EvaluationPage{}}, Audit: &evaluationAuditStub{}})
+	svc := New(Dependencies{Repository: &evaluationRepositoryStub{page: &evaluationcontract.EvaluationPage{}}, Audit: &evaluationAuditStub{}})
 	_, err := svc.ListKnowledgeRefs(context.Background(), "not-a-team", "evidence", 1, "", "", false)
 	require.EqualError(t, err, "evaluation tool requires authenticated team context")
 }
@@ -78,7 +78,7 @@ func TestRunRecallCaseMapsRefsAndRequiresAudit(t *testing.T) {
 	recall := &recallServiceStub{result: &recallcontract.RecallResult{
 		RecallID:    "recall-1",
 		SearchState: "current",
-		Results:     []recallcontract.RecallResultItem{{EvidenceID: "evidence-1", Rank: 1, RelationshipIDs: []string{"relationship-1"}}},
+		Results:     []recallcontract.RecallResultItem{{EvidenceID: "evidence-1", Rank: 1}},
 	}}
 	audit := &evaluationAuditStub{}
 	svc := New(Dependencies{Recall: recall, Audit: audit})
@@ -127,7 +127,7 @@ func TestRunRecallCaseRejectsMalformedTimeAfterAudit(t *testing.T) {
 
 func TestEvaluationServiceAppliesWorkflowDefaultsAndCaps(t *testing.T) {
 	teamID := uuid.NewString()
-	repository := &evaluationRepositoryStub{page: &dreamcontract.EvaluationPage{}}
+	repository := &evaluationRepositoryStub{page: &evaluationcontract.EvaluationPage{}}
 	recall := &recallServiceStub{}
 	svc := New(Dependencies{
 		Repository: repository,
@@ -151,8 +151,6 @@ func TestEvaluationServiceAppliesWorkflowDefaultsAndCaps(t *testing.T) {
 func TestStripContentAndReferenceMappingPolicies(t *testing.T) {
 	for kind, fields := range map[string][]string{
 		"evidence": {"content"},
-		"entity":   {"canonical_name", "identity_context"},
-		"value":    {"canonical_value", "display"},
 	} {
 		item := make(map[string]any, len(fields))
 		for _, field := range fields {
@@ -166,16 +164,16 @@ func TestStripContentAndReferenceMappingPolicies(t *testing.T) {
 }
 
 type evaluationRepositoryStub struct {
-	input dreamcontract.EvaluationListInput
-	page  *dreamcontract.EvaluationPage
+	input evaluationcontract.EvaluationListInput
+	page  *evaluationcontract.EvaluationPage
 }
 
-func (s *evaluationRepositoryStub) ListEvaluationRefs(_ context.Context, input dreamcontract.EvaluationListInput) (*dreamcontract.EvaluationPage, error) {
+func (s *evaluationRepositoryStub) ListEvaluationRefs(_ context.Context, input evaluationcontract.EvaluationListInput) (*evaluationcontract.EvaluationPage, error) {
 	s.input = input
 	return s.page, nil
 }
 
-func (s *evaluationRepositoryStub) GetEvaluationItem(context.Context, dreamcontract.EvaluationGetInput) (map[string]any, error) {
+func (s *evaluationRepositoryStub) GetEvaluationItem(context.Context, evaluationcontract.EvaluationGetInput) (map[string]any, error) {
 	return nil, errors.New("not implemented")
 }
 

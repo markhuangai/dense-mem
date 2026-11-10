@@ -3,10 +3,13 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/google/uuid"
+	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/observability"
@@ -223,4 +226,44 @@ func (r *RLS) withReadOnlyRepeatableTx(ctx context.Context, db *gorm.DB, fn func
 		return err
 	}
 	return tx.Commit().Error
+}
+
+var ErrTeamInactive = knowledgecontract.ErrTeamInactive
+
+func EnsureActiveTeamForMutation(ctx context.Context, tx *gorm.DB, teamID string) error {
+	if tx == nil {
+		return errors.New("team mutation: transaction is required")
+	}
+	row := tx.WithContext(ctx).Raw(`
+		SELECT id::text
+		FROM teams
+		WHERE id = ?::uuid
+		  AND status = 'active'
+		  AND deleted_at IS NULL
+		FOR SHARE
+	`, teamID).Row()
+	var id string
+	if err := row.Scan(&id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrTeamInactive
+		}
+		return err
+	}
+	return nil
+}
+
+// DiscardAdvisoryLockConnection marks a connection bad so a session-bound
+// PostgreSQL advisory lock cannot return to the pool accidentally.
+func DiscardAdvisoryLockConnection(lockConn *sql.Conn) error {
+	if lockConn == nil {
+		return nil
+	}
+	err := lockConn.Raw(func(any) error { return driver.ErrBadConn })
+	if errors.Is(err, driver.ErrBadConn) || errors.Is(err, sql.ErrConnDone) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("advisory lock discard: %w", err)
+	}
+	return errors.New("advisory lock discard: connection was not discarded")
 }

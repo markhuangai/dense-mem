@@ -88,7 +88,7 @@ func WithRuntimeToolPolicy(ctx context.Context, policy RuntimeToolPolicy) contex
 
 // ToolVisible reports whether a registered tool should be visible for a request.
 func ToolVisible(ctx context.Context, tool Tool, policy RuntimeToolPolicy) bool {
-	if tool.Name == ToolRemember || tool.Name == ToolCorrectRelationship || tool.Name == ToolRetractEvidence {
+	if tool.Name == ToolRemember || tool.Name == ToolRetractEvidence {
 		actor, ok := requestctx.ActorFromContext(ctx)
 		if !ok {
 			return false

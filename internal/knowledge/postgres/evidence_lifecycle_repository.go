@@ -13,7 +13,6 @@ import (
 	"github.com/lib/pq"
 	"gorm.io/gorm"
 
-	"github.com/markhuangai/dense-mem/internal/domain"
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
@@ -38,18 +37,8 @@ type evidenceLifecycleOperationInput struct {
 }
 
 type evidenceLifecyclePlan struct {
-	SpaceID                         string
-	EvidenceIDs                     []string
-	Supports                        []evidenceLifecycleSupport
-	AffectedRelationshipCount       int
-	PendingRelationshipCount        int
-	RetainedActiveRelationshipCount int
-}
-
-type evidenceLifecycleSupport struct {
-	SupportID      string
-	RelationshipID string
-	OwnerProfileID string
+	SpaceID     string
+	EvidenceIDs []string
 }
 
 func (r *Store) RetractEvidence(ctx context.Context, input RetractEvidenceInput) (*EvidenceLifecycleResult, error) {
@@ -65,9 +54,6 @@ func (r *Store) RetractEvidence(ctx context.Context, input RetractEvidenceInput)
 		}
 		input.EvidenceIDs = normalizeUUIDStrings(resolved)
 		if err := authorizeEvidenceRetraction(ctx, tx, input); err != nil {
-			return err
-		}
-		if err := seedTeamPredicateDefinitions(ctx, tx, input.TeamID); err != nil {
 			return err
 		}
 		if err := lockEvidenceLifecycleIdempotencyKeys(ctx, tx, input.TeamID, input.OwnerProfileID, []string{input.IdempotencyKey}); err != nil {
@@ -323,39 +309,7 @@ func planEvidenceLifecycleInSystem(
 			return nil, err
 		}
 	}
-	supports, err := loadEffectiveEvidenceLifecycleSupports(ctx, tx, input.TeamID, evidenceIDs)
-	if err != nil {
-		return nil, err
-	}
-	plan := &evidenceLifecyclePlan{SpaceID: targetSpaceID, EvidenceIDs: evidenceIDs, Supports: supports}
-	supportsByRelationship := make(map[string][]evidenceLifecycleSupport)
-	for _, support := range supports {
-		supportsByRelationship[support.RelationshipID] = append(supportsByRelationship[support.RelationshipID], support)
-	}
-	relationshipIDs := make([]string, 0, len(supportsByRelationship))
-	for relationshipID := range supportsByRelationship {
-		relationshipIDs = append(relationshipIDs, relationshipID)
-	}
-	sort.Strings(relationshipIDs)
-	for _, relationshipID := range relationshipIDs {
-		relationship, err := loadRelationshipRecordForUpdate(ctx, tx, input.TeamID, relationshipID)
-		if err != nil {
-			return nil, err
-		}
-		counts, err := effectiveRelationshipSupportCounts(ctx, tx, input.TeamID, relationshipID)
-		if err != nil {
-			return nil, err
-		}
-		nextStatus := knowledgecontract.StatusForEffectiveSupport(relationship.Status, counts.SupportCount-len(supportsByRelationship[relationshipID]))
-		plan.AffectedRelationshipCount++
-		switch nextStatus {
-		case string(domain.RelationshipStatusPendingEvidence):
-			plan.PendingRelationshipCount++
-		case string(domain.RelationshipStatusActive):
-			plan.RetainedActiveRelationshipCount++
-		}
-	}
-	return plan, nil
+	return &evidenceLifecyclePlan{SpaceID: targetSpaceID, EvidenceIDs: evidenceIDs}, nil
 }
 
 func sortedEvidenceIDs(ids []string) []string {
@@ -472,59 +426,6 @@ func validateEvidenceLifecycleReplacement(
 	return nil
 }
 
-func loadEffectiveEvidenceLifecycleSupports(
-	ctx context.Context,
-	tx *gorm.DB,
-	teamID string,
-	evidenceIDs []string,
-) ([]evidenceLifecycleSupport, error) {
-	rows, err := tx.WithContext(ctx).Raw(`
-		WITH latest AS (
-			SELECT DISTINCT ON (support_id)
-			       support_id,
-			       decision
-			FROM relationship_support_decision_events
-			WHERE team_id = ?::uuid
-			ORDER BY support_id, created_at DESC, support_decision_id DESC
-		)
-		SELECT support.support_id::text,
-		       support.relationship_id::text,
-		       support.owner_profile_id::text
-		FROM relationship_evidence_supports AS support
-		JOIN latest
-		  ON latest.support_id = support.support_id
-		LEFT JOIN evidence_quarantines AS quarantine
-		  ON quarantine.team_id = support.team_id
-		 AND quarantine.fragment_id = support.fragment_id
-		 AND quarantine.status = 'active'
-		LEFT JOIN evidence_exact_aliases AS alias
-		  ON alias.team_id = support.team_id
-		 AND alias.alias_fragment_id = support.fragment_id
-		LEFT JOIN evidence_sources AS source
-		  ON source.team_id = support.team_id
-		 AND source.source_id = support.source_id
-		WHERE support.team_id = ?::uuid
-		  AND (support.fragment_id = ANY(?::uuid[]) OR alias.canonical_fragment_id = ANY(?::uuid[]))
-		  AND latest.decision IN ('grant', 'reinstate')
-		  AND quarantine.quarantine_id IS NULL
-		  AND (support.source_id IS NULL OR source.current_revision_id = support.source_revision_id)
-		ORDER BY support.relationship_id ASC, support.support_id ASC
-	`, teamID, teamID, pq.Array(evidenceIDs), pq.Array(evidenceIDs)).Rows()
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	supports := []evidenceLifecycleSupport{}
-	for rows.Next() {
-		var support evidenceLifecycleSupport
-		if err := rows.Scan(&support.SupportID, &support.RelationshipID, &support.OwnerProfileID); err != nil {
-			return nil, err
-		}
-		supports = append(supports, support)
-	}
-	return supports, rows.Err()
-}
-
 func insertEvidenceLifecycleOperation(
 	ctx context.Context,
 	tx *gorm.DB,
@@ -568,11 +469,8 @@ func marshalEvidenceLifecycleResult(result *EvidenceLifecycleResult) ([]byte, er
 		result = &EvidenceLifecycleResult{}
 	}
 	return json.Marshal(map[string]any{
-		"processing_state":                   result.ProcessingState,
-		"retracted_evidence_ids":             result.RetractedEvidenceIDs,
-		"affected_relationship_count":        result.AffectedRelationshipCount,
-		"pending_relationship_count":         result.PendingRelationshipCount,
-		"retained_active_relationship_count": result.RetainedActiveRelationshipCount,
+		"processing_state":       result.ProcessingState,
+		"retracted_evidence_ids": result.RetractedEvidenceIDs,
 	})
 }
 
@@ -581,12 +479,9 @@ func evidenceLifecycleResultFromPlan(decisionID string, plan *evidenceLifecycleP
 		plan = &evidenceLifecyclePlan{}
 	}
 	return &EvidenceLifecycleResult{
-		DecisionID:                      decisionID,
-		ProcessingState:                 evidenceLifecycleCompleted,
-		RetractedEvidenceIDs:            append([]string(nil), plan.EvidenceIDs...),
-		AffectedRelationshipCount:       plan.AffectedRelationshipCount,
-		PendingRelationshipCount:        plan.PendingRelationshipCount,
-		RetainedActiveRelationshipCount: plan.RetainedActiveRelationshipCount,
+		DecisionID:           decisionID,
+		ProcessingState:      evidenceLifecycleCompleted,
+		RetractedEvidenceIDs: append([]string(nil), plan.EvidenceIDs...),
 	}
 }
 
@@ -635,81 +530,8 @@ func applyEvidenceLifecycleEffects(
 	})
 }
 
-func applyEvidenceLifecycleEffectsInSystem(
-	ctx context.Context,
-	tx *gorm.DB,
-	input evidenceLifecycleOperationInput,
-	operationID string,
-	plan *evidenceLifecyclePlan,
-) error {
-	relationshipsToRetire, err := revokeEvidenceLifecycleSupports(ctx, tx, input, operationID, plan.Supports)
-	if err != nil {
-		return err
-	}
-	if err := retireEvidenceLifecycleSearchDocuments(ctx, tx, input.TeamID, plan.SpaceID, "evidence", plan.EvidenceIDs); err != nil {
-		return err
-	}
-	return retireEvidenceLifecycleSearchDocuments(ctx, tx, input.TeamID, plan.SpaceID, "relationship", relationshipsToRetire)
-}
-
-func revokeEvidenceLifecycleSupports(
-	ctx context.Context,
-	tx *gorm.DB,
-	input evidenceLifecycleOperationInput,
-	operationID string,
-	supports []evidenceLifecycleSupport,
-) ([]string, error) {
-	decisionByRelationship := make(map[string]string)
-	for _, support := range supports {
-		decisionID, err := insertSupportDecisionEvent(ctx, tx, supportDecisionInput{
-			TeamID:         input.TeamID,
-			OwnerProfileID: support.OwnerProfileID,
-			ActorProfileID: lifecycleActorProfileID(input),
-			SupportID:      support.SupportID,
-			RelationshipID: support.RelationshipID,
-			Decision:       string(domain.SupportRevoke),
-			Reason:         "evidence_" + input.Action + "d",
-			IdempotencyKey: "evidence-lifecycle:" + operationID + ":support:" + support.SupportID,
-			Metadata: map[string]any{
-				"lifecycle_operation_id": operationID,
-				"action":                 input.Action,
-			},
-		})
-		if err != nil {
-			return nil, err
-		}
-		decisionByRelationship[support.RelationshipID] = decisionID
-	}
-	relationshipIDs := make([]string, 0, len(decisionByRelationship))
-	for relationshipID := range decisionByRelationship {
-		relationshipIDs = append(relationshipIDs, relationshipID)
-	}
-	sort.Strings(relationshipIDs)
-	retire := make([]string, 0)
-	for _, relationshipID := range relationshipIDs {
-		recomputed, err := recomputeRelationshipFromEffectiveSupport(
-			ctx,
-			tx,
-			input.TeamID,
-			relationshipID,
-			decisionByRelationship[relationshipID],
-			"evidence_"+input.Action+"d",
-		)
-		if err != nil {
-			return nil, err
-		}
-		if !relationshipSearchEligible(recomputed.After) {
-			retire = append(retire, relationshipID)
-		}
-	}
-	return retire, nil
-}
-
-func lifecycleActorProfileID(input evidenceLifecycleOperationInput) string {
-	if input.ActorProfileID != "" {
-		return input.ActorProfileID
-	}
-	return input.OwnerProfileID
+func applyEvidenceLifecycleEffectsInSystem(ctx context.Context, tx *gorm.DB, input evidenceLifecycleOperationInput, operationID string, plan *evidenceLifecyclePlan) error {
+	return retireEvidenceLifecycleSearchDocuments(ctx, tx, input.TeamID, plan.SpaceID, "evidence", plan.EvidenceIDs)
 }
 
 func retireEvidenceLifecycleSearchDocuments(

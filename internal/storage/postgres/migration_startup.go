@@ -190,5 +190,25 @@ func ValidateStartupMigrationState(ctx context.Context, db *sql.DB, migrationsDi
 	if state.DatabaseLatest != state.RepositoryLatest && state.DatabaseLatest != runtimeLatest {
 		return fmt.Errorf("%w: database version %d does not match repository version %d", ErrInvalidMigrationState, state.DatabaseLatest, state.RepositoryLatest)
 	}
+	if state.DatabaseLatest >= evidenceOnlyMigrationVersion {
+		tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		if _, err := tx.ExecContext(ctx, `SELECT set_config('app.tx_mode','system',true)`); err != nil {
+			return err
+		}
+		var compatible bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM v2_compatibility_markers WHERE marker_kind='evidence_only' AND version='dense-mem.v3.0.0' AND status='compatible' AND metadata->>'retained_fingerprints_verified'='true' AND metadata->>'transaction_outcome'='committed')`).Scan(&compatible); err != nil {
+			return err
+		}
+		if !compatible {
+			return fmt.Errorf("%w: Evidence-only migration receipt is missing or incompatible", ErrInvalidMigrationState)
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+	}
 	return nil
 }

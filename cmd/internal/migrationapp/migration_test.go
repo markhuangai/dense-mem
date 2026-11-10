@@ -54,6 +54,8 @@ func (l *recordingLogger) Info(message string, args ...any) {
 	}
 }
 
+func (l *recordingLogger) Error(message string, args ...any) { l.Info(message, args...) }
+
 func (l *recordingLogger) entriesSnapshot() []logEntry {
 	l.mu.Lock()
 	defer l.mu.Unlock()

@@ -11,13 +11,13 @@ from .errors import (
 from .requests import (
     Evidence,
     RecallRequest,
-    RelationshipProposal,
+    ExportRequest,
     RememberRequest,
     SessionEvent,
     SessionRequest,
     TraceRequest,
 )
-from .results import RecallResult, RememberResult, SessionResult, TraceResult
+from .results import ExportResult, RecallResult, RememberResult, SessionResult, TraceResult
 
 __all__ = [
     "DenseMemAuthenticationError",
@@ -31,7 +31,8 @@ __all__ = [
     "Evidence",
     "RecallRequest",
     "RecallResult",
-    "RelationshipProposal",
+    "ExportRequest",
+    "ExportResult",
     "RememberRequest",
     "RememberResult",
     "SessionEvent",

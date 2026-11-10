@@ -244,17 +244,28 @@ func newMigrationProviderWithFilesystem(
 		// is not part of their filesystem.
 		goose.WithDisableGlobalRegistry(true),
 	}
+	var excludedNames []string
+	var goMigrations []*goose.Migration
 	if _, ok := filesystem[operationLogInvocationIndexMigrationSQLName]; ok {
 		// This migration is registered as a no-transaction Go migration so it can reserve one
 		// connection and restore session settings even when concurrent DDL fails.
-		options = append(options,
-			goose.WithExcludeNames([]string{operationLogInvocationIndexMigrationSQLName}),
-			goose.WithGoMigrations(goose.NewGoMigration(
-				operationLogInvocationIndexMigrationVersion,
-				&goose.GoFunc{RunDB: operationLogInvocationIndexMigrationUp, Mode: goose.TransactionDisabled},
-				&goose.GoFunc{RunDB: operationLogInvocationIndexMigrationDown, Mode: goose.TransactionDisabled},
-			)),
-		)
+		excludedNames = append(excludedNames, operationLogInvocationIndexMigrationSQLName)
+		goMigrations = append(goMigrations, goose.NewGoMigration(
+			operationLogInvocationIndexMigrationVersion,
+			&goose.GoFunc{RunDB: operationLogInvocationIndexMigrationUp, Mode: goose.TransactionDisabled},
+			&goose.GoFunc{RunDB: operationLogInvocationIndexMigrationDown, Mode: goose.TransactionDisabled},
+		))
+	}
+	if source, ok := filesystem[evidenceOnlyMigrationSQLName]; ok {
+		migration, err := newEvidenceOnlyMigration(source.Data)
+		if err != nil {
+			return nil, err
+		}
+		excludedNames = append(excludedNames, evidenceOnlyMigrationSQLName)
+		goMigrations = append(goMigrations, migration)
+	}
+	if len(excludedNames) > 0 {
+		options = append(options, goose.WithExcludeNames(excludedNames), goose.WithGoMigrations(goMigrations...))
 	}
 	if withLock {
 		locker, err := gooselock.NewPostgresSessionLocker()
@@ -317,6 +328,15 @@ func (m *Migrator) PreparePrivateMemoryMigration(ctx context.Context) error {
 		return err
 	}
 	_, err = provider.UpTo(ctx, 20261014010001)
+	return err
+}
+
+func (m *Migrator) PrepareEvidenceOnlyMigration(ctx context.Context) error {
+	provider, err := newRuntimeMigrationProvider(m.dir, m.db, true)
+	if err != nil {
+		return err
+	}
+	_, err = provider.UpTo(ctx, 20261108010000)
 	return err
 }
 

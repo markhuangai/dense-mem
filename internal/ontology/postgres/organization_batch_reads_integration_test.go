@@ -4,7 +4,7 @@ package postgres
 
 import (
 	"context"
-	"encoding/json"
+
 	"fmt"
 	"testing"
 
@@ -76,21 +76,14 @@ func TestOntologyOrganizationBatchedSources(t *testing.T) {
 		require.Equal(t, before, f.canonicalSnapshot(t))
 	}
 	check(6)
-	require.NoError(t, f.rls.WithTeamTx(context.Background(), f.app, f.team, func(tx *gorm.DB) error {
-		return tx.Exec(`UPDATE entity_records SET status='retired',updated_at=now() WHERE team_id=?::uuid AND entity_id=?::uuid`, f.team, handles[0].ID).Error
-	}))
-	supported, err := f.store.ReadSources(context.Background(), f.team, handles[1:2])
+	_, err = f.knowledge.RetractEvidence(f.actor(0, "member"), knowledge.RetractEvidenceInput{
+		TeamID: f.team, OwnerProfileID: f.owners[0], EvidenceIDs: []string{handles[0].ID}, Reason: "withdraw current source", IdempotencyKey: uuid.NewString(), RequestHash: testHash("batch source retraction")})
 	require.NoError(t, err)
-	require.True(t, supported[0].Eligible)
 	check(5)
-	snapshots, err := f.store.ReadSources(context.Background(), f.team, handles[1:2])
+	_, err = f.knowledge.RetractEvidence(f.actor(1, "member"), knowledge.RetractEvidenceInput{
+		TeamID: f.team, OwnerProfileID: f.owners[1], EvidenceIDs: []string{handles[1].ID}, Reason: "withdraw peer source", IdempotencyKey: uuid.NewString(), RequestHash: testHash("batch peer retraction")})
 	require.NoError(t, err)
-	var supports [][]string
-	require.NoError(t, json.Unmarshal([]byte(snapshots[0].State["supports"]), &supports))
-	require.NotEmpty(t, supports)
-	_, err = f.knowledge.RetractEvidence(f.actor(0, "member"), knowledge.RetractEvidenceInput{TeamID: f.team, OwnerProfileID: f.owners[0], EvidenceIDs: []string{supports[0][1]}, Reason: "withdraw relationship support", IdempotencyKey: uuid.NewString(), RequestHash: testHash("withdraw batch support")})
-	require.NoError(t, err)
-	check(3)
+	check(4)
 }
 
 func TestOntologyOrganizationBatchedQueryCounts(t *testing.T) {
@@ -106,7 +99,7 @@ func TestOntologyOrganizationBatchedQueryCounts(t *testing.T) {
 		actualSources, err := organizationSources(tx, fence, handles)
 		require.NoError(t, err)
 		require.Equal(t, expectedSources, actualSources)
-		require.EqualValues(t, 4, counter.queries.Load())
+		require.EqualValues(t, 1, counter.queries.Load())
 		require.Less(t, counter.queries.Load(), individualSources)
 		counter.queries.Store(0)
 		var expectedViews []ontology.RecordView
@@ -233,12 +226,12 @@ func TestOntologyOrganizationFreshnessStopsAfterStaleBatch(t *testing.T) {
 
 func TestOntologyOrganizationBatchedDependencyBounds(t *testing.T) {
 	f := newOrganizationFixture(t)
-	source := maintenanceEntity(t, f, "child-bounded-left child-bounded-right")
+	source := maintenanceEvidence(t, f, "child-bounded-left child-bounded-right")
 	var records, children []ontology.Record
 	var changes []ontology.Change
 	for _, key := range []string{"bounded-left", "bounded-right"} {
-		parent := ontology.Record{ID: uuid.NewString(), Kind: ontology.EntityClass, Definition: &ontology.Definition{Key: key, Label: key, BaseEntityKind: "project"}}
-		child := ontology.Record{ID: uuid.NewString(), Kind: ontology.EntityClass, Definition: &ontology.Definition{Key: "child-" + key, Label: "child-" + key, BaseEntityKind: "project", ParentID: parent.ID, ParentRelation: ontology.SubclassOf}}
+		parent := ontology.Record{ID: uuid.NewString(), Kind: ontology.Topic, Definition: &ontology.Definition{Key: key, Label: key}}
+		child := ontology.Record{ID: uuid.NewString(), Kind: ontology.Topic, Definition: &ontology.Definition{Key: "child-" + key, Label: "child-" + key, ParentID: parent.ID}}
 		records = append(records, parent)
 		children = append(children, child)
 		changes = append(changes, ontology.Change{Record: parent}, ontology.Change{Record: child})
@@ -295,7 +288,6 @@ func TestOntologyOrganizationBatchedDependencyBounds(t *testing.T) {
 			}
 			require.Equal(t, expected, contextData.Candidates[0].ID)
 			require.Equal(t, contextData.Candidates[0].Definition.ParentID, contextData.Candidates[1].ID)
-			require.Equal(t, ontology.SubclassOf, contextData.Candidates[0].Definition.ParentRelation)
 			require.Len(t, contextData.Records, ontology.MaxDependencyRecords/2)
 			for _, pin := range contextData.Records {
 				require.True(t, pin.Current)

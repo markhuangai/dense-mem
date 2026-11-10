@@ -225,8 +225,6 @@ func runPairedServiceSide(t *testing.T, c evalharness.PairConfig, f *pairedServi
 	for turn := 0; turn < 100; turn++ {
 		_, err = f.maintenance.RunTurn(ctx)
 		require.NoError(t, err)
-		_, err = f.projections.RunProjectionTurn(ctx)
-		require.NoError(t, err)
 		frozen = observe()
 		ready, err := evalharness.EvaluatePairReadiness(f.release.Protocol, frozen, false)
 		require.NoError(t, err)
@@ -258,32 +256,6 @@ func runPairedServiceSide(t *testing.T, c evalharness.PairConfig, f *pairedServi
 	readyAfterSearch, err := evalharness.EvaluatePairReadiness(f.release.Protocol, observe(), false)
 	require.NoError(t, err)
 	require.True(t, readyAfterSearch.Ready)
-	for _, query := range []string{
-		`UPDATE community_topic_work SET status='pending' WHERE team_id=?`,
-		`UPDATE community_topic_versions SET version=version+1 WHERE team_id=? AND dependency_key LIKE 'relationship:%'`,
-	} {
-		require.NoError(t, rls.WithSystemTx(ctx, f.admin, func(tx *gorm.DB) error {
-			drift := tx.Exec(query, f.release.Scope.TeamID)
-			if drift.Error != nil {
-				return drift.Error
-			}
-			require.Positive(t, drift.RowsAffected)
-			return nil
-		}))
-		checkBlocked("pending_projections")
-		for turn := 0; turn < 100; turn++ {
-			_, err := f.projections.RunProjectionTurn(ctx)
-			require.NoError(t, err)
-			ready, err := evalharness.EvaluatePairReadiness(f.release.Protocol, observe(), false)
-			require.NoError(t, err)
-			if ready.Ready {
-				break
-			}
-		}
-		ready, err := evalharness.EvaluatePairReadiness(f.release.Protocol, observe(), false)
-		require.NoError(t, err)
-		require.True(t, ready.Ready)
-	}
 	_, err = f.maintenance.Command(ctx, domain.OntologyMaintenanceCommand{Action: "pause", OperationKey: uuid.NewString()}, "", "")
 	require.NoError(t, err)
 	frozen = observe()
@@ -354,14 +326,12 @@ func pairedSmallSeed(t *testing.T, root string) (string, string, []evalharness.C
 	corpus := []evalharness.CorpusItem{}
 	for index, name := range []string{"Alpha", "Beta", "Gamma"} {
 		content := "Project " + name + " stores durable memory in PostgreSQL."
-		subject := name
 		if index == 2 {
-			subject, content = "Alpha", "PostgreSQL stores durable memory for Project Alpha."
+			content = "PostgreSQL stores durable memory for Project Alpha."
 		}
-		proposal := map[string]any{"ref": "stores", "subject": map[string]any{"name": "Project " + subject, "entity_kind": "project"}, "predicate": map[string]any{"proposed_key": "stores_memory_" + strings.ToLower(name)}, "object": map[string]any{"value": map[string]any{"type": "string", "value": "PostgreSQL"}}, "polarity": "+", "evidence_indices": []int{0}}
-		corpus = append(corpus, evalharness.CorpusItem{SourceDocID: []string{"one", "two", "unjudged"}[index], Content: content, Relationships: []any{proposal}})
+		corpus = append(corpus, evalharness.CorpusItem{SourceDocID: []string{"one", "two", "unjudged"}[index], Content: content})
 	}
-	manifest := evalharness.SeedManifest{SchemaVersion: evalharness.SeedSchemaVersionV2, SeedID: "paired-service-fixture", CorpusFile: "corpus.jsonl", CasesFile: "cases.jsonl", QrelsFile: "qrels.jsonl", RelationshipCount: 3}
+	manifest := evalharness.SeedManifest{SchemaVersion: evalharness.SeedSchemaVersionV2, SeedID: "paired-service-fixture", CorpusFile: "corpus.jsonl", CasesFile: "cases.jsonl", QrelsFile: "qrels.jsonl"}
 	seed, suite := filepath.Join(root, "seed_manifest.json"), filepath.Join(root, "suite.jsonl")
 	writePairedFixtureJSON(t, seed, manifest)
 	writeRows := func(path string, rows []any) {

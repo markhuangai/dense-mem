@@ -19,7 +19,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/crypto"
 	"github.com/markhuangai/dense-mem/internal/domain"
-	graphservice "github.com/markhuangai/dense-mem/internal/graph"
+
 	httpmw "github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
@@ -208,60 +208,6 @@ func (s *userPortalRotateErrorKeySvc) RotateForTeam(context.Context, uuid.UUID, 
 	return nil, "", s.err
 }
 
-type userPortalGraphSvc struct {
-	profileID        string
-	query            graphservice.Query
-	calls            int
-	detailProfileID  string
-	detailType       string
-	detailID         string
-	detailCalls      int
-	err              error
-	nodeDetailErr    error
-	nodeDetailResult *graphservice.Node
-}
-
-func (s *userPortalGraphSvc) Graph(_ context.Context, profileID string, query graphservice.Query) (*graphservice.Snapshot, error) {
-	s.profileID = profileID
-	s.query = query
-	s.calls++
-	if s.err != nil {
-		return nil, s.err
-	}
-	return &graphservice.Snapshot{
-		Scope: query.Scope,
-		Nodes: []graphservice.Node{{
-			Key:   "entity:entity-1",
-			ID:    "entity-1",
-			Type:  "entity",
-			Title: "entity title",
-		}},
-	}, nil
-}
-
-func (s *userPortalGraphSvc) NodeDetail(_ context.Context, profileID string, nodeType string, nodeID string) (*graphservice.Node, error) {
-	s.detailProfileID = profileID
-	s.detailType = nodeType
-	s.detailID = nodeID
-	s.detailCalls++
-	if s.nodeDetailErr != nil {
-		return nil, s.nodeDetailErr
-	}
-	if s.nodeDetailResult != nil {
-		return s.nodeDetailResult, nil
-	}
-	return &graphservice.Node{
-		Key:         "entity:entity-1",
-		ID:          "entity-1",
-		Type:        "entity",
-		Title:       "entity title",
-		Body:        "entity detail",
-		Status:      "active",
-		CommunityID: "community-1",
-		Score:       0.9,
-	}, nil
-}
-
 func TestUserPortalSessionShowsOnlyAuthenticatedKey(t *testing.T) {
 	teamID := uuid.New()
 	authKey, rawKey := userPortalTestKey(t, teamID, uuid.New(), "Mine", []string{"read"})
@@ -301,31 +247,6 @@ func TestUserPortalTelemetryRouteRetired(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, rec.Code)
 }
 
-func TestUserPortalGraphUsesAuthenticatedTeamScope(t *testing.T) {
-	teamID := uuid.New()
-	authKey, rawKey := userPortalTestKey(t, teamID, uuid.New(), "Reader", []string{"read"})
-	graph := &userPortalGraphSvc{}
-	server := userPortalTestServerWithGraph(t, teamID, authKey, &userPortalKeySvc{keys: []*domain.Credential{authKey}}, "", graph)
-
-	req := httptest.NewRequest(http.MethodGet, "/ui/api/graph?scope=local&anchor_type=entity&anchor_id=entity-1&depth=5&limit=181&types=entity,value&q=memory", nil)
-	req.Header.Set("Authorization", "Bearer "+rawKey)
-	rec := httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
-
-	require.Equal(t, http.StatusOK, rec.Code)
-	require.Equal(t, "no-store", rec.Header().Get(echo.HeaderCacheControl))
-	require.Contains(t, rec.Body.String(), `"entity:entity-1"`)
-	require.Equal(t, 1, graph.calls)
-	require.Equal(t, teamID.String(), graph.profileID)
-	require.Equal(t, "local", graph.query.Scope)
-	require.Equal(t, "entity", graph.query.AnchorType)
-	require.Equal(t, "entity-1", graph.query.AnchorID)
-	require.Equal(t, 5, graph.query.Depth)
-	require.Equal(t, 181, graph.query.Limit)
-	require.Equal(t, []string{"entity", "value"}, graph.query.Types)
-	require.Equal(t, "memory", graph.query.Query)
-}
-
 func TestPublicIPRateLimitFailureDoesNotLogRawError(t *testing.T) {
 	e := echo.New()
 	e.HTTPErrorHandler = httperr.ErrorHandler
@@ -341,63 +262,6 @@ func TestPublicIPRateLimitFailureDoesNotLogRawError(t *testing.T) {
 	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
 	require.Contains(t, logs.String(), "public ip rate limit check failed")
 	require.NotContains(t, logs.String(), "postgres password=not-safe-to-log")
-}
-
-func TestUserPortalGraphRequiresReadScope(t *testing.T) {
-	teamID := uuid.New()
-	authKey, rawKey := userPortalTestKey(t, teamID, uuid.New(), "Writer", []string{"write"})
-	graph := &userPortalGraphSvc{}
-	server := userPortalTestServerWithGraph(t, teamID, authKey, &userPortalKeySvc{keys: []*domain.Credential{authKey}}, "", graph)
-
-	req := httptest.NewRequest(http.MethodGet, "/ui/api/graph", nil)
-	req.Header.Set("Authorization", "Bearer "+rawKey)
-	rec := httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
-
-	require.Equal(t, http.StatusForbidden, rec.Code)
-	require.Equal(t, 0, graph.calls)
-}
-
-func TestUserPortalGraphNodeDetailUsesAuthenticatedTeamScope(t *testing.T) {
-	teamID := uuid.New()
-	authKey, rawKey := userPortalTestKey(t, teamID, uuid.New(), "Reader", []string{"read"})
-	graph := &userPortalGraphSvc{}
-	server := userPortalTestServerWithGraph(t, teamID, authKey, &userPortalKeySvc{keys: []*domain.Credential{authKey}}, "", graph)
-
-	req := httptest.NewRequest(http.MethodGet, "/ui/api/node-detail?type=entity&id=entity-1", nil)
-	req.Header.Set("Authorization", "Bearer "+rawKey)
-	rec := httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
-
-	require.Equal(t, http.StatusOK, rec.Code)
-	require.Equal(t, "no-store", rec.Header().Get(echo.HeaderCacheControl))
-	require.Contains(t, rec.Body.String(), `"body":"entity detail"`)
-	require.Equal(t, 1, graph.detailCalls)
-	require.Equal(t, teamID.String(), graph.detailProfileID)
-	require.Equal(t, "entity", graph.detailType)
-	require.Equal(t, "entity-1", graph.detailID)
-}
-
-func TestUserPortalGraphNodeDetailMapsValidationAndNotFound(t *testing.T) {
-	teamID := uuid.New()
-	authKey, rawKey := userPortalTestKey(t, teamID, uuid.New(), "Reader", []string{"read"})
-	graph := &userPortalGraphSvc{nodeDetailErr: graphservice.ErrMissingNode}
-	server := userPortalTestServerWithGraph(t, teamID, authKey, &userPortalKeySvc{keys: []*domain.Credential{authKey}}, "", graph)
-
-	req := httptest.NewRequest(http.MethodGet, "/ui/api/node-detail", nil)
-	req.Header.Set("Authorization", "Bearer "+rawKey)
-	rec := httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
-
-	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
-
-	graph.nodeDetailErr = graphservice.ErrNodeNotFound
-	req = httptest.NewRequest(http.MethodGet, "/ui/api/node-detail?type=entity&id=missing", nil)
-	req.Header.Set("Authorization", "Bearer "+rawKey)
-	rec = httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
-
-	require.Equal(t, http.StatusNotFound, rec.Code)
 }
 
 func TestUserPortalRotateRequiresWriteScope(t *testing.T) {
@@ -620,6 +484,8 @@ func TestRegisterUserPortalRegistersCurrentSurface(t *testing.T) {
 
 	for _, route := range []string{
 		"POST /ui/api/key/rotate",
+		"GET /ui/api/graph",
+		"GET /ui/api/graph/node",
 		"GET /ui/api/dreaming/status",
 		"GET /ui/api/dreaming/runs",
 		"GET /ui/api/dreams",
@@ -838,10 +704,6 @@ func userPortalPrincipal(teamID, credentialID uuid.UUID, role string, grants []s
 }
 
 func userPortalTestServer(t *testing.T, teamID uuid.UUID, authKey *domain.Credential, keySvc *userPortalKeySvc, staticDir string) http.Handler {
-	return userPortalTestServerWithGraph(t, teamID, authKey, keySvc, staticDir, nil)
-}
-
-func userPortalTestServerWithGraph(t *testing.T, teamID uuid.UUID, authKey *domain.Credential, keySvc *userPortalKeySvc, staticDir string, graph graphservice.Service) http.Handler {
 	t.Helper()
 	profiles := &controlProfileSvc{profiles: []*domain.Team{{
 		ID:        teamID,
@@ -859,7 +721,6 @@ func userPortalTestServerWithGraph(t *testing.T, teamID uuid.UUID, authKey *doma
 		TeamSvc:                  profiles,
 		CredentialSvc:            keySvc,
 		RateLimitSvc:             accessservice.NewRateLimitService(inmem.NewInMemoryRateLimitStore()),
-		GraphView:                graph,
 		Config:                   &config.Config{RateLimitPerMinute: 100},
 		CredentialVerifier:       crypto.NewArgon2Verifier(0),
 		CredentialLookupPrefixes: crypto.GetLookupPrefixes,

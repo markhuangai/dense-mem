@@ -84,8 +84,8 @@ test("cached attempt-one outputs cannot authorize admin or non-admin selective r
 
 test("development selections support E2E-only, PostgreSQL-only, subsets, and all", async () => {
   const registry = readRegistry();
-  const scenarios = await policy.selectDevelopmentTests(registry, "conflict, mcp_oauth", "");
-  assert.deepEqual(scenarios.scenario_matrix.include.map(({ name }) => name).sort(), ["conflict", "mcp_oauth"]);
+  const scenarios = await policy.selectDevelopmentTests(registry, "synchronous_write, mcp_oauth", "");
+  assert.deepEqual(scenarios.scenario_matrix.include.map(({ name }) => name).sort(), ["mcp_oauth", "synchronous_write"]);
   assert.equal(scenarios.has_postgres, false);
   const postgres = await policy.selectDevelopmentTests(registry, "", "2,0");
   assert.equal(postgres.has_scenarios, false);
@@ -101,7 +101,7 @@ test("development selections support E2E-only, PostgreSQL-only, subsets, and all
 });
 
 test("development selections reject empty, malformed, unknown, and duplicate lists", async () => {
-  for (const [scenarios, postgres] of [["", ""], ["unknown", ""], ["conflict,,mcp_oauth", ""], ["all,conflict", ""], ["conflict,conflict", ""], ["", "6"], ["", "all,0"], ["", "0,0"]]) {
+  for (const [scenarios, postgres] of [["", ""], ["unknown", ""], ["synchronous_write,,mcp_oauth", ""], ["all,synchronous_write", ""], ["synchronous_write,synchronous_write", ""], ["conflict", ""], ["", "6"], ["", "all,0"], ["", "0,0"]]) {
     await assert.rejects(policy.selectDevelopmentTests(readRegistry(), scenarios, postgres));
   }
 });

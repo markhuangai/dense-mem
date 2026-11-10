@@ -45,8 +45,6 @@ func validationDiagnostic(stage string, err error, request Request, response Res
 	switch issue.Code {
 	case "definition_limit":
 		expected, actual = ontology.MaxVocabularyCandidates, len(response.Definitions)
-	case "hierarchy_update_limit":
-		expected, actual = ontology.MaxVocabularyCandidates, len(response.HierarchyUpdates)
 	case "item_count_mismatch":
 		expected, actual = len(request.Items), len(response.Items)
 	case "equivalence_coverage":

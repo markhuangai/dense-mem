@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"github.com/markhuangai/dense-mem/internal/observability"
 
 	"gorm.io/gorm"
 
@@ -11,19 +12,14 @@ import (
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
 	searchcontract "github.com/markhuangai/dense-mem/internal/search/contract"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
-	tracecontract "github.com/markhuangai/dense-mem/internal/trace/contract"
 )
 
 type (
 	RecallEvidenceInput            = recallcontract.RecallEvidenceInput
-	RecallRelationshipsInput       = recallcontract.RecallRelationshipsInput
 	RecallEvidenceResult           = recallcontract.RecallEvidenceResult
-	RecallRelationshipsResult      = recallcontract.RecallRelationshipsResult
 	RecallEvidenceHit              = recallcontract.RecallEvidenceHit
-	RecallRelationshipHit          = recallcontract.RecallRelationshipHit
 	ActiveSearchContract           = searchcontract.ActiveSearchContract
 	SearchHit                      = searchcontract.SearchHit
-	RelationshipConflictCaseRecord = tracecontract.RelationshipConflictCaseRecord
 	EvidenceConflictCaseRecord     = recallcontract.EvidenceConflictCaseRecord
 	EvidenceConflictEventRecord    = recallcontract.EvidenceConflictEventRecord
 	EvidenceConflictPositionRecord = recallcontract.EvidenceConflictPositionRecord
@@ -42,15 +38,21 @@ var (
 // visibility predicates, temporal fences, and hydration while using the
 // existing Search adapter for the active embedding contract.
 type Store struct {
-	db                    *gorm.DB
-	rls                   storagepostgres.RLSHelper
-	search                searchcontract.SearchRepository
-	relationshipConflicts RelationshipConflictReader
-	evidenceConflicts     EvidenceConflictReader
-	ontology              func() OntologyReader
-	snapshot              *gorm.DB
-	snapshotTeam          string
-	organizationFailure   string
+	db                  *gorm.DB
+	rls                 storagepostgres.RLSHelper
+	search              searchcontract.SearchRepository
+	evidenceConflicts   EvidenceConflictReader
+	topics              func(context.Context, *gorm.DB, string, ontologycontract.TopicReadInput) (ontologycontract.TopicReadResult, error)
+	ontology            func() OntologyReader
+	snapshot            *gorm.DB
+	snapshotTeam        string
+	organizationFailure string
+	topicLogger         observability.LogProvider
+}
+
+func (r *Store) WithTopicDiagnostics(logger observability.LogProvider) *Store {
+	r.topicLogger = logger
+	return r
 }
 
 type OntologyReader func(context.Context, *gorm.DB, string, ontologycontract.RecallReadInput) (ontologycontract.RecallOrganization, error)
@@ -60,13 +62,12 @@ func (r *Store) WithOntology(reader func() OntologyReader) *Store {
 	return r
 }
 
-func NewStore(db *gorm.DB, rls storagepostgres.RLSHelper, search searchcontract.SearchRepository, relationshipConflicts RelationshipConflictReader, evidenceConflicts EvidenceConflictReader) *Store {
+func NewStore(db *gorm.DB, rls storagepostgres.RLSHelper, search searchcontract.SearchRepository, evidenceConflicts EvidenceConflictReader) *Store {
 	return &Store{
-		db:                    db,
-		rls:                   rls,
-		search:                search,
-		relationshipConflicts: relationshipConflicts,
-		evidenceConflicts:     evidenceConflicts,
+		db:                db,
+		rls:               rls,
+		search:            search,
+		evidenceConflicts: evidenceConflicts,
 	}
 }
 
@@ -101,3 +102,8 @@ func (r *Store) database() (*gorm.DB, error) {
 }
 
 var _ recallcontract.Repository = (*Store)(nil)
+
+func (r *Store) WithTopics(reader func(context.Context, *gorm.DB, string, ontologycontract.TopicReadInput) (ontologycontract.TopicReadResult, error)) *Store {
+	r.topics = reader
+	return r
+}

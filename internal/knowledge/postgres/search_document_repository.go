@@ -19,9 +19,6 @@ func (r *Store) UpsertSearchDocument(ctx context.Context, input UpsertSearchDocu
 	ctx = WithInlineEmbeddingResults(ctx, []InlineEmbeddingResult{})
 	var result *SearchDocumentResult
 	err := r.withActiveTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
-		if err := seedTeamPredicateDefinitions(ctx, tx, input.TeamID); err != nil {
-			return err
-		}
 		contract, err := loadActiveSearchContractInTx(ctx, tx)
 		if err != nil {
 			return err

@@ -35,7 +35,7 @@ func TestOntologyMatchingRefreshMigration(t *testing.T) {
 	_, err := service.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: "refresh-preserved-receipt", Sources: []ontology.SourceHandle{source}})
 	require.NoError(t, err)
 	require.NoError(t, f.admin.Exec(`DELETE FROM ontology_maintenance_markers`).Error)
-	require.NoError(t, f.admin.Exec(`INSERT INTO ontology_maintenance_teams(team_id,shared_space_id,space_generation,discovery_kind) VALUES(?::uuid,?::uuid,?,4)`, f.team, f.space, f.generation).Error)
+	require.NoError(t, f.admin.Exec(`INSERT INTO ontology_maintenance_teams(team_id,shared_space_id,space_generation,discovery_kind) VALUES(?::uuid,?::uuid,?,1)`, f.team, f.space, f.generation).Error)
 	require.NoError(t, f.admin.Exec(`SELECT dense_mem_enqueue_ontology_marker(?::uuid,?::uuid,?,'ontology_record_heads',?,'definition',?)`, f.team, f.space, f.generation, active.ID, active.ID).Error)
 	require.NoError(t, f.admin.Exec(`UPDATE ontology_maintenance_markers SET cursor='evidence:partially-consumed' WHERE team_id=?::uuid AND anchor_id=?`, f.team, active.ID).Error)
 	var oldSequence int64

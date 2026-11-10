@@ -4,12 +4,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"github.com/google/uuid"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"sort"
 	"strings"
-
-	"github.com/google/uuid"
-
-	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
 func memoryPackActor(ctx context.Context) (requestctx.Actor, error) {
@@ -74,33 +72,6 @@ func uniqueStrings(values []string) []string {
 	return out
 }
 
-func canonicalMemoryPackRelationshipID(value string) string {
-	value = strings.TrimSpace(value)
-	parsed, err := uuid.Parse(value)
-	if err != nil {
-		return value
-	}
-	return parsed.String()
-}
-
-func uniqueMemoryPackRelationshipIDs(values []string) []string {
-	normalized := make([]string, 0, len(values))
-	for _, value := range values {
-		normalized = append(normalized, canonicalMemoryPackRelationshipID(value))
-	}
-	return uniqueStrings(normalized)
-}
-
-func omitMemoryPackEntityNames(item *MemoryPackRelationship) {
-	if item == nil {
-		return
-	}
-	item.Subject.DisplayName = ""
-	if item.Object.Kind != "value" {
-		item.Object.DisplayName = ""
-	}
-}
-
 func MemoryPackCopyMap(value map[string]any) map[string]any {
 	if len(value) == 0 {
 		return nil
@@ -110,13 +81,6 @@ func MemoryPackCopyMap(value map[string]any) map[string]any {
 		out[key] = item
 	}
 	return out
-}
-
-func MemoryPackSupportOmissions(includeSupport bool, canonical []byte) []string {
-	if includeSupport || len(canonical) == 0 {
-		return nil
-	}
-	return []string{"support evidence omitted by request"}
 }
 
 func boolPtr(value bool) *bool {

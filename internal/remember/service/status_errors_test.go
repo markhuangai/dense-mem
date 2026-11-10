@@ -13,7 +13,6 @@ func TestSubmissionStatusErrorsExposeClosedGuidance(t *testing.T) {
 	require.Equal(t, []string{
 		string(SubmissionNextActionRetrySameRequest),
 		string(SubmissionNextActionResubmitRemember),
-		string(SubmissionNextActionRetryCorrection),
 		string(SubmissionNextActionContactOperator),
 		string(SubmissionNextActionNone),
 	}, SubmissionNextActions())

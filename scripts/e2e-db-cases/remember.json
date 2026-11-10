@@ -10,27 +10,6 @@
       "source": "cmd/internal/serverapp/evaluation_import_admission_integration_test.go"
     },
     {
-      "id": "repository/TestSubmissionPredicateRegistrationPreflightCatalogAndIsolation",
-      "package": "./internal/knowledge/postgres",
-      "run": "^TestSubmissionPredicateRegistrationPreflightCatalogAndIsolation$",
-      "phase": "precheck",
-      "source": "internal/knowledge/postgres/submission_predicate_registration_preflight_integration_test.go"
-    },
-    {
-      "id": "repository/TestSubmissionPredicateRegistrationPreflightBatchOverlayAndNoWrites",
-      "package": "./internal/knowledge/postgres",
-      "run": "^TestSubmissionPredicateRegistrationPreflightBatchOverlayAndNoWrites$",
-      "phase": "precheck",
-      "source": "internal/knowledge/postgres/submission_predicate_registration_preflight_integration_test.go"
-    },
-    {
-      "id": "repository/TestSubmissionPredicateRegistrationCatalogDriftPreservesPreviewAndCommitFences",
-      "package": "./internal/knowledge/postgres",
-      "run": "^TestSubmissionPredicateRegistrationCatalogDriftPreservesPreviewAndCommitFences$",
-      "phase": "precheck",
-      "source": "internal/knowledge/postgres/submission_predicate_registration_preflight_integration_test.go"
-    },
-    {
       "id": "repository/TestRecordRememberFailurePreservesUnavailableCaptureStateAfterAttemptBudget",
       "package": "./internal/knowledge/postgres",
       "run": "^TestRecordRememberFailurePreservesUnavailableCaptureStateAfterAttemptBudget$",
@@ -115,36 +94,12 @@
       "source": "internal/knowledge/postgres/remember_invocation_diagnostics_integration_test.go"
     },
     {
-      "id": "server/TestRememberServiceRejectsHistoricalOutcomesThroughPostgres",
-      "package": "./cmd/internal/serverapp",
-      "run": "^TestRememberServiceRejectsHistoricalOutcomesThroughPostgres$",
-      "phase": "scenario",
-      "scenario": "synchronous_write_primitives",
-      "source": "cmd/internal/serverapp/remember_processor_integration_test.go"
-    },
-    {
       "id": "server/TestRememberServiceRejectsMigratedAttemptThroughPostgres",
       "package": "./cmd/internal/serverapp",
       "run": "^TestRememberServiceRejectsMigratedAttemptThroughPostgres$",
       "phase": "scenario",
       "scenario": "synchronous_write_primitives",
       "source": "cmd/internal/serverapp/remember_processor_integration_test.go"
-    },
-    {
-      "id": "server/TestRememberPredicateRegistrationCatalogDriftThroughPostgres",
-      "package": "./cmd/internal/serverapp",
-      "run": "^TestRememberPredicateRegistrationCatalogDriftThroughPostgres$",
-      "phase": "scenario",
-      "scenario": "synchronous_write_primitives",
-      "source": "cmd/internal/serverapp/remember_processor_integration_test.go"
-    },
-    {
-      "id": "service/TestComposeSynchronousUnsupportedProposalPreservesSafeEvidence",
-      "package": "./cmd/internal/serverapp",
-      "run": "^TestComposeSynchronousUnsupportedProposalPreservesSafeEvidence$",
-      "phase": "scenario",
-      "scenario": "synchronous_write_primitives",
-      "source": "cmd/internal/serverapp/synchronous_assessment_compose_e2e_integration_test.go"
     },
     {
       "id": "repository/TestRememberPublicDiagnosticsPersistReplayAndIsolateOwners",
@@ -159,6 +114,21 @@
       "run": "^TestRememberPublicDiagnosticsLocateMultiItemSourceConflictAndRollback$",
       "phase": "precheck",
       "source": "internal/knowledge/postgres/remember_public_diagnostics_integration_test.go"
+    },
+    {
+      "id": "remember/TestEvidenceOnlyPostgresRetiredRememberReceipts",
+      "package": "./cmd/internal/serverapp",
+      "run": "^TestEvidenceOnlyPostgresRetiredRememberReceipts$",
+      "phase": "precheck",
+      "source": "cmd/internal/serverapp/remember_processor_integration_test.go"
+    },
+    {
+      "id": "remember/TestComposeEvidenceOnlyAssessmentPreservesExactEvidence",
+      "package": "./cmd/internal/serverapp",
+      "run": "^TestComposeEvidenceOnlyAssessmentPreservesExactEvidence$",
+      "phase": "scenario",
+      "source": "cmd/internal/serverapp/synchronous_assessment_compose_e2e_integration_test.go",
+      "scenario": "synchronous_write_primitives"
     }
   ]
 }

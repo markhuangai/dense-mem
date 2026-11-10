@@ -8,113 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCountSemanticAssessmentRequestTokensHandlesFramingAndSerializationErrors(t *testing.T) {
-	limits := DefaultSemanticAssessmentLimits()
-	limits.MaxInputTokens = 1_000_000
-	limits.MaxCandidateContextTokens = 1_000_000
-
-	contextError := SemanticAssessmentRequest{
-		EntityCandidateGroups: []SemanticAssessmentEntityCandidateGroup{{Candidates: []SemanticAssessmentEntityCandidate{{IdentityContext: map[string]any{"unsupported": func() {}}}}}},
-	}
-	_, _, err := CountSemanticAssessmentRequestTokens(contextError, limits)
-	require.Error(t, err)
-
-	payloadError := SemanticAssessmentRequest{ClientProposal: map[string]any{"unsupported": func() {}}}
-	_, _, err = CountSemanticAssessmentRequestTokens(payloadError, limits)
-	require.Error(t, err)
-
-	limits.Tokenizer = "not-a-tokenizer"
-	_, _, err = CountSemanticAssessmentRequestTokens(SemanticAssessmentRequest{}, limits)
-	require.Error(t, err)
-
-	legacyLimits := DefaultSemanticAssessmentLimits()
-	legacyLimits.LegacyProviderFraming = true
-	inputTokens, candidateContextTokens, err := CountSemanticAssessmentRequestTokens(SemanticAssessmentRequest{RequestID: "legacy"}, legacyLimits)
-	require.NoError(t, err)
-	require.Greater(t, inputTokens, candidateContextTokens)
-}
-
-func TestAllocateSemanticAssessmentOptionalContextPreservesRequiredAndOmitsOptional(t *testing.T) {
-	base := SemanticAssessmentRequest{
-		RequestID: "request",
-		Evidence:  []SemanticReviewEvidence{{EvidenceID: "evidence:0", Content: "submitted evidence"}},
-	}
-	limits := DefaultSemanticAssessmentLimits()
-	limits.MaxInputTokens = 1_000_000
-	limits.MaxCandidateContextTokens = 1_000_000
-
-	baseInput, _, err := CountSemanticAssessmentRequestTokens(base, limits)
-	require.NoError(t, err)
-	repairHeadroom := (SemanticAssessmentMaxProviderTurns - 1) * (limits.MaxOutputTokens + semanticAssessmentRepairSafetyTokens)
-	optional := base
-	optional.PredicateOptions = []SemanticAssessmentPredicateOption{{
-		PredicateKey:        strings.Repeat("optional_predicate_", 80),
-		Version:             1,
-		AllowedSubjectKinds: []string{"concept"},
-		AllowedObjectKinds:  []string{"concept"},
-		RelationshipKind:    "state",
-		CurrentCardinality:  "many",
-	}}
-	optionalLimits := limits
-	optionalLimits.MaxInputTokens = baseInput + repairHeadroom
-	errs, err := allocateSemanticAssessmentOptionalContext(&optional, optionalLimits)
-	require.NoError(t, err)
-	require.Empty(t, errs)
-	require.Len(t, optional.PredicateOptions, 0)
-	require.Equal(t, 1, optional.CandidateContextOmittedPredicateOptions)
-	require.True(t, optional.CandidateContextTruncated)
-
-	required := base
-	required.PredicateOptions = []SemanticAssessmentPredicateOption{{PredicateKey: "required", Version: 1}}
-	required.RequiredRelationshipRefs = []SemanticAssessmentRequiredRelationshipRef{{KnownPredicateKey: " required "}}
-	required.SubmissionContract = &SemanticAssessmentSubmissionContract{Relationships: []SemanticAssessmentRequiredRelationshipRef{{KnownPredicateKey: "required"}}}
-	errs, err = allocateSemanticAssessmentOptionalContext(&required, limits)
-	require.NoError(t, err)
-	require.Empty(t, errs)
-	require.Len(t, required.PredicateOptions, 1)
-	require.Equal(t, 0, required.CandidateContextOmittedPredicateOptions)
-
-	groups := base
-	groups.EvidenceEquivalenceCandidates = []SemanticAssessmentEvidenceEquivalenceCandidateGroup{
-		{EvidenceID: "nonnumeric"},
-		{EvidenceID: "evidence:bad", Candidates: []SemanticAssessmentEvidenceEquivalenceCandidate{{EvidenceID: "bad", Content: "bad"}}},
-		{EvidenceID: "evidence:-1", Candidates: []SemanticAssessmentEvidenceEquivalenceCandidate{{EvidenceID: "negative", Content: "negative"}}},
-		{EvidenceID: "evidence:2", Candidates: []SemanticAssessmentEvidenceEquivalenceCandidate{{EvidenceID: "numeric", Content: "numeric"}}},
-	}
-	errs, err = allocateSemanticAssessmentOptionalContext(&groups, limits)
-	require.NoError(t, err)
-	require.Empty(t, errs)
-	require.Equal(t, "evidence:2", groups.EvidenceEquivalenceCandidates[0].EvidenceID)
-	require.Len(t, groups.EvidenceEquivalenceCandidates[0].Candidates, 1)
-	// Empty groups are retained, and the round-robin allocator skips them.
-	require.Empty(t, groups.EvidenceEquivalenceCandidates[3].Candidates)
-	require.Len(t, groups.EvidenceEquivalenceCandidates[1].Candidates, 1)
-}
-
-func TestAllocateSemanticAssessmentOptionalContextRejectsNilAndRequiredBudgets(t *testing.T) {
-	_, err := allocateSemanticAssessmentOptionalContext(nil, DefaultSemanticAssessmentLimits())
-	require.EqualError(t, err, "semantic assessment request is required")
-
-	req := SemanticAssessmentRequest{RequestID: "request", Evidence: []SemanticReviewEvidence{{EvidenceID: "evidence:0", Content: "evidence"}}}
-	limits := DefaultSemanticAssessmentLimits()
-	limits.MaxInputTokens = 1
-	limits.MaxCandidateContextTokens = 1_000_000
-	errs, err := allocateSemanticAssessmentOptionalContext(&req, limits)
-	require.NoError(t, err)
-	require.Len(t, errs, 1)
-	require.Equal(t, "input_tokens", errs[0].Field)
-	require.Greater(t, req.InputTokens, limits.MaxInputTokens)
-
-	contextReq := SemanticAssessmentRequest{EntityCandidateGroups: []SemanticAssessmentEntityCandidateGroup{{EvidenceID: "evidence:0", Candidates: []SemanticAssessmentEntityCandidate{{EntityID: "entity", CanonicalName: "entity"}}}}}
-	limits = DefaultSemanticAssessmentLimits()
-	limits.MaxInputTokens = 1_000_000
-	limits.MaxCandidateContextTokens = 1
-	errs, err = allocateSemanticAssessmentOptionalContext(&contextReq, limits)
-	require.NoError(t, err)
-	require.Len(t, errs, 1)
-	require.Equal(t, "candidate_context_tokens", errs[0].Field)
-}
-
 func TestPrepareSemanticAssessmentRequestPreservesPriorTruncationOnReprepare(t *testing.T) {
 	req := SemanticAssessmentRequest{
 		RequestID: "request", TeamID: "team", OwnerProfileID: "owner",
@@ -168,59 +61,6 @@ func TestPrepareSemanticAssessmentRequestDoesNotMutateCandidateContext(t *testin
 	require.JSONEq(t, string(before), string(after))
 }
 
-func TestPrepareSemanticAssessmentRequestDoesNotMutateRequiredRelationshipRefs(t *testing.T) {
-	req := SemanticAssessmentRequest{
-		RequestID: "request",
-		TeamID:    "team",
-		Evidence:  []SemanticReviewEvidence{{EvidenceID: "evidence:0", Content: "submitted evidence"}},
-		RequiredRelationshipRefs: []SemanticAssessmentRequiredRelationshipRef{
-			{ProposalID: " proposal ", EvidenceIDs: []string{" evidence:0 "}},
-			{ProposalID: "span", Evidence: []SemanticAssessmentEvidenceSpan{{EvidenceID: " evidence:0 ", Start: 0, End: 9}}},
-		},
-	}
-	limits := DefaultSemanticAssessmentLimits()
-	limits.MaxInputTokens = 1_000_000
-	limits.MaxCandidateContextTokens = 1_000_000
-	prepared, errs := PrepareSemanticAssessmentRequest(req, limits)
-	require.Empty(t, errs)
-	require.Equal(t, "proposal", prepared.RequiredRelationshipRefs[0].ProposalID)
-	require.Equal(t, []string{"evidence:0"}, prepared.RequiredRelationshipRefs[0].EvidenceIDs)
-	require.Equal(t, "evidence:0", prepared.RequiredRelationshipRefs[1].Evidence[0].EvidenceID)
-	require.Equal(t, " proposal ", req.RequiredRelationshipRefs[0].ProposalID)
-	require.Equal(t, []string{" evidence:0 "}, req.RequiredRelationshipRefs[0].EvidenceIDs)
-	require.Equal(t, " evidence:0 ", req.RequiredRelationshipRefs[1].Evidence[0].EvidenceID)
-}
-
-func TestSemanticAssessmentBudgetFailureStageIdentifiesRequiredContext(t *testing.T) {
-	limits := DefaultSemanticAssessmentLimits()
-	limits.MaxCandidateContextTokens = 1
-	entityReq := SemanticAssessmentRequest{EntityCandidateGroups: []SemanticAssessmentEntityCandidateGroup{{EvidenceID: "evidence:0", Candidates: []SemanticAssessmentEntityCandidate{{CanonicalName: strings.Repeat("entity ", 20)}}}}}
-	require.Equal(t, "entity_catalog", SemanticAssessmentBudgetFailureStage(entityReq, "candidate_context_tokens", limits))
-	predicateReq := SemanticAssessmentRequest{PredicateOptions: []SemanticAssessmentPredicateOption{{PredicateKey: strings.Repeat("predicate_", 20)}}}
-	require.Equal(t, "predicate_context", SemanticAssessmentBudgetFailureStage(predicateReq, "candidate_context_tokens", limits))
-	require.Equal(t, "catalog_context", SemanticAssessmentBudgetFailureStage(SemanticAssessmentRequest{}, "candidate_context_tokens", limits))
-	require.Equal(t, "assessment_input", SemanticAssessmentBudgetFailureStage(SemanticAssessmentRequest{}, "other", limits))
-
-	base := SemanticAssessmentRequest{RequestID: "request", Evidence: []SemanticReviewEvidence{PrepareSemanticAssessmentEvidence(SemanticReviewEvidence{EvidenceID: "submitted", Content: "submitted"})}}
-	withKnown := base
-	withKnown.KnownEvidence = []SemanticReviewEvidence{PrepareSemanticAssessmentEvidence(SemanticReviewEvidence{EvidenceID: "known", Content: strings.Repeat("known ", 100)})}
-	require.Equal(t, "known_evidence_context", stageForInputOverflow(t, withKnown, limits))
-	withEntity := base
-	withEntity.EntityCandidateGroups = []SemanticAssessmentEntityCandidateGroup{{EvidenceID: "submitted", Candidates: []SemanticAssessmentEntityCandidate{{CanonicalName: strings.Repeat("entity ", 100)}}}}
-	require.Equal(t, "entity_catalog", stageForInputOverflow(t, withEntity, limits))
-	withPredicate := base
-	withPredicate.PredicateOptions = []SemanticAssessmentPredicateOption{{PredicateKey: strings.Repeat("predicate_", 100)}}
-	require.Equal(t, "predicate_context", stageForInputOverflow(t, withPredicate, limits))
-
-	client := SemanticAssessmentRequest{Evidence: []SemanticReviewEvidence{{EvidenceID: "submitted", Content: strings.Repeat("client ", 1000)}}}
-	clientLimits := limits
-	framingTokens, err := CountSemanticAssessmentProviderFramingTokens(clientLimits)
-	require.NoError(t, err)
-	repairHeadroom := (SemanticAssessmentMaxProviderTurns - 1) * (clientLimits.MaxOutputTokens + semanticAssessmentRepairSafetyTokens)
-	clientLimits.MaxInputTokens = framingTokens + repairHeadroom + 1
-	require.Equal(t, "assessment_input", SemanticAssessmentBudgetFailureStage(client, "input_tokens", clientLimits))
-}
-
 func TestSemanticAssessmentBudgetFailureStageIdentifiesProviderFramingOverflow(t *testing.T) {
 	limits := DefaultSemanticAssessmentLimits()
 	framingTokens, err := CountSemanticAssessmentProviderFramingTokens(limits)
@@ -253,6 +93,7 @@ func TestSemanticAssessmentBudgetFailureStageUsesRepairAwareInputLimit(t *testin
 	countLimits.MaxInputTokens = 1_000_000
 	inputTokens, _, err := CountSemanticAssessmentRequestTokens(request, countLimits)
 	require.NoError(t, err)
+	limits.MaxInputTokens = inputTokens + (SemanticAssessmentMaxProviderTurns-1)*(limits.MaxOutputTokens+semanticAssessmentRepairSafetyTokens) - 1
 	require.Greater(t, inputTokens, semanticAssessmentConversationInputLimit(limits))
 	require.Less(t, inputTokens, limits.MaxInputTokens)
 	require.Equal(t, "assessment_input", SemanticAssessmentBudgetFailureStage(request, "input_tokens", limits))
@@ -340,7 +181,7 @@ func TestCountSemanticAssessmentRequestTokensMatchesOmittedCandidateFields(t *te
 		var fields map[string]json.RawMessage
 		require.NoError(t, json.Unmarshal(payload, &fields))
 		candidateFields := map[string]json.RawMessage{}
-		for _, key := range []string{"entity_candidate_groups", "predicate_options", "evidence_equivalence_candidates"} {
+		for _, key := range []string{"evidence_equivalence_candidates"} {
 			if value, ok := fields[key]; ok {
 				candidateFields[key] = value
 			}
@@ -367,26 +208,6 @@ func TestValidateSemanticAssessmentLimitsIdentifiesInputLimit(t *testing.T) {
 	var validationErr *SemanticAssessmentLimitValidationError
 	require.ErrorAs(t, ValidateSemanticAssessmentLimits(limits), &validationErr)
 	require.Equal(t, "input_tokens", validationErr.Field)
-}
-
-func stageForInputOverflow(t *testing.T, req SemanticAssessmentRequest, limits SemanticAssessmentLimits) string {
-	t.Helper()
-	countLimits := limits
-	countLimits.MaxInputTokens = 1_000_000
-	countLimits.MaxCandidateContextTokens = 1_000_000
-	input, _, err := CountSemanticAssessmentRequestTokens(req, countLimits)
-	require.NoError(t, err)
-	withoutRequired := req
-	withoutRequired.KnownEvidence = nil
-	withoutRequired.EntityCandidateGroups = nil
-	withoutRequired.PredicateOptions = nil
-	baseInput, _, err := CountSemanticAssessmentRequestTokens(withoutRequired, countLimits)
-	require.NoError(t, err)
-	require.Greater(t, input, baseInput)
-	repairHeadroom := (SemanticAssessmentMaxProviderTurns - 1) * (limits.MaxOutputTokens + semanticAssessmentRepairSafetyTokens)
-	limits.MaxInputTokens = baseInput + repairHeadroom
-	limits.MaxCandidateContextTokens = 1_000_000
-	return SemanticAssessmentBudgetFailureStage(req, "input_tokens", limits)
 }
 
 func TestSemanticAssessmentContextHelpersHandleInvalidValues(t *testing.T) {
@@ -461,37 +282,6 @@ func TestAllocateSemanticAssessmentOptionalContextSkipsOversizedCandidate(t *tes
 	}
 }
 
-func TestAllocateSemanticAssessmentOptionalContextReservesRepairHeadroom(t *testing.T) {
-	base := SemanticAssessmentRequest{
-		RequestID: "request",
-		Evidence:  []SemanticReviewEvidence{{EvidenceID: "evidence:0", Content: "submitted evidence"}},
-	}
-	withOptional := base
-	withOptional.PredicateOptions = []SemanticAssessmentPredicateOption{{
-		PredicateKey: strings.Repeat("optional_predicate_", 30_000),
-		Version:      1,
-	}}
-	countLimits := DefaultSemanticAssessmentLimits()
-	countLimits.MaxInputTokens = 1_000_000
-	countLimits.MaxCandidateContextTokens = 1_000_000
-	fullInput, _, err := CountSemanticAssessmentRequestTokens(withOptional, countLimits)
-	require.NoError(t, err)
-	baseInput, _, err := CountSemanticAssessmentRequestTokens(base, countLimits)
-	require.NoError(t, err)
-	repairHeadroom := (SemanticAssessmentMaxProviderTurns - 1) * (countLimits.MaxOutputTokens + semanticAssessmentRepairSafetyTokens)
-	require.Greater(t, fullInput, baseInput+semanticAssessmentRepairSafetyTokens+countLimits.MaxOutputTokens)
-
-	limits := countLimits
-	limits.MaxInputTokens = fullInput + repairHeadroom - 1
-	prepared := withOptional
-	errs, err := allocateSemanticAssessmentOptionalContext(&prepared, limits)
-	require.NoError(t, err)
-	require.Empty(t, errs)
-	require.Empty(t, prepared.PredicateOptions)
-	require.Equal(t, 1, prepared.CandidateContextOmittedPredicateOptions)
-	require.True(t, prepared.CandidateContextTruncated)
-}
-
 func TestAllocateSemanticAssessmentOptionalContextReservesRepairHeadroomForRequiredContext(t *testing.T) {
 	req := SemanticAssessmentRequest{
 		RequestID: "request",
@@ -512,58 +302,4 @@ func TestAllocateSemanticAssessmentOptionalContextReservesRepairHeadroomForRequi
 	require.Len(t, errs, 1)
 	require.Equal(t, "input_tokens", errs[0].Field)
 	require.Equal(t, baseInput, prepared.InputTokens)
-}
-
-func TestSemanticAssessmentBudgetFailureStageKeepsOversizedClientInputClientControlled(t *testing.T) {
-	req := SemanticAssessmentRequest{
-		RequestID: "request", TeamID: "team",
-		Evidence: []SemanticReviewEvidence{{EvidenceID: "evidence:0", Content: strings.Repeat("client evidence ", 5_000)}},
-		EntityCandidateGroups: []SemanticAssessmentEntityCandidateGroup{{
-			EvidenceID: "evidence:0", GroundingRef: "grounding", Surface: "client", Start: 0, End: 6,
-		}},
-	}
-	limits := DefaultSemanticAssessmentLimits()
-	framingTokens, err := CountSemanticAssessmentProviderFramingTokens(limits)
-	require.NoError(t, err)
-	repairHeadroom := (SemanticAssessmentMaxProviderTurns - 1) * (limits.MaxOutputTokens + semanticAssessmentRepairSafetyTokens)
-	limits.MaxInputTokens = framingTokens + repairHeadroom + 1
-	require.Equal(t, "assessment_input", SemanticAssessmentBudgetFailureStage(req, "input_tokens", limits))
-}
-
-func TestSemanticAssessmentBudgetFailureStageAttributesCombinedRequiredContext(t *testing.T) {
-	entityGroups := []SemanticAssessmentEntityCandidateGroup{{
-		EvidenceID: "evidence:0", GroundingRef: "grounding", Surface: "entity",
-		Candidates: []SemanticAssessmentEntityCandidate{{
-			EntityID: "entity-1", CanonicalName: strings.Repeat("entity ", 30), Kind: "concept",
-		}},
-	}}
-	predicateOptions := []SemanticAssessmentPredicateOption{{
-		PredicateKey: strings.Repeat("predicate_", 10), Version: 1,
-		AllowedSubjectKinds: []string{"concept"}, AllowedObjectKinds: []string{"concept"},
-		RelationshipKind: "state", CurrentCardinality: "many",
-	}}
-	req := SemanticAssessmentRequest{
-		RequestID: "request", TeamID: "team",
-		Evidence:                 []SemanticReviewEvidence{{EvidenceID: "evidence:0", Content: "entity predicate"}},
-		EntityCandidateGroups:    entityGroups,
-		PredicateOptions:         predicateOptions,
-		RequiredRelationshipRefs: []SemanticAssessmentRequiredRelationshipRef{{KnownPredicateKey: predicateOptions[0].PredicateKey}},
-	}
-	limits := DefaultSemanticAssessmentLimits()
-	limits.MaxInputTokens = 1_000_000
-	entityTokens := semanticAssessmentContextComponentTokens(entityGroups, limits.Tokenizer)
-	predicateTokens := semanticAssessmentContextComponentTokens(predicateOptions, limits.Tokenizer)
-	inputTokens, contextTokens, err := CountSemanticAssessmentRequestTokens(req, limits)
-	require.NoError(t, err)
-	require.Greater(t, contextTokens, entityTokens)
-	require.Greater(t, contextTokens, predicateTokens)
-	limits.MaxCandidateContextTokens = contextTokens - 1
-	_, allocationErr := allocateSemanticAssessmentOptionalContext(&req, limits)
-	require.NoError(t, allocationErr)
-	// The exact predicate is mandatory, so the allocator cannot remove either
-	// required component; the resulting failure must be server-owned.
-	require.Equal(t, "entity_catalog", SemanticAssessmentBudgetFailureStage(req, "candidate_context_tokens", limits))
-	repairHeadroom := (SemanticAssessmentMaxProviderTurns - 1) * (limits.MaxOutputTokens + semanticAssessmentRepairSafetyTokens)
-	limits.MaxInputTokens = inputTokens - 1 + repairHeadroom
-	require.Equal(t, "entity_catalog", SemanticAssessmentBudgetFailureStage(req, "input_tokens", limits))
 }

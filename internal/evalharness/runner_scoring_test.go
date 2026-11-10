@@ -5,47 +5,6 @@ import (
 	"testing"
 )
 
-func TestMapExpectedDreamsMatchesResolvedSourceRefSet(t *testing.T) {
-	mapping := newKnowledgeMapping()
-	addSourceMapping(&mapping, Ref{Type: "fact", ID: "fact-employer", SourceDocID: "doc-employer"}, false)
-	addSourceMapping(&mapping, Ref{Type: "fact", ID: "fact-location", SourceDocID: "doc-location"}, false)
-	addDreamSourceRefs(&mapping, "dream-good", []Ref{
-		{Type: "fact", ID: "fact-location"},
-		{Type: "fact", ID: "fact-employer"},
-	})
-	addDreamSourceRefs(&mapping, "dream-other", []Ref{
-		{Type: "fact", ID: "fact-employer"},
-	})
-
-	mapExpectedDreams(&mapping, []ExpectedDream{
-		{
-			SourceDocID: "expected-dream",
-			SourceRefs: []Ref{
-				{Type: "fact", SourceDocID: "doc-employer"},
-				{Type: "fact", SourceDocID: "doc-location"},
-			},
-		},
-		{
-			SourceDocID: "unmapped-dream",
-			SourceRefs:  []Ref{{Type: "fact", SourceDocID: "missing-source"}},
-		},
-	})
-
-	resolved, ok := resolveRef(Ref{Type: "dream", SourceDocID: "expected-dream"}, mapping)
-	if !ok || resolved.ID != "dream-good" {
-		t.Fatalf("expected dream resolved = %+v, %v", resolved, ok)
-	}
-	if _, ok := resolveRef(Ref{Type: "dream", SourceDocID: "unmapped-dream"}, mapping); ok {
-		t.Fatal("unmapped expected dream resolved")
-	}
-	if !sameRefSet([]Ref{{Type: "fact", ID: "a"}, {Type: "fact", ID: "b"}}, []Ref{{Type: "fact", ID: "b"}, {Type: "fact", ID: "a"}}) {
-		t.Fatal("sameRefSet should ignore ordering")
-	}
-	if sameRefSet([]Ref{{Type: "fact", ID: "a"}}, []Ref{{Type: "claim", ID: "a"}}) {
-		t.Fatal("sameRefSet should include type")
-	}
-}
-
 func TestResolveRefPrefersTypeAwareSourceMapping(t *testing.T) {
 	mapping := newKnowledgeMapping()
 	addSourceMapping(&mapping, Ref{Type: "fragment", ID: "fragment-tiered", SourceDocID: "doc-tiered"}, true)
@@ -198,43 +157,6 @@ func TestEvaluateGatesChecksEvidenceMetrics(t *testing.T) {
 	unavailable := EvaluateGates(Summary{}, gates)
 	if unavailable.Passed || len(unavailable.Failures) != 1 || !strings.Contains(unavailable.Failures[0], "evidence metrics unavailable") {
 		t.Fatalf("unavailable evidence gate = %+v", unavailable)
-	}
-}
-
-func TestEvaluateGatesChecksDreamMetrics(t *testing.T) {
-	minRecall := 0.8
-	minRank1 := 0.5
-	maxBad := 0.25
-	maxBadRank1 := 0.1
-	gates := GateOptions{
-		MinDreamRecallAtK:         &minRecall,
-		MinDreamRequiredRank1Rate: &minRank1,
-		MaxAverageDreamBadAtK:     &maxBad,
-		MaxDreamBadRank1Rate:      &maxBadRank1,
-	}
-	passed := EvaluateGates(Summary{
-		DreamScoredCaseCount:   2,
-		AverageDreamRecallAtK:  0.9,
-		DreamRequiredRank1Rate: 0.6,
-		AverageDreamBadAtK:     0.1,
-		DreamBadRank1Rate:      0,
-	}, gates)
-	if !passed.Passed || len(passed.Failures) != 0 {
-		t.Fatalf("passed dream gate = %+v", passed)
-	}
-	failed := EvaluateGates(Summary{
-		DreamScoredCaseCount:   2,
-		AverageDreamRecallAtK:  0.7,
-		DreamRequiredRank1Rate: 0.4,
-		AverageDreamBadAtK:     0.3,
-		DreamBadRank1Rate:      0.2,
-	}, gates)
-	if failed.Passed || len(failed.Failures) != 4 {
-		t.Fatalf("failed dream gate = %+v; want four failures", failed)
-	}
-	unavailable := EvaluateGates(Summary{}, gates)
-	if unavailable.Passed || len(unavailable.Failures) != 1 || !strings.Contains(unavailable.Failures[0], "dream metrics unavailable") {
-		t.Fatalf("unavailable dream gate = %+v", unavailable)
 	}
 }
 

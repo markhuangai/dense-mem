@@ -6,9 +6,7 @@ import (
 
 	"strings"
 	"testing"
-	"unicode/utf8"
 
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/correlation"
@@ -16,7 +14,6 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
-	"github.com/markhuangai/dense-mem/internal/lifecycle"
 
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
@@ -39,8 +36,8 @@ func TestActionableErrorDataMapsSupportedFailuresToRecoveryGuidance(t *testing.T
 		{name: "deadline read", tool: ToolRecallMemory, err: context.DeadlineExceeded, code: string(domain.ErrorProviderUnavailable), reasonCode: "request_timeout", nextAction: actionRetrySameRequest, retryable: true},
 		{name: "unavailable", tool: ToolRecallMemory, err: ErrToolUnavailable, code: string(domain.ErrorDegraded), reasonCode: "tool_unavailable", nextAction: actionContactOperator},
 		{name: "authorization", tool: ToolRemember, err: rememberapp.ErrRememberAuthContext, code: string(domain.ErrorUnauthorizedScope), reasonCode: "authenticated_context_required", nextAction: actionAuthorization},
-		{name: "reference", tool: ToolTraceMemory, err: tracecontract.ErrRelationshipNotFound, code: string(domain.ErrorInvalidInput), reasonCode: "reference_not_found", nextAction: actionRefreshState},
-		{name: "invalid trace id", tool: ToolTraceMemory, err: tracecontract.ErrRelationshipIDInvalid, code: string(domain.ErrorInvalidInput), reasonCode: "invalid_request", nextAction: actionCorrectInput},
+		{name: "reference", tool: ToolTraceMemory, err: tracecontract.ErrEvidenceNotFound, code: string(domain.ErrorInvalidInput), reasonCode: "reference_not_found", nextAction: actionRefreshState},
+		{name: "invalid trace id", tool: ToolTraceMemory, err: tracecontract.ErrEvidenceIDInvalid, code: string(domain.ErrorInvalidInput), reasonCode: "invalid_request", nextAction: actionCorrectInput},
 		{name: "invalid retract evidence id", tool: ToolRetractEvidence, err: knowledgecontract.ErrEvidenceLifecycleIDInvalid, code: string(domain.ErrorInvalidInput), reasonCode: "invalid_request", nextAction: actionCorrectInput},
 		{name: "read repository", tool: ToolRecallMemory, err: errors.New("database unavailable"), code: string(domain.ErrorProviderUnavailable), reasonCode: "read_unavailable", nextAction: actionRetrySameRequest, retryable: true},
 		{name: "retract repository", tool: ToolRetractEvidence, err: errors.New("database unavailable"), code: string(domain.ErrorProviderUnavailable), reasonCode: "write_unavailable", nextAction: actionRetrySameRequest, retryable: true},
@@ -75,7 +72,7 @@ func TestActionableErrorDataMapsSupportedFailuresToRecoveryGuidance(t *testing.T
 		})
 	}
 	longCorrelation := strings.Repeat("界", 129)
-	bounded := ActionableErrorData(correlation.WithID(context.Background(), longCorrelation), ToolTraceMemory, tracecontract.ErrRelationshipNotFound)
+	bounded := ActionableErrorData(correlation.WithID(context.Background(), longCorrelation), ToolTraceMemory, tracecontract.ErrEvidenceNotFound)
 	require.LessOrEqual(t, len([]rune(bounded["correlation_id"].(string))), 128)
 	require.NotEqual(t, longCorrelation, bounded["correlation_id"])
 	serverMessage := ActionableErrorData(ctx, ToolRecallMemory, httperr.New(httperr.SERVICE_UNAVAILABLE, "internal database password"))
@@ -131,8 +128,8 @@ func TestActionableErrorDataMapsHTTPStatusesAndBudgetMeasurements(t *testing.T) 
 	require.Equal(t, 12, details["observed"])
 	require.Equal(t, 10, details["limit"])
 	require.Equal(t, true, details["server_owned"])
-	invalidTrace := ActionableErrorData(ctx, ToolTraceMemory, tracecontract.ErrRelationshipIDInvalid)
-	require.Equal(t, "trace.relationship_id", invalidTrace["details"].(map[string]any)["component"])
+	invalidTrace := ActionableErrorData(ctx, ToolTraceMemory, tracecontract.ErrEvidenceIDInvalid)
+	require.Equal(t, "trace.evidence_id", invalidTrace["details"].(map[string]any)["component"])
 	require.Equal(t, true, invalidTrace["details"].(map[string]any)["client_controlled"])
 
 	guided := ActionableErrorData(ctx, ToolRemember, httperr.WithGuidance(
@@ -158,7 +155,7 @@ func TestActionableErrorHelpersExposeBoundedRecoveryActions(t *testing.T) {
 	require.Equal(t, "tool_unavailable", ActionableToolUnavailableData(ctx, ToolRecallMemory)["reason_code"])
 	require.Equal(t, "tool_result_serialization_failed", ActionableSerializationFailureData(ctx, ToolRecallMemory)["reason_code"])
 
-	for _, tool := range []string{ToolRemember, ToolRetractEvidence, ToolCorrectRelationship, ToolSubmitRecallSessionFeedback} {
+	for _, tool := range []string{ToolRemember, ToolRetractEvidence, ToolSubmitRecallSessionFeedback} {
 		require.True(t, actionableToolRequiresIdempotency(tool), tool)
 		require.Contains(t, actionableTimeoutRemediation(tool), "same idempotency key")
 		require.Contains(t, actionableTransientRemediation(tool), "same idempotency key")
@@ -255,136 +252,6 @@ func TestRememberErrorCodeCoversSupportedFailureClasses(t *testing.T) {
 			require.Equal(t, test.want, rememberErrorCode(test.err))
 		})
 	}
-}
-
-func TestCorrectionToolResultErrorMapsLifecycleAndHTTPFailures(t *testing.T) {
-	ctx := correlation.WithID(context.Background(), "correction-correlation")
-	cases := []struct {
-		name string
-		err  error
-		want rememberapp.SubmissionErrorCode
-	}{
-		{name: "embedding unavailable", err: lifecycle.ErrLifecycleEmbeddingUnavailable, want: rememberapp.SubmissionErrorEmbeddingUnavailable},
-		{name: "embedding invalid", err: lifecycle.ErrLifecycleEmbeddingInvalid, want: rememberapp.SubmissionErrorEmbeddingResponseInvalid},
-		{name: "embedding timeout", err: lifecycle.ErrLifecycleEmbeddingTimeout, want: rememberapp.SubmissionErrorRequestTimeout},
-		{name: "request deadline", err: context.DeadlineExceeded, want: rememberapp.SubmissionErrorRequestTimeout},
-		{name: "translated embedding unavailable", err: httperr.New(httperr.ErrEmbeddingUnavailable, "embedding provider unavailable"), want: rememberapp.SubmissionErrorEmbeddingUnavailable},
-		{name: "translated embedding invalid", err: httperr.New(httperr.ErrEmbeddingResponseInvalid, "embedding provider response invalid"), want: rememberapp.SubmissionErrorEmbeddingResponseInvalid},
-		{name: "translated embedding timeout", err: httperr.New(httperr.ErrEmbeddingTimeout, "embedding provider timed out"), want: rememberapp.SubmissionErrorRequestTimeout},
-		{name: "cancelled", err: context.Canceled, want: rememberapp.SubmissionErrorRequestCancelled},
-		{name: "not found", err: httperr.New(httperr.NOT_FOUND, "missing"), want: rememberapp.SubmissionErrorEntityNotFound},
-		{name: "conflict", err: httperr.New(httperr.CONFLICT, "changed"), want: rememberapp.SubmissionErrorRelationshipChanged},
-		{name: "database", err: errors.New("database failure"), want: rememberapp.SubmissionErrorDatabaseFailure},
-	}
-	for _, test := range cases {
-		t.Run(test.name, func(t *testing.T) {
-			result := structuredToolResult(t, correctionToolResultError(ctx, " correction-submission ", test.err))
-			require.Equal(t, "correction-submission", result["submission_id"])
-			require.Equal(t, "correction-correlation", result["correlation_id"])
-			resultErrors := result["errors"].([]any)
-			require.Equal(t, string(test.want), resultErrors[0].(map[string]any)["code"])
-		})
-	}
-
-	generated := structuredToolResult(t, correctionToolResultError(ctx, " ", errors.New("database failure")))
-	require.NotEmpty(t, generated["submission_id"])
-	entry := generated["errors"].([]any)[0].(map[string]any)
-	canonicalDatabaseError := rememberapp.StatusError(rememberapp.SubmissionErrorDatabaseFailure)
-	require.Equal(t, canonicalDatabaseError.NextAction, entry["next_action"])
-	require.Equal(t, canonicalDatabaseError.Remediation, entry["remediation"])
-}
-
-func TestCorrectionToolResultErrorNormalizesOversizedCorrelationID(t *testing.T) {
-	ctx := correlation.WithID(context.Background(), strings.Repeat("x", 129))
-	result := structuredToolResult(t, correctionToolResultError(ctx, "correction-submission", errors.New("database failure")))
-
-	correlationID, ok := result["correlation_id"].(string)
-	require.True(t, ok)
-	require.NotEqual(t, strings.Repeat("x", 129), correlationID)
-	require.LessOrEqual(t, utf8.RuneCountInString(correlationID), 128)
-	_, parseErr := uuid.Parse(correlationID)
-	require.NoError(t, parseErr)
-}
-
-func TestCorrectionToolResultErrorPreservesTypedConflictReasons(t *testing.T) {
-	ctx := correlation.WithID(context.Background(), "correction-correlation")
-	cases := []struct {
-		name           string
-		reason         string
-		wantCode       rememberapp.SubmissionErrorCode
-		wantState      string
-		wantNextAction string
-		wantClient     bool
-	}{
-		{
-			name: "entity not found", reason: "not found",
-			wantCode: rememberapp.SubmissionErrorEntityNotFound, wantState: "failed",
-			wantNextAction: string(rememberapp.SubmissionNextActionRetryCorrection), wantClient: true,
-		},
-		{
-			name: "idempotency", reason: string(rememberapp.SubmissionErrorIdempotencyConflict),
-			wantCode: rememberapp.SubmissionErrorIdempotencyConflict, wantState: "failed",
-			wantNextAction: string(rememberapp.SubmissionNextActionRetryCorrection), wantClient: true,
-		},
-		{
-			name: "confirmation expired", reason: string(rememberapp.SubmissionErrorConfirmationExpired),
-			wantCode: rememberapp.SubmissionErrorConfirmationExpired, wantState: "rejected",
-			wantNextAction: string(rememberapp.SubmissionNextActionRetryCorrection), wantClient: true,
-		},
-		{
-			name: "commit fence", reason: string(rememberapp.SubmissionErrorCommitConflict),
-			wantCode: rememberapp.SubmissionErrorCommitConflict, wantState: "failed",
-			wantNextAction: string(rememberapp.SubmissionNextActionRetrySameRequest), wantClient: false,
-		},
-		{
-			name: "invalid confirmation", reason: lifecycle.CorrectionConfirmationInvalidReason,
-			wantCode: rememberapp.SubmissionErrorRelationshipChanged, wantState: "failed",
-			wantNextAction: string(rememberapp.SubmissionNextActionRetryCorrection), wantClient: true,
-		},
-	}
-	for _, test := range cases {
-		t.Run(test.name, func(t *testing.T) {
-			var err error
-			if test.name == "entity not found" {
-				err = httperr.New(httperr.NOT_FOUND, "submission not found")
-			} else {
-				err = httperr.NewWithDetails(httperr.CONFLICT, "relationship correction conflict", []httperr.ErrorDetail{{Field: "reason", Message: test.reason}})
-			}
-			result := structuredToolResult(t, correctionToolResultError(ctx, "correction-submission", err))
-			require.Equal(t, test.wantCode, rememberapp.SubmissionErrorCode(result["errors"].([]any)[0].(map[string]any)["code"].(string)))
-			require.Equal(t, test.wantState, result["processing_state"])
-			require.Equal(t, test.wantNextAction, result["errors"].([]any)[0].(map[string]any)["next_action"])
-			details := result["errors"].([]any)[0].(map[string]any)["details"].(map[string]any)
-			if test.wantClient {
-				require.Equal(t, true, details["client_controlled"])
-				require.NotContains(t, details, "server_owned")
-			} else {
-				require.Equal(t, true, details["server_owned"])
-				require.NotContains(t, details, "client_controlled")
-			}
-			if test.wantCode == rememberapp.SubmissionErrorIdempotencyConflict {
-				require.Equal(t, "Retry correct_relationship with current relationship state and a new idempotency_key.", result["errors"].([]any)[0].(map[string]any)["remediation"])
-			}
-		})
-	}
-}
-
-func TestCorrectionToolResultErrorPreservesSearchConfigurationGuidance(t *testing.T) {
-	ctx := correlation.WithID(context.Background(), "correction-correlation")
-	err := httperr.WithGuidance(
-		httperr.New(httperr.CONFLICT, "relationship correction conflict"),
-		"search_configuration_invalid", "contact_operator", "Contact an operator to restore the configured search contract before retrying.", false, nil, "",
-	)
-	result := structuredToolResult(t, correctionToolResultError(ctx, "correction-submission", err))
-	entry := result["errors"].([]any)[0].(map[string]any)
-	require.Equal(t, string(rememberapp.SubmissionErrorConfigurationInvalid), entry["code"])
-	require.Equal(t, "search_configuration_invalid", entry["reason_code"])
-	require.Equal(t, "contact_operator", entry["next_action"])
-	require.Equal(t, "Contact an operator to restore the configured search contract before retrying.", entry["remediation"])
-	require.False(t, entry["retryable"].(bool))
-	details := entry["details"].(map[string]any)
-	require.Equal(t, true, details["server_owned"])
-	require.NotContains(t, details, "client_controlled")
 }
 
 func structuredToolResult(t *testing.T, err error) map[string]any {

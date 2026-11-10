@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
+
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -93,7 +93,7 @@ func TestRecallOntologyScoringKeepsSourceLookupsBounded(t *testing.T) {
 	}))
 	contract, err := f.search.GetActiveSearchContract(ctx)
 	require.NoError(t, err)
-	capture := &projectionQueryCapture{}
+	capture := &recallQueryCapture{}
 	db := newReadPerformanceCountedDB(f.app, &readPerformanceBenchmarkCounters{capture: capture})
 	input := RecallEvidenceInput{TeamID: f.team, SpaceID: f.space, Query: "bounded scoring", QueryEmbedding: []float32{1, 0, 0}}
 	ordinary, err := f.search.ReadEvidenceCandidates(ctx, input, contract, 60)
@@ -154,70 +154,6 @@ func TestRecallOntologyScoringKeepsSourceLookupsBounded(t *testing.T) {
 		for index := range expected {
 			require.Equal(t, expected[index].SourceID, merged[index].SourceID, "reused scores must preserve PostgreSQL distance and document-ID ordering, including NaN distances")
 		}
-		return nil
-	}))
-}
-
-func TestRecallOntologyRelationshipScoringPreservesVectorReadiness(t *testing.T) {
-	f := newRecallOntologyFixture(t)
-	ctx := f.actor(2, "member")
-	var handles []ontology.SourceHandle
-	for index, text := range []string{"Morgan works on Alpha.", "Robin works on Beta."} {
-		subject := createSemanticEntity(t, context.Background(), f.knowledge, f.team, f.owners[index], "person", []string{"Morgan", "Robin"}[index])
-		object := createSemanticEntity(t, context.Background(), f.knowledge, f.team, f.owners[index], "project", []string{"Alpha", "Beta"}[index])
-		ingest := createSemanticIngest(t, context.Background(), f.knowledge, f.team, f.owners[index], uuid.NewString(), text)
-		decision := applySemanticDecision(t, f.actor(index, "member"), f.knowledge, ApplyRelationshipDecisionInput{
-			TeamID: f.team, OwnerProfileID: f.owners[index], IngestID: ingest.IngestID,
-			SubjectEntityID: subject.EntityID, PredicateKey: "works_on", ObjectEntityID: object.EntityID,
-			Support: &EvidenceSupportInput{FragmentID: ingest.Evidence[0].FragmentID, SourceGroupKey: uuid.NewString(), SpanStart: 0, SpanEnd: len(text), Authority: "primary"}})
-		require.NotNil(t, decision.Relationship)
-		require.Equal(t, "active", decision.Relationship.Status)
-		handle := ontology.SourceHandle{Kind: ontology.RelationshipSource, ID: decision.Relationship.RelationshipID, Version: int64(decision.Relationship.Version)}
-		handles = append(handles, handle)
-		document, err := f.search.UpsertSearchDocument(context.Background(), knowledge.UpsertSearchDocumentInput{TeamID: f.team, OwnerProfileID: f.owners[index], SourceKind: "relationship", SourceID: handle.ID, SourceVersion: handle.Version, DocumentText: text})
-		require.NoError(t, err)
-		if index == 0 {
-			completeSearchDocumentsForTest(t, f.search, f.team, map[string][]float32{document.SearchDocumentID: {0, 1, 0}})
-		}
-	}
-	definition := ontology.Record{ID: uuid.NewString(), Kind: ontology.Topic, Definition: &ontology.Definition{Key: "staff catalog", Label: "Staff catalog"}}
-	f.publication(t, definition, f.assignment(t, definition.ID, handles[1]))
-	contract, err := f.search.GetActiveSearchContract(ctx)
-	require.NoError(t, err)
-	input := RecallRelationshipsInput{TeamID: f.team, SpaceID: f.space, Query: "staff catalog", QueryEmbedding: []float32{1, 0, 0}, ExcludedGroupKeys: []string{}, OrganizationEnabled: true, Limit: 10}
-	batch, err := f.search.ReadRelationshipCandidates(ctx, input, contract, 60)
-	require.NoError(t, err)
-	require.Empty(t, batch.OrganizationDegradation)
-	require.NotEqual(t, "current", batch.SearchState)
-	require.Empty(t, batch.VectorHits)
-	require.Empty(t, batch.ExpansionHits)
-	require.Len(t, batch.OntologyHits, 1)
-	result, err := f.search.RecallRelationships(ctx, input)
-	require.NoError(t, err)
-	require.True(t, result.VectorOmitted)
-	require.Len(t, result.Results, 1)
-	require.Equal(t, handles[1].ID, result.Results[0].RelationshipID)
-	require.Zero(t, result.Results[0].Score)
-
-	var documentID string
-	require.NoError(t, f.rls.WithTeamTx(ctx, f.app, f.team, func(tx *gorm.DB) error {
-		return tx.Raw(`SELECT search_document_id::text FROM search_documents WHERE team_id=?::uuid AND source_kind='relationship' AND source_id=?::uuid`, f.team, handles[1].ID).Scan(&documentID).Error
-	}))
-	completeSearchDocumentsForTest(t, f.search, f.team, map[string][]float32{documentID: {1, 0, 0}})
-	ann := *contract
-	ann.IndexStrategy, ann.AllowExactFallback = "vector_hnsw", false
-	require.NoError(t, f.rls.WithTeamReadOnlyRepeatableTx(ctx, f.app, f.team, func(tx *gorm.DB) error {
-		score := func(ids []string) ([]SearchHit, error) {
-			return searchRecallRelationshipExactVectorSources(ctx, tx, input, &ann, 1, ids)
-		}
-		ordinary, err := score([]string{handles[0].ID})
-		require.NoError(t, err)
-		augmented, err := augmentRecallVectorChannel(ordinary, []SearchHit{{SourceID: handles[1].ID}}, 1, score)
-		require.NoError(t, err)
-		require.Len(t, augmented, 1)
-		require.Equal(t, handles[1].ID, augmented[0].SourceID)
-		_, err = searchRecallRelationshipExactVector(ctx, tx, input, &ann, 1)
-		require.ErrorIs(t, err, ErrSearchContractMismatch, "bounded rescoring must not enable unrestricted exact fallback")
 		return nil
 	}))
 }

@@ -2,11 +2,7 @@ package postgres
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
-	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
-	storage "github.com/markhuangai/dense-mem/internal/storage/postgres"
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
@@ -91,14 +87,12 @@ func purgePrivateMemoryLineageTx(ctx context.Context, tx *gorm.DB, space *domain
 				changed += result.RowsAffected
 			}
 		}
-		// Observations and provider diagnostics can contain quotes from a removed support.
+		// Provider diagnostics can contain exact copies of erased Evidence.
 		for _, statement := range []string{
-			`INSERT INTO private_memory_purge_rows SELECT 'relationship_observations',jsonb_build_array(observation.team_id,observation.observation_id),observation.space_id
-    FROM relationship_observations observation JOIN relationship_evidence_supports support ON support.team_id=observation.team_id AND support.observation_id=observation.observation_id
-    JOIN private_memory_purge_rows target ON target.table_name='relationship_evidence_supports' AND target.row_key=jsonb_build_array(support.team_id,support.support_id) ON CONFLICT DO NOTHING`,
 			`INSERT INTO private_memory_purge_rows SELECT 'semantic_assessments',jsonb_build_array(assessment.team_id,assessment.semantic_assessment_id),assessment.space_id
-    FROM semantic_assessments assessment JOIN relationship_observations observation ON observation.team_id=assessment.team_id AND observation.remember_attempt_id=assessment.attempt_id
-    JOIN private_memory_purge_rows target ON target.table_name='relationship_observations' AND target.row_key=jsonb_build_array(observation.team_id,observation.observation_id) WHERE assessment.space_id IS NOT NULL ON CONFLICT DO NOTHING`,
+ FROM semantic_assessments assessment JOIN evidence_occurrences occurrence ON occurrence.team_id=assessment.team_id AND occurrence.ingest_id=assessment.attempt_id
+ JOIN private_memory_purge_rows target ON target.table_name='evidence_occurrences' AND target.row_key=jsonb_build_array(occurrence.team_id,occurrence.occurrence_id)
+ WHERE assessment.space_id IS NOT NULL ON CONFLICT DO NOTHING`,
 			`INSERT INTO private_memory_purge_rows SELECT 'remember_attempt_diagnostics',jsonb_build_array(diagnostic.team_id,diagnostic.diagnostic_id),diagnostic.space_id
     FROM remember_attempt_diagnostics diagnostic JOIN semantic_assessments assessment ON assessment.team_id=diagnostic.team_id AND assessment.attempt_id=diagnostic.attempt_id
     JOIN private_memory_purge_rows target ON target.table_name='semantic_assessments' AND target.row_key=jsonb_build_array(assessment.team_id,assessment.semantic_assessment_id) WHERE diagnostic.space_id IS NOT NULL ON CONFLICT DO NOTHING`,
@@ -116,16 +110,12 @@ func purgePrivateMemoryLineageTx(ctx context.Context, tx *gorm.DB, space *domain
 			break
 		}
 	}
-	if err := tx.Exec(`CREATE TEMP TABLE private_memory_purge_relationships ON COMMIT DROP AS SELECT DISTINCT support.team_id,support.relationship_id,support.space_id
-  FROM relationship_evidence_supports support JOIN private_memory_purge_rows target ON target.table_name='relationship_evidence_supports' AND target.row_key=jsonb_build_array(support.team_id,support.support_id)`).Error; err != nil {
-		return nil, err
-	}
 	if err := privateMemoryRetryTombstonesTx(tx); err != nil {
 		return nil, err
 	}
 	// Search projections are content-bearing copies even though their source references are polymorphic.
 	if err := tx.Exec(`INSERT INTO private_memory_purge_rows SELECT 'search_documents',jsonb_build_array(document.team_id,document.search_document_id),document.space_id FROM search_documents document
-  JOIN private_memory_purge_rows target ON target.space_id=document.space_id AND target.table_name=CASE document.source_kind WHEN 'evidence' THEN 'evidence_fragments' WHEN 'relationship' THEN 'relationship_records' ELSE '' END AND target.row_key=jsonb_build_array(document.team_id,document.source_id)
+  JOIN private_memory_purge_rows target ON target.space_id=document.space_id AND target.table_name=CASE document.source_kind WHEN 'evidence' THEN 'evidence_fragments' ELSE '' END AND target.row_key=jsonb_build_array(document.team_id,document.source_id)
   ON CONFLICT DO NOTHING`).Error; err != nil {
 		return nil, err
 	}
@@ -175,9 +165,6 @@ func purgePrivateMemoryLineageTx(ctx context.Context, tx *gorm.DB, space *domain
 	}
 
 	if err := tx.Exec(`UPDATE private_memory_migration_records mapping SET purged_at=now() FROM private_memory_purge_rows target WHERE mapping.source_table=target.table_name AND mapping.destination_key=target.row_key AND mapping.destination_space_id=target.space_id`).Error; err != nil {
-		return nil, err
-	}
-	if err := invalidatePrivateLineageRelationshipsTx(tx); err != nil {
 		return nil, err
 	}
 	counts["audit_log"], err = scrubPrivateMemoryLineageAuditTx(ctx, tx, space, originOwner, legacy, destinations)
@@ -258,75 +245,6 @@ func privateMemoryRetryTombstonesTx(tx *gorm.DB) error {
    JOIN private_memory_purge_rows target ON target.table_name=? AND target.row_key=`+key+` WHERE row.idempotency_key<>'' ON CONFLICT DO NOTHING`, entry.Kind, entry.Table).Error; err != nil {
 			return err
 		}
-	}
-	return nil
-}
-
-func invalidatePrivateLineageRelationshipsTx(tx *gorm.DB) error {
-	rows, err := tx.Raw(`SELECT relationship.team_id::text,relationship.relationship_id::text,relationship.owner_profile_id::text,relationship.space_id::text,relationship.space_generation,
-  relationship.status,relationship.version,relationship.support_count,relationship.source_group_count,COALESCE(relationship.identity_alias_of_relationship_id::text,''),
-  relationship.subject_entity_id::text,relationship.predicate_key,COALESCE(relationship.object_entity_id::text,''),COALESCE(relationship.object_value_id::text,''),relationship.polarity,COALESCE(relationship.scope_key,''),relationship.valid_from,relationship.valid_to
-  FROM relationship_records relationship JOIN private_memory_purge_relationships affected USING(team_id,relationship_id) ORDER BY relationship.relationship_id FOR UPDATE OF relationship`).Rows()
-	if err != nil {
-		return err
-	}
-	var records []knowledge.RelationshipRecord
-	for rows.Next() {
-		var record knowledge.RelationshipRecord
-		if err = rows.Scan(&record.TeamID, &record.RelationshipID, &record.OwnerProfileID, &record.SpaceID, &record.SpaceGeneration, &record.Status, &record.Version, &record.SupportCount, &record.SourceGroupCount, &record.IdentityAliasOfID, &record.SubjectEntityID, &record.PredicateKey, &record.ObjectEntityID, &record.ObjectValueID, &record.Polarity, &record.ScopeKey, &record.ValidFrom, &record.ValidTo); err != nil {
-			rows.Close()
-			return err
-		}
-		records = append(records, record)
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return err
-	}
-	for _, record := range records {
-		if err := refreshPrivateRelationshipTx(tx, record, "private supporting memory erased"); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func refreshPrivateRelationshipTx(tx *gorm.DB, record knowledge.RelationshipRecord, reason string) error {
-	counts, err := storage.RelationshipSupportCountsTx(tx.Statement.Context, tx, record.TeamID, record.RelationshipID)
-	if err != nil {
-		return err
-	}
-	next := knowledge.StatusForEffectiveSupport(record.Status, counts.SupportCount)
-	if record.IdentityAliasOfID != "" {
-		next = record.Status
-	}
-	if next != record.Status {
-		if err := tx.Exec(`INSERT INTO relationship_transition_events(team_id,relationship_id,owner_profile_id,from_status,to_status,reason,space_id,space_generation)
-   VALUES(?::uuid,?::uuid,?::uuid,?,?,?,?::uuid,?)`, record.TeamID, record.RelationshipID, record.OwnerProfileID, record.Status, next, reason, record.SpaceID, record.SpaceGeneration).Error; err != nil {
-			return err
-		}
-	}
-	if counts.SupportCount != record.SupportCount || counts.SourceGroupCount != record.SourceGroupCount || next != record.Status {
-		record.Version++
-	}
-	record.Status = next
-	if err := tx.Exec(`UPDATE relationship_records SET status=?,support_count=?,source_group_count=?,version=?,updated_at=now() WHERE team_id=?::uuid AND relationship_id=?::uuid`, next, counts.SupportCount, counts.SourceGroupCount, record.Version, record.TeamID, record.RelationshipID).Error; err != nil {
-		return err
-	}
-	text, err := storage.RelationshipProjectionTextTx(tx.Statement.Context, tx, &record)
-	if err != nil {
-		return err
-	}
-	sum := sha256.Sum256([]byte(text))
-	hash := hex.EncodeToString(sum[:])
-	if err := tx.Exec(`UPDATE search_documents SET source_version=?,document_version=document_version+1,
-   search_state=CASE WHEN ? THEN CASE WHEN document_hash=? AND embedding IS NOT NULL AND projection_format_version=2 THEN 'current' ELSE 'pending' END ELSE 'not_required' END,
-   embedding=CASE WHEN ? AND document_hash=? AND projection_format_version=2 THEN embedding ELSE NULL END,
-   embedding_updated_at=CASE WHEN ? AND document_hash=? AND projection_format_version=2 THEN embedding_updated_at ELSE NULL END,
-   document_text=?,document_hash=?,embedding_error='',updated_at=now()
-   WHERE team_id=?::uuid AND space_id=?::uuid AND source_kind='relationship' AND source_id=?::uuid`, record.Version, next == "active", hash, next == "active", hash, next == "active", hash, text, hash, record.TeamID, record.SpaceID, record.RelationshipID).Error; err != nil {
-		return err
 	}
 	return nil
 }

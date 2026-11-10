@@ -25,7 +25,7 @@ func TestRememberDuplicateBudgetAllocationUsesScopedPostgresCandidates(t *testin
 	teamC := createLedgerTeam(t, adminDB, rls, "duplicate-budget-selection-team-c")
 	ownerC := createLedgerProfile(t, adminDB, rls, teamC, "duplicate-budget-selection-owner-c")
 	sharedSpaceID, sharedGeneration := duplicateTeamSharedSpace(t, adminDB, rls, teamA)
-	repo := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	repo := NewStore(appDB, rls)
 
 	// These candidates are intentionally large enough that the complete set
 	// cannot fit the configured context sub-budget while each item remains

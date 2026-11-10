@@ -428,6 +428,9 @@ func CheckPairRuntimeLifecycle(c PairConfig, side string) error {
 	if err != nil {
 		return err
 	}
+	if release.Mode == PairModeRetainedBaseline {
+		return fmt.Errorf("retained baseline has no executable runtime")
+	}
 	dir, err := runtimeCleanPath(release.Runtime.StateDir)
 	if err != nil {
 		return err

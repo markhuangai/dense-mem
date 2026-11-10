@@ -80,7 +80,7 @@ func (s *Store) Rollback(ctx context.Context, teamID, targetID, key string, expe
 	if found {
 		return replay, nil
 	}
-	return s.commit(ctx, teamID, input, "rollback", actor, hash, "")
+	return s.commit(ctx, teamID, input, "rollback", actor, hash)
 }
 
 func prepareOntologyRollback(tx *gorm.DB, fence scope, input ontology.Publication) (ontology.Publication, error) {

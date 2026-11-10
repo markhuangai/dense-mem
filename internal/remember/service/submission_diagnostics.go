@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
-	"strings"
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	embeddingcontract "github.com/markhuangai/dense-mem/internal/embedding/contract"
@@ -15,7 +14,7 @@ import (
 
 const maxSubmissionDiagnosticIssues = 20
 
-var diagnosticInputPath = regexp.MustCompile(`^/(?:evidence(?:/[0-9]+(?:/(?:content|source_key|source_revision|previous_source_revision))?)?|relationships(?:/[0-9]+(?:/(?:client_comment|ref|subject|object|predicate|known_evidence_ids|correction_target|conflict_context|valid_from|valid_to)(?:/[a-z_]+)*)?)?)$`)
+var diagnosticInputPath = regexp.MustCompile(`^/evidence(?:/[0-9]+(?:/(?:content|source_key|source_revision|previous_source_revision))?)?$`)
 
 var securityDiagnosticMessages = map[string]string{
 	"role_control_spoofing":    "The security check detected text presented as a system or developer instruction.",
@@ -37,24 +36,12 @@ func submissionErrorRemediationForCode(code SubmissionErrorCode, action Submissi
 		return "Submit readable evidence without commands directed at the service, using a new idempotency_key. Preserve the factual meaning. If you dispute the security classification, contact an operator with submission_id and correlation_id."
 	case SubmissionErrorStaleInput:
 		return "Refresh the authorized source revisions and exact references, check that the intended change still applies, then submit the complete updated request with a new idempotency_key."
+	case SubmissionErrorRetiredContract:
+		return "This key belongs to a retired memory contract. Preserve the original receipt; use v3 Evidence-only remember with a new idempotency_key for an intentional new submission."
 	case SubmissionErrorIdempotencyConflict:
 		return "Reuse this idempotency_key only for the original unchanged request. Submit a deliberately changed request with a new idempotency_key."
 	case SubmissionErrorInputBudgetExceeded:
 		return "Reduce or split only the identified caller-controlled input while preserving its meaning, then submit with a new idempotency_key. If the excess is server-owned context, contact an operator."
-	case SubmissionErrorRelationshipVersionStale, SubmissionErrorRelationshipChanged:
-		return "Read the current relationship state, check that your correction still applies, then call correct_relationship with the current version and a new idempotency_key."
-	case SubmissionErrorSupportSetMismatch, SubmissionErrorSupportSetChanged:
-		return "Trace the relationship, retain only effective granted or reinstated evidence supports, and supply their exact evidence IDs and spans with a new idempotency_key."
-	case SubmissionErrorConfirmationExpired, SubmissionErrorPersistentAmbiguity:
-		return "Start correct_relationship again with refreshed state and a new idempotency_key, then use the newly returned candidate or confirmation before it expires."
-	case SubmissionErrorPredicateNotFound, SubmissionErrorPredicateSubjectKindMismatch, SubmissionErrorPredicateObjectKindMismatch:
-		return "Refresh the authorized predicate catalog and choose an active predicate whose subject and object kinds permit this correction; resubmit with a new idempotency_key."
-	case SubmissionErrorEntityNotFound, SubmissionErrorTooManyEntityCandidates:
-		return "Refresh authorized Entity candidates and select an available exact Entity identity before retrying correct_relationship with a new idempotency_key."
-	case SubmissionErrorRelationshipNotActive, SubmissionErrorInactiveRelationshipCollision:
-		return "Trace the current relationship and its lifecycle state. Select an eligible active relationship or ask the operator to review the historical collision before starting a new correction."
-	case SubmissionErrorObjectKindChangeForbidden:
-		return "Keep the corrected object a typed Value. A change from Value to Entity requires a separately supported operation; contact an operator if that change is intended."
 	default:
 		return submissionErrorRemediation(action)
 	}
@@ -84,7 +71,7 @@ func applySubmissionDiagnosticGuidance(result *SubmissionStatusError) {
 		issues, _ := boundedSubmissionDiagnosticIssues(result.Details["issues"])
 		if result.Code == string(SubmissionErrorPolicyRejected) && len(issues) == 0 {
 			result.Message = "The saved result records that this batch was rejected by policy. Its specific cause and affected input location were not retained."
-			result.Remediation = "Review the original evidence and proposals without changing their factual meaning. If the missing detail prevents correction, contact an operator with submission_id and correlation_id. Submit a deliberately changed request with a new idempotency_key."
+			result.Remediation = "Review the original Evidence without changing their factual meaning. If the missing detail prevents correction, contact an operator with submission_id and correlation_id. Submit a deliberately changed request with a new idempotency_key."
 		}
 	case "legacy_details_unavailable":
 		result.Message = boundedStatusErrorText(result.Message+" More specific cause and input-location details were not retained in this result.", 512)
@@ -139,7 +126,7 @@ func diagnosticInputOwner(details map[string]any) string {
 	if statusErrorServerOwned(details) {
 		return "server-owned context"
 	}
-	return "submitted evidence or proposals"
+	return "submitted evidence"
 }
 
 func boundedSubmissionDiagnosticIssues(value any) ([]any, bool) {
@@ -199,9 +186,7 @@ func submissionDiagnosticIssueMessage(code string) string {
 	case "known_evidence_changed":
 		return "Referenced supporting evidence changed or is no longer available in your authorized context."
 	case "exact_reference_changed":
-		return "The submitted exact Entity or relationship reference could not be confirmed in your authorized context."
-	case "correction_target_changed":
-		return "The relationship selected for correction changed before the correction could be applied."
+		return "The submitted Evidence reference could not be confirmed in your authorized context."
 	case "conflict_target_changed":
 		return "The conflict state selected by this request changed before the operation could be applied."
 	}
@@ -222,7 +207,7 @@ func SecurityRejectionFailure(signals []SubmissionSecurityBatchSignal, truncated
 	for _, signal := range signals {
 		path := signal.Path
 		if path == "" {
-			path = "/relationships"
+			path = "/evidence"
 			if signal.Source == SecuritySourceEvidence {
 				path = fmt.Sprintf("/evidence/%d/content", signal.EvidenceIndex)
 			}
@@ -277,12 +262,10 @@ func RememberFailureDetails(err error, phase string) (string, map[string]any) {
 		reason, path string
 	}{
 		{repository.ErrSourceRevisionConflict, "source_revision_changed", "/evidence"},
-		{repository.ErrSubmissionAssessmentKnownEvidenceStale, "known_evidence_changed", "/relationships"},
-		{repository.ErrCorrectionTargetStale, "correction_target_changed", "/relationships"},
-		{repository.ErrConflictContextStale, "conflict_target_changed", "/relationships"},
+		{repository.ErrSubmissionAssessmentKnownEvidenceStale, "known_evidence_changed", "/evidence"},
 		{repository.ErrEvidenceConflictStaleInput, "conflict_target_changed", "/evidence"},
-		{repository.ErrRememberExactReferenceStale, "exact_reference_changed", "/relationships"},
-		{errSubmissionAssessmentStaleInput, "exact_reference_changed", "/relationships"},
+		{repository.ErrRememberExactReferenceStale, "exact_reference_changed", "/evidence"},
+		{errSubmissionAssessmentStaleInput, "exact_reference_changed", "/evidence"},
 		{repository.ErrRememberDuplicateCandidateStale, "known_evidence_changed", "/evidence"},
 	} {
 		if errors.Is(err, condition.cause) {
@@ -340,9 +323,7 @@ func RememberFailureDetails(err error, phase string) (string, map[string]any) {
 }
 
 func NotStoredGuidance(reason string) (string, string) {
-	if reason == "not_supported_by_evidence" {
-		return "The supplied evidence did not establish this proposed relationship, so the relationship was not stored.", "Provide independent evidence that establishes the proposed relationship, or clarify the proposal without changing the evidence's factual meaning. Submit the changed request with a new idempotency_key."
-	}
+
 	code := SubmissionErrorInternalFailure
 	if reason == "submission_policy_rejected" || reason == "security_quarantine" {
 		code = SubmissionErrorPolicyRejected
@@ -397,28 +378,18 @@ func UpgradeRememberResultDiagnostics(status *SubmissionStatusResult) {
 		if item.NextAction != "" {
 			value.Retryable, value.NextAction = item.Retryable, item.NextAction
 		}
-		if item.NextAction == string(TerminalNextActionRetryDreamFeedback) {
-			value.NextAction, value.Remediation = item.NextAction, item.Remediation
-		}
 		status.Errors[index] = value
 	}
 	legacy := legacyRememberDiagnosticError(status)
 	for index, item := range status.Evidence {
 		if item.Disposition == "not_stored" && item.Message == "" {
 			status.Evidence[index].Message, status.Evidence[index].Remediation = NotStoredGuidance(item.Reason)
-			if legacy != nil && item.Reason != "not_supported_by_evidence" {
+			if legacy != nil {
 				status.Evidence[index].Message, status.Evidence[index].Remediation = legacyNotStoredGuidance(item.Reason)
 			}
 		}
 	}
-	for index, item := range status.RelationshipResults {
-		if item.Disposition == "not_stored" && item.Message == "" {
-			status.RelationshipResults[index].Message, status.RelationshipResults[index].Remediation = NotStoredGuidance(item.Reason)
-			if legacy != nil && item.Reason != "not_supported_by_evidence" {
-				status.RelationshipResults[index].Message, status.RelationshipResults[index].Remediation = legacyNotStoredGuidance(item.Reason)
-			}
-		}
-	}
+
 }
 
 func legacyRememberDiagnosticError(status *SubmissionStatusResult) *SubmissionStatusError {
@@ -429,24 +400,6 @@ func legacyRememberDiagnosticError(status *SubmissionStatusResult) *SubmissionSt
 		}
 	}
 	return nil
-}
-
-func staleEntityReferenceFailure(target submissionAssessmentEntityTarget) error {
-	path := target.InputPath
-	if !diagnosticInputPath.MatchString(path) {
-		path = "/relationships"
-	}
-	return &submissionDiagnosticFailure{cause: errSubmissionAssessmentStaleInput, reason: "exact_reference_changed",
-		details: map[string]any{"component": "remember.entity_catalog", "client_controlled": true,
-			"issues": []any{map[string]any{"path": path, "code": "exact_reference_changed"}}}}
-}
-
-func diagnosticProposalPath(path string) string {
-	path = strings.Replace(path, "/relationship_hints", "/relationships", 1)
-	if diagnosticInputPath.MatchString(path) {
-		return path
-	}
-	return "/relationships"
 }
 
 func diagnosticArrayPath(path string, index int) string { return path + "/" + strconv.Itoa(index) }

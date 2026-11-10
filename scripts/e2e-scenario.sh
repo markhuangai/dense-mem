@@ -58,18 +58,13 @@ if [[ -n "${DENSE_MEM_E2E_OAUTH_FIXTURE_TOKEN:-}" ]]; then
     wait_for_url "Entra OIDC mock" "${DENSE_MEM_ENTRA_MOCK_URL%/}/.well-known/openid-configuration" "${NODE_EXTRA_CA_CERTS:-}"
   fi
 fi
-if [[ "$SCENARIO" == "conflict" ]]; then
-  conflict_health_url="${DENSE_MEM_E2E_CONFLICT_PROVIDER_URL%/}"
-  conflict_health_url="${conflict_health_url%/v1}/health"
-  wait_for_url "conflict provider" "$conflict_health_url"
-elif [[ "$SCENARIO" == "langchain_retriever" || "$SCENARIO" == "google_adk_memory" || "$SCENARIO" == "session_ingest" || "$SCENARIO" == "python_client" || "$SCENARIO" == "mcp_transport_cancellation" || "$SCENARIO" == "synchronous_write" || "$SCENARIO" == "decision_providers" || "$SCENARIO" == "synchronous_write_primitives" || "$SCENARIO" == "synchronous_write_telemetry_disabled" ]]; then
+if [[ "$SCENARIO" == "langchain_retriever" || "$SCENARIO" == "google_adk_memory" || "$SCENARIO" == "session_ingest" || "$SCENARIO" == "python_client" || "$SCENARIO" == "mcp_transport_cancellation" || "$SCENARIO" == "synchronous_write" || "$SCENARIO" == "decision_providers" || "$SCENARIO" == "synchronous_write_primitives" || "$SCENARIO" == "synchronous_write_telemetry_disabled" ]]; then
   wait_for_url "synchronous-write provider" "http://synchronous-write-provider:8787/health"
 fi
 
 export DENSE_MEM_E2E_COMPOSE_PROJECT="${DENSE_MEM_E2E_COMPOSE_PROJECT:-}"
 export DENSE_MEM_E2E_COMPOSE_FILE="${DENSE_MEM_E2E_COMPOSE_FILE:-}"
 export DENSE_MEM_E2E_COMPOSE_OVERLAY_FILE="${DENSE_MEM_E2E_COMPOSE_OVERLAY_FILE:-}"
-export DENSE_MEM_E2E_CONFLICT_PROVIDER_URL="${DENSE_MEM_E2E_CONFLICT_PROVIDER_URL:-http://conflict-provider:8081/v1}"
 export DENSE_MEM_E2E_OAUTH_INTERNAL_URL="${DENSE_MEM_E2E_OAUTH_INTERNAL_URL:-https://oauth-provider-mock:9444}"
 export DENSE_MEM_E2E_SSO_SESSION_TOKEN="${DENSE_MEM_E2E_SSO_SESSION_TOKEN:-oauth-session-${DENSE_MEM_E2E_RUN_ID:-unknown}}"
 export DENSE_MEM_E2E_SSO_CSRF_TOKEN="${DENSE_MEM_E2E_SSO_CSRF_TOKEN:-oauth-csrf-${DENSE_MEM_E2E_RUN_ID:-unknown}}"
@@ -136,7 +131,6 @@ run_playwright() {
       [[ -n "$expired_invocation_id" ]] || fail "diagnostics expired invocation handoff is missing"
       export DENSE_MEM_E2E_DIAGNOSTIC_EXPIRED_INVOCATION_ID="$expired_invocation_id"
       ;;
-    full) [[ -n "${DENSE_MEM_E2E_DREAM_STATEMENT:-}" ]] || fail "Dream Playwright handoff is missing" ;;
   esac
   local -a specs=("tests-compose/search-convergence.spec.ts" "tests-compose/compose-portal.spec.ts")
   case "$SCENARIO" in
@@ -144,8 +138,6 @@ run_playwright() {
     synchronous_write) specs=("tests-compose/remember-attempts.spec.ts") ;;
     ontology_management) specs=("tests-compose/ontology-management.spec.ts") ;;
     ontology_organization) specs=("tests-compose/ontology-maintenance.spec.ts") ;;
-    community) specs=("tests-compose/community-recall.spec.ts") ;;
-    conflict_queue) specs=("tests-compose/compose-conflict-queue.spec.ts") ;;
     mcp_oauth) specs=("tests-compose/oauth-team-resource.spec.ts") ;;
   esac
   if [[ "$SCENARIO" == "synchronous_write" ]]; then
@@ -199,9 +191,6 @@ case "$SCENARIO" in
     DENSE_MEM_E2E_TELEMETRY_DISABLED=1 run_node_case tests/uat/synchronous_write/runner.mjs
     ;;
   identity_cleanup) run_node_case tests/uat/identity_cleanup_e2e.mjs ;;
-  community) run_node_case tests/uat/community_recall_mcp_e2e.mjs ;;
-  conflict) run_node_case tests/uat/conflict_mcp_e2e.mjs ;;
-  conflict_queue) run_node_case tests/uat/conflict_queue_e2e.mjs ;;
   mcp_sdk_parity) run_node_case tests/uat/mcp_sdk_parity_e2e.mjs ;;
   mcp_sdk_transport) run_node_case tests/uat/mcp_sdk_transport_e2e.mjs ;;
   security_runtime) run_node_case tests/uat/security_runtime_e2e.mjs ;;
@@ -214,18 +203,6 @@ case "$SCENARIO" in
     run_node_case tests/uat/memory_spaces_e2e.mjs
     ;;
   full)
-    dreaming_output="$(run_node_case tests/uat/team_dreaming_e2e.mjs)" || fail "team-dreaming scenario failed"
-    printf '%s\n' "${dreaming_output}"
-    DENSE_MEM_E2E_DREAM_STATEMENT="$(printf '%s' "${dreaming_output}" | parse_json_root_field statement)" || fail "team-dreaming scenario did not produce the Dream Playwright handoff"
-    DENSE_MEM_E2E_EVIDENCE_DREAM_ID="$(printf '%s' "${dreaming_output}" | parse_json_root_field evidence_hypothesis_id)" || fail "team-dreaming scenario did not produce the evidence Dream handoff"
-    DENSE_MEM_E2E_EVIDENCE_DREAM_STATEMENT="$(printf '%s' "${dreaming_output}" | parse_json_root_field evidence_dream_statement)" || fail "team-dreaming scenario did not produce the evidence statement handoff"
-    DENSE_MEM_E2E_EVIDENCE_TARGET_ID="$(printf '%s' "${dreaming_output}" | parse_json_root_field evidence_target_id)" || fail "team-dreaming scenario did not produce the evidence target handoff"
-    DENSE_MEM_E2E_EVIDENCE_TARGET_CONTENT="$(printf '%s' "${dreaming_output}" | parse_json_root_field evidence_target_content)" || fail "team-dreaming scenario did not produce the evidence content handoff"
-    DENSE_MEM_E2E_EVIDENCE_FAILURE_RUN_ID="$(printf '%s' "${dreaming_output}" | parse_json_root_field evidence_failure_run_id)" || fail "team-dreaming scenario did not produce the adverse evidence run handoff"
-    DENSE_MEM_E2E_EVIDENCE_FAILURE_TEAM_NAME="$(printf '%s' "${dreaming_output}" | parse_json_root_field evidence_failure_team_name)" || fail "team-dreaming scenario did not produce the adverse evidence team handoff"
-    export DENSE_MEM_E2E_DREAM_STATEMENT
-    export DENSE_MEM_E2E_EVIDENCE_DREAM_ID DENSE_MEM_E2E_EVIDENCE_DREAM_STATEMENT
-    export DENSE_MEM_E2E_EVIDENCE_TARGET_ID DENSE_MEM_E2E_EVIDENCE_TARGET_CONTENT DENSE_MEM_E2E_EVIDENCE_FAILURE_RUN_ID DENSE_MEM_E2E_EVIDENCE_FAILURE_TEAM_NAME
     run_node_case tests/uat/telemetry_mcp_e2e.mjs
     ;;
   *) fail "unsupported scenario: ${SCENARIO}" ;;
@@ -239,7 +216,7 @@ if [[ "$SCENARIO" == "mcp_oauth" && "${DENSE_MEM_E2E_RUN_PLAYWRIGHT:-0}" == "1" 
 fi
 
 case "$SCENARIO" in
-  mcp_oauth|community|conflict_queue|synchronous_write|decision_providers|ontology_organization|ontology_management|full) run_playwright ;;
+  mcp_oauth|synchronous_write|decision_providers|ontology_organization|ontology_management|full) run_playwright ;;
 esac
 
 log "completed"

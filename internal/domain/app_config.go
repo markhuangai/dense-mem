@@ -17,16 +17,6 @@ const (
 	AppConfigSSOCookieSecure               = "SSO_COOKIE_SECURE"
 	AppConfigMCPPublicBaseURL              = "MCP_PUBLIC_BASE_URL"
 
-	AppConfigDreamingEnabled        = "DREAMING_ENABLED"
-	AppConfigDreamingForceEnabled   = "DREAMING_FORCE_ENABLED"
-	AppConfigDreamingStartTimeLocal = "DREAMING_START_TIME_LOCAL"
-	AppConfigDreamingMaxOutputs     = "DREAMING_MAX_OUTPUTS"
-
-	AppConfigCommunityDetectionEnabled        = "COMMUNITY_DETECTION_ENABLED"
-	AppConfigCommunityDetectionStartTimeLocal = "COMMUNITY_DETECTION_START_TIME_LOCAL"
-	AppConfigCommunityDetectionMaxConcurrency = "COMMUNITY_DETECTION_MAX_CONCURRENCY"
-	AppConfigCommunityDetectionJitterSeconds  = "COMMUNITY_DETECTION_JITTER_SECONDS"
-
 	AppConfigOperationLogRetentionDays  = "OPERATION_LOG_RETENTION_DAYS"
 	AppConfigPrivateMemoryRetentionDays = "PRIVATE_MEMORY_RETENTION_DAYS"
 

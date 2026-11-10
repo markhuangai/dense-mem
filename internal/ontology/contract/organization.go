@@ -14,7 +14,7 @@ import (
 const (
 	MaxOrganizationSources    = 20
 	MaxVocabularyCandidates   = 20
-	OrganizationPolicyVersion = "ontology-organization-v2"
+	OrganizationPolicyVersion = "ontology-evidence-organization-v3"
 )
 
 type OrganizationInput struct {
@@ -128,52 +128,16 @@ func OrganizationRecordID(teamID string, kind Kind, key string) string {
 func OrganizationClassification(source SourceSnapshot, records, candidates []RecordView) (locked, preferred string) {
 	key := SourceKey(source.SourceHandle)
 	for _, view := range records {
-		if !view.Retired && view.Override != nil && view.Override.Action == SetClassification && SourceKey(view.Override.Members[0]) == key {
+		if !view.Retired && view.Override != nil && view.Override.Action == SetClassification && len(view.Override.Members) == 1 && SourceKey(view.Override.Members[0]) == key {
 			return view.Override.DefinitionID, ""
 		}
 	}
-	automatic := func(id string) (string, string) {
-		if source.Kind == EntitySource || source.Kind == PredicateSource {
-			return "", id
-		}
-		return id, ""
-	}
 	for _, view := range records {
 		if view.Current && view.Assignment != nil && SourceKey(view.Assignment.Source) == key {
-			return automatic(view.Assignment.DefinitionID)
-		}
-	}
-	name := ""
-	if source.Kind == PredicateSource {
-		name = NormalizeName(source.ID)
-	}
-	if source.Kind == EntitySource {
-		name = NormalizeName(source.EntityKind)
-	}
-	if name != "" {
-		for _, view := range candidates {
-			if !view.Current || view.Definition == nil {
-				continue
-			}
-			for _, candidate := range DefinitionNames(view.Record) {
-				if candidate == name && ((source.Kind == EntitySource && view.Kind == EntityClass && view.Definition.BaseEntityKind == source.EntityKind) || (source.Kind == PredicateSource && view.Kind == PredicateConcept)) {
-					return automatic(view.ID)
-				}
-			}
+			return view.Assignment.DefinitionID, ""
 		}
 	}
 	return "", ""
-}
-
-func OrganizationHierarchyEditable(view RecordView, records []RecordView) bool {
-	if !view.Current || view.Retired || view.Definition == nil || (view.Kind != EntityClass && view.Kind != PredicateConcept) {
-		return false
-	}
-	catalog := make(map[string]Record, len(records))
-	for _, record := range records {
-		catalog[record.ID] = record.Record
-	}
-	return CheckOverrides(view.Record, catalog) == nil
 }
 
 func OrganizationDependencies(context OrganizationContext) ([]RevisionRef, error) {
@@ -200,7 +164,7 @@ func VocabularyQuery(sources []SourceSnapshot) (string, []string) {
 	seen := map[string]bool{}
 	var words []string
 	for _, source := range sources {
-		for _, text := range []string{source.ID, source.EntityKind, source.State["content"], source.State["names"], source.State["predicate"]} {
+		for _, text := range []string{source.ID, source.State["content"]} {
 			for _, word := range strings.FieldsFunc(strings.ToLower(text), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsNumber(r) }) {
 				if len(words) < 64 && len(word) <= 128 && !seen[word] {
 					words = append(words, word)

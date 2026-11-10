@@ -1,6 +1,5 @@
 import { navigate, openNavigation, confirmAction, expectPageContained } from "../tests-support/portal";
 import { expect, type APIRequestContext, type Locator, type Page, test } from "@playwright/test";
-import "./graph-views";
 import "./portal-state";
 
 const controlUrl = requiredEnv("DENSE_MEM_CONTROL_URL").replace(/\/$/, "");
@@ -9,16 +8,16 @@ const controlToken = requiredEnv("DENSE_MEM_CONTROL_TOKEN");
 const seedTeamId = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
 const seedTeamName = requiredEnv("DENSE_MEM_E2E_TEAM_NAME");
 const seedApiKey = requiredEnv("DENSE_MEM_E2E_API_KEY");
-const dreamStatement = requiredEnv("DENSE_MEM_E2E_DREAM_STATEMENT");
-const evidenceDreamStatement = requiredEnv("DENSE_MEM_E2E_EVIDENCE_DREAM_STATEMENT");
-const evidenceTargetContent = requiredEnv("DENSE_MEM_E2E_EVIDENCE_TARGET_CONTENT");
-const evidenceFailureTeamName = requiredEnv("DENSE_MEM_E2E_EVIDENCE_FAILURE_TEAM_NAME");
+
+
+
+
 const prometheusUrl = requiredEnv("DENSE_MEM_PROMETHEUS_URL").replace(/\/$/, "");
-const graphAnchorEntityId = process.env.DENSE_MEM_E2E_GRAPH_ANCHOR_ENTITY_ID ?? "";
-const graphOriginalObjectEntityId = process.env.DENSE_MEM_E2E_GRAPH_ORIGINAL_OBJECT_ENTITY_ID ?? "";
-const graphCorrectedObjectEntityId = process.env.DENSE_MEM_E2E_GRAPH_CORRECTED_OBJECT_ENTITY_ID ?? "";
-const graphOriginalRelationshipId = process.env.DENSE_MEM_E2E_GRAPH_ORIGINAL_RELATIONSHIP_ID ?? "";
-const graphSuccessorRelationshipId = process.env.DENSE_MEM_E2E_GRAPH_SUCCESSOR_RELATIONSHIP_ID ?? "";
+
+
+
+
+
 
 type CreatedCredential = {
   api_key: string;
@@ -144,58 +143,11 @@ test("control panel keeps security settings display-only against compose", async
   await expectNoShellOverlap(page);
 });
 
-test("control panel loads team Dreams without re-evaluation", async ({ page }) => {
-  const refreshRequests: string[] = [];
-  page.on("request", (request) => {
-    if (new URL(request.url()).pathname === `/control/api/teams/${seedTeamId}/dreams/refresh`) {
-      refreshRequests.push(request.url());
-    }
-  });
 
-  await openControlPanel(page);
-  await page.getByRole("button", { name: new RegExp(escapeRegExp(seedTeamName)) }).click();
-  await navigate(page, "Dream history");
 
-  await expect(page.getByRole("heading", { name: "Dream Outputs" })).toBeVisible();
-  await expect(page.getByText(dreamStatement, { exact: true })).toBeVisible();
-  await expect(page.getByLabel("Dream history status")).toContainText("Retired");
-  const runRow = page.locator(".dream-runs-table tbody tr").first();
-  await runRow.getByRole("button", { name: "Inspect" }).click();
-  await expect(page.getByRole("region", { name: "Dream diagnostics" })).toBeVisible();
-  const captureButton = page.getByRole("button", { name: "View capture" }).first();
-  if (await captureButton.count()) {
-    await captureButton.click();
-    await expect(page.getByText("Selected capture")).toBeVisible();
-  }
-  await expect(page.getByText(/authenticated actor context is required/i)).toHaveCount(0);
-  expect(refreshRequests).toEqual([]);
-});
 
-test("control panel renders historical discovery citations and lane output", async ({ page }) => {
-  await openControlPanel(page);
-  await page.getByRole("button", { name: new RegExp(escapeRegExp(seedTeamName)) }).click();
-  await navigate(page, "Dream history");
 
-  const dreamRow = page.locator(".dreams-table tbody tr").filter({ hasText: evidenceDreamStatement });
-  await expect(dreamRow).toBeVisible();
-  await expect(dreamRow).toContainText("1 cited excerpt");
-  await dreamRow.getByRole("button", { name: `Evidence used for ${evidenceDreamStatement}` }).click();
-  await expect(page.getByRole("tooltip").filter({ hasText: evidenceTargetContent })).toBeVisible();
 
-  const evidenceRun = page.locator(".dream-runs-table tbody tr").filter({ hasText: "Evidence discovery stored" });
-  await expect(evidenceRun).toHaveCount(1);
-  await expect(evidenceRun).toContainText("Evidence discovery stored");
-});
-
-test("control panel surfaces a historical failed discovery run", async ({ page }) => {
-  await openControlPanel(page);
-  await page.getByRole("button", { name: new RegExp(escapeRegExp(evidenceFailureTeamName)) }).click();
-  await navigate(page, "Dream history");
-
-  const failedRun = page.locator(".dream-runs-table tbody tr").filter({ hasText: "Evidence discovery" }).filter({ hasText: "failed" });
-  await expect(failedRun).toHaveCount(1);
-  await expect(failedRun).toContainText("Provider call failed");
-});
 
 test("Prometheus telemetry remains available without portal dashboards", async ({ page, request }) => {
   test.setTimeout(150_000);
@@ -211,7 +163,7 @@ test("Prometheus telemetry remains available without portal dashboards", async (
   expect(telemetry.data?.available).toBe(true);
   expect(telemetry.data?.scope?.type).toBe("system");
   expect(telemetryLabels(telemetry.data?.windowed_cards)).toContain("HTTP requests");
-  expect(telemetryLabels(telemetry.data?.current_cards)).toContain("Relationships: active");
+  expect(telemetry.data?.current_cards).toEqual([]);
   assertTelemetrySeries(telemetry);
 
   await openControlPanel(page);
@@ -245,7 +197,6 @@ test("MCP supersedes and retracts caller-owned evidence against compose", async 
         content: originalContent,
         source_type: "manual",
       }],
-      relationships: [securityRelationship(originalContent, `${runID}:original-relationship`)],
     },
   }));
 	expect(original.processing_state).toBe("completed");
@@ -263,7 +214,6 @@ test("MCP supersedes and retracts caller-owned evidence against compose", async 
         source_type: "manual",
         supersedes_evidence_ids: [originalEvidenceID],
       }],
-      relationships: [securityRelationship(replacementContent, `${runID}:replacement-relationship`)],
     },
   }));
 	expect(replacement.processing_state, JSON.stringify(replacement)).toBe("completed");
@@ -408,11 +358,6 @@ test("user portal logs in with a real API key and shows only that credential", a
   await expect(page.getByLabel("Knowledge explorer")).toBeVisible();
   await expect(page.getByText("No recall results")).toBeVisible();
 
-  await navigate(page, "Graph");
-  await expect(page.getByLabel("Knowledge graph")).toBeVisible();
-  await page.getByRole("button", { name: "Open details", exact: true }).click();
-  await expect(page.getByLabel("Graph totals")).toContainText(/Nodes\s*[1-9]/);
-
   await expect(page.getByRole("link", { name: "Dream history" })).toHaveCount(0);
 });
 
@@ -511,53 +456,7 @@ test("control Logs renders and inspects the source-less readiness record", async
   await expectPageContained(page);
 });
 
-if (graphAnchorEntityId && graphOriginalObjectEntityId && graphCorrectedObjectEntityId && graphOriginalRelationshipId && graphSuccessorRelationshipId) {
-test("user portal renders the corrected live graph with depth five and an uncapped limit", async ({ page }) => {
-  test.skip(!graphAnchorEntityId || !graphOriginalObjectEntityId || !graphCorrectedObjectEntityId || !graphOriginalRelationshipId || !graphSuccessorRelationshipId, "terminal graph fixture is not seeded for this scenario");
-  await openUserPortal(page, seedApiKey);
-  await navigate(page, "Graph");
 
-  await page.getByRole("button", { name: "Graph controls", exact: true }).click();
-  const controls = page.getByLabel("Graph controls", { exact: true });
-  await expect(controls.getByLabel("Relationship limit")).toHaveValue("80");
-  await expect(controls.getByLabel("Depth")).toHaveValue("2");
-  await expect(controls.getByLabel("Depth")).toHaveAttribute("max", "5");
-  await controls.getByRole("button", { name: "Local" }).click();
-  await controls.getByLabel("Anchor ID").fill(graphAnchorEntityId);
-  await controls.getByLabel("Depth").focus();
-  await controls.getByLabel("Depth").press("End");
-  await expect(controls.getByLabel("Depth")).toHaveValue("5");
-  await controls.getByLabel("Relationship limit").fill("181");
-
-  const graphResponsePromise = page.waitForResponse((response) => {
-    const url = new URL(response.url());
-    return url.pathname === "/ui/api/graph" && url.searchParams.get("depth") === "5" && url.searchParams.get("limit") === "181";
-  });
-  await controls.getByRole("button", { name: "Refresh" }).click();
-  const graphResponse = await graphResponsePromise;
-  expect(graphResponse.status()).toBe(200);
-  expect(graphResponse.headers()["cache-control"]).toBe("no-store");
-  const graph = (await graphResponse.json() as {
-    data: {
-      depth: number;
-      limit: number;
-      nodes: Array<{ id: string }>;
-      edges: Array<{ id: string }>;
-    };
-  }).data;
-  expect(graph.depth).toBe(5);
-  expect(graph.limit).toBe(181);
-  expect(graph.nodes.map((node) => node.id)).toContain(graphCorrectedObjectEntityId);
-  expect(graph.nodes.map((node) => node.id)).not.toContain(graphOriginalObjectEntityId);
-  expect(graph.edges.map((edge) => edge.id)).toContain(graphSuccessorRelationshipId);
-  expect(graph.edges.map((edge) => edge.id)).not.toContain(graphOriginalRelationshipId);
-  await page.keyboard.press("Escape");
-  await page.getByRole("button", { name: "Open details", exact: true }).click();
-  await expect(page.getByLabel("Graph totals")).toContainText(new RegExp(`Nodes\\s*${graph.nodes.length}`));
-  await expect(page.getByLabel("Graph totals")).toContainText(new RegExp(`Edges\\s*${graph.edges.length}`));
-	await expect(page.locator(".graph-canvas canvas").first()).toBeVisible();
-});
-}
 
 test("read-only user key cannot regenerate itself", async ({ page, request }, testInfo) => {
   const readOnly = await createTeamCredential(request, uniqueName("Read only", testInfo), ["read"]);
@@ -838,26 +737,7 @@ function requiredString(value: Record<string, unknown>, field: string) {
   return result;
 }
 
-function securityRelationship(content: string, ref: string) {
-  return {
-    ref,
-    subject: {
-      name: "deployment",
-      entity_kind: "concept",
-    },
-    predicate: {
-      proposed_key: "protects",
-    },
-    object: {
-      entity: {
-        name: "prompt",
-        entity_kind: "concept",
-      },
-    },
-    polarity: "+",
-    evidence_indices: [0],
-  };
-}
+
 
 function assertTelemetrySeries(body: TelemetryResponse) {
 	const series = body.data?.series;

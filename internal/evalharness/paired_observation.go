@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -80,12 +79,12 @@ func DecodePairObservation(release PairRelease, snapshot PairNativeSnapshot, fre
 	}
 	o.ObservedAt, o.Scope = db.ObservedAt, db.Scope
 	o.SourceHash, o.CanonicalHash, o.Imports = db.SourceHash, db.CanonicalHash, db.Imports
+	if release.Mode == PairModeRetainedBaseline {
+		return o, fmt.Errorf("retained baseline is offline only")
+	}
 	for _, row := range db.Imports {
-		if row.ContractVersion == "dense-mem.v2.6.3" && !pairLegacyRelease(release) {
-			return o, fmt.Errorf("legacy import contract does not match the pinned runtime")
-		}
-		if pairLegacyRelease(release) && row.ContractVersion != "" && row.ContractVersion != "dense-mem.v2.6.3" {
-			return o, fmt.Errorf("pinned baseline import contract differs")
+		if row.ContractVersion != "dense-mem.v3.0.0" {
+			return o, fmt.Errorf("import contract does not match the Evidence-only runtime")
 		}
 	}
 	if err := requirePairFields(snapshot.Search, "status", "expected_documents", "current_documents", "drifted_documents"); err != nil {
@@ -114,13 +113,13 @@ func DecodePairObservation(release PairRelease, snapshot PairNativeSnapshot, fre
 		o.CoverageComplete, o.ProjectionCoverageComplete = true, true
 		return o, nil
 	}
-	if release.Protocol != "adr0014" {
+	if release.Protocol != PairModeEvidenceOnlyV5 {
 		return o, fmt.Errorf("legacy processing remains owned by its recorded workflow")
 	}
 	if err := requirePairFields(snapshot.Ontology, "observed_at", "enabled", "paused", "discovery_complete", "coverage_complete", "counts.eligible", "counts.organized", "counts.pending", "counts.failed", "counts.ambiguous", "active_work", "usage.attempts", "usage.unreconciled_attempts", "usage.unavailable_usage_attempts", "usage.partial_usage_attempts", "usage.reported_input_tokens", "usage.reported_output_tokens", "usage.reported_total_tokens", "historical_usage"); err != nil {
 		return o, err
 	}
-	if err := requirePairFields(snapshot.Database, "active_batches", "active_preparations", "active_projections", "unreconciled_attempts", "budget_deferred", "foreign_work", "provider_attempts"); err != nil {
+	if err := requirePairFields(snapshot.Database, "active_batches", "active_preparations", "unreconciled_attempts", "budget_deferred", "foreign_work", "provider_attempts"); err != nil {
 		return o, err
 	}
 	var status ontology.MaintenanceStatus
@@ -133,41 +132,11 @@ func DecodePairObservation(release PairRelease, snapshot PairNativeSnapshot, fre
 	if status.ConfigurationError != "" && !fresh && !preparing {
 		return o, fmt.Errorf("native ontology configuration is invalid")
 	}
-	if preparing {
-		if err := requirePairFields(snapshot.Community, "legacy_processing_retired", "effective_config.enabled"); err != nil {
-			return o, err
-		}
-		var disabled struct {
-			Retired bool                   `json:"legacy_processing_retired"`
-			Config  struct{ Enabled bool } `json:"effective_config"`
-		}
-		if err := json.Unmarshal(snapshot.Community, &disabled); err != nil {
-			return o, err
-		}
-		if !disabled.Retired || disabled.Config.Enabled {
-			return o, fmt.Errorf("empty runtime preparation requires disabled native community status")
-		}
-	} else if err := requirePairFields(snapshot.Community, "projection_coverage.pending_topics", "projection_coverage.stale_topics", "projection_coverage.failed_topics", "projection_coverage.coverage_complete"); err != nil {
-		return o, err
-	}
-	var community struct {
-		Coverage struct {
-			Pending  int64 `json:"pending_topics"`
-			Stale    int64 `json:"stale_topics"`
-			Failed   int64 `json:"failed_topics"`
-			Complete bool  `json:"coverage_complete"`
-		} `json:"projection_coverage"`
-	}
-	if err := json.Unmarshal(snapshot.Community, &community); err != nil {
-		return o, err
-	}
 	o.Enabled, o.Paused = status.Enabled, status.Paused
 	o.DiscoveryComplete, o.CoverageComplete = status.DiscoveryComplete, status.CoverageComplete
 	o.Eligible, o.Organized = status.Counts.Eligible, status.Counts.Organized
 	o.Pending, o.Failed, o.Ambiguous = status.Counts.Pending, status.Counts.Failed, status.Counts.Ambiguous
-	o.ActiveWork, o.ActiveBatches, o.ActivePreparations, o.ActiveProjections = int64(status.ActiveWork), db.ActiveBatches, db.ActivePreparations, db.ActiveProjections
-	o.PendingProjections, o.FailedProjections = community.Coverage.Pending+community.Coverage.Stale, community.Coverage.Failed
-	o.ProjectionCoverageComplete = community.Coverage.Complete
+	o.ActiveWork, o.ActiveBatches, o.ActivePreparations = int64(status.ActiveWork), db.ActiveBatches, db.ActivePreparations
 	o.Usage, o.HistoricalUsage = pairUsage(status.Usage), pairUsage(status.HistoricalUsage)
 	o.Usage.Unreconciled = max(o.Usage.Unreconciled, db.Unreconciled)
 	o.BudgetDeferred, o.ProviderAttempts = db.BudgetDeferred, db.ProviderAttempts
@@ -309,6 +278,10 @@ func VerifyPairContainers(release PairRelease, raw []byte) error {
 }
 
 func VerifyPairSession(release PairRelease, raw []byte) error {
+	if release.Mode == PairModeRetainedBaseline {
+		return fmt.Errorf("retained baseline is offline only")
+	}
+
 	var session struct {
 		Data struct {
 			Team struct {
@@ -340,19 +313,10 @@ func VerifyPairSession(release PairRelease, raw []byte) error {
 		return fmt.Errorf("credential does not authenticate the prepared team with shared write access")
 	}
 	sharedWrite := s.MemoryAccess != nil && s.MemoryAccess.Shared.Write
-	if pairLegacyRelease(release) {
-		sharedWrite = s.MemoryAccess == nil && s.Membership.TeamID == release.Scope.TeamID &&
-			slices.Contains(s.Membership.Grants, "write") && slices.Contains(s.Credential.Scopes, "write") &&
-			s.Credential.MemoryBinding == "shared_only" && s.Credential.MemorySpaceKind == "team_shared"
-	}
 	if !sharedWrite {
 		return fmt.Errorf("credential does not authenticate the prepared team with shared write access")
 	}
 	return nil
-}
-
-func pairLegacyRelease(release PairRelease) bool {
-	return release.Protocol == "none" && release.Release == "v2.6.5" && release.SourceRevision == "49ba9d36acaf19bde5a8ddbe7552fd04621d19bd"
 }
 
 func VerifyPairProtocol(release PairRelease, status int, body []byte) error {
@@ -362,7 +326,7 @@ func VerifyPairProtocol(release PairRelease, status int, body []byte) error {
 		}
 		return nil
 	}
-	if release.Protocol != "adr0014" || status != 200 {
+	if release.Protocol != PairModeEvidenceOnlyV5 || status != 200 {
 		return fmt.Errorf("prepared runtime does not expose its declared readiness protocol")
 	}
 	var response struct {

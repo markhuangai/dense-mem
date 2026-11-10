@@ -30,8 +30,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/session/extraction"
 	sessionservice "github.com/markhuangai/dense-mem/internal/session/service"
 	storage "github.com/markhuangai/dense-mem/internal/storage/postgres"
-	tracecontract "github.com/markhuangai/dense-mem/internal/trace/contract"
-	tracepostgres "github.com/markhuangai/dense-mem/internal/trace/postgres"
 )
 
 type privateMigrationFixture struct {
@@ -274,7 +272,7 @@ func TestPrivateMigrationFingerprintResumeHandlesAndCopiedErasure(t *testing.T) 
 	}))
 	keyA := f.ownerA
 	aCtx := requestctx.WithActor(ctx, requestctx.Actor{TeamID: f.team, IdentityID: f.ownerA, MembershipID: f.memberA, OwnerID: f.ownerA, CredentialID: &keyA, Grants: []string{"read", "write"}, AllowedSpaces: []domain.MemorySpaceAccess{{ID: spaceA, Kind: domain.MemorySpacePrivate, Generation: 1}}})
-	api := remember.NewService(remember.Dependencies{Synchronous: processor.NewSynchronousProcessor(processor.ProcessorDependencies{Ledger: knowledgepostgres.NewStore(app, f.rls, knowledgepostgres.ConflictRuntimeConfig{})})})
+	api := remember.NewService(remember.Dependencies{Synchronous: processor.NewSynchronousProcessor(processor.ProcessorDependencies{Ledger: knowledgepostgres.NewStore(app, f.rls)})})
 	_, err = api.Remember(aCtx, remember.RememberRequest{IdempotencyKey: "legacy:" + f.ingestA.String()})
 	require.ErrorIs(t, err, domain.ErrMemoryTargetRequired, "same-version historical receipts cannot bypass required target validation")
 	require.NoError(t, f.rls.WithSystemTx(ctx, f.db, func(tx *gorm.DB) error {
@@ -283,7 +281,8 @@ func TestPrivateMigrationFingerprintResumeHandlesAndCopiedErasure(t *testing.T) 
 			return err
 		}
 		require.Equal(t, "unchanged-targetless-hash", hash)
-		require.JSONEq(t, `{"contract_version":"dense-mem.v2.7.0","processing_state":"completed","submission_kind":"remember"}`, receipt)
+		require.Contains(t, receipt, `"processing_state": "completed"`)
+		require.Contains(t, receipt, `"contract_version": "dense-mem.v2.7.0"`)
 		if err := tx.Raw(`SELECT convert_from(request_bytes,'UTF8') FROM remember_attempt_diagnostics WHERE team_id=? AND attempt_id=?`, f.team, f.ingestA).Row().Scan(&request); err != nil {
 			return err
 		}
@@ -308,10 +307,6 @@ func TestPrivateMigrationFingerprintResumeHandlesAndCopiedErasure(t *testing.T) 
 			return err
 		}
 		require.Equal(t, 1, count, "only the necessary copied support is visible")
-		if err := tx.Raw(`SELECT support_count FROM relationship_records WHERE team_id=? AND relationship_id=?`, f.team, f.relationship).Row().Scan(&count); err != nil {
-			return err
-		}
-		require.Equal(t, 1, count, "copies must not inflate corroboration")
 		return nil
 	}))
 	func() {
@@ -336,7 +331,7 @@ func TestPrivateMigrationFingerprintResumeHandlesAndCopiedErasure(t *testing.T) 
 		require.NoError(t, <-locked)
 		purgeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
-		deleted, err := knowledgepostgres.NewStore(app, f.rls, knowledgepostgres.ConflictRuntimeConfig{}).PurgeExpiredRememberAttemptDiagnostics(purgeCtx, 100)
+		deleted, err := knowledgepostgres.NewStore(app, f.rls).PurgeExpiredRememberAttemptDiagnostics(purgeCtx, 100)
 		require.NoError(t, err)
 		require.Zero(t, deleted, "purge must skip mixed source diagnostics while any copied lineage space is locked")
 	}()
@@ -352,7 +347,7 @@ func TestPrivateMigrationFingerprintResumeHandlesAndCopiedErasure(t *testing.T) 
 	require.NoError(t, err)
 	require.True(t, created)
 	require.Zero(t, retention.QueuedCount, "a hold on copied support excludes every affected space from retention")
-	deleted, err := knowledgepostgres.NewStore(app, f.rls, knowledgepostgres.ConflictRuntimeConfig{}).PurgeExpiredRememberAttemptDiagnostics(ctx, 100)
+	deleted, err := knowledgepostgres.NewStore(app, f.rls).PurgeExpiredRememberAttemptDiagnostics(ctx, 100)
 	require.NoError(t, err)
 	require.Zero(t, deleted, "a hold on B also protects retained mixed source diagnostics")
 	_, _, err = f.repo.RequestControlErasure(ctx, spaceA, strings.Repeat("1", 64), strings.Repeat("2", 64), "owner-erasure")
@@ -379,7 +374,7 @@ func TestPrivateMigrationFingerprintResumeHandlesAndCopiedErasure(t *testing.T) 
 		if err := tx.Exec(`SELECT set_config('app.private_erasure_rebase_space_id',?,true),set_config('app.private_erasure_operation_id',?,true)`, spaceB.String(), claim.ID.String()).Error; err != nil {
 			return err
 		}
-		return tx.Exec(`UPDATE search_documents SET space_generation=space_generation+1,document_text='changed during rebase' WHERE team_id=? AND source_id=?`, f.team, f.relationship).Error
+		return tx.Exec(`UPDATE search_documents SET space_generation=space_generation+1,document_text='changed during rebase' WHERE team_id=? AND source_id=?`, f.team, f.independent).Error
 	})
 	require.ErrorContains(t, err, "private erasure rebase can change only the placement generation")
 	_, err = f.repo.ExecuteClaim(ctx, claim.ID, claim.WorkerID, claim.Fence)
@@ -398,21 +393,11 @@ func TestPrivateMigrationFingerprintResumeHandlesAndCopiedErasure(t *testing.T) 
 			return err
 		}
 		require.Zero(t, count)
-		var status, searchState string
-		if err := tx.Raw(`SELECT status,support_count FROM relationship_records WHERE team_id=? AND relationship_id=?`, f.team, f.relationship).Row().Scan(&status, &count); err != nil {
+		var graphAbsent bool
+		if err := tx.Raw(`SELECT to_regclass('public.relationship_records') IS NULL AND to_regclass('public.semantic_edges') IS NULL`).Row().Scan(&graphAbsent); err != nil {
 			return err
 		}
-		require.Equal(t, "pending_evidence", status)
-		require.Zero(t, count)
-		if err := tx.Raw(`SELECT search_state FROM search_documents WHERE team_id=? AND source_id=?`, f.team, f.relationship).Row().Scan(&searchState); err != nil {
-			return err
-		}
-		require.Equal(t, "not_required", searchState)
-		var validProjection bool
-		if err := tx.Raw(`SELECT search_tsv=to_tsvector('simple',document_text) AND space_generation=2 FROM search_documents WHERE team_id=? AND source_id=?`, f.team, f.relationship).Row().Scan(&validProjection); err != nil {
-			return err
-		}
-		require.True(t, validProjection, "generation rebasing preserves the generated search projection")
+		require.True(t, graphAbsent)
 		var scrubbed bool
 		if err := tx.Raw(`SELECT before_payload IS NULL AND after_payload IS NULL AND metadata='{"private_content_erased":true}'::jsonb FROM audit_log WHERE id=?`, f.auditID).Row().Scan(&scrubbed); err != nil {
 			return err
@@ -422,10 +407,6 @@ func TestPrivateMigrationFingerprintResumeHandlesAndCopiedErasure(t *testing.T) 
 			return err
 		}
 		require.Zero(t, count, "erasure removes archived content-bearing diagnostics")
-		if err := tx.Raw(`SELECT count(*) FROM semantic_edges WHERE team_id=? AND relationship_id=?`, f.team, f.relationship).Row().Scan(&count); err != nil {
-			return err
-		}
-		require.Zero(t, count)
 		return nil
 	}))
 	require.ErrorIs(t, f.rls.WithTeamProfileTx(ownerCtx, app, f.team.String(), f.ownerB.String(), func(tx *gorm.DB) error {
@@ -434,112 +415,6 @@ func TestPrivateMigrationFingerprintResumeHandlesAndCopiedErasure(t *testing.T) 
 		require.Equal(t, f.evidence.String(), resolved, "erased copy mappings cannot recover content")
 		return storage.AuthorizeMemoryMutationTx(ownerCtx, tx, f.team.String(), f.ownerB.String(), spaceB.String(), 1)
 	}), domain.ErrMemoryWriteDenied, "the old B generation cannot restore erased support")
-}
-
-func TestPrivateMigrationRestoresForeignConflictAndScopesRelationshipHandles(t *testing.T) {
-	f := legacyPrivateMigrationFixture(t)
-	f.seedDependentRelationship(t)
-	ctx := context.Background()
-	foreignRelationship, foreignObject, conflict, preferred, suppressed := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
-	observation, verification, support := uuid.New(), uuid.New(), uuid.New()
-	require.NoError(t, f.rls.WithSystemTx(ctx, f.db, func(tx *gorm.DB) error {
-		for _, statement := range []struct {
-			query string
-			args  []any
-		}{
-			{`INSERT INTO entity_records(team_id,entity_id,entity_kind,space_id) VALUES(?,?,'project',?)`, []any{f.team, foreignObject, f.legacy}},
-			{`INSERT INTO entity_resolution_events(team_id,ingest_id,owner_profile_id,mention_ref,action,entity_id,space_id) VALUES(?,?,?,'foreign choice','create',?,?)`, []any{f.team, f.ingestA, f.ownerA, foreignObject, f.legacy}},
-			{`INSERT INTO entity_names(team_id,entity_id,owner_profile_id,display_name,normalized_name,name_kind,space_id) VALUES(?,?,?,'A foreign choice','a foreign choice','canonical',?)`, []any{f.team, foreignObject, f.ownerA, f.legacy}},
-			{`INSERT INTO relationship_records(team_id,relationship_id,owner_profile_id,semantic_group_key,subject_entity_id,predicate_key,predicate_version,object_entity_id,relationship_kind,current_cardinality,status,support_count,source_group_count,space_id)
- SELECT team_id,?,?,'foreign-choice',subject_entity_id,predicate_key,predicate_version,?,'state','one','active',1,1,space_id FROM relationship_records WHERE team_id=? AND relationship_id=?`, []any{foreignRelationship, f.ownerA, foreignObject, f.team, f.relationship}},
-			{`INSERT INTO relationship_observations(team_id,observation_id,relationship_id,ingest_id,owner_profile_id,subject_ref,original_predicate,object_ref,subject_entity_id,predicate_key,predicate_version,object_entity_id,space_id)
- SELECT team_id,?,relationship_id,?,owner_profile_id,'B endpoint','uses','A foreign choice',subject_entity_id,predicate_key,predicate_version,object_entity_id,space_id FROM relationship_records WHERE team_id=? AND relationship_id=?`, []any{observation, f.ingestA, f.team, foreignRelationship}},
-			{`INSERT INTO verification_events(team_id,verification_event_id,observation_id,owner_profile_id,evidence_verdict,space_id) VALUES(?,?,?,?,'entailed',?)`, []any{f.team, verification, observation, f.ownerA, f.legacy}},
-			{`INSERT INTO relationship_evidence_supports(team_id,support_id,relationship_id,observation_id,verification_event_id,fragment_id,owner_profile_id,evidence_owner_profile_id,source_group_key,span_start,span_end,quote,space_id)
- VALUES(?,?,?,?,?,?,?,?,'source-A',0,27,'A exact supporting evidence',?)`, []any{f.team, support, foreignRelationship, observation, verification, f.evidence, f.ownerA, f.ownerA, f.legacy}},
-			{`INSERT INTO relationship_support_decision_events(team_id,support_id,relationship_id,owner_profile_id,decision,reason,space_id) VALUES(?,?,?,?,'grant','original support',?)`, []any{f.team, support, foreignRelationship, f.ownerA, f.legacy}},
-			{`INSERT INTO relationship_conflict_cases(team_id,conflict_id,semantic_scope_key,status,subject_entity_id,predicate_key,relationship_kind,current_cardinality,review_due_at,next_review_at,review_ttl_days,resolved_at,effective_at,space_id)
- SELECT team_id,?,'legacy-mixed-conflict','resolved',subject_entity_id,predicate_key,'state','one',now(),now(),7,now(),now(),space_id FROM relationship_records WHERE team_id=? AND relationship_id=?`, []any{conflict, f.team, f.relationship}},
-			{`INSERT INTO relationship_conflict_positions(team_id,conflict_id,position_id,position_key,object_entity_id,disposition,support_group_count,space_id)
- SELECT team_id,?,?,'A choice',object_entity_id,'preferred',1,space_id FROM relationship_records WHERE team_id=? AND relationship_id=?`, []any{conflict, preferred, f.team, foreignRelationship}},
-			{`INSERT INTO relationship_conflict_positions(team_id,conflict_id,position_id,position_key,object_entity_id,disposition,support_group_count,space_id)
- SELECT team_id,?,?,'B choice',object_entity_id,'suppressed_current',1,space_id FROM relationship_records WHERE team_id=? AND relationship_id=?`, []any{conflict, suppressed, f.team, f.relationship}},
-			{`UPDATE relationship_conflict_cases SET preferred_position_id=? WHERE team_id=? AND conflict_id=?`, []any{preferred, f.team, conflict}},
-			{`INSERT INTO relationship_conflict_position_members(team_id,conflict_id,position_id,relationship_id,owner_profile_id,support_id,verification_event_id,fragment_id,source_group_key,accepted_at,space_id)
- SELECT team_id,?,CASE WHEN relationship_id=? THEN ?::uuid ELSE ?::uuid END,relationship_id,owner_profile_id,support_id,verification_event_id,fragment_id,source_group_key,now(),space_id FROM relationship_evidence_supports WHERE team_id=?`, []any{conflict, foreignRelationship, preferred, suppressed, f.team}},
-			{`UPDATE relationship_records SET current_cardinality='one',status='superseded',valid_to=now(),recorded_to=now(),version=version+1 WHERE team_id=? AND relationship_id=?`, []any{f.team, f.relationship}},
-			{`INSERT INTO relationship_transition_events(team_id,relationship_id,owner_profile_id,from_status,to_status,reason,space_id)
- VALUES(?,?,?,'active','superseded','conflict_resolved',?)`, []any{f.team, f.relationship, f.ownerB, f.legacy}},
-		} {
-			if err := tx.Exec(statement.query, statement.args...).Error; err != nil {
-				return err
-			}
-		}
-		return nil
-	}))
-	report, err := f.repo.InspectPrivateMemoryMigration(ctx)
-	require.NoError(t, err)
-	require.Empty(t, report.Blockers)
-	migrator, err := storage.NewMigrator(f.db)
-	require.NoError(t, err)
-	require.NoError(t, migrator.PreparePrivateMemoryMigration(ctx))
-	require.NoError(t, f.repo.MigratePrivateMemory(ctx, report.SourceFingerprint))
-	require.NoError(t, migrator.RunUp(ctx))
-	app := f.applicationDB(t)
-	var spaceA, spaceB uuid.UUID
-	require.NoError(t, f.rls.WithSystemTx(ctx, f.db, func(tx *gorm.DB) error {
-		if err := tx.Raw(`SELECT id FROM memory_spaces WHERE owner_membership_id=? AND NOT migration_archive`, f.memberA).Row().Scan(&spaceA); err != nil {
-			return err
-		}
-		return tx.Raw(`SELECT id FROM memory_spaces WHERE owner_membership_id=? AND NOT migration_archive`, f.memberB).Row().Scan(&spaceB)
-	}))
-	aCtx := requestctx.WithActor(ctx, requestctx.Actor{TeamID: f.team, IdentityID: f.ownerA, MembershipID: f.memberA, OwnerID: f.ownerA, Grants: []string{"read"}, AllowedSpaces: []domain.MemorySpaceAccess{{ID: spaceA, Kind: domain.MemorySpacePrivate, Generation: 1}}})
-	bCtx := requestctx.WithActor(ctx, requestctx.Actor{TeamID: f.team, IdentityID: f.ownerB, MembershipID: f.memberB, OwnerID: f.ownerB, Grants: []string{"read"}, AllowedSpaces: []domain.MemorySpaceAccess{{ID: spaceB, Kind: domain.MemorySpacePrivate, Generation: 1}}})
-	traces := tracepostgres.New(app, f.rls, nil, nil)
-	input := tracecontract.Input{TeamID: f.team.String(), RelationshipID: f.relationship.String()}
-	result, err := traces.TraceRelationship(bCtx, input)
-	require.NoError(t, err, "the original B relationship handle remains usable after splitting")
-	require.Equal(t, f.relationship.String(), result.Relationship.RelationshipID)
-	require.Equal(t, f.ownerB.String(), result.Relationship.OwnerProfileID)
-	require.Equal(t, "active", result.Relationship.Status)
-	require.Nil(t, result.Relationship.ValidTo, "restore the original validity from the immutable observation")
-	require.Nil(t, result.Relationship.RecordedTo)
-	require.Equal(t, 1, result.Relationship.SupportCount)
-	require.Len(t, result.Transitions, 2, "preserve the original suppression and append restoration")
-	require.Len(t, result.SearchDocuments, 1)
-	require.NoError(t, f.rls.WithTeamProfileTx(bCtx, app, f.team.String(), f.ownerB.String(), func(tx *gorm.DB) error {
-		var document string
-		if err := tx.Raw(`SELECT document_text FROM search_documents WHERE team_id=? AND source_id=? AND source_kind='relationship'`, f.team, f.relationship).Row().Scan(&document); err != nil {
-			return err
-		}
-		require.Contains(t, document, "B endpoint")
-		require.NotContains(t, document, "old mixed projection")
-		require.NotContains(t, document, "A foreign choice")
-		resolved, err := storage.ResolveMemoryHandleTx(bCtx, tx, f.team.String(), "relationship_records", f.relationship.String(), spaceB.String())
-		require.NoError(t, err)
-		require.Equal(t, f.relationship.String(), resolved)
-		resolved, err = storage.ResolveMemoryHandleTx(bCtx, tx, f.team.String(), "relationship_records", foreignRelationship.String(), spaceA.String())
-		require.NoError(t, err)
-		require.Equal(t, foreignRelationship.String(), resolved, "an unauthorized destination cannot grant a handle")
-		var count int
-		if err := tx.Raw(`SELECT count(*) FROM semantic_edges WHERE team_id=? AND relationship_id=?`, f.team, f.relationship).Row().Scan(&count); err != nil {
-			return err
-		}
-		require.Equal(t, 1, count, "foreign suppression must no longer hide B's graph edge")
-		if err := tx.Raw(`SELECT count(*) FROM relationship_conflict_cases WHERE team_id=? AND dense_mem_space_allowed(space_id) AND space_generation=dense_mem_active_space_generation(team_id,space_id)`, f.team).Row().Scan(&count); err != nil {
-			return err
-		}
-		require.Zero(t, count, "mixed conflict projections remain sealed")
-		return nil
-	}))
-	_, err = traces.TraceRelationship(aCtx, input)
-	require.ErrorIs(t, err, tracecontract.ErrRelationshipNotFound)
-	_, err = traces.TraceRelationship(bCtx, tracecontract.Input{TeamID: f.team.String(), RelationshipID: foreignRelationship.String()})
-	require.ErrorIs(t, err, tracecontract.ErrRelationshipNotFound)
-	_, _, err = NewPrivateMemoryRepository(app, f.rls).RequestControlErasure(ctx, spaceB, strings.Repeat("3", 64), strings.Repeat("4", 64), "owner-erasure")
-	require.NoError(t, err)
-	_, err = traces.TraceRelationship(bCtx, input)
-	require.ErrorIs(t, err, tracecontract.ErrRelationshipNotFound, "historical handles cannot recover a sealed generation")
 }
 
 func TestPrivateMigrationDetectsStoppedStateDrift(t *testing.T) {
@@ -646,7 +521,7 @@ func TestPrivateMigrationPreservesSessionIdentityAndRecomputesMixedCheckpoints(t
 	ctx := context.Background()
 	submissionID := uuid.New()
 	req := session.Request{IdempotencyKey: "original-session-operation", Framework: "test", AppName: "automation", UserID: "B", SessionID: "session", Events: []session.Event{{EventID: "one", Text: "B observed a retry condition."}}}
-	intake := session.Intake{Scope: session.Scope{TeamID: f.team.String(), OwnerProfileID: f.ownerB.String(), SpaceID: f.legacy.String(), SpaceGeneration: 1}, Request: req, RequestHash: "sha256:" + strings.Repeat("5", 64), ExtractionVersion: session.ExtractionVersion, Tokenizer: "o200k_base", DuplicateResults: map[string]session.EventResult{}}
+	intake := session.Intake{Scope: session.Scope{TeamID: f.team.String(), OwnerProfileID: f.ownerB.String(), SpaceID: f.legacy.String(), SpaceGeneration: 1}, Request: req, RequestHash: "sha256:" + strings.Repeat("5", 64), ExtractionVersion: "session_factual_extraction_v1", Tokenizer: "o200k_base", DuplicateResults: map[string]session.EventResult{}}
 	var err error
 	intake.RequestHash, err = sessionservice.RequestHash(req)
 	require.NoError(t, err)
@@ -693,22 +568,31 @@ func TestPrivateMigrationPreservesSessionIdentityAndRecomputesMixedCheckpoints(t
 			return err
 		}
 		var storedIntake, storedReceipt string
-		if err := tx.Raw(`SELECT intake::text,result::text FROM session_submissions WHERE team_id=? AND space_id=? AND submission_id=?`, f.team, destination, submissionID).Row().Scan(&storedIntake, &storedReceipt); err != nil {
+		if err := tx.Raw(`SELECT intake::text,COALESCE(result::text,'null') FROM session_submissions WHERE team_id=? AND space_id=? AND submission_id=?`, f.team, destination, submissionID).Row().Scan(&storedIntake, &storedReceipt); err != nil {
 			return err
 		}
-		require.JSONEq(t, string(intakeBody), storedIntake)
-		require.JSONEq(t, receipt, storedReceipt)
+		var retained session.Intake
+		require.NoError(t, json.Unmarshal([]byte(storedIntake), &retained))
+		require.Equal(t, intake.RequestHash, retained.RequestHash)
+		require.Equal(t, intake.Request, retained.Request)
+		require.Equal(t, session.ExtractionVersion, retained.ExtractionVersion)
+		require.Equal(t, "null", storedReceipt)
+		var historical string
+		if err := tx.Raw(`SELECT body::text FROM session_submission_receipts WHERE team_id=? AND space_id=? AND submission_id=? ORDER BY receipt_id LIMIT 1`, f.team, destination, submissionID).Row().Scan(&historical); err != nil {
+			return err
+		}
+		require.Contains(t, historical, "retired_contract")
 		var sealed int
 		if err := tx.Raw(`SELECT count(*) FROM session_extraction_checkpoints checkpoint JOIN memory_spaces space ON space.id=checkpoint.space_id WHERE checkpoint.team_id=? AND checkpoint.submission_id=? AND space.migration_archive AND space.lifecycle_state='sealed'`, f.team, submissionID).Row().Scan(&sealed); err != nil {
 			return err
 		}
-		require.Equal(t, 1, sealed)
+		require.Zero(t, sealed)
 		return nil
 	}))
 	actor := requestctx.Actor{TeamID: f.team, IdentityID: f.ownerB, MembershipID: f.memberB, OwnerID: f.ownerB, CredentialID: &f.ownerB, Grants: []string{"read"}, AllowedSpaces: []domain.MemorySpaceAccess{{ID: destination, Kind: domain.MemorySpacePrivate, Generation: generation}}}
 	actorCtx := requestctx.WithActor(ctx, actor)
 	scope := session.Scope{TeamID: f.team.String(), OwnerProfileID: f.ownerB.String(), SpaceID: destination.String(), SpaceGeneration: generation}
-	store := knowledgepostgres.NewStore(app, f.rls, knowledgepostgres.ConflictRuntimeConfig{})
+	store := knowledgepostgres.NewStore(app, f.rls)
 	loaded, err := store.LookupSession(actorCtx, scope, req.IdempotencyKey)
 	require.NoError(t, err)
 	require.Equal(t, submissionID.String(), loaded.ID)
@@ -716,7 +600,6 @@ func TestPrivateMigrationPreservesSessionIdentityAndRecomputesMixedCheckpoints(t
 	require.Equal(t, req, loaded.Intake.Request)
 	require.Equal(t, scope, loaded.Intake.Scope)
 	require.Empty(t, loaded.Extractions)
-	require.Empty(t, loaded.Linked)
 	transport := &migrationSessionTransport{}
 	api := sessionservice.NewService(sessionservice.Dependencies{Enabled: true, Repository: store, Tokenizer: intake.Tokenizer,
 		Preparer:  processor.NewSynchronousProcessor(processor.ProcessorDependencies{Ledger: store}),
@@ -757,7 +640,7 @@ func (p *migrationSessionTransport) Complete(_ context.Context, request modelpro
 }
 
 func migrationEmptyExtraction(input session.ExtractionRequest) session.ExtractionResponse {
-	response := session.ExtractionResponse{RequestID: input.RequestID, Coverage: []string{}, Entities: []session.EntityProposal{}, Relationships: []session.RelationshipProposal{}, SecuritySignals: []session.ExtractionSignal{}}
+	response := session.ExtractionResponse{RequestID: input.RequestID, Coverage: []string{}, Excerpts: []session.Excerpt{}, SecuritySignals: []session.ExtractionSignal{}}
 	for _, segment := range input.Window.Core {
 		response.Coverage = append(response.Coverage, segment.Ref)
 	}
@@ -777,7 +660,7 @@ func TestPrivateMigrationCarriesLegacyHoldAndPreservesSharedHistory(t *testing.T
 	}))
 	var before string
 	require.NoError(t, f.rls.WithSystemTx(ctx, f.db, func(tx *gorm.DB) error {
-		return tx.Raw(`SELECT to_jsonb(row)::text FROM knowledge_ingests row WHERE team_id=? AND ingest_id=?`, f.team, sharedID).Row().Scan(&before)
+		return tx.Raw(`SELECT (to_jsonb(row)-'proposal')::text FROM knowledge_ingests row WHERE team_id=? AND ingest_id=?`, f.team, sharedID).Row().Scan(&before)
 	}))
 	report, err := f.repo.InspectPrivateMemoryMigration(ctx)
 	require.NoError(t, err)
@@ -785,11 +668,14 @@ func TestPrivateMigrationCarriesLegacyHoldAndPreservesSharedHistory(t *testing.T
 	require.NoError(t, err)
 	require.NoError(t, migrator.PreparePrivateMemoryMigration(ctx))
 	require.NoError(t, f.repo.MigratePrivateMemory(ctx, report.SourceFingerprint))
-	require.NoError(t, migrator.RunUp(ctx))
+	require.ErrorContains(t, migrator.RunUp(ctx), "legal hold")
+	var graphPresent bool
+	require.NoError(t, f.db.Raw(`SELECT to_regclass('public.relationship_records') IS NOT NULL`).Row().Scan(&graphPresent))
+	require.True(t, graphPresent)
 	var destination uuid.UUID
 	require.NoError(t, f.rls.WithSystemTx(ctx, f.db, func(tx *gorm.DB) error {
 		var after string
-		if err := tx.Raw(`SELECT to_jsonb(row)::text FROM knowledge_ingests row WHERE team_id=? AND ingest_id=?`, f.team, sharedID).Row().Scan(&after); err != nil {
+		if err := tx.Raw(`SELECT (to_jsonb(row)-'proposal')::text FROM knowledge_ingests row WHERE team_id=? AND ingest_id=?`, f.team, sharedID).Row().Scan(&after); err != nil {
 			return err
 		}
 		require.Equal(t, before, after)
@@ -799,6 +685,7 @@ func TestPrivateMigrationCarriesLegacyHoldAndPreservesSharedHistory(t *testing.T
 	require.ErrorIs(t, err, ErrPrivateMemoryLegalHold)
 	_, _, err = f.repo.ReleaseLegalHold(ctx, f.legacy)
 	require.NoError(t, err)
+	require.NoError(t, migrator.RunUp(ctx))
 	_, _, err = f.repo.RequestControlErasure(ctx, destination, strings.Repeat("6", 64), strings.Repeat("7", 64), "legacy-hold")
 	require.NoError(t, err)
 }
@@ -817,7 +704,7 @@ func TestPrivateMigrationArchiveHoldBlocksLineageErasure(t *testing.T) {
 	f.repo = NewPrivateMemoryRepository(app, f.rls)
 	require.NoError(t, f.repo.Prepare(ctx))
 	// Purge expired diagnostics so their row-delete guard cannot mask erasure of the held audit archive.
-	deleted, err := knowledgepostgres.NewStore(app, f.rls, knowledgepostgres.ConflictRuntimeConfig{}).PurgeExpiredRememberAttemptDiagnostics(ctx, 100)
+	deleted, err := knowledgepostgres.NewStore(app, f.rls).PurgeExpiredRememberAttemptDiagnostics(ctx, 100)
 	require.NoError(t, err)
 	require.Positive(t, deleted)
 	unrelatedOwner := createLedgerProfile(t, f.db, f.rls, f.team.String(), "unrelated-private")

@@ -139,12 +139,6 @@ func TestOntologyMaintenanceParallelClaimsAndLimits(t *testing.T) {
 	blocked, err := NewStore(f.app, f.rls).ClaimMaintenanceTurn(ctx, window.ID, time.Now().UTC(), time.Minute)
 	require.NoError(t, err)
 	require.Nil(t, blocked, "the team cap applies across store instances")
-	projection := ontology.MaintenanceTurn{TeamID: f.team, SpaceID: f.space, Generation: f.generation, LeaseToken: uuid.NewString(), LeaseUntil: time.Now().Add(time.Minute)}
-	require.NoError(t, f.rls.WithSystemTx(ctx, f.app, func(tx *gorm.DB) error {
-		admission, err := f.store.NewTopicProjectionAdmission()(ctx, tx, projection, time.Now())
-		require.Equal(t, ontology.TopicProjectionTeamBusy, admission)
-		return err
-	}))
 	other := maintenanceOtherTeam(t, f)
 	other.organizationEvidence(t, 0, "Foreign isolated cohort.", nil)
 	turn, err := NewStore(f.app, f.rls).ClaimMaintenanceTurn(ctx, window.ID, time.Now().UTC(), time.Minute)
@@ -161,12 +155,7 @@ func TestOntologyMaintenanceParallelClaimsAndLimits(t *testing.T) {
 	require.Zero(t, leaked)
 	require.NoError(t, f.store.ReleaseMaintenanceTurn(ctx, *turn))
 	require.NoError(t, f.store.CompleteMaintenanceBatch(ctx, *first, ontology.OrganizationResult{}, "maintenance_paused", time.Now()))
-	require.NoError(t, f.rls.WithSystemTx(ctx, f.app, func(tx *gorm.DB) error {
-		admission, err := f.store.NewTopicProjectionAdmission()(ctx, tx, projection, time.Now())
-		require.Equal(t, ontology.TopicProjectionAdmitted, admission)
-		return err
-	}))
-	require.NoError(t, f.rls.WithSystemTx(ctx, f.app, func(tx *gorm.DB) error { return f.store.NewTopicProjectionRelease()(ctx, tx, projection) }))
+
 }
 
 func TestOntologyMaintenanceParallelWindowPolicy(t *testing.T) {

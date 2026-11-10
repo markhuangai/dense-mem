@@ -4,65 +4,42 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
-	"sort"
-	"strings"
-	"time"
-
 	"github.com/google/uuid"
-	communitycontract "github.com/markhuangai/dense-mem/internal/community/contract"
 	"github.com/markhuangai/dense-mem/internal/domain"
-
 	embeddingcontract "github.com/markhuangai/dense-mem/internal/embedding/contract"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	searchcontract "github.com/markhuangai/dense-mem/internal/search/contract"
+	"math"
+	"strings"
+	"time"
 )
 
 const (
-	defaultRecallResultLimit        = 10
-	maxRecallResultLimit            = 50
-	defaultRelatedRelationshipLimit = 5
-	maxRelatedRelationshipLimit     = 20
+	defaultRecallResultLimit = 10
+	maxRecallResultLimit     = 50
 )
 
 var ErrRecallAuthContext = errors.New("recall: authenticated actor context is required")
+var ErrInvalidInput = recallcontract.ErrInvalidInput
+var ErrTopicUnavailable = recallcontract.ErrTopicUnavailable
 
 type RecallService = recallcontract.Service
-
+type RecallSearchRepository = recallcontract.SearchRepository
+type RecallOntologyConfigProvider interface {
+	OntologyMaintenanceRuntimeConfig(context.Context) (domain.OntologyMaintenanceConfig, error)
+}
 type RecallDependencies struct {
 	Decisions        modelprovider.DecisionProvider
 	DecisionSettings modelprovider.DecisionSettings
 	Logger           observability.LogProvider
 	Search           RecallSearchRepository
 	Provider         embeddingcontract.EmbeddingProviderInterface
-
-	Communities RecallCommunityRepository
-
-	OntologyConfig RecallOntologyConfigProvider
-	Metrics        observability.DiscoverabilityMetrics
+	OntologyConfig   RecallOntologyConfigProvider
+	Metrics          observability.DiscoverabilityMetrics
 }
-
-type RecallSearchRepository = recallcontract.SearchRepository
-
-type RecallCommunityRepository interface {
-	RecallCommunityDiscovery(ctx context.Context, input communitycontract.CommunityDiscoveryInput) ([]communitycontract.CommunityDiscoveryPath, error)
-}
-
-type RecallCommunitySnapshotRepository interface {
-	RecallCommunities(ctx context.Context, input communitycontract.CommunityRecallInput) ([]communitycontract.CommunityRecallRecord, *communitycontract.TopicProjectionCoverage, error)
-}
-
-type RecallCommunityCoverageRepository interface {
-	ListCommunitySemanticGroups(ctx context.Context, input communitycontract.CommunityCoverageInput) ([]string, error)
-}
-
-type RecallOntologyConfigProvider interface {
-	OntologyMaintenanceRuntimeConfig(context.Context) (domain.OntologyMaintenanceConfig, error)
-}
-
 type recallService struct {
 	decisions        modelprovider.DecisionProvider
 	decisionSettings modelprovider.DecisionSettings
@@ -70,11 +47,8 @@ type recallService struct {
 	search           RecallSearchRepository
 	retrieval        *Retrieval
 	provider         embeddingcontract.EmbeddingProviderInterface
-
-	communities RecallCommunityRepository
-
-	ontologyConfig RecallOntologyConfigProvider
-	metrics        observability.DiscoverabilityMetrics
+	ontologyConfig   RecallOntologyConfigProvider
+	metrics          observability.DiscoverabilityMetrics
 }
 
 func NewRecallService(deps RecallDependencies) RecallService {
@@ -82,19 +56,11 @@ func NewRecallService(deps RecallDependencies) RecallService {
 	if metrics == nil {
 		metrics = observability.NoopDiscoverabilityMetrics()
 	}
-	return &recallService{
-		decisions: deps.Decisions, decisionSettings: deps.DecisionSettings, logger: deps.Logger,
-		search:         deps.Search,
-		retrieval:      &Retrieval{repository: deps.Search, decisions: deps.Decisions, logger: deps.Logger},
-		provider:       deps.Provider,
-		communities:    deps.Communities,
-		ontologyConfig: deps.OntologyConfig,
-		metrics:        metrics,
-	}
+	return &recallService{decisions: deps.Decisions, decisionSettings: deps.DecisionSettings, logger: deps.Logger, search: deps.Search,
+		retrieval: &Retrieval{repository: deps.Search, decisions: deps.Decisions, logger: deps.Logger}, provider: deps.Provider, ontologyConfig: deps.OntologyConfig, metrics: metrics}
 }
 
 type RecallRequest = recallcontract.Request
-
 type recallExecutionRequest struct {
 	RecallRequest
 	recallContract             *searchcontract.ActiveSearchContract
@@ -109,18 +75,16 @@ type recallExecutionRequest struct {
 type RecallResult = recallcontract.RecallResult
 type RecallSuggestedAction = recallcontract.RecallSuggestedAction
 type RecallResultItem = recallcontract.RecallResultItem
-type RecallDiscoveryPath = recallcontract.RecallDiscoveryPath
-type RecallCommunity = recallcontract.RecallCommunity
+type RelatedTopic = recallcontract.RelatedTopic
 type RecallConflictSummary = recallcontract.RecallConflictSummary
-type RecallRelationshipHandle = recallcontract.RecallRelationshipHandle
-type RelatedRelationshipSummary = recallcontract.RelatedRelationshipSummary
-type EntityHandle = recallcontract.EntityHandle
-type SemanticObject = recallcontract.SemanticObject
-
 type RecallDegradationResult = recallcontract.RecallDegradationResult
 type RecallSearchStates = recallcontract.RecallSearchStates
 
 func (s *recallService) Recall(ctx context.Context, req RecallRequest) (*RecallResult, error) {
+	if err := validateRecallRequest(req); err != nil {
+		return nil, fmt.Errorf("%w: %v", recallcontract.ErrInvalidInput, err)
+	}
+	req = normalizeRecallRequest(req)
 	ctx = observability.WithReadPerformance(ctx, s.metrics)
 	actor, ok := requestctx.ActorFromContext(ctx)
 	if !ok || actor.TeamID == uuid.Nil || actor.OwnerID == uuid.Nil {
@@ -139,6 +103,9 @@ func (s *recallService) Recall(ctx context.Context, req RecallRequest) (*RecallR
 		result.Degradation = &result.Degradations[0]
 	}
 	if err == nil && result != nil {
+		if err = s.relatedTopics(ctx, req, result); err != nil {
+			return nil, err
+		}
 		reconcileDecisionSelections(ctx, s.logger, result)
 	}
 	return result, err
@@ -166,9 +133,11 @@ func (s *recallService) recallWithExecution(ctx context.Context, req recallExecu
 	if _, branchSelected := recallBranchFromContext(ctx); !branchSelected && len(actor.AllowedSpaces) > 1 {
 		return s.recallAcrossSpaces(ctx, req, actor)
 	}
+	if _, selected := recallBranchFromContext(ctx); !selected && len(actor.AllowedSpaces) == 1 {
+		ctx = context.WithValue(ctx, recallBranchContextKey{}, actor.AllowedSpaces[0])
+	}
 	branch, _ := recallBranchFromContext(ctx)
 	spaceKind := branchKind(branch)
-	// Private ingestion is not supported here, so graph and hypothesis expansion stays on shared data.
 	teamSharedBranch := spaceKind == string(domain.MemorySpaceTeamShared)
 	if !recallBranchMetricsSuppressed(ctx) {
 		started := time.Now()
@@ -210,18 +179,17 @@ func (s *recallService) recallWithExecution(ctx context.Context, req recallExecu
 		}
 	}
 	recalled, err := s.retrieval.RecallEvidence(ctx, recallcontract.RecallEvidenceInput{
-		OrganizationEnabled:  req.organizationEnabled && teamSharedBranch,
-		TeamID:               actor.TeamID.String(),
-		Query:                req.Query,
-		QueryEmbedding:       queryEmbedding,
-		Limit:                req.Limit,
-		ValidAt:              req.ValidAt,
-		KnownAt:              req.KnownAt,
-		KnownEvidenceIDs:     req.KnownEvidenceIDs,
-		KnownRelationshipIDs: req.KnownRelationshipIDs,
-		ExpandFromEntityIDs:  req.ExpandFromEntityIDs,
-		SpaceID:              branchID(branch),
-		SpaceKind:            spaceKind,
+		OrganizationEnabled: req.organizationEnabled && teamSharedBranch,
+		TopicIDs:            req.TopicIDs,
+		TeamID:              actor.TeamID.String(),
+		Query:               req.Query,
+		QueryEmbedding:      queryEmbedding,
+		Limit:               req.Limit,
+		ValidAt:             req.ValidAt,
+		KnownAt:             req.KnownAt,
+		KnownEvidenceIDs:    req.KnownEvidenceIDs,
+		SpaceID:             branchID(branch),
+		SpaceKind:           spaceKind,
 	})
 	if err != nil {
 		return nil, err
@@ -231,380 +199,11 @@ func (s *recallService) recallWithExecution(ctx context.Context, req recallExecu
 	}
 	result = recallResultFromRepository(recalled, degradations)
 	appendEvidenceVectorFailureDegradation(result, recalled.SearchState)
-	returnedEvidenceIDs := recallResultEvidenceIDs(result.Results)
-	coveredGroups := map[string]struct{}{}
-	coverageAvailable := true
-	var coverageDegradation *RecallDegradationResult
-	if teamSharedBranch {
-		coveredGroups, coverageAvailable, coverageDegradation = s.resolveCommunityCoverage(ctx, actor.TeamID.String(), req.KnownEvidenceIDs, returnedEvidenceIDs, req.KnownRelationshipIDs)
-	}
-	if coverageDegradation != nil {
-		result.Degradations = append(result.Degradations, *coverageDegradation)
-	}
-	relationships, relationshipState, relationshipDegradations, directGroups, relationshipStages, relationshipErr := s.recallRelatedRelationships(ctx, actor.TeamID.String(), req.RecallRequest, queryEmbedding, coveredGroups, req.organizationEnabled && teamSharedBranch)
-	if relationshipErr != nil {
-		return nil, relationshipErr
-	}
-	result.RelatedRelationships = relationships
-	result.DecisionStages = append(result.DecisionStages, relationshipStages...)
-	result.SearchStates.Relationships = relationshipState
-	result.Degradations = append(result.Degradations, relationshipDegradations...)
-	communities, paths, communityDegradation := []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, (*RecallDegradationResult)(nil)
-	if teamSharedBranch {
-		if _, snapshotRepo := s.communities.(RecallCommunitySnapshotRepository); snapshotRepo || len(result.Results) < req.Limit {
-			evidenceIDs := make([]string, 0, len(result.Results))
-			evidenceIDs = append(evidenceIDs, returnedEvidenceIDs...)
-			communityGroups := cloneGroupSet(coveredGroups)
-			for group := range directGroups {
-				communityGroups[group] = struct{}{}
-			}
-			seedRelationshipIDs := relationshipSummaryIDs(relationships)
-			communities, paths, communityDegradation = s.recallCommunities(ctx, actor.TeamID.String(), req.RecallRequest, communityGroups, evidenceIDs, seedRelationshipIDs, coverageAvailable, req.organizationEnabled)
-		}
-	}
-	result.RelatedCommunities = communities
-	result.DiscoveryPaths = paths
-	result.DiscoveryGuidance = "No additional discovery guidance."
-	if len(communities) > 0 || len(paths) > 0 {
-		result.DiscoveryGuidance = "Community discovery found derived relationship paths; verify details with trace_memory before using them as support."
-	}
-	if communityDegradation != nil {
-		result.Degradations = append(result.Degradations, *communityDegradation)
-	}
-	if len(communities) > 0 {
-		communityGroups := cloneGroupSet(coveredGroups)
-		for group := range directGroups {
-			communityGroups[group] = struct{}{}
-		}
-		for _, community := range communities {
-			for _, relationship := range community.CommunityRelationships {
-				if relationship.SemanticGroupKey != "" {
-					communityGroups[relationship.SemanticGroupKey] = struct{}{}
-				}
-			}
-		}
-		result.RelatedRelationships = filterRelatedRelationshipsByGroups(result.RelatedRelationships, communityGroups)
-	}
-	if !recallBranchMetricsSuppressed(ctx) {
-		recordRecallCommunityMetric(ctx, s.metrics, result)
-	}
 	if len(result.Degradations) > 0 {
 		result.Degradation = &result.Degradations[0]
 	}
 	applyRecallSpaceKind(result, spaceKind)
 	return result, nil
-}
-
-func recordRecallCommunityMetric(ctx context.Context, metrics observability.DiscoverabilityMetrics, result *RecallResult) {
-	if result == nil {
-		return
-	}
-	outcome := "ok"
-	for _, degradation := range result.Degradations {
-		if degradation.Frontier == "communities" {
-			outcome = "degraded"
-			break
-		}
-	}
-	communityRelationships := 0
-	for _, community := range result.RelatedCommunities {
-		communityRelationships += len(community.CommunityRelationships)
-	}
-	communitycontract.RecordCommunityRecall(ctx, metrics, outcome, len(result.RelatedCommunities), communityRelationships)
-}
-
-func (s *recallService) resolveCommunityCoverage(
-	ctx context.Context,
-	teamID string,
-	knownEvidenceIDs []string,
-	returnedEvidenceIDs []string,
-	knownRelationshipIDs []string,
-) (map[string]struct{}, bool, *RecallDegradationResult) {
-	groups := map[string]struct{}{}
-	coverageRepo, ok := s.communities.(RecallCommunityCoverageRepository)
-	if !ok {
-		return groups, true, nil
-	}
-	evidenceIDs := append(append([]string(nil), knownEvidenceIDs...), returnedEvidenceIDs...)
-	covered, err := coverageRepo.ListCommunitySemanticGroups(ctx, communitycontract.CommunityCoverageInput{
-		TeamID: teamID, EvidenceIDs: evidenceIDs, RelationshipIDs: knownRelationshipIDs,
-	})
-	if err != nil {
-		return groups, false, communitySnapshotDegradation("community_snapshot_unavailable", "community coverage was unavailable; direct relationship fallback was used")
-	}
-	for _, group := range covered {
-		if strings.TrimSpace(group) != "" {
-			groups[group] = struct{}{}
-		}
-	}
-	return groups, true, nil
-}
-
-func (s *recallService) recallCommunityDiscovery(
-	ctx context.Context,
-	teamID string,
-	req RecallRequest,
-) ([]RecallDiscoveryPath, *RecallDegradationResult) {
-	communityLimit := recallOptionalLimitValue(req.CommunityLimit)
-	if s.communities == nil || s.ontologyConfig == nil || communityLimit <= 0 {
-		return []RecallDiscoveryPath{}, nil
-	}
-	cfg, err := s.ontologyConfig.OntologyMaintenanceRuntimeConfig(ctx)
-	if err != nil {
-		return []RecallDiscoveryPath{}, communityDiscoveryDegradation()
-	}
-	if !cfg.Enabled {
-		return []RecallDiscoveryPath{}, nil
-	}
-	records, err := s.communities.RecallCommunityDiscovery(ctx, communitycontract.CommunityDiscoveryInput{
-		TeamID:               teamID,
-		Query:                req.Query,
-		ValidAt:              req.ValidAt,
-		KnownAt:              req.KnownAt,
-		KnownRelationshipIDs: req.KnownRelationshipIDs,
-		ExpandFromEntityIDs:  req.ExpandFromEntityIDs,
-		Limit:                communityLimit,
-	})
-	if err != nil {
-		return []RecallDiscoveryPath{}, communityDiscoveryDegradation()
-	}
-	return communityDiscoveryPaths(records), nil
-}
-
-func (s *recallService) recallCommunities(
-	ctx context.Context,
-	teamID string,
-	req RecallRequest,
-	excludedGroups map[string]struct{},
-	returnedEvidenceIDs []string,
-	seedRelationshipIDs []string,
-	coverageAvailable bool,
-	organizationEnabled bool,
-) ([]RecallDiscoveryPath, []RecallDiscoveryPath, *RecallDegradationResult) {
-	communityLimit := recallOptionalLimitValue(req.CommunityLimit)
-	if !organizationEnabled || communityLimit <= 0 || s.communities == nil || s.ontologyConfig == nil {
-		return []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, nil
-	}
-	cfg, err := s.ontologyConfig.OntologyMaintenanceRuntimeConfig(ctx)
-	if err != nil {
-		return []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, communityDiscoveryDegradation()
-	}
-	if !cfg.Enabled {
-		return []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, nil
-	}
-	if req.ValidAt != nil || req.KnownAt != nil {
-		return []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, communitySnapshotDegradation(
-			"community_temporal_not_supported",
-			"community snapshots are current-only; temporal recall used direct relationship fallback",
-		)
-	}
-	if !coverageAvailable {
-		return []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, communitySnapshotDegradation("community_snapshot_unavailable", "community coverage was unavailable; direct relationship fallback was used")
-	}
-	var projectionDegradation *RecallDegradationResult
-	if snapshotRepo, ok := s.communities.(RecallCommunitySnapshotRepository); ok {
-		groups := make([]string, 0, len(excludedGroups))
-		for group := range excludedGroups {
-			groups = append(groups, group)
-		}
-		sort.Strings(groups)
-		records, coverage, recallErr := snapshotRepo.RecallCommunities(ctx, communitycontract.CommunityRecallInput{
-			TeamID: teamID, Query: req.Query, ValidAt: req.ValidAt, KnownAt: req.KnownAt,
-			ExpectedOntologyEnabled: &organizationEnabled,
-			ReturnedEvidenceIDs:     returnedEvidenceIDs, SeedRelationshipIDs: seedRelationshipIDs,
-			KnownEvidenceIDs: req.KnownEvidenceIDs, KnownRelationshipIDs: req.KnownRelationshipIDs,
-			ExpandFromEntityIDs: req.ExpandFromEntityIDs, ExcludedGroupKeys: groups,
-			Limit: communityLimit, RelationshipLimit: recallOptionalLimitValue(req.CommunityRelationshipLimit),
-			CoveredGroupKeys: groups,
-		})
-		if recallErr != nil {
-			return []RecallDiscoveryPath{}, []RecallDiscoveryPath{}, communitySnapshotDegradation("community_snapshot_unavailable", "community snapshot was unavailable; direct relationship fallback was used")
-		}
-		if organizationEnabled {
-			if coverage == nil {
-				projectionDegradation = communitySnapshotDegradation("community_projection_unavailable", "community projection coverage was unavailable; eligible current topics remain readable")
-			} else if !coverage.CoverageComplete {
-				projectionDegradation = communitySnapshotDegradation("community_projection_partial", "community topic coverage is incomplete; eligible current topics and direct retrieval remain available")
-			}
-		}
-		return recallCommunitiesFromRepository(records), []RecallDiscoveryPath{}, projectionDegradation
-	}
-	// Transitional adapters remain usable for callers that only implement the
-	// old path reader; production wiring uses RecallCommunities above.
-	paths, degradation := s.recallCommunityDiscovery(ctx, teamID, req)
-	return []RecallDiscoveryPath{}, paths, degradation
-}
-
-func communitySnapshotDegradation(code, message string) *RecallDegradationResult {
-	return &RecallDegradationResult{Frontier: "communities", Optional: true, Code: code, Message: message}
-}
-
-func communityDiscoveryDegradation() *RecallDegradationResult {
-	return &RecallDegradationResult{
-		Frontier: "communities",
-		Optional: true,
-		Code:     "community_discovery_unavailable",
-		Message:  "community discovery was unavailable; primary evidence recall was used",
-	}
-}
-
-func relationshipVectorDegradation(state string) *RecallDegradationResult {
-	code := "relationship_vector_warming"
-	message := "Relationship vector projection is warming; lexical discovery was used."
-	if state == string(domain.SearchProjectionFailed) {
-		code = "relationship_vector_failed"
-		message = "Relationship vector projection failed; lexical discovery was used."
-	}
-	return &RecallDegradationResult{
-		Frontier: "relationships",
-		Optional: true,
-		Code:     code,
-		Message:  message,
-	}
-}
-
-func communityDiscoveryPaths(records []communitycontract.CommunityDiscoveryPath) []RecallDiscoveryPath {
-	out := make([]RecallDiscoveryPath, 0, len(records))
-	for _, record := range records {
-		out = append(out, RecallDiscoveryPath{
-			Relationships: []RecallRelationshipHandle{{
-				RelationshipID: record.Relationship.RelationshipID,
-				Subject: EntityHandle{
-					EntityID: record.Relationship.SubjectEntityID,
-					Name:     record.Relationship.SubjectName,
-				},
-				Predicate: record.Relationship.PredicateKey,
-				Object: SemanticObject{
-					EntityID: record.Relationship.ObjectEntityID,
-					Name:     record.Relationship.ObjectName,
-				},
-				Polarity: record.Relationship.Polarity,
-			}},
-			EvidenceIDs: append([]string(nil), record.EvidenceIDs...),
-		})
-	}
-	return out
-}
-
-func recallCommunitiesFromRepository(records []communitycontract.CommunityRecallRecord) []RecallDiscoveryPath {
-	out := make([]RecallDiscoveryPath, 0, len(records))
-	for _, record := range records {
-		if len(record.Relationships) == 0 {
-			continue
-		}
-		community := RecallDiscoveryPath{
-			CommunityID: record.CommunityID, LogicalCommunityID: record.LogicalCommunityID, Rank: record.Rank, Summary: record.Summary,
-			TopPredicates: append([]string(nil), record.TopPredicates...), EntityCount: record.EntityCount,
-			RelationshipCount: record.RelationshipCount, RelationshipsTruncated: record.RelationshipsTruncated,
-			TopEntities:            make([]EntityHandle, 0, len(record.TopEntities)),
-			CommunityRelationships: make([]RelatedRelationshipSummary, 0, len(record.Relationships)),
-		}
-		for _, entity := range record.TopEntities {
-			community.TopEntities = append(community.TopEntities, EntityHandle{EntityID: entity.EntityID, Name: entity.Name})
-		}
-		for _, relationship := range record.Relationships {
-			community.CommunityRelationships = append(community.CommunityRelationships, RelatedRelationshipSummary{
-				RelationshipID:            relationship.RelationshipID,
-				EquivalentRelationshipIDs: append([]string{}, relationship.EquivalentRelationshipIDs...),
-				SemanticGroupKey:          relationship.SemanticGroupKey,
-				Subject:                   EntityHandle{EntityID: relationship.SubjectEntityID, Name: relationship.SubjectName},
-				Predicate:                 relationship.PredicateKey, Object: recallRelationshipObject(relationship),
-				Polarity: relationship.Polarity, EvidenceIDs: append([]string(nil), relationship.EvidenceIDs...),
-				SearchState: relationship.SearchState,
-			})
-		}
-		out = append(out, community)
-	}
-	return out
-}
-
-func relatedRelationshipSummaries(recalled *recallcontract.RecallRelationshipsResult) []RelatedRelationshipSummary {
-	if recalled == nil {
-		return []RelatedRelationshipSummary{}
-	}
-	out := make([]RelatedRelationshipSummary, 0, len(recalled.Results))
-	for _, record := range recalled.Results {
-		out = append(out, RelatedRelationshipSummary{
-			RelationshipID:            record.RelationshipID,
-			EquivalentRelationshipIDs: append([]string{}, record.EquivalentRelationshipIDs...),
-			SemanticGroupKey:          record.SemanticGroupKey,
-			Subject: EntityHandle{
-				EntityID: record.SubjectEntityID,
-				Name:     record.SubjectName,
-			},
-			Predicate:   record.PredicateKey,
-			Object:      recallRelationshipObject(record),
-			Polarity:    record.Polarity,
-			EvidenceIDs: append([]string(nil), record.EvidenceIDs...),
-			SearchState: record.SearchState,
-			SpaceKind:   record.SpaceKind,
-		})
-	}
-	return out
-}
-
-func sortedGroupKeys(groups map[string]struct{}) []string {
-	keys := make([]string, 0, len(groups))
-	for group := range groups {
-		if strings.TrimSpace(group) != "" {
-			keys = append(keys, group)
-		}
-	}
-	sort.Strings(keys)
-	return keys
-}
-
-func cloneGroupSet(groups map[string]struct{}) map[string]struct{} {
-	cloned := make(map[string]struct{}, len(groups))
-	for group := range groups {
-		cloned[group] = struct{}{}
-	}
-	return cloned
-}
-
-func recallResultEvidenceIDs(results []RecallResultItem) []string {
-	ids := []string{}
-	seen := map[string]bool{}
-	for _, result := range results {
-		for _, id := range append([]string{result.EvidenceID}, result.EquivalentEvidenceIDs...) {
-			if id != "" && !seen[id] {
-				ids = append(ids, id)
-				seen[id] = true
-			}
-		}
-	}
-	return ids
-}
-
-func relationshipSummaryIDs(values []RelatedRelationshipSummary) []string {
-	ids := make([]string, 0, len(values))
-	seen := map[string]struct{}{}
-	for _, value := range values {
-		if value.RelationshipID == "" {
-			continue
-		}
-		if _, ok := seen[value.RelationshipID]; ok {
-			continue
-		}
-		seen[value.RelationshipID] = struct{}{}
-		ids = append(ids, value.RelationshipID)
-	}
-	return ids
-}
-
-func recallRelationshipObject(record recallcontract.RecallRelationshipHit) SemanticObject {
-	if record.ObjectEntityID != "" {
-		return SemanticObject{
-			EntityID: record.ObjectEntityID,
-			Name:     record.ObjectName,
-		}
-	}
-	return SemanticObject{
-		ValueID: record.ObjectValueID,
-		Type:    record.ObjectValueType,
-		Value:   record.ObjectValue,
-		Display: record.ObjectName,
-	}
 }
 
 func (s *recallService) queryEmbedding(
@@ -672,12 +271,11 @@ func normalizeRecallRequest(req RecallRequest) RecallRequest {
 	if req.Limit > maxRecallResultLimit {
 		req.Limit = maxRecallResultLimit
 	}
-	req.RelationshipLimit = normalizeRecallOptionalLimit(req.RelationshipLimit, defaultRelatedRelationshipLimit, maxRelatedRelationshipLimit)
-	req.CommunityLimit = normalizeRecallOptionalLimit(req.CommunityLimit, communitycontract.DefaultRecallCommunityLimit, communitycontract.MaxRecallCommunityLimit)
-	req.CommunityRelationshipLimit = normalizeRecallPositiveLimit(req.CommunityRelationshipLimit, communitycontract.DefaultRecallCommunityRelationshipLimit, communitycontract.MaxRecallCommunityRelationshipLimit)
 	req.KnownEvidenceIDs = normalizeRecallRequestIDs(req.KnownEvidenceIDs)
-	req.KnownRelationshipIDs = normalizeRecallRequestIDs(req.KnownRelationshipIDs)
-	req.ExpandFromEntityIDs = normalizeRecallRequestIDs(req.ExpandFromEntityIDs)
+	if req.TopicIDs != nil {
+		req.TopicIDs = normalizeRecallRequestIDs(req.TopicIDs)
+	}
+	req.TopicLimit = normalizeRecallOptionalLimit(req.TopicLimit, 3, 10)
 	return req
 }
 
@@ -750,7 +348,6 @@ func recallResultFromRepository(
 				EvidenceID:            item.EvidenceID,
 				EquivalentEvidenceIDs: append([]string{}, item.EquivalentEvidenceIDs...),
 				EquivalentsTruncated:  item.EquivalentsTruncated,
-				RelationshipIDs:       append([]string(nil), item.RelationshipIDs...),
 				Rank:                  item.Rank,
 				Context:               item.Context,
 				Source:                item.Source,
@@ -758,24 +355,19 @@ func recallResultFromRepository(
 				CreatedAt:             recallCreatedAt(item.CreatedAt),
 			})
 		}
-		conflicts = append(conflicts, recallConflictSummaries(recalled.Conflicts)...)
 		conflicts = append(conflicts, recallEvidenceConflictSummaries(recalled.EvidenceConflicts)...)
 		conflicts = limitRecallConflictSummaries(conflicts, 20)
 	}
 	result := &RecallResult{
-		RecallID:             "rec_" + uuid.NewString(),
-		Results:              results,
-		Conflicts:            conflicts,
-		RelatedRelationships: []RelatedRelationshipSummary{},
-		RelatedCommunities:   []RecallDiscoveryPath{},
+		RecallID:      "rec_" + uuid.NewString(),
+		RelatedTopics: []recallcontract.RelatedTopic{},
+		Results:       results,
+		Conflicts:     conflicts,
 		SearchStates: RecallSearchStates{
-			Evidence:      searchState,
-			Relationships: string(domain.SearchProjectionCurrent),
+			Evidence: searchState,
 		},
-		Degradations:      append([]RecallDegradationResult(nil), degradations...),
-		DiscoveryPaths:    []RecallDiscoveryPath{},
-		DiscoveryGuidance: "No additional discovery guidance.",
-		SearchState:       searchState,
+		Degradations: append([]RecallDegradationResult(nil), degradations...),
+		SearchState:  searchState,
 	}
 	if recalled != nil {
 		result.DecisionStages = append([]modelprovider.DecisionStage(nil), recalled.DecisionStages...)
@@ -792,4 +384,41 @@ func recallCreatedAt(value time.Time) *time.Time {
 	}
 	createdAt := value.UTC()
 	return &createdAt
+}
+
+func recallResultEvidenceIDs(results []RecallResultItem) []string {
+	ids := []string{}
+	seen := map[string]bool{}
+	for _, result := range results {
+		for _, id := range append([]string{result.EvidenceID}, result.EquivalentEvidenceIDs...) {
+			if id != "" && !seen[id] {
+				ids = append(ids, id)
+				seen[id] = true
+			}
+		}
+	}
+	return ids
+}
+
+func validateRecallRequest(req RecallRequest) error {
+	if req.TopicIDs != nil {
+		if len(req.TopicIDs) < 1 || len(req.TopicIDs) > 10 {
+			return errors.New("topic_ids must contain between 1 and 10 unique UUIDs")
+		}
+		seen := map[uuid.UUID]bool{}
+		for _, value := range req.TopicIDs {
+			id, err := uuid.Parse(value)
+			if err != nil || id == uuid.Nil || seen[id] {
+				return errors.New("topic_ids must contain between 1 and 10 unique UUIDs")
+			}
+			seen[id] = true
+		}
+	}
+	if req.TopicLimit != nil && (*req.TopicLimit < 0 || *req.TopicLimit > 10) {
+		return errors.New("topic_limit must be between 0 and 10")
+	}
+	if strings.TrimSpace(req.Query) == "" && len(req.TopicIDs) == 0 {
+		return errors.New("query or topic_ids is required")
+	}
+	return nil
 }

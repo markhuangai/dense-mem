@@ -6,248 +6,93 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
-	"strconv"
-	"strings"
-	"unicode/utf8"
-
-	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/google/uuid"
 	tracecontract "github.com/markhuangai/dense-mem/internal/trace/contract"
+	"sort"
+	"strings"
+	"time"
 )
 
 var ErrInvalidArtifact = errors.New("invalid memory pack artifact")
 
 func canonicalMemoryPackArtifact(artifact MemoryPackArtifact) ([]byte, string, error) {
-	return canonicalMemoryPackArtifactWithOptions(artifact, true)
-}
-
-func canonicalMemoryPackArtifactWithOptions(artifact MemoryPackArtifact, includeEntityNames bool) ([]byte, string, error) {
 	artifact = normalizeMemoryPackArtifact(artifact)
-	if err := validateMemoryPackArtifactWithOptions(artifact, includeEntityNames); err != nil {
+	if err := validateMemoryPackArtifact(artifact); err != nil {
 		return nil, "", err
 	}
-	hashable := artifact
-	hashable.ContentSHA256 = ""
-	data, err := json.Marshal(hashable)
-	if err != nil {
-		return nil, "", fmt.Errorf("memory pack canonicalize: %w", err)
-	}
-	sum := sha256.Sum256(data)
-	return data, hex.EncodeToString(sum[:]), nil
-}
-
-func marshalMemoryPackArtifact(artifact MemoryPackArtifact) ([]byte, error) {
-	return marshalMemoryPackArtifactWithOptions(artifact, true)
-}
-
-func marshalMemoryPackArtifactWithOptions(artifact MemoryPackArtifact, includeEntityNames bool) ([]byte, error) {
-	artifact = normalizeMemoryPackArtifact(artifact)
-	if err := validateMemoryPackArtifactWithOptions(artifact, includeEntityNames); err != nil {
-		return nil, err
-	}
+	artifact.ContentSHA256 = ""
 	data, err := json.Marshal(artifact)
 	if err != nil {
-		return nil, fmt.Errorf("memory pack marshal: %w", err)
+		return nil, "", err
 	}
-	return data, nil
+	digest := sha256.Sum256(data)
+	return data, hex.EncodeToString(digest[:]), nil
 }
-
+func marshalMemoryPackArtifact(artifact MemoryPackArtifact) ([]byte, error) {
+	artifact = normalizeMemoryPackArtifact(artifact)
+	if err := validateMemoryPackArtifact(artifact); err != nil {
+		return nil, err
+	}
+	return json.Marshal(artifact)
+}
 func validateMemoryPackArtifact(artifact MemoryPackArtifact) error {
-	return validateMemoryPackArtifactWithOptions(artifact, true)
-}
-
-func validateMemoryPackArtifactWithOptions(artifact MemoryPackArtifact, includeEntityNames bool) error {
-	if artifact.Format != MemoryPackFormat {
-		return fmt.Errorf("%w: format must be %q", ErrInvalidArtifact, MemoryPackFormat)
+	if artifact.Format != MemoryPackFormat || artifact.Name == "" || len(artifact.Name) > maxMemoryPackNameBytes || len(artifact.Description) > maxMemoryPackDescriptionBytes {
+		return fmt.Errorf("%w: invalid format, name or description", ErrInvalidArtifact)
 	}
-	if strings.TrimSpace(artifact.Name) == "" {
-		return fmt.Errorf("%w: name is required", ErrInvalidArtifact)
+	if _, err := time.Parse(time.RFC3339Nano, artifact.CreatedAt); err != nil {
+		return fmt.Errorf("%w: created_at", ErrInvalidArtifact)
 	}
-	if len(artifact.Name) > maxMemoryPackNameBytes {
-		return fmt.Errorf("%w: name exceeds %d characters", ErrInvalidArtifact, maxMemoryPackNameBytes)
+	if len(artifact.Evidence) > maxExportEvidence || artifact.Evidence == nil || artifact.Omissions == nil {
+		return fmt.Errorf("%w: evidence or omissions bounds", ErrInvalidArtifact)
 	}
-	if len(artifact.Description) > maxMemoryPackDescriptionBytes {
-		return fmt.Errorf("%w: description exceeds %d characters", ErrInvalidArtifact, maxMemoryPackDescriptionBytes)
-	}
-	if len(artifact.Relationships) == 0 {
-		return fmt.Errorf("%w: relationships is required", ErrInvalidArtifact)
-	}
-	seen := map[string]struct{}{}
-	for i, item := range artifact.Relationships {
-		if err := validateMemoryPackRelationshipWithOptions(item, includeEntityNames); err != nil {
-			return fmt.Errorf("%w: relationships[%d]: %v", ErrInvalidArtifact, i, err)
+	seen := map[string]bool{}
+	for _, item := range artifact.Evidence {
+		id, err := uuid.Parse(item.FragmentID)
+		if err != nil || id == uuid.Nil || seen[id.String()] {
+			return fmt.Errorf("%w: duplicated or invalid evidence ID", ErrInvalidArtifact)
 		}
-		if _, exists := seen[item.ItemID]; exists {
-			return fmt.Errorf("%w: relationships[%d]: duplicate item_id %q", ErrInvalidArtifact, i, item.ItemID)
-		}
-		seen[item.ItemID] = struct{}{}
-	}
-	evidence := map[string]struct{}{}
-	for i, item := range artifact.Evidence {
-		id := strings.TrimSpace(item.EvidenceID)
-		if id == "" {
-			return fmt.Errorf("%w: evidence[%d]: evidence_id is required", ErrInvalidArtifact, i)
-		}
-		if strings.TrimSpace(item.Content) == "" {
-			return fmt.Errorf("%w: evidence[%d]: content is required", ErrInvalidArtifact, i)
-		}
-		if _, exists := evidence[id]; exists {
-			return fmt.Errorf("%w: evidence[%d]: duplicate evidence_id %q", ErrInvalidArtifact, i, id)
-		}
-		evidence[id] = struct{}{}
-	}
-	for i, support := range artifact.EvidenceSupports {
-		if _, exists := seen[support.RelationshipItemID]; !exists {
-			return fmt.Errorf("%w: evidence_supports[%d]: relationship item %q is missing", ErrInvalidArtifact, i, support.RelationshipItemID)
-		}
-		if _, exists := evidence[support.EvidenceID]; !exists {
-			return fmt.Errorf("%w: evidence_supports[%d]: evidence %q is missing", ErrInvalidArtifact, i, support.EvidenceID)
+		seen[id.String()] = true
+		for _, fragment := range append([]tracecontract.TraceEvidenceFragment{item.TraceEvidenceFragment}, item.Occurrences...) {
+			if fragment.ContentOmitted {
+				if fragment.Content != "" {
+					return fmt.Errorf("%w: omitted content is present", ErrInvalidArtifact)
+				}
+				continue
+			}
+			if fragment.ContentTruncated {
+				continue
+			}
+			digest := sha256.Sum256([]byte(fragment.Content))
+			if strings.TrimPrefix(fragment.ContentHash, "sha256:") != hex.EncodeToString(digest[:]) {
+				return fmt.Errorf("%w: exact Evidence content hash mismatch", ErrInvalidArtifact)
+			}
 		}
 	}
 	return nil
 }
-
-func validateMemoryPackRelationship(item MemoryPackRelationship) error {
-	return validateMemoryPackRelationshipWithOptions(item, true)
-}
-
-func validateMemoryPackRelationshipWithOptions(item MemoryPackRelationship, includeEntityNames bool) error {
-	if strings.TrimSpace(item.ItemID) == "" {
-		return errors.New("item_id is required")
-	}
-	if strings.TrimSpace(item.PredicateKey) == "" {
-		return errors.New("predicate_key is required")
-	}
-	if utf8.RuneCountInString(item.PredicateKey) > 128 {
-		return errors.New("predicate_key exceeds 128 characters")
-	}
-	if item.PredicateVersion < 1 {
-		return errors.New("predicate_version must be greater than zero")
-	}
-	if strings.TrimSpace(item.Subject.Ref) == "" {
-		return errors.New("subject ref is required")
-	}
-	if includeEntityNames && strings.TrimSpace(item.Subject.DisplayName) == "" {
-		return errors.New("subject display_name is required when entity names are included")
-	}
-	if strings.TrimSpace(item.Object.Ref) == "" {
-		return errors.New("object ref is required")
-	}
-	if item.Object.Kind == "value" {
-		if strings.TrimSpace(item.Object.Value) == "" || strings.TrimSpace(item.Object.ValueType) == "" {
-			return errors.New("object value and value_type are required")
-		}
-		if _, err := memoryPackCanonicalValue(item.Object); err != nil {
-			return err
-		}
-	} else if includeEntityNames && strings.TrimSpace(item.Object.DisplayName) == "" {
-		return errors.New("object display_name is required when entity names are included")
-	}
-	return nil
-}
-
 func normalizeMemoryPackArtifact(artifact MemoryPackArtifact) MemoryPackArtifact {
 	artifact.Format = strings.TrimSpace(artifact.Format)
 	artifact.PackID = strings.TrimSpace(artifact.PackID)
 	artifact.Name = strings.TrimSpace(artifact.Name)
 	artifact.Description = strings.TrimSpace(artifact.Description)
-	artifact.Source.TeamID = strings.TrimSpace(artifact.Source.TeamID)
-	artifact.Source.ExportedBy = strings.TrimSpace(artifact.Source.ExportedBy)
-	for i := range artifact.Relationships {
-		item := &artifact.Relationships[i]
-		item.ItemID = strings.TrimSpace(item.ItemID)
-		item.SourceRelationshipID = strings.TrimSpace(item.SourceRelationshipID)
-		item.SourceOwnerProfileID = strings.TrimSpace(item.SourceOwnerProfileID)
-		item.PredicateKey = strings.TrimSpace(item.PredicateKey)
-		item.Subject = normalizeMemoryPackEndpoint(item.Subject)
-		item.Object = normalizeMemoryPackEndpoint(item.Object)
-		item.SupportEvidenceIDs = uniqueStrings(item.SupportEvidenceIDs)
+	artifact.Evidence = append([]MemoryPackEvidence{}, artifact.Evidence...)
+	for index := range artifact.Evidence {
+		item := &artifact.Evidence[index]
+		item.Occurrences = append([]tracecontract.TraceEvidenceFragment{}, item.Occurrences...)
+		item.SourceRevisions = append([]tracecontract.TraceSourceRevision{}, item.SourceRevisions...)
+		item.Decisions = append([]tracecontract.TraceEvidenceDecision{}, item.Decisions...)
+		item.Lifecycle = append([]tracecontract.TraceEvidenceLifecycleEvent{}, item.Lifecycle...)
+		item.Omissions = append([]string{}, item.Omissions...)
+		sort.Slice(item.Occurrences, func(i, j int) bool { return item.Occurrences[i].OccurrenceID < item.Occurrences[j].OccurrenceID })
+		sort.Slice(item.SourceRevisions, func(i, j int) bool {
+			return item.SourceRevisions[i].SourceRevisionID < item.SourceRevisions[j].SourceRevisionID
+		})
+		sort.Slice(item.Decisions, func(i, j int) bool { return item.Decisions[i].DecisionID < item.Decisions[j].DecisionID })
+		sort.Slice(item.Lifecycle, func(i, j int) bool { return item.Lifecycle[i].LifecycleEventID < item.Lifecycle[j].LifecycleEventID })
+		sort.Strings(item.Omissions)
 	}
-	for i := range artifact.Evidence {
-		evidence := &artifact.Evidence[i]
-		evidence.EvidenceID = strings.TrimSpace(evidence.EvidenceID)
-		evidence.SourceType = strings.TrimSpace(evidence.SourceType)
-		evidence.Authority = strings.TrimSpace(evidence.Authority)
-		evidence.SourceRef = strings.TrimSpace(evidence.SourceRef)
-		evidence.SourceKey = strings.TrimSpace(evidence.SourceKey)
-		evidence.SourceRevisionID = strings.TrimSpace(evidence.SourceRevisionID)
-	}
+	sort.Slice(artifact.Evidence, func(i, j int) bool { return artifact.Evidence[i].FragmentID < artifact.Evidence[j].FragmentID })
+	artifact.Omissions = append([]string{}, artifact.Omissions...)
+	sort.Strings(artifact.Omissions)
 	return artifact
-}
-
-func normalizeMemoryPackEndpoint(endpoint MemoryPackEndpoint) MemoryPackEndpoint {
-	endpoint.Ref = strings.TrimSpace(endpoint.Ref)
-	endpoint.Kind = strings.TrimSpace(endpoint.Kind)
-	if endpoint.Kind == "" {
-		endpoint.Kind = "entity"
-	}
-	endpoint.SourceID = strings.TrimSpace(endpoint.SourceID)
-	endpoint.DisplayName = strings.TrimSpace(endpoint.DisplayName)
-	endpoint.ValueType = strings.TrimSpace(endpoint.ValueType)
-	endpoint.Value = strings.TrimSpace(endpoint.Value)
-	return endpoint
-}
-
-func memoryPackRelationshipFromTrace(record *tracecontract.RelationshipTraceRecord) MemoryPackRelationship {
-	itemID := record.RelationshipID
-	if itemID == "" {
-		itemID = "rel_" + memoryPackShortHash(record.SemanticGroupKey)
-	}
-	object := MemoryPackEndpoint{
-		Ref:         "object",
-		Kind:        "entity",
-		SourceID:    record.ObjectEntityID,
-		DisplayName: record.ObjectEntityName,
-	}
-	if record.ObjectValueID != "" {
-		object = MemoryPackEndpoint{
-			Ref:       "object",
-			Kind:      "value",
-			SourceID:  record.ObjectValueID,
-			ValueType: record.ObjectValueType,
-			Value:     record.ObjectValue,
-		}
-	}
-	return MemoryPackRelationship{
-		ItemID:                    itemID,
-		SourceRelationshipID:      record.RelationshipID,
-		SourceRelationshipVersion: record.Version,
-		SourceOwnerProfileID:      record.OwnerProfileID,
-		Subject: MemoryPackEndpoint{
-			Ref:         "subject",
-			Kind:        "entity",
-			SourceID:    record.SubjectEntityID,
-			DisplayName: record.SubjectName,
-		},
-		PredicateKey:     record.PredicateKey,
-		PredicateVersion: record.PredicateVersion,
-		Object:           object,
-		Polarity:         record.Polarity,
-		ScopeKey:         record.ScopeKey,
-		Status:           record.Status,
-	}
-}
-
-func memoryPackCanonicalValue(endpoint MemoryPackEndpoint) (any, error) {
-	switch endpoint.ValueType {
-	case string(domain.ValueTypeString), string(domain.ValueTypeDate), string(domain.ValueTypeDateTime):
-		return endpoint.Value, nil
-	case string(domain.ValueTypeNumber):
-		value, err := strconv.ParseFloat(endpoint.Value, 64)
-		if err != nil {
-			return nil, fmt.Errorf("memory pack value %q must be a number", endpoint.Value)
-		}
-		if math.IsNaN(value) || math.IsInf(value, 0) {
-			return nil, fmt.Errorf("memory pack value %q must be finite", endpoint.Value)
-		}
-		return value, nil
-	case string(domain.ValueTypeBoolean):
-		value, err := strconv.ParseBool(endpoint.Value)
-		if err != nil {
-			return nil, fmt.Errorf("memory pack value %q must be a boolean", endpoint.Value)
-		}
-		return value, nil
-	default:
-		return nil, fmt.Errorf("memory pack value type %q is unsupported", endpoint.ValueType)
-	}
 }

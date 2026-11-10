@@ -25,8 +25,8 @@ from .errors import (
     DenseMemTimeoutError,
     DenseMemTransportError,
 )
-from .requests import RecallRequest, RememberRequest, SessionRequest, TraceRequest
-from .results import RecallResult, RememberResult, SessionResult, TraceResult
+from .requests import ExportRequest, RecallRequest, RememberRequest, SessionRequest, TraceRequest
+from .results import ExportResult, RecallResult, RememberResult, SessionResult, TraceResult
 
 _operation_token: ContextVar[str] = ContextVar("densemem_operation_token", default="")
 
@@ -107,6 +107,9 @@ class DenseMemClient:
 
     async def trace_memory(self, request: TraceRequest) -> TraceResult:
         return cast(TraceResult, await self._execute("trace_memory", cast(dict[str, Any], request)))
+
+    async def export_memory_pack(self, request: ExportRequest) -> ExportResult:
+        return cast(ExportResult, await self._execute("export_memory_pack", cast(dict[str, Any], request)))
 
     async def _execute(self, method: str, request: dict[str, Any] | None = None) -> Any:
         payload = copy.deepcopy(request)
@@ -308,3 +311,6 @@ class SyncDenseMemClient:
 
     def trace_memory(self, request: TraceRequest) -> TraceResult:
         return self._run(lambda: self._async.trace_memory(request))
+
+    def export_memory_pack(self, request: ExportRequest) -> ExportResult:
+        return self._run(lambda: self._async.export_memory_pack(request))

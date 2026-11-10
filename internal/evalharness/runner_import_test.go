@@ -48,14 +48,14 @@ func TestRunImportModeImportsWithoutRecall(t *testing.T) {
 			rememberCalls++
 			submissionID := strings.TrimPrefix(idempotencyKey, "eval:")
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"contract_version":     "dense-mem.v2.6.2",
-				"submission_id":        submissionID,
-				"submission_kind":      "remember",
-				"processing_state":     "completed",
-				"search_state":         "current",
-				"correlation_id":       "correlation-" + submissionID,
-				"evidence":             []map[string]any{{"disposition": "stored", "evidence_id": rememberIDs["eval:"+submissionID], "evidence_index": 0, "superseded_evidence_ids": []string{}, "search_state": "current"}},
-				"relationship_results": []map[string]any{}, "errors": []map[string]any{},
+				"contract_version": "dense-mem.v3.0.0",
+				"submission_id":    submissionID,
+				"submission_kind":  "remember",
+				"processing_state": "completed",
+				"search_state":     "current",
+				"correlation_id":   "correlation-" + submissionID,
+				"evidence":         []map[string]any{{"disposition": "stored", "evidence_id": rememberIDs["eval:"+submissionID], "evidence_index": 0, "superseded_evidence_ids": []string{}, "search_state": "current"}},
+				"errors":           []map[string]any{},
 			})
 		case "tool:eval_list_knowledge_refs":
 			var input map[string]any
@@ -154,14 +154,14 @@ func TestRunImportResumeSkipsOnlyCompletedDocumentsWithLiveEvidence(t *testing.T
 			sourceDocID := strings.TrimPrefix(input["idempotency_key"].(string), "eval:")
 			remembered = append(remembered, sourceDocID)
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"contract_version":     "dense-mem.v2.6.2",
-				"submission_id":        "submission-" + sourceDocID,
-				"submission_kind":      "remember",
-				"processing_state":     "completed",
-				"search_state":         "current",
-				"correlation_id":       "correlation-" + sourceDocID,
-				"evidence":             []map[string]any{{"disposition": "stored", "evidence_id": "evidence-" + sourceDocID, "evidence_index": 0, "superseded_evidence_ids": []string{}, "search_state": "current"}},
-				"relationship_results": []map[string]any{}, "errors": []map[string]any{},
+				"contract_version": "dense-mem.v3.0.0",
+				"submission_id":    "submission-" + sourceDocID,
+				"submission_kind":  "remember",
+				"processing_state": "completed",
+				"search_state":     "current",
+				"correlation_id":   "correlation-" + sourceDocID,
+				"evidence":         []map[string]any{{"disposition": "stored", "evidence_id": "evidence-" + sourceDocID, "evidence_index": 0, "superseded_evidence_ids": []string{}, "search_state": "current"}},
+				"errors":           []map[string]any{},
 			})
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
@@ -243,10 +243,6 @@ func writeV2EvalImportFixture(t *testing.T) string {
 		t.Fatalf("load fixture corpus: %v", err)
 	}
 	manifest.SchemaVersion = SeedSchemaVersionV2
-	manifest.RelationshipCount = len(corpus)
-	for i := range corpus {
-		corpus[i].Relationships = []any{evalImportRelationship(t, corpus[i].Content, "relationship-"+corpus[i].SourceDocID)}
-	}
 	if err := writeJSONL(filepath.Join(dir, manifest.CorpusFile), corpus); err != nil {
 		t.Fatalf("write V2 fixture corpus: %v", err)
 	}
@@ -254,50 +250,4 @@ func writeV2EvalImportFixture(t *testing.T) string {
 		t.Fatalf("write V2 fixture manifest: %v", err)
 	}
 	return dir
-}
-
-func evalImportRelationship(t *testing.T, content, ref string) map[string]any {
-	t.Helper()
-	runes := []rune(content)
-	firstSpace := -1
-	secondSpace := -1
-	for index, value := range runes {
-		if value != ' ' {
-			continue
-		}
-		if firstSpace < 0 {
-			firstSpace = index
-			continue
-		}
-		secondSpace = index
-		break
-	}
-	if firstSpace <= 0 || secondSpace <= firstSpace+1 || secondSpace+1 >= len(runes) {
-		t.Fatal("eval import fixture content must contain subject, predicate, and object")
-	}
-	objectEnd := len(runes)
-	for objectEnd > secondSpace+1 && strings.ContainsRune(".!?", runes[objectEnd-1]) {
-		objectEnd--
-	}
-	if objectEnd <= secondSpace+1 {
-		t.Fatal("eval import fixture content must contain an object")
-	}
-	subjectEnd := firstSpace
-	predicateStart := firstSpace + 1
-	predicateEnd := secondSpace
-	objectStart := secondSpace + 1
-	return map[string]any{
-		"ref": ref,
-		"subject": map[string]any{
-			"name": string(runes[:subjectEnd]), "entity_kind": "other",
-		},
-		"predicate": map[string]any{
-			"proposed_key": strings.ToLower(string(runes[predicateStart:predicateEnd])),
-		},
-		"object": map[string]any{"entity": map[string]any{
-			"name": string(runes[objectStart:objectEnd]), "entity_kind": "other",
-		}},
-		"polarity":         "+",
-		"evidence_indices": []any{0},
-	}
 }

@@ -38,7 +38,7 @@ func recordRecallFeedbackSnapshot(
 		SearchState:     res.SearchState,
 		Degradation:     degradation,
 		SnapshotMetadata: map[string]any{
-			"result_schema":   "v2.evidence_community_relationship_refs.v1",
+			"result_schema":   "v3.evidence_topic_refs.v1",
 			"decision_stages": res.DecisionStages,
 		},
 	})
@@ -116,14 +116,11 @@ func recallFeedbackToolArgs(input map[string]any, req recall.RecallRequest) map[
 		"query": req.Query,
 		"limit": req.Limit,
 	}
-	if req.RelationshipLimit != nil {
-		effective["relationship_limit"] = *req.RelationshipLimit
+	if req.TopicLimit != nil {
+		effective["topic_limit"] = *req.TopicLimit
 	}
-	if req.CommunityLimit != nil {
-		effective["community_limit"] = *req.CommunityLimit
-	}
-	if req.CommunityRelationshipLimit != nil {
-		effective["community_relationship_limit"] = *req.CommunityRelationshipLimit
+	if len(req.TopicIDs) > 0 {
+		effective["topic_ids"] = append([]string{}, req.TopicIDs...)
 	}
 	if req.ValidAt != nil {
 		effective["valid_at"] = req.ValidAt.UTC().Format(feedbackTimeFormat)
@@ -133,12 +130,6 @@ func recallFeedbackToolArgs(input map[string]any, req recall.RecallRequest) map[
 	}
 	if len(req.KnownEvidenceIDs) > 0 {
 		effective["known_evidence_ids"] = append([]string(nil), req.KnownEvidenceIDs...)
-	}
-	if len(req.KnownRelationshipIDs) > 0 {
-		effective["known_relationship_ids"] = append([]string(nil), req.KnownRelationshipIDs...)
-	}
-	if len(req.ExpandFromEntityIDs) > 0 {
-		effective["expand_from_entity_ids"] = append([]string(nil), req.ExpandFromEntityIDs...)
 	}
 	return map[string]any{
 		"input":     recallFeedbackInputCopy(input),
@@ -153,12 +144,7 @@ func recallFeedbackInputCopy(input map[string]any) map[string]any {
 		"limit",
 		"valid_at",
 		"known_at",
-		"known_evidence_ids",
-		"known_relationship_ids",
-		"expand_from_entity_ids",
-		"relationship_limit",
-		"community_limit",
-		"community_relationship_limit",
+		"known_evidence_ids", "topic_ids", "topic_limit",
 	} {
 		if value, ok := input[key]; ok {
 			out[key] = value

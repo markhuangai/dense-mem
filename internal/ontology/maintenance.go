@@ -34,7 +34,6 @@ type MaintenanceDependencies struct {
 	ProviderTimeout time.Duration
 	Audit           MaintenanceAuditPreparer
 	Now             func() time.Time
-	Projections     ProjectionRunner
 	Logger          *slog.Logger
 	Diagnostics     MaintenanceDiagnosticCapture
 }
@@ -43,14 +42,6 @@ type MaintenanceDiagnosticCapture struct {
 	Observe       assessment.Observer
 	NewRecorder   func() modelprovider.SnapshotRecorder
 	RecordFailure func(context.Context, contract.MaintenanceClaim, contract.OrganizationResult, []modelprovider.ProviderExchange) error
-}
-
-type ProjectionRunner interface {
-	RunProjectionTurn(context.Context) (bool, error)
-}
-
-func (s *MaintenanceService) SetProjectionRunner(runner ProjectionRunner) {
-	s.deps.Projections = runner
 }
 
 type MaintenanceService struct{ deps MaintenanceDependencies }
@@ -239,16 +230,6 @@ func (s *MaintenanceService) prepareTurn(ctx context.Context) (work *maintenance
 	s.logMaintenanceDiscovery(ctx, *turn, discovery, err)
 	if err != nil {
 		return nil, true, err
-	}
-	page, err := s.deps.Repository.ListRecords(turnCtx, turn.TeamID, contract.EntityClass, "", 1)
-	if err != nil {
-		return nil, true, err
-	}
-	if len(page.Records) == 0 {
-		_, err = s.deps.Repository.SeedDefinitions(turnCtx, turn.TeamID, contract.SeedInput{OperationKey: "maintenance-seed:" + turn.LeaseToken, ExpectedRevision: page.Revision, Limit: 20})
-		if err != nil {
-			return nil, true, err
-		}
 	}
 	claim, err := s.deps.Repository.ClaimMaintenanceBatch(turnCtx, *turn, window.ID, s.deps.Now())
 	if err != nil || claim == nil {

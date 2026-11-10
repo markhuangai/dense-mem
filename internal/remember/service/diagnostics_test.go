@@ -145,7 +145,6 @@ func TestProjectRememberAttemptPublicResultRejectsMalformedStoredJSON(t *testing
 	result, err := projectRememberAttemptPublicResult(nil)
 	require.NoError(t, err)
 	require.Empty(t, result.Evidence)
-	require.Empty(t, result.RelationshipResults)
 	require.Empty(t, result.Errors)
 }
 

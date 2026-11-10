@@ -18,7 +18,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	assessorprovider "github.com/markhuangai/dense-mem/internal/provider/assessor"
-	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
 func TestApplicationBundleBuildsEveryCapabilityService(t *testing.T) {
@@ -26,50 +25,17 @@ func TestApplicationBundleBuildsEveryCapabilityService(t *testing.T) {
 		Metrics: observability.NoopDiscoverabilityMetrics(),
 		Logger:  observability.New(slog.LevelInfo),
 	})
-	if bundle.Remember == nil || bundle.Recall == nil || bundle.Community == nil || bundle.Lifecycle == nil || bundle.Context == nil || bundle.ControlDream == nil || bundle.Graph == nil || bundle.MemoryPack == nil || bundle.RecallFeedback == nil {
+	if bundle.Remember == nil || bundle.Recall == nil || bundle.Lifecycle == nil || bundle.Context == nil || bundle.MemoryPack == nil || bundle.RecallFeedback == nil {
 		t.Fatal("application composition did not build every capability service")
 	}
 }
 
-func TestAISessionModelsUseIndependentOverrides(t *testing.T) {
-	fallback := aiSessionModels{
-		remember:       "verifier-model",
-		conflictReview: "verifier-model",
+func TestEvidenceOnlyCatalogSessionModelRetainsRememberOverride(t *testing.T) {
+	if got := aiSessionModelsForConfig(&config.Config{AIVerifierModel: "default-model"}); got.remember != "default-model" {
+		t.Fatalf("fallback model=%q", got.remember)
 	}
-	for name, configure := range map[string]func(*config.Config){
-		"remember": func(cfg *config.Config) { cfg.AIRememberModel = "remember-model" },
-		"conflict review": func(cfg *config.Config) {
-			cfg.AIConflictReviewModel = "conflict-model"
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			cfg := config.Config{AIVerifierModel: "verifier-model"}
-			configure(&cfg)
-			got := aiSessionModelsForConfig(&cfg)
-			want := fallback
-			switch name {
-			case "remember":
-				want.remember = "remember-model"
-			case "conflict review":
-				want.conflictReview = "conflict-model"
-			}
-			if got != want {
-				t.Fatalf("session models = %#v, want %#v", got, want)
-			}
-		})
-	}
-
-	all := aiSessionModelsForConfig(&config.Config{
-		AIVerifierModel:       "verifier-model",
-		AIRememberModel:       "remember-model",
-		AIConflictReviewModel: "conflict-model",
-	})
-	wantAll := aiSessionModels{
-		remember:       "remember-model",
-		conflictReview: "conflict-model",
-	}
-	if all != wantAll {
-		t.Fatalf("all session models = %#v, want %#v", all, wantAll)
+	if got := aiSessionModelsForConfig(&config.Config{AIVerifierModel: "default-model", AIRememberModel: "remember-model"}); got.remember != "remember-model" {
+		t.Fatalf("Remember model=%q", got.remember)
 	}
 }
 
@@ -119,7 +85,7 @@ func TestConfiguredSessionProvidersShareConcurrencyGate(t *testing.T) {
 	assessorProvider := assessorprovider.NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGateAndModel(
 		cfg, server.Client(), assessor.DefaultSemanticAssessmentLimits(), gate, "remember-model",
 	)
-	verifierProvider := verifier.NewOpenAIVerifier(assessorProvider, "conflict-model", verifier.DefaultSemanticAssessmentLimits(), nil)
+	sessionProvider := assessorprovider.NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGateAndModel(cfg, server.Client(), assessor.DefaultSemanticAssessmentLimits(), gate, "session-model")
 
 	if err := modelprovider.AcquireConcurrency(context.Background(), gate); err != nil {
 		t.Fatalf("acquire shared gate: %v", err)
@@ -127,7 +93,7 @@ func TestConfiguredSessionProvidersShareConcurrencyGate(t *testing.T) {
 	canceled, cancel := context.WithCancel(context.Background())
 	cancel()
 	_, err := assessorProvider.Complete(canceled, modelprovider.StructuredRequest{
-		Model: "dream-graph-model", Messages: []modelprovider.Message{{Role: "user", Content: "{}"}},
+		Model: "remember-model", Messages: []modelprovider.Message{{Role: "user", Content: "{}"}},
 		SchemaName: "schema", Schema: map[string]any{"type": "object"},
 	})
 	if err == nil {
@@ -144,14 +110,14 @@ func TestConfiguredSessionProvidersShareConcurrencyGate(t *testing.T) {
 	go func() {
 		defer wait.Done()
 		_, err := assessorProvider.Complete(context.Background(), modelprovider.StructuredRequest{
-			Model: "dream-graph-model", Messages: []modelprovider.Message{{Role: "user", Content: "{}"}},
+			Model: "remember-model", Messages: []modelprovider.Message{{Role: "user", Content: "{}"}},
 			SchemaName: "schema", Schema: map[string]any{"type": "object"},
 		})
 		errs <- err
 	}()
 	go func() {
 		defer wait.Done()
-		_, err := verifierProvider.StructuredChatJSON(context.Background(), "community-model", "schema", map[string]any{"type": "object"}, "system", map[string]any{})
+		_, err := sessionProvider.Complete(context.Background(), modelprovider.StructuredRequest{Model: "session-model", SchemaName: "schema", Schema: map[string]any{"type": "object"}, Messages: []modelprovider.Message{{Role: "user", Content: "{}"}}})
 		errs <- err
 	}()
 
@@ -199,18 +165,16 @@ func TestConfiguredSessionModelsDoNotFallbackAfterProviderFailure(t *testing.T) 
 	defer server.Close()
 
 	cfg := &config.Config{
-		AIVerifierAPIURL:      server.URL,
-		AIVerifierAPIKey:      "test-key",
-		AIVerifierModel:       "verifier-fallback-model",
-		AIRememberModel:       "remember-model",
-		AIConflictReviewModel: "conflict-model",
+		AIVerifierAPIURL: server.URL,
+		AIVerifierAPIKey: "test-key",
+		AIVerifierModel:  "verifier-fallback-model",
+		AIRememberModel:  "remember-model",
 	}
 	models := aiSessionModelsForConfig(cfg)
 	gate := modelprovider.NewConcurrencyGate(1)
 	assessorProvider := assessorprovider.NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGateAndModel(
 		cfg, server.Client(), assessor.DefaultSemanticAssessmentLimits(), gate, models.remember,
 	)
-	verifierProvider := verifier.NewOpenAIVerifier(assessorProvider, models.conflictReview, verifier.DefaultSemanticAssessmentLimits(), nil)
 
 	calls := []func() error{
 		func() error {
@@ -220,7 +184,7 @@ func TestConfiguredSessionModelsDoNotFallbackAfterProviderFailure(t *testing.T) 
 			return err
 		},
 		func() error {
-			_, err := verifierProvider.Verify(context.Background(), verifier.Request{ProfileID: "profile", Predicate: "claim"})
+			_, err := assessorProvider.Complete(context.Background(), modelprovider.StructuredRequest{Model: models.remember, SchemaName: "schema", Schema: map[string]any{"type": "object"}, Messages: []modelprovider.Message{{Role: "user", Content: "{}"}}})
 			return err
 		},
 	}
@@ -231,7 +195,7 @@ func TestConfiguredSessionModelsDoNotFallbackAfterProviderFailure(t *testing.T) 
 	}
 	wantModels := []string{
 		"remember-model",
-		"conflict-model",
+		"remember-model",
 	}
 	if len(requestedModels) != len(wantModels) {
 		t.Fatalf("provider request count = %d, want %d: %#v", len(requestedModels), len(wantModels), requestedModels)
@@ -275,7 +239,7 @@ func TestSearchProviderCompositionBuildsSharedProviderFacets(t *testing.T) {
 }
 
 func TestCompositionHelpersCoverNilPortsAndTelemetryBranches(t *testing.T) {
-	if buildConflictQueueApplication(nil) == nil || buildEvidenceConflictApplication(nil) == nil || buildGraphApplication(nil) == nil {
+	if buildEvidenceConflictApplication(nil) == nil {
 		t.Fatal("nil adapter composition returned nil service")
 	}
 	if buildConfigurationApplication(nil, nil) == nil || buildSecurityApplication(nil, nil) == nil || buildUsageMetricsApplication(nil, nil) == nil {
@@ -283,9 +247,6 @@ func TestCompositionHelpersCoverNilPortsAndTelemetryBranches(t *testing.T) {
 	}
 	if buildAuditApplication(nil) == nil || buildOperationLogApplication(nil, nil) == nil || buildActiveApplicationLogger(slog.LevelInfo, nil) == nil {
 		t.Fatal("nil infrastructure composition returned nil application")
-	}
-	if _, err := buildConflictReviewApplication(conflictReviewApplicationDependencies{}); err == nil {
-		t.Fatal("missing conflict store did not fail review composition")
 	}
 
 	server, err := newTelemetryScrapeServer(nil, "token")

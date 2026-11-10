@@ -49,10 +49,18 @@ type ontologyFixture struct {
 }
 
 func newOntologyFixture(t *testing.T) *ontologyFixture {
-	return newOntologyFixtureWithMaintenance(t, true)
+	return newOntologyFixtureWithMode(t, false, true)
 }
 
 func newOntologyFixtureWithMaintenance(t *testing.T, maintenance bool) *ontologyFixture {
+	return newOntologyFixtureWithMode(t, !maintenance, maintenance)
+}
+
+func newHistoricalOntologyFixture(t *testing.T) *ontologyFixture {
+	return newOntologyFixtureWithMode(t, true, true)
+}
+
+func newOntologyFixtureWithMode(t *testing.T, historical, maintenance bool) *ontologyFixture {
 	t.Helper()
 	if os.Getenv("DENSE_MEM_REPOSITORY_TESTCONTAINERS") != "1" {
 		t.Skip("set DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 for disposable ontology PostgreSQL cases")
@@ -90,7 +98,11 @@ func newOntologyFixtureWithMaintenance(t *testing.T, maintenance bool) *ontology
 	require.NoError(t, err)
 	migrator, err := storage.NewMigrator(admin)
 	require.NoError(t, err)
-	require.NoError(t, migrator.RunUp(context.Background()))
+	if historical {
+		require.NoError(t, migrator.PrepareEvidenceOnlyMigration(context.Background()))
+	} else {
+		require.NoError(t, migrator.RunUp(context.Background()))
+	}
 	var schema map[string]string
 	if !maintenance {
 		schema = ontologySchemaSnapshot(t, admin)
@@ -116,7 +128,7 @@ func newOntologyFixtureWithMaintenance(t *testing.T, maintenance bool) *ontology
 		require.NoError(t, db.Close())
 	})
 	rls := storage.NewRLS()
-	fixture := &ontologyFixture{admin: admin, app: app, rls: rls, store: NewStore(app, rls), knowledge: knowledge.NewStore(app, rls, knowledgecontract.ConflictRuntimeConfig{}), schema: schema}
+	fixture := &ontologyFixture{admin: admin, app: app, rls: rls, store: NewStore(app, rls), knowledge: knowledge.NewStore(app, rls), schema: schema}
 	team := &domain.Team{Name: "ontology-" + uuid.NewString()}
 	require.NoError(t, access.NewTeamRepository(admin, rls).Create(context.Background(), team))
 	fixture.team = team.ID.String()
@@ -310,7 +322,7 @@ func testPublication(key string, revision int64, changes ...ontology.Change) ont
 func (f *ontologyFixture) canonicalSnapshot(t *testing.T) map[string]string {
 	t.Helper()
 	result := map[string]string{}
-	for _, table := range []string{"evidence_fragments", "evidence_occurrences", "evidence_sources", "evidence_source_revisions", "entity_records", "entity_names", "value_records", "relationship_records", "relationship_evidence_supports", "relationship_support_decision_events", "evidence_lifecycle_events", "evidence_quarantines"} {
+	for _, table := range []string{"evidence_fragments", "evidence_occurrences", "evidence_sources", "evidence_source_revisions", "evidence_lifecycle_events", "evidence_quarantines"} {
 		var value string
 		require.NoError(t, f.admin.Raw(`SELECT COALESCE(jsonb_agg(to_jsonb(row) ORDER BY to_jsonb(row)::text)::text,'[]') FROM `+table+` AS row WHERE team_id=?::uuid`, f.team).Row().Scan(&value))
 		result[table] = value

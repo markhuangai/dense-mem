@@ -89,7 +89,7 @@ func TestOntologyMaintenanceLeaseInterruptionReturnsPending(t *testing.T) {
 
 func TestOntologyMaintenanceEnrollsActiveTeamsDespiteRetiredOptouts(t *testing.T) {
 	f := newOrganizationFixture(t)
-	maintenanceEntity(t, f, "Existing active team")
+	maintenanceEvidence(t, f, "Existing active team")
 	ctx := context.Background()
 	config := maintenanceSettings(t, f)
 	_, err := config.UpdateOntologyMaintenanceSettings(ctx, map[string]string{domain.AppConfigOntologyEnabled: "false"}, "control", "", "")
@@ -110,7 +110,7 @@ func TestOntologyMaintenanceEnrollsActiveTeamsDespiteRetiredOptouts(t *testing.T
 	require.NoError(t, err)
 	window = maintenanceWindow(t, f, config)
 	newTeam := maintenanceOtherTeam(t, f)
-	maintenanceEntity(t, newTeam, "Newly active team")
+	maintenanceEvidence(t, newTeam, "Newly active team")
 	require.NoError(t, f.rls.WithSystemTx(ctx, f.admin, func(tx *gorm.DB) error {
 		return tx.Exec(`UPDATE teams SET config='{"dreaming":{"enabled":false}}' WHERE id=?::uuid`, newTeam.team).Error
 	}))
@@ -155,7 +155,7 @@ func TestOntologyMaintenancePauseCommandsAndWindows(t *testing.T) {
 	require.ErrorIs(t, err, ontology.ErrConflict)
 	require.ErrorIs(t, restarted.AdmitMaintenanceAttempt(ctx, *claim, assessment, 2, 100, 100, now), ontology.ErrMaintenancePaused)
 	require.NoError(t, restarted.ReconcileMaintenanceAttempt(ctx, *claim, assessment, ontology.AssessmentAttempt{Number: 1, ReportedInputTokens: 50, ReportedOutputTokens: 50}))
-	_, err = restarted.SeedDefinitions(ontology.WithMaintenanceClaim(ctx, *claim), f.team, ontology.SeedInput{OperationKey: "drained-seed", Limit: 20})
+	_, err = restarted.PublishAutomatic(ontology.WithMaintenanceClaim(ctx, *claim), f.team, testPublication("drained-probe", 0, ontology.Change{Record: testTopic("drained-probe")}))
 	require.NoError(t, err, "already admitted work may publish while paused")
 	_, err = restarted.MaintenanceCommand(ctx, domain.OntologyMaintenanceCommand{Action: "resume", OperationKey: "durable-resume"}, now, nil)
 	require.NoError(t, err)
@@ -180,7 +180,7 @@ func TestOntologyMaintenancePauseCommandsAndWindows(t *testing.T) {
 
 func TestOntologyMaintenanceExpiredLeaseAndNewInvalidation(t *testing.T) {
 	f := newOrganizationFixture(t)
-	source := maintenanceEntity(t, f, "Atlas")
+	source := maintenanceEvidence(t, f, "Atlas")
 	config := maintenanceSettings(t, f)
 	_, err := config.UpdateOntologyMaintenanceSettings(context.Background(), map[string]string{domain.AppConfigOntologyConcurrency: "2", domain.AppConfigOntologyTeamConcurrency: "2"}, "control", "", "")
 	require.NoError(t, err)
@@ -190,13 +190,13 @@ func TestOntologyMaintenanceExpiredLeaseAndNewInvalidation(t *testing.T) {
 	require.NoError(t, f.rls.WithSystemTx(ctx, f.admin, func(tx *gorm.DB) error {
 		return tx.Exec(`UPDATE ontology_maintenance_batches SET lease_until=clock_timestamp()-interval '1 second' WHERE batch_id=?::uuid`, claim.ID).Error
 	}))
-	_, err = f.store.SeedDefinitions(ontology.WithMaintenanceClaim(ctx, *claim), f.team, ontology.SeedInput{OperationKey: "expired-seed", Limit: 20})
+	_, err = f.store.PublishAutomatic(ontology.WithMaintenanceClaim(ctx, *claim), f.team, testPublication("expired-probe", 0, ontology.Change{Record: testTopic("expired-probe")}))
 	require.ErrorIs(t, err, ontology.ErrLeaseLost)
 	require.ErrorIs(t, f.store.AdmitMaintenanceAttempt(ctx, *claim, uuid.NewString(), 1, 100, 100, time.Now().UTC()), ontology.ErrLeaseLost)
 	require.NoError(t, f.store.ReleaseMaintenanceTurn(ctx, *turn))
 	turn, claim = maintenanceClaim(t, f, window)
 	require.NoError(t, f.rls.WithTeamTx(ctx, f.app, f.team, func(tx *gorm.DB) error {
-		return tx.Exec(`UPDATE entity_records SET identity_context=identity_context||'{"revision":"changed"}'::jsonb,version=version+1 WHERE team_id=?::uuid AND entity_id=?::uuid`, f.team, source.ID).Error
+		return appendMaintenanceOccurrence(tx, f, source)
 	}))
 	discovery, err := f.store.ClaimMaintenanceTurn(ctx, window.ID, time.Now(), time.Minute)
 	require.NoError(t, err)
@@ -212,8 +212,8 @@ func TestOntologyMaintenanceExpiredLeaseAndNewInvalidation(t *testing.T) {
 }
 
 func TestOntologyMaintenancePopulatedMigrationCannotRollback(t *testing.T) {
-	f := newOrganizationFixture(t)
-	maintenanceEntity(t, f, "Preserved canonical entity")
+	f := newHistoricalOntologyFixture(t)
+	maintenanceEvidence(t, f, "Preserved canonical entity")
 	before := f.canonicalSnapshot(t)
 	migrator := ontologyMigrationProvider(t, f.admin)
 	require.NoError(t, rollbackOntologySchemaTo(t, f.admin, 20261006010001))
@@ -224,7 +224,7 @@ func TestOntologyMaintenancePopulatedMigrationCannotRollback(t *testing.T) {
 
 func TestOntologyMaintenanceMarkerRollbackAndRLS(t *testing.T) {
 	f := newOrganizationFixture(t)
-	source := maintenanceEntity(t, f, "Rollback entity")
+	source := maintenanceEvidence(t, f, "Rollback entity")
 	config := maintenanceSettings(t, f)
 	window := maintenanceWindow(t, f, config)
 	turn, claim := maintenanceClaim(t, f, window)
@@ -233,7 +233,7 @@ func TestOntologyMaintenanceMarkerRollbackAndRLS(t *testing.T) {
 	require.NoError(t, f.admin.Raw(`SELECT COALESCE(max(marker_sequence),0) FROM ontology_maintenance_markers WHERE team_id=?::uuid`, f.team).Row().Scan(&before))
 	abort := errors.New("abort authoritative transaction")
 	err := f.rls.WithTeamTx(ctx, f.app, f.team, func(tx *gorm.DB) error {
-		if err := tx.Exec(`UPDATE entity_records SET identity_context=identity_context||'{"rollback":true}'::jsonb,version=version+1 WHERE team_id=?::uuid AND entity_id=?::uuid`, f.team, source.ID).Error; err != nil {
+		if err := appendMaintenanceOccurrence(tx, f, source); err != nil {
 			return err
 		}
 		return abort
@@ -253,7 +253,7 @@ func TestOntologyMaintenanceMarkerRollbackAndRLS(t *testing.T) {
 	}))
 	require.Equal(t, 1, count)
 	claim.TeamID = uuid.NewString()
-	_, err = f.store.SeedDefinitions(ontology.WithMaintenanceClaim(ctx, *claim), f.team, ontology.SeedInput{OperationKey: "cross-team-seed", Limit: 20})
+	_, err = f.store.PublishAutomatic(ontology.WithMaintenanceClaim(ctx, *claim), f.team, testPublication("cross-team-probe", 0, ontology.Change{Record: testTopic("cross-team-probe")}))
 	require.ErrorIs(t, err, ontology.ErrUnauthorized)
 	require.NoError(t, f.store.ReleaseMaintenanceTurn(ctx, *turn))
 }

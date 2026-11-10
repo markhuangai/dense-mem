@@ -15,7 +15,6 @@ const credentialTeams = new Map([[apiKey, teamID]]);
 const diagnosticSince = new Date().toISOString();
 const maintenanceObservationAttempts = 300;
 const original = (await control("/config/ontology-maintenance")).data;
-const summaryCallsBefore = await summaryCalls();
 let paused = false;
 let failure;
 try {
@@ -35,17 +34,16 @@ try {
   credentialTeams.set(foreignCredential.api_key, foreignTeam.id);
   const texts = ["Atlas stores PostgreSQL data.", "Atlas uses PostgreSQL for data storage.", "Atlas stores PostgreSQL data and encrypts its backups."];
   const sourceIDs = [];
-  const relationshipIDs = [];
   for (const [index, content] of texts.entries()) {
-    sourceIDs.push(await remember(content, index === 1 ? second.api_key : shared.api_key, relationshipIDs));
+    sourceIDs.push(await remember(content, index === 1 ? second.api_key : shared.api_key));
   }
   assert.equal(new Set(sourceIDs).size, 3, "force-inserted paraphrases must retain distinct source handles");
-  const privateID = await remember(texts[0], privateCredential.api_key, [], "private");
+  const privateID = await remember(texts[0], privateCredential.api_key, "private");
   const foreignID = await remember(texts[0], foreignCredential.api_key);
   const coordinationID = await remember("Atlas uses Redis for coordination.", shared.api_key);
   const coordinationAlternativeID = await remember("Atlas uses KeyDB for coordination.", shared.api_key);
-  await remember("Atlas uses SQLite for backup storage.", shared.api_key, relationshipIDs);
-  await remember("Atlas uses SQLite for backup storage.", second.api_key, relationshipIDs);
+  await remember("Atlas uses SQLite for backup storage.", shared.api_key);
+  await remember("Atlas uses SQLite for backup storage.", second.api_key);
   await expectStatus("/ontology/runs", { operation_key: randomUUID(), max_batches: 101 }, 422);
   await expectStatus("/ontology/runs", { operation_key: randomUUID(), team_id: "untrusted" }, 422);
   await expectStatus("/config/ontology-maintenance", { items: [{ key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "true" }, { key: "ONTOLOGY_MAINTENANCE_CONTEXT_WINDOW_TOKENS", value: "300000" }, { key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "false" }] }, 422, "PATCH");
@@ -61,22 +59,15 @@ try {
   assert.equal(command.window_id, replay.window_id);
   await expectStatus("/ontology/runs", { operation_key: key, max_batches: 2 }, 409);
   let status;
-  let projectionCoverage;
   for (let index = 0; index < maintenanceObservationAttempts; index++) {
     status = (await control("/ontology/status")).data;
-    if (status.discovery_complete && status.counts.pending === 0 && status.counts.organized > initial.counts.organized) {
-      projectionCoverage = (await control(`/teams/${teamID}/community/status`)).data.projection_coverage;
-      if (projectionCoverage?.coverage_complete && projectionCoverage.current_topics >= 2) break;
-    }
+    if (status.discovery_complete && status.counts.pending === 0 && status.counts.organized > initial.counts.organized) break;
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
   assert.equal(status.discovery_complete, true);
   assert.equal(status.counts.pending, 0);
   assert.equal(status.counts.failed, 0);
   assert(status.counts.organized > initial.counts.organized);
-  assert(projectionCoverage?.coverage_complete && projectionCoverage.current_topics >= 2,
-    `alias discovery must exercise current topic projections: ${JSON.stringify({ projection_coverage: projectionCoverage ?? null,
-      discovery_complete: status.discovery_complete, counts: status.counts })}`);
   assert(status.usage.attempts > 0, "provider dispatches must have durable attempt identities");
   assert.equal(status.usage.unreconciled_attempts, 0);
   const currentReceipts = JSON.parse(postgresQuery(`SELECT COALESCE(jsonb_agg(jsonb_build_object('source',source.source_id,'status',source.status,'assessment',source.assessment_id,'failure',assessment.body->'result'->>'failure_code')),'[]')
@@ -94,7 +85,7 @@ try {
   await control("/ontology/pause", { operation_key: randomUUID() });
   paused = true;
   const accountingBefore = (await control("/ontology/status")).data.window;
-  const args = { query: "Atlas PostgreSQL", limit: 20, relationship_limit: 0, community_limit: 0 };
+  const args = { query: "Atlas PostgreSQL", limit: 20 };
   const grouped = await mcp("recall_memory", args, reader.api_key);
   const relevant = grouped.results.filter((item) => sourceIDs.includes(item.evidence_id));
   assert.equal(relevant.length, 2, `equivalent sources must share one slot while the partial-overlap fact retains its own slot: ${JSON.stringify({ results: relevant, degradations: grouped.degradations, counts: status.counts })}`);
@@ -120,120 +111,67 @@ try {
   const discovered = await mcp("recall_memory", { ...args, query: "database platform" }, reader.api_key);
   assert(discovered.results.some((item) => sourceIDs.includes(item.evidence_id)), "published alias must discover its source evidence");
   await assertOntologyQueryScoring(reader.api_key, coordinationID, sourceIDs);
-  // One evidence slot leaves one uses group uncovered even with current projections.
-  const relationshipDiscovery = await mcp("recall_memory", { ...args, query: "database platform", limit: 1, relationship_limit: 20 }, reader.api_key);
-  const displayedRelationshipIDs = relationshipDiscovery.related_relationships.flatMap((item) => [item.relationship_id, ...item.equivalent_relationship_ids]);
-  assert(relationshipIDs.some((id) => displayedRelationshipIDs.includes(id)), `published alias must discover existing Relationship handles: ${JSON.stringify({ expected_relationship_ids: relationshipIDs, returned_relationship_ids: displayedRelationshipIDs.slice(0, 20), degradations: relationshipDiscovery.degradations?.map(({ frontier, code }) => ({ frontier, code })), maintenance_counts: status.counts })}`);
-  const usesSlots = relationshipDiscovery.related_relationships.filter((item) => item.predicate === "uses" && relationshipIDs.includes(item.relationship_id));
-  assert.equal(usesSlots.length, 1, "existing semantic grouping must retain one uses slot across owners");
-  assert.equal(usesSlots[0].equivalent_relationship_ids.length, 1, "the uncovered uses group must retain both owners' Relationship handles");
+  const topicRecall = await mcp("recall_memory", { query: "Atlas", limit: 20, topic_limit: 10 }, reader.api_key);
+  assert.equal(topicRecall.related_topics.length, 2, "shared Evidence must expose both direct topics");
+  const topicIDs = topicRecall.related_topics.map((topic) => topic.topic_id);
+  for (const [index, topic] of topicRecall.related_topics.entries()) {
+    assert.equal(topic.rank, index + 1);
+    assert(topic.name && topic.description && topic.eligible_evidence_count > 0);
+    assert(!Object.hasOwn(topic, "relationships"));
+    const follow = await mcp("recall_memory", { topic_ids: [topic.topic_id], limit: 50 }, reader.api_key);
+    assert(follow.results.length > 0, "topic-only follow-up must retrieve exact Evidence");
+    assert(!follow.results.some((item) => [privateID, foreignID].includes(item.evidence_id)), "topic counts and results must exclude private and foreign Evidence");
+    const knownIDs = follow.results.flatMap((item) => [item.evidence_id, ...item.equivalent_evidence_ids]);
+    const unseen = await mcp("recall_memory", { topic_ids: [topic.topic_id], limit: 50, known_evidence_ids: knownIDs }, reader.api_key);
+    assert.equal(unseen.results.length, 0, "known Evidence must be excluded before topic selection");
+    assert.equal(unseen.related_topics.length, 0, "known-only topics must have no eligible unseen hint");
+  }
+  const union = await mcp("recall_memory", { topic_ids: topicIDs, limit: 50 }, reader.api_key);
+  assert(union.results.some((item) => item.evidence_id === coordinationID));
+  assert(union.results.some((item) => item.evidence_id === coordinationAlternativeID));
+  assert(union.results.some((item) => sourceIDs.includes(item.evidence_id)));
+  const limitedTopics = await mcp("recall_memory", { query: "Atlas", limit: 20, topic_limit: 1 }, reader.api_key);
+  assert.equal(limitedTopics.related_topics.length, 1);
+  assert.equal(limitedTopics.topics_truncated, true);
+  assert.equal(topicRecall.topics_truncated, false);
+  const noTopics = await mcp("recall_memory", { query: "Atlas", topic_limit: 0 }, reader.api_key);
+  assert.deepEqual(noTopics.related_topics, []);
+  const pausedTopics = await mcp("recall_memory", { topic_ids: topicIDs, limit: 50 }, reader.api_key);
+  assert.deepEqual(pausedTopics.related_topics, union.related_topics, "pause must preserve current organizational reads");
+  const foreignTopics = await mcp("recall_memory", { query: "Atlas", topic_limit: 10 }, foreignCredential.api_key);
+  const unavailableTopicIDs = [randomUUID(), foreignTopics.related_topics[0]?.topic_id].filter(Boolean);
+  for (const id of unavailableTopicIDs) {
+    const unavailable = await rpc("recall_memory", { topic_ids: [id] }, reader.api_key);
+    assert(unavailable.result?.isError && unavailable.result.structuredContent.reason_code === "topic_unavailable", "foreign and missing topics must share bounded rejection");
+    assert(!JSON.stringify(unavailable.result).includes(id));
+  }
+  const topicHeads = postgresQuery(`SELECT jsonb_agg(jsonb_build_object('record_id',record_id,'retired',retired)) FROM ontology_record_heads WHERE team_id=${sqlLiteral(teamID)}::uuid AND record_id=${sqlLiteral(topicIDs[0])}::uuid`);
+  assert(JSON.parse(topicHeads)?.length === 1);
+  postgresQuery(`UPDATE ontology_record_heads SET retired=true WHERE team_id=${sqlLiteral(teamID)}::uuid AND record_id=${sqlLiteral(topicIDs[0])}::uuid`);
+  try {
+    const unavailable = await rpc("recall_memory", { topic_ids: [topicIDs[0]] }, reader.api_key);
+    assert(unavailable.result?.isError && unavailable.result.structuredContent.reason_code === "topic_unavailable", "retired topic must fail explicit filtering");
+  } finally {
+    postgresQuery(`UPDATE ontology_record_heads SET retired=false WHERE team_id=${sqlLiteral(teamID)}::uuid AND record_id=${sqlLiteral(topicIDs[0])}::uuid`);
+  }
   for (const temporalField of ["valid_at", "known_at"]) {
-    const temporal = await mcp("recall_memory", { ...args, [temporalField]: new Date().toISOString() }, reader.api_key);
-    assert.equal(temporal.results.filter((item) => sourceIDs.includes(item.evidence_id)).length, 3);
-    assert(temporal.degradations.some((item) => item.code === "ontology_temporal_not_supported"));
+    const temporal = await mcp("recall_memory", { topic_ids: topicIDs, limit: 50, [temporalField]: new Date().toISOString() }, reader.api_key);
+    assert(temporal.results.some((item) => sourceIDs.includes(item.evidence_id)), "temporal Evidence must use current direct topic membership");
+    assert(temporal.related_topics.length > 0);
   }
-  const combinedFallback = await mcp("recall_memory", { ...args, query: "Atlas PostgreSQL [fixture-fault:embedding-malformed]", relationship_limit: 20, known_at: new Date().toISOString() }, reader.api_key);
-  assert(combinedFallback.degradations.some((item) => item.frontier === "evidence" && item.code === "provider_unavailable"), "the provider fixture must make the query vector unavailable");
-  assert(combinedFallback.degradations.some((item) => item.frontier === "relationships" && item.code === "relationship_vector_warming"), "relationship recall must report its vector fallback");
-  assert(combinedFallback.degradations.some((item) => item.frontier === "relationships" && item.code === "ontology_temporal_not_supported"), "the vector fallback must retain the independent ontology omission");
-  const accountingAfterOntologyRecall = (await control("/ontology/status")).data.window;
-  assert.equal(accountingAfterOntologyRecall.usage.reported_input_tokens, accountingBefore.usage.reported_input_tokens, "Recall added organization provider input tokens");
-  assert.equal(accountingAfterOntologyRecall.usage.reported_output_tokens, accountingBefore.usage.reported_output_tokens, "Recall added organization provider output tokens");
-  const historicalRunID = randomUUID();
-  postgresQuery(`INSERT INTO community_snapshot_runs(team_id,space_id,space_generation,run_id,window_key,algorithm_kind,status,error)
-    VALUES(${sqlLiteral(teamID)}::uuid,dense_mem_team_shared_space(${sqlLiteral(teamID)}::uuid),dense_mem_team_shared_generation(${sqlLiteral(teamID)}::uuid),
-    ${sqlLiteral(historicalRunID)}::uuid,${sqlLiteral(`historical-status-${historicalRunID}`)},'louvain','failed','retained historical failure')`);
-  await control("/ontology/resume", { operation_key: randomUUID() });
-  paused = false;
-  let communityStatus;
-  for (let index = 0; index < 150; index++) {
-    communityStatus = (await control(`/teams/${teamID}/community/status`)).data;
-    if (communityStatus.projection_coverage?.current_topics >= 2 && communityStatus.projection_coverage.coverage_complete) break;
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-  }
-  assert(communityStatus.projection_coverage.current_topics >= 2, JSON.stringify(communityStatus));
-  assert(!communityStatus.latest_run, "enabled ontology status must not present a historical failed legacy run as current work");
-  await control("/ontology/pause", { operation_key: randomUUID() });
-  paused = true;
-  const accountingBeforeCommunityRecall = (await control("/ontology/status")).data.window;
-  const topicArgs = { query: "Synthetic organization vocabulary", limit: 1, relationship_limit: 0, community_limit: 10, community_relationship_limit: 1 };
-  const topicRecall = await mcp("recall_memory", topicArgs, reader.api_key);
-  const completeTopicRecall = await mcp("recall_memory", { ...topicArgs, community_relationship_limit: 20 }, reader.api_key);
-  assert.equal(topicRecall.related_communities.length, 2);
-  assert(topicRecall.related_communities.some((topic) => topic.relationships_truncated), "fixture must exercise preview truncation");
-  const healthyTopic = topicRecall.related_communities.find((item) => item.summary.includes("memory coordination"));
-  assert(healthyTopic, "coordination topic was not independently published");
-  assert(healthyTopic.relationships.some((item) => item.evidence_ids.some((id) => [coordinationID, coordinationAlternativeID].includes(id))));
-  for (const topic of topicRecall.related_communities) {
-    const completeTopic = completeTopicRecall.related_communities.find((item) => item.community_id === topic.community_id);
-    assert(completeTopic);
-    assert.equal(completeTopic.relationships_truncated, false);
-    assert.equal(topic.relationship_count, completeTopic.relationship_count);
-    assert(topic.relationships.length <= 1);
-    assert.deepEqual(topic.relationships, completeTopic.relationships.slice(0, 1));
-    assert.equal(topic.relationships_truncated, completeTopic.relationships.length > topic.relationships.length);
-    for (const relationship of topic.relationships) {
-      assert(!relationship.evidence_ids.includes(privateID));
-      assert(!relationship.evidence_ids.includes(foreignID));
-    }
-  }
-  const pausedTopics = await mcp("recall_memory", topicArgs, reader.api_key);
-  assert.deepEqual(pausedTopics.related_communities.map((item) => item.community_id).sort(), topicRecall.related_communities.map((item) => item.community_id).sort());
-  const failedTopic = topicRecall.related_communities.find((item) => item.community_id !== healthyTopic.community_id);
-  assert(failedTopic, "failure fixture requires a second independently published topic");
-  postgresQuery(`UPDATE community_topic_work SET status='failed',failure_code='fixture_projection_failed'
-    WHERE team_id=${sqlLiteral(teamID)}::uuid AND topic_id=${sqlLiteral(failedTopic.logical_community_id)}::uuid;
-    UPDATE community_records SET status='stale',stale_reason='fixture_projection_failed'
-    WHERE team_id=${sqlLiteral(teamID)}::uuid AND community_id=${sqlLiteral(failedTopic.community_id)}::uuid`);
-  const failedTopics = await mcp("recall_memory", topicArgs, reader.api_key);
-  assert.equal(failedTopics.related_communities.length, 1);
-  assert.equal(failedTopics.related_communities[0].community_id, healthyTopic.community_id);
-  assert(failedTopics.degradations.some((item) => item.code === "community_projection_partial"));
-  const failureStatus = (await control(`/teams/${teamID}/community/status`)).data.projection_coverage;
-  assert.equal(failureStatus.failed_topics, 1);
-  assert.equal(failureStatus.current_topics, 1);
-  postgresQuery(`UPDATE community_topic_work SET status='current',failure_code=''
-    WHERE team_id=${sqlLiteral(teamID)}::uuid AND topic_id=${sqlLiteral(failedTopic.logical_community_id)}::uuid;
-    UPDATE community_records SET status='current',stale_reason=''
-    WHERE team_id=${sqlLiteral(teamID)}::uuid AND community_id=${sqlLiteral(failedTopic.community_id)}::uuid`);
   await control("/config/ontology-maintenance", { items: [{ key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "false" }] }, "PATCH");
-  const disabledStatus = (await control(`/teams/${teamID}/community/status`)).data;
-  assert.equal(disabledStatus.latest_run.run_id, historicalRunID);
-  assert.equal(disabledStatus.latest_run.status, "failed");
-  assert.equal(disabledStatus.latest_run.error, "community run failed");
-  const noCommunity = await mcp("recall_memory", topicArgs, reader.api_key);
-  assert.equal(noCommunity.related_communities.length, 0, "disabled ontology must not expose historical communities");
-  assert(!Object.hasOwn(noCommunity, "related_hypotheses"));
-  const ordinary = await mcp("recall_memory", args, reader.api_key);
-  assert.equal(ordinary.results.filter((item) => sourceIDs.includes(item.evidence_id)).length, 3);
-  assert(ordinary.results.every((item) => item.equivalent_evidence_ids.length === 0 && !item.equivalents_truncated));
-  await control("/config/ontology-maintenance", { items: [{ key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "true" }, { key: "ONTOLOGY_MAINTENANCE_CONTEXT_WINDOW_TOKENS", value: "300000" }] }, "PATCH");
-  const deniedRetraction = await rpc("retract_evidence", { evidence_ids: [sourceIDs[0]], reason: "wrong owner regression", idempotency_key: randomUUID() }, reader.api_key);
-  assert(deniedRetraction.error || deniedRetraction.result?.isError, "reader C must not mutate owner A's source");
-  const retracted = await mcp("retract_evidence", { evidence_ids: [sourceIDs[0]], reason: "withdraw grouping source", idempotency_key: randomUUID() }, shared.api_key);
-  assert(retracted.retracted_evidence_ids.includes(sourceIDs[0]));
-  const stale = await mcp("recall_memory", args, reader.api_key);
-  assert(!stale.results.some((item) => item.evidence_id === sourceIDs[0] || item.equivalent_evidence_ids.includes(sourceIDs[0])));
-  assert(stale.results.some((item) => item.evidence_id === sourceIDs[1] && item.equivalent_evidence_ids.length === 0));
-  assert(stale.degradations.some((item) => item.code === "ontology_stale"));
-  const partialTopics = await mcp("recall_memory", topicArgs, reader.api_key);
-  assert.equal(partialTopics.related_communities.length, 1, "stale topic must be omitted without hiding the healthy topic");
-  assert.equal(partialTopics.related_communities[0].community_id, healthyTopic.community_id);
-  assert(partialTopics.degradations.some((item) => item.code === "community_projection_partial"));
-  const temporalTopics = await mcp("recall_memory", { ...topicArgs, query: "Atlas Redis", relationship_limit: 20, known_at: new Date().toISOString() }, reader.api_key);
-  assert.equal(temporalTopics.related_communities.length, 0);
-  assert(temporalTopics.results.some((item) => item.evidence_id === coordinationID), "temporal retrieval must retain the original coordination evidence");
-  assert(temporalTopics.degradations.some((item) => item.code === "community_temporal_not_supported"));
-  assert.equal(await summaryCalls(), summaryCallsBefore, "topic projection or Recall added summary-model calls");
-  const staleRelationships = await mcp("recall_memory", { ...args, query: "database platform", relationship_limit: 20 }, reader.api_key);
-  for (const item of staleRelationships.related_relationships) {
-    assert(!item.evidence_ids.includes(sourceIDs[0]));
-    assert(!item.evidence_ids.includes(privateID));
-    assert(!item.evidence_ids.includes(foreignID));
+  try {
+    const unavailable = await rpc("recall_memory", { topic_ids: topicIDs }, reader.api_key);
+    assert(unavailable.result?.isError && unavailable.result.structuredContent.reason_code === "topic_unavailable");
+    const ordinary = await mcp("recall_memory", { query: "Atlas" }, reader.api_key);
+    assert(ordinary.results.length > 0 && ordinary.related_topics.length === 0, "disabled organization must preserve ordinary retrieval");
+    assert(!ordinary.degradations.some((item) => item.frontier === "topics"), "intentional disablement is not a topic failure");
+  } finally {
+    await control("/config/ontology-maintenance", { items: [{ key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "true" }] }, "PATCH");
   }
   const accountingAfter = (await control("/ontology/status")).data.window;
-  assert.equal(accountingAfter.usage.reported_input_tokens, accountingBeforeCommunityRecall.usage.reported_input_tokens, "Recall added organization provider input tokens");
-  assert.equal(accountingAfter.usage.reported_output_tokens, accountingBeforeCommunityRecall.usage.reported_output_tokens, "Recall added organization provider output tokens");
+  assert.equal(accountingAfter.usage.reported_input_tokens, accountingBefore.usage.reported_input_tokens, "Recall added organization provider input tokens");
+  assert.equal(accountingAfter.usage.reported_output_tokens, accountingBefore.usage.reported_output_tokens, "Recall added organization provider output tokens");
   await control("/ontology/pause", { operation_key: randomUUID() });
   paused = true;
   await fixtureMode("ambiguous");
@@ -308,6 +246,15 @@ try {
       assert(!Object.hasOwn(attempt, "validation"), "successful and transport-failed attempts must omit validation rejection details");
     }
   }
+  const topicWindow = captureSemanticAssessmentWindow({ project: required("DENSE_MEM_E2E_COMPOSE_PROJECT"), composeFile: required("DENSE_MEM_E2E_COMPOSE_FILE"), since: diagnosticSince, directory: failureDirectory+"/topic-selection" });
+  const topicRecords=topicWindow.split(/\r?\n/).filter(Boolean).map((line)=>JSON.parse(line)).filter((row)=>row.team_id===teamID);
+  for (const credential of credentialTeams.keys()) assert(!topicWindow.includes(credential),"topic diagnostic capture exposed credentials");
+  const selectedLog=topicRecords.find((row)=>row.msg==="recall_topic_selection"&&row.outcome==="selected"&&row.selection?.memberships?.length);
+  assert(selectedLog && selectedLog.level==="DEBUG" && selectedLog.selection.generation>0 && selectedLog.topics.length>0,"current memberships/counts/generation must be diagnosable from stdout");
+  for (const id of [...unavailableTopicIDs, topicIDs[0]]) {
+    const rejectedLog = topicRecords.find((row) => row.msg === "recall_topic_degraded" && Object.keys(row.rejected ?? {}).length > 0 && row.requested_ids?.includes(id) && row.rejected[id] === "unavailable");
+    assert(rejectedLog && rejectedLog.level === "WARN" && rejectedLog.reason, "missing, foreign, and retired topic reasons must be diagnosable from stdout");
+  }
   console.log(JSON.stringify({ status: "ok", scenario: "ontology_organization", window_id: status.window.id, counts: status.counts, durable_command_replay: true, operator_isolation: true, grouped_recall: true, original_sources_retained: true, private_and_foreign_isolation: true, stale_group_fallback: true, recall_organization_provider_tokens: 0, bounded_ambiguity_run: ambiguousRun.id, retryable_failure_run: failedRun.id }));
 } catch (error) {
   failure = error;
@@ -363,21 +310,12 @@ async function mcp(name, args, key) {
   assert(!result.error && result.result?.isError !== true, `${name} failed: ${JSON.stringify(result.error ?? result.result)}`);
   return JSON.parse(result.result.content[0].text);
 }
-async function remember(content, key, relationshipIDs = [], targetSpace = "team_shared") {
-  const relationships = [{ ref: "storage", subject: { name: "Atlas", entity_kind: "project" }, predicate: { proposed_key: "uses" }, object: { entity: { name: content.includes("Redis") ? "Redis" : content.includes("KeyDB") ? "KeyDB" : content.includes("SQLite") ? "SQLite" : "PostgreSQL", entity_kind: "product" } }, polarity: "+", evidence_indices: [0] }];
-  if (content.includes("encrypts")) relationships.push({ ref: "backups", subject: { name: "Atlas", entity_kind: "project" }, predicate: { proposed_key: "encrypts" }, object: { entity: { name: "backups", entity_kind: "document" } }, polarity: "+", evidence_indices: [0] });
-  const result = await mcp("remember", { target_space: targetSpace, idempotency_key: randomUUID(), evidence: [{ content, source_type: "document", source: "ontology-e2e", source_group: "ontology-e2e", force_insert: true }], relationships }, key);
+async function remember(content, key, targetSpace = "team_shared") {
+  const result = await mcp("remember", { target_space: targetSpace, idempotency_key: randomUUID(), evidence: [{ content, source_type: "document", source: "ontology-e2e", source_group: "ontology-e2e", force_insert: true }] }, key);
   assert.equal(result.processing_state, "completed");
-  relationshipIDs.push(...result.relationship_results.flatMap((item) => item.splits.map((split) => split.relationship_id)));
   const evidence = result.evidence.find((item) => item.disposition === "stored");
-  assert(evidence?.evidence_id, "Remember did not retain the source evidence");
+  assert(evidence?.evidence_id, "Remember did not retain exact Evidence");
   return evidence.evidence_id;
-}
-
-async function summaryCalls() {
-  const response = await fetch(`${required("DENSE_MEM_E2E_PROVIDER_URL")}/health`);
-  assert.equal(response.status, 200);
-  return ((await response.json()).chat_requests || []).filter((item) => item.schema_name === "community_summary").length;
 }
 
 async function assertOntologyQueryScoring(readerKey, ordinaryID, ontologyIDs) {
@@ -391,7 +329,7 @@ async function assertOntologyQueryScoring(readerKey, ordinaryID, ontologyIDs) {
   const vector = (axis) => JSON.stringify(Array.from({ length: dimension }, (_, index) => Number(index === axis)));
   const selected = rows.map((row) => `${sqlLiteral(row.id)}::uuid`).join(",");
   const rankFirst = (id) => postgresQuery(`UPDATE search_documents SET embedding=(CASE WHEN source_id=${sqlLiteral(id)}::uuid THEN ${sqlLiteral(vector(0))} ELSE ${sqlLiteral(vector(1))} END)::vector WHERE search_document_id IN (${selected})`);
-  const request = { query: "database platform [fixture-ranking:ontology]", limit: 1, relationship_limit: 0, community_limit: 0 };
+  const request = { query: "database platform [fixture-ranking:ontology]", limit: 1 };
   try {
     rankFirst(ordinaryID);
     await control("/config/ontology-maintenance", { items: [{ key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "false" }] }, "PATCH");
@@ -412,7 +350,7 @@ async function assertOntologyQueryScoring(readerKey, ordinaryID, ontologyIDs) {
 
 function postgresQuery(sql) {
   const scopedSQL = ["BEGIN", "SET LOCAL app.tx_mode='system'", "SET LOCAL app.current_team_id=''", "SET LOCAL app.current_profile_id=''", "SET LOCAL app.allowed_space_ids=''", sql, "COMMIT"].join(";\n");
-  const result = spawnSync("docker", ["compose", "-p", required("DENSE_MEM_E2E_COMPOSE_PROJECT"), "-f", required("DENSE_MEM_E2E_COMPOSE_FILE"), "exec", "-T", "postgres", "sh", "-ec", 'psql -q -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -c "$1"', "ontology-community-e2e", scopedSQL], { cwd: fileURLToPath(new URL("../..", import.meta.url)), encoding: "utf8" });
+  const result = spawnSync("docker", ["compose", "-p", required("DENSE_MEM_E2E_COMPOSE_PROJECT"), "-f", required("DENSE_MEM_E2E_COMPOSE_FILE"), "exec", "-T", "postgres", "sh", "-ec", 'psql -q -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -c "$1"', "ontology-evidence-e2e", scopedSQL], { cwd: fileURLToPath(new URL("../..", import.meta.url)), encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr || result.stdout);
   return result.stdout.trim();
 }
@@ -423,7 +361,7 @@ async function fixtureMode(mode) {
   assert.equal(response.status, 200);
 }
 async function rememberFixture(key, content) {
-  const result = await mcp("remember", { target_space: "team_shared", idempotency_key: randomUUID(), evidence: [{ content, source_type: "document", source: "ontology-followups", source_group: randomUUID() }], relationships: [{ ref: "storage", subject: { name: "Atlas", entity_kind: "project" }, predicate: { proposed_key: "uses" }, object: { entity: { name: "PostgreSQL", entity_kind: "product" } }, polarity: "+", evidence_indices: [0] }] }, key);
+  const result = await mcp("remember", { target_space: "team_shared", idempotency_key: randomUUID(), evidence: [{ content, source_type: "document", source: "ontology-followups", source_group: randomUUID() }] }, key);
   assert.equal(result.processing_state, "completed");
 }
 async function terminalRun(id) {
@@ -545,7 +483,7 @@ async function pollFinalization(check, label, seconds = maintenanceObservationAt
 }
 
 function canonicalFingerprints(scopeTeam = teamID) {
-  const tables = ["evidence_fragments", "evidence_occurrences", "evidence_sources", "evidence_source_revisions", "entity_records", "entity_names", "value_records", "relationship_records", "relationship_evidence_supports", "relationship_support_decision_events", "evidence_lifecycle_events", "evidence_quarantines"];
+  const tables = ["evidence_fragments", "evidence_occurrences", "evidence_sources", "evidence_source_revisions", "evidence_lifecycle_events", "evidence_quarantines"];
   return postgresQuery(tables.map((table) => `SELECT '${table}',md5(COALESCE(jsonb_agg(to_jsonb(record) ORDER BY to_jsonb(record)::text)::text,'[]')) FROM ${table} AS record WHERE team_id=${sqlLiteral(scopeTeam)}::uuid`).join(";\n"));
 }
 

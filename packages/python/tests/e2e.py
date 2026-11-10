@@ -42,12 +42,10 @@ def example(name):
     return module
 
 
-def relationships(result):
-    return [
-        split["relationship_id"]
-        for item in result["relationship_results"]
-        for split in item["splits"]
-    ]
+def evidence_ids(result):
+    if "events" in result:
+        return [value for event in result["events"] for value in event["evidence_ids"]]
+    return [item["evidence_id"] for item in result["evidence"] if item["disposition"] == "stored"]
 
 
 async def rejected(call, cls=DenseMemError):
@@ -81,7 +79,8 @@ async def main():
     client = DenseMemClient(USER_URL + "/mcp", token=token_a)
     assert (await client.initialize()).serverInfo.name
     tools = {tool.name for tool in (await client.list_tools()).tools}
-    assert {"remember", "ingest_session", "recall_memory", "trace_memory"} <= tools
+    assert {"remember", "ingest_session", "recall_memory", "trace_memory", "export_memory_pack"} <= tools
+    assert not {"correct_relationship", "query_graph", "list_dreams"} & tools
     assert "get_submission_status" not in tools
     for token in (shared, readonly):
         private_client = DenseMemClient(USER_URL + "/mcp", token=token)
@@ -99,7 +98,7 @@ async def main():
         DenseMemAuthenticationError,
     )
     result = await example("remember").run(client, str(uuid4()))
-    assert result["processing_state"] == "completed" and relationships(result)
+    assert result["processing_state"] == "completed" and evidence_ids(result)
     request = example("remember").make_request(str(uuid4()))
     original = copy.deepcopy(request)
     retained = await client.remember(request)
@@ -115,9 +114,9 @@ async def main():
     no_canonical_write(missing["idempotency_key"])
     session_request = example("session").make_request(str(uuid4()))
     session_result = await example("session").run(client, session_request["idempotency_key"])
-    assert relationships(session_result) and session_result["search_state"] == "current"
-    trace = await client.trace_memory({"relationship_id": relationships(session_result)[0]})
-    for evidence in trace["evidence"]:
+    assert evidence_ids(session_result) and session_result["search_state"] == "current"
+    trace = await client.trace_memory({"evidence_id": evidence_ids(session_result)[0]})
+    for evidence in trace["occurrences"]:
         provenance = evidence["session"]
         event = session_request["events"][0]
         assert (
@@ -127,11 +126,11 @@ async def main():
         assert provenance["occurred_at"] == event["occurred_at"]
     for foreign in (token_b, token_c):
         other = DenseMemClient(USER_URL + "/mcp", token=foreign)
-        recall = await other.recall_memory({"query": "Ari Go", "limit": 20, "community_limit": 0})
-        assert not set(relationships(session_result)) & {
-            item["relationship_id"] for item in recall["related_relationships"]
+        recall = await other.recall_memory({"query": "Ari Go", "limit": 20, "topic_limit": 0})
+        assert not set(evidence_ids(session_result)) & {
+            item["evidence_id"] for item in recall["results"]
         }
-        await rejected(other.trace_memory({"relationship_id": relationships(session_result)[0]}))
+        await rejected(other.trace_memory({"evidence_id": evidence_ids(session_result)[0]}))
     changed = copy.deepcopy(session_request)
     changed["idempotency_key"] = str(uuid4())
     changed["events"][0]["text"] = "Ari uses Rust."
@@ -141,7 +140,8 @@ async def main():
     empty["session_id"] = str(uuid4())
     empty["events"][0]["text"] = "Thanks. Let's continue."
     empty_result = await client.ingest_session(empty)
-    assert empty_result["search_state"] == "not_required" and not relationships(empty_result)
+    assert empty_result["search_state"] == "not_required" and not evidence_ids(empty_result)
+    assert empty_result["memory_outcome"] == "no_memory"
     failed = example("session").make_request(str(uuid4()))
     failed["session_id"] = str(uuid4())
     failed["events"][0]["text"] = "Ari uses Java. [fixture-fault:assessment-malformed]"
@@ -153,38 +153,21 @@ async def main():
     overlap = await rejected(client.ingest_session(overlapping), DenseMemOperationError)
     assert overlap.reason_code == "session_event_retry_required"
     await session_recovery(client)
-    mixed = example("remember").make_request(str(uuid4()))
-    suffix = str(uuid4())
-    subject, database, annotation = (
-        "Dense-Mem Mixed " + suffix,
-        "PostgreSQL Mixed " + suffix,
-        "annotation Mixed " + suffix,
-    )
-    mixed["evidence"] = [
-        {
-            "content": f"{subject} stores its durable memory in {database}. "
-            "[fixture:mixed-a] [fixture-fault:mixed]"
-        },
-        {
-            "content": f"The unsupported {annotation} is not a durable claim by {subject}. "
-            "[fixture:mixed-b] [fixture-fault:mixed]"
-        },
-    ]
-    proposal = mixed["relationships"][0]
-    proposal["ref"], proposal["subject"]["name"] = "supported", subject
-    proposal["object"]["entity"]["name"] = database
-    proposal["evidence_indices"] = [0, 1]
-    unsupported = copy.deepcopy(proposal)
-    unsupported["ref"] = "unsupported"
-    unsupported["object"] = {"entity": {"name": annotation, "entity_kind": "concept"}}
-    unsupported["evidence_indices"] = [1]
-    mixed["relationships"].append(unsupported)
-    mixed_result = await client.remember(mixed)
-    assert [item["disposition"] for item in mixed_result["relationship_results"]] == [
-        "stored",
-        "not_stored",
-    ]
-    assert mixed_result["relationship_results"][1]["remediation"]
+    for field, value in (("relationships", []), ("entities", []), ("values", [])):
+        retired = example("remember").make_request(str(uuid4()))
+        retired[field] = value
+        before = await provider_health()
+        await rejected(client.remember(retired), DenseMemProtocolError)
+        no_canonical_write(retired["idempotency_key"])
+        assert await provider_health() == before
+    pack = await client.export_memory_pack({"name": "Python Evidence", "evidence_ids": evidence_ids(session_result)})
+    artifact = json.loads(pack["artifact_json"])
+    assert artifact["format"] == "dense-mem.memory-pack.v3.0"
+    assert pack["counts"]["evidence"] == len(evidence_ids(session_result))
+    assert pack["content_sha256"] == artifact["content_sha256"]
+    for foreign in (token_b, token_c):
+        await rejected(DenseMemClient(USER_URL + "/mcp", token=foreign).export_memory_pack(
+            {"name": "Foreign Evidence", "evidence_ids": evidence_ids(session_result)}))
     await cancellation_and_timeout(client)
     oauth, profile_key, oauth_owner, credential_owner = oauth_credentials()
     count = 0
@@ -202,14 +185,14 @@ async def main():
     oauth_session = example("session").make_request(str(uuid4()))
     oauth_session["session_id"] = str(uuid4())
     oauth_private = await signed.ingest_session(oauth_session)
-    assert oauth_private["processing_state"] == "completed" and relationships(oauth_private)
+    assert oauth_private["processing_state"] == "completed" and evidence_ids(oauth_private)
     assert await signed.ingest_session(oauth_session) == oauth_private
     profile = DenseMemClient(USER_URL + "/mcp", token=profile_key)
     assert "ingest_session" in {t.name for t in (await profile.list_tools()).tools}
     profile_session = example("session").make_request(str(uuid4()))
     profile_session["session_id"] = str(uuid4())
     profile_private = await profile.ingest_session(profile_session)
-    assert profile_private["processing_state"] == "completed" and relationships(profile_private)
+    assert profile_private["processing_state"] == "completed" and evidence_ids(profile_private)
     assert await profile.ingest_session(profile_session) == profile_private
     for receipt, owner in ((oauth_private, oauth_owner), (profile_private, credential_owner)):
         assert (
@@ -223,11 +206,11 @@ async def main():
         for foreign in (token_b, token_c):
             await rejected(
                 DenseMemClient(USER_URL + "/mcp", token=foreign).trace_memory(
-                    {"relationship_id": relationships(receipt)[0]}
+                    {"evidence_id": evidence_ids(receipt)[0]}
                 )
             )
-    await rejected(signed.trace_memory({"relationship_id": relationships(profile_private)[0]}))
-    await rejected(profile.trace_memory({"relationship_id": relationships(oauth_private)[0]}))
+    await rejected(signed.trace_memory({"evidence_id": evidence_ids(profile_private)[0]}))
+    await rejected(profile.trace_memory({"evidence_id": evidence_ids(oauth_private)[0]}))
     assert sql(
         "SELECT count(DISTINCT space_id) FROM session_submissions WHERE submission_id IN ("
         + literal(oauth_private["submission_id"]) + "::uuid,"
@@ -237,13 +220,13 @@ async def main():
         DenseMemClient(USER_URL + "/mcp", token=oauth + ".bad").initialize(),
         DenseMemAuthenticationError,
     )
-    for request in ({"query": "Ari Go", "limit": 5, "community_limit": 1},):
+    for request in ({"query": "Ari Go", "limit": 5, "topic_limit": 1},):
         mapped = await client.recall_memory(request)
         raw = await raw_call("recall_memory", request, token_a)
         for name in (
             "results",
-            "related_relationships",
-            "related_communities",
+            "related_topics",
+            "topics_truncated",
             "conflicts",
             "search_states",
             "degradations",
@@ -336,7 +319,7 @@ async def session_recovery(client):
     conflict = await rejected(client.ingest_session(overlapping), DenseMemOperationError)
     assert conflict.reason_code == "session_event_retry_required"
     recovered = await client.ingest_session(request)
-    assert recovered["processing_state"] == "completed" and relationships(recovered)
+    assert recovered["processing_state"] == "completed" and evidence_ids(recovered)
     assert recovered["submission_id"] == submission
     assert recovered["accepted_event_count"] == 1 and recovered["duplicate_event_count"] == 0
     count = len(recovered["events"][0]["evidence_ids"])

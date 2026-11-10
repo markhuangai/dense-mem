@@ -17,6 +17,20 @@ const run = { id: 200, run_attempt: 1, repository: { full_name: approved.source_
 const jobs = policy.requiredForkJobs(scenarios).map((name) => ({ name: `Contributor E2E / ${name}`, conclusion: "success",
   steps: name.startsWith("Fork scenario ") ? ["Run scenario", "Stop scenario stack"].map((name) => ({ name, conclusion: "success" })) : [] }));
 
+test("fork receipt accepts the full job name declared by the reusable workflow", async () => {
+  const workflow = await readFile(new URL("../../.github/workflows/production-e2e-scenario.yml", import.meta.url), "utf8");
+  const caller = await readFile(new URL("../../.github/workflows/fork-e2e.yml", import.meta.url), "utf8");
+  const fullName = workflow.match(/inputs\.scenario == 'full' && '([^']+)'/)[1];
+  const prefix = caller.match(/receipt_job_prefix: "([^"]+)"/)[1];
+  const declared = `${prefix}${fullName}`;
+  assert.ok(policy.requiredForkJobs(["full"]).includes(declared));
+  const completed = ["Fork rootless controller precheck", ...[0, 1, 2, 3, 4, 5].map((shard) => `Fork PostgreSQL precheck shard ${shard}`), "Sign fork E2E receipt"]
+    .map((name) => ({ name, conclusion: "success" }));
+  completed.push({ name: `Contributor E2E / ${declared}`, conclusion: "success", steps: ["Run scenario", "Stop scenario stack"].map((name) => ({ name, conclusion: "success" })) });
+  policy.requireCompleteForkJobs(completed, ["full"]);
+  assert.throws(() => policy.requireCompleteForkJobs(completed.map((job) => job.name.endsWith(declared) ? { ...job, name: "Fork scenario dreaming_telemetry_portal" } : job), ["full"]), /required fork job/);
+});
+
 test("fork receipt binds approved source, image, preview attempt, workflow revision, run, and complete results", () => {
   policy.requireForkRun(run, approved);
   policy.requireCompleteForkJobs(jobs, scenarios);

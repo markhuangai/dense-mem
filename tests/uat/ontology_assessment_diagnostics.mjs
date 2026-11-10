@@ -13,7 +13,7 @@ export function assessmentRecords(window) {
   });
 }
 
-function reconstruct(records) {
+export function reconstructDiagnosticBody(records) {
   assert(records.length > 0, "required diagnostic body is missing");
   const first = records[0].payload_chunk;
   assert.equal(records.length, first.count, "diagnostic body is incomplete");
@@ -49,7 +49,7 @@ export function verifySemanticAssessment(window, expected) {
     assert.equal(manifest.capture_state, "captured");
     const chunks = records.filter((record) => record.msg === manifest.msg && record.stage === manifest.stage && record.attempt === manifest.attempt && record.payload_chunk);
     assert.equal(chunks.length, manifest.chunk_count);
-    stages.set(`${manifest.stage}:${manifest.attempt}`, reconstruct(chunks));
+    stages.set(`${manifest.stage}:${manifest.attempt}`, reconstructDiagnosticBody(chunks));
   }
   const terminal = records.filter((record) => ["ontology_semantic_assessment_completed", "ontology_semantic_assessment_failed"].includes(record.msg));
   assert.equal(terminal.length, 1);
@@ -73,7 +73,7 @@ export function verifySemanticAssessment(window, expected) {
     const group = exchanges.get(key) ?? [];
     group.push(record); exchanges.set(key, group);
   }
-  const bodies = Object.fromEntries([...exchanges].map(([key, group]) => [key, reconstruct(group)]));
+  const bodies = Object.fromEntries([...exchanges].map(([key, group]) => [key, reconstructDiagnosticBody(group)]));
   if (!expected.reuse) {
     assert(exchanges.size >= 2, "actual provider request and response are required");
     for (const record of records.filter((record) => record.msg === "ai_exchange_payload")) {

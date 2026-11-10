@@ -22,7 +22,7 @@ func TestLedgerSourceRevisionCompareAndSet(t *testing.T) {
 	teamID := createLedgerTeam(t, adminDB, rls, "team-source")
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "source-owner")
 	otherOwnerID := createLedgerProfile(t, adminDB, rls, teamID, "source-other-owner")
-	repo := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	repo := NewStore(appDB, rls)
 
 	first, err := repo.AdvanceSourceRevision(ctx, AdvanceSourceRevisionInput{
 		TeamID: teamID, OwnerProfileID: ownerID, SourceKey: "doc://policy",

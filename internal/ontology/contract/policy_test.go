@@ -23,7 +23,7 @@ func publicationFor(records ...Record) Publication {
 	return input
 }
 func policySnapshot(key string, kind SourceKind, meaning string) SourceSnapshot {
-	return SourceSnapshot{SourceHandle: SourceHandle{Kind: kind, ID: policyID(key), Version: 1}, TeamID: policyID("team"), SpaceID: policyID("space"), Generation: 1, OwnerID: policyID("owner"), Eligible: true, EntityKind: "person", State: map[string]string{"content": meaning}, MeaningKey: meaning}
+	return SourceSnapshot{SourceHandle: SourceHandle{Kind: kind, ID: policyID(key), Version: 1}, TeamID: policyID("team"), SpaceID: policyID("space"), Generation: 1, OwnerID: policyID("owner"), Eligible: true, State: map[string]string{"content": meaning}, MeaningKey: meaning}
 }
 func sourceDependency(t *testing.T, snapshot SourceSnapshot) SourceDependency {
 	t.Helper()
@@ -70,16 +70,14 @@ func TestOntologyClosedPublicationSchema(t *testing.T) {
 
 func TestOntologyRecordValidation(t *testing.T) {
 	for name, alter := range map[string]func(*Record){
-		"identity":           func(r *Record) { r.ID = "not-uuid" },
-		"unknown kind":       func(r *Record) { r.Kind = "fact" },
-		"extra body":         func(r *Record) { r.Group = &Group{} },
-		"missing body":       func(r *Record) { r.Definition = nil },
-		"duplicate alias":    func(r *Record) { r.Definition.Aliases = []string{"DB", " db "} },
-		"empty key":          func(r *Record) { r.Definition.Key = " " },
-		"parent":             func(r *Record) { r.Definition.ParentID = "bad" },
-		"invalid base kind":  func(r *Record) { r.Kind = EntityClass; r.Definition.BaseEntityKind = "database" },
-		"base kind on topic": func(r *Record) { r.Definition.BaseEntityKind = "person" },
-		"self dependency":    func(r *Record) { r.Dependencies = []RevisionRef{{ID: r.ID, Version: 1}} },
+		"identity":        func(r *Record) { r.ID = "not-uuid" },
+		"unknown kind":    func(r *Record) { r.Kind = "fact" },
+		"extra body":      func(r *Record) { r.Group = &Group{} },
+		"missing body":    func(r *Record) { r.Definition = nil },
+		"duplicate alias": func(r *Record) { r.Definition.Aliases = []string{"DB", " db "} },
+		"empty key":       func(r *Record) { r.Definition.Key = " " },
+		"parent":          func(r *Record) { r.Definition.ParentID = "bad" },
+		"self dependency": func(r *Record) { r.Dependencies = []RevisionRef{{ID: r.ID, Version: 1}} },
 		"source hash": func(r *Record) {
 			r.Sources = []SourceDependency{{SourceHandle: SourceHandle{Kind: EvidenceSource, ID: policyID("e"), Version: 1}, Fingerprint: "sha256:invalid"}}
 		},
@@ -93,9 +91,9 @@ func TestOntologyRecordValidation(t *testing.T) {
 	first := topicRecord("first")
 	duplicate := publicationFor(first, first)
 	require.ErrorIs(t, ValidatePublication(duplicate), ErrInvalid)
-	validPredicate := SourceHandle{Kind: PredicateSource, ID: "uses", Version: 1}
-	require.NoError(t, ValidateSourceHandle(validPredicate))
-	for _, handle := range []SourceHandle{{Kind: "value", ID: policyID("e"), Version: 1}, {Kind: EntitySource, ID: "person", Version: 1}, {Kind: PredicateSource, Version: 1}, {Kind: EvidenceSource, ID: policyID("e")}} {
+	validEvidence := SourceHandle{Kind: EvidenceSource, ID: policyID("e"), Version: 1}
+	require.NoError(t, ValidateSourceHandle(validEvidence))
+	for _, handle := range []SourceHandle{{Kind: "value", ID: policyID("e"), Version: 1}, {Kind: "entity", ID: "person", Version: 1}, {Kind: "predicate", Version: 1}, {Kind: EvidenceSource, ID: policyID("e")}} {
 		require.ErrorIs(t, ValidateSourceHandle(handle), ErrInvalid)
 	}
 }
@@ -123,18 +121,15 @@ func TestOntologyDefinitionHierarchyAndCollisions(t *testing.T) {
 	_, err = PreparePublication(nil, nil, publicationFor(parent, child), false)
 	require.ErrorIs(t, err, ErrInvalid)
 	child.Definition.Aliases = nil
-	child.Kind = EntityClass
-	child.Definition.BaseEntityKind = "person"
+	child.Kind = "entity_class"
 	child.Definition.ParentID = parent.ID
 	_, err = PreparePublication(nil, nil, publicationFor(parent, child), false)
 	require.ErrorIs(t, err, ErrInvalid)
 }
 
 func TestOntologyPublicationRejectsStaleSourcesAndPartialChanges(t *testing.T) {
-	snapshot := policySnapshot("entity", EntitySource, "Ada")
+	snapshot := policySnapshot("evidence", EvidenceSource, "Ada")
 	definition := topicRecord("person")
-	definition.Kind = EntityClass
-	definition.Definition.BaseEntityKind = "person"
 	definition.Version = 1
 	assignment := Record{ID: policyID("assignment"), Kind: AssignmentKind, Assignment: &Assignment{Source: snapshot.SourceHandle, DefinitionID: definition.ID}, Sources: []SourceDependency{sourceDependency(t, snapshot)}, Dependencies: []RevisionRef{{ID: definition.ID, Version: 1}}}
 	catalog := policyCatalog(t, definition)
@@ -147,17 +142,14 @@ func TestOntologyPublicationRejectsStaleSourcesAndPartialChanges(t *testing.T) {
 	prepared, err = PreparePublication(catalog, snapshots, publicationFor(topicRecord("valid"), assignment), true)
 	require.ErrorIs(t, err, ErrSourceStale)
 	require.Nil(t, prepared)
-	assignment.Assignment.Source.Kind = EvidenceSource
+	assignment.Assignment.Source.Kind = "entity"
 	_, err = PreparePublication(catalog, snapshots, publicationFor(assignment), true)
 	require.ErrorIs(t, err, ErrInvalid)
 }
 
 func TestOntologyGroupingKeepsDistinctContext(t *testing.T) {
-	for _, kind := range []Kind{EvidenceGroup, RelationshipGroup} {
+	for _, kind := range []Kind{EvidenceGroup} {
 		sourceKind := EvidenceSource
-		if kind == RelationshipGroup {
-			sourceKind = RelationshipSource
-		}
 		first := policySnapshot("first", sourceKind, "Alice|uses|PostgreSQL|+|2026|production")
 		second := policySnapshot("second", sourceKind, first.MeaningKey)
 		group := Record{ID: policyID("group"), Kind: kind, Group: &Group{Members: []SourceHandle{first.SourceHandle, second.SourceHandle}}, Sources: []SourceDependency{sourceDependency(t, first), sourceDependency(t, second)}}
@@ -176,8 +168,6 @@ func TestOntologyGroupingKeepsDistinctContext(t *testing.T) {
 
 func TestOntologyManagerOverridesSurviveReprocessing(t *testing.T) {
 	definition := topicRecord("person")
-	definition.Kind = EntityClass
-	definition.Definition.BaseEntityKind = "person"
 	definition.Version = 1
 	pin := Record{ID: policyID("pin"), Kind: OverrideKind, Override: &Override{Action: PinDefinition, TargetID: definition.ID}, Version: 1}
 	catalog := policyCatalog(t, definition, pin)
@@ -248,8 +238,7 @@ func TestOntologyFingerprintsAreStableAndSelective(t *testing.T) {
 }
 
 func TestOntologyBatchFingerprintsPreserveVersionsAndFreshness(t *testing.T) {
-	first := policySnapshot("predicate", PredicateSource, "version one")
-	first.ID = "uses"
+	first := policySnapshot("evidence", EvidenceSource, "version one")
 	second := first
 	second.Version++
 	second.State = map[string]string{"contract": "version two"}
@@ -325,23 +314,6 @@ func TestOntologyPublicationEnforcesAggregateBounds(t *testing.T) {
 	require.ErrorIs(t, ValidatePublication(input), ErrInvalid)
 }
 
-func TestOntologySeedingPreservesExistingKinds(t *testing.T) {
-	predicate := policySnapshot("predicate", PredicateSource, "")
-	predicate.ID = "uses"
-	first, err := SeedRecords(predicate.TeamID, []SourceSnapshot{predicate})
-	require.NoError(t, err)
-	require.Len(t, first, 9)
-	second, err := SeedRecords(predicate.TeamID, []SourceSnapshot{predicate})
-	require.NoError(t, err)
-	require.Equal(t, first, second)
-	for _, record := range first {
-		require.NoError(t, ValidateRecord(record))
-	}
-	predicate.Eligible = false
-	_, err = SeedRecords(predicate.TeamID, []SourceSnapshot{predicate})
-	require.ErrorIs(t, err, ErrSourceStale)
-}
-
 func TestOntologyOverrideApplicabilityFollowsActionAndRecordKind(t *testing.T) {
 	first, second := policySnapshot("a", EvidenceSource, "same"), policySnapshot("b", EvidenceSource, "same")
 	topic := topicRecord("topic")
@@ -360,30 +332,4 @@ func TestOntologyOverrideApplicabilityFollowsActionAndRecordKind(t *testing.T) {
 	two, err := RecordFingerprint(assignment, snapshots, map[string]Record{topic.ID: topic, separation.ID: separation})
 	require.NoError(t, err)
 	require.Equal(t, one, two)
-}
-
-func TestOntologyMixedSeparationOverrideMatchesEveryMemberKind(t *testing.T) {
-	evidenceA, evidenceB := policySnapshot("evidence-a", EvidenceSource, "same"), policySnapshot("evidence-b", EvidenceSource, "same")
-	relationshipA, relationshipB := policySnapshot("relationship-a", RelationshipSource, "same"), policySnapshot("relationship-b", RelationshipSource, "same")
-	for _, testCase := range []struct {
-		kind    Kind
-		members []SourceHandle
-		group   []SourceHandle
-	}{
-		{EvidenceGroup, []SourceHandle{relationshipA.SourceHandle, evidenceA.SourceHandle, evidenceB.SourceHandle}, []SourceHandle{evidenceA.SourceHandle, evidenceB.SourceHandle}},
-		{RelationshipGroup, []SourceHandle{evidenceA.SourceHandle, relationshipA.SourceHandle, relationshipB.SourceHandle}, []SourceHandle{relationshipA.SourceHandle, relationshipB.SourceHandle}},
-	} {
-		t.Run(string(testCase.kind), func(t *testing.T) {
-			override := Record{ID: policyID("mixed-separation"), Kind: OverrideKind, Override: &Override{Action: KeepSeparate, Members: testCase.members}}
-			require.NoError(t, ValidatePublication(publicationFor(override)))
-			catalog := map[string]Record{override.ID: override}
-			group := Record{ID: policyID("mixed-group"), Kind: testCase.kind, Group: &Group{Members: testCase.group}}
-			require.Equal(t, []Record{override}, ApplicableOverrides(group, catalog))
-			require.ErrorIs(t, CheckOverrides(group, catalog), ErrOverride)
-			group.Retired = true
-			require.NoError(t, CheckOverrides(group, catalog))
-			assignment := Record{ID: policyID("mixed-assignment"), Kind: AssignmentKind, Assignment: &Assignment{Source: testCase.group[0], DefinitionID: policyID("topic")}}
-			require.Empty(t, ApplicableOverrides(assignment, catalog))
-		})
-	}
 }

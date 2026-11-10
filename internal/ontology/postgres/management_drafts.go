@@ -286,7 +286,7 @@ func (s *Store) CommandManagementDraft(ctx context.Context, teamID, id, action s
 			if _, _, err := validateManagementPublication(tx, fence, publication); err != nil {
 				return err
 			}
-			published, err := s.commitPublication(tx, fence, publication, "manager", owner, hash, "", "")
+			published, err := s.commitPublication(tx, fence, publication, "manager", owner, hash, "")
 			if err != nil {
 				return err
 			}

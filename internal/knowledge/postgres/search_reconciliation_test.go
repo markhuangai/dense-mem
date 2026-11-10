@@ -10,7 +10,7 @@ import (
 var _ knowledgecontract.SearchProjectionRepository = (*Store)(nil)
 
 func TestSearchProjectionOwnerUsesKnowledgePort(t *testing.T) {
-	store := NewStore(nil, nil, knowledgecontract.ConflictRuntimeConfig{})
+	store := NewStore(nil, nil)
 	if store == nil {
 		t.Fatal("NewStore returned nil")
 	}

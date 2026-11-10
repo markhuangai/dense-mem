@@ -548,8 +548,8 @@ for (const entry of fs.readdirSync(directory).filter((item) => item.endsWith(".j
   const cases = [...packageCounts.values()].reduce((total, count) => total + count, 0);
   const weight = [...packageCounts.values()].reduce((total, count) => total + Math.ceil(count / batchSize), 0);
   const caseIds = selectedCases.map((item) => item.id);
-  // Community fanout and ontology-heavy Recall need more room than their case counts suggest in the bounded six-shard route.
-  const load = shardCount === 6 ? cases * (capability === "community" ? 5 : capability === "recall" ? 2 : 1) : cases;
+  // Evidence Recall hydration needs more room than its case count suggests in the bounded six-shard route.
+  const load = shardCount === 6 ? cases * (capability === "recall" ? 2 : 1) : cases;
   records.push({ capability, cases, load, packageCounts, weight, caseIds });
 }
 
@@ -561,7 +561,6 @@ const caseSelections = [];
 if (shardCount === 6) {
   // Keep discovery measurement isolated and balance measured ontology work across the other two selections.
   const ontology = records[ontologyIndex];
-  const refinement = ontology?.caseIds.filter((id) => /^repository\/TestOntology(?:AutomaticRefinement|Refinement)/.test(id)) || [];
   const dedicated = [
     "repository/TestOntologyMaintenanceFinalizationAdmissionAndIsolation",
     "repository/TestOntologyMaintenanceLargeBacklogAndFairTurns",
@@ -572,7 +571,6 @@ if (shardCount === 6) {
       "repository/TestOntologyOrganizationPreservesValidLargeSourceContext",
       "repository/TestOntologyOrganizationPreservesPerRecordDependencyBounds",
     ].filter((id) => ontology?.caseIds.includes(id)),
-    ...refinement,
   ].sort();
   const measurement = "repository/TestOntologyMaintenanceRevalidationDiscoveryMeasurement";
   const isolated = [...dedicated, measurement];

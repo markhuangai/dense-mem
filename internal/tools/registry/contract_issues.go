@@ -66,7 +66,6 @@ const (
 	maxContractValidationPathRunes    = 128
 	maxContractValidationMessageRunes = 512
 	maxRememberEvidenceItems          = 20
-	maxRememberRelationshipItems      = 200
 )
 
 // ValidateContractInputIssues validates a contract without stopping at the
@@ -91,19 +90,10 @@ func ValidateContractInputIssues(tool Tool, args map[string]any, scopes []string
 				if err := validateRecall(args); err != nil {
 					collector.add("", classifyContractIssue(err.Error()), err.Error())
 				}
-			case ToolRetractEvidence, ToolTraceMemory, ToolExportMemoryPack:
+			case ToolRetractEvidence, ToolExportMemoryPack:
 				field := "evidence_ids"
-				if tool.Name == ToolTraceMemory {
-					field = "predicate_keys"
-				} else if tool.Name == ToolExportMemoryPack {
-					field = "relationship_ids"
-				}
 				if err := validateUniqueStringArray(args, field); err != nil {
 					collector.add("/"+jsonPointerToken(field), classifyContractIssue(err.Error()), err.Error())
-				}
-			case ToolCorrectRelationship:
-				if err := validateCorrectRelationship(args); err != nil {
-					collector.add("", classifyContractIssue(err.Error()), err.Error())
 				}
 			case ToolSubmitRecallSessionFeedback:
 				if err := validateRecallFeedback(args); err != nil {
@@ -249,83 +239,6 @@ func collectRememberContractIssues(tool Tool, args map[string]any, collector *co
 		collector.add(contractIssuePath(err, "/evidence"), classifyContractIssue(err.Error()), err.Error())
 	}
 
-	relationships := collectAnyArray(args["relationships"])
-	if _, exists := args["relationships"]; exists && relationships == nil {
-		collector.add("/relationships", "type", "relationships must be an array")
-		return
-	}
-	if len(relationships) > maxRememberRelationshipItems {
-		collector.add("/relationships", "too_many_items", fmt.Sprintf("relationships exceeds maximum item count of %d", maxRememberRelationshipItems))
-		relationships = relationships[:maxRememberRelationshipItems]
-	}
-	if err := rememberapp.ValidateRelationshipCoverage(len(evidence), objectArray(relationships)); err != nil {
-		var validation *rememberapp.RememberValidationError
-		if errors.As(err, &validation) {
-			for _, issue := range validation.Issues {
-				collector.add(issue.Path, issue.Code, issue.Message)
-			}
-			collector.truncated = collector.truncated || validation.IssuesTruncated
-		}
-	}
-	seenRefs := map[string]struct{}{}
-	for index, item := range relationships {
-		path := fmt.Sprintf("/relationships/%d", index)
-		relationship, ok := objectFields(item)
-		if !ok {
-			collector.add(path, "type", "relationship must be an object")
-			continue
-		}
-		relationshipProperties := schemaProperties(relationshipSubmissionSchema())
-		keys := make([]string, 0, len(relationship))
-		for key := range relationship {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		for _, key := range keys {
-			if _, ok := relationshipProperties[key]; !ok {
-				collector.add(path+"/"+jsonPointerToken(key), "unknown_field", "unknown field: "+key)
-			}
-		}
-		ref := strings.TrimSpace(stringField(relationship, "ref"))
-		if ref == "" {
-			collector.add(path+"/ref", "required", "relationship.ref must not be blank")
-		} else if _, exists := seenRefs[ref]; exists {
-			collector.add(path+"/ref", "duplicate", "relationship.ref must be unique")
-		} else {
-			seenRefs[ref] = struct{}{}
-		}
-		for _, required := range []string{"subject", "predicate", "object", "polarity"} {
-			if _, exists := relationship[required]; !exists {
-				collector.add(path+"/"+required, "required", "relationship."+required+" is required")
-			}
-		}
-		if err := validateSubmittedRelationship(relationship, evidence, path); err != nil {
-			collector.add(contractIssuePath(err, path), classifyContractIssue(err.Error()), err.Error())
-		}
-		if subject, exists := relationship["subject"]; exists {
-			if err := validateRememberEntityHintValue(subject, path+"/subject"); err != nil {
-				collector.add(contractIssuePath(err, path+"/subject"), classifyContractIssue(err.Error()), err.Error())
-			}
-		}
-		if predicate, exists := relationship["predicate"]; exists {
-			if err := validateRememberPredicateHintValue(predicate, path+"/predicate"); err != nil {
-				collector.add(contractIssuePath(err, path+"/predicate"), classifyContractIssue(err.Error()), err.Error())
-			}
-		}
-		if object, ok := objectFields(relationship["object"]); ok {
-			if entity, exists := object["entity"]; exists {
-				if err := validateRememberEntityHintValue(entity, path+"/object/entity"); err != nil {
-					collector.add(contractIssuePath(err, path+"/object/entity"), classifyContractIssue(err.Error()), err.Error())
-				}
-			}
-		}
-		indices := collectAnyArray(relationship["evidence_indices"])
-		for position, rawIndex := range indices {
-			if _, ok := schemaNumber(rawIndex); !ok {
-				collector.add(fmt.Sprintf("%s/evidence_indices/%d", path, position), "type", "evidence index must be an integer")
-			}
-		}
-	}
 	if err := ValidateInput(tool, args); err != nil {
 		collector.add("", classifyContractIssue(err.Error()), err.Error())
 	}
@@ -355,7 +268,7 @@ func contractIssuePath(err error, fallback string) string {
 		}
 		return path[:dot] + suffix
 	}
-	if !strings.HasPrefix(path, "evidence[") && !strings.HasPrefix(path, "relationships[") {
+	if !strings.HasPrefix(path, "evidence[") {
 		return fallback
 	}
 	pointer, ok := contractDotPathPointer(path)

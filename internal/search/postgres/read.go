@@ -12,7 +12,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	searchcontract "github.com/markhuangai/dense-mem/internal/search/contract"
-	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
 type searchPhysicalIndexState struct {
@@ -188,76 +187,7 @@ func (r *Store) CheckSearchReadiness(ctx context.Context) (readiness *searchcont
 			})
 		}
 	}
-	incompleteRelationships, err := r.relationshipProjectionTextIncomplete(ctx, contract)
-	if err != nil {
-		return nil, err
-	}
-	if incompleteRelationships {
-		readiness.Ready = false
-		readiness.Reasons = append(readiness.Reasons, searchcontract.SearchReadinessReason{
-			Code: "relationship_projection_text_incomplete", Message: "eligible relationship search documents are missing projection format 2 text",
-		})
-	}
 	return readiness, nil
-}
-
-func (r *Store) relationshipProjectionTextIncomplete(ctx context.Context, contract *searchcontract.ActiveSearchContract) (bool, error) {
-	var incomplete bool
-	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
-		return tx.WithContext(ctx).Raw(`
-			WITH activated_generation AS (
-			    SELECT DISTINCT ON (team_id)
-			           team_id, projection_generation_id
-			    FROM search_projection_generations
-			    WHERE source_kind = 'relationship'
-			      AND projection_format_version = 2
-			      AND state = 'current'
-			      AND activated_at IS NOT NULL
-			    ORDER BY team_id, generation DESC, created_at DESC
-			),
-			latest_generation AS (
-			    SELECT DISTINCT ON (team_id)
-			           team_id, projection_generation_id
-			    FROM search_projection_generations
-			    WHERE source_kind = 'relationship'
-			      AND projection_format_version = 2
-			    ORDER BY team_id, generation DESC, created_at DESC
-			),
-			selected_generation AS (
-			    SELECT COALESCE(activated.team_id, latest.team_id) AS team_id,
-			           COALESCE(activated.projection_generation_id, latest.projection_generation_id) AS projection_generation_id
-			    FROM activated_generation AS activated
-			    FULL JOIN latest_generation AS latest
-			      ON latest.team_id = activated.team_id
-			)
-			SELECT EXISTS (
-			    SELECT 1
-			    FROM relationship_records AS relationship
-			    LEFT JOIN selected_generation AS generation
-			      ON generation.team_id = relationship.team_id
-			    WHERE relationship.identity_alias_of_relationship_id IS NULL
-			      AND relationship.status = 'active'
-			      AND relationship.support_count > 0
-			      AND NOT EXISTS (
-			          SELECT 1
-			          FROM search_documents AS document
-			          WHERE document.team_id = relationship.team_id
-			            AND document.source_kind = 'relationship'
-			            AND document.source_id = relationship.relationship_id
-			            AND document.embedding_contract_id = ?::uuid
-			            AND document.embedding_dimensions = ?
-			            AND document.projection_format_version = 2
-			            AND document.search_state IN ('pending', 'current', 'failed')
-			            AND `+storagepostgres.RelationshipGenerationDocumentSQL("document", "generation.projection_generation_id", "generation.projection_generation_id::text")+`
-			)
-			LIMIT 1
-		)
-		`, contract.EmbeddingContractID, contract.EmbeddingDimensions).Scan(&incomplete).Error
-	})
-	if err != nil {
-		return false, fmt.Errorf("search: relationship projection readiness: %w", err)
-	}
-	return incomplete, nil
 }
 
 func (r *Store) SearchFullText(ctx context.Context, input searchcontract.FullTextSearchInput) (hits []searchcontract.SearchHit, err error) {
@@ -276,23 +206,22 @@ func (r *Store) SearchFullText(ctx context.Context, input searchcontract.FullTex
 	}()
 	err = r.withTeamTx(queryCtx, input.TeamID, func(tx *gorm.DB) error {
 		sourceFilter := ""
-		args := []any{input.TeamID, input.Query, input.TeamID, input.Query}
+		args := []any{input.Query, input.TeamID, input.Query}
 		if input.SourceKind != "" {
 			sourceFilter = "AND document.source_kind = ?"
 			args = append(args, input.SourceKind)
 		}
 		args = append(args, input.Limit)
 		rows, err := tx.WithContext(queryCtx).Raw(`
-			WITH `+storagepostgres.RecallRelationshipGenerationScopeSQL+`
-			SELECT document.team_id::text, document.search_document_id::text, document.source_kind, document.source_id::text,
+						SELECT document.team_id::text, document.search_document_id::text, document.source_kind, document.source_id::text,
 			       document.source_version, document.document_version, document.embedding_contract_id::text,
 			       document.search_state,
 			       0::double precision AS distance,
 			       ts_rank_cd(document.search_tsv, plainto_tsquery('simple', ?))::double precision AS text_rank
-			FROM recall_relationship_generation AS generation
-			JOIN search_documents AS document
-			  ON document.team_id = ?::uuid
-			WHERE document.search_state IN ('pending', 'current', 'failed')
+			FROM search_documents AS document
+            WHERE document.team_id = ?::uuid
+            AND document.source_kind = 'evidence'
+            AND document.search_state IN ('pending', 'current', 'failed')
 			  AND document.search_tsv @@ plainto_tsquery('simple', ?)
 			  AND (
 			      document.source_kind <> 'evidence'
@@ -301,13 +230,6 @@ func (r *Store) SearchFullText(ctx context.Context, input searchcontract.FullTex
 			          FROM evidence_exact_aliases AS alias
 			          WHERE alias.team_id = document.team_id
 			            AND alias.alias_fragment_id = document.source_id
-			      )
-			  )
-			  AND (
-			      document.source_kind <> 'relationship'
-			      OR (
-			          document.projection_format_version = 2
-			          AND `+storagepostgres.RelationshipGenerationDocumentSQL("document", "generation.projection_generation_id", "generation.projection_generation_id::text")+`
 			      )
 			  )
 			  `+sourceFilter+`
@@ -366,8 +288,8 @@ func (r *Store) SearchExactVector(ctx context.Context, input searchcontract.Exac
 	}()
 	err = r.withTeamTx(queryCtx, input.TeamID, func(tx *gorm.DB) error {
 		sourceFilter := ""
-		countArgs := []any{input.TeamID, input.TeamID, contract.EmbeddingContractID, contract.EmbeddingDimensions}
-		args := []any{input.TeamID, vectorLiteral, input.TeamID, contract.EmbeddingContractID, contract.EmbeddingDimensions}
+		countArgs := []any{input.TeamID, contract.EmbeddingContractID, contract.EmbeddingDimensions}
+		args := []any{vectorLiteral, input.TeamID, contract.EmbeddingContractID, contract.EmbeddingDimensions}
 		if input.SourceKind != "" {
 			sourceFilter = "AND document.source_kind = ?"
 			countArgs = append(countArgs, input.SourceKind)
@@ -376,14 +298,11 @@ func (r *Store) SearchExactVector(ctx context.Context, input searchcontract.Exac
 		countArgs = append(countArgs, contract.ExactMaxRows+1)
 		var candidateCount int64
 		if err := tx.WithContext(queryCtx).Raw(`
-			WITH `+storagepostgres.RecallRelationshipGenerationScopeSQL+`
-			SELECT count(*)
+						SELECT count(*)
 			FROM (
 				SELECT document.search_document_id
-				FROM recall_relationship_generation AS generation
-				JOIN search_documents AS document
-				  ON document.team_id = ?::uuid
-				WHERE document.embedding_contract_id = ?::uuid
+				FROM search_documents AS document
+ WHERE document.team_id = ?::uuid AND document.source_kind = 'evidence' AND document.embedding_contract_id = ?::uuid
 				  AND document.embedding_dimensions = ?
 				  AND document.search_state = 'current'
 				  AND document.embedding IS NOT NULL
@@ -394,13 +313,6 @@ func (r *Store) SearchExactVector(ctx context.Context, input searchcontract.Exac
 				          FROM evidence_exact_aliases AS alias
 				          WHERE alias.team_id = document.team_id
 				            AND alias.alias_fragment_id = document.source_id
-				      )
-				  )
-				  AND (
-				      document.source_kind <> 'relationship'
-					      OR (
-					          document.projection_format_version = 2
-					          AND `+storagepostgres.RelationshipGenerationDocumentSQL("document", "generation.projection_generation_id", "generation.projection_generation_id::text")+`
 				      )
 				  )
 				  `+sourceFilter+`
@@ -414,16 +326,13 @@ func (r *Store) SearchExactVector(ctx context.Context, input searchcontract.Exac
 		}
 		args = append(args, vectorLiteral, input.Limit)
 		rows, err := tx.WithContext(queryCtx).Raw(`
-				WITH `+storagepostgres.RecallRelationshipGenerationScopeSQL+`
-				SELECT document.team_id::text, document.search_document_id::text, document.source_kind, document.source_id::text,
+								SELECT document.team_id::text, document.search_document_id::text, document.source_kind, document.source_id::text,
 				       document.source_version, document.document_version, document.embedding_contract_id::text,
 				       document.search_state,
 				       (document.embedding <=> ?::vector)::double precision AS distance,
 				       0::double precision AS text_rank
-				FROM recall_relationship_generation AS generation
-				JOIN search_documents AS document
-				  ON document.team_id = ?::uuid
-				WHERE document.embedding_contract_id = ?::uuid
+				FROM search_documents AS document
+ WHERE document.team_id = ?::uuid AND document.source_kind = 'evidence' AND document.embedding_contract_id = ?::uuid
 				  AND document.embedding_dimensions = ?
 				  AND document.search_state = 'current'
 				  AND document.embedding IS NOT NULL
@@ -434,13 +343,6 @@ func (r *Store) SearchExactVector(ctx context.Context, input searchcontract.Exac
 				          FROM evidence_exact_aliases AS alias
 				          WHERE alias.team_id = document.team_id
 				            AND alias.alias_fragment_id = document.source_id
-				      )
-				  )
-				  AND (
-				      document.source_kind <> 'relationship'
-					      OR (
-					          document.projection_format_version = 2
-					          AND `+storagepostgres.RelationshipGenerationDocumentSQL("document", "generation.projection_generation_id", "generation.projection_generation_id::text")+`
 				      )
 				  )
 				  `+sourceFilter+`

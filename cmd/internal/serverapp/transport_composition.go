@@ -8,14 +8,9 @@ import (
 
 	"github.com/labstack/echo/v4"
 	auditapp "github.com/markhuangai/dense-mem/internal/audit"
-
-	communityapp "github.com/markhuangai/dense-mem/internal/community/service"
 	"github.com/markhuangai/dense-mem/internal/config"
 	conflictevidence "github.com/markhuangai/dense-mem/internal/conflict/evidence"
-	conflictqueue "github.com/markhuangai/dense-mem/internal/conflict/queue"
 	"github.com/markhuangai/dense-mem/internal/crypto"
-	"github.com/markhuangai/dense-mem/internal/dream"
-	"github.com/markhuangai/dense-mem/internal/graph"
 	densehttp "github.com/markhuangai/dense-mem/internal/http"
 	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
 	"github.com/markhuangai/dense-mem/internal/http/handler"
@@ -54,33 +49,28 @@ type transportCompositionInputs struct {
 	rememberAttempts         rememberapp.RememberAttemptDiagnosticsReader
 	rememberInvocations      rememberapp.RememberInvocationDiagnosticsReader
 
-	credentialRepo          accessservice.CredentialStore
-	credentialVerifier      crypto.CredentialVerifier
-	activityWriter          *accessservice.CredentialActivityWriter
-	teamService             accessservice.TeamService
-	credentialService       accessservice.CredentialService
-	ssoService              *accessservice.SSOService
-	portalSession           accessservice.UserPortalSessionManager
-	directoryIdentity       *accessservice.DirectoryIdentityService
-	controlIdentity         *accessservice.ControlIdentityService
-	privateMemory           densehttp.PrivateMemoryServiceInterface
-	auditService            accessservice.AuditService
-	securityService         settings.SecurityService
-	appConfig               settings.AppConfigService
-	decisionConfig          settings.DecisionConfigService
-	operationLogs           operations.OperationLogReader
-	operationLogHealth      func(context.Context) error
-	usageMetrics            operations.UsageMetricsService
-	conflictQueue           conflictqueue.Reader
-	evidenceConflicts       conflictevidence.Reader
-	recallFeedback          recall.RecallFeedbackEventReader
-	community               communityapp.Service
-	ontologyMaintenance     *ontology.MaintenanceService
-	ontologyManagement      *ontology.ManagementService
-	controlDream            dream.ControlService
-	controlDreamDiagnostics dream.DiagnosticService
-	graph                   graph.Service
-	recall                  recall.RecallService
+	credentialRepo      accessservice.CredentialStore
+	credentialVerifier  crypto.CredentialVerifier
+	activityWriter      *accessservice.CredentialActivityWriter
+	teamService         accessservice.TeamService
+	credentialService   accessservice.CredentialService
+	ssoService          *accessservice.SSOService
+	portalSession       accessservice.UserPortalSessionManager
+	directoryIdentity   *accessservice.DirectoryIdentityService
+	controlIdentity     *accessservice.ControlIdentityService
+	privateMemory       densehttp.PrivateMemoryServiceInterface
+	auditService        accessservice.AuditService
+	securityService     settings.SecurityService
+	appConfig           settings.AppConfigService
+	decisionConfig      settings.DecisionConfigService
+	operationLogs       operations.OperationLogReader
+	operationLogHealth  func(context.Context) error
+	usageMetrics        operations.UsageMetricsService
+	evidenceConflicts   conflictevidence.Reader
+	recallFeedback      recall.RecallFeedbackEventReader
+	ontologyMaintenance *ontology.MaintenanceService
+	ontologyManagement  *ontology.ManagementService
+	recall              recall.RecallService
 }
 
 type transportComposition struct {
@@ -335,7 +325,6 @@ func buildTransportComposition(deps transportCompositionInputs) (*transportCompo
 		CredentialSvc:            deps.credentialService,
 		RateLimitSvc:             deps.backend.rateLimitService,
 		UsageMetrics:             deps.usageMetrics,
-		GraphView:                deps.graph,
 		RecallSvc:                deps.recall,
 		PrivateMemory:            deps.privateMemory,
 		AuditSvc:                 deps.auditService,
@@ -396,11 +385,7 @@ func buildTransportComposition(deps transportCompositionInputs) (*transportCompo
 				Decisions:           deps.decisionConfig,
 				Logs:                deps.operationLogs,
 				RecallFeedback:      deps.recallFeedback,
-				Dreams:              deps.controlDream,
-				DreamDiagnostics:    deps.controlDreamDiagnostics,
-				Communities:         deps.community,
 				Ontology:            deps.ontologyMaintenance,
-				ConflictQueue:       deps.conflictQueue,
 				EvidenceConflicts:   deps.evidenceConflicts,
 				Convergence:         deps.convergence,
 				RememberAttempts:    deps.rememberAttempts,

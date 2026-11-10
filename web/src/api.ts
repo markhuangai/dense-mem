@@ -5,14 +5,11 @@ export type { DecisionConfig, DecisionTasks, GeneralConfig, GeneralConfigInput, 
 import type { OntologyMaintenanceConfig, OntologyMaintenanceRun, OntologyMaintenanceStatus, OntologyMaintenanceRunPage } from "./ontology-maintenance-api-types";
 export type { OntologyMaintenanceConfig, OntologyMaintenanceRun, OntologyMaintenanceStatus, OntologyMaintenanceRunPage } from "./ontology-maintenance-api-types";
 import type { ControlTelemetryQuery, TelemetrySnapshot } from "./telemetry/types";
-import type { CommunityStatus } from "./community-api-types";
 import type { OAuthProtectedResourceConfig } from "./oauth-protected-resource-types";
 import type { SearchConvergence } from "./search-convergence-types";
 import type { EvidenceConflictDetail, EvidenceConflictListPage, EvidenceConflictListQuery, EvidenceConflict } from "./evidence-conflict-api-types";
 import { getEvidenceConflict as getEvidenceConflictRequest, listEvidenceConflicts as listEvidenceConflictsRequest, resolveEvidenceConflict as resolveEvidenceConflictRequest } from "./evidence-conflict-api";
 import { requestJson } from "./http";
-import type { DreamDiagnostic, DreamDiagnosticPage } from "./dream-diagnostics-api-types";
-export type { DreamDiagnostic, DreamDiagnosticPage } from "./dream-diagnostics-api-types";
 import {
   buildRememberAttemptDiagnosticPath, buildRememberAttemptDiagnosticsPath,
   buildRememberInvocationDiagnosticPath, buildRememberInvocationDiagnosticsPath,
@@ -30,17 +27,6 @@ export type {
   RememberAttemptDiagnosticSummary, RememberAttemptOutcome, RememberAttemptPublicResult, RememberDiagnosticExchange,
   RememberInvocationDiagnosticDetail, RememberInvocationDiagnosticQuery, RememberInvocationDiagnosticSummary,
 } from "./control-observability-api";
-export type {
-  ConflictQueueItem,
-  ConflictQueueLeaseState,
-  ConflictQueuePage,
-  ConflictQueuePosition,
-  ConflictQueueQuery,
-  ConflictQueueStatus,
-  ConflictQueueSummary,
-  ConflictQueueSupporter,
-} from "./conflict-queue-api-types";
-import type { ConflictQueuePage, ConflictQueueQuery } from "./conflict-queue-api-types";
 export type { OAuthProtectedResourceConfig, OAuthScopeMapping } from "./oauth-protected-resource-types";
 export type { SearchConvergence } from "./search-convergence-types";
 export type Team = {
@@ -429,13 +415,7 @@ export type RecallFeedbackJudgedResultRef = {
   rank?: number;
 };
 
-export type RecallFeedbackDreamFeedback = {
-  dream_id: string;
-  used: boolean;
-  quality: "high" | "medium" | "low" | string;
-  contradicted: boolean;
-  feedback_comment?: string;
-};
+
 
 export type RecallFeedbackResolvedResult = {
   type: string;
@@ -469,7 +449,7 @@ export type RecallFeedbackEvent = {
   irrelevant?: boolean | null;
   feedback_comment?: string;
   irrelevant_result_refs?: RecallFeedbackJudgedResultRef[] | null;
-  dream_feedback?: RecallFeedbackDreamFeedback[] | null;
+
   resolved_results?: RecallFeedbackResolvedResult[] | null;
 };
 
@@ -486,69 +466,14 @@ export type RecallFeedbackEventQuery = {
   to?: string;
 };
 
-export type Dream = {
-  dream_id: string;
-  team_id: string;
-  hypothesis: string;
-  what_if: string;
-  possible_outcome: string;
-  rationale: string;
-  likelihood: number;
-  confidence: number;
-  lane?: "graph" | "evidence_discovery" | string; source_evidence_ids?: string[];
-  status: "proposed" | "reinforced" | "stale" | "rejected" | "submitted" | string;
-  cycle_run_id?: string;
-  generator_model?: string;
-  source_refs?: Array<{ type: string; id: string }>;
-  derivations?: Array<{ premise_position: number; relationship_id: string; relationship_version: number; source_group_key: string; quote: string; authority: string }>;
-  evidence_derivations?: Array<{ evidence_id: string; source_group_key: string; span_start: number; span_end: number; quote: string; authority: string }>;
-  invalidated_reason?: string;
-  created_at: string;
-  updated_at: string;
-};
 
-export type DreamSort = "updated_at" | "created_at";
-export type DreamDirection = "asc" | "desc";
 
-export type DreamRun = {
-  run_id: string;
-  team_id: string;
-  run_date: string;
-  started_at: string;
-  completed_at: string;
-  input_relationships: number;
-  created_dreams: number;
-  rejected_dreams: number;
-  scheduled_for?: string;
-  attempt_count?: number;
-  provider_model?: string;
-  provider_turns?: number;
-  provider_input_tokens?: number;
-  provider_output_tokens?: number;
-  attempted_paths?: number;
-  provider_proposals?: number;
-  lane?: "graph" | "evidence_discovery" | string; evidence_targets?: number; evaluated_evidence_targets?: number;
-  outcome_summary?: Record<string, number>;
-  status: string;
-  error?: string;
-};
 
-export type DreamStatus = {
-  retired: boolean;
-  latest_run?: DreamRun | null;
-  historical_proposed_count: number;
-};
-export type DreamQuery = {
-  limit?: number;
-  status?: Dream["status"] | "";
-  cursor?: string;
-  sort?: DreamSort;
-  direction?: DreamDirection;
-};
-export type DreamListResponse = {
-  items: Dream[];
-  next_cursor?: string;
-};
+
+
+
+
+
 type RequestOptions = {
   method?: string;
   body?: unknown;
@@ -637,20 +562,7 @@ export class ControlApi {
     return this.requestEnvelope<ControlMetrics>(`/metrics${suffix}`, { signal });
   }
 
-  getConflictQueue(teamId: string, query: ConflictQueueQuery = {}): Promise<ConflictQueuePage> {
-    const params = new URLSearchParams();
-    if (query.status) {
-      params.set("status", query.status);
-    }
-    if (query.limit !== undefined) {
-      params.set("limit", String(query.limit));
-    }
-    if (query.cursor) {
-      params.set("cursor", query.cursor);
-    }
-    const suffix = params.toString() ? `?${params.toString()}` : "";
-    return this.requestEnvelope<ConflictQueuePage>(`/teams/${encodeURIComponent(teamId)}/conflicts/queue${suffix}`);
-  }
+
 
   listEvidenceConflicts(teamId: string, query: EvidenceConflictListQuery = {}): Promise<EvidenceConflictListPage> { return listEvidenceConflictsRequest(this.requestEnvelope.bind(this), teamId, query); }
 
@@ -889,41 +801,16 @@ export class ControlApi {
     return this.requestEnvelope<RecallFeedbackEvent>(`/recall-feedback-events/${encodeURIComponent(recallId)}`);
   }
 
-  getTeamDreamingStatus(teamId: string): Promise<DreamStatus> {
-    return this.requestEnvelope<DreamStatus>(`/teams/${teamId}/dreaming/status`);
-  }
 
-  getTeamCommunityStatus(teamId: string): Promise<CommunityStatus> {
-    return this.requestEnvelope<CommunityStatus>(`/teams/${teamId}/community/status`);
-  }
 
-  listTeamDreamingRuns(teamId: string, limit = 20): Promise<DreamRun[]> {
-    return this.requestEnvelope<DreamRun[]>(`/teams/${teamId}/dreaming/runs?limit=${limit}`);
-  }
-  listTeamDreams(teamId: string, query: DreamQuery = {}): Promise<DreamListResponse> {
-    const params = new URLSearchParams();
-    if (query.limit !== undefined) {
-      params.set("limit", String(query.limit));
-    }
-    if (query.status) {
-      params.set("status", query.status);
-    }
-    if (query.cursor) {
-      params.set("cursor", query.cursor);
-    }
-    if (query.sort) {
-      params.set("sort", query.sort);
-    }
-    if (query.direction) {
-      params.set("direction", query.direction);
-    }
-    const suffix = params.toString() ? `?${params.toString()}` : "";
-    return this.requestEnvelope<DreamListResponse>(`/teams/${teamId}/dreams${suffix}`);
-  }
-  listTeamDreamDiagnostics(teamId: string, runId: string, limit = 25, cursor = ""): Promise<DreamDiagnosticPage> { return this.listDreamDiagnostics(`/teams/${encodeURIComponent(teamId)}/dreaming/runs/${encodeURIComponent(runId)}/diagnostics`, limit, cursor); }
-  listTeamDreamDiagnosticsForHypothesis(teamId: string, hypothesisId: string, limit = 25, cursor = ""): Promise<DreamDiagnosticPage> { return this.listDreamDiagnostics(`/teams/${encodeURIComponent(teamId)}/dreams/${encodeURIComponent(hypothesisId)}/diagnostics`, limit, cursor); }
-  getTeamDreamDiagnostic(teamId: string, runId: string, diagnosticId: string): Promise<DreamDiagnostic> { return this.requestEnvelope<DreamDiagnostic>(`/teams/${encodeURIComponent(teamId)}/dreaming/runs/${encodeURIComponent(runId)}/diagnostics/${encodeURIComponent(diagnosticId)}`); }
-  private listDreamDiagnostics(path: string, limit: number, cursor: string): Promise<DreamDiagnosticPage> { const params = new URLSearchParams({ limit: String(limit) }); if (cursor) params.set("cursor", cursor); return this.requestEnvelope<DreamDiagnosticPage>(`${path}?${params}`); }
+
+
+
+
+
+
+
+
   private async requestEnvelope<T>(path: string, options: RequestOptions = {}): Promise<T> {
     const payload = await this.request<{ data: T }>(path, options);
     return payload.data;

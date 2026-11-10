@@ -20,7 +20,7 @@ func TestSearchReconciliationSelectionAndHashFence(t *testing.T) {
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "search-reconciliation-owner")
 	contractID := insertSearchTestContract(t, adminDB, rls, "reconciliation", 2, "exact", "")
 	repo := newSearchFixtureStore(appDB, rls)
-	ledger := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	ledger := NewStore(appDB, rls)
 	ingest, err := createTestIngest(ctx, ledger, CreateIngestInput{
 		TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: "search-reconciliation-evidence",
 		RequestHash: sha256Hex("canonical rendered document"), Evidence: []EvidenceInput{{Content: "canonical rendered document"}},
@@ -339,7 +339,7 @@ func TestSearchReconciliationSuppressesHistoricalEvidenceAliases(t *testing.T) {
 	contractID := insertSearchTestContract(t, adminDB, rls, "reconciliation-alias", 2, "exact", "")
 	teamID := createLedgerTeam(t, adminDB, rls, "reconciliation-alias-team")
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "reconciliation-alias-owner")
-	ledger := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	ledger := NewStore(appDB, rls)
 	repo := newSearchFixtureStore(appDB, rls)
 	content := "canonical reconciliation document"
 	canonical, err := createTestIngest(ctx, ledger, CreateIngestInput{
@@ -394,7 +394,7 @@ func TestSearchReconciliationProjectsSafeHistoricalRejectedEvidence(t *testing.T
 	teamID := createLedgerTeam(t, adminDB, rls, "search-reconciliation-rejected")
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "search-reconciliation-rejected-owner")
 	contractID := insertSearchTestContract(t, adminDB, rls, "reconciliation-rejected", 2, "exact", "")
-	ledger := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	ledger := NewStore(appDB, rls)
 	repo := newSearchFixtureStore(appDB, rls)
 	rejected, err := createTestIngest(ctx, ledger, CreateIngestInput{
 		TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: "search-reconciliation-rejected",
@@ -486,7 +486,7 @@ func TestSearchReconciliationSelectionAdvancesDurableCursorPastHealthyDocuments(
 	teamID := createLedgerTeam(t, adminDB, rls, "search-reconciliation-cursor")
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "search-reconciliation-cursor-owner")
 	contractID := insertSearchTestContract(t, adminDB, rls, "reconciliation-cursor", 2, "exact", "")
-	ledger := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	ledger := NewStore(appDB, rls)
 	repo := newSearchFixtureStore(appDB, rls)
 
 	healthy, err := createTestIngest(ctx, ledger, CreateIngestInput{
@@ -571,7 +571,7 @@ func TestSearchReconciliationCanonicalSourceSetAndSpaceFence(t *testing.T) {
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "search-reconciliation-source-owner")
 	contractID := insertSearchTestContract(t, adminDB, rls, "reconciliation-source-set", 2, "exact", "")
 	repo := newSearchFixtureStore(appDB, rls)
-	ledger := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	ledger := NewStore(appDB, rls)
 	ingest, err := createTestIngest(ctx, ledger, CreateIngestInput{
 		TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: "search-reconciliation-source-set",
 		RequestHash: sha256Hex("source-set canonical evidence"), Evidence: []EvidenceInput{{Content: "source-set canonical evidence"}},
@@ -699,7 +699,7 @@ func TestSearchReconciliationRetiresLifecycleTerminalEvidence(t *testing.T) {
 	teamID := createLedgerTeam(t, adminDB, rls, "search-reconciliation-lifecycle")
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "search-reconciliation-lifecycle-owner")
 	contractID := insertSearchTestContract(t, adminDB, rls, "reconciliation-lifecycle", 2, "exact", "")
-	ledger := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	ledger := NewStore(appDB, rls)
 	repo := newSearchFixtureStore(appDB, rls)
 	ingest, err := createTestIngest(ctx, ledger, CreateIngestInput{
 		TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: "search-reconciliation-lifecycle",
@@ -759,7 +759,7 @@ func TestSearchReconciliationExcludesLifecycleTerminalEvidenceWithoutDocument(t 
 	teamID := createLedgerTeam(t, adminDB, rls, "search-reconciliation-lifecycle-missing")
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "search-reconciliation-lifecycle-missing-owner")
 	contractID := insertSearchTestContract(t, adminDB, rls, "reconciliation-lifecycle-missing", 2, "exact", "")
-	ledger := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	ledger := NewStore(appDB, rls)
 	repo := newSearchFixtureStore(appDB, rls)
 	ingest, err := createTestIngest(ctx, ledger, CreateIngestInput{
 		TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: "search-reconciliation-lifecycle-missing",
@@ -797,7 +797,7 @@ func TestSearchReconciliationExcludesSupersededSourceRevisionWithoutDocument(t *
 	teamID := createLedgerTeam(t, adminDB, rls, "search-reconciliation-source-revision")
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "search-reconciliation-source-revision-owner")
 	contractID := insertSearchTestContract(t, adminDB, rls, "reconciliation-source-revision", 2, "exact", "")
-	ledger := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	ledger := NewStore(appDB, rls)
 	repo := newSearchFixtureStore(appDB, rls)
 	const sourceKey = "doc://search-reconciliation-source-revision"
 
@@ -845,7 +845,7 @@ func TestSearchReconciliationExcludesSealedSpaceEvidenceWithoutDocument(t *testi
 	teamID := createLedgerTeam(t, adminDB, rls, "search-reconciliation-sealed-space")
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "search-reconciliation-sealed-space-owner")
 	contractID := insertSearchTestContract(t, adminDB, rls, "reconciliation-sealed-space", 2, "exact", "")
-	ledger := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	ledger := NewStore(appDB, rls)
 	repo := newSearchFixtureStore(appDB, rls)
 	space, err := ensurePrivateSpaceForOwner(t, appDB, rls, ctx, uuid.MustParse(teamID), uuid.MustParse(ownerID))
 	require.NoError(t, err)
@@ -892,7 +892,7 @@ func TestSearchReconciliationExcludesConflictResolutionDeletionOnlyEvidence(t *t
 	teamID := createLedgerTeam(t, adminDB, rls, "search-reconciliation-deletion-only")
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "search-reconciliation-deletion-only-owner")
 	contractID := insertSearchTestContract(t, adminDB, rls, "reconciliation-deletion-only", 2, "exact", "")
-	ledger := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	ledger := NewStore(appDB, rls)
 	repo := newSearchFixtureStore(appDB, rls)
 	marker := map[string]any{"conflict_resolution_deletion_only": true}
 	ingest, err := createTestIngest(ctx, ledger, CreateIngestInput{

@@ -1,35 +1,11 @@
 package recall
 
 import (
-	"strings"
-
-	"github.com/markhuangai/dense-mem/internal/domain"
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
-	tracecontract "github.com/markhuangai/dense-mem/internal/trace/contract"
+	"strings"
 )
 
-func recallConflictSummaries(records []tracecontract.RelationshipConflictCaseRecord) []RecallConflictSummary {
-	out := make([]RecallConflictSummary, 0, len(records))
-	for _, record := range records {
-		reviewDueAt := record.ReviewDueAt
-		positions := recallConflictPositions(record.Positions)
-		summary := RecallConflictSummary{
-			ConflictID:          record.ConflictID,
-			Version:             record.Version,
-			Kind:                record.Kind,
-			Status:              record.Status,
-			Question:            record.Question,
-			ReviewDueAt:         &reviewDueAt,
-			EffectiveAt:         record.EffectiveAt,
-			EffectiveTimeBasis:  record.EffectiveTimeBasis,
-			PreferredPositionID: record.PreferredPositionID,
-			Positions:           positions,
-			PositionsTruncated:  len(record.Positions) > recallConflictPositionLimit,
-		}
-		out = append(out, summary)
-	}
-	return out
-}
+const recallConflictPositionLimit = 10
 
 func recallEvidenceConflictSummaries(records []recallcontract.EvidenceConflictCaseRecord) []RecallConflictSummary {
 	out := make([]RecallConflictSummary, 0, len(records))
@@ -64,85 +40,16 @@ func recallEvidenceConflictSummaries(records []recallcontract.EvidenceConflictCa
 }
 
 func limitRecallConflictSummaries(values []RecallConflictSummary, limit int) []RecallConflictSummary {
-	if limit <= 0 {
-		return []RecallConflictSummary{}
-	}
-	seen := make(map[string]struct{}, len(values))
-	capacity := len(values)
-	if capacity > limit {
-		capacity = limit
-	}
-	out := make([]RecallConflictSummary, 0, capacity)
-	// Relationship conflicts remain first for compatibility with the existing
-	// conflict queue projection; evidence conflicts fill the shared remainder.
-	appendKind := func(kind string) {
-		for _, value := range values {
-			if (kind == "evidence_conflict" && value.Kind != "evidence_conflict") ||
-				(kind == "relationship" && value.Kind == "evidence_conflict") {
-				continue
-			}
-			if _, exists := seen[value.ConflictID]; exists {
-				continue
-			}
-			seen[value.ConflictID] = struct{}{}
-			out = append(out, value)
-			if len(out) == limit {
-				return
-			}
+	result := []RecallConflictSummary{}
+	seen := map[string]bool{}
+	for _, value := range values {
+		if seen[value.ConflictID] || len(result) >= limit {
+			continue
 		}
+		seen[value.ConflictID] = true
+		result = append(result, value)
 	}
-	appendKind("relationship")
-	appendKind("evidence_conflict")
-	if len(out) > limit {
-		out = out[:limit]
-	}
-	return out
-}
-
-const (
-	recallConflictPositionLimit         = 10
-	recallConflictSupporterLimit        = 20
-	recallConflictRelationshipIDLimit   = 20
-	recallConflictOwnerProfileIDLimit   = 20
-	recallConflictResultEvidenceIDLimit = 50
-)
-
-func recallConflictPositions(records []domain.RelationshipConflictPositionRecord) []RecallConflictPosition {
-	if len(records) > recallConflictPositionLimit {
-		records = records[:recallConflictPositionLimit]
-	}
-	out := make([]RecallConflictPosition, 0, len(records))
-	for _, record := range records {
-		supportersTruncated := record.SupportersTruncated || len(record.Supporters) > recallConflictSupporterLimit
-		out = append(out, RecallConflictPosition{
-			PositionID:          record.PositionID,
-			Disposition:         record.Disposition,
-			SupporterCount:      record.SupporterCount,
-			SupportersTruncated: supportersTruncated,
-			Supporters:          recallConflictSupporters(record.Supporters),
-			RelationshipIDs:     limitStrings(record.RelationshipIDs, recallConflictRelationshipIDLimit),
-			OwnerProfileIDs:     limitStrings(record.OwnerProfileIDs, recallConflictOwnerProfileIDLimit),
-			ResultEvidenceIDs:   limitStrings(record.EvidenceIDs, recallConflictResultEvidenceIDLimit),
-		})
-	}
-	return out
-}
-
-func recallConflictSupporters(records []domain.RelationshipConflictSupporterRecord) []RecallConflictSupporter {
-	if len(records) > recallConflictSupporterLimit {
-		records = records[:recallConflictSupporterLimit]
-	}
-	out := make([]RecallConflictSupporter, 0, len(records))
-	for _, record := range records {
-		out = append(out, RecallConflictSupporter{
-			ProfileID:          record.ProfileID,
-			ProfileName:        record.ProfileName,
-			StrongestAuthority: record.StrongestAuthority,
-			EvidenceID:         record.EvidenceID,
-			AcceptedAt:         record.AcceptedAt,
-		})
-	}
-	return out
+	return result
 }
 
 func limitStrings(values []string, limit int) []string {
@@ -150,44 +57,4 @@ func limitStrings(values []string, limit int) []string {
 		values = values[:limit]
 	}
 	return append([]string(nil), values...)
-}
-
-func relatedHypothesisSourceIDs(refs []map[string]any) []string {
-	out := []string{}
-	for _, ref := range refs {
-		refType, _ := ref["type"].(string)
-		refType = strings.TrimSpace(refType)
-		if refType != "relationship" && refType != "candidate_relationship" {
-			continue
-		}
-		id, _ := ref["id"].(string)
-		id = strings.TrimSpace(id)
-		if id != "" {
-			out = append(out, id)
-		}
-	}
-	return out
-}
-
-func publicHypothesisGeneratorKind(kind string) string {
-	switch strings.TrimSpace(kind) {
-	case "provider":
-		return "provider"
-	default:
-		return "deterministic"
-	}
-}
-
-func filterRelatedRelationshipsByGroups(values []RelatedRelationshipSummary, excludedGroups map[string]struct{}) []RelatedRelationshipSummary {
-	if len(values) == 0 || len(excludedGroups) == 0 {
-		return values
-	}
-	filtered := make([]RelatedRelationshipSummary, 0, len(values))
-	for _, value := range values {
-		if _, excluded := excludedGroups[value.SemanticGroupKey]; excluded {
-			continue
-		}
-		filtered = append(filtered, value)
-	}
-	return filtered
 }

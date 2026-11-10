@@ -45,7 +45,7 @@ func evalListKnowledgeRefsTool(deps Dependencies) Tool {
 func evalListKnowledgeRefTypes(deps Dependencies) []string {
 	types := make([]string, 0, 6)
 	if deps.EvaluationBindings.Application != nil || deps.EvaluationBindings.Repository != nil {
-		types = append(types, "evidence", "relationship", "entity", "value")
+		types = append(types, "evidence")
 	}
 	return types
 }

@@ -1,27 +1,21 @@
-// Package trace builds bounded relationship traces from Dense-Mem's semantic graph.
 package trace
 
-import "context"
+import (
+	"context"
+	tracecontract "github.com/markhuangai/dense-mem/internal/trace/contract"
+)
 
-// Service exposes the supported read-only relationship trace operation.
 type Service interface {
-	Trace(ctx context.Context, profileID string, req TraceRequest) (*TraceResult, error)
+	Trace(context.Context, string, TraceRequest) (*TraceResult, error)
 }
-
-// TraceRequest selects one Relationship to expand.
 type TraceRequest struct {
-	RelationshipID         string   `json:"relationship_id"`
-	IncludeEvidenceContent *bool    `json:"include_evidence_content,omitempty"`
-	IncludeVerification    *bool    `json:"include_verification,omitempty"`
-	IncludeTransitions     *bool    `json:"include_transitions,omitempty"`
-	MaxDepth               int      `json:"max_depth,omitempty"`
-	MaxEdges               int      `json:"max_edges,omitempty"`
-	PredicateKeys          []string `json:"predicate_keys,omitempty"`
-	Topic                  string   `json:"topic,omitempty"`
-	MinRelevance           *float64 `json:"min_relevance,omitempty"`
+	EvidenceID              string `json:"evidence_id"`
+	IncludeEvidenceContent  *bool  `json:"include_evidence_content,omitempty"`
+	IncludeTransitions      *bool  `json:"include_transitions,omitempty"`
+	MaxEvents               int    `json:"max_events,omitempty"`
+	MaxFragmentContentRunes int    `json:"max_fragment_content_runes,omitempty"`
 }
-
-// TraceResult holds the public semantic lineage response.
 type TraceResult struct {
-	Semantic *SemanticTrace `json:"semantic,omitempty"`
+	Semantic *tracecontract.EvidenceTraceResult `json:"semantic"`
 }
+type SemanticTrace = tracecontract.EvidenceTraceResult

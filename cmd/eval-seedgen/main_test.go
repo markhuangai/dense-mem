@@ -28,7 +28,7 @@ func TestGenerateLocalEval100IsDeterministicAndValid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadSeedManifest: %v", err)
 	}
-	if manifest.SchemaVersion != evalharness.SeedSchemaVersionV2 || manifest.SeedID != seedIdentityLocal100 || manifest.Counts["cases"] != 25 || manifest.Counts["corpus"] != 100 || manifest.Counts["hard_negatives"] != 75 || manifest.RelationshipCount != 100 {
+	if manifest.SchemaVersion != evalharness.SeedSchemaVersion || manifest.SeedID != seedIdentityLocal100 || manifest.Counts["cases"] != 25 || manifest.Counts["corpus"] != 100 || manifest.Counts["hard_negatives"] != 75 || manifest.RelationshipCount != 0 {
 		t.Fatalf("smoke manifest identity/counts = %q/%v", manifest.SeedID, manifest.Counts)
 	}
 	corpus, err := evalharness.LoadCorpus(manifestPath, manifest)
@@ -50,10 +50,12 @@ func TestGenerateLocalEval100IsDeterministicAndValid(t *testing.T) {
 	if corpus[0].SourceDataset != seedIdentityLocal100 {
 		t.Fatalf("smoke source dataset = %q", corpus[0].SourceDataset)
 	}
-	for index, item := range corpus {
-		if len(item.Relationships) != 1 {
-			t.Fatalf("smoke corpus row %d relationships = %d; want 1", index+1, len(item.Relationships))
-		}
+	rawCorpus, err := os.ReadFile(filepath.Join(firstSeed, "corpus.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(rawCorpus, []byte(`"relationships"`)) {
+		t.Fatal("generated intake contains a retired graph proposal")
 	}
 	summary, err := evalharness.Run(context.Background(), evalharness.RunOptions{
 		Mode:             "validate",
@@ -120,18 +122,9 @@ func TestGenerateLocalEval1KAcceptsHistoricalPresetAlias(t *testing.T) {
 	}
 }
 
-func TestEvalSeedGeneratorRejectsUnsupportedPresetAndMalformedRelationshipContent(t *testing.T) {
+func TestEvalSeedGeneratorRejectsUnsupportedPreset(t *testing.T) {
 	if err := generatePreset("unsupported", filepath.Join(t.TempDir(), "seed"), filepath.Join(t.TempDir(), "suite.jsonl")); err == nil {
 		t.Fatal("unsupported preset was accepted")
-	}
-	if _, err := localEval100Relationship("unsupported content"); err == nil {
-		t.Fatal("unsupported relationship content was accepted")
-	}
-	if _, err := localEvalToken("content", "missing"); err == nil {
-		t.Fatal("missing token prefix was accepted")
-	}
-	if _, err := localEval100Relationship("Canonical owner registry has no account L token"); err == nil {
-		t.Fatal("missing relationship token was accepted")
 	}
 }
 

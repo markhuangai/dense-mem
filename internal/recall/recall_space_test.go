@@ -8,7 +8,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	communitycontract "github.com/markhuangai/dense-mem/internal/community/contract"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
@@ -29,12 +28,11 @@ func TestRecallFusesAuthorizedSpacesWithLabelsAndStablePrivateTieBreak(t *testin
 		},
 	})
 
-	result, err := svc.Recall(ctx, RecallRequest{Query: "space query", RelationshipLimit: intPtr(0)})
+	result, err := svc.Recall(ctx, RecallRequest{Query: "space query", TopicLimit: intPtr(0)})
 	require.NoError(t, err)
 	require.Len(t, result.Results, 2)
 	require.Equal(t, string(domain.MemorySpacePrivate), result.Results[0].SpaceKind)
 	require.Equal(t, string(domain.MemorySpaceTeamShared), result.Results[1].SpaceKind)
-	require.Equal(t, string(domain.SearchProjectionNotRequired), result.SearchStates.Relationships)
 	require.Equal(t, privateID.String(), search.inputs[0].SpaceID)
 	require.Equal(t, sharedID.String(), search.inputs[1].SpaceID)
 }
@@ -53,7 +51,7 @@ func TestRecallAcrossSpacesEmbedsQueryOnceAndReusesVector(t *testing.T) {
 		},
 	})
 
-	_, err := svc.Recall(ctx, RecallRequest{Query: "same vector", RelationshipLimit: intPtr(0)})
+	_, err := svc.Recall(ctx, RecallRequest{Query: "same vector", TopicLimit: intPtr(0)})
 	require.NoError(t, err)
 	require.Equal(t, 1, provider.calls)
 	require.Len(t, search.inputs, 2)
@@ -77,7 +75,7 @@ func TestRecallAcrossSpacesReportsEmbeddingDegradationOnce(t *testing.T) {
 		},
 	})
 
-	result, err := svc.Recall(ctx, RecallRequest{Query: "degraded vector", RelationshipLimit: intPtr(0)})
+	result, err := svc.Recall(ctx, RecallRequest{Query: "degraded vector", TopicLimit: intPtr(0)})
 	require.NoError(t, err)
 	var degradationCount int
 	for _, degradation := range result.Degradations {
@@ -90,50 +88,26 @@ func TestRecallAcrossSpacesReportsEmbeddingDegradationOnce(t *testing.T) {
 
 func TestFuseRecallResultsSumsRRFAndHonorsGlobalLimits(t *testing.T) {
 	shared := &RecallResult{
-		SearchStates: RecallSearchStates{Evidence: string(domain.SearchProjectionPending), Relationships: string(domain.SearchProjectionCurrent)},
+		SearchStates: RecallSearchStates{Evidence: string(domain.SearchProjectionPending)},
 		Results: []RecallResultItem{
 			{EvidenceID: "shared-1", Rank: 2, SpaceKind: string(domain.MemorySpaceTeamShared)},
 			{EvidenceID: "shared-2", Rank: 2, SpaceKind: string(domain.MemorySpaceTeamShared)},
 		},
-		RelatedRelationships: []RelatedRelationshipSummary{
-			{RelationshipID: "rel-1", SpaceKind: string(domain.MemorySpaceTeamShared)},
-			{RelationshipID: "rel-2", SpaceKind: string(domain.MemorySpaceTeamShared)},
-		},
 	}
 	private := &RecallResult{
-		SearchStates: RecallSearchStates{Evidence: string(domain.SearchProjectionFailed), Relationships: string(domain.SearchProjectionPending)},
+		SearchStates: RecallSearchStates{Evidence: string(domain.SearchProjectionFailed)},
 		Results: []RecallResultItem{
 			{EvidenceID: "private-1", Rank: 1, SpaceKind: string(domain.MemorySpacePrivate)},
 			{EvidenceID: "shared-1", Rank: 1, SpaceKind: string(domain.MemorySpaceTeamShared)},
 		},
-		RelatedRelationships: []RelatedRelationshipSummary{{RelationshipID: "rel-1", SpaceKind: string(domain.MemorySpaceTeamShared)}},
 	}
 
-	fused := fuseRecallResults([]*RecallResult{shared, private}, 2, 1)
+	fused := fuseRecallResults([]*RecallResult{shared, private}, 2)
 	require.Len(t, fused.Results, 2)
 	require.Equal(t, "shared-1", fused.Results[0].EvidenceID)
 	require.Equal(t, "private-1", fused.Results[1].EvidenceID)
-	require.Len(t, fused.RelatedRelationships, 1)
-	require.Equal(t, "rel-1", fused.RelatedRelationships[0].RelationshipID)
 	require.Equal(t, string(domain.SearchProjectionFailed), fused.SearchStates.Evidence)
-	require.Equal(t, string(domain.SearchProjectionPending), fused.SearchStates.Relationships)
 	require.Equal(t, string(domain.SearchProjectionFailed), fused.SearchState)
-}
-
-func TestFuseRecallResultsUsesBestRelationshipSummary(t *testing.T) {
-	fused := fuseRecallResults([]*RecallResult{
-		{RelatedRelationships: []RelatedRelationshipSummary{
-			{RelationshipID: "other", SpaceKind: string(domain.MemorySpaceTeamShared)},
-			{RelationshipID: "duplicate", SpaceKind: string(domain.MemorySpaceTeamShared), Object: SemanticObject{Name: "rank-two"}},
-		}},
-		{RelatedRelationships: []RelatedRelationshipSummary{
-			{RelationshipID: "duplicate", SpaceKind: string(domain.MemorySpaceTeamShared), Object: SemanticObject{Name: "rank-one"}},
-		}},
-	}, 0, 1)
-
-	require.Len(t, fused.RelatedRelationships, 1)
-	require.Equal(t, "duplicate", fused.RelatedRelationships[0].RelationshipID)
-	require.Equal(t, "rank-one", fused.RelatedRelationships[0].Object.Name)
 }
 
 func TestFuseRecallResultsOrdersEqualScoresWithStrictSpaceTieBreak(t *testing.T) {
@@ -141,7 +115,7 @@ func TestFuseRecallResultsOrdersEqualScoresWithStrictSpaceTieBreak(t *testing.T)
 		{Results: []RecallResultItem{{EvidenceID: "shared", Rank: 1, SpaceKind: string(domain.MemorySpaceTeamShared)}}},
 		{Results: []RecallResultItem{{EvidenceID: "profile", Rank: 1, SpaceKind: string(domain.MemorySpacePrivate)}}},
 		{Results: []RecallResultItem{{EvidenceID: "credential", Rank: 1, SpaceKind: string(domain.MemorySpacePrivate)}}},
-	}, 3, 0)
+	}, 3)
 
 	require.Equal(t, []string{"credential", "profile", "shared"}, []string{
 		fused.Results[0].EvidenceID,
@@ -156,68 +130,11 @@ func TestCompareRecallSpaceKindsOrdersSameRankLexically(t *testing.T) {
 }
 
 func TestFuseRecallResultsSkipsNilAndClampsLimits(t *testing.T) {
-	empty := fuseRecallResults([]*RecallResult{nil}, 1, 1)
+	empty := fuseRecallResults([]*RecallResult{nil}, 1)
 	require.Empty(t, empty.Results)
-	require.Empty(t, empty.RelatedRelationships)
 
-	negative := fuseRecallResults([]*RecallResult{{}}, -1, -1)
+	negative := fuseRecallResults([]*RecallResult{{}}, -1)
 	require.Empty(t, negative.Results)
-	require.Empty(t, negative.RelatedRelationships)
-}
-
-func TestRecallPrivateBranchDoesNotExpandTeamGraph(t *testing.T) {
-	teamID, ownerID := uuid.New(), uuid.New()
-	sharedID, privateID := uuid.New(), uuid.New()
-	search := &spaceRecallStub{contract: &searchcontract.ActiveSearchContract{EmbeddingDimensions: 3}}
-	communities := &recallCommunitySnapshotStub{
-		records: []communitycontract.CommunityRecallRecord{{
-			CommunityID: uuid.NewString(),
-			Relationships: []recallcontract.RecallRelationshipHit{{
-				RelationshipID: uuid.NewString(),
-			}},
-		}},
-	}
-	communityLimit := 1
-	metrics := &recallCommunityMetricsStub{InMemoryDiscoverabilityMetrics: observability.NewInMemoryDiscoverabilityMetrics()}
-	svc := NewRecallService(RecallDependencies{
-		Search: search, Communities: communities,
-		OntologyConfig: recallOntologyConfigStub{enabled: true},
-		Metrics:        metrics,
-	})
-	ctx := requestctx.WithActor(context.Background(), requestctx.Actor{
-		TeamID: teamID, IdentityID: ownerID, MembershipID: ownerID, OwnerID: ownerID,
-		AllowedSpaces: []domain.MemorySpaceAccess{
-			{ID: sharedID, Kind: domain.MemorySpaceTeamShared},
-			{ID: privateID, Kind: domain.MemorySpacePrivate},
-		},
-	})
-
-	result, err := svc.Recall(ctx, RecallRequest{
-		Query: "space query", Limit: 2, RelationshipLimit: intPtr(0), CommunityLimit: &communityLimit,
-	})
-	require.NoError(t, err)
-	require.Len(t, result.RelatedCommunities, 1, "private branch must not repeat team-wide community expansion")
-	require.Equal(t, 1, metrics.communityRecallCalls, "fused recall should record one community metric")
-}
-
-func TestRecallSingleSharedSpaceRecordsCommunityMetric(t *testing.T) {
-	teamID, ownerID := uuid.New(), uuid.New()
-	sharedID := uuid.New()
-	search := &spaceRecallStub{contract: &searchcontract.ActiveSearchContract{EmbeddingDimensions: 3}}
-	communities := &recallCommunitySnapshotStub{records: []communitycontract.CommunityRecallRecord{{CommunityID: uuid.NewString()}}}
-	metrics := &recallCommunityMetricsStub{InMemoryDiscoverabilityMetrics: observability.NewInMemoryDiscoverabilityMetrics()}
-	svc := NewRecallService(RecallDependencies{
-		Search: search, Communities: communities, Metrics: metrics,
-		OntologyConfig: recallOntologyConfigStub{enabled: true},
-	})
-	ctx := requestctx.WithActor(context.Background(), requestctx.Actor{
-		TeamID: teamID, IdentityID: ownerID, MembershipID: ownerID, OwnerID: ownerID,
-		AllowedSpaces: []domain.MemorySpaceAccess{{ID: sharedID, Kind: domain.MemorySpaceTeamShared}},
-	})
-
-	_, err := svc.Recall(ctx, RecallRequest{Query: "space query", RelationshipLimit: intPtr(0)})
-	require.NoError(t, err)
-	require.Equal(t, 1, metrics.communityRecallCalls)
 }
 
 func TestRecallPrivateBranchFailureIsBounded(t *testing.T) {
@@ -237,7 +154,7 @@ func TestRecallPrivateBranchFailureIsBounded(t *testing.T) {
 		},
 	})
 
-	result, err := svc.Recall(ctx, RecallRequest{Query: "space query", Limit: 1, RelationshipLimit: intPtr(0)})
+	result, err := svc.Recall(ctx, RecallRequest{Query: "space query", Limit: 1, TopicLimit: intPtr(0)})
 	require.NoError(t, err)
 	require.Len(t, result.Results, 1)
 	require.Contains(t, result.Degradations, RecallDegradationResult{
@@ -264,22 +181,9 @@ func TestRecallSharedBranchFailureRemainsRequired(t *testing.T) {
 		},
 	})
 
-	result, err := svc.Recall(ctx, RecallRequest{Query: "space query", RelationshipLimit: intPtr(0)})
+	result, err := svc.Recall(ctx, RecallRequest{Query: "space query", TopicLimit: intPtr(0)})
 	require.Error(t, err)
 	require.Nil(t, result)
-}
-
-func TestApplyRecallSpaceKindLabelsNestedCommunityRelationships(t *testing.T) {
-	result := &RecallResult{
-		Results:              []RecallResultItem{{EvidenceID: "e1"}},
-		RelatedRelationships: []RelatedRelationshipSummary{{RelationshipID: "r1"}},
-		RelatedCommunities:   []RecallDiscoveryPath{{CommunityRelationships: []RelatedRelationshipSummary{{RelationshipID: "r2"}}}},
-	}
-	applyRecallSpaceKind(result, "")
-	require.Equal(t, string(domain.MemorySpaceTeamShared), result.Results[0].SpaceKind)
-	require.Equal(t, string(domain.MemorySpaceTeamShared), result.RelatedRelationships[0].SpaceKind)
-	require.Equal(t, string(domain.MemorySpaceTeamShared), result.RelatedCommunities[0].CommunityRelationships[0].SpaceKind)
-	applyRecallSpaceKind(nil, string(domain.MemorySpaceTeamShared))
 }
 
 func TestFuseRecallSearchStateKeepsEmptyAndCurrentStates(t *testing.T) {
@@ -288,25 +192,17 @@ func TestFuseRecallSearchStateKeepsEmptyAndCurrentStates(t *testing.T) {
 	require.Equal(t, string(domain.SearchProjectionCurrent), domain.CombineSearchProjectionStates(string(domain.SearchProjectionNotRequired), string(domain.SearchProjectionCurrent)))
 }
 
-func TestFuseRecallResultsPreservesNotRequiredRelationshipState(t *testing.T) {
-	fused := fuseRecallResults([]*RecallResult{
-		{SearchStates: RecallSearchStates{Evidence: string(domain.SearchProjectionCurrent), Relationships: string(domain.SearchProjectionNotRequired)}},
-		{SearchStates: RecallSearchStates{Evidence: string(domain.SearchProjectionCurrent), Relationships: string(domain.SearchProjectionNotRequired)}},
-	}, 1, 0)
-	require.Equal(t, string(domain.SearchProjectionNotRequired), fused.SearchStates.Relationships)
-}
-
 func TestFuseRecallResultsDeduplicatesIdenticalDegradations(t *testing.T) {
 	degradation := RecallDegradationResult{
-		Frontier: "relationships",
+		Frontier: "evidence",
 		Optional: true,
-		Code:     "relationship_vector_warming",
-		Message:  "Relationship vector projection is warming; lexical discovery was used.",
+		Code:     "evidence_vector_warming",
+		Message:  "Evidence vector projection is warming; lexical discovery was used.",
 	}
 	fused := fuseRecallResults([]*RecallResult{
 		{Degradations: []RecallDegradationResult{degradation}},
 		{Degradations: []RecallDegradationResult{degradation}},
-	}, 1, 0)
+	}, 1)
 	require.Equal(t, []RecallDegradationResult{degradation}, fused.Degradations)
 }
 
@@ -322,19 +218,6 @@ type spaceRecallStub struct {
 type recallEmbeddingProviderStub struct {
 	calls int
 }
-
-type recallCommunityMetricsStub struct {
-	*observability.InMemoryDiscoverabilityMetrics
-	communityRecallCalls int
-}
-
-func (m *recallCommunityMetricsStub) ObserveCommunityRecall(context.Context, string, int, int) {
-	m.communityRecallCalls++
-}
-
-func (*recallCommunityMetricsStub) ObserveCommunityRun(context.Context, string, int, int, int) {}
-
-func (*recallCommunityMetricsStub) ObserveCommunitySummary(context.Context, string, int) {}
 
 func (p *recallEmbeddingProviderStub) Embed(context.Context, string) ([]float32, string, error) {
 	p.calls++
@@ -375,12 +258,4 @@ func (s *spaceRecallStub) HydrateEvidence(_ context.Context, input recallcontrac
 
 func (s *spaceRecallStub) LoadRecallConflicts(context.Context, recallcontract.RecallEvidenceInput, []recallcontract.RecallEvidenceHit) (*recallcontract.RecallConflicts, error) {
 	return &recallcontract.RecallConflicts{}, nil
-}
-
-func (s *spaceRecallStub) ReadRelationshipCandidates(context.Context, recallcontract.RecallRelationshipsInput, *searchcontract.ActiveSearchContract, int) (*recallcontract.RecallCandidateBatch, error) {
-	return &recallcontract.RecallCandidateBatch{SearchState: string(domain.SearchProjectionCurrent)}, nil
-}
-
-func (s *spaceRecallStub) HydrateRelationships(context.Context, recallcontract.RecallRelationshipsInput, *searchcontract.ActiveSearchContract, []string) (map[string]recallcontract.RecallRelationshipHit, error) {
-	return map[string]recallcontract.RecallRelationshipHit{}, nil
 }

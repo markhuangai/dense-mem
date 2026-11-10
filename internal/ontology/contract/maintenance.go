@@ -132,7 +132,6 @@ type MaintenanceDiscoveryResult struct {
 }
 
 type MaintenanceRepository interface {
-	SeedDefinitions(context.Context, string, SeedInput) (SeedResult, error)
 	ListRecords(context.Context, string, Kind, string, int) (Page, error)
 	EnsureMaintenanceWindow(context.Context, domain.OntologyMaintenanceConfig, time.Time) (*MaintenanceWindow, error)
 	CurrentMaintenanceWindow(context.Context, time.Time) (*MaintenanceWindow, error)

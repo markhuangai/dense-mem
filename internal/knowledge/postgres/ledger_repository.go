@@ -34,10 +34,8 @@ type EvidenceFragment = knowledgecontract.EvidenceFragment
 type rLSHelper = storagepostgres.RLSHelper
 
 type Store struct {
-	db                     *gorm.DB
-	rls                    rLSHelper
-	conflictReviewTTLDays  int
-	conflictReviewTimezone string
+	db  *gorm.DB
+	rls rLSHelper
 
 	rememberIdempotencyLockMu sync.Mutex
 	rememberIdempotencyLocks  map[string]*rememberIdempotencyLockEntry
@@ -123,10 +121,6 @@ func ensureActiveTeamForMutation(ctx context.Context, tx *gorm.DB, teamID string
 }
 
 func insertKnowledgeIngest(ctx context.Context, tx *gorm.DB, input CreateIngestInput) (string, bool, error) {
-	proposal, err := marshalJSON(input.Proposal)
-	if err != nil {
-		return "", false, err
-	}
 	metadata, err := marshalJSON(knowledgeIngestMetadata(input))
 	if err != nil {
 		return "", false, err
@@ -136,11 +130,11 @@ func insertKnowledgeIngest(ctx context.Context, tx *gorm.DB, input CreateIngestI
 			WITH inserted AS (
 				INSERT INTO knowledge_ingests (
 				    ingest_id, team_id, owner_profile_id, space_id, space_generation,
-				    idempotency_key, request_hash, source_summary, status, proposal, metadata
+				    idempotency_key, request_hash, source_summary, status, metadata
 				) VALUES (
 				    COALESCE(NULLIF(?, '')::uuid, gen_random_uuid()),
 				    ?::uuid, ?::uuid, NULLIF(?, '')::uuid, NULLIF(?::bigint, 0),
-				    ?, ?, ?, ?, ?::jsonb, ?::jsonb
+				    ?, ?, ?, ?, ?::jsonb
 				)
 				ON CONFLICT (team_id, owner_profile_id, idempotency_key)
 				WHERE idempotency_key <> '' AND status <> 'failed'
@@ -155,7 +149,7 @@ func insertKnowledgeIngest(ctx context.Context, tx *gorm.DB, input CreateIngestI
 			  AND idempotency_key = ? AND status <> 'failed'
 			LIMIT 1
 		`, input.IngestID, input.TeamID, input.OwnerProfileID, input.SpaceID, input.SpaceGeneration,
-			input.IdempotencyKey, input.RequestHash, input.SourceSummary, input.Status, string(proposal), string(metadata),
+			input.IdempotencyKey, input.RequestHash, input.SourceSummary, input.Status, string(metadata),
 			input.TeamID, input.OwnerProfileID, input.IdempotencyKey).Rows()
 		if err != nil {
 			return "", false, err
@@ -180,15 +174,15 @@ func insertKnowledgeIngest(ctx context.Context, tx *gorm.DB, input CreateIngestI
 	rows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO knowledge_ingests (
 		    ingest_id, team_id, owner_profile_id, space_id, space_generation,
-		    request_hash, source_summary, status, proposal, metadata
+		    request_hash, source_summary, status, metadata
 		) VALUES (
 		    COALESCE(NULLIF(?, '')::uuid, gen_random_uuid()),
 		    ?::uuid, ?::uuid, NULLIF(?, '')::uuid, NULLIF(?::bigint, 0),
-		    ?, ?, ?, ?::jsonb, ?::jsonb
+		    ?, ?, ?, ?::jsonb
 		)
 		RETURNING ingest_id::text
 	`, input.IngestID, input.TeamID, input.OwnerProfileID, input.SpaceID, input.SpaceGeneration,
-		input.RequestHash, input.SourceSummary, input.Status, string(proposal), string(metadata)).Rows()
+		input.RequestHash, input.SourceSummary, input.Status, string(metadata)).Rows()
 	if err != nil {
 		return "", false, err
 	}

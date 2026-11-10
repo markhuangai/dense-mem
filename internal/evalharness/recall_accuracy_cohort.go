@@ -46,23 +46,6 @@ type RecallAccuracyCase struct {
 	Concept   RecallAccuracyConcept    `json:"concept"`
 }
 
-func (source RecallAccuracySource) CorpusItem() CorpusItem {
-	proposal := map[string]any{
-		"ref": "relationship", "evidence_indices": []int{0}, "polarity": source.Polarity,
-		"subject":   map[string]any{"name": source.Subject, "entity_kind": source.SubjectKind},
-		"predicate": map[string]any{"proposed_key": source.Predicate},
-		"object":    map[string]any{"entity": map[string]any{"name": source.Object, "entity_kind": source.ObjectKind}},
-	}
-	if source.ValidFrom != "" {
-		proposal["valid_from"] = source.ValidFrom
-	}
-	if source.ValidTo != "" {
-		proposal["valid_to"] = source.ValidTo
-	}
-	return CorpusItem{SourceDocID: source.ID, Content: source.Text, SourceDataset: RecallAccuracySeedID,
-		SourceType: "document", Authority: "primary", Relationships: []any{proposal}}
-}
-
 func accuracySource(subject, predicate, object, text string) RecallAccuracySource {
 	kindAndName := func(value, fallback string) (string, string) {
 		if kind, name, ok := strings.Cut(value, ":"); ok {
@@ -261,4 +244,8 @@ func accuracyMultihopCases() []RecallAccuracyCase {
 		result = append(result, c)
 	}
 	return result
+}
+
+func (source RecallAccuracySource) CorpusItem() CorpusItem {
+	return CorpusItem{SourceDocID: source.ID, Content: source.Text, SourceDataset: RecallAccuracySeedID, SourceType: "document", Authority: "primary"}
 }

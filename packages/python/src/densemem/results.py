@@ -15,22 +15,6 @@ class PublicError(TypedDict):
     retry_after_seconds: NotRequired[int]
 
 
-class RelationshipSplit(TypedDict):
-    relationship_id: str
-    relationship_version: int
-    split_index: int
-    status: str
-
-
-class RelationshipResult(TypedDict):
-    ref: str
-    disposition: Literal["stored", "not_stored"]
-    splits: list[RelationshipSplit]
-    reason: NotRequired[str]
-    message: NotRequired[str]
-    remediation: NotRequired[str]
-
-
 class EvidenceResult(TypedDict):
     evidence_index: int
     disposition: Literal["stored", "not_stored"]
@@ -51,7 +35,6 @@ class TerminalResult(TypedDict):
     correlation_id: str
     processing_state: Literal["completed", "failed"]
     search_state: SearchState
-    relationship_results: list[RelationshipResult]
     errors: list[PublicError]
     warnings: NotRequired[list[str]]
 
@@ -72,6 +55,9 @@ class SessionResult(TerminalResult):
     accepted_event_count: int
     duplicate_event_count: int
     events: list[SessionEventResult]
+    memory_outcome: Literal["stored", "no_memory", "failed", "retired_contract"]
+    retired_payload: NotRequired[bool]
+    original_contract_version: NotRequired[str]
 
 
 class RecallEvidence(TypedDict):
@@ -82,11 +68,19 @@ class RecallEvidence(TypedDict):
     equivalents_truncated: bool
 
 
+class RelatedTopic(TypedDict):
+    topic_id: str
+    name: str
+    description: str
+    eligible_evidence_count: int
+    rank: int
+
+
 class RecallResult(TypedDict):
     recall_id: str
     results: list[RecallEvidence]
-    related_relationships: list[dict[str, Any]]
-    related_communities: list[dict[str, Any]]
+    related_topics: list[RelatedTopic]
+    topics_truncated: bool
     conflicts: list[dict[str, Any]]
     search_states: dict[str, SearchState]
     degradations: list[dict[str, Any]]
@@ -94,19 +88,19 @@ class RecallResult(TypedDict):
 
 
 class TraceResult(TypedDict):
-    relationship: dict[str, Any] | None
-    observations: list[dict[str, Any]]
-    evidence_supports: list[dict[str, Any]]
-    evidence_support_decision_events: list[dict[str, Any]]
-    evidence: list[dict[str, Any]]
-    evidence_lifecycle_events: list[dict[str, Any]]
-    verification_events: list[dict[str, Any]]
-    transitions: list[dict[str, Any]]
-    conflicts: list[dict[str, Any]]
-    cross_profile_references: list[dict[str, Any]]
-    identity_corrections: list[dict[str, Any]]
-    supersession_lineage: list[dict[str, Any]]
-    semantic_nodes: list[dict[str, Any]]
-    semantic_edges: list[dict[str, Any]]
-    visited_entity_ids: list[str]
-    stopped_reason: str | None
+    evidence: dict[str, Any] | None
+    occurrences: list[dict[str, Any]]
+    source_revisions: list[dict[str, Any]]
+    decisions: list[dict[str, Any]]
+    lifecycle: list[dict[str, Any]]
+    search_documents: list[dict[str, Any]]
+    omissions: list[str]
+    truncated: bool
+
+
+class ExportResult(TypedDict):
+    artifact_json: str
+    content_sha256: str
+    filename: str
+    counts: dict[str, int]
+    omissions: list[dict[str, str]]

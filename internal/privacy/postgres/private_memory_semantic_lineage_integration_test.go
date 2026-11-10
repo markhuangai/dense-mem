@@ -4,214 +4,90 @@ package postgres
 
 import (
 	"context"
-	accesspostgres "github.com/markhuangai/dense-mem/internal/access/postgres"
-	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
-	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	accesspostgres "github.com/markhuangai/dense-mem/internal/access/postgres"
+	"github.com/markhuangai/dense-mem/internal/domain"
+	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
+	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
+	tracecontract "github.com/markhuangai/dense-mem/internal/trace/contract"
+	tracepostgres "github.com/markhuangai/dense-mem/internal/trace/postgres"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
-
-	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
-func TestPrivateMemoryErasureCleansPrivateSemanticDecisionLineage(t *testing.T) {
-	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+func TestEvidenceOnlyPostgresPrivateErasureCleansEvidenceAndDiagnosticLineage(t *testing.T) {
+	admin, app, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
-	insertSearchTestContract(t, adminDB, rls, "private-semantic-lineage", 3, "exact", "")
-
 	ctx := context.Background()
-	teamID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "private-semantic-lineage"))
-	identityID := createLedgerSSOIdentity(t, adminDB, rls, teamID)
-	credentialRepo := accesspostgres.NewCredentialRepository(appDB, rls, nil)
-	target := createOwnedCredential(t, credentialRepo, teamID, identityID, "semantic-lineage")
-	ownerID := target.ID
-	invocationID := uuid.New()
-	invocationRepo := knowledgepostgres.NewStore(appDB, rls, knowledgecontract.ConflictRuntimeConfig{})
-	require.NoError(t, invocationRepo.RecordRememberInvocationDiagnostic(ctx, knowledgecontract.RememberInvocationDiagnosticInput{
-		TeamID: teamID.String(), OwnerProfileID: ownerID.String(), InvocationID: invocationID.String(),
-		SpaceID: target.MemorySpaceID.String(), SpaceGeneration: target.MemorySpaceGeneration,
-		Classification: "execution", Outcome: "failed",
-		CreatedAt: time.Now().UTC(), CompletedAt: time.Now().UTC(), ExpiresAt: time.Now().UTC().Add(24 * time.Hour),
-	}))
-
-	privateSubjectID, privateObjectID, correctedObjectID := uuid.New(), uuid.New(), uuid.New()
-	ingestID, fragmentID := uuid.New(), uuid.New()
-	content := "Private semantic lineage evidence."
-	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
-		if err := seedTeamPredicateDefinitions(ctx, tx, teamID.String()); err != nil {
-			return err
-		}
-		if err := tx.Exec(`
-			INSERT INTO entity_records (team_id, entity_id, entity_kind, space_id)
-			VALUES (?, ?, 'project', ?), (?, ?, 'product', ?), (?, ?, 'product', ?)
-		`, teamID, privateSubjectID, target.MemorySpaceID, teamID, privateObjectID, target.MemorySpaceID, teamID, correctedObjectID, target.MemorySpaceID).Error; err != nil {
-			return err
-		}
-		if err := tx.Exec(`
-			INSERT INTO knowledge_ingests (
-				team_id, ingest_id, owner_profile_id, idempotency_key, request_hash,
-				source_summary, status, proposal, metadata, space_id
-			) VALUES (?, ?, ?, ?, ?, ?, 'completed', '{}'::jsonb, '{}'::jsonb, ?)
-		`, teamID, ingestID, ownerID, "private-semantic-lineage-"+ingestID.String(), "hash-"+ingestID.String(), content, target.MemorySpaceID).Error; err != nil {
-			return err
-		}
-		return tx.Exec(`
-			INSERT INTO evidence_fragments (
-				team_id, fragment_id, ingest_id, owner_profile_id, evidence_index,
-				content, content_hash, source_type, authority, labels, metadata, space_id
-			) VALUES (?, ?, ?, ?, 0, ?, ?, 'conversation', 'primary', ARRAY[]::text[], '{}'::jsonb, ?)
-		`, teamID, fragmentID, ingestID, ownerID, content, "hash-"+fragmentID.String(), target.MemorySpaceID).Error
-	}))
-
-	semantic := knowledgepostgres.NewStore(appDB, rls, knowledgepostgres.ConflictRuntimeConfig{})
-	traceRepo := newPrivacyTraceFixtureStore(appDB, rls)
-	semanticCtx := requestctx.WithActor(ctx, requestctx.Actor{
-		TeamID: teamID, OwnerID: target.OwnerID, IdentityID: target.ActorIdentityID,
-		MembershipID: target.MembershipID, CredentialID: &target.ID, AuthMethod: "api_key",
-		Grants: target.Scopes, AllowedSpaces: target.MemorySpaces(),
-	})
-	decision, err := semantic.ApplyRelationshipDecision(semanticCtx, ApplyRelationshipDecisionInput{
-		TeamID:            teamID.String(),
-		OwnerProfileID:    ownerID.String(),
-		IngestID:          ingestID.String(),
-		SubjectEntityID:   privateSubjectID.String(),
-		PredicateKey:      "uses",
-		PredicateVersion:  1,
-		OriginalPredicate: "uses",
-		SubjectRef:        "Private subject",
-		ObjectRef:         "Private object",
-		ObjectEntityID:    privateObjectID.String(),
-		Polarity:          "+",
-		EvidenceVerdict:   string(domain.VerificationEntailed),
-		Rationale:         "private semantic lineage regression",
-		Model:             "test",
-		ResponseHash:      "hash-private-semantic-lineage",
-		Support: &EvidenceSupportInput{
-			FragmentID:     fragmentID.String(),
-			SourceGroupKey: "private-semantic-lineage",
-			SpanStart:      0,
-			SpanEnd:        len(content),
-			Quote:          content,
-			Authority:      "primary",
-		},
-	})
-	require.NoError(t, err)
-	require.NotNil(t, decision.Relationship)
-	relationshipID := decision.Relationship.RelationshipID
-	require.Equal(t, target.MemorySpaceID.String(), decision.Relationship.SpaceID)
-
-	correction, err := correctRelationshipWithTestEmbeddings(semanticCtx, semantic, CorrectRelationshipInput{
-		TeamID:          teamID.String(),
-		OwnerProfileID:  ownerID.String(),
-		Action:          "submit",
-		RelationshipID:  relationshipID,
-		ExpectedVersion: decision.Relationship.Version,
-		Patch: RelationshipCorrectionPatch{
-			ObjectEntity: &RelationshipCorrectionEntityPatch{EntityID: correctedObjectID.String()},
-		},
-		Supports:       []RelationshipCorrectionSupport{{EvidenceID: fragmentID.String(), Start: 0, End: len(content)}},
-		Reason:         "private correction lineage regression",
-		IdempotencyKey: "private-correction-lineage",
-	})
-	require.NoError(t, err)
-	require.Equal(t, "completed", correction.ProcessingState)
-	require.NotNil(t, correction.Correction)
-
-	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
-		var submissionSpace, eventSpace, crossReferenceSpace string
-		if err := tx.Raw(`SELECT space_id::text FROM relationship_correction_submissions WHERE submission_id = ?`, correction.SubmissionID).Row().Scan(&submissionSpace); err != nil {
-			return err
-		}
-		if err := tx.Raw(`SELECT space_id::text FROM relationship_correction_events WHERE submission_id = ?`, correction.SubmissionID).Row().Scan(&eventSpace); err != nil {
-			return err
-		}
-		if err := tx.Raw(`SELECT space_id::text FROM relationship_cross_references WHERE source_relationship_id = ?`, correction.Correction.SuccessorRelationshipID).Row().Scan(&crossReferenceSpace); err != nil {
-			return err
-		}
-		require.Equal(t, target.MemorySpaceID.String(), submissionSpace)
-		require.Equal(t, target.MemorySpaceID.String(), eventSpace)
-		require.Equal(t, target.MemorySpaceID.String(), crossReferenceSpace)
-		return nil
-	}))
-
-	var dependentSpaces []string
-	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
-		rows, err := tx.Raw(`
-			SELECT space_id::text FROM relationship_observations WHERE observation_id = ?
-			UNION ALL
-			SELECT space_id::text FROM verification_events WHERE verification_event_id = ?
-			UNION ALL
-			SELECT space_id::text FROM relationship_evidence_supports WHERE relationship_id = ?
-			UNION ALL
-			SELECT space_id::text FROM relationship_support_decision_events WHERE relationship_id = ?
-			UNION ALL
-			SELECT space_id::text FROM relationship_transition_events WHERE relationship_id = ?
-		`, decision.ObservationID, decision.VerificationEventID, relationshipID, relationshipID, relationshipID).Rows()
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var spaceID string
-			if err := rows.Scan(&spaceID); err != nil {
-				return err
-			}
-			dependentSpaces = append(dependentSpaces, spaceID)
-		}
-		return rows.Err()
-	}))
-	require.NotEmpty(t, dependentSpaces)
-	for _, spaceID := range dependentSpaces {
-		require.Equal(t, target.MemorySpaceID.String(), spaceID)
+	team := uuid.MustParse(createLedgerTeam(t, admin, rls, "private-evidence-lineage"))
+	identity := createLedgerSSOIdentity(t, admin, rls, team)
+	credentials := accesspostgres.NewCredentialRepository(app, rls, nil)
+	target := createOwnedCredential(t, credentials, team, identity, "Evidence lineage")
+	peer := createOwnedCredential(t, credentials, team, identity, "Other private owner")
+	actor := func(key *domain.Credential) context.Context {
+		return requestctx.WithActor(ctx, requestctx.Actor{
+			TeamID: team, OwnerID: key.OwnerID, IdentityID: key.ActorIdentityID, MembershipID: key.MembershipID, CredentialID: &key.ID,
+			AuthMethod: "api_key", Grants: key.Scopes, AllowedSpaces: key.MemorySpaces(),
+		})
 	}
-
-	trace, err := traceRepo.TraceRelationship(semanticCtx, TraceRelationshipInput{
-		TeamID: teamID.String(), RelationshipID: relationshipID, MaxEvents: 20,
-	})
+	ledger := knowledgepostgres.NewStore(app, rls)
+	input := knowledge.CreateIngestInput{TeamID: team.String(), OwnerProfileID: target.ID.String(),
+		SpaceID: target.MemorySpaceID.String(), SpaceGeneration: target.MemorySpaceGeneration,
+		IdempotencyKey: "private-evidence-source", RequestHash: sha256Hex("private-evidence-source"),
+		Evidence: []knowledge.EvidenceInput{{Content: "Exact private Evidence. Café 🧭", SourceKey: "doc://private-lineage", SourceRevisionToken: "r1", SourceType: "document", Authority: "primary",
+			InitialEvent: &knowledge.SecurityEventDraft{EventKind: "deterministic_scan", Decision: "pass", Reason: "Admitted exact Evidence"}}},
+	}
+	stored, err := ledger.CreateIngestForTest(actor(target), input)
 	require.NoError(t, err)
-	require.NotEmpty(t, trace.Observations)
-	require.NotEmpty(t, trace.EvidenceSupports)
-	require.NotEmpty(t, trace.VerificationEvents)
-
-	repo := NewPrivateMemoryRepository(appDB, rls)
-	require.NoError(t, repo.Prepare(ctx))
-	operation, created, err := repo.RequestCredentialErasure(ctx, PrivateMemoryErasureRequest{
-		TeamID: teamID, OwnerID: target.ID, CredentialID: target.ID,
-		IdempotencyScopeHash: Hash("private-semantic-lineage", target.ID.String()),
-		RequestHash:          Hash("erase-private-semantic-lineage", target.ID.String()),
-		ReasonCode:           "owner_request",
+	evidence := stored.Evidence[0].FragmentID
+	invocation := uuid.NewString()
+	require.NoError(t, ledger.RecordRememberInvocationDiagnostic(ctx, knowledge.RememberInvocationDiagnosticInput{
+		TeamID: team.String(), OwnerProfileID: target.ID.String(), InvocationID: invocation,
+		SpaceID: target.MemorySpaceID.String(), SpaceGeneration: target.MemorySpaceGeneration,
+		Classification: "execution", Outcome: "completed", CreatedAt: time.Now().UTC(), CompletedAt: time.Now().UTC(), ExpiresAt: time.Now().UTC().Add(24 * time.Hour),
+	}))
+	_, err = ledger.RetractEvidence(actor(target), knowledge.RetractEvidenceInput{TeamID: team.String(), OwnerProfileID: target.ID.String(), EvidenceIDs: []string{evidence},
+		IdempotencyKey: "retract-private-evidence", RequestHash: sha256Hex("retract-private-evidence"), Reason: "Withdraw private Evidence"})
+	require.NoError(t, err)
+	traces := tracepostgres.New(app, rls)
+	trace, err := traces.TraceEvidence(actor(target), tracecontract.Input{TeamID: team.String(), EvidenceID: evidence})
+	require.NoError(t, err)
+	require.Equal(t, input.Evidence[0].Content, trace.Evidence.Content)
+	require.Len(t, trace.Occurrences, 1)
+	require.Len(t, trace.SourceRevisions, 1)
+	require.NotEmpty(t, trace.Decisions)
+	require.Len(t, trace.Lifecycle, 1)
+	_, err = traces.TraceEvidence(actor(peer), tracecontract.Input{TeamID: team.String(), EvidenceID: evidence})
+	require.ErrorIs(t, err, tracecontract.ErrEvidenceNotFound)
+	repository := NewPrivateMemoryRepository(app, rls)
+	require.NoError(t, repository.Prepare(ctx))
+	operation, created, err := repository.RequestCredentialErasure(actor(target), PrivateMemoryErasureRequest{
+		TeamID: team, OwnerID: target.ID, CredentialID: target.ID, IdempotencyScopeHash: Hash("private-evidence-lineage", target.ID.String()),
+		RequestHash: Hash("erase-private-evidence-lineage", target.ID.String()), ReasonCode: "owner_request",
 	})
 	require.NoError(t, err)
 	require.True(t, created)
-	claim, err := repo.ClaimNext(ctx, "private-semantic-lineage-worker", time.Minute)
+	claim, err := repository.ClaimNext(ctx, "private-evidence-lineage-worker", time.Minute)
 	require.NoError(t, err)
+	require.NotNil(t, claim)
 	require.Equal(t, operation.ID, claim.ID)
-	completed, err := repo.ExecuteClaim(ctx, claim.ID, claim.WorkerID, claim.Fence)
+	completed, err := repository.ExecuteClaim(ctx, claim.ID, claim.WorkerID, claim.Fence)
 	require.NoError(t, err)
 	require.Equal(t, domain.PrivateMemoryErasureCompleted, completed.Status)
-
-	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
-		for _, table := range []string{
-			"relationship_records", "relationship_observations", "verification_events",
-			"relationship_evidence_supports", "relationship_support_decision_events",
-			"relationship_transition_events", "relationship_correction_submissions",
-			"relationship_correction_events", "relationship_cross_references",
-		} {
+	require.NoError(t, rls.WithSystemTx(ctx, admin, func(tx *gorm.DB) error {
+		for _, table := range []string{"evidence_fragments", "evidence_occurrences", "evidence_sources", "evidence_source_revisions", "evidence_security_events", "evidence_lifecycle_events", "evidence_lifecycle_operations", "remember_invocation_diagnostics"} {
 			var count int64
-			if err := tx.Raw("SELECT COUNT(*) FROM "+table+" WHERE space_id = ?", target.MemorySpaceID).Scan(&count).Error; err != nil {
+			if err := tx.Raw("SELECT count(*) FROM "+table+" WHERE space_id=?", target.MemorySpaceID).Scan(&count).Error; err != nil {
 				return err
 			}
-			require.Zero(t, count, table+" rows remain after private erasure")
+			require.Zero(t, count, table)
 		}
-		var invocationCount int64
-		if err := tx.Raw(`SELECT COUNT(*) FROM remember_invocation_diagnostics WHERE invocation_id = ?`, invocationID).Scan(&invocationCount).Error; err != nil {
-			return err
-		}
-		require.Zero(t, invocationCount, "remember invocation diagnostic survived private erasure")
 		return nil
 	}))
+	_, err = traces.TraceEvidence(actor(target), tracecontract.Input{TeamID: team.String(), EvidenceID: evidence})
+	require.ErrorIs(t, err, tracecontract.ErrEvidenceNotFound)
 }

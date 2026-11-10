@@ -152,12 +152,11 @@ const entraTeamA = await issueToken("entra", {
   claims: { dense_mem_team_id: seedTeamID, log_sentinel: logSentinel },
 });
 const entraTeamATools = await mcpTools(entraTeamA, "/mcp");
-assertMCPTools(entraTeamATools, { present: ["recall_memory", "remember", "correct_relationship", "retract_evidence"] });
+assertMCPTools(entraTeamATools, { present: ["recall_memory", "remember", "retract_evidence"] });
 await assertMCPToolSuccess(entraTeamA, "/mcp", "recall_memory", { query: `${runID} OAuth profile private`, limit: 1 });
 const privateOAuthRequest = {
   target_space: "private", idempotency_key: `${runID}:private-oauth`,
   evidence: [{ content: "Dense-Mem stores durable memory in PostgreSQL.", source_type: "manual" }],
-  relationships: [{ ref: "durable-store", subject: { name: "Dense-Mem", entity_kind: "project" }, predicate: { proposed_key: "stores_memory_in" }, object: { value: { type: "string", value: "PostgreSQL" } }, polarity: "+", evidence_indices: [0] }],
 };
 const privateOAuth = await mcpRPC(entraTeamA, "/mcp", "tools/call", { name: "remember", arguments: privateOAuthRequest });
 assert(privateOAuth.payload.result?.isError !== true && privateOAuth.payload.result?.structuredContent?.processing_state === "completed", "team-read-only OAuth private Remember failed");

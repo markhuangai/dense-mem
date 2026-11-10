@@ -73,15 +73,10 @@ func validateExactVectorSearchInput(input searchcontract.ExactVectorSearchInput)
 }
 
 func validSearchSourceKind(kind string) bool {
-	return kind == "evidence" || kind == "relationship" || kind == "entity"
+	return kind == "evidence"
 }
 
-func defaultProjectionFormat(sourceKind string) int {
-	if sourceKind == "relationship" {
-		return 2
-	}
-	return 1
-}
+func defaultProjectionFormat(sourceKind string) int { return 1 }
 
 func vectorLiteral(values []float32) (string, error) {
 	if len(values) == 0 {

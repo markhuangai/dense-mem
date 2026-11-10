@@ -32,7 +32,7 @@ func TestOntologyMaintenanceFinalizationCancellationAndDiscovery(t *testing.T) {
 			calls, receipts := x.calls.Load(), receiptCount(t, f)
 			statusBefore, err := f.store.MaintenanceStatus(ctx, time.Now())
 			require.NoError(t, err)
-			require.NoError(t, f.admin.Exec(`UPDATE ontology_maintenance_teams SET discovery_kind=2,discovery_cursor='' WHERE team_id=?::uuid`, f.team).Error)
+			require.NoError(t, f.admin.Exec(`UPDATE ontology_maintenance_teams SET discovery_kind=1,discovery_cursor='' WHERE team_id=?::uuid`, f.team).Error)
 			second := uuid.MustParse(x.claim.Sources[1].ID).String()
 			require.NoError(t, f.admin.Exec(fmt.Sprintf(`CREATE FUNCTION finalization_discovery_barrier() RETURNS trigger LANGUAGE plpgsql AS $$
 			 BEGIN IF NEW.source_id='%s' THEN PERFORM pg_advisory_xact_lock(603001); END IF; RETURN NEW; END $$;
@@ -396,7 +396,7 @@ func TestOntologyMaintenanceFinalizationRacesAndFences(t *testing.T) {
 			require.Equal(t, 1, maintenanceRunByID(t, f, x.claim.RunID).CompletedBatches)
 			require.Equal(t, "completed", x.batchStatus(t))
 			require.ErrorIs(t, f.store.AdmitMaintenanceAttempt(ctx, *x.claim, uuid.NewString(), 1, 1, 1, time.Now()), ontology.ErrLeaseLost)
-			_, err := f.store.SeedDefinitions(ontology.WithMaintenanceClaim(ctx, *x.claim), f.team, ontology.SeedInput{OperationKey: "stale-finalization", Limit: 1})
+			_, err := f.store.PublishAutomatic(ontology.WithMaintenanceClaim(ctx, *x.claim), f.team, testPublication("stale-finalization", 0, ontology.Change{Record: testTopic("stale-finalization")}))
 			require.ErrorIs(t, err, ontology.ErrLeaseLost)
 			forged := *x.claim
 			forged.LeaseToken = uuid.NewString()

@@ -150,7 +150,7 @@ func assertStartupPrivateIsolation(t *testing.T, db *gorm.DB, team uuid.UUID, ow
 				return err
 			}
 			require.False(t, bypass)
-			store := knowledgepostgres.NewStore(tx, storage.NewRLS(), knowledge.ConflictRuntimeConfig{})
+			store := knowledgepostgres.NewStore(tx, storage.NewRLS())
 			for targetIndex, space := range spaces {
 				visible, err := store.ListSubmissionAssessmentKnownEvidence(ctx, knowledge.SubmissionAssessmentKnownEvidenceInput{
 					TeamID: team.String(), OwnerProfileID: owner.String(), SpaceID: space, EvidenceIDs: evidenceIDs,

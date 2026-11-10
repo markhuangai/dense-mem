@@ -18,31 +18,11 @@ import (
 
 	accesspostgres "github.com/markhuangai/dense-mem/internal/access/postgres"
 	"github.com/markhuangai/dense-mem/internal/domain"
-	graphcontract "github.com/markhuangai/dense-mem/internal/graph/contract"
-	graphpostgres "github.com/markhuangai/dense-mem/internal/graph/postgres"
-	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
+
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
-	tracepostgres "github.com/markhuangai/dense-mem/internal/trace/postgres"
 )
 
 var searchTestContractSequence atomic.Int32
-
-type privacyTraceFixtureStore struct{ trace *tracepostgres.Store }
-
-func newPrivacyTraceFixtureStore(db *gorm.DB, rls storagepostgres.RLSHelper) *privacyTraceFixtureStore {
-	trace := tracepostgres.New(db, rls, func(ctx context.Context, tx *gorm.DB, input graphcontract.Query, spaceID string) (*graphcontract.Snapshot, error) {
-		rows, err := graphpostgres.LoadLocalRows(ctx, tx, input, spaceID)
-		if err != nil {
-			return nil, err
-		}
-		return graphpostgres.Snapshot(input, rows), nil
-	}, nil)
-	return &privacyTraceFixtureStore{trace: trace}
-}
-
-func (s *privacyTraceFixtureStore) TraceRelationship(ctx context.Context, input tracepostgres.TraceRelationshipInput) (*tracepostgres.RelationshipTraceResult, error) {
-	return s.trace.TraceRelationship(ctx, input)
-}
 
 func createLedgerSSOIdentity(t testing.TB, db *gorm.DB, rls storagepostgres.RLSHelper, teamID uuid.UUID) uuid.UUID {
 	t.Helper()
@@ -133,30 +113,9 @@ func insertSearchTestContract(t *testing.T, db *gorm.DB, rls *storagepostgres.RL
 	return contractID
 }
 
-func seedTeamPredicateDefinitions(ctx context.Context, tx *gorm.DB, teamID string) error {
-	return storagepostgres.SeedTeamPredicateDefinitions(ctx, tx, teamID)
-}
-
 func sha256Hex(value string) string {
 	sum := sha256.Sum256([]byte(value))
 	return "sha256:" + hex.EncodeToString(sum[:])
-}
-
-func correctRelationshipWithTestEmbeddings(ctx context.Context, semantic *knowledgepostgres.Store, input knowledgepostgres.CorrectRelationshipInput) (*knowledgepostgres.CorrectRelationshipResult, error) {
-	plan, err := semantic.PlanRelationshipCorrectionEmbeddings(ctx, input)
-	if err != nil {
-		return nil, err
-	}
-	embeddings := make([]knowledgepostgres.RelationshipCorrectionEmbedding, 0, len(plan.Documents))
-	for _, document := range plan.Documents {
-		embeddings = append(embeddings, knowledgepostgres.RelationshipCorrectionEmbedding{
-			DocumentHash: document.DocumentHash, Embedding: make([]float32, plan.EmbeddingDimensions),
-			EmbeddingContractID: plan.EmbeddingContractID, EmbeddingDimensions: plan.EmbeddingDimensions,
-			EmbeddingModel: plan.EmbeddingModel, SearchIndexGenerationID: plan.SearchIndexGenerationID,
-			IndexGeneration: plan.IndexGeneration,
-		})
-	}
-	return semantic.CorrectRelationshipWithEmbeddings(ctx, input, embeddings)
 }
 
 func seedPrivateMemoryEvidenceConflict(t *testing.T, db *gorm.DB, rls storagepostgres.RLSHelper, teamID uuid.UUID, target *domain.Credential, ingestID uuid.UUID) {

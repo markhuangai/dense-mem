@@ -6,50 +6,17 @@ import { App } from "./App";
 import { requestBytes, requestJson } from "./http";
 import { buildOperationLogsPath, buildRememberAttemptDiagnosticPath, buildRememberAttemptDiagnosticsPath } from "./control-observability-api";
 import { getEvidenceConflict, listEvidenceConflicts, resolveEvidenceConflict } from "./evidence-conflict-api";
-import { ConflictQueuePanel } from "./control/ConflictQueuePanel";
 import { SecurityPanel } from "./control/SecurityPanel";
 import { DirectoryAutomationPanel } from "./control/DirectoryAutomationPanel";
 import { SSOPanel } from "./control/SSOPanel";
 import { RecallFeedbackPanel } from "./control/RecallFeedbackPanel";
-import { ControlDreamsPanel } from "./control/DreamsPanel";
 import { ConfigPanel } from "./control/ConfigPanel";
 import { TeamManagementPanel } from "./user/TeamManagementPanel";
-import { GraphSnapshot, RecallHit, UserApi, UserSession } from "./user/api";
-import { GraphPanel, ResultGraphPreview } from "./user/GraphPanel";
+import { UserApi, UserSession } from "./user/api";
 import { SearchPanel } from "./user/SearchPanel";
 import { InfoTooltip, PortalShell, SecretBox, writeClipboardText } from "./ui/components";
-import { DreamEvidenceSummary, MetricLabel, runOutcome, runStatusClass } from "./ui/dreams";
 
-vi.mock("react-force-graph-2d", async () => {
-  const React = await import("react");
-  return { default: React.forwardRef((props: {
-    graphData?: { nodes?: Array<{ id?: string; key?: string; title?: string; type?: string }> ; links?: Array<{ source?: unknown; target?: unknown; relationship?: string }> };
-    onNodeClick?: (node: { key?: string }) => void;
-    nodeCanvasObject?: (node: { key?: string; id?: string; title?: string; type?: string; x?: number; y?: number }, canvas: CanvasRenderingContext2D, scale: number) => void;
-    nodePointerAreaPaint?: (node: { key?: string; id?: string; title?: string; type?: string; x?: number; y?: number }, color: string, canvas: CanvasRenderingContext2D) => void;
-    linkLabel?: (link: { relationship?: string }) => string;
-    linkColor?: (link: { relationship?: string }) => string;
-    linkWidth?: (link: { source?: unknown; target?: unknown }) => number;
-    linkDirectionalArrowColor?: (link: { relationship?: string }) => string;
-  }, ref) => {
-    React.useImperativeHandle(ref, () => ({ d3Force: () => ({ distance: () => undefined }), d3ReheatSimulation: () => undefined, zoomToFit: () => undefined }));
-    const canvas = { beginPath: () => undefined, arc: () => undefined, fill: () => undefined, stroke: () => undefined, fillText: () => undefined, setLineDash: () => undefined } as unknown as CanvasRenderingContext2D;
-    const nodes = props.graphData?.nodes ?? [];
-    const links = props.graphData?.links ?? [];
-    nodes.forEach((node) => {
-      props.nodeCanvasObject?.({ ...node, x: 4, y: 8 }, canvas, 1);
-      props.nodeCanvasObject?.({ ...node, x: 4, y: 8 }, canvas, 2);
-      props.nodePointerAreaPaint?.({ ...node, x: 4, y: 8 }, "#fff", canvas);
-    });
-    links.forEach((link) => {
-      props.linkLabel?.(link);
-      props.linkColor?.(link);
-      props.linkWidth?.(link);
-      props.linkDirectionalArrowColor?.(link);
-    });
-    return <div data-testid="force-graph">{nodes.map((node) => <button key={node.id ?? node.key} type="button" onClick={() => props.onNodeClick?.(node)}>{node.title ?? node.id}</button>)}</div>;
-  }) };
-});
+
 
 const team: Team = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -115,24 +82,22 @@ describe("coverage contracts", () => {
     await api.session(); await api.listTeams(); await api.createTeam({ name: "x", description: "" }); await api.updateTeam("team/a", { name: "x", description: "" }); await api.deleteTeam("team/a");
     await api.listTeamCredentials("team/a"); await api.createTeamCredential("team/a", { name: "x", rate_limit: 1 }); await api.updateTeamCredential("team/a", "key/a", { name: "x" }); await api.rotateTeamCredential("team/a", "key/a", { name: "x", rate_limit: 1 }); await api.deleteTeamCredential("team/a", "key/a");
     await api.getSecuritySettings(); await api.updateSecuritySettings({ enabled: true, failure_threshold: 1, failure_window_seconds: 1, ban_duration_seconds: 0, updated_at: "" }); await api.listSecurityBans(true); await api.createSecurityBan({ ip: "127.0.0.1", reason: "smoke test" }); await api.deleteSecurityBan("127.0.0.1");
-    await api.getMetrics({ window_minutes: 60, team_id: "team/a" }); await api.getConflictQueue("team/a", { status: "open", limit: 5, cursor: "c" }); await api.listEvidenceConflicts("team/a", { status: "open", limit: 5, cursor: "c" }); await api.getEvidenceConflict("team/a", "conflict/a", 5, "cursor"); await api.resolveEvidenceConflict("team/a", "conflict/a", { expected_version: 1, decision: "resolve", reason: "ok" }); await api.getSearchConvergence(); await api.getTelemetry({ window: "1h", scope: "team", team_id: "team/a", profile_id: "profile/a" });
+    await api.getMetrics({ window_minutes: 60, team_id: "team/a" }); await api.listEvidenceConflicts("team/a", { status: "open", limit: 5, cursor: "c" }); await api.getEvidenceConflict("team/a", "conflict/a", 5, "cursor"); await api.resolveEvidenceConflict("team/a", "conflict/a", { expected_version: 1, decision: "resolve", reason: "ok" }); await api.getSearchConvergence(); await api.getTelemetry({ window: "1h", scope: "team", team_id: "team/a", profile_id: "profile/a" });
     await api.listSSOProviders(); await api.createSSOProvider({ name: "x", kind: "generic_oidc", issuer_url: "https://issuer", tenant_id: "", identity_claim: "sub", client_id: "id", client_secret_env: "secret", scopes: [], group_claims: [], groups_endpoint: "", groups_scopes: [], protected_resource: provider.protected_resource, enabled: true }); await api.updateSSOProvider("provider/a", {} as never); await api.deleteSSOProvider("provider/a"); await api.listSSOGroupMappings("provider/a"); await api.createSSOGroupMapping("provider/a", {} as never); await api.updateSSOGroupMapping("provider/a", "mapping/a", {} as never); await api.deleteSSOGroupMapping("provider/a", "mapping/a");
     await api.listDirectoryConnectors(); await api.getDirectoryConnector("provider/a"); await api.createDirectoryConnector("provider/a", { group_pattern: "", role_entitlements: {}, max_auto_teams: 1 }); await api.updateDirectoryConnector("connector/a", { group_pattern: "", role_entitlements: {}, max_auto_teams: 1 }); await api.rotateDirectoryCredentials("connector/a"); await api.previewDirectoryConnector("connector/a"); await api.setDirectoryConnectorStatus("connector/a", "observe", ""); await api.adoptDirectoryGroupTeam("connector/a", "group/a", "team/a"); await api.listControlAdminGroups("provider/a"); await api.createControlAdminGroup("provider/a", { group_id: "g", group_name: "G", enabled: true }); await api.deleteControlAdminGroup("provider/a", "group/a");
     await api.getGeneralConfig(); await api.updateGeneralConfig({ items: [] }); await api.getSSOConfig(); await api.updateSSOConfig({ items: [] }); await api.getOperationLogConfig(); await api.updateOperationLogConfig({ items: [] }); await api.getRecallFeedbackConfig(); await api.updateRecallFeedbackConfig({ items: [] }); await api.getTelemetryPricingConfig(); await api.updateTelemetryPricingConfig({ items: [] });
-    await api.listOperationLogs({ limit: 5, offset: 1, severity: "ERROR", event: "x" }); await api.listRememberAttemptDiagnostics({ limit: 5, offset: 1, outcome: "failed" }); await api.getRememberAttemptDiagnostic("team/a", "attempt/a"); await api.listRecallFeedbackEvents({ limit: 5, offset: 1, team_id: "team/a", profile_id: "profile/a", quality: "low", include_pending: true, missing_context: false, irrelevant: true, from: "2026-09-01T00:00:00Z", to: "2026-09-02T00:00:00Z" }); await api.getRecallFeedbackEvent("recall/a"); await api.getTeamDreamingStatus("team/a"); await api.getTeamCommunityStatus("team/a"); await api.listTeamDreamingRuns("team/a", 5); await api.listTeamDreams("team/a", { limit: 5, status: "proposed", cursor: "c" });
-    expect(fetchMock.mock.calls.length).toBeGreaterThan(50);
+    await api.listOperationLogs({ limit: 5, offset: 1, severity: "ERROR", event: "x" }); await api.listRememberAttemptDiagnostics({ limit: 5, offset: 1, outcome: "failed" }); await api.getRememberAttemptDiagnostic("team/a", "attempt/a"); await api.listRecallFeedbackEvents({ limit: 5, offset: 1, team_id: "team/a", profile_id: "profile/a", quality: "low", include_pending: true, missing_context: false, irrelevant: true, from: "2026-09-01T00:00:00Z", to: "2026-09-02T00:00:00Z" }); await api.getRecallFeedbackEvent("recall/a"); expect(fetchMock.mock.calls.length).toBeGreaterThan(50);
   });
 
   it("covers UserApi authentication modes, recall normalization, and request builders", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      const data = url.includes("/recall?") ? { results: [], related_communities: [], related_relationships: [], discovery_paths: [] } : {};
+      const data = url.includes("/recall?") ? { recall_id:"smoke", results: [], related_topics: [], topics_truncated:false, conflicts:[],degradations:[],search_states:{evidence:"current"} } : {};
       return new Response(JSON.stringify({ data, pagination: { limit: 25, offset: 0, total: 0 } }), { status: 200 });
     });
     vi.stubGlobal("fetch", fetchMock);
     const api = new UserApi("token");
-    await api.session(); await api.ssoProviders(); expect(api.ssoStartUrl("provider/a")).toContain("provider%2Fa"); await api.switchSSOTeam("team/a"); await api.logoutSSO(); await api.createPortalSession(true); await api.logoutPortalSession(); await api.createSSOCredential({ name: "x", rate_limit: 1 }); await api.listSSOCredentials(); await api.getSSOCredential("key/a"); await api.rotateSSOCredential("key/a"); await api.revokeSSOCredential("key/a", "idem"); await api.rotateCredential(); await api.updateTeam({ name: "x", description: "" }); await api.listTeamCredentials(); await api.createTeamCredential({ name: "x", rate_limit: 1 }); await api.updateTeamCredential("key/a", { name: "x" }); await api.rotateTeamCredential("key/a", { name: "x", rate_limit: 1 }); await api.deleteTeamCredential("key/a"); await api.recall("query", 5); await api.graph({ scope: "local", q: "q", types: ["entity"], anchorType: "entity", anchorId: "id", depth: 2, limit: 5 }); await api.nodeDetail("entity", "id");
-    const anonymous = new UserApi("", "api_key_session");
+    await api.session(); await api.ssoProviders(); expect(api.ssoStartUrl("provider/a")).toContain("provider%2Fa"); await api.switchSSOTeam("team/a"); await api.logoutSSO(); await api.createPortalSession(true); await api.logoutPortalSession(); await api.createSSOCredential({ name: "x", rate_limit: 1 }); await api.listSSOCredentials(); await api.getSSOCredential("key/a"); await api.rotateSSOCredential("key/a"); await api.revokeSSOCredential("key/a", "idem"); await api.rotateCredential(); await api.updateTeam({ name: "x", description: "" }); await api.listTeamCredentials(); await api.createTeamCredential({ name: "x", rate_limit: 1 }); await api.updateTeamCredential("key/a", { name: "x" }); await api.rotateTeamCredential("key/a", { name: "x", rate_limit: 1 }); await api.deleteTeamCredential("key/a"); await api.recall("query", 5); const anonymous = new UserApi("", "api_key_session");
     await anonymous.createPortalSession(false);
     expect(fetchMock).toHaveBeenCalled();
   });
@@ -143,22 +108,7 @@ describe("coverage contracts", () => {
   });
 
 
-  it("covers shared UI fallbacks and dream presentation branches", async () => {
-    expect(runOutcome({})).toBe("-");
-    expect(runOutcome({ outcome_summary: { provider_failed: 1 } })).toBe("Provider call failed");
-    expect(runOutcome({ lane: "evidence_discovery", evidence_targets: 0, outcome_summary: {} })).toBe("No eligible evidence target");
-    expect(runOutcome({ lane: "evidence_discovery", status: "completed", evidence_targets: 1, outcome_summary: { created_hypotheses: 0 } })).toBe("Provider returned no supported relationship");
-    expect(runOutcome({ lane: "evidence_discovery", status: "completed", evidence_targets: 1, outcome_summary: { created_hypotheses: 1 } })).toBe("Evidence discovery stored");
-    expect(runOutcome({ lane: "evidence_discovery", evidence_targets: 2, evaluated_evidence_targets: 1, outcome_summary: { provider_proposals: 1 } })).toBe("1 of 4 evidence target passes evaluated");
-    expect(runOutcome({ attempted_paths: 0, outcome_summary: { blocked_targets: 1 } })).toBe("1 target already exist");
-    expect(runOutcome({ attempted_paths: 0, outcome_summary: { blocked_targets: 2 } })).toBe("2 targets already exist");
-    expect(runOutcome({ attempted_paths: 0, outcome_summary: { previously_assessed_paths: 1 } })).toBe("All paths already assessed");
-    expect(runOutcome({ attempted_paths: 1, outcome_summary: { policy_rejections: 1 } })).toBe("1 blocked during persistence");
-    expect(runOutcome({ attempted_paths: 1, outcome_summary: { provider_proposals: 0 } })).toBe("Provider returned no supported relationship");
-    expect(runOutcome({ attempted_paths: 1, outcome_summary: { provider_proposals: 1 } })).toBe("Provider result stored");
-    expect(runStatusClass("failed")).toBe("status-pill error");
-    expect(runStatusClass("skipped")).toBe("status-pill warning");
-    expect(runStatusClass("completed")).toBe("status-pill");
+  it("covers shared UI fallbacks and credential copying", async () => {
 
     const input = document.createElement("input");
     const execCommand = vi.fn(() => true);
@@ -177,9 +127,6 @@ describe("coverage contracts", () => {
     render(<>
       <SecretBox value=" secret " valueLabel="Secret" copyLabel="Copy secret" dismissLabel="Dismiss secret" onDismiss={vi.fn()} />
       <InfoTooltip label="Meaning">Details</InfoTooltip>
-      <DreamEvidenceSummary dream={{ hypothesis: "No evidence" }} />
-      <DreamEvidenceSummary dream={{ hypothesis: "Evidence", derivations: [{ premise_position: 1, relationship_id: "r", relationship_version: 1, quote: "quote", authority: "owner" }], evidence_derivations: [{ evidence_id: "e", source_group_key: "g", span_start: 0, span_end: 5, quote: "excerpt", authority: "owner" }] }} />
-      <MetricLabel label="Metric" detail="Meaning" />
       <PortalShell theme="dark" title="Portal" icon={<span>icon</span>} topbarActions={<span>actions</span>} navLabel="Navigation" navItemsLabel="Sections" contextBar={<span>context</span>} workspacePicker={<span>resources</span>} detailLabel="Details" error="portal error" navItems={[{ id: "one", label: "One", icon: <span>one</span>, active: true, onClick: vi.fn() }, { id: "two", label: "Two", icon: <span>two</span>, active: false, disabled: true, onClick: vi.fn() }]}><span>content</span></PortalShell>
     </>);
     expect(screen.getByRole("alert")).toHaveTextContent("portal error");
@@ -192,7 +139,6 @@ describe("coverage contracts", () => {
     await user.tab();
     await user.hover(meaning);
     expect(await screen.findByRole("tooltip", { name: "Details" })).toBeInTheDocument();
-    expect(screen.getByText("No cited excerpts")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Copy secret" }));
     expect(await screen.findByRole("button", { name: "Copy secret" })).toBeInTheDocument();
   });
@@ -382,44 +328,7 @@ describe("coverage contracts", () => {
     expect(await screen.findByText("credential delete failed")).toBeInTheDocument();
   });
 
-  it("covers conflict queue pagination, evidence review, and bounded errors", async () => {
-    const position = { position_id: "position-1", position_key: "subject|uses|object", disposition: "open", supporter_count: 2, supporters_truncated: true, supporters: [{ profile_id: "profile-1", profile_name: "Owner", strongest_authority: "owner", accepted_at: "2026-09-01T00:00:00Z" }] };
-    const queue = { summary: { open_count: 1, overdue_count: 1, active_lease_count: 1, expired_lease_count: 0, failed_assessment_count_24h: 1, lww_resolution_count_24h: 0, pending_derived_task_count: 1, failed_derived_task_count: 0, oldest_open_age_seconds: 90, oldest_overdue_age_seconds: 172800, collected_at: "2026-09-01T00:00:00Z" }, items: [{ conflict_id: "conflict-1", version: 2, status: "overdue", question: "Which value?", question_truncated: true, predicate_key: "uses", predicate_key_truncated: true, positions_truncated: true, review_due_at: "2020-01-01T00:00:00Z", next_review_at: "2020-01-01T00:00:00Z", created_at: "2026-08-01T00:00:00Z", updated_at: "2026-09-01T00:00:00Z", attempt_count: 2, lease_state: "active", lease_until: "2026-09-01T01:00:00Z", last_failure_class: "provider", positions: [position] }], next_cursor: "cursor-2" };
-    const evidencePosition = { position_id: "ep-1", evidence_id: "e1", occurrence_id: "o1", quote: "Quoted evidence", span_start: 0, span_end: 10, authority: "owner", submitted: true, created_at: "2026-09-01T00:00:00Z" };
-    const evidence = { team_id: team.id, conflict_id: "e-conflict", space_id: "space", space_generation: 1, kind: "evidence_conflict", status: "open", version: 1, created_at: "2026-09-01T00:00:00Z", updated_at: "2026-09-01T00:00:00Z", positions: [evidencePosition], events: [{ event_id: "event-1", conflict_id: "e-conflict", ordinal: 1, action: "opened", status_after: "open", case_version: 1, actor_kind: "system", reason: "initial", citation_snapshot: [evidencePosition], created_at: "2026-09-01T00:00:00Z" }] };
-    const detail = { conflict: evidence, next_event_cursor: "event-cursor" };
-    const older = { conflict: { ...evidence, events: [] }, next_event_cursor: null };
-    const api = {
-      getConflictQueue: vi.fn(async () => queue),
-      getTelemetry: vi.fn(async () => ({ available: true, current_cards: [{ id: "conflict_queue_collection_success", label: "collector", unit: "state", value: 0, available: true }] })),
-      listEvidenceConflicts: vi.fn(async () => ({ items: [evidence], next_cursor: "evidence-cursor" })),
-      getEvidenceConflict: vi.fn(async (_team: string, _id: string, _limit?: number, cursor?: string) => cursor ? older : detail),
-      resolveEvidenceConflict: vi.fn(async () => ({ conflict: evidence })),
-    } as unknown as ControlApi;
-    const user = userEvent.setup();
-    const view = render(<ConflictQueuePanel api={api} team={team} />);
-    expect(await screen.findByText("Which value?")).toBeInTheDocument();
-    expect(screen.getByText(/Queue collector is degraded/)).toBeInTheDocument();
-    await user.selectOptions(screen.getByLabelText("Show"), "overdue");
-    await user.selectOptions(screen.getByLabelText("Rows"), "50");
-    await user.click(screen.getByRole("button", { name: "Next" }));
-    await user.click(screen.getByRole("button", { name: "Previous" }));
-    await user.click(screen.getByRole("button", { name: "Refresh conflict queue" }));
-    await user.click(screen.getByRole("tab", { name: "Evidence" }));
-    await user.click(await screen.findByRole("button", { name: /1 cited positions/ }));
-    await user.click(screen.getByText(/Review history/));
-    await user.click(screen.getByRole("button", { name: "Load older history" }));
-    await waitFor(() => expect(api.getEvidenceConflict).toHaveBeenLastCalledWith(team.id, "e-conflict", 50, "event-cursor"));
-    await user.type(screen.getByLabelText("Review reason"), "reviewed");
-    await user.click(screen.getByRole("button", { name: "Resolve" }));
-    await waitFor(() => expect(api.resolveEvidenceConflict).toHaveBeenCalledWith(team.id, "e-conflict", expect.objectContaining({ decision: "resolve", reason: "reviewed" })));
-    await user.selectOptions(screen.getByLabelText("Show"), "resolved");
 
-    view.unmount();
-    const notFoundApi = { getConflictQueue: vi.fn(async () => { throw new ApiError(404, "not found"); }), getTelemetry: vi.fn(async () => ({ available: true, current_cards: [] })) } as unknown as ControlApi;
-    render(<ConflictQueuePanel api={notFoundApi} team={team} />);
-    expect(await screen.findByText("Team queue not found.")).toBeInTheDocument();
-  });
 
   it("covers control auth discovery, theme switching, and token validation", async () => {
     sessionStorage.clear();
@@ -500,118 +409,14 @@ describe("coverage contracts", () => {
     expect(api.deleteSSOProvider).not.toHaveBeenCalled();
   });
 
-  it("covers graph validation, node detail, controls, and request errors", async () => {
-    const snapshot: GraphSnapshot = { scope: "overview", depth: 2, limit: 80, truncated: true, nodes: [{ key: "entity:e1", id: "e1", type: "entity", title: "Entity" }, { key: "value:v1", id: "v1", type: "value", title: "Value" }], edges: ["PROMOTES_TO", "SUPPORTED_BY", "CONTRADICTS", "SUPERSEDED_BY", "OVERLAYS", "ALIGNS_WITH", "DREAMS_FROM", "uses"].map((relationship, index) => ({ id: `edge-${index}`, source: "entity:e1", target: "value:v1", relationship, directed: true })) };
-    const api = { graph: vi.fn(async () => snapshot), nodeDetail: vi.fn(async (_type: string, id: string) => ({ key: `${id}-detail`, id, type: "entity", title: `${id} detail`, body: "body" })) } as unknown as UserApi;
-    const user = userEvent.setup();
-    render(<GraphPanel api={api} />);
-    expect(await screen.findByText("Entity")).toBeInTheDocument();
-    await user.click(within(screen.getByTestId("force-graph")).getByRole("button", { name: "Entity" }));
-    await waitFor(() => expect(api.nodeDetail).toHaveBeenCalled());
-    await user.click(screen.getByRole("button", { name: "Close details panel" }));
-    await user.click(screen.getByRole("button", { name: "Graph controls" }));
-    await user.click(screen.getByLabelText("Value"));
-    await user.click(screen.getByLabelText("Entity"));
-    await user.click(screen.getByLabelText("Value"));
-    await user.click(screen.getByRole("button", { name: "Local" }));
-    await user.click(screen.getByRole("button", { name: "Refresh" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Anchor ID is required");
-    await user.type(screen.getByLabelText("Anchor ID"), "e1");
-    fireEvent.change(screen.getByLabelText("Node size"), { target: { value: "9" } });
-    fireEvent.change(screen.getByLabelText("Link distance"), { target: { value: "180" } });
-    await user.click(screen.getByRole("button", { name: "Refresh" }));
-    await user.click(screen.getByLabelText("Entity"));
-    await waitFor(() => expect(api.nodeDetail).toHaveBeenCalled());
-    await user.clear(screen.getByLabelText("Relationship limit"));
-    await user.click(screen.getByRole("button", { name: "Refresh" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("positive integer");
-  });
-
-  it("covers graph preview empty, success, and request error states", async () => {
-    const snapshot: GraphSnapshot = { scope: "local", depth: 2, limit: 48, truncated: false, anchor: { key: "entity:e1", id: "e1", type: "entity" }, nodes: [{ key: "entity:e1", id: "e1", type: "entity", title: "Anchor" }], edges: [] };
-    const api = { graph: vi.fn(async () => snapshot) } as unknown as UserApi;
-    const view = render(<ResultGraphPreview api={api} anchor={null} />);
-    expect(screen.getByText("No graph anchor")).toBeInTheDocument();
-    view.rerender(<ResultGraphPreview api={api} anchor={{ type: "entity", id: "e1" }} />);
-    expect(await screen.findByText("1 nodes")).toBeInTheDocument();
-    expect(api.graph).toHaveBeenCalledWith(expect.objectContaining({ scope: "local", anchorId: "e1" }));
-    const failing = { graph: vi.fn(async () => { throw new Error("graph unavailable"); }) } as unknown as UserApi;
-    view.rerender(<ResultGraphPreview api={failing} anchor={{ type: "entity", id: "e2" }} />);
-    expect(await screen.findByRole("alert")).toHaveTextContent("graph unavailable");
-  });
-
-  it("covers search filters, inspector tabs, keyboard selection, and recall failure", async () => {
-    const evidence = { evidence_id: "e1", context: "Evidence context", source_type: "manual", created_at: "2026-08-01T00:00:00Z", status: "active", rank: 1 };
-    const relationship = { relationship_id: "r1", tier: "verified", search_state: "current", subject: { name: "Subject", entity_id: "e1" }, predicate: "uses", object: { name: "Postgres", entity_id: "e2" }, valid_from: "2026-08-02T00:00:00Z", polarity: "+" };
-    const provisional = { ...relationship, relationship_id: "r2", tier: "candidate", search_state: "pending", valid_from: "2026-08-03T00:00:00Z" };
-    const disputed = { ...relationship, relationship_id: "r3", search_state: "failed", valid_from: "2026-08-04T00:00:00Z" };
-    const community = { community_id: "c1", logical_community_id: "logical-c1", rank: 1, summary: "Community summary", entity_count: 2, relationship_count: 1, relationships_truncated: true, top_entities: [{ name: "Subject" }], top_predicates: ["uses"], relationships: [relationship] };
-    const hits: RecallHit[] = [{ evidence, evidences: [evidence], tier: "evidence", final_score: 0.9 }, { relationship, relationships: [relationship], tier: "verified", final_score: 0.8 }, { relationship: provisional, relationships: [provisional], tier: "candidate", final_score: 0.75 }, { relationship: disputed, relationships: [disputed], tier: "verified", final_score: 0.7 }, { community, tier: "community", final_score: 0.6 }];
-    const recall = vi.fn(async () => hits);
-    const api = { recall, graph: vi.fn(async () => ({ scope: "local", depth: 2, limit: 48, truncated: false, nodes: [], edges: [] })), nodeDetail: vi.fn() } as unknown as UserApi;
-    const user = userEvent.setup();
-    render(<SearchPanel api={api} />);
-    await user.click(screen.getByRole("button", { name: "Search" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Query is required");
-    await user.type(screen.getByLabelText("Keyword"), "knowledge");
-    await user.click(screen.getByRole("button", { name: "Search" }));
-    expect((await screen.findAllByText("Evidence context")).length).toBeGreaterThan(0);
-    await user.click(screen.getByRole("button", { name: "Filters" }));
-    const filters = screen.getByLabelText("Knowledge filters");
-    const typeFilters = within(filters).getByRole("group", { name: "Type" });
-    await user.click(within(typeFilters).getAllByRole("checkbox")[2]);
-    await user.click(screen.getByLabelText("Date range"));
-    await user.selectOptions(screen.getByLabelText("Date range"), "custom");
-    await user.type(screen.getByLabelText("Start date"), "2026-01-01");
-    await user.type(screen.getByLabelText("End date"), "2026-12-31");
-    await user.keyboard("{Escape}");
-    await user.click(screen.getByRole("button", { name: /Sort by date/ }));
-    await user.click(screen.getByRole("button", { name: "Use compact density" }));
-    const list = screen.getByRole("listbox", { name: "Recall result list" });
-    const option = within(list).getAllByRole("option")[0];
-    option.focus();
-    await user.keyboard("{Enter}");
-    await user.click(screen.getByRole("tab", { name: "Lineage" }));
-    await user.click(screen.getByRole("tab", { name: "Recall" }));
-    await user.click(screen.getByRole("tab", { name: "Graph" }));
-    await user.click(screen.getByRole("button", { name: "Close details panel" }));
-    await user.click(screen.getByRole("button", { name: "Open details" }));
-    await user.click(screen.getByRole("button", { name: "Close details panel" }));
-    await user.click(screen.getByRole("button", { name: "Filters" }));
-    const statusFilters = within(screen.getByLabelText("Knowledge filters")).getByRole("group", { name: "Status" });
-    await user.click(within(statusFilters).getAllByRole("checkbox")[1]);
-    await user.click(within(statusFilters).getAllByRole("checkbox")[2]);
-    await user.selectOptions(screen.getByLabelText("Source"), "manual");
-    await user.click(screen.getByRole("button", { name: "Clear all" }));
-    await user.selectOptions(screen.getByLabelText("Date range"), "custom");
-    await user.clear(screen.getByLabelText("Start date"));
-    await user.type(screen.getByLabelText("Start date"), "2027-01-01");
-    expect(screen.getByText("No recall results")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Clear all" }));
-    await user.keyboard("{Escape}");
-    recall.mockRejectedValueOnce(new Error("recall failed"));
-    await user.clear(screen.getByLabelText("Keyword"));
-    await user.type(screen.getByLabelText("Keyword"), "failed");
-    await user.click(screen.getByRole("button", { name: "Search" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("recall failed");
-  });
 
 
-  it("covers control dreams empty and error states", async () => {
-    const emptyApi = { getTeamDreamingStatus: vi.fn(async () => ({ retired: true, latest_run: null, historical_proposed_count: 0 })), listTeamDreamingRuns: vi.fn(async () => []), listTeamDreams: vi.fn(async () => ({ items: [], next_cursor: "" })) } as unknown as ControlApi;
-    const view = render(<ControlDreamsPanel api={emptyApi} team={team} />);
-    expect(await screen.findByText("No dreams")).toBeInTheDocument();
-    expect(screen.getByText("No runs")).toBeInTheDocument();
-    view.unmount();
-    const statusDream = (status: string) => ({ dream_id: `dream-${status}`, team_id: team.id, hypothesis: status, what_if: "", possible_outcome: "", rationale: "", likelihood: 0.1, confidence: 0.1, status, created_at: "2026-09-01T00:00:00Z", updated_at: "2026-09-01T00:00:00Z" });
-    const statusApi = { getTeamDreamingStatus: vi.fn(async () => ({ retired: true, latest_run: null, historical_proposed_count: 0 })), listTeamDreamingRuns: vi.fn(async () => []), listTeamDreams: vi.fn(async () => ({ items: [statusDream("reinforced"), statusDream("submitted"), statusDream("stale"), statusDream("proposed")], next_cursor: "" })) } as unknown as ControlApi;
-    render(<ControlDreamsPanel api={statusApi} team={team} />);
-    expect(await screen.findByText("reinforced")).toBeInTheDocument();
-    expect(screen.getByText("submitted", { selector: "strong" })).toBeInTheDocument();
-    const failingApi = { getTeamDreamingStatus: vi.fn(async () => { throw new Error("control dreams failed"); }), listTeamDreamingRuns: vi.fn(async () => []), listTeamDreams: vi.fn(async () => ({ items: [], next_cursor: "" })) } as unknown as ControlApi;
-    render(<ControlDreamsPanel api={failingApi} team={team} />);
-    expect(await screen.findByRole("alert")).toHaveTextContent("control dreams failed");
-  });
+
+
+
+
+
+
 
   it("covers runtime config load and save failures", async () => {
     const api = { getGeneralConfig: vi.fn(async () => ({ update_time: "2026-09-01T00:00:00Z", items: [{ key: "APP_TIMEZONE", value: "UTC", effective_value: "UTC", updated_at: "" }] })), updateGeneralConfig: vi.fn(async () => { throw new Error("config save failed"); }) } as unknown as ControlApi;
@@ -628,10 +433,10 @@ describe("coverage contracts", () => {
   it("covers recall feedback filters and detail resolution", async () => {
     const event = { recall_id: "rec-1", created_at: "2026-09-01T00:00:00Z", updated_at: "2026-09-01T00:00:00Z", feedback_at: "2026-09-01T00:01:00Z", team_id: team.id, profile_id: "profile-1", key_id: "key-1", auth_method: "api_key", tool_name: "recall_memory", query: "why", tool_args: {}, result_refs: [{ type: "evidence", id: "e1", rank: 1, tier: "evidence", status_at_recall: "active" }], result_count: 1, snapshot_state: "captured", used: true, answer_supported: true, quality: "medium", missing_context: false, irrelevant: true, feedback_comment: "comment", irrelevant_result_refs: [{ type: "evidence", id: "e1", rank: 1 }], resolved_results: [{ type: "evidence", id: "e1", rank: 1, resolution_status: "found", current_status: "retracted", current: { content: "current" }, ref: { type: "evidence", id: "e1", rank: 1, tier: "evidence", status_at_recall: "active" } }] };
     const pendingEvent = { ...event, recall_id: "rec-2", profile_id: "", key_id: "", auth_method: "", query: "", snapshot_state: "", result_refs: [], resolved_results: [], used: undefined, answer_supported: undefined, missing_context: undefined, irrelevant: undefined, quality: undefined, feedback_comment: "", irrelevant_result_refs: [] };
-    const edgeEvent = { ...pendingEvent, recall_id: "rec-3", result_refs: [{ type: "evidence", id: "missing", rank: 1, status_at_recall: "active" }, { type: "relationship", id: "triple", rank: 2, status_at_recall: "active" }, { type: "value", id: "empty", rank: 3, status_at_recall: "active" }], resolved_results: [
+    const edgeEvent = { ...pendingEvent, recall_id: "rec-3", result_refs: [{ type: "evidence", id: "missing", rank: 1, status_at_recall: "active" }, { type: "topic", id: "topic", rank: 2, status_at_recall: "active" }, { type: "evidence", id: "empty", rank: 3, status_at_recall: "active" }], resolved_results: [
       { type: "evidence", id: "missing", rank: 1, resolution_status: "missing", ref: { type: "evidence", id: "missing", rank: 1, status_at_recall: "active" } },
-      { type: "relationship", id: "triple", rank: 2, resolution_status: "found", current: { subject: "Subject", predicate: "uses", object: "Value" }, ref: { type: "relationship", id: "triple", rank: 2, status_at_recall: "active" } },
-      { type: "value", id: "empty", rank: 3, resolution_status: "found", current: {}, ref: { type: "value", id: "empty", rank: 3, status_at_recall: "active" } },
+      { type: "topic", id: "topic", rank: 2, resolution_status: "found", current: { content: "Topic description" }, ref: { type: "topic", id: "topic", rank: 2, status_at_recall: "active" } },
+      { type: "evidence", id: "empty", rank: 3, resolution_status: "found", current: {}, ref: { type: "evidence", id: "empty", rank: 3, status_at_recall: "active" } },
     ] };
     const api = { listRecallFeedbackEvents: vi.fn(async () => ({ data: [event, pendingEvent, edgeEvent], pagination: { limit: 1, offset: 0, total: 3 } })), getRecallFeedbackEvent: vi.fn(async (id: string) => id === "rec-2" ? pendingEvent : id === "rec-3" ? edgeEvent : event) } as unknown as ControlApi;
     const user = userEvent.setup();
@@ -653,8 +458,8 @@ describe("coverage contracts", () => {
     expect(await screen.findByText("No result refs")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Close details panel" }));
     await user.click(screen.getByRole("button", { name: /View recall feedback rec-3/ }));
-    expect(await screen.findByText("Missing from graph")).toBeInTheDocument();
-    expect(screen.getByText("Subject uses Value")).toBeInTheDocument();
+    expect(await screen.findByText("Evidence unavailable")).toBeInTheDocument();
+    expect(screen.getByText("Topic description")).toBeInTheDocument();
     expect(screen.getByText("Resolved")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Close details panel" }));
     await user.selectOptions(screen.getByLabelText("Rows"), "50");

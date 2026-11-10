@@ -245,27 +245,18 @@ verify_v25_cleanup_catalog() {
       to_regclass('public.semantic_team_refs') IS NULL, '|',
       to_regclass('public.semantic_profile_refs') IS NULL, '|',
       to_regclass('public.embedding_config') IS NULL, '|',
-      (SELECT count(*) = 32 FROM pg_constraint AS constraint_state
+      (SELECT count(DISTINCT constraint_state.conrelid) = 9 FROM pg_constraint AS constraint_state
        WHERE constraint_state.contype = 'f'
          AND constraint_state.conrelid::regclass::text = ANY(ARRAY[
-           'dream_cycle_runs', 'entity_correction_events', 'entity_correction_plans', 'entity_names',
-           'entity_resolution_events', 'evidence_fragments', 'evidence_lifecycle_operations',
-           'evidence_quarantines', 'evidence_security_events', 'evidence_security_signals',
-           'evidence_source_revisions', 'evidence_sources', 'hypotheses', 'hypothesis_feedback_events',
-           'knowledge_ingests', 'relationship_conflict_derived_evidence_tasks', 'relationship_conflict_events',
-           'relationship_conflict_evidence_derivations', 'relationship_correction_submissions',
-           'relationship_cross_references', 'relationship_evidence_supports', 'relationship_observations',
-           'relationship_records', 'relationship_support_decision_events', 'relationship_transition_events',
-           'review_tasks', 'search_documents', 'verification_events'
+           'evidence_fragments', 'evidence_lifecycle_operations', 'evidence_quarantines',
+           'evidence_security_events', 'evidence_security_signals', 'evidence_source_revisions',
+           'evidence_sources', 'knowledge_ingests', 'search_documents'
          ]::text[])
          AND constraint_state.confrelid = 'ownership_aliases'::regclass
          AND constraint_state.convalidated AND constraint_state.confdeltype = 'r'), '|',
-      (SELECT count(*) = 5 FROM pg_constraint AS constraint_state
+      (SELECT count(DISTINCT constraint_state.conrelid) = 1 FROM pg_constraint AS constraint_state
        WHERE constraint_state.contype = 'f'
-         AND constraint_state.conrelid::regclass::text = ANY(ARRAY[
-           'community_snapshot_runs', 'entity_records', 'search_projection_generations',
-           'team_predicate_definitions', 'value_records'
-         ]::text[])
+         AND constraint_state.conrelid::regclass::text = 'search_projection_generations'
          AND constraint_state.confrelid = 'teams'::regclass
          AND constraint_state.convalidated AND constraint_state.confdeltype = 'r'), '|',
       NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname LIKE 'dense_mem_v25_%')
@@ -554,7 +545,7 @@ NODE
 
 ontology_upgrade_fingerprints() {
   local table
-  for table in entity_records value_records relationship_records evidence_fragments relationship_evidence_supports ontology_maintenance_windows ontology_maintenance_attempts ontology_assessments; do
+  for table in evidence_fragments ontology_maintenance_windows ontology_maintenance_attempts ontology_assessments; do
     identity_postgres_scalar "SELECT '${table}:'||md5(COALESCE(jsonb_agg(to_jsonb(row)-'estimated_input_tokens'-'max_output_tokens' ORDER BY to_jsonb(row)::text)::text,'[]')) FROM ${table} AS row" || return
   done
 }

@@ -73,24 +73,7 @@ const remember = await mcpTool("remember", {
     source: `telemetry:${runID}`,
     source_group: `telemetry:${runID}`,
   }],
-  relationships: [{
-    ref: `${runID}:relationship`,
-    subject: {
-      name: "Dense-Mem",
-      entity_kind: "project",
-    },
-    predicate: {
-      proposed_key: "uses",
-    },
-    object: {
-      entity: {
-        name: "exact evidence",
-        entity_kind: "concept",
-      },
-    },
-    polarity: "+",
-    evidence_indices: [0],
-  }],
+
 });
 const submissionID = String(remember.submission_id ?? "");
 if (!submissionID) {
@@ -205,7 +188,7 @@ async function validateDisabledFeatureReasons() {
       assert(item.reason_code === "feature_disabled", `disabled feature item ${id} omitted feature_disabled`);
     }
     const dream = (snapshot.data.windowed_cards ?? []).find((card) => card.id === "dream_feedbacks");
-    assert(dream?.status === "inactive" && dream.reason_code === "feature_retired", "Dream feedback telemetry must remain retired regardless of general feedback configuration");
+    assert(!dream, "retired Dream telemetry must be absent");
     return true;
   } finally {
     await restoreConfig("/config/recall-feedback", recallBefore);
@@ -228,13 +211,11 @@ async function validateTelemetryIsolation(profileID) {
   assert(foreignTeamID, "telemetry isolation fixture did not create a foreign team");
   const foreign = await controlJSON(`/telemetry?window=15m&scope=team&team_id=${foreignTeamID}`, { method: "GET" });
   assertTelemetrySnapshot(foreign.data, "team", "15m");
-  const foreignActive = (foreign.data.current_cards ?? []).find((card) => card.id === "relationships_active");
-  assert(Number(foreignActive?.value ?? 0) === 0, "foreign team saw another team's current Relationship count");
+  assert((foreign.data.current_cards ?? []).length === 0, "retired graph cards must be absent");
 
   const mismatchedProfile = await controlJSON(`/telemetry?window=15m&scope=profile&team_id=${foreignTeamID}&profile_id=${profileID}`, { method: "GET" });
   assertTelemetrySnapshot(mismatchedProfile.data, "profile", "15m");
-  const mismatchedActive = (mismatchedProfile.data.current_cards ?? []).find((card) => card.id === "relationships_active");
-  assert(Number(mismatchedActive?.value ?? 0) === 0, "profile telemetry crossed a team boundary");
+  assert((mismatchedProfile.data.current_cards ?? []).length === 0, "profile telemetry must not revive graph cards");
   return { foreign_team_isolated: true, mismatched_profile_isolated: true };
 }
 
@@ -484,9 +465,7 @@ async function validateGrafanaDashboardParity(credentialID) {
         let actual = grafanaFrameNumber(queryResult.frames ?? []);
         if (item.status === "ready") {
           let expected = Number(item.value);
-          const ledgerCard = item.id === "relationship_corrections"
-            || item.id.startsWith("relationship_transitions_")
-            || item.id.startsWith("relationships_");
+          const ledgerCard = item.id.startsWith("remember_");
           if (ledgerCard) {
             // Direct PostgreSQL reads can precede the next Prometheus scrape.
             for (let attempt = 0; attempt < 9 && actual !== expected; attempt += 1) {
@@ -928,8 +907,7 @@ async function validatePartialPrometheusFailure(grafana) {
     assert(degraded.data.status === "degraded", `Prometheus failure did not degrade the snapshot: ${degraded.data.status}`);
     const failed = [...(degraded.data.cards ?? []), ...(degraded.data.series ?? [])].filter((item) => item.reason_code === "query_failed");
     assert(failed.length > 0, "Prometheus failure did not disclose query_failed items");
-    const lifecycle = (degraded.data.current_cards ?? []).find((card) => card.id === "relationships_active");
-    assert(lifecycle?.status === "ready", "Prometheus failure hid successful lifecycle data");
+    assert((degraded.data.current_cards ?? []).length === 0, "query failure must not revive graph metrics");
     return { degraded: true, failed_items: failed.length, lifecycle_preserved: true };
   } finally {
     const startedPrometheus = spawnSync("docker", [...composeArgs, "start", "prometheus"], { encoding: "utf8" });

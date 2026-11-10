@@ -48,7 +48,7 @@ func TestRecallAccuracyCohort(t *testing.T) {
 				cases, suite := []evalharness.Case{}, []evalharness.SuiteCase{}
 				for _, c := range f.cohort {
 					t.Run(c.Case.CaseID+map[bool]string{false: "/ordinary", true: "/ontology"}[enabled], func(t *testing.T) {
-						observation := f.observe(t, c, enabled, "constant_vectors", false)
+						observation := f.observe(t, c, enabled, "constant_vectors")
 						repetitions[repetition] = append(repetitions[repetition], observation)
 						scores = append(scores, observation.Score)
 					})
@@ -82,66 +82,30 @@ func TestRecallAccuracyVariations(t *testing.T) {
 			f := newRecallAccuracyFixture(t, variant.reverse, variant.vectors)
 			for _, c := range f.cohort {
 				for _, enabled := range []bool{false, true} {
-					f.observe(t, c, enabled, variant.name, false)
+					f.observe(t, c, enabled, variant.name)
 				}
 			}
 			if !variant.vectors {
 				for _, c := range f.cohort {
-					if c.Case.Slices[0] == "multihop" {
-						observation := f.observe(t, c, true, "explicit_entity_expansion", true)
-						require.Contains(t, flattenedAccuracySources(observation), c.Sources[0].ID, "explicit expansion must retain directly supported evidence")
-						f.assertMultihopExpansion(t, c)
-					}
 					if c.Case.Slices[0] == "synonyms" {
-						ordinary := f.observe(t, c, false, "alias_only_control", false)
+						ordinary := f.observe(t, c, false, "alias_only_control")
 						require.Zero(t, ordinary.Score.RelevantAtK)
-						organized := f.observe(t, c, true, "alias_only_control", false)
+						organized := f.observe(t, c, true, "alias_only_control")
 						require.Equal(t, 1.0, organized.Score.RecallAtK)
 						f.groupAccuracySources(t, c.Sources[:2])
-						grouped := f.observe(t, c, true, "grouped_alternates", false)
+						grouped := f.observe(t, c, true, "grouped_alternates")
 						require.Equal(t, 1.0, grouped.Score.RecallAtK)
 						require.Len(t, grouped.RankedSources, 1)
 						require.ElementsMatch(t, []string{c.Sources[0].ID, c.Sources[1].ID}, grouped.RankedSources[0])
 					}
 					if c.Case.CaseID == evalharness.RecallAccuracySeedID+":predicate_meaningful_predicate" || c.Case.CaseID == evalharness.RecallAccuracySeedID+":name_common_word" {
-						observation := f.observe(t, c, true, "meaningful_query_control", false)
+						observation := f.observe(t, c, true, "meaningful_query_control")
 						require.Contains(t, flattenedAccuracySources(observation), c.Sources[0].ID)
 					}
 				}
 			}
 		})
 	}
-}
-
-func (f *recallAccuracyFixture) assertMultihopExpansion(t *testing.T, c evalharness.RecallAccuracyCase) {
-	t.Helper()
-	first := c.Sources[0]
-	start := f.entities[first.SubjectKind+":"+first.Subject]
-	hop, err := f.search.RecallRelationships(f.actor(2, "member"), RecallRelationshipsInput{
-		TeamID: f.team, SpaceID: f.space, ExpandFromEntityIDs: []string{start}, Limit: 10, OrganizationEnabled: true,
-	})
-	require.NoError(t, err)
-	var next []string
-	for _, relationship := range hop.Results {
-		if relationship.SubjectEntityID == start && relationship.ObjectEntityID != "" {
-			next = append(next, relationship.ObjectEntityID)
-		}
-	}
-	require.NotEmpty(t, next, "the first hop must expose its project handle")
-	result, err := f.search.RecallEvidence(f.actor(2, "member"), RecallEvidenceInput{
-		TeamID: f.team, SpaceID: f.space, ExpandFromEntityIDs: next, Limit: 10, OrganizationEnabled: true,
-	})
-	require.NoError(t, err)
-	trace := evalharness.RecallTrace{CaseID: c.Case.CaseID}
-	for _, hit := range result.Results {
-		trace.RankedRefs = append(trace.RankedRefs, evalharness.Ref{Type: "evidence", ID: hit.EvidenceID, Rank: hit.Rank, EquivalentEvidenceIDs: hit.EquivalentEvidenceIDs})
-	}
-	score := evalharness.ScoreTrace(c.Case.CaseID, c.Case.Limit, c.QRel, trace, f.mapping)
-	require.Equal(t, 2, score.RelevantTotal)
-	require.Equal(t, 1.0, score.RecallAtK, "both the person-to-project and project-to-storage sources must be retrieved")
-	require.Zero(t, score.BadAtK, "the disconnected namesake chain must not enter the multihop result")
-	require.Empty(t, score.UnmappedSourceRefs)
-	t.Logf("RECALL_ACCURACY_MULTIHOP case=%s required_sources=%d recall_at_10=%g bad_at_10=%d", c.Case.CaseID, score.RelevantTotal, score.RecallAtK, score.BadAtK)
 }
 
 func flattenedAccuracySources(observation recallAccuracyObservation) []string {

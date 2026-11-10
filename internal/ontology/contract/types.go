@@ -20,22 +20,16 @@ const (
 type Kind string
 
 const (
-	EntityClass       Kind = "entity_class"
-	PredicateConcept  Kind = "predicate_concept"
-	Topic             Kind = "topic"
-	AssignmentKind    Kind = "assignment"
-	EvidenceGroup     Kind = "evidence_group"
-	RelationshipGroup Kind = "relationship_group"
-	OverrideKind      Kind = "override"
+	Topic          Kind = "topic"
+	AssignmentKind Kind = "assignment"
+	EvidenceGroup  Kind = "evidence_group"
+	OverrideKind   Kind = "override"
 )
 
 type SourceKind string
 
 const (
-	EntitySource       SourceKind = "entity"
-	PredicateSource    SourceKind = "predicate"
-	EvidenceSource     SourceKind = "evidence"
-	RelationshipSource SourceKind = "relationship"
+	EvidenceSource SourceKind = "evidence"
 )
 
 var (
@@ -63,21 +57,12 @@ type RevisionRef struct {
 	Version int64  `json:"version"`
 }
 
-type ParentRelation string
-
-const (
-	SubclassOf    ParentRelation = "subclass_of"
-	SubpropertyOf ParentRelation = "subproperty_of"
-)
-
 type Definition struct {
-	Key            string         `json:"key"`
-	Label          string         `json:"label"`
-	Description    string         `json:"description"`
-	Aliases        []string       `json:"aliases,omitempty"`
-	ParentID       string         `json:"parent_id,omitempty"`
-	ParentRelation ParentRelation `json:"parent_relation,omitempty"`
-	BaseEntityKind string         `json:"base_entity_kind,omitempty"`
+	Key         string   `json:"key"`
+	Label       string   `json:"label"`
+	Description string   `json:"description"`
+	Aliases     []string `json:"aliases,omitempty"`
+	ParentID    string   `json:"parent_id,omitempty"`
 }
 
 type Assignment struct {
@@ -134,11 +119,10 @@ type Publication struct {
 }
 
 type PublicationResult struct {
-	ID            string        `json:"id"`
-	Revision      int64         `json:"revision"`
-	Existing      bool          `json:"existing"`
-	Records       []RevisionRef `json:"records"`
-	NextPredicate string        `json:"next_predicate,omitempty"`
+	ID       string        `json:"id"`
+	Revision int64         `json:"revision"`
+	Existing bool          `json:"existing"`
+	Records  []RevisionRef `json:"records"`
 }
 
 type RecordView struct {
@@ -153,17 +137,6 @@ type Page struct {
 	Revision int64
 }
 
-type SeedInput struct {
-	OperationKey     string
-	ExpectedRevision int64
-	AfterPredicate   string
-	Limit            int
-}
-
-type SeedResult struct {
-	PublicationResult
-}
-
 type SourceSnapshot struct {
 	SourceHandle
 	TeamID     string            `json:"team_id"`
@@ -171,7 +144,6 @@ type SourceSnapshot struct {
 	Generation int64             `json:"generation"`
 	OwnerID    string            `json:"owner_id,omitempty"`
 	Eligible   bool              `json:"eligible"`
-	EntityKind string            `json:"entity_kind,omitempty"`
 	State      map[string]string `json:"state"`
 	MeaningKey string            `json:"meaning_key,omitempty"`
 }
@@ -187,7 +159,6 @@ type PublicationHistory struct {
 type Repository interface {
 	PublishAutomatic(context.Context, string, Publication) (PublicationResult, error)
 	PublishManager(context.Context, string, Publication) (PublicationResult, error)
-	SeedDefinitions(context.Context, string, SeedInput) (SeedResult, error)
 	GetRecord(context.Context, string, string, int64) (RecordView, error)
 	ListRecords(context.Context, string, Kind, string, int) (Page, error)
 	ReadSources(context.Context, string, []SourceHandle) ([]SourceSnapshot, error)

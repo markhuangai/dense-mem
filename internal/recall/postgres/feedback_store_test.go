@@ -22,7 +22,7 @@ func feedbackQueryRow() []driver.Value {
 		"api_key", "recall_memory", "query", []byte(`{"limit":2}`), []byte(`[{"type":"fragment","id":"e1","rank":1}]`),
 		int64(1), "captured", "canonical", "ranking-v1", "embedding-v1", "search-v1", "current",
 		[]byte(`{"code":"vector_unavailable"}`), []byte(`{"schema":"v1"}`), true, false, "high", false, true, "useful",
-		[]byte(`[{"type":"fragment","id":"e1","rank":1}]`), []byte(`[{"dream_id":"h1","quality":"low","used":false}]`),
+		[]byte(`[{"type":"fragment","id":"e1","rank":1}]`),
 	}
 }
 
@@ -41,7 +41,7 @@ func TestFeedbackStoreSnapshotBindsIdentityAndOrderedReferences(t *testing.T) {
 		RecallID: " rec_test ", CreatedAt: recallTime, UpdatedAt: recallTime,
 		TeamID: &team, ProfileID: &profile, KeyID: &key, SpaceID: &space, SpaceGeneration: 4,
 		AuthMethod: " api_key ", Query: " query ", ToolArgs: map[string]any{"limit": 2}, ResultCount: 99,
-		ResultRefs:      []domain.RecallFeedbackResultRef{{Type: "fragment", ID: "second", Rank: 1}, {Type: "relationship", ID: "first", Rank: 2}},
+		ResultRefs:      []domain.RecallFeedbackResultRef{{Type: "fragment", ID: "second", Rank: 1}, {Type: "fragment", ID: "first", Rank: 2}},
 		ContractVersion: "canonical", SearchState: "current",
 	}
 	refs, err := json.Marshal(event.ResultRefs)
@@ -143,7 +143,6 @@ func TestFeedbackStoreListBindsFiltersAndHydratesFullEvent(t *testing.T) {
 	require.False(t, *event.AnswerSupported)
 	require.Equal(t, "e1", event.ResultRefs[0].ID)
 	require.Equal(t, 1, event.ResultRefs[0].Rank)
-	require.Equal(t, "h1", event.DreamFeedback[0].DreamID)
 	require.Equal(t, "v1", event.SnapshotMetadata["schema"])
 }
 

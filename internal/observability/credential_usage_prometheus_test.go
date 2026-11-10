@@ -37,7 +37,7 @@ func TestCredentialUsageSeparatesCredentialsFromSharedOwner(t *testing.T) {
 		})
 	}
 
-	background := WithAIOperation(WithMetricIdentity(context.Background(), teamID.String(), ""), AIOperationDreamGeneration, 1)
+	background := WithAIOperation(WithMetricIdentity(context.Background(), teamID.String(), ""), AIOperationOntologyOrganization, 1)
 	metrics.ObserveVerifierLatencyFor(background, "verifier-model", 10, "ok")
 	body := scrapePrometheusMetrics(t, metrics)
 	for _, credential := range []struct {

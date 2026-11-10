@@ -315,7 +315,7 @@ func TestEvidenceConflictRecallRequiresEveryPositionToRemainEligible(t *testing.
 	teamID := createLedgerTeam(t, adminDB, rls, "evidence-conflict-recall-eligibility-team")
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "evidence-conflict-recall-eligibility-owner")
 	spaceID, generation := duplicateTeamSharedSpace(t, adminDB, rls, teamID)
-	ledger := knowledgepostgres.NewStore(appDB, rls, knowledgepostgres.ConflictRuntimeConfig{})
+	ledger := knowledgepostgres.NewStore(appDB, rls)
 
 	input := citedEvidenceRememberInput(teamID, ownerID, "evidence-conflict-recall-eligibility", "Alice approved the change.", "Alice rejected the change.", spaceID, generation)
 	commitCitedEvidenceFixture(t, ctx, ledger, input)

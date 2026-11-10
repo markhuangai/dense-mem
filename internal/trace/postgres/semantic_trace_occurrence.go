@@ -3,25 +3,11 @@ package postgres
 import (
 	"context"
 	"encoding/json"
-	"strings"
 
 	"github.com/lib/pq"
 	tracecontract "github.com/markhuangai/dense-mem/internal/trace/contract"
 	"gorm.io/gorm"
 )
-
-func loadTraceEvidenceForSupports(
-	ctx context.Context,
-	tx *gorm.DB,
-	input traceExecutionInput,
-	supports []RelationshipEvidenceSupportRecord,
-) ([]TraceEvidenceFragment, error) {
-	occurrenceIDs := traceSupportOccurrenceIDs(supports)
-	if len(occurrenceIDs) == 0 {
-		return loadTraceEvidenceFragments(ctx, tx, input, traceSupportFragmentIDs(supports))
-	}
-	return loadTraceEvidenceOccurrences(ctx, tx, input, occurrenceIDs)
-}
 
 func loadTraceEvidenceOccurrences(
 	ctx context.Context,
@@ -38,7 +24,7 @@ func loadTraceEvidenceOccurrences(
 		       COALESCE(occurrence.source_id::text, ''), COALESCE(occurrence.source_revision_id::text, ''),
 		       COALESCE(source.source_key, ''), COALESCE(source.source_kind, ''),
 		       COALESCE(revision.revision_token, ''), COALESCE(source.current_revision_id::text, ''),
-		       occurrence.evidence_index,
+		       occurrence.evidence_index, occurrence.owner_profile_id::text,
 		       CASE WHEN ? THEN left(occurrence.content, ?) ELSE '' END,
 		       occurrence.content_hash,
 		       CASE WHEN ? THEN char_length(occurrence.content) > ? ELSE false END,
@@ -81,9 +67,10 @@ func loadTraceEvidenceOccurrences(
 		      revision.source_revision_id IS NULL
 		      OR `+activeSemanticSpaceGenerationSQL("revision")+`
 		  )
-		ORDER BY occurrence.evidence_index ASC, occurrence.occurrence_id ASC
+		ORDER BY occurrence.created_at ASC, occurrence.occurrence_id ASC
+		LIMIT ?
 	`, includeContent, input.MaxFragmentContentRunes, includeContent, input.MaxFragmentContentRunes,
-		input.TeamID, pq.Array(occurrenceIDs), input.spaceID).Rows()
+		input.TeamID, pq.Array(occurrenceIDs), input.spaceID, input.MaxEvents+1).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -95,13 +82,15 @@ func loadTraceEvidenceOccurrences(
 		if err := rows.Scan(
 			&row.FragmentID, &row.OccurrenceID, &row.IngestID, &row.OwnerProfileID,
 			&row.SourceID, &row.SourceRevisionID, &row.SourceKey, &row.SourceKind,
-			&row.RevisionToken, &row.CurrentRevisionID, &row.EvidenceIndex,
+			&row.RevisionToken, &row.CurrentRevisionID, &row.EvidenceIndex, &row.OccurrenceOwnerProfileID,
 			&row.Content, &row.ContentHash, &row.ContentTruncated, &row.SourceType,
 			&row.Authority, &row.SourceRef, pq.Array(&row.Labels), &metadataJSON,
 			&row.CreatedAt, &sessionJSON,
 		); err != nil {
 			return nil, err
 		}
+		row.TeamID = input.TeamID
+		row.ContentOmitted = !includeContent
 		row.Metadata = jSONMap(metadataJSON)
 		if sessionJSON != "null" {
 			row.Session = &tracecontract.SessionProvenance{}
@@ -112,21 +101,4 @@ func loadTraceEvidenceOccurrences(
 		out = append(out, row)
 	}
 	return out, rows.Err()
-}
-
-func traceSupportOccurrenceIDs(supports []RelationshipEvidenceSupportRecord) []string {
-	seen := map[string]struct{}{}
-	out := make([]string, 0, len(supports))
-	for _, support := range supports {
-		occurrenceID := strings.TrimSpace(support.OccurrenceID)
-		if occurrenceID == "" {
-			continue
-		}
-		if _, exists := seen[occurrenceID]; exists {
-			continue
-		}
-		seen[occurrenceID] = struct{}{}
-		out = append(out, occurrenceID)
-	}
-	return out
 }

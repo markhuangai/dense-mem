@@ -1,177 +1,22 @@
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/primitives/tabs";
 import { useUnsavedChanges, useViewTransition } from "../ui/navigation";
 import { Button } from "../ui/primitives/button";
 import { Label } from "../ui/primitives/label";
 import { NativeSelect, NativeSelectOption } from "../ui/primitives/native-select";
 import { Textarea } from "../ui/primitives/textarea";
-import { Table, TableCaption, TableHeader, TableRow, TableHead, TableBody, TableCell } from "../ui/primitives/table";
-import { AlertTriangle, Clock3, RefreshCw, ShieldAlert } from "lucide-react";
+import { AlertTriangle, RefreshCw, ShieldAlert } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { ApiError, ConflictQueueItem, ConflictQueuePage, ControlApi, Team } from "../api";
+import { ApiError, ControlApi, Team } from "../api";
 import type { EvidenceConflict, EvidenceConflictDetail } from "../evidence-conflict-api-types";
-import { FieldRow, LoadingState, SectionHeading, SummaryCard } from "../ui/components";
-import { formatDate, formatCount, readError, shortId } from "./utils";
+import { FieldRow, LoadingState, SectionHeading } from "../ui/components";
+import { formatDate, readError, shortId } from "./utils";
 import "./ConflictQueuePanel.css";
 
-type QueueFilter = "" | "open" | "overdue";
-
 export function ConflictQueuePanel({ api, team }: { api: ControlApi; team: Team }) {
-  const transition = useViewTransition();
-  const [view, setView] = useState<"relationships" | "evidence">("relationships");
-  const [filter, setFilter] = useState<QueueFilter>("");
-  const [pageSize, setPageSize] = useState(25);
-  const [cursorHistory, setCursorHistory] = useState<string[]>([]);
-  const [page, setPage] = useState<ConflictQueuePage | null>(null);
-  const [queueError, setQueueError] = useState<unknown>(null);
-  const [telemetryError, setTelemetryError] = useState<unknown>(null);
-  const [telemetryDegraded, setTelemetryDegraded] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [refreshNonce, setRefreshNonce] = useState(0);
-  const [loadedTeamID, setLoadedTeamID] = useState<string | null>(null);
-  const requestSequence = useRef(0);
-  const lastTeamID = useRef(team.id);
-  const currentCursor = cursorHistory[cursorHistory.length - 1] ?? "";
-
-  useEffect(() => {
-    if (view === "evidence") {
-      return;
-    }
-    if (lastTeamID.current !== team.id) {
-      lastTeamID.current = team.id;
-      if (cursorHistory.length > 0) {
-        setCursorHistory([]);
-        return;
-      }
-    }
-    const requestId = ++requestSequence.current;
-    let active = true;
-    setLoading(true);
-    setQueueError(null);
-    setTelemetryError(null);
-    setTelemetryDegraded(false);
-
-    api.getConflictQueue(team.id, { status: filter, limit: pageSize, cursor: currentCursor }).then((value) => {
-      if (!active || requestId !== requestSequence.current) {
-        return;
-      }
-      setPage(value);
-      setLoadedTeamID(team.id);
-    }).catch((reason) => {
-      if (!active || requestId !== requestSequence.current) {
-        return;
-      }
-      setQueueError(reason);
-      setPage(null);
-      setLoadedTeamID(null);
-    }).finally(() => {
-      if (active && requestId === requestSequence.current) {
-        setLoading(false);
-      }
-    });
-
-    api.getTelemetry({ window: "1h", scope: "system" }).then((snapshot) => {
-      if (!active || requestId !== requestSequence.current) {
-        return;
-      }
-      const card = snapshot.current_cards?.find((item) => item.id === "conflict_queue_collection_success");
-      if (!snapshot.available || !card || !card.available) {
-        setTelemetryError(new Error("Conflict queue collection telemetry is unavailable."));
-      } else {
-        setTelemetryDegraded(card.value < 1);
-      }
-    }).catch((reason) => {
-      if (active && requestId === requestSequence.current) {
-        setTelemetryError(reason);
-      }
-    });
-
-    return () => {
-      active = false;
-    };
-  }, [api, team.id, filter, pageSize, currentCursor, refreshNonce, view]);
-
-  function changeFilter(value: QueueFilter) {
-    setFilter(value);
-    setCursorHistory([]);
-  }
-
-  function changePageSize(value: number) {
-    setPageSize(value);
-    setCursorHistory([]);
-  }
-
-  const visiblePage = loadedTeamID === team.id ? page : null;
-  const summary = visiblePage?.summary;
-  const oldestActive = Math.max(summary?.oldest_open_age_seconds ?? 0, summary?.oldest_overdue_age_seconds ?? 0);
-  const queueErrorStatus = queueError instanceof ApiError ? queueError.status : 0;
-
-  return (
-    <section className="team-embedded-panel conflict-queue-panel" aria-label="Conflict queue">
-      <SectionHeading
-        title="Conflict queue"
-        subtitle={summary ? `Snapshot ${formatDate(summary.collected_at)}` : "Read-only review workspace"}
-        actions={(
-          <Button variant="ghost" size="icon"
-            className="icon-button"
-            type="button"
-            aria-label="Refresh conflict queue"
-            onClick={() => setRefreshNonce((value) => value + 1)}
-            disabled={loading}
-          >
-            <RefreshCw size={16} aria-hidden="true" />
-          </Button>
-        )}
-      />
-
-      <Tabs className="panel-tabs" value={view} onValueChange={(value) => void transition(() => setView(value as "relationships" | "evidence"))}>
-        <TabsList aria-label="Conflict type"><TabsTrigger value="relationships">Relationships</TabsTrigger><TabsTrigger value="evidence">Evidence</TabsTrigger></TabsList>
-        <TabsContent value="evidence"><EvidenceConflictView api={api} team={team} refreshNonce={refreshNonce} /></TabsContent>
-        <TabsContent value="relationships">
-      {Boolean(telemetryError) && <div className="banner warning" role="status">Queue telemetry is unavailable; queue data may still be current.</div>}
-      {telemetryDegraded && <div className="banner warning" role="status"><ShieldAlert size={15} aria-hidden="true" /> Queue collector is degraded. Gauge values are suppressed until the next successful scrape.</div>}
-
-      {summary && (
-        <div className="summary-strip conflict-summary" aria-label="Conflict queue summary">
-          <SummaryCard label="Open" value={formatCount(summary.open_count)} detail={`${formatCount(summary.active_lease_count)} active leases`} />
-          <SummaryCard label="Overdue" value={formatCount(summary.overdue_count)} detail={`${formatCount(summary.expired_lease_count)} expired leases`} tone={summary.overdue_count > 0 ? "warning" : "neutral"} />
-          <SummaryCard label="Oldest active" value={formatAge(oldestActive)} detail="Since case creation" />
-          <SummaryCard label="Assessment failures" value={formatCount(summary.failed_assessment_count_24h)} detail="Last 24 hours" tone={summary.failed_assessment_count_24h > 0 ? "warning" : "neutral"} />
-          <SummaryCard label="LWW resolutions" value={formatCount(summary.lww_resolution_count_24h)} detail="Last 24 hours" />
-          <SummaryCard label="Failed derived tasks" value={formatCount(summary.failed_derived_task_count)} detail={`${formatCount(summary.pending_derived_task_count)} pending`} tone={summary.failed_derived_task_count > 0 ? "danger" : "neutral"} />
-        </div>
-      )}
-
-      <div className="conflict-queue-toolbar" aria-label="Conflict queue controls">
-        <Label htmlFor="conflict-queue-filter">Show</Label>
-        <NativeSelect id="conflict-queue-filter" value={filter} onChange={(event) => changeFilter(event.target.value as QueueFilter)}>
-          <NativeSelectOption value="">All active</NativeSelectOption>
-          <NativeSelectOption value="open">Open</NativeSelectOption>
-          <NativeSelectOption value="overdue">Overdue</NativeSelectOption>
-        </NativeSelect>
-        <Label htmlFor="conflict-queue-page-size">Rows</Label>
-        <NativeSelect id="conflict-queue-page-size" value={pageSize} onChange={(event) => changePageSize(Number(event.target.value))}>
-          <NativeSelectOption value={25}>25</NativeSelectOption>
-          <NativeSelectOption value={50}>50</NativeSelectOption>
-          <NativeSelectOption value={100}>100</NativeSelectOption>
-        </NativeSelect>
-        <span className="conflict-queue-order"><Clock3 size={14} aria-hidden="true" /> Overdue first, then next review</span>
-      </div>
-
-      {loading && <LoadingState label="Loading conflict queue" />}
-      {!loading && Boolean(queueError) && <QueueErrorState status={queueErrorStatus} message={readError(queueError)} />}
-      {!loading && !queueError && visiblePage && visiblePage.items.length === 0 && <div className="table-placeholder" role="status">No active conflicts match this view.</div>}
-      {!loading && !queueError && visiblePage && visiblePage.items.length > 0 && <ConflictQueueTable items={visiblePage.items} />}
-
-      {!loading && !queueError && visiblePage && (
-        <div className="conflict-queue-pagination" aria-label="Conflict queue pagination">
-          <Button variant="outline" className="ghost-button" type="button" disabled={cursorHistory.length === 0} onClick={() => setCursorHistory((current) => current.slice(0, -1))}>Previous</Button>
-          <span>Page {cursorHistory.length + 1}</span>
-          <Button variant="outline" className="ghost-button" type="button" disabled={!visiblePage.next_cursor} onClick={() => visiblePage.next_cursor && setCursorHistory((current) => [...current, visiblePage.next_cursor as string])}>Next</Button>
-        </div>
-      )}
-      </TabsContent></Tabs>
-    </section>
-  );
+  const [refreshNonce,setRefreshNonce]=useState(0);
+  return <section className="team-embedded-panel conflict-queue-panel" aria-label="Evidence conflict workspace">
+    <SectionHeading title="Evidence conflicts" subtitle="Review cited Evidence and preserve its history" actions={<Button variant="ghost" size="icon" type="button" aria-label="Refresh evidence conflicts" onClick={()=>setRefreshNonce(value=>value+1)}><RefreshCw size={16} aria-hidden="true"/></Button>}/>
+    <EvidenceConflictView api={api} team={team} refreshNonce={refreshNonce}/>
+  </section>;
 }
 
 function EvidenceConflictView({ api, team, refreshNonce }: { api: ControlApi; team: Team; refreshNonce: number }) {
@@ -380,107 +225,12 @@ function EvidenceConflictView({ api, team, refreshNonce }: { api: ControlApi; te
   </div>;
 }
 
-function ConflictQueueTable({ items }: { items: ConflictQueueItem[] }) {
-  return (
-    <div className="conflict-queue-table-wrap">
-      <Table className="conflict-queue-table">
-        <TableCaption className="visually-hidden">Active relationship conflicts</TableCaption>
-        <TableHeader>
-          <TableRow>
-            <TableHead scope="col">Status</TableHead>
-            <TableHead scope="col">Question / predicate</TableHead>
-            <TableHead scope="col">Positions and supporters</TableHead>
-            <TableHead scope="col">Attempts</TableHead>
-            <TableHead scope="col">Lease</TableHead>
-            <TableHead scope="col">Failure</TableHead>
-            <TableHead scope="col">Timestamps</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {items.map((item) => <ConflictQueueRow key={item.conflict_id} item={item} />)}
-        </TableBody>
-      </Table>
-    </div>
-  );
-}
-
-function ConflictQueueRow({ item }: { item: ConflictQueueItem }) {
-  return (
-    <TableRow>
-      <TableCell data-label="Status">
-        <div className={`conflict-status-cell ${item.status}`}>
-          <span className="conflict-urgency-spine" aria-hidden="true" />
-          <strong>{item.status === "overdue" ? "Overdue" : "Open"}</strong>
-          <span>{formatDue(item.next_review_at)}</span>
-          <small>v{item.version} · {shortId(item.conflict_id)}</small>
-        </div>
-      </TableCell>
-      <TableCell data-label="Question / predicate">
-        <div className="conflict-question">{item.question || "Unspecified conflict question"}{item.question_truncated && <small className="conflict-truncation">Question truncated.</small>}</div>
-        <code>{item.predicate_key}</code>{item.predicate_key_truncated && <small className="conflict-truncation">Predicate truncated.</small>}
-      </TableCell>
-      <TableCell data-label="Positions and supporters">
-        <div className="conflict-position-list">
-          {item.positions.map((position) => (
-            <div className="conflict-position" key={position.position_id}>
-              <div className="conflict-position-heading">
-                <strong>{position.position_key}</strong>
-                <span>{position.supporter_count} supporters</span>
-              </div>
-              <div className="conflict-supporter-list">
-                {position.supporters.map((supporter) => (
-                  <span className="conflict-supporter" key={`${position.position_id}-${supporter.profile_id}`}>
-					{supporter.profile_name || "Unnamed owner"} <small>{shortId(supporter.profile_id)}</small>
-                  </span>
-                ))}
-              </div>
-              {position.supporters_truncated && <small className="conflict-truncation">Showing {position.supporters.length} of {position.supporter_count} supporters.</small>}
-            </div>
-          ))}
-          {item.positions_truncated && <small className="conflict-truncation">Some positions are not shown.</small>}
-        </div>
-      </TableCell>
-      <TableCell data-label="Attempts"><strong>{item.attempt_count}</strong></TableCell>
-      <TableCell data-label="Lease"><span className={`status-pill ${item.lease_state === "active" ? "warning" : "neutral"}`}>{item.lease_state}</span>{item.lease_until && <small>{formatDate(item.lease_until)}</small>}</TableCell>
-      <TableCell data-label="Failure"><span className={item.last_failure_class === "none" ? "muted-text" : "status-pill warning"}>{item.last_failure_class}</span></TableCell>
-      <TableCell data-label="Timestamps"><small>Created {formatDate(item.created_at)}</small><small>Updated {formatDate(item.updated_at)}</small><small>Due {formatDate(item.review_due_at)}</small></TableCell>
-    </TableRow>
-  );
-}
-
 function QueueErrorState({ status, message }: { status: number; message: string }) {
   if (status === 401 || status === 403) {
-    return <div className="queue-state error-state" role="alert"><ShieldAlert size={22} aria-hidden="true" /><strong>Conflict queue access is not authorized.</strong><span>Use a control credential with access to this team.</span></div>;
+    return <div className="queue-state error-state" role="alert"><ShieldAlert size={22} aria-hidden="true" /><strong>Evidence conflict access is not authorized.</strong><span>Use a control credential with access to this team.</span></div>;
   }
   if (status === 404) {
-    return <div className="queue-state error-state" role="alert"><AlertTriangle size={22} aria-hidden="true" /><strong>Team queue not found.</strong><span>This team may have been removed or is not available to this operator.</span></div>;
+    return <div className="queue-state error-state" role="alert"><AlertTriangle size={22} aria-hidden="true" /><strong>Team not found.</strong><span>This team may have been removed or is not available to this operator.</span></div>;
   }
-  return <div className="queue-state error-state" role="alert"><AlertTriangle size={22} aria-hidden="true" /><strong>Conflict queue unavailable.</strong><span>{message || "Try refreshing after the service recovers."}</span></div>;
-}
-
-function formatDue(value: string): string {
-  const diff = new Date(value).getTime() - Date.now();
-  if (!Number.isFinite(diff)) {
-    return "Review time unavailable";
-  }
-  if (diff <= 0) {
-    return "Review due now";
-  }
-  return `Review in ${formatAge(Math.round(diff / 1000))}`;
-}
-
-function formatAge(seconds: number): string {
-  if (!Number.isFinite(seconds) || seconds <= 0) {
-    return "0m";
-  }
-  const days = Math.floor(seconds / 86400);
-  const hours = Math.floor((seconds % 86400) / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  if (days > 0) {
-    return `${days}d ${hours}h`;
-  }
-  if (hours > 0) {
-    return `${hours}h ${minutes}m`;
-  }
-  return `${Math.max(1, minutes)}m`;
+  return <div className="queue-state error-state" role="alert"><AlertTriangle size={22} aria-hidden="true" /><strong>Evidence conflicts unavailable.</strong><span>{message || "Try refreshing after the service recovers."}</span></div>;
 }

@@ -50,11 +50,6 @@ func (p *rememberSynchronousProcessor) prepareRemember(ctx context.Context, inpu
 		}
 		decisionSnapshot = &value
 	}
-	var handleErr error
-	input, snapshot, handleErr = p.resolveRememberHandles(ctx, input, snapshot)
-	if handleErr != nil {
-		return fail(handleErr, "assessment")
-	}
 	duplicateInput := repository.RememberDuplicateCandidateInput{
 		MaxEvidenceItems: snapshot.MaxEvidenceItems,
 		TeamID:           input.TeamID, OwnerProfileID: input.OwnerProfileID,
@@ -93,7 +88,7 @@ func (p *rememberSynchronousProcessor) prepareRemember(ctx context.Context, inpu
 	}
 	assessmentStarted := time.Now()
 	prepared, err := rememberapp.AssessSynchronousRemember(ctx, rememberapp.SynchronousAssessmentDependencies{
-		Catalog: p.catalog, Provider: p.provider, Limits: p.limits, Metrics: p.metrics, Logger: p.logger,
+		Provider: p.provider, Limits: p.limits, Metrics: p.metrics, Logger: p.logger,
 		Decisions: p.decisions, DecisionSnapshot: decisionSnapshot,
 	}, rememberapp.SynchronousAssessmentInput{Scope: scope, Snapshot: snapshot})
 	assessorDiagnostics = rememberapp.SynchronousAssessmentDiagnostics(err)
@@ -111,8 +106,7 @@ func (p *rememberSynchronousProcessor) prepareRemember(ctx context.Context, inpu
 		TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IngestID: ingestID,
 		SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration, IdempotencyKey: input.IdempotencyKey,
 		RequestHash:   input.RequestHash,
-		SourceSummary: input.SourceSummary, Proposal: input.Proposal,
-		Metadata: input.Metadata, Evidence: rememberEvidenceInputsForCommit(input, snapshot), Assessment: prepared,
+		SourceSummary: input.SourceSummary, Metadata: input.Metadata, Evidence: rememberEvidenceInputsForCommit(input, snapshot), Assessment: prepared,
 		Duration: time.Since(started),
 	})
 	commitInput.StartedAt = started
@@ -132,9 +126,6 @@ func (p *rememberSynchronousProcessor) prepareRemember(ctx context.Context, inpu
 	plan, err := p.ledger.PlanRememberEmbeddings(embeddingCtx, commitInput)
 	if err != nil {
 		p.observeRememberPhase(ctx, input, ingestID, "embedding", err, embeddingStarted, nil)
-		if errors.Is(err, repository.ErrSubmissionPredicateRegistrationHeld) && len(commitInput.Commit.PredicateRegistrations) > 0 {
-			err = fmt.Errorf("%w: predicate catalog changed before embedding planning: %w", rememberapp.ErrRememberCommitConflict, err)
-		}
 		return fail(&rememberEmbeddingPlanFailure{cause: err}, "embedding")
 	}
 	plannedEmbeddings, err := p.embedSearchDocumentBatch(
@@ -166,7 +157,7 @@ func (p *rememberSynchronousProcessor) PrepareSession(ctx context.Context, req s
 		InvocationStartedAt: started, TeamID: req.Scope.TeamID, OwnerProfileID: req.Scope.OwnerProfileID,
 		SpaceID: req.Scope.SpaceID, SpaceGeneration: req.Scope.SpaceGeneration,
 		IdempotencyKey: "session:" + req.SubmissionID, RequestHash: req.RequestHash,
-		SourceSummary: "private session user events", Proposal: req.Proposal, Metadata: req.Metadata, Evidence: req.Evidence,
+		SourceSummary: "private session user events", Metadata: req.Metadata, Evidence: req.Evidence,
 	}
 	snapshot, scope := rememberAssessmentSnapshot(input, req.SubmissionID)
 	snapshot.MaxEvidenceItems = session.MaxExcerpts

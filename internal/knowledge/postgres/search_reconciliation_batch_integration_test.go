@@ -26,7 +26,7 @@ func TestSearchReconciliationConfiguredBatchUsesRealAdapterAndDurableCursor(t *t
 	t.Cleanup(cleanup)
 	ctx := context.Background()
 	contractID := insertSearchTestContract(t, adminDB, rls, "reconciliation-batch", 2, "exact", "")
-	ledger := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	ledger := NewStore(appDB, rls)
 	repo := newSearchFixtureStore(appDB, rls)
 	for actor := range 2 {
 		teamID := createLedgerTeam(t, adminDB, rls, fmt.Sprintf("reconciliation-batch-%d", actor))

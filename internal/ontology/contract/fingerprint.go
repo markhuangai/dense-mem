@@ -52,6 +52,24 @@ func RecordFingerprint(record Record, snapshots map[string]SourceSnapshot, catal
 	})
 }
 
+// RecordFingerprintWithAcceptedSources lets migrations rebind retained metadata without refreshing accepted source state.
+func RecordFingerprintWithAcceptedSources(record Record, catalog map[string]Record) (string, error) {
+	fingerprints := make(map[SourceHandle]string, len(record.Sources))
+	for _, source := range record.Sources {
+		if err := ValidateSourceHandle(source.SourceHandle); err != nil || !validFingerprint(source.Fingerprint) {
+			return "", ErrSourceStale
+		}
+		fingerprints[source.SourceHandle] = source.Fingerprint
+	}
+	return recordFingerprint(record, catalog, func(handle SourceHandle) (string, error) {
+		fingerprint, exists := fingerprints[handle]
+		if !exists {
+			return "", ErrSourceStale
+		}
+		return fingerprint, nil
+	})
+}
+
 type RecordFingerprints struct {
 	snapshots    map[SourceHandle]SourceSnapshot
 	catalog      map[string]Record

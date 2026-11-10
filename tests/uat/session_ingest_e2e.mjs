@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
+import { captureSemanticAssessmentWindow, reconstructDiagnosticBody } from "./ontology_assessment_diagnostics.mjs";
+const diagnosticSince = new Date().toISOString();
 
 const userURL = required("DENSE_MEM_USER_URL").replace(/\/$/, "");
 const controlURL = required("DENSE_MEM_CONTROL_URL").replace(/\/$/, "");
@@ -30,15 +32,15 @@ assert.equal(first.processing_state, "completed");
 assert.equal(first.accepted_event_count, 1);
 assert.equal(first.duplicate_event_count, 1);
 assert.equal(first.search_state, "current");
-const ids = relationshipIDs(first);
+const ids = evidenceIDs(first);
 assert.equal(ids.length, 1, JSON.stringify(first));
 const afterFirst = await providerCalls();
 assert(afterFirst > before);
 assert.deepEqual(await call("ingest_session", firstRequest, a.api_key), first);
-assert.equal(await providerCalls(), afterFirst, "replay must not invoke extraction, linking or assessment");
-const trace = await call("trace_memory", { relationship_id: ids[0] }, a.api_key);
-assert(trace.evidence.length > 0);
-for (const evidence of trace.evidence) {
+assert.equal(await providerCalls(), afterFirst, "replay must not invoke extraction or assessment");
+const trace = await call("trace_memory", { evidence_id: ids[0] }, a.api_key);
+assert(trace.evidence?.evidence_id === ids[0]);
+for (const evidence of trace.occurrences) {
   const provenance = evidence.session;
   assert(provenance, "authorized trace must expose server-verified session provenance");
   assert.equal(provenance.framework, firstRequest.framework);
@@ -50,10 +52,9 @@ for (const evidence of trace.evidence) {
   assert.equal(evidence.content, Array.from(firstEvent.text).slice(provenance.span_start, provenance.span_end).join(""));
 }
 for (const actor of [b, c]) {
-  const recall = await call("recall_memory", { query: "Ari Go", limit: 20, relationship_limit: 20, community_limit: 0 }, actor.api_key);
-  assert(!recall.related_relationships.some((item) => ids.includes(item.relationship_id)));
+  const recall = await call("recall_memory", { query: "Ari Go", limit: 20 }, actor.api_key);
   assert(!recall.results.some((item) => first.events[0].evidence_ids.includes(item.evidence_id)));
-  assertFailed(await rpc("trace_memory", { relationship_id: ids[0] }, actor.api_key));
+  assertFailed(await rpc("trace_memory", { evidence_id: ids[0] }, actor.api_key));
 }
 const changed = request([{ event_id: "two", text: "Ari uses Rust." }, { ...firstEvent, text: "Ari uses Java." }], firstRequest.session_id);
 const conflict = assertFailed(await rpc("ingest_session", changed, a.api_key));
@@ -64,15 +65,17 @@ const secondEvent = { event_id: "two", text: "Ari uses Rust." };
 const incremental = await call("ingest_session", request([firstEvent, secondEvent], firstRequest.session_id), a.api_key);
 assert.equal(incremental.accepted_event_count, 1);
 assert.equal(incremental.duplicate_event_count, 1);
-assert.equal(relationshipIDs(incremental).length, 1);
+assert.equal(evidenceIDs(incremental).length, 1);
 const noFacts = await call("ingest_session", request([{ event_id: "empty", text: "Thanks. Let's continue." }]), a.api_key);
 assert.equal(noFacts.processing_state, "completed");
 assert.equal(noFacts.search_state, "not_required");
 assert.deepEqual(noFacts.events[0].evidence_ids, []);
+assert.equal(noFacts.memory_outcome, "no_memory");
+assert.equal(first.contract_version, "dense-mem.v3.0.0");
 const longEvent = { event_id: "long", text: (" ".repeat(506) + "Morgan uses Go.").padEnd(32_000) };
 const long = await call("ingest_session", request([longEvent]), a.api_key);
 assert.equal(long.processing_state, "completed");
-assert.equal(relationshipIDs(long).length, 1);
+assert.equal(evidenceIDs(long).length, 1);
 const malformed = request([{ event_id: "bad", text: "Ari uses Java. [fixture-fault:assessment-malformed]" }]);
 const failed = assertFailed(await rpc("ingest_session", malformed, a.api_key));
 assert.equal(failed.processing_state, "failed");
@@ -119,8 +122,30 @@ assert(diagnostic, "cancelled production request must retain its diagnostic");
 assert.deepEqual(diagnostic.payload.request, cancelledRequest);
 assert.equal(diagnostic.payload.result.errors[0].code, "request_cancelled");
 assert(!JSON.stringify(diagnostic).includes(a.api_key), "diagnostic must protect authentication material");
-const finalRecall = await call("recall_memory", { query: "Taylor Ruby Ari Java Python", limit: 20, relationship_limit: 20, community_limit: 0 }, a.api_key);
-assert(!finalRecall.related_relationships.some((item) => ["Java", "Python", "Ruby"].includes(item.object?.name)));
+const logWindow = captureSemanticAssessmentWindow({ project, composeFile: required("DENSE_MEM_E2E_COMPOSE_FILE"), since: diagnosticSince, directory: (process.env.DENSE_MEM_E2E_REMEMBER_FAILURE_DIR || "/tmp/dense-mem-session-diagnostics")+"/session-v3" });
+assert(!logWindow.includes(a.api_key) && !logWindow.includes(controlToken), "session stdout exposed credentials");
+const envelopes = new Map();
+for (const line of logWindow.split(/\r?\n/).filter(Boolean)) {
+ const row=JSON.parse(line); assert.notEqual(row.level,"TRACE");
+ if (row.msg!=="session_evidence_diagnostics") continue;
+ assert.equal(row.team_id,teamID); assert(row.space_id && row.owner_profile_id && row.space_generation>0);
+ const chunks=envelopes.get(row.submission_id)||[];chunks.push(row);envelopes.set(row.submission_id,chunks);
+}
+const sessions=[...envelopes.values()].map((chunks)=>{chunks.sort((a,b)=>a.payload_chunk.index-b.payload_chunk.index);return reconstructDiagnosticBody(chunks);});
+const cancellation = sessions.find((body)=>body.payload.request.idempotency_key===cancelledRequest.idempotency_key);
+assert(cancellation, "cancellation must be diagnosable from protected stdout alone");
+assert.deepEqual(cancellation.payload.request,cancelledRequest);
+assert.equal(cancellation.payload.result.errors[0].code,"request_cancelled");
+assert(cancellation.payload.exchanges.some((exchange)=>["no_response","interrupted","truncated"].includes(exchange.CaptureState)), "session cancellation must expose incomplete provider capture");
+for (const exchange of cancellation.payload.exchanges) {
+ assert(exchange.StartedAt && exchange.CompletedAt && exchange.Model && exchange.Component);
+ if (exchange.RequestBody) assert(Buffer.from(exchange.RequestBody,"base64").byteLength<=16*1024*1024);
+ if (exchange.ResponseBody) assert(Buffer.from(exchange.ResponseBody,"base64").byteLength<=16*1024*1024);
+}
+assert(sessions.some((body)=>body.payload.result.errors?.some((error)=>error.code==="provider_response_invalid")), "malformed extraction must retain its terminal diagnostic");
+
+const finalRecall = await call("recall_memory", { query: "Taylor Ruby Ari Java Python", limit: 20 }, a.api_key);
+assert(!finalRecall.results.some((item) => /(?:Taylor uses Ruby|Ari uses Java|Ari uses Python|Casey uses Ruby)/.test(item.context)));
 await control(`/teams/${teamID}/credentials/${readOnly.credential.id}`, undefined, "DELETE");
 const response = await fetch(`${userURL}/mcp`, { method: "POST", headers: { Authorization: `Bearer ${readOnly.api_key}`, "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: "revoked", method: "tools/list" }) });
 assert.equal(response.status, 401);
@@ -128,7 +153,7 @@ console.log(JSON.stringify({ status: "ok", scenario: "session_ingest", exact_pro
 
 function required(name) { assert(process.env[name], `${name} is required`); return process.env[name]; }
 function request(events, sessionID = randomUUID()) { return { idempotency_key: randomUUID(), framework: "generic", app_name: "session-e2e", user_id: "external-user", session_id: sessionID, events }; }
-function relationshipIDs(result) { return [...new Set(result.relationship_results.flatMap((item) => (item.splits || []).map((split) => split.relationship_id).filter(Boolean)))]; }
+function evidenceIDs(result) { return [...new Set(result.events.flatMap((event) => event.evidence_ids))]; }
 async function control(path, body, method = body ? "POST" : "GET") {
  const response = await fetch(`${controlURL}/control/api${path}`, { method, headers: { Authorization: `Bearer ${controlToken}`, "Content-Type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) });
  assert(response.ok, `control ${path}: ${response.status} ${(await response.clone().text()).slice(0, 500)}`); return response.json();

@@ -28,7 +28,7 @@ if (listed.error || !listed.result?.tools?.some((tool) => tool.name === "remembe
 }
 const failedTrace = await rpc("tools/call", {
   name: "trace_memory",
-  arguments: { relationship_id: randomUUID() },
+  arguments: { evidence_id: randomUUID() },
 }, { "MCP-Protocol-Version": "2025-11-25" });
 if (failedTrace.error || failedTrace.result?.isError !== true || !failedTrace.result?.structuredContent) {
   throw new Error("live SDK trace failure did not return structured actionable data");

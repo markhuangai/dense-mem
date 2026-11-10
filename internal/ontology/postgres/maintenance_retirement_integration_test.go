@@ -33,7 +33,7 @@ type legacyMaintenance struct {
 
 func legacyMaintenanceFixture(t *testing.T) legacyMaintenance {
 	t.Helper()
-	f := newOrganizationFixture(t)
+	f := newHistoricalOntologyFixture(t)
 	provider := ontologyMigrationProvider(t, f.admin)
 	_, err := provider.ApplyVersion(context.Background(), budgetRetirementVersion, false)
 	require.NoError(t, err)
@@ -178,7 +178,7 @@ func TestOntologyMaintenanceBudgetRetirementRejectsUnfinishedWork(t *testing.T) 
 }
 
 func TestOntologyMaintenanceBudgetRetirementExpiredWindowActivatesImmediately(t *testing.T) {
-	f := newOrganizationFixture(t)
+	f := newHistoricalOntologyFixture(t)
 	ctx := context.Background()
 	migrator := ontologyMigrationProvider(t, f.admin)
 	_, err := migrator.ApplyVersion(ctx, budgetRetirementVersion, false)

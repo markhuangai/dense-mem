@@ -28,7 +28,7 @@ func TestSubmissionAssessmentDuplicateResolutionsKeepServerFences(t *testing.T) 
 	}
 	response := assessor.SemanticAssessmentResponse{
 		EvidenceEquivalenceResults: []assessor.SemanticAssessmentEvidenceEquivalenceResult{{
-			EvidenceID: "evidence:1", Action: "reuse", CandidateEvidenceID: stringPointer(semanticID),
+			EvidenceID: "evidence:1", Action: "reuse", CandidateEvidenceID: new(semanticID),
 		}},
 	}
 
@@ -41,7 +41,7 @@ func TestSubmissionAssessmentDuplicateResolutionsKeepServerFences(t *testing.T) 
 	require.False(t, resolutions[1].Exact)
 	require.Equal(t, "new", resolutions[2].Disposition)
 
-	response.EvidenceEquivalenceResults[0].CandidateEvidenceID = stringPointer(uuid.NewString())
+	response.EvidenceEquivalenceResults[0].CandidateEvidenceID = new(uuid.NewString())
 	_, err = submissionAssessmentDuplicateResolutions(plan, response)
 	require.ErrorContains(t, err, "unknown candidate")
 }

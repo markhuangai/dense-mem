@@ -51,11 +51,11 @@ func TestOntologySemanticPublicationLogOnlyDiagnostics(t *testing.T) {
 					run()
 				})
 			}
-			record := func(key, base, parent string, relation contract.ParentRelation) contract.Record {
-				return contract.Record{ID: uuid.NewString(), Kind: contract.EntityClass, Definition: &contract.Definition{Key: key, Label: key, Description: "token password secret are admitted fields " + secret + "/" + auth, BaseEntityKind: base, ParentID: parent, ParentRelation: relation}}
+			record := func(key, parent string) contract.Record {
+				return contract.Record{ID: uuid.NewString(), Kind: contract.Topic, Definition: &contract.Definition{Key: key, Label: key, Description: "token password secret are admitted fields " + secret + "/" + auth, ParentID: parent}}
 			}
-			parent := record("parent", "person", "", "")
-			child := record("child", "person", parent.ID, contract.SubclassOf)
+			parent := record("parent", "")
+			child := record("child", parent.ID)
 			publish := func(revision int64, changes ...contract.Change) (contract.PublicationResult, error) {
 				return store.PublishManager(ctx, team.String(), contract.Publication{OperationKey: uuid.NewString(), ExpectedRevision: revision, Reason: "Semantic diagnostic acceptance", Changes: changes})
 			}
@@ -74,18 +74,13 @@ func TestOntologySemanticPublicationLogOnlyDiagnostics(t *testing.T) {
 				{"cycle", "hierarchy_cycle", 1, contract.Change{ExpectedVersion: 1, Record: func() contract.Record {
 					value := parent
 					definition := *parent.Definition
-					definition.ParentID, definition.ParentRelation = child.ID, contract.SubclassOf
+					definition.ParentID = child.ID
 					value.Definition = &definition
 					return value
 				}()}},
-				{"incompatible_class", "class_parent_kind", 1, contract.Change{Record: record("wrong-base", "project", parent.ID, contract.SubclassOf)}},
-				{"stale_catalog", "catalog_revision", 0, contract.Change{Record: record("stale", "person", parent.ID, contract.SubclassOf)}},
+				{"stale_catalog", "catalog_revision", 0, contract.Change{Record: record("stale", parent.ID)}},
 				{"stale_record", "record_version", 1, contract.Change{ExpectedVersion: 0, Record: child}},
-				{"unknown_relation", "parent_relation", 1, contract.Change{Record: record("unknown-relation", "person", parent.ID, "unknown")}},
-				{"wrong_relation_kind", "parent_relation_kind", 1, contract.Change{Record: record("wrong-relation-kind", "person", parent.ID, contract.SubpropertyOf)}},
-				{"missing_parent", "parent_required", 1, contract.Change{Record: record("missing-parent", "person", "", contract.SubclassOf)}},
-				{"unavailable_parent", "parent_unavailable", 1, contract.Change{Record: record("unavailable-parent", "person", uuid.NewString(), contract.SubclassOf)}},
-				{"wrong_parent_kind", "parent_kind", 1, contract.Change{Record: contract.Record{ID: uuid.NewString(), Kind: contract.PredicateConcept, Definition: &contract.Definition{Key: "wrong-parent-kind", Label: "Wrong parent kind", ParentID: parent.ID, ParentRelation: contract.SubpropertyOf}}}},
+				{"unavailable_parent", "parent_unavailable", 1, contract.Change{Record: record("unavailable-parent", uuid.NewString())}},
 			} {
 				t.Run(test.name, func(t *testing.T) {
 					console, records := capture(func() { _, err := publish(test.expected, test.change); require.Error(t, err) })
@@ -122,7 +117,7 @@ func TestOntologySemanticPublicationLogOnlyDiagnostics(t *testing.T) {
 				})
 			}
 			service := application.NewManagementService(store, auditapp.New(auditpg.NewStore(app, rls)))
-			draft, err := service.SaveDraft(ctx, "", contract.SaveDraftInput{OperationKey: uuid.NewString(), ExpectedRevision: 1, Reason: "Audit failure acceptance", Edits: []contract.ManagementEdit{{Action: "define", Kind: contract.EntityClass, Definition: record("audit-child", "person", parent.ID, contract.SubclassOf).Definition}}})
+			draft, err := service.SaveDraft(ctx, "", contract.SaveDraftInput{OperationKey: uuid.NewString(), ExpectedRevision: 1, Reason: "Audit failure acceptance", Edits: []contract.ManagementEdit{{Action: "define", Kind: contract.Topic, Definition: record("audit-child", parent.ID).Definition}}})
 			require.NoError(t, err)
 			require.NoError(t, admin.Exec(`CREATE FUNCTION reject_semantic_publication_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.operation='ONTOLOGY_PUBLISH' THEN RAISE EXCEPTION 'fixture semantic audit rejection'; END IF; RETURN NEW; END $$;
 				CREATE TRIGGER reject_semantic_publication_audit BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION reject_semantic_publication_audit()`).Error)
@@ -148,7 +143,7 @@ func TestOntologySemanticPublicationLogOnlyDiagnostics(t *testing.T) {
 				require.NoError(t, admin.Exec(`DROP TRIGGER IF EXISTS reject_semantic_publication_commit ON ontology_publications; DROP FUNCTION IF EXISTS reject_semantic_publication_commit()`).Error)
 			})
 			console, _ = capture(func() {
-				_, err := publish(1, contract.Change{Record: record("commit-child", "person", parent.ID, contract.SubclassOf)})
+				_, err := publish(1, contract.Change{Record: record("commit-child", parent.ID)})
 				require.ErrorContains(t, err, "fixture semantic commit rejection")
 			})
 			require.NoError(t, admin.Exec(`DROP TRIGGER reject_semantic_publication_commit ON ontology_publications; DROP FUNCTION reject_semantic_publication_commit()`).Error)
@@ -184,11 +179,7 @@ func TestOntologySemanticPublicationLogOnlyDiagnostics(t *testing.T) {
 			depthParent, depthRevision := "", int64(2)
 			var changes []contract.Change
 			for depth := 0; depth <= contract.MaxParentDepth; depth++ {
-				relation := contract.SubclassOf
-				if depthParent == "" {
-					relation = ""
-				}
-				value := record(fmt.Sprintf("depth-%d", depth), "person", depthParent, relation)
+				value := record(fmt.Sprintf("depth-%d", depth), depthParent)
 				depthParent = value.ID
 				changes = append(changes, contract.Change{Record: value})
 				if len(changes) == 16 || depth == contract.MaxParentDepth {
@@ -201,7 +192,7 @@ func TestOntologySemanticPublicationLogOnlyDiagnostics(t *testing.T) {
 				}
 			}
 			console, records = capture(func() {
-				_, err := publish(depthRevision, contract.Change{Record: record("depth-rejected", "person", depthParent, contract.SubclassOf)})
+				_, err := publish(depthRevision, contract.Change{Record: record("depth-rejected", depthParent)})
 				require.ErrorIs(t, err, contract.ErrInvalid)
 			})
 			require.Contains(t, console, "hierarchy_depth")
@@ -217,7 +208,7 @@ func TestOntologySemanticPublicationLogOnlyDiagnostics(t *testing.T) {
 					})
 				}
 				input := contract.SaveDraftInput{OperationKey: uuid.NewString(), ExpectedRevision: depthRevision, Reason: "Exact admitted manager reason " + secret,
-					Edits: []contract.ManagementEdit{{Action: "define", Kind: contract.EntityClass, Definition: record("manager-child", "person", parent.ID, contract.SubclassOf).Definition}}}
+					Edits: []contract.ManagementEdit{{Action: "define", Kind: contract.Topic, Definition: record("manager-child", parent.ID).Definition}}}
 				var saved contract.ManagementDraft
 				console, records := observe(func() {
 					var err error

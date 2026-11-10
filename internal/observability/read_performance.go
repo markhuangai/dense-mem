@@ -9,12 +9,12 @@ import (
 type ReadOperation string
 
 const (
-	ReadOperationEvidenceRecall     ReadOperation = "evidence_recall"
-	ReadOperationRelationshipRecall ReadOperation = "relationship_recall"
-	ReadOperationSearchContract     ReadOperation = "search_contract"
-	ReadOperationSearchReadiness    ReadOperation = "search_readiness"
-	ReadOperationFullTextSearch     ReadOperation = "full_text_search"
-	ReadOperationVectorSearch       ReadOperation = "vector_search"
+	ReadOperationEvidenceRecall ReadOperation = "evidence_recall"
+
+	ReadOperationSearchContract  ReadOperation = "search_contract"
+	ReadOperationSearchReadiness ReadOperation = "search_readiness"
+	ReadOperationFullTextSearch  ReadOperation = "full_text_search"
+	ReadOperationVectorSearch    ReadOperation = "vector_search"
 )
 
 type ReadStage string
@@ -158,7 +158,7 @@ func readOutcome(err error) ReadOutcome {
 
 func validReadOperation(operation ReadOperation) bool {
 	switch operation {
-	case ReadOperationEvidenceRecall, ReadOperationRelationshipRecall,
+	case ReadOperationEvidenceRecall,
 		ReadOperationSearchContract, ReadOperationSearchReadiness,
 		ReadOperationFullTextSearch, ReadOperationVectorSearch:
 		return true

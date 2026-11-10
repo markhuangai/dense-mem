@@ -2,21 +2,18 @@ package postgres
 
 import "github.com/markhuangai/dense-mem/internal/domain"
 
-func rememberPublicResult(input SynchronousRememberCommitInput, evidence []EvidenceFragment, semantic *submissionSemanticCommitState, appliedSplits []submissionRelationshipAppliedSplit) map[string]any {
+func rememberPublicResult(input SynchronousRememberCommitInput, evidence []EvidenceFragment, semantic *submissionSemanticCommitState) map[string]any {
 	result := map[string]any{
 		"space_kind":       input.Metadata["target_space"],
 		"contract_version": domain.ContractVersion, "submission_id": input.IngestID,
 		"submission_kind": "remember", "processing_state": "completed",
 		"search_state": "not_required", "correlation_id": rememberCorrelationID(input.Metadata),
-		"evidence": []map[string]any{}, "relationship_results": []map[string]any{},
-		"errors": []map[string]any{},
+		"evidence": []map[string]any{},
+		"errors":   []map[string]any{},
 	}
 	warnings := make([]string, 0, 2)
 	if input.CandidateContextOmittedCandidates > 0 {
 		warnings = append(warnings, "optional duplicate candidates were omitted to fit the configured assessor budget")
-	}
-	if input.CandidateContextOmittedPredicateOptions > 0 {
-		warnings = append(warnings, "optional predicate suggestions were omitted to fit the configured assessor budget")
 	}
 	if len(warnings) > 0 {
 		result["warnings"] = warnings
@@ -34,35 +31,6 @@ func rememberPublicResult(input SynchronousRememberCommitInput, evidence []Evide
 		})
 	}
 	result["evidence"] = evidenceResults
-	relationshipResults := make([]map[string]any, 0, len(input.Commit.RelationshipResults))
-	byRef := make(map[string][]SubmissionRelationshipSplitInput)
-	for _, applied := range appliedSplits {
-		if applied.RelationshipRef == "" || applied.Result.Relationship == nil {
-			continue
-		}
-		byRef[applied.RelationshipRef] = append(byRef[applied.RelationshipRef], SubmissionRelationshipSplitInput{
-			SplitIndex: applied.SplitIndex, RelationshipID: applied.Result.Relationship.RelationshipID,
-			RelationshipVersion: applied.Result.Relationship.Version, Status: applied.Result.Relationship.Status,
-		})
-	}
-	for _, item := range input.Commit.RelationshipResults {
-		entry := map[string]any{"ref": item.RelationshipRef, "disposition": item.Disposition, "splits": []map[string]any{}}
-		if item.Reason != "" {
-			entry["reason"] = item.Reason
-		}
-		if item.Message != "" {
-			entry["message"] = item.Message
-		}
-		if item.Remediation != "" {
-			entry["remediation"] = item.Remediation
-		}
-		if splits := byRef[item.RelationshipRef]; len(splits) > 0 {
-			entry["disposition"] = "stored"
-			entry["splits"] = splits
-		}
-		relationshipResults = append(relationshipResults, entry)
-	}
-	result["relationship_results"] = relationshipResults
 	return result
 }
 

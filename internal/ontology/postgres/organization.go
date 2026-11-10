@@ -190,7 +190,7 @@ func (s *Store) organizationVocabulary(tx *gorm.DB, fence scope, sources []ontol
    FROM ontology_record_heads AS head
    JOIN ontology_record_revisions AS revision USING(team_id,shared_space_id,space_generation,record_id,version)
    WHERE head.team_id=?::uuid AND head.shared_space_id=?::uuid AND head.space_generation=?
-    AND NOT head.retired AND head.kind IN ('entity_class','predicate_concept','topic')
+    AND NOT head.retired AND head.kind IN ('topic')
     AND (head.record_id=ANY(?::uuid[]) OR head.names && ?::text[]
      OR `+vocabularyVectorSQL+`
        @@ websearch_to_tsquery('simple',?)))
@@ -469,7 +469,7 @@ func (s *Store) CommitOrganization(ctx context.Context, teamID string, receipt o
 				if err != nil {
 					return err
 				}
-				publication, err := s.commitPublication(tx, fence, input, "automatic", "", receipt.InputHash, "", receipt.ID)
+				publication, err := s.commitPublication(tx, fence, input, "automatic", "", receipt.InputHash, receipt.ID)
 				if err != nil {
 					return err
 				}

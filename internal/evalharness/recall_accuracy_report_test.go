@@ -84,7 +84,7 @@ func TestRecallAccuracyReportRejectsMismatchedAggregateAndCaseAccounting(t *test
 	dir, err := latestPairStage(c, "candidate", "score")
 	require.NoError(t, err)
 	dir = filepath.Join(dir, "native")
-	seed, _, cases, _, _, suite, _, err := loadRunInputs(c.SeedManifest, c.Suite)
+	seed, _, cases, _, suite, _, err := loadRunInputs(c.SeedManifest, c.Suite)
 	require.NoError(t, err)
 	var summary Summary
 	require.NoError(t, readJSONFile(filepath.Join(dir, "summary.json"), &summary))

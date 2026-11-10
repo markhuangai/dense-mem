@@ -52,14 +52,8 @@ func TestHTTPClientEvaluationFlow(t *testing.T) {
 			if input["idempotency_key"] != "eval:doc-alpha" {
 				t.Fatalf("remember idempotency_key = %#v", input["idempotency_key"])
 			}
-			relationships, ok := input["relationships"].([]any)
-			if !ok || len(relationships) != 1 {
-				t.Fatalf("remember relationships = %#v", input["relationships"])
-			}
-			relationship := relationships[0].(map[string]any)
-			predicate := relationship["predicate"].(map[string]any)
-			if relationship["ref"] != "relationship_1" || predicate["proposed_key"] != "uses" {
-				t.Fatalf("remember relationship = %#v", relationship)
+			if _, exists := input["relationships"]; exists {
+				t.Fatal("retired graph input was sent")
 			}
 			rememberCalls++
 			evidence := input["evidence"].([]any)
@@ -71,15 +65,14 @@ func TestHTTPClientEvaluationFlow(t *testing.T) {
 				t.Fatalf("remember input = %#v", input)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"contract_version":     "dense-mem.v2.6.2",
-				"submission_id":        "submission-alpha",
-				"submission_kind":      "remember",
-				"processing_state":     "completed",
-				"search_state":         "current",
-				"correlation_id":       "correlation-alpha",
-				"evidence":             []map[string]any{{"evidence_id": "fragment-alpha", "search_state": "current"}},
-				"relationship_results": []map[string]any{},
-				"errors":               []map[string]any{},
+				"contract_version": "dense-mem.v3.0.0",
+				"submission_id":    "submission-alpha",
+				"submission_kind":  "remember",
+				"processing_state": "completed",
+				"search_state":     "current",
+				"correlation_id":   "correlation-alpha",
+				"evidence":         []map[string]any{{"evidence_id": "fragment-alpha", "search_state": "current"}},
+				"errors":           []map[string]any{},
 			})
 		case "tool:eval_list_knowledge_refs":
 			var input map[string]any
@@ -112,7 +105,7 @@ func TestHTTPClientEvaluationFlow(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 				t.Fatalf("decode recall body: %v", err)
 			}
-			if input["case_id"] != "case-alpha" || input["limit"] != float64(3) || input["valid_at"] != "2026-06-25T00:00:00Z" || input["use_communities"] != true {
+			if input["case_id"] != "case-alpha" || input["limit"] != float64(3) || input["valid_at"] != "2026-06-25T00:00:00Z" {
 				t.Fatalf("recall input = %#v", input)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -148,12 +141,12 @@ func TestHTTPClientEvaluationFlow(t *testing.T) {
 	}
 
 	mapping, err := client.ImportCorpus(context.Background(), []CorpusItem{{
-		SourceDocID:   "doc-alpha",
-		Title:         "Alpha",
-		Content:       "Alpha uses Beta.",
-		SourceDataset: "fixture",
-		Metadata:      map[string]any{"topic": "letters"},
-		Relationships: flatRelationships,
+		SourceDocID:           "doc-alpha",
+		Title:                 "Alpha",
+		Content:               "Alpha uses Beta.",
+		SourceDataset:         "fixture",
+		Metadata:              map[string]any{"topic": "letters"},
+		RetainedRelationships: flatRelationships,
 	}})
 	if err != nil {
 		t.Fatalf("ImportCorpus: %v", err)
@@ -171,11 +164,10 @@ func TestHTTPClientEvaluationFlow(t *testing.T) {
 	}
 
 	trace, err := client.RunRecallCase(context.Background(), Case{
-		CaseID:         "case-alpha",
-		Query:          "alpha query",
-		Limit:          3,
-		ValidAt:        "2026-06-25T00:00:00Z",
-		UseCommunities: true,
+		CaseID:  "case-alpha",
+		Query:   "alpha query",
+		Limit:   3,
+		ValidAt: "2026-06-25T00:00:00Z",
 	})
 	if err != nil {
 		t.Fatalf("RunRecallCase: %v", err)
@@ -482,11 +474,11 @@ func TestHTTPClientImportCorpusMapsSubmissionEvidenceID(t *testing.T) {
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"contract_version": "dense-mem.v2.6.2", "submission_id": "submission-canonical",
+			"contract_version": "dense-mem.v3.0.0", "submission_id": "submission-canonical",
 			"submission_kind": "remember", "processing_state": "completed", "search_state": "current",
-			"correlation_id":       "correlation-canonical",
-			"evidence":             []map[string]any{{"disposition": "stored", "evidence_id": "evidence-canonical", "evidence_index": 0, "superseded_evidence_ids": []string{}, "search_state": "current"}},
-			"relationship_results": []map[string]any{}, "errors": []map[string]any{},
+			"correlation_id": "correlation-canonical",
+			"evidence":       []map[string]any{{"disposition": "stored", "evidence_id": "evidence-canonical", "evidence_index": 0, "superseded_evidence_ids": []string{}, "search_state": "current"}},
+			"errors":         []map[string]any{},
 		})
 	}))
 	defer server.Close()
@@ -511,10 +503,9 @@ func TestHTTPClientImportCorpusReportsSubmissionErrorCause(t *testing.T) {
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"contract_version": "dense-mem.v2.6.2", "submission_id": "submission-failed",
+			"contract_version": "dense-mem.v3.0.0", "submission_id": "submission-failed",
 			"submission_kind": "remember", "processing_state": "failed", "search_state": "not_required",
-			"correlation_id": "correlation-failed", "evidence": []map[string]any{}, "relationship_results": []map[string]any{},
-			"errors": []map[string]any{{"code": "provider_unavailable", "message": "verifier unavailable", "retryable": true, "next_action": "retry_same_request", "remediation": "retry"}},
+			"correlation_id": "correlation-failed", "evidence": []map[string]any{}, "errors": []map[string]any{{"code": "provider_unavailable", "message": "verifier unavailable", "retryable": true, "next_action": "retry_same_request", "remediation": "retry"}},
 		})
 	}))
 	defer server.Close()
@@ -532,11 +523,11 @@ func TestHTTPClientImportCorpusAllowsCompletedSubmission(t *testing.T) {
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"contract_version": "dense-mem.v2.6.2", "submission_id": "submission-review",
+			"contract_version": "dense-mem.v3.0.0", "submission_id": "submission-review",
 			"submission_kind": "remember", "processing_state": "completed", "search_state": "current",
-			"correlation_id":       "correlation-review",
-			"evidence":             []map[string]any{{"disposition": "stored", "evidence_id": "evidence-review", "evidence_index": 0, "superseded_evidence_ids": []string{}, "search_state": "current"}},
-			"relationship_results": []map[string]any{}, "errors": []map[string]any{},
+			"correlation_id": "correlation-review",
+			"evidence":       []map[string]any{{"disposition": "stored", "evidence_id": "evidence-review", "evidence_index": 0, "superseded_evidence_ids": []string{}, "search_state": "current"}},
+			"errors":         []map[string]any{},
 		})
 	}))
 	defer server.Close()
@@ -561,10 +552,9 @@ func TestHTTPClientImportCorpusReportsSubmissionFailureCause(t *testing.T) {
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"contract_version": "dense-mem.v2.6.2", "submission_id": "submission-canonical-failed",
+			"contract_version": "dense-mem.v3.0.0", "submission_id": "submission-canonical-failed",
 			"submission_kind": "remember", "processing_state": "failed", "search_state": "not_required",
-			"correlation_id": "correlation-canonical-failed", "evidence": []map[string]any{}, "relationship_results": []map[string]any{},
-			"errors": []map[string]any{{"code": "provider_unavailable", "message": "verifier unavailable", "retryable": true, "next_action": "retry_same_request", "remediation": "retry"}},
+			"correlation_id": "correlation-canonical-failed", "evidence": []map[string]any{}, "errors": []map[string]any{{"code": "provider_unavailable", "message": "verifier unavailable", "retryable": true, "next_action": "retry_same_request", "remediation": "retry"}},
 		})
 	}))
 	defer server.Close()
@@ -599,11 +589,11 @@ func TestHTTPClientImportCorpusWithConcurrency(t *testing.T) {
 		}
 		sourceDocID := strings.TrimPrefix(input["idempotency_key"].(string), "eval:")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"contract_version": "dense-mem.v2.6.2", "submission_id": "submission-" + sourceDocID,
+			"contract_version": "dense-mem.v3.0.0", "submission_id": "submission-" + sourceDocID,
 			"submission_kind": "remember", "processing_state": "completed", "search_state": "current",
-			"correlation_id":       "correlation-" + sourceDocID,
-			"evidence":             []map[string]any{{"disposition": "stored", "evidence_id": "fragment-" + sourceDocID, "evidence_index": 0, "superseded_evidence_ids": []string{}, "search_state": "current"}},
-			"relationship_results": []map[string]any{}, "errors": []map[string]any{},
+			"correlation_id": "correlation-" + sourceDocID,
+			"evidence":       []map[string]any{{"disposition": "stored", "evidence_id": "fragment-" + sourceDocID, "evidence_index": 0, "superseded_evidence_ids": []string{}, "search_state": "current"}},
+			"errors":         []map[string]any{},
 		})
 	}))
 	defer server.Close()
@@ -664,11 +654,11 @@ func TestHTTPClientConcurrentFileImportDrainsActiveRequestsAfterError(t *testing
 		case <-time.After(40 * time.Millisecond):
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"contract_version": "dense-mem.v2.6.2", "submission_id": "submission-doc-2",
+			"contract_version": "dense-mem.v3.0.0", "submission_id": "submission-doc-2",
 			"submission_kind": "remember", "processing_state": "completed", "search_state": "current",
-			"correlation_id":       "correlation-doc-2",
-			"evidence":             []map[string]any{{"disposition": "stored", "evidence_id": "fragment-doc-2", "evidence_index": 0, "superseded_evidence_ids": []string{}, "search_state": "current"}},
-			"relationship_results": []map[string]any{}, "errors": []map[string]any{},
+			"correlation_id": "correlation-doc-2",
+			"evidence":       []map[string]any{{"disposition": "stored", "evidence_id": "fragment-doc-2", "evidence_index": 0, "superseded_evidence_ids": []string{}, "search_state": "current"}},
+			"errors":         []map[string]any{},
 		})
 		close(docTwoCompleted)
 	}))

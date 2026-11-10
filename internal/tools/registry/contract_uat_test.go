@@ -5,12 +5,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 
 	recallapp "github.com/markhuangai/dense-mem/internal/recall"
+	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 )
 
@@ -20,7 +20,6 @@ func TestBuildActiveWiresExecutableRemember(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildActive: %v", err)
 	}
-	correctionTargetID := uuid.NewString()
 	remember, ok := reg.Get(ToolRemember)
 	if !ok {
 		t.Fatal("BuildActive did not register remember")
@@ -28,13 +27,8 @@ func TestBuildActiveWiresExecutableRemember(t *testing.T) {
 	if remember.Invoke == nil {
 		t.Fatal("BuildActive remember invoker is nil")
 	}
-	input := validFlatRelationshipSubmission()
+	input := validEvidenceOnlySubmission()
 	input["idempotency_key"] = "eval:doc-alpha"
-	relationship(input)["ref"] = "rel:uses"
-	relationship(input)["correction_target"] = map[string]any{
-		"relationship_id":  correctionTargetID,
-		"expected_version": 2,
-	}
 	out, err := remember.Invoke(contractInvokeContext("read", "write"), "ignored-profile", input)
 	if err != nil {
 		t.Fatalf("remember.Invoke: %v", err)
@@ -57,24 +51,7 @@ func TestBuildActiveWiresExecutableRemember(t *testing.T) {
 	if stub.req.Evidence[0].Content != "Dense-Mem uses PostgreSQL." {
 		t.Fatalf("evidence content = %q", stub.req.Evidence[0].Content)
 	}
-	if len(stub.req.EntityHints) != 0 {
-		t.Fatalf("entity hints = %#v", stub.req.EntityHints)
-	}
-	if len(stub.req.RelationshipHints) != 1 || stub.req.RelationshipHints[0]["ref"] != "rel:uses" {
-		t.Fatalf("relationship hints = %#v", stub.req.RelationshipHints)
-	}
-	predicate, ok := stub.req.RelationshipHints[0]["predicate"].(map[string]any)
-	if !ok || predicate["proposed_key"] != "uses" {
-		t.Fatalf("predicate hint = %#v", stub.req.RelationshipHints[0]["predicate"])
-	}
-	target, ok := stub.req.RelationshipHints[0]["correction_target"].(map[string]any)
-	if !ok {
-		t.Fatalf("correction target hint = %#v", stub.req.RelationshipHints[0]["correction_target"])
-	}
-	version, versionOK := schemaNumber(target["expected_version"])
-	if target["relationship_id"] != correctionTargetID || !versionOK || int(version) != 2 {
-		t.Fatalf("correction target hint = %#v", stub.req.RelationshipHints[0]["correction_target"])
-	}
+
 }
 
 func TestBuildActiveRememberCapturesCallerEnvelope(t *testing.T) {
@@ -92,7 +69,7 @@ func TestBuildActiveRememberCapturesCallerEnvelope(t *testing.T) {
 	require.NoError(t, err)
 	remember, ok := reg.Get(ToolRemember)
 	require.True(t, ok)
-	input := validFlatRelationshipSubmission()
+	input := validEvidenceOnlySubmission()
 	input["idempotency_key"] = "diagnostic-capture"
 	_, err = remember.Invoke(contractInvokeContext("read", "write"), "ignored-profile", input)
 	require.NoError(t, err)
@@ -131,7 +108,7 @@ func TestBuildActiveRememberReturnsTypedDynamicValidation(t *testing.T) {
 	require.NoError(t, err)
 	remember, ok := reg.Get(ToolRemember)
 	require.True(t, ok)
-	_, err = remember.Invoke(contractInvokeContext("read", "write"), "ignored-profile", validFlatRelationshipSubmission())
+	_, err = remember.Invoke(contractInvokeContext("read", "write"), "ignored-profile", validEvidenceOnlySubmission())
 	result, ok := ContractValidationResultFromError(err)
 	require.True(t, ok)
 	require.Equal(t, []ContractValidationIssue{{
@@ -145,7 +122,7 @@ func TestBuildActiveRememberAllowsTeamReadOnlyPrivateSubmission(t *testing.T) {
 	require.NoError(t, err)
 	tool, ok := reg.Get(ToolRemember)
 	require.True(t, ok)
-	input := validFlatRelationshipSubmission()
+	input := validEvidenceOnlySubmission()
 	input["target_space"] = "private"
 	_, err = tool.Invoke(contractInvokeContext("read"), "ignored-profile", input)
 	require.NoError(t, err)
@@ -199,11 +176,11 @@ func TestBuildActiveWiresExecutableRecallMemory(t *testing.T) {
 	if _, ok := out["related_hypotheses"]; ok {
 		t.Fatal("recall exposed retired hypotheses")
 	}
-	if _, ok := out["related_relationships"].([]recallapp.RelatedRelationshipSummary); !ok {
-		t.Fatalf("related_relationships = %#v, want typed empty array", out["related_relationships"])
+	if _, ok := out["related_topics"].([]recallcontract.RelatedTopic); !ok {
+		t.Fatalf("related_topics = %#v", out["related_topics"])
 	}
-	if _, ok := out["related_communities"].([]recallapp.RecallDiscoveryPath); !ok {
-		t.Fatalf("related_communities = %#v, want typed empty array", out["related_communities"])
+	if _, ok := out["topics_truncated"].(bool); !ok {
+		t.Fatalf("topics_truncated = %#v", out["topics_truncated"])
 	}
 	if _, ok := out["conflicts"].([]recallapp.RecallConflictSummary); !ok {
 		t.Fatalf("conflicts = %#v, want typed empty array", out["conflicts"])
@@ -252,72 +229,26 @@ func TestBuildActiveRecallRejectsMissingReadScope(t *testing.T) {
 	}
 }
 
-func TestBuildActiveWiresExecutableTraceMemory(t *testing.T) {
+func TestEvidenceOnlyCatalogWiresExecutableTraceMemory(t *testing.T) {
 	stub := &stubTraceContext{}
 	reg, err := BuildActive(Dependencies{TraceBindings: TraceBindings{Service: stub}})
-	if err != nil {
-		t.Fatalf("BuildActive: %v", err)
-	}
-	trace, ok := reg.Get(ToolTraceMemory)
-	if !ok {
-		t.Fatal("BuildActive did not register trace_memory")
-	}
-	if trace.Invoke == nil {
-		t.Fatal("BuildActive trace_memory invoker is nil")
-	}
-	out, err := trace.Invoke(contractInvokeContext("read"), "ignored-profile", map[string]any{
-		"relationship_id":          "relationship-canonical",
-		"include_evidence_content": false,
-		"include_verification":     true,
-		"include_transitions":      false,
-		"max_depth":                2,
-		"max_edges":                12,
-		"predicate_keys":           []any{"works_on"},
-		"topic":                    "PostgreSQL memory",
-		"min_relevance":            0.7,
-	})
-	if err != nil {
-		t.Fatalf("trace_memory.Invoke: %v", err)
-	}
-	relationship, ok := out["relationship"].(map[string]any)
-	if !ok || relationship["relationship_id"] != "relationship-canonical" {
-		t.Fatalf("relationship = %#v", out["relationship"])
-	}
-	if _, ok := out["legacy_semantic"]; ok {
-		t.Fatalf("trace_memory should unwrap payload, got %#v", out)
-	}
-	if err := ValidateInput(Tool{InputSchema: trace.OutputSchema}, out); err != nil {
-		t.Fatalf("trace output contract validation failed: %v; output = %#v", err, out)
-	}
-	for _, forbidden := range []string{"search_documents", "embedding_jobs", "placement_item_id", "truncated"} {
-		if _, ok := out[forbidden]; ok {
-			t.Fatalf("trace_memory exposed internal field %s in public output: %#v", forbidden, out)
-		}
-	}
-	for _, forbidden := range []string{"team_id", "semantic_group_key", "status"} {
-		if _, ok := relationship[forbidden]; ok {
-			t.Fatalf("trace_memory relationship exposed internal field %s: %#v", forbidden, relationship)
-		}
-	}
-	if relationship["relationship_status"] != string(domain.RelationshipStatusActive) {
-		t.Fatalf("relationship_status = %#v, want active", relationship["relationship_status"])
-	}
-	supports, ok := out["evidence_supports"].([]map[string]any)
-	if !ok || len(supports) != 1 {
-		t.Fatalf("evidence_supports = %#v, want one public support", out["evidence_supports"])
-	}
-	if supports[0]["span_start"] != 0 || supports[0]["span_end"] != 12 {
-		t.Fatalf("support spans = %#v, want zero-based span retained", supports[0])
-	}
-	if stub.req.RelationshipID != "relationship-canonical" || stub.req.MaxDepth != 2 || stub.req.MaxEdges != 12 {
-		t.Fatalf("trace request = %#v", stub.req)
-	}
-	if got := strings.Join(stub.req.PredicateKeys, ","); got != "works_on" {
-		t.Fatalf("predicate_keys = %q", got)
-	}
-	if stub.req.MinRelevance == nil || *stub.req.MinRelevance != 0.7 {
-		t.Fatalf("min_relevance = %#v, want 0.7", stub.req.MinRelevance)
-	}
+	require.NoError(t, err)
+	tool, ok := reg.Get(ToolTraceMemory)
+	require.True(t, ok)
+	out, err := tool.Invoke(contractInvokeContext("read"), "ignored", map[string]any{"evidence_id": "00000000-0000-0000-0000-000000000001", "include_evidence_content": false, "include_transitions": false, "max_events": 12, "max_fragment_content_runes": 200})
+	require.NoError(t, err)
+	evidence, ok := out["evidence"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "evidence-canonical", evidence["evidence_id"])
+	require.NotContains(t, evidence, "team_id")
+	require.Equal(t, true, out["truncated"])
+	require.NoError(t, ValidateInput(Tool{InputSchema: tool.OutputSchema}, out))
+	require.Equal(t, 12, stub.req.MaxEvents)
+	require.Equal(t, 200, stub.req.MaxFragmentContentRunes)
+	require.NotNil(t, stub.req.IncludeEvidenceContent)
+	require.False(t, *stub.req.IncludeEvidenceContent)
+	require.NotNil(t, stub.req.IncludeTransitions)
+	require.False(t, *stub.req.IncludeTransitions)
 }
 
 func TestBuildActiveTraceRejectsTenantOverride(t *testing.T) {
@@ -330,8 +261,8 @@ func TestBuildActiveTraceRejectsTenantOverride(t *testing.T) {
 		t.Fatal("BuildActive did not register trace_memory")
 	}
 	_, err = trace.Invoke(contractInvokeContext("read"), "ignored-profile", map[string]any{
-		"team_id":         "attacker-team",
-		"relationship_id": "relationship-canonical",
+		"team_id":     "attacker-team",
+		"evidence_id": "00000000-0000-0000-0000-000000000001",
 	})
 	if err == nil || !strings.Contains(err.Error(), "team_id") {
 		t.Fatalf("trace_memory.Invoke err = %v, want tenant override rejection", err)
@@ -349,12 +280,12 @@ func TestBuildActiveTraceRejectsMissingReadScope(t *testing.T) {
 		t.Fatal("BuildActive did not register trace_memory")
 	}
 	_, err = trace.Invoke(context.Background(), "ignored-profile", map[string]any{
-		"relationship_id": "relationship-canonical",
+		"evidence_id": "00000000-0000-0000-0000-000000000001",
 	})
 	if err == nil || !strings.Contains(err.Error(), "missing required scope") {
 		t.Fatalf("trace_memory.Invoke err = %v, want missing scope rejection", err)
 	}
-	if stub.req.RelationshipID != "" {
+	if stub.req.EvidenceID != "" {
 		t.Fatalf("trace service was called without read scope: %#v", stub.req)
 	}
 }

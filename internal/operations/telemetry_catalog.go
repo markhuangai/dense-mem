@@ -41,9 +41,6 @@ const (
 
 var telemetryAllScopes = []string{"system", "team", "profile"}
 
-// orderedTelemetryCatalog is intentionally explicit and ordered. Lifecycle
-// status items are appended by telemetryCatalogEntryFor because their IDs are
-// derived from the active V2 status registry.
 var orderedTelemetryCatalog = []telemetryCatalogEntry{
 	{ID: "http_requests", Source: "densemem_http_requests_total", SourceKind: telemetrySourceCollector, Audience: telemetryAudienceUser, SupportedScopes: telemetryAllScopes, RuntimePrerequisite: "prometheus_scrape", ParentActivitySource: telemetryParentNone, ZeroPolicy: telemetryZeroValid, Presentations: []string{"card", "chart"}},
 	{ID: "http_errors", Source: "densemem_http_requests_total", SourceKind: telemetrySourceCollector, Audience: telemetryAudienceUser, SupportedScopes: telemetryAllScopes, RuntimePrerequisite: "prometheus_scrape", ParentActivitySource: "densemem_http_requests_total", ZeroPolicy: telemetryZeroParent, Presentations: []string{"card"}},
@@ -64,12 +61,9 @@ var orderedTelemetryCatalog = []telemetryCatalogEntry{
 	{ID: "llm_recall_quality_score", Source: "densemem_recall_feedback_quality_score", SourceKind: telemetrySourceCollector, Audience: telemetryAudienceUser, SupportedScopes: telemetryAllScopes, RuntimePrerequisite: "recall_feedback_enabled", ParentActivitySource: "densemem_recall_feedback_total", ZeroPolicy: telemetryZeroUnavailable, Presentations: []string{"card", "chart"}},
 	{ID: "llm_recall_missing_context_rate", Source: "densemem_recall_feedback_total", SourceKind: telemetrySourceCollector, Audience: telemetryAudienceUser, SupportedScopes: telemetryAllScopes, RuntimePrerequisite: "recall_feedback_enabled", ParentActivitySource: "densemem_recall_feedback_total", ZeroPolicy: telemetryZeroUnavailable, Presentations: []string{"card", "chart"}},
 	{ID: "llm_recall_irrelevant_rate", Source: "densemem_recall_feedback_total", SourceKind: telemetrySourceCollector, Audience: telemetryAudienceUser, SupportedScopes: telemetryAllScopes, RuntimePrerequisite: "recall_feedback_enabled", ParentActivitySource: "densemem_recall_feedback_total", ZeroPolicy: telemetryZeroUnavailable, Presentations: []string{"card", "chart"}},
-	{ID: "dream_feedbacks", Source: "densemem_dream_feedback_total", SourceKind: telemetrySourceCollector, Audience: telemetryAudienceUser, SupportedScopes: telemetryAllScopes, RuntimePrerequisite: "dreaming_enabled", ParentActivitySource: telemetryParentNone, ZeroPolicy: telemetryZeroValid, Presentations: []string{"card", "chart"}},
 	{ID: "avg_http_latency", Source: "densemem_http_request_duration_seconds_sum/count", SourceKind: telemetrySourceCollector, Audience: telemetryAudienceUser, SupportedScopes: telemetryAllScopes, RuntimePrerequisite: "http_instrumentation", ParentActivitySource: "densemem_http_requests_total", ZeroPolicy: telemetryZeroParent, Presentations: []string{"card"}},
 	{ID: "avg_embedding_latency", Source: "densemem_embedding_duration_seconds_sum/count", SourceKind: telemetrySourceCollector, Audience: telemetryAudienceUser, SupportedScopes: []string{"system", "team"}, RuntimePrerequisite: "embedding_instrumentation", ParentActivitySource: "densemem_embedding_requests_total", ZeroPolicy: telemetryZeroParent, Presentations: []string{"card"}},
 	{ID: "avg_verifier_latency", Source: "densemem_verifier_duration_seconds_sum/count", SourceKind: telemetrySourceCollector, Audience: telemetryAudienceUser, SupportedScopes: telemetryAllScopes, RuntimePrerequisite: "verifier_instrumentation", ParentActivitySource: "densemem_verifier_requests_total", ZeroPolicy: telemetryZeroParent, Presentations: []string{"card"}},
-	{ID: "avg_conflict_review_duration", Source: "densemem_conflict_review_duration_seconds_sum/count", SourceKind: telemetrySourceCollector, Audience: telemetryAudienceUser, SupportedScopes: []string{"system", "team"}, RuntimePrerequisite: "conflict_review_instrumentation", ParentActivitySource: telemetryParentNone, ZeroPolicy: telemetryZeroParent, Presentations: []string{"card"}},
-	{ID: "conflict_review_duration", Source: "densemem_conflict_review_duration_seconds_sum/count", SourceKind: telemetrySourceCollector, Audience: telemetryAudienceUser, SupportedScopes: []string{"system", "team"}, RuntimePrerequisite: "conflict_review_instrumentation", ParentActivitySource: telemetryParentNone, ZeroPolicy: telemetryZeroParent, Presentations: []string{"chart"}},
 	{ID: "remember_requests", Source: "densemem_remember_acknowledgements_total", SourceKind: telemetrySourceCollector, Audience: telemetryAudienceUser, SupportedScopes: telemetryAllScopes, RuntimePrerequisite: "remember_instrumentation", ParentActivitySource: telemetryParentNone, ZeroPolicy: telemetryZeroValid, Presentations: []string{"card", "chart"}},
 	{ID: "avg_remember_duration", Source: "densemem_remember_acknowledgement_duration_seconds_sum/count", SourceKind: telemetrySourceCollector, Audience: telemetryAudienceUser, SupportedScopes: telemetryAllScopes, RuntimePrerequisite: "remember_instrumentation", ParentActivitySource: "densemem_remember_acknowledgements_total", ZeroPolicy: telemetryZeroParent, Presentations: []string{"card"}},
 	{ID: "p95_remember_duration", Source: "densemem_remember_acknowledgement_duration_seconds_bucket", SourceKind: telemetrySourceCollector, Audience: telemetryAudienceUser, SupportedScopes: telemetryAllScopes, RuntimePrerequisite: "remember_instrumentation", ParentActivitySource: "densemem_remember_acknowledgements_total", ZeroPolicy: telemetryZeroParent, Presentations: []string{"card"}},
@@ -83,7 +77,6 @@ var orderedTelemetryCatalog = []telemetryCatalogEntry{
 	{ID: "ai_cost_usd", Source: "densemem_ai_operation_cost_usd_total", SourceKind: telemetrySourceCollector, Audience: telemetryAudienceOperator, SupportedScopes: []string{"system", "team"}, RuntimePrerequisite: "pricing_and_provider_usage", ParentActivitySource: "densemem_verifier_requests_total+densemem_embedding_requests_total", ZeroPolicy: telemetryZeroUnavailable, Presentations: []string{"card"}},
 	{ID: "verifier_cost_usd", Source: "densemem_ai_operation_cost_usd_total{component=verifier}", SourceKind: telemetrySourceCollector, Audience: telemetryAudienceOperator, SupportedScopes: telemetryAllScopes, RuntimePrerequisite: "pricing_and_provider_usage", ParentActivitySource: "densemem_verifier_requests_total", ZeroPolicy: telemetryZeroUnavailable, Presentations: []string{"card"}},
 	{ID: "embedding_cost_usd", Source: "densemem_ai_operation_cost_usd_total{component=embedding}", SourceKind: telemetrySourceCollector, Audience: telemetryAudienceOperator, SupportedScopes: []string{"system", "team"}, RuntimePrerequisite: "pricing_and_provider_usage", ParentActivitySource: "densemem_embedding_requests_total", ZeroPolicy: telemetryZeroUnavailable, Presentations: []string{"card"}},
-	{ID: "conflict_queue_collection_success", Source: "densemem_conflict_queue_collection_success", SourceKind: telemetrySourceCollector, Audience: telemetryAudienceOperator, SupportedScopes: []string{"system"}, RuntimePrerequisite: "conflict_queue_instrumentation", ParentActivitySource: telemetryParentNone, ZeroPolicy: telemetryZeroNotApplicable, Presentations: []string{"card"}},
 }
 
 func telemetryCatalogEntryFor(id string) (telemetryCatalogEntry, bool) {
@@ -98,30 +91,6 @@ func telemetryCatalogEntryFor(id string) (telemetryCatalogEntry, bool) {
 			Audience: telemetryAudienceUser, SupportedScopes: telemetryAllScopes,
 			RuntimePrerequisite: "recall_feedback_enabled", ParentActivitySource: telemetryParentNone,
 			ZeroPolicy: telemetryZeroValid, Presentations: []string{"internal"},
-		}, true
-	}
-	if strings.HasPrefix(id, "relationship_transitions_") {
-		return telemetryCatalogEntry{
-			ID: id, Source: "relationship_transition_events", SourceKind: telemetrySourceLedger,
-			Audience: telemetryAudienceUser, SupportedScopes: telemetryAllScopes,
-			RuntimePrerequisite: "postgresql_lifecycle_reader", ParentActivitySource: telemetryParentNone,
-			ZeroPolicy: telemetryZeroValid, Presentations: []string{"card"},
-		}, true
-	}
-	if strings.HasPrefix(id, "relationships_") {
-		return telemetryCatalogEntry{
-			ID: id, Source: "relationship_records", SourceKind: telemetrySourceLedger,
-			Audience: telemetryAudienceUser, SupportedScopes: telemetryAllScopes,
-			RuntimePrerequisite: "postgresql_lifecycle_reader", ParentActivitySource: telemetryParentNone,
-			ZeroPolicy: telemetryZeroValid, Presentations: []string{"card"},
-		}, true
-	}
-	if id == "relationship_corrections" {
-		return telemetryCatalogEntry{
-			ID: id, Source: "relationship_correction_events", SourceKind: telemetrySourceLedger,
-			Audience: telemetryAudienceUser, SupportedScopes: telemetryAllScopes,
-			RuntimePrerequisite: "postgresql_lifecycle_reader", ParentActivitySource: telemetryParentNone,
-			ZeroPolicy: telemetryZeroValid, Presentations: []string{"card"},
 		}, true
 	}
 	return telemetryCatalogEntry{}, false
@@ -250,7 +219,7 @@ func collectTelemetryRangeFailures(specs []telemetryQuerySpec, results map[strin
 }
 
 func (s *PrometheusTelemetryService) telemetryFeatureStates(ctx context.Context, scope TelemetryScope) map[string]telemetryFeatureState {
-	states := map[string]telemetryFeatureState{"dream": {Set: true, Disposition: telemetryInactive("feature_retired")}}
+	states := map[string]telemetryFeatureState{}
 	if s == nil || s.features.RecallFeedbackEnabled == nil {
 		return states
 	}
@@ -265,7 +234,7 @@ func (s *PrometheusTelemetryService) telemetryFeatureStates(ctx context.Context,
 	return states
 }
 
-func buildTelemetryCards(specs []telemetryQuerySpec, results map[string]telemetryInstantResult, lifecycle operationscontract.TelemetryLifecycleSnapshot, lifecycleErr error, features map[string]telemetryFeatureState, scope TelemetryScope) []TelemetryCard {
+func buildTelemetryCards(specs []telemetryQuerySpec, results map[string]telemetryInstantResult, features map[string]telemetryFeatureState, scope TelemetryScope) []TelemetryCard {
 	cards := make([]TelemetryCard, 0, len(specs))
 	for _, spec := range specs {
 		disposition := telemetryDisposition{}
@@ -274,26 +243,10 @@ func buildTelemetryCards(specs []telemetryQuerySpec, results map[string]telemetr
 			disposition = telemetryUnsupported()
 		} else if feature, ok := telemetryFeatureForSpec(spec.ID, features); ok && feature.Set {
 			disposition = feature.Disposition
-		} else if spec.Ledger {
-			if lifecycleErr != nil {
-				disposition = telemetryUnavailable("ledger_unavailable")
-			} else {
-				disposition = telemetryReady()
-				switch {
-				case strings.HasPrefix(spec.ID, "relationship_transitions_"):
-					value = lifecycle.Transitions[strings.TrimPrefix(spec.ID, "relationship_transitions_")]
-				case spec.ID == "relationship_corrections":
-					value = lifecycle.Corrections
-				case strings.HasPrefix(spec.ID, "relationships_"):
-					value = lifecycle.Current[strings.TrimPrefix(spec.ID, "relationships_")]
-				}
-			}
 		} else if result, ok := results[spec.ID]; !ok || result.Err != nil {
 			disposition = telemetryUnavailable("query_failed")
 		} else if reason, ok := result.Scalar.Labels["reason"]; ok && strings.TrimSpace(reason) != "" {
 			disposition = telemetryUnavailable(telemetryUnpricedReasonCode(reason))
-		} else if spec.ID == "conflict_queue_collection_success" && result.Scalar.Available && result.Scalar.Value <= 0 {
-			disposition = telemetryUnavailable("query_failed")
 		} else if result.Scalar.Available {
 			value = result.Scalar.Value
 			disposition = telemetryReady()
@@ -544,10 +497,7 @@ func telemetryFeatureForSpec(id string, states map[string]telemetryFeatureState)
 		state, ok := states["recall"]
 		return state, ok
 	}
-	if strings.HasPrefix(id, "dream_") {
-		state, ok := states["dream"]
-		return state, ok
-	}
+
 	return telemetryFeatureState{}, false
 }
 

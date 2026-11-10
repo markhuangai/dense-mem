@@ -16,17 +16,6 @@ func CompatibleMeaningContext(left, right SourceSnapshot) bool {
 	if !left.Eligible || !right.Eligible || left.Kind != right.Kind {
 		return false
 	}
-	if left.Kind == RelationshipSource {
-		if (left.State["predicate"] != right.State["predicate"] || left.State["predicate_version"] != right.State["predicate_version"]) && (left.State["predicate_contract"] == "" || right.State["predicate_contract"] == "") {
-			return false
-		}
-		for _, field := range []string{"subject", "object_entity", "object_value", "kind", "cardinality", "polarity", "scope", "valid_from", "valid_to", "metadata", "predicate_contract"} {
-			if left.State[field] != right.State[field] {
-				return false
-			}
-		}
-		return true
-	}
 	if left.Kind != EvidenceSource {
 		return false
 	}
@@ -88,9 +77,6 @@ func AssessedGroupCompatible(record Record, snapshots map[string]SourceSnapshot)
 		return ErrInvalid
 	}
 	expected := EvidenceSource
-	if record.Kind == RelationshipGroup {
-		expected = RelationshipSource
-	}
 	for i, member := range record.Group.Members {
 		left, ok := snapshots[SourceKey(member)]
 		if !ok || left.SourceHandle != member || member.Kind != expected || !left.Eligible {
@@ -106,25 +92,7 @@ func AssessedGroupCompatible(record Record, snapshots map[string]SourceSnapshot)
 }
 
 func SourceDisplayContext(source SourceSnapshot) map[string]string {
-	context := map[string]string{}
-	if source.Kind == EvidenceSource {
-		context["metadata"] = source.State["metadata"]
-		context["labels"] = source.State["labels"]
-		context["created_at"] = source.State["created_at"]
-	} else {
-		for field, value := range source.State {
-			if field != "supports" && field != "occurrences" {
-				context[field] = value
-			}
-		}
-	}
-	return context
+	return map[string]string{"metadata": source.State["metadata"], "labels": source.State["labels"], "created_at": source.State["created_at"]}
 }
 
-func SourceDisplayText(source SourceSnapshot) string {
-	if source.Kind == EvidenceSource {
-		return source.State["content"]
-	}
-	encoded, _ := json.Marshal(SourceDisplayContext(source))
-	return string(encoded)
-}
+func SourceDisplayText(source SourceSnapshot) string { return source.State["content"] }

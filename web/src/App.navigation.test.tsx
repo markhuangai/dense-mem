@@ -15,16 +15,16 @@ it("keeps the Remember outcome and page when inspecting and clearing a selected 
   const attempts = Array.from({ length: 52 }, (_, index) => {
     const summary = {
       team_id: profileA.id, team_name: profileA.name, owner_profile_id: "owner-1", attempt_id: `attempt-${index}`,
-      contract_version: "dense-mem.v2.6", submission_kind: "remember", outcome: index === 51 ? "failed" : "completed",
-      evidence_count: 0, relationship_count: 0, document_count: 0, assessor_turns: 0,
+      contract_version: "dense-mem.v3.0.0", submission_kind: "remember", outcome: index === 51 ? "failed" : "completed",
+      evidence_count: 0, document_count: 0, assessor_turns: 0,
       duration_ms: 1, created_at: "2026-08-18T01:00:00Z",
     };
     return { summary, detail: {
       ...summary,
       public_result: {
-        contract_version: "dense-mem.v2.6", submission_id: summary.attempt_id, submission_kind: "remember",
+        contract_version: "dense-mem.v3.0.0", submission_id: summary.attempt_id, submission_kind: "remember",
         processing_state: "completed", search_state: "current", correlation_id: "corr",
-        evidence: [], relationship_results: [], errors: [],
+        evidence: [], errors: [],
       },
       events: [], diagnostics: { original_request: null, provider_exchanges: [], caller_response: null },
     } };
@@ -244,4 +244,14 @@ it("restores each Logs entry's initial query through Back, Forward and reload", 
   expect(await screen.findByLabelText("Correlation ID")).toHaveValue("history-correlation");
   await userEvent.click(screen.getByRole("link", { name: "Logs" }));
   await waitFor(() => expect(queries().at(-1)?.searchParams.has("invocation_id")).toBe(false));
+});
+
+
+it("omits retired graph and Dream destinations", async () => {
+  mockPortalFetch({ teams: [profileA], keys: [] });
+  render(<App />);
+  await screen.findByRole("button", { name: /Default/ });
+  expect(screen.queryByRole("link", {name:"Dream history"})).not.toBeInTheDocument();
+  expect(screen.queryByRole("link", {name:"Conflicts"})).not.toBeInTheDocument();
+  expect(screen.getByRole("link", {name:"Evidence conflicts"})).toBeInTheDocument();
 });

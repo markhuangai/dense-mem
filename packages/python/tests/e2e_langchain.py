@@ -35,7 +35,7 @@ from densemem.langchain import DenseMemRecallWarning, DenseMemRetriever
 
 ENDPOINT = USER_URL + "/mcp"
 QUERY = "Dense-Mem durable memory PostgreSQL"
-OPTIONS = {"community_limit": 0, "relationship_limit": 20}
+OPTIONS = {"topic_limit": 0}
 
 
 class Callbacks(BaseCallbackHandler):
@@ -57,7 +57,7 @@ async def remember(token, space):
     request["target_space"] = space
     result = await DenseMemClient(ENDPOINT, token=token).remember(request)
     assert result["processing_state"] == "completed" and result["space_kind"] == space
-    assert all(item["disposition"] == "stored" for item in result["relationship_results"])
+    assert all(item["disposition"] == "stored" for item in result["evidence"])
     return result["evidence"][0]["evidence_id"]
 
 
@@ -65,11 +65,9 @@ def semantic_snapshot():
     tables = (
         "knowledge_ingests",
         "evidence_fragments",
-        "entity_records",
-        "relationship_records",
-        "relationship_observations",
-        "relationship_evidence_supports",
-        "relationship_transition_events",
+        "evidence_occurrences",
+        "evidence_decisions",
+        "evidence_lifecycle_events",
     )
     return {
         table: sql(
@@ -99,8 +97,8 @@ def assert_fidelity(documents, raw, team):
         ):
             assert metadata[key] == evidence[key]
         for key in (
-            "related_relationships",
-            "related_communities",
+            "related_topics",
+            "topics_truncated",
             "conflicts",
             "search_states",
             "degradations",
@@ -238,8 +236,7 @@ async def main():
         assert {document.id for document in documents} == expected
         assert not forbidden & {document.id for document in documents}
         for document in documents:
-            for relationship in document.metadata["densemem"]["related_relationships"]:
-                assert not forbidden & set(relationship["evidence_ids"])
+            assert not forbidden & set(document.metadata["densemem"]["equivalent_evidence_ids"])
     supplied, resolutions = [oauth_token], []
 
     async def provider():

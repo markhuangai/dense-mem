@@ -186,7 +186,7 @@ func (o *OTLP) ObserveOperation(_ context.Context, name string, started time.Tim
 			break
 		}
 	}
-	name = exportAllowed(name, "remember recall_memory trace_memory retract_evidence correct_relationship verify resolve_evidence_conflict submit_recall_session_feedback resolve_dream_feedback list_dreams get_dream confirm_dream list_conflicts resolve_conflict export_memory_pack")
+	name = exportAllowed(name, "remember recall_memory trace_memory retract_evidence ingest_session resolve_evidence_conflict submit_recall_session_feedback export_memory_pack")
 	outcome = exportAllowed(outcome, "success cancelled rpc_error tool_error missing_result")
 	_, span := o.tracer.Start(context.Background(), "mcp."+name, trace.WithTimestamp(started), trace.WithAttributes(attribute.String("operation", name), attribute.String("outcome", outcome)))
 	if outcome != "success" {

@@ -88,25 +88,21 @@ func TestEvaluationRunnerRunRejectsV1ImportAndWritesGateInput(t *testing.T) {
 func TestEvaluationRunnerValidationRejectsCrossFileReferences(t *testing.T) {
 	root := writeEvalFixture(t)
 	manifestPath := filepath.Join(root, "seed_manifest.json")
-	manifest, corpus, cases, qrels, dreams, suite, seedHash, err := loadRunInputs(manifestPath, filepath.Join(root, "suite.jsonl"))
+	manifest, corpus, cases, qrels, suite, seedHash, err := loadRunInputs(manifestPath, filepath.Join(root, "suite.jsonl"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	cases[0].CaseID = "missing"
-	if err := validateRunInputs(manifestPath, manifest, corpus, cases, qrels, dreams, suite, seedHash); err == nil || !strings.Contains(err.Error(), "missing from seed cases") {
+	if err := validateRunInputs(manifestPath, manifest, corpus, cases, qrels, suite, seedHash); err == nil || !strings.Contains(err.Error(), "missing from seed cases") {
 		t.Fatalf("missing suite case was accepted: %v", err)
 	}
 	cases[0].CaseID = "case-1"
-	qrels[0].RequiredDreamRefs = []Ref{{Type: "dream", SourceDocID: "missing-dream"}}
-	if err := validateRunInputs(manifestPath, manifest, corpus, cases, qrels, dreams, suite, seedHash); err == nil || !strings.Contains(err.Error(), "missing-dream") {
-		t.Fatalf("missing dream reference was accepted: %v", err)
-	}
 }
 
 func TestEvaluationRunnerValidationRejectsEveryReferenceFamily(t *testing.T) {
 	root := writeEvalFixture(t)
 	manifestPath := filepath.Join(root, "seed_manifest.json")
-	manifest, corpus, cases, qrels, dreams, suite, seedHash, err := loadRunInputs(manifestPath, filepath.Join(root, "suite.jsonl"))
+	manifest, corpus, cases, qrels, suite, seedHash, err := loadRunInputs(manifestPath, filepath.Join(root, "suite.jsonl"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,8 +112,6 @@ func TestEvaluationRunnerValidationRejectsEveryReferenceFamily(t *testing.T) {
 		"bad":               func(q *QRel) { q.BadRefs = []Ref{missing} },
 		"required evidence": func(q *QRel) { q.RequiredEvidenceRefs = []Ref{missing} },
 		"bad evidence":      func(q *QRel) { q.BadEvidenceRefs = []Ref{missing} },
-		"acceptable dream":  func(q *QRel) { q.AcceptableDreamRefs = []Ref{missing} },
-		"bad dream":         func(q *QRel) { q.BadDreamRefs = []Ref{missing} },
 	} {
 		t.Run(name, func(t *testing.T) {
 			copyQrels := append([]QRel(nil), qrels...)
@@ -125,10 +119,8 @@ func TestEvaluationRunnerValidationRejectsEveryReferenceFamily(t *testing.T) {
 			copyQrels[0].BadRefs = nil
 			copyQrels[0].RequiredEvidenceRefs = nil
 			copyQrels[0].BadEvidenceRefs = nil
-			copyQrels[0].AcceptableDreamRefs = nil
-			copyQrels[0].BadDreamRefs = nil
 			mutate(&copyQrels[0])
-			if err := validateRunInputs(manifestPath, manifest, corpus, cases, copyQrels, dreams, suite, seedHash); err == nil || !strings.Contains(err.Error(), "missing") {
+			if err := validateRunInputs(manifestPath, manifest, corpus, cases, copyQrels, suite, seedHash); err == nil || !strings.Contains(err.Error(), "missing") {
 				t.Fatalf("reference family was accepted: %v", err)
 			}
 		})
@@ -137,11 +129,11 @@ func TestEvaluationRunnerValidationRejectsEveryReferenceFamily(t *testing.T) {
 	adversarial[0].Slices = []string{"adversarial"}
 	noBad := append([]QRel(nil), qrels...)
 	noBad[0].BadRefs = nil
-	if err := validateRunInputs(manifestPath, manifest, corpus, adversarial, noBad, dreams, suite, seedHash); err == nil || !strings.Contains(err.Error(), "no bad_refs") {
+	if err := validateRunInputs(manifestPath, manifest, corpus, adversarial, noBad, suite, seedHash); err == nil || !strings.Contains(err.Error(), "no bad_refs") {
 		t.Fatalf("adversarial qrel without bad refs was accepted: %v", err)
 	}
 	duplicate := append([]QRel(nil), qrels[0], qrels[0])
-	if err := validateRunInputs(manifestPath, manifest, corpus, cases, duplicate, dreams, suite, seedHash); err == nil || !strings.Contains(err.Error(), "duplicate qrels") {
+	if err := validateRunInputs(manifestPath, manifest, corpus, cases, duplicate, suite, seedHash); err == nil || !strings.Contains(err.Error(), "duplicate qrels") {
 		t.Fatalf("duplicate qrels were accepted: %v", err)
 	}
 }
@@ -177,10 +169,10 @@ func TestEvaluationRunnerLoaderAndComparisonFailures(t *testing.T) {
 	root := t.TempDir()
 	missing := filepath.Join(root, "missing")
 	for name, call := range map[string]func() error{
-		"manifest": func() error { _, _, _, _, _, _, _, err := loadRunInputs(missing, missing); return err },
+		"manifest": func() error { _, _, _, _, _, _, err := loadRunInputs(missing, missing); return err },
 		"suite": func() error {
 			fixture := writeEvalFixture(t)
-			_, _, _, _, _, _, _, err := loadRunInputs(filepath.Join(fixture, "seed_manifest.json"), missing)
+			_, _, _, _, _, _, err := loadRunInputs(filepath.Join(fixture, "seed_manifest.json"), missing)
 			return err
 		},
 		"source ids": func() error { _, err := loadSourceDocIDs(missing); return err },
@@ -263,8 +255,6 @@ func TestEvaluationRunnerMappingAndReferenceValidation(t *testing.T) {
 		RequiredEvidenceRefs: []Ref{{Type: "evidence", SourceDocID: "doc-1"}},
 		BadRefs:              []Ref{{Type: "evidence", SourceDocID: "doc-1"}},
 		BadEvidenceRefs:      []Ref{{Type: "evidence", SourceDocID: "doc-1"}},
-		RequiredDreamRefs:    []Ref{{Type: "evidence", SourceDocID: "doc-1"}},
-		BadDreamRefs:         []Ref{{Type: "evidence", SourceDocID: "doc-1"}},
 	}}
 	if err := validateRequiredQRelMappings(qrels, []SuiteCase{{CaseID: "case-1"}}, mapping); err != nil {
 		t.Fatalf("mapped qrels rejected: %v", err)
@@ -275,7 +265,7 @@ func TestEvaluationRunnerMappingAndReferenceValidation(t *testing.T) {
 	if err := validateRequiredQRelMappings(map[string]QRel{"case-1": {RequiredRefs: []Ref{{Type: "evidence", SourceDocID: "missing"}}}}, []SuiteCase{{CaseID: "case-1"}}, mapping); err == nil || !strings.Contains(err.Error(), "unmapped") {
 		t.Fatalf("unmapped qrel error = %v", err)
 	}
-	if got := sourceDocIDsForQRelMappings([]QRel{{RequiredRefs: []Ref{{SourceDocID: "doc-1"}}, BadRefs: []Ref{{SourceDocID: "doc-2"}}}}, []ExpectedDream{{SourceRefs: []Ref{{SourceDocID: "doc-3"}}}}); len(got) != 3 {
+	if got := sourceDocIDsForQRelMappings([]QRel{{RequiredRefs: []Ref{{SourceDocID: "doc-1"}}, BadRefs: []Ref{{SourceDocID: "doc-2"}}}}); len(got) != 2 {
 		t.Fatalf("source doc mapping index = %#v", got)
 	}
 	if got := sourceDocIDIndexForCorpus([]CorpusItem{{SourceDocID: "doc-1"}, {SourceDocID: " "}}); len(got) != 1 {

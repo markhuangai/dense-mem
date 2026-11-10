@@ -22,7 +22,6 @@ func evalRunRecallCaseTool(deps Dependencies) Tool {
 				"valid_at":          map[string]any{"type": "string", "format": "date-time"},
 				"known_at":          map[string]any{"type": "string", "format": "date-time"},
 				"include_evidence":  map[string]any{"type": "boolean"},
-				"use_communities":   map[string]any{"type": "boolean"},
 				"max_context_chars": map[string]any{"type": "integer", "minimum": 1, "maximum": 20000},
 			},
 			"additionalProperties": false,

@@ -275,9 +275,9 @@ func newImportAdmissionHarness(t *testing.T, pool int) *importAdmissionHarness {
 	}
 	h.release = sync.OnceFunc(func() { close(gate) })
 	t.Cleanup(h.release)
-	store := knowledgepostgres.NewStore(app, rls, knowledgecontract.ConflictRuntimeConfig{})
+	store := knowledgepostgres.NewStore(app, rls)
 	processor := rememberprocessor.NewSynchronousProcessor(rememberprocessor.ProcessorDependencies{
-		Ledger: store, Catalog: store, Assessor: h.provider,
+		Ledger: store, Assessor: h.provider,
 		EmbeddingExecutor: semanticwrite.NewProviderExecutor(rememberProcessorIntegrationSearchEmbedder{model: model, dimensions: dimensions}),
 		Limits:            assessor.DefaultSemanticAssessmentLimits(), Metrics: observability.NoopDiscoverabilityMetrics(),
 	})
@@ -342,7 +342,6 @@ func (h *importAdmissionHarness) callStatelessRemember(ctx context.Context, item
 		"target_space": "team_shared", "idempotency_key": "eval:" + item.SourceDocID,
 		"evidence": []map[string]any{{"content": item.Content, "source": "eval-seed", "labels": item.Labels,
 			"metadata": map[string]any{"source_doc_id": item.SourceDocID, "source_dataset": item.SourceDataset, "eval_seed": true}}},
-		"relationships": item.Relationships,
 	}
 	body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": map[string]any{
 		"name": "remember", "arguments": input,
@@ -417,12 +416,6 @@ func admissionCorpus(count, heldFrom int) []evalharness.CorpusItem {
 		}
 		items[index] = evalharness.CorpusItem{
 			SourceDocID: fmt.Sprintf("admission-%d", index), Content: content, Labels: []string{"admission"},
-			Relationships: []any{map[string]any{
-				"ref": "state", "subject": map[string]any{"name": name, "entity_kind": "document"},
-				"predicate": map[string]any{"proposed_key": fmt.Sprintf("admission_state_%d", index)},
-				"object":    map[string]any{"value": map[string]any{"type": "string", "value": value}},
-				"polarity":  "+", "evidence_indices": []any{0},
-			}},
 		}
 	}
 	return items

@@ -56,20 +56,17 @@ func readSources(tx *gorm.DB, fence scope, handles []ontology.SourceHandle) (map
 		byKind[handle.Kind] = append(byKind[handle.Kind], handle)
 	}
 	result := map[ontology.SourceHandle]ontology.SourceSnapshot{}
-	for _, kind := range []ontology.SourceKind{ontology.EntitySource, ontology.EvidenceSource, ontology.RelationshipSource, ontology.PredicateSource} {
+	for _, kind := range []ontology.SourceKind{ontology.EvidenceSource} {
 		batch := byKind[kind]
 		if len(batch) == 0 {
 			continue
 		}
-		ids, versions := make([]string, len(batch)), make([]int64, len(batch))
+		ids := make([]string, len(batch))
 		for i, handle := range batch {
-			ids[i], versions[i] = handle.ID, handle.Version
+			ids[i] = handle.ID
 		}
-		query := map[ontology.SourceKind]string{ontology.EntitySource: entitySourceSQL, ontology.EvidenceSource: evidenceSourceSQL, ontology.RelationshipSource: relationshipSourceSQL, ontology.PredicateSource: predicateSourceSQL}[kind]
+		query := evidenceSourceSQL
 		args := []any{fence.TeamID, fence.SpaceID, fence.Generation, pq.Array(ids)}
-		if kind == ontology.PredicateSource {
-			args = append(args, pq.Array(versions))
-		}
 		rows, err := tx.Raw(query, args...).Rows()
 		if err != nil {
 			return nil, fmt.Errorf("ontology: read scoped sources: %w", err)
@@ -78,7 +75,7 @@ func readSources(tx *gorm.DB, fence scope, handles []ontology.SourceHandle) (map
 			snapshot := ontology.SourceSnapshot{TeamID: fence.TeamID, SpaceID: fence.SpaceID, Generation: fence.Generation, Eligible: true}
 			snapshot.Kind = kind
 			var state sql.RawBytes
-			if err := rows.Scan(&snapshot.ID, &snapshot.Version, &snapshot.OwnerID, &snapshot.EntityKind, &state, &snapshot.MeaningKey); err != nil {
+			if err := rows.Scan(&snapshot.ID, &snapshot.Version, &snapshot.OwnerID, &state, &snapshot.MeaningKey); err != nil {
 				_ = rows.Close()
 				return nil, err
 			}

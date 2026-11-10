@@ -14,21 +14,6 @@
         "visibility": "private"
       },
       {
-        "id": "web/src/dream-diagnostics-api-types.ts",
-        "role": "transport",
-        "visibility": "private"
-      },
-      {
-        "id": "web/src/community-api-types.ts",
-        "role": "transport",
-        "visibility": "private"
-      },
-      {
-        "id": "web/src/conflict-queue-api-types.ts",
-        "role": "transport",
-        "visibility": "private"
-      },
-      {
         "id": "web/src/control-auth-api.ts",
         "role": "transport",
         "visibility": "private"
@@ -60,11 +45,6 @@
       },
       {
         "id": "web/src/control/DirectoryAutomationPanel.tsx",
-        "role": "transport",
-        "visibility": "private"
-      },
-      {
-        "id": "web/src/control/DreamsPanel.tsx",
         "role": "transport",
         "visibility": "private"
       },
@@ -150,11 +130,6 @@
       },
       {
         "id": "web/src/ui/components.tsx",
-        "role": "transport",
-        "visibility": "public"
-      },
-      {
-        "id": "web/src/ui/dreams.tsx",
         "role": "transport",
         "visibility": "public"
       },
@@ -299,5 +274,10 @@
         "visibility": "private"
       }
     ]
-  }
+  },
+  "source_ownership": [
+    {
+      "path": "web/tests-compose/compose-portal.spec.ts"
+    }
+  ]
 }

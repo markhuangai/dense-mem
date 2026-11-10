@@ -103,7 +103,7 @@ async function fixture(mode) { const response = await fetch(`${providerURL}/onto
 async function providerHealth() { const response = await fetch(`${providerURL}/health`); assert.equal(response.status, 200); return response.json(); }
 async function until(probe, milliseconds, message) { const deadline = Date.now() + milliseconds; while (Date.now() < deadline) { const result = await probe(); if (result) return result; await delay(100); } assert.fail(message); }
 async function remember(key, content) {
-  const body = JSON.stringify({ jsonrpc: "2.0", id: randomUUID(), method: "tools/call", params: { name: "remember", arguments: { target_space: "team_shared", idempotency_key: randomUUID(), evidence: [{ content, force_insert: true, source: "ontology-concurrency", source_type: "document", source_group: randomUUID() }], relationships: [{ ref: "uses", subject: { name: "Atlas", entity_kind: "project" }, predicate: { proposed_key: "uses" }, object: { entity: { name: "PostgreSQL", entity_kind: "product" } }, polarity: "+", evidence_indices: [0] }] } } });
+  const body = JSON.stringify({ jsonrpc: "2.0", id: randomUUID(), method: "tools/call", params: { name: "remember", arguments: { target_space: "team_shared", idempotency_key: randomUUID(), evidence: [{ content, force_insert: true, source: "ontology-concurrency", source_type: "document", source_group: randomUUID() }] } } });
   for (let attempt = 0; attempt < 2; attempt++) {
     const response = await fetch(`${userURL}/mcp`, { method: "POST", headers: { Authorization: `Bearer ${key}`, Accept: "application/json", "Content-Type": "application/json" }, body });
     assert.equal(response.status, 200);
@@ -127,5 +127,5 @@ function query(sql) {
   return result.stdout.trim();
 }
 function canonical() {
-  return Object.fromEntries(["evidence_fragments", "entity_records", "value_records", "relationship_records", "relationship_evidence_supports"].map((table) => [table, query(`SELECT md5(COALESCE(jsonb_agg(to_jsonb(row) ORDER BY to_jsonb(row)::text)::text,'[]')) FROM ${table} AS row WHERE team_id IN (${teams.map((team) => `'${team.id}'::uuid`).join(",")})`)]));
+  return Object.fromEntries(["evidence_fragments", "evidence_occurrences", "evidence_sources", "evidence_source_revisions", "evidence_lifecycle_events", "evidence_quarantines"].map((table) => [table, query(`SELECT md5(COALESCE(jsonb_agg(to_jsonb(row) ORDER BY to_jsonb(row)::text)::text,'[]')) FROM ${table} AS row WHERE team_id IN (${teams.map((team) => `'${team.id}'::uuid`).join(",")})`)]));
 }

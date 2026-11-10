@@ -45,7 +45,7 @@ func TestRecallEvidenceIsolatesCredentialPrivateSpacesWithinTeam(t *testing.T) {
 	shared, err := privacypostgres.NewMemorySpaceRepository(appDB, rls).GetTeamShared(ctx, teamID)
 	require.NoError(t, err)
 	require.NotNil(t, shared)
-	ledgerRepo := knowledgepostgres.NewStore(appDB, rls, knowledgepostgres.ConflictRuntimeConfig{})
+	ledgerRepo := knowledgepostgres.NewStore(appDB, rls)
 	searchRepo := newSearchFixtureStore(appDB, rls)
 	const query = "credential private isolation sentinel"
 	privateSpaces := make([]uuid.UUID, len(credentials))

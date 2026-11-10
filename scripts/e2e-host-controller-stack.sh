@@ -78,56 +78,6 @@ run_go_source_container() (
   return "$result_status"
 )
 
-build_conflict_review_driver() (
-  local source_dir="$1" image="$2" project="$3" run_id="$4" attempt="$5" phase="$6" scenario="$7"
-  local container_name="${project}-driver-${BASHPID}"
-  local container=""
-  local output="${DENSE_MEM_CI_HELPER_DIR}/conflict-review-driver"
-  local created_at
-  created_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  local -a docker_args=(
-    create --name "$container_name"
-    --label "io.dense-mem.ci.contract=${CONTRACT_VERSION}"
-    --label "io.dense-mem.ci.repository=${REPOSITORY}"
-    --label "io.dense-mem.ci.run-id=${run_id}"
-    --label "io.dense-mem.ci.run-attempt=${attempt}"
-    --label "io.dense-mem.ci.phase=${phase}"
-    --label "io.dense-mem.ci.scenario=${scenario}"
-    --label "io.dense-mem.ci.image-digest=${DENSE_MEM_CI_IMAGE_DIGEST}"
-    --label "io.dense-mem.ci.created-at=${created_at}"
-    --label "io.dense-mem.ci.compose-project=${project}"
-    --workdir /workspace
-    "$image"
-    bash -euc
-    'mkdir -p /tmp/dense-mem-helper && go build -o /tmp/dense-mem-helper/conflict-review-driver ./tests/uat/conflict_review_driver'
-  )
-
-  cleanup_conflict_driver() {
-    local status=$?
-    trap - EXIT INT TERM
-    if [[ -n "$container" ]]; then
-      docker rm -f "$container" >/dev/null 2>&1 || status=1
-    fi
-    exit "$status"
-  }
-  trap cleanup_conflict_driver EXIT INT TERM
-  container="$(docker "${docker_args[@]}")"
-  copy_git_source "$container" "$source_dir"
-  set +e
-  docker start --attach "$container" 2>&1 |
-    redact_diagnostics "$ENV_FILE"
-  local -a pipeline_status=("${PIPESTATUS[@]}")
-  set -e
-  ((pipeline_status[1] == 0)) || fail "diagnostic redaction failed for conflict review helper"
-  ((pipeline_status[0] == 0)) || fail "failed to build the conflict review helper"
-  docker cp "$container:/tmp/dense-mem-helper/conflict-review-driver" "$output" >/dev/null ||
-    fail "failed to copy the conflict review helper"
-  chmod 700 "$output"
-  trap - EXIT INT TERM
-  docker rm "$container" >/dev/null
-  container=""
-)
-
 prepare_stack_helpers() {
   local project="$1" source_dir="$2" helpers="$3" run_id="$4" attempt="$5" phase="$6" scenario="$7"
   DENSE_MEM_CI_HELPER_DIR="${JOB_DIR}/${run_id}-${attempt}/${phase}-${scenario}-helpers"
@@ -246,13 +196,6 @@ NODE
     chmod 600 "${DENSE_MEM_CI_HELPER_DIR}/runtime.env"
   fi
 
-  if has_helper "$helpers" conflict_provider || has_helper "$helpers" conflict_review; then
-    local go_image
-    go_image="$(env_value DENSE_MEM_CI_GO_TEST_IMAGE 2>/dev/null || printf '%s' golang:1.26.9-bookworm)"
-    [[ "$go_image" =~ ^[A-Za-z0-9._/:@-]+$ ]] || fail "invalid conflict review helper image"
-    build_conflict_review_driver "$source_dir" "$go_image" "$project" "$run_id" "$attempt" "$phase" "$scenario"
-  fi
-
   if [[ -n "$helpers" || "${DENSE_MEM_CI_HOSTED:-0}" == "1" ]]; then
     DENSE_MEM_CI_COMPOSE_OVERLAY_FILE="${DENSE_MEM_CI_HELPER_DIR}/compose.yml"
     node - "$DENSE_MEM_CI_COMPOSE_OVERLAY_FILE" "$helpers" "$oauth_token" "$harness_image" "$provider_model" "$provider_dimensions" "$scenario" "$project" "$embedding_timeout_seconds" <<'NODE'
@@ -260,7 +203,7 @@ const fs = require("node:fs");
 const [destination, helpers, oauthToken, harnessImage, providerModel, providerDimensions, scenario, project, embeddingTimeoutSeconds] = process.argv.slice(2);
 const has = (name) => new Set(helpers.split(",").filter(Boolean)).has(name);
 const hosted = process.env.DENSE_MEM_CI_HOSTED === "1";
-const fixtureEmbeddingProvider = hosted || scenario === "community" || scenario === "identity_cleanup" || ["ontology_organization", "ontology_management", "ontology_upgrade"].includes(scenario) || has("synchronous_write") || scenario === "full";
+const fixtureEmbeddingProvider = hosted || scenario === "identity_cleanup" || ["ontology_organization", "ontology_management", "ontology_upgrade"].includes(scenario) || has("synchronous_write") || scenario === "full";
 const fromEnv = (name, fallback) => JSON.stringify(fallback ? `\${${name}:-${fallback}}` : `\${${name}}`);
 const lines = ["# dense-mem-ci-e2e.v1 generated helper overlay", "services:"];
 const serverEnvironment = new Map();
@@ -271,14 +214,7 @@ if (has("verifier")) {
     AI_VERIFIER_API_URL: "http://synchronous-write-provider:8787/v1",
     AI_VERIFIER_API_KEY: "dense-mem-e2e-verifier-key",
     AI_VERIFIER_MODEL: "dense-mem-e2e-verifier",
-    AI_CONFLICT_REVIEW_MODEL: "dense-mem-e2e-conflict-review",
     AI_VERIFIER_DISABLE_TEMPERATURE: "true",
-  })) serverEnvironment.set(key, value);
-}
-if (scenario === "community") {
-  for (const [key, value] of Object.entries({
-    AI_API_URL: "http://synchronous-write-provider:8787/v1",
-    AI_API_KEY: "dense-mem-community-e2e-key",
   })) serverEnvironment.set(key, value);
 }
 if (scenario === "identity_cleanup") {
@@ -293,7 +229,7 @@ if (["ontology_organization", "ontology_management", "ontology_upgrade"].include
     AI_API_KEY: "dense-mem-ontology-e2e-key",
   })) serverEnvironment.set(key, value);
 }
-if (scenario === "ontology_organization") serverEnvironment.set("LOG_LEVEL", "trace");
+if (scenario === "ontology_organization") serverEnvironment.set("LOG_LEVEL", "debug");
 if (scenario === "ontology_management") serverEnvironment.set("LOG_LEVEL", "debug");
 if (scenario === "ontology_upgrade") serverEnvironment.set("LOG_LEVEL", "debug");
 if (scenario === "full") {
@@ -301,20 +237,6 @@ if (scenario === "full") {
     AI_API_URL: "http://synchronous-write-provider:8787/v1",
     AI_API_KEY: "dense-mem-grafana-e2e-key",
   })) serverEnvironment.set(key, value);
-}
-if (has("conflict_provider")) {
-  for (const [key, value] of Object.entries({
-    AI_API_URL: "http://conflict-provider:8081/v1",
-    AI_API_KEY: "dense-mem-conflict-e2e-key",
-    AI_API_EMBEDDING_MODEL: providerModel,
-    AI_API_EMBEDDING_DIMENSIONS: providerDimensions,
-    AI_VERIFIER_API_URL: "http://conflict-provider:8081/v1",
-    AI_VERIFIER_API_KEY: "dense-mem-conflict-e2e-key",
-    AI_VERIFIER_MODEL: "dense-mem-conflict-e2e-verifier",
-    AI_CONFLICT_REVIEW_MODEL: "dense-mem-e2e-conflict-review",
-    AI_VERIFIER_DISABLE_TEMPERATURE: "true",
-  })) serverEnvironment.set(key, value);
-  helperServices.push(["conflict-provider", ["    command: [\"sh\", \"-c\", \"sleep infinity\"]"]]);
 }
 if (scenario === "google_adk_memory" || scenario === "session_ingest" || scenario === "python_client" || scenario === "full") serverEnvironment.set("SESSION_INGEST_ENABLED", "true");
 if (["google_adk_memory", "langchain_retriever"].includes(scenario)) serverEnvironment.set("RATE_LIMIT_PER_MINUTE", "1000");
@@ -330,6 +252,7 @@ if (has("synchronous_write")) {
     AI_VERIFIER_DISABLE_TEMPERATURE: "true",
   })) serverEnvironment.set(key, value);
 }
+if (["synchronous_write", "synchronous_write_telemetry_disabled", "session_ingest"].includes(scenario)) serverEnvironment.set("LOG_LEVEL", "debug");
 if (scenario === "decision_providers") {
   for (const [key, value] of Object.entries({
     AI_DECISION_PROVIDER: "openai",
@@ -359,16 +282,6 @@ if (fixtureEmbeddingProvider) {
     providerService.push(`      DENSE_MEM_E2E_PROVIDER_TIMEOUT_DELAY_MS: "${(Math.max(timeoutSeconds, 30) + 5) * 1000}"`);
   }
   helperServices.push(["synchronous-write-provider", providerService]);
-}
-if (has("conflict_provider")) {
-  helperServices.find(([name]) => name === "conflict-provider")[1].push(
-    "    environment:",
-    `      DENSE_MEM_E2E_EMBEDDING_BASE_URL: ${fromEnv("AI_API_URL")}`,
-    `      DENSE_MEM_E2E_EMBEDDING_API_KEY: ${fromEnv("AI_API_KEY")}`,
-    `      DENSE_MEM_E2E_EMBEDDING_MODEL: ${fromEnv("AI_API_EMBEDDING_MODEL")}`,
-    `      DENSE_MEM_E2E_EMBEDDING_DIMENSIONS: ${fromEnv("AI_API_EMBEDDING_DIMENSIONS")}`,
-    `      DENSE_MEM_E2E_EMBEDDING_MAX_BATCH_ITEMS: ${fromEnv("AI_API_EMBEDDING_MAX_BATCH_ITEMS", "256")}`,
-  );
 }
 if (has("oauth") || has("oauth_compatibility")) {
   serverEnvironment.set("SSL_CERT_FILE", "/e2e/oauth-files/ca.pem");
@@ -523,16 +436,6 @@ start_stack_helpers() {
       docker exec -d "$entra" node /e2e/entra-mock.mjs >/dev/null
     fi
   fi
-  if has_helper "$helpers" conflict_provider; then
-    local conflict
-    conflict="$(ci_compose ps -q conflict-provider)"
-    [[ -n "$conflict" ]] || fail "conflict provider helper was not created"
-    docker cp "${source_dir}/tests/uat/conflict_openai_stub.mjs" "${conflict}:/e2e/conflict_openai_stub.mjs" >/dev/null
-    docker cp "${source_dir}/tests/uat/embedding_upstream.mjs" "${conflict}:/e2e/embedding_upstream.mjs" >/dev/null
-    docker exec "$conflict" mkdir -p /e2e/decision_providers >/dev/null
-    docker cp "${source_dir}/tests/uat/decision_providers/protocol.mjs" "${conflict}:/e2e/decision_providers/protocol.mjs" >/dev/null
-    docker exec -d "$conflict" node /e2e/conflict_openai_stub.mjs >/dev/null
-  fi
   if [[ "${DENSE_MEM_CI_HOSTED:-0}" == "1" ]] || has_helper "$helpers" verifier || has_helper "$helpers" synchronous_write; then
     local provider
     provider="$(ci_compose ps -q synchronous-write-provider)"
@@ -610,7 +513,6 @@ const lines = [
   "    healthcheck:", "      test: [\"CMD-SHELL\", \"REDISCLI_AUTH= redis-cli ping | grep -q PONG\"]",
   "  server:", `    image: ${JSON.stringify(image)}`, "    networks: [ci]",
   "  prometheus:", "    image: prom/prometheus:v3.12.0", "    networks: [ci]",
-  "  conflict-provider:", "    image: node:24-alpine", "    networks: [ci]",
   "  oauth-provider-mock:", "    image: node:26-alpine", "    networks: [ci]",
   "  entra-mock:", "    image: node:26-alpine", "    networks: [ci]",
   "  oauth-compat-harness:", "    image: alpine:3.24", "    networks: [ci]",

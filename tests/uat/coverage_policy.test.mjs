@@ -158,7 +158,7 @@ test("complete Go coverage deduplicates profiles and rejects exact thresholds", 
   assert.match(merged, /example\/audit\.go:1\.1,1\.2 1 1/);
   assert.match(merged, /example\/root\.go:2\.1,2\.2 1 1/);
   assert.match(readFixture(join(completeDir, "go-postgres-complete.out")), /example\/audit\.go:1\.1,1\.2 1 1/);
-  assert.match(readFixture(join(completeDir, "go-postgres-complete.out")), /example\/community-scale\.go:1\.1,1\.2 1 1/);
+  assert.match(readFixture(join(completeDir, "go-postgres-complete.out")), /example\/evidence-only\.go:1\.1,1\.2 1 1/);
   assert.match(readFixture(join(completeDir, "go-complete.txt")), /complete total: 6\/7 85\.7%/);
 
   const missing = runCoverage(fakeGo, join(fixture, "missing"), "--complete", { FAKE_SKIP_EVALUATION: "1" });
@@ -178,10 +178,10 @@ test("complete Go coverage deduplicates profiles and rejects exact thresholds", 
     assert.notEqual(missingSession.status, 0);
     assert.match(missingSession.stderr, /coverage profile is missing or empty: .*go-session-complete\.raw/);
   }
-  for (const flag of ["FAKE_SKIP_COMMUNITY_SCALE", "FAKE_EMPTY_COMMUNITY_SCALE"]) {
+  for (const flag of ["FAKE_SKIP_EVIDENCE_ONLY", "FAKE_EMPTY_EVIDENCE_ONLY"]) {
     const missingScale = runCoverage(fakeGo, join(fixture, flag), "--complete", { [flag]: "1" });
     assert.notEqual(missingScale.status, 0);
-    assert.match(missingScale.stderr, /coverage profile is missing or empty: .*go-community-scale-complete\.raw/);
+    assert.match(missingScale.stderr, /coverage profile is missing or empty: .*go-evidence-only-complete\.raw/);
   }
 
   const exact = runCoverage(fakeGo, join(fixture, "exact"), "--transitional", { FAKE_COVERAGE_TOTAL: "90.0" });
@@ -279,9 +279,9 @@ function fakeGoScript() {
     "  [[ \"${DENSE_MEM_REPOSITORY_TESTCONTAINERS:-}\" == \"1\" ]] || exit 1",
     "  if [[ \"${FAKE_SKIP_POSTGRES:-}\" == \"1\" ]]; then exit 0; fi",
     "fi",
-    "if [[ \"${profile}\" == *go-community-scale-complete.raw ]]; then",
+    "if [[ \"${profile}\" == *go-evidence-only-complete.raw ]]; then",
     "  [[ \"${DENSE_MEM_REPOSITORY_TESTCONTAINERS:-}\" == \"1\" ]] || exit 1",
-    "  if [[ \"${FAKE_SKIP_COMMUNITY_SCALE:-}\" == \"1\" ]]; then exit 0; fi",
+    "  if [[ \"${FAKE_SKIP_EVIDENCE_ONLY:-}\" == \"1\" ]]; then exit 0; fi",
     "fi",
     "if [[ \"${profile}\" == *go-audit-complete.raw ]]; then",
     "  [[ \"${DENSE_MEM_REPOSITORY_TESTCONTAINERS:-}\" == \"1\" ]] || exit 1",
@@ -320,9 +320,9 @@ function fakeGoScript() {
     "        printf 'example/root.go:2.1,2.2 1 0\\n'",
     "      fi",
     "      ;;",
-    "    *go-community-scale-complete.raw)",
-    "      if [[ \"${FAKE_EMPTY_COMMUNITY_SCALE:-}\" != \"1\" ]]; then",
-    "        printf 'example/community-scale.go:1.1,1.2 1 1\\n'",
+    "    *go-evidence-only-complete.raw)",
+    "      if [[ \"${FAKE_EMPTY_EVIDENCE_ONLY:-}\" != \"1\" ]]; then",
+    "        printf 'example/evidence-only.go:1.1,1.2 1 1\\n'",
     "      fi",
     "      ;;",
     "    *go-session-complete.raw)",
@@ -353,12 +353,16 @@ test("real Go coverage parts retain cross-package and testless execution and rej
   writeFixture(fixture, "internal/parallelonly/value.go", "package parallelonly\nfunc Value() int { return 23 }\n");
   writeFixture(fixture, "internal/semanticonly/value.go", "package semanticonly\nfunc Hierarchy() int { return 27 }\nfunc Publication() int { return 29 }\n");
   const targets = {
-    "internal/ontology/postgres": ["TestOntologyMaintenanceCohort", "TestOntologyCoverageFailureWitnesses", "TestOntologyMaintenanceParallelClaimsAndLimits", "TestOntologyMaintenanceParallelSchedulerExecution", "TestOntologySemanticHierarchyPublication", "TestOntologySemanticHierarchyDependencies", "TestOntologySemanticHierarchyRollbackAndPins", "TestOntologySemanticHierarchyRacesAndIsolation"],
-    "internal/community/postgres": ["TestCommunityTopicOrdinary", "TestCommunityTopicLargeFanoutResumesAndRotates"],
-    "internal/dream/postgres": ["TestRetiredDreamHistoryPreservesProvenanceIsolationAndRetention"],
-    "cmd/internal/serverapp": ["TestServerLifecycleCore", "TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads", "TestOntologySemanticPublicationLogOnlyDiagnostics"],
+    "internal/ontology/postgres": ["TestOntologyMaintenanceCohort", "TestOntologyCoverageFailureWitnesses", "TestOntologyMaintenanceParallelClaimsAndLimits", "TestOntologyMaintenanceParallelSchedulerExecution", "TestOntologyManagementTopicPublication", "TestOntologyManagementTopicDependencies", "TestOntologyManagementTopicRollbackAndPins", "TestOntologyManagementTopicRacesAndIsolation"],
+    "internal/storage/postgres": ["TestEvidenceOnlyPostgresUpgrade"],
+    "cmd/internal/migrationapp": ["TestEvidenceOnlyPostgresMigrationDiagnostics"],
+    "internal/recall/postgres": ["TestEvidenceOnlyPostgresTopics"],
+    "internal/trace/postgres": ["TestEvidenceOnlyPostgresTrace"],
+    "internal/privacy/postgres": ["TestEvidenceOnlyPostgresPrivacy"],
+    "internal/operations/postgres": ["TestEvidenceOnlyPostgresTelemetry"],
+    "cmd/internal/serverapp": ["TestServerLifecycleCore", "TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads", "TestOntologySemanticPublicationLogOnlyDiagnostics", "TestEvidenceOnlyPostgresIntake"],
     "internal/service": ["TestAuditFixture"],
-    "internal/knowledge/postgres": ["TestSessionFixture", "TestDecisionWorkflowFixture"],
+    "internal/knowledge/postgres": ["TestSessionFixture", "TestDecisionWorkflowFixture", "TestEvidenceOnlyPostgresSession"],
     "internal/settings": ["TestDecisionSettingsFixture"],
   };
   for (const [directory, names] of Object.entries(targets)) {
@@ -366,12 +370,12 @@ test("real Go coverage parts retain cross-package and testless execution and rej
     const decisionImport = names.some((name) => name.startsWith("TestDecision")) ? '; "example.com/fixture/internal/decisiononly"' : "";
     const diagnosticImport = names.some((name) => name.startsWith("TestOntologyCoverage") || name.startsWith("TestOntologyFailureCapture")) ? '; "example.com/fixture/internal/diagnosticonly"' : "";
     const parallelImport = names.some((name) => name.startsWith("TestOntologyMaintenanceParallel")) ? '; "example.com/fixture/internal/parallelonly"' : "";
-    const semanticImport = names.some((name) => name.startsWith("TestOntologySemantic")) ? '; "example.com/fixture/internal/semanticonly"' : "";
+    const semanticImport = names.some((name) => (name.startsWith("TestOntologySemantic") || name.startsWith("TestOntologyManagementTopic"))) ? '; "example.com/fixture/internal/semanticonly"' : "";
     const tests = names.map((name) => {
       let expression = name.includes("DecisionSettings") ? "decisiononly.Settings() != 13" : name.includes("DecisionWorkflow") ? "decisiononly.Workflow() != 11" : "Value() != 8";
       if (name === "TestOntologyCoverageFailureWitnesses") expression = "diagnosticonly.AssessmentWitness() != 19";
       if (name === "TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads") expression = "diagnosticonly.FailureCapture() != 17";
-      if (name.startsWith("TestOntologySemanticHierarchy")) expression = "semanticonly.Hierarchy() != 27";
+      if (name.startsWith("TestOntologyManagementTopic")) expression = "semanticonly.Hierarchy() != 27";
       if (name === "TestOntologySemanticPublicationLogOnlyDiagnostics") expression = "semanticonly.Publication() != 29";
       if (name.startsWith("TestOntologyMaintenanceParallel")) expression = "parallelonly.Value() != 23";
       return `func ${name}(t *testing.T) { record(t); if ${expression} { t.Fatal("cross-package execution") } }`;
@@ -401,7 +405,7 @@ test("real Go coverage parts retain cross-package and testless execution and rej
   const core = readFixture(join(outputDir, "core/go-root-complete.raw"));
   assert.match(core, /fixture\/internal\/testless\/value.go:[^\n]+ 0/m);
   assert.notEqual(coverage("--merge-complete").status, 0);
-  for (const name of ["go-community-scale-complete.raw", "go-audit-complete.raw", "go-session-complete.raw"]) {
+  for (const name of ["go-evidence-only-complete.raw", "go-audit-complete.raw", "go-session-complete.raw"]) {
     writeFixture(outputDir, `postgres/${name}`, "mode: atomic\nexample.com/unused.go:1.1,1.2 1 0\n");
   }
   requirePass(coverage("--complete-part", "postgres"));
@@ -409,7 +413,7 @@ test("real Go coverage parts retain cross-package and testless execution and rej
   assert.match(readFixture(join(outputDir, "postgres/go-postgres-complete.raw")), /fixture\/internal\/testless\/value.go:[^\n]+ [1-9]/m);
   assert.match(readFixture(join(outputDir, "postgres/go-postgres-complete.raw")), /fixture\/internal\/parallelonly\/value.go:[^\n]+ [1-9]/m);
   for (const line of [2, 3]) assert.match(readFixture(join(outputDir, "postgres/go-postgres-complete.raw")), new RegExp(`fixture/internal/diagnosticonly/value.go:${line}\\.[^\\n]+ [1-9]`, "m"));
-  assert.doesNotMatch(readFixture(join(outputDir, "postgres/profiles.sha256")), /go-(audit|session|community-scale)-complete/);
+  assert.doesNotMatch(readFixture(join(outputDir, "postgres/profiles.sha256")), /go-(audit|session|evidence-only)-complete/);
   for (const line of [2, 3]) assert.match(readFixture(join(outputDir, "core/postgres-support/go-session-complete.raw")), new RegExp(`fixture/internal/decisiononly/value.go:${line}\\.[^\\n]+ [1-9]`, "m"));
   requirePass(coverage("--merge-complete"));
   assert.match(readFixture(join(outputDir, "go-complete.txt")), /100\.0%/);

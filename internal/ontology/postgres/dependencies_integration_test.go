@@ -58,13 +58,12 @@ func TestOntologyMismatchedSourceVersionDoesNotCommit(t *testing.T) {
 
 func TestOntologyEnrichmentBoundRejectsAtomically(t *testing.T) {
 	f := newOntologyFixture(t)
-	seed, err := f.store.SeedDefinitions(context.Background(), f.team, ontology.SeedInput{OperationKey: "seed", Limit: 20})
+	topic := testTopic("storage")
+	seed, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("seed", 0, ontology.Change{Record: topic}))
 	require.NoError(t, err)
-	entity, err := f.knowledge.CreateEntity(context.Background(), knowledge.CreateEntityInput{TeamID: f.team, OwnerProfileID: f.owners[0], EntityKind: "person", CanonicalName: "Ada"})
-	require.NoError(t, err)
-	handle := ontology.SourceHandle{Kind: ontology.EntitySource, ID: entity.EntityID, Version: int64(entity.Version)}
+	handle := f.organizationEvidence(t, 0, "Atlas stores records.", nil)
 	dependency := f.source(t, handle)
-	classID := ontology.SeedDefinitionID(f.team, ontology.EntityClass, "person")
+	classID := topic.ID
 	revision := seed.Revision
 	var changes []ontology.Change
 	var lastID string
@@ -94,8 +93,6 @@ func TestOntologyEnrichmentBoundRejectsAtomically(t *testing.T) {
 func TestOntologyDefinitionChangesValidateActiveChildren(t *testing.T) {
 	f := newOntologyFixture(t)
 	parent, child := testTopic("person"), testTopic("engineer")
-	parent.Kind, child.Kind = ontology.EntityClass, ontology.EntityClass
-	parent.Definition.BaseEntityKind, child.Definition.BaseEntityKind = "person", "person"
 	child.Definition.ParentID = parent.ID
 	initial, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("parent", 0, ontology.Change{Record: parent}))
 	require.NoError(t, err)
@@ -109,9 +106,6 @@ func TestOntologyDefinitionChangesValidateActiveChildren(t *testing.T) {
 	_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("retire-parent", 2, ontology.Change{ExpectedVersion: 1, Record: retired}))
 	require.ErrorIs(t, err, ontology.ErrInvalid)
 	_, err = f.store.Rollback(f.actor(0, "manager"), f.team, initial.ID, "rollback-parent", 2, "undo parent creation")
-	require.ErrorIs(t, err, ontology.ErrInvalid)
-	parent.Definition.BaseEntityKind = "project"
-	_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("change-parent-kind", 2, ontology.Change{ExpectedVersion: 1, Record: parent}))
 	require.ErrorIs(t, err, ontology.ErrInvalid)
 	history, err := f.store.History(context.Background(), f.team, 0, 20)
 	require.NoError(t, err)

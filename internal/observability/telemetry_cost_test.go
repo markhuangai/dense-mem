@@ -30,8 +30,8 @@ func TestAIOperationContextUsesBoundedLabels(t *testing.T) {
 	if HasAIOperation(WithAIOperation(ctx, "unbounded-operation", 2)) {
 		t.Fatal("unknown operation unexpectedly has an AI operation")
 	}
-	graphCtx := WithAIOperation(ctx, AIOperationDreamGeneration, 1)
-	evidenceCtx := WithAIOperation(ctx, AIOperationEvidenceDiscovery, 1)
+	graphCtx := WithAIOperation(ctx, AIOperationOntologyOrganization, 1)
+	evidenceCtx := WithAIOperation(ctx, AIOperationSemanticAssessment, 1)
 	graphOperation, graphOK := aiOperationFromContext(graphCtx)
 	evidenceOperation, evidenceOK := aiOperationFromContext(evidenceCtx)
 	if !graphOK || !evidenceOK || graphOperation.operation == evidenceOperation.operation {

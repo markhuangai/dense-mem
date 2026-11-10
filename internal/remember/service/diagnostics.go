@@ -52,7 +52,6 @@ type RememberAttemptDiagnosticSummary struct {
 	Retryable          bool       `json:"retryable"`
 	CorrelationID      string     `json:"correlation_id,omitempty"`
 	EvidenceCount      int        `json:"evidence_count"`
-	RelationshipCount  int        `json:"relationship_count"`
 	DocumentCount      int        `json:"document_count"`
 	AssessorTurns      int        `json:"assessor_turns"`
 	DurationMS         int64      `json:"duration_ms"`
@@ -240,7 +239,6 @@ func rememberAttemptDiagnosticSummary(record knowledgecontract.RememberAttemptDi
 		Retryable:          record.Retryable,
 		CorrelationID:      record.CorrelationID,
 		EvidenceCount:      record.EvidenceCount,
-		RelationshipCount:  record.RelationshipCount,
 		DocumentCount:      record.DocumentCount,
 		AssessorTurns:      record.AssessorTurns,
 		DurationMS:         record.Duration.Milliseconds(),
@@ -264,9 +262,6 @@ func projectRememberAttemptPublicResult(raw map[string]any) (*RememberAttemptPub
 	result.Kind = ResultKindTerminal
 	if result.Evidence == nil {
 		result.Evidence = []TerminalEvidenceResult{}
-	}
-	if result.RelationshipResults == nil {
-		result.RelationshipResults = []SubmissionRelationshipResult{}
 	}
 	if result.Errors == nil {
 		result.Errors = []SubmissionStatusError{}

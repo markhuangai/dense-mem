@@ -48,79 +48,48 @@ func (s *MaintenanceScheduler) run(ctx context.Context) {
 	if window == nil {
 		return
 	}
-	const organizationTurn, projectionTurn = 0, 1
-	remaining := [2]int{20 * window.Policy.MaxConcurrency, 20 * window.Policy.MaxConcurrency}
-	if s.service.deps.Projections == nil {
-		remaining[projectionTurn] = 0
-	} else {
-		status, err := s.service.deps.Repository.MaintenanceStatus(ctx, s.service.deps.Now())
-		if err != nil {
-			s.logFailure("projection_status_unavailable")
-		}
-		if err != nil || status.Paused {
-			remaining[projectionTurn] = 0
-		}
-	}
+	remaining := 20 * window.Policy.MaxConcurrency
 	type turnResult struct {
-		kind, generation int
-		progress         bool
-		err              error
+		generation int
+		progress   bool
+		err        error
 	}
 	completed := make(chan turnResult, window.Policy.MaxConcurrency)
-	active, next, generation := 0, organizationTurn, 1
-	blocked := [2]int{}
+	active, generation := 0, 1
+	blocked := 0
 	finish := func() {
 		result := <-completed
 		active--
-		if result.kind == organizationTurn {
-			s.logTurnFailure(result.err)
-		} else if result.err != nil {
-			s.logFailure("topic_projection_failed")
-			remaining[projectionTurn] = 0
-		}
+		s.logTurnFailure(result.err)
 		if result.progress {
 			generation++
 		} else {
 			// A late refusal must not hide capacity released after its dispatch.
-			blocked[result.kind] = max(blocked[result.kind], result.generation)
+			blocked = max(blocked, result.generation)
 		}
 	}
 	for ctx.Err() == nil {
-		kind := next
-		if remaining[kind] == 0 || blocked[kind] >= generation {
-			kind = 1 - kind
-		}
-		if active == window.Policy.MaxConcurrency || remaining[kind] == 0 || blocked[kind] >= generation {
+		if active == window.Policy.MaxConcurrency || remaining == 0 || blocked >= generation {
 			if active == 0 {
 				break
 			}
 			finish()
 			continue
 		}
-		remaining[kind]--
-		next = 1 - kind
-		if kind == projectionTurn {
-			active++
-			dispatched := generation
-			go func() {
-				progress, err := s.service.deps.Projections.RunProjectionTurn(ctx)
-				completed <- turnResult{kind: projectionTurn, generation: dispatched, progress: progress, err: err}
-			}()
-			continue
-		}
+		remaining--
 		work, progress, err := s.service.prepareTurn(ctx)
 		if err != nil {
 			s.logTurnFailure(err)
-			remaining[organizationTurn] = 0
+			remaining = 0
 		} else if progress {
 			generation++
 		} else {
-			blocked[organizationTurn] = generation
+			blocked = generation
 		}
 		if work != nil {
 			active++
 			go func() {
-				completed <- turnResult{kind: organizationTurn, progress: true, err: s.service.executeBatch(ctx, *work)}
+				completed <- turnResult{progress: true, err: s.service.executeBatch(ctx, *work)}
 			}()
 		}
 	}

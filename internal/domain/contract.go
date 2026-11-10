@@ -1,27 +1,21 @@
 package domain
 
 const (
-	ContractVersion              = "dense-mem.v2.7.0"
-	PreviousContractVersion      = "dense-mem.v2.6.2"
-	PredicatePolicyVersion       = "open_vocabulary_v1"
-	ConflictPolicyVersion        = "cross_profile_supporter_majority_after_ttl"
-	ConflictOverduePolicyVersion = "overdue_conflict_ai_supporter_voting"
-	FeatureGate                  = "memory"
-	ToolVisibility               = "active"
+	ContractVersion         = "dense-mem.v3.0.0"
+	PreviousContractVersion = "dense-mem.v2.6.2"
+	FeatureGate             = "memory"
+	ToolVisibility          = "active"
 )
-
-const MaxOriginalPredicateRunes = 256
 
 // ContractVersionCompatible reports versions whose terminal Remember shape
 // and replay semantics are intentionally preserved by the current server.
 func ContractVersionCompatible(version string) bool {
-	return version == ContractVersion || version == "dense-mem.v2.6.8" || version == "dense-mem.v2.6.7" || version == "dense-mem.v2.6.6" || version == "dense-mem.v2.6.3" || version == PreviousContractVersion
+	return version == ContractVersion
 }
 
-// AcceptedContractVersions returns the current version first, followed by the
-// one explicitly retained for replay compatibility.
+// AcceptedContractVersions contains only the supported Evidence-only contract.
 func AcceptedContractVersions() []string {
-	return []string{ContractVersion, "dense-mem.v2.6.8", "dense-mem.v2.6.7", "dense-mem.v2.6.6", "dense-mem.v2.6.3", PreviousContractVersion}
+	return []string{ContractVersion}
 }
 
 const (
@@ -31,163 +25,7 @@ const (
 
 type IngestID string
 type EvidenceID string
-type ObservationID string
-type EntityID string
-type ValueID string
-type RelationshipID string
-type HypothesisID string
-type CommunityID string
 type MemoryPackID string
-
-type SemanticNodeKind string
-
-const (
-	SemanticNodeEntity SemanticNodeKind = "entity"
-	SemanticNodeValue  SemanticNodeKind = "value"
-)
-
-type EntityKind string
-
-const (
-	EntityKindPerson       EntityKind = "person"
-	EntityKindOrganization EntityKind = "organization"
-	EntityKindProject      EntityKind = "project"
-	EntityKindProduct      EntityKind = "product"
-	EntityKindPlace        EntityKind = "place"
-	EntityKindDocument     EntityKind = "document"
-	EntityKindConcept      EntityKind = "concept"
-	EntityKindOther        EntityKind = "other"
-)
-
-type ValueType string
-
-const (
-	ValueTypeString   ValueType = "string"
-	ValueTypeNumber   ValueType = "number"
-	ValueTypeBoolean  ValueType = "boolean"
-	ValueTypeDate     ValueType = "date"
-	ValueTypeDateTime ValueType = "date_time"
-)
-
-type RelationshipStatus string
-
-const (
-	RelationshipStatusActive          RelationshipStatus = "active"
-	RelationshipStatusPendingEvidence RelationshipStatus = "pending_evidence"
-	RelationshipStatusNeedsReview     RelationshipStatus = "needs_review"
-	RelationshipStatusRejected        RelationshipStatus = "rejected"
-	RelationshipStatusRetracted       RelationshipStatus = "retracted"
-	RelationshipStatusSuperseded      RelationshipStatus = "superseded"
-	RelationshipStatusQuarantined     RelationshipStatus = "quarantined"
-	RelationshipStatusDisputed        RelationshipStatus = "disputed"
-)
-
-type RelationshipKind string
-
-const (
-	RelationshipKindState RelationshipKind = "state"
-	RelationshipKindEvent RelationshipKind = "event"
-)
-
-type CurrentCardinality string
-
-const (
-	CurrentCardinalityOne  CurrentCardinality = "one"
-	CurrentCardinalityMany CurrentCardinality = "many"
-)
-
-type PredicateLifecycleState string
-
-const (
-	PredicateLifecycleActive     PredicateLifecycleState = "active"
-	PredicateLifecycleDeprecated PredicateLifecycleState = "deprecated"
-	PredicateLifecycleRetired    PredicateLifecycleState = "retired"
-)
-
-type VerificationVerdict string
-
-const (
-	VerificationEntailed     VerificationVerdict = "entailed"
-	VerificationContradicted VerificationVerdict = "contradicted"
-	VerificationInsufficient VerificationVerdict = "insufficient"
-)
-
-type EntityResolutionAction string
-
-const (
-	EntityResolutionReuse     EntityResolutionAction = "reuse"
-	EntityResolutionCreate    EntityResolutionAction = "create"
-	EntityResolutionAmbiguous EntityResolutionAction = "ambiguous"
-)
-
-type SupportDecision string
-
-const (
-	SupportGrant     SupportDecision = "grant"
-	SupportRevoke    SupportDecision = "revoke"
-	SupportReinstate SupportDecision = "reinstate"
-)
-
-type CrossReferenceKind string
-
-const (
-	CrossReferenceConfirms           CrossReferenceKind = "confirms"
-	CrossReferenceChallenges         CrossReferenceKind = "challenges"
-	CrossReferenceCorrects           CrossReferenceKind = "corrects"
-	CrossReferenceAdoptsEvidenceFrom CrossReferenceKind = "adopts_evidence_from"
-)
-
-type RelationshipConflictStatus string
-
-const (
-	RelationshipConflictOpen      RelationshipConflictStatus = "open"
-	RelationshipConflictOverdue   RelationshipConflictStatus = "overdue"
-	RelationshipConflictResolved  RelationshipConflictStatus = "resolved"
-	RelationshipConflictDismissed RelationshipConflictStatus = "dismissed"
-)
-
-type RelationshipConflictKind string
-
-const (
-	RelationshipConflictCrossProfileCurrentState RelationshipConflictKind = "cross_profile_current_state"
-)
-
-type RelationshipConflictPositionDisposition string
-
-const (
-	RelationshipConflictPositionCandidate         RelationshipConflictPositionDisposition = "candidate"
-	RelationshipConflictPositionPreferred         RelationshipConflictPositionDisposition = "preferred"
-	RelationshipConflictPositionSuppressedCurrent RelationshipConflictPositionDisposition = "suppressed_current"
-)
-
-type RelationshipConflictEventAction string
-
-const (
-	RelationshipConflictEventOpened               RelationshipConflictEventAction = "opened"
-	RelationshipConflictEventPositionAdded        RelationshipConflictEventAction = "position_added"
-	RelationshipConflictEventMemberAdded          RelationshipConflictEventAction = "member_added"
-	RelationshipConflictEventEvaluated            RelationshipConflictEventAction = "evaluated"
-	RelationshipConflictEventMarkedOverdue        RelationshipConflictEventAction = "marked_overdue"
-	RelationshipConflictEventResolved             RelationshipConflictEventAction = "resolved"
-	RelationshipConflictEventRelationshipUpdated  RelationshipConflictEventAction = "relationship_updated"
-	RelationshipConflictEventDismissed            RelationshipConflictEventAction = "dismissed"
-	RelationshipConflictEventAIAssessmentReserved RelationshipConflictEventAction = "ai_assessment_reserved"
-	RelationshipConflictEventAIAssessed           RelationshipConflictEventAction = "ai_assessed"
-	RelationshipConflictEventResolutionPending    RelationshipConflictEventAction = "resolution_pending"
-	RelationshipConflictEventEvidenceRetracted    RelationshipConflictEventAction = "evidence_retracted"
-	RelationshipConflictEventDerivedStaged        RelationshipConflictEventAction = "derived_replacement_staged"
-	RelationshipConflictEventDerivedFailed        RelationshipConflictEventAction = "derived_replacement_failed"
-)
-
-type HypothesisStatus string
-
-const (
-	HypothesisProposed   HypothesisStatus = "proposed"
-	HypothesisReinforced HypothesisStatus = "reinforced"
-	HypothesisStale      HypothesisStatus = "stale"
-	HypothesisRejected   HypothesisStatus = "rejected"
-	HypothesisSubmitted  HypothesisStatus = "submitted"
-)
 
 type SearchProjectionState string
 
@@ -257,17 +95,6 @@ const (
 	EvidenceProcessingFailed EvidenceItemCategory = "processing_failed"
 )
 
-type RelationshipOutcomeCategory string
-
-const (
-	OutcomeRelationshipAccepted        RelationshipOutcomeCategory = "relationship_accepted"
-	OutcomeRelationshipPendingEvidence RelationshipOutcomeCategory = "relationship_pending_evidence"
-	OutcomeRelationshipNeedsReview     RelationshipOutcomeCategory = "relationship_needs_review"
-	OutcomePredicateNeedsReview        RelationshipOutcomeCategory = "predicate_needs_review"
-	OutcomeRelationshipRejected        RelationshipOutcomeCategory = "relationship_rejected"
-	OutcomeIdentityNeedsReview         RelationshipOutcomeCategory = "identity_needs_review"
-)
-
 type SemanticReviewStatus string
 
 const (
@@ -277,27 +104,6 @@ const (
 	SemanticReviewRetryable       SemanticReviewStatus = "retryable"
 	SemanticReviewTerminalFailure SemanticReviewStatus = "terminal_failure"
 	SemanticReviewSuperseded      SemanticReviewStatus = "superseded"
-)
-
-type ResolveAction string
-
-const (
-	ResolveAcknowledge       ResolveAction = "acknowledge"
-	ResolveSelectEntity      ResolveAction = "select_entity"
-	ResolveConfirmNewEntity  ResolveAction = "confirm_new_entity"
-	ResolveSelectPredicate   ResolveAction = "select_predicate"
-	ResolveAccept            ResolveAction = "accept"
-	ResolveReject            ResolveAction = "reject"
-	ResolveCorrect           ResolveAction = "correct"
-	ResolveReleaseQuarantine ResolveAction = "release_quarantine"
-	ResolveForget            ResolveAction = "forget"
-)
-
-type EntityCorrectionAction string
-
-const (
-	EntityCorrectionMerge EntityCorrectionAction = "merge"
-	EntityCorrectionSplit EntityCorrectionAction = "split"
 )
 
 type PublicErrorCode string
@@ -311,116 +117,6 @@ const (
 	ErrorProviderMalformed   PublicErrorCode = "provider_malformed"
 	ErrorDegraded            PublicErrorCode = "degraded"
 )
-
-func ResolveActions() []string {
-	return []string{
-		string(ResolveAcknowledge),
-		string(ResolveSelectEntity),
-		string(ResolveConfirmNewEntity),
-		string(ResolveSelectPredicate),
-		string(ResolveAccept),
-		string(ResolveReject),
-		string(ResolveCorrect),
-		string(ResolveReleaseQuarantine),
-		string(ResolveForget),
-	}
-}
-
-func RelationshipKinds() []string {
-	return []string{
-		string(RelationshipKindState),
-		string(RelationshipKindEvent),
-	}
-}
-
-func RelationshipStatuses() []string {
-	return []string{
-		string(RelationshipStatusPendingEvidence),
-		string(RelationshipStatusActive),
-		string(RelationshipStatusNeedsReview),
-		string(RelationshipStatusRejected),
-		string(RelationshipStatusRetracted),
-		string(RelationshipStatusSuperseded),
-		string(RelationshipStatusQuarantined),
-		string(RelationshipStatusDisputed),
-	}
-}
-
-func CurrentCardinalities() []string {
-	return []string{
-		string(CurrentCardinalityOne),
-		string(CurrentCardinalityMany),
-	}
-}
-
-func PredicateLifecycleStates() []string {
-	return []string{
-		string(PredicateLifecycleActive),
-		string(PredicateLifecycleDeprecated),
-		string(PredicateLifecycleRetired),
-	}
-}
-
-func VerificationVerdicts() []string {
-	return []string{
-		string(VerificationEntailed),
-		string(VerificationContradicted),
-		string(VerificationInsufficient),
-	}
-}
-
-func EntityResolutionActions() []string {
-	return []string{
-		string(EntityResolutionReuse),
-		string(EntityResolutionCreate),
-		string(EntityResolutionAmbiguous),
-	}
-}
-
-func SupportDecisions() []string {
-	return []string{
-		string(SupportGrant),
-		string(SupportRevoke),
-		string(SupportReinstate),
-	}
-}
-
-func CrossReferenceKinds() []string {
-	return []string{
-		string(CrossReferenceConfirms),
-		string(CrossReferenceChallenges),
-		string(CrossReferenceCorrects),
-		string(CrossReferenceAdoptsEvidenceFrom),
-	}
-}
-
-func HypothesisStatuses() []string {
-	return []string{
-		string(HypothesisProposed),
-		string(HypothesisReinforced),
-		string(HypothesisStale),
-		string(HypothesisRejected),
-		string(HypothesisSubmitted),
-	}
-}
-
-func EntityCorrectionActions() []string {
-	return []string{
-		string(EntityCorrectionMerge),
-		string(EntityCorrectionSplit),
-	}
-}
-
-func RelationshipOutcomeCategories() []string {
-	return []string{
-		string(OutcomeRelationshipAccepted),
-		string(OutcomeRelationshipPendingEvidence),
-		string(OutcomeRelationshipNeedsReview),
-		string(OutcomePredicateNeedsReview),
-		string(OutcomeRelationshipRejected),
-		string(OutcomeIdentityNeedsReview),
-	}
-}
 
 func SemanticReviewStatuses() []string {
 	return []string{
@@ -438,29 +134,6 @@ func EvidenceItemCategories() []string {
 		string(EvidenceProcessed),
 		string(EvidenceQuarantined),
 		string(EvidenceProcessingFailed),
-	}
-}
-
-func EntityKinds() []string {
-	return []string{
-		string(EntityKindPerson),
-		string(EntityKindOrganization),
-		string(EntityKindProject),
-		string(EntityKindProduct),
-		string(EntityKindPlace),
-		string(EntityKindDocument),
-		string(EntityKindConcept),
-		string(EntityKindOther),
-	}
-}
-
-func ValueTypes() []string {
-	return []string{
-		string(ValueTypeString),
-		string(ValueTypeNumber),
-		string(ValueTypeBoolean),
-		string(ValueTypeDate),
-		string(ValueTypeDateTime),
 	}
 }
 
@@ -621,26 +294,3 @@ const (
 	EmbeddingReconciliationFailed    EmbeddingReconciliationRunStatus = "failed"
 	EmbeddingReconciliationAmbiguous EmbeddingReconciliationRunStatus = "ambiguous"
 )
-
-func RelationshipConflictStatuses() []string {
-	return []string{
-		string(RelationshipConflictOpen),
-		string(RelationshipConflictOverdue),
-		string(RelationshipConflictResolved),
-		string(RelationshipConflictDismissed),
-	}
-}
-
-func RelationshipConflictKinds() []string {
-	return []string{
-		string(RelationshipConflictCrossProfileCurrentState),
-	}
-}
-
-func RelationshipConflictPositionDispositions() []string {
-	return []string{
-		string(RelationshipConflictPositionCandidate),
-		string(RelationshipConflictPositionPreferred),
-		string(RelationshipConflictPositionSuppressedCurrent),
-	}
-}

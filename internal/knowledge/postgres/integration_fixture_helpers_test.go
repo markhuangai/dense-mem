@@ -33,13 +33,21 @@ const (
 )
 
 func setupLedgerRepositoryDB(t testing.TB) (*gorm.DB, *gorm.DB, *storagepostgres.RLS, func()) {
+	return setupLedgerRepositoryDBAtEvidenceOnlyBoundary(t, false)
+}
+
+func setupLedgerRepositoryDBAtEvidenceOnlyBoundary(t testing.TB, before bool) (*gorm.DB, *gorm.DB, *storagepostgres.RLS, func()) {
 	t.Helper()
 	dsn, baseCleanup := setupLedgerRepositoryDSN(t)
 	db, err := gorm.Open(gormpostgres.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 	migrator, err := storagepostgres.NewMigrator(db)
 	require.NoError(t, err)
-	require.NoError(t, migrator.RunUp(context.Background()))
+	if before {
+		require.NoError(t, migrator.PrepareEvidenceOnlyMigration(context.Background()))
+	} else {
+		require.NoError(t, migrator.RunUp(context.Background()))
+	}
 
 	rls := storagepostgres.NewRLS()
 	require.NoError(t, rls.WithSystemTx(context.Background(), db, func(tx *gorm.DB) error {

@@ -13,7 +13,7 @@ import (
 	"gorm.io/gorm"
 )
 
-var maintenanceSourceKinds = []ontology.SourceKind{ontology.EntitySource, ontology.PredicateSource, ontology.EvidenceSource, ontology.RelationshipSource}
+var maintenanceSourceKinds = []ontology.SourceKind{ontology.EvidenceSource}
 
 func (s *Store) DiscoverMaintenance(ctx context.Context, turn ontology.MaintenanceTurn, limit int) (result ontology.MaintenanceDiscoveryResult, err error) {
 	started := time.Now()
@@ -70,19 +70,10 @@ func (s *Store) DiscoverMaintenance(ctx context.Context, turn ontology.Maintenan
 }
 
 func maintenanceSourcePage(tx *gorm.DB, fence scope, kind ontology.SourceKind, cursor string, limit int) ([]ontology.SourceHandle, error) {
-	var query string
-	switch kind {
-	case ontology.EntitySource:
-		query = maintenanceEntityPageSQL
-	case ontology.EvidenceSource:
-		query = `SELECT fragment_id::text AS id,1::bigint FROM evidence_fragments WHERE team_id=?::uuid AND space_id=?::uuid AND space_generation=? AND fragment_id>COALESCE(NULLIF(?,'')::uuid,'00000000-0000-0000-0000-000000000000'::uuid) ORDER BY fragment_id LIMIT ?`
-	case ontology.RelationshipSource:
-		query = `SELECT relationship_id::text AS id,version FROM relationship_records WHERE team_id=?::uuid AND space_id=?::uuid AND space_generation=? AND relationship_id>COALESCE(NULLIF(?,'')::uuid,'00000000-0000-0000-0000-000000000000'::uuid) ORDER BY relationship_id LIMIT ?`
-	case ontology.PredicateSource:
-		query = eligiblePredicateSelect + ` AND definition.predicate_key>? ORDER BY definition.predicate_key,definition.version DESC LIMIT ?`
-	default:
+	if kind != ontology.EvidenceSource {
 		return nil, ontology.ErrInvalid
 	}
+	query := maintenanceEvidencePageSQL
 	rows, err := tx.Raw(query, fence.TeamID, fence.SpaceID, fence.Generation, cursor, limit).Rows()
 	if err != nil {
 		return nil, err
@@ -168,28 +159,9 @@ func refreshMaintenanceSource(tx *gorm.DB, fence scope, handle ontology.SourceHa
 }
 
 func latestMaintenanceHandle(tx *gorm.DB, fence scope, handle ontology.SourceHandle) (ontology.SourceHandle, error) {
-	var query string
-	switch handle.Kind {
-	case ontology.EntitySource:
-		query = `SELECT version FROM entity_records WHERE team_id=?::uuid AND space_id=?::uuid AND space_generation=? AND entity_id=?::uuid`
-	case ontology.RelationshipSource:
-		query = `SELECT version FROM relationship_records WHERE team_id=?::uuid AND space_id=?::uuid AND space_generation=? AND relationship_id=?::uuid`
-	case ontology.PredicateSource:
-		query = `SELECT version FROM (` + eligiblePredicateSelect + ` AND definition.predicate_key=? ORDER BY definition.predicate_key,definition.version DESC) AS live`
-	case ontology.EvidenceSource:
-		return handle, nil
-	default:
+	if handle.Kind != ontology.EvidenceSource {
 		return handle, ontology.ErrInvalid
 	}
-	var version int64
-	err := tx.Raw(query, fence.TeamID, fence.SpaceID, fence.Generation, handle.ID).Row().Scan(&version)
-	if errors.Is(err, sql.ErrNoRows) {
-		return handle, nil
-	}
-	if err != nil {
-		return handle, err
-	}
-	handle.Version = version
 	return handle, nil
 }
 
@@ -201,17 +173,7 @@ func refreshMaintenanceInvalidation(tx *gorm.DB, fence scope, handle ontology.So
 		if err := enqueueMaintenanceDependencies(tx, fence, handle); err != nil {
 			return err
 		}
-		if handle.Kind == ontology.RelationshipSource {
-			var predicate ontology.SourceHandle
-			predicate.Kind = ontology.PredicateSource
-			err := tx.Raw(`SELECT predicate_key,predicate_version FROM relationship_records WHERE team_id=?::uuid AND space_id=?::uuid AND space_generation=? AND relationship_id=?::uuid`, fence.TeamID, fence.SpaceID, fence.Generation, handle.ID).Row().Scan(&predicate.ID, &predicate.Version)
-			if err != nil && !errors.Is(err, sql.ErrNoRows) {
-				return err
-			}
-			if err == nil {
-				return refreshMaintenanceInvalidation(tx, fence, predicate, false)
-			}
-		}
+
 	}
 	return nil
 }
@@ -255,12 +217,6 @@ func maintenanceMarkerSources(tx *gorm.DB, fence scope, marker maintenanceMarker
 	}
 	direct := ontology.SourceHandle{ID: marker.TargetID, Version: 1}
 	switch marker.TargetKind {
-	case "entity":
-		direct.Kind = ontology.EntitySource
-	case "predicate":
-		direct.Kind = ontology.PredicateSource
-	case "relationship":
-		direct.Kind = ontology.RelationshipSource
 	case "evidence":
 		direct.Kind = ontology.EvidenceSource
 	case "source", "ingest":
@@ -274,7 +230,7 @@ func maintenanceMarkerSources(tx *gorm.DB, fence scope, marker maintenanceMarker
 		}
 		result = append(result, latest)
 	}
-	if len(result) == limit || marker.TargetKind == "entity" || marker.TargetKind == "relationship" {
+	if len(result) == limit || marker.TargetKind == "evidence" {
 		return result, nil
 	}
 	cursorKind, cursorID, _ := strings.Cut(marker.Cursor, ":")
@@ -294,27 +250,7 @@ func maintenanceMarkerSources(tx *gorm.DB, fence scope, marker maintenanceMarker
 			}
 		}
 	}
-	if len(result) == limit || cursorKind > "relationship" {
-		return result, nil
-	}
-	after := "00000000-0000-0000-0000-000000000000"
-	if cursorKind == "relationship" {
-		after = cursorID
-	}
-	filter := `relationship.predicate_key=?`
-	if marker.TargetKind != "predicate" {
-		column := "fragment_id"
-		if marker.TargetKind == "source" {
-			column = "source_id"
-		}
-		if marker.TargetKind == "ingest" {
-			column = "ingest_id"
-		}
-		filter = `EXISTS(SELECT 1 FROM relationship_evidence_supports AS support JOIN evidence_fragments AS fragment ON fragment.team_id=support.team_id AND fragment.fragment_id=support.fragment_id
-   WHERE support.team_id=relationship.team_id AND support.space_id=relationship.space_id AND support.space_generation=relationship.space_generation AND support.relationship_id=relationship.relationship_id AND fragment.` + column + `=?::uuid)`
-	}
-	err := appendRows(`SELECT 'relationship',relationship_id::text AS id,version FROM relationship_records AS relationship WHERE team_id=?::uuid AND space_id=?::uuid AND space_generation=? AND relationship_id>?::uuid AND `+filter+` ORDER BY relationship_id LIMIT ?`, fence.TeamID, fence.SpaceID, fence.Generation, after, marker.TargetID, limit-len(result))
-	return result, err
+	return result, nil
 }
 
 func maintenanceLexicalQuery(snapshot ontology.SourceSnapshot) string {

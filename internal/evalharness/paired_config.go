@@ -18,6 +18,8 @@ import (
 )
 
 const PairSchema = "dense-mem.eval.pair.v1"
+const PairModeRetainedBaseline = "retained_baseline"
+const PairModeEvidenceOnlyV5 = "evidence_only_v5"
 
 var pairSHA = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 var pairRevision = regexp.MustCompile(`^[0-9a-f]{40}$`)
@@ -25,9 +27,11 @@ var pairName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,95}$`)
 var pairEnvName = regexp.MustCompile(`^[A-Z][A-Z0-9_]+$`)
 
 type PairBinary struct {
-	Path           string `json:"path"`
-	SHA256         string `json:"sha256"`
-	SourceRevision string `json:"source_revision"`
+	SourceManifest       string `json:"source_manifest,omitempty"`
+	SourceManifestSHA256 string `json:"source_manifest_sha256,omitempty"`
+	Path                 string `json:"path"`
+	SHA256               string `json:"sha256"`
+	SourceRevision       string `json:"source_revision"`
 }
 
 type PairModels struct {
@@ -55,6 +59,8 @@ type PairRuntime struct {
 }
 
 type PairRelease struct {
+	Mode              string       `json:"mode,omitempty"`
+	IntakeVariant     string       `json:"intake_variant,omitempty"`
 	Release           string       `json:"release"`
 	SourceRevision    string       `json:"source_revision"`
 	ImageID           string       `json:"image_id"`
@@ -71,17 +77,19 @@ type PairRelease struct {
 }
 
 type PairConfig struct {
-	SchemaVersion string      `json:"schema_version"`
-	RunID         string      `json:"run_id"`
-	SeedManifest  string      `json:"seed_manifest"`
-	Suite         string      `json:"suite"`
-	SeedHash      string      `json:"seed_hash"`
-	SuiteSHA256   string      `json:"suite_sha256"`
-	OutDir        string      `json:"out_dir"`
-	Deadline      time.Time   `json:"deadline"`
-	Baseline      PairRelease `json:"baseline"`
-	Candidate     PairRelease `json:"candidate"`
-	Scorer        PairBinary  `json:"scorer"`
+	Answers       *PairAnswerInputs `json:"answers,omitempty"`
+	Campaign      string            `json:"campaign,omitempty"`
+	SchemaVersion string            `json:"schema_version"`
+	RunID         string            `json:"run_id"`
+	SeedManifest  string            `json:"seed_manifest"`
+	Suite         string            `json:"suite"`
+	SeedHash      string            `json:"seed_hash"`
+	SuiteSHA256   string            `json:"suite_sha256"`
+	OutDir        string            `json:"out_dir"`
+	Deadline      time.Time         `json:"deadline"`
+	Baseline      PairRelease       `json:"baseline"`
+	Candidate     PairRelease       `json:"candidate"`
+	Scorer        PairBinary        `json:"scorer"`
 }
 
 func LoadPairConfig(path string) (PairConfig, error) {
@@ -103,6 +111,14 @@ func LoadPairConfig(path string) (PairConfig, error) {
 	for side, r := range map[string]PairRelease{"baseline": c.Baseline, "candidate": c.Candidate} {
 		if err := validatePairRelease(r, side == "baseline"); err != nil {
 			return c, fmt.Errorf("%s: %w", side, err)
+		}
+	}
+	if c.Campaign == "issue_681_evidence_only_v5" {
+		if err := validatePairAnswers(c); err != nil {
+			return c, err
+		}
+		if c.Candidate.Models.Remember != "dense-mem-testing" || c.Candidate.Models.EmbeddingModel != "@cf/baai/bge-m3" || c.Candidate.Models.EmbeddingDimensions != 1024 || c.Candidate.Models.EmbeddingIndexStrategy != "vector_hnsw" || c.Candidate.ImportConcurrency != 4 {
+			return c, fmt.Errorf("v5 effective model, embedding and intake settings differ from the frozen campaign")
 		}
 	}
 	if c.Candidate.CaptureDir != "" {
@@ -134,11 +150,11 @@ func LoadPairConfig(path string) (PairConfig, error) {
 		}
 	}
 
-	manifest, corpus, cases, qrels, dreams, suite, seedHash, err := loadRunInputs(c.SeedManifest, c.Suite)
+	manifest, corpus, cases, qrels, suite, seedHash, err := loadRunInputs(c.SeedManifest, c.Suite)
 	if err != nil {
 		return c, err
 	}
-	if err := validateRunInputs(c.SeedManifest, manifest, corpus, cases, qrels, dreams, suite, seedHash); err != nil {
+	if err := validateRunInputs(c.SeedManifest, manifest, corpus, cases, qrels, suite, seedHash); err != nil {
 		return c, err
 	}
 	suiteHash, err := PairFileHash(c.Suite)
@@ -155,14 +171,17 @@ func LoadPairConfig(path string) (PairConfig, error) {
 }
 
 func validatePairRelease(r PairRelease, baseline bool) error {
+	if baseline && (r.Mode != PairModeRetainedBaseline || r.CaptureDir == "" || r.IntakeVariant != "evidence_only" || !pairSHA.MatchString(r.Runner.SourceManifestSHA256)) {
+		return fmt.Errorf("baseline requires an explicit retained Evidence-only capture and source manifest identity")
+	}
 	if r.Release == "" || !pairRevision.MatchString(r.SourceRevision) || !pairSHA.MatchString(r.ImageID) || r.Runner.SourceRevision != r.SourceRevision {
 		return fmt.Errorf("release, source, image and native runner identities are required")
 	}
-	if r.Protocol != "adr0014" && r.Protocol != "legacy" && r.Protocol != "none" {
+	if r.Protocol != "adr0014" && r.Protocol != "legacy" && r.Protocol != "none" && r.Protocol != PairModeEvidenceOnlyV5 {
 		return fmt.Errorf("unknown readiness protocol")
 	}
-	if !baseline && r.Protocol != "adr0014" {
-		return fmt.Errorf("new candidate runs require ADR 0014; retain legacy runs under their recorded workflow")
+	if !baseline && (r.Protocol != PairModeEvidenceOnlyV5 || r.Mode != PairModeEvidenceOnlyV5) {
+		return fmt.Errorf("new candidate runs require evidence_only_v5")
 	}
 	if r.Protocol == "legacy" && r.CaptureDir == "" {
 		return fmt.Errorf("legacy runs require a verified existing capture; their recorded workflow owns processing")
@@ -175,7 +194,7 @@ func validatePairRelease(r PairRelease, baseline bool) error {
 	if r.Scope.Generation < 1 || r.ImportConcurrency < 1 || r.ImportConcurrency > r.AdmissionLimit || r.AdmissionLimit > MaxImportConcurrency {
 		return fmt.Errorf("explicit generation and compatible import/admission limits are required")
 	}
-	if r.Protocol == "adr0014" && (r.Capacity.Global < 1 || r.Capacity.Global > 8 || r.Capacity.Team < 1 || r.Capacity.Team > r.Capacity.Global || r.Capacity.ContextWindowTokens < 1) {
+	if (r.Protocol == "adr0014" || r.Protocol == PairModeEvidenceOnlyV5) && (r.Capacity.Global < 1 || r.Capacity.Global > 8 || r.Capacity.Team < 1 || r.Capacity.Team > r.Capacity.Global || r.Capacity.ContextWindowTokens < 1) {
 		return fmt.Errorf("explicit global/team concurrency and model context capacity are required")
 	}
 	if r.Models.Provider == "" || r.Models.Remember == "" || r.Models.BackingRevision == "" || r.Models.EmbeddingModel == "" || r.Models.EmbeddingDimensions < 1 || r.Models.EmbeddingIndexStrategy == "" || !pairSHA.MatchString(r.Models.VerifierEndpointSHA256) || !pairSHA.MatchString(r.Models.EmbeddingEndpointSHA256) {

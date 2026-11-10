@@ -17,7 +17,10 @@
       "name": "decision_providers",
       "isolation": "exclusive",
       "runtime": "production",
-      "helper_profiles": ["synchronous_write", "playwright"],
+      "helper_profiles": [
+        "synchronous_write",
+        "playwright"
+      ],
       "timeout_minutes": 60,
       "playwright": true
     },
@@ -25,7 +28,10 @@
       "name": "langchain_retriever",
       "isolation": "exclusive",
       "runtime": "production",
-      "helper_profiles": ["oauth", "synchronous_write"],
+      "helper_profiles": [
+        "oauth",
+        "synchronous_write"
+      ],
       "timeout_minutes": 60,
       "playwright": false
     },
@@ -33,7 +39,9 @@
       "name": "google_adk_memory",
       "isolation": "exclusive",
       "runtime": "production",
-      "helper_profiles": ["synchronous_write"],
+      "helper_profiles": [
+        "synchronous_write"
+      ],
       "timeout_minutes": 60,
       "playwright": false
     },
@@ -70,7 +78,9 @@
       "name": "mcp_transport_cancellation",
       "isolation": "exclusive",
       "runtime": "production",
-      "helper_profiles": ["synchronous_write"],
+      "helper_profiles": [
+        "synchronous_write"
+      ],
       "timeout_minutes": 30,
       "playwright": false
     },
@@ -78,7 +88,9 @@
       "name": "oauth_provider_compatibility",
       "isolation": "exclusive",
       "runtime": "production",
-      "helper_profiles": ["oauth_compatibility"],
+      "helper_profiles": [
+        "oauth_compatibility"
+      ],
       "timeout_minutes": 35,
       "playwright": false
     },
@@ -86,7 +98,10 @@
       "name": "mcp_oauth",
       "isolation": "exclusive",
       "runtime": "production",
-      "helper_profiles": ["oauth", "playwright"],
+      "helper_profiles": [
+        "oauth",
+        "playwright"
+      ],
       "timeout_minutes": 45,
       "playwright": true
     },
@@ -102,7 +117,10 @@
       "name": "synchronous_write",
       "isolation": "exclusive",
       "runtime": "production",
-      "helper_profiles": ["conflict_provider", "conflict_review", "synchronous_write", "playwright"],
+      "helper_profiles": [
+        "synchronous_write",
+        "playwright"
+      ],
       "timeout_minutes": 60,
       "playwright": true
     },
@@ -110,7 +128,9 @@
       "name": "synchronous_write_primitives",
       "isolation": "exclusive",
       "runtime": "production",
-      "helper_profiles": ["synchronous_write"],
+      "helper_profiles": [
+        "synchronous_write"
+      ],
       "timeout_minutes": 60,
       "playwright": false
     },
@@ -118,7 +138,9 @@
       "name": "synchronous_write_telemetry_disabled",
       "isolation": "exclusive",
       "runtime": "production",
-      "helper_profiles": ["conflict_provider", "conflict_review", "synchronous_write"],
+      "helper_profiles": [
+        "synchronous_write"
+      ],
       "timeout_minutes": 60,
       "playwright": false
     },
@@ -126,39 +148,20 @@
       "name": "identity_cleanup",
       "isolation": "exclusive",
       "runtime": "production",
-      "helper_profiles": ["verifier"],
+      "helper_profiles": [
+        "verifier"
+      ],
       "timeout_minutes": 35,
       "playwright": false
-    },
-    {
-      "name": "community",
-      "isolation": "exclusive",
-      "runtime": "production",
-      "helper_profiles": ["verifier", "playwright"],
-      "timeout_minutes": 60,
-      "playwright": true
-    },
-    {
-      "name": "conflict",
-      "isolation": "exclusive",
-      "runtime": "production",
-      "helper_profiles": ["conflict_provider"],
-      "timeout_minutes": 45,
-      "playwright": false
-    },
-    {
-      "name": "conflict_queue",
-      "isolation": "exclusive",
-      "runtime": "production",
-      "helper_profiles": ["conflict_provider", "conflict_review", "playwright"],
-      "timeout_minutes": 60,
-      "playwright": true
     },
     {
       "name": "full",
       "isolation": "exclusive",
       "runtime": "production",
-      "helper_profiles": ["verifier", "playwright"],
+      "helper_profiles": [
+        "verifier",
+        "playwright"
+      ],
       "timeout_minutes": 90,
       "playwright": true
     },
@@ -206,7 +209,9 @@
       "name": "submission_terminal_errors",
       "isolation": "shared_team",
       "runtime": "production",
-      "helper_profiles": ["verifier"],
+      "helper_profiles": [
+        "verifier"
+      ],
       "timeout_minutes": 60,
       "playwright": false
     },
@@ -214,7 +219,9 @@
       "name": "security_intake",
       "isolation": "shared_team",
       "runtime": "production",
-      "helper_profiles": ["verifier"],
+      "helper_profiles": [
+        "verifier"
+      ],
       "timeout_minutes": 60,
       "playwright": false
     },
@@ -254,7 +261,10 @@
       "name": "enterprise_exports",
       "isolation": "exclusive",
       "runtime": "production",
-      "helper_profiles": ["oauth", "synchronous_write"],
+      "helper_profiles": [
+        "oauth",
+        "synchronous_write"
+      ],
       "timeout_minutes": 45,
       "playwright": false
     },

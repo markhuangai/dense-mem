@@ -101,7 +101,7 @@ func (s *ManagementService) Records(ctx context.Context, kind contract.Kind, cur
 	if err != nil {
 		return contract.ManagementRecordPage{}, err
 	}
-	if kind != "" && !slices.Contains([]contract.Kind{contract.EntityClass, contract.PredicateConcept, contract.Topic, contract.AssignmentKind, contract.EvidenceGroup, contract.RelationshipGroup, contract.OverrideKind}, kind) {
+	if kind != "" && !slices.Contains([]contract.Kind{contract.Topic, contract.AssignmentKind, contract.EvidenceGroup, contract.OverrideKind}, kind) {
 		return contract.ManagementRecordPage{}, contract.ErrInvalid
 	}
 	page, err := s.repository.ListRecords(ctx, actor.TeamID.String(), kind, cursor, limit)

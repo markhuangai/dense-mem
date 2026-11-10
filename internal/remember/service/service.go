@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -14,19 +15,19 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/correlation"
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/jsonstrict"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
 const (
-	// Request hashes retain the v2.6.2 body contract so retries can replay
-	// attempts created before the v2.6.3 public contract change.
-	requestHashContractVersion = domain.PreviousContractVersion
+	requestHashContractVersion = domain.ContractVersion
 )
 
 var (
 	ErrRememberAuthContext             = errors.New("remember: authenticated actor context is required")
 	ErrRememberConflict                = errors.New("remember: conflict")
+	ErrRememberRetiredContract         = errors.New("remember: retired contract")
 	ErrRememberPolicyRejected          = errors.New("remember: submission rejected by semantic policy")
 	ErrRememberStaleInput              = errors.New("remember: stale input")
 	ErrRememberPersistence             = errors.New("remember: persistence failed")
@@ -45,7 +46,6 @@ var (
 const (
 	maxRememberEvidenceItems = 20
 	maxRememberEvidenceRunes = 999
-	maxRememberRelationships = 200
 )
 
 // Service is the public application boundary for synchronous Remember.
@@ -81,11 +81,14 @@ func NewService(deps Dependencies) *service {
 }
 
 type RememberRequest struct {
-	TargetSpace       domain.MemorySpaceKind  `json:"target_space"`
-	Evidence          []RememberEvidenceInput `json:"evidence"`
-	EntityHints       []map[string]any        `json:"entity_hints,omitempty"`
-	RelationshipHints []map[string]any        `json:"relationship_hints,omitempty"`
-	IdempotencyKey    string                  `json:"idempotency_key,omitempty"`
+	TargetSpace    domain.MemorySpaceKind  `json:"target_space"`
+	Evidence       []RememberEvidenceInput `json:"evidence"`
+	IdempotencyKey string                  `json:"idempotency_key,omitempty"`
+}
+
+func (req *RememberRequest) UnmarshalJSON(raw []byte) error {
+	type body RememberRequest
+	return jsonstrict.Decode(bytes.NewReader(raw), (*body)(req), int64(len(raw))+1)
 }
 
 type RememberEvidenceInput struct {
@@ -104,62 +107,35 @@ type RememberEvidenceInput struct {
 }
 
 type RememberResult struct {
-	SpaceKind            domain.MemorySpaceKind          `json:"space_kind,omitempty"`
-	ContractVersion      string                          `json:"contract_version"`
-	IngestID             string                          `json:"-"`
-	SubmissionID         string                          `json:"submission_id"`
-	SubmissionKind       string                          `json:"submission_kind"`
-	ProcessingState      string                          `json:"processing_state"`
-	SearchState          string                          `json:"search_state"`
-	CorrelationID        string                          `json:"correlation_id,omitempty"`
-	Evidence             []SubmissionEvidenceStatus      `json:"evidence"`
-	Errors               []SubmissionStatusError         `json:"errors"`
-	RelationshipResults  []SubmissionRelationshipResult  `json:"relationship_results"`
-	Warnings             []string                        `json:"warnings,omitempty"`
-	AwaitingConfirmation *SubmissionAwaitingConfirmation `json:"awaiting_confirmation,omitempty"`
-	CorrectionResult     *RelationshipCorrectionResult   `json:"correction_result,omitempty"`
-	Kind                 ResultKind                      `json:"-"`
-	Terminal             *TerminalRememberResult         `json:"-"`
+	SpaceKind       domain.MemorySpaceKind     `json:"space_kind,omitempty"`
+	ContractVersion string                     `json:"contract_version"`
+	IngestID        string                     `json:"-"`
+	SubmissionID    string                     `json:"submission_id"`
+	SubmissionKind  string                     `json:"submission_kind"`
+	ProcessingState string                     `json:"processing_state"`
+	SearchState     string                     `json:"search_state"`
+	CorrelationID   string                     `json:"correlation_id,omitempty"`
+	Evidence        []SubmissionEvidenceStatus `json:"evidence"`
+	Errors          []SubmissionStatusError    `json:"errors"`
+	Warnings        []string                   `json:"warnings,omitempty"`
+	Kind            ResultKind                 `json:"-"`
+	Terminal        *TerminalRememberResult    `json:"-"`
 }
 
 type SubmissionStatusResult struct {
-	SpaceKind            domain.MemorySpaceKind          `json:"space_kind,omitempty"`
-	ContractVersion      string                          `json:"contract_version"`
-	SubmissionID         string                          `json:"submission_id"`
-	SubmissionKind       string                          `json:"submission_kind"`
-	ProcessingState      string                          `json:"processing_state"`
-	SearchState          string                          `json:"search_state"`
-	CorrelationID        string                          `json:"correlation_id,omitempty"`
-	Evidence             []SubmissionEvidenceStatus      `json:"evidence"`
-	Errors               []SubmissionStatusError         `json:"errors"`
-	RelationshipResults  []SubmissionRelationshipResult  `json:"relationship_results"`
-	Warnings             []string                        `json:"warnings,omitempty"`
-	QuarantineExpiresAt  *time.Time                      `json:"-"`
-	AwaitingConfirmation *SubmissionAwaitingConfirmation `json:"awaiting_confirmation,omitempty"`
-	CorrectionResult     *RelationshipCorrectionResult   `json:"correction_result,omitempty"`
-	Kind                 ResultKind                      `json:"-"`
-	Terminal             *TerminalRememberResult         `json:"-"`
-}
-
-type SubmissionAwaitingConfirmation struct {
-	ConfirmationToken string                            `json:"confirmation_token"`
-	ExpiresAt         time.Time                         `json:"expires_at"`
-	Candidates        []RelationshipCorrectionCandidate `json:"candidates"`
-}
-
-type RelationshipCorrectionCandidate struct {
-	Endpoint      string `json:"endpoint"`
-	EntityID      string `json:"entity_id"`
-	EntityKind    string `json:"entity_kind"`
-	CanonicalName string `json:"canonical_name"`
-}
-
-type RelationshipCorrectionResult struct {
-	OriginalRelationshipID  string `json:"original_relationship_id"`
-	OriginalVersion         int    `json:"original_version"`
-	SuccessorRelationshipID string `json:"successor_relationship_id"`
-	SuccessorVersion        int    `json:"successor_version"`
-	ReusedSuccessor         bool   `json:"reused_successor"`
+	SpaceKind           domain.MemorySpaceKind     `json:"space_kind,omitempty"`
+	ContractVersion     string                     `json:"contract_version"`
+	SubmissionID        string                     `json:"submission_id"`
+	SubmissionKind      string                     `json:"submission_kind"`
+	ProcessingState     string                     `json:"processing_state"`
+	SearchState         string                     `json:"search_state"`
+	CorrelationID       string                     `json:"correlation_id,omitempty"`
+	Evidence            []SubmissionEvidenceStatus `json:"evidence"`
+	Errors              []SubmissionStatusError    `json:"errors"`
+	Warnings            []string                   `json:"warnings,omitempty"`
+	QuarantineExpiresAt *time.Time                 `json:"-"`
+	Kind                ResultKind                 `json:"-"`
+	Terminal            *TerminalRememberResult    `json:"-"`
 }
 
 type SubmissionEvidenceStatus struct {
@@ -199,9 +175,6 @@ func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberR
 	if len(req.Evidence) > maxRememberEvidenceItems {
 		return nil, fmt.Errorf("remember: evidence must contain at most %d entries", maxRememberEvidenceItems)
 	}
-	if len(req.RelationshipHints) > maxRememberRelationships {
-		return nil, fmt.Errorf("remember: relationships must contain at most %d entries", maxRememberRelationships)
-	}
 	for index, evidence := range req.Evidence {
 		if len([]rune(evidence.Content)) == 0 || len([]rune(evidence.Content)) > maxRememberEvidenceRunes {
 			return nil, fmt.Errorf("remember: evidence[%d].content must contain between 1 and %d characters", index, maxRememberEvidenceRunes)
@@ -210,18 +183,11 @@ func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberR
 	if strings.TrimSpace(req.IdempotencyKey) == "" {
 		return nil, errors.New("remember: idempotency_key is required")
 	}
-	if err := ValidateRelationshipCoverage(len(req.Evidence), req.RelationshipHints); err != nil {
-		return nil, err
-	}
 	contents := make([]string, 0, len(req.Evidence))
 	for _, evidence := range req.Evidence {
 		contents = append(contents, evidence.Content)
 	}
-	proposal := map[string]any{
-		"entity_hints":       req.EntityHints,
-		"relationship_hints": req.RelationshipHints,
-	}
-	scan, scanErr := scanSubmissionWithProviderProposal(contents, proposal)
+	scan, scanErr := ScanSubmissionBatch(contents)
 	if scanErr != nil {
 		if err := recordSubmissionSecurityRejection(ctx, s.auditor, s.logger, actor, "remember", scan, scanErr); err != nil {
 			observability.RecordRememberAcknowledgement(ctx, s.metrics, time.Since(started), "error")
@@ -263,7 +229,7 @@ func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberR
 		InvocationStartedAt: started,
 		TeamID:              actor.TeamID.String(), OwnerProfileID: actor.OwnerID.String(), SpaceID: rememberSpaceID(space),
 		SpaceGeneration: space.Generation, IdempotencyKey: strings.TrimSpace(req.IdempotencyKey), RequestHash: requestHash,
-		SourceSummary: sourceSummary(req.Evidence), Proposal: proposal, Metadata: metadata,
+		SourceSummary: sourceSummary(req.Evidence), Metadata: metadata,
 		Evidence:        repositoryEvidenceInputs(req.Evidence),
 		OriginalRequest: originalRequest,
 	}
@@ -298,15 +264,14 @@ func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberR
 
 func rememberSecurityAuditPersistenceError(req RememberRequest, correlationID string) *RememberProcessError {
 	status := &SubmissionStatusResult{
-		SpaceKind:           req.TargetSpace,
-		ContractVersion:     domain.ContractVersion,
-		SubmissionID:        uuid.NewString(),
-		SubmissionKind:      "remember",
-		ProcessingState:     string(TerminalProcessingFailed),
-		SearchState:         string(TerminalSearchNotRequired),
-		CorrelationID:       correlationID,
-		Evidence:            make([]SubmissionEvidenceStatus, len(req.Evidence)),
-		RelationshipResults: make([]SubmissionRelationshipResult, len(req.RelationshipHints)),
+		SpaceKind:       req.TargetSpace,
+		ContractVersion: domain.ContractVersion,
+		SubmissionID:    uuid.NewString(),
+		SubmissionKind:  "remember",
+		ProcessingState: string(TerminalProcessingFailed),
+		SearchState:     string(TerminalSearchNotRequired),
+		CorrelationID:   correlationID,
+		Evidence:        make([]SubmissionEvidenceStatus, len(req.Evidence)),
 		Errors: []SubmissionStatusError{StatusErrorWithDetails(
 			SubmissionErrorDatabaseFailure,
 			"security_audit_persistence",
@@ -321,15 +286,6 @@ func rememberSecurityAuditPersistenceError(req RememberRequest, correlationID st
 			SupersededEvidenceIDs: []string{},
 			SearchState:           string(TerminalSearchNotRequired),
 			Reason:                "internal_failure",
-		}
-	}
-	for index, hint := range req.RelationshipHints {
-		ref, _ := hint["ref"].(string)
-		status.RelationshipResults[index] = SubmissionRelationshipResult{
-			RelationshipRef: strings.TrimSpace(ref),
-			Disposition:     "not_stored",
-			Reason:          "internal_failure",
-			Splits:          []SubmissionRelationshipSplit{},
 		}
 	}
 	result := rememberResultFromStatus(status, status.SubmissionID)
@@ -402,7 +358,7 @@ func canonicalRequestHash(req RememberRequest) (string, error) {
 	if !req.TargetSpace.Valid() {
 		return "", domain.ErrMemoryTargetInvalid
 	}
-	bodyHash, err := CanonicalRequestBodyHash(req.Evidence, req.EntityHints, req.RelationshipHints)
+	bodyHash, err := CanonicalRequestBodyHash(req.Evidence)
 	if err != nil {
 		return "", fmt.Errorf("remember: canonical request hash: %w", err)
 	}
@@ -416,15 +372,11 @@ func rememberResultFromStatus(status *SubmissionStatusResult, ingestID string) *
 	}
 	copyStatus := *status
 	copyStatus.Evidence = append([]SubmissionEvidenceStatus(nil), status.Evidence...)
-	copyStatus.RelationshipResults = append([]SubmissionRelationshipResult(nil), status.RelationshipResults...)
 	copyStatus.Errors = append([]SubmissionStatusError(nil), status.Errors...)
 	UpgradeRememberResultDiagnostics(&copyStatus)
 	copyStatus.Warnings = append([]string(nil), status.Warnings...)
 	if copyStatus.Evidence == nil {
 		copyStatus.Evidence = []SubmissionEvidenceStatus{}
-	}
-	if copyStatus.RelationshipResults == nil {
-		copyStatus.RelationshipResults = []SubmissionRelationshipResult{}
 	}
 	if copyStatus.Errors == nil {
 		copyStatus.Errors = []SubmissionStatusError{}
@@ -435,22 +387,19 @@ func rememberResultFromStatus(status *SubmissionStatusResult, ingestID string) *
 		}
 	}
 	result := &RememberResult{
-		SpaceKind:            copyStatus.SpaceKind,
-		ContractVersion:      copyStatus.ContractVersion,
-		IngestID:             ingestID,
-		SubmissionID:         copyStatus.SubmissionID,
-		SubmissionKind:       copyStatus.SubmissionKind,
-		ProcessingState:      copyStatus.ProcessingState,
-		SearchState:          copyStatus.SearchState,
-		CorrelationID:        copyStatus.CorrelationID,
-		Evidence:             copyStatus.Evidence,
-		Errors:               copyStatus.Errors,
-		RelationshipResults:  copyStatus.RelationshipResults,
-		Warnings:             copyStatus.Warnings,
-		AwaitingConfirmation: copyStatus.AwaitingConfirmation,
-		CorrectionResult:     copyStatus.CorrectionResult,
-		Kind:                 copyStatus.Kind,
-		Terminal:             copyStatus.Terminal,
+		SpaceKind:       copyStatus.SpaceKind,
+		ContractVersion: copyStatus.ContractVersion,
+		IngestID:        ingestID,
+		SubmissionID:    copyStatus.SubmissionID,
+		SubmissionKind:  copyStatus.SubmissionKind,
+		ProcessingState: copyStatus.ProcessingState,
+		SearchState:     copyStatus.SearchState,
+		CorrelationID:   copyStatus.CorrelationID,
+		Evidence:        copyStatus.Evidence,
+		Errors:          copyStatus.Errors,
+		Warnings:        copyStatus.Warnings,
+		Kind:            copyStatus.Kind,
+		Terminal:        copyStatus.Terminal,
 	}
 	if result.SubmissionID == "" {
 		result.SubmissionID = ingestID
@@ -472,24 +421,18 @@ func rememberResultFromStatus(status *SubmissionStatusResult, ingestID string) *
 			result.Evidence[index].SearchState = result.SearchState
 		}
 	}
-	for index := range result.RelationshipResults {
-		if result.RelationshipResults[index].Splits == nil {
-			result.RelationshipResults[index].Splits = []SubmissionRelationshipSplit{}
-		}
-	}
 	terminal := &TerminalRememberResult{
-		SpaceKind:           result.SpaceKind,
-		ContractVersion:     result.ContractVersion,
-		SubmissionID:        result.SubmissionID,
-		SubmissionKind:      result.SubmissionKind,
-		ProcessingState:     result.ProcessingState,
-		SearchState:         result.SearchState,
-		CorrelationID:       result.CorrelationID,
-		Evidence:            make([]TerminalEvidenceResult, 0, len(result.Evidence)),
-		RelationshipResults: append([]SubmissionRelationshipResult(nil), result.RelationshipResults...),
-		Errors:              append([]SubmissionStatusError(nil), result.Errors...),
-		Warnings:            append([]string(nil), result.Warnings...),
-		Kind:                ResultKindTerminal,
+		SpaceKind:       result.SpaceKind,
+		ContractVersion: result.ContractVersion,
+		SubmissionID:    result.SubmissionID,
+		SubmissionKind:  result.SubmissionKind,
+		ProcessingState: result.ProcessingState,
+		SearchState:     result.SearchState,
+		CorrelationID:   result.CorrelationID,
+		Evidence:        make([]TerminalEvidenceResult, 0, len(result.Evidence)),
+		Errors:          append([]SubmissionStatusError(nil), result.Errors...),
+		Warnings:        append([]string(nil), result.Warnings...),
+		Kind:            ResultKindTerminal,
 	}
 	for _, evidence := range result.Evidence {
 		terminal.Evidence = append(terminal.Evidence, TerminalEvidenceResult{
@@ -511,9 +454,6 @@ func rememberResultFromStatus(status *SubmissionStatusResult, ingestID string) *
 		if terminal.Evidence[index].SupersededEvidenceIDs == nil {
 			terminal.Evidence[index].SupersededEvidenceIDs = []string{}
 		}
-	}
-	if terminal.RelationshipResults == nil {
-		terminal.RelationshipResults = []SubmissionRelationshipResult{}
 	}
 	if terminal.Errors == nil {
 		terminal.Errors = []SubmissionStatusError{}

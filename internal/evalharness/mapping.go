@@ -1,7 +1,6 @@
 package evalharness
 
 import (
-	"sort"
 	"strings"
 )
 
@@ -9,7 +8,6 @@ func newKnowledgeMapping() KnowledgeMapping {
 	return KnowledgeMapping{
 		BySourceDocID:        map[string]Ref{},
 		BySourceDocIDAndType: map[string]map[string][]Ref{},
-		DreamSourceRefsByID:  map[string][]Ref{},
 	}
 }
 
@@ -40,28 +38,6 @@ func addSourceMapping(mapping *KnowledgeMapping, ref Ref, defaultForSource bool)
 	}
 }
 
-func addDreamSourceRefs(mapping *KnowledgeMapping, dreamID string, refs []Ref) {
-	dreamID = strings.TrimSpace(dreamID)
-	if dreamID == "" || len(refs) == 0 {
-		return
-	}
-	if mapping.DreamSourceRefsByID == nil {
-		mapping.DreamSourceRefsByID = map[string][]Ref{}
-	}
-	out := make([]Ref, 0, len(refs))
-	for _, ref := range refs {
-		ref.Type = strings.TrimSpace(ref.Type)
-		ref.ID = strings.TrimSpace(ref.ID)
-		if ref.Type == "" || ref.ID == "" {
-			continue
-		}
-		out = append(out, Ref{Type: ref.Type, ID: ref.ID})
-	}
-	if len(out) > 0 {
-		mapping.DreamSourceRefsByID[dreamID] = out
-	}
-}
-
 func hasMappedRef(refs []Ref, want Ref) bool {
 	for _, ref := range refs {
 		if strings.TrimSpace(ref.Type) == strings.TrimSpace(want.Type) &&
@@ -89,9 +65,7 @@ func mergeKnowledgeMapping(dst *KnowledgeMapping, src KnowledgeMapping) {
 			}
 		}
 	}
-	for dreamID, refs := range src.DreamSourceRefsByID {
-		addDreamSourceRefs(dst, dreamID, refs)
-	}
+
 }
 
 func mergeFilteredKnowledgeMapping(dst *KnowledgeMapping, src KnowledgeMapping, keepSourceDocIDs map[string]struct{}) {
@@ -120,9 +94,7 @@ func mergeFilteredKnowledgeMapping(dst *KnowledgeMapping, src KnowledgeMapping, 
 			}
 		}
 	}
-	for dreamID, refs := range src.DreamSourceRefsByID {
-		addDreamSourceRefs(dst, dreamID, refs)
-	}
+
 }
 
 func resolveSourceMapping(mapping KnowledgeMapping, sourceDocID, refType string) (Ref, bool) {
@@ -160,65 +132,6 @@ func resolveSourceMapping(mapping KnowledgeMapping, sourceDocID, refType string)
 		resolved.Type = refType
 	}
 	return resolved, true
-}
-
-func mapExpectedDreams(mapping *KnowledgeMapping, expected []ExpectedDream) {
-	if mapping == nil || len(expected) == 0 || len(mapping.DreamSourceRefsByID) == 0 {
-		return
-	}
-	dreamIDs := make([]string, 0, len(mapping.DreamSourceRefsByID))
-	for dreamID := range mapping.DreamSourceRefsByID {
-		dreamIDs = append(dreamIDs, dreamID)
-	}
-	sort.Strings(dreamIDs)
-	for _, dream := range expected {
-		sourceDocID := strings.TrimSpace(dream.SourceDocID)
-		if sourceDocID == "" {
-			continue
-		}
-		want, ok := resolveExpectedDreamSourceRefs(dream.SourceRefs, *mapping)
-		if !ok {
-			continue
-		}
-		for _, dreamID := range dreamIDs {
-			got := mapping.DreamSourceRefsByID[dreamID]
-			if sameRefSet(want, got) {
-				addSourceMapping(mapping, Ref{Type: "dream", ID: dreamID, SourceDocID: sourceDocID}, false)
-				break
-			}
-		}
-	}
-}
-
-func expectedDreamCycleSeeds(mapping KnowledgeMapping, expected []ExpectedDream) []DreamCycleSeed {
-	out := make([]DreamCycleSeed, 0, len(expected))
-	for _, dream := range expected {
-		hypothesis := strings.TrimSpace(dream.Hypothesis)
-		if hypothesis == "" {
-			continue
-		}
-		refs, ok := resolveExpectedDreamSourceRefs(dream.SourceRefs, mapping)
-		if !ok {
-			continue
-		}
-		out = append(out, DreamCycleSeed{
-			Hypothesis: hypothesis,
-			SourceRefs: refs,
-		})
-	}
-	return out
-}
-
-func resolveExpectedDreamSourceRefs(refs []Ref, mapping KnowledgeMapping) ([]Ref, bool) {
-	out := make([]Ref, 0, len(refs))
-	for _, ref := range refs {
-		resolved, ok := resolveRef(ref, mapping)
-		if !ok {
-			return nil, false
-		}
-		out = append(out, Ref{Type: resolved.Type, ID: resolved.ID})
-	}
-	return out, len(out) > 0
 }
 
 func sameRefSet(a, b []Ref) bool {

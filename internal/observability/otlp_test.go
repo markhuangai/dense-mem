@@ -98,7 +98,7 @@ func TestOTLPPreservesBoundedProducerLabelVocabularies(t *testing.T) {
 	for _, outcome := range []string{"ok", "error", "timeout", "rate_limited", "network_error", "provider_quota_exhausted", "provider_authentication_failed", "provider_permission_denied", "provider_contract_rejected", "provider_response_invalid"} {
 		metrics.ObserveEmbeddingLatencyFor(context.Background(), "safe-model", 1, outcome)
 	}
-	for _, operation := range []ReadOperation{ReadOperationEvidenceRecall, ReadOperationRelationshipRecall, ReadOperationSearchContract, ReadOperationSearchReadiness, ReadOperationFullTextSearch, ReadOperationVectorSearch} {
+	for _, operation := range []ReadOperation{ReadOperationEvidenceRecall, ReadOperationSearchContract, ReadOperationSearchReadiness, ReadOperationFullTextSearch, ReadOperationVectorSearch} {
 		for _, outcome := range []ReadOutcome{ReadOutcomeSuccess, ReadOutcomeError, ReadOutcomeCancellation, ReadOutcomeDeadlineExceeded} {
 			metrics.ObserveReadStage(operation, ReadStageTotal, outcome, time.Millisecond, 1)
 		}

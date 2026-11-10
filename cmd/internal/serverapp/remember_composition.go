@@ -13,7 +13,6 @@ import (
 
 type rememberApplicationDependencies struct {
 	Persistence         remembercontract.Persistence
-	Catalog             remembercontract.SubmissionAssessmentCatalog
 	Assessor            assessor.Provider
 	Decisions           modelprovider.DecisionProvider
 	DecisionSettings    modelprovider.DecisionSettings
@@ -27,7 +26,7 @@ type rememberApplicationDependencies struct {
 
 func buildRememberApplication(deps rememberApplicationDependencies) rememberapp.Service {
 	processor := rememberprocessor.NewSynchronousProcessor(rememberprocessor.ProcessorDependencies{
-		Ledger: deps.Persistence, Catalog: deps.Catalog, Assessor: deps.Assessor,
+		Ledger: deps.Persistence, Assessor: deps.Assessor,
 		Decisions: deps.Decisions, DecisionSettings: deps.DecisionSettings,
 		EmbeddingExecutor: deps.EmbeddingExecutor, Limits: deps.Limits, Metrics: deps.Metrics,
 		Logger: deps.Logger, DiagnosticProtector: deps.DiagnosticProtector, IsStaleInput: rememberapp.IsRememberStaleInputError,

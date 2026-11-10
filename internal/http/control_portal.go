@@ -128,7 +128,7 @@ func newControlPortalServerWithMetricsAndTelemetry(
 		e.GET("/metrics", echo.WrapHandler(telemetry.ScrapeHandler), httpmw.TelemetryScrapeTokenMiddleware(telemetry.ScrapeToken))
 	}
 
-	control := &controlPortalHandler{teams: teamSvc, credentials: credentialSvc, security: securitySvc, metrics: metricsSvc, telemetry: telemetry.Reader, operationLogs: telemetry.Logs, recallFeedback: telemetry.RecallFeedback, dreams: telemetry.Dreams, dreamDiagnostics: telemetry.DreamDiagnostics, communities: telemetry.Communities, ontology: telemetry.Ontology, conflictQueue: telemetry.ConflictQueue, evidenceConflicts: telemetry.EvidenceConflicts, convergence: telemetry.Convergence, rememberAttempts: telemetry.RememberAttempts, rememberInvocations: telemetry.RememberInvocations, privateMemory: telemetry.PrivateMemory, health: health, sso: telemetry.SSO, directory: telemetry.Directory, controlIdentity: telemetry.ControlIdentity, appConfig: telemetry.Config, logger: logger, verifierModel: cfg.GetAIVerifierModel(), embeddingModel: cfg.GetAIEmbeddingModel()}
+	control := &controlPortalHandler{teams: teamSvc, credentials: credentialSvc, security: securitySvc, metrics: metricsSvc, telemetry: telemetry.Reader, operationLogs: telemetry.Logs, recallFeedback: telemetry.RecallFeedback, ontology: telemetry.Ontology, evidenceConflicts: telemetry.EvidenceConflicts, convergence: telemetry.Convergence, rememberAttempts: telemetry.RememberAttempts, rememberInvocations: telemetry.RememberInvocations, privateMemory: telemetry.PrivateMemory, health: health, sso: telemetry.SSO, directory: telemetry.Directory, controlIdentity: telemetry.ControlIdentity, appConfig: telemetry.Config, logger: logger, verifierModel: cfg.GetAIVerifierModel(), embeddingModel: cfg.GetAIEmbeddingModel()}
 	if telemetry.ControlIdentity != nil {
 		registerControlIdentityRoutes(e, control)
 	}
@@ -170,19 +170,6 @@ func newControlPortalServerWithMetricsAndTelemetry(
 	api.POST("/teams", control.createTeam)
 	api.PATCH("/teams/:teamId", control.updateTeam)
 	api.DELETE("/teams/:teamId", control.deleteTeam)
-	if telemetry.Dreams != nil {
-		api.GET("/teams/:teamId/dreaming/status", control.getTeamDreamingStatus)
-		api.GET("/teams/:teamId/dreaming/runs", control.listTeamDreamingRuns)
-		api.GET("/teams/:teamId/dreams", control.listTeamDreams)
-		api.GET("/teams/:teamId/dreams/:dreamId", control.getTeamDream)
-	}
-	registerControlDreamDiagnosticRoutes(api, control, telemetry.Dreams != nil, telemetry.DreamDiagnostics != nil)
-	if telemetry.Communities != nil {
-		api.GET("/teams/:teamId/community/status", control.getTeamCommunityStatus)
-	}
-	if telemetry.ConflictQueue != nil {
-		api.GET("/teams/:teamId/conflicts/queue", control.listConflictQueue)
-	}
 	if telemetry.EvidenceConflicts != nil {
 		api.GET("/teams/:teamId/evidence-conflicts", control.listEvidenceConflicts)
 		api.GET("/teams/:teamId/evidence-conflicts/:conflictId", control.getEvidenceConflict)

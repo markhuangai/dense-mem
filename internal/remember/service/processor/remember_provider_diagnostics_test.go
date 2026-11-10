@@ -83,7 +83,7 @@ func TestRememberProcessorCommitsValidatedAssessmentAndResult(t *testing.T) {
 	}
 	commitResult := map[string]any{
 		"contract_version": domain.ContractVersion, "submission_id": "committed", "submission_kind": "remember",
-		"processing_state": "completed", "search_state": "current", "evidence": []any{}, "relationship_results": []any{}, "errors": []any{},
+		"processing_state": "completed", "search_state": "current", "evidence": []any{}, "errors": []any{},
 	}
 	ledger := &rememberPipelineLedgerStub{
 		rememberFailureLedgerStub: &rememberFailureLedgerStub{},
@@ -94,7 +94,6 @@ func TestRememberProcessorCommitsValidatedAssessmentAndResult(t *testing.T) {
 	logger := &rememberProcessorLogCapture{}
 	processor := &rememberSynchronousProcessor{
 		ledger:   ledger,
-		catalog:  &processorAssessmentCatalogStub{},
 		provider: &processorAssessmentProviderStub{},
 		metrics:  metrics, logger: logger,
 	}

@@ -88,7 +88,7 @@ func TestProviderUsageAggregateCardinalityDoesNotFollowModelNames(t *testing.T) 
 			require.NotContains(t, line, "model-")
 		}
 	}
-	require.Equal(t, 360, len(aggregateLines))
+	require.Equal(t, 216, len(aggregateLines))
 	inputTokens := prometheusCounterValue(t, body.Body.String(), "densemem_operation_provider_tokens_total",
 		`component="verifier"`, `kind="input"`, `operation="semantic_assessment"`, `source="provider"`)
 	require.Equal(t, float64(100), inputTokens)
@@ -98,20 +98,8 @@ func TestOperationalTelemetryCollectorEmitsDurableSnapshotAndFixedLabelSets(t *t
 	metrics := NewPrometheusMetrics()
 	reader := operationalTelemetryReaderFunc(func(context.Context) (operationscontract.OperationalTelemetrySnapshot, error) {
 		return operationscontract.OperationalTelemetrySnapshot{
-			DreamRuns: []operationscontract.DreamRunTelemetry{
-				{Window: "1h", Lane: "graph", Status: "completed", Runs: 2, InputTargets: 8, ProviderProposals: 4, CreatedHypotheses: 2},
-				{Window: "1h", Lane: "graph", Status: "completed", Runs: 1, InputTargets: 5, ProviderProposals: 2, CreatedHypotheses: 1},
-				{Window: "private-query", Lane: "raw-lane", Status: "raw-status", Runs: 99},
-			},
-			Hypotheses: []operationscontract.HypothesisTelemetry{
-				{Lane: "graph", Status: "proposed", Count: 3, BacklogCount: 3, OldestBacklogAge: 40},
-				{Lane: "graph", Status: "proposed", Count: 2, BacklogCount: 2, OldestBacklogAge: 70},
-			},
-			RememberAttempts:        []operationscontract.WindowedTelemetryCount{{Window: "1h", Kind: "completed", Count: 7}},
-			RelationshipTransitions: []operationscontract.WindowedTelemetryCount{{Window: "1h", Kind: "active", Count: 8}},
-			RelationshipCorrections: []operationscontract.WindowedTelemetryCount{{Window: "1h", Kind: "corrections", Count: 2}},
-			RelationshipsCurrent: []operationscontract.NamedTelemetryCount{
-				{Kind: "active", Count: 4}, {Kind: "active", Count: 2}, {Kind: "raw-status", Count: 99},
+			RememberAttempts: []operationscontract.WindowedTelemetryCount{
+				{Window: "1h", Kind: "completed", Count: 4}, {Window: "1h", Kind: "completed", Count: 3}, {Window: "unbounded", Kind: "raw-status", Count: 99},
 			},
 		}, nil
 	})
@@ -121,14 +109,10 @@ func TestOperationalTelemetryCollectorEmitsDurableSnapshotAndFixedLabelSets(t *t
 	metrics.Handler().ServeHTTP(recorder, httptest.NewRequest("GET", "/metrics", nil))
 	body := recorder.Body.String()
 	require.Contains(t, body, `densemem_operational_ledger_collection_success 1`)
-	require.Contains(t, body, `densemem_operational_dream_runs{lane="graph",status="completed",window="1h"} 3`)
 	require.NotContains(t, body, "densemem_operational_dream_run_attempts")
 	require.NotContains(t, body, "densemem_operational_hypothesis_backlog")
 	require.NotContains(t, body, "densemem_operational_hypothesis_oldest_backlog_age_seconds")
 	require.Contains(t, body, `densemem_operational_remember_attempts{outcome="completed",window="1h"} 7`)
-	require.Contains(t, body, `densemem_operational_relationship_transitions{status="active",window="1h"} 8`)
-	require.Contains(t, body, `densemem_operational_relationship_corrections{window="1h"} 2`)
-	require.Contains(t, body, `densemem_operational_relationships_current{status="active"} 6`)
 	require.NotContains(t, body, "private-query")
 	require.NotContains(t, body, "raw-lane")
 	require.NotContains(t, body, "raw-status")
@@ -137,7 +121,7 @@ func TestOperationalTelemetryCollectorEmitsDurableSnapshotAndFixedLabelSets(t *t
 func TestOperationalTelemetryCollectorDoesNotPublishFalseZerosOnPartialFailure(t *testing.T) {
 	metrics := NewPrometheusMetrics()
 	reader := operationalTelemetryReaderFunc(func(context.Context) (operationscontract.OperationalTelemetrySnapshot, error) {
-		return operationscontract.OperationalTelemetrySnapshot{RelationshipsCurrent: []operationscontract.NamedTelemetryCount{{Kind: "active", Count: 12}}}, errors.New("relationship correction query failed")
+		return operationscontract.OperationalTelemetrySnapshot{RememberAttempts: []operationscontract.WindowedTelemetryCount{{Window: "1h", Kind: "completed", Count: 12}}}, errors.New("remember attempt query failed")
 	})
 	require.NoError(t, metrics.RegisterOperationalTelemetryCollector(reader))
 
@@ -145,8 +129,8 @@ func TestOperationalTelemetryCollectorDoesNotPublishFalseZerosOnPartialFailure(t
 	metrics.Handler().ServeHTTP(recorder, httptest.NewRequest("GET", "/metrics", nil))
 	body := recorder.Body.String()
 	require.Contains(t, body, `densemem_operational_ledger_collection_success 0`)
-	require.NotContains(t, body, "densemem_operational_relationships_current")
-	require.NotContains(t, body, "relationship correction query failed")
+	require.NotContains(t, body, "densemem_operational_remember_attempts")
+	require.NotContains(t, body, "remember attempt query failed")
 }
 
 func TestOperationalTelemetryCollectorCoalescesInFlightLedgerReads(t *testing.T) {
@@ -163,7 +147,7 @@ func TestOperationalTelemetryCollectorCoalescesInFlightLedgerReads(t *testing.T)
 			}
 		}
 		return operationscontract.OperationalTelemetrySnapshot{
-			RelationshipsCurrent: []operationscontract.NamedTelemetryCount{{Kind: "active", Count: 7}},
+			RememberAttempts: []operationscontract.WindowedTelemetryCount{{Window: "1h", Kind: "completed", Count: 7}},
 		}, nil
 	})
 	collector := NewOperationalTelemetryCollector(reader)
@@ -191,7 +175,7 @@ func TestOperationalTelemetryCollectorCoalescesInFlightLedgerReads(t *testing.T)
 	require.True(t, firstResult.Shared)
 	require.True(t, secondResult.Shared)
 	require.Equal(t, operationscontract.OperationalTelemetrySnapshot{
-		RelationshipsCurrent: []operationscontract.NamedTelemetryCount{{Kind: "active", Count: 7}},
+		RememberAttempts: []operationscontract.WindowedTelemetryCount{{Window: "1h", Kind: "completed", Count: 7}},
 	}, firstResult.Val)
 	require.Equal(t, firstResult.Val, secondResult.Val)
 	require.Equal(t, int32(1), calls.Load())
@@ -200,7 +184,7 @@ func TestOperationalTelemetryCollectorCoalescesInFlightLedgerReads(t *testing.T)
 func TestOperationalTelemetryCollectorCanReadDurableStateAfterRecreation(t *testing.T) {
 	reader := operationalTelemetryReaderFunc(func(context.Context) (operationscontract.OperationalTelemetrySnapshot, error) {
 		return operationscontract.OperationalTelemetrySnapshot{
-			RelationshipsCurrent: []operationscontract.NamedTelemetryCount{{Kind: "active", Count: 9}},
+			RememberAttempts: []operationscontract.WindowedTelemetryCount{{Window: "1h", Kind: "completed", Count: 9}},
 		}, nil
 	})
 	read := func() string {
@@ -210,8 +194,8 @@ func TestOperationalTelemetryCollectorCanReadDurableStateAfterRecreation(t *test
 		metrics.Handler().ServeHTTP(recorder, httptest.NewRequest("GET", "/metrics", nil))
 		return recorder.Body.String()
 	}
-	require.Contains(t, read(), `densemem_operational_relationships_current{status="active"} 9`)
-	require.Contains(t, read(), `densemem_operational_relationships_current{status="active"} 9`)
+	require.Contains(t, read(), `densemem_operational_remember_attempts{outcome="completed",window="1h"} 9`)
+	require.Contains(t, read(), `densemem_operational_remember_attempts{outcome="completed",window="1h"} 9`)
 }
 
 func TestOperationalTelemetryCollectorRegistersWithRealPrometheusRegistry(t *testing.T) {

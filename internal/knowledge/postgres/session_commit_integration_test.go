@@ -32,20 +32,19 @@ func TestSessionReceiptFailureRollsBackKnowledgeAndRecoversOriginalIntake(t *tes
 	require.NoError(t, err)
 	intake.RequestHash, err = sessionservice.RequestHash(intake.Request)
 	require.NoError(t, err)
-	store := NewStore(app, rls, ConflictRuntimeConfig{})
+	store := NewStore(app, rls)
 	submission, err := store.StageSession(ctx, intake)
 	require.NoError(t, err)
 	input.IngestID, input.Commit.IngestID = submission.ID, submission.ID
 	input.IdempotencyKey, input.RequestHash = "session:"+submission.ID, intake.RequestHash
 	input.SpaceID, input.SpaceGeneration = intake.Scope.SpaceID, intake.Scope.SpaceGeneration
 	input.Evidence[0].Metadata = map[string]any{"session": map[string]any{"event_index": 0, "span_start": 0, "span_end": len([]rune(input.Evidence[0].Content)), "event_id": "one", "session_id": intake.Request.SessionID}}
-	checkpoint := json.RawMessage(`{"request_id":"fixture","coverage":[],"entities":[],"relationships":[],"security_signals":[],"overflow":false}`)
+	checkpoint := json.RawMessage(`{"request_id":"fixture","coverage":[],"excerpts":[],"security_signals":[],"overflow":false}`)
 	require.NoError(t, store.SaveSessionExtraction(ctx, intake.Scope, submission.ID, 0, checkpoint))
-	require.NoError(t, store.SaveSessionLinking(ctx, intake.Scope, submission.ID, json.RawMessage(`{"request_id":"fixture","groups":[]}`)))
 	plan, err := store.PlanRememberEmbeddings(ctx, input)
 	require.NoError(t, err)
 	prepared := &session.Prepared{Commit: input, Embeddings: ownerEmbeddings(plan, false)}
-	result := session.Result{ContractVersion: domain.ContractVersion, SubmissionID: submission.ID, SubmissionKind: "session_ingest", CorrelationID: "fixture", AcceptedEventCount: 1, ProcessingState: "completed", SearchState: "not_required", Events: []session.EventResult{{EventID: "one", Disposition: "accepted", ProcessingState: "completed", EvidenceIDs: []string{}}}, RelationshipResults: []SubmissionRelationshipResult{}, Errors: []session.Error{}}
+	result := session.Result{ContractVersion: domain.ContractVersion, SubmissionID: submission.ID, SubmissionKind: "session_ingest", CorrelationID: "fixture", AcceptedEventCount: 1, ProcessingState: "completed", SearchState: "not_required", Events: []session.EventResult{{EventID: "one", Disposition: "accepted", ProcessingState: "completed", EvidenceIDs: []string{}}}, Errors: []session.Error{}}
 	originalResult, err := json.Marshal(result)
 	require.NoError(t, err)
 	require.NoError(t, rls.WithSystemTx(ctx, admin, func(tx *gorm.DB) error {
@@ -97,14 +96,14 @@ func TestSessionCheckpointAndSuccessfulReceiptAreImmutable(t *testing.T) {
 	team := createLedgerTeam(t, admin, rls, "session-checkpoint")
 	owner := createLedgerProfile(t, admin, rls, team, "session-owner")
 	ctx, intake := sessionIntakeFixture(t, admin, app, rls, team, owner, domain.MemorySpacePrivate)
-	store := NewStore(app, rls, ConflictRuntimeConfig{})
+	store := NewStore(app, rls)
 	submission, err := store.StageSession(ctx, intake)
 	require.NoError(t, err)
 	body := json.RawMessage(`{"request_id":"one"}`)
 	require.NoError(t, store.SaveSessionExtraction(ctx, intake.Scope, submission.ID, 0, body))
 	require.NoError(t, store.SaveSessionExtraction(ctx, intake.Scope, submission.ID, 0, body))
 	require.ErrorIs(t, store.SaveSessionExtraction(ctx, intake.Scope, submission.ID, 0, json.RawMessage(`{"request_id":"changed"}`)), session.ErrRequestConflict)
-	result := session.Result{ContractVersion: domain.ContractVersion, SubmissionID: submission.ID, SubmissionKind: "session_ingest", CorrelationID: "fixture", AcceptedEventCount: 1, ProcessingState: "completed", SearchState: "not_required", Events: []session.EventResult{{EventID: "one", Disposition: "accepted", ProcessingState: "completed", EvidenceIDs: []string{}}}, RelationshipResults: []SubmissionRelationshipResult{}, Errors: []session.Error{}}
+	result := session.Result{ContractVersion: domain.ContractVersion, SubmissionID: submission.ID, SubmissionKind: "session_ingest", CorrelationID: "fixture", AcceptedEventCount: 1, ProcessingState: "completed", SearchState: "not_required", Events: []session.EventResult{{EventID: "one", Disposition: "accepted", ProcessingState: "completed", EvidenceIDs: []string{}}}, Errors: []session.Error{}}
 	completed, err := store.CommitSession(ctx, intake.Scope, submission.ID, nil, result)
 	require.NoError(t, err)
 	require.Equal(t, "not_required", completed.SearchState)
@@ -137,7 +136,7 @@ func TestSessionPreparedCommitCannotReviveChangedOrErasedPrivateGeneration(t *te
 				require.NoError(t, err)
 				intake.RequestHash, err = sessionservice.RequestHash(intake.Request)
 				require.NoError(t, err)
-				store := NewStore(app, rls, ConflictRuntimeConfig{})
+				store := NewStore(app, rls)
 				staged, err := store.StageSession(ctx, intake)
 				require.NoError(t, err)
 				input.IngestID, input.Commit.IngestID = staged.ID, staged.ID
@@ -145,7 +144,6 @@ func TestSessionPreparedCommitCannotReviveChangedOrErasedPrivateGeneration(t *te
 				input.IdempotencyKey, input.RequestHash = "session:"+staged.ID, intake.RequestHash
 				input.Evidence[0].Metadata = map[string]any{"session": map[string]any{"event_index": 0, "span_start": 0, "span_end": len([]rune(input.Evidence[0].Content)), "event_id": "one", "session_id": intake.Request.SessionID}}
 				require.NoError(t, store.SaveSessionExtraction(ctx, intake.Scope, staged.ID, 0, json.RawMessage(`{}`)))
-				require.NoError(t, store.SaveSessionLinking(ctx, intake.Scope, staged.ID, json.RawMessage(`{}`)))
 				plan, err := store.PlanRememberEmbeddings(ctx, input)
 				require.NoError(t, err)
 				prepared := &session.Prepared{Commit: input, Embeddings: ownerEmbeddings(plan, false)}

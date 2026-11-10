@@ -48,6 +48,9 @@ func (s *Service) recordDiagnostics(ctx context.Context, submission *session.Sub
 		s.diagnosticUnavailable("serialization_failed")
 		return
 	}
+	if s.deps.DiagnosticLog != nil {
+		s.deps.DiagnosticLog(context.WithoutCancel(ctx), submission.Intake.Scope, submission.ID, body)
+	}
 	persistenceCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	err = s.deps.Repository.RecordSessionDiagnostic(persistenceCtx, submission.Intake.Scope, submission.ID, body)
 	cancel()

@@ -9,14 +9,14 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
+	evaluationcontract "github.com/markhuangai/dense-mem/internal/evaluation/contract"
 	"gorm.io/gorm"
 )
 
-type EvaluationRepository = dreamcontract.EvaluationRepository
-type EvaluationListInput = dreamcontract.EvaluationListInput
-type EvaluationGetInput = dreamcontract.EvaluationGetInput
-type EvaluationPage = dreamcontract.EvaluationPage
+type EvaluationRepository = evaluationcontract.EvaluationRepository
+type EvaluationListInput = evaluationcontract.EvaluationListInput
+type EvaluationGetInput = evaluationcontract.EvaluationGetInput
+type EvaluationPage = evaluationcontract.EvaluationPage
 
 func normalizeEvaluationListInput(input EvaluationListInput) EvaluationListInput {
 	input.TeamID = strings.TrimSpace(input.TeamID)
@@ -74,7 +74,7 @@ func validateEvaluationGetInput(input EvaluationGetInput) error {
 
 func evaluationTypeSupported(value string) bool {
 	switch value {
-	case "evidence", "relationship", "entity", "value":
+	case "evidence":
 		return true
 	default:
 		return false
@@ -166,107 +166,6 @@ func evaluationQuery(input EvaluationListInput, limit int, offset int, ids ...st
 				'labels', labels,
 				'metadata', metadata,
 				'content', content,
-				'created_at', created_at
-			)
-			FROM rows
-			WHERE true` + idFilter + statusFilter + `
-			ORDER BY created_at DESC, id
-			LIMIT ? OFFSET ?`, args.values, nil
-	case "relationship":
-		return `
-			WITH rows AS (
-				SELECT relationship_id AS id, owner_profile_id::text, semantic_group_key,
-				       subject_entity_id::text, predicate_key, predicate_version,
-				       COALESCE(object_entity_id::text, '') AS object_entity_id,
-				       COALESCE(object_value_id::text, '') AS object_value_id,
-				       relationship_kind, current_cardinality, status, polarity,
-				       COALESCE(scope_key, '') AS scope_key, valid_from, valid_to,
-				       support_count, source_group_count, version, metadata, created_at, updated_at
-				FROM relationship_records
-				WHERE team_id = ?::uuid
-			)
-			SELECT jsonb_build_object(
-				'type', 'relationship',
-				'id', id::text,
-				'owner_profile_id', owner_profile_id,
-				'semantic_group_key', semantic_group_key,
-				'subject_entity_id', subject_entity_id,
-				'predicate_key', predicate_key,
-				'predicate_version', predicate_version,
-				'object_entity_id', object_entity_id,
-				'object_value_id', object_value_id,
-				'relationship_kind', relationship_kind,
-				'current_cardinality', current_cardinality,
-				'status', status,
-				'polarity', polarity,
-				'scope_key', scope_key,
-				'valid_from', valid_from,
-				'valid_to', valid_to,
-				'support_count', support_count,
-				'source_group_count', source_group_count,
-				'version', version,
-				'metadata', metadata,
-				'created_at', created_at,
-				'updated_at', updated_at
-			)
-			FROM rows
-			WHERE true` + idFilter + statusFilter + `
-			ORDER BY updated_at DESC, id
-			LIMIT ? OFFSET ?`, args.values, nil
-	case "entity":
-		return `
-			WITH rows AS (
-				SELECT entity.entity_id AS id, entity.entity_kind, entity.status,
-				       entity.version, entity.identity_context, entity.metadata,
-				       entity.created_at, entity.updated_at,
-				       COALESCE(name.display_name, '') AS canonical_name
-				FROM entity_records entity
-				LEFT JOIN LATERAL (
-					SELECT display_name
-					FROM entity_names
-					WHERE team_id = entity.team_id
-					  AND entity_id = entity.entity_id
-					  AND name_kind = 'canonical'
-					  AND valid_to IS NULL
-					ORDER BY created_at DESC, entity_name_id DESC
-					LIMIT 1
-				) name ON true
-				WHERE entity.team_id = ?::uuid
-			)
-			SELECT jsonb_build_object(
-				'type', 'entity',
-				'id', id::text,
-				'entity_kind', entity_kind,
-				'canonical_name', canonical_name,
-				'status', status,
-				'version', version,
-				'identity_context', identity_context,
-				'metadata', metadata,
-				'created_at', created_at,
-				'updated_at', updated_at
-			)
-			FROM rows
-			WHERE true` + idFilter + statusFilter + `
-			ORDER BY updated_at DESC, id
-			LIMIT ? OFFSET ?`, args.values, nil
-	case "value":
-		return `
-			WITH rows AS (
-				SELECT value_id AS id, 'active' AS status, value_type, canonical_value, COALESCE(unit, '') AS unit,
-				       display, normalization_version, metadata, created_at
-				FROM value_records
-				WHERE team_id = ?::uuid
-			)
-			SELECT jsonb_build_object(
-				'type', 'value',
-				'id', id::text,
-				'status', status,
-				'value_type', value_type,
-				'canonical_value', canonical_value,
-				'unit', unit,
-				'display', display,
-				'normalization_version', normalization_version,
-				'metadata', metadata,
 				'created_at', created_at
 			)
 			FROM rows

@@ -100,7 +100,7 @@ async function runScenario() {
   await assertOwnerOperationVisibility(ownerOperationID, ownerA.apiKey, ownerB.apiKey, ownerC.apiKey);
   assertErasedSpace(ownerASpace.id, ownerCompleted, ownerAFixture, "active");
   await assertPrivateRecallAbsent(ownerA.apiKey, ownerAFixture.sentinel);
-  await assertTraceAbsent(ownerA.apiKey, ownerAFixture.relationshipID);
+  await assertTraceAbsent(ownerA.apiKey, ownerAFixture.fragmentID);
   assertPreserved(ownerBSpace.id, ownerBFixture);
   assertPreserved(ownerCSpace.id, ownerCFixture);
   assertPreserved(sharedSpace.id, sharedFixture);
@@ -605,16 +605,15 @@ async function assertCredentialDenied(apiKey) {
 }
 
 async function assertRichPrivateVisibility(owner, sameTeam, otherTeam, ownerFixture, sharedFixture) {
-  const trace = await mcpToolSuccess(owner.apiKey, "trace_memory", { relationship_id: ownerFixture.relationshipID, include_evidence_content: false });
-  assert(JSON.stringify(trace).includes(ownerFixture.relationshipID), "private trace positive control did not return its relationship");
+  const trace = await mcpToolSuccess(owner.apiKey, "trace_memory", { evidence_id: ownerFixture.fragmentID, include_evidence_content: false });
+  assert(JSON.stringify(trace).includes(ownerFixture.fragmentID), "private trace positive control did not return its Evidence");
   for (const credential of [sameTeam, otherTeam]) {
-    const hidden = await mcpToolRaw(credential.apiKey, "trace_memory", { relationship_id: ownerFixture.relationshipID, include_evidence_content: false });
-    assert(hidden.payload.result?.isError === true || hidden.payload.error, "foreign credential traced another private relationship");
+    const hidden = await mcpToolRaw(credential.apiKey, "trace_memory", { evidence_id: ownerFixture.fragmentID, include_evidence_content: false });
+    assert(hidden.payload.result?.isError === true || hidden.payload.error, "foreign credential traced another private Evidence");
   }
   const privateRecall = await recall(owner.apiKey, ownerFixture.sentinel);
   const privateRecallDiagnostic = {
     results: privateRecall.results?.length ?? 0,
-    relationships: privateRecall.related_relationships?.length ?? 0,
     search_states: privateRecall.search_states ?? {},
     degradations: (privateRecall.degradations ?? []).map(({ frontier, code }) => ({ frontier, code })),
   };
@@ -637,15 +636,15 @@ async function assertSharedRecallPreserved(apiKey, sentinel) {
   assert(JSON.stringify(result).includes(sentinel), "team-shared recall changed after private erasure");
 }
 
-async function assertTraceAbsent(apiKey, relationshipID) {
-  const response = await mcpToolRaw(apiKey, "trace_memory", { relationship_id: relationshipID, include_evidence_content: false });
+async function assertTraceAbsent(apiKey, evidenceID) {
+  const response = await mcpToolRaw(apiKey, "trace_memory", { evidence_id: evidenceID, include_evidence_content: false });
   if (response.payload.result?.isError === true || response.payload.error) return;
   const text = response.payload.result?.content?.[0]?.text ?? "";
-  assert(!text.includes(relationshipID), "erased private relationship remained traceable");
+  assert(!text.includes(evidenceID), "erased private Evidence remained traceable");
 }
 
 async function recall(apiKey, query) {
-  return mcpToolSuccess(apiKey, "recall_memory", { query, limit: 20, relationship_limit: 20 });
+  return mcpToolSuccess(apiKey, "recall_memory", { query, limit: 20 });
 }
 
 async function mcpToolSuccess(apiKey, name, args) {
@@ -670,7 +669,7 @@ async function mcpRaw(apiKey, method, params) {
 
 function assertErasedSpace(spaceID, operation, fixture, lifecycle) {
   const catalog = privateMemoryManifestTables();
-  const counted = Object.keys(operation.deleted_counts ?? {}).filter((table) => table !== "audit_log" && table !== "relationship_cross_references_inbound").sort();
+  const counted = Object.keys(operation.deleted_counts ?? {}).filter((table) => table !== "audit_log").sort();
   assert(JSON.stringify(counted) === JSON.stringify(catalog), "erasure deleted-count manifest did not match the live space catalog");
   postgresExec(`
     DO $private_erasure_zero$
@@ -743,10 +742,10 @@ function assertWriteRejected(spaceID, teamID, ownerID, generation, message) {
     BEGIN;
     SELECT set_config('app.tx_mode', 'system', true);
     INSERT INTO knowledge_ingests (
-      team_id, ingest_id, owner_profile_id, request_hash, source_summary, status, proposal, metadata, space_id${generationColumn}
+      team_id, ingest_id, owner_profile_id, request_hash, source_summary, status, metadata, space_id${generationColumn}
     ) VALUES (
       ${sqlLiteral(teamID)}::uuid, ${sqlLiteral(ingestID)}::uuid, ${sqlLiteral(ownerID)}::uuid,
-      ${sqlLiteral(`hash-${ingestID}`)}, 'write-fence-probe', 'completed', '{}'::jsonb, '{}'::jsonb,
+      ${sqlLiteral(`hash-${ingestID}`)}, 'write-fence-probe', 'completed', '{}'::jsonb,
       ${sqlLiteral(spaceID)}::uuid${generationValue}
     );
     COMMIT
@@ -765,10 +764,10 @@ function seedSingleIngest(teamID, ownerID, spaceID, sentinel) {
     BEGIN;
     SELECT set_config('app.tx_mode', 'system', true);
     INSERT INTO knowledge_ingests (
-      team_id, ingest_id, owner_profile_id, request_hash, source_summary, status, proposal, metadata, space_id
+      team_id, ingest_id, owner_profile_id, request_hash, source_summary, status, metadata, space_id
     ) VALUES (
       ${sqlLiteral(teamID)}::uuid, ${sqlLiteral(ingestID)}::uuid, ${sqlLiteral(ownerID)}::uuid,
-      ${sqlLiteral(`hash-${ingestID}`)}, ${sqlLiteral(sentinel)}, 'completed', '{}'::jsonb, '{}'::jsonb, ${sqlLiteral(spaceID)}::uuid
+      ${sqlLiteral(`hash-${ingestID}`)}, ${sqlLiteral(sentinel)}, 'completed', '{}'::jsonb, ${sqlLiteral(spaceID)}::uuid
     );
     COMMIT
   `);
@@ -777,10 +776,7 @@ function seedSingleIngest(teamID, ownerID, spaceID, sentinel) {
 
 function seedSpaceContent({ teamID, ownerID, keyID, spaceID, label, rich = false }) {
   const ids = {
-    ingestID: randomUUID(), fragmentID: randomUUID(), securityEventID: randomUUID(), subjectID: randomUUID(), objectID: randomUUID(),
-    relationshipID: randomUUID(), observationID: randomUUID(), verificationID: randomUUID(), supportID: randomUUID(),
-    conflictID: randomUUID(), positionID: randomUUID(), dreamRunID: randomUUID(), hypothesisID: randomUUID(),
-    communityRunID: randomUUID(), communityID: randomUUID(), logicalCommunityID: randomUUID(), searchDocumentID: randomUUID(),
+    ingestID: randomUUID(), fragmentID: randomUUID(), securityEventID: randomUUID(),
     evidenceSearchDocumentID: randomUUID(), diagnosticID: randomUUID(), recallID: `${runID}-${label}-${randomUUID()}`,
   };
   const sentinel = `${runID}-${label}-private-content`;
@@ -790,24 +786,24 @@ function seedSpaceContent({ teamID, ownerID, keyID, spaceID, label, rich = false
     "SELECT set_config('app.tx_mode', 'system', true)",
     `INSERT INTO knowledge_ingests (
        team_id, ingest_id, owner_profile_id, idempotency_key, request_hash, source_summary,
-       status, proposal, metadata, completed_at, space_id
+       status, metadata, completed_at, space_id
      ) VALUES (
        ${sqlLiteral(teamID)}::uuid, ${sqlLiteral(ids.ingestID)}::uuid, ${sqlLiteral(ownerID)}::uuid,
        ${sqlLiteral(`${runID}-${label}`)}, ${sqlLiteral(`sha256:${ids.ingestID}`)}, ${sqlLiteral(sentinel)},
-       'completed', '{}'::jsonb, '{}'::jsonb, now(), ${sqlLiteral(spaceID)}::uuid
+       'completed', '{}'::jsonb, now(), ${sqlLiteral(spaceID)}::uuid
      )`,
     ...(label === "team-shared" ? [] : [
       `INSERT INTO remember_attempts (
          team_id, attempt_id, owner_profile_id, space_id, space_generation,
          idempotency_key, request_hash, contract_version, submission_kind, outcome,
-         failed_phase, error_code, public_result, evidence_count, relationship_count,
+         failed_phase, error_code, public_result, evidence_count,
          document_count, assessor_turns, duration_ms, created_at, completed_at
        ) VALUES (
          ${sqlLiteral(teamID)}::uuid, ${sqlLiteral(ids.ingestID)}::uuid, ${sqlLiteral(ownerID)}::uuid,
          ${sqlLiteral(spaceID)}::uuid, (SELECT generation FROM memory_spaces WHERE id = ${sqlLiteral(spaceID)}::uuid),
          ${sqlLiteral(`${runID}-${label}-policy`)}, ${sqlLiteral(`sha256:${ids.ingestID}`)},
-         'dense-mem.v2.6.1', 'remember', 'failed', 'preflight', 'submission_policy_rejected',
-         '{}'::jsonb, 0, 0, 0, 0, 0, now() - interval '8 days', now() - interval '8 days'
+         'dense-mem.v3.0.0', 'remember', 'failed', 'preflight', 'submission_policy_rejected',
+         '{}'::jsonb, 0, 0, 0, 0, now() - interval '8 days', now() - interval '8 days'
        )`,
       `INSERT INTO remember_attempt_diagnostics (
          team_id, diagnostic_id, attempt_id, owner_profile_id, sequence_no, kind, component,
@@ -824,7 +820,7 @@ function seedSpaceContent({ teamID, ownerID, keyID, spaceID, label, rich = false
        content_hash, source_type, authority, source_ref, space_id
      ) VALUES (
        ${sqlLiteral(teamID)}::uuid, ${sqlLiteral(ids.fragmentID)}::uuid, ${sqlLiteral(ids.ingestID)}::uuid,
-       ${sqlLiteral(ownerID)}::uuid, 0, ${sqlLiteral(sentinel)}, ${sqlLiteral(`sha256:${ids.fragmentID}`)},
+       ${sqlLiteral(ownerID)}::uuid, 0, ${sqlLiteral(sentinel)}, ${sqlLiteral(`sha256:${sha256(sentinel)}`)},
        'manual', 'primary', ${sqlLiteral(`${runID}:${label}`)}, ${sqlLiteral(spaceID)}::uuid
      )`,
     `INSERT INTO audit_log (
@@ -852,119 +848,20 @@ function richSpaceStatements(ids) {
        team_id, security_event_id, signal_index, owner_profile_id, kind, severity, span_start, span_end, quote, metadata, space_id
      ) VALUES (${q.teamID}::uuid, ${q.securityEventID}::uuid, 0, ${q.ownerID}::uuid,
        'instruction_override', 'low', 0, char_length(${q.sentinel}), ${q.sentinel}, '{}'::jsonb, ${q.spaceID}::uuid)`,
-    `INSERT INTO team_predicate_definitions (
-       team_id, predicate_key, version, aliases, allowed_subject_kinds, allowed_object_kinds,
-       relationship_kind, current_cardinality, lifecycle_state, origin, metadata, created_at
-     ) SELECT ${q.teamID}::uuid, predicate_key, version, aliases, allowed_subject_kinds, allowed_object_kinds,
-       relationship_kind, current_cardinality, lifecycle_state, 'built_in', metadata, created_at
-       FROM predicate_definitions WHERE predicate_key = 'uses' AND version = 1
-       ON CONFLICT (team_id, predicate_key, version) DO NOTHING`,
-    `INSERT INTO entity_records (team_id, entity_id, entity_kind, metadata, space_id) VALUES
-       (${q.teamID}::uuid, ${q.subjectID}::uuid, 'project', jsonb_build_object('content', ${q.sentinel}), ${q.spaceID}::uuid),
-       (${q.teamID}::uuid, ${q.objectID}::uuid, 'product', '{}'::jsonb, ${q.spaceID}::uuid)`,
-    `INSERT INTO entity_names (team_id, entity_id, owner_profile_id, display_name, normalized_name, name_kind, metadata, space_id) VALUES
-       (${q.teamID}::uuid, ${q.subjectID}::uuid, ${q.ownerID}::uuid, ${q.sentinel}, lower(${q.sentinel}), 'canonical', '{}'::jsonb, ${q.spaceID}::uuid),
-       (${q.teamID}::uuid, ${q.objectID}::uuid, ${q.ownerID}::uuid, ${q.label}, lower(${q.label}), 'canonical', '{}'::jsonb, ${q.spaceID}::uuid)`,
-    `INSERT INTO relationship_records (
-       team_id, relationship_id, owner_profile_id, semantic_group_key, subject_entity_id,
-       predicate_key, predicate_version, object_entity_id, relationship_kind, current_cardinality,
-       status, polarity, support_count, source_group_count, metadata, space_id
-     ) VALUES (${q.teamID}::uuid, ${q.relationshipID}::uuid, ${q.ownerID}::uuid, ${q.label}, ${q.subjectID}::uuid,
-       'uses', 1, ${q.objectID}::uuid, 'state', 'many', 'active', '+', 1, 1,
-       jsonb_build_object('content', ${q.sentinel}), ${q.spaceID}::uuid)`,
-    `INSERT INTO relationship_observations (
-       team_id, observation_id, relationship_id, ingest_id, owner_profile_id, subject_ref,
-       original_predicate, object_ref, subject_entity_id, predicate_key, predicate_version,
-       object_entity_id, evidence, metadata, space_id
-     ) VALUES (${q.teamID}::uuid, ${q.observationID}::uuid, ${q.relationshipID}::uuid, ${q.ingestID}::uuid,
-       ${q.ownerID}::uuid, ${q.sentinel}, 'uses', ${q.label}, ${q.subjectID}::uuid, 'uses', 1,
-       ${q.objectID}::uuid, jsonb_build_array(jsonb_build_object('fragment_id', ${q.fragmentID}, 'start', 0, 'end', char_length(${q.sentinel}))),
-       '{}'::jsonb, ${q.spaceID}::uuid)`,
-    `INSERT INTO verification_events (
-       team_id, verification_event_id, observation_id, owner_profile_id, evidence_verdict,
-       confidence, rationale, model, response_hash, metadata, space_id
-     ) VALUES (${q.teamID}::uuid, ${q.verificationID}::uuid, ${q.observationID}::uuid, ${q.ownerID}::uuid,
-       'entailed', 0.99, ${q.sentinel}, 'private-erasure-e2e', ${sqlLiteral(`sha256:${ids.verificationID}`)}, '{}'::jsonb, ${q.spaceID}::uuid)`,
-    `INSERT INTO relationship_evidence_supports (
-       team_id, support_id, relationship_id, observation_id, verification_event_id, fragment_id,
-       owner_profile_id, source_group_key, span_start, span_end, quote, authority, metadata, space_id
-     ) VALUES (${q.teamID}::uuid, ${q.supportID}::uuid, ${q.relationshipID}::uuid, ${q.observationID}::uuid,
-       ${q.verificationID}::uuid, ${q.fragmentID}::uuid, ${q.ownerID}::uuid, ${q.label}, 0,
-       char_length(${q.sentinel}), ${q.sentinel}, 'primary', '{}'::jsonb, ${q.spaceID}::uuid)`,
-    `INSERT INTO relationship_support_decision_events (
-       team_id, support_id, relationship_id, owner_profile_id, actor_profile_id, decision, reason, metadata, space_id
-     ) VALUES (${q.teamID}::uuid, ${q.supportID}::uuid, ${q.relationshipID}::uuid, ${q.ownerID}::uuid,
-       ${q.ownerID}::uuid, 'grant', ${q.sentinel}, '{}'::jsonb, ${q.spaceID}::uuid)`,
-    `INSERT INTO relationship_conflict_cases (
-       team_id, conflict_id, semantic_scope_key, status, subject_entity_id, predicate_key, predicate_version,
-       relationship_kind, current_cardinality, review_due_at, next_review_at, review_ttl_days,
-       policy_version, version, attempts, lease_worker_id, lease_until, metadata, space_id
-     ) VALUES (${q.teamID}::uuid, ${q.conflictID}::uuid, ${sqlLiteral(`${ids.label}-${ids.conflictID}`)}, 'open', ${q.subjectID}::uuid,
-       'uses', 1, 'state', 'many', now() + interval '1 day', now() + interval '1 day', 7,
-       'private_erasure_e2e', 1, 1, 'private-erasure-fixture', now() + interval '1 hour',
-       jsonb_build_object('content', ${q.sentinel}), ${q.spaceID}::uuid)`,
-    `INSERT INTO relationship_conflict_positions (
-       team_id, conflict_id, position_id, position_key, object_entity_id, support_group_count,
-       authoritative_group_count, metadata, space_id
-     ) VALUES (${q.teamID}::uuid, ${q.conflictID}::uuid, ${q.positionID}::uuid, ${q.label},
-       ${q.objectID}::uuid, 1, 1, jsonb_build_object('content', ${q.sentinel}), ${q.spaceID}::uuid)`,
-    `INSERT INTO dream_cycle_runs (
-       team_id, run_id, initiated_by_profile_id, run_date, window_key, status, lease_until,
-       input_count, source_snapshot, space_id
-     ) VALUES (${q.teamID}::uuid, ${q.dreamRunID}::uuid, ${q.ownerID}::uuid, CURRENT_DATE::text,
-       ${sqlLiteral(`${ids.label}-${ids.dreamRunID}`)}, 'running', now() + interval '1 hour', 1,
-       jsonb_build_array(jsonb_build_object('content', ${q.sentinel})), ${q.spaceID}::uuid)`,
-    `INSERT INTO hypotheses (
-       team_id, hypothesis_id, created_by_profile_id, status, statement, rationale, confidence,
-       subject_entity_id, predicate_key, predicate_version, object_entity_id, source_refs,
-       source_versions, source_owner_profile_ids, content_hash, cycle_run_id, space_id
-     ) VALUES (${q.teamID}::uuid, ${q.hypothesisID}::uuid, ${q.ownerID}::uuid, 'proposed', ${q.sentinel},
-       ${q.sentinel}, 0.75, ${q.subjectID}::uuid, 'uses', 1, ${q.objectID}::uuid,
-       jsonb_build_array(jsonb_build_object('type','relationship','id',${q.relationshipID})),
-       jsonb_build_object(${q.relationshipID}, 1), ARRAY[${q.ownerID}::uuid],
-       ${sqlLiteral(`sha256:${ids.hypothesisID}`)}, ${q.dreamRunID}::uuid, ${q.spaceID}::uuid)`,
-    `INSERT INTO community_snapshot_runs (
-       team_id, run_id, window_key, status, source_snapshot, node_count, edge_count,
-       community_count, max_nodes, max_edges, lease_until, space_id
-     ) VALUES (${q.teamID}::uuid, ${q.communityRunID}::uuid, ${sqlLiteral(`${ids.label}-${ids.communityRunID}`)},
-       'running', jsonb_build_array(jsonb_build_object('content', ${q.sentinel})), 2, 1, 1, 10, 10,
-       now() + interval '1 hour', ${q.spaceID}::uuid)`,
-    `INSERT INTO community_records (
-       team_id, community_id, logical_community_id, run_id, ordinal, status, summary,
-       member_count, source_count, top_entities, top_predicates, source_fingerprint, space_id
-     ) VALUES (${q.teamID}::uuid, ${q.communityID}::uuid, ${q.logicalCommunityID}::uuid, ${q.communityRunID}::uuid,
-       0, 'current', ${q.sentinel}, 1, 1, ARRAY[${q.sentinel}]::text[], ARRAY['uses']::text[],
-       ${sqlLiteral(`sha256:${ids.communityID}`)}, ${q.spaceID}::uuid)`,
-    `INSERT INTO community_memberships (
-       team_id, community_id, entity_id, rank, membership_score, source_count, space_id
-     ) VALUES (${q.teamID}::uuid, ${q.communityID}::uuid, ${q.subjectID}::uuid, 0, 1, 1, ${q.spaceID}::uuid)`,
-    `INSERT INTO community_sources (
-       team_id, community_id, relationship_id, owner_profile_id, relationship_version,
-       source_rank, semantic_group_key, source_state_hash, space_id
-     ) VALUES (${q.teamID}::uuid, ${q.communityID}::uuid, ${q.relationshipID}::uuid, ${q.ownerID}::uuid,
-       1, 0, ${q.label}, ${sqlLiteral(`sha256:${ids.relationshipID}`)}, ${q.spaceID}::uuid)`,
-    `INSERT INTO search_documents (
-       team_id, search_document_id, owner_profile_id, source_kind, source_id, source_version,
-       document_version, embedding_contract_id, embedding_dimensions, search_state,
-       document_text, document_hash, metadata, space_id
-     ) SELECT ${q.teamID}::uuid, ${q.searchDocumentID}::uuid, ${q.ownerID}::uuid, 'relationship',
-       ${q.relationshipID}::uuid, 1, 1, embedding_contract_id, dimensions, 'current', ${q.sentinel},
-       ${sqlLiteral(`sha256:${ids.searchDocumentID}`)}, jsonb_build_object('content', ${q.sentinel}), ${q.spaceID}::uuid
-       FROM embedding_contracts ORDER BY created_at DESC LIMIT 1`,
     `INSERT INTO search_documents (
        team_id, search_document_id, owner_profile_id, source_kind, source_id, source_version,
        document_version, embedding_contract_id, embedding_dimensions, search_state,
        document_text, document_hash, metadata, space_id
      ) SELECT ${q.teamID}::uuid, ${q.evidenceSearchDocumentID}::uuid, ${q.ownerID}::uuid, 'evidence',
        ${q.fragmentID}::uuid, 1, 1, embedding_contract_id, dimensions, 'current', ${q.sentinel},
-       ${sqlLiteral(`sha256:${ids.evidenceSearchDocumentID}`)}, jsonb_build_object('content', ${q.sentinel}), ${q.spaceID}::uuid
+       ${sqlLiteral(`sha256:${sha256(ids.sentinel)}`)}, jsonb_build_object('content', ${q.sentinel}), ${q.spaceID}::uuid
        FROM embedding_contracts ORDER BY created_at DESC LIMIT 1`,
     `INSERT INTO recall_feedback_events (
        recall_id, team_id, profile_id, key_id, auth_method, query, tool_args,
        result_refs, result_count, snapshot_state, space_id
      ) VALUES (${q.recallID}, ${q.teamID}::uuid, ${q.ownerID}::uuid, ${q.keyID}::uuid,
        'api_key', ${q.sentinel}, jsonb_build_object('query', ${q.sentinel}),
-       jsonb_build_array(jsonb_build_object('id', ${q.relationshipID}, 'type', 'relationship')),
+       jsonb_build_array(jsonb_build_object('id', ${q.fragmentID}, 'type', 'evidence')),
        1, 'captured', ${q.spaceID}::uuid)`,
   ];
 }
@@ -990,7 +887,7 @@ function privateMemoryManifestTables() {
       ) AS catalog
   `);
   manifestTables = value ? value.split(",") : [];
-  assert(manifestTables.length >= 53, "live private-memory manifest was unexpectedly small");
+  assert(manifestTables.length === 27, "live Evidence-only private-memory manifest differs from its closed final catalog");
   return manifestTables;
 }
 

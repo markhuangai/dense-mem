@@ -29,7 +29,7 @@ func TestRememberAttemptDiagnosticsRepositoryScopesReadsAndPurgesExpiredBytes(t 
 	ownerA := createLedgerProfile(t, adminDB, rls, teamA, "remember-attempt-diagnostics-owner-a")
 	privateSpace, err := ensurePrivateSpaceForOwner(t, appDB, rls, ctx, uuid.MustParse(teamA), uuid.MustParse(ownerA))
 	require.NoError(t, err)
-	repo := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	repo := NewStore(appDB, rls)
 	attemptID := "00000000-0000-4000-8000-000000000301"
 	require.NoError(t, repo.RecordRememberFailure(ctx, RememberFailureRecordInput{
 		Attempt: RememberAttemptRecordInput{
@@ -117,7 +117,7 @@ func TestRememberAttemptDiagnosticsIncludesReplayedHistoryAndExchanges(t *testin
 	ctx := context.Background()
 	teamID := createLedgerTeam(t, adminDB, rls, "remember-attempt-diagnostics-replayed")
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "remember-attempt-diagnostics-replayed-owner")
-	repo := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	repo := NewStore(appDB, rls)
 	canonicalID := uuidForDiagnostics(330)
 	replayedID := uuidForDiagnostics(331)
 	require.NoError(t, repo.RecordRememberAttempt(ctx, RememberAttemptRecordInput{
@@ -163,7 +163,7 @@ func TestRememberAttemptDiagnosticsPurgeClaimsConcurrentBatches(t *testing.T) {
 	ctx := context.Background()
 	teamID := createLedgerTeam(t, adminDB, rls, "remember-attempt-diagnostics-concurrent")
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "remember-attempt-diagnostics-concurrent-owner")
-	repo := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	repo := NewStore(appDB, rls)
 	old := time.Now().UTC().Add(-8 * 24 * time.Hour)
 	for index := 0; index < 6; index++ {
 		attemptID := uuidForDiagnostics(310 + index)
@@ -238,7 +238,7 @@ func TestRememberAttemptDiagnosticsDrainRotatesPrivateSpaces(t *testing.T) {
 	spaces := []*domain.MemorySpace{spaceA, spaceB}
 	spaceOwners := map[string]string{spaceA.ID.String(): ownerA, spaceB.ID.String(): ownerB}
 	sort.Slice(spaces, func(left, right int) bool { return spaces[left].ID.String() < spaces[right].ID.String() })
-	repo := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	repo := NewStore(appDB, rls)
 	old := time.Now().UTC().Add(-8 * 24 * time.Hour)
 	for index := 0; index < 101; index++ {
 		attemptID := uuidForDiagnostics(1000 + index)
@@ -280,7 +280,7 @@ func TestRememberAttemptDiagnosticsPaginatesOrdersAndIsolatesABC(t *testing.T) {
 	ownerB := createLedgerProfile(t, adminDB, rls, teamA, "remember-attempt-diagnostics-pagination-owner-b")
 	teamC := createLedgerTeam(t, adminDB, rls, "remember-attempt-diagnostics-pagination-c")
 	ownerC := createLedgerProfile(t, adminDB, rls, teamC, "remember-attempt-diagnostics-pagination-owner-c")
-	repo := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	repo := NewStore(appDB, rls)
 
 	attemptIDs := []string{
 		"00000000-0000-4000-8000-000000000401",
@@ -302,7 +302,7 @@ func TestRememberAttemptDiagnosticsPaginatesOrdersAndIsolatesABC(t *testing.T) {
 			IdempotencyKey: fmt.Sprintf("diagnostics-pagination-%d", index), RequestHash: fmt.Sprintf("diagnostics-pagination-hash-%d", index),
 			ContractVersion: domain.ContractVersion, SubmissionKind: "remember", Outcome: []string{"completed", "rejected", "quarantined", "failed", "failed"}[index],
 			CorrelationID: fmt.Sprintf("diagnostics-pagination-correlation-%d", index), PublicResult: map[string]any{"processing_state": "completed", "sequence": index},
-			EvidenceCount: index, RelationshipCount: index + 1, DocumentCount: index + 2, AssessorTurns: index + 3, Duration: time.Duration(index+1) * time.Millisecond,
+			EvidenceCount: index, DocumentCount: index + 2, AssessorTurns: index + 3, Duration: time.Duration(index+1) * time.Millisecond,
 		}
 		if index == 0 || index == 3 {
 			attempt.AssessorDiagnostics = map[string]any{"preparation_ms": 0, "elapsed_ms": 4, "turns": []any{map[string]any{"attempt": 1, "elapsed_ms": 4}}}

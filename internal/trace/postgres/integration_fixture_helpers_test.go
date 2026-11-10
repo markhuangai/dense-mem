@@ -23,8 +23,7 @@ import (
 
 	accesspostgres "github.com/markhuangai/dense-mem/internal/access/postgres"
 	"github.com/markhuangai/dense-mem/internal/domain"
-	graphcontract "github.com/markhuangai/dense-mem/internal/graph/contract"
-	graphpostgres "github.com/markhuangai/dense-mem/internal/graph/postgres"
+
 	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 	privacypostgres "github.com/markhuangai/dense-mem/internal/privacy/postgres"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
@@ -246,13 +245,7 @@ func createLedgerProfile(t testing.TB, db *gorm.DB, rls *storagepostgres.RLS, te
 }
 
 func newTraceStoreForTest(db *gorm.DB, rls storagepostgres.RLSHelper) *Store {
-	return New(db, rls, func(ctx context.Context, tx *gorm.DB, input graphcontract.Query, spaceID string) (*graphcontract.Snapshot, error) {
-		rows, err := graphpostgres.LoadLocalRows(ctx, tx, input, spaceID)
-		if err != nil {
-			return nil, err
-		}
-		return graphpostgres.Snapshot(input, rows), nil
-	}, nil)
+	return New(db, rls)
 }
 
 type SynchronousRememberCommitInput = knowledgepostgres.SynchronousRememberCommitInput

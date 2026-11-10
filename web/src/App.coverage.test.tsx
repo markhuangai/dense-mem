@@ -54,12 +54,6 @@ describe("App coverage additions", () => {
     await act(() => vi.dynamicImportSettled());
     expect(await screen.findByRole("heading", { name: /SSO providers/i })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("link", { name: "All teams" }));
-    await userEvent.click(screen.getByRole("link", { name: "Dream history" }));
-    expect(await screen.findByRole("heading", { name: "Dream history" })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("link", { name: "All teams" }));
-    await userEvent.click(screen.getByRole("link", { name: "Conflicts" }));
-    expect(await screen.findByRole("heading", { name: "Conflict queue" })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("link", { name: "All teams" }));
     await userEvent.click(screen.getByRole("link", { name: "Remember history" }));
     expect(await screen.findByRole("heading", { name: "Remember Attempts" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("link", { name: "Search readiness" }));
@@ -86,7 +80,6 @@ describe("App coverage additions", () => {
       if (url.endsWith("/teams") && method === "POST") return jsonResponse({ message: "team create failed" }, 500);
       if (url.includes("/credentials") && method === "GET") return jsonResponse(page([]));
       if (url.includes("/metrics")) return jsonResponse({ data: metricsSnapshot });
-      if (url.includes("/community/status")) return jsonResponse({ data: { effective_config: { enabled: false }, latest_run: null, pending_count: 0 } });
       if (url.includes("/dreaming/status")) return jsonResponse({ data: dreamStatusSnapshot });
       if (method === "PATCH") return jsonResponse({ message: "team update failed" }, 500);
       if (method === "DELETE") return jsonResponse({ message: "team delete failed" }, 500);

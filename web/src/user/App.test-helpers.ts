@@ -1,12 +1,12 @@
 import { screen, waitFor } from "@testing-library/react";
 import { expect } from "vitest";
-import { RecallHit, RecallPayload, UserSession } from "./api";
+import { RecallEvidenceContext, RecallPayload, UserSession } from "./api";
 
 export function optionValue<T>(value: T | T[], index: number): T {
   return Array.isArray(value) ? value[Math.min(index, value.length - 1)] : value;
 }
 
-export function isRecallSequence(value: RecallHit[] | RecallHit[][]): value is RecallHit[][] {
+export function isRecallSequence(value: RecallEvidenceContext[] | RecallEvidenceContext[][]): value is RecallEvidenceContext[][] {
   return Array.isArray(value[0]);
 }
 
@@ -68,56 +68,6 @@ export function ssoSessions(baseSession: UserSession) {
   return { initial, switched, secondTeam, secondMembership };
 }
 
-export function recallPayloadForHits(hits: RecallHit[]): RecallPayload {
-  return {
-    recall_id: "recall-test",
-    results: hits.map((hit, index) => {
-      const evidence = evidenceForHit(hit);
-      return {
-        ...evidence,
-        relationship_ids: relationshipsForHit(hit).map((relationship) => relationship.relationship_id),
-        rank: hit.semantic_rank ?? index + 1,
-      };
-    }),
-    conflicts: [],
-    related_communities: [],
-    discovery_paths: hits.map((hit) => {
-      const evidenceID = evidenceForHit(hit).evidence_id;
-      return {
-        community_id: `community-${evidenceID}`,
-        logical_community_id: `logical-community-${evidenceID}`,
-        rank: 1,
-        summary: "test community",
-        top_entities: [],
-        top_predicates: [],
-        entity_count: 0,
-        relationship_count: relationshipsForHit(hit).length,
-        relationships: relationshipsForHit(hit).map((relationship) => ({
-          ...relationship,
-          evidence_ids: relationship.evidence_ids?.length ? relationship.evidence_ids : [evidenceID],
-        })),
-        relationships_truncated: false,
-      };
-    }),
-    related_relationships: [],
-    search_states: { evidence: "current", relationships: "current" },
-    degradations: [],
-  };
-}
-
-function evidenceForHit(hit: RecallHit) {
-	if (!hit.evidence) {
-		throw new Error("test recall hit must include evidence");
-	}
-	return hit.evidence;
-}
-
-function relationshipsForHit(hit: RecallHit) {
-  if (hit.relationships?.length) {
-    return hit.relationships;
-  }
-  if (hit.relationship) {
-    return [hit.relationship];
-  }
-	return [];
+export function recallPayloadForHits(hits: RecallEvidenceContext[]): RecallPayload {
+  return { recall_id: "recall-test", results: hits, conflicts: [], related_topics: [], topics_truncated: false, search_states: { evidence: "current" }, degradations: [] };
 }

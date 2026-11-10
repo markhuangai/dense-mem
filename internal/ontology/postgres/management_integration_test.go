@@ -130,102 +130,7 @@ func TestOntologyManagementHTTPPersistedWorkflow(t *testing.T) {
 	decode(request(0, http.MethodGet, "/drafts/"+discarded.ID, nil), &stored)
 	require.Equal(t, discarded, stored)
 	require.Equal(t, before, f.canonicalSnapshot(t))
-	for _, kind := range []ontology.Kind{ontology.EntityClass, ontology.PredicateConcept} {
-		t.Run("semantic_hierarchy/"+string(kind), func(t *testing.T) {
-			service, ctx := managementService(f), f.actor(0, "manager")
-			publish := func(edits ...ontology.ManagementEdit) ontology.ManagementDraft {
-				t.Helper()
-				status, err := service.Status(ctx)
-				require.NoError(t, err)
-				draft, err := service.SaveDraft(ctx, "", managementInput(status.Revision, edits...))
-				require.NoError(t, err)
-				stored, err := service.Draft(ctx, draft.ID)
-				require.NoError(t, err)
-				require.Equal(t, draft, stored)
-				_, err = service.Draft(f.actor(1, "manager"), draft.ID)
-				require.ErrorIs(t, err, ontology.ErrNotFound)
-				actor, _ := requestctx.ActorFromContext(ctx)
-				actor.Grants = []string{"read"}
-				reader := requestctx.WithActor(ctx, actor)
-				preview, err := service.Preview(reader, draft.ID, draft.Version)
-				require.NoError(t, err)
-				require.True(t, preview.Complete)
-				_, err = service.CommandDraft(reader, draft.ID, "publish", managementCommand(draft))
-				require.ErrorIs(t, err, ontology.ErrUnauthorized)
-				_, err = service.Preview(ctx, draft.ID, draft.Version+1)
-				require.ErrorIs(t, err, ontology.ErrConflict)
-				published, err := service.CommandDraft(ctx, draft.ID, "publish", managementCommand(draft))
-				require.NoError(t, err)
-				return published
-			}
-			definition := func(key string) *ontology.Definition {
-				value := &ontology.Definition{Key: string(kind) + "-" + key, Label: key, Description: "Manager hierarchy definition"}
-				if kind == ontology.EntityClass {
-					value.BaseEntityKind = "person"
-				}
-				return value
-			}
-			edit := func(value *ontology.Definition, previous ontology.RecordView) ontology.ManagementEdit {
-				return ontology.ManagementEdit{Action: "define", Kind: kind, Definition: value, RecordID: previous.ID, ExpectedVersion: previous.Version}
-			}
-			find := func(key string) ontology.RecordView {
-				t.Helper()
-				page, err := service.Records(ctx, kind, "", 200)
-				require.NoError(t, err)
-				for _, record := range page.Records {
-					if record.Definition.Key == string(kind)+"-"+key {
-						return record
-					}
-				}
-				t.Fatal("definition was not persisted")
-				return ontology.RecordView{}
-			}
-			publish(edit(definition("parent"), ontology.RecordView{}), edit(definition("alternate"), ontology.RecordView{}))
-			parent, alternate := find("parent"), find("alternate")
-			value := definition("child")
-			value.ParentID = parent.ID
-			publish(edit(value, ontology.RecordView{}))
-			child := find("child")
-			require.Empty(t, child.Definition.ParentRelation)
-			value = child.Definition
-			value.ParentRelation = ontology.SubclassOf
-			if kind == ontology.PredicateConcept {
-				value.ParentRelation = ontology.SubpropertyOf
-			}
-			semantic := publish(edit(value, child))
-			child = find("child")
-			history, err := service.Publication(ctx, semantic.Publication.ID)
-			require.NoError(t, err)
-			var storedMeaning ontology.ParentRelation
-			for _, record := range history.RecordsView {
-				if record.ID == child.ID {
-					storedMeaning = record.Definition.ParentRelation
-				}
-			}
-			require.Equal(t, value.ParentRelation, storedMeaning)
-			value = child.Definition
-			value.ParentID, value.Description = alternate.ID, "Unrelated edit and reparenting"
-			changed := publish(edit(value, child))
-			_, err = service.Rollback(ctx, changed.Publication.ID, ontology.DraftCommand{OperationKey: uuid.NewString(), ExpectedRevision: changed.Publication.Revision, Reason: "Reverse semantic reparenting"})
-			require.NoError(t, err)
-			child = find("child")
-			require.Equal(t, parent.ID, child.Definition.ParentID)
-			require.Equal(t, storedMeaning, child.Definition.ParentRelation)
-			value = child.Definition
-			value.ParentRelation = ""
-			publish(edit(value, child))
-			child = find("child")
-			require.Equal(t, parent.ID, child.Definition.ParentID)
-			require.Empty(t, child.Definition.ParentRelation)
-			value = child.Definition
-			value.ParentID = ""
-			publish(edit(value, child))
-			child = find("child")
-			require.Empty(t, child.Definition.ParentID)
-			require.Empty(t, child.Definition.ParentRelation)
-			require.Equal(t, before, f.canonicalSnapshot(t))
-		})
-	}
+
 }
 
 func TestOntologyManagementDraftIsolationReplayAndRLS(t *testing.T) {
@@ -267,10 +172,6 @@ func TestOntologyManagementDraftIsolationReplayAndRLS(t *testing.T) {
 	require.NoError(t, f.admin.Raw(`SELECT count(*) FROM pg_class WHERE relname IN ('ontology_draft_heads','ontology_draft_revisions') AND relforcerowsecurity AND relrowsecurity`).Row().Scan(&forced))
 	require.Equal(t, 2, forced)
 	require.Error(t, f.admin.Exec(`UPDATE ontology_draft_revisions SET version=version+1`).Error)
-	migrator := ontologyMigrationProvider(t, f.admin)
-	require.NoError(t, rollbackOntologySchemaTo(t, f.admin, 20261011220000))
-	_, err = migrator.ApplyVersion(context.Background(), 20261011220000, false)
-	require.ErrorContains(t, err, "populated ontology draft history")
 	preview, err := service.Preview(ctx, draft.ID, draft.Version)
 	require.NoError(t, err)
 	require.Equal(t, 2, preview.ChangedRecords)

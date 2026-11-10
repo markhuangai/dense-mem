@@ -91,10 +91,10 @@ func testConformanceToolExamples(t *testing.T) {
 		t.Fatalf("invalid discovered example invoked remember %d times", invocations[registry.ToolRemember])
 	}
 
-	correction := discoveryExampleRequest(t, descriptions[registry.ToolCorrectRelationship])
-	correctionCall := conformanceRPC(t, server, toolCallRequest(t, 10, registry.ToolCorrectRelationship, correction))
-	if correctionCall.Error != nil || invocations[registry.ToolCorrectRelationship] != 1 {
-		t.Fatalf("discovered correction example = error:%+v invocations:%d", correctionCall.Error, invocations[registry.ToolCorrectRelationship])
+	trace := discoveryExampleRequest(t, descriptions[registry.ToolTraceMemory])
+	traceCall := conformanceRPC(t, server, toolCallRequest(t, 10, registry.ToolTraceMemory, trace))
+	if traceCall.Error != nil || invocations[registry.ToolTraceMemory] != 1 {
+		t.Fatalf("discovered Evidence trace example = %+v", traceCall.Error)
 	}
 }
 

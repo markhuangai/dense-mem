@@ -8,10 +8,87 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	tracecontract "github.com/markhuangai/dense-mem/internal/trace/contract"
+	tracepostgres "github.com/markhuangai/dense-mem/internal/trace/postgres"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
+
+func TestEvidenceOnlyPostgresRetractionReplaysAndKeepsAuthorizedProvenance(t *testing.T) {
+	admin, app, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := t.Context()
+	team := createLedgerTeam(t, admin, rls, "evidence-only-lifecycle")
+	owner := createLedgerProfile(t, admin, rls, team, "owner A")
+	peer := createLedgerProfile(t, admin, rls, team, "peer B")
+	store := NewStore(app, rls)
+	original := createSemanticIngest(t, ctx, store, team, owner, "original", "Exact original Evidence. Café 🧭")
+	id := original.Evidence[0].FragmentID
+	input := RetractEvidenceInput{TeamID: team, OwnerProfileID: owner, EvidenceIDs: []string{id}, Reason: "Withdraw original", IdempotencyKey: "withdraw", RequestHash: sha256Hex("withdraw")}
+	foreign := input
+	foreign.OwnerProfileID, foreign.IdempotencyKey = peer, "peer-withdraw"
+	_, err := store.RetractEvidence(ctx, foreign)
+	require.ErrorIs(t, err, ErrEvidenceLifecycleNotFound)
+	type outcome struct {
+		result *EvidenceLifecycleResult
+		err    error
+	}
+	results, start := make(chan outcome, 2), make(chan struct{})
+	for range 2 {
+		go func() { <-start; result, err := store.RetractEvidence(ctx, input); results <- outcome{result, err} }()
+	}
+	close(start)
+	first, second := <-results, <-results
+	require.NoError(t, first.err)
+	require.NoError(t, second.err)
+	require.Equal(t, first.result.DecisionID, second.result.DecisionID)
+	require.NotEqual(t, first.result.Existing, second.result.Existing)
+	first.result.Existing, second.result.Existing = false, false
+	require.Equal(t, first.result, second.result)
+	trace, err := tracepostgres.New(app, rls).TraceEvidence(ctx, tracecontract.Input{TeamID: team, EvidenceID: id})
+	require.NoError(t, err)
+	require.Equal(t, "Exact original Evidence. Café 🧭", trace.Evidence.Content)
+	require.Len(t, trace.Lifecycle, 1)
+	require.Equal(t, "retract", trace.Lifecycle[0].Action)
+	require.Equal(t, id, trace.Lifecycle[0].TargetFragmentID)
+	otherTeam := createLedgerTeam(t, admin, rls, "foreign lifecycle reader")
+	_, err = tracepostgres.New(app, rls).TraceEvidence(ctx, tracecontract.Input{TeamID: otherTeam, EvidenceID: id})
+	require.ErrorIs(t, err, tracecontract.ErrEvidenceNotFound)
+	changed := input
+	changed.Reason = "Changed request"
+	changed.RequestHash = sha256Hex("changed")
+	_, err = store.RetractEvidence(ctx, changed)
+	require.ErrorIs(t, err, ErrIdempotencyConflict)
+}
+
+func TestEvidenceOnlyPostgresSupersessionRetainsLineageForQuarantinedReplacement(t *testing.T) {
+	admin, app, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := t.Context()
+	team := createLedgerTeam(t, admin, rls, "evidence-only-supersession")
+	owner := createLedgerProfile(t, admin, rls, team, "owner")
+	store := NewStore(app, rls)
+	original := createSemanticIngest(t, ctx, store, team, owner, "before", "Original exact Evidence.")
+	input := CreateIngestInput{TeamID: team, OwnerProfileID: owner, IdempotencyKey: "replacement", RequestHash: sha256Hex("replacement"), Evidence: []EvidenceInput{{Content: "Exact replacement Evidence.", SupersedesEvidenceIDs: []string{original.Evidence[0].FragmentID}, InitialEvent: &SecurityEventDraft{EventKind: "deterministic_scan", Decision: "quarantine", Reason: "Needs security review"}}}}
+	replacement, err := store.CreateIngestForTest(ctx, input)
+	require.NoError(t, err)
+	trace, err := tracepostgres.New(app, rls).TraceEvidence(ctx, tracecontract.Input{TeamID: team, EvidenceID: original.Evidence[0].FragmentID})
+	require.NoError(t, err)
+	require.Equal(t, "Original exact Evidence.", trace.Evidence.Content)
+	require.Len(t, trace.Lifecycle, 1)
+	require.Equal(t, "supersede", trace.Lifecycle[0].Action)
+	require.Equal(t, replacement.Evidence[0].FragmentID, trace.Lifecycle[0].ReplacementFragmentID)
+	var quarantined int64
+	require.NoError(t, rls.WithSystemTx(ctx, admin, func(tx *gorm.DB) error {
+		return tx.Raw(`SELECT count(*) FROM evidence_quarantines WHERE team_id=?::uuid AND fragment_id=?::uuid AND status='active'`, team, replacement.Evidence[0].FragmentID).Scan(&quarantined).Error
+	}))
+	require.EqualValues(t, 1, quarantined)
+	replayed, err := store.CreateIngestForTest(ctx, input)
+	require.NoError(t, err)
+	require.True(t, replayed.Existing)
+	require.Equal(t, replacement.IngestID, replayed.IngestID)
+}
 
 func TestLedgerEvidenceLifecyclePersistsTargetSpaceAndRejectsMixedSpaces(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
@@ -19,7 +96,7 @@ func TestLedgerEvidenceLifecyclePersistsTargetSpaceAndRejectsMixedSpaces(t *test
 	ctx := context.Background()
 	teamID := createLedgerTeam(t, adminDB, rls, "evidence-lifecycle-space")
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "evidence-lifecycle-space-owner")
-	ledger := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	ledger := NewStore(appDB, rls)
 	sharedTarget := createSemanticIngest(t, ctx, ledger, teamID, ownerID, "lifecycle-shared", "Shared lifecycle evidence.")
 	privateIngestID := uuid.New()
 	privateFragmentID := uuid.New()
@@ -87,7 +164,7 @@ func TestLedgerDirectEvidenceSupersessionRejectsCrossSpaceReplacement(t *testing
 	ctx := context.Background()
 	teamID := createLedgerTeam(t, adminDB, rls, "evidence-supersession-cross-space")
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "evidence-supersession-cross-space-owner")
-	ledger := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	ledger := NewStore(appDB, rls)
 	sharedTarget := createSemanticIngest(t, ctx, ledger, teamID, ownerID, "cross-space-target", "Shared target evidence.")
 	privateIngestID := uuid.New()
 	privateFragmentID := uuid.New()
@@ -156,7 +233,7 @@ func TestLedgerDirectEvidenceSupersessionRejectsSameTeamCrossOwnerReplacement(t 
 	teamID := createLedgerTeam(t, adminDB, rls, "evidence-supersession-cross-owner")
 	ownerA := createLedgerProfile(t, adminDB, rls, teamID, "evidence-supersession-owner-a")
 	ownerB := createLedgerProfile(t, adminDB, rls, teamID, "evidence-supersession-owner-b")
-	ledger := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	ledger := NewStore(appDB, rls)
 	target := createSemanticIngest(t, ctx, ledger, teamID, ownerA, "cross-owner-target", "Owner A target evidence.")
 	replacement := createSemanticIngest(t, ctx, ledger, teamID, ownerB, "cross-owner-replacement", "Owner B replacement evidence.")
 
@@ -174,290 +251,4 @@ func TestLedgerDirectEvidenceSupersessionRejectsSameTeamCrossOwnerReplacement(t 
 		}, uuid.NewString(), []EvidenceFragment{{FragmentID: replacement.Evidence[0].FragmentID}})
 	})
 	require.ErrorIs(t, err, ErrEvidenceLifecycleNotFound)
-}
-
-func TestLedgerRetractEvidenceRevokesOnlyItsSupportAndReplaysAtomically(t *testing.T) {
-	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
-	defer cleanup()
-	ctx := context.Background()
-	teamID := createLedgerTeam(t, adminDB, rls, "evidence-retraction-team")
-	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "evidence-retraction-owner")
-	otherOwnerID := createLedgerProfile(t, adminDB, rls, teamID, "evidence-retraction-other-owner")
-	ledger := NewStore(appDB, rls, ConflictRuntimeConfig{})
-	semantic := NewStore(appDB, rls, ConflictRuntimeConfig{})
-	traceRepo := newKnowledgeTraceFixtureStore(appDB, rls)
-
-	subject := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "person", "Jamie")
-	object := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "project", "Dense-Mem")
-	firstIngest := createSemanticIngest(t, ctx, ledger, teamID, ownerID, "retract-first", "Jamie works on Dense-Mem.")
-	first := applySemanticDecision(t, ctx, semantic, ApplyRelationshipDecisionInput{
-		TeamID:          teamID,
-		OwnerProfileID:  ownerID,
-		IngestID:        firstIngest.IngestID,
-		SubjectEntityID: subject.EntityID,
-		PredicateKey:    "works_on",
-		ObjectEntityID:  object.EntityID,
-		Support: &EvidenceSupportInput{
-			FragmentID:     firstIngest.Evidence[0].FragmentID,
-			SourceGroupKey: "source:first",
-			SpanStart:      0,
-			SpanEnd:        len("Jamie works on Dense-Mem."),
-			Authority:      "primary",
-		},
-	})
-	secondIngest := createSemanticIngest(t, ctx, ledger, teamID, ownerID, "retract-second", "Another source confirms Jamie works on Dense-Mem.")
-	second := applySemanticDecision(t, ctx, semantic, ApplyRelationshipDecisionInput{
-		TeamID:          teamID,
-		OwnerProfileID:  ownerID,
-		IngestID:        secondIngest.IngestID,
-		SubjectEntityID: subject.EntityID,
-		PredicateKey:    "works_on",
-		ObjectEntityID:  object.EntityID,
-		Support: &EvidenceSupportInput{
-			FragmentID:     secondIngest.Evidence[0].FragmentID,
-			SourceGroupKey: "source:second",
-			SpanStart:      0,
-			SpanEnd:        len("Another source confirms Jamie works on Dense-Mem."),
-			Authority:      "primary",
-		},
-	})
-	require.Equal(t, first.Relationship.RelationshipID, second.Relationship.RelationshipID)
-	require.Equal(t, 2, second.Relationship.SupportCount)
-	firstRetraction, err := ledger.RetractEvidence(ctx, RetractEvidenceInput{
-		TeamID:         teamID,
-		OwnerProfileID: ownerID,
-		EvidenceIDs:    []string{firstIngest.Evidence[0].FragmentID},
-		Reason:         "source was entered in error",
-		IdempotencyKey: "retract-first-evidence",
-		RequestHash:    "sha256:retract-first",
-	})
-	require.NoError(t, err)
-	assert.Equal(t, evidenceLifecycleCompleted, firstRetraction.ProcessingState)
-	assert.Equal(t, []string{firstIngest.Evidence[0].FragmentID}, firstRetraction.RetractedEvidenceIDs)
-	assert.Equal(t, 1, firstRetraction.AffectedRelationshipCount)
-	assert.Equal(t, 0, firstRetraction.PendingRelationshipCount)
-	assert.Equal(t, 1, firstRetraction.RetainedActiveRelationshipCount)
-
-	trace, err := traceRepo.TraceRelationship(ctx, TraceRelationshipInput{
-		TeamID:         teamID,
-		RelationshipID: first.Relationship.RelationshipID,
-		MaxEvents:      20,
-	})
-	require.NoError(t, err)
-	assert.Equal(t, "active", trace.Relationship.Status)
-	assert.Equal(t, 1, trace.Relationship.SupportCount)
-	assert.Len(t, trace.EvidenceFragments, 2)
-
-	replay, err := ledger.RetractEvidence(ctx, RetractEvidenceInput{
-		TeamID:         teamID,
-		OwnerProfileID: ownerID,
-		EvidenceIDs:    []string{firstIngest.Evidence[0].FragmentID},
-		Reason:         "source was entered in error",
-		IdempotencyKey: "retract-first-evidence",
-		RequestHash:    "sha256:retract-first",
-	})
-	require.NoError(t, err)
-	assert.True(t, replay.Existing)
-	wantReplay := *firstRetraction
-	wantReplay.Existing = true
-	assert.Equal(t, &wantReplay, replay)
-
-	_, err = ledger.RetractEvidence(ctx, RetractEvidenceInput{
-		TeamID:         teamID,
-		OwnerProfileID: otherOwnerID,
-		EvidenceIDs:    []string{secondIngest.Evidence[0].FragmentID},
-		Reason:         "other profile cannot retract",
-		IdempotencyKey: "cross-owner-retract",
-		RequestHash:    "sha256:cross-owner",
-	})
-	require.ErrorIs(t, err, ErrEvidenceLifecycleNotFound)
-
-	secondRetraction, err := ledger.RetractEvidence(ctx, RetractEvidenceInput{
-		TeamID:         teamID,
-		OwnerProfileID: ownerID,
-		EvidenceIDs:    []string{secondIngest.Evidence[0].FragmentID},
-		Reason:         "remaining support was withdrawn",
-		IdempotencyKey: "retract-second-evidence",
-		RequestHash:    "sha256:retract-second",
-	})
-	require.NoError(t, err)
-	assert.Equal(t, 1, secondRetraction.PendingRelationshipCount)
-	assert.Equal(t, 0, secondRetraction.RetainedActiveRelationshipCount)
-
-	trace, err = traceRepo.TraceRelationship(ctx, TraceRelationshipInput{
-		TeamID:         teamID,
-		RelationshipID: first.Relationship.RelationshipID,
-		MaxEvents:      20,
-	})
-	require.NoError(t, err)
-	assert.Equal(t, "pending_evidence", trace.Relationship.Status)
-	assert.Equal(t, 0, trace.Relationship.SupportCount)
-	assert.Len(t, trace.EvidenceFragments, 2)
-
-	var lifecycleEvents int
-	err = rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
-		return tx.Raw(`
-			SELECT COUNT(*)
-			FROM evidence_lifecycle_events
-			WHERE team_id = ?::uuid
-		`, teamID).Scan(&lifecycleEvents).Error
-	})
-	require.NoError(t, err)
-	assert.Equal(t, 2, lifecycleEvents)
-}
-
-func TestLedgerDirectEvidenceSupersessionRetiresTargetWhenReplacementIsQuarantined(t *testing.T) {
-	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
-	defer cleanup()
-	ctx := context.Background()
-	teamID := createLedgerTeam(t, adminDB, rls, "evidence-supersession-team")
-	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "evidence-supersession-owner")
-	ledger := NewStore(appDB, rls, ConflictRuntimeConfig{})
-	semantic := NewStore(appDB, rls, ConflictRuntimeConfig{})
-	traceRepo := newKnowledgeTraceFixtureStore(appDB, rls)
-
-	subject := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "person", "Jamie")
-	object := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "project", "Dense-Mem")
-	original := createSemanticIngest(t, ctx, ledger, teamID, ownerID, "supersession-original", "Jamie works on Dense-Mem.")
-	decision := applySemanticDecision(t, ctx, semantic, ApplyRelationshipDecisionInput{
-		TeamID:          teamID,
-		OwnerProfileID:  ownerID,
-		IngestID:        original.IngestID,
-		SubjectEntityID: subject.EntityID,
-		PredicateKey:    "works_on",
-		ObjectEntityID:  object.EntityID,
-		Support: &EvidenceSupportInput{
-			FragmentID:     original.Evidence[0].FragmentID,
-			SourceGroupKey: "source:original",
-			SpanStart:      0,
-			SpanEnd:        len("Jamie works on Dense-Mem."),
-			Authority:      "primary",
-		},
-	})
-
-	replacementInput := CreateIngestInput{
-		TeamID:         teamID,
-		OwnerProfileID: ownerID,
-		IdempotencyKey: "supersession-replacement-ingest",
-		RequestHash:    "sha256:supersession-replacement",
-		Evidence: []EvidenceInput{{
-			Content:               "Jamie no longer works on Dense-Mem.",
-			SupersedesEvidenceIDs: []string{original.Evidence[0].FragmentID},
-			IdempotencyKey:        "supersession-replacement-evidence",
-			InitialEvent: &SecurityEventDraft{
-				EventKind: "deterministic_scan",
-				Decision:  "quarantine",
-				Reason:    "needs security review",
-			},
-		}},
-	}
-	replacement, err := ledger.CreateIngestForTest(ctx, replacementInput)
-	require.NoError(t, err)
-	require.Len(t, replacement.Evidence, 1)
-	assert.Equal(t, []string{original.Evidence[0].FragmentID}, replacement.Evidence[0].SupersededEvidenceIDs)
-
-	trace, err := traceRepo.TraceRelationship(ctx, TraceRelationshipInput{
-		TeamID:         teamID,
-		RelationshipID: decision.Relationship.RelationshipID,
-		MaxEvents:      20,
-	})
-	require.NoError(t, err)
-	assert.Equal(t, "pending_evidence", trace.Relationship.Status)
-	assert.Equal(t, 0, trace.Relationship.SupportCount)
-	require.Len(t, trace.EvidenceLifecycleEvents, 1)
-	assert.Equal(t, original.Evidence[0].FragmentID, trace.EvidenceLifecycleEvents[0].TargetFragmentID)
-	assert.Equal(t, replacement.Evidence[0].FragmentID, trace.EvidenceLifecycleEvents[0].ReplacementFragmentID)
-	assert.Equal(t, "supersede", trace.EvidenceLifecycleEvents[0].Action)
-
-	var eventCount, quarantineCount int
-	err = rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
-		if err := tx.Raw(`
-			SELECT COUNT(*)
-			FROM evidence_lifecycle_events
-			WHERE team_id = ?::uuid
-			  AND target_fragment_id = ?::uuid
-			  AND replacement_fragment_id = ?::uuid
-		`, teamID, original.Evidence[0].FragmentID, replacement.Evidence[0].FragmentID).Scan(&eventCount).Error; err != nil {
-			return err
-		}
-		return tx.Raw(`
-			SELECT COUNT(*)
-			FROM evidence_quarantines
-			WHERE team_id = ?::uuid
-			  AND fragment_id = ?::uuid
-			  AND status = 'active'
-		`, teamID, replacement.Evidence[0].FragmentID).Scan(&quarantineCount).Error
-	})
-	require.NoError(t, err)
-	assert.Equal(t, 1, eventCount)
-	assert.Equal(t, 1, quarantineCount)
-
-	replay, err := ledger.CreateIngestForTest(ctx, replacementInput)
-	require.NoError(t, err)
-	assert.True(t, replay.Existing)
-	assert.Equal(t, replacement.IngestID, replay.IngestID)
-}
-
-func TestTraceRelationshipMarksLifecycleEventLimitAsTruncated(t *testing.T) {
-	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
-	defer cleanup()
-	ctx := context.Background()
-	teamID := createLedgerTeam(t, adminDB, rls, "evidence-lifecycle-trace-team")
-	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "evidence-lifecycle-trace-owner")
-	ledger := NewStore(appDB, rls, ConflictRuntimeConfig{})
-	semantic := NewStore(appDB, rls, ConflictRuntimeConfig{})
-	traceRepo := newKnowledgeTraceFixtureStore(appDB, rls)
-
-	targetEvidenceIDs := make([]string, 0, 3)
-	for index, content := range []string{
-		"Prior evidence one.",
-		"Prior evidence two.",
-		"Prior evidence three.",
-	} {
-		target := createSemanticIngest(t, ctx, ledger, teamID, ownerID, "trace-lifecycle-target-"+string(rune('a'+index)), content)
-		targetEvidenceIDs = append(targetEvidenceIDs, target.Evidence[0].FragmentID)
-	}
-	replacement, err := ledger.CreateIngestForTest(ctx, CreateIngestInput{
-		TeamID:         teamID,
-		OwnerProfileID: ownerID,
-		IdempotencyKey: "trace-lifecycle-replacement-ingest",
-		RequestHash:    "sha256:trace-lifecycle-replacement",
-		Evidence: []EvidenceInput{{
-			Content:               "The corrected evidence is current.",
-			SupersedesEvidenceIDs: targetEvidenceIDs,
-			IdempotencyKey:        "trace-lifecycle-replacement-evidence",
-		}},
-	})
-	require.NoError(t, err)
-
-	subject := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "person", "Jamie")
-	object := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "project", "Dense-Mem")
-	decision := applySemanticDecision(t, ctx, semantic, ApplyRelationshipDecisionInput{
-		TeamID:          teamID,
-		OwnerProfileID:  ownerID,
-		IngestID:        replacement.IngestID,
-		SubjectEntityID: subject.EntityID,
-		PredicateKey:    "works_on",
-		ObjectEntityID:  object.EntityID,
-		Support: &EvidenceSupportInput{
-			FragmentID:     replacement.Evidence[0].FragmentID,
-			SourceGroupKey: "source:replacement",
-			SpanStart:      0,
-			SpanEnd:        len("The corrected evidence is current."),
-			Authority:      "primary",
-		},
-	})
-
-	trace, err := traceRepo.TraceRelationship(ctx, TraceRelationshipInput{
-		TeamID:         teamID,
-		RelationshipID: decision.Relationship.RelationshipID,
-		MaxEvents:      2,
-	})
-	require.NoError(t, err)
-	assert.Len(t, trace.Observations, 1)
-	assert.Len(t, trace.EvidenceSupports, 1)
-	assert.Len(t, trace.SupportDecisionEvents, 1)
-	assert.Len(t, trace.EvidenceLifecycleEvents, 2)
-	assert.True(t, trace.Truncated)
-	assert.Equal(t, "max_events", trace.StoppedReason)
 }

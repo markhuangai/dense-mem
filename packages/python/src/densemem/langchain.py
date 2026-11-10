@@ -107,8 +107,7 @@ def _documents(result: RecallResult, k: int) -> list[Document]:
             raise ValueError
         context = {key: public[key] for key in RecallResult.__annotations__ if key != "results"}
         for key in (
-            "related_relationships",
-            "related_communities",
+            "related_topics",
             "conflicts",
             "degradations",
             "suggested_actions",
@@ -117,10 +116,12 @@ def _documents(result: RecallResult, k: int) -> list[Document]:
                 not isinstance(item, dict) for item in context[key]
             ):
                 raise ValueError
+        if type(result["topics_truncated"]) is not bool:
+            raise ValueError
         states = result["search_states"]
         if not isinstance(states, dict) or any(
             states[key] not in ("current", "not_required", "pending", "failed")
-            for key in ("evidence", "relationships")
+            for key in ("evidence",)
         ):
             raise ValueError
         for degradation in result["degradations"]:

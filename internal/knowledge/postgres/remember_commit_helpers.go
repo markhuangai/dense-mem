@@ -188,15 +188,11 @@ func rememberCreateIngestInput(input SynchronousRememberCommitInput) CreateInges
 		TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IngestID: input.IngestID,
 		SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration, IdempotencyKey: input.IdempotencyKey,
 		RequestHash: input.RequestHash, SourceSummary: input.SourceSummary, Status: "completed",
-		Proposal: input.Proposal, Metadata: input.Metadata, Evidence: append([]EvidenceInput(nil), input.Evidence...),
+		Metadata: input.Metadata, Evidence: append([]EvidenceInput(nil), input.Evidence...),
 	})
 }
 
 func insertRememberKnowledgeIngest(ctx context.Context, tx *gorm.DB, input CreateIngestInput) (bool, error) {
-	proposal, err := marshalJSON(input.Proposal)
-	if err != nil {
-		return false, err
-	}
 	metadataValues := make(map[string]any, len(input.Metadata)+1)
 	for key, value := range input.Metadata {
 		if key == ingestMetadataTelemetryOriginKey {
@@ -212,17 +208,17 @@ func insertRememberKnowledgeIngest(ctx context.Context, tx *gorm.DB, input Creat
 	rows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO knowledge_ingests (
 		    ingest_id, team_id, owner_profile_id, space_id, space_generation,
-		    idempotency_key, request_hash, source_summary, status, proposal, metadata, completed_at
+		    idempotency_key, request_hash, source_summary, status, metadata, completed_at
 		) VALUES (
 		    ?::uuid, ?::uuid, ?::uuid, NULLIF(?, '')::uuid, NULLIF(?::bigint, 0),
-		    ?, ?, ?, ?, ?::jsonb, ?::jsonb, now()
+		    ?, ?, ?, ?, ?::jsonb, now()
 		)
 		ON CONFLICT (team_id, owner_profile_id, idempotency_key)
 		WHERE idempotency_key <> '' AND status <> 'failed'
 		DO NOTHING
 		RETURNING ingest_id::text
 	`, input.IngestID, input.TeamID, input.OwnerProfileID, input.SpaceID, input.SpaceGeneration,
-		input.IdempotencyKey, input.RequestHash, input.SourceSummary, input.Status, string(proposal), string(metadata)).Rows()
+		input.IdempotencyKey, input.RequestHash, input.SourceSummary, input.Status, string(metadata)).Rows()
 	if err != nil {
 		return false, err
 	}
@@ -301,16 +297,12 @@ func insertRememberSemanticAssessment(ctx context.Context, tx *gorm.DB, input Sy
 	if input.CandidateContextOmittedCandidates > 0 {
 		warnings = append(warnings, "optional duplicate candidates were omitted to fit the configured assessor budget")
 	}
-	if input.CandidateContextOmittedPredicateOptions > 0 {
-		warnings = append(warnings, "optional predicate suggestions were omitted to fit the configured assessor budget")
-	}
 	history, err := json.Marshal([]map[string]any{{
 		"assessment_id": input.AssessmentID, "normalized_response": json.RawMessage(input.AssessmentJSON),
 		"response_hash": input.Commit.Payload["response_hash"], "provider_turns": input.ProviderTurns,
-		"candidate_context_omitted_candidates":        input.CandidateContextOmittedCandidates,
-		"candidate_context_omitted_predicate_options": input.CandidateContextOmittedPredicateOptions,
-		"warnings":     warnings,
-		"validated_at": time.Now().UTC(),
+		"candidate_context_omitted_candidates": input.CandidateContextOmittedCandidates,
+		"warnings":                             warnings,
+		"validated_at":                         time.Now().UTC(),
 	}})
 	if err != nil {
 		return err
@@ -373,98 +365,6 @@ func insertRememberTerminalEvidence(ctx context.Context, tx *gorm.DB, input Sync
 	return evidence, nil
 }
 
-func applyRememberCommitSourceReferences(observations []SubmissionAssessmentRelationshipObservationInput, evidence []EvidenceFragment) {
-	type sourceRef struct{ sourceID, revisionID, occurrenceID, evidenceOwnerID, occurrenceOwnerID, canonicalID string }
-	byFragment := make(map[string]sourceRef, len(evidence))
-	byOccurrence := make(map[string]sourceRef, len(evidence))
-	for _, item := range evidence {
-		ref := sourceRef{sourceID: item.SourceID, revisionID: item.SourceRevisionID, occurrenceID: item.OccurrenceID, evidenceOwnerID: item.CanonicalOwnerID, occurrenceOwnerID: item.OccurrenceOwnerID, canonicalID: item.FragmentID}
-		byFragment[item.FragmentID] = ref
-		if item.OccurrenceID != "" {
-			byOccurrence[item.OccurrenceID] = ref
-		}
-		if item.SubmittedFragmentID != "" {
-			byFragment[item.SubmittedFragmentID] = ref
-		}
-	}
-	apply := func(support *EvidenceSupportInput) {
-		if support == nil {
-			return
-		}
-		if ref, ok := byOccurrence[strings.TrimSpace(support.OccurrenceID)]; ok {
-			support.FragmentID = ref.canonicalID
-			support.EvidenceOwnerProfileID = ref.evidenceOwnerID
-			support.OccurrenceOwnerProfileID = ref.occurrenceOwnerID
-			support.SourceID, support.SourceRevisionID = ref.sourceID, ref.revisionID
-			return
-		}
-		if ref, ok := byFragment[support.FragmentID]; ok {
-			support.FragmentID = ref.canonicalID
-			support.OccurrenceID = ref.occurrenceID
-			support.EvidenceOwnerProfileID = ref.evidenceOwnerID
-			support.OccurrenceOwnerProfileID = ref.occurrenceOwnerID
-			support.SourceID, support.SourceRevisionID = ref.sourceID, ref.revisionID
-		}
-	}
-	for index := range observations {
-		apply(observations[index].Observation.Support)
-		for supportIndex := range observations[index].Observation.Supports {
-			apply(&observations[index].Observation.Supports[supportIndex])
-		}
-	}
-}
-
-func remapRememberCommitEvidenceReferences(commit *CommitSubmissionAssessmentInput, evidence []EvidenceFragment) error {
-	if commit == nil {
-		return errors.New("remember semantic commit input is required")
-	}
-	byID := make(map[string]EvidenceFragment, len(evidence)*2)
-	for _, item := range evidence {
-		byID[item.FragmentID] = item
-		if item.SubmittedFragmentID != "" {
-			byID[item.SubmittedFragmentID] = item
-		}
-	}
-	resolve := func(fragmentID string, support *EvidenceSupportInput) error {
-		if support == nil {
-			return nil
-		}
-		item, ok := byID[strings.TrimSpace(fragmentID)]
-		if !ok {
-			return nil
-		}
-		support.FragmentID = item.FragmentID
-		support.OccurrenceID = item.OccurrenceID
-		support.OccurrenceOwnerProfileID = item.OccurrenceOwnerID
-		support.EvidenceOwnerProfileID = item.CanonicalOwnerID
-		return nil
-	}
-	for index := range commit.EntityResolutions {
-		resolution := &commit.EntityResolutions[index].Resolution
-		item, ok := byID[strings.TrimSpace(resolution.FragmentID)]
-		if !ok {
-			return fmt.Errorf("remember entity resolution evidence %q is outside the Remember request", resolution.FragmentID)
-		}
-		resolution.FragmentID = item.FragmentID
-		resolution.OccurrenceID = item.OccurrenceID
-		resolution.EvidenceOwnerProfileID = item.CanonicalOwnerID
-	}
-	for index := range commit.RelationshipObservations {
-		observation := &commit.RelationshipObservations[index].Observation
-		if observation.Support != nil {
-			if err := resolve(observation.Support.FragmentID, observation.Support); err != nil {
-				return err
-			}
-		}
-		for supportIndex := range observation.Supports {
-			if err := resolve(observation.Supports[supportIndex].FragmentID, &observation.Supports[supportIndex]); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
 func rememberEvidenceExists(evidence []EvidenceFragment, fragmentID string) bool {
 	for _, item := range evidence {
 		if item.FragmentID == strings.TrimSpace(fragmentID) {
@@ -472,31 +372,6 @@ func rememberEvidenceExists(evidence []EvidenceFragment, fragmentID string) bool
 		}
 	}
 	return false
-}
-
-func rememberSubmittedOccurrenceBelongsToOwner(evidence []EvidenceFragment, support EvidenceSupportInput, ownerID string) bool {
-	occurrenceID := strings.TrimSpace(support.OccurrenceID)
-	if occurrenceID == "" {
-		return false
-	}
-	for _, item := range evidence {
-		if item.FragmentID == strings.TrimSpace(support.FragmentID) &&
-			item.OccurrenceID == occurrenceID &&
-			item.OccurrenceOwnerID == strings.TrimSpace(ownerID) {
-			return true
-		}
-	}
-	return false
-}
-
-func rememberRelationshipFragmentID(entry SubmissionAssessmentRelationshipObservationInput) (string, error) {
-	if entry.Observation.Support != nil && strings.TrimSpace(entry.Observation.Support.FragmentID) != "" {
-		return strings.TrimSpace(entry.Observation.Support.FragmentID), nil
-	}
-	if len(entry.Observation.Supports) > 0 && strings.TrimSpace(entry.Observation.Supports[0].FragmentID) != "" {
-		return strings.TrimSpace(entry.Observation.Supports[0].FragmentID), nil
-	}
-	return "", errors.New("remember relationship observation support is required")
 }
 
 func rememberCorrelationID(metadata map[string]any) string {
