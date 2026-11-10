@@ -192,6 +192,7 @@ test("shared CI partitions slow gates into independent hosted jobs", async () =>
   const goTests = workflowJob(shared, "go-tests");
   const coverage = workflowJob(shared, "coverage");
   const coverageMerge = workflowJob(shared, "coverage-merge");
+  const python = workflowJob(shared, "python");
   assert.match(shared, /^  COVERAGE_THRESHOLD: "90\.0"$/m);
   assert.equal((shared.match(/COVERAGE_THRESHOLD: "90\.0"/g) || []).length, 1);
 
@@ -201,6 +202,7 @@ test("shared CI partitions slow gates into independent hosted jobs", async () =>
     ["quality", quality],
     ["go-tests", goTests],
     ["coverage", coverage],
+    ["python", python],
   ]) {
     assert.match(job, /^    runs-on: ubuntu-latest$/m, `${name} must use a hosted runner`);
     assert.doesNotMatch(job, /^    needs:/m, `${name} must not depend on another CI job`);
@@ -262,6 +264,9 @@ test("shared CI partitions slow gates into independent hosted jobs", async () =>
   assert.match(shared, /^        required: false$/m);
   assert.match(shared, /^        type: string$/m);
   assert.match(shared, /^        default: origin\/main$/m);
+  assert.match(python, /matrix\.sh "\$RUNNER_TEMP\/python-matrix" '\$\{\{ matrix\.python \}\}' '\$\{\{ matrix\.sdk \}\}'/);
+  assert.match(python, /python: \['3\.11', '3\.12', '3\.13', '3\.14'\]/);
+  assert.match(python, /python: '3\.12'\n            sdk: minimum/);
   assert.match(migrations, /scripts\/check-postgres-migrations\.sh "\$\{\{ inputs\.migration-base-ref \}\}"/);
   assert.match(pullRequest, /^name: CI Pull Request$/m);
   assert.match(push, /^name: CI Push$/m);
