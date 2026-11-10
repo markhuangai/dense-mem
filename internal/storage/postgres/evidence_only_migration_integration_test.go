@@ -325,12 +325,27 @@ func TestEvidenceOnlyPostgresMixedOntologyReceiptsAndDrafts(t *testing.T) {
 	require.NoError(t, evidenceOnlyMigrationUpTo(ctx, db, evidenceOnlyMigrationBase))
 	fixture := insertEvidenceOnlyMigrationFixture(t, ctx, db, false)
 	assessmentID, publicationID, groupID, retiredID := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
+	overrideID, oldOverridePublication, newOverridePublication := uuid.NewString(), uuid.NewString(), uuid.NewString()
 	digest := "sha256:" + strings.Repeat("a", 64)
 	evidence := ontology.SourceHandle{Kind: ontology.EvidenceSource, ID: fixture.evidence, Version: 1}
 	other := ontology.SourceHandle{Kind: ontology.EvidenceSource, ID: uuid.NewString(), Version: 1}
 	group := ontology.Record{ID: groupID, Version: 1, Kind: ontology.EvidenceGroup, Group: &ontology.Group{Members: []ontology.SourceHandle{evidence, other}, AssessmentID: assessmentID},
 		Sources:      []ontology.SourceDependency{{SourceHandle: evidence, Fingerprint: digest}, {SourceHandle: other, Fingerprint: digest}, {SourceHandle: ontology.SourceHandle{Kind: "entity", ID: retiredID, Version: 1}, Fingerprint: digest}},
-		Dependencies: []ontology.RevisionRef{{ID: retiredID, Version: 1}}, Fingerprint: digest}
+		Dependencies: []ontology.RevisionRef{{ID: retiredID, Version: 1}, {ID: overrideID, Version: 1}}, Fingerprint: digest}
+	legacyOverride := ontology.Record{ID: overrideID, Version: 1, Kind: ontology.OverrideKind,
+		Override: &ontology.Override{Action: ontology.SetClassification, DefinitionID: retiredID, Members: []ontology.SourceHandle{{Kind: "entity", ID: retiredID, Version: 1}}},
+		Sources:  []ontology.SourceDependency{{SourceHandle: ontology.SourceHandle{Kind: "entity", ID: retiredID, Version: 1}, Fingerprint: digest}}, Dependencies: []ontology.RevisionRef{{ID: retiredID, Version: 1}}, Fingerprint: digest}
+	compiled, err := ontology.CompileManagementEdits(ontology.SaveDraftInput{OperationKey: "evidence-override", ExpectedRevision: 2, Reason: "Replace old graph classification with an Evidence group", Edits: []ontology.ManagementEdit{{Action: "group_together", RecordID: overrideID, ExpectedVersion: 1, Members: []ontology.SourceHandle{evidence, other}}}},
+		ontology.ManagementContext{DraftID: uuid.NewString(), Revision: 2, Records: map[string]ontology.Record{overrideID: legacyOverride}, Sources: map[string]ontology.SourceSnapshot{
+			ontology.SourceKey(evidence): {SourceHandle: evidence, TeamID: fixture.team, SpaceID: fixture.space, Generation: fixture.generation, Eligible: true, MeaningKey: "migration-override-context"},
+			ontology.SourceKey(other):    {SourceHandle: other, TeamID: fixture.team, SpaceID: fixture.space, Generation: fixture.generation, Eligible: true, MeaningKey: "migration-override-context"},
+		}})
+	require.NoError(t, err)
+	require.Len(t, compiled.Changes, 1)
+	retainedOverride := compiled.Changes[0].Record
+	retainedOverride.Version = 2
+	retainedOverride.Fingerprint, err = ontology.RecordFingerprintWithAcceptedSources(retainedOverride, map[string]ontology.Record{overrideID: retainedOverride})
+	require.NoError(t, err)
 	receipt := ontology.OrganizationReceipt{ID: assessmentID, OperationKey: "mixed-receipt", InputHash: digest, BatchHash: digest, ContextHash: digest, ProviderIdentity: "original-provider",
 		Sources: group.Sources, Dependencies: group.Dependencies, Result: ontology.OrganizationResult{AssessmentID: assessmentID, Current: true,
 			Outcomes:    []ontology.OrganizationOutcome{{Source: evidence, Status: "organized", RecordIDs: []string{groupID, retiredID}}, {Source: other, Status: "organized", RecordIDs: []string{groupID}}, {Source: group.Sources[2].SourceHandle, Status: "organized", RecordIDs: []string{retiredID}}},
@@ -338,7 +353,7 @@ func TestEvidenceOnlyPostgresMixedOntologyReceiptsAndDrafts(t *testing.T) {
 			Publication: &ontology.PublicationResult{ID: publicationID, Revision: 1, Records: []ontology.RevisionRef{{ID: groupID, Version: 1}, {ID: retiredID, Version: 1}}}}}
 	draftIDs := []string{uuid.NewString(), uuid.NewString()}
 	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO ontology_catalog_heads(team_id,shared_space_id,space_generation,revision) VALUES($1::uuid,$2::uuid,$3,1)`, fixture.team, fixture.space, fixture.generation); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO ontology_catalog_heads(team_id,shared_space_id,space_generation,revision) VALUES($1::uuid,$2::uuid,$3,3)`, fixture.team, fixture.space, fixture.generation); err != nil {
 			return err
 		}
 		result, _ := json.Marshal(receipt.Result.Publication)
@@ -356,6 +371,34 @@ func TestEvidenceOnlyPostgresMixedOntologyReceiptsAndDrafts(t *testing.T) {
 			if _, err = tx.ExecContext(ctx, `INSERT INTO ontology_record_heads(team_id,shared_space_id,space_generation,record_id,version,kind,retired) VALUES($1::uuid,$2::uuid,$3,$4::uuid,1,$5,false)`, fixture.team, fixture.space, fixture.generation, record.ID, string(record.Kind)); err != nil {
 				return err
 			}
+		}
+		for index, record := range []ontology.Record{legacyOverride, retainedOverride} {
+			id := []string{oldOverridePublication, newOverridePublication}[index]
+			body, err := json.Marshal(record)
+			if err != nil {
+				return err
+			}
+			result, err := json.Marshal(ontology.PublicationResult{ID: id, Revision: int64(index + 2), Records: []ontology.RevisionRef{{ID: overrideID, Version: record.Version}}})
+			if err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO ontology_publications(team_id,shared_space_id,space_generation,publication_id,revision,operation_key,request_hash,origin,actor_id,reason,result) VALUES($1::uuid,$2::uuid,$3,$4::uuid,$5,$4::text,$6,'manager',$7::uuid,'Manager revised override',$8::jsonb)`, fixture.team, fixture.space, fixture.generation, id, index+2, digest, fixture.owner, string(result)); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO ontology_record_revisions(team_id,shared_space_id,space_generation,record_id,version,kind,publication_id,retired,body,fingerprint) VALUES($1::uuid,$2::uuid,$3,$4::uuid,$5,'override',$6::uuid,false,$7::jsonb,$8)`, fixture.team, fixture.space, fixture.generation, overrideID, record.Version, id, string(body), record.Fingerprint); err != nil {
+				return err
+			}
+			for _, source := range record.Sources {
+				if _, err := tx.ExecContext(ctx, `INSERT INTO ontology_source_dependencies(team_id,shared_space_id,space_generation,record_id,record_version,source_kind,source_id,source_version,fingerprint) VALUES($1::uuid,$2::uuid,$3,$4::uuid,$5,$6,$7,$8,$9)`, fixture.team, fixture.space, fixture.generation, overrideID, record.Version, string(source.Kind), source.ID, source.Version, source.Fingerprint); err != nil {
+					return err
+				}
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO ontology_record_heads(team_id,shared_space_id,space_generation,record_id,version,kind,retired) VALUES($1::uuid,$2::uuid,$3,$4::uuid,2,'override',false)`, fixture.team, fixture.space, fixture.generation, overrideID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO ontology_revision_dependencies(team_id,shared_space_id,space_generation,record_id,record_version,dependency_id,dependency_version) VALUES($1::uuid,$2::uuid,$3,$4::uuid,1,$5::uuid,1)`, fixture.team, fixture.space, fixture.generation, groupID, overrideID); err != nil {
+			return err
 		}
 		body, err := json.Marshal(receipt)
 		if err != nil {
@@ -412,6 +455,33 @@ func TestEvidenceOnlyPostgresMixedOntologyReceiptsAndDrafts(t *testing.T) {
 		require.Equal(t, expected, rebound.Fingerprint)
 		require.NotEqual(t, digest, rebound.Fingerprint)
 		require.Equal(t, assessmentID, rebound.Group.AssessmentID)
+		if err := tx.QueryRowContext(ctx, `SELECT revision.body FROM ontology_record_heads head JOIN ontology_record_revisions revision USING(team_id,shared_space_id,space_generation,record_id,version) WHERE head.record_id=$1::uuid`, overrideID).Scan(&body); err != nil {
+			return err
+		}
+		var preserved ontology.Record
+		require.NoError(t, json.Unmarshal(body, &preserved))
+		require.Equal(t, retainedOverride, preserved)
+		var obsolete, currentSources int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM ontology_record_revisions WHERE record_id=$1::uuid AND version=1`, overrideID).Scan(&obsolete); err != nil {
+			return err
+		}
+		require.Zero(t, obsolete)
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM ontology_source_dependencies WHERE record_id=$1::uuid AND record_version=2`, overrideID).Scan(&currentSources); err != nil {
+			return err
+		}
+		require.Equal(t, 2, currentSources)
+		for index, publication := range []string{oldOverridePublication, newOverridePublication} {
+			if err := tx.QueryRowContext(ctx, `SELECT result FROM ontology_publications WHERE publication_id=$1::uuid`, publication).Scan(&body); err != nil {
+				return err
+			}
+			var result ontology.PublicationResult
+			require.NoError(t, json.Unmarshal(body, &result))
+			if index == 0 {
+				require.Empty(t, result.Records)
+			} else {
+				require.Equal(t, []ontology.RevisionRef{{ID: overrideID, Version: 2}}, result.Records)
+			}
+		}
 		for index, id := range draftIDs {
 			var state string
 			var edits, prepared int

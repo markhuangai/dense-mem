@@ -58,7 +58,7 @@ func TestReadPerformanceClassifiesFailuresAndRequiresBoundedLabels(t *testing.T)
 		{cause: context.DeadlineExceeded, want: ReadOutcomeDeadlineExceeded},
 		{cause: errReadPerformanceTest, want: ReadOutcomeError},
 	} {
-		_, stage := StartReadStage(ctx, ReadStageHydration)
+		_, stage := StartReadStage(ctx, ReadOperationEvidenceRecall, ReadStageHydration)
 		stage.Finish(tc.cause, 0)
 	}
 	metrics.ObserveReadStage(ReadOperation("sentinel team id"), ReadStageSelection, ReadOutcomeSuccess, time.Millisecond, 1)

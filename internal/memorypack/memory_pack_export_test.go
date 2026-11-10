@@ -75,3 +75,15 @@ func TestEvidenceOnlyUnitMemoryPackExportsExactEvidenceProvenanceAndCanonicalHas
 	require.Equal(t, 8000, reader.inputs[0].MaxFragmentContentRunes)
 	require.True(t, *reader.inputs[0].IncludeEvidenceContent)
 }
+
+func TestEvidenceOnlyUnitMemoryPackCoalescesCanonicalEvidenceAfterAuthorizingEveryRoot(t *testing.T) {
+	ctx, reader, service, canonical := exportFixture()
+	alias := uuid.NewString()
+	result, err := service.Export(ctx, ExportRequest{Name: "Historical aliases", EvidenceIDs: []string{canonical, alias}})
+	require.NoError(t, err)
+	require.Equal(t, 1, result.ItemCount)
+	require.Equal(t, canonical, result.Artifact.Evidence[0].FragmentID)
+	require.Equal(t, reader.trace.Evidence.Content, result.Artifact.Evidence[0].Content)
+	require.Len(t, reader.inputs, 2)
+	require.ElementsMatch(t, []string{canonical, alias}, []string{reader.inputs[0].EvidenceID, reader.inputs[1].EvidenceID})
+}

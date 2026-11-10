@@ -50,6 +50,11 @@ func (p *rememberSynchronousProcessor) prepareRemember(ctx context.Context, inpu
 		}
 		decisionSnapshot = &value
 	}
+	var handleErr error
+	input, handleErr = p.resolveRememberEvidenceHandles(ctx, input)
+	if handleErr != nil {
+		return fail(handleErr, "assessment")
+	}
 	duplicateInput := repository.RememberDuplicateCandidateInput{
 		MaxEvidenceItems: snapshot.MaxEvidenceItems,
 		TeamID:           input.TeamID, OwnerProfileID: input.OwnerProfileID,

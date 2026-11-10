@@ -126,6 +126,7 @@ type SecurityRejectionAuditSignal struct {
 
 type Persistence interface {
 	LoadRememberAttempt(context.Context, knowledgecontract.RememberAttemptLookupInput) (*knowledgecontract.RememberAttempt, error)
+	ResolveMemoryHandles(context.Context, string, string, string, map[string][]string) (map[string]map[string]string, error)
 	PlanRememberDuplicateEmbeddings(context.Context, knowledgecontract.RememberDuplicateCandidateInput) (*knowledgecontract.RememberDuplicateEmbeddingPlan, error)
 	ResolveRememberDuplicateCandidates(context.Context, knowledgecontract.RememberDuplicateCandidateInput, []knowledgecontract.InlineEmbeddingResult) (*knowledgecontract.RememberDuplicateResolutionResult, error)
 	PlanRememberEmbeddings(context.Context, knowledgecontract.SynchronousRememberCommitInput) (*knowledgecontract.InlineEmbeddingPlan, error)

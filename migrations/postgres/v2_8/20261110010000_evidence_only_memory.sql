@@ -141,51 +141,56 @@ ALTER TABLE session_extraction_checkpoints DROP CONSTRAINT session_extraction_ch
 ALTER TABLE session_extraction_checkpoints ADD CONSTRAINT session_extraction_checkpoints_window_index_check CHECK(window_index BETWEEN 0 AND 7);
 
 -- Delete obsolete semantic ontology rows, then their reverse dependencies, without touching topic definitions or Evidence membership overrides.
-CREATE TEMP TABLE evidence_only_retired_records ON COMMIT DROP AS
- SELECT DISTINCT team_id,shared_space_id,space_generation,record_id FROM ontology_record_revisions revision
+CREATE TEMP TABLE evidence_only_retired_revisions ON COMMIT DROP AS
+ SELECT team_id,shared_space_id,space_generation,record_id,version FROM ontology_record_revisions revision
  WHERE kind NOT IN ('topic','assignment','evidence_group','override')
-
  OR (kind='assignment' AND body->'assignment'->'source'->>'kind'<>'evidence')
  OR EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(body->'group'->'members',body->'override'->'members','[]'::jsonb)) member WHERE member->>'kind'<>'evidence');
+CREATE TEMP TABLE evidence_only_retired_records ON COMMIT DROP AS
+ SELECT head.team_id,head.shared_space_id,head.space_generation,head.record_id FROM ontology_record_heads head
+ JOIN evidence_only_retired_revisions revision USING(team_id,shared_space_id,space_generation,record_id,version);
 DO $closure$
 DECLARE changed bigint;
 BEGIN LOOP
  INSERT INTO evidence_only_retired_records SELECT DISTINCT dependency.team_id,dependency.shared_space_id,dependency.space_generation,dependency.record_id
- FROM ontology_record_revisions dependency JOIN evidence_only_retired_records retired
+ FROM ontology_record_heads head JOIN ontology_record_revisions dependency USING(team_id,shared_space_id,space_generation,record_id,version)
+ JOIN evidence_only_retired_records retired
  ON (dependency.team_id,dependency.shared_space_id,dependency.space_generation)=(retired.team_id,retired.shared_space_id,retired.space_generation)
  AND retired.record_id::text IN (dependency.body->'assignment'->>'definition_id',dependency.body->'override'->>'definition_id',dependency.body->'override'->>'target_id')
  WHERE NOT EXISTS(SELECT 1 FROM evidence_only_retired_records present WHERE (dependency.team_id,dependency.shared_space_id,dependency.space_generation,dependency.record_id)=(present.team_id,present.shared_space_id,present.space_generation,present.record_id));
  GET DIAGNOSTICS changed=ROW_COUNT; EXIT WHEN changed=0;
 END LOOP; END $closure$;
-DELETE FROM ontology_revision_dependencies dependency WHERE EXISTS(SELECT 1 FROM evidence_only_retired_records retired WHERE
- (dependency.team_id,dependency.shared_space_id,dependency.space_generation)=(retired.team_id,retired.shared_space_id,retired.space_generation) AND (dependency.record_id=retired.record_id OR dependency.dependency_id=retired.record_id));
-DELETE FROM ontology_source_dependencies dependency WHERE source_kind<>'evidence' OR EXISTS(SELECT 1 FROM evidence_only_retired_records retired WHERE
- (dependency.team_id,dependency.shared_space_id,dependency.space_generation,dependency.record_id)=(retired.team_id,retired.shared_space_id,retired.space_generation,retired.record_id));
+INSERT INTO evidence_only_retired_revisions
+ SELECT revision.team_id,revision.shared_space_id,revision.space_generation,revision.record_id,revision.version
+ FROM ontology_record_revisions revision JOIN evidence_only_retired_records retired USING(team_id,shared_space_id,space_generation,record_id)
+ WHERE NOT EXISTS(SELECT 1 FROM evidence_only_retired_revisions present WHERE
+  (present.team_id,present.shared_space_id,present.space_generation,present.record_id,present.version)=(revision.team_id,revision.shared_space_id,revision.space_generation,revision.record_id,revision.version));
+DELETE FROM ontology_revision_dependencies dependency WHERE EXISTS(SELECT 1 FROM evidence_only_retired_revisions retired WHERE
+ (dependency.team_id,dependency.shared_space_id,dependency.space_generation)=(retired.team_id,retired.shared_space_id,retired.space_generation)
+ AND ((dependency.record_id,dependency.record_version)=(retired.record_id,retired.version) OR (dependency.dependency_id,dependency.dependency_version)=(retired.record_id,retired.version)));
+DELETE FROM ontology_source_dependencies dependency WHERE source_kind<>'evidence' OR EXISTS(SELECT 1 FROM evidence_only_retired_revisions retired WHERE
+ (dependency.team_id,dependency.shared_space_id,dependency.space_generation,dependency.record_id,dependency.record_version)=(retired.team_id,retired.shared_space_id,retired.space_generation,retired.record_id,retired.version));
 DELETE FROM ontology_record_heads head USING evidence_only_retired_records retired WHERE
  (head.team_id,head.shared_space_id,head.space_generation,head.record_id)=(retired.team_id,retired.shared_space_id,retired.space_generation,retired.record_id);
-DELETE FROM ontology_record_revisions revision USING evidence_only_retired_records retired WHERE
- (revision.team_id,revision.shared_space_id,revision.space_generation,revision.record_id)=(retired.team_id,retired.shared_space_id,retired.space_generation,retired.record_id);
+DELETE FROM ontology_record_revisions revision USING evidence_only_retired_revisions retired WHERE
+ (revision.team_id,revision.shared_space_id,revision.space_generation,revision.record_id,revision.version)=(retired.team_id,retired.shared_space_id,retired.space_generation,retired.record_id,retired.version);
+CREATE FUNCTION pg_temp.evidence_only_record_refs(p_team uuid,p_space uuid,p_generation bigint,refs jsonb) RETURNS jsonb LANGUAGE sql STABLE AS $$
+ SELECT COALESCE(jsonb_agg(ref ORDER BY ordinal),'[]'::jsonb)
+ FROM jsonb_array_elements(COALESCE(refs,'[]'::jsonb)) WITH ORDINALITY entries(ref,ordinal)
+ WHERE EXISTS(SELECT 1 FROM ontology_record_revisions revision
+ WHERE (revision.team_id,revision.shared_space_id,revision.space_generation,revision.record_id::text,revision.version::text)=(p_team,p_space,p_generation,ref->>'id',ref->>'version'));
+$$;
 CREATE TEMP TABLE evidence_only_rebind_records ON COMMIT DROP AS
  SELECT revision.team_id,revision.shared_space_id,revision.space_generation,revision.record_id,revision.version,revision.fingerprint AS original_fingerprint
  FROM ontology_record_revisions revision WHERE
  EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(body->'sources','[]'::jsonb)) source WHERE source->>'kind'<>'evidence')
- OR EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(body->'dependencies','[]'::jsonb)) dependency JOIN evidence_only_retired_records retired
-  ON (revision.team_id,revision.shared_space_id,revision.space_generation,dependency->>'id')=(retired.team_id,retired.shared_space_id,retired.space_generation,retired.record_id::text));
+ OR COALESCE(body->'dependencies','[]'::jsonb) IS DISTINCT FROM pg_temp.evidence_only_record_refs(team_id,shared_space_id,space_generation,body->'dependencies');
 UPDATE ontology_record_revisions revision SET body=jsonb_set(jsonb_set(body,'{sources}',
  COALESCE((SELECT jsonb_agg(source ORDER BY ordinal) FROM jsonb_array_elements(COALESCE(body->'sources','[]'::jsonb)) WITH ORDINALITY entries(source,ordinal) WHERE source->>'kind'='evidence'),'[]'::jsonb)),
- '{dependencies}',COALESCE((SELECT jsonb_agg(dependency ORDER BY ordinal) FROM jsonb_array_elements(COALESCE(body->'dependencies','[]'::jsonb)) WITH ORDINALITY entries(dependency,ordinal)
- WHERE NOT EXISTS(SELECT 1 FROM evidence_only_retired_records retired WHERE
-  (revision.team_id,revision.shared_space_id,revision.space_generation,dependency->>'id')=(retired.team_id,retired.shared_space_id,retired.space_generation,retired.record_id::text))),'[]'::jsonb))
+ '{dependencies}',pg_temp.evidence_only_record_refs(team_id,shared_space_id,space_generation,body->'dependencies'))
  WHERE EXISTS(SELECT 1 FROM evidence_only_rebind_records changed WHERE
  (revision.team_id,revision.shared_space_id,revision.space_generation,revision.record_id,revision.version)=(changed.team_id,changed.shared_space_id,changed.space_generation,changed.record_id,changed.version));
-CREATE FUNCTION pg_temp.evidence_only_record_refs(p_team uuid,p_space uuid,p_generation bigint,refs jsonb) RETURNS jsonb LANGUAGE sql STABLE AS $$
- SELECT COALESCE(jsonb_agg(ref ORDER BY ordinal),'[]'::jsonb)
- FROM jsonb_array_elements(COALESCE(refs,'[]'::jsonb)) WITH ORDINALITY entries(ref,ordinal)
- WHERE NOT EXISTS(SELECT 1 FROM evidence_only_retired_records retired
- WHERE (retired.team_id,retired.shared_space_id,retired.space_generation,retired.record_id::text)=(p_team,p_space,p_generation,ref->>'id'));
-$$;
-UPDATE ontology_publications publication SET result=jsonb_set(result,'{records}',COALESCE((SELECT jsonb_agg(ref) FROM jsonb_array_elements(COALESCE(result->'records','[]'::jsonb)) ref
- WHERE NOT EXISTS(SELECT 1 FROM evidence_only_retired_records retired WHERE (publication.team_id,publication.shared_space_id,publication.space_generation,ref->>'id')=(retired.team_id,retired.shared_space_id,retired.space_generation,retired.record_id::text))),'[]'::jsonb))||jsonb_build_object('retired_payload',true);
+UPDATE ontology_publications publication SET result=jsonb_set(result,'{records}',pg_temp.evidence_only_record_refs(team_id,shared_space_id,space_generation,result->'records'))||jsonb_build_object('retired_payload',true);
 CREATE FUNCTION pg_temp.evidence_only_draft(p_team uuid,p_space uuid,p_generation bigint,body jsonb) RETURNS jsonb LANGUAGE plpgsql AS $$
 DECLARE kept jsonb; impacted boolean;
 BEGIN
@@ -201,8 +206,7 @@ BEGIN
   SELECT 1 FROM jsonb_array_elements(COALESCE(body->'prepared'->'changes','[]'::jsonb)) change
   WHERE change->'record'->>'kind' NOT IN ('topic','assignment','evidence_group','override')
    OR EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(change->'record'->'sources','[]'::jsonb)) source WHERE source->>'kind'<>'evidence')
-   OR EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(change->'record'->'dependencies','[]'::jsonb)) dependency JOIN evidence_only_retired_records retired
-    ON (retired.team_id,retired.shared_space_id,retired.space_generation,retired.record_id::text)=(p_team,p_space,p_generation,dependency->>'id')));
+   OR COALESCE(change->'record'->'dependencies','[]'::jsonb) IS DISTINCT FROM pg_temp.evidence_only_record_refs(p_team,p_space,p_generation,change->'record'->'dependencies'));
  body:=jsonb_set(body,'{draft,edits}',kept);
  IF body->'draft' ? 'publication' THEN body:=jsonb_set(body,'{draft,publication,records}',pg_temp.evidence_only_record_refs(p_team,p_space,p_generation,body->'draft'->'publication'->'records')); END IF;
  IF impacted THEN

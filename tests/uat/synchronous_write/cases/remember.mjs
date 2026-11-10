@@ -39,6 +39,7 @@ export async function run({ rpc, rawRPC = rpc, expect, runStep }) {
       ["admission-capacity", () => runAdmissionCapacityCase({ rpc, rawRPC, expect })],
       ["changed-hash-conflict", () => runChangedHashConflictCase({ rawRPC, expect })],
       ["supersession-fence", () => runSupersessionFenceCase({ rpc, expect })],
+      ["historical-evidence-handles", () => runHistoricalEvidenceHandlesCase({ expect })],
       ["model-routing", () => assertRememberSessionModelRouting(expect, providerRequestOffset)],
     ]) results.push(await runStep(label, fn));
   }
@@ -692,6 +693,88 @@ async function runSupersessionFenceCase({ rpc, expect }) {
   expect(stale.evidence.every((item) => item.disposition === "not_stored"), "stale supersession must not store evidence");
 
   return { fault: "supersession-stale", processing_state: stale.processing_state };
+}
+
+async function runHistoricalEvidenceHandlesCase({ expect }) {
+  const label = `historical-evidence-${randomUUID()}`;
+  const teamID = await createKnownEvidenceTeam(label);
+  const owner = await createKnownEvidenceCredential(teamID, `${label}-A`);
+  const peer = await createKnownEvidenceCredential(teamID, `${label}-B`);
+  const foreignTeam = await createKnownEvidenceTeam(`${label}-foreign`);
+  const foreign = await createKnownEvidenceCredential(foreignTeam, `${label}-C`);
+  const target = await rememberWithKey(owner.apiKey, singleItemArguments("historical-target", "", "private"));
+  assertStrictTerminalRemember(target, expect);
+  expect(target.processing_state === "completed", "historical handle target must complete");
+  const canonical = target.evidence[0].evidence_id;
+  const alias = randomUUID(), historical = randomUUID(), mapping = randomUUID();
+  const fixture = postgresExec(`
+    INSERT INTO evidence_fragments(team_id,fragment_id,ingest_id,owner_profile_id,space_id,space_generation,evidence_index,
+      content,content_hash,source_type,authority,source_ref,source_id,source_revision_id,labels,metadata)
+    SELECT team_id,'${alias}'::uuid,ingest_id,owner_profile_id,space_id,space_generation,1,
+      content,content_hash,source_type,authority,source_ref,source_id,source_revision_id,labels,metadata
+    FROM evidence_fragments WHERE team_id='${sqlLiteral(teamID)}'::uuid AND fragment_id='${sqlLiteral(canonical)}'::uuid AND owner_profile_id='${sqlLiteral(owner.profileID)}'::uuid
+    RETURNING fragment_id;
+    INSERT INTO evidence_occurrences(team_id,occurrence_id,canonical_fragment_id,canonical_owner_profile_id,ingest_id,owner_profile_id,
+      space_id,space_generation,evidence_index,content,content_hash,source_type,authority,source_ref,source_id,source_revision_id,labels,metadata)
+    SELECT team_id,'${alias}'::uuid,canonical_fragment_id,canonical_owner_profile_id,ingest_id,owner_profile_id,
+      space_id,space_generation,1,content,content_hash,source_type,authority,source_ref,source_id,source_revision_id,labels,metadata
+    FROM evidence_occurrences WHERE team_id='${sqlLiteral(teamID)}'::uuid AND occurrence_id='${sqlLiteral(canonical)}'::uuid AND owner_profile_id='${sqlLiteral(owner.profileID)}'::uuid
+    RETURNING occurrence_id;
+    INSERT INTO evidence_exact_aliases(team_id,alias_fragment_id,alias_owner_profile_id,canonical_fragment_id,canonical_owner_profile_id,space_id,space_generation)
+    SELECT team_id,'${alias}'::uuid,owner_profile_id,fragment_id,owner_profile_id,space_id,space_generation
+    FROM evidence_fragments WHERE team_id='${sqlLiteral(teamID)}'::uuid AND fragment_id='${sqlLiteral(canonical)}'::uuid AND owner_profile_id='${sqlLiteral(owner.profileID)}'::uuid
+    RETURNING alias_fragment_id;
+    INSERT INTO private_memory_migration_records(record_id,team_id,source_table,source_key,source_space_id,source_generation,
+      original_membership_ids,destination_space_id,destination_generation,destination_key,destination_membership_id,supporting_copy,sealed,completed,projection_rebuilt)
+    SELECT '${mapping}'::uuid,fragment.team_id,'evidence_fragments',jsonb_build_array(fragment.team_id::text,'${historical}'),space.id,space.generation,
+      ARRAY[space.owner_membership_id],space.id,space.generation,jsonb_build_array(fragment.team_id::text,fragment.fragment_id::text),space.owner_membership_id,false,false,true,true
+    FROM evidence_fragments fragment JOIN memory_spaces space ON space.team_id=fragment.team_id AND space.id=fragment.space_id
+    WHERE fragment.team_id='${sqlLiteral(teamID)}'::uuid AND fragment.fragment_id='${sqlLiteral(canonical)}'::uuid AND fragment.owner_profile_id='${sqlLiteral(owner.profileID)}'::uuid
+    RETURNING record_id;
+  `, "historical-evidence-handles-fixture").trim().split(/\r?\n/);
+  expect(JSON.stringify(fixture) === JSON.stringify([alias, alias, alias, mapping]), "historical fixtures must create every intended row");
+
+  const exportArgs = { name: label, evidence_ids: [canonical, alias] };
+  const pack = await mcpSuccessWithKey(owner.apiKey, "export_memory_pack", exportArgs);
+  const artifact = JSON.parse(pack.artifact_json);
+  expect(artifact.evidence.length === 1 && artifact.evidence[0].evidence_id === canonical, "authorized aliases must export one canonical Evidence item");
+  expect(artifact.evidence[0].occurrences.length === 2, "canonical export must retain both historical occurrences");
+  for (const [name, actor] of [["B", peer], ["C", foreign]]) {
+    const deniedExport = await rawRPCWithKey(actor.apiKey, "tools/call", { name: "export_memory_pack", arguments: exportArgs });
+    expect(deniedExport.result?.isError === true && !JSON.stringify(deniedExport.result).includes(canonical), `${name} must not export another owner's canonical or alias IDs`);
+    const correction = singleItemArguments(`historical-denied-${name}`, "", "private");
+    correction.evidence[0].supersedes_evidence_ids = [historical];
+    const denied = await rememberWithKey(actor.apiKey, correction);
+    assertStrictTerminalRemember(denied, expect);
+    expect(denied.processing_state === "failed" && denied.evidence.every((item) => item.disposition === "not_stored"), `${name} must not supersede a mapped private Evidence target`);
+  }
+  const correction = singleItemArguments("historical-owner-replacement", "", "private");
+  correction.evidence[0].supersedes_evidence_ids = [historical];
+  const replaced = await rememberWithKey(owner.apiKey, correction);
+  assertStrictTerminalRemember(replaced, expect);
+  expect(replaced.processing_state === "completed" && JSON.stringify(replaced.evidence[0].superseded_evidence_ids) === JSON.stringify([canonical]), "owner supersession must resolve the historical handle to its authorized destination");
+  const replay = await rememberWithKey(owner.apiKey, correction);
+  expect(JSON.stringify(replay) === JSON.stringify(replaced), "historical-handle replay must preserve the original request identity and outcome");
+  for (const fence of ["generation", "sealed", "purged"]) {
+    const unavailable = randomUUID(), record = randomUUID();
+    const targetID = replaced.evidence[0].evidence_id;
+    const seeded = postgresExec(`
+      INSERT INTO private_memory_migration_records(record_id,team_id,source_table,source_key,source_space_id,source_generation,
+        original_membership_ids,destination_space_id,destination_generation,destination_key,destination_membership_id,supporting_copy,sealed,completed,projection_rebuilt,purged_at)
+      SELECT '${record}'::uuid,fragment.team_id,'evidence_fragments',jsonb_build_array(fragment.team_id::text,'${unavailable}'),space.id,space.generation,
+        ARRAY[space.owner_membership_id],space.id,space.generation+${fence === "generation" ? 1 : 0},jsonb_build_array(fragment.team_id::text,fragment.fragment_id::text),space.owner_membership_id,false,${fence === "sealed"},true,true,${fence === "purged" ? "now()" : "NULL"}
+      FROM evidence_fragments fragment JOIN memory_spaces space ON space.team_id=fragment.team_id AND space.id=fragment.space_id
+      WHERE fragment.team_id='${sqlLiteral(teamID)}'::uuid AND fragment.fragment_id='${sqlLiteral(targetID)}'::uuid AND fragment.owner_profile_id='${sqlLiteral(owner.profileID)}'::uuid
+      RETURNING record_id;
+    `, `historical-evidence-${fence}`).trim();
+    expect(seeded === record, `${fence} fixture must insert its intended mapping`);
+    const request = singleItemArguments(`historical-${fence}`, "", "private");
+    request.evidence[0].supersedes_evidence_ids = [unavailable];
+    const denied = await rememberWithKey(owner.apiKey, request);
+    assertStrictTerminalRemember(denied, expect);
+    expect(denied.processing_state === "failed" && denied.evidence.every((item) => item.disposition === "not_stored"), `${fence} mapping must never revive an unavailable historical handle`);
+  }
+  return { fault: "historical-evidence-handles", canonical_export: true, private_supersession: true, isolated_owners: ["A", "B", "C"], replay_preserved: true, generation_sealing_purge_fences: true };
 }
 
 function singleItemArguments(label, marker, targetSpace = "team_shared") {

@@ -73,6 +73,7 @@ func (s *memoryPackService) Export(ctx context.Context, req ExportRequest) (resu
 	sort.Strings(ids)
 	now := s.now().UTC()
 	artifact := MemoryPackArtifact{Format: MemoryPackFormat, PackID: "pack_" + memoryPackShortHash(strings.Join(ids, "\x00")+now.Format(time.RFC3339Nano)), Name: name, Description: description, CreatedAt: now.Format(time.RFC3339Nano), Source: MemoryPackSource{TeamID: actor.TeamID.String(), ExportedBy: actor.OwnerID.String()}, Evidence: []MemoryPackEvidence{}, Omissions: []string{}}
+	exported := map[string]bool{}
 	for _, id := range ids {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -84,6 +85,9 @@ func (s *memoryPackService) Export(ctx context.Context, req ExportRequest) (resu
 		if trace == nil || trace.Evidence == nil || trace.Evidence.TeamID != actor.TeamID.String() {
 			return nil, tracecontract.ErrEvidenceNotFound
 		}
+		if exported[trace.Evidence.FragmentID] {
+			continue
+		}
 		item := MemoryPackEvidence{TraceEvidenceFragment: *trace.Evidence, Occurrences: trace.Occurrences, SourceRevisions: trace.SourceRevisions, Decisions: trace.Decisions, Lifecycle: trace.Lifecycle, Omissions: append([]string{}, trace.Omissions...)}
 		artifact.Evidence = append(artifact.Evidence, item)
 		encoded, _, encodeErr := canonicalMemoryPackArtifact(artifact)
@@ -94,6 +98,7 @@ func (s *memoryPackService) Export(ctx context.Context, req ExportRequest) (resu
 			artifact.Evidence = artifact.Evidence[:len(artifact.Evidence)-1]
 			artifact.Omissions = append(artifact.Omissions, id+":artifact_byte_limit")
 		} else {
+			exported[trace.Evidence.FragmentID] = true
 			for _, omission := range trace.Omissions {
 				artifact.Omissions = append(artifact.Omissions, id+":"+omission)
 			}
