@@ -126,7 +126,7 @@ func (s *Store) commitPublication(tx *gorm.DB, fence scope, input ontology.Publi
 	if err != nil {
 		return ontology.PublicationResult{}, err
 	}
-	prepared := []ontology.Record{}
+	var prepared []ontology.Record
 	if len(input.Changes) > 0 {
 		prepared, err = ontology.PreparePublication(catalog, snapshots, input, origin == "automatic")
 		if err != nil {

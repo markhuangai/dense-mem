@@ -27,15 +27,6 @@ func IsRememberStaleInputError(err error) bool {
 	return isRememberStaleInputError(err)
 }
 
-func submissionAssessmentItemForFragment(plan submissionAssessmentPlan, fragmentID string) (submissionAssessmentItem, bool) {
-	for _, item := range plan.Items {
-		if item.Fragment.FragmentID == fragmentID {
-			return item, true
-		}
-	}
-	return submissionAssessmentItem{}, false
-}
-
 func validateSubmissionAssessmentEvidenceConflictCanonicalization(
 	plan submissionAssessmentPlan,
 	response assessor.SemanticAssessmentResponse,

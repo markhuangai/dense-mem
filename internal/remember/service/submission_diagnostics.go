@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
-	"strconv"
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	embeddingcontract "github.com/markhuangai/dense-mem/internal/embedding/contract"
@@ -401,5 +400,3 @@ func legacyRememberDiagnosticError(status *SubmissionStatusResult) *SubmissionSt
 	}
 	return nil
 }
-
-func diagnosticArrayPath(path string, index int) string { return path + "/" + strconv.Itoa(index) }

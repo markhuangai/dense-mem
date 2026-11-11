@@ -140,17 +140,6 @@ func (s *assessmentEngine) assessRememberSessionWithValidator(
 	return response, session, finalRequest, err
 }
 
-func (s *assessmentEngine) completeRememberSessionTurns(
-	ctx context.Context,
-	session assessor.SemanticAssessmentSession,
-	turn assessor.SemanticAssessmentTurn,
-	request assessor.SemanticAssessmentRequest,
-	refresh func(context.Context) (assessor.SemanticAssessmentRequest, error),
-	turnOffset int,
-) (assessor.SemanticAssessmentResponse, assessor.SemanticAssessmentRequest, error) {
-	return s.completeRememberSessionTurnsWithValidator(ctx, session, turn, request, refresh, turnOffset, nil)
-}
-
 func (s *assessmentEngine) completeRememberSessionTurnsWithValidator(
 	ctx context.Context,
 	session assessor.SemanticAssessmentSession,

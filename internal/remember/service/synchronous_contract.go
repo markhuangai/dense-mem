@@ -399,19 +399,6 @@ func terminalErrorMessage(code TerminalErrorCode) string {
 	return submissionErrorMessages[SubmissionErrorCode(normalizeTerminalErrorCode(code))]
 }
 
-func terminalErrorRemediation(action TerminalNextAction) string {
-	switch action {
-	case TerminalNextActionRetrySameRequest:
-		return "Retry the same request with the same idempotency_key after the transient failure clears."
-	case TerminalNextActionResubmitRemember:
-		return "Submit the complete batch again with remember and a new idempotency_key after correcting the input."
-	case TerminalNextActionNone:
-		return "No action is required."
-	default:
-		return "Contact an operator with submission_id and correlation_id."
-	}
-}
-
 func ValidateTerminalRememberResult(result *TerminalRememberResult, evidenceCount int) error {
 	if result == nil {
 		return errors.New("remember: terminal result is required")

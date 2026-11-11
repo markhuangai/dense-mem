@@ -37,6 +37,61 @@ func TestInlineEmbeddingResultsFromDocumentsCopiesPlanMetadataAndVectors(t *test
 	require.Empty(t, inlineEmbeddingResultsFromDocuments(documents, nil))
 }
 
+func TestEvidenceOnlyUnitRememberCommitRacesPreserveOriginalOutcome(t *testing.T) {
+	input := rememberapp.RememberProcessRequest{TeamID: "team", OwnerProfileID: "owner", IdempotencyKey: "key", RequestHash: "hash", Evidence: []rememberapp.EvidenceInput{{Content: "Exact Evidence.", ForceInsert: true}}}
+	for _, outcome := range []string{"completed", "failed", "conflict", "unavailable"} {
+		t.Run(outcome, func(t *testing.T) {
+			state := "completed"
+			if outcome == "failed" {
+				state = "failed"
+			}
+			attempt := &knowledgecontract.RememberAttempt{AttemptID: "original", RequestHash: input.RequestHash, ContractVersion: domain.ContractVersion, Outcome: state, PublicResult: map[string]any{"contract_version": domain.ContractVersion, "submission_id": "original", "submission_kind": "remember", "processing_state": state, "search_state": "not_required", "evidence": []any{}, "errors": []any{}}}
+			if outcome == "conflict" {
+				attempt.RequestHash = "different"
+			}
+			if outcome == "unavailable" {
+				attempt = nil
+			}
+			base := &rememberFailureLedgerStub{loadSequence: []*knowledgecontract.RememberAttempt{nil, attempt}}
+			ledger := &rememberPipelineLedgerStub{rememberFailureLedgerStub: base, commitErr: knowledgecontract.ErrRememberReplay}
+			processor := &rememberSynchronousProcessor{ledger: ledger, provider: &processorAssessmentProviderStub{}}
+			result, err := processor.ProcessRemember(context.Background(), input)
+			if outcome == "completed" {
+				require.NoError(t, err)
+				require.Equal(t, "original", result.SubmissionID)
+				require.Equal(t, "completed", result.ProcessingState)
+			} else {
+				require.Error(t, err)
+			}
+			want := "replay"
+			if outcome == "conflict" {
+				want = "conflict"
+				require.ErrorIs(t, err, rememberapp.ErrRememberConflict)
+			}
+			require.Equal(t, want, base.invocation.Classification)
+			require.Empty(t, base.failure.Attempt.AttemptID, "a commit race must not create a new failed intake")
+		})
+	}
+	for _, cause := range []error{domain.ErrMemoryWriteDenied, domain.ErrMemoryOperationErased} {
+		ledger := &rememberPipelineLedgerStub{rememberFailureLedgerStub: &rememberFailureLedgerStub{}, commitErr: cause}
+		result, err := (&rememberSynchronousProcessor{ledger: ledger, provider: &processorAssessmentProviderStub{}}).ProcessRemember(context.Background(), input)
+		require.ErrorIs(t, err, cause)
+		require.Nil(t, result)
+		require.Empty(t, ledger.failure.Attempt.AttemptID)
+	}
+}
+
+func TestEvidenceOnlyUnitRememberWaiterReturnsCompletedReplay(t *testing.T) {
+	base := &rememberFailureLedgerStub{load: &knowledgecontract.RememberAttempt{AttemptID: "original", RequestHash: "hash", ContractVersion: domain.ContractVersion, Outcome: "completed", PublicResult: map[string]any{"contract_version": domain.ContractVersion, "submission_id": "original", "submission_kind": "remember", "processing_state": "completed", "search_state": "not_required", "evidence": []any{}, "errors": []any{}}}}
+	ledger := &rememberWaitAwareLedgerStub{rememberFailureLedgerStub: base, waited: true}
+	result, err := (&rememberSynchronousProcessor{ledger: ledger}).ProcessRemember(context.Background(), rememberapp.RememberProcessRequest{TeamID: "team", OwnerProfileID: "owner", IdempotencyKey: "key", RequestHash: "hash"})
+	require.NoError(t, err)
+	require.Equal(t, "original", result.SubmissionID)
+	require.Equal(t, "completed", result.ProcessingState)
+	require.Equal(t, "replay", base.invocation.Classification)
+	require.Empty(t, base.failure.Attempt.AttemptID)
+}
+
 func TestInlineEmbeddingResultsFromDuplicateDocumentsCopiesPlanMetadata(t *testing.T) {
 	plan := &knowledgecontract.RememberDuplicateEmbeddingPlan{
 		EmbeddingContractID: "contract-v1", EmbeddingDimensions: 3, EmbeddingModel: "embed-v2",

@@ -216,7 +216,7 @@ func searchRecallExactVectorSources(ctx context.Context, tx *gorm.DB, input Reca
 		return nil, err
 	}
 	filter, filterArgs := recallEvidenceEligibility(input, "source_fragment", true)
-	sourceClause, args := recallSourceFilter("search_documents.source_id", sourceIDs, []any{vectorLiteral, input.TeamID, contract.EmbeddingContractID, contract.EmbeddingDimensions})
+	sourceClause, _ := recallSourceFilter("search_documents.source_id", sourceIDs, nil)
 	query := `
 		SELECT search_documents.team_id::text, search_documents.search_document_id::text,
 		       search_documents.source_kind, search_documents.source_id::text,
@@ -235,7 +235,7 @@ func searchRecallExactVectorSources(ctx context.Context, tx *gorm.DB, input Reca
 		  AND search_documents.embedding IS NOT NULL
 		` + filter + sourceClause + `
 	`
-	args = append([]any{vectorLiteral, input.TeamID, contract.EmbeddingContractID, contract.EmbeddingDimensions}, filterArgs...)
+	args := append([]any{vectorLiteral, input.TeamID, contract.EmbeddingContractID, contract.EmbeddingDimensions}, filterArgs...)
 	if sourceIDs != nil {
 		args = append(args, pq.Array(sourceIDs))
 	}

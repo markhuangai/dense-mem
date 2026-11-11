@@ -235,24 +235,6 @@ func normalizeRecallEvidenceInput(input recallcontract.RecallEvidenceInput) reca
 	return input
 }
 
-func normalizeRecallGroupKeys(values []string) []string {
-	seen := map[string]struct{}{}
-	result := make([]string, 0, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if _, exists := seen[value]; exists {
-			continue
-		}
-		seen[value] = struct{}{}
-		result = append(result, value)
-	}
-	sort.Strings(result)
-	return result
-}
-
 func validateRecallEvidenceInput(input recallcontract.RecallEvidenceInput) error {
 	if _, err := uuid.Parse(input.TeamID); err != nil {
 		return fmt.Errorf("team_id is required: %w", err)

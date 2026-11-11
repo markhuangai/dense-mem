@@ -49,6 +49,58 @@ func TestCohortFilterLockValidationRejectsInvalidDeclarations(t *testing.T) {
 	}
 }
 
+func TestEvidenceOnlyUnitCohortRetainsExactFrozenSidecars(t *testing.T) {
+	root := t.TempDir()
+	parentDir, filteredDir := filepath.Join(root, "parent"), filepath.Join(root, "filtered")
+	for _, dir := range []string{parentDir, filteredDir} {
+		if err := os.Mkdir(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	manifest := SeedManifest{CorpusFile: "corpus.jsonl", CasesFile: "cases.jsonl", QrelsFile: "qrels.jsonl", AnswersFile: "answers.jsonl", TransformsFile: "transforms.jsonl", HardNegativesFile: "negatives.jsonl", LicensesFile: "licenses.jsonl"}
+	parent, filtered := manifest, manifest
+	parent.Counts = map[string]int{"corpus": 2, "cases": 2}
+	filtered.Counts = map[string]int{"corpus": 1, "cases": 1, "qrels": 1, "answers": 1, "transforms": 1}
+	for name, key := range map[string]string{"corpus.jsonl": "source_doc_id", "cases.jsonl": "case_id", "qrels.jsonl": "case_id", "answers.jsonl": "case_id", "transforms.jsonl": "case_id", "suite.jsonl": "case_id"} {
+		retained := `{"` + key + `":"a","text":"Exact frozen text."}` + "\n"
+		dropped := `{"` + key + `":"b","text":"Declared omission."}` + "\n"
+		if err := os.WriteFile(filepath.Join(parentDir, name), []byte(retained+dropped), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(filteredDir, name), []byte(retained), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{"negatives.jsonl", "licenses.jsonl"} {
+		for _, dir := range []string{parentDir, filteredDir} {
+			if err := os.WriteFile(filepath.Join(dir, name), []byte("Exact immutable sidecar.\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	opts := V2CohortValidationOptions{ParentManifestPath: filepath.Join(parentDir, "manifest.json"), FilteredManifestPath: filepath.Join(filteredDir, "manifest.json"), ParentSuitePath: filepath.Join(parentDir, "suite.jsonl"), FilteredSuitePath: filepath.Join(filteredDir, "suite.jsonl")}
+	lock := cohortFilterLock{RemovedSourceDocIDs: []string{"b"}, DroppedCaseIDs: []string{"b"}, ExpectedCounts: filtered.Counts}
+	if err := validateV1CohortFiles(opts, &parent, &filtered, lock); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"answers.jsonl", "licenses.jsonl"} {
+		path := filepath.Join(filteredDir, name)
+		original, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, append([]byte(" "), original...), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := validateV1CohortFiles(opts, &parent, &filtered, lock); err == nil {
+			t.Fatalf("changed frozen %s was accepted", name)
+		}
+		if err := os.WriteFile(path, original, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestCohortFilterJSONLAndManifestHelpers(t *testing.T) {
 	root := t.TempDir()
 	parent := filepath.Join(root, "parent.jsonl")

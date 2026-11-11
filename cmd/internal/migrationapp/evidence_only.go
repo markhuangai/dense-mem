@@ -80,7 +80,7 @@ func migrateEvidenceOnly(ctx context.Context, db *gorm.DB, migrator *postgres.Mi
 		return tx.Raw(`SELECT metadata FROM v2_compatibility_markers WHERE marker_kind='evidence_only' AND version='dense-mem.v2.8.0' AND status='compatible'`).Row().Scan(&receipt)
 	})
 	if err != nil {
-		return fmt.Errorf("Evidence-only migration receipt: %w", err)
+		return fmt.Errorf("evidence-only migration receipt: %w", err)
 	}
 	var metadata map[string]any
 	if err = json.Unmarshal(receipt, &metadata); err != nil {

@@ -254,9 +254,6 @@ func SelectedExcerpts(submission *Submission, responses []ExtractionResponse) ([
 	return selected, nil
 }
 
-func boundedString(value string, limit int) bool {
-	return strings.TrimSpace(value) != "" && len([]rune(value)) <= limit
-}
 func stringMember(values []string, value string) bool {
 	for _, allowed := range values {
 		if value == allowed {

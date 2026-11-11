@@ -51,10 +51,3 @@ func limitRecallConflictSummaries(values []RecallConflictSummary, limit int) []R
 	}
 	return result
 }
-
-func limitStrings(values []string, limit int) []string {
-	if limit >= 0 && len(values) > limit {
-		values = values[:limit]
-	}
-	return append([]string(nil), values...)
-}

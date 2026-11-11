@@ -22,15 +22,15 @@ const (
 func newEvidenceOnlyMigration(source []byte) (*goose.Migration, error) {
 	_, sections, ok := strings.Cut(string(source), "-- +goose Up")
 	if !ok {
-		return nil, errors.New("Evidence-only migration: missing Up section")
+		return nil, errors.New("evidence-only migration: missing Up section")
 	}
 	up, down, ok := strings.Cut(sections, "-- +goose Down")
 	if !ok {
-		return nil, errors.New("Evidence-only migration: missing Down section")
+		return nil, errors.New("evidence-only migration: missing Down section")
 	}
 	before, after, ok := strings.Cut(up, evidenceOnlyFingerprintBoundary)
 	if !ok || strings.Contains(after, evidenceOnlyFingerprintBoundary) {
-		return nil, errors.New("Evidence-only migration: missing or duplicated fingerprint boundary")
+		return nil, errors.New("evidence-only migration: missing or duplicated fingerprint boundary")
 	}
 	return goose.NewGoMigration(evidenceOnlyMigrationVersion,
 		&goose.GoFunc{RunTx: func(ctx context.Context, tx *sql.Tx) error {

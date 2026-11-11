@@ -28,7 +28,7 @@ func TestRunCandidateWithKnowledgeMappingScoresEvidenceRefs(t *testing.T) {
 			}
 			kind := stringValue(input["type"])
 			requestedTypes = append(requestedTypes, kind)
-			items := []map[string]any{}
+			var items []map[string]any
 			switch kind {
 			case "evidence":
 				items = []map[string]any{

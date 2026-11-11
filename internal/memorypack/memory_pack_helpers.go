@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
-	"sort"
 	"strings"
 )
 
@@ -16,15 +15,6 @@ func memoryPackActor(ctx context.Context) (requestctx.Actor, error) {
 		return requestctx.Actor{}, ErrMemoryPackAuthContext
 	}
 	return actor, nil
-}
-
-func MemoryPackSortedEvidenceIDs(values map[string]MemoryPackEvidence) []string {
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 func memoryPackShortHash(value string) string {
@@ -53,36 +43,4 @@ func skillPackFilename(name string) string {
 		slug = "memory-pack"
 	}
 	return slug + ".memory-pack.json"
-}
-
-func uniqueStrings(values []string) []string {
-	seen := map[string]struct{}{}
-	out := []string{}
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if _, exists := seen[value]; exists {
-			continue
-		}
-		seen[value] = struct{}{}
-		out = append(out, value)
-	}
-	return out
-}
-
-func MemoryPackCopyMap(value map[string]any) map[string]any {
-	if len(value) == 0 {
-		return nil
-	}
-	out := make(map[string]any, len(value))
-	for key, item := range value {
-		out[key] = item
-	}
-	return out
-}
-
-func boolPtr(value bool) *bool {
-	return &value
 }

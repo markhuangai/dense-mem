@@ -296,14 +296,6 @@ func normalizeRecallOptionalLimit(value *int, defaultValue int, maxValue int) *i
 	return &normalized
 }
 
-func normalizeRecallPositiveLimit(value *int, defaultValue int, maxValue int) *int {
-	normalized := normalizeRecallOptionalLimit(value, defaultValue, maxValue)
-	if *normalized < 1 {
-		*normalized = 1
-	}
-	return normalized
-}
-
 func recallOptionalLimitValue(value *int) int {
 	if value == nil {
 		return 0
