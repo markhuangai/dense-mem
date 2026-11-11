@@ -65,7 +65,7 @@ func TestEvaluationOutputHelpersCoverStateAndReferenceVariants(t *testing.T) {
 		"id": "fallback", "fragment_id": "fragment", "claim_id": "claim", "metadata": map[string]any{"source_doc_id": "doc"},
 		"source_refs": []any{map[string]any{"type": "fragment", "id": "f1"}},
 	}
-	if knowledgeItemID("fragment", item) != "fragment" || knowledgeItemID("unknown", item) != "fallback" {
+	if knowledgeItemID("evidence", item) != "fallback" || knowledgeItemID("fragment", item) != "" || knowledgeItemID("unknown", item) != "" {
 		t.Fatal("knowledge item IDs were not selected")
 	}
 	if got := sourceDocIDsFromKnowledgeItem("evidence", item, nil); len(got) != 1 {
@@ -157,7 +157,7 @@ func TestHTTPClientCorpusAndOutputHelperBranches(t *testing.T) {
 	if got := corpusImportGroupKey(CorpusItem{Content: "content"}); got != "item:content" {
 		t.Fatalf("content import key = %q", got)
 	}
-	if got := knowledgeItemID("fragment", map[string]any{"fragment_id": "fragment"}); got != "fragment" || knowledgeItemID("unknown", map[string]any{"id": "fallback"}) != "fallback" {
+	if got := knowledgeItemID("evidence", map[string]any{"evidence_id": "evidence"}); got != "evidence" || knowledgeItemID("unknown", map[string]any{"id": "fallback"}) != "" {
 		t.Fatal("knowledge item ID fallback failed")
 	}
 	if got := evidenceIDFromSubmission(map[string]any{"evidence": []any{map[string]any{"id": "evidence"}}}); got != "evidence" || evidenceIDFromSubmission(map[string]any{}) != "" {

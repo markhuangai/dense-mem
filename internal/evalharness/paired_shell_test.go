@@ -500,7 +500,7 @@ pair_begin drain`)
 	t.Setenv("PAIR_IMPORT_STAGE", imported.Directory)
 	output, err = run(configPath, `set -Eeuo pipefail
 source "$PAIR_SCRIPT"
-pair_stage_dir="$PAIR_IMPORT_STAGE"; pair_interrupted=false
+pair_stage=import; pair_stage_dir="$PAIR_IMPORT_STAGE"; pair_interrupted=false
 trap 'pair_on_error "$?"' ERR
 pair_tool complete-import-mapping --pair-side candidate --pair-directory "$pair_stage_dir"`)
 	require.ErrorAs(t, err, &exited, "%s", output)

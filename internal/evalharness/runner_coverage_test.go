@@ -47,14 +47,10 @@ func TestEvaluationRunnerRunRejectsInvalidExecutionContracts(t *testing.T) {
 	}
 }
 
-func TestEvaluationRunnerRunRejectsV1ImportAndWritesGateInput(t *testing.T) {
+func TestEvaluationRunnerRunWritesGateInput(t *testing.T) {
 	root := writeEvalFixture(t)
 	manifestPath := filepath.Join(root, "seed_manifest.json")
 	suitePath := filepath.Join(root, "suite.jsonl")
-	if _, err := Run(context.Background(), RunOptions{Mode: "import", ImportSeed: true, SeedManifestPath: manifestPath, SuitePath: suitePath}); err == nil || !strings.Contains(err.Error(), "cannot be imported") {
-		t.Fatalf("V1 import error = %v", err)
-	}
-
 	policyPath := filepath.Join(root, "policy.json")
 	if err := writeJSONFile(policyPath, ReleaseGatePolicy{
 		SchemaVersion:           ReleaseGatePolicySchemaVersion,

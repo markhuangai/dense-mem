@@ -220,18 +220,20 @@ func TestPairRuntimeIdentityAndRunnerProvenance(t *testing.T) {
 }
 
 func TestPairProtocolRequiresNativeApplicability(t *testing.T) {
-	r := pairedFixture(t).Baseline
+	r := pairedFixture(t).Candidate
 	r.Protocol = "none"
 	require.NoError(t, VerifyPairProtocol(r, 404, nil))
 	for _, status := range []int{200, 401, 500} {
 		require.Error(t, VerifyPairProtocol(r, status, []byte(`{"enabled":false}`)))
 	}
-	r.Protocol = "adr0014"
+	r.Protocol = PairModeEvidenceOnlyV5
 	raw, err := json.Marshal(map[string]any{"data": ontology.MaintenanceStatus{}})
 	require.NoError(t, err)
 	require.NoError(t, VerifyPairProtocol(r, 200, raw))
 	require.Error(t, VerifyPairProtocol(r, 404, nil))
 	require.Error(t, VerifyPairProtocol(r, 200, []byte(`{"enabled":true}`)))
+	r.Protocol = "adr0014"
+	require.Error(t, VerifyPairProtocol(r, 200, raw))
 }
 
 func TestPairNativeObservationRejectsUntrustedWireValues(t *testing.T) {
@@ -249,8 +251,8 @@ func TestPairNativeObservationRejectsUntrustedWireValues(t *testing.T) {
 		{"embedding_contract", "search", func(m map[string]any) { m["contract"].(map[string]any)["model"] = "different-model" }},
 		{"ontology_type", "ontology", func(m map[string]any) { m["active_work"] = "unknown" }},
 		{"configuration_failure", "ontology", func(m map[string]any) { m["configuration_error"] = "invalid" }},
-		{"community_type", "community", func(m map[string]any) { m["projection_coverage"].(map[string]any)["pending_topics"] = "unknown" }},
-		{"community_missing", "community", func(m map[string]any) { delete(m, "projection_coverage") }},
+		{"ontology_counts_missing", "ontology", func(m map[string]any) { delete(m, "counts") }},
+		{"historical_usage_missing", "ontology", func(m map[string]any) { delete(m, "historical_usage") }},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
@@ -268,7 +270,13 @@ func TestPairNativeObservationRejectsUntrustedWireValues(t *testing.T) {
 		})
 	}
 	c := pairedFixture(t)
-	_, err := DecodePairObservation(c.Baseline, commandNativeSnapshot(t, c.Baseline, nil), false)
+	for _, retiredCommunity := range []json.RawMessage{nil, json.RawMessage(`{"projection_coverage":"retired"}`)} {
+		snapshot := commandNativeSnapshot(t, c.Candidate, []PairImportAttempt{})
+		snapshot.Community = retiredCommunity
+		_, err := DecodePairObservation(c.Candidate, snapshot, false)
+		require.NoError(t, err)
+	}
+	_, err := DecodePairObservation(c.Baseline, commandNativeSnapshot(t, c.Baseline, []PairImportAttempt{}), false)
 	require.ErrorContains(t, err, "offline only")
 }
 

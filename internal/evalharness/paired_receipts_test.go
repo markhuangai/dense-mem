@@ -510,7 +510,11 @@ func TestPairCaptureProofRejectsIncompleteAndUnfrozenHistory(t *testing.T) {
 			require.NoError(t, readPairJSON(path, &proof))
 			test.edit(&proof)
 			require.NoError(t, writePairJSON(path, proof))
-			_, err := VerifyPairCaptureProof(c, c.Baseline, dir)
+			r := c.Baseline
+			var err error
+			r.CaptureSHA256, err = PairFileHash(path)
+			require.NoError(t, err)
+			_, err = VerifyPairCaptureProof(c, r, dir)
 			require.Error(t, err)
 		})
 	}
@@ -518,11 +522,17 @@ func TestPairCaptureProofRejectsIncompleteAndUnfrozenHistory(t *testing.T) {
 	writePairCompletedStage(t, c, "baseline", "import")
 	dir := filepath.Join(writePairCompletedStage(t, c, "baseline", "capture"), "native")
 	r := c.Baseline
-	r.CaptureSHA256 = pairBytesHash([]byte("different proof"))
-	_, err := VerifyPairCaptureProof(c, r, dir)
+	proofHash, err := PairFileHash(filepath.Join(dir, "pair_capture.json"))
+	require.NoError(t, err)
+	r.CaptureSHA256 = proofHash
+	_, err = VerifyPairCaptureProof(c, r, dir)
+	require.NoError(t, err)
+	changed := r
+	changed.CaptureSHA256 = pairBytesHash([]byte("different proof"))
+	_, err = VerifyPairCaptureProof(c, changed, dir)
 	require.ErrorContains(t, err, "proof hash mismatch")
 	require.NoError(t, os.Symlink(filepath.Join(dir, "summary.json"), filepath.Join(dir, "linked-artifact")))
-	_, err = VerifyPairCaptureProof(c, c.Baseline, dir)
+	_, err = VerifyPairCaptureProof(c, r, dir)
 	require.ErrorContains(t, err, "regular files")
 }
 

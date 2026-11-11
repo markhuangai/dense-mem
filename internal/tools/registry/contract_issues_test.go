@@ -59,6 +59,7 @@ func TestValidateContractInputIssuesHonorsEarlyScopeAndTenantGuards(t *testing.T
 }
 
 func TestValidateContractInputIssuesDispatchesToolSpecificValidation(t *testing.T) {
+	const duplicateID = "11111111-1111-4111-8111-111111111111"
 	cases := []struct {
 		name  string
 		tool  string
@@ -66,9 +67,9 @@ func TestValidateContractInputIssuesDispatchesToolSpecificValidation(t *testing.
 		scope string
 		want  string
 	}{
-		{name: "recall", tool: ToolRecallMemory, args: map[string]any{"known_evidence_ids": []any{"same", "same"}}, scope: "read", want: "duplicate"},
-		{name: "retract", tool: ToolRetractEvidence, args: map[string]any{"evidence_ids": []any{"same", "same"}}, scope: "write", want: "duplicate"},
-		{name: "export", tool: ToolExportMemoryPack, args: map[string]any{"evidence_ids": []any{"same", "same"}}, scope: "read", want: "duplicate"},
+		{name: "recall", tool: ToolRecallMemory, args: map[string]any{"query": "durable memory", "known_evidence_ids": []any{duplicateID, duplicateID}}, scope: "read", want: "duplicate"},
+		{name: "retract", tool: ToolRetractEvidence, args: map[string]any{"evidence_ids": []any{duplicateID, duplicateID}}, scope: "write", want: "duplicate"},
+		{name: "export", tool: ToolExportMemoryPack, args: map[string]any{"evidence_ids": []any{duplicateID, duplicateID}}, scope: "read", want: "duplicate"},
 		{name: "recall feedback", tool: ToolSubmitRecallSessionFeedback, args: map[string]any{"recalls": []any{map[string]any{"quality": "low"}}}, scope: "write", want: "feedback_comment"},
 	}
 	for _, tc := range cases {
@@ -113,7 +114,7 @@ func TestValidateContractInputIssuesRememberValidAndMalformedShapes(t *testing.T
 	retired := validEvidenceOnlySubmission()
 	retired["relationships"] = []any{}
 	result = ValidateContractInputIssues(remember, retired, []string{"read", "write"})
-	require.Contains(t, issueMessages(result), "relationships is not allowed")
+	require.Contains(t, result.Issues, ContractValidationIssue{Path: "/relationships", Code: "unknown_field", Message: "unknown field: relationships"})
 }
 
 func TestContractIssueCollectorDeduplicatesAndTruncates(t *testing.T) {

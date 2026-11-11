@@ -100,8 +100,9 @@ func contractToolExamples() map[string]contractToolExample {
 		},
 		ToolSubmitRecallSessionFeedback: {
 			WhenToUse: "Record voluntary truthful feedback after using a Recall.", Prerequisites: "Use its returned recall_id as recall_event_id.",
-			Request: map[string]any{"recalls": []any{map[string]any{"recall_event_id": returnedRecallID, "used": true, "answer_supported": true, "quality": "high"}}},
-			Result:  "Returns recorded_count or an explicit partial failure and failed_index.", NextAction: "For partial failure, omit recorded items before failed_index and follow next_action for the failed and later items. Never invent feedback.",
+			Request:    map[string]any{"recalls": []any{map[string]any{"recall_event_id": returnedRecallID, "used": true, "answer_supported": true, "quality": "high"}}},
+			Result:     "The result reports recorded and recorded_count, or a bounded partial failure with the failed index and remediation.",
+			NextAction: "For a partial failure, use failed_index with the returned next_action and remediation. Items before failed_index were recorded; omit them. For correct_and_resubmit, correct the failed item and submit it with all later unprocessed items. For retry_same_request, resend the failed item and all later unprocessed items unchanged; stop only when instructed. Do not invent feedback for a recall you did not use.",
 		},
 		ToolExportMemoryPack: {
 			WhenToUse: "Export 1–500 authorized Evidence IDs with provenance.", Prerequisites: "Use Evidence IDs returned by supported memory tools.",

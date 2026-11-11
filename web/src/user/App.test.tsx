@@ -143,7 +143,11 @@ describe("UserPortalApp", () => {
     const option=within(list).getByRole("option");
     expect(option).toHaveTextContent("Alice uses: Dense-Mem");
     await userEvent.click(option);
-    expect(screen.getByLabelText("Inspector")).toHaveTextContent("evidence-2");
+    const details = await screen.findByRole("dialog", { name: "Evidence details" });
+    expect(details).toHaveTextContent("evidence-2");
+    expect(details).toHaveTextContent("Alice uses: Dense-Mem");
+    await userEvent.click(within(details).getByRole("button", { name: "Close details panel" }));
+    await waitFor(() => expect(details).not.toBeInTheDocument());
   });
 
   it("resets stale source filters after a new recall search", async () => {
@@ -390,6 +394,9 @@ describe("UserPortalApp", () => {
     expect(teamSelect).toHaveTextContent(initial.team.name);
     await userEvent.click(screen.getByRole("button", { name: "Connect" }));
     expect(screen.getByText(`https://memory.example.test/teams/${initial.team.id}/mcp`)).toBeInTheDocument();
+    const initialConnection = screen.getByRole("dialog", { name: "Connect to Dense-Mem" });
+    await userEvent.click(within(initialConnection).getByRole("button", { name: "Close", exact: true }));
+    await waitFor(() => expect(initialConnection).not.toBeInTheDocument());
 
     await userEvent.click(teamSelect);
     await userEvent.click(screen.getByRole("button", { name: secondTeam.name }));
@@ -397,6 +404,9 @@ describe("UserPortalApp", () => {
     await expectCurrentWorkspace("Analytics Team");
     await userEvent.click(screen.getByRole("button", { name: "Connect" }));
     expect(screen.getByText(`https://memory.example.test/teams/${secondTeam.id}/mcp`)).toBeInTheDocument();
+    const switchedConnection = screen.getByRole("dialog", { name: "Connect to Dense-Mem" });
+    await userEvent.click(within(switchedConnection).getByRole("button", { name: "Close", exact: true }));
+    await waitFor(() => expect(switchedConnection).not.toBeInTheDocument());
     expect(screen.queryByRole("link", { name: "My credentials" })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Team" })).toBeInTheDocument();
     await waitFor(() => {

@@ -122,8 +122,8 @@ func TestBuildActiveSubmitRecallSessionFeedbackRecordsFeedback(t *testing.T) {
 			"missing_context":  false,
 			"irrelevant":       false,
 			"irrelevant_result_refs": []any{map[string]any{
-				"type": "relationship",
-				"id":   "relationship-canonical",
+				"type": "evidence",
+				"id":   "evidence-canonical",
 				"rank": 1,
 			}},
 		}},
@@ -141,7 +141,7 @@ func TestBuildActiveSubmitRecallSessionFeedbackRecordsFeedback(t *testing.T) {
 	if feedback.RecallID != "rec-canonical" || !feedback.Used || !feedback.AnswerSupported || feedback.Quality != "high" {
 		t.Fatalf("feedback submission = %+v", feedback)
 	}
-	if len(feedback.IrrelevantRefs) != 1 || feedback.IrrelevantRefs[0].ID != "relationship-canonical" {
+	if len(feedback.IrrelevantRefs) != 1 || feedback.IrrelevantRefs[0].Type != domain.RecallFeedbackResultTypeEvidence || feedback.IrrelevantRefs[0].ID != "evidence-canonical" {
 		t.Fatalf("irrelevant refs = %+v", feedback.IrrelevantRefs)
 	}
 	if got := len(metrics.RecallFeedbackSamples()); got != 1 {
