@@ -239,7 +239,7 @@ func TestEvidenceOnlyPostgresTraceBudgetsAndMemoryPackCanonicalProvenance(t *tes
 			}
 		}
 	}
-	require.Equal(t, 4, traced)
+	require.Equal(t, 5, traced)
 	require.Equal(t, 2, exported)
 	require.Equal(t, 1, failed)
 

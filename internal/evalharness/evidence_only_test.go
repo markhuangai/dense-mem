@@ -40,6 +40,41 @@ func TestEvidenceOnlyUnitAnswerJudgmentsRequireCompleteCitationCoverage(t *testi
 	require.Error(t, validateAnswerJudgmentFields([]byte(strings.Replace(string(raw), `"answer_correct":true,`, "", 1))))
 	judgment.Citations = append(judgment.Citations, judgment.Citations[0])
 	require.Error(t, validateAnswerJudgment(judgment, 2))
+	judgment.Citations = []AnswerCitationJudgment{{Index: 1, Reason: "First citation"}, {Index: 2, Reason: "Second citation"}}
+	require.ErrorContains(t, validateAnswerJudgment(judgment, 2), "citation_index 2 must be unique and in [0, 2)")
+}
+
+func TestEvidenceOnlyUnitAnswerScorerSuppliesCitationIndexes(t *testing.T) {
+	input := answerPolicyInput{
+		labels: map[string]AnswerLabel{"case": {CaseID: "case", ReferenceAnswer: "Both source facts."}},
+		results: map[string]EvidenceOnlyHostResult{"case": {Answer: "Both source facts.", Citations: []EvidenceOnlyHostCitation{
+			{EvidenceID: "second", Quote: "Second source fact."},
+			{EvidenceID: "first", Quote: "First source fact."},
+		}}},
+		sources: map[string][]string{"first": {"First source fact."}, "second": {"Second source fact."}},
+		cases:   map[string]Case{"case": {Query: "What do both sources say?"}},
+	}
+	body, exact, err := input.request("case")
+	require.NoError(t, err)
+	require.True(t, exact)
+	var request struct {
+		Citations []struct {
+			Index      *int     `json:"citation_index"`
+			EvidenceID string   `json:"evidence_id"`
+			Quote      string   `json:"quote"`
+			Sources    []string `json:"original_sources"`
+		} `json:"citations"`
+	}
+	require.NoError(t, json.Unmarshal(body, &request))
+	require.Len(t, request.Citations, 2)
+	for index, original := range input.results["case"].Citations {
+		citation := request.Citations[index]
+		require.NotNil(t, citation.Index)
+		require.Equal(t, index, *citation.Index)
+		require.Equal(t, original.EvidenceID, citation.EvidenceID)
+		require.Equal(t, original.Quote, citation.Quote)
+		require.Equal(t, input.sources[original.EvidenceID], citation.Sources)
+	}
 }
 
 func TestEvidenceOnlyUnitAnswerCapturesPreserveTypedReceiptsAndProtectCredentials(t *testing.T) {
