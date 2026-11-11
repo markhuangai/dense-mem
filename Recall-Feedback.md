@@ -1,204 +1,53 @@
-| Ranking comparison | Compare recorded outcomes alongside evaluated code/configuration versions. |nded host judgments about a completed recall. It is
-observational: it does not mutate Relationships, evidence, Entity identity,
-Hypotheses, embeddings, indexes, or ranking weights.
+# Recall Feedback
 
-Retrieval eligibility and response behavior live in
-[Recall Ranking](Recall-Ranking). Distance, fusion, RRF, deterministic reranking,
-and ranking-contract versioning live in
-[Vector Search And Ranking](Vector-Search-And-Ranking). Metrics presentation
-lives in [Telemetry](Telemetry).
+Recall feedback records what happened after a host used memory. It is voluntary and observational: it does not change Evidence, topic membership, conflict decisions, or live ranking.
 
 ## Flow
 
 ```mermaid
-%%{init: {"sequence": {"rightAngles": true}}}%%
-sequenceDiagram
-  participant Host as AI client
-  participant Recall as recall_memory
-  participant Feedback as submit_recall_session_feedback
-  participant PG as PostgreSQL
-  participant Metrics as Bounded metrics
-
-  Host->>Recall: Query memory
-  Recall-->>Host: Results, recall_event_id, and suggested action
-  Host->>Host: Answer user
-  Host->>Feedback: Bounded session judgment
-  Feedback->>PG: Persist refs, ranking version, and judgment
-  Feedback->>Metrics: Increment low-cardinality counters
+%%{init: {"flowchart": {"curve": "linear"}}}%%
+flowchart TB
+  Recall["Recall result and recall_id"] --> Use["Host uses or declines the results"]
+  Use --> Judge["Truthful quality judgment"]
+  Judge --> Submit["Submit feedback when enabled"]
+  Submit --> Event[("Bounded PostgreSQL feedback event")]
+  Event --> Operator["Authorized investigation"]
+  Event --> Offline["Reviewed offline evaluation cases"]
 ```
-
-Feedback is submitted after the host has enough context to judge whether recall
-helped the answer.
-
-When recall feedback is enabled and the server successfully stores the recall
-snapshot, recall_memory includes a suggested_actions entry naming
-submit_recall_session_feedback and the matching recall ID. If feedback is
-disabled, the tool is not registered in tools/list, direct tools/call returns
-not found, and recall does not suggest it. If snapshot persistence fails, recall
-still returns its recall ID and results, omits the unavailable suggestion, and
-adds the optional `feedback` degradation
-`recall_feedback_snapshot_unavailable`.
-
-## Record-Only Boundary
-
-Submitting feedback does not:
-
-- create, promote, retract, or correct a Relationship
-- grant, revoke, or reinstate evidence support
-- merge or split an Entity
-- reinforce/reject a Hypothesis
-- update a search document or embedding
-- change ranking policy
-- train a model
-
-A quality problem changes behavior only after it becomes an evaluated case, an
-explicit code/config change is made, and release gates pass.
 
 ## Submission
 
-```json
-{
-  "recalls": [
-    {
-      "recall_event_id": "rec_01J...",
-      "used": true,
-      "answer_supported": false,
-      "quality": "low",
-      "missing_context": true,
-      "irrelevant": true,
-      "feedback_comment": "Returned stale UI Relationships instead of the button behavior.",
-      "irrelevant_result_refs": [
-        {
-          "type": "relationship",
-          "id": "r_stale_ui",
-          "rank": 1
-        }
-      ],
-      "hypothesis_feedback": [
-        {
-          "hypothesis_id": "hyp_01J...",
-          "used": false,
-          "quality": "low",
-          "contradicted": true,
-          "feedback_comment": "The source Relationships were stale."
-        }
-      ]
-    }
-  ]
-}
-```
+Use the returned `recall_id` as `recall_event_id`. Record actual use, answer support, and quality. Optional comments and irrelevant references can identify returned Evidence or Topics; they cannot invent new sources or ask the server to correct memory.
 
-Recall snapshots retain returned evidence, Relationship, community, and
-Hypothesis references as applicable. Submitted references are checked against
-the original authorized recall event.
+Complete arguments and bounds are in [Technical Reference](Technical-Reference#submit_recall_session_feedback). The tool requires write scope and effective feedback enablement. Ordinary recall does not require submitting feedback.
 
-A comment is required for low-quality, missing-context, irrelevant, or
-contradicted judgments. Comments are bounded and should describe the retrieval
-failure without copying private user content.
-
-Hypothesis quality feedback remains observational. Use `resolve_dream_feedback`
-with new evidence for a status-changing dream decision.
-
-### Partial failure
-
-For a batch error, read `failed_index`, `recorded_count`, `next_action`, and
-`remediation`. Earlier items were already recorded: omit them. Retry or correct
-the failed item and the later unprocessed items according to the returned
-action. Do not replay the whole batch blindly.
-
-## Stored Event
-
-The durable event records:
-
-```text
-feedback_event_id
-recall_event_id
-team_id and profile_id
-query fingerprint or approved bounded query text
-server-recorded contract/version metadata
-search freshness and degraded branches
-returned result refs and ranks
-semantic groups, authored alternatives, and clarification outcome
-used/support/quality flags
-missing/irrelevant refs
-bounded comments
-Hypothesis judgments
-actor and timestamps
-```
-
-New snapshots also retain `space_id` and `space_generation` from the
-authenticated recall context. A feedback submission must match the stored
-team, space, and generation exactly; the service additionally requires the
-actor's current allowed-space set to contain that same generation. Listing and
-getting events expose only rows whose private space is still active at its
-current generation, so a sealed or retired snapshot cannot be updated or
-resolved through a stale reference.
-
-Retention and text-storage policy must be explicit because queries/comments may
-contain sensitive information.
-
-## Metrics
-
-Low-cardinality aggregates include:
-
-| Metric meaning | Example measure |
-| --- | --- |
-| recall used rate | events where the host used at least one result |
-| answer supported rate | events where memory supported the final answer |
-| average quality | bounded ordinal score |
-| missing context rate | events reporting important missing knowledge |
-| irrelevant result rate | events reporting one or more bad results |
-| search-freshness correlation | quality grouped by bounded pending/failed-vector state |
-| Relationship frontier usefulness | used/irrelevant rate by lexical/vector gate state and query class |
-| authored-conflict usefulness | quality when recall preferred, retained, or asked about conflicting profile-owned Relationships |
-| fusion-contract comparison | paired quality by approved ranking-contract version and fusion mode |
-
-Metric labels must not contain queries, comments, result IDs, Entity names, or
-Relationship text. Exact metric names are owned by [Telemetry](Telemetry).
-
-## Offline Use
+## Partial Failure
 
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart LR
-  Events["Stored feedback events"] --> Redact["Review and redact"]
-  Redact --> Cases["Versioned evaluation cases"]
-  Cases --> Baseline["Run baseline"]
-  Cases --> Candidate["Run candidate ranking"]
-  Baseline --> Compare["Paired comparison"]
-  Candidate --> Compare
-  Compare --> Gate["Release gate and manual review"]
+  Batch["Ordered feedback batch"] --> Prefix["Items before failed_index recorded"]
+  Batch --> Failed["Failed item and unprocessed suffix"]
+  Prefix --> Keep["Do not resend recorded prefix"]
+  Failed --> Action["Follow next_action and remediation"]
 ```
 
-Feedback is not automatically a gold label. A reviewer must resolve ambiguous
-queries, stale source data, host misuse, and privacy before adding a case.
+Inspect `recorded_count`, `partial_success`, `failed_index`, and the returned action. For correct-and-resubmit, repair the failed item and include later unprocessed items. For retry-same-request, resend the failed and later unprocessed items unchanged. Do not fabricate feedback to fill a missing receipt.
 
-## Feature Gate And Access
+## Stored Investigation Record
 
-The tool is visible and callable only when database-backed configuration
-enables recall feedback. Submission needs `write` scope. Detailed event
-inspection is a control/first-party surface.
+| Material | Meaning |
+| --- | --- |
+| Recall identity and actor/space context | Authorizes association and protects private-generation boundaries. |
+| Query and tool arguments | Bounded investigation data outside metric labels. |
+| Result references | Content-free Evidence/Topic IDs and ranks, plus equivalent-source references where captured. |
+| Contract/search/ranking identities | Context for reproducibility and degradation. |
+| Host judgment | Use, support, quality, missing-context, irrelevant flags, comment, and judged references. |
 
-Disabling collection stops new events; it does not silently delete retained
-events.
+A captured snapshot and a `feedback_only` event are different states. Authorized operator readers resolve references under current access; erased/sealed private generations cannot be revived through old feedback.
 
-## Risks And Mitigations
+## Offline Use And Retention
 
-| Risk | Concrete failure mode | Mitigation |
-| --- | --- | --- |
-| Feedback changes truth | low score demotes a valid Relationship | record-only service boundary and no knowledge repository dependency |
-| Label cardinality explosion | result IDs/comments become Prometheus labels | fixed enums and bounded buckets only |
-| Privacy leak | raw user query is retained indefinitely | bounded retention and restricted detail access |
-| Host self-bias | one model judges its own retrieval as ground truth | human review and paired offline cases before ranking changes |
-| Cross-team reference | feedback names a result from another recall/team | bind refs to the stored recall event and authenticated team |
-| Stale vector misdiagnosed | ranking is blamed for pending/failed embedding work | store search freshness, branch path, and source/vector versions with the event |
-| Authored conflict changed by feedback | a low score on B's result reopens/resolves a case or demotes B's knowledge | keep feedback observational; only verified evidence and deterministic Conflict policy change disposition |
+Review and redact retained examples before turning them into versioned evaluation cases. Compare baseline and candidate with frozen identities; feedback never automatically trains a model or changes weights.
 
-## Acceptance Invariants
-
-1. feedback writes no knowledge, search, or Hypothesis state
-2. every result ref belonged to the original recall event
-3. Prometheus labels remain low-cardinality
-4. detailed text follows retention and authorization policy
-5. ranking changes require separate evaluation and release approval
-6. feedback never changes another profile's Relationship or conflict position
+[Configuration](Configuration#recall-feedback) owns enablement/retention. [Telemetry](Telemetry) owns aggregate metrics and exposure rules. Queries/comments can contain sensitive information and stay within their authorized diagnostic boundary.

@@ -57,7 +57,7 @@ Public edge controls include:
 - access-log redaction
 
 They are defense in depth; application authentication, scopes, RLS, and
-team-scoped full-text/vector/adjacency reads remain required.
+team-scoped full-text/vector/topic reads remain required.
 
 ## Forwarded Client IP
 
@@ -113,8 +113,8 @@ credential, session, or audit truth.
 Redis never owns:
 
 - evidence or ingests
-- Entity/EntityName records
-- Relationship records/support/transitions
+- occurrences, source revisions, and lifecycle records
+- Topics, memberships, equivalence, and publication history
 - verifier/submission assessment decisions
 - terminal write results and durable background operations
 - API keys/audit
@@ -141,7 +141,7 @@ All replicas use:
 
 - the same Redis deployment/key namespace policy
 - consistent rate/SSE/provider limit config
-- the same PostgreSQL/pgvector/embedding/predicate contracts
+- the same PostgreSQL/pgvector/embedding contracts
 - unique process identity for leases/telemetry
 - readiness that fails when distributed coordination is unavailable
 
@@ -202,7 +202,7 @@ Verify:
 | --- | --- | --- |
 | Control listener exposed | public caller gains cross-team operations | separate private listener/ingress and network policy |
 | Plaintext bearer key | key captured outside loopback | HTTPS-only public edge |
-| Redis becomes memory store | Redis restart removes Entity/submission state | coordination-only interfaces and persistence tests |
+| Redis becomes memory store | Redis restart removes Evidence/submission state | coordination-only interfaces and persistence tests |
 | Silent replica fallback | global limits split per process | distributed-required readiness |
 | Wildcard route exposes compatibility/admin | ingress publishes unintended path | explicit route allowlist and external scan |
 | Proxy logs secrets | Authorization header appears in access logs | header redaction and log validation |

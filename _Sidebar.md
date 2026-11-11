@@ -1,36 +1,23 @@
-## Getting Started
+## Get Started
 
 - [Home](Home)
 - [Quick Start](Quick-Start)
 - [Hosted Demo](Hosted-Demo)
 
-## Use Dense-Mem
+## Use Memory
 
-- [Everyday Memory](Using-Dense-Mem)
+- [Using Dense-Mem](Using-Dense-Mem)
 - [MCP Clients](MCP-Clients)
-- [Recall Feedback](Recall-Feedback)
+- [Framework Integrations](Framework-Integrations)
 - [Conflicts And Corrections](Conflicts-And-Corrections)
 - [Memory Packs](Memory-Packs)
-- [Community Memory](Community-And-Dreaming)
-- [Dreaming](Dreaming)
+- [Recall Feedback](Recall-Feedback)
 
-## Operate Dense-Mem
-
-- [Configuration](Configuration)
-- [Portals And API Keys](Portals-And-API-Keys)
-- [User Portal SSO](User-Portal-SSO)
-- [Request Lifecycle And Security](Request-Lifecycle-And-Security)
-- [Public HTTPS And Redis](Public-HTTPS-And-Redis)
-- [Operations Runbook](Operations-Runbook)
-- [Conflict Queue](Conflict-Queue)
-- [Telemetry](Telemetry)
-- [Evaluation](Evaluation)
-
-## Architecture And Process
+## Understand The System
 
 - [Architecture](Architecture)
-- [Entity Identity And Resolution](Entity-Identity-And-Resolution)
-- [Relationship Model And Lifecycle](Relationship-Model-And-Lifecycle)
+- [Evidence Model And Lifecycle](Evidence-Model-And-Lifecycle)
+- [Topics And Organization](Topics-And-Organization)
 - [Memory Write Pipeline](Write-Pipeline)
 - [Data Model And Storage](Data-Model-And-Storage)
 - [PostgreSQL Cluster-Safe Schema](PostgreSQL-Cluster-Safe-Schema)
@@ -39,9 +26,18 @@
 - [ANN, HNSW, And Halfvec](ANN-HNSW-And-Halfvec)
 - [Technical Reference](Technical-Reference)
 
-## Contribute And Maintain
+## Operate
+
+- [Configuration](Configuration)
+- [Portals And API Keys](Portals-And-API-Keys)
+- [User Portal SSO](User-Portal-SSO)
+- [Request Lifecycle And Security](Request-Lifecycle-And-Security)
+- [Public HTTPS And Redis](Public-HTTPS-And-Redis)
+- [Operations Runbook](Operations-Runbook)
+- [Telemetry](Telemetry)
+
+## Contribute
 
 - [Development And Testing](Development-And-Testing)
+- [Evaluation](Evaluation)
 - [Documentation Maintenance](Documentation-Maintenance)
-
-- [Framework Integrations](Framework-Integrations)

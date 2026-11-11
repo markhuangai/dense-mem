@@ -1,159 +1,80 @@
 # Architecture
 
-Dense-Mem is a self-hosted MCP memory service. The host decides when memory is
-useful. Dense-Mem owns evidence intake, semantic lifecycle, retrieval,
-provenance, authorization, and audit.
+Dense-Mem is a standalone MCP Streamable HTTP memory service. PostgreSQL with pgvector owns durable memory, provenance, workflow, security, search, and audit. Model providers propose assessments; deterministic server policy decides what can commit.
 
-## System Map
+## Runtime Boundaries
+
+```mermaid
+%%{init: {"flowchart": {"curve": "linear"}}}%%
+flowchart TB
+  Client["AI client"] --> MCP["Authenticated /mcp"]
+  User["User browser"] --> UI["First-party /ui"]
+  Operator["Private operator"] --> Control["Separate control listener"]
+  MCP --> App["Capability application services"]
+  UI --> App
+  Control --> App
+  App --> PG[("PostgreSQL + pgvector<br/>Durable authority")]
+  App --> Providers["Assessment, extraction, embeddings<br/>Optional typed decisions"]
+  App --> Coordination["Redis or single-process coordination"]
+  Workers["Ontology maintenance<br/>Search reconciliation<br/>Privacy maintenance"] --> App
+```
+
+MCP is the supported external memory integration contract. Browser handlers are first-party interfaces. The control listener stays private or behind dedicated administrative ingress.
+
+## Dependency Direction
 
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart LR
-  Host["MCP client"] --> Transport["Authenticated MCP transport"]
-  Browser["User portal"] --> HTTP["First-party HTTP handlers"]
-  Operator["Private control portal"] --> HTTP
-  Transport --> App["Capability application services"]
-  HTTP --> App
-  App --> PG[("PostgreSQL and pgvector")]
-  App --> AI["Bounded model-provider ports"]
-  App --> Coordination["Redis or single-process coordination"]
+  Transport["Transport<br/>Bind and translate"] --> Application["Application<br/>Orchestrate use cases"]
+  Application --> Domain["Domain policy and ports"]
+  Storage["PostgreSQL / Redis adapters"] -. "Implement ports" .-> Domain
+  Provider["Provider adapters"] -. "Implement ports" .-> Domain
+  Composition["Composition root"] -. "Construct and connect" .-> Application
+  Composition -.-> Storage
+  Composition -.-> Provider
 ```
 
-PostgreSQL is the durable authority for knowledge, control state, workflow,
-audit, graph-shaped reads, full-text search, and vectors. Redis and process
-memory provide coordination only. Multiple server instances require distributed
-coordination; one process can use the in-process implementation.
-
-## Responsibility Boundaries
-
-Dependency direction is transport → application → domain and ports.
-Providers and storage implement ports. Composition constructs and connects
-the concrete implementations.
-
-| Owner | Responsibility |
+| Capability | Owns |
 | --- | --- |
-| Access | Authentication, canonical identity, memberships, credentials, portal sessions, grants, and access policy. |
-| Remember | Strict intake, security admission, bounded assessment, retry behavior, and synchronous write orchestration. |
-| Knowledge | Authoritative evidence, semantic/lifecycle state, search-document and projection writes. |
-| Search, recall, graph, trace | Search orchestration and maintenance, authorized retrieval, graph reads, and provenance. |
-| Dream, community, conflict | Derived Hypotheses, community snapshots, and governed conflict workflows. |
-| Privacy, settings, operations, audit | Private erasure/retention, runtime configuration, operator diagnostics, and audit use cases. |
+| Access | Identity, memberships, credentials, sessions, grants, and access policy. |
+| Remember / Session | Strict intake, exact source staging, bounded provider orchestration, and terminal outcomes. |
+| Knowledge | Evidence, occurrences, source revisions, lifecycle, Evidence conflicts, and authoritative search writes. |
+| Recall / Trace / Memory packs | Authorized retrieval, bounded provenance reads, and portable Evidence exports. |
+| Ontology | Derived shared-Evidence topics, memberships, equivalence, and manager overrides. |
+| Search | Search contracts, query orchestration, index mechanics, and reconciliation. |
+| Privacy / Settings / Operations / Audit | Erasure and retention, configuration, diagnostics, and audit use cases. |
 
-Models propose closed-schema results. Deterministic server policy decides
-authorization, identity, support, lifecycle, and durable state.
+The [checked architecture inventory](https://github.com/markhuangai/dense-mem/blob/152448a4c4c4192a7492ad3ae2ca311fcb82851a/architecture/ownership.v2.json) and [capability contracts](https://github.com/markhuangai/dense-mem/blob/152448a4c4c4192a7492ad3ae2ca311fcb82851a/architecture/capability-contracts.md) own package-level detail.
 
 ## Runtime Composition
 
-The production image contains one executable, `/app/server`, PostgreSQL
-migrations, and the user/control browser bundles. Server composition is owned
-by `cmd/internal/serverapp`; transports and workers receive explicit capability
-dependencies and process contexts.
+| Runtime | Boundary |
+| --- | --- |
+| Production | `/app/server`, migrations, user/control browser bundles. |
+| Demo | `/app/demo-server`, bounded temporary-team behavior and user bundle. |
+| Evaluation | Separate build profile with bounded evaluation tools. A runtime flag cannot enable them in production. |
+| One server process | Process-local coordination is supported. |
+| Multiple server processes | Redis or an equivalent distributed implementation is required. |
 
-The demo image uses `/app/demo-server` and the user bundle. The evaluation
-image compiles the evaluation profile and adds its bounded harness tools.
-A production runtime setting cannot enable evaluation-only tools.
+Startup validates configuration, connects to a writable PostgreSQL primary, serializes migrations under a session lock, verifies search contracts, and composes providers, listeners, and workers. Readiness remains false until required dependencies are ready. Shutdown cancels request/worker contexts and closes dependencies.
 
-The checked source inventory is
-[ownership.v2.json](https://github.com/markhuangai/dense-mem/blob/main/architecture/ownership.v2.json),
-assembled from exact capability fragments under `architecture/modules/`.
-[Capability contracts](https://github.com/markhuangai/dense-mem/blob/main/architecture/capability-contracts.md)
-describe the native package owners.
+## Read And Write Responsibilities
 
-## Architecture Conformance
+| Question | Canonical explanation |
+| --- | --- |
+| What is stored, and what changes eligibility? | [Evidence Model And Lifecycle](Evidence-Model-And-Lifecycle) |
+| When is input staged, assessed, embedded, and committed? | [Memory Write Pipeline](Write-Pipeline) |
+| How are shared sources organized? | [Topics And Organization](Topics-And-Organization) |
+| How are candidates selected and hydrated? | [Recall Ranking](Recall-Ranking) |
+| How are identity and spaces enforced? | [Request Lifecycle And Security](Request-Lifecycle-And-Security) |
+| How do startup, backup, and recovery work? | [Operations Runbook](Operations-Runbook) |
 
-Accepted ADRs govern predictable tool outcomes, public-behavior tests, single
-policy ownership, simple sufficient designs, and capability visibility.
-
-The manifest has schema version 2. Its fragments classify exact Go/browser
-units, worker anchors, and database-case ownership. The dependency role matrix
-has one owner in `architecture/manifest.mjs`. Cross-capability imports require
-a public target; private adapters and PostgreSQL infrastructure remain private.
-
-Independent discovery checks production/evaluation Go profiles, browser imports,
-and worker anchors. Missing, duplicate, stale, unclassified, or forbidden edges
-fail. There are no dependency exceptions or ticket-expiring worker records.
+## Architecture Checks
 
 ```bash
 node scripts/check-architecture.mjs
 node --test tests/uat/architecture_conformance.test.mjs
 ```
 
-## Startup And Shutdown
-
-Startup validates configuration, connects to a writable PostgreSQL primary,
-serializes migrations under a database session lock, establishes the search
-contract, and composes coordination, providers, listeners, and workers.
-
-The main listener serves MCP and the user portal. The separate control listener
-serves administrative interfaces and authenticated metrics. Operation logging
-has a required PostgreSQL sink whose availability participates in readiness.
-
-Shutdown stops request admission and background work through their owning
-contexts, then closes dependencies. Long-lived streams release their slots on
-disconnect or cancellation. See [Operations Runbook](Operations-Runbook).
-
-## Write Boundary
-
-Remember validates and scans the complete request, serializes its idempotency
-key, resolves duplicate evidence and bounded context, and assesses submitted
-evidence/proposals. It embeds required final documents before one fenced
-canonical transaction. Duplicate-candidate embedding may also precede
-assessment.
-
-Safe evidence may be stored without a Relationship. Unsupported proposals have
-explicit dispositions. Invalid assessor responses and required provider,
-embedding, or commit failures cannot partially commit accepted knowledge.
-The originating call returns the terminal result.
-
-See [Memory Write Pipeline](Write-Pipeline) for ordering, deadlines,
-retryability, and failure semantics.
-
-## Read Boundary
-
-Recall retrieves evidence contexts after final authorization and eligible
-Relationship support-path checks. It separately returns related Relationships,
-communities, conflicts, and Hypotheses. Derived frontiers never turn into
-submitted evidence.
-
-Trace expands normalized evidence, support decisions, transitions, and conflict
-history for an authorized Relationship. A SemanticEdge is a read projection of
-an active eligible Relationship, not another authoritative record.
-
-Search reconciliation repairs derived documents and vectors using source and
-contract fences. Required write embeddings remain part of the synchronous
-write. See [Recall Ranking](Recall-Ranking) and
-[Data Model And Storage](Data-Model-And-Storage).
-
-## Memory-Space Ownership Boundary
-
-Authentication fixes team, identity, membership, permanent semantic owner alias,
-credential, grants, and allowed space IDs. Public kinds are `private` and
-`team_shared`. A private space belongs to one team membership.
-
-Each API credential owns a private space through its API-client membership,
-including SSO-issued keys. SSO sessions and OAuth tokens share only the SSO
-user/team membership's separate private space. Rotation preserves the key's
-identity and private space.
-
-The calling LLM selects `remember.target_space: "private" | "team_shared"`.
-There is no default or denied-write fallback. Team-read-only callers can mutate
-their own private memory; shared mutation requires current write permission plus
-semantic ownership. Read visibility never grants mutation of another owner's
-records. Private sources remain excluded from shared ontology.
-
-Legacy private history is split by immutable writer during maintenance. Necessary
-support copies from the same old private space retain provenance and do not
-inflate support. Historical handles are scoped by owner, destination, and
-generation; mixed artifacts remain sealed. Erasing an original writer's private
-memory purges its migration copies and invalidates dependent memories. Applicable
-holds block physical purge. See [Operations Runbook](Operations-Runbook).
-
-## Risks And Mitigations
-
-| Failure mode | Architectural protection |
-| --- | --- |
-| A transport duplicates domain authorization or bypasses it | Narrow application APIs and checked dependency boundaries. |
-| A provider changes durable lifecycle or owner | Closed-schema results and deterministic server policy. |
-| A concurrent source/space change makes a prepared write stale | Commit-time version, source, ownership, and generation fences. |
-| A background projection overwrites newer knowledge | Versioned source/hash/search-contract checks. |
-| A private result crosses into shared memory | Independent scoped queries and authorization again on hydration/mutation. |
+Schema-version-2 fragments declare exact package/browser units, public/private visibility, worker anchors, and database-case ownership. Independent discovery rejects missing, duplicate, stale, or forbidden dependencies. One cohesive owner supplies each authoritative policy; similar syntax alone is not a reason to create a shared abstraction.

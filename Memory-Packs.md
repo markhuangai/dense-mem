@@ -1,102 +1,50 @@
 # Memory Packs
 
-Dense-Mem memory packs are read-only exports of selected active Relationships
-and their authorized support provenance. They are portability artifacts, not
-database backups and not a write or identity-resolution path.
+A memory pack is a read-only export of selected authorized Evidence and provenance. The current artifact format is `dense-mem.memory-pack.v3.0`.
 
-This page owns the current `dense-mem.memory-pack.v2.4` artifact. The runtime
-exposes `export_memory_pack` for a caller-selected set of active Relationships.
-A destination receives source evidence through its own authenticated
-`remember` workflow.
-
-## What an export contains
+## Export Boundary
 
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
-flowchart LR
-  Selection["Caller-selected active Relationships"] --> Entities["Referenced Entities and Values"]
-  Selection --> Evidence["Authorized support evidence"]
-  Entities --> Pack["Canonical v2.4 JSON"]
-  Evidence --> Pack
-  Pack --> Hash["SHA-256 content hash"]
+flowchart TB
+  IDs["1–500 authorized Evidence IDs"] --> Read["Consistent bounded provenance reads"]
+  Read --> Exact["Original Evidence and occurrences"]
+  Read --> History["Source revisions, decisions and lifecycle"]
+  Exact --> Canonical["Validate and canonicalize artifact"]
+  History --> Canonical
+  Canonical --> Pack["v3.0 JSON + SHA-256"]
+  Canonical --> Omissions["Explicit omissions and counts"]
 ```
 
-An export may include:
+Select Evidence IDs returned by supported memory tools. Export derives visibility from authentication and does not write memory. Complete arguments and result fields are in [Technical Reference](Technical-Reference#export_memory_pack).
 
-- selected active Relationship snapshots and temporal/polarity qualifiers;
-- referenced Entity, Value, and predicate descriptors;
-- evidence and accepted support spans that the caller may read;
-- source author and installation metadata as provenance only; and
-- format, creation, counts, omissions, and canonical hash metadata.
+## Artifact Contents
 
-It never includes API keys, sessions, security/audit logs, raw embeddings,
-search documents, provider retry data, Redis state, unresolved review work, or
-Hypotheses.
+| Included | Meaning |
+| --- | --- |
+| Evidence and content hashes | Exact authorized source content when requested and available. |
+| Occurrences | Original submitted text, source, authorship, and provenance. |
+| Source revisions | Source identity, revision tokens, envelopes, and lineage. |
+| Decisions and lifecycle | Bounded retained acceptance and lifecycle history. |
+| Format, source metadata, counts, and omissions | Portable context and explicit limits. |
 
-## Artifact outline
+`include_evidence` controls source-content inclusion. Omitted/truncated content and bounded history remain explicit. Verify the returned canonical hash, counts, and all omission reasons before relying on the artifact. Export IDs and source metadata are provenance, never destination authorization.
 
-```json
-{
-  "format": "dense-mem.memory-pack.v2.4",
-  "pack_id": "pack_01J...",
-  "name": "dense-mem-architecture",
-  "description": "Selected architecture Relationships",
-  "created_at": "2026-07-11T00:00:00Z",
-  "source": {"installation_id": "install-a", "team_id": "team-a"},
-  "relationships": [],
-  "evidence": [],
-  "evidence_supports": [],
-  "extensions": {},
-  "content_sha256": "..."
-}
+Credentials, authentication material, raw embeddings, search documents, operational logs, and Redis state are outside this artifact. Factual graph records are absent.
+
+## Use At A Destination
+
+```mermaid
+%%{init: {"flowchart": {"curve": "linear"}}}%%
+flowchart TB
+  Pack["Exported source artifact"] --> Review["Review content, provenance and omissions"]
+  Review --> Input["Choose exact source Evidence"]
+  Input --> Destination["Authenticated destination Remember"]
+  Destination --> Policy["Normal destination assessment and lifecycle policy"]
 ```
 
-Endpoint descriptors are nested in Relationship entries; there are no separate
-Entity, Value, or predicate-definition arrays in the current artifact.
-Artifact-local IDs are references in the export. They are never destination
-IDs, owner identities, or authorization grants. Canonical JSON fixes ordering,
-Unicode normalization, omitted/null behavior, number formatting, and the hash
-exclusion fields. Export validation uses one canonicalizer and reports bounded
-omissions instead of silently dropping selected data.
+There is no automatic import or identity-copy operation. A destination submission requires its own explicit memory destination and operation key. It does not inherit source owners, IDs, lifecycle decisions, or permissions.
 
-## Export request
+## Recovery Boundary
 
-```json
-{
-  "name": "release-workflow",
-  "description": "Reusable release Relationships",
-  "relationship_ids": ["<same-team-relationship-uuid>"],
-  "include_evidence": true,
-  "include_entity_names": true
-}
-```
-
-The request is authenticated and constrained by team and allowed-space visibility. The result contains
-`artifact_json`, `content_sha256`, a suggested filename, per-kind counts, and
-bounded `omissions`. An export fails or records an explicit omission when a
-selected Relationship or support evidence is not readable by the caller.
-
-## Destination workflow
-
-An exported pack is an external artifact. To use its contents elsewhere, a
-caller must extract exact evidence and submit a complete, authenticated
-`remember` request with optional logical Relationships and their supporting
-`evidence_indices`; the originating call returns the complete terminal result.
-The destination never copies
-source IDs, lifecycle status, review decisions, or source profile ownership.
-
-## Not a backup
-
-Exports omit control state, unresolved history, provider metadata, and
-non-exportable evidence. Use the [Operations Runbook](Operations-Runbook#backup)
-for recovery and database backup procedures.
-
-## Invariants
-
-1. Export never writes durable semantic state.
-2. Artifact-local IDs never become destination IDs.
-3. Export obeys team and memory-space read visibility.
-4. Credentials, security payloads, embeddings, search documents, and Redis state
-   are never exportable.
-5. Every omission is explicit and bounded.
-6. The current artifact format is `dense-mem.memory-pack.v2.4`.
+A pack is not a database backup. It omits operational state and can contain bounded or omitted source/history data. Use [Operations Runbook](Operations-Runbook#backup) for backup and restore.

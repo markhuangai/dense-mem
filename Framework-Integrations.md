@@ -1,49 +1,37 @@
 # Framework Integrations
 
-The Dense-Mem Python core client uses the official MCP SDK. It supports Python
-3.11–3.14 and MCP SDK 1.30 through the compatible 1.x line. The client code is
-merged through [PR #563](https://github.com/markhuangai/dense-mem/pull/563);
-PyPI publication is pending. Install a verified wheel:
+The Python package provides a typed MCP core client, a Google ADK memory service, and a read-only LangChain retriever. Use a verified wheel built from the matching release source. Python 3.11–3.14 and MCP SDK `>=1.30.0,<2` are supported.
 
-~~~bash
-python -m pip install /path/to/densemem-0.1.0rc1-py3-none-any.whl
-~~~
+```bash
+python -m pip install /path/to/densemem-VERSION-py3-none-any.whl
+```
 
-The Google ADK integration is documented below. The LangChain retriever passed
-validation in [PR #608](https://github.com/markhuangai/dense-mem/pull/608), at
-[`62147d6f`](https://github.com/markhuangai/dense-mem/commit/62147d6fa4fc9da323c4f775250dc5f3d62efe7a).
-Code merge and package publication remain pending; use a wheel built from that
-verified revision. The core installs neither framework.
+The core installs neither framework. Add `[adk]` or `[langchain]` to the wheel installation for the corresponding integration.
 
-## Authentication and operations
+## Authentication And Operations
 
-~~~python
+```python
 from densemem import DenseMemClient
 
-client = DenseMemClient("https://memory.example.com/teams/TEAM_UUID/mcp", token=api_key)
+client = DenseMemClient(endpoint, token=api_key)
 tools = await client.list_tools()
-~~~
+```
 
-Pass exactly one of token or token_provider. A provider is an async callable
-returning a caller-owned access token. The client resolves it once per operation;
-it does not acquire or refresh OAuth credentials. Use an authenticated team URL
-or /mcp. Credentials belong only in the bearer header, never the URL. Configure
-transport trust through the environment's certificate store when using a private CA.
+`endpoint` is the authenticated team MCP URL copied from the portal. Supply exactly one static `token` or caller-owned async `token_provider`. The client resolves the provider once per operation; it does not acquire or refresh OAuth tokens. Keep credentials out of URLs and committed configuration.
 
-Each call owns its SDK session, initialization and transport cleanup. The default
-190-second total deadline allows the server's bounded 180-second write processing.
-A shorter positive finite timeout is supported through the timeout constructor
-argument. The synchronous SyncDenseMemClient exposes the same methods and rejects
-use inside an active event loop.
+| Interface | Behavior |
+| --- | --- |
+| `DenseMemClient` | Async initialize, list_tools, remember, ingest_session, recall_memory, and trace_memory. |
+| `SyncDenseMemClient` | Same core methods; rejects use inside an active event loop. |
+| Typed requests/results | Typed dictionaries with `py.typed`; server discovery/validation remains authoritative. |
+| Default deadline | 190 seconds total; a shorter positive finite timeout is configurable. |
+| Current contract | `dense-mem.v2.8.0`; refresh discovery after upgrading. |
 
-Methods are initialize, list_tools, remember, ingest_session, recall_memory and
-trace_memory. Requests/results are typed dictionaries with py.typed. Server
-validation and authenticated discovery remain authoritative. Current-server
-compatibility is dense-mem.v2.7.0. Refresh tool discovery: Remember requires an explicit target even when an older prerelease used the same version string. Targetless historical requests cannot replay.
+## Remember With Python
 
-## Complete Remember request and safe replay
+The following uses a caller-retained operation key:
 
-~~~python
+```python
 from densemem import RememberRequest
 
 request: RememberRequest = {
@@ -52,36 +40,17 @@ request: RememberRequest = {
     "evidence": [{
         "content": "Dense-Mem stores durable memory in PostgreSQL.",
         "source_type": "manual",
-        "source": "Python core example",
-        "metadata": {"origin": "python-example"},
-    }],
-    "relationships": [{
-        "ref": "durable-store",
-        "subject": {"name": "Dense-Mem", "entity_kind": "project"},
-        "predicate": {"proposed_key": "stores_durable_memory_in"},
-        "object": {"entity": {"name": "PostgreSQL", "entity_kind": "product"}},
-        "polarity": "+",
-        "evidence_indices": [0],
+        "source": "Python example",
     }],
 }
 result = await client.remember(request)
-~~~
+```
 
-Create the operation key once for a deliberate new operation, and retain this
-entire request before sending it. For a replay, resend this unchanged request,
-including target_space, metadata, and key. Never rotate a key to bypass a conflict. The client
-never retries automatically or fills in keys/defaults. Remember requires at least
-one proposal citing every evidence item. The client does not infer Relationships.
+Inspect Evidence dispositions, processing/search state, errors, and warnings. Trace takes an `evidence_id`; recall preserves server order, equivalent IDs, Evidence conflicts, topic hints, and degradations. The full protocol and lifecycle rules live in [Technical Reference](Technical-Reference) and [Memory Write Pipeline](Write-Pipeline).
 
-Inspect evidence and relationship_results: completed processing can include
-not_stored proposals and remediation. Returned warnings remain visible. Recall
-results preserve server order, equivalent IDs, conflicts, topic communities,
-hypotheses, provenance, search states and degradations. These frontiers do not
-establish new factual support. Trace requires a returned relationship_id.
+## Exact Private Session Ingestion
 
-## Exact private session ingestion
-
-~~~python
+```python
 from densemem import SessionRequest
 
 request: SessionRequest = {
@@ -93,85 +62,56 @@ request: SessionRequest = {
     "events": [{
         "event_id": "user-event-1",
         "text": "  Ari uses Go. café 🧭\n",
-        "occurred_at": "2026-10-11T12:00:00Z",
+        "occurred_at": "2026-11-11T10:00:00Z",
     }],
 }
 result = await client.ingest_session(request)
-~~~
+```
 
-Send only exact user-authored events. Event IDs/text/timestamps are immutable;
-the server owns chunking and extraction. External identifiers are provenance,
-never authorization or private-space selection. The server must enable session
-ingestion and the caller must have effective private write access, including team-read-only callers; discovery
-hides unavailable tools. Remember retains its separate proposal requirements.
-Session semantic acceptance is atomic across the request. A no-fact completed
-result with search_state not_required is valid.
+Keep exact immutable event text and timestamps. Authentication selects the private space; external IDs are provenance. The server must enable intake. Inspect `memory_outcome`: `no_memory` explicitly means no excerpts were selected, not a failed or pending write.
 
-## Failures and unknown outcomes
+## Failures And Unknown Outcomes
 
-DenseMemAuthenticationError reports token acquisition or HTTP 401/403 failures.
-DenseMemTransportError reports network/HTTP failure. DenseMemProtocolError
-reports MCP/response failure. DenseMemOperationError preserves actionable public
-errors and failed receipts in result, with code, reason_code, retryable,
-next_action, remediation, correlation_id and submission_id when returned.
-DenseMemTimeoutError reports deadlines. DenseMemCancelledError subclasses
-asyncio.CancelledError and preserves a returned cancellation receipt if present.
+```mermaid
+%%{init: {"flowchart": {"curve": "linear"}}}%%
+flowchart LR
+  Request["Retain complete request and key"] --> Call["Call client"]
+  Call -->|"Terminal result"| Inspect["Inspect outcome and warnings"]
+  Call -->|"Timeout / lost response"| Unknown["Outcome can be unknown"]
+  Unknown --> Recovery["Only unchanged original request/key"]
+  Inspect --> Action["Follow typed next_action"]
+```
 
-A local timeout, disconnect or cancellation can lose a response after a commit.
-An absent receipt means unknown outcome, not a fabricated failed submission.
-Recovery uses only the unchanged original request/key. There is no polling,
-status tool, background readiness loop or automatic new-key recovery.
+| Error | Meaning |
+| --- | --- |
+| `DenseMemAuthenticationError` | Token acquisition or HTTP 401/403. |
+| `DenseMemTransportError` / `DenseMemProtocolError` | Transport failure or malformed MCP/response. |
+| `DenseMemOperationError` | Actionable public failure or failed receipt, retained in `result`. |
+| `DenseMemTimeoutError` | Deadline expired. |
+| `DenseMemCancelledError` | Async cancellation; subclasses `asyncio.CancelledError`, preserving a returned cancellation receipt when available. |
 
-SDK 1.30 negotiates protocol 2025-11-25. Local cancellation closes the client's
-resources; the server can continue processing under this older protocol and may
-commit or reach its bounded deadline. Cancellation does not prove that a write
-was prevented. Retain the unchanged request/key for recovery.
-
-## Development and release
-
-Run the repository package check script for lint/type/async tests, installed-wheel
-checks, reproducible wheel/sdist builds, vulnerability scanning and SBOM. Run
-the repository Python matrix script with a new output directory for the Python
-version matrix, and scripts/e2e.sh python_client for real server boundaries.
-The example scripts require DENSEMEM_ENDPOINT, DENSEMEM_TOKEN and a retained
-DENSEMEM_OPERATION_KEY. Keep the exact request unchanged when rerunning them.
-
-The manual publish-python workflow requires an existing python-vVERSION tag on
-merged main matching package metadata, verified PyPI ownership and an OIDC trusted
-publisher for this repository/workflow/environment. It verifies artifacts and
-produces provenance. Publication is independent of server releases. Never overwrite
-a package version; a broken prerelease may be yanked through a separate maintainer
-action. This implementation does not register publishers, create tags or publish.
-
+A disconnect/cancellation can lose delivery after commit. With MCP SDK 1.30's protocol behavior, closing the client does not prove that server processing stopped. The core never automatically retries, rotates operation keys, or polls a status tool. Preserve the exact request and follow [replay guidance](Write-Pipeline#replay-and-recovery).
 
 ## Google ADK 2.7.0
 
-Install the verified wheel with its optional extra:
-
-~~~bash
+```bash
 python -m pip install '/path/to/densemem-VERSION-py3-none-any.whl[adk]'
-~~~
+```
 
-~~~python
+```python
 from densemem.adk import DenseMemMemoryService
 
 memory = DenseMemMemoryService(endpoint, token=alice_token, bound_user_id="alice")
 snapshot = session.model_copy(deep=True)
 await memory.add_session_to_memory(snapshot)
-response = await memory.search_memory(app_name=snapshot.app_name, user_id="alice", query="Ari Go")
-~~~
+response = await memory.search_memory(
+    app_name=snapshot.app_name, user_id="alice", query="Ari Go"
+)
+```
 
-Use the actual ADK Session and Event types. The runnable adk_memory.py example
-retains a fixed session ID, event ID and timestamp. Both add_session_to_memory
-and add_events_to_memory return None only after every batch completes. Direct
-add_memory raises NotImplementedError. Event deltas require a nonempty session_id;
-nonempty custom_metadata is rejected. Events retain their exact visible user
-text, IDs, order and UTC timestamps. Assistant, system, tool, state, transcription,
-binary and thought content are excluded. Unknown part shapes fail before ingestion.
+Use actual ADK Session/Event types. A static token requires `bound_user_id` and rejects other users, including empty ingestion. For multiple users, resolve their distinct credentials through your existing credential manager:
 
-For multiple users, supply a caller-owned async provider instead of a static token:
-
-~~~python
+```python
 async def credential_provider(app_name: str, user_id: str) -> str:
     return await credentials.access_token(app_name, user_id)
 
@@ -180,113 +120,50 @@ await memory.add_events_to_memory(
     app_name=session.app_name, user_id=session.user_id,
     session_id=session.id, events=session.events,
 )
-~~~
+```
 
-Return the correct Dense-Mem credential for each application/user pair. The
-adapter resolves it once per server request, supports caller-managed rotation,
-and never owns OAuth refresh or caches user credentials. Static credentials
-require bound_user_id and reject every other user, including empty ingestion.
-External application/user/session IDs are provenance; credentials determine
-private-space isolation and authorized shared reads. Different application IDs
-using one credential do not create separate authorization boundaries.
+| ADK behavior | Contract |
+| --- | --- |
+| Event selection | Exact visible user text, IDs, order, and UTC timestamps. Exclude assistant/system/tool/state/transcription/binary/thought content; unknown part shapes fail. |
+| Batching | Sequential requests of at most 20 eligible events. An individual event is never truncated or split by the adapter. |
+| Operations | `add_session_to_memory` and `add_events_to_memory` return None after all batches complete. Deltas require `session_id`; nonempty custom metadata and direct `add_memory` are unsupported. |
+| Limits | Default 190-second deadline covers slot waiting, credential resolution, and all batches; default concurrency four public operations. |
+| Retry identity | Deterministic `google-adk-v1` keys from application/user/session/ordered event identities. Retain the unchanged original snapshot. |
 
-Calls automatically send sequential batches of at most 20 eligible events.
-The default 190-second deadline includes slot waiting, credential resolution,
-and every batch; timeout is configurable. max_concurrency defaults to four
-public operations. Server token and payload limits still apply, and an individual
-event is never truncated or split by the adapter.
+Earlier batches can commit before a later batch fails. Errors retain `completed_results` and, when attempted, the exact `failed_request`. A waiting timeout has no attempted request. Replay the unchanged snapshot or send the exact failed request through the core client; never alter text/order/timestamps to recover.
 
-Each batch has a deterministic google-adk-v1 key derived from application, user,
-session and ordered event identities. Keep the original snapshot until completion.
-An earlier batch can commit before a later batch fails. Existing Dense-Mem error
-classes retain result and available submission/correlation IDs; completed_results
-contains earlier terminal receipts and failed_request contains the exact attempted
-request, when a request was attempted. A timeout while waiting has no failed_request.
-The batch with an unknown receipt may have committed. Replay only the unchanged
-original snapshot, or send the complete unchanged failed_request through the core
-client. Do not change text, timestamps, ordering or metadata to recover. Completed
-batches replay safely; there is no automatic retry, key rotation or readiness polling.
-A completed no-fact result is valid and does not promise a searchable memory.
-
-Search preserves server order, evidence IDs, equivalent IDs and space kind in
-MemoryEntry.custom_metadata["densemem"]. The compatible response subclass retains
-the entire bounded recall result in response.custom_metadata["densemem"], including
-conflicts and degradations on an empty result. Missing author/timestamps remain
-unset. The adapter does not add trace calls or post-filter authorized shared memory.
-
-The extra is pinned to google-adk==2.7.0. Core and extra installed-wheel checks,
-Python 3.11–3.14 and MCP SDK minimum/latest matrices, and google_adk_memory E2E
-are release gates. Package publication and live wiki publication remain separate.
-
-The maintainer approved wiki publication before PR #601 merges and closing #220
-on merge. Run google_adk_memory on the exact merged main commit as post-merge
-follow-up; branch-local results prove only their tested source.
-
-> LangChain is verified on the PR revision above. Code merge and package release
-> remain pending. See [verification evidence](Development-And-Testing#langchain-retriever-verification).
+The adapter does not cache credentials or own OAuth refresh. Different external app/user IDs using one credential do not create separate authorization boundaries. Search retains Evidence IDs, equivalent IDs, and space kind in `MemoryEntry.custom_metadata["densemem"]`, with the complete bounded recall projection in `response.custom_metadata["densemem"]`. Empty/degraded results remain explicit; no extra trace calls or private/shared post-filtering are added.
 
 ## LangChain Core 1.5.4
 
-Install a verified wheel with its optional extra:
-
-~~~bash
+```bash
 python -m pip install '/path/to/densemem-VERSION-py3-none-any.whl[langchain]'
-~~~
+```
 
-~~~python
+```python
 from densemem.langchain import DenseMemRetriever
 
 retriever = DenseMemRetriever(endpoint=endpoint, token=api_key, k=10)
 documents = retriever.invoke("Which database does this project use?")
-~~~
+```
 
-Use native async retrieval inside an event loop:
+Inside an event loop, use:
 
-~~~python
+```python
 documents = await retriever.ainvoke("Which database does this project use?")
-~~~
+```
 
-Pass exactly one static token or caller-owned async token_provider. Credential
-resolution happens once per invocation; the client owns no token refresh or
-credential cache. Authentication determines the team and allowed private/shared
-spaces. The default total timeout is 190 seconds. Sync invocation rejects a
-running event loop; use ainvoke there. Standard LangChain callbacks, tags,
-metadata and batch/abatch behavior remain available. The adapter adds no content
-or credential logging; caller-configured LangChain callbacks receive the normal
-queries and returned Documents.
+| Option or result | Contract |
+| --- | --- |
+| Authentication | Exactly one static token or async token_provider; no credential cache or token refresh. |
+| `k` | Integer 1–50, default 10. |
+| `recall_options` | `topic_ids`, `topic_limit`, `valid_at`, `known_at`, and `known_evidence_ids`. Query/limit/team/space and invocation-time overrides are rejected. |
+| Documents | One per returned Evidence item in server order; ID is `evidence_id`, content is the exact server-bounded context. |
+| `metadata["densemem"]` | Evidence/equivalent IDs, space kind, recall ID, related Topics, topic truncation, conflicts, search states, degradations, and suggested actions. Query-wide context does not imply per-document support. |
+| Optional degradation | Available documents plus content-free `DenseMemRecallWarning`; its `result` retains the complete response, including empty results. |
 
-k defaults to 10 and accepts only integers from 1 through 50. recall_options
-accepts the existing public options: relationship_limit, community_limit,
-community_relationship_limit, valid_at, known_at, known_evidence_ids,
-known_relationship_ids and expand_from_entity_ids. Values pass to the server
-unchanged and are validated there. Query, limit, team and space overrides are
-rejected; invocation-time recall overrides are unsupported. Options are copied
-for each call. Server validation and authorization remain authoritative.
+Required failures remain typed errors; malformed mapping produces no partial documents. The adapter adds no reranking, deduplication, semantic writes, trace calls, or automatic retries. Sync invocation rejects an active event loop. Standard LangChain callbacks/tags/metadata and batch operations remain available; caller-configured callbacks receive ordinary query/document data.
 
-Each returned evidence item becomes one Document in server order. Document.id
-is its evidence_id, and page_content is the exact server-bounded context without
-additional truncation. Document.metadata["densemem"] contains evidence_id,
-equivalent_evidence_ids, equivalents_truncated, space_kind, recall_id,
-related_relationships, related_communities, conflicts, search_states, degradations
-and suggested_actions. These relationship/community frontiers describe the whole
-query, rather than a new per-document support association. The current public
-response exposes no document scores, ranks or source URLs, so none are invented.
-Identical private and shared text remains separate Documents.
+## Build And Validation
 
-Optional degradation returns the available Documents and emits
-DenseMemRecallWarning from densemem.langchain. Its message contains no recalled
-content; its result attribute retains the complete public response, including
-when the document list is empty. Capture this category with Python's warnings
-API when the application needs those details. Required server failures remain
-typed Dense-Mem errors, and malformed recall mapping raises DenseMemProtocolError
-without partial documents. The adapter performs no reranking, deduplication,
-semantic writes, trace calls or automatic retry. It provides no BaseStore, chat
-history, cache, checkpointer or session-ingestion API.
-
-The extra is pinned to langchain-core==1.5.4. An absent or incompatible dependency
-raises an actionable ImportError; the framework-free core remains usable.
-The repository LangChain example uses DENSEMEM_ENDPOINT and DENSEMEM_TOKEN. Package checks cover core, each isolated extra and combined-extra
-compatibility, installed artifacts, Python 3.11–3.14, the existing MCP SDK matrix,
-reproducibility, vulnerability scans and SBOMs. The registered production scenario
-is scripts/e2e.sh langchain_retriever. Publication uses the existing shared server
-release version and publishing gates.
+Framework extras pin `google-adk==2.7.0` and `langchain-core==1.5.4`; missing/incompatible extras fail with actionable imports while the core remains usable. Installed-wheel checks, Python/MCP matrices, real server scenarios, artifact provenance, and shared-release publication are documented in [Development And Testing](Development-And-Testing#python-package-and-frameworks).

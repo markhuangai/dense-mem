@@ -1,86 +1,27 @@
 # Operations Runbook
 
-This runbook covers current installations. Establish the deployed image,
-effective configuration, and database state before applying a procedure.
-A source checkout does not establish the deployed revision.
-
-## Dependency Matrix
-
-| Dependency | Role |
-| --- | --- |
-| PostgreSQL with pgvector | Required durable authority and search execution. |
-| Embedding and verifier providers | Required configured clients; failures are surfaced by affected operations. |
-| Redis | Distributed coordination when required; otherwise one process can coordinate locally. |
-| Prometheus | Optional operational metric collection/querying. |
-
-The production image has one `/app/server` executable. The private control
-portal/API owns administration; the main listener owns MCP and the user portal.
-
-## First Deployment
-
-Follow [Quick Start](Quick-Start) with a pinned image and the matching Compose
-example. Configure the required database/control/provider credentials and
-model dimensions before startup.
-
-Keep the control listener and database private. Use the expert Compose
-configuration for public HTTPS or distributed coordination. Set runtime public
-origins and cookie policy through the control portal.
-
-## Upgrade Existing Private History
-
-Use the matching binary and existing environment configuration. Preflight is
-read-only: it starts no server and applies no migrations.
-
-```bash
-/app/server private-memory-preflight
-```
-
-1. Inspect the content-free report and resolve all blockers. Ambiguous writer
-   attribution and references outside the original legacy private space block
-   migration; do not repair them by guessing an owner.
-2. Schedule downtime, drain requests and workers, and stop every old instance.
-   Verify a restorable backup, then rerun preflight against that stopped state.
-3. Run the migration with the inspected `source_fingerprint`:
-
-   ```bash
-   /app/server private-memory-migrate --maintenance-confirmed \
-     --source-fingerprint='<preflight-source-fingerprint>'
-   ```
-
-4. On interruption, keep instances stopped and resume the same command with the
-   retained fingerprint. Row work commits in bounded batches. Catalog and
-   constraint changes use maintenance locks; allow disk and WAL capacity for
-   necessary supporting copies and search rebuilding. Startup rejects partial
-   migration, and normal writes remain gated until completion.
-5. Start the matching binary after completion and verify readiness, isolation,
-   and effective capabilities before restoring traffic.
-
-Migration preserves shared history and splits private records by immutable
-writer. Necessary support copies retain provenance without adding independent
-corroboration; old handles resolve only within the authorized destination and
-generation. Mixed context is sealed, projections are rebuilt, and unfinished
-session checkpoints are recomputed from the original intake.
-
-Erasing a writer's private memory also purges its migration copies in other
-private spaces and invalidates dependent memories. Applicable legal holds block
-physical purge. Unaffected destination records survive with a new generation,
-which fences stale jobs; erased operation keys cannot restore content.
-
-Before accepting new writes, rollback requires restoring the verified backup
-and matching application/schema together with all instances stopped. After new
-writes, use forward recovery. Down does not discard history or restore legacy
-bindings. Production migration remains an operator-authorized action.
-
+Establish the deployed image, effective configuration, database state, and operation IDs before acting. Source documentation does not establish which binary is deployed.
 
 ## Startup And Readiness
 
-The server validates a writable single-primary PostgreSQL topology and applies
-ordered migrations under a database session lock before serving. Replicas that
-share that primary serialize the migration phase.
+```mermaid
+%%{init: {"flowchart": {"curve": "linear"}}}%%
+flowchart TB
+  Config["Validate configuration"] --> Primary["Connect writable PostgreSQL primary"]
+  Primary --> Lock["Acquire migration session lock"]
+  Lock --> Migrate["Apply pending ordered migrations"]
+  Migrate --> Search["Verify embedding and index contracts"]
+  Search --> Compose["Attach required sinks, listeners and workers"]
+  Compose --> Ready["Ready for traffic"]
+```
 
-The default migration deadline is 1800 seconds. If increasing it, extend the
-deployment healthcheck start period accordingly. A migration still running
-within that deadline is not a reason to launch a second manual migration.
+| Dependency | Role |
+| --- | --- |
+| PostgreSQL + pgvector | Required durable authority and search execution. |
+| Assessment and embedding providers | Required configured clients; affected operations surface failures. |
+| Redis | Required shared coordination for multiple instances; single-process local mode is supported. |
+| Operation-log sink | Required PostgreSQL diagnostic sink participates in readiness. |
+| Prometheus/OTLP | Optional telemetry according to configuration. |
 
 ```bash
 docker compose ps
@@ -89,251 +30,141 @@ curl -fsS http://127.0.0.1:8080/health
 curl -fsS http://127.0.0.1:8080/ready
 ```
 
-Console logs may contain admitted user text. Inspect them within the operator
-boundary; do not paste the entire output into an external report.
+Migrations have no overall deadline by default (`POSTGRES_MIGRATION_TIMEOUT_SECONDS=0`); shutdown still cancels. Progress logs appear every ten seconds. Extend startup/healthcheck grace and rollout deadlines for a long migration instead of launching a competing migration process. See [Configuration](Configuration#postgresql-and-pgvector).
 
-Readiness covers required configured dependencies and active search state.
-The PostgreSQL operation-log sink is required and exposes sink failure/recovery.
-Unsupported replica/distributed topology, incompatible model/dimensions,
-missing pgvector, and invalid required configuration must be corrected before
-traffic.
+### Destructive Migration Boundary
+
+If pending Evidence-only migrations remove retired graph data, stop incompatible readers/writers and verify a matching restore-tested backup before starting the new binary. The migration uses an explicit inventory/fingerprint, bounded lock acquisition, and one transaction without provider calls. A blocked inventory or retained dependency needs investigation, not manual deletion.
+
+Before destructive commit, transaction rollback preserves the prior state. After commit, restoration requires the matching backup; after new accepted writes, use forward recovery unless separately authorized. Ordinary rolling changes must remain compatible with the previous supported binary.
+
+Private attribution migration also runs automatically before serving. Its read-only diagnostic command is:
+
+```bash
+/app/server private-memory-preflight
+```
+
+When an operator deliberately invokes the existing migration command with a retained inspected fingerprint:
+
+```bash
+/app/server private-memory-migrate \
+  --source-fingerprint='<preflight-source-fingerprint>'
+```
+
+Do not guess ownership to clear a preflight blocker. Partial migration remains a readiness failure. The deprecated maintenance-confirmation flag is not an activation requirement.
 
 ## Health Triage
 
-1. Record the image/revision, UTC window, correlation ID, and bounded error.
-2. Check readiness, startup logs, database connectivity/locks, and effective
-   configuration.
-3. Open the corresponding control diagnostic view and inspect its actual
-   source/capture availability.
-4. Follow typed remediation; do not substitute a successful empty response or
-   modify canonical rows to suppress an error.
+1. Record the image/source revision, UTC window, correlation ID, and bounded public error.
+2. Check readiness, database connectivity/locks, effective configuration, and required sink health.
+3. Open the matching control diagnostic view and inspect actual capture availability.
+4. Follow typed remediation; preserve source data and operation identity.
 
-See [Telemetry](Telemetry) for the logging, capture, and metric boundaries.
+Console logs can contain admitted user text. Inspect within the operator boundary; collect only the authorized protected evidence needed for diagnosis.
 
 ## Synchronous Remember Failure Triage
 
-The originating call returns a completed result or a typed failure. For a
-completed result, distinguish stored evidence from accepted Relationship
-splits. Evidence-only storage does not guarantee default recall visibility.
+```mermaid
+%%{init: {"flowchart": {"curve": "linear"}}}%%
+flowchart TB
+  Call["Remember call"] --> Receipt{"Terminal receipt received?"}
+  Receipt -->|"Yes"| Inspect["Inspect processing state,<br/>Evidence outcomes, errors and warnings"]
+  Receipt -->|"No"| Unknown["Unknown delivery outcome<br/>Retain complete original request/key"]
+  Inspect --> Error{"Failure class"}
+  Error -->|"Input / policy"| Correct["Follow bounded correction guidance"]
+  Error -->|"Provider / database"| Diagnose["Join invocation and canonical attempt"]
+  Unknown --> Recover["Unchanged-request recovery when permitted"]
+  Diagnose --> Recover
+```
 
-Use the control Remember view's admitted invocations. An invocation can be an
-execution, replay, or idempotency conflict; several calls can refer to one
-canonical attempt. Inspect phase, retry eligibility, request hash, assessor
-validation details, provider exchange availability, and delivery observations.
+The control Remember view links admitted invocations to canonical attempts. Execution, replay, and key-conflict calls are different invocations and can refer to one attempt. Inspect phase, request hash, validation details, retry eligibility, and provider-exchange availability.
 
-| Failure | Response |
+| Failure | Operator action |
 | --- | --- |
-| Invalid input or security rejection | Follow bounded client guidance; initial rejected content is not captured. |
-| Idempotency conflict | Compare the saved operation; do not rotate the key to bypass it. |
-| Stale source/version/support | Refresh authorized state before a deliberately revised request. |
-| Provider or embedding error | Check the selected endpoint/model, timeout, dimensions, and returned retry action. |
-| Commit/database failure | Check database health and fence conditions; preserve exact retry semantics. |
+| Initial security rejection | Use content-free rule/span metadata; no rejected body was captured. |
+| Changed request under the same key | Compare saved request identity; do not bypass conflict by rotating keys. |
+| Stale source or generation | Refresh authorized current state before an intentional revised operation. |
+| Provider/embedding failure | Check actual endpoint/model, remaining deadline, dimensions, and returned retry action. |
+| Commit failure | Check transaction/fence errors and database health. |
+| Retired contract | Inspect retained outcome; no replay through the removed graph contract. |
 
-Provider work and embeddings finish before accepted canonical commit.
-Duplicate-detection embeddings can precede assessment. A capture marked
-unavailable, truncated, or expired is incomplete evidence, not an empty
-successful exchange.
+Staged exact intake can remain after required failure without new accepted semantic memory. A response-write observation is not proof of client delivery. See [Memory Write Pipeline](Write-Pipeline) and [Telemetry](Telemetry#operation-logs-and-protected-captures).
 
 ## Search Convergence
 
-Use the control Search convergence view:
+Inspect `GET /control/api/search/convergence` or the control Search convergence view. Compare expected, current, drifted, pending, and failed documents with active source/embedding/index generations.
 
-```text
-GET /control/api/search/convergence
-```
-
-Compare expected/current/drifted documents, failed sources, active embedding
-contract and index generation, and reconciliation run status. Search documents
-are derived; canonical evidence and lifecycle remain authoritative.
-
-Reconciliation selects current documents, obtains required embeddings, and
-applies only source/version/hash-compatible results. Fix provider or database
-faults and use the supported maintenance workflow. Do not repeat Remember to
-repair a derived index or manually reset document versions.
+Required foreground embeddings finish before Remember success. Later source or contract changes can need bounded reconciliation. Investigate the allowlisted failure and latest reconciliation outcome; do not repair search by rewriting canonical Evidence or relabeling incompatible vectors.
 
 ## Recall Latency Or Quality
 
-Check source/support/time eligibility before diagnosing a missing result as
-data loss. Inspect `search_states` and `degradations`, then the active
-generation and authorized canonical trace.
+| Observation | Investigate |
+| --- | --- |
+| Empty/degraded results | Public search states and degradations, then authorized source/lifecycle visibility. |
+| Missing topic follow-up | Organization enablement, current memberships, dependencies, and unseen eligible counts. |
+| Slow provider phase | Model, request/context size, concurrency, and provider diagnostics. |
+| Slow database phase | Scoped full-text/vector plans, active index definition, connection pressure, and slow-query logs. |
+| Quality changed | Same-identity deterministic comparison; see [Evaluation](Evaluation). |
 
-Compare lexical and vector candidate behavior with the same query, team, space,
-and time view. ANN reranking cannot recover an omitted candidate. Ranking/index
-changes require the evaluation evidence in [Evaluation](Evaluation).
+Use trace for individual Evidence state. Metrics cannot establish the lifecycle or truth of a source.
 
-## Dream And Community Jobs
+## Ontology Maintenance
 
-Inspect effective enablement, timezone/window, last durable run, lease, input
-counts, provider activity, and final disposition. Graph Dream runs use a daily
-local window; evidence discovery uses UTC hourly windows.
+```mermaid
+%%{init: {"flowchart": {"curve": "linear"}}}%%
+flowchart LR
+  Status["Inspect status"] --> Configure["Configure maintenance"]
+  Configure --> Enable["Enable"]
+  Enable --> Progress["Observe progress"]
+  Progress --> Pause["Pause admission"]
+  Pause --> Resume["Resume"]
+```
 
-A zero-output run can be valid. Dream diagnostic phases explain no input,
-previous evaluation, provider zero proposals, rejected proposals, and
-stale/fenced work. See [Dreaming](Dreaming#run-diagnostics).
+| Private control route | Purpose |
+| --- | --- |
+| `GET/PATCH /control/api/config/ontology-maintenance` | Read/update supported settings. |
+| `GET /control/api/ontology/status` | Current policy, pause state, usage, and progress. |
+| `GET /control/api/ontology/runs` | Bounded run history. |
+| `POST /control/api/ontology/runs` | Explicit bounded run with retained `operation_key` and optional `max_batches`. |
+| `POST /control/api/ontology/runs/{runId}/retry` | Supported explicit retry of the selected run. |
+| `POST /control/api/ontology/pause` or `/resume` | Idempotent admission control with retained operation key. |
 
-Community publication requires a valid complete snapshot and source
-fingerprint. Stale or failed snapshots degrade recall explicitly; operators
-must not treat a summary as evidence.
+Inspect failed/ambiguous outcomes and unknown usage separately from pending or in-flight work. Disabling stops admissions and drains dispatched work. Pause preserves eligible current topic reads; disabling organization removes them. Neither control revives graph clustering or Dream. There are no token-allowance grants.
 
-## Conflict Review Job
+[Configuration](Configuration#ontology-maintenance) owns defaults; [Topics And Organization](Topics-And-Organization) owns publication and manager policy.
 
-The [Conflict Queue](Conflict-Queue) is a read-only projection of open/overdue
-Relationship cases and lease/assessment state. Evidence-conflict cases have
-their own control view and version-fenced resolution workflow.
+## Evidence Conflicts
 
-Check the durable case, next review time, supporter projection, lease expiry,
-and bounded assessment failure class. Let normal recovery reclaim expired
-work. Do not change case status, votes, source evidence, or lease fences
-through ad hoc SQL.
+Use the control Evidence-conflict workspace. Inspect exact positions and provenance before a version-fenced resolve/dismiss command. The current procedure and routes are in [Conflicts And Corrections](Conflicts-And-Corrections#operator-inspection-and-decision).
 
 ## Private-Memory Erasure
 
-The control portal private-memory API is the supported operational surface. It
-lists private spaces, active legal holds, erasure operations, retention runs,
-and `PRIVATE_MEMORY_RETENTION_DAYS`; there is no dedicated browser Privacy
-workspace yet. A zero retention value disables the scheduled scan; owner and
-control requests still work.
+Inspect the exact private target, operation state, active generation, and applicable legal holds. A queued acknowledgement is not physical completion. Let the privacy owner seal/fence and verify its catalog-complete purge. Do not unseal a target or reset generations to retry a stale writer.
 
-Before an erasure:
-
-1. confirm the exact team, private space, owner membership, original-writer
-   migration lineage, and legal holds on every affected destination;
-2. use a new bounded `Idempotency-Key` and the exact body
-   `{"acknowledge_irreversible":true}`;
-3. treat `202 Accepted` as a queued durable operation, not completed deletion;
-4. poll the operation until `completed` or `failed`, preserving its ID and
-   correlation window in the change record.
-
-Acceptance seals the private space and advances its generation in the same
-transaction as the operation. For an accepted SSO-owned credential deletion,
-the credential is disabled in that transaction, and its membership-private space
-is erased and retired. The SSO user's private space and shared memory remain.
-Owner/control private erasure reopens an empty space after completion.
-
-The control Team-credentials delete route is a separate manager operation. It
-disables the selected credential and queues the same private-space retirement
-without an owner acknowledgement body. Original-writer erasure also reaches
-migration copies in other private spaces and invalidates dependent memories;
-an applicable hold on any affected copy blocks physical purge.
-
-The SSO owner path appends its safe `REVOKE` audit row before the credential
-disable and erasure queue become visible; the control/manager path does the
-same with a `DELETE` audit row. An audit insert failure rolls back the
-disablement and queueing. Session invalidation happens after commit and is
-best-effort coordination cleanup: a failure is logged and does not undo the
-durable credential state. If a credential deletion arrives while an erase is
-already queued or processing, its second idempotency mapping upgrades that
-operation to retirement while preserving the sealed target generation and
-worker fence. A different request hash still returns an idempotency conflict.
-
-Remember and correction recheck the canonical space generation in their
-accepted transaction.
-
-The erasure worker rechecks the operation, sealed generation, legal hold, and credential state, then deletes
-the catalog-complete manifest in one transaction, verifies zero remaining rows,
-and redacts private audit payloads while retaining the audit tombstone. If a
-team hard-delete later removes a memory-space catalog row, the append-only audit
-row remains and its `memory_space_id` becomes `NULL`. A worker
-failure is requeued after 1, 2, 4, and 8 seconds; the fifth failed attempt or
-an exhausted expired lease becomes terminal `failed`. Do not manually update
-`status`, `fence`, `manifest_position`, space lifecycle, or deleted counts.
-
-For a stuck operation:
-
-| Observation | Response |
-| --- | --- |
-| live `processing` lease | wait; do not start a second worker |
-| expired lease | let the normal worker reclaim it with a new fence |
-| terminal `failed` | inspect `attempt_count` and bounded `last_error_code`, correct the underlying fault, and submit a new reviewed intent with a new idempotency key if erasure is still authorized; the new operation preserves the failed operation's sealed generation, action, target credential, and retirement outcome |
-| `last_error_code=legal_hold` | verify the hold; release it only under the applicable legal/change authority, then let the worker retry |
-| `last_error_code=manifest_mismatch` or boot reports a manifest mismatch | stop private erasure rollout; identify the unaccounted `space_id` table/FK and ship a reviewed manifest/migration fix |
-| repeated database/timeout error | inspect PostgreSQL health, locks, and the bounded operation metadata; do not delete rows manually |
-
-Automatic retention selects only active private spaces whose most recent
-private content is older than the cutoff, which have no active hold, and which
-have no queued or processing erasure. The retention-run receipt records the
-fixed cutoff and number queued. Changing the configured days later does not
-rewrite an existing run.
-
-A terminal failure does not unseal the space or rewrite the failed operation.
-An authorized owner or control request with a fresh idempotency key creates a
-new queued operation against the same sealed target contract. The space reopens
-or retires only after that recovery operation completes and verifies the full
-manifest.
-
-There is no cancellation or restore endpoint after an erasure is accepted.
-After completion, recovery means an authorized backup/PITR restore into an
-isolated environment and a separate reviewed re-ingestion decision; never copy
-rows back into the live space or reset its generation. Restoring content does
-not re-enable a disabled or retired credential.
-
+Erasure includes raw intake, extraction checkpoints, retained memory, dependent projections, and applicable migration copies. Unaffected spaces remain separate. Owner-facing requests and polling are in [Portals And API Keys](Portals-And-API-Keys#private-memory-erasure).
 
 ## Backup
 
-Use PostgreSQL base backups and WAL/PITR with approved encryption/secret
-material. The recovery catalog should record database/pgvector versions,
-application/schema revision, search contracts/generations, WAL coverage,
-checksums, and retention policy.
+Use a PostgreSQL backup/PITR policy matching durability requirements. For a logical backup of the bundled stack:
 
-Memory packs are selected exports, not full backups. Redis is not the canonical
-backup source. Verify restores regularly in an isolated environment.
+```bash
+docker compose exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > dense-mem.dump
+```
+
+Protect the dump. Record database/server versions, schema, pgvector, active search contracts, WAL coverage, checksums, and protected configuration references. Memory packs and Redis are not full backups. Test restores in isolation.
 
 ## Restore And Disaster Recovery
 
-1. Restore the selected backup and WAL into an isolated environment.
-2. Restore required protected configuration and verify schema, pgvector,
-   ownership, RLS, and active search contracts.
-3. Verify expected canonical counts, representative traces, private-space
-   isolation, and current/temporal recall.
-4. Reconcile derived search state through the supported workflow and verify
-   worker lease recovery.
-5. Complete an authorized deployment/traffic change only after the checks pass.
+1. Restore the selected PostgreSQL backup and WAL into an isolated environment.
+2. Restore compatible protected configuration; verify schema, pgvector, ownership, RLS, and search contracts.
+3. Check canonical counts, representative traces, private isolation, and current/temporal recall.
+4. Verify derived reconciliation and worker lease recovery.
+5. Restore traffic only through the authorized deployment procedure.
 
-Private content erased from the live database must not be copied back by
-resetting a space generation. Any recovery/re-ingestion requires its own
-authorized decision.
+Do not restore erased private content by resetting a space generation. After incompatible migrations or new writes, retain compatible readers/writers and recover forward as required.
 
-## Routine Maintenance
+## Routine Maintenance And Shutdown
 
-Monitor database locks, slow queries, connection budget, vacuum/analyze,
-disk/WAL, backups, provider error/latency, search convergence, conflict due age,
-Dream/community runs, diagnostic retention, and Redis coordination health.
+Monitor locks, slow queries, connection budget, vacuum/analyze, disk/WAL, backups, provider failures, search/organization convergence, diagnostic retention, and coordination health. More application replicas increase database/provider pressure.
 
-Adding replicas multiplies connection/provider pressure. Model or dimension
-changes are not ordinary hot configuration edits; persisted vectors must
-remain compatible with the active contract.
-
-## Graceful Shutdown
-
-Stop admitting requests, cancel owned workers/streams, and allow bounded
-shutdown before closing dependencies. A worker that loses its lease cannot
-commit. Shutdown never converts unfinished work to success.
-
-## Support Bundle
-
-Include the UTC window, image/source revision, correlation and authorized
-operation IDs, safe error codes, readiness, effective non-secret settings,
-search/run summaries, and bounded database/provider metadata.
-
-External support bundles exclude raw credentials, headers, cookies, DSNs,
-evidence, provider prompts/responses, vectors, and database dumps. Authorized
-local diagnostic visibility does not authorize exporting its contents.
-
-## Risks
-
-A capture does not prove response delivery; a counter does not prove current
-lifecycle; stored evidence does not guarantee recall visibility; and a sealed
-space is not proof that physical erasure completed. Use the corresponding
-authoritative result or durable operation state for each decision.
-
-## Enterprise export operations (issue #224)
-
-Enable only the required capability. Configure separate trace and metric destinations and mount destination header files. LangSmith's documented OTLP trace endpoint accepts traces; it is not a metric destination. Collector outage is optional degradation: inspect private `densemem_otlp_*` metrics and the diagnostic exporter state while retaining ordinary readiness and required operation failure checks.
-
-Control admins poll `GET /control/api/audit/export`. Omit `team_id` for the instance, or supply a team UUID. Supply the returned cursor unchanged in the next request and keep the same scope. `limit` defaults to 100 and cannot exceed 1,000. A page contains fixed event metadata and ends with a version-1 checkpoint. Save the cursor only after consuming that checkpoint; deduplicate replayed event IDs. An interrupted page does not establish progress.
-
-The cursor orders insertion transaction ID, timestamp, and event UUID below PostgreSQL's safe transaction frontier. Historical rows have transaction ID zero. Long transactions can delay newer committed events; the checkpoint reports `delayed_by_transaction` and `safe_frontier`. Investigate long-running transactions rather than advancing the cursor manually.
-
-`GET /control/api/diagnostics/bundle` downloads versioned operational JSON: build version, configuration-presence flags, dependency states, authority/schema compatibility, exporter health, and aggregate usage. Unavailable sections are explicit. It does not read capture bodies, filesystem content, or log files.
-
-Rollback disables exporters and download flags. Retain the additive audit insertion column, immutable history, and versioned cursor contract. The migration adds a constant historical value without rewriting payloads, uses a bounded schema lock, and builds matching instance/team indexes concurrently. Interrupted index builds can be resumed; production recovery preserves history.
+Graceful shutdown stops admission and cancels request/worker contexts before closing dependencies. A forced disconnect can leave a client uncertain about delivery; retain operation identity. Keep support bundles bounded and protect operational credentials and admitted text.

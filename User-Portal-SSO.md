@@ -1,234 +1,39 @@
 # User Portal SSO
 
-This page is the source of truth for Dense-Mem browser SSO, OIDC provider
-configuration, team entitlements, SSO-owned credentials, and troubleshooting.
-For the surrounding portal surfaces, see
-[Portals And API Keys](Portals-And-API-Keys).
-For request authentication and tenant enforcement, see
-[Request Lifecycle And Security](Request-Lifecycle-And-Security).
+This page owns IdP setup, entitled-team mapping, directory provisioning, and browser SSO troubleshooting. [Portals And API Keys](Portals-And-API-Keys) owns credential administration and portal procedures; [Request Lifecycle And Security](Request-Lifecycle-And-Security) owns authentication policy.
 
-This page defines the target browser SSO contract. Provider-specific setup is
-version-sensitive; verify it against the deployed Dense-Mem release and the
-provider's current documentation.
-
-This page defines the SSO cookie-session contract. The user portal also
-supports direct API-key authentication and an explicit, separate API-key portal
-session described below; an API-key login is never converted into an SSO
-session.
-
-SSO, OAuth, and directory/SCIM inputs are handled by the access application
-boundary. Provider claims propose an external identity or entitlement; access
-policy validates the mapping, resolves the selected team membership and
-permanent owner alias, and persists through narrow storage ports. Browser
-handlers never persist provider output directly or let a claim choose a team,
-profile, credential, or memory space.
-
-When SSO is configured, the user portal adds public SSO endpoints under the main
-Dense-Mem public base URL.
-
-Register this redirect URI with the OIDC provider:
-
-```text
-https://<dense-mem-host>/ui/api/sso/callback
-```
-
-This value is derived from `SSO_PUBLIC_BASE_URL`, so a deployment with:
-
-```text
-SSO_PUBLIC_BASE_URL=https://dense-mem.example.com
-```
-
-uses:
-
-```text
-https://dense-mem.example.com/ui/api/sso/callback
-```
-
-Dense-Mem exposes these user-portal SSO endpoints:
-
-| Method | Path | Purpose |
-| --- | --- | --- |
-| `GET` | `/ui/api/sso/providers` | Lists enabled SSO providers for the login screen. |
-| `GET` | `/ui/api/sso/start/:providerId` | Starts OIDC login and redirects to the provider. |
-| `GET` | `/ui/api/sso/callback` | Receives the OIDC authorization code callback. |
-| `POST` | `/ui/api/sso/team` | Switches the current SSO browser session to another entitled team. |
-| `GET` | `/ui/api/sso/credentials` | Lists all active credentials owned by the current SSO identity in the selected team. |
-| `POST` | `/ui/api/sso/credentials` | Creates one SSO-owned credential and returns its plaintext API key once. |
-| `GET` | `/ui/api/sso/credentials/:credentialId` | Gets one owned credential by its stable ID. |
-| `POST` | `/ui/api/sso/credentials/:credentialId/rotate` | Rotates one writable owned credential in place, preserving its identity, membership, and private space. |
-| `DELETE` | `/ui/api/sso/credentials/:credentialId` | Disables one owned credential and queues erasure and retirement of its private space. |
-| `DELETE` | `/ui/api/sso/private-memory` | Queues erasure of the selected SSO membership's private space. |
-| `GET` | `/ui/api/private-memory/erasures/:operationId` | Polls an owner-visible erasure operation without exposing control-only target IDs. |
-| `POST` | `/ui/api/sso/logout` | Clears the local Dense-Mem SSO session cookies. |
-
-## API-Key Portal Session
-
-The API-key login screen has an opt-in “Keep me signed in for 7 days” checkbox.
-After the direct bearer key is validated, the UI calls:
-
-| Method | Path | Purpose |
-| --- | --- | --- |
-| `POST` | `/ui/api/session` | Exchanges the current direct API-key bearer for an opaque portal session. Body is exactly `{"remember":true}` or `{"remember":false}`. |
-| `GET` | `/ui/api/session` | Reads the current portal session, direct bearer session, or SSO session. |
-| `POST` | `/ui/api/session/logout` | Deletes the presented portal session and clears its cookies. |
-
-All three authenticated modes use one session response shape:
-
-```json
-{
-  "data": {
-    "team": {},
-    "membership": {
-      "team_id": "...",
-      "name": "...",
-      "grants": ["read"],
-      "role": "member"
-    },
-    "credential": null,
-    "teams": [{ "team": {}, "membership": {} }],
-    "personal_credentials": [],
-    "mcp_public_base_url": "https://memory.example.com"
-  }
-}
-```
-
-`credential: null` identifies an SSO browser session. A non-null credential
-with a locally held bearer identifies direct API-key auth; a non-null
-credential without a locally held bearer identifies an API-key portal-cookie
-session. The response does not expose `auth_method`, capability flags, or the
-permanent owner alias.
-
-### Team And MCP Connection Details
-
-After any API-key, portal-session, or SSO login, `/ui` shows the selected
-team's full UUID and a copyable MCP URL:
-
-```text
-{MCP_PUBLIC_BASE_URL}/teams/{team_id}/mcp
-```
-
-An SSO team switch returns a new session snapshot, so both values refresh
-together. When `MCP_PUBLIC_BASE_URL` is empty, the browser uses its own origin
-and labels that fallback. Configure the canonical HTTPS base in production so
-reverse-proxy host differences cannot produce a client URL for the wrong
-origin. Copying this URL does not copy a credential: configure the MCP client
-with a Dense-Mem API key or customer-IdP OAuth access token. The SSO browser
-cookie is deliberately rejected by MCP routes.
-
-The server stores only SHA-256 fingerprints of the session and CSRF tokens.
-The browser receives a host-only `dense_mem_ui_session` cookie (`HttpOnly`,
-`SameSite=Lax`, `Path=/ui`) and a readable `dense_mem_ui_csrf` cookie on the
-same path. State-changing requests send the CSRF value in
-`X-Dense-Mem-CSRF`. The server-side session always expires seven days after
-creation; the checkbox controls only whether the browser cookies persist past
-the current browser session. Expiry is absolute, not sliding.
-
-The API-key portal session points to the stable credential ID. Rotation replaces key
-material in place, so an active portal session survives rotation. Revocation,
-expiration, inactive/deleted teams, role/scopes, and SSO-owned-key entitlement
-are checked again on each request. The API-key exchange clears SSO browser
-cookies, and an SSO callback clears portal cookies.
-
-Portal sessions are stored in PostgreSQL under a dedicated `NOLOGIN`
-`dense_mem_portal_session_system` role. The application login receives only
-`EXECUTE` on the four bounded session functions; setting the transaction-local
-`app.tx_mode` marker alone does not grant direct access to the session table.
-The bundled Compose deployment runs migrations with the same database login as
-the server. Deployments that separate migration and runtime logins must grant
-the runtime login those function privileges without granting it direct table
-access.
+## Browser Login Flow
 
 ```mermaid
 %%{init: {"sequence": {"rightAngles": true}}}%%
 sequenceDiagram
   actor Browser
-  participant DM as Dense-Mem /ui
+  participant DM as Dense-Mem
   participant IdP as OIDC provider
   participant PG as PostgreSQL
-
-  Browser->>DM: Start provider login
-  DM->>IdP: Authorization request with state/PKCE
+  Browser->>DM: Start enabled provider login
+  DM->>IdP: Authorization request with state and PKCE
   IdP-->>DM: Authorization-code callback
-  DM->>IdP: Validate tokens and load claims/groups
-  DM->>PG: Match enabled mappings and team entitlements
-  PG-->>DM: Teams, selected membership, role, grants, owner alias
-  DM-->>Browser: Secure session + CSRF cookies
-  Browser->>DM: State-changing /ui request + CSRF header
-  opt Switch entitled team
+  DM->>IdP: Validate tokens and load configured claims/groups
+  DM->>PG: Resolve identity and entitled memberships
+  PG-->>DM: Selected team, membership, role and grants
+  DM-->>Browser: Browser session and CSRF cookies
+  opt Select another entitled team
     Browser->>DM: POST /ui/api/sso/team
-    DM->>PG: Validate entitlement
+    DM->>PG: Revalidate entitlement and select membership
+    DM-->>Browser: Refreshed session and connection details
   end
 ```
 
-Do not use `/ui/api/sso/logout` as an OIDC post-logout redirect URI. It is a
-local API endpoint, not a browser landing page. The target contract does not
-perform RP-initiated OIDC logout with `post_logout_redirect_uri` unless a later
-version explicitly adds it.
+Register `https://<dense-mem-host>/ui/api/sso/callback` with the OIDC provider. It is derived from the configured `SSO_PUBLIC_BASE_URL`. Use `GET /ui/api/sso/providers` to inspect login availability, and `GET /ui/api/sso/start/{providerId}` to start login.
 
-SSO sessions and API keys are separate authentication sources. One SSO identity
-can be entitled to multiple teams, and the same provider group or role can map
-to many Dense-Mem teams. Dense-Mem creates one membership with a permanent
-owner alias per entitled team, and `/ui` shows a team selector for those teams.
+One SSO identity can have memberships in several teams. Each membership has its own permanent owner alias and private space. Team selection never creates API-key material. Owned API credentials have separate private spaces; their administration is in [Portals And API Keys](Portals-And-API-Keys#sso-owned-credentials).
 
-The SSO membership has no API key material. Authentication resolves its actor
-identity, membership, and permanent owner alias before application services
-run; the team ID and membership ID are not substituted for the owner alias.
+`POST /ui/api/sso/logout` clears the local SSO session. It is not an OIDC post-logout landing page. If an IdP requires a post-logout URL, use `/ui`; Dense-Mem does not implement RP-initiated logout as part of this flow.
 
-SSO manager sessions see the Team tab and can manage same-team credentials like
-a manager API-key login. Credentials created from the Team tab use ordinary API
-keys.
+Provider setup is version-sensitive: match the deployed release and the provider's current configuration.
 
-SSO member sessions see the My credentials tab. One SSO identity may own any
-number of active credentials in the selected team. The session response lists
-them in `personal_credentials`, and every follow-up operation addresses a
-specific `credentialId`; the server never selects an arbitrary or newest key.
-Each credential has a stable ID and its own private space through its API-client
-membership. Two keys from one SSO user are isolated from each other and from the
-user's SSO session/OAuth private space. Rotation preserves the ID and private
-space; revocation affects the selected credential. Plaintext keys are returned
-only on creation or rotation.
-
-The LLM chooses `private` or `team_shared` through the required
-`remember.target_space` field. The portal displays effective private/shared
-read/write capabilities; `memory_binding` inputs are rejected. Team-read-only
-members and keys can write their own private memory, including gated session
-intake. Shared writes require current write permission and semantic ownership.
-
-Bearer authentication revalidates the issuing SSO membership's current
-entitlement. Credential creation and rotation remain constrained by membership
-grants and the credential's own scopes. Private erasure requires private access
-and ownership; it does not require shared write permission.
-
-Credential deletion and private erasure require an `Idempotency-Key` and exactly
-`{"acknowledge_irreversible":true}`. A `202 Accepted` response means the durable
-operation is queued and must be polled. Credential deletion disables its bearer
-and retires its private space. The issuing user's separate private space and
-team-shared memory remain intact. Applicable legal holds can delay physical
-purge. Erasure follows migration-copy lineage and invalidates dependent memory
-without granting access to another private space.
-
-The current SSO entitlement limits what the member can create or rotate from
-`/ui`:
-
-| SSO entitlement on selected team | Self-service behavior |
-| --- | --- |
-| Manager | Use the Team tab instead of My credentials. |
-| Member with read/write permission | Can create multiple read/write or read-only personal API keys, choose the expiry for each, rotate only a selected key when both membership and credential scopes include write, and delete owned keys or request profile erasure. |
-| Member with team-read-only permission | Can create multiple team-read-only personal API keys and erase their own SSO private memory. Credential rotation and deletion retain their existing team-write requirements. |
-
-SSO managers retain the established Team-tab contract: they can manage
-team-scoped credentials through `/ui/api/team/credentials`, but the
-SSO-owned collection is member self-service and does not expose another
-member's private space. API-key and token-derived portal sessions cannot call
-the SSO-owned collection or mint/link credentials.
-
-If the provider requires a post-logout redirect URI, use the portal URL:
-
-```text
-https://<dense-mem-host>/ui
-```
-
-### SSO Login Visibility
+## SSO Login Visibility
 
 The user portal shows SSO login only when public SSO is ready:
 
@@ -242,7 +47,7 @@ When these conditions are not met, `/ui` should only show API-key login and
 `GET /ui/api/sso/providers` should return no public providers. This is
 intentional for deployments such as the hosted demo.
 
-### Provider Fields
+## Provider Fields
 
 Configure providers in the control portal SSO section.
 
@@ -288,7 +93,7 @@ Group mappings connect provider group values to Dense-Mem teams:
 | Role | Dense-Mem membership role, either member or manager. Manager role grants the `/ui` Team tab for that team. |
 | Status | Disable a mapping without deleting it. |
 
-### Microsoft Entra ID / Azure AD SCIM Directory Automation
+## Microsoft Entra ID / Azure AD SCIM Directory Automation
 
 One Dense-Mem deployment is one organization boundary. An Entra provider can
 have one SCIM connector. The connector provisions durable users, groups, and
@@ -366,7 +171,7 @@ a group archives only a directory-created team. Exact-name, manual, and adopted
 teams remain active but lose the removed directory access. An operator may adopt
 a directory-created team to make it manual before that removal.
 
-### Control Portal SSO
+## Control Portal SSO
 
 The control portal keeps the break-glass `CONTROL_PORTAL_TOKEN`, and can also
 use an enabled OIDC provider plus explicitly configured control-admin group IDs.
@@ -384,7 +189,7 @@ identity must also remain an active SCIM user. Keep the control listener private
 or behind dedicated administrative ingress, and retain the break-glass token
 outside browser-accessible configuration.
 
-### Generic OIDC Group And Role Mapping
+## Generic OIDC Group And Role Mapping
 
 Dense-Mem is not tied to a specific SSO vendor. A provider without an active
 SCIM connector can use stable group, role, or entitlement values through one of
@@ -425,7 +230,7 @@ Use `LOG_LEVEL=debug` during setup and read `id_token_claim_names`,
 `userinfo_claim_names`, and `groups` in the SSO callback logs to confirm the
 right claim names and emitted values.
 
-### Example: ZITADEL Cloud With Project Roles
+## Example: ZITADEL Cloud With Project Roles
 
 For hosted ZITADEL, use the ZITADEL instance that owns the application as the
 issuer URL:
@@ -512,7 +317,7 @@ claim names and a group value matching the role key:
 }
 ```
 
-### SSO Troubleshooting
+## SSO Troubleshooting
 
 Set `LOG_LEVEL=debug` while setting up SSO. The callback response now returns a
 safe setup hint, and the server log has provider and claim details.

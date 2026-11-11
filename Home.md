@@ -1,196 +1,44 @@
 # Dense-Mem
 
-Dense-Mem gives AI clients a shared, evidence-backed semantic memory service.
+Dense-Mem stores exact Evidence with provenance and a governed lifecycle. AI clients decide when to save or retrieve memory; the server owns authorization, assessment, persistence, and retrieval.
 
-This manual describes the current PostgreSQL + `pgvector` architecture and
-supported product behavior. A code/design mismatch is implementation work, not
-a second valid architecture.
+This wiki describes the Evidence-only source contract, `dense-mem.v2.8.0`. Check the connected server's authenticated `tools/list` before using an example; a deployed image can lag the source.
 
-## Current Memory Contract
-
-The current source contract is `dense-mem.v2.7.0`. `remember` requires an explicit private or team-shared destination and accepts exact evidence
-and required client Relationship proposals, validates the complete batch, and returns
-a terminal result. Safe evidence can be stored without an accepted
-Relationship. Default recall still requires an eligible Relationship support
-path.
-
-The private control portal provides operation logs and Remember/Dream
-diagnostics. Graph Dream generation produces isolated Hypotheses; historical evidence-discovery
-Hypotheses remain readable. Exact schemas and examples are in
-[Technical Reference](Technical-Reference).
-
-## Python Integration
-
-The Python core client is merged. This wiki documents verified-wheel
-installation, authenticated operations and safe retries
-in [Framework Integrations](Framework-Integrations). ADK/LangChain extras and PyPI
-publication remain pending.
-
-## What Dense-Mem Remembers
-
-Dense-Mem is suited to:
-
-- project goals, systems, ownership, and current priorities
-- preferences and team agreements
-- decisions and corrections across sessions
-- time-scoped operational knowledge
-- provenance needed to explain a remembered Relationship
-
-Dense-Mem is not a truth oracle. A host LLM chooses when to call it. Dense-Mem
-stores exact evidence, lets one bounded assessor session repair
-grounding/identity/predicate/support decisions, applies deterministic lifecycle
-rules, and preserves trace. Unsupported proposals receive `not_stored`; safe evidence can still be stored.
-
-## How It Works
-
-~~~mermaid
-%%{init: {"sequence": {"rightAngles": true}}}%%
-sequenceDiagram
-  actor User
-  participant Host as AI client
-  participant DM as Dense-Mem
-  participant PG as PostgreSQL and pgvector
-  User->>Host: Share exact evidence
-  Host->>DM: remember with required proposals and a retry key
-  DM->>DM: Validate, resolve duplicates, and assess
-  alt Accepted
-    DM->>DM: Embed required documents
-    DM->>PG: Commit evidence, semantics, vectors, and result
-    DM-->>Host: Completed result with dispositions
-  else Failed
-    DM->>PG: Bounded attempt or audit diagnostics
-    DM-->>Host: Typed error with next action
-  end
-  Host->>DM: recall_memory(query)
-  DM->>PG: Authorized support and time-view reads
-  DM-->>Host: Evidence, related frontiers, and degradations
-  opt Provenance needed
-    Host->>DM: trace_memory(relationship_id)
-    DM->>PG: Read evidence and decision history
-    DM-->>Host: Bounded authorized lineage
-  end
-~~~
-
-The convergence rule:
-
-```text
-same real identity      -> reuse the Entity
-same owner + relationship -> attach evidence to that Relationship
-another profile agrees  -> keep its authored Relationship and group on recall
-profiles disagree       -> preserve each author; use a team Conflict case
-new real identity       -> create one Entity
-new relationship        -> create one Relationship
-actual ambiguity        -> server assessment; no client resolution loop
-unsupported proposal   -> not_stored; safe evidence can still be stored
-stored evidence        -> recall only with an eligible support path
-dream speculation       -> Hypothesis only; no new node
+```mermaid
+%%{init: {"flowchart": {"curve": "linear"}}}%%
+flowchart TB
+  Client["Your AI client"] -->|"Exact Evidence"| Remember["Remember"]
+  Remember --> Store[("PostgreSQL + pgvector")]
+  Store -->|"Eligible Evidence"| Recall["Recall"]
+  Recall --> Client
+  Store -. "Derived organization" .-> Topics["Topics"]
+  Topics -. "Discovery and follow-up" .-> Recall
 ```
-
-Aliases are Entity-name metadata, never edges.
 
 ## Start Here
 
-```mermaid
-%%{init: {"flowchart": {"curve": "linear"}}}%%
-flowchart LR
-  Start["What do you need?"] --> Use["Use memory"]
-  Start --> Design["Understand the design"]
-  Start --> Run["Deploy and operate"]
-  Start --> Build["Develop and test"]
-  Use --> Workflow["Quick Start / Using Dense-Mem"]
-  Design --> Model["Architecture / identity /<br/>Relationship lifecycle"]
-  Run --> Ops["Configuration / security / runbook"]
-  Build --> Dev["Development / evaluation / release"]
-```
-
-| Goal | Canonical page |
+| Goal | Read |
 | --- | --- |
-| System boundary | [Architecture](Architecture) |
-| Entity IDs, names, aliases, homonyms, merge/split | [Entity Identity And Resolution](Entity-Identity-And-Resolution) |
-| Predicate, Relationship, evidence, verification, status/support, forget | [Relationship Model And Lifecycle](Relationship-Model-And-Lifecycle) |
-| `remember` process and strict assessor | [Memory Write Pipeline](Write-Pipeline) |
-| PostgreSQL, `pgvector`, Redis, queues, and recovery | [Data Model And Storage](Data-Model-And-Storage) |
-| Tenant keys, composite constraints, RLS, queues, and future team sharding | [PostgreSQL Cluster-Safe Schema](PostgreSQL-Cluster-Safe-Schema) |
-| Recall eligibility, branches, adjacency, and trace escalation | [Recall Ranking](Recall-Ranking) |
-| Embedding/cosine meaning, candidate fusion, RRF, and reranking | [Vector Search And Ranking](Vector-Search-And-Ranking) |
-| Exact/ANN execution, HNSW, halfvec, index lifecycle, and vector scale | [ANN, HNSW, And Halfvec](ANN-HNSW-And-Halfvec) |
-| Public MCP tool schemas | [Technical Reference](Technical-Reference) |
-| Local setup | [Quick Start](Quick-Start) |
-| Everyday client workflow | [Using Dense-Mem](Using-Dense-Mem) |
-| MCP clients | [MCP Clients](MCP-Clients) |
-| Conflict, correction, identity split, and forget | [Conflicts And Corrections](Conflicts-And-Corrections) |
-| Hypotheses | [Dreaming](Dreaming) |
-| Community discovery | [Community Memory](Community-And-Dreaming) |
-| Configuration and operation | [Configuration](Configuration), [Operations Runbook](Operations-Runbook) |
-| Security, portals, SSO, keys | [Request Lifecycle And Security](Request-Lifecycle-And-Security), [Portals And API Keys](Portals-And-API-Keys), [User Portal SSO](User-Portal-SSO) |
-| Telemetry, feedback, evaluation | [Telemetry](Telemetry), [Recall Feedback](Recall-Feedback), [Evaluation](Evaluation) |
-| Source changes and testing | [Development And Testing](Development-And-Testing) |
-| Manual ownership | [Documentation Maintenance](Documentation-Maintenance) |
+| Set up a server or try disposable memory | [Quick Start](Quick-Start), [Hosted Demo](Hosted-Demo) |
+| Use memory from an AI client | [Using Dense-Mem](Using-Dense-Mem), [MCP Clients](MCP-Clients) |
+| Integrate Python, Google ADK, or LangChain | [Framework Integrations](Framework-Integrations) |
+| Understand the current model | [Evidence Model And Lifecycle](Evidence-Model-And-Lifecycle), [Topics And Organization](Topics-And-Organization) |
+| Understand execution and storage | [Architecture](Architecture), [Memory Write Pipeline](Write-Pipeline), [Data Model And Storage](Data-Model-And-Storage) |
+| Inspect the tool contract | [Technical Reference](Technical-Reference) |
+| Understand search | [Recall Ranking](Recall-Ranking), [Vector Search And Ranking](Vector-Search-And-Ranking), [ANN, HNSW, And Halfvec](ANN-HNSW-And-Halfvec) |
+| Correct, retract, export, or give feedback | [Conflicts And Corrections](Conflicts-And-Corrections), [Memory Packs](Memory-Packs), [Recall Feedback](Recall-Feedback) |
+| Administer access | [Portals And API Keys](Portals-And-API-Keys), [User Portal SSO](User-Portal-SSO), [Request Lifecycle And Security](Request-Lifecycle-And-Security) |
+| Operate a deployment | [Configuration](Configuration), [Public HTTPS And Redis](Public-HTTPS-And-Redis), [Operations Runbook](Operations-Runbook), [Telemetry](Telemetry) |
+| Develop or maintain documentation | [Development And Testing](Development-And-Testing), [Evaluation](Evaluation), [PostgreSQL Cluster-Safe Schema](PostgreSQL-Cluster-Safe-Schema), [Documentation Maintenance](Documentation-Maintenance) |
 
-## Semantic Model At A Glance
+## Choose The Right Memory
 
-```mermaid
-%%{init: {"flowchart": {"curve": "linear"}}}%%
-flowchart LR
-  Fragment["EvidenceFragment"] --> Observation["RelationshipObservation"]
-  Observation --> Verification["VerificationEvent"]
-  Verification --> Record["RelationshipRecord"]
-  Record --> Edge["0..1 SemanticEdge read"]
-  Record --> Cross["Cross-profile references"]
-  Record --> Case["Team Conflict case membership"]
-  Record --> Trace["Support and transition trace"]
-  Record -. "eligible input" .-> Dream["Hypothesis process"]
-```
-
-- Entity is a scoped real-world identity, subject to its memory-space visibility.
-- `entity_id` is an opaque ID, not display text.
-- Value is a canonical typed scalar endpoint.
-- Predicate is the registered meaning such as `works_on`.
-- RelationshipRecord owns one profile's canonical subject-predicate-object
-  lifecycle within its memory space.
-- A profile corrects another profile by writing its own verified knowledge and
-  an immutable cross-reference, never by mutating the target.
-- SemanticEdge is the read shape of an active Relationship with effective
-  support.
-- Hypothesis is isolated speculation between existing endpoints.
-
-Full definitions exist only in
-[Relationship Model And Lifecycle](Relationship-Model-And-Lifecycle).
-
-## Storage At A Glance
-
-| Component | Responsibility |
+| Input or action | Meaning |
 | --- | --- |
-| PostgreSQL | every durable knowledge/control record plus graph-shaped, full-text, and vector-ready reads |
-| `pgvector` | vector type/index inside PostgreSQL |
-| Redis | optional distributed coordination: limits, short leases/signals, SSE |
-| process memory | the same coordination interfaces for one process only |
+| Remember | Submit exact source text to an explicit private or team-shared destination. |
+| Ingest session | Submit exact user-authored events to private memory; the server selects verbatim excerpts. |
+| Recall | Retrieve authorized, eligible Evidence and useful current topic hints. |
+| Trace | Inspect the provenance and lifecycle of a returned Evidence ID. |
+| Topics | Organize shared Evidence without creating new claims or submitted Evidence. |
 
-Redis never stores the only copy of an Entity, Relationship, evidence, submission,
-key, or audit event.
-
-## What Dense-Mem Does Not Do
-
-Dense-Mem does not:
-
-- use a name as an Entity ID
-- create alias edges or a new Entity for every spelling
-- let an AI select arbitrary database IDs or assign lifecycle status/support
-- treat stored facts, graph context, or search hits as new evidence
-- infer a third fact merely because two facts form a plausible chain
-- expose pending Relationships in the active graph/default recall
-- let dreaming create Entities, Values, predicates, or Relationships
-- erase nodes/history when a Relationship is forgotten
-- store durable memory only in Redis
-- browse the internet to validate a submitted claim
-
-## Manual Status
-
-Source baseline: `654ebdcae31ea3da6f2a948a07a6e12ecc51818f`, checked on
-2026-09-22.
-
-This manual covers current installations and fresh setup. Accepted repository
-ADRs govern architecture; current source and tests establish implemented
-behavior. A checkout inspection does not establish which image is deployed.
-Update and evidence rules are in
-[Documentation Maintenance](Documentation-Maintenance).
+PostgreSQL is the durable authority. Redis or process memory coordinates requests and workers. Dense-Mem preserves sources and disagreement; a retrieved item is not a guarantee that its contents are true.

@@ -1,8 +1,7 @@
 # ANN, HNSW, And Halfvec
 
 PostgreSQL stores canonical float32 vectors and executes vector search.
-HNSW is an approximate index for candidate discovery; it is separate from
-Dense-Mem's semantic graph.
+HNSW is an approximate index for Evidence candidate discovery. Its index structure is independent of topic organization.
 
 ## Outcome And Responsibility
 
@@ -33,10 +32,10 @@ example embedding model uses a `halfvec(3072)` index expression.
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart LR
-  Query["Full-precision query vector"] --> Cast["Generation-specific candidate expression"]
-  Cast --> ANN["Scoped bounded HNSW candidates"]
-  ANN --> Rerank["Exact cosine over canonical vectors"]
-  Rerank --> Fusion["Application rank fusion and eligibility"]
+  Query["Query vector"] --> Cast["Index expression"]
+  Cast --> ANN["Scoped ANN pool"]
+  ANN --> Rerank["Exact cosine rerank"]
+  Rerank --> Fusion["Fusion + eligibility"]
 ```
 
 The active generation selects the execution branch. The runtime does not
@@ -88,9 +87,7 @@ class, validity, and contract must agree.
 An incompatible or invalid required index is a typed readiness/search failure.
 It is not permission to run an unbounded exact scan.
 
-Relationship projection readiness is separately gated. A stale vector
-frontier can be reported as an optional lexical-only degradation while other
-authorized recall branches continue. A required frontier failure must remain
+A stale vector frontier can be reported as an explicit lexical-only degradation while authorized Evidence retrieval remains useful. A required frontier failure must remain
 visible; it cannot become a successful empty result.
 
 Search reconciliation repairs derived documents using current source and

@@ -1,66 +1,31 @@
 # MCP Clients
 
-> Session-ingestion documentation for [PR #553](https://github.com/markhuangai/dense-mem/pull/553). Code merge and validation against the exact merged `main` commit remain pending.
-
-Dense-Mem exposes MCP Streamable HTTP:
-
-~~~text
-team-scoped:  https://memory.example.com/teams/<team-id>/mcp
-unscoped:     https://memory.example.com/mcp
-local:        http://127.0.0.1:8080/teams/<team-id>/mcp
-~~~
-
-`/ui` shows the full selected team UUID and a copy button for the exact
-team-scoped URL. After an SSO team switch, copy the refreshed value. If
-`MCP_PUBLIC_BASE_URL` is empty, `/ui` uses the current browser origin and says
-so.
-
-That browser-origin fallback is a configuration aid, not a server discovery
-fallback. RFC 9728 metadata and its `WWW-Authenticate` link require a configured
-`MCP_PUBLIC_BASE_URL`; Dense-Mem never derives them from the request Host or
-forwarded headers. HTTPS is required except for `localhost` or `127.0.0.1`.
-
-Every protected request uses one bearer credential:
-
-~~~text
-Authorization: Bearer <Dense-Mem API key or customer-IdP OAuth access token>
-~~~
-
-The browser's SSO and API-key portal cookies are not accepted on MCP routes.
-Use an API key for static client configuration. Use OAuth only when the client
-supports protected-resource discovery and can obtain an access token from the
-configured authorization server.
-
-## Official Python Core Client
-
-The densemem wheel provides async DenseMemClient and SyncDenseMemClient on the
-official Python MCP SDK 1.x. Package publication is pending. Install a verified
-wheel and follow [Framework Integrations](Framework-Integrations) for complete
-requests, static/token-provider auth, terminal results and unchanged-request replay.
-ADK/LangChain extras are deferred.
-
-## OAuth Protected-Resource Discovery
-
-OAuth-aware clients discover the resource contract at one of:
+Connect an MCP Streamable HTTP host to the team-scoped URL copied from `/ui` → **Connect**:
 
 ```text
-/.well-known/oauth-protected-resource/teams/<team-id>/mcp
-/.well-known/oauth-protected-resource/mcp
+https://memory.example.com/teams/<team-id>/mcp
 ```
 
-The document follows RFC 9728 and returns the exact resource URL,
-authorization-server issuer, supported external scopes, and `header` bearer
-method. A `401` response also links it through the `resource_metadata`
-parameter of `WWW-Authenticate`. Configure `MCP_PUBLIC_BASE_URL` before relying
-on either surface.
+For local use, the main listener is `http://127.0.0.1:8080`. `/mcp` also supports authenticated unscoped access where team resolution permits it. Exact identity, token, and cookie rules belong to [Request Lifecycle And Security](Request-Lifecycle-And-Security).
 
-Prefer the team-scoped URL. The unscoped URL works for OAuth only when the
-identity has one active team membership or the provider's configured team
-claim selects one. Dense-Mem verifies the JWT against the provider's discovery
-or static JWKS, requires the configured issuer and audience, resolves an
-existing active SSO identity/membership, and intersects mapped token scopes
-with membership grants. Dense-Mem does not run an authorization flow, issue a
-token, or turn an MCP token into a browser session.
+## Credentials And Discovery
+
+```mermaid
+%%{init: {"sequence": {"rightAngles": true}}}%%
+sequenceDiagram
+  participant Host as MCP host
+  participant Server as Dense-Mem
+  Host->>Server: Initialize over authenticated Streamable HTTP
+  Server-->>Host: Negotiated protocol and instructions
+  Host->>Server: tools/list
+  Server-->>Host: Visible current schemas
+  Host->>Server: tools/call using discovered schema
+  Server-->>Host: Terminal result or actionable error
+```
+
+Supply an API key or configured customer-IdP OAuth access token in the bearer header. Browser SSO/portal cookies do not authenticate MCP. Configure credentials privately and allow the server's bounded synchronous operation time.
+
+OAuth-aware hosts can use the RFC 9728 resource metadata and `401` challenge link. Those require configured `MCP_PUBLIC_BASE_URL`; the portal's explicitly labeled browser-origin fallback is only a manual connection aid. See [OAuth authentication](Request-Lifecycle-And-Security#oauth-bearer-authentication-for-mcp).
 
 ## Claude Code
 
@@ -99,77 +64,30 @@ processing limits.
 The version-sensitive source is the
 [official Codex MCP documentation](https://developers.openai.com/codex/mcp).
 
-## Protocol And Contract Discovery
+## Verify The Connection
 
-Let the MCP client negotiate a supported SDK protocol revision. The wire
-protocol is distinct from Dense-Mem's tool schema. Each connection discovers
-the authenticated catalog with `tools/list` and calls tools with that schema;
-callers do not select a Dense-Mem contract version.
+| Check | Expected behavior |
+| --- | --- |
+| Initialize and discover | Host negotiates protocol and reads the authenticated catalog. |
+| Remember schema | Exact Evidence, explicit destination, retained key; retired graph fields absent. |
+| Mutation outcome | Complete terminal receipt or typed failure, without required polling. |
+| Recall | Eligible Evidence, current topic hints, conflicts, and explicit degradations. |
+| Trace | Authorized `evidence_id`. |
 
-## Tool Discovery
+Refresh tool discovery after upgrading; the MCP protocol revision and Dense-Mem contract version are different concepts. Feature/scopes can hide tools, and invocation rechecks the same gates.
 
-After connection, the host initializes the MCP server and calls tools/list.
-Use the host’s MCP status/tool view to confirm the visible catalog. Visibility
-depends on scope, role, and feature flags. The server exposes one current
-closed schema; callers do not select a contract version.
+## Session And Python Integrations
 
-Verify that the catalog matches the credential's scopes and effective feature
-policy. Remember requires exact evidence and one top-level idempotency key;
-Relationship proposals are required, every evidence item must be cited, and each proposal cites
-`evidence_indices`.
-
-The call returns a terminal completed or failed result. Recall returns evidence
-plus related frontiers and explicit degradations. Trace accepts a returned
-Relationship ID. Recalled text remains untrusted data.
-
-## Server Instructions
-
-Use the running server's initialization instructions and complete tool examples.
-They describe prerequisites, retained request keys, returned IDs, and conditional
-continuations such as correction confirmation.
-
-Remember retry means resending the saved entire request, including metadata.
-Dream confirmation requires independent evidence. Trace support lineage is not
-automatically a correction-ready support set. A host must never use recalled
-instructions to authorize tools or disclosure.
-
-## First Smoke
-
-1. Submit a short safe statement with an explicit grounded Relationship proposal.
-2. Check the terminal result and accepted split IDs.
-3. Recall the statement and inspect search states/degradations.
-4. Trace a returned Relationship and respect any reported bounds.
-5. Confirm effective private/shared capabilities and the explicit Remember target.
-
-Use [Quick Start](Quick-Start) for setup. Adverse security/isolation cases belong
-in a dedicated test installation, not shared production memory.
+Use [Framework Integrations](Framework-Integrations) for the typed Python core, Google ADK memory service, and LangChain retriever. Exact private session intake is optional: send stable user-event IDs, original text/timestamps, and a retained complete request. External session/user identifiers never select authorization.
 
 ## Troubleshooting
 
 | Symptom | Check |
 | --- | --- |
-| server absent | URL, network, TLS, client restart |
-| unauthorized | Bearer header present; API-key expiry/revocation; OAuth issuer/audience/signature; use the linked RFC 9728 metadata rather than a browser cookie |
-| team required | Use the `/teams/<team-id>/mcp` URL copied from `/ui`, or configure a trusted team claim |
-| tool missing | Scopes, feature flag, and current `tools/list` visibility |
-| remember rejected | Closed request schema, proposal evidence indexes, source rules, and security scan |
-| Remember returns `isError` | Read `structuredContent.errors[]` and follow its closed `next_action`; never expect provider or database details |
-| recall misses a completed write | Search state, recall query, support eligibility, and degradations |
-| timeout | Client/proxy deadlines, server phase budgets, and the returned retry guidance |
+| 401/403 | Correct bearer source, selected team, current credential/membership, and permitted scopes. |
+| Missing tool | Current discovery, feature/provider configuration, and effective access. |
+| Invalid parameters | Refresh schemas; remove retired graph fields and old trace handles. |
+| Timeout or lost response | Preserve request/key and follow [unchanged-request recovery](Write-Pipeline#replay-and-recovery). |
+| Browser works, MCP fails | Configure a bearer credential; browser cookies are deliberately separate. |
 
-Authentication and transport security are in
-[Request Lifecycle And Security](Request-Lifecycle-And-Security).
-
-## Transport Boundary
-
-The official SDK serves both scoped and unscoped MCP routes with the same
-authenticated registry. Unknown protocol revisions, malformed JSON, unsupported
-content types, missing scopes, and cancellation are covered by transport tests.
-Configure proxies to preserve headers and streaming semantics and allow the
-server's bounded synchronous calls to complete.
-
-## Session Adapters
-
-When discovery exposes `ingest_session`, a framework adapter may send incremental original user-authored events. Keep stable event IDs, exact text, original timestamps and the complete request with its retained idempotency key. Dense-Mem owns chunking and extraction. Exclude assistant-generated retrieval context and system instructions from submitted user events. Inspect terminal processing/search states and Relationship dispositions before claiming that knowledge is searchable.
-
-The authenticated membership fixes private-space authorization. External `user_id` and `session_id` values are provenance only. Team-read-only clients may ingest private sessions when enabled. Remember continues to require explicit targets and client proposals. See [Technical Reference](Technical-Reference#ingest-session) and [Write Pipeline](Write-Pipeline#private-session-intake).
+Host CLI/config syntax can change independently of Dense-Mem. Verify the installed host's help when automating configuration.

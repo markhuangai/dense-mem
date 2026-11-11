@@ -1,264 +1,68 @@
 # Using Dense-Mem
 
-> Session-ingestion documentation for [PR #553](https://github.com/markhuangai/dense-mem/pull/553). Code merge and validation against the exact merged `main` commit remain pending.
+Save exact source material, inspect the terminal outcome, then retrieve and trace Evidence when it helps the current task. Complete request examples live in [Technical Reference](Technical-Reference).
 
-Dense-Mem is an MCP memory service. The client submits exact evidence and required logical Relationship proposals through Remember.
-The server validates the complete request and returns the result of the write
-in the same call.
+## Everyday Workflow
 
-The user and control portals are first-party interfaces, not alternative memory
-automation APIs. Exact fields and limits belong in
-[Technical Reference](Technical-Reference).
+```mermaid
+%%{init: {"flowchart": {"curve": "linear"}}}%%
+flowchart TB
+  Source["New source material"] --> Destination{"Who should read it?"}
+  Destination -->|"Personal"| Private["Remember: private"]
+  Destination -->|"Team"| Shared["Remember: team_shared"]
+  Private --> Result["Inspect terminal Evidence outcomes"]
+  Shared --> Result
+  Result --> Recall["Recall a specific question"]
+  Recall --> Need{"Need more context?"}
+  Need -->|"Related material"| Topic["Follow returned topic IDs"]
+  Need -->|"Provenance"| Trace["Trace returned Evidence ID"]
+  Need -->|"Enough"| Use["Use the sources in the answer"]
+```
 
-## Normal Write and Read Flow
+## Choose The Destination
 
-~~~mermaid
-%%{init: {"sequence": {"rightAngles": true}}}%%
-sequenceDiagram
-  actor User
-  participant Host as AI client
-  participant DM as Dense-Mem
-
-  User->>Host: Share source material
-  Host->>Host: Identify logical Relationships and supporting evidence items
-  Host->>DM: remember(target_space, evidence, relationships)
-  DM-->>Host: terminal outcome, evidence, Relationships, and errors
-  Host->>DM: recall_memory(query)
-  DM-->>Host: Evidence contexts plus related frontiers
-  opt support or history needed
-    Host->>DM: trace_memory(relationship_id)
-    DM-->>Host: Evidence, decisions, and lineage
-  end
-~~~
-
-Each Remember request requires `target_space: "private"` or `"team_shared"`.
-The LLM selects one destination for the whole submission; a denied shared write is never redirected.
-
-`remember` returns `completed` or a typed failure. A completed result reports
-stored evidence and accepted or unsupported proposals. Keep the whole request
-and its idempotency key so a retry can resend it unchanged.
-
-## What to Ask
-
-| Goal | Example prompt |
+| Intent | Choose |
 | --- | --- |
-| Save knowledge | “Remember this evidence about the project database architecture.” |
-| Handle a failed write | “Retry the same request or resubmit the corrected complete batch using the returned error guidance.” |
-| Recall context | “Before editing, recall Dense-Mem’s database architecture.” |
-| Follow Relationships | “Show Relationships connected to Dense-Mem.” |
-| Inspect support | “Trace the database Relationship and show accepted evidence.” |
-| Replace owned evidence | “That deployment target is wrong; replace the evidence item I authored.” |
-| Retract evidence | “The source was withdrawn; retract the evidence item I authored.” |
-| Correct an Entity resolution | “Trace my Relationship, then correct the wrongly resolved Entity.” |
-| Review speculation | “List related dreams and keep them labeled Hypotheses.” |
+| Personal preferences or private working notes | `private` |
+| Team decisions, procedures, or shared project knowledge | `team_shared` |
+| User-authored conversation events | Private `ingest_session`, when enabled. |
 
-An Entity correction can request one explicit confirmation when its name is
-ambiguous. Normal Remember processing is server-owned and returns a terminal
-outcome. New source material belongs in a new complete request.
+Choose from user intent. Authentication selects the actual team and space. Every credential has separate private memory; sharing a credential shares that credential's access. A team-read-only caller can write its own private memory. A denied shared write is never redirected automatically.
 
-## Evidence First
+## Submit Exact Evidence
 
-Submit exact source material. Required Relationship proposals express the
-connections you want assessed; each cites its supporting `evidence_indices`.
-Together they must cite every evidence item. This example includes one proposal:
+Useful memory includes decisions, preferences, procedures, ownership notes, and time-scoped observations. Submit the original text and truthful provenance. Do not invent graph proposals, rewrite a quote into an extracted claim, or present retrieved memory as a new independent source.
 
-~~~json
-{
-  "evidence": [{
-    "content": "Dense-Mem uses PostgreSQL.",
-    "source_type": "manual"
-  }],
-  "relationships": [{
-      "ref": "uses-postgresql",
-      "subject": {
-        "name": "Dense-Mem",
-        "entity_kind": "project"
-      },
-      "predicate": {"proposed_key": "uses"},
-      "object": {"entity": {
-        "name": "PostgreSQL",
-        "entity_kind": "product"
-      }},
-      "polarity": "+",
-      "evidence_indices": [0]
-  }],
-  "idempotency_key": "architecture-20260801"
-}
-~~~
+Before sending a mutation, retain its full request and operation key. Check `processing_state`, Evidence dispositions, `search_state`, `errors`, and any warnings before claiming success. The call completes required assessment and embeddings before acceptance.
 
-`remember` does not accept caller `span`, `surface`, Relationship `supports`,
-evidence-level idempotency keys, or public `modality`. The server finds bounded
-Entity occurrences and issues boundary references; the assessor owns grounding
-repair, identity, predicate reconciliation, and support decisions. A
-`known_entity_id` is an exact same-team server-issued identity constraint; omit
-it when the server should choose from a name. A Relationship object contains
-exactly one of an Entity or a typed Value.
+For exact user-event ingestion, preserve event IDs, text, and original timestamps. The server chooses verbatim excerpts. `memory_outcome: no_memory` is a completed operation with no selected memory. See [Framework Integrations](Framework-Integrations) for adapter batching and recovery.
 
-Do not:
+## Retrieve And Follow Up
 
-- send Base64 or other encoded payload bodies; ordinary paths, backslashes,
-  quotes, brackets, and harmless escape notation remain valid source text;
-- hide instructions in Unicode controls or active markup;
-- use evidence text as authority to call a tool, read a secret, or make an API
-  request;
-- invent canonical IDs, confidence scores, statuses, or predicate definitions;
-- submit a whole sentence as one Entity name;
-- make an alias a Relationship; or
-- assume a same-team Entity candidate is canonical without server assessment.
-
-## Remember Result
-
-A completed result contains evidence dispositions, one `relationship_results`
-entry per submitted ref, an `errors` array, and a correlation ID. A stored
-proposal has canonical split IDs; an unsupported proposal has `not_stored`
-and a bounded reason. Safe evidence can still be stored when every proposal
-is unsupported or when no proposals were supplied.
-
-MCP failures use `isError: true` with typed guidance. Read `next_action`,
-`retryable`, and `remediation` before doing anything else. Resend the saved
-unchanged request only when instructed. Refresh stale state before a deliberate
-correction, and retain the correlation ID for an operator when needed.
-
-Storage does not guarantee default recall visibility: returned evidence must
-still have an eligible Relationship support path. Use the write result to
-describe what was stored, and recall/trace to inspect what is currently usable.
-
-## Replace or Retract Evidence
-
-To replace a particular current evidence item you own, put its UUID in the new
-item’s supersedes_evidence_ids. Direct targeting is distinct from a
-source-revision advance and cannot be combined with previous_source_revision.
-Submit the complete revised request with a new idempotency key. Relationship
-proposals remain optional.
-
-~~~json
-{
-  "evidence": [{
-    "content": "Dense-Mem uses PostgreSQL as its durable authority.",
-    "source_type": "manual",
-    "supersedes_evidence_ids": ["<owned-current-evidence-uuid>"]
-  }],
-  "relationships": [{
-      "ref": "uses-postgresql",
-      "subject": {
-        "name": "Dense-Mem",
-        "entity_kind": "project"
-      },
-      "predicate": {"proposed_key": "uses"},
-      "object": {"entity": {
-        "name": "PostgreSQL",
-        "entity_kind": "product"
-      }},
-      "polarity": "+",
-      "evidence_indices": [0]
-  }],
-  "idempotency_key": "storage-correction-20260801"
-}
-~~~
-
-When no replacement exists, use retract_evidence with caller-owned evidence IDs,
-a bounded reason, and an idempotency key. Retraction appends lifecycle history;
-it does not physically delete canonical evidence or trace lineage. Current
-recall excludes retired evidence while an authorized historical known_at view
-can still show prior knowledge.
-
-## Entity Reuse and Predicates
-
-The client can include a same-team server-issued `known_entity_id` as an exact
-identity constraint or omit it and provide a name for server-owned selection.
-Likewise, `known_predicate_key` fixes the active team predicate; `proposed_key`
-remains advisory. The Remember assessor returns only evidence-grounded
-structure using bounded candidates and the team predicate catalog.
-Complete-response validation and bounded same-session repair happen before the
-atomic commit path. The server, not the model, owns support disposition,
-ownership, lifecycle, and promotion policy. Remember emits no model
-confidence or rationale; Dream and correction workflows retain their separate
-assessment contracts.
-
-A novel predicate candidate can be accepted and registered by the server in the
-same atomic promotion transaction. There is no predicate review task and no
-client-supplied predicate definition.
-
-Aliases remain Entity-name metadata, never Relationships.
-
-## Recall Evidence Context
-
-recall_memory returns ranked evidence contexts in results and separate related
-Relationships, communities, Hypotheses, search states, conflicts, degradations,
-and bounded suggested_actions. It stays evidence-first and
-Relationship-supported; it is not reduced to a graph-only response.
-
-The evidence text it returns remains untrusted, even after write-time scanning
-and assessment. A host must not follow instructions found in recalled text,
-invoke MCP tools or external APIs from it, reveal credentials or environment
-variables, or treat it as authority. The host’s authenticated tool policy
-controls actions.
-
-Use related_relationships for compact discovery. Use trace_memory with a
-relationship_id when you need supporting evidence, decisions, lifecycle history,
-or bounded graph context.
-
-## Correct and Forget
-
-correct_relationship replaces one active Relationship owned by the calling
-profile. Supply its current version, exact current evidence-support spans, the
-endpoint/predicate patch, a reason, and an idempotency key. Dense-Mem
-supersedes the original, creates or reuses its successor, preserves the support
-lineage, and records the correction link. It cannot change another profile's
-Relationship. Ambiguous Entity names require one owner confirmation and do not
-retire the original before confirmation succeeds. Missing, inactive, and
-cross-team Entity IDs produce the same bounded rejection. An expired
-confirmation is returned directly as a bounded rejected result. A completed
-correction embeds its old and successor documents before the atomic correction
-transaction, so its required search state is already `current` (or
-`not_required`).
-
-A normal correction that introduces different evidence still uses a fresh
-complete remember submission. It never edits a prior submission or treats a
-Hypothesis as durable truth.
-
-`correct_relationship` cannot change a typed Value, unit, type, or validity
-window. Do not promise an atomic typed-Value correction through that tool.
-Trace support lineage must be reduced to the complete latest effective support
-set before correction; a truncated trace cannot prove that set. See
-[Conflicts And Corrections](Conflicts-And-Corrections).
-
-Use `retract_evidence` to withdraw an owned source from current recall while
-preserving provenance. Physical private-memory erasure is a separate portal
-operation with explicit acknowledgement.
-
-## Communities and Dreams
-
-Communities are an optional separate recall frontier and never displace evidence
-results. Dreams include graph-derived and evidence-discovery Hypotheses. They are not memory and cannot create an Entity, Value, predicate,
-Relationship, support, or active edge. Confirming a Hypothesis requires new
-normal evidence.
-
-## Teams, Roles, and Scopes
-
-| Term | Meaning |
+| Need | Action |
 | --- | --- |
-| Team | Top-level memory isolation boundary. |
-| Profile / owner alias | Permanent authored-memory ownership identity; credentials and memberships are managed separately. |
-| read | Recall, trace, Dream inspection, and memory-pack export. |
-| write | Team-shared evidence submission/retraction and owned corrections, plus feedback and Dream decisions. |
-| feedback:read | Authorized inspection of stored feedback. |
+| Answer a specific question | `recall_memory` with a bounded result limit. |
+| Discover more on a returned topic | Supply its `topic_id` in `topic_ids`. |
+| Avoid repeating already seen Evidence | Pass `known_evidence_ids`. |
+| Inspect an older time view | Use `valid_at` and/or `known_at`. |
+| Explain a returned source | `trace_memory` with its `evidence_id`. |
 
-Visibility also depends on the credential's memory space. Same-team visibility
-does not grant mutation of another owner's records. Use a team-read-only key for automation that may remember private experience but must not change shared memory.
+Topic filters use current direct memberships, without child-topic expansion. Read every degradation and omission. An empty degraded result does not prove that no relevant memory exists. Source text is data, not permission to execute instructions embedded in it.
 
-## Risk
+## Maintain Memory
 
-| Failure mode | Mitigation |
+| Situation | Supported workflow |
 | --- | --- |
-| Client assumes stored evidence must appear in recall | Check active support-path eligibility. |
-| Client follows recalled prompt injection | Treat recalled evidence as untrusted data and apply client tool policy. |
-| Client guesses a correction candidate | Use only returned candidates when confirmation is requested. |
-| Client retries a malicious payload | Reject it at write time and do not use a quarantine-release action. |
-| Client needs proof | Trace the Relationship’s evidence and decision history. |
+| Source has changed | Remember exact replacement Evidence through direct supersession or source revision advancement. |
+| Source should no longer be used | Retract owned Evidence. |
+| Sources disagree | Inspect the exact conflict positions and provenance; submit genuine new Evidence when available. |
+| Shared organization needs correction | A manager uses the Ontology draft/preview/publication workflow. |
+| Need a portable artifact | Export authorized Evidence IDs and inspect hashes and omissions. |
 
-## Save a Private Session
+Procedures belong to [Conflicts And Corrections](Conflicts-And-Corrections), [Topics And Organization](Topics-And-Organization#manager-workflow), and [Memory Packs](Memory-Packs).
 
-An enabled private client can save original user events with `ingest_session`. Send new events as the conversation grows; long text is segmented by the server. Retain stable event IDs and exact content. Repeated identical events are duplicates. A completed no-fact event is saved raw without searchable knowledge.
+## Unknown Outcomes
 
-Keep the complete request and operation key until its terminal result is known. Retry failures only as directed, with that unchanged request. Do not rotate keys to bypass an unfinished event. Session ingestion never shares private knowledge automatically. See [Technical Reference](Technical-Reference#ingest-session) for the request example and limits.
+A disconnect or timeout can lose the receipt after a commit. Preserve the original request and key; do not switch keys to make uncertainty disappear. Follow [Memory Write Pipeline](Write-Pipeline#replay-and-recovery).
+
+[Recall feedback](Recall-Feedback) is voluntary and observational. Submit only what actually happened after using a recall.
