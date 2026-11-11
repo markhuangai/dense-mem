@@ -241,7 +241,11 @@ func SelectedExcerpts(submission *Submission, responses []ExtractionResponse) ([
 		text := []rune(submission.Intake.Request.Events[span.EventIndex].Text)
 		for start := span.Start; start < span.End; start += 999 {
 			end := min(span.End, start+999)
-			selected = append(selected, Excerpt{EventIndex: span.EventIndex, Start: start, End: end, Content: string(text[start:end])})
+			content := string(text[start:end])
+			if strings.TrimSpace(content) == "" {
+				continue
+			}
+			selected = append(selected, Excerpt{EventIndex: span.EventIndex, Start: start, End: end, Content: content})
 			if len(selected) > MaxExcerpts {
 				return nil, ErrBudget
 			}

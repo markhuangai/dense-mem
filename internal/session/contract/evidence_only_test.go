@@ -57,3 +57,33 @@ func TestEvidenceOnlyUnitSessionCoalescesAndChunksWithoutChangingText(t *testing
 	require.Equal(t, 999, selected[0].End)
 	require.Equal(t, 999, selected[1].Start)
 }
+
+func TestEvidenceOnlyUnitSessionMergedExcerptsOmitOnlyBlankChunks(t *testing.T) {
+	for _, suffix := range []string{"\n", "\u2003\t", "\nB", " B"} {
+		t.Run(suffix, func(t *testing.T) {
+			text := []rune(strings.Repeat("é", 999) + suffix)
+			submission, responses := evidenceOnlyExcerptFixture(string(text))
+			for _, bounds := range [][2]int{{0, 900}, {800, len(text)}} {
+				responses[0].Excerpts = append(responses[0].Excerpts, Excerpt{EventIndex: 0, Start: bounds[0], End: bounds[1], Content: string(text[bounds[0]:bounds[1]])})
+			}
+			selected, err := SelectedExcerpts(submission, responses)
+			require.NoError(t, err)
+			require.Equal(t, Excerpt{EventIndex: 0, Start: 0, End: 999, Content: string(text[:999])}, selected[0])
+			if strings.TrimSpace(suffix) == "" {
+				require.Len(t, selected, 1)
+			} else {
+				require.Equal(t, []Excerpt{
+					{EventIndex: 0, Start: 0, End: 999, Content: string(text[:999])},
+					{EventIndex: 0, Start: 999, End: len(text), Content: suffix},
+				}, selected)
+			}
+			replayed, err := SelectedExcerpts(submission, responses)
+			require.NoError(t, err)
+			require.Equal(t, selected, replayed)
+		})
+	}
+	submission, responses := evidenceOnlyExcerptFixture(strings.Repeat("é", 999) + "\n")
+	responses[0].Excerpts = []Excerpt{{EventIndex: 0, Start: 999, End: 1000, Content: "\n"}}
+	_, err := SelectedExcerpts(submission, responses)
+	require.ErrorContains(t, err, "invalid excerpt bounds")
+}

@@ -238,6 +238,14 @@ function fixtureSessionExtraction(input) {
     parts.sort((left, right) => left.start - right.start);
     const text = parts.map((part) => part.text).join("");
     const offset = parts[0].start;
+    const runes = Array.from(text);
+    if (text.includes("[fixture:session-overlap-whitespace]") && offset === 0 && runes.length === 1000) {
+      for (const [start, end] of [[0, 900], [800, 1000]]) {
+        if (!core.some((part) => part.event_index === parts[0].event_index && part.start < end && part.end > start)) continue;
+        result.excerpts.push({ event_index: parts[0].event_index, start, end, content: runes.slice(start, end).join("") });
+      }
+      continue;
+    }
     for (const match of text.matchAll(/([\p{L}\d]+) (?:also )?uses ([\p{L}\d]+)\.(?: \[fixture-fault:[a-z0-9_-]+\])?/gu)) {
       const start = offset + Array.from(text.slice(0, match.index)).length;
       const end = start + Array.from(match[0]).length;

@@ -80,6 +80,24 @@ const longEvent = { event_id: "long", text: (" ".repeat(506) + "Morgan uses Go."
 const long = await call("ingest_session", request([longEvent]), a.api_key);
 assert.equal(long.processing_state, "completed");
 assert.equal(evidenceIDs(long).length, 1);
+for (const [label, suffix] of [["newline", "\n"], ["unicode-space", "\u2003"]]) {
+  const event = { event_id: label, text: ("Ari uses Go. [fixture:session-overlap-whitespace] " + label).padEnd(999, "é") + suffix };
+  const input = request([event]);
+  const result = await call("ingest_session", input, a.api_key);
+  assert.equal(result.processing_state, "completed");
+  const selected = evidenceIDs(result);
+  assert.equal(selected.length, 1);
+  const traced = await call("trace_memory", { evidence_id: selected[0] }, a.api_key);
+  assert.equal(traced.evidence.content, Array.from(event.text).slice(0, 999).join(""));
+  const occurrence = traced.occurrences.find((item) => item.session?.event_id === event.event_id);
+  assert(occurrence, "merged excerpt must retain its exact session provenance");
+  assert.equal(occurrence.session.span_start, 0);
+  assert.equal(occurrence.session.span_end, 999);
+  const calls = await providerCalls();
+  assert.deepEqual(await call("ingest_session", input, a.api_key), result);
+  assert.equal(await providerCalls(), calls);
+  for (const actor of [b, c]) assertFailed(await rpc("trace_memory", { evidence_id: selected[0] }, actor.api_key));
+}
 const malformed = request([{ event_id: "bad", text: "Ari uses Java. [fixture-fault:assessment-malformed]" }]);
 const failed = assertFailed(await rpc("ingest_session", malformed, a.api_key));
 assert.equal(failed.processing_state, "failed");

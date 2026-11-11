@@ -185,6 +185,13 @@ test("provider fixture emits exact current-event excerpts with original rune off
   assert.deepEqual(result.excerpts, [{ event_index: 0, start: 3, end: Array.from(text).length, content: "Ari uses Go. [fixture-fault:embedding-malformed]" }]);
   const empty = fixtureChatResponse(structuredRequest("session_evidence_excerpts_v2", { request_id: "empty", window: { core: [{ event_index: 0, ref: "empty", start: 0, end: 7, text: "Thanks." }] } }));
   assert.deepEqual(empty.excerpts, []);
+  const overlappingText = "Ari uses Go. [fixture:session-overlap-whitespace]".padEnd(999, "é") + "\n";
+  const overlapping = fixtureChatResponse(structuredRequest("session_evidence_excerpts_v2", {
+    request_id: "overlap", window: { core: [{ event_index: 0, ref: "current", start: 0, end: 1000, text: overlappingText }] },
+  }));
+  assert.deepEqual(overlapping.excerpts, [[0, 900], [800, 1000]].map(([start, end]) => ({
+    event_index: 0, start, end, content: Array.from(overlappingText).slice(start, end).join(""),
+  })));
 });
 
 function structuredRequest(schemaName, input) {
