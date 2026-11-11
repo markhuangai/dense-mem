@@ -64,6 +64,34 @@ processing limits.
 The version-sensitive source is the
 [official Codex MCP documentation](https://developers.openai.com/codex/mcp).
 
+## Remember Progress (Target)
+
+The target experience adds changing status text while `remember` remains pending. See [implementation status](Documentation-Maintenance#implementation-status), the [canonical processing sequence](Write-Pipeline#atomic-commit-and-deadlines), and [protocol examples](Technical-Reference#optional-progress-target).
+
+Illustrative text for a host that displays progress; each arrow replaces the running status:
+
+~~~text
+dense-mem · remember
+  Assessing Evidence…
+          ↓
+  Preparing search state…
+          ↓
+  Committing…
+          ↓
+  Final result: saved Evidence or actionable error
+~~~
+
+The final line comes from the tool result. A progress message alone never establishes success or a reason to resubmit.
+
+| Client inspected on 2026-11-11 | Verified boundary | Remaining uncertainty |
+| --- | --- | --- |
+| Claude Code 2.1.288 | Installed client handling supports progress text and percentages when a total is supplied. The [official changelog](https://code.claude.com/docs/en/changelog) records the collapsed-view rendering fix in 2.1.153. | Dense-Mem integration and actual screen presentation await implementation. |
+| Codex 0.166.0 | Its generated app-server protocol includes `item/mcpToolCall/progress` with a message and thread/turn/item correlation. | CLI and IDE rendering were not verified; a visible progress indicator is not guaranteed. |
+
+Claude Code documents automatic backgrounding of main-conversation MCP calls after two minutes by default; the task view retains the latest progress and later delivers the tool outcome. This is host behavior around the same server call. See [Claude Code's MCP reference](https://code.claude.com/docs/en/mcp#automatic-backgrounding-of-long-tool-calls).
+
+Server progress emission requires no extra model inference. A host that only updates its UI needs no model turn for each update. Context injection or host-managed background-result handling can consume tokens; rendering, model resumption, correction, and retries remain client decisions.
+
 ## Verify The Connection
 
 | Check | Expected behavior |

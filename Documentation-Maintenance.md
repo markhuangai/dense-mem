@@ -1,8 +1,19 @@
 # Documentation Maintenance
 
-This wiki describes current architecture and recommended processes supported by current code. Accepted ADRs govern architecture; registries, implementations, migrations, callers, and tests establish implemented behavior. An unresolved mismatch is not permission to document an unimplemented capability.
+This wiki holds the approved target architecture and recommended workflows. Accepted ADRs and explicit maintainer decisions govern the target; registries, implementations, migrations, callers, and tests establish implemented behavior. Describe approved targets before implementation, label the affected sections, and record their implementation gaps here. Verify implementation and deployment claims separately.
 
 The current audit uses [source snapshot 152448a4](https://github.com/markhuangai/dense-mem/commit/152448a4c4c4192a7492ad3ae2ca311fcb82851a) and contract `dense-mem.v2.8.0`. Source state does not establish a deployed release.
+
+## Implementation Status
+
+| Subject | Approved target | Inspected implementation |
+| --- | --- | --- |
+| Remember outcome | Required work finishes in the originating call; final success or actionable failure remains authoritative. | Synchronous processing is present in the audited Evidence-only baseline. |
+| Remember progress | Optional request-scoped stage notifications while the same call remains pending. | Pending [#742](https://github.com/markhuangai/dense-mem/issues/742). Inspection at [8369e326](https://github.com/markhuangai/dense-mem/commit/8369e326876f848439a2e7421618d71e6e821968) found no progress emitter in the MCP, Remember, or HTTP handler paths. |
+
+Sections marked **Target** specify the approved progress behavior. Keep this gap visible until production-entry success, failure, isolation, delivery, cancellation, and replay checks pass. Client-specific inspection and UI uncertainty belong to [MCP Clients](MCP-Clients#remember-progress-target).
+
+[ADR 0001](https://github.com/markhuangai/dense-mem/blob/8369e326876f848439a2e7421618d71e6e821968/adr/0001-predictable-mcp-tool-contracts.md#decision) already requires synchronous terminal outcomes. Progress notifications leave that decision intact; a short clarification is tracked with the implementation.
 
 ## Canonical Page Ownership
 
@@ -12,13 +23,13 @@ The current audit uses [source snapshot 152448a4](https://github.com/markhuangai
 | Components, dependency direction, runtime composition | [Architecture](Architecture). |
 | Exact Evidence, occurrence/revision meaning, ownership, lifecycle, temporal semantics | [Evidence Model And Lifecycle](Evidence-Model-And-Lifecycle). |
 | Topics, direct membership, equivalence, freshness, maintenance and manager publication | [Topics And Organization](Topics-And-Organization). |
-| Staging, duplicate/assessment orchestration, deadlines, embeddings, atomicity and replay | [Memory Write Pipeline](Write-Pipeline). |
+| Staging, duplicate/assessment orchestration, stage progression, deadlines, embeddings, atomicity and replay | [Memory Write Pipeline](Write-Pipeline). |
 | Storage families, durable versus rebuildable state | [Data Model And Storage](Data-Model-And-Storage). |
 | Tenant keys, constraints, transactions, RLS, generation and topology mechanics | [PostgreSQL Cluster-Safe Schema](PostgreSQL-Cluster-Safe-Schema). |
 | Recall eligibility, branches, grouping, topic follow-up and degradation | [Recall Ranking](Recall-Ranking). |
 | Similarity, candidate fusion and typed relevance reranking | [Vector Search And Ranking](Vector-Search-And-Ranking). |
 | Physical vector execution, dimensions, HNSW/halfvec and index lifecycle | [ANN, HNSW, And Halfvec](ANN-HNSW-And-Halfvec). |
-| Public tools, complete protocol examples, field bounds, result/error shapes | [Technical Reference](Technical-Reference). |
+| Public tools, complete protocol/progress examples, field bounds, result/error shapes | [Technical Reference](Technical-Reference). |
 | Recommended host workflow | [Using Dense-Mem](Using-Dense-Mem). |
 | Installation, disposable demo and host connection | [Quick Start](Quick-Start), [Hosted Demo](Hosted-Demo), [MCP Clients](MCP-Clients), each for its own procedure. |
 | Python, ADK and LangChain adapter use | [Framework Integrations](Framework-Integrations). |
@@ -39,12 +50,13 @@ The current audit uses [source snapshot 152448a4](https://github.com/markhuangai
 
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
-flowchart LR
+flowchart TB
   Claim["Changed rule"] --> Owner["Edit the owner"]
   Owner --> Links["Link from other pages"]
   Links --> Examples["Check examples + diagrams"]
   Examples --> Validate["Verify source"]
-  Validate --> Publish["Publish"]
+  Validate --> Status["Record implementation gaps"]
+  Status --> Publish["Publish target + status"]
 ```
 
 Keep complete schemas/examples in Technical Reference, defaults in Configuration, policy in its owning page, and procedures in their workflow/runbook. Framework-native snippets may illustrate their integration without restating the wire schema. Short reader summaries are useful; copied decision tables and full diagrams create competing authority.
@@ -55,7 +67,7 @@ Retired feature URLs retain only short pointers and are absent from active navig
 
 ## Updating And Verifying
 
-1. Record source revision/worktree state; read relevant accepted ADRs, callers, owners, and tests.
+1. Record the approved target, inspected source revision/worktree state, and implementation gaps; read relevant accepted ADRs, callers, owners, and tests.
 2. Update the canonical explanation and all affected links, examples, and diagrams together.
 3. Test a concrete adverse reading: private-bound access, stale topic/revision, malformed provider response, required failure, or unknown delivery.
 4. Validate links/anchors, examples, source identifiers, diagrams, and the final diff.
@@ -63,7 +75,7 @@ Retired feature URLs retain only short pointers and are absent from active navig
 
 | Material | Verification |
 | --- | --- |
-| Complete tool JSON | Current registry schemas and semantic input validation; substitute only explicit returned-ID/new-key placeholders. |
+| Complete tool JSON | Current registry schemas and semantic input validation; validate target protocol envelopes separately and retain their implementation label. Substitute only explicit returned-ID/new-key placeholders. |
 | Python snippets | Parse/compile and check current client types, methods, options, and constructor signatures. |
 | Shell/config snippets | Syntax plus existing scripts, routes, parser settings, and deployment examples. |
 | Source/lifecycle claims | Domain policy, adapters, migrations, real PostgreSQL tests and supported consumers. |

@@ -144,6 +144,20 @@ A field name or secret-like phrase alone does not cause masking. Registered oper
 
 Long-lived streams honor cancellation and configured lifetime/concurrency bounds, releasing slots on every disconnect or error. Multiple instances require distributed coordination; they cannot silently fall back to independent counters.
 
+## Progress Notification Boundary (Target)
+
+See [implementation status](Documentation-Maintenance#implementation-status) and the [protocol contract](Technical-Reference#optional-progress-target).
+
+| Boundary | Target rule |
+| --- | --- |
+| Request and actor | Route progress only to the originating authenticated call/session. Equal tokens from different clients never merge routing or authority. |
+| Correlation token | Client metadata correlates messages; it cannot choose team, profile, destination, ownership, or another request. Treat it as untrusted caller metadata when producing diagnostics. |
+| Public payload | Fixed bounded stage messages; no Evidence text, provider output/reasoning, operational credentials, or private-context details. Operator captures remain a separate exposure contract. |
+| Delivery | Bound optional notification work outside semantic transactions. Preserve required outcomes; use bounded diagnostics for delivery failures and retain the existing disconnect/cancellation rules. |
+| Lifetime | Stop notifications before the final response; preserve phase/operation deadlines and release stream resources on every exit. |
+
+A progress update does not extend a request deadline or prove a commit. A disconnect can still leave receipt delivery unknown; follow [unchanged-request recovery](Write-Pipeline#replay-and-recovery).
+
 ## Private Erasure Boundary
 
 Erasure seals the authorized private target, advances/fences its generation, checks applicable holds, and purges the catalog-complete scope. Old receipts and unfinished jobs cannot recreate erased content. Unaffected spaces remain separate. [Portals And API Keys](Portals-And-API-Keys#private-memory-erasure) owns the request/status workflow; [Operations Runbook](Operations-Runbook#private-memory-erasure) owns operator recovery.

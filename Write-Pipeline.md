@@ -44,28 +44,45 @@ Optional typed decision providers resolve only supported tasks under server-owne
 
 ## Atomic Commit And Deadlines
 
+This sequence includes **Target** progress notifications; see [implementation status](Documentation-Maintenance#implementation-status). The application owns actual stage transitions; the MCP transport translates them into optional notifications. [Technical Reference](Technical-Reference#optional-progress-target) owns the complete wire examples.
+
 ```mermaid
 %%{init: {"sequence": {"rightAngles": true}}}%%
 sequenceDiagram
-  participant App as Write service
+  participant Host as MCP client
+  participant App as Dense-Mem
   participant AI as Model providers
   participant PG as PostgreSQL
+  Host->>App: remember (same call remains pending)
   App->>PG: Stage exact intake and processing intent
-  App->>AI: Assess and embed outside semantic transaction
-  AI-->>App: Complete validated results and required vectors
-  App->>PG: Begin semantic transaction
-  App->>PG: Recheck authorization, source versions and generations
-  App->>PG: Evidence, occurrences, decisions, lifecycle, conflicts, search, receipt
-  alt All checks and writes succeed
-    App->>PG: Commit
-    PG-->>App: Durable terminal result
-  else Required check or write fails
-    App->>PG: Roll back complete semantic transaction
-    PG-->>App: Failure
+  opt Target: progress requested over SSE
+    App-->>Host: Nonterminal reached-stage notification
+  end
+  App->>AI: Bounded provider work outside semantic transaction
+  AI-->>App: Assessment proposals / vectors / required failure
+  Note over App: Validate complete responses<br/>and apply server policy
+  alt Required processing fails
+    App-->>Host: Final actionable error
+  else Ready to commit
+    opt Target: progress requested over SSE
+      App-->>Host: Committing (nonterminal)
+    end
+    App->>PG: Begin transaction and recheck authority/versions
+    App->>PG: Evidence, provenance, lifecycle, search and receipt
+    alt All checks and writes succeed
+      App->>PG: Commit
+      PG-->>App: Durable terminal result
+      App-->>Host: Final success receipt
+    else Required check or write fails
+      App->>PG: Roll back complete semantic transaction
+      App-->>Host: Final actionable error
+    end
   end
 ```
 
-The 180-second operation budget bounds required processing. Assessment has a 160-second phase bound; embedding and commit have their existing bounded phases within the total deadline. Earlier context cancellation and remaining time still apply. Provider timeouts cannot extend a phase or operation deadline.
+Target notifications follow the stages above, including skipped work and bounded regeneration. They add no model calls and never imply accepted memory. Notify before entering the semantic transaction; no network notification delivery belongs inside it. A retained-result replay can return directly.
+
+The 180-second operation budget bounds required processing. Assessment has a 160-second phase bound; embedding and commit have their existing bounded phases within the total deadline. Earlier context cancellation and remaining time still apply. Provider timeouts and optional progress delivery cannot extend a phase or operation deadline.
 
 Background search reconciliation repairs derived state after later changes. It does not finish the required foreground work of a successful Remember call.
 

@@ -2,7 +2,7 @@
 
 Dense-Mem stores exact Evidence with provenance and a governed lifecycle. AI clients decide when to save or retrieve memory; the server owns authorization, assessment, persistence, and retrieval.
 
-This wiki describes the Evidence-only source contract, `dense-mem.v2.8.0`. Check the connected server's authenticated `tools/list` before using an example; a deployed image can lag the source.
+This wiki describes the approved Evidence-only target architecture and contract `dense-mem.v2.8.0`. [Implementation status](Documentation-Maintenance#implementation-status) identifies gaps between the target and inspected code. Check the connected server's authenticated `tools/list` before using tool arguments; a deployed image can lag the source.
 
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%

@@ -2,7 +2,7 @@
 
 The current memory contract is `dense-mem.v2.8.0`. MCP at `/mcp` or `/teams/{team_id}/mcp` is the external memory interface. Initialize the MCP session, discover with `tools/list`, and invoke with `tools/call`. Discovery and execution use the same authenticated registry.
 
-Examples below are tool argument/result objects, not complete JSON-RPC envelopes. Replace `<returned_...>` placeholders with authorized returned IDs, and generate and retain each `<new_..._key>` before sending a mutation.
+Examples below are tool argument/result objects except where explicitly shown as complete JSON-RPC envelopes. Replace `<returned_...>` placeholders with authorized returned IDs, and generate and retain each `<new_..._key>` before sending a mutation.
 
 ## Tool Catalog
 
@@ -91,6 +91,111 @@ Illustrative successful terminal result:
 ```
 
 Inspect every Evidence disposition, `errors`, optional `warnings`, and search state. Successful processing is terminal; there is no public polling step. See [Conflicts And Corrections](Conflicts-And-Corrections) for replacement procedures.
+
+### Optional Progress (Target)
+
+This section specifies the approved target; see [implementation status](Documentation-Maintenance#implementation-status). Progress uses the existing synchronous `remember` call. Its workflow and failure ordering are illustrated in [Memory Write Pipeline](Write-Pipeline#atomic-commit-and-deadlines).
+
+Complete request envelope after initialization, sent over Streamable HTTP with `Accept: application/json, text/event-stream`:
+
+~~~json
+{
+  "jsonrpc": "2.0",
+  "id": 41,
+  "method": "tools/call",
+  "params": {
+    "name": "remember",
+    "_meta": {"progressToken": "remember-41"},
+    "arguments": {
+      "target_space": "team_shared",
+      "idempotency_key": "<new_remember_key>",
+      "evidence": [{"content": "This project stores durable memory in PostgreSQL."}]
+    }
+  }
+}
+~~~
+
+An optional notification on the originating response stream while request `41` remains pending:
+
+~~~json
+{
+  "jsonrpc": "2.0",
+  "method": "notifications/progress",
+  "params": {
+    "progressToken": "remember-41",
+    "progress": 1,
+    "message": "Assessing Evidence."
+  }
+}
+~~~
+
+One successful final response, after the required work commits:
+
+~~~json
+{
+  "jsonrpc": "2.0",
+  "id": 41,
+  "result": {
+    "content": [{
+      "type": "text",
+      "text": "{\"contract_version\":\"dense-mem.v2.8.0\",\"space_kind\":\"team_shared\",\"submission_id\":\"<returned_submission_id>\",\"submission_kind\":\"remember\",\"processing_state\":\"completed\",\"search_state\":\"current\",\"correlation_id\":\"<returned_correlation_id>\",\"evidence\":[{\"disposition\":\"stored\",\"evidence_index\":0,\"evidence_id\":\"<returned_evidence_id>\",\"superseded_evidence_ids\":[],\"search_state\":\"current\"}],\"errors\":[]}"
+    }],
+    "structuredContent": {
+      "contract_version": "dense-mem.v2.8.0",
+      "space_kind": "team_shared",
+      "submission_id": "<returned_submission_id>",
+      "submission_kind": "remember",
+      "processing_state": "completed",
+      "search_state": "current",
+      "correlation_id": "<returned_correlation_id>",
+      "evidence": [{
+        "disposition": "stored",
+        "evidence_index": 0,
+        "evidence_id": "<returned_evidence_id>",
+        "superseded_evidence_ids": [],
+        "search_state": "current"
+      }],
+      "errors": []
+    },
+    "isError": false
+  }
+}
+~~~
+
+An alternative final actionable-error response; actual codes and remediation depend on the failure:
+
+~~~json
+{
+  "jsonrpc": "2.0",
+  "id": 41,
+  "result": {
+    "content": [{
+      "type": "text",
+      "text": "{\"code\":\"provider_unavailable\",\"message\":\"Required provider work is unavailable.\",\"retryable\":true,\"next_action\":\"retry_same_request\",\"remediation\":\"Retry the complete unchanged request with the same idempotency key.\",\"correlation_id\":\"<returned_correlation_id>\"}"
+    }],
+    "structuredContent": {
+      "code": "provider_unavailable",
+      "message": "Required provider work is unavailable.",
+      "retryable": true,
+      "next_action": "retry_same_request",
+      "remediation": "Retry the complete unchanged request with the same idempotency key.",
+      "correlation_id": "<returned_correlation_id>"
+    },
+    "isError": true
+  }
+}
+~~~
+
+| Field or delivery condition | Target contract |
+| --- | --- |
+| `params._meta.progressToken` | Client-supplied string or integer, including `0`, unique across that client's active requests; preserve the exact value/type. Protocol metadata sits beside `arguments`; it is not a Remember argument, credential, or idempotency key. |
+| Notification fields | `progressToken` echoes the request token; numeric `progress` increases; `message` is fixed human-readable stage text. |
+| `total` | Optional meaningful total; omit when unknown. Progress values do not estimate elapsed time. |
+| SSE and valid token | May receive a bounded sequence of notifications before the final response. Only reached stages appear; replay or fast completion can produce none. |
+| No token or JSON-only response | Keep the existing terminal response without progress. No separate subscription or polling is required. |
+| Completion | Exactly one final response for the request ID; no later progress. Final result/error schemas retain their existing meaning. |
+
+The wire examples are JSON-RPC messages carried by the response stream; they omit SSE `data:` framing. The [MCP progress specification](https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/progress) defines the protocol; [Request Lifecycle And Security](Request-Lifecycle-And-Security#progress-notification-boundary-target) owns isolation and exposure.
 
 ## ingest_session
 
