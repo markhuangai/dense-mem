@@ -395,7 +395,7 @@ describe("UserPortalApp", () => {
     await userEvent.click(screen.getByRole("button", { name: "Connect" }));
     expect(screen.getByText(`https://memory.example.test/teams/${initial.team.id}/mcp`)).toBeInTheDocument();
     const initialConnection = screen.getByRole("dialog", { name: "Connect to Dense-Mem" });
-    await userEvent.click(within(initialConnection).getByRole("button", { name: "Close", exact: true }));
+    await userEvent.click(within(initialConnection).getByRole("button", { name: "Close" }));
     await waitFor(() => expect(initialConnection).not.toBeInTheDocument());
 
     await userEvent.click(teamSelect);
@@ -405,7 +405,7 @@ describe("UserPortalApp", () => {
     await userEvent.click(screen.getByRole("button", { name: "Connect" }));
     expect(screen.getByText(`https://memory.example.test/teams/${secondTeam.id}/mcp`)).toBeInTheDocument();
     const switchedConnection = screen.getByRole("dialog", { name: "Connect to Dense-Mem" });
-    await userEvent.click(within(switchedConnection).getByRole("button", { name: "Close", exact: true }));
+    await userEvent.click(within(switchedConnection).getByRole("button", { name: "Close" }));
     await waitFor(() => expect(switchedConnection).not.toBeInTheDocument());
     expect(screen.queryByRole("link", { name: "My credentials" })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Team" })).toBeInTheDocument();
