@@ -280,7 +280,7 @@ func TestEvidenceOnlyPostgresTraceBudgetsAndMemoryPackCanonicalProvenance(t *tes
 		retracted, err := store.RetractEvidence(ownerCtx, knowledge.RetractEvidenceInput{TeamID: team, OwnerProfileID: owner, EvidenceIDs: []string{aliases[0]}, Reason: "Historical alias retraction", IdempotencyKey: "alias-retraction", RequestHash: "alias-retraction"})
 		require.NoError(t, err)
 		require.Equal(t, "completed", retracted.ProcessingState)
-		replacement, err := store.CreateIngestForTest(ownerCtx, knowledge.CreateIngestInput{TeamID: team, OwnerProfileID: owner, SpaceID: spaceID, SpaceGeneration: generation, IdempotencyKey: "alias-replacement", RequestHash: "alias-replacement", Evidence: []knowledge.EvidenceInput{{Content: "Replacement for a historical alias.", SupersedesEvidenceIDs: []string{aliases[1]}}}})
+		replacement, err := store.CreateIngestForTest(ownerCtx, knowledge.CreateIngestInput{TeamID: team, OwnerProfileID: owner, SpaceID: spaceID, SpaceGeneration: generation, IdempotencyKey: "alias-replacement", RequestHash: "alias-replacement", Evidence: []knowledge.EvidenceInput{{Content: "Replacement for a historical alias.", IdempotencyKey: "alias-replacement-evidence", SupersedesEvidenceIDs: []string{aliases[1]}}}})
 		require.NoError(t, err)
 		for _, evidenceID := range append([]string{id}, aliases...) {
 			traced, err := adapter.TraceEvidence(actorCtx, tracecontract.Input{TeamID: team, EvidenceID: evidenceID})
