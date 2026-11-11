@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	accesspostgres "github.com/markhuangai/dense-mem/internal/access/postgres"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 	"github.com/markhuangai/dense-mem/internal/memorypack"
@@ -245,7 +246,15 @@ func TestEvidenceOnlyPostgresTraceBudgetsAndMemoryPackCanonicalProvenance(t *tes
 
 	t.Run("historical_alias_lifecycle", func(t *testing.T) {
 		aliases := []string{uuid.NewString(), uuid.NewString()}
-		ownerCtx := requestctx.WithActor(ctx, requestctx.Actor{TeamID: uuid.MustParse(team), OwnerID: uuid.MustParse(owner), Grants: []string{"read", "write"}, AllowedSpaces: []domain.MemorySpaceAccess{{ID: uuid.MustParse(spaceID), Kind: domain.MemorySpaceTeamShared, Generation: generation}}})
+		credentials := accesspostgres.NewCredentialRepository(app, rls, nil)
+		credential, err := credentials.GetByIDForTeam(ctx, uuid.MustParse(team), uuid.MustParse(owner))
+		require.NoError(t, err)
+		require.NotNil(t, credential)
+		ownerCtx := requestctx.WithActor(ctx, requestctx.Actor{TeamID: credential.TeamID, OwnerID: credential.OwnerID, IdentityID: credential.ActorIdentityID, MembershipID: credential.MembershipID, CredentialID: &credential.ID, Grants: credential.Scopes, AllowedSpaces: credential.MemorySpaces()})
+		peerCredential, err := credentials.GetByIDForTeam(ctx, uuid.MustParse(team), uuid.MustParse(peer))
+		require.NoError(t, err)
+		require.NotNil(t, peerCredential)
+		peerCtx := requestctx.WithActor(ctx, requestctx.Actor{TeamID: peerCredential.TeamID, OwnerID: peerCredential.OwnerID, IdentityID: peerCredential.ActorIdentityID, MembershipID: peerCredential.MembershipID, CredentialID: &peerCredential.ID, Grants: peerCredential.Scopes, AllowedSpaces: peerCredential.MemorySpaces()})
 		require.NoError(t, rls.WithSystemTx(ctx, admin, func(tx *gorm.DB) error {
 			for index, alias := range aliases {
 				if err := tx.Exec(`INSERT INTO evidence_occurrences
@@ -266,7 +275,7 @@ func TestEvidenceOnlyPostgresTraceBudgetsAndMemoryPackCanonicalProvenance(t *tes
 			}
 			return nil
 		}))
-		_, err := store.RetractEvidence(actorCtx, knowledge.RetractEvidenceInput{TeamID: team, OwnerProfileID: peer, EvidenceIDs: []string{aliases[0]}, Reason: "Foreign owner", IdempotencyKey: "alias-peer-retraction", RequestHash: "alias-peer-retraction"})
+		_, err = store.RetractEvidence(peerCtx, knowledge.RetractEvidenceInput{TeamID: team, OwnerProfileID: peer, EvidenceIDs: []string{aliases[0]}, Reason: "Foreign owner", IdempotencyKey: "alias-peer-retraction", RequestHash: "alias-peer-retraction"})
 		require.Error(t, err)
 		retracted, err := store.RetractEvidence(ownerCtx, knowledge.RetractEvidenceInput{TeamID: team, OwnerProfileID: owner, EvidenceIDs: []string{aliases[0]}, Reason: "Historical alias retraction", IdempotencyKey: "alias-retraction", RequestHash: "alias-retraction"})
 		require.NoError(t, err)

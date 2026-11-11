@@ -252,7 +252,7 @@ if (has("synchronous_write")) {
     AI_VERIFIER_DISABLE_TEMPERATURE: "true",
   })) serverEnvironment.set(key, value);
 }
-if (["synchronous_write", "synchronous_write_telemetry_disabled", "session_ingest"].includes(scenario)) serverEnvironment.set("LOG_LEVEL", "debug");
+if (["synchronous_write", "synchronous_write_telemetry_disabled", "session_ingest", "python_client"].includes(scenario)) serverEnvironment.set("LOG_LEVEL", "debug");
 if (scenario === "decision_providers") {
   for (const [key, value] of Object.entries({
     AI_DECISION_PROVIDER: "openai",

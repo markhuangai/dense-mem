@@ -100,6 +100,11 @@ test("Client overlays reserve a bounded request budget", async () => {
       } else {
         assert.doesNotMatch(overlay, /RATE_LIMIT_PER_MINUTE/);
       }
+      if (["python_client", "session_ingest", "synchronous_write", "synchronous_write_telemetry_disabled"].includes(name)) {
+        assert.match(overlay, /LOG_LEVEL: "debug"/);
+      } else {
+        assert.doesNotMatch(overlay, /LOG_LEVEL/);
+      }
     }
   } finally {
     await rm(fixture, { recursive: true, force: true });
