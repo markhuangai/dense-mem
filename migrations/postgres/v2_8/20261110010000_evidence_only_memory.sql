@@ -136,7 +136,7 @@ UPDATE session_submission_receipts SET body=pg_temp.evidence_only_session_result
 UPDATE session_submission_diagnostics SET body=jsonb_build_object('capture_state','unavailable','retired_payload',true,'retirement_reason','factual_graph_removed',
  'payload',jsonb_build_object('tool',body->'payload'->'tool','request',body->'payload'->'request','result',pg_temp.evidence_only_result(body->'payload'->'result'),
  'exchanges',COALESCE((SELECT jsonb_agg((exchange-ARRAY['RequestBody','ResponseBody','ResponseBodyProjection'])||jsonb_build_object('retired_payload',true,'availability','legacy_provider_payload_unavailable') ORDER BY ordinal)
- FROM jsonb_array_elements(COALESCE(body->'payload'->'exchanges','[]'::jsonb)) WITH ORDINALITY entries(exchange,ordinal)),'[]'::jsonb)));
+ FROM jsonb_array_elements(COALESCE(NULLIF(body->'payload'->'exchanges','null'::jsonb),'[]'::jsonb)) WITH ORDINALITY entries(exchange,ordinal)),'[]'::jsonb)));
 ALTER TABLE session_extraction_checkpoints DROP CONSTRAINT session_extraction_checkpoints_window_index_check;
 ALTER TABLE session_extraction_checkpoints ADD CONSTRAINT session_extraction_checkpoints_window_index_check CHECK(window_index BETWEEN 0 AND 7);
 
@@ -176,7 +176,7 @@ DELETE FROM ontology_record_revisions revision USING evidence_only_retired_revis
  (revision.team_id,revision.shared_space_id,revision.space_generation,revision.record_id,revision.version)=(retired.team_id,retired.shared_space_id,retired.space_generation,retired.record_id,retired.version);
 CREATE FUNCTION pg_temp.evidence_only_record_refs(p_team uuid,p_space uuid,p_generation bigint,refs jsonb) RETURNS jsonb LANGUAGE sql STABLE AS $$
  SELECT COALESCE(jsonb_agg(ref ORDER BY ordinal),'[]'::jsonb)
- FROM jsonb_array_elements(COALESCE(refs,'[]'::jsonb)) WITH ORDINALITY entries(ref,ordinal)
+ FROM jsonb_array_elements(COALESCE(NULLIF(refs,'null'::jsonb),'[]'::jsonb)) WITH ORDINALITY entries(ref,ordinal)
  WHERE EXISTS(SELECT 1 FROM ontology_record_revisions revision
  WHERE (revision.team_id,revision.shared_space_id,revision.space_generation,revision.record_id::text,revision.version::text)=(p_team,p_space,p_generation,ref->>'id',ref->>'version'));
 $$;
@@ -203,7 +203,7 @@ BEGIN
   (retired.team_id,retired.shared_space_id,retired.space_generation)=(p_team,p_space,p_generation)
   AND retired.record_id::text IN (edit->>'record_id',edit->>'definition_id'));
  impacted:=jsonb_array_length(kept)<>jsonb_array_length(COALESCE(body->'draft'->'edits','[]'::jsonb)) OR EXISTS(
-  SELECT 1 FROM jsonb_array_elements(COALESCE(body->'prepared'->'changes','[]'::jsonb)) change
+  SELECT 1 FROM jsonb_array_elements(COALESCE(NULLIF(body->'prepared'->'changes','null'::jsonb),'[]'::jsonb)) change
   WHERE change->'record'->>'kind' NOT IN ('topic','assignment','evidence_group','override')
    OR EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(change->'record'->'sources','[]'::jsonb)) source WHERE source->>'kind'<>'evidence')
    OR COALESCE(change->'record'->'dependencies','[]'::jsonb) IS DISTINCT FROM pg_temp.evidence_only_record_refs(p_team,p_space,p_generation,change->'record'->'dependencies'));

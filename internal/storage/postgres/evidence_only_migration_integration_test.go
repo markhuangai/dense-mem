@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/markhuangai/dense-mem/internal/jsonstrict"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	"github.com/stretchr/testify/require"
 )
@@ -278,8 +279,13 @@ func TestEvidenceOnlyPostgresSessionMigrationPreservesRawIdentityAndTerminalOutc
 		hashes[id] = hash
 		intake, err := json.Marshal(map[string]any{"ExtractionVersion": "session_factual_extraction_v1", "RequestHash": hash, "Request": map[string]any{"framework": "adk", "app_name": "migration", "user_id": "u", "session_id": id, "events": []any{map[string]any{"event_id": "event", "text": "Exact raw current event."}}}})
 		require.NoError(t, err)
+		diagnostic, err := json.Marshal(map[string]any{"payload": map[string]any{"exchanges": []modelprovider.ProviderExchange(nil)}})
+		require.NoError(t, err)
 		require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
 			if _, err := tx.ExecContext(ctx, `INSERT INTO session_submissions(team_id,owner_profile_id,space_id,space_generation,submission_id,idempotency_key,request_hash,intake,prior_context,new_event_indices,accepted_event_count,duplicate_event_count,result) VALUES($1::uuid,$2::uuid,$3::uuid,$4,$5::uuid,$5::text,$6,$7::jsonb,'[]','[0]',1,0,$8::jsonb)`, fixture.team, fixture.owner, fixture.space, fixture.generation, id, hash, string(intake), result); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO session_submission_diagnostics(team_id,owner_profile_id,space_id,space_generation,submission_id,body) VALUES($1::uuid,$2::uuid,$3::uuid,$4,$5::uuid,$6::jsonb)`, fixture.team, fixture.owner, fixture.space, fixture.generation, id, string(diagnostic)); err != nil {
 				return err
 			}
 			_, err := tx.ExecContext(ctx, `INSERT INTO session_extraction_checkpoints(team_id,owner_profile_id,space_id,space_generation,submission_id,window_index,body) VALUES($1::uuid,$2::uuid,$3::uuid,$4,$5::uuid,-1,'{"groups":[],"entities":[],"relationships":[]}'),($1::uuid,$2::uuid,$3::uuid,$4,$5::uuid,0,'{"entities":[],"relationships":[],"coverage":[]}')`, fixture.team, fixture.owner, fixture.space, fixture.generation, id)
@@ -314,7 +320,132 @@ func TestEvidenceOnlyPostgresSessionMigrationPreservesRawIdentityAndTerminalOutc
 		}
 		require.Equal(t, 2, resumable)
 		require.Equal(t, 2, terminal)
-		return rows.Err()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+		var diagnostics int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM session_submission_diagnostics WHERE team_id=$1::uuid AND body->'payload'->'exchanges'='[]'::jsonb`, fixture.team).Scan(&diagnostics); err != nil {
+			return err
+		}
+		require.Equal(t, len(hashes), diagnostics)
+		return nil
+	}))
+}
+
+func TestEvidenceOnlyPostgresNullableOntologyCollections(t *testing.T) {
+	ctx := context.Background()
+	db, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+	require.NoError(t, evidenceOnlyMigrationUpTo(ctx, db, evidenceOnlyMigrationBase))
+	fixture := insertEvidenceOnlyMigrationFixture(t, ctx, db, false)
+	digest := "sha256:" + strings.Repeat("a", 64)
+	assessmentID, publicationID, draftID := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	source := ontology.SourceHandle{Kind: ontology.EvidenceSource, ID: fixture.evidence, Version: 1}
+	publication := ontology.PublicationResult{ID: publicationID, Revision: 1}
+	receipt := ontology.OrganizationReceipt{ID: assessmentID, OperationKey: "nullable-receipt", InputHash: digest, BatchHash: digest, ContextHash: digest, ProviderIdentity: "original-provider",
+		Sources: []ontology.SourceDependency{{SourceHandle: source, Fingerprint: digest}},
+		Result:  ontology.OrganizationResult{AssessmentID: assessmentID, Current: true, Outcomes: []ontology.OrganizationOutcome{{Source: source, Status: "unchanged"}}, Publication: &publication}}
+	require.NoError(t, ontology.ValidateOrganizationReceipt(receipt))
+	receiptBody, err := json.Marshal(receipt)
+	require.NoError(t, err)
+	publicationBody, err := json.Marshal(publication)
+	require.NoError(t, err)
+	draftBody, err := json.Marshal(struct {
+		Draft    ontology.ManagementDraft `json:"draft"`
+		Prepared ontology.Publication     `json:"prepared"`
+	}{Draft: ontology.ManagementDraft{ID: draftID, Version: 1, State: "open", Reason: "Prepare later",
+		Edits: []ontology.ManagementEdit{{Action: "define", Kind: ontology.Topic, Definition: &ontology.Definition{Key: "nullable", Label: "Nullable", Description: "A topic awaiting preparation"}}}}})
+	require.NoError(t, err)
+	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO ontology_catalog_heads(team_id,shared_space_id,space_generation,revision) VALUES($1::uuid,$2::uuid,$3,1)`, fixture.team, fixture.space, fixture.generation); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO ontology_publications(team_id,shared_space_id,space_generation,publication_id,revision,operation_key,request_hash,origin,reason,result) VALUES($1::uuid,$2::uuid,$3,$4::uuid,1,'nullable-publication',$5,'automatic','No record changes',$6::jsonb)`, fixture.team, fixture.space, fixture.generation, publicationID, digest, string(publicationBody)); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO ontology_assessments(team_id,shared_space_id,space_generation,operation_key,assessment_id,input_hash,batch_hash,body) VALUES($1::uuid,$2::uuid,$3,'nullable-receipt',$4::uuid,$5,$5,$6::jsonb)`, fixture.team, fixture.space, fixture.generation, assessmentID, digest, string(receiptBody)); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO ontology_draft_heads(team_id,shared_space_id,space_generation,owner_profile_id,draft_id,version,state,body) VALUES($1::uuid,$2::uuid,$3,$4::uuid,$5::uuid,1,'open',$6::jsonb)`, fixture.team, fixture.space, fixture.generation, fixture.owner, draftID, string(draftBody)); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO ontology_draft_revisions(team_id,shared_space_id,space_generation,owner_profile_id,draft_id,version,operation_key,request_hash,body) VALUES($1::uuid,$2::uuid,$3,$4::uuid,$5::uuid,1,'nullable-draft',$6,$7::jsonb)`, fixture.team, fixture.space, fixture.generation, fixture.owner, draftID, digest, string(draftBody))
+		return err
+	}))
+	before := evidenceOnlyFingerprints(t, ctx, db)
+	require.NoError(t, evidenceOnlyMigrationUpTo(ctx, db, evidenceOnlyMigrationVersion))
+	require.Equal(t, before, evidenceOnlyFingerprints(t, ctx, db))
+	assertEvidenceOnlyCatalog(t, ctx, db)
+	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+		var body []byte
+		if err := tx.QueryRowContext(ctx, `SELECT body FROM ontology_assessments WHERE assessment_id=$1::uuid`, assessmentID).Scan(&body); err != nil {
+			return err
+		}
+		var retained ontology.OrganizationReceipt
+		require.NoError(t, jsonstrict.Decode(strings.NewReader(string(body)), &retained, ontology.MaxPublicationBytes))
+		require.NoError(t, ontology.ValidateOrganizationReceipt(retained))
+		require.Equal(t, receipt.ID, retained.ID)
+		require.Equal(t, receipt.OperationKey, retained.OperationKey)
+		require.Equal(t, receipt.InputHash, retained.InputHash)
+		require.Equal(t, receipt.Sources, retained.Sources)
+		require.Empty(t, retained.Dependencies)
+		require.NotNil(t, retained.Result.Publication)
+		require.Equal(t, publication.ID, retained.Result.Publication.ID)
+		require.Empty(t, retained.Result.Publication.Records)
+		if err := tx.QueryRowContext(ctx, `SELECT result FROM ontology_publications WHERE publication_id=$1::uuid`, publicationID).Scan(&body); err != nil {
+			return err
+		}
+		var result ontology.PublicationResult
+		require.NoError(t, json.Unmarshal(body, &result))
+		require.Equal(t, publication.ID, result.ID)
+		require.Empty(t, result.Records)
+		for _, table := range []string{"ontology_draft_heads", "ontology_draft_revisions"} {
+			if err := tx.QueryRowContext(ctx, `SELECT body FROM `+table+` WHERE draft_id=$1::uuid`, draftID).Scan(&body); err != nil {
+				return err
+			}
+			require.JSONEq(t, string(draftBody), string(body))
+		}
+		return nil
+	}))
+}
+
+func TestEvidenceOnlyPostgresMalformedOntologyCollectionsRollBack(t *testing.T) {
+	ctx := context.Background()
+	db, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+	require.NoError(t, evidenceOnlyMigrationUpTo(ctx, db, evidenceOnlyMigrationBase))
+	fixture := insertEvidenceOnlyMigrationFixture(t, ctx, db, false)
+	assessmentID := uuid.NewString()
+	digest := "sha256:" + strings.Repeat("a", 64)
+	body := `{"sources":[],"dependencies":false,"result":{"outcomes":[]}}`
+	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `INSERT INTO ontology_assessments(team_id,shared_space_id,space_generation,operation_key,assessment_id,input_hash,batch_hash,body) VALUES($1::uuid,$2::uuid,$3,'malformed-collection',$4::uuid,$5,$5,$6::jsonb)`, fixture.team, fixture.space, fixture.generation, assessmentID, digest, body)
+		return err
+	}))
+	before := evidenceOnlyFingerprints(t, ctx, db)
+	err := evidenceOnlyMigrationUpTo(ctx, db, evidenceOnlyMigrationVersion)
+	var databaseError *pgconn.PgError
+	require.ErrorAs(t, err, &databaseError)
+	require.Equal(t, "22023", databaseError.Code)
+	require.Equal(t, before, evidenceOnlyFingerprints(t, ctx, db))
+	var graphExists bool
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT to_regclass('public.relationship_records') IS NOT NULL`).Scan(&graphExists))
+	require.True(t, graphExists)
+	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+		var retained []byte
+		if err := tx.QueryRowContext(ctx, `SELECT body FROM ontology_assessments WHERE assessment_id=$1::uuid`, assessmentID).Scan(&retained); err != nil {
+			return err
+		}
+		require.JSONEq(t, body, string(retained))
+		var committed bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM v2_compatibility_markers WHERE marker_kind='evidence_only')`).Scan(&committed); err != nil {
+			return err
+		}
+		require.False(t, committed)
+		return nil
 	}))
 }
 
