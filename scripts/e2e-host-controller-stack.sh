@@ -538,7 +538,7 @@ process.stdout.write(url.toString());
 NODE
 )"
   local go_image
-  go_image="$(env_value DENSE_MEM_CI_GO_TEST_IMAGE 2>/dev/null || printf '%s' golang:1.26.9-bookworm)"
+  go_image="$(env_value DENSE_MEM_CI_GO_TEST_IMAGE 2>/dev/null || printf '%s' golang:1.26.11-bookworm)"
   run_go_source_container \
     "$source_dir" "$go_image" "$project" "$run_id" "$attempt" "$phase" "$scenario" "$digest" "${project}_ci" "" "$ENV_FILE" \
     "$DENSE_MEM_CI_BOOTSTRAP_POSTGRES_PASSWORD" "$DENSE_MEM_CI_BOOTSTRAP_POSTGRES_USER" "$postgres_db" -- \
@@ -553,7 +553,7 @@ NODE
 run_mcp_sdk_parity_driver() {
   local source_dir="$1" project="$2" run_id="$3" attempt="$4" phase="$5" scenario="$6" digest="$7"
   local go_image
-  go_image="$(env_value DENSE_MEM_CI_GO_TEST_IMAGE 2>/dev/null || printf '%s' golang:1.26.9-bookworm)"
+  go_image="$(env_value DENSE_MEM_CI_GO_TEST_IMAGE 2>/dev/null || printf '%s' golang:1.26.11-bookworm)"
   run_go_source_container \
     "$source_dir" "$go_image" "$project" "$run_id" "$attempt" "$phase" "$scenario" "$digest" "${project}_ci" "" "$ENV_FILE" -- \
     -- \

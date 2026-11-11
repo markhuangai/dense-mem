@@ -158,7 +158,7 @@ run_scenario() {
   fi
   if [[ -n "$ontology_database_capabilities" ]]; then
     local go_image
-    go_image="$(env_value DENSE_MEM_CI_GO_TEST_IMAGE 2>/dev/null || printf '%s' golang:1.26.9-bookworm)"
+    go_image="$(env_value DENSE_MEM_CI_GO_TEST_IMAGE 2>/dev/null || printf '%s' golang:1.26.11-bookworm)"
     run_go_source_container \
       "$source_dir" "$go_image" "$project" "$run_id" "$attempt" "$phase" "$scenario" "$digest" "${project}_ci" "$docker_socket" "$ENV_FILE" -- \
       "TESTCONTAINERS_RYUK_DISABLED=true" \
