@@ -122,8 +122,8 @@
           "feedback_comment": "The result omitted the current architecture.",
           "irrelevant_result_refs": [
             {
-              "type": "relationship",
-              "id": "rel-old",
+              "type": "evidence",
+              "id": "00000000-0000-0000-0000-000000000001",
               "rank": 1
             }
           ]
@@ -144,9 +144,8 @@
     "valid": true,
     "input": {
       "name": "release-workflow",
-      "description": "Reusable release relationships",
+      "description": "Reusable release Evidence",
       "include_evidence": true,
-      "include_entity_names": true,
       "evidence_ids": [
         "00000000-0000-0000-0000-000000000001"
       ]

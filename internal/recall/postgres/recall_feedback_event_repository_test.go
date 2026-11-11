@@ -31,7 +31,7 @@ func TestScanRecallFeedbackEventRejectsMalformedIrrelevantResultRefsJSON(t *test
 }
 
 func TestScanRecallFeedbackEventReadsFeedbackComment(t *testing.T) {
-	rows := recallFeedbackEventRows(t, []byte("{}"), []byte("[]"), []byte(`[{"type":"fragment","id":"fragment-1","rank":1}]`))
+	rows := recallFeedbackEventRows(t, []byte("{}"), []byte("[]"), []byte(`[{"type":"evidence","id":"fragment-1","rank":1}]`))
 	got, err := scanRecallFeedbackEvent(rows)
 	require.NoError(t, err)
 	require.Equal(t, "canonical", got.ContractVersion)

@@ -33,7 +33,7 @@ func TestOrganizationDecodeValidationDiagnostics(t *testing.T) {
 	for _, tc := range []struct{ raw, field, family, message string }{
 		{`{}`, "request_id", "request_id", "is required"},
 		{`{"request_id":"request","items":[],"equivalence":[]}`, "definitions", "definitions", "is required"},
-		{strings.Replace(string(encoded), `"parent_ref":"",`, "", 1), "definitions[0].parent_ref", "definitions.parent_ref", "is required"},
+		{withoutDefinitionParentRef(t, encoded), "definitions[0].parent_ref", "definitions.parent_ref", "is required"},
 		{strings.Replace(string(encoded), `"reason":""`, `"reason":null`, 1), "items[0].reason", "items.reason", "must not be null"},
 	} {
 		_, err := Decode(tc.raw)
@@ -204,7 +204,7 @@ func TestOrganizationDecodeReportsIndependentIndexedFields(t *testing.T) {
 	_, response := assessmentFixture()
 	encoded, err := json.Marshal(response)
 	require.NoError(t, err)
-	raw := strings.Replace(string(encoded), `"parent_ref":"",`, "", 1)
+	raw := withoutDefinitionParentRef(t, encoded)
 	raw = strings.Replace(raw, `"ref":"a"`, `"ref":"a","unexpected":true`, 1)
 	raw = strings.Replace(raw, `"ref":"b","status":"classified"`, `"ref":"b","status":null`, 1)
 	result, err := Decode(raw)

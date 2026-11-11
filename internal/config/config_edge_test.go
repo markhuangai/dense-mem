@@ -47,22 +47,7 @@ func TestLoadValidation_RemainingInvalidEnvironmentBranches(t *testing.T) {
 			os.Setenv("AI_VERIFIER_MAX_CANDIDATE_CONTEXT_TOKENS", "11")
 		}, "AI_VERIFIER_MAX_CANDIDATE_CONTEXT_TOKENS"},
 		{"unsupported verifier tokenizer", func() { os.Setenv("AI_VERIFIER_TOKENIZER", "unknown") }, "AI_VERIFIER_TOKENIZER"},
-		{"invalid conflict ttl", func() { os.Setenv("CONFLICT_REVIEW_TTL_DAYS", "bad") }, "CONFLICT_REVIEW_TTL_DAYS"},
-		{"zero conflict ttl", func() { os.Setenv("CONFLICT_REVIEW_TTL_DAYS", "0") }, "CONFLICT_REVIEW_TTL_DAYS"},
-		{"excessive conflict ttl", func() { os.Setenv("CONFLICT_REVIEW_TTL_DAYS", "31") }, "CONFLICT_REVIEW_TTL_DAYS"},
-		{"invalid conflict start time", func() { os.Setenv("CONFLICT_REVIEW_START_TIME_LOCAL", "4am") }, "CONFLICT_REVIEW_START_TIME_LOCAL"},
 		{"invalid app timezone", func() { os.Setenv("APP_TIMEZONE", "Mars/Base") }, "APP_TIMEZONE"},
-		{"excessive conflict concurrency", func() { os.Setenv("CONFLICT_REVIEW_MAX_CONCURRENCY", "17") }, "CONFLICT_REVIEW_MAX_CONCURRENCY"},
-		{"excessive conflict batch size", func() { os.Setenv("CONFLICT_REVIEW_BATCH_SIZE", "501") }, "CONFLICT_REVIEW_BATCH_SIZE"},
-		{"short conflict lease", func() { os.Setenv("CONFLICT_REVIEW_LEASE_SECONDS", "29") }, "CONFLICT_REVIEW_LEASE_SECONDS"},
-		{"conflict lease does not cover synchronous embedding", func() {
-			os.Setenv("AI_API_EMBEDDING_TIMEOUT_SECONDS", "60")
-			os.Setenv("CONFLICT_REVIEW_LEASE_SECONDS", "90")
-		}, "CONFLICT_REVIEW_LEASE_SECONDS"},
-		{"long conflict lease", func() { os.Setenv("CONFLICT_REVIEW_LEASE_SECONDS", "1801") }, "CONFLICT_REVIEW_LEASE_SECONDS"},
-		{"excessive conflict attempts", func() { os.Setenv("CONFLICT_REVIEW_MAX_ATTEMPTS", "21") }, "CONFLICT_REVIEW_MAX_ATTEMPTS"},
-		{"negative conflict jitter", func() { os.Setenv("CONFLICT_REVIEW_JITTER_SECONDS", "-1") }, "CONFLICT_REVIEW_JITTER_SECONDS"},
-		{"excessive conflict jitter", func() { os.Setenv("CONFLICT_REVIEW_JITTER_SECONDS", "3601") }, "CONFLICT_REVIEW_JITTER_SECONDS"},
 		{"zero http max body bytes", func() { os.Setenv("HTTP_MAX_BODY_BYTES", "0") }, "HTTP_MAX_BODY_BYTES"},
 		{"verifier key without url or shared api url", func() { os.Setenv("AI_VERIFIER_API_KEY", "verifier-key") }, "AI_VERIFIER_API_URL"},
 		{"embedding missing url", func() {

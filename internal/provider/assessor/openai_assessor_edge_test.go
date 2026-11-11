@@ -416,7 +416,7 @@ func TestOpenAIAssessorAssessSemanticCorrectsMalformedContentInSameHistory(t *te
 	assert.Equal(t, "request_id", correction.ValidationErrors[0].Field)
 	assert.Contains(t, correction.ValidationErrors[0].Message, `expected "assess-1"`)
 	assert.Contains(t, correction.Instruction, "complete replacement JSON object")
-	assert.Contains(t, correction.Instruction, "Preserve valid unrelated results")
+	assert.Contains(t, correction.Instruction, "unchanged original Evidence")
 }
 
 func TestOpenAIAssessorAssessSemanticRegeneratesInvalidSecurityReference(t *testing.T) {
@@ -463,7 +463,8 @@ func TestOpenAIAssessorAssessSemanticRegeneratesInvalidSecurityReference(t *test
 	assert.NotContains(t, requests[1].Messages[3].Content, "span_hints")
 	assert.NotContains(t, requests[1].Messages[3].Content, "entity_selection_hints")
 	assert.Contains(t, correction.Instruction, "one complete replacement JSON object")
-	assert.Contains(t, correction.Instruction, "Copy only supplied evidence_id, candidate_evidence_id, start_ref, and end_ref")
+	assert.Contains(t, correction.Instruction, "Reuse only allowlisted candidates")
+	assert.Contains(t, correction.Instruction, "using only supplied boundary refs")
 }
 
 func semanticAssessmentTestHasValidationField(errs []SemanticValidationError, field string) bool {
@@ -481,13 +482,11 @@ func TestSemanticAssessmentValidationFieldFamilyIsBounded(t *testing.T) {
 	}{
 		{field: "request_id", want: "request_id"},
 		{field: "evidence_security_results[4].signals[0].evidence_id", want: "evidence_security_results"},
-		{field: "entity_results[12].surface", want: "entity_results.span"},
-		{field: "entity_results[12].candidate_entity_id", want: "entity_results.selection"},
-		{field: "entity_results[12].invented_field", want: "entity_results.other"},
-		{field: "relationship_results[7].predicate_key", want: "relationship_results.predicate"},
-		{field: "relationship_results[7].evidence[2].evidence_id", want: "relationship_results.evidence"},
-		{field: "relationship_results[7].valid_to", want: "relationship_results.temporal"},
-		{field: "relationship_results[7].invented_field", want: "relationship_results.other"},
+		{field: "evidence_equivalence_results[12].candidate_evidence_id", want: "evidence_equivalence"},
+		{field: "evidence_equivalence_candidates[12].candidates", want: "evidence_equivalence"},
+		{field: "evidence_conflict_results[7].positions[2].start_ref", want: "evidence_conflicts"},
+		{field: "entity_results[12].surface", want: "other"},
+		{field: "relationship_results[7].predicate_key", want: "other"},
 		{field: "provider supplied arbitrary field", want: "other"},
 	}
 	for _, testCase := range testCases {

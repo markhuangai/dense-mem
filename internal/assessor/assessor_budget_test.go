@@ -93,10 +93,22 @@ func TestSemanticAssessmentBudgetFailureStageUsesRepairAwareInputLimit(t *testin
 	countLimits.MaxInputTokens = 1_000_000
 	inputTokens, _, err := CountSemanticAssessmentRequestTokens(request, countLimits)
 	require.NoError(t, err)
-	limits.MaxInputTokens = inputTokens + (SemanticAssessmentMaxProviderTurns-1)*(limits.MaxOutputTokens+semanticAssessmentRepairSafetyTokens) - 1
-	require.Greater(t, inputTokens, semanticAssessmentConversationInputLimit(limits))
-	require.Less(t, inputTokens, limits.MaxInputTokens)
-	require.Equal(t, "assessment_input", SemanticAssessmentBudgetFailureStage(request, "input_tokens", limits))
+	withoutKnown := request
+	withoutKnown.KnownEvidence = nil
+	requiredTokens, _, err := CountSemanticAssessmentRequestTokens(withoutKnown, countLimits)
+	require.NoError(t, err)
+	for _, test := range []struct {
+		inputLimit int
+		wantStage  string
+	}{
+		{requiredTokens - 1, "assessment_input"},
+		{inputTokens - 1, "known_evidence_context"},
+	} {
+		limits.MaxInputTokens = test.inputLimit + (SemanticAssessmentMaxProviderTurns-1)*(limits.MaxOutputTokens+semanticAssessmentRepairSafetyTokens)
+		require.Greater(t, inputTokens, semanticAssessmentConversationInputLimit(limits))
+		require.Less(t, inputTokens, limits.MaxInputTokens)
+		require.Equal(t, test.wantStage, SemanticAssessmentBudgetFailureStage(request, "input_tokens", limits))
+	}
 }
 
 func TestSemanticAssessmentConversationInputLimitNormalizesDefaults(t *testing.T) {
@@ -136,16 +148,13 @@ func TestValidateSemanticAssessmentLimitsRequiresMinimumValidRequestBudget(t *te
 	require.Contains(t, validationErr.Error(), "no usable room")
 }
 
-func TestValidateSemanticAssessmentLimitsRequiresMinimumCandidateContextBudget(t *testing.T) {
+func TestValidateSemanticAssessmentLimitsAcceptsMinimumEvidenceOnlyContextBudget(t *testing.T) {
 	limits := DefaultSemanticAssessmentLimits()
 	_, minimumCandidateContextTokens, err := CountSemanticAssessmentRequestTokens(minimumSemanticAssessmentRequest(), limits)
 	require.NoError(t, err)
-	require.Greater(t, minimumCandidateContextTokens, 1)
-	limits.MaxCandidateContextTokens = minimumCandidateContextTokens - 1
-
-	var validationErr *SemanticAssessmentLimitValidationError
-	require.ErrorAs(t, ValidateSemanticAssessmentLimits(limits), &validationErr)
-	require.Equal(t, "candidate_context_tokens", validationErr.Field)
+	require.Equal(t, 1, minimumCandidateContextTokens)
+	limits.MaxCandidateContextTokens = minimumCandidateContextTokens
+	require.NoError(t, ValidateSemanticAssessmentLimits(limits))
 }
 
 func TestCountSemanticAssessmentProviderFramingTokensUsesTheRequestEnvelope(t *testing.T) {

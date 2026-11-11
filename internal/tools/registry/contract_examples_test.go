@@ -80,7 +80,7 @@ func TestRememberExampleRetainsTheWholePayloadForReplay(t *testing.T) {
 
 	changed := cloneContractExampleRequest(t, original)
 	changedEvidence := changed["evidence"].([]any)[0].(map[string]any)
-	changedEvidence["metadata"].(map[string]any)["origin"] = "changed-example"
+	changedEvidence["metadata"] = map[string]any{"origin": "changed-example"}
 	if err := ValidateContractInput(remember, changed, remember.RequiredScopes); err != nil {
 		t.Fatal(err)
 	}

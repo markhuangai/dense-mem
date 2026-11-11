@@ -1,8 +1,8 @@
 -- Lock/rewrite impact: stopped-service transaction locks the explicit inventory; five-second acquisition bound, no provider calls.
 -- RLS impact: temporary migration policies are removed before commit; FORCE RLS and runtime immutability remain enabled.
 -- Backfill: retire mixed graph payloads and unfinished extraction checkpoints while retaining original Evidence and operation identity.
--- Preconditions: stop incompatible instances and verify a matching restore-tested backup before normal startup.
--- Recovery: before commit the transaction rolls back; after commit restore that backup, and after new writes recover forward unless separately approved.
+-- Backward compatibility: stop incompatible instances and verify a matching restore-tested backup before normal startup.
+-- Rollback: before commit the transaction rolls back; after commit restore that backup, and after new writes recover forward unless separately approved.
 -- Inventory identity: sha256:4d4269d72e53f44fa47476c7cf2ed658fa270e65339256c73b2f73faabe494d2
 -- +goose Up
 -- +goose StatementBegin

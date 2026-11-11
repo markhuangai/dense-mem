@@ -42,7 +42,6 @@ func TestIsRememberStaleInputErrorClassifiesAdapterBoundaries(t *testing.T) {
 	for _, stale := range []error{
 		knowledgecontract.ErrSubmissionAssessmentKnownEvidenceStale,
 		knowledgecontract.ErrRememberExactReferenceStale,
-		knowledgecontract.ErrRememberDuplicateCandidateStale,
 	} {
 		require.True(t, rememberapp.IsRememberStaleInputError(stale), stale)
 		require.True(t, rememberapp.IsRememberStaleInputError(errors.Join(errors.New("wrapped"), stale)), stale)

@@ -185,13 +185,11 @@ func TestOntologyManagerOverridesSurviveReprocessing(t *testing.T) {
 	retired.Retired = true
 	_, err = PreparePublication(catalog, nil, Publication{OperationKey: "unpin", Reason: "remove pin", Changes: []Change{{ExpectedVersion: 1, Record: retired}, {ExpectedVersion: 1, Record: changed}}}, false)
 	require.NoError(t, err)
-	_, err = PreparePublication(nil, nil, publicationFor(pin), true)
+	_, err = PreparePublication(map[string]Record{definition.ID: definition}, nil, publicationFor(pin), true)
 	require.ErrorIs(t, err, ErrOverride)
 	first := policySnapshot("a", EvidenceSource, "same complete meaning")
 	second := policySnapshot("b", EvidenceSource, first.MeaningKey)
 	separation := Record{ID: policyID("separation"), Version: 1, Kind: OverrideKind, Override: &Override{Action: KeepSeparate, Members: []SourceHandle{first.SourceHandle, second.SourceHandle}}}
-	first.Version = 2
-	second.Version = 2
 	group := Record{ID: policyID("joined"), Kind: EvidenceGroup, Group: &Group{Members: []SourceHandle{first.SourceHandle, second.SourceHandle}}, Sources: []SourceDependency{sourceDependency(t, first), sourceDependency(t, second)}}
 	_, err = PreparePublication(map[string]Record{separation.ID: separation}, map[string]SourceSnapshot{SourceKey(first.SourceHandle): first, SourceKey(second.SourceHandle): second}, publicationFor(group), true)
 	require.ErrorIs(t, err, ErrOverride)

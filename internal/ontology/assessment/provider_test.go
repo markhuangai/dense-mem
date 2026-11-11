@@ -172,12 +172,28 @@ func assessmentFixture() (Request, Response) {
 	return request, response
 }
 
+func withoutDefinitionParentRef(t *testing.T, encoded []byte) string {
+	t.Helper()
+	var fields map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(encoded, &fields))
+	var definitions []map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(fields["definitions"], &definitions))
+	require.NotEmpty(t, definitions)
+	delete(definitions[0], "parent_ref")
+	var err error
+	fields["definitions"], err = json.Marshal(definitions)
+	require.NoError(t, err)
+	result, err := json.Marshal(fields)
+	require.NoError(t, err)
+	return string(result)
+}
+
 func TestOrganizationResponseRequiresCompleteClosedAllowlists(t *testing.T) {
 	request, response := assessmentFixture()
 	require.NoError(t, Validate(request, response))
 	encoded, err := json.Marshal(response)
 	require.NoError(t, err)
-	for name, raw := range map[string]string{"unknown": strings.Replace(string(encoded), "{", `{"team_id":"chosen",`, 1), "duplicate": strings.Replace(string(encoded), "{", `{"request_id":"first",`, 1), "trailing": string(encoded) + " {}", "null": "null", "missing": `{"request_id":"request","items":[],"equivalence":[]}`, "missing_nested": strings.Replace(string(encoded), `"parent_ref":"",`, "", 1)} {
+	for name, raw := range map[string]string{"unknown": strings.Replace(string(encoded), "{", `{"team_id":"chosen",`, 1), "duplicate": strings.Replace(string(encoded), "{", `{"request_id":"first",`, 1), "trailing": string(encoded) + " {}", "null": "null", "missing": `{"request_id":"request","items":[],"equivalence":[]}`, "missing_nested": withoutDefinitionParentRef(t, encoded)} {
 		t.Run(name, func(t *testing.T) { _, err := Decode(raw); require.Error(t, err) })
 	}
 	for _, change := range []func(*Response){

@@ -192,55 +192,30 @@ func TestHTTPClientKnowledgeMapping(t *testing.T) {
 		}
 		kind := stringValue(input["type"])
 		requestedTypes = append(requestedTypes, kind)
-		var items []map[string]any
-		switch kind {
-		case "evidence":
-			items = []map[string]any{{
-				"id":       "evidence-alpha",
-				"metadata": map[string]any{"source_doc_id": "doc-alpha"},
-			}}
-		case "entity":
-			items = []map[string]any{{
-				"id":       "entity-alpha",
-				"metadata": map[string]any{"source_doc_id": "doc-alpha"},
-			}}
-		case "value":
-			items = []map[string]any{{
-				"id":       "value-beta",
-				"metadata": map[string]any{"source_doc_id": "doc-beta"},
-			}}
-		case "relationship":
-			items = []map[string]any{{
-				"id":       "relationship-alpha",
-				"metadata": map[string]any{"source_doc_id": "doc-alpha"},
-			}}
-		default:
-			t.Fatalf("unexpected export type %q", kind)
+		if kind != "evidence" {
+			t.Fatalf("retired export type %q requested", kind)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"items":       items,
-			"next_cursor": "",
-			"has_more":    false,
+			"items": []map[string]any{
+				{"id": "evidence-alpha", "metadata": map[string]any{"source_doc_id": "doc-alpha"}},
+				{"id": "evidence-beta", "metadata": map[string]any{"source_doc_id": "doc-beta"}},
+			}, "next_cursor": "", "has_more": false,
 		})
 	}))
 	defer server.Close()
-
 	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
 	mapping, err := client.ExportKnowledgeMapping(context.Background(), 50)
 	if err != nil {
 		t.Fatalf("ExportKnowledgeMapping: %v", err)
 	}
-	if strings.Join(requestedTypes, ",") != "evidence,entity,value,relationship" {
+	if strings.Join(requestedTypes, ",") != "evidence" {
 		t.Fatalf("requested types = %v", requestedTypes)
 	}
-	alphaByType := mapping.BySourceDocIDAndType["doc-alpha"]
-	if alphaByType["evidence"][0].ID != "evidence-alpha" ||
-		alphaByType["entity"][0].ID != "entity-alpha" ||
-		alphaByType["relationship"][0].ID != "relationship-alpha" {
-		t.Fatalf("doc-alpha mapping = %+v", alphaByType)
-	}
-	if mapping.BySourceDocIDAndType["doc-beta"]["value"][0].ID != "value-beta" {
-		t.Fatalf("doc-beta mapping = %+v", mapping.BySourceDocIDAndType["doc-beta"])
+	for source, id := range map[string]string{"doc-alpha": "evidence-alpha", "doc-beta": "evidence-beta"} {
+		byType := mapping.BySourceDocIDAndType[source]
+		if len(byType) != 1 || len(byType["evidence"]) != 1 || byType["evidence"][0].ID != id {
+			t.Fatalf("%s mapping = %+v", source, byType)
+		}
 	}
 }
 
@@ -696,55 +671,35 @@ func TestHTTPClientExportKnowledgeMappingIncludesCanonicalRefs(t *testing.T) {
 		}
 		var input map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-			t.Fatalf("decode eval_list_knowledge_refs body: %v", err)
+			t.Fatalf("decode export body: %v", err)
 		}
-		switch input["type"] {
-		case "evidence":
-			_ = json.NewEncoder(w).Encode(map[string]any{"items": []map[string]any{{
-				"id":       "evidence-tiered",
-				"metadata": map[string]any{"source_doc_id": "doc-tiered"},
-			}}})
-		case "entity":
-			_ = json.NewEncoder(w).Encode(map[string]any{"items": []map[string]any{{
-				"id":       "entity-tiered",
-				"metadata": map[string]any{"source_doc_id": "doc-tiered"},
-			}}})
-		case "value":
-			_ = json.NewEncoder(w).Encode(map[string]any{"items": []map[string]any{{
-				"id":       "value-other",
-				"metadata": map[string]any{"source_doc_id": "doc-other"},
-			}}})
-		case "relationship":
-			_ = json.NewEncoder(w).Encode(map[string]any{"items": []map[string]any{{
-				"id":       "relationship-tiered",
-				"metadata": map[string]any{"source_doc_id": "doc-tiered"},
-			}}})
-		default:
-			t.Fatalf("unexpected export type %v", input["type"])
+		if input["type"] != "evidence" {
+			t.Fatalf("retired export type %v requested", input["type"])
 		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"items": []map[string]any{
+			{"id": "evidence-tiered", "metadata": map[string]any{"source_doc_id": "doc-tiered"}},
+			{"id": "evidence-other", "metadata": map[string]any{"source_doc_id": "doc-other"}},
+		}})
 	}))
 	defer server.Close()
-
 	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
 	mapping, err := client.ExportKnowledgeMapping(context.Background(), 100)
-
 	if err != nil {
 		t.Fatalf("ExportKnowledgeMapping: %v", err)
 	}
-	if mapping.BySourceDocID["doc-tiered"].ID != "evidence-tiered" {
-		t.Fatalf("default mapping = %+v", mapping.BySourceDocID["doc-tiered"])
-	}
-	if mapping.BySourceDocIDAndType["doc-tiered"]["entity"][0].ID != "entity-tiered" {
-		t.Fatalf("entity mapping = %+v", mapping.BySourceDocIDAndType)
-	}
-	if mapping.BySourceDocIDAndType["doc-tiered"]["relationship"][0].ID != "relationship-tiered" {
-		t.Fatalf("relationship mapping = %+v", mapping.BySourceDocIDAndType)
-	}
-	if len(mapping.BySourceDocIDAndType["doc-tiered"]["hypothesis"]) != 0 {
-		t.Fatalf("retired hypotheses returned = %+v", mapping.BySourceDocIDAndType)
-	}
-	if mapping.BySourceDocIDAndType["doc-other"]["value"][0].ID != "value-other" {
-		t.Fatalf("value mapping = %+v", mapping.BySourceDocIDAndType)
+	for source, id := range map[string]string{"doc-tiered": "evidence-tiered", "doc-other": "evidence-other"} {
+		if mapping.BySourceDocID[source].ID != id {
+			t.Fatalf("default mapping = %+v", mapping.BySourceDocID)
+		}
+		refs := mapping.BySourceDocIDAndType[source]["evidence"]
+		if len(refs) != 1 || refs[0].ID != id || refs[0].Type != "evidence" {
+			t.Fatalf("Evidence mapping = %+v", refs)
+		}
+		for _, retired := range []string{"entity", "relationship", "value", "hypothesis"} {
+			if len(mapping.BySourceDocIDAndType[source][retired]) != 0 {
+				t.Fatalf("retired %s refs returned = %+v", retired, mapping.BySourceDocIDAndType)
+			}
+		}
 	}
 }
 

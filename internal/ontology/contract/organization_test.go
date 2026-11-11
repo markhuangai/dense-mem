@@ -37,8 +37,8 @@ func TestOrganizationInputAndFingerprints(t *testing.T) {
 }
 
 func TestOrganizationEvidenceSourceOrderDoesNotChangeItsHash(t *testing.T) {
-	a := SourceHandle{Kind: EvidenceSource, ID: policyID("a"), Version: 12}
-	b := SourceHandle{Kind: EvidenceSource, ID: policyID("a1"), Version: 2}
+	a := SourceHandle{Kind: EvidenceSource, ID: policyID("a"), Version: 1}
+	b := SourceHandle{Kind: EvidenceSource, ID: policyID("a1"), Version: 1}
 	forward, err := PrepareOrganizationInput(OrganizationInput{OperationKey: "same", Sources: []SourceHandle{a, b}})
 	require.NoError(t, err)
 	reverse, err := PrepareOrganizationInput(OrganizationInput{OperationKey: "same", Sources: []SourceHandle{b, a}})
@@ -49,7 +49,7 @@ func TestOrganizationEvidenceSourceOrderDoesNotChangeItsHash(t *testing.T) {
 	two, err := OrganizationInputHash(reverse, "provider")
 	require.NoError(t, err)
 	require.Equal(t, one, two)
-	a.Version = 2
+	a.ID = policyID("different-evidence")
 	changed, err := OrganizationInputHash(OrganizationInput{Sources: []SourceHandle{a, b}}, "provider")
 	require.NoError(t, err)
 	require.NotEqual(t, one, changed)

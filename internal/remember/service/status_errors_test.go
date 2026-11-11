@@ -28,7 +28,7 @@ func TestSubmissionStatusErrorsExposeClosedGuidance(t *testing.T) {
 
 	require.Equal(t, string(SubmissionErrorInternalFailure), StatusError("provider-secret-detail").Code)
 	require.Equal(t, "safe override", StatusErrorWithMessage(SubmissionErrorInternalFailure, "safe override").Message)
-	serverOwnedBudget := StatusErrorWithDetails(SubmissionErrorInputBudgetExceeded, "entity_catalog", map[string]any{"server_owned": true})
+	serverOwnedBudget := StatusErrorWithDetails(SubmissionErrorInputBudgetExceeded, "known_evidence_context", map[string]any{"server_owned": true})
 	require.Equal(t, SubmissionNextActionContactOperator, SubmissionNextAction(serverOwnedBudget.NextAction))
 	require.Equal(t, serverOwnedInputBudgetRemediation, serverOwnedBudget.Remediation)
 	require.Equal(t, string(SubmissionErrorPolicyRejected), StatusErrorForCode("unknown", "rejected").Code)
@@ -41,7 +41,7 @@ func TestSubmissionStatusErrorsExposeClosedGuidance(t *testing.T) {
 	}{
 		{stage: "contract_superseded", want: SubmissionErrorInternalFailure},
 		{stage: "input_budget", want: SubmissionErrorInputBudgetExceeded},
-		{stage: "entity_catalog", want: SubmissionErrorInputBudgetExceeded},
+		{stage: "known_evidence_context", want: SubmissionErrorInputBudgetExceeded},
 		{stage: "configuration_invalid", want: SubmissionErrorConfigurationInvalid},
 		{stage: "database", want: SubmissionErrorDatabaseFailure},
 		{stage: "assessment", class: "malformed_exhausted", want: SubmissionErrorProviderResponseInvalid},

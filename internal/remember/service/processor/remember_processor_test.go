@@ -191,7 +191,7 @@ func TestRememberInvocationDiagnosticsRecordOutcomeAndCause(t *testing.T) {
 		TeamID: "11111111-1111-4111-8111-111111111111", OwnerProfileID: "22222222-2222-4222-8222-222222222222",
 		InvocationStartedAt: started, RequestHash: "sha256:request", OriginalRequest: []byte(`{"evidence":[{"content":"admitted"}]}`),
 	}, "33333333-3333-4333-8333-333333333333", "execution", "33333333-3333-4333-8333-333333333333", "commit", nil, status, nil)
-	require.Equal(t, "evaluated_zero", ledger.invocation.Outcome)
+	require.Equal(t, "completed", ledger.invocation.Outcome)
 	require.Empty(t, ledger.invocation.FailedPhase)
 	require.Equal(t, "sha256:request", ledger.invocation.RequestHash)
 	require.WithinDuration(t, started, ledger.invocation.CreatedAt, 50*time.Millisecond)
@@ -357,11 +357,12 @@ func TestRememberFailureRecoveryContextUsesPersistenceBudget(t *testing.T) {
 
 func TestRememberReplayReloadUsesBoundedRecoveryContext(t *testing.T) {
 	ledger := &rememberFailureLedgerStub{loadSequence: []*knowledgecontract.RememberAttempt{{
-		AttemptID: "77777777-7777-7777-7777-777777777777", Outcome: "completed",
+		AttemptID: "77777777-7777-7777-7777-777777777777", ContractVersion: domain.ContractVersion, Outcome: "completed",
 		PublicResult: map[string]any{
 			"contract_version": domain.ContractVersion, "submission_id": "77777777-7777-7777-7777-777777777777",
 			"submission_kind": "remember", "processing_state": "completed", "search_state": "current",
-			"evidence": []any{}, "errors": []any{},
+			"space_kind": "team_shared",
+			"evidence":   []any{}, "errors": []any{},
 		},
 	}}}
 	processor := &rememberSynchronousProcessor{ledger: ledger}
