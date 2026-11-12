@@ -9,11 +9,17 @@ The current audit uses [source snapshot 152448a4](https://github.com/markhuangai
 | Subject | Approved target | Inspected implementation |
 | --- | --- | --- |
 | Remember outcome | Required work finishes in the originating call; final success or actionable failure remains authoritative. | Synchronous processing is present in the audited Evidence-only baseline. |
-| Remember progress | Optional request-scoped stage notifications while the same call remains pending. | Pending [#742](https://github.com/markhuangai/dense-mem/issues/742). Inspection at [8369e326](https://github.com/markhuangai/dense-mem/commit/8369e326876f848439a2e7421618d71e6e821968) found no progress emitter in the MCP, Remember, or HTTP handler paths. |
+| Remember progress | Optional request-scoped stage notifications while the same call remains pending. | Implemented and verified in [candidate 66e103ed](https://github.com/markhuangai/dense-mem/commit/66e103ed04b93c6658e8cbed607bc4decfc01e42), [PR #745](https://github.com/markhuangai/dense-mem/pull/745). Not merged or deployed. |
 
-Sections marked **Target** specify the approved progress behavior. Keep this gap visible until production-entry success, failure, isolation, delivery, cancellation, and replay checks pass. Client-specific inspection and UI uncertainty belong to [MCP Clients](MCP-Clients#remember-progress-target).
+The #742 candidate passed independent plan audit (`gpt-6.1-sol/max`, round 5), selective local checks, and [Development E2E 43263787048](https://github.com/markhuangai/dense-mem/actions/runs/43263787048): all five selected scenarios and PostgreSQL shard 4. The tested production image was `sha256:85f1338975f758b941aaa2dc2865a58fc7755331f2466da3c571d521911af8f6`; [cleanup 43265955042](https://github.com/markhuangai/dense-mem/actions/runs/43265955042) deleted its owned version. Client fixture probes separately verified visible stage updates in Claude Code 2.1.288 and generic tool status without stage text in Codex 0.166.0. These results establish candidate behavior, not deployment. The maintainer-approved 1k evaluation waiver and replacement verification are recorded in the [issue contract](https://github.com/markhuangai/dense-mem/issues/742#issuecomment-6823449787).
 
-[ADR 0001](https://github.com/markhuangai/dense-mem/blob/8369e326876f848439a2e7421618d71e6e821968/adr/0001-predictable-mcp-tool-contracts.md#decision) already requires synchronous terminal outcomes. Progress notifications leave that decision intact; a short clarification is tracked with the implementation.
+The maintainer authorized [Codex-only review for this delivery](https://github.com/markhuangai/dense-mem/issues/742#issuecomment-6826236791). The separate AI reviewer error remains excluded from that gate. Codex completed without findings, and CodeQL plus CodeQL analysis passed on `66e103ed04b93c6658e8cbed607bc4decfc01e42`.
+
+Full Repository CI and production-image E2E passed in [run 43266534414, attempt 2](https://github.com/markhuangai/dense-mem/actions/runs/43266534414/attempts/2), including all 30 scenarios and six PostgreSQL shards. The initial `ontology_organization` failure was a verified transient embedding-provider HTTP 502; its one scoped retry passed on the unchanged source and image. The production image was `sha256:20a5843dc5061e61d8eb46a39d429f72690f560ee9568550dde9fcdf00fb8c9f`. The candidate includes main `007fbb6fafed69411c09666de37cc0a20ec24523`; the PR remains open and requires human approval.
+
+Sections marked **Target** specify the approved progress behavior. Keep candidate verification separate from merge and deployment status. Client-specific inspection and UI uncertainty belong to [MCP Clients](MCP-Clients#remember-progress-target).
+
+[ADR 0001](https://github.com/markhuangai/dense-mem/blob/66e103ed04b93c6658e8cbed607bc4decfc01e42/adr/0001-predictable-mcp-tool-contracts.md#decision) requires synchronous terminal outcomes. The candidate clarification preserves that decision while allowing optional activity notifications.
 
 ## Canonical Page Ownership
 

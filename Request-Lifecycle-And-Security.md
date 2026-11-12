@@ -153,10 +153,12 @@ See [implementation status](Documentation-Maintenance#implementation-status) and
 | Request and actor | Route progress only to the originating authenticated call/session. Equal tokens from different clients never merge routing or authority. |
 | Correlation token | Client metadata correlates messages; it cannot choose team, profile, destination, ownership, or another request. Treat it as untrusted caller metadata when producing diagnostics. |
 | Public payload | Fixed bounded stage messages; no Evidence text, provider output/reasoning, operational credentials, or private-context details. Operator captures remain a separate exposure contract. |
-| Delivery | Bound optional notification work outside semantic transactions. Preserve required outcomes; use bounded diagnostics for delivery failures and retain the existing disconnect/cancellation rules. |
+| Delivery | Bound each optional write to 100 ms and the earlier phase/request deadline, outside semantic transactions. Unsupported write deadlines or delivery failure disable subsequent updates. Preserve required outcomes and existing disconnect/cancellation rules. |
 | Lifetime | Stop notifications before the final response; preserve phase/operation deadlines and release stream resources on every exit. |
 
 A progress update does not extend a request deadline or prove a commit. A disconnect can still leave receipt delivery unknown; follow [unchanged-request recovery](Write-Pipeline#replay-and-recovery).
+
+Lossless envelope-token decoding prevents large integer tokens from being rounded by SDK metadata conversion. The token stays outside the tool arguments and canonical request hash. Eligibility logs omit its value before admission; stage-delivery diagnostics use the existing credential protector.
 
 ## Private Erasure Boundary
 

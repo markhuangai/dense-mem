@@ -72,6 +72,10 @@ Illustrative text for a host that displays progress; each arrow replaces the run
 
 ~~~text
 dense-mem · remember
+  Preparing intake
+          ↓
+  Checking duplicate Evidence
+          ↓
   Assessing Evidence…
           ↓
   Preparing search state…
@@ -83,10 +87,12 @@ dense-mem · remember
 
 The final line comes from the tool result. A progress message alone never establishes success or a reason to resubmit.
 
-| Client inspected on 2026-11-11 | Verified boundary | Remaining uncertainty |
+| Client inspected on 2026-11-12 | Verified boundary | Remaining uncertainty |
 | --- | --- | --- |
-| Claude Code 2.1.288 | Installed client handling supports progress text and percentages when a total is supplied. The [official changelog](https://code.claude.com/docs/en/changelog) records the collapsed-view rendering fix in 2.1.153. | Dense-Mem integration and actual screen presentation await implementation. |
-| Codex 0.166.0 | Its generated app-server protocol includes `item/mcpToolCall/progress` with a message and thread/turn/item correlation. | CLI and IDE rendering were not verified; a visible progress indicator is not guaranteed. |
+| Claude Code 2.1.288 | A controlled fixture using the verified candidate wire sequence received its numeric token, delivered five notifications, and showed live stage updates before the terminal result in the captured CLI view. | The first model turn skipped the tool call and required a follow-up instruction. This was a presentation fixture; IDE/desktop behavior and a deployed Dense-Mem connection were not tested. |
+| Codex 0.166.0 | The same controlled fixture received its numeric token and delivered all five notifications plus the terminal result. | The captured CLI view showed generic working/tool status without stage text. Its app-server protocol support does not establish CLI or IDE rendering. |
+
+Issue #742 separately verifies the production server and each installed client's presentation using a controlled fixture with the verified notification sequence. A fixture probe does not write real memory. Record whether the client supplies a progress token and whether its actual terminal shows the stage text; receiving a valid terminal result alone does not prove visible progress. Candidate verification and exact source/run evidence belong to [Documentation Maintenance](Documentation-Maintenance#implementation-status).
 
 Claude Code documents automatic backgrounding of main-conversation MCP calls after two minutes by default; the task view retains the latest progress and later delivers the tool outcome. This is host behavior around the same server call. See [Claude Code's MCP reference](https://code.claude.com/docs/en/mcp#automatic-backgrounding-of-long-tool-calls).
 

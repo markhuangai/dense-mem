@@ -190,12 +190,14 @@ An alternative final actionable-error response; actual codes and remediation dep
 | --- | --- |
 | `params._meta.progressToken` | Client-supplied string or integer, including `0`, unique across that client's active requests; preserve the exact value/type. Protocol metadata sits beside `arguments`; it is not a Remember argument, credential, or idempotency key. |
 | Notification fields | `progressToken` echoes the request token; numeric `progress` increases; `message` is fixed human-readable stage text. |
-| `total` | Optional meaningful total; omit when unknown. Progress values do not estimate elapsed time. |
-| SSE and valid token | May receive a bounded sequence of notifications before the final response. Only reached stages appear; replay or fast completion can produce none. |
-| No token or JSON-only response | Keep the existing terminal response without progress. No separate subscription or polling is required. |
+| `total` | Omitted for Remember because cached/skipped work and regeneration make a fixed total misleading. Progress values do not estimate elapsed time. |
+| SSE and valid token | May receive at most five notifications before the final response. Only reached stages appear; retained-result replay produces none. |
+| Missing/invalid token or JSON-only response | Keep the existing terminal response without progress. No separate subscription or polling is required. |
 | Completion | Exactly one final response for the request ID; no later progress. Final result/error schemas retain their existing meaning. |
 
 The wire examples are JSON-RPC messages carried by the response stream; they omit SSE `data:` framing. The [MCP progress specification](https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/progress) defines the protocol; [Request Lifecycle And Security](Request-Lifecycle-And-Security#progress-notification-boundary-target) owns isolation and exposure.
+
+Fixed stage text is `Preparing intake`, `Checking duplicate Evidence`, `Assessing Evidence`, `Preparing search state`, and `Committing`. Duplicate checking can embed candidates before assessment. Search preparation can reuse cached vectors or skip a provider call; no status promises that a provider was invoked. A bounded regeneration remains within the assessment stage.
 
 ## ingest_session
 

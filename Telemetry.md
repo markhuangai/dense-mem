@@ -57,6 +57,18 @@ Remember body captures expire after seven days, subject to applicable holds and 
 
 Ontology diagnostics join trusted team/actor, correlation, operation, run/batch/assessment, and provider-exchange identities. Complete protected DEBUG chunks are stdout-only and independent of optional telemetry. Preserve the full operation window and validate manifest hashes and chunk counts; missing required chunks cannot establish a diagnosis. Successful publication observations occur after transaction/audit success. Rejected assessment receipts can include bounded server-owned validation identifiers; absence does not imply success.
 
+### Remember Progress Diagnostics (Candidate)
+
+The #742 candidate uses the existing process logger and level policy; deployment verbosity is unchanged. [Documentation Maintenance](Documentation-Maintenance#implementation-status) records verification and deployment status.
+
+| Event | Level and evidence |
+| --- | --- |
+| `mcp_progress_eligibility` | DEBUG: response mode, protocol and eligibility reason; no token value before admission. |
+| `mcp_progress_sending` / `mcp_progress_delivered` | DEBUG: trusted team/profile and correlation, request/invocation identity, protected token, stage, sequence, 100 ms write budget and delivery duration. |
+| `mcp_progress_delivery_failed` | WARN: causal error, elapsed time, reason and disabled state; correlate with the terminal MCP and HTTP delivery events. |
+
+Collect the complete server console operation window, including `remember_request_payload` and `ai_exchange_payload` at DEBUG. Reconstruct protected chunks by exchange/direction and verify counts/hashes. Required provider bodies are console-only and remain available with optional telemetry disabled; the control log summary alone cannot prove complete capture. Use existing phase, processing-failure and invocation events for cause, retry eligibility, canonical attempt, request hash and final outcome. Initial security rejection remains content-free.
+
 ## Dashboard States
 
 | State | Meaning |

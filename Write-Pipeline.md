@@ -80,7 +80,9 @@ sequenceDiagram
   end
 ```
 
-Target notifications follow the stages above, including skipped work and bounded regeneration. They add no model calls and never imply accepted memory. Notify before entering the semantic transaction; no network notification delivery belongs inside it. A retained-result replay can return directly.
+Target notifications follow reached preparation, duplicate checking, assessment, search preparation and commit boundaries. Duplicate-candidate embedding can precede assessment; cached or empty embedding work adds no provider call. Regeneration does not repeat the assessment notification. Notifications add no model calls and never imply accepted memory. Notify before entering the semantic transaction; no network notification delivery belongs inside it. A retained-result replay returns directly without simulated processing.
+
+Each optional notification write has a 100 ms cap within the existing request/phase deadline. Unsupported write deadlines or a delivery error disable further notifications for that call. Required processing still owns its terminal outcome; a broken response stream can make receipt delivery unknown.
 
 The 180-second operation budget bounds required processing. Assessment has a 160-second phase bound; embedding and commit have their existing bounded phases within the total deadline. Earlier context cancellation and remaining time still apply. Provider timeouts and optional progress delivery cannot extend a phase or operation deadline.
 
@@ -97,6 +99,8 @@ Background search reconciliation repairs derived state after later changes. It d
 | Client timeout/disconnect | Receipt delivery can be unknown even if a commit occurred. |
 
 A lost response is not proof of rollback. The Python client does not automatically retry or generate replacement operation keys. See [Framework Integrations](Framework-Integrations#failures-and-unknown-outcomes).
+
+The controlled disconnect fixture in [candidate 66e103ed](https://github.com/markhuangai/dense-mem/commit/66e103ed04b93c6658e8cbed607bc4decfc01e42), verified by [Development E2E 43263787048](https://github.com/markhuangai/dense-mem/actions/runs/43263787048), observed different retained outcomes by negotiated protocol: `2025-11-25` completed processing after disconnect, while `2026-07-28` retained `failed` with `request_cancelled`. Resending the unchanged complete request and original key recovered to completion for both. These are candidate observations under controlled timing; inspect the retained outcome and use unchanged-request recovery for an actual disconnect.
 
 ## Private Session Intake
 
