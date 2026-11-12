@@ -132,8 +132,18 @@ func TestEvidenceOnlyPostgresFreshInstall(t *testing.T) {
 	require.NoError(t, NewMigratorWithDB(db).RunUp(ctx))
 	assertEvidenceOnlyCatalog(t, ctx, db)
 	require.NoError(t, ValidateStartupMigrationState(ctx, db, MigrationsDir()))
+	blocker, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	defer blocker.Rollback()
+	_, err = blocker.ExecContext(ctx, `LOCK TABLE private_memory_legal_holds IN SHARE MODE`)
+	require.NoError(t, err)
+	replayCtx, cancelReplay := context.WithTimeout(ctx, time.Second)
+	defer cancelReplay()
+	require.NoError(t, NewMigratorWithDB(db).RunUp(replayCtx), "an applied migration must not analyze the holds table again")
+	require.NoError(t, blocker.Rollback())
+
 	require.ErrorContains(t, migrationDown(ctx, db), "irreversible after commit")
-	_, err := db.ExecContext(ctx, `CREATE ROLE evidence_only_marker_writer NOSUPERUSER NOBYPASSRLS;
+	_, err = db.ExecContext(ctx, `CREATE ROLE evidence_only_marker_writer NOSUPERUSER NOBYPASSRLS;
  GRANT USAGE ON SCHEMA public TO evidence_only_marker_writer;
  GRANT INSERT ON v2_compatibility_markers TO evidence_only_marker_writer;
  GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO evidence_only_marker_writer`)
@@ -148,6 +158,33 @@ func TestEvidenceOnlyPostgresFreshInstall(t *testing.T) {
 	var databaseError *pgconn.PgError
 	require.ErrorAs(t, err, &databaseError)
 	require.Equal(t, "42501", databaseError.Code)
+}
+
+func TestEvidenceOnlyPostgresNeverAnalyzedLegalHolds(t *testing.T) {
+	ctx := context.Background()
+	db, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+	require.NoError(t, evidenceOnlyMigrationUpTo(ctx, db, evidenceOnlyMigrationBase))
+	insertEvidenceOnlyMigrationFixture(t, ctx, db, true)
+	before := evidenceOnlyFingerprints(t, ctx, db)
+	var plannerRows float64
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT reltuples FROM pg_class WHERE oid='public.private_memory_legal_holds'::regclass`).Scan(&plannerRows))
+	require.Equal(t, float64(-1), plannerRows)
+	_, err := db.ExecContext(ctx, `CREATE FUNCTION require_evidence_only_hold_statistics() RETURNS event_trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF current_setting('app.tx_mode',true)='migration'
+ AND (SELECT reltuples FROM pg_class WHERE oid='public.private_memory_legal_holds'::regclass)<>0 THEN
+  RAISE EXCEPTION 'empty legal-hold statistics must be known before inventory policy creation';
+ END IF;
+END $$;
+CREATE EVENT TRIGGER require_evidence_only_hold_statistics ON ddl_command_start
+ WHEN TAG IN ('CREATE POLICY') EXECUTE FUNCTION require_evidence_only_hold_statistics()`)
+	require.NoError(t, err)
+	require.NoError(t, NewMigratorWithDB(db).RunUp(ctx))
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT reltuples FROM pg_class WHERE oid='public.private_memory_legal_holds'::regclass`).Scan(&plannerRows))
+	require.Zero(t, plannerRows)
+	require.Equal(t, before, evidenceOnlyFingerprints(t, ctx, db))
+	assertEvidenceOnlyCatalog(t, ctx, db)
 }
 
 func TestEvidenceOnlyPostgresPopulatedUpgradePreservesEvidenceAndLegacyIdentity(t *testing.T) {
