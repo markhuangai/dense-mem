@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { captureSemanticAssessmentWindow, reconstructDiagnosticBody } from "../../ontology_assessment_diagnostics.mjs";
 import { createKnownEvidenceTeam, createKnownEvidenceCredential, postgresQuery, rememberCanonicalCounts } from "./remember.mjs";
+import { diagnoseProviderHTTPLog } from "./diagnostics.mjs";
 
 export const name = "progress";
 const messages = ["Preparing intake", "Checking duplicate Evidence", "Assessing Evidence", "Preparing search state", "Committing"];
@@ -181,8 +182,12 @@ export async function run({ expect, runStep }) {
     const terminal = correlated.find((row) => row.msg === "remember_invocation_completed");
     assert(terminal?.level === "ERROR" && terminal.error_code === "provider_unavailable" &&
       terminal.request_hash && terminal.canonical_attempt_id && terminal.retryable === true);
+    const providerRows = correlated.filter((item) => item.msg === "ai_exchange_payload");
+    const providerProof = diagnoseProviderHTTPLog(providerRows.map((row) => JSON.stringify(row)).join("\n"));
+    assert(providerProof.exchanges.some((item) => item.direction === "response" && item.transport_capture_state === "no_response"));
+    assert(providerProof.exchanges.some((item) => item.direction === "transport_error" && item.protected_bytes > 0));
     const exchanges = new Map();
-    for (const row of correlated.filter((item) => item.msg === "ai_exchange_payload")) {
+    for (const row of providerRows.filter((item) => item.direction === "request")) {
       const key = row.exchange_id + ":" + row.direction;
       const group = exchanges.get(key) || [];
       group.push(row); exchanges.set(key, group);

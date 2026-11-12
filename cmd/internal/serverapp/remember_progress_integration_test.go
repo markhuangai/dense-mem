@@ -99,7 +99,7 @@ func TestRememberProgressPostgres(t *testing.T) {
 		}
 		id := uuid.New()
 		require.NoError(t, accesspostgres.NewCredentialRepository(admin, rls, nil).CreateCredential(t.Context(), &domain.Credential{
-			ID: id, TeamID: teamID, Name: "progress actor", Role: "member", KeyHash: id.String(),
+			ID: id, TeamID: teamID, Name: "progress actor " + id.String(), Role: "member", KeyHash: id.String(),
 			KeyPrefix: strings.ReplaceAll(id.String(), "-", "")[:24], KeySuffix: "test", Scopes: []string{"read", "write"},
 		}))
 		ctx := rememberProcessorActorContext(t, t.Context(), admin, rls, teamID, id)
