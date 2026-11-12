@@ -192,3 +192,15 @@ services:
     assert.match(await readFile(summary, "utf8"), /Healthy: `false`[\s\S]*Failure: The verified candidate did not become healthy/);
   });
 });
+
+test("real PostgreSQL preserves staging Evidence through fresh and legacy upgrades", { timeout: 600_000 }, async (t) => {
+  await execute("go", [
+    "test", "-tags=staging_rehearsal", "./cmd/internal/migrationapp",
+    "-run", "^(TestValidateStagingDSN|TestStopStagingServerWithoutImageSelection|TestPrivateMemoryRehearsalFromDeployedSchema|TestStagingMigrationRehearsalFreshDatabase)$",
+    "-count=1", "-timeout=8m",
+  ], {
+    cwd: fileURLToPath(new URL("../../", import.meta.url)),
+    signal: t.signal,
+    maxBuffer: 4 * 1024 * 1024,
+  });
+});

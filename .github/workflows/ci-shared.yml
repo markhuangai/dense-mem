@@ -195,7 +195,6 @@ jobs:
 
       - name: Run image release policy tests
         run: |
-          go test -tags=staging_rehearsal ./cmd/internal/migrationapp -run '^(TestValidateStagingDSN|TestStopStagingServerWithoutImageSelection|TestPrivateMemoryRehearsalFromDeployedSchema|TestStagingMigrationRehearsalFreshDatabase)$' -count=1
           node --test tests/uat/staging_deployment.test.mjs
           node --test tests/uat/image_release_policy.test.mjs
           node --test tests/uat/preview_receipt.test.mjs tests/uat/fork_e2e_policy.test.mjs tests/uat/fork_e2e_workspace.test.mjs
