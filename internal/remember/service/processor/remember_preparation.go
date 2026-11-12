@@ -61,6 +61,7 @@ func (p *rememberSynchronousProcessor) prepareRemember(ctx context.Context, inpu
 		SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration,
 		Evidence: rememberEvidenceInputsForCommit(input, snapshot),
 	}
+	rememberapp.ReportProgress(ctx, rememberapp.ProgressCheckingDuplicates)
 	embeddingStarted := time.Now()
 	duplicateEmbeddingCtx, duplicateEmbeddingCancel := rememberapp.ContextForPhase(ctx, rememberapp.RememberPhaseEmbedding)
 	duplicatePlan, err := p.ledger.PlanRememberDuplicateEmbeddings(duplicateEmbeddingCtx, duplicateInput)
@@ -92,6 +93,7 @@ func (p *rememberSynchronousProcessor) prepareRemember(ctx context.Context, inpu
 		}
 	}
 	assessmentStarted := time.Now()
+	rememberapp.ReportProgress(ctx, rememberapp.ProgressAssessingEvidence)
 	prepared, err := rememberapp.AssessSynchronousRemember(ctx, rememberapp.SynchronousAssessmentDependencies{
 		Provider: p.provider, Limits: p.limits, Metrics: p.metrics, Logger: p.logger,
 		Decisions: p.decisions, DecisionSnapshot: decisionSnapshot,
@@ -128,6 +130,7 @@ func (p *rememberSynchronousProcessor) prepareRemember(ctx context.Context, inpu
 	embeddingStarted = time.Now()
 	embeddingCtx, embeddingCancel := rememberapp.ContextForPhase(ctx, rememberapp.RememberPhaseEmbedding)
 	defer embeddingCancel()
+	rememberapp.ReportProgress(embeddingCtx, rememberapp.ProgressPreparingSearch)
 	plan, err := p.ledger.PlanRememberEmbeddings(embeddingCtx, commitInput)
 	if err != nil {
 		p.observeRememberPhase(ctx, input, ingestID, "embedding", err, embeddingStarted, nil)

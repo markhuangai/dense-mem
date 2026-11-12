@@ -260,6 +260,7 @@ func (p *rememberSynchronousProcessor) processRememberUnlocked(
 	if input.SecurityRejected {
 		return fail(rememberapp.SecurityRejectionFailure(input.SecuritySignals, input.SecuritySignalsTruncated, "initial_scan"), "assessment")
 	}
+	rememberapp.ReportProgress(ctx, rememberapp.ProgressPreparingIntake)
 	preparedWrite, prepareErr := p.prepareRemember(ctx, input, snapshot, scope, started)
 	if prepareErr != nil {
 		var preparation *rememberPreparationError
@@ -281,6 +282,7 @@ func (p *rememberSynchronousProcessor) processRememberUnlocked(
 		return fail(err, "commit")
 	}
 	defer commitCancel()
+	rememberapp.ReportProgress(commitCtx, rememberapp.ProgressCommitting)
 	committed, err := p.ledger.CommitRememberWithEmbeddings(commitCtx, commitInput, inlineEmbeddings)
 	commitMetricErr := err
 	if errors.Is(commitMetricErr, repository.ErrRememberReplay) {
