@@ -793,6 +793,13 @@
       "source": "internal/storage/postgres/evidence_only_migration_integration_test.go"
     },
     {
+      "id": "postgres/TestEvidenceOnlyPostgresNeverAnalyzedLegalHolds",
+      "package": "./internal/storage/postgres",
+      "run": "^TestEvidenceOnlyPostgresNeverAnalyzedLegalHolds$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/evidence_only_migration_integration_test.go"
+    },
+    {
       "id": "postgres/TestEvidenceOnlyPostgresPopulatedUpgradePreservesEvidenceAndLegacyIdentity",
       "package": "./internal/storage/postgres",
       "run": "^TestEvidenceOnlyPostgresPopulatedUpgradePreservesEvidenceAndLegacyIdentity$",

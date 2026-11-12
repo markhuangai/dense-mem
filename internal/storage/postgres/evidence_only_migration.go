@@ -34,6 +34,10 @@ func newEvidenceOnlyMigration(source []byte) (*goose.Migration, error) {
 	}
 	return goose.NewGoMigration(evidenceOnlyMigrationVersion,
 		&goose.GoFunc{RunTx: func(ctx context.Context, tx *sql.Tx) error {
+			// Unknown empty-table statistics can make every inventory row expand private lineage unnecessarily.
+			if _, err := tx.ExecContext(ctx, `SET LOCAL lock_timeout = '5s'; ANALYZE public.private_memory_legal_holds;`); err != nil {
+				return fmt.Errorf("prepare Evidence-only legal-hold statistics: %w", err)
+			}
 			if _, err := tx.ExecContext(ctx, before); err != nil {
 				return err
 			}
