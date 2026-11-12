@@ -215,7 +215,7 @@ if [[ "${cleanup_case}" == retained_* ]]; then
 else
   printf 'partial compiler output\n' > "${PAIR_RUNNER}.tmp"
 fi
-pair_stage_dir=""; pair_interrupted=false
+pair_stage=""; pair_stage_dir=""; pair_interrupted=false
 trap 'pair_on_error "$?"' ERR
 case "${cleanup_case}" in
   error|retained_error) bash -c 'exit 43' ;;
