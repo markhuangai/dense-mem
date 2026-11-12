@@ -561,10 +561,14 @@ if (shardCount === 6) {
   // Keep discovery measurement isolated and balance measured ontology work across the other two selections.
   const ontology = records[ontologyIndex];
   const dedicated = [
+    "repository/TestOntologyMaintenanceCurrentReceiptCompletion",
     "repository/TestOntologyMaintenanceFinalizationAdmissionAndIsolation",
     "repository/TestOntologyMaintenanceLargeBacklogAndFairTurns",
     "repository/TestOntologyMaintenanceReadMeasurement",
     "repository/TestOntologyOrganizationVocabularyAndSourceFences",
+    "repository/TestOntologyOrganizationBatchedDependencyBounds",
+    "repository/TestOntologyOrganizationRejectsStaleAndMalformedPublication",
+    "repository/TestOntologyVocabularyUsesCurrentCandidateWindow",
     ...[
       "repository/TestOntologyUnavailableSnapshotRetainsScopedHandleForMaintenance",
       "repository/TestOntologyOrganizationPreservesValidLargeSourceContext",
