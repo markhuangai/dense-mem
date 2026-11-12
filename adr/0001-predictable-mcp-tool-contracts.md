@@ -28,6 +28,10 @@ Every supported MCP tool must have a bounded and predictable contract:
 - Required server-owned work finishes in the originating call. The call returns
   a complete terminal result or a typed, bounded, actionable error; it does not
   return success that requires blind status polling to discover the real result.
+- Optional progress notifications may report activity while the originating call
+  remains pending. They are nonterminal, do not acknowledge durable success, and
+  never replace the terminal result or actionable error. Correctness and failure
+  handling must not depend on clients displaying them.
 - A mutation defines replay behavior. A matching idempotent retry reuses the
   authoritative result, while a different request using the same key conflicts.
 - Provider variability is allowed only inside a closed response schema with
@@ -73,3 +77,5 @@ For every changed MCP behavior, verify the catalog and call schemas, bounded
 success and error results, cancellation, idempotent replay, and removal of
 hidden required work. Model-backed writes also require invalid-response and
 provider-failure cases proving zero partial semantic commit.
+Progress verification also covers request/token isolation, bounded optional
+delivery, replay, cancellation, and no notifications after the terminal response.

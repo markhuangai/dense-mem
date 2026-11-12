@@ -384,7 +384,7 @@ async function mcpSuccessWithKey(apiKey, name, args) {
   return terminalPayload(raw.result);
 }
 
-async function createKnownEvidenceTeam(label) {
+export async function createKnownEvidenceTeam(label) {
   const response = await controlJSON("/teams", {
     method: "POST",
     body: JSON.stringify({ name: label, description: "known evidence isolation e2e" }),
@@ -394,7 +394,7 @@ async function createKnownEvidenceTeam(label) {
   return teamID;
 }
 
-async function createKnownEvidenceCredential(teamID, name) {
+export async function createKnownEvidenceCredential(teamID, name) {
   const response = await controlJSON(`/teams/${teamID}/credentials`, {
     method: "POST",
     body: JSON.stringify({ name, role: "member", scopes: ["read", "write"], rate_limit: 300 }),
@@ -892,7 +892,7 @@ function assertControlError(result, status, code, label, expect) {
   }
 }
 
-function postgresQuery(sql) {
+export function postgresQuery(sql) {
   if (!/^(SELECT|WITH)\b/i.test(sql.trim())) {
     throw new Error("known-evidence PostgreSQL query helper only permits read queries");
   }
@@ -910,7 +910,7 @@ function rememberAdmissionLockCount() {
   `));
 }
 
-function rememberCanonicalCounts(teamID, submissionID) {
+export function rememberCanonicalCounts(teamID, submissionID) {
   return postgresQuery(`
     SELECT count(*) FROM knowledge_ingests
     WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND ingest_id = '${sqlLiteral(submissionID)}'::uuid
