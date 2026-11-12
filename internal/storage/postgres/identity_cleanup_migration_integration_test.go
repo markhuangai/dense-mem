@@ -385,6 +385,7 @@ func TestIdentityCleanupMismatchRollsBackAndLeavesBridge(t *testing.T) {
 
 	err := migrationUpTo(ctx, sqlDB, 2026081501)
 	require.ErrorContains(t, err, "usage history missing ownership aliases")
+	require.Equal(t, "identity cleanup blocked: usage history missing ownership aliases", MigrationFailureReason(err))
 	require.True(t, tableExists(t, ctx, sqlDB, "team_profiles"))
 	require.True(t, tableExists(t, ctx, sqlDB, "identity_compatibility_state"))
 	require.True(t, columnExists(t, ctx, sqlDB, "credentials", "legacy_profile_id"))
@@ -414,6 +415,7 @@ func TestIdentityCleanupLockContentionRollsBackAndCanRetry(t *testing.T) {
 	require.ErrorAs(t, err, &pgErr)
 	require.Equal(t, "55P03", pgErr.Code)
 	require.Contains(t, pgErr.Message, "lock timeout")
+	require.Equal(t, "lock timeout", MigrationFailureReason(err))
 	require.NoError(t, lockTx.Rollback())
 	require.False(t, identityCleanupMigrationApplied(t, ctx, sqlDB))
 	require.True(t, tableExists(t, ctx, sqlDB, "team_profiles"))

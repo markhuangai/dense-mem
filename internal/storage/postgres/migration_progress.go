@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/markhuangai/dense-mem/internal/jsonstrict"
+	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	gooselock "github.com/pressly/goose/v3/lock"
 )
 
@@ -275,14 +276,31 @@ func MigrationFailureReason(err error) string {
 	case errors.Is(err, context.DeadlineExceeded):
 		return "deadline_exceeded"
 	}
+	if errors.Is(err, ontology.ErrMaintenanceUpgradeBlocked) {
+		if strings.HasSuffix(err.Error(), " unreconciled attempts require terminal evidence") {
+			return "ontology upgrade blocked: unreconciled attempts require terminal evidence"
+		}
+		return "ontology upgrade blocked"
+	}
 	reasons := []string{"legal hold", "unhandled retained dependency", "retained fingerprint mismatch", "retained ontology fingerprint", "missing inventory table", "graph catalog remains", "canonical metadata fingerprint phase required"}
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
+		if pgErr.Code == "55P03" && pgErr.Message == "canceling statement due to lock timeout" {
+			return "lock timeout"
+		}
 		if pgErr.Code == "P0001" {
 			for _, reason := range reasons {
 				if strings.HasPrefix(pgErr.Message, "evidence_only_migration_blocked: "+reason) || strings.HasPrefix(pgErr.Message, "evidence_only_migration_failed: "+reason) {
 					return reason
 				}
+			}
+			for _, reason := range []string{"membership or ownership translation mismatch", "credential translation mismatch", "membership grant translation mismatch", "SSO identity translation mismatch", "SSO sessions missing memberships", "semantic owners missing aliases", "usage history missing ownership aliases", "portal sessions missing credentials", "migration history missing ownership aliases"} {
+				if strings.HasPrefix(pgErr.Message, "identity cleanup blocked: "+reason+" (") {
+					return "identity cleanup blocked: " + reason
+				}
+			}
+			if strings.HasPrefix(pgErr.Message, "identity cleanup blocked: unexpected team_profiles dependencies: ") {
+				return "identity cleanup blocked: unexpected team_profiles dependencies"
 			}
 		}
 		if validSQLState(pgErr.Code) {
