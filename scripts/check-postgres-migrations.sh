@@ -12,6 +12,10 @@ KNOWN_ONTOLOGY_LOOKUP_REPAIR_VERSION="20261110010000"
 KNOWN_ONTOLOGY_LOOKUP_REPAIR_BASE_SHA="fa5a8b04c7ff72dc6469c675e3c68433a8397aa3c3911f51e1edd8a64f39ccae"
 KNOWN_ONTOLOGY_LOOKUP_REPAIR_CURRENT_SHA="269a4d203f7568d06818c96817883db7aa1fe722207dcb32d2547294ada4b104"
 
+# Observation-only exception approved in issue #749 comment 6832418853.
+KNOWN_PROGRESS_BASE_SHA="269a4d203f7568d06818c96817883db7aa1fe722207dcb32d2547294ada4b104"
+KNOWN_PROGRESS_CURRENT_SHA="2d9c529f820db4b6d2fe339f56ef4fbd6dc994046a550d1ee8407260d50d76b4"
+
 cd "${ROOT_DIR}"
 git rev-parse --verify "${BASE_REF}^{commit}" >/dev/null 2>&1 || {
   echo "base ref ${BASE_REF} is unavailable; fetch the current upstream base" >&2
@@ -52,7 +56,10 @@ is_approved_migration_repair() {
      "${current_sha}" == "${KNOWN_EVIDENCE_REPAIR_CURRENT_SHA}" ]] ||
   [[ "${version}" == "${KNOWN_ONTOLOGY_LOOKUP_REPAIR_VERSION}" &&
      "${base_sha}" == "${KNOWN_ONTOLOGY_LOOKUP_REPAIR_BASE_SHA}" &&
-     "${current_sha}" == "${KNOWN_ONTOLOGY_LOOKUP_REPAIR_CURRENT_SHA}" ]]
+     "${current_sha}" == "${KNOWN_ONTOLOGY_LOOKUP_REPAIR_CURRENT_SHA}" ]] ||
+  [[ "${version}" == "${KNOWN_ONTOLOGY_LOOKUP_REPAIR_VERSION}" &&
+     "${base_sha}" == "${KNOWN_PROGRESS_BASE_SHA}" &&
+     "${current_sha}" == "${KNOWN_PROGRESS_CURRENT_SHA}" ]]
 }
 
 mapfile -t base_paths < <(

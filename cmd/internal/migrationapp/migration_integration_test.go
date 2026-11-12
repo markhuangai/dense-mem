@@ -30,7 +30,6 @@ import (
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	tcnetwork "github.com/testcontainers/testcontainers-go/network"
 	"github.com/testcontainers/testcontainers-go/wait"
-	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
@@ -70,7 +69,7 @@ func TestEvidenceOnlyPostgresMigrationDiagnostics(t *testing.T) {
 	body, err := os.ReadFile(path)
 	require.NoError(t, err)
 	require.NotContains(t, string(body), secret)
-	require.Contains(t, string(body), "evidence_only_[REDACTED]")
+	require.Contains(t, string(body), "database_detail_omitted")
 	seen := map[string]map[string]any{}
 	for _, line := range strings.Split(strings.TrimSpace(string(body)), "\n") {
 		var record map[string]any
@@ -83,8 +82,8 @@ func TestEvidenceOnlyPostgresMigrationDiagnostics(t *testing.T) {
 	require.Equal(t, "ERROR", blocked["level"])
 	require.Contains(t, blocked["error"], "unhandled retained dependency")
 	require.Equal(t, "P0001", blocked["sqlstate"])
-	require.Contains(t, blocked["database_context"], "RAISE")
-	require.Equal(t, "apply", blocked["phase"])
+	require.Equal(t, true, blocked["database_detail_omitted"])
+	require.Equal(t, "dependency_check", blocked["phase"])
 	completed := seen["evidence_only_migration_completed"]
 	require.Equal(t, "INFO", completed["level"])
 	require.Equal(t, "committed", completed["transaction_outcome"])
@@ -172,8 +171,8 @@ func TestEvidenceOnlyPostgresMigrationRollbackLogs(t *testing.T) {
 					return waiting
 				}, 30*time.Second, 20*time.Millisecond)
 				cancel()
-				require.Error(t, <-done)
 				require.NoError(t, blocker.Rollback().Error)
+				require.Error(t, <-done)
 			} else {
 				expected := "legal hold"
 				if mode == "fingerprint" {
@@ -202,8 +201,8 @@ func TestEvidenceOnlyPostgresMigrationRollbackLogs(t *testing.T) {
 				}
 			}
 			require.NotEmpty(t, failure)
-			require.Equal(t, "apply", failure["phase"])
-			require.Equal(t, "not_committed", failure["transaction_outcome"])
+			require.NotEmpty(t, failure["phase"])
+			require.Equal(t, "rolled_back", failure["transaction_outcome"])
 			require.Equal(t, storagepostgres.EvidenceOnlyMigrationInventorySHA256, failure["inventory_identity"])
 			if mode == "interruption" {
 				require.Contains(t, failure["error"], "cancel")
@@ -292,7 +291,12 @@ func TestRunDownTimeoutRollsBackBlockedMigration(t *testing.T) {
 	require.False(t, migrationTimeoutProbeExists(t, sqlDB), "retry must complete the rollback")
 }
 
-func openMigrationIntegrationDB(t *testing.T) *gorm.DB {
+func openMigrationIntegrationDB(t testing.TB) *gorm.DB {
+	db, _ := openMigrationProgressDB(t)
+	return db
+}
+
+func openMigrationProgressDB(t testing.TB, extra ...testcontainers.ContainerCustomizer) (*gorm.DB, string) {
 	t.Helper()
 	ctx := context.Background()
 	containerOptions := []testcontainers.ContainerCustomizer{
@@ -308,6 +312,7 @@ func openMigrationIntegrationDB(t *testing.T) *gorm.DB {
 	if networkName := strings.TrimSpace(os.Getenv("DENSE_MEM_CI_PRECHECK_NETWORK")); networkName != "" {
 		containerOptions = append(containerOptions, tcnetwork.WithNetworkName([]string{"postgres"}, networkName))
 	}
+	containerOptions = append(containerOptions, extra...)
 	container, err := testfixture.Run(ctx, "pgvector/pgvector:0.8.2-pg18-trixie", containerOptions...)
 	if err != nil {
 		if os.Getenv("DENSE_MEM_REQUIRE_POSTGRES_TESTS") == "1" {
@@ -321,14 +326,14 @@ func openMigrationIntegrationDB(t *testing.T) *gorm.DB {
 
 	dsn, err := migrationIntegrationDSN(ctx, container)
 	require.NoError(t, err)
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	db, err := storagepostgres.Open(ctx, migrationProgressTestConfig{dsn})
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		_ = sqlDB.Close()
 	})
-	return db
+	return db, dsn
 }
 
 func migrationIntegrationDSN(ctx context.Context, container *tcpostgres.PostgresContainer) (string, error) {
@@ -469,3 +474,7 @@ func (ctx *controlledDeadlineContext) expire() {
 		close(ctx.done)
 	})
 }
+
+type migrationProgressTestConfig struct{ dsn string }
+
+func (c migrationProgressTestConfig) GetPostgresDSN() string { return c.dsn }

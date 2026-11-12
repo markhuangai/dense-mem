@@ -33,14 +33,26 @@ func newEvidenceOnlyMigration(source []byte) (*goose.Migration, error) {
 		return nil, errors.New("evidence-only migration: missing or duplicated fingerprint boundary")
 	}
 	return goose.NewGoMigration(evidenceOnlyMigrationVersion,
-		&goose.GoFunc{RunTx: func(ctx context.Context, tx *sql.Tx) error {
+		&goose.GoFunc{RunTx: func(ctx context.Context, tx *sql.Tx) (err error) {
+			progress := MigrationProgressFromContext(ctx)
+			if progress != nil {
+				if err = progress.beginTransaction(ctx, tx); err != nil {
+					return err
+				}
+				defer func() {
+					if err != nil {
+						s := progress.Snapshot()
+						progress.Report(s.Phase, s.WorkUnit, "rolling_back", s.Metric, s.Unit, s.Completed, s.Total)
+					}
+				}()
+			}
 			if _, err := tx.ExecContext(ctx, before); err != nil {
 				return err
 			}
 			if err := rebindEvidenceOnlyFingerprints(ctx, tx); err != nil {
 				return err
 			}
-			_, err := tx.ExecContext(ctx, after)
+			_, err = tx.ExecContext(ctx, after)
 			return err
 		}, Mode: goose.TransactionEnabled},
 		&goose.GoFunc{RunTx: func(ctx context.Context, tx *sql.Tx) error {
@@ -50,6 +62,14 @@ func newEvidenceOnlyMigration(source []byte) (*goose.Migration, error) {
 }
 
 func rebindEvidenceOnlyFingerprints(ctx context.Context, tx *sql.Tx) error {
+	progress := MigrationProgressFromContext(ctx)
+	var loaded, rebound, target int64
+	report := func(phase, state, metric string, n, total *int64) {
+		if progress != nil {
+			progress.Report(phase, "ontology_record_revisions", state, metric, "records", n, total)
+		}
+	}
+	report("fingerprint_load", "started", "counted", nil, nil)
 	rows, err := tx.QueryContext(ctx, `SELECT revision.team_id::text,revision.shared_space_id::text,revision.space_generation,revision.body,
 		EXISTS(SELECT 1 FROM evidence_only_rebind_records changed WHERE
 		 (changed.team_id,changed.shared_space_id,changed.space_generation,changed.record_id,changed.version)=
@@ -84,24 +104,34 @@ func rebindEvidenceOnlyFingerprints(ctx context.Context, tx *sql.Tx) error {
 		}
 		catalogs[item.scope][item.record.ID] = item.record
 		records = append(records, item)
+		loaded++
+		if item.changed {
+			target++
+		}
+		report("fingerprint_load", "progress", "counted", &loaded, nil)
 	}
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 		return err
 	}
+	report("fingerprint_load", "completed", "counted", &loaded, &loaded)
+	report("fingerprint_rebind", "started", "rebound", nil, &target)
 	for _, item := range records {
 		if !item.changed {
 			continue
 		}
 		fingerprint, err := ontology.RecordFingerprintWithAcceptedSources(item.record, catalogs[item.scope])
 		if err != nil {
-			return fmt.Errorf("evidence_only_migration_blocked: retained ontology fingerprint team=%s record=%s: %w", item.team, item.record.ID, err)
+			return fmt.Errorf("evidence_only_migration_blocked: retained ontology fingerprint: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE ontology_record_revisions SET fingerprint=$1,body=jsonb_set(body,'{fingerprint}',to_jsonb($1::text))
 		 WHERE team_id=$2::uuid AND shared_space_id=$3::uuid AND space_generation=$4 AND record_id=$5::uuid AND version=$6`,
 			fingerprint, item.team, item.space, item.generation, item.record.ID, item.record.Version); err != nil {
 			return err
 		}
+		rebound++
+		report("fingerprint_rebind", "progress", "rebound", &rebound, &target)
 	}
+	report("fingerprint_rebind", "completed", "rebound", &rebound, &target)
 	_, err = tx.ExecContext(ctx, `SELECT set_config('app.evidence_only_rebound','true',true)`)
 	return err
 }

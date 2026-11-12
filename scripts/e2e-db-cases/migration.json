@@ -72,6 +72,27 @@
       "run": "^TestEvidenceOnlyPostgresMigrationRollbackLogs$",
       "phase": "precheck",
       "source": "cmd/internal/migrationapp/migration_integration_test.go"
+    },
+    {
+      "id": "migration/TestEvidenceOnlyPostgresProgressLiveSQL",
+      "package": "./cmd/internal/migrationapp",
+      "run": "^TestEvidenceOnlyPostgresProgressLiveSQL$",
+      "phase": "precheck",
+      "source": "cmd/internal/migrationapp/progress_integration_test.go"
+    },
+    {
+      "id": "migration/TestEvidenceOnlyPostgresProgressWaitCancellation",
+      "package": "./cmd/internal/migrationapp",
+      "run": "^TestEvidenceOnlyPostgresProgressWaitCancellation$",
+      "phase": "precheck",
+      "source": "cmd/internal/migrationapp/progress_integration_test.go"
+    },
+    {
+      "id": "migration/TestEvidenceOnlyPostgresProgressConcurrentStarters",
+      "package": "./cmd/internal/migrationapp",
+      "run": "^TestEvidenceOnlyPostgresProgressConcurrentStarters$",
+      "phase": "precheck",
+      "source": "cmd/internal/migrationapp/progress_integration_test.go"
     }
   ]
 }

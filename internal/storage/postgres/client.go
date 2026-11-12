@@ -7,6 +7,9 @@ import (
 	"os"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/stdlib"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 
@@ -81,7 +84,16 @@ func open(ctx context.Context, cfg ConfigProvider, logger observability.LogProvi
 	if logger != nil {
 		gormLogger = newGORMLoggerWithRoot(logger, postgresSlowQueryThreshold(cfg))
 	}
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{Logger: gormLogger})
+	db, err := gorm.Open(postgres.New(postgres.Config{DSN: dsn, OptionOpenDB: []stdlib.OptionOpenDB{stdlib.OptionBeforeConnect(func(_ context.Context, cfg *pgx.ConnConfig) error {
+		previous := cfg.OnNotice
+		cfg.OnNotice = func(conn *pgconn.PgConn, notice *pgconn.Notice) {
+			dispatchMigrationNotice(conn, notice)
+			if previous != nil {
+				previous(conn, notice)
+			}
+		}
+		return nil
+	})}}), &gorm.Config{Logger: gormLogger})
 	if err != nil {
 		return nil, fmt.Errorf("failed to open postgres connection: %w", err)
 	}
