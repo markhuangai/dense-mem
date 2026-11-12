@@ -291,7 +291,7 @@ pair_ensure_runner() {
   printf -v pair_cleanup 'pair_cleanup_runner "$?" %q' "${pair_tools}"
   trap "${pair_cleanup}" EXIT
   PAIR_RUNNER="${pair_tools}/eval-runner"
-  /usr/local/go/bin/go build -o "${PAIR_RUNNER}.tmp" ./cmd/eval-runner || return "$?"
+  go build -o "${PAIR_RUNNER}.tmp" ./cmd/eval-runner || return "$?"
   mv "${PAIR_RUNNER}.tmp" "${PAIR_RUNNER}"
 }
 
