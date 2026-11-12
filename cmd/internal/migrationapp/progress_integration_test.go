@@ -316,7 +316,7 @@ func TestEvidenceOnlyPostgresProgressLiveSQL(t *testing.T) {
 		require.Equal(t, "transaction_local", event["work_durability"])
 	}
 	previous := -1
-	for _, phase := range []string{"guards", "payload_cleanup", "session_cleanup", "ontology_seed", "dependency_closure", "ontology_cleanup", "table_retirement", "guard_restoration", "fingerprint_load", "fingerprint_rebind", "fingerprint_after", "validation", "receipt", "policy_restoration"} {
+	for _, phase := range []string{"legal_hold_statistics", "guards", "payload_cleanup", "session_cleanup", "ontology_seed", "dependency_closure", "ontology_cleanup", "table_retirement", "guard_restoration", "fingerprint_load", "fingerprint_rebind", "fingerprint_after", "validation", "receipt", "policy_restoration"} {
 		position, ok := positions[phase]
 		require.True(t, ok, phase)
 		require.Greater(t, position, previous, phase)

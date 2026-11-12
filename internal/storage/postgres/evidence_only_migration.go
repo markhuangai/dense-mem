@@ -46,6 +46,17 @@ func newEvidenceOnlyMigration(source []byte) (*goose.Migration, error) {
 					}
 				}()
 			}
+			analyzed := int64(1)
+			if progress != nil {
+				progress.Report("legal_hold_statistics", "private_memory_legal_holds", "started", "completed", "tables", nil, &analyzed)
+			}
+			// Unknown empty-table statistics can make every inventory row expand private lineage unnecessarily.
+			if _, err := tx.ExecContext(ctx, `SET LOCAL lock_timeout = '5s'; ANALYZE public.private_memory_legal_holds;`); err != nil {
+				return fmt.Errorf("prepare Evidence-only legal-hold statistics: %w", err)
+			}
+			if progress != nil {
+				progress.Report("legal_hold_statistics", "private_memory_legal_holds", "completed", "completed", "tables", &analyzed, &analyzed)
+			}
 			if _, err := tx.ExecContext(ctx, before); err != nil {
 				return err
 			}
