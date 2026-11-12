@@ -140,6 +140,9 @@ func newSDKRootLogger(logger Logger) *slog.Logger {
 }
 
 func sdkLog(ctx context.Context, logger Logger, level slog.Level, message string, attrs ...LogField) {
+	if logger == nil {
+		return
+	}
 	if contextual, ok := logger.(interface {
 		TraceContext(context.Context, string, ...LogField)
 		DebugContext(context.Context, string, ...LogField)
@@ -338,6 +341,10 @@ func appendSDKApplicationRefs(attrs []LogField, value any) []LogField {
 func (s *Server) NewSDKHTTPHandler(jsonResponse bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		annotateSDKToolDispatch(req)
+		req = req.WithContext(context.WithValue(req.Context(), sdkProgressHTTPContextKey{}, sdkProgressHTTP{
+			controller: http.NewResponseController(w), sse: !jsonResponse,
+			protocol: req.Header.Get("MCP-Protocol-Version"),
+		}))
 		if s.writeSDKToolLookupError(w, req, jsonResponse) {
 			return
 		}
@@ -382,12 +389,18 @@ func annotateSDKToolDispatch(req *http.Request) {
 		JSONRPC string          `json:"jsonrpc"`
 		ID      json.RawMessage `json:"id"`
 		Method  string          `json:"method"`
+		Params  struct {
+			Meta map[string]json.RawMessage `json:"_meta"`
+		} `json:"params"`
 	}
 	if json.Unmarshal(payload, &envelope) != nil || envelope.JSONRPC != "2.0" || envelope.Method != "tools/call" {
 		return
 	}
 	isRequest := len(envelope.ID) > 0 && sdkRPCIDValid(envelope.ID)
 	ctx := context.WithValue(req.Context(), sdkToolDispatchContextKey{}, isRequest)
+	ctx = context.WithValue(ctx, sdkProgressMetadataContextKey{}, sdkProgressMetadata{
+		token: envelope.Params.Meta["progressToken"], requestID: envelope.ID,
+	})
 	*req = *req.WithContext(ctx)
 }
 
@@ -646,6 +659,8 @@ func (s *Server) invokeSDKTool(name string, ctx context.Context, req *sdkmcp.Cal
 			return nil, &sdkjsonrpc.Error{Code: errCodeInvalidParams, Message: "invalid params", Data: data}
 		}
 	}
+	ctx, stopProgress := s.withSDKRememberProgress(ctx, name, req)
+	defer stopProgress()
 	result, rpcErr := s.invokeTool(ctx, name, args)
 	if rpcErr != nil {
 		tool, toolExists := s.registry.Get(name)

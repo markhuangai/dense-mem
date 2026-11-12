@@ -3,6 +3,13 @@
   "capability": "remember",
   "cases": [
     {
+      "id": "remember/TestRememberProgressPostgres",
+      "package": "./cmd/internal/serverapp",
+      "run": "^TestRememberProgressPostgres$",
+      "phase": "precheck",
+      "source": "cmd/internal/serverapp/remember_progress_integration_test.go"
+    },
+    {
       "id": "server/TestRememberEvaluationImporterAdmission",
       "package": "./cmd/internal/serverapp",
       "run": "^TestRememberEvaluationImporterAdmission$",
