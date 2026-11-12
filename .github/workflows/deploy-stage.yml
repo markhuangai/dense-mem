@@ -56,28 +56,15 @@ jobs:
             core.setOutput("revision", revision);
             core.setOutput("tag", tag);
 
-  staging-migration-rehearsal:
-    name: Restore production copy and rehearse migrations
-    needs: authorize
-    uses: ./.github/workflows/staging-migration-rehearsal.yml
-    with:
-      revision: ${{ needs.authorize.outputs.revision }}
-    secrets: inherit
-
   deploy-staging:
     name: Deploy staging image
-    needs: [authorize, staging-migration-rehearsal]
-    if: >-
-      ${{
-        needs.authorize.result == 'success' &&
-        needs.staging-migration-rehearsal.result == 'success'
-      }}
+    needs: authorize
     permissions:
       contents: read
       packages: read
     runs-on: [home-server, bash, non-root]
-    timeout-minutes: 75
-    environment: staging
+    timeout-minutes: 150
+    environment: staging-migration
 
     steps:
       - name: Checkout trusted staging deployment helper
@@ -86,18 +73,33 @@ jobs:
         with:
           ref: ${{ github.workflow_sha }}
           persist-credentials: false
-          sparse-checkout: .github/scripts
+
+      - name: Checkout selected image source for migration validation
+        uses: actions/checkout@v7
+        timeout-minutes: 2
+        with:
+          ref: ${{ needs.authorize.outputs.revision }}
+          path: .staging-image-source
+          sparse-checkout: migrations
+          persist-credentials: false
+
+      - name: Set up Go for read-only migration verification
+        uses: actions/setup-go@v7
+        timeout-minutes: 5
+        with:
+          go-version-file: go.mod
+          cache: true
 
       - name: Pull and deploy requested image
         shell: bash
         env:
           GHCR_TOKEN: ${{ github.token }}
           IMAGE_TAG: ${{ needs.authorize.outputs.tag }}
-          EXPECTED_REVISION: ${{ needs.staging-migration-rehearsal.outputs.revision }}
+          DENSE_MEM_STAGE_POSTGRES_DSN: ${{ secrets.PGVECTOR_STAGE_DSN }}
         run: |
           set -euo pipefail
 
-          timeout --signal=TERM --kill-after=60s --verbose 70m bash -euo pipefail <<'DEPLOY'
+          timeout --signal=TERM --kill-after=60s --verbose 135m bash -euo pipefail <<'DEPLOY'
           docker_config="${RUNNER_TEMP}/dense-mem-staging-docker"
           mkdir -p "${docker_config}"
           export DOCKER_CONFIG="${docker_config}"
@@ -105,25 +107,25 @@ jobs:
             docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
           unset GHCR_TOKEN
 
-          exec .github/scripts/deploy-staging-image.sh \
-            "${HOME}/dense-mem-stage" "${IMAGE_TAG}" "${EXPECTED_REVISION}"
+          expected_revision="$(git -C .staging-image-source rev-parse HEAD)"
+          exec .github/scripts/deploy-staging-copy.sh \
+            "${HOME}/dense-mem-stage" "${IMAGE_TAG}" "${expected_revision}" \
+            "${GITHUB_WORKSPACE}/.staging-image-source/migrations/postgres"
           DEPLOY
 
   deployment-result:
     name: Report staging deployment outcome
-    needs: [authorize, staging-migration-rehearsal, deploy-staging]
+    needs: [authorize, deploy-staging]
     if: always() && !cancelled() && needs.authorize.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Require healthy compatible recovery
         env:
           DEPLOY_RESULT: ${{ needs.deploy-staging.result }}
-          REHEARSAL_RESULT: ${{ needs.staging-migration-rehearsal.result }}
         run: |
           if [[ "${DEPLOY_RESULT}" != success ]]; then
             {
               echo '## Staging recovery incomplete'
-              echo "- Rehearsal: ${REHEARSAL_RESULT}"
               echo "- Deployment: ${DEPLOY_RESULT}"
               echo 'No fallback image was restarted. Inspect staging and dispatch Deploy staging from main with a compatible image tag.'
             } >> "${GITHUB_STEP_SUMMARY}"

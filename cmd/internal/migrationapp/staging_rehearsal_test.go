@@ -52,50 +52,7 @@ func (l stagingRehearsalLogger) Info(message string, args ...any) {
 func (l stagingRehearsalLogger) Error(message string, args ...any) { l.t.Log(message, args) }
 
 func TestStagingMigrationRehearsal(t *testing.T) {
-	dsn := strings.TrimSpace(os.Getenv("DENSE_MEM_STAGE_POSTGRES_DSN"))
-	if dsn == "" {
-		t.Fatal("DENSE_MEM_STAGE_POSTGRES_DSN is required")
-	}
-	connectionConfig, err := pgconn.ParseConfig(dsn)
-	if err != nil {
-		t.Fatal("DENSE_MEM_STAGE_POSTGRES_DSN is invalid; connection details suppressed")
-	}
-	if connectionConfig.Database != stagingDatabaseName {
-		t.Fatalf("staging migration rehearsal refused a DSN for a database other than %q", stagingDatabaseName)
-	}
-	if err := validateStagingDSN(connectionConfig); err != nil {
-		t.Fatal(err)
-	}
-
-	db, err := gorm.Open(gormpostgres.Open(dsn), &gorm.Config{
-		Logger: gormlogger.Default.LogMode(gormlogger.Silent),
-	})
-	if err != nil {
-		t.Fatal("staging migration rehearsal could not open PostgreSQL; connection details suppressed")
-	}
-	sqlDB, err := db.DB()
-	if err != nil {
-		t.Fatal("staging migration rehearsal could not access PostgreSQL; connection details suppressed")
-	}
-	t.Cleanup(func() {
-		_ = sqlDB.Close()
-	})
-
-	preflightCtx, preflightCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer preflightCancel()
-	if err := sqlDB.PingContext(preflightCtx); err != nil {
-		t.Fatal("staging migration rehearsal could not reach PostgreSQL; connection details suppressed")
-	}
-	var databaseName string
-	if err := sqlDB.QueryRowContext(preflightCtx, `SELECT current_database()`).Scan(&databaseName); err != nil {
-		t.Fatal("staging migration rehearsal could not verify the PostgreSQL database; details suppressed")
-	}
-	if databaseName != stagingDatabaseName {
-		t.Fatalf("staging migration rehearsal refused a database other than %q", stagingDatabaseName)
-	}
-	if err := storagepostgres.ValidateSinglePrimaryTopology(preflightCtx, db); err != nil {
-		t.Fatal("staging migration rehearsal requires a writable single-primary PostgreSQL database")
-	}
+	db, dsn := openStagingDatabase(t)
 
 	migrationCtx, migrationCancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer migrationCancel()
@@ -208,19 +165,12 @@ func assertStagingEvidenceOnlyCatalog(t *testing.T, ctx context.Context, db *gor
 	t.Log("Evidence-only rehearsal verified retained fingerprints, explicit graph-object absence, and committed inventory receipt")
 }
 
+func stagingScript(name string) string {
+	return filepath.Join(filepath.Dir(filepath.Dir(storagepostgres.MigrationsDir())), ".github", "scripts", name)
+}
+
 func stopStagingServer(ctx context.Context, directory string) error {
-	// Existing Compose identity avoids requiring the image selected for a later deployment.
-	output, err := exec.CommandContext(ctx, "docker", "ps", "--no-trunc",
-		"--filter", "label=com.docker.compose.project.working_dir="+directory,
-		"--filter", "label=com.docker.compose.service=server", "--format", "{{.ID}}").Output()
-	if err != nil {
-		return err
-	}
-	containerIDs := strings.Fields(string(output))
-	if len(containerIDs) == 0 {
-		return nil
-	}
-	return exec.CommandContext(ctx, "docker", append([]string{"stop", "-t", "30"}, containerIDs...)...).Run()
+	return exec.CommandContext(ctx, "bash", stagingScript("stop-staging-server.sh"), directory).Run()
 }
 
 func TestStopStagingServerWithoutImageSelection(t *testing.T) {
@@ -444,6 +394,8 @@ func TestPrivateMemoryRehearsalFromDeployedSchema(t *testing.T) {
 		require.Equal(t, 1, count)
 		return nil
 	}))
+	assertStagingImageEvidenceSnapshot(t, ctx, db)
+
 }
 
 func TestStagingMigrationRehearsalFreshDatabase(t *testing.T) {
@@ -453,4 +405,118 @@ func TestStagingMigrationRehearsalFreshDatabase(t *testing.T) {
 	for range 2 {
 		rehearseStagingMigrations(t, ctx, db, dsn)
 	}
+}
+
+func openStagingDatabase(t *testing.T) (*gorm.DB, string) {
+	t.Helper()
+	dsn := strings.TrimSpace(os.Getenv("DENSE_MEM_STAGE_POSTGRES_DSN"))
+	if dsn == "" {
+		t.Fatal("DENSE_MEM_STAGE_POSTGRES_DSN is required")
+	}
+	connectionConfig, err := pgconn.ParseConfig(dsn)
+	if err != nil {
+		t.Fatal("DENSE_MEM_STAGE_POSTGRES_DSN is invalid; connection details suppressed")
+	}
+	if connectionConfig.Database != stagingDatabaseName {
+		t.Fatalf("staging migration rehearsal refused a DSN for a database other than %q", stagingDatabaseName)
+	}
+	if err := validateStagingDSN(connectionConfig); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := gorm.Open(gormpostgres.Open(dsn), &gorm.Config{
+		Logger: gormlogger.Default.LogMode(gormlogger.Silent),
+	})
+	if err != nil {
+		t.Fatal("staging migration rehearsal could not open PostgreSQL; connection details suppressed")
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatal("staging migration rehearsal could not access PostgreSQL; connection details suppressed")
+	}
+	t.Cleanup(func() {
+		_ = sqlDB.Close()
+	})
+
+	preflightCtx, preflightCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer preflightCancel()
+	if err := sqlDB.PingContext(preflightCtx); err != nil {
+		t.Fatal("staging migration rehearsal could not reach PostgreSQL; connection details suppressed")
+	}
+	var databaseName string
+	if err := sqlDB.QueryRowContext(preflightCtx, `SELECT current_database()`).Scan(&databaseName); err != nil {
+		t.Fatal("staging migration rehearsal could not verify the PostgreSQL database; details suppressed")
+	}
+	if databaseName != stagingDatabaseName {
+		t.Fatalf("staging migration rehearsal refused a database other than %q", stagingDatabaseName)
+	}
+	if err := storagepostgres.ValidateSinglePrimaryTopology(preflightCtx, db); err != nil {
+		t.Fatal("staging migration rehearsal requires a writable single-primary PostgreSQL database")
+	}
+
+	return db, dsn
+}
+
+func TestStagingImageMigrationVerification(t *testing.T) {
+	db, _ := openStagingDatabase(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+	snapshot := os.Getenv("DENSE_MEM_STAGE_EVIDENCE_SNAPSHOT")
+	switch os.Getenv("DENSE_MEM_STAGE_IMAGE_PHASE") {
+	case "before":
+		data, err := json.Marshal(stagingEvidenceFingerprints(t, ctx, db))
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(snapshot, data, 0o600))
+	case "after":
+		require.NoError(t, compareStagingEvidenceSnapshot(t, ctx, db, snapshot))
+		sqlDB, err := db.DB()
+		require.NoError(t, err)
+		require.NoError(t, storagepostgres.ValidateStartupMigrationState(ctx, sqlDB, os.Getenv("DENSE_MEM_STAGE_EXPECTED_MIGRATIONS")))
+		require.NoError(t, storagepostgres.CheckPGVectorExtension(ctx, db))
+		assertStagingEvidenceOnlyCatalog(t, ctx, db)
+	default:
+		t.Fatal("image verification requires a before or after phase")
+	}
+}
+
+func compareStagingEvidenceSnapshot(t *testing.T, ctx context.Context, db *gorm.DB, snapshot string) error {
+	t.Helper()
+	data, err := os.ReadFile(snapshot)
+	if err != nil {
+		return err
+	}
+	var before map[string]string
+	if err := json.Unmarshal(data, &before); err != nil {
+		return err
+	}
+	if len(before) != 13 {
+		return errors.New("retained Evidence snapshot is incomplete")
+	}
+	after := stagingEvidenceFingerprints(t, ctx, db)
+	for table, hash := range before {
+		if after[table] != hash {
+			return fmt.Errorf("retained Evidence fingerprint changed: %s", table)
+		}
+	}
+	return nil
+}
+
+func assertStagingImageEvidenceSnapshot(t *testing.T, ctx context.Context, db *gorm.DB) {
+	t.Helper()
+	snapshot := filepath.Join(t.TempDir(), "evidence.json")
+	before := stagingEvidenceFingerprints(t, ctx, db)
+	data, err := json.Marshal(before)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(snapshot, data, 0o600))
+	require.NoError(t, compareStagingEvidenceSnapshot(t, ctx, db, snapshot))
+
+	require.NoError(t, storagepostgres.NewRLS().WithSystemTx(ctx, db, func(tx *gorm.DB) error {
+		return tx.Exec(`INSERT INTO evidence_fragments(team_id,fragment_id,ingest_id,owner_profile_id,space_id,space_generation,evidence_index,content,content_hash)
+ SELECT team_id,gen_random_uuid(),ingest_id,owner_profile_id,space_id,space_generation,evidence_index+1,'Additional snapshot regression Evidence.','snapshot-regression-hash' FROM evidence_fragments`).Error
+	}))
+	require.ErrorContains(t, compareStagingEvidenceSnapshot(t, ctx, db, snapshot), "fingerprint changed")
+	require.NoError(t, os.WriteFile(snapshot, []byte(`{}`), 0o600))
+	require.ErrorContains(t, compareStagingEvidenceSnapshot(t, ctx, db, snapshot), "incomplete")
+	require.NoError(t, os.WriteFile(snapshot, []byte(`invalid`), 0o600))
+	require.Error(t, compareStagingEvidenceSnapshot(t, ctx, db, snapshot))
 }
