@@ -149,6 +149,12 @@ CREATE TEMP TABLE evidence_only_retired_revisions ON COMMIT DROP AS
 CREATE TEMP TABLE evidence_only_retired_records ON COMMIT DROP AS
  SELECT head.team_id,head.shared_space_id,head.space_generation,head.record_id FROM ontology_record_heads head
  JOIN evidence_only_retired_revisions revision USING(team_id,shared_space_id,space_generation,record_id,version);
+CREATE UNIQUE INDEX evidence_only_retired_records_key
+ ON evidence_only_retired_records(team_id,shared_space_id,space_generation,record_id);
+CREATE INDEX evidence_only_retired_records_text_key
+ ON evidence_only_retired_records(team_id,shared_space_id,space_generation,(record_id::text));
+ANALYZE evidence_only_retired_records;
+ANALYZE evidence_only_retired_revisions;
 DO $closure$
 DECLARE changed bigint;
 BEGIN LOOP
