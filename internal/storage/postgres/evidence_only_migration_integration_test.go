@@ -156,9 +156,66 @@ func TestEvidenceOnlyPostgresPopulatedUpgradePreservesEvidenceAndLegacyIdentity(
 	defer cleanup()
 	require.NoError(t, evidenceOnlyMigrationUpTo(ctx, db, evidenceOnlyMigrationBase))
 	fixture := insertEvidenceOnlyMigrationFixture(t, ctx, db, false)
+	topic := ontology.Record{ID: uuid.NewString(), Version: 1, Kind: ontology.Topic,
+		Definition: &ontology.Definition{Key: "retained-topic", Label: "Retained topic", Description: "Evidence organization survives graph removal"}}
+	fingerprint, err := ontology.RecordFingerprintWithAcceptedSources(topic, nil)
+	require.NoError(t, err)
+	topic.Fingerprint = fingerprint
+	source := ontology.SourceHandle{Kind: ontology.EvidenceSource, ID: fixture.evidence, Version: 1}
+	assignment := ontology.Record{ID: uuid.NewString(), Version: 1, Kind: ontology.AssignmentKind,
+		Assignment:   &ontology.Assignment{Source: source, DefinitionID: topic.ID},
+		Sources:      []ontology.SourceDependency{{SourceHandle: source, Fingerprint: "sha256:" + strings.Repeat("a", 64)}},
+		Dependencies: []ontology.RevisionRef{{ID: topic.ID, Version: 1}}}
+	assignment.Fingerprint, err = ontology.RecordFingerprintWithAcceptedSources(assignment, map[string]ontology.Record{topic.ID: topic})
+	require.NoError(t, err)
+	publicationID := uuid.NewString()
+	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO ontology_catalog_heads(team_id,shared_space_id,space_generation,revision) VALUES($1::uuid,$2::uuid,$3,1)`, fixture.team, fixture.space, fixture.generation); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO ontology_publications(team_id,shared_space_id,space_generation,publication_id,revision,operation_key,request_hash,origin,reason,result) VALUES($1::uuid,$2::uuid,$3,$4::uuid,1,'retained-topic-publication',$5,'automatic','Retained Evidence topic','{}')`, fixture.team, fixture.space, fixture.generation, publicationID, topic.Fingerprint); err != nil {
+			return err
+		}
+		for _, record := range []ontology.Record{topic, assignment} {
+			require.NoError(t, ontology.ValidateRecord(record))
+			body, err := json.Marshal(record)
+			if err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO ontology_record_revisions(team_id,shared_space_id,space_generation,record_id,version,kind,publication_id,retired,body,fingerprint) VALUES($1::uuid,$2::uuid,$3,$4::uuid,1,$5,$6::uuid,false,$7::jsonb,$8)`, fixture.team, fixture.space, fixture.generation, record.ID, string(record.Kind), publicationID, string(body), record.Fingerprint); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO ontology_record_heads(team_id,shared_space_id,space_generation,record_id,version,kind,retired) VALUES($1::uuid,$2::uuid,$3,$4::uuid,1,$5,false)`, fixture.team, fixture.space, fixture.generation, record.ID, string(record.Kind)); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO ontology_source_dependencies(team_id,shared_space_id,space_generation,record_id,record_version,source_kind,source_id,source_version,fingerprint) VALUES($1::uuid,$2::uuid,$3,$4::uuid,1,'evidence',$5,1,$6)`, fixture.team, fixture.space, fixture.generation, assignment.ID, source.ID, assignment.Sources[0].Fingerprint); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO ontology_revision_dependencies(team_id,shared_space_id,space_generation,record_id,record_version,dependency_id,dependency_version) VALUES($1::uuid,$2::uuid,$3,$4::uuid,1,$5::uuid,1)`, fixture.team, fixture.space, fixture.generation, assignment.ID, topic.ID)
+		return err
+	}))
+	ontologySnapshot := func() map[string]string {
+		result := map[string]string{}
+		require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+			for _, table := range []string{"ontology_record_heads", "ontology_record_revisions", "ontology_source_dependencies", "ontology_revision_dependencies"} {
+				var body string
+				query := `SELECT COALESCE(jsonb_agg(to_jsonb(row_value) ORDER BY to_jsonb(row_value)::text),'[]'::jsonb)::text FROM ` + quoteMigrationIdentifier(table) + ` row_value WHERE team_id=$1::uuid AND shared_space_id=$2::uuid AND space_generation=$3 AND record_id IN ($4::uuid,$5::uuid)`
+				if err := tx.QueryRowContext(ctx, query, fixture.team, fixture.space, fixture.generation, topic.ID, assignment.ID).Scan(&body); err != nil {
+					return err
+				}
+				require.NotEqual(t, "[]", body, table)
+				result[table] = body
+			}
+			return nil
+		}))
+		return result
+	}
+	beforeOntology := ontologySnapshot()
 	before := evidenceOnlyFingerprints(t, ctx, db)
 	require.NoError(t, evidenceOnlyMigrationUpTo(ctx, db, evidenceOnlyMigrationVersion))
 	require.Equal(t, before, evidenceOnlyFingerprints(t, ctx, db))
+	require.Equal(t, beforeOntology, ontologySnapshot())
 	assertEvidenceOnlyCatalog(t, ctx, db)
 	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
 		var legacyKeys int
