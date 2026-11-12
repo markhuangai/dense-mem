@@ -127,7 +127,7 @@ func TestOntologyMaintenanceConcurrentInterruptionPreservesRunWork(t *testing.T)
 	for _, failure := range []string{"maintenance_paused", "maintenance_disabled", ""} {
 		t.Run(failure, func(t *testing.T) {
 			f.organizationEvidence(t, 0, "Atlas uses PostgreSQL "+uuid.NewString(), nil)
-			maintenanceEntity(t, other, "Beta-"+uuid.NewString())
+			maintenanceEvidence(t, other, "Beta-"+uuid.NewString())
 			run, err := f.store.MaintenanceCommand(ctx, domain.OntologyMaintenanceCommand{Action: "run", OperationKey: uuid.NewString(), MaxBatches: 2}, time.Now().UTC(), nil)
 			require.NoError(t, err)
 			firstTurn, first := maintenanceClaim(t, f, window)

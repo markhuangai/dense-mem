@@ -67,8 +67,7 @@ func TestSemanticAssessmentAcceptsSerializedInputWithRepairHeadroom(t *testing.T
 	}))
 	defer server.Close()
 
-	request, _ := semanticAssessmentSubmissionContractTestRequest(t)
-	request.SubmissionContract.Relationships[0].KnownPredicateKey = "works_on"
+	request, _ := semanticAssessmentPreparedTestRequest(t)
 	limits := DefaultSemanticAssessmentLimits()
 	limits.ProviderModel = "assessor-model"
 	limits.ProviderSchemaName = assessor.SemanticAssessmentSchemaName
@@ -103,8 +102,7 @@ func TestSemanticAssessmentRejectsRequiredInputWithoutRepairHeadroom(t *testing.
 	}))
 	defer server.Close()
 
-	request, _ := semanticAssessmentSubmissionContractTestRequest(t)
-	request.SubmissionContract.Relationships[0].KnownPredicateKey = "works_on"
+	request, _ := semanticAssessmentPreparedTestRequest(t)
 	limits := DefaultSemanticAssessmentLimits()
 	limits.ProviderModel = "assessor-model"
 	limits.ProviderSchemaName = assessor.SemanticAssessmentSchemaName
@@ -133,7 +131,7 @@ func TestSemanticAssessmentRepairDoesNotDoubleCountFrozenCandidateContext(t *tes
 		calls++
 		response := semanticAssessmentTestResponse()
 		if calls == 1 {
-			response.EntityResults[0].GroundingRef = nil
+			response.RequestID = "wrong-request"
 		}
 		content, err := json.Marshal(response)
 		require.NoError(t, err)
@@ -143,7 +141,7 @@ func TestSemanticAssessmentRepairDoesNotDoubleCountFrozenCandidateContext(t *tes
 	}))
 	defer server.Close()
 
-	request, _ := semanticAssessmentSubmissionContractTestRequest(t)
+	request, _ := semanticAssessmentPreparedTestRequest(t)
 	limits := DefaultSemanticAssessmentLimits()
 	limits.ProviderModel = "assessor-model"
 	limits.ProviderSchemaName = assessor.SemanticAssessmentSchemaName
@@ -179,7 +177,7 @@ func TestSemanticAssessmentPreparedRequestRetainsEquivalenceAllowlist(t *testing
 	}))
 	defer server.Close()
 
-	request, _ := semanticAssessmentSubmissionContractTestRequest(t)
+	request, _ := semanticAssessmentPreparedTestRequest(t)
 	request.EvidenceEquivalenceCandidates = []assessor.SemanticAssessmentEvidenceEquivalenceCandidateGroup{{
 		EvidenceID: "ev-1",
 		Candidates: []assessor.SemanticAssessmentEvidenceEquivalenceCandidate{{
@@ -204,8 +202,8 @@ func TestSemanticAssessmentPreparedRequestRetainsEquivalenceAllowlist(t *testing
 }
 
 func TestSemanticAssessmentCandidateContextBudgetIgnoresAssistantFields(t *testing.T) {
-	user := openAIVerifierMessage{Role: "user", Content: `{"entity_candidate_groups":[{"evidence_id":"evidence:0","candidates":[{"entity_id":"entity-1"}]}]}`}
-	assistant := openAIVerifierMessage{Role: "assistant", Content: `{"entity_candidate_groups":[{"evidence_id":"evidence:1","candidates":[{"entity_id":"` + strings.Repeat("assistant-only ", 200) + `"}]}]}`}
+	user := openAIVerifierMessage{Role: "user", Content: `{"evidence_equivalence_candidates":[{"evidence_id":"evidence:0","candidates":[{"evidence_id":"entity-1"}]}]}`}
+	assistant := openAIVerifierMessage{Role: "assistant", Content: `{"evidence_equivalence_candidates":[{"evidence_id":"evidence:1","candidates":[{"evidence_id":"` + strings.Repeat("assistant-only ", 200) + `"}]}]}`}
 	userOnly, err := semanticAssessmentConversationCandidateContextTokens([]openAIVerifierMessage{user}, "o200k_base")
 	require.NoError(t, err)
 	withAssistant, err := semanticAssessmentConversationCandidateContextTokens([]openAIVerifierMessage{user, assistant}, "o200k_base")

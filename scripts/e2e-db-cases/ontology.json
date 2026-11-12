@@ -2,13 +2,55 @@
   "version": 1,
   "capability": "ontology",
   "cases": [
-    {"id": "repository/TestOntologyCoverageFailureWitnesses","package": "./internal/ontology/postgres","run": "^TestOntologyCoverageFailureWitnesses$","phase": "precheck","source": "internal/ontology/postgres/coverage_witness_integration_test.go"},
-    {"id": "repository/TestOntologyMaintenanceClaimErrorReleasesReturnedTurn","package": "./internal/ontology/postgres","run": "^TestOntologyMaintenanceClaimErrorReleasesReturnedTurn$","phase": "precheck","source": "internal/ontology/postgres/maintenance_service_integration_test.go"},
-    {"id": "repository/TestOntologyMatchingVocabularyAndInvalidation","package": "./internal/ontology/postgres","run": "^TestOntologyMatchingVocabularyAndInvalidation$","phase": "precheck","source": "internal/ontology/postgres/matching_integration_test.go"},
-    {"id": "repository/TestOntologyMatchingConcurrentInvalidation","package": "./internal/ontology/postgres","run": "^TestOntologyMatchingConcurrentInvalidation$","phase": "precheck","source": "internal/ontology/postgres/matching_concurrency_integration_test.go"},
-    {"id": "repository/TestOntologyMatchingRefreshMigration","package": "./internal/ontology/postgres","run": "^TestOntologyMatchingRefreshMigration$","phase": "precheck","source": "internal/ontology/postgres/matching_migration_integration_test.go"},
-    {"id": "repository/TestOntologyMatchingHistoricalReceiptRefresh","package": "./internal/ontology/postgres","run": "^TestOntologyMatchingHistoricalReceiptRefresh$","phase": "precheck","source": "internal/ontology/postgres/matching_receipt_integration_test.go"},
-    {"id": "repository/TestOntologyMaintenanceMatchingCohort","package": "./internal/ontology/postgres","run": "^TestOntologyMaintenanceMatchingCohort$","phase": "precheck","source": "internal/ontology/postgres/organization_integration_test.go"},
+    {
+      "id": "repository/TestOntologyCoverageFailureWitnesses",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyCoverageFailureWitnesses$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/coverage_witness_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceClaimErrorReleasesReturnedTurn",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceClaimErrorReleasesReturnedTurn$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_service_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMatchingVocabularyAndInvalidation",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMatchingVocabularyAndInvalidation$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/matching_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMatchingConcurrentInvalidation",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMatchingConcurrentInvalidation$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/matching_concurrency_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMatchingRefreshMigration",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMatchingRefreshMigration$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/matching_migration_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMatchingHistoricalReceiptRefresh",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMatchingHistoricalReceiptRefresh$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/matching_receipt_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceMatchingCohort",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceMatchingCohort$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/organization_integration_test.go"
+    },
     {
       "id": "repository/TestOntologyDefinitionChangesValidateActiveChildren",
       "package": "./internal/ontology/postgres",
@@ -90,13 +132,6 @@
       "id": "repository/TestOntologyExcludesOldSharedGeneration",
       "package": "./internal/ontology/postgres",
       "run": "^TestOntologyExcludesOldSharedGeneration$",
-      "phase": "precheck",
-      "source": "internal/ontology/postgres/sources_integration_test.go"
-    },
-    {
-      "id": "repository/TestOntologyRelationshipProvenanceAndPredicateSeeds",
-      "package": "./internal/ontology/postgres",
-      "run": "^TestOntologyRelationshipProvenanceAndPredicateSeeds$",
       "phase": "precheck",
       "source": "internal/ontology/postgres/sources_integration_test.go"
     },
@@ -190,27 +225,6 @@
       "run": "^TestOntologyMaintenanceMarkerRollbackAndRLS$",
       "phase": "precheck",
       "source": "internal/ontology/postgres/maintenance_integration_test.go"
-    },
-    {
-      "id": "repository/TestOntologyMaintenanceCommunityDependencyCounters",
-      "package": "./internal/ontology/postgres",
-      "run": "^TestOntologyMaintenanceCommunityDependencyCounters$",
-      "phase": "precheck",
-      "source": "internal/ontology/postgres/maintenance_performance_integration_test.go"
-    },
-    {
-      "id": "repository/TestOntologyMaintenanceWriteLatencyBaseline",
-      "package": "./internal/ontology/postgres",
-      "run": "^TestOntologyMaintenanceWriteLatencyBaseline$",
-      "phase": "precheck",
-      "source": "internal/ontology/postgres/maintenance_latency_baseline_integration_test.go"
-    },
-    {
-      "id": "repository/TestOntologyMaintenanceWriteLatency",
-      "package": "./internal/ontology/postgres",
-      "run": "^TestOntologyMaintenanceWriteLatency$",
-      "phase": "precheck",
-      "source": "internal/ontology/postgres/maintenance_performance_integration_test.go"
     },
     {
       "id": "repository/TestOntologyMaintenanceCohort",
@@ -409,13 +423,6 @@
       "source": "internal/ontology/postgres/followup_freshness_integration_test.go"
     },
     {
-      "id": "repository/TestOntologyCurrentReadersReportCanonicalFingerprintAndVersionChanges",
-      "package": "./internal/ontology/postgres",
-      "run": "^TestOntologyCurrentReadersReportCanonicalFingerprintAndVersionChanges$",
-      "phase": "precheck",
-      "source": "internal/ontology/postgres/followup_freshness_integration_test.go"
-    },
-    {
       "id": "repository/TestOntologyVocabularyUsesCurrentCandidateWindow",
       "package": "./internal/ontology/postgres",
       "run": "^TestOntologyVocabularyUsesCurrentCandidateWindow$",
@@ -570,23 +577,9 @@
       "source": "internal/ontology/postgres/management_regressions_integration_test.go"
     },
     {
-      "id": "repository/TestOntologyManagementPredicateLookupBeyondFirstPage",
-      "package": "./internal/ontology/postgres",
-      "run": "^TestOntologyManagementPredicateLookupBeyondFirstPage$",
-      "phase": "precheck",
-      "source": "internal/ontology/postgres/management_regressions_integration_test.go"
-    },
-    {
       "id": "repository/TestOntologyManagementEditAndUnpinTogether",
       "package": "./internal/ontology/postgres",
       "run": "^TestOntologyManagementEditAndUnpinTogether$",
-      "phase": "precheck",
-      "source": "internal/ontology/postgres/management_regressions_integration_test.go"
-    },
-    {
-      "id": "repository/TestOntologyManagementReplacesAdvancedSourceAndRemovesWithdrawnCorrection",
-      "package": "./internal/ontology/postgres",
-      "run": "^TestOntologyManagementReplacesAdvancedSourceAndRemovesWithdrawnCorrection$",
       "phase": "precheck",
       "source": "internal/ontology/postgres/management_regressions_integration_test.go"
     },
@@ -610,13 +603,6 @@
       "run": "^TestOntologyMaintenanceEnrollsActiveTeamsDespiteRetiredOptouts$",
       "phase": "precheck",
       "source": "internal/ontology/postgres/maintenance_integration_test.go"
-    },
-    {
-      "id": "repository/TestOntologySchedulerStatusFailurePreservesRealOrganizationTurns",
-      "package": "./internal/ontology/postgres",
-      "run": "^TestOntologySchedulerStatusFailurePreservesRealOrganizationTurns$",
-      "phase": "precheck",
-      "source": "internal/ontology/postgres/scheduler_status_failure_integration_test.go"
     },
     {
       "id": "repository/TestOntologyMaintenanceParallelClaimsAndLimits",
@@ -717,25 +703,11 @@
       "source": "internal/ontology/postgres/scheduler_bounds_integration_test.go"
     },
     {
-      "id": "repository/TestOntologyMaintenanceParallelSchedulerPublicationFences",
-      "package": "./internal/ontology/postgres",
-      "run": "^TestOntologyMaintenanceParallelSchedulerPublicationFences$",
-      "phase": "precheck",
-      "source": "internal/ontology/postgres/scheduler_fences_integration_test.go"
-    },
-    {
       "id": "repository/TestOntologyMaintenanceParallelSchedulerUnavailableCapacity",
       "package": "./internal/ontology/postgres",
       "run": "^TestOntologyMaintenanceParallelSchedulerUnavailableCapacity$",
       "phase": "precheck",
       "source": "internal/ontology/postgres/scheduler_fences_integration_test.go"
-    },
-    {
-      "id": "repository/TestOntologyMaintenanceParallelSchedulerMixedTurns",
-      "package": "./internal/ontology/postgres",
-      "run": "^TestOntologyMaintenanceParallelSchedulerMixedTurns$",
-      "phase": "precheck",
-      "source": "internal/ontology/postgres/scheduler_interleaving_integration_test.go"
     },
     {
       "id": "repository/TestOntologyMaintenanceParallelSchedulerFillsAvailableSlots",
@@ -968,33 +940,103 @@
       "phase": "precheck",
       "source": "internal/ontology/postgres/paired_evaluation_integration_test.go"
     },
-    {"id": "repository/TestOntologyMaintenanceRevalidationDiscoveryMeasurement", "package": "./internal/ontology/postgres", "run": "^TestOntologyMaintenanceRevalidationDiscoveryMeasurement$", "phase": "precheck", "source": "internal/ontology/postgres/maintenance_discovery_measurement_integration_test.go"},
-    {"id": "repository/TestOntologyMaintenanceRevalidationDiscoveryConcurrency", "package": "./internal/ontology/postgres", "run": "^TestOntologyMaintenanceRevalidationDiscoveryConcurrency$", "phase": "precheck", "source": "internal/ontology/postgres/maintenance_discovery_concurrency_integration_test.go"},
-    {"id": "repository/TestOntologyMaintenanceRevalidationDiscoveryCancellation", "package": "./internal/ontology/postgres", "run": "^TestOntologyMaintenanceRevalidationDiscoveryCancellation$", "phase": "precheck", "source": "internal/ontology/postgres/maintenance_discovery_concurrency_integration_test.go"},
-    {"id": "repository/TestOntologyMaintenanceRevalidationDiscoveryIsolation", "package": "./internal/ontology/postgres", "run": "^TestOntologyMaintenanceRevalidationDiscoveryIsolation$", "phase": "precheck", "source": "internal/ontology/postgres/maintenance_discovery_isolation_integration_test.go"},
-    {"id": "repository/TestOntologyMaintenanceRevalidationDiscoveryLockCancellation", "package": "./internal/ontology/postgres", "run": "^TestOntologyMaintenanceRevalidationDiscoveryLockCancellation$", "phase": "precheck", "source": "internal/ontology/postgres/maintenance_discovery_isolation_integration_test.go"},
-    {"id": "repository/TestOntologyMaintenanceCoalescingLockedPrefix", "package": "./internal/ontology/postgres", "run": "^TestOntologyMaintenanceCoalescingLockedPrefix$", "phase": "precheck", "source": "internal/ontology/postgres/maintenance_coalescing_concurrency_integration_test.go"},
-    {"id": "repository/TestOntologyMaintenanceCoalescingConcurrentPublicationRetained", "package": "./internal/ontology/postgres", "run": "^TestOntologyMaintenanceCoalescingConcurrentPublicationRetained$", "phase": "precheck", "source": "internal/ontology/postgres/maintenance_coalescing_concurrency_integration_test.go"},
-    {"id": "repository/TestOntologyMaintenanceCoalescingPages", "package": "./internal/ontology/postgres", "run": "^TestOntologyMaintenanceCoalescingPages$", "phase": "precheck", "source": "internal/ontology/postgres/maintenance_coalescing_integration_test.go"},
-    {"id": "repository/TestOntologyMaintenanceCoalescingCursorAndGroupBounds", "package": "./internal/ontology/postgres", "run": "^TestOntologyMaintenanceCoalescingCursorAndGroupBounds$", "phase": "precheck", "source": "internal/ontology/postgres/maintenance_coalescing_integration_test.go"},
-    {"id": "repository/TestOntologyMaintenanceCoalescingPreservesNonDefinitionOrder", "package": "./internal/ontology/postgres", "run": "^TestOntologyMaintenanceCoalescingPreservesNonDefinitionOrder$", "phase": "precheck", "source": "internal/ontology/postgres/maintenance_coalescing_integration_test.go"},
-    {"id": "repository/TestOntologyMaintenanceDiscoveryCommittedDiagnostics", "package": "./internal/ontology/postgres", "run": "^TestOntologyMaintenanceDiscoveryCommittedDiagnostics$", "phase": "precheck", "source": "internal/ontology/postgres/maintenance_discovery_diagnostics_integration_test.go"},
-    {"id": "repository/TestOntologySemanticHierarchyPublication", "package": "./internal/ontology/postgres", "run": "^TestOntologySemanticHierarchyPublication$", "phase": "precheck", "source": "internal/ontology/postgres/semantic_hierarchy_integration_test.go"},
-    {"id": "repository/TestOntologySemanticHierarchyDependencies", "package": "./internal/ontology/postgres", "run": "^TestOntologySemanticHierarchyDependencies$", "phase": "precheck", "source": "internal/ontology/postgres/semantic_hierarchy_integration_test.go"},
-    {"id": "repository/TestOntologySemanticHierarchyRollbackAndPins", "package": "./internal/ontology/postgres", "run": "^TestOntologySemanticHierarchyRollbackAndPins$", "phase": "precheck", "source": "internal/ontology/postgres/semantic_hierarchy_integration_test.go"},
-    {"id": "repository/TestOntologySemanticHierarchyRacesAndIsolation", "package": "./internal/ontology/postgres", "run": "^TestOntologySemanticHierarchyRacesAndIsolation$", "phase": "precheck", "source": "internal/ontology/postgres/semantic_hierarchy_integration_test.go"},
-    {"id": "repository/TestOntologySemanticPublicationLogOnlyDiagnostics", "package": "./cmd/internal/serverapp", "run": "^TestOntologySemanticPublicationLogOnlyDiagnostics$", "phase": "precheck", "source": "cmd/internal/serverapp/ontology_semantic_diagnostic_integration_test.go"},
-    {"id": "repository/TestOntologyAutomaticRefinement", "package": "./internal/ontology/postgres", "run": "^TestOntologyAutomaticRefinement$", "phase": "precheck", "source": "internal/ontology/postgres/refinement_integration_test.go"},
-    {"id": "repository/TestOntologyRefinementPreservesLegacyAndAmbiguity", "package": "./internal/ontology/postgres", "run": "^TestOntologyRefinementPreservesLegacyAndAmbiguity$", "phase": "precheck", "source": "internal/ontology/postgres/refinement_integration_test.go"},
-    {"id": "repository/TestOntologyRefinementPublicationRaces", "package": "./internal/ontology/postgres", "run": "^TestOntologyRefinementPublicationRaces$", "phase": "precheck", "source": "internal/ontology/postgres/refinement_integration_test.go"},
-    {"id": "repository/TestOntologyRefinementLeaseRecovery", "package": "./internal/ontology/postgres", "run": "^TestOntologyRefinementLeaseRecovery$", "phase": "precheck", "source": "internal/ontology/postgres/refinement_integration_test.go"},
-    {"id": "repository/TestOntologyRefinementIsolationAndAncestryBound", "package": "./internal/ontology/postgres", "run": "^TestOntologyRefinementIsolationAndAncestryBound$", "phase": "precheck", "source": "internal/ontology/postgres/refinement_integration_test.go"},
-    {"id": "repository/TestOntologyRefinementKeepsHistoricalReceipts", "package": "./internal/ontology/postgres", "run": "^TestOntologyRefinementKeepsHistoricalReceipts$", "phase": "precheck", "source": "internal/ontology/postgres/refinement_integration_test.go"},
-    {"id": "repository/TestOntologyRefinementRefreshMigration", "package": "./internal/ontology/postgres", "run": "^TestOntologyRefinementRefreshMigration$", "phase": "precheck", "source": "internal/ontology/postgres/refinement_migration_integration_test.go"},
-    {"id": "repository/TestOntologyRefinementRebuildsStoredAncestry", "package": "./internal/ontology/postgres", "run": "^TestOntologyRefinementRebuildsStoredAncestry$", "phase": "precheck", "source": "internal/ontology/postgres/refinement_integration_test.go"},
-    {"id": "repository/TestOntologyRefinementCoarseAncestryBound", "package": "./internal/ontology/postgres", "run": "^TestOntologyRefinementCoarseAncestryBound$", "phase": "precheck", "source": "internal/ontology/postgres/refinement_integration_test.go"},
-    {"id": "repository/TestOntologyRefinementDefinitionAliasRace", "package": "./internal/ontology/postgres", "run": "^TestOntologyRefinementDefinitionAliasRace$", "phase": "precheck", "source": "internal/ontology/postgres/refinement_integration_test.go"},
-    {"id": "repository/TestOntologyRefinementReusesBoundedCandidate", "package": "./internal/ontology/postgres", "run": "^TestOntologyRefinementReusesBoundedCandidate$", "phase": "precheck", "source": "internal/ontology/postgres/refinement_integration_test.go"},
-    {"id": "repository/TestOntologyRefinementAmbiguityRetainsEligiblePredicateVersion", "package": "./internal/ontology/postgres", "run": "^TestOntologyRefinementAmbiguityRetainsEligiblePredicateVersion$", "phase": "precheck", "source": "internal/ontology/postgres/refinement_integration_test.go"}
+    {
+      "id": "repository/TestOntologyMaintenanceRevalidationDiscoveryMeasurement",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceRevalidationDiscoveryMeasurement$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_discovery_measurement_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceRevalidationDiscoveryConcurrency",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceRevalidationDiscoveryConcurrency$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_discovery_concurrency_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceRevalidationDiscoveryCancellation",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceRevalidationDiscoveryCancellation$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_discovery_concurrency_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceRevalidationDiscoveryIsolation",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceRevalidationDiscoveryIsolation$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_discovery_isolation_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceRevalidationDiscoveryLockCancellation",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceRevalidationDiscoveryLockCancellation$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_discovery_isolation_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceCoalescingLockedPrefix",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceCoalescingLockedPrefix$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_coalescing_concurrency_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceCoalescingConcurrentPublicationRetained",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceCoalescingConcurrentPublicationRetained$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_coalescing_concurrency_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceCoalescingPages",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceCoalescingPages$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_coalescing_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceCoalescingCursorAndGroupBounds",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceCoalescingCursorAndGroupBounds$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_coalescing_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceCoalescingPreservesNonDefinitionOrder",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceCoalescingPreservesNonDefinitionOrder$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_coalescing_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceDiscoveryCommittedDiagnostics",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceDiscoveryCommittedDiagnostics$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_discovery_diagnostics_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologySemanticPublicationLogOnlyDiagnostics",
+      "package": "./cmd/internal/serverapp",
+      "run": "^TestOntologySemanticPublicationLogOnlyDiagnostics$",
+      "phase": "precheck",
+      "source": "cmd/internal/serverapp/ontology_semantic_diagnostic_integration_test.go"
+    },
+    {
+      "id": "ontology/TestOntologyManagementEvidenceLookupBeyondFirstPage",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyManagementEvidenceLookupBeyondFirstPage$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/management_regressions_integration_test.go"
+    },
+    {
+      "id": "ontology/TestOntologyManagementRemovesWithdrawnCorrection",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyManagementRemovesWithdrawnCorrection$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/management_regressions_integration_test.go"
+    }
   ]
 }

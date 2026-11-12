@@ -48,7 +48,7 @@ async function tool(name, args, { allowError = false, key = apiKey, signal } = {
   return body.result.structuredContent;
 }
 function rememberArguments(label, fault = "") {
-  return { target_space: "team_shared", idempotency_key: `exports-${label}`, evidence: [{ content: `Dense-Mem stores durable memory in PostgreSQL. ${canary} ${fault}`, source_type: "manual", source_key: `exports:${label}`, source_revision: "1" }], relationships: [{ ref: "durable-store", subject: { name: "Dense-Mem", entity_kind: "project" }, predicate: { proposed_key: "stores_memory_in" }, object: { value: { type: "string", value: "PostgreSQL" } }, polarity: "+", evidence_indices: [0] }] };
+  return { target_space: "team_shared", idempotency_key: `exports-${label}`, evidence: [{ content: `Dense-Mem stores durable memory in PostgreSQL. ${canary} ${fault}`, source_type: "manual", source_key: `exports:${label}`, source_revision: "1" }] };
 }
 
 for (const endpoint of ["/audit/export", "/diagnostics/bundle"]) {
@@ -64,14 +64,14 @@ for (const endpoint of ["/audit/export", "/diagnostics/bundle"]) assert.equal((a
 const seed = rememberArguments("seed");
 const remembered = assertTerminalRememberResult(await tool("remember", seed));
 assert.equal(remembered.processing_state, "completed");
-const relationshipID = remembered.relationship_results[0].splits[0].relationship_id;
-const trace = await tool("trace_memory", { relationship_id: relationshipID }); assert.equal(trace.relationship.relationship_id, relationshipID);
+const evidenceID = remembered.evidence[0].evidence_id;
+const trace = await tool("trace_memory", { evidence_id: evidenceID }); assert.equal(trace.evidence.evidence_id, evidenceID);
 await tool("recall_memory", { query: "Dense-Mem durable memory PostgreSQL" });
 const failed = assertTerminalRememberResult(await tool("remember", rememberArguments("provider-failure", "[fixture-fault:unavailable]"), { allowError: true }));
 assert.equal(failed.processing_state, "failed"); assert.ok(failed.errors.length > 0);
 const foreign = await controlJSON(`/teams/${second.id}/credentials`, { method: "POST", body: { name: "exports-foreign", scopes: ["read", "write"] } });
 prohibited.push(foreign.api_key);
-const deniedTrace = await tool("trace_memory", { relationship_id: relationshipID }, { key: foreign.api_key, allowError: true });
+const deniedTrace = await tool("trace_memory", { evidence_id: evidenceID }, { key: foreign.api_key, allowError: true });
 assert.ok(deniedTrace.code || deniedTrace.errors?.length);
 assert.ok(!JSON.stringify(deniedTrace).includes(canary), "foreign-team denial exposed evidence content");
 
@@ -169,7 +169,7 @@ try {
   try {
     const start = Date.now();
     await Promise.all(Array.from({ length: 8 }, () => tool("remember", seed)));
-    await Promise.all(Array.from({ length: 8 }, () => tool("trace_memory", { relationship_id: relationshipID })));
+    await Promise.all(Array.from({ length: 8 }, () => tool("trace_memory", { evidence_id: evidenceID })));
     assert.ok(Date.now() - start < 10000, "slow Collector blocked memory operations");
     const healthDeadline = Date.now() + 12000;
     let degraded;
@@ -180,7 +180,7 @@ try {
     } while (Date.now() < healthDeadline);
     assert.ok(degraded.exporters.traces.degraded); assert.ok(degraded.exporters.traces.failures > 0); assert.ok(degraded.exporters.pending_spans <= 2048);
   } finally { docker(["kill", "--signal=SIGCONT", collectorID]); }
-  await tool("trace_memory", { relationship_id: relationshipID });
+  await tool("trace_memory", { evidence_id: evidenceID });
 } finally {
   if (disabledID) docker(["rm", "--force", disabledID]);
   for (const entry of fs.readdirSync(temporary)) fs.unlinkSync(path.join(temporary, entry));

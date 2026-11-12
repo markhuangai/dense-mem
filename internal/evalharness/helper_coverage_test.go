@@ -61,18 +61,14 @@ func TestEvaluationOutputHelpersCoverStateAndReferenceVariants(t *testing.T) {
 	if stringsFromAny(3) != nil {
 		t.Fatal("scalar converted to strings")
 	}
-	refs := sourceRefsFromAny([]any{map[string]any{"type": "fragment", "id": "f1"}, map[string]any{"type": "", "id": "f2"}, "invalid"})
-	if len(refs) != 1 || refs[0].ID != "f1" {
-		t.Fatalf("source refs = %#v", refs)
-	}
 	item := map[string]any{
 		"id": "fallback", "fragment_id": "fragment", "claim_id": "claim", "metadata": map[string]any{"source_doc_id": "doc"},
 		"source_refs": []any{map[string]any{"type": "fragment", "id": "f1"}},
 	}
-	if knowledgeItemID("fragment", item) != "fragment" || knowledgeItemID("unknown", item) != "fallback" {
+	if knowledgeItemID("evidence", item) != "fallback" || knowledgeItemID("fragment", item) != "" || knowledgeItemID("unknown", item) != "" {
 		t.Fatal("knowledge item IDs were not selected")
 	}
-	if got := sourceDocIDsFromKnowledgeItem("hypothesis", item, map[string][]string{"f1": {"doc-ref"}}); len(got) != 2 {
+	if got := sourceDocIDsFromKnowledgeItem("evidence", item, nil); len(got) != 1 {
 		t.Fatalf("source document IDs = %#v", got)
 	}
 	if evidenceIDFromSubmission(map[string]any{"evidence": []any{map[string]any{"fragment_id": "fragment"}}}) != "fragment" {
@@ -88,20 +84,18 @@ func TestEvaluationOutputHelpersCoverStateAndReferenceVariants(t *testing.T) {
 
 func TestEvaluationContractAndRetryHelpers(t *testing.T) {
 	for _, schema := range []map[string]any{
-		{"properties": map[string]any{"contract_version": map[string]any{"enum": []any{domain.PreviousContractVersion, domain.ContractVersion}}}},
-		{"properties": map[string]any{"contract_version": map[string]any{"enum": []string{domain.PreviousContractVersion}}}},
+		{"properties": map[string]any{"contract_version": map[string]any{"enum": []any{domain.ContractVersion}}}},
+		{"properties": map[string]any{"contract_version": map[string]any{"enum": []string{domain.ContractVersion}}}},
 		{"oneOf": []any{map[string]any{"properties": map[string]any{"contract_version": map[string]any{"enum": []any{domain.ContractVersion}}}}}},
 	} {
-		if contractVersionFromSchema(schema) == "" {
-			t.Fatalf("contract version not found in %#v", schema)
+		if contractVersionFromSchema(schema) != domain.ContractVersion {
+			t.Fatalf("Evidence-only contract missing: %#v", schema)
 		}
 	}
-	if contractVersionFromSchema(map[string]any{"oneOf": []any{map[string]any{"properties": map[string]any{"contract_version": map[string]any{"enum": []any{domain.ContractVersion}}}}, map[string]any{"properties": map[string]any{"contract_version": map[string]any{"enum": []any{domain.PreviousContractVersion}}}}}}) != "" {
-		t.Fatal("mixed contract versions were accepted")
+	if preferredContractVersion([]any{domain.PreviousContractVersion}) != "" || preferredContractVersion([]any{domain.ContractVersion, domain.PreviousContractVersion}) != "" {
+		t.Fatal("retired contract accepted")
 	}
-	if preferredContractVersion([]any{"unknown"}) != "" || preferredContractVersion([]any{domain.PreviousContractVersion}) != domain.PreviousContractVersion {
-		t.Fatal("contract version preference mismatch")
-	}
+
 	if !structuredToolErrorRetryable(map[string]any{"retryable": true, "next_action": "retry_same_request"}) {
 		t.Fatal("top-level retry marker was ignored")
 	}
@@ -163,7 +157,7 @@ func TestHTTPClientCorpusAndOutputHelperBranches(t *testing.T) {
 	if got := corpusImportGroupKey(CorpusItem{Content: "content"}); got != "item:content" {
 		t.Fatalf("content import key = %q", got)
 	}
-	if got := knowledgeItemID("fragment", map[string]any{"fragment_id": "fragment"}); got != "fragment" || knowledgeItemID("unknown", map[string]any{"id": "fallback"}) != "fallback" {
+	if got := knowledgeItemID("evidence", map[string]any{"evidence_id": "evidence"}); got != "evidence" || knowledgeItemID("unknown", map[string]any{"id": "fallback"}) != "" {
 		t.Fatal("knowledge item ID fallback failed")
 	}
 	if got := evidenceIDFromSubmission(map[string]any{"evidence": []any{map[string]any{"id": "evidence"}}}); got != "evidence" || evidenceIDFromSubmission(map[string]any{}) != "" {

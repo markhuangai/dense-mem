@@ -9,19 +9,12 @@ const teamID = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
 const composeProject = requiredEnv("DENSE_MEM_E2E_COMPOSE_PROJECT");
 const composeFile = requiredEnv("DENSE_MEM_E2E_COMPOSE_FILE");
 const runID = `submission-terminal-errors-${Date.now()}`;
-const predicatePrefix = runID.replace(/[^A-Za-z0-9]+/g, "_").toLowerCase();
 let rpcID = 0;
 
-seedOverflowPredicates();
-const terminal = await mcpOperationalResult("remember", overflowFixture());
+const terminal = await mcpOperationalResult("remember", clientControlledBudgetFixture());
 const submissionID = requiredString(terminal.submission_id, "submission_id");
-assertTerminalErrors(terminal, { serverOwned: true });
-assertZeroSemanticWrites(submissionID, "server-owned budget failure");
-
-const clientControlled = await mcpOperationalResult("remember", clientControlledBudgetFixture());
-const clientSubmissionID = requiredString(clientControlled.submission_id, "client-controlled submission_id");
-assertTerminalErrors(clientControlled, { serverOwned: false });
-assertZeroSemanticWrites(clientSubmissionID, "client-controlled budget failure");
+assertTerminalErrors(terminal);
+assertZeroSemanticWrites(submissionID, "client-controlled Evidence budget failure");
 
 const removed = await mcpRaw("get_submission_status", { submission_id: "00000000-0000-0000-0000-000000000000" });
 if (removed.error?.code !== -32601 || removed.result !== undefined) {
@@ -32,7 +25,6 @@ console.log(JSON.stringify({
   scenario: "submission_terminal_errors",
   tested_commit: requiredEnv("DENSE_MEM_E2E_COMMIT_SHA"),
   submission_id: submissionID,
-  client_controlled_submission_id: clientSubmissionID,
   processing_state: terminal.processing_state,
   error_code: terminal.errors[0]?.code,
   terminal_errors_nonempty: true,
@@ -57,67 +49,20 @@ function assertZeroSemanticWrites(submissionID, label) {
   SELECT count(*) FROM semantic_assessments
   WHERE team_id = ${sqlLiteral(teamID)}::uuid
     AND attempt_id = ${sqlLiteral(submissionID)}::uuid
-  UNION ALL
-  SELECT count(*) FROM relationship_observations
-  WHERE team_id = ${sqlLiteral(teamID)}::uuid
-    AND ingest_id = ${sqlLiteral(submissionID)}::uuid;
+;
 `).split(/\r?\n/).filter(Boolean).map(Number);
-if (zeroSemanticWrites.length !== 4 || zeroSemanticWrites.some((count) => count !== 0)) {
+if (zeroSemanticWrites.length !== 3 || zeroSemanticWrites.some((count) => count !== 0)) {
     throw new Error(`${label} created partial semantic state: ${zeroSemanticWrites.join(",")}`);
   }
 }
 
-function assertTerminalErrors(status, options = {}) {
-  if (!["failed"].includes(status.processing_state) || !Array.isArray(status.errors) || status.errors.length === 0) {
-    throw new Error("terminal failure returned an empty errors array");
-  }
-  const allowedCodes = new Set([
-    "provider_unavailable", "provider_response_invalid", "input_budget_exceeded", "configuration_invalid", "database_failure", "internal_failure",
-    "submission_policy_rejected",
-    "relationship_version_stale", "relationship_not_active", "object_kind_change_forbidden",
-    "support_set_mismatch", "entity_not_found", "too_many_entity_candidates",
-    "predicate_not_found", "predicate_subject_kind_mismatch", "predicate_object_kind_mismatch",
-    "no_change", "confirmation_expired", "relationship_changed", "support_set_changed",
-    "persistent_ambiguity", "inactive_relationship_collision",
-  ]);
-  const allowedActions = new Set([
-    "retry_same_request", "resubmit_remember", "retry_correction", "retry_dream_feedback", "contact_operator", "none",
-  ]);
-  const seen = new Set();
+function assertTerminalErrors(status) {
+  if (status.contract_version !== "dense-mem.v2.8.0" || status.processing_state !== "failed" || !status.errors?.length) throw new Error("Evidence-only failure must have a terminal typed outcome");
+  if (Object.hasOwn(status, "relationship_results")) throw new Error("retired factual results returned");
   for (const item of status.errors) {
-    if (item === null || typeof item !== "object" || Array.isArray(item) ||
-        typeof item.code !== "string" || typeof item.message !== "string" ||
-        typeof item.retryable !== "boolean" || typeof item.next_action !== "string" ||
-        typeof item.remediation !== "string") {
-      throw new Error("terminal error fields were incomplete");
-    }
-    const { code, message, next_action: nextAction, remediation } = item;
-    if (!message.includes("allowed") || !message.includes(options.serverOwned ? "server-owned context" : "submitted evidence or proposals")) {
-      throw new Error("budget explanation did not state the failed bound and input ownership without its codes");
-    }
-    if (!allowedCodes.has(code) || !message.includes("processing limit was exceeded") || !allowedActions.has(nextAction) ||
-        message.length === 0 || message.length > 512 || remediation.length === 0 || remediation.length > 512) {
-      throw new Error("terminal error was not bounded and typed");
-    }
-    if (/[\r\n]|Bearer |postgres(?:ql)?:\/\/|https?:\/\//i.test(`${message} ${remediation}`)) {
-      throw new Error("terminal error leaked prohibited data");
-    }
-    if (seen.has(`${code}\0${message}`)) throw new Error("terminal errors were not deduplicated");
-    seen.add(`${code}\0${message}`);
-    if (code === "input_budget_exceeded") {
-      if (item.details === null || typeof item.details !== "object" || Array.isArray(item.details)) {
-        throw new Error("assessor budget failure details must be a bounded object");
-      }
-      if (options.serverOwned) {
-        if (typeof item.details.server_owned !== "boolean" || item.reason_code !== "predicate_options_overflow" || item.details.server_owned !== true ||
-            item.next_action !== "contact_operator" || !item.remediation.includes("operator")) {
-          throw new Error("server-owned assessor budget failure did not expose operator guidance");
-        }
-      } else if (typeof item.details.client_controlled !== "boolean" || item.reason_code !== "assessment_input" || item.details.client_controlled !== true ||
-          item.next_action !== "resubmit_remember" || !item.remediation.includes("new idempotency_key")) {
-        throw new Error("client-controlled assessor budget failure did not expose correction guidance");
-      }
-    }
+    if (item.code !== "input_budget_exceeded" || !item.message || item.message.length > 512 || !item.remediation || item.remediation.length > 512 || item.retryable !== false) throw new Error("Evidence budget error must be bounded, typed and non-retryable");
+    if (item.reason_code !== "assessment_input" || item.details?.client_controlled !== true || item.next_action !== "resubmit_remember" || !item.remediation.includes("new idempotency_key")) throw new Error("Evidence budget failure must identify its owner and supported correction");
+    if (/[\r\n]|Bearer |postgres(?:ql)?:\/\/|https?:\/\//i.test(`${item.message} ${item.remediation}`)) throw new Error("public budget error leaked operational detail");
   }
 }
 
@@ -144,67 +89,11 @@ async function mcpRaw(name, args) {
   return text ? JSON.parse(text) : {};
 }
 
-function overflowFixture() {
-  // Keep the embedding batch small so provider latency does not mask the predicate-option budget failure.
-  const content = "A and B have submitted relationships.";
-  const evidence = [{ content, source_type: "document", source: `${runID}:evidence`, source_group: runID }];
-  const relationships = [];
-  for (let index = 0; index < 101; index += 1) {
-    relationships.push(relationship(content, 0, `${runID}:${index}`, "A", predicateKey(index), "B"));
-  }
-  return { target_space: "team_shared", evidence, relationships, idempotency_key: `${runID}:batch` };
-}
-
 function clientControlledBudgetFixture() {
-  const comment = "界".repeat(1000);
-  const relationships = [];
-  for (let index = 0; index < 200; index += 1) {
-    relationships.push({
-      ref: `${runID}:client-budget:${index}`,
-      subject: { name: "Client subject", entity_kind: "project" },
-      predicate: { proposed_key: "uses" },
-      object: { entity: { name: "Client object", entity_kind: "product" } },
-      polarity: "+",
-      evidence_indices: [0],
-      client_comment: comment,
-    });
-  }
   return {
-    target_space: "team_shared",
-    evidence: [{ content: "Client-controlled assessor budget input.", source_type: "manual", source: `${runID}:client-budget`, source_group: runID }],
-    relationships,
-    idempotency_key: `${runID}:client-budget`,
+    target_space: "team_shared", idempotency_key: `${runID}:client-budget`,
+    evidence: Array.from({ length: 20 }, (_, index) => ({ content: `${index} ` + "界".repeat(995), source_type: "manual", source: `${runID}:${index}`, source_group: runID, force_insert: true })),
   };
-}
-
-function relationship(content, evidenceIndex, ref, subject, predicate, object) {
-  return {
-    ref,
-    subject: { name: subject, entity_kind: "project" },
-    predicate: { proposed_key: predicate },
-    object: { entity: { name: object, entity_kind: "product" } },
-    polarity: "+", evidence_indices: [evidenceIndex],
-  };
-}
-
-function seedOverflowPredicates() {
-  const team = sqlLiteral(teamID);
-  const prefix = sqlLiteral(`${predicatePrefix}_predicate_`);
-  postgresQuery(`
-    BEGIN;
-    SELECT set_config('app.tx_mode', 'system', true);
-    INSERT INTO team_predicate_definitions (
-      team_id, predicate_key, version, aliases, allowed_subject_kinds,
-      allowed_object_kinds, relationship_kind, current_cardinality,
-      lifecycle_state, origin, metadata
-    )
-    SELECT ${team}::uuid, ${prefix} || series::text, 1, ARRAY[]::text[],
-      ARRAY['project']::text[], ARRAY['product']::text[], 'state', 'many',
-      'active', 'built_in', '{}'::jsonb
-    FROM generate_series(0, 100) AS series
-    ON CONFLICT (team_id, predicate_key, version) DO NOTHING;
-    COMMIT;
-  `);
 }
 
 function postgresQuery(sql) {
@@ -214,7 +103,6 @@ function postgresQuery(sql) {
 }
 
 function sqlLiteral(value) { return `'${String(value).replaceAll("'", "''")}'`; }
-function predicateKey(index) { return `${predicatePrefix}_predicate_${index}`; }
 function requiredString(value, field) { if (typeof value !== "string" || !value.trim()) throw new Error(`${field} missing`); return value; }
 function requiredEnv(name) { const value = process.env[name]; if (!value) throw new Error(`${name} is required`); return value; }
 function stableJSON(value) { if (Array.isArray(value)) return `[${value.map(stableJSON).join(",")}]`; if (value && typeof value === "object") return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJSON(value[key])}`).join(",")}}`; return JSON.stringify(value); }

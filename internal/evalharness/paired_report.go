@@ -10,15 +10,17 @@ import (
 )
 
 type PairCaptureIdentity struct {
-	Release        string     `json:"release"`
-	SourceRevision string     `json:"source_revision"`
-	ImageID        string     `json:"image_id"`
-	RunnerSHA256   string     `json:"runner_sha256"`
-	SeedHash       string     `json:"seed_hash"`
-	SuiteSHA256    string     `json:"suite_sha256"`
-	Models         PairModels `json:"models"`
-	Scope          PairScope  `json:"scope"`
-	Protocol       string     `json:"protocol"`
+	IntakeVariant        string     `json:"intake_variant,omitempty"`
+	SourceManifestSHA256 string     `json:"source_manifest_sha256,omitempty"`
+	Release              string     `json:"release"`
+	SourceRevision       string     `json:"source_revision"`
+	ImageID              string     `json:"image_id"`
+	RunnerSHA256         string     `json:"runner_sha256"`
+	SeedHash             string     `json:"seed_hash"`
+	SuiteSHA256          string     `json:"suite_sha256"`
+	Models               PairModels `json:"models"`
+	Scope                PairScope  `json:"scope"`
+	Protocol             string     `json:"protocol"`
 }
 
 type PairCaptureProof struct {
@@ -30,7 +32,7 @@ type PairCaptureProof struct {
 }
 
 func capturePairIdentity(c PairConfig, r PairRelease) PairCaptureIdentity {
-	return PairCaptureIdentity{Release: r.Release, SourceRevision: r.SourceRevision, ImageID: r.ImageID, RunnerSHA256: r.Runner.SHA256, SeedHash: c.SeedHash, SuiteSHA256: c.SuiteSHA256, Models: r.Models, Scope: r.Scope, Protocol: r.Protocol}
+	return PairCaptureIdentity{IntakeVariant: r.IntakeVariant, SourceManifestSHA256: r.Runner.SourceManifestSHA256, Release: r.Release, SourceRevision: r.SourceRevision, ImageID: r.ImageID, RunnerSHA256: r.Runner.SHA256, SeedHash: c.SeedHash, SuiteSHA256: c.SuiteSHA256, Models: r.Models, Scope: r.Scope, Protocol: r.Protocol}
 }
 
 func pairCaptureHashes(dir string) (map[string]string, error) {
@@ -85,11 +87,11 @@ func VerifyPairCaptureProof(c PairConfig, release PairRelease, dir string) (Pair
 	if a != b {
 		return proof, fmt.Errorf("capture artifacts differ from their immutable receipt")
 	}
-	_, corpus, _, _, _, _, _, err := loadRunInputs(c.SeedManifest, c.Suite)
+	_, corpus, _, _, _, _, err := loadRunInputs(c.SeedManifest, c.Suite)
 	if err != nil {
 		return proof, err
 	}
-	progress, err := EvaluatePairImport(release.Scope, corpus, proof.After.Imports, false)
+	progress, err := EvaluatePairImport(release.Scope, corpus, proof.After.Imports, false, release)
 	if err != nil {
 		return proof, err
 	}
@@ -144,6 +146,7 @@ type PairSideReport struct {
 }
 
 type PairReport struct {
+	Quality        *EvidenceOnlyQuality      `json:"quality,omitempty"`
 	SchemaVersion  string                    `json:"schema_version"`
 	RunID          string                    `json:"run_id"`
 	Status         string                    `json:"status"`
@@ -206,7 +209,7 @@ func readPairReport(c PairConfig) (PairReport, error) {
 		if err != nil {
 			return report, err
 		}
-		if !ready.Complete {
+		if !ready.Complete && r.Mode != PairModeRetainedBaseline {
 			report.Status = "incomplete"
 		}
 		row := PairSideReport{Identity: proof.Identity, ReusedCapture: r.CaptureDir != "", DistinctSources: len(completedPairImports(proof.After.Imports)), Progress: proof.After, Readiness: ready, Usage: proof.After.Usage, HistoricalUsage: proof.After.HistoricalUsage, Windows: map[string]PairAttemptMeasurement{}}
@@ -235,6 +238,18 @@ func readPairReport(c PairConfig) (PairReport, error) {
 		if r.CaptureDir != "" {
 			report.Limitations = append(report.Limitations, side+": original capture reused; its import/build time is not part of this run's elapsed time.")
 		}
+	}
+
+	if c.Campaign == "issue_681_evidence_only_v5" {
+		quality, err := evaluateEvidenceOnlyQuality(c, report.Sides)
+		if err != nil {
+			return report, err
+		}
+		report.Quality = &quality
+		if !quality.Passed {
+			report.Status = "failed"
+		}
+		report.Limitations = append(report.Limitations, "Retained C organization coverage is incomplete: 818 eligible, 790 organized, 15 failed and 13 ambiguous; historical environment/model backing revisions differ or remain unavailable.", "Answer correctness and claim support use frozen model-assisted judgments; exact quotations and policy call budgets are checked deterministically. Performance is report-only under issue #731's recorded waiver.")
 	}
 	report.Comparison, err = CompareSummaries(report.Sides["baseline"].Scores, report.Sides["candidate"].Scores)
 	if err != nil {

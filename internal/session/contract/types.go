@@ -19,7 +19,7 @@ const (
 	ContextEvents     = 10
 	ContextTokens     = 2048
 	MaxExcerpts       = 100
-	ExtractionVersion = "session_extraction_v1"
+	ExtractionVersion = "session_evidence_excerpts_v2"
 )
 
 var (
@@ -72,13 +72,20 @@ type Window struct {
 }
 
 type Intake struct {
-	Scope             Scope
-	Request           Request
-	RequestHash       string
-	Windows           []Window
-	DuplicateResults  map[string]EventResult
-	ExtractionVersion string
-	Tokenizer         string
+	Scope              Scope
+	Request            Request
+	RequestHash        string
+	Windows            []Window
+	DuplicateResults   map[string]EventResult
+	ExtractionVersion  string
+	Tokenizer          string
+	EvidenceOnlyResume *ResumeTransition
+}
+
+type ResumeTransition struct {
+	OriginalVersion    string `json:"original_version"`
+	OriginalOutcome    string `json:"original_outcome"`
+	ClearedCheckpoints int    `json:"cleared_checkpoints"`
 }
 
 type PriorEvent struct {
@@ -94,7 +101,6 @@ type Submission struct {
 	NewEventIndices     []int
 	Prior               []PriorEvent
 	Extractions         map[int]json.RawMessage
-	Linked              json.RawMessage
 	Result              *Result
 }
 
@@ -114,18 +120,20 @@ type Error struct {
 }
 
 type Result struct {
-	ContractVersion     string                                   `json:"contract_version"`
-	SubmissionID        string                                   `json:"submission_id"`
-	SubmissionKind      string                                   `json:"submission_kind"`
-	CorrelationID       string                                   `json:"correlation_id"`
-	AcceptedEventCount  int                                      `json:"accepted_event_count"`
-	DuplicateEventCount int                                      `json:"duplicate_event_count"`
-	ProcessingState     string                                   `json:"processing_state"`
-	SearchState         string                                   `json:"search_state"`
-	Events              []EventResult                            `json:"events"`
-	RelationshipResults []knowledge.SubmissionRelationshipResult `json:"relationship_results"`
-	Errors              []Error                                  `json:"errors"`
-	Warnings            []string                                 `json:"warnings,omitempty"`
+	ContractVersion         string        `json:"contract_version"`
+	SubmissionID            string        `json:"submission_id"`
+	SubmissionKind          string        `json:"submission_kind"`
+	CorrelationID           string        `json:"correlation_id"`
+	AcceptedEventCount      int           `json:"accepted_event_count"`
+	DuplicateEventCount     int           `json:"duplicate_event_count"`
+	ProcessingState         string        `json:"processing_state"`
+	SearchState             string        `json:"search_state"`
+	Events                  []EventResult `json:"events"`
+	Errors                  []Error       `json:"errors"`
+	MemoryOutcome           string        `json:"memory_outcome"`
+	OriginalContractVersion string        `json:"original_contract_version,omitempty"`
+	RetiredPayload          bool          `json:"retired_payload,omitempty"`
+	Warnings                []string      `json:"warnings,omitempty"`
 }
 
 type ProcessingError struct {
@@ -146,8 +154,8 @@ type PrepareInput struct {
 	SubmissionID string
 	RequestHash  string
 	Evidence     []remember.EvidenceInput
-	Proposal     map[string]any
-	Metadata     map[string]any
+
+	Metadata map[string]any
 }
 
 type Preparer interface {
@@ -159,7 +167,6 @@ type Repository interface {
 	LookupSession(context.Context, Scope, string) (*Submission, error)
 	StageSession(context.Context, Intake) (*Submission, error)
 	SaveSessionExtraction(context.Context, Scope, string, int, json.RawMessage) error
-	SaveSessionLinking(context.Context, Scope, string, json.RawMessage) error
 	CommitSession(context.Context, Scope, string, *Prepared, Result) (*Result, error)
 	RecordSessionFailure(context.Context, Scope, string, Result) error
 	RecordSessionDiagnostic(context.Context, Scope, string, json.RawMessage) error

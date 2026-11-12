@@ -234,7 +234,7 @@ func (s *Store) ClaimMaintenanceTurn(ctx context.Context, windowID string, now t
 		 AND (SELECT count(*) FROM ontology_maintenance_batches AS active_batch WHERE active_batch.team_id=state.team_id AND active_batch.shared_space_id=state.shared_space_id AND active_batch.space_generation=state.space_generation AND active_batch.status='running' AND active_batch.lease_until>?) < COALESCE((?::jsonb->>state.team_id::text)::int,?)
 		 AND (?='' OR EXISTS(SELECT 1 FROM ontology_maintenance_sources AS retry_source
 		 WHERE retry_source.team_id=state.team_id AND retry_source.shared_space_id=state.shared_space_id AND retry_source.space_generation=state.space_generation AND retry_source.last_run_id=NULLIF(?,'')::uuid AND retry_source.eligible AND retry_source.status='failed'))
-		 AND (?<>'' OR state.discovery_kind<4 OR EXISTS(
+		 AND (?<>'' OR state.discovery_kind<1 OR EXISTS(
 		 SELECT 1 FROM ontology_maintenance_markers AS marker WHERE marker.team_id=state.team_id AND marker.shared_space_id=state.shared_space_id AND marker.space_generation=state.space_generation)
 		 OR EXISTS(SELECT 1 FROM ontology_maintenance_sources AS source WHERE source.team_id=state.team_id AND source.shared_space_id=state.shared_space_id AND source.space_generation=state.space_generation AND source.eligible AND
 		 source.status='pending'))

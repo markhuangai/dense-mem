@@ -61,9 +61,6 @@ func validateUpsertSearchDocumentInput(input UpsertSearchDocumentInput) error {
 	if input.ProjectionFormat < 1 {
 		return errors.New("projection_format_version must be greater than zero")
 	}
-	if input.SourceKind == "relationship" && input.ProjectionFormat != 2 {
-		return errors.New("relationship projection_format_version must be 2")
-	}
 	if input.ProjectionGenerationID != "" {
 		if _, err := uuid.Parse(input.ProjectionGenerationID); err != nil {
 			return fmt.Errorf("projection_generation_id is invalid: %w", err)
@@ -84,15 +81,10 @@ func validateUpsertSearchDocumentInput(input UpsertSearchDocumentInput) error {
 }
 
 func validSearchSourceKind(kind string) bool {
-	return kind == "evidence" || kind == "relationship" || kind == "entity"
+	return kind == "evidence"
 }
 
-func defaultProjectionFormat(sourceKind string) int {
-	if sourceKind == "relationship" {
-		return 2
-	}
-	return 1
-}
+func defaultProjectionFormat(sourceKind string) int { return 1 }
 
 func marshalSearchJSON(value map[string]any) ([]byte, error) {
 	if value == nil {

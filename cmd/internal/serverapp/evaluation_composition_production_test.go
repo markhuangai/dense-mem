@@ -8,12 +8,12 @@ import (
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 )
 
-func TestProductionEvaluationCompositionIsEmpty(t *testing.T) {
-	bindings, err := buildEvaluationRegistryBindings(nil, nil, nil, nil)
+func TestEvidenceOnlyCatalogProductionEvaluationCompositionIsEmpty(t *testing.T) {
+	bindings, err := buildEvaluationRegistryBindings(nil, nil, nil)
 	if err != nil {
 		t.Fatalf("production evaluation composition: %v", err)
 	}
-	if bindings.Application != nil || bindings.Repository != nil || bindings.Communities != nil || bindings.Audit != nil {
+	if bindings.Repository != nil || bindings.Application != nil || bindings.Audit != nil {
 		t.Fatal("production composition wired offline evaluation dependencies")
 	}
 	reg, err := registry.BuildActive(registry.Dependencies{EvaluationBindings: bindings})

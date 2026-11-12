@@ -21,7 +21,6 @@ import (
 // request-owned Remember assessment. No durable ledger or assessment
 // repository is needed until the provider has returned a valid response.
 type SynchronousAssessmentDependencies struct {
-	Catalog          SubmissionAssessmentCatalog
 	Provider         assessor.Provider
 	Limits           assessor.SemanticAssessmentLimits
 	Metrics          observability.DiscoverabilityMetrics
@@ -53,9 +52,9 @@ type RememberAssessmentItem struct {
 // assessor. IDs are generated before provider work and reused by the final
 // durable commit.
 type RememberAssessmentSnapshot struct {
-	MaxEvidenceItems       int
-	Scope                  RememberAssessmentScope
-	Proposal               map[string]any
+	MaxEvidenceItems int
+	Scope            RememberAssessmentScope
+
 	Evidence               []repository.EvidenceFragment
 	Items                  []RememberAssessmentItem
 	DuplicateCandidates    []repository.RememberDuplicateCandidateGroup
@@ -93,11 +92,11 @@ type SynchronousRememberCommitRequest struct {
 	IdempotencyKey  string
 	RequestHash     string
 	SourceSummary   string
-	Proposal        map[string]any
-	Metadata        map[string]any
-	Evidence        []repository.EvidenceInput
-	Assessment      *SynchronousAssessmentResult
-	Duration        time.Duration
+
+	Metadata   map[string]any
+	Evidence   []repository.EvidenceInput
+	Assessment *SynchronousAssessmentResult
+	Duration   time.Duration
 }
 
 // BuildSynchronousRememberCommitInput converts the validated assessor result
@@ -128,15 +127,13 @@ func BuildSynchronousRememberCommitInput(input SynchronousRememberCommitRequest)
 		TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IngestID: input.IngestID,
 		SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration, IdempotencyKey: input.IdempotencyKey,
 		RequestHash:   input.RequestHash,
-		SourceSummary: input.SourceSummary, Proposal: input.Proposal,
-		Metadata: input.Metadata, Evidence: append([]repository.EvidenceInput(nil), input.Evidence...),
+		SourceSummary: input.SourceSummary, Metadata: input.Metadata, Evidence: append([]repository.EvidenceInput(nil), input.Evidence...),
 		DuplicateResolutions: duplicateResolutions,
 		AssessmentID:         assessment.AssessmentID, AssessmentJSON: append(json.RawMessage(nil), assessment.NormalizedResponse...),
 		EvidenceSecurityResults: append([]repository.EvidenceSecurityResult(nil), securityResults...),
 		ProviderTurns:           providerTurns, InputTokens: assessment.InputTokens, OutputTokens: assessment.OutputTokens,
-		CandidateContextOmittedCandidates:       assessment.CandidateContextOmittedCandidates,
-		CandidateContextOmittedPredicateOptions: assessment.CandidateContextOmittedPredicateOptions,
-		AssessorTurns:                           providerTurns, Duration: input.Duration,
+		CandidateContextOmittedCandidates: assessment.CandidateContextOmittedCandidates,
+		AssessorTurns:                     providerTurns, Duration: input.Duration,
 		AssessorDiagnostics: input.Assessment.Diagnostics,
 		Commit:              commit,
 	}, nil
@@ -216,9 +213,6 @@ func AssessSynchronousRemember(
 		}
 		resultErr = WithSynchronousAssessmentDiagnostics(resultErr, data)
 	}()
-	if deps.Catalog == nil {
-		return nil, errors.New("synchronous assessment: catalog is required")
-	}
 	if deps.Provider == nil {
 		return nil, errors.New("synchronous assessment: provider is required")
 	}
@@ -231,14 +225,11 @@ func AssessSynchronousRemember(
 	}
 	concrete := newSynchronousAssessmentEngine(deps, input.Scope.TeamID, input.Scope.OwnerProfileID)
 	concrete.diagnostics = diagnostics
-	if err := concrete.loadKnownEvidence(ctx, input.Scope, &plan); err != nil {
-		return nil, normalizeSynchronousAssessmentPreflightError(err)
-	}
-	request, err := concrete.buildRequest(ctx, input.Scope, plan, input.Snapshot.Proposal)
+	request, err := concrete.buildRequest(ctx, input.Scope, plan)
 	if err != nil {
 		return nil, normalizeSynchronousAssessmentPreflightError(err)
 	}
-	// Candidate and predicate selections are part of the server-owned assessor
+	// Evidence candidate selections are part of the server-owned assessor
 	// allowlist. Freeze the first bounded selection so a repair cannot observe a
 	// different catalog result while the response is being validated and
 	// committed.
@@ -255,38 +246,7 @@ func AssessSynchronousRemember(
 	providerCtx = observability.WithAIOperation(providerCtx, observability.AIOperationSemanticAssessment, 1)
 	started := time.Now()
 	response, _, finalRequest, err := concrete.assessRememberSessionWithValidator(providerCtx, request, refresh, 0, func(validateCtx context.Context, _ assessor.SemanticAssessmentRequest, response assessor.SemanticAssessmentResponse) ([]assessor.SemanticValidationError, error) {
-		validationErrors := validateSubmissionAssessmentEvidenceConflictCanonicalization(plan, response)
-		if len(validationErrors) != 0 {
-			return validationErrors, nil
-		}
-		registrations, paths := submissionAssessmentPredicateRegistrations(plan, response)
-		if len(registrations) == 0 {
-			return nil, nil
-		}
-		issues, err := deps.Catalog.ValidateSubmissionPredicateRegistrations(validateCtx, repository.SubmissionPredicateRegistrationValidationInput{
-			TeamID: input.Scope.TeamID, OwnerProfileID: input.Scope.OwnerProfileID, Registrations: registrations,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("%w: validate predicate registrations: %w", ErrRememberDatabaseFailure, err)
-		}
-		for _, issue := range issues {
-			if issue.RegistrationIndex < 0 || issue.RegistrationIndex >= len(paths) {
-				return nil, fmt.Errorf("%w: predicate catalog returned an invalid registration index", ErrRememberDatabaseFailure)
-			}
-			field := issue.Field
-			if field == "subject_kind" || field == "object_kind" {
-				field = "predicate_key"
-			}
-			switch field {
-			case "predicate_key", "relationship_kind", "current_cardinality":
-			default:
-				return nil, fmt.Errorf("%w: predicate catalog returned an invalid registration field", ErrRememberDatabaseFailure)
-			}
-			validationErrors = append(validationErrors, assessor.SemanticValidationError{
-				Field: paths[issue.RegistrationIndex] + "." + field, Message: issue.Message, Code: issue.Code,
-			})
-		}
-		return validationErrors, nil
+		return validateSubmissionAssessmentEvidenceConflictCanonicalization(plan, response), nil
 	})
 	if err != nil {
 		providerTurns := SynchronousAssessmentProviderTurns(err)
@@ -349,10 +309,9 @@ func AssessSynchronousRemember(
 		Model: deps.Provider.ModelName(), Tokenizer: assessmentTokenizer(deps.Limits),
 		RevisionNumber: 1, ProviderTurns: providerTurns, InputTokens: inputTokens,
 		OutputTokens: response.OutputTokens, CandidateContextTokens: finalRequest.CandidateContextTokens,
-		CandidateContextTruncated:               finalRequest.CandidateContextTruncated,
-		CandidateContextOmittedCandidates:       finalRequest.CandidateContextOmittedCandidates,
-		CandidateContextOmittedPredicateOptions: finalRequest.CandidateContextOmittedPredicateOptions,
-		NormalizedResponse:                      canonicalJSON, ResponseHash: semanticAssessmentHash(canonicalJSON),
+		CandidateContextTruncated:         finalRequest.CandidateContextTruncated,
+		CandidateContextOmittedCandidates: finalRequest.CandidateContextOmittedCandidates,
+		NormalizedResponse:                canonicalJSON, ResponseHash: semanticAssessmentHash(canonicalJSON),
 		ValidatedAt: now, CreatedAt: now,
 	}
 	return &SynchronousAssessmentResult{Response: response, Request: finalRequest, Plan: plan, Assessment: assessment}, nil
@@ -364,7 +323,7 @@ func normalizeSynchronousAssessmentPreflightError(err error) error {
 	}
 	stage, _ := semanticAssessmentPreflightFailure(err)
 	switch stage {
-	case "entity_catalog", "known_evidence_context", "catalog_context", "predicate_context", "assessment_input", "predicate_options_overflow", "provider_framing":
+	case "known_evidence_context", "catalog_context", "assessment_input", "provider_framing":
 		return fmt.Errorf("%w: %w", ErrRememberInputBudgetExceeded, err)
 	default:
 		return err

@@ -12,10 +12,10 @@ import { useEffect, useRef, useState } from "react";
 import { FieldRow, LoadingState, SectionHeading, UsageMeter } from "../ui/components";
 import { ApiError, newIdempotencyKey, UserApi, UserSession } from "./api";
 import { OntologyEditor } from "./OntologyEditor";
-import { ontologyParentMeaningLabels, type OntologyDefinition, type OntologyCoverage, type OntologyDraft, type OntologyEdit, type OntologyKind, type OntologyPreview, type OntologyPublication, type OntologyRecord, type OntologySource, type SourceHandle, type SourceKind } from "./ontology-types";
+import { type OntologyDefinition, type OntologyCoverage, type OntologyDraft, type OntologyEdit, type OntologyKind, type OntologyPreview, type OntologyPublication, type OntologyRecord, type OntologySource, type SourceHandle, type SourceKind } from "./ontology-types";
 
 const sourceKey = (source: SourceHandle) => `${source.kind}:${source.id}`;
-const recordLabel = (record: OntologyRecord) => record.definition?.label ?? (record.group ? `${record.group.members.length} ${record.kind === "evidence_group" ? "evidence" : "relationship"} sources` : record.override?.action.replaceAll("_", " ") ?? record.kind.replaceAll("_", " "));
+const recordLabel = (record: OntologyRecord) => record.definition?.label ?? (record.group ? `${record.group.members.length} ${"evidence"} sources` : record.override?.action.replaceAll("_", " ") ?? record.kind.replaceAll("_", " "));
 
 export function OntologyPanel({ api, session }: { api: UserApi; session: UserSession }) {
   const confirm = useConfirmation();
@@ -176,7 +176,7 @@ export function OntologyPanel({ api, session }: { api: UserApi; session: UserSes
     <Tabs className="panel-tabs ontology-tabs" value={activeTab} onValueChange={setActiveTab}>
       <TabsList aria-label="Ontology sections"><TabsTrigger value="catalog">Catalog</TabsTrigger><TabsTrigger value="sources">Sources</TabsTrigger><TabsTrigger value="drafts">Drafts</TabsTrigger><TabsTrigger value="history">History</TabsTrigger></TabsList>
     <TabsContent value="catalog"><section className="surface" aria-label="Ontology catalog"><h3>Catalog and groups</h3>
-      <Label>Catalog type<NativeSelect aria-label="Catalog type" value={recordKind} disabled={busy} onChange={(event) => void perform(() => catalog(event.target.value as OntologyKind | ""))}><NativeSelectOption value="">All records</NativeSelectOption>{["topic", "entity_class", "predicate_concept", "assignment", "evidence_group", "relationship_group", "override"].map((kind) => <NativeSelectOption key={kind} value={kind}>{kind.replaceAll("_", " ")}</NativeSelectOption>)}</NativeSelect></Label>
+      <Label>Catalog type<NativeSelect aria-label="Catalog type" value={recordKind} disabled={busy} onChange={(event) => void perform(() => catalog(event.target.value as OntologyKind | ""))}><NativeSelectOption value="">All records</NativeSelectOption>{["topic", "assignment", "evidence_group", "override"].map((kind) => <NativeSelectOption key={kind} value={kind}>{kind.replaceAll("_", " ")}</NativeSelectOption>)}</NativeSelect></Label>
       <div className="table-wrap"><Table className="data-table"><TableHeader><TableRow><TableHead>Organization</TableHead><TableHead>Status</TableHead><TableHead>Sources or classification</TableHead><TableHead>Actions</TableHead></TableRow></TableHeader><TableBody>{records.map((record) => <TableRow key={record.id}>
         <TableCell><strong>{recordLabel(record)}</strong>{record.definition && <p>{record.definition.description}</p>}<small title={record.id}>{record.id.slice(0, 8)} · revision {record.version}</small></TableCell>
         <TableCell><span className={`status-pill ${record.retired ? "neutral" : record.current ? "success" : "warning"}`}>{record.retired ? "Retired" : record.current ? "Current" : "Needs reassessment"}</span></TableCell>
@@ -188,7 +188,7 @@ export function OntologyPanel({ api, session }: { api: UserApi; session: UserSes
       {!records.length && <p>No catalog records yet.</p>}{recordCursor && <Button variant="outline" disabled={busy} onClick={() => void perform(() => catalog(recordKind, true))}>Load more catalog records</Button>}
     </section></TabsContent>
     <TabsContent value="sources"><section className="surface"><h3>Shared sources</h3>
-      <Label>Source type<NativeSelect aria-label="Source type" value={sourceKind} disabled={busy} onChange={(event) => { setSourceKind(event.target.value as SourceKind); setSources([]); setSourceCursor(""); }}>{["evidence", "relationship", "entity", "predicate"].map((kind) => <NativeSelectOption key={kind}>{kind}</NativeSelectOption>)}</NativeSelect></Label>
+      <Label>Source type<NativeSelect aria-label="Source type" value={sourceKind} disabled={busy} onChange={(event) => { setSourceKind(event.target.value as SourceKind); setSources([]); setSourceCursor(""); }}>{["evidence"].map((kind) => <NativeSelectOption key={kind}>{kind}</NativeSelectOption>)}</NativeSelect></Label>
       <Label>Source text or ID<Input aria-label="Source text or ID" value={sourceQuery} maxLength={128} onChange={(event) => setSourceQuery(event.target.value)} /></Label><Button variant="outline" disabled={busy} onClick={() => void perform(() => sourcePage())}>Inspect sources</Button>
       {sources.map((source) => <Label className="checkbox-row" key={sourceKey(source)}><Checkbox aria-label={`Select source ${source.id}`} disabled={busy || !canWrite || !open} checked={selected.some((item) => sourceKey(item) === sourceKey(source))} onCheckedChange={(event) => setSelected((current) => (event === true) ? [...current, { kind: source.kind, id: source.id, version: source.version }] : current.filter((item) => sourceKey(item) !== sourceKey(source)))} /><span>{source.text}{source.truncated && " … (excerpt)"}</span></Label>)}
       {sourceCursor && <Button variant="outline" disabled={busy} onClick={() => void perform(() => sourcePage(true))}>Load more sources</Button>}<p>Text filtering applies to each inspected page. Load more sources to continue searching. A source ID looks up that shared source directly.</p><p>{selected.length} selected sources.</p>
@@ -236,7 +236,7 @@ function SourceDetails({ source }: { source: SourceHandle }) {
 }
 
 function DefinitionParent({ definition, records }: { definition: OntologyDefinition; records: OntologyRecord[] }) {
-  return <p>{definition.parent_id ? `${ontologyParentMeaningLabels[definition.parent_relation ?? ""]}: ${definitionLabel(definition.parent_id, records)}` : "No parent"}</p>;
+  return <p>{definition.parent_id ? `Parent: ${definitionLabel(definition.parent_id, records)}` : "No parent"}</p>;
 }
 
 function RecordDetails({ record, records }: { record: OntologyRecord; records: OntologyRecord[] }) {

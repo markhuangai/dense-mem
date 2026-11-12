@@ -150,7 +150,7 @@ seed_identity_cleanup_database() {
   export DENSE_MEM_CI_IDENTITY_UPGRADE_TEAM_ID DENSE_MEM_CI_IDENTITY_UPGRADE_PROFILE_ID DENSE_MEM_CI_IDENTITY_UPGRADE_API_KEY
 
   local go_image
-  go_image="$(env_value DENSE_MEM_CI_GO_TEST_IMAGE 2>/dev/null || printf '%s' golang:1.26.9-bookworm)"
+  go_image="$(env_value DENSE_MEM_CI_GO_TEST_IMAGE 2>/dev/null || printf '%s' golang:1.26.11-bookworm)"
   [[ "$go_image" =~ ^[A-Za-z0-9._/:@-]+$ ]] || fail "invalid identity cleanup Go test image"
   local database_url
   database_url="$(node - "$DENSE_MEM_CI_BOOTSTRAP_POSTGRES_USER" "$DENSE_MEM_CI_BOOTSTRAP_POSTGRES_PASSWORD" "$DENSE_MEM_CI_IDENTITY_POSTGRES_DATABASE" <<'NODE'
@@ -245,27 +245,18 @@ verify_v25_cleanup_catalog() {
       to_regclass('public.semantic_team_refs') IS NULL, '|',
       to_regclass('public.semantic_profile_refs') IS NULL, '|',
       to_regclass('public.embedding_config') IS NULL, '|',
-      (SELECT count(*) = 32 FROM pg_constraint AS constraint_state
+      (SELECT count(DISTINCT constraint_state.conrelid) = 9 FROM pg_constraint AS constraint_state
        WHERE constraint_state.contype = 'f'
          AND constraint_state.conrelid::regclass::text = ANY(ARRAY[
-           'dream_cycle_runs', 'entity_correction_events', 'entity_correction_plans', 'entity_names',
-           'entity_resolution_events', 'evidence_fragments', 'evidence_lifecycle_operations',
-           'evidence_quarantines', 'evidence_security_events', 'evidence_security_signals',
-           'evidence_source_revisions', 'evidence_sources', 'hypotheses', 'hypothesis_feedback_events',
-           'knowledge_ingests', 'relationship_conflict_derived_evidence_tasks', 'relationship_conflict_events',
-           'relationship_conflict_evidence_derivations', 'relationship_correction_submissions',
-           'relationship_cross_references', 'relationship_evidence_supports', 'relationship_observations',
-           'relationship_records', 'relationship_support_decision_events', 'relationship_transition_events',
-           'review_tasks', 'search_documents', 'verification_events'
+           'evidence_fragments', 'evidence_lifecycle_operations', 'evidence_quarantines',
+           'evidence_security_events', 'evidence_security_signals', 'evidence_source_revisions',
+           'evidence_sources', 'knowledge_ingests', 'search_documents'
          ]::text[])
          AND constraint_state.confrelid = 'ownership_aliases'::regclass
          AND constraint_state.convalidated AND constraint_state.confdeltype = 'r'), '|',
-      (SELECT count(*) = 5 FROM pg_constraint AS constraint_state
+      (SELECT count(DISTINCT constraint_state.conrelid) = 1 FROM pg_constraint AS constraint_state
        WHERE constraint_state.contype = 'f'
-         AND constraint_state.conrelid::regclass::text = ANY(ARRAY[
-           'community_snapshot_runs', 'entity_records', 'search_projection_generations',
-           'team_predicate_definitions', 'value_records'
-         ]::text[])
+         AND constraint_state.conrelid::regclass::text = 'search_projection_generations'
          AND constraint_state.confrelid = 'teams'::regclass
          AND constraint_state.convalidated AND constraint_state.confdeltype = 'r'), '|',
       NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname LIKE 'dense_mem_v25_%')
@@ -531,7 +522,7 @@ run_identity_cleanup_startup_matrix() {
 
 seed_ontology_upgrade_database() {
   local source_dir="$1" project="$2" variant="$3" go_image database_url
-  go_image="$(env_value DENSE_MEM_CI_GO_TEST_IMAGE 2>/dev/null || printf '%s' golang:1.26.9-bookworm)"
+  go_image="$(env_value DENSE_MEM_CI_GO_TEST_IMAGE 2>/dev/null || printf '%s' golang:1.26.11-bookworm)"
   database_url="$(node - "$DENSE_MEM_CI_IDENTITY_POSTGRES_USER" "$DENSE_MEM_CI_IDENTITY_POSTGRES_PASSWORD" "$DENSE_MEM_CI_IDENTITY_POSTGRES_DATABASE" <<'NODE'
 const [user, password, database] = process.argv.slice(2);
 const url = new URL("postgresql://postgres:5432");
@@ -554,7 +545,7 @@ NODE
 
 ontology_upgrade_fingerprints() {
   local table
-  for table in entity_records value_records relationship_records evidence_fragments relationship_evidence_supports ontology_maintenance_windows ontology_maintenance_attempts ontology_assessments; do
+  for table in evidence_fragments ontology_maintenance_windows ontology_maintenance_attempts ontology_assessments; do
     identity_postgres_scalar "SELECT '${table}:'||md5(COALESCE(jsonb_agg(to_jsonb(row)-'estimated_input_tokens'-'max_output_tokens' ORDER BY to_jsonb(row)::text)::text,'[]')) FROM ${table} AS row" || return
   done
 }

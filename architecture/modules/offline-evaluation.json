@@ -62,7 +62,7 @@
       },
       {
         "id": "github.com/markhuangai/dense-mem/cmd/eval-runner",
-        "role": "offline_evaluation",
+        "role": "composition",
         "visibility": "public"
       },
       {
@@ -73,6 +73,11 @@
       {
         "id": "github.com/markhuangai/dense-mem/internal/evalharness",
         "role": "offline_evaluation",
+        "visibility": "public"
+      },
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/evaluation/contract",
+        "role": "port",
         "visibility": "public"
       }
     ]

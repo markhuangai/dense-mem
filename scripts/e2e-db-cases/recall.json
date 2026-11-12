@@ -66,34 +66,6 @@
       "source": "internal/recall/postgres/recall_repository_integration_test.go"
     },
     {
-      "id": "repository/TestRecallEvidenceDoesNotApplyFutureAliasSupportAtKnownAt",
-      "package": "./internal/recall/postgres",
-      "run": "^TestRecallEvidenceDoesNotApplyFutureAliasSupportAtKnownAt$",
-      "phase": "precheck",
-      "source": "internal/recall/postgres/recall_alias_support_integration_test.go"
-    },
-    {
-      "id": "repository/TestRecallEvidenceExcludesRelationshipAliases",
-      "package": "./internal/recall/postgres",
-      "run": "^TestRecallEvidenceExcludesRelationshipAliases$",
-      "phase": "precheck",
-      "source": "internal/recall/postgres/recall_repository_integration_test.go"
-    },
-    {
-      "id": "repository/TestRecallEvidenceExcludesStaleSupportSourceRevision",
-      "package": "./internal/recall/postgres",
-      "run": "^TestRecallEvidenceExcludesStaleSupportSourceRevision$",
-      "phase": "precheck",
-      "source": "internal/recall/postgres/recall_repository_integration_test.go"
-    },
-    {
-      "id": "repository/TestRecallEvidenceHistoricalAliasEndsAtSourceSupersession",
-      "package": "./internal/recall/postgres",
-      "run": "^TestRecallEvidenceHistoricalAliasEndsAtSourceSupersession$",
-      "phase": "precheck",
-      "source": "internal/recall/postgres/recall_alias_support_integration_test.go"
-    },
-    {
       "id": "repository/TestRecallEvidenceHistoricalExcludesEvidenceRetractedAtKnownAt",
       "package": "./internal/recall/postgres",
       "run": "^TestRecallEvidenceHistoricalExcludesEvidenceRetractedAtKnownAt$",
@@ -115,20 +87,6 @@
       "source": "internal/recall/postgres/recall_repository_integration_test.go"
     },
     {
-      "id": "repository/TestRecallEvidenceHydratesHistoricallySupportedRelationshipAtKnownAt",
-      "package": "./internal/recall/postgres",
-      "run": "^TestRecallEvidenceHydratesHistoricallySupportedRelationshipAtKnownAt$",
-      "phase": "precheck",
-      "source": "internal/recall/postgres/recall_repository_integration_test.go"
-    },
-    {
-      "id": "repository/TestRecallEvidenceHydratesSupportDecisionEligibility",
-      "package": "./internal/recall/postgres",
-      "run": "^TestRecallEvidenceHydratesSupportDecisionEligibility$",
-      "phase": "precheck",
-      "source": "internal/recall/postgres/recall_repository_integration_test.go"
-    },
-    {
       "id": "repository/TestRecallEvidenceIsolatesCredentialPrivateSpacesWithinTeam",
       "package": "./internal/recall/postgres",
       "run": "^TestRecallEvidenceIsolatesCredentialPrivateSpacesWithinTeam$",
@@ -141,13 +99,6 @@
       "run": "^TestRecallExcludesConflictResolutionDeletionOnlyEvidence$",
       "phase": "precheck",
       "source": "internal/recall/postgres/recall_failed_document_integration_test.go"
-    },
-    {
-      "id": "repository/TestRecallExpansionFollowsHistoricalAliasSupportToCanonicalEvidence",
-      "package": "./internal/recall/postgres",
-      "run": "^TestRecallExpansionFollowsHistoricalAliasSupportToCanonicalEvidence$",
-      "phase": "precheck",
-      "source": "internal/recall/postgres/recall_alias_support_integration_test.go"
     },
     {
       "id": "repository/TestRecallFailedDocumentsRemainLexicalAndTeamScopedWhileVectorsAreExcluded",
@@ -169,76 +120,6 @@
       "run": "^TestRecallFeedbackEventRepositoryRecordsSnapshotBeforeFeedback$",
       "phase": "precheck",
       "source": "internal/recall/postgres/recall_feedback_event_repository_integration_test.go"
-    },
-    {
-      "id": "repository/TestRecallQuarantinedHistoricalAliasSupportDoesNotExposeRelationship",
-      "package": "./internal/recall/postgres",
-      "run": "^TestRecallQuarantinedHistoricalAliasSupportDoesNotExposeRelationship$",
-      "phase": "precheck",
-      "source": "internal/recall/postgres/recall_alias_support_integration_test.go"
-    },
-    {
-      "id": "repository/TestRecallRelationshipsFullTextFencesGenerationAndKeepsForegroundRows",
-      "package": "./internal/recall/postgres",
-      "run": "^TestRecallRelationshipsFullTextFencesGenerationAndKeepsForegroundRows$",
-      "phase": "precheck",
-      "source": "internal/recall/postgres/recall_relationship_generation_integration_test.go"
-    },
-    {
-      "id": "repository/TestRecallRelationshipsHydratesHistoricallySupersededAtKnownAt",
-      "package": "./internal/recall/postgres",
-      "run": "^TestRecallRelationshipsHydratesHistoricallySupersededAtKnownAt$",
-      "phase": "precheck",
-      "source": "internal/recall/postgres/recall_repository_integration_test.go"
-    },
-    {
-      "id": "repository/TestRecallRelationshipsHydratesHistoricallySupportedAtKnownAt",
-      "package": "./internal/recall/postgres",
-      "run": "^TestRecallRelationshipsHydratesHistoricallySupportedAtKnownAt$",
-      "phase": "precheck",
-      "source": "internal/recall/postgres/recall_repository_integration_test.go"
-    },
-    {
-      "id": "repository/TestRecallRelationshipsKeepsLastActivatedGenerationDuringUnactivatedProjection",
-      "package": "./internal/recall/postgres",
-      "run": "^TestRecallRelationshipsKeepsLastActivatedGenerationDuringUnactivatedProjection$",
-      "phase": "precheck",
-      "source": "internal/recall/postgres/recall_relationship_generation_integration_test.go"
-    },
-    {
-      "id": "repository/TestRelationshipProjectionANNAndAllTeamReadinessKeepDistinctGenerationPolicies",
-      "package": "./internal/recall/postgres",
-      "run": "^TestRelationshipProjectionANNAndAllTeamReadinessKeepDistinctGenerationPolicies$",
-      "phase": "precheck",
-      "source": "internal/recall/postgres/relationship_projection_selection_integration_test.go"
-    },
-    {
-      "id": "repository/TestRecallRelationshipsOmitsVectorWhenOnlyStaleContractDocumentsAreCurrent",
-      "package": "./internal/recall/postgres",
-      "run": "^TestRecallRelationshipsOmitsVectorWhenOnlyStaleContractDocumentsAreCurrent$",
-      "phase": "precheck",
-      "source": "internal/recall/postgres/recall_repository_integration_test.go"
-    },
-    {
-      "id": "repository/TestRecallRelationshipsReturnsEquivalentRelationshipIDs",
-      "package": "./internal/recall/postgres",
-      "run": "^TestRecallRelationshipsReturnsEquivalentRelationshipIDs$",
-      "phase": "precheck",
-      "source": "internal/recall/postgres/recall_repository_integration_test.go"
-    },
-    {
-      "id": "repository/TestRecallRelationshipsScopesKnownRelationshipGroupsToActiveSpace",
-      "package": "./internal/recall/postgres",
-      "run": "^TestRecallRelationshipsScopesKnownRelationshipGroupsToActiveSpace$",
-      "phase": "precheck",
-      "source": "internal/recall/postgres/recall_known_relationship_space_integration_test.go"
-    },
-    {
-      "id": "repository/TestRecallRelationshipsUsesActivatedGenerationWhenNewestGenerationFailed",
-      "package": "./internal/recall/postgres",
-      "run": "^TestRecallRelationshipsUsesActivatedGenerationWhenNewestGenerationFailed$",
-      "phase": "precheck",
-      "source": "internal/recall/postgres/recall_relationship_generation_integration_test.go"
     },
     {
       "id": "repository/TestRecallReadBenchmarkCountsTransactionStatements",
@@ -269,39 +150,11 @@
       "source": "internal/recall/postgres/read_performance_integration_test.go"
     },
     {
-      "id": "repository/TestRecallRelationshipsUsesCurrentGenerationVectors",
-      "package": "./internal/recall/postgres",
-      "run": "^TestRecallRelationshipsUsesCurrentGenerationVectors$",
-      "phase": "precheck",
-      "source": "internal/recall/postgres/recall_repository_integration_test.go"
-    },
-    {
-      "id": "repository/TestRecallRelationshipsUsesNullGenerationVectorsForPostCutoverTeam",
-      "package": "./internal/recall/postgres",
-      "run": "^TestRecallRelationshipsUsesNullGenerationVectorsForPostCutoverTeam$",
-      "phase": "precheck",
-      "source": "internal/recall/postgres/recall_repository_integration_test.go"
-    },
-    {
       "id": "repository/TestRecallRetrievalCancellationAfterCandidates",
       "package": "./internal/recall/postgres",
       "run": "^TestRecallRetrievalCancellationAfterCandidates$",
       "phase": "precheck",
       "source": "internal/recall/postgres/read_performance_integration_test.go"
-    },
-    {
-      "id": "repository/TestRecallRetrievalEquivalenceCorpus",
-      "package": "./internal/recall/postgres",
-      "run": "^TestRecallRetrievalEquivalenceCorpus$",
-      "phase": "precheck",
-      "source": "internal/recall/postgres/recall_retrieval_equivalence_integration_test.go"
-    },
-    {
-      "id": "repository/TestSearchReadinessRejectsStaleRelationshipProjectionGeneration",
-      "package": "./internal/recall/postgres",
-      "run": "^TestSearchReadinessRejectsStaleRelationshipProjectionGeneration$",
-      "phase": "precheck",
-      "source": "internal/recall/postgres/recall_relationship_generation_integration_test.go"
     },
     {
       "id": "repository/TestRecallOntologyGroupingKnownIDsAndStaleSources",
@@ -367,20 +220,6 @@
       "source": "internal/recall/postgres/recall_ontology_integration_test.go"
     },
     {
-      "id": "repository/TestRecallOntologyRelationshipDiscoveryPreservesSemanticGroups",
-      "package": "./internal/recall/postgres",
-      "run": "^TestRecallOntologyRelationshipDiscoveryPreservesSemanticGroups$",
-      "phase": "precheck",
-      "source": "internal/recall/postgres/recall_ontology_integration_test.go"
-    },
-    {
-      "id": "repository/TestRecallOntologyBatchKeepsActivePredicateVersions",
-      "package": "./internal/recall/postgres",
-      "run": "^TestRecallOntologyBatchKeepsActivePredicateVersions$",
-      "phase": "precheck",
-      "source": "internal/recall/postgres/recall_ontology_integration_test.go"
-    },
-    {
       "id": "repository/TestRecallOntologyReaderResetsBetweenTransactions",
       "package": "./internal/recall/postgres",
       "run": "^TestRecallOntologyReaderResetsBetweenTransactions$",
@@ -437,11 +276,32 @@
       "source": "internal/recall/postgres/recall_ontology_scoring_integration_test.go"
     },
     {
-      "id": "repository/TestRecallOntologyRelationshipScoringPreservesVectorReadiness",
+      "id": "recall/TestEvidenceOnlyPostgresTopicFiltersRespectRuntimeDisable",
       "package": "./internal/recall/postgres",
-      "run": "^TestRecallOntologyRelationshipScoringPreservesVectorReadiness$",
+      "run": "^TestEvidenceOnlyPostgresTopicFiltersRespectRuntimeDisable$",
       "phase": "precheck",
-      "source": "internal/recall/postgres/recall_ontology_scoring_integration_test.go"
+      "source": "internal/recall/postgres/evidence_only_topics_integration_test.go"
+    },
+    {
+      "id": "recall/TestEvidenceOnlyPostgresTopicsRejectUnavailableAndReauthorizeCurrentMembership",
+      "package": "./internal/recall/postgres",
+      "run": "^TestEvidenceOnlyPostgresTopicsRejectUnavailableAndReauthorizeCurrentMembership$",
+      "phase": "precheck",
+      "source": "internal/recall/postgres/evidence_only_topics_integration_test.go"
+    },
+    {
+      "id": "recall/TestEvidenceOnlyPostgresTopicsUseDirectMembershipAndDeterministicHints",
+      "package": "./internal/recall/postgres",
+      "run": "^TestEvidenceOnlyPostgresTopicsUseDirectMembershipAndDeterministicHints$",
+      "phase": "precheck",
+      "source": "internal/recall/postgres/evidence_only_topics_integration_test.go"
+    },
+    {
+      "id": "recall/TestEvidenceOnlyPostgresTopicLogDiagnosis",
+      "package": "./internal/recall/postgres",
+      "run": "^TestEvidenceOnlyPostgresTopicLogDiagnosis$",
+      "phase": "precheck",
+      "source": "internal/recall/postgres/evidence_only_topics_integration_test.go"
     }
   ]
 }

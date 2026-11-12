@@ -11,35 +11,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestDreamStatusIsValid(t *testing.T) {
-	for _, status := range []domain.DreamStatus{
-		domain.DreamStatusProposed,
-		domain.DreamStatusReinforced,
-		domain.DreamStatusStale,
-		domain.DreamStatusRejected,
-		domain.DreamStatusSubmitted,
-	} {
-		if !status.IsValid() {
-			t.Fatalf("status %q should be valid", status)
-		}
-	}
-	if domain.DreamStatus("unknown").IsValid() {
-		t.Fatal("unknown dream status should be invalid")
-	}
-	if domain.DreamStatus("promoted").IsValid() {
-		t.Fatal("legacy promoted dream status should be invalid")
-	}
-}
-
-func TestDreamLaneIsValid(t *testing.T) {
-	if !domain.DreamLaneGraph.IsValid() || !domain.DreamLaneEvidenceDiscovery.IsValid() {
-		t.Fatal("supported dream lanes should be valid")
-	}
-	if domain.DreamLane("legacy").IsValid() {
-		t.Fatal("unknown dream lane should be invalid")
-	}
-}
-
 // TestDTOValidationProfileCreate verifies CreateTeamRequest validation rules.
 func TestDTOValidationProfileCreate(t *testing.T) {
 	t.Run("valid profile passes validation", func(t *testing.T) {

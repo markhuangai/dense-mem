@@ -4,26 +4,23 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/google/uuid"
+	"github.com/markhuangai/dense-mem/internal/observability"
+	tracecontract "github.com/markhuangai/dense-mem/internal/trace/contract"
+	"log/slog"
+	"sort"
 	"strings"
 	"time"
-
-	"github.com/markhuangai/dense-mem/internal/domain"
-	tracecontract "github.com/markhuangai/dense-mem/internal/trace/contract"
 )
 
-// ErrMemoryPackRelationshipNotActive identifies a caller-selected Relationship
-// that was found but is no longer eligible for export.
-var ErrMemoryPackRelationshipNotActive = errors.New("memory pack export relationship is not active")
-
 const (
-	maxExportRelationships        = 500
+	maxExportEvidence             = 500
 	maxTraceEvents                = 100
 	maxFragmentContentRunes       = 8000
 	maxMemoryPackNameBytes        = 256
 	maxMemoryPackDescriptionBytes = 1024
+	maxMemoryPackArtifactBytes    = 4 * 1024 * 1024
 )
-
-var _ MemoryPackService = (*memoryPackService)(nil)
 
 func NewMemoryPackService(deps MemoryPackDependencies) MemoryPackService {
 	now := deps.Now
@@ -32,148 +29,93 @@ func NewMemoryPackService(deps MemoryPackDependencies) MemoryPackService {
 	}
 	return &memoryPackService{deps: deps, now: now}
 }
-
-func (s *memoryPackService) Export(ctx context.Context, req ExportRequest) (*ExportResult, error) {
+func (s *memoryPackService) Export(ctx context.Context, req ExportRequest) (result *ExportResult, err error) {
 	actor, err := memoryPackActor(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if s.deps.Semantic == nil {
-		return nil, errors.New("memory pack export: semantic reader is required")
+	if s == nil || s.deps.Semantic == nil {
+		return nil, errors.New("memory pack export: Evidence reader is required")
 	}
-	name := strings.TrimSpace(req.Name)
-	description := strings.TrimSpace(req.Description)
-	if name == "" {
-		return nil, errors.New("memory pack export: name is required")
-	}
-	if len(name) > maxMemoryPackNameBytes {
-		return nil, fmt.Errorf("memory pack export: name exceeds %d characters", maxMemoryPackNameBytes)
-	}
-	if len(description) > maxMemoryPackDescriptionBytes {
-		return nil, fmt.Errorf("memory pack export: description exceeds %d characters", maxMemoryPackDescriptionBytes)
-	}
-	relationshipIDs := uniqueMemoryPackRelationshipIDs(req.RelationshipIDs)
-	if len(relationshipIDs) == 0 {
-		return nil, errors.New("memory pack export: relationship_ids is required")
-	}
-	if len(relationshipIDs) > maxExportRelationships {
-		return nil, fmt.Errorf("memory pack export: relationship_ids exceeds %d items", maxExportRelationships)
-	}
-	includeSupport := req.IncludeSupport == nil || *req.IncludeSupport
-	includeEntityNames := req.IncludeEntityNames == nil || *req.IncludeEntityNames
-	now := s.now().UTC()
-	artifact := MemoryPackArtifact{
-		Format:      MemoryPackFormat,
-		PackID:      "pack_" + memoryPackShortHash(strings.Join(relationshipIDs, "\x00")+now.Format(time.RFC3339Nano)),
-		Name:        name,
-		Description: description,
-		CreatedAt:   now.Format(time.RFC3339Nano),
-		Source: MemoryPackSource{
-			TeamID:     actor.TeamID.String(),
-			ExportedBy: actor.OwnerID.String(),
-		},
-		Relationships: []MemoryPackRelationship{},
-	}
-	evidence := map[string]MemoryPackEvidence{}
-	supports := []MemoryPackEvidenceSupport{}
-	for _, relationshipID := range relationshipIDs {
-		trace, err := s.deps.Semantic.TraceRelationship(ctx, tracecontract.Input{
-			TeamID:                  actor.TeamID.String(),
-			RelationshipID:          relationshipID,
-			IncludeEvidenceContent:  boolPtr(includeSupport),
-			MaxEvents:               maxTraceEvents,
-			MaxFragmentContentRunes: maxFragmentContentRunes,
-		})
+	defer func() {
+		if s.deps.Logger == nil {
+			return
+		}
+		attrs := []observability.LogAttr{observability.String("team_id", actor.TeamID.String()), observability.String("owner_profile_id", actor.OwnerID.String()), {Key: "requested_evidence_ids", Value: req.EvidenceIDs}, {Key: "max_events", Value: maxTraceEvents}, {Key: "max_content_runes", Value: maxFragmentContentRunes}, {Key: "artifact_byte_limit", Value: maxMemoryPackArtifactBytes}}
 		if err != nil {
-			if errors.Is(err, tracecontract.ErrRelationshipNotFound) {
-				return nil, tracecontract.ErrRelationshipNotFound
-			}
+			attrs = append(attrs, observability.String("outcome", "failed"), observability.String("reason", err.Error()))
+		} else {
+			attrs = append(attrs, observability.String("outcome", "completed"), observability.LogAttr{Key: "item_count", Value: result.ItemCount}, observability.LogAttr{Key: "omissions", Value: result.Omissions}, observability.String("content_sha256", result.SHA256))
+		}
+		if logger, ok := s.deps.Logger.(observability.ContextLogProvider); ok {
+			logger.LogContext(ctx, slog.LevelDebug, "memory_pack_evidence_selection", attrs...)
+		} else {
+			s.deps.Logger.Debug("memory_pack_evidence_selection", attrs...)
+		}
+	}()
+	name, description := strings.TrimSpace(req.Name), strings.TrimSpace(req.Description)
+	if name == "" || len(name) > maxMemoryPackNameBytes || len(description) > maxMemoryPackDescriptionBytes {
+		return nil, errors.New("memory pack export: name or description exceeds bounds")
+	}
+	if len(req.EvidenceIDs) < 1 || len(req.EvidenceIDs) > maxExportEvidence {
+		return nil, errors.New("memory pack export: evidence_ids must contain between 1 and 500 UUIDs")
+	}
+	ids := make([]string, 0, len(req.EvidenceIDs))
+	seen := map[string]bool{}
+	for _, value := range req.EvidenceIDs {
+		id, parseErr := uuid.Parse(strings.TrimSpace(value))
+		if parseErr != nil || id == uuid.Nil || seen[id.String()] {
+			return nil, errors.New("memory pack export: evidence_ids must contain unique UUIDs")
+		}
+		seen[id.String()] = true
+		ids = append(ids, id.String())
+	}
+	sort.Strings(ids)
+	now := s.now().UTC()
+	artifact := MemoryPackArtifact{Format: MemoryPackFormat, PackID: "pack_" + memoryPackShortHash(strings.Join(ids, "\x00")+now.Format(time.RFC3339Nano)), Name: name, Description: description, CreatedAt: now.Format(time.RFC3339Nano), Source: MemoryPackSource{TeamID: actor.TeamID.String(), ExportedBy: actor.OwnerID.String()}, Evidence: []MemoryPackEvidence{}, Omissions: []string{}}
+	exported := map[string]bool{}
+	for _, id := range ids {
+		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if trace.Relationship == nil {
-			return nil, fmt.Errorf("%w: %s", tracecontract.ErrRelationshipNotFound, relationshipID)
+		trace, readErr := s.deps.Semantic.TraceEvidence(ctx, tracecontract.Input{TeamID: actor.TeamID.String(), EvidenceID: id, IncludeEvidenceContent: req.IncludeEvidence, MaxEvents: maxTraceEvents, MaxFragmentContentRunes: maxFragmentContentRunes})
+		if readErr != nil {
+			return nil, readErr
 		}
-		if teamID := strings.TrimSpace(trace.Relationship.TeamID); teamID != "" && teamID != actor.TeamID.String() {
-			return nil, tracecontract.ErrRelationshipNotFound
+		if trace == nil || trace.Evidence == nil || trace.Evidence.TeamID != actor.TeamID.String() {
+			return nil, tracecontract.ErrEvidenceNotFound
 		}
-		if returnedID := canonicalMemoryPackRelationshipID(trace.Relationship.RelationshipID); returnedID != "" && returnedID != relationshipID {
-			return nil, tracecontract.ErrRelationshipNotFound
+		if exported[trace.Evidence.FragmentID] {
+			continue
 		}
-		if trace.Relationship.Status != string(domain.RelationshipStatusActive) {
-			return nil, fmt.Errorf("%w: %s", ErrMemoryPackRelationshipNotActive, relationshipID)
+		item := MemoryPackEvidence{TraceEvidenceFragment: *trace.Evidence, Occurrences: trace.Occurrences, SourceRevisions: trace.SourceRevisions, Decisions: trace.Decisions, Lifecycle: trace.Lifecycle, Omissions: append([]string{}, trace.Omissions...)}
+		artifact.Evidence = append(artifact.Evidence, item)
+		encoded, _, encodeErr := canonicalMemoryPackArtifact(artifact)
+		if encodeErr != nil {
+			return nil, encodeErr
 		}
-		item := memoryPackRelationshipFromTrace(trace.Relationship)
-		if !includeEntityNames {
-			omitMemoryPackEntityNames(&item)
-		}
-		if includeSupport {
-			evidenceIDs := map[string]struct{}{}
-			for _, support := range trace.EvidenceSupports {
-				if support.RelationshipID != "" && canonicalMemoryPackRelationshipID(support.RelationshipID) != relationshipID {
-					continue
-				}
-				if support.FragmentID != "" {
-					item.SupportEvidenceIDs = append(item.SupportEvidenceIDs, support.FragmentID)
-					evidenceIDs[support.FragmentID] = struct{}{}
-				}
-				if support.FragmentID == "" {
-					continue
-				}
-				supports = append(supports, MemoryPackEvidenceSupport{
-					RelationshipItemID: item.ItemID,
-					EvidenceID:         support.FragmentID,
-					Quote:              support.Quote,
-					SpanStart:          support.SpanStart,
-					SpanEnd:            support.SpanEnd,
-					Metadata:           MemoryPackCopyMap(support.Metadata),
-				})
-			}
-			for _, fragment := range trace.EvidenceFragments {
-				if fragment.FragmentID == "" {
-					continue
-				}
-				if _, ok := evidenceIDs[fragment.FragmentID]; !ok {
-					continue
-				}
-				evidence[fragment.FragmentID] = MemoryPackEvidence{
-					EvidenceID:       fragment.FragmentID,
-					Content:          fragment.Content,
-					ContentHash:      fragment.ContentHash,
-					SourceType:       fragment.SourceType,
-					Authority:        fragment.Authority,
-					SourceRef:        fragment.SourceRef,
-					SourceKey:        fragment.SourceKey,
-					SourceRevisionID: fragment.SourceRevisionID,
-					Labels:           append([]string(nil), fragment.Labels...),
-					Metadata:         MemoryPackCopyMap(fragment.Metadata),
-				}
+		if len(encoded) > maxMemoryPackArtifactBytes-128*1024 {
+			artifact.Evidence = artifact.Evidence[:len(artifact.Evidence)-1]
+			artifact.Omissions = append(artifact.Omissions, id+":artifact_byte_limit")
+		} else {
+			exported[trace.Evidence.FragmentID] = true
+			for _, omission := range trace.Omissions {
+				artifact.Omissions = append(artifact.Omissions, id+":"+omission)
 			}
 		}
-		item.SupportEvidenceIDs = uniqueStrings(item.SupportEvidenceIDs)
-		artifact.Relationships = append(artifact.Relationships, item)
 	}
-	if includeSupport {
-		for _, id := range MemoryPackSortedEvidenceIDs(evidence) {
-			artifact.Evidence = append(artifact.Evidence, evidence[id])
-		}
-		artifact.EvidenceSupports = supports
-	}
-	canonical, hash, err := canonicalMemoryPackArtifactWithOptions(artifact, includeEntityNames)
+	artifact = normalizeMemoryPackArtifact(artifact)
+	_, hash, err := canonicalMemoryPackArtifact(artifact)
 	if err != nil {
 		return nil, err
 	}
 	artifact.ContentSHA256 = hash
-	canonicalWithHash, err := marshalMemoryPackArtifactWithOptions(artifact, includeEntityNames)
+	encoded, err := marshalMemoryPackArtifact(artifact)
 	if err != nil {
 		return nil, err
 	}
-	return &ExportResult{
-		Artifact:      artifact,
-		CanonicalJSON: string(canonicalWithHash),
-		SHA256:        hash,
-		ItemCount:     len(artifact.Relationships),
-		Filename:      skillPackFilename(artifact.Name),
-		ContentType:   "application/json",
-		Omissions:     MemoryPackSupportOmissions(includeSupport, canonical),
-	}, nil
+	if len(encoded) > maxMemoryPackArtifactBytes {
+		return nil, fmt.Errorf("memory pack export: artifact exceeds %d bytes", maxMemoryPackArtifactBytes)
+	}
+	return &ExportResult{Artifact: artifact, CanonicalJSON: string(encoded), SHA256: hash, ItemCount: len(artifact.Evidence), Filename: skillPackFilename(name), ContentType: "application/json", Omissions: append([]string{}, artifact.Omissions...)}, nil
 }

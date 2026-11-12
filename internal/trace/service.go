@@ -3,128 +3,68 @@ package trace
 import (
 	"context"
 	"errors"
-	"fmt"
-	"strings"
-
 	"github.com/google/uuid"
-
-	graphcontract "github.com/markhuangai/dense-mem/internal/graph/contract"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	tracecontract "github.com/markhuangai/dense-mem/internal/trace/contract"
+	"log/slog"
+	"strings"
 )
 
-var (
-	ErrTraceAuthContext            = errors.New("trace: authenticated actor context is required")
-	ErrTraceRelationshipNotFound   = errors.New("not_found: relationship not found")
-	ErrTraceRepositoryTeamMismatch = errors.New("trace: repository returned a mismatched team")
-)
+var ErrTraceAuthContext = errors.New("trace: authenticated actor context is required")
+var ErrTraceEvidenceNotFound = tracecontract.ErrEvidenceNotFound
+var ErrTraceRepositoryTeamMismatch = errors.New("trace: repository returned a mismatched team")
 
 type SemanticTraceStore interface {
-	TraceRelationship(ctx context.Context, input tracecontract.Input) (*tracecontract.RelationshipTraceResult, error)
+	TraceEvidence(context.Context, tracecontract.Input) (*tracecontract.EvidenceTraceResult, error)
 }
-
 type semanticTraceService struct {
-	store SemanticTraceStore
+	store  SemanticTraceStore
+	logger observability.LogProvider
 }
 
-var _ Service = (*semanticTraceService)(nil)
-
-func NewSemantic(store SemanticTraceStore) Service {
-	return &semanticTraceService{store: store}
+func NewSemantic(store SemanticTraceStore, loggers ...observability.LogProvider) Service {
+	service := &semanticTraceService{store: store}
+	if len(loggers) > 0 {
+		service.logger = loggers[0]
+	}
+	return service
 }
-
-type SemanticTrace struct {
-	Relationship                  *tracecontract.RelationshipTraceRecord            `json:"relationship,omitempty"`
-	Observations                  []tracecontract.RelationshipObservationRecord     `json:"observations,omitempty"`
-	EvidenceSupports              []tracecontract.RelationshipEvidenceSupportRecord `json:"evidence_supports,omitempty"`
-	EvidenceSupportDecisionEvents []tracecontract.RelationshipSupportDecisionEvent  `json:"evidence_support_decision_events,omitempty"`
-	Evidence                      []tracecontract.TraceEvidenceFragment             `json:"evidence,omitempty"`
-	EvidenceLifecycleEvents       []tracecontract.TraceEvidenceLifecycleEvent       `json:"evidence_lifecycle_events,omitempty"`
-	VerificationEvents            []tracecontract.RelationshipVerificationEvent     `json:"verification_events,omitempty"`
-	Transitions                   []tracecontract.RelationshipTransitionEvent       `json:"transitions,omitempty"`
-	Conflicts                     []tracecontract.RelationshipConflictCaseRecord    `json:"conflicts,omitempty"`
-	CrossProfileReferences        []tracecontract.RelationshipCrossReferenceRecord  `json:"cross_profile_references,omitempty"`
-	IdentityCorrections           []tracecontract.EntityCorrectionEventRecord       `json:"identity_corrections,omitempty"`
-	SupersessionLineage           []tracecontract.RelationshipTraceRecord           `json:"supersession_lineage,omitempty"`
-	SearchDocuments               []tracecontract.TraceSearchDocument               `json:"search_documents,omitempty"`
-	SemanticNodes                 []graphcontract.Node                              `json:"semantic_nodes,omitempty"`
-	SemanticEdges                 []graphcontract.Edge                              `json:"semantic_edges,omitempty"`
-	VisitedEntityIDs              []string                                          `json:"visited_entity_ids,omitempty"`
-	StoppedReason                 string                                            `json:"stopped_reason,omitempty"`
-	Truncated                     bool                                              `json:"truncated,omitempty"`
-}
-
 func (s *semanticTraceService) Trace(ctx context.Context, _ string, req TraceRequest) (*TraceResult, error) {
 	if s == nil || s.store == nil {
-		return nil, errors.New("trace: semantic store is required")
+		return nil, errors.New("trace: Evidence store is required")
 	}
 	actor, ok := requestctx.ActorFromContext(ctx)
-	if !ok || actor.TeamID == uuid.Nil {
+	if !ok || actor.TeamID == uuid.Nil || actor.OwnerID == uuid.Nil {
 		return nil, ErrTraceAuthContext
 	}
-	relationshipID := strings.TrimSpace(req.RelationshipID)
-	if relationshipID == "" {
-		return nil, errors.New("trace: relationship_id is required")
+	id, err := uuid.Parse(strings.TrimSpace(req.EvidenceID))
+	if err != nil || id == uuid.Nil {
+		return nil, tracecontract.ErrEvidenceIDInvalid
 	}
-
-	trace, err := s.store.TraceRelationship(ctx, tracecontract.NormalizeInput(tracecontract.Input{
-		TeamID:                 actor.TeamID.String(),
-		RelationshipID:         relationshipID,
-		IncludeEvidenceContent: req.IncludeEvidenceContent,
-		IncludeVerification:    req.IncludeVerification,
-		IncludeTransitions:     req.IncludeTransitions,
-		MaxDepth:               req.MaxDepth,
-		MaxEdges:               req.MaxEdges,
-		PredicateKeys:          req.PredicateKeys,
-		Topic:                  req.Topic,
-		MinRelevance:           req.MinRelevance,
-	}))
-	if err != nil {
-		if errors.Is(err, tracecontract.ErrRelationshipNotFound) {
-			return nil, ErrTraceRelationshipNotFound
+	input := tracecontract.NormalizeInput(tracecontract.Input{TeamID: actor.TeamID.String(), EvidenceID: id.String(), IncludeEvidenceContent: req.IncludeEvidenceContent, IncludeTransitions: req.IncludeTransitions, MaxEvents: req.MaxEvents, MaxFragmentContentRunes: req.MaxFragmentContentRunes})
+	result, err := s.store.TraceEvidence(ctx, input)
+	if err == nil && (result == nil || result.Evidence == nil) {
+		err = ErrTraceEvidenceNotFound
+	}
+	if err == nil && result.Evidence.TeamID != actor.TeamID.String() {
+		err = ErrTraceRepositoryTeamMismatch
+	}
+	if s.logger != nil {
+		attrs := []observability.LogAttr{observability.String("team_id", actor.TeamID.String()), observability.String("owner_profile_id", actor.OwnerID.String()), observability.String("evidence_id", input.EvidenceID), {Key: "limits", Value: observability.DecisionLogValue(input)}}
+		if err != nil {
+			attrs = append(attrs, observability.String("outcome", "failed"), observability.String("reason", err.Error()))
+		} else {
+			attrs = append(attrs, observability.String("outcome", "completed"), observability.LogAttr{Key: "omissions", Value: result.Omissions}, observability.LogAttr{Key: "selection", Value: result.Selection})
 		}
-		return nil, fmt.Errorf("trace: %w", err)
+		if logger, ok := s.logger.(observability.ContextLogProvider); ok {
+			logger.LogContext(ctx, slog.LevelDebug, "trace_evidence_selection", attrs...)
+		} else {
+			s.logger.Debug("trace_evidence_selection", attrs...)
+		}
 	}
-	if err := validateTraceConflictTeams(trace, actor.TeamID.String()); err != nil {
+	if err != nil {
 		return nil, err
 	}
-	return &TraceResult{Semantic: semanticTraceFromContract(trace)}, nil
-}
-
-func validateTraceConflictTeams(trace *tracecontract.RelationshipTraceResult, expectedTeamID string) error {
-	if trace == nil {
-		return nil
-	}
-	for _, conflict := range trace.Conflicts {
-		if conflict.TeamID != expectedTeamID {
-			return ErrTraceRepositoryTeamMismatch
-		}
-	}
-	return nil
-}
-
-func semanticTraceFromContract(trace *tracecontract.RelationshipTraceResult) *SemanticTrace {
-	if trace == nil {
-		return &SemanticTrace{}
-	}
-	return &SemanticTrace{
-		Relationship:                  trace.Relationship,
-		Observations:                  trace.Observations,
-		EvidenceSupports:              trace.EvidenceSupports,
-		EvidenceSupportDecisionEvents: trace.SupportDecisionEvents,
-		Evidence:                      trace.EvidenceFragments,
-		EvidenceLifecycleEvents:       trace.EvidenceLifecycleEvents,
-		VerificationEvents:            trace.VerificationEvents,
-		Transitions:                   trace.Transitions,
-		Conflicts:                     trace.Conflicts,
-		CrossProfileReferences:        trace.CrossProfileReferences,
-		IdentityCorrections:           trace.IdentityCorrections,
-		SupersessionLineage:           trace.SupersessionLineage,
-		SearchDocuments:               trace.SearchDocuments,
-		SemanticNodes:                 trace.SemanticNodes,
-		SemanticEdges:                 trace.SemanticEdges,
-		VisitedEntityIDs:              trace.VisitedEntityIDs,
-		StoppedReason:                 trace.StoppedReason,
-		Truncated:                     trace.Truncated,
-	}
+	return &TraceResult{Semantic: result}, nil
 }

@@ -397,7 +397,7 @@ function ConfigField({
     );
   }
 
-  if ((item.key.startsWith("ONTOLOGY_MAINTENANCE_") || item.key.startsWith("DREAMING_") || item.key.startsWith("COMMUNITY_DETECTION_") || item.key.startsWith("RECALL_FEEDBACK_") || item.key.startsWith("EVALUATION_")) && item.key.endsWith("_ENABLED")) {
+  if ((item.key.startsWith("ONTOLOGY_MAINTENANCE_") || item.key.startsWith("RECALL_FEEDBACK_") || item.key.startsWith("EVALUATION_")) && item.key.endsWith("_ENABLED")) {
     const checked = (value || item.effective_value) === "true";
     return (
       <>
@@ -462,9 +462,9 @@ function ConfigField({
 
   const pricing = item.key.startsWith("TELEMETRY_COST_");
   const ontologyNumber = ["ONTOLOGY_MAINTENANCE_CADENCE_HOURS", "ONTOLOGY_MAINTENANCE_MAX_CONCURRENCY", "ONTOLOGY_MAINTENANCE_TEAM_MAX_CONCURRENCY", "ONTOLOGY_MAINTENANCE_CONTEXT_WINDOW_TOKENS"].includes(item.key);
-  const numeric = pricing || item.key.endsWith("_SECONDS") || item.key === "DREAMING_MAX_OUTPUTS" || item.key === "COMMUNITY_DETECTION_MAX_CONCURRENCY" || item.key === "OPERATION_LOG_RETENTION_DAYS" || item.key === "RECALL_FEEDBACK_RETENTION_DAYS";
-  const time = item.key === "DREAMING_START_TIME_LOCAL" || item.key === "COMMUNITY_DETECTION_START_TIME_LOCAL";
-  const min = item.key === "COMMUNITY_DETECTION_JITTER_SECONDS" ? 0 : numeric && !pricing ? 1 : undefined;
+  const numeric = pricing || item.key.endsWith("_SECONDS") || item.key === "OPERATION_LOG_RETENTION_DAYS" || item.key === "RECALL_FEEDBACK_RETENTION_DAYS";
+  const time = false;
+  const min = numeric && !pricing ? 1 : undefined;
   return (
     <>
       <div className="setting-row">
@@ -475,7 +475,7 @@ function ConfigField({
         inputMode={pricing ? "decimal" : ontologyNumber ? "numeric" : undefined}
         className={item.key === "ONTOLOGY_MAINTENANCE_START_TIME_LOCAL" ? "input-time" : undefined}
         min={min}
-        max={item.key === "DREAMING_MAX_OUTPUTS" ? 50 : item.key === "COMMUNITY_DETECTION_MAX_CONCURRENCY" ? 8 : item.key === "COMMUNITY_DETECTION_JITTER_SECONDS" ? 3600 : item.key === "OPERATION_LOG_RETENTION_DAYS" || item.key === "RECALL_FEEDBACK_RETENTION_DAYS" ? 365 : undefined}
+        max={item.key === "OPERATION_LOG_RETENTION_DAYS" || item.key === "RECALL_FEEDBACK_RETENTION_DAYS" ? 365 : undefined}
         placeholder={CONFIG_PLACEHOLDERS[item.key] ?? ""}
         value={value}
         onChange={(event) => onChange(event.target.value)}

@@ -588,7 +588,7 @@ func TestExecutionMeasurementsImportIncludesContractDiscovery(t *testing.T) {
 		switch r.URL.Path {
 		case "tool:remember":
 			source := strings.TrimPrefix(stringValue(input["idempotency_key"]), "eval:")
-			_ = json.NewEncoder(w).Encode(map[string]any{"contract_version": "dense-mem.v2.6.2", "submission_id": "attempt-" + source, "submission_kind": "remember", "processing_state": "completed", "search_state": "current", "correlation_id": "server-" + source, "evidence": []map[string]any{{"disposition": "stored", "evidence_id": "evidence-" + source, "evidence_index": 0, "search_state": "current"}}, "relationship_results": []any{}, "errors": []any{}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"contract_version": "dense-mem.v2.8.0", "submission_id": "attempt-" + source, "submission_kind": "remember", "processing_state": "completed", "search_state": "current", "correlation_id": "server-" + source, "evidence": []map[string]any{{"disposition": "stored", "evidence_id": "evidence-" + source, "evidence_index": 0, "search_state": "current"}}, "errors": []any{}})
 		case "tool:eval_list_knowledge_refs":
 			_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{}})
 		default:
@@ -845,74 +845,7 @@ func TestCaptureRejectionLogsAtReplayAndComparisonBoundaries(t *testing.T) {
 			_, err = CompareRunDirs(opts.OutDir, opts.OutDir, "", opts.Logger)
 			require.Error(t, err)
 			require.Contains(t, logs.String(), "evaluation_capture_invalid")
-			logs.Reset()
-			_, err = readComparisonSummary("candidate", opts.OutDir, opts.Logger)
-			require.Error(t, err)
-			require.Contains(t, logs.String(), "evaluation_capture_invalid")
 			t.Log(logs.String())
-		})
-	}
-}
-
-func TestV2CohortComparisonRequiresMeasuredEvidence(t *testing.T) {
-	for _, corruption := range []string{"missing_journal", "incomplete", "summary_changed"} {
-		t.Run(corruption, func(t *testing.T) {
-			cohortOpts := writeV2CohortValidationFixture(t)
-			cohort, err := ValidateV2CohortDerivation(cohortOpts)
-			require.NoError(t, err)
-			opts, logs := measurementFixture(t)
-			opts.SeedManifestPath, opts.SuitePath = cohortOpts.DerivedManifestPath, cohortOpts.DerivedSuitePath
-			manifest, err := LoadSeedManifest(opts.SeedManifestPath)
-			require.NoError(t, err)
-			qrels, err := LoadQrels(opts.SeedManifestPath, manifest)
-			require.NoError(t, err)
-			mapping := newKnowledgeMapping()
-			for _, qrel := range qrels {
-				for _, ref := range qrel.RequiredRefs {
-					if ref.SourceDocID != "" {
-						kind := ref.Type
-						if kind == "source_doc" {
-							kind = "fragment"
-						}
-						addSourceMapping(&mapping, Ref{Type: kind, ID: "mapped-" + ref.SourceDocID, SourceDocID: ref.SourceDocID}, true)
-					}
-				}
-			}
-			require.NoError(t, writeJSONFile(opts.MappingPath, mapping))
-			server := measurementServer(t, func(w http.ResponseWriter, _ *http.Request, input map[string]any) { measurementRecall(w, input) })
-			defer server.Close()
-			opts.BaseURL = server.URL
-			_, err = Run(context.Background(), opts)
-			require.NoError(t, err)
-			baseline := filepath.Join(t.TempDir(), "legacy-baseline")
-			require.NoError(t, writeJSONFile(filepath.Join(baseline, "summary.json"), Summary{RunID: "legacy", SeedHash: cohort.FilteredSeedHash, CaseCount: cohort.RetainedCaseCount, ScoredCaseCount: cohort.RetainedCaseCount}))
-			comparison := V2CohortComparisonOptions{Cohort: cohortOpts, BaselineRunDir: baseline, CandidateRunDir: opts.OutDir, OutDir: filepath.Join(t.TempDir(), "comparison"), Logger: opts.Logger}
-			_, err = CompareV2CohortRunDirs(comparison)
-			require.NoError(t, err)
-			if corruption == "missing_journal" {
-				require.NoError(t, os.Remove(filepath.Join(opts.OutDir, measurementJournal)))
-			} else if corruption == "summary_changed" {
-				var summary Summary
-				require.NoError(t, readJSONFile(filepath.Join(opts.OutDir, "summary.json"), &summary))
-				summary.AverageRecallAtK += 0.25
-				require.NoError(t, writeJSONFile(filepath.Join(opts.OutDir, "summary.json"), summary))
-			} else {
-				var plan ExecutionMeasurements
-				require.NoError(t, readJSONFile(filepath.Join(opts.OutDir, measurementManifest), &plan))
-				plan.Status = "incomplete"
-				require.NoError(t, writeJSONFile(filepath.Join(opts.OutDir, measurementManifest), plan))
-			}
-			logs.Reset()
-			_, err = CompareV2CohortRunDirs(comparison)
-			require.Error(t, err)
-			if corruption == "missing_journal" {
-				require.ErrorContains(t, err, measurementJournal)
-			} else if corruption == "summary_changed" {
-				require.ErrorContains(t, err, "summary.json")
-			} else {
-				require.ErrorContains(t, err, "incomplete")
-			}
-			require.Contains(t, logs.String(), "evaluation_capture_invalid")
 		})
 	}
 }

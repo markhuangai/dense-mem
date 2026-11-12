@@ -10,7 +10,7 @@ func TestSemanticAssessmentSchemaIsClosedAndCanonical(t *testing.T) {
 	schema := SemanticAssessmentResponseSchema()
 	assertClosedProviderObjects(t, schema, "assessment response")
 	props := schemaPropertiesForTest(t, schema)
-	for _, field := range []string{"evidence_security_results", "evidence_equivalence_results", "evidence_conflict_results", "entity_results", "relationship_results"} {
+	for _, field := range []string{"evidence_security_results", "evidence_equivalence_results", "evidence_conflict_results"} {
 		if _, ok := props[field]; !ok {
 			t.Fatalf("assessment schema missing %s", field)
 		}

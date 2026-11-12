@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -130,16 +129,16 @@ func (e *RememberProcessError) Unwrap() error {
 }
 
 type RememberProcessRequest struct {
-	SpaceKind                domain.MemorySpaceKind
-	InvocationStartedAt      time.Time
-	TeamID                   string
-	OwnerProfileID           string
-	SpaceID                  string
-	SpaceGeneration          int64
-	IdempotencyKey           string
-	RequestHash              string
-	SourceSummary            string
-	Proposal                 map[string]any
+	SpaceKind           domain.MemorySpaceKind
+	InvocationStartedAt time.Time
+	TeamID              string
+	OwnerProfileID      string
+	SpaceID             string
+	SpaceGeneration     int64
+	IdempotencyKey      string
+	RequestHash         string
+	SourceSummary       string
+
 	Metadata                 map[string]any
 	Evidence                 []EvidenceInput
 	SecuritySignals          []SubmissionSecurityBatchSignal
@@ -157,18 +156,17 @@ type RememberProcessRequest struct {
 }
 
 type TerminalRememberResult struct {
-	SpaceKind           domain.MemorySpaceKind         `json:"space_kind,omitempty"`
-	ContractVersion     string                         `json:"contract_version"`
-	SubmissionID        string                         `json:"submission_id"`
-	SubmissionKind      string                         `json:"submission_kind"`
-	ProcessingState     string                         `json:"processing_state"`
-	SearchState         string                         `json:"search_state"`
-	CorrelationID       string                         `json:"correlation_id"`
-	Evidence            []TerminalEvidenceResult       `json:"evidence"`
-	RelationshipResults []SubmissionRelationshipResult `json:"relationship_results"`
-	Errors              []SubmissionStatusError        `json:"errors"`
-	Warnings            []string                       `json:"warnings,omitempty"`
-	Kind                ResultKind                     `json:"-"`
+	SpaceKind       domain.MemorySpaceKind   `json:"space_kind,omitempty"`
+	ContractVersion string                   `json:"contract_version"`
+	SubmissionID    string                   `json:"submission_id"`
+	SubmissionKind  string                   `json:"submission_kind"`
+	ProcessingState string                   `json:"processing_state"`
+	SearchState     string                   `json:"search_state"`
+	CorrelationID   string                   `json:"correlation_id"`
+	Evidence        []TerminalEvidenceResult `json:"evidence"`
+	Errors          []SubmissionStatusError  `json:"errors"`
+	Warnings        []string                 `json:"warnings,omitempty"`
+	Kind            ResultKind               `json:"-"`
 }
 
 type TerminalEvidenceResult struct {
@@ -207,6 +205,7 @@ const (
 	TerminalErrorInputBudgetExceeded      TerminalErrorCode = "input_budget_exceeded"
 	TerminalErrorConfigurationInvalid     TerminalErrorCode = "configuration_invalid"
 	TerminalErrorIdempotencyConflict      TerminalErrorCode = "idempotency_conflict"
+	TerminalErrorRetiredContract          TerminalErrorCode = "retired_contract"
 	TerminalErrorEmbeddingUnavailable     TerminalErrorCode = "embedding_unavailable"
 	TerminalErrorEmbeddingResponseInvalid TerminalErrorCode = "embedding_response_invalid"
 	TerminalErrorCommitConflict           TerminalErrorCode = "commit_conflict"
@@ -224,6 +223,7 @@ var terminalErrorCodes = []TerminalErrorCode{
 	TerminalErrorInputBudgetExceeded,
 	TerminalErrorConfigurationInvalid,
 	TerminalErrorIdempotencyConflict,
+	TerminalErrorRetiredContract,
 	TerminalErrorEmbeddingUnavailable,
 	TerminalErrorEmbeddingResponseInvalid,
 	TerminalErrorCommitConflict,
@@ -235,7 +235,6 @@ var terminalErrorCodes = []TerminalErrorCode{
 
 const (
 	maxTerminalErrors             = 50
-	maxTerminalRelationshipSplits = 50
 	maxTerminalSupersededEvidence = 50
 	maxTerminalCorrelationIDRunes = 128
 	maxTerminalRemediationRunes   = 512
@@ -262,19 +261,15 @@ func TerminalErrorCodes() []string {
 type TerminalNextAction string
 
 const (
-	TerminalNextActionRetrySameRequest   TerminalNextAction = "retry_same_request"
-	TerminalNextActionResubmitRemember   TerminalNextAction = "resubmit_remember"
-	TerminalNextActionRetryDreamFeedback TerminalNextAction = "retry_dream_feedback"
-	TerminalNextActionRetryCorrection    TerminalNextAction = "retry_correction"
-	TerminalNextActionContactOperator    TerminalNextAction = "contact_operator"
-	TerminalNextActionNone               TerminalNextAction = "none"
+	TerminalNextActionRetrySameRequest TerminalNextAction = "retry_same_request"
+	TerminalNextActionResubmitRemember TerminalNextAction = "resubmit_remember"
+	TerminalNextActionContactOperator  TerminalNextAction = "contact_operator"
+	TerminalNextActionNone             TerminalNextAction = "none"
 )
 
 var terminalNextActions = []TerminalNextAction{
 	TerminalNextActionRetrySameRequest,
 	TerminalNextActionResubmitRemember,
-	TerminalNextActionRetryDreamFeedback,
-	TerminalNextActionRetryCorrection,
 	TerminalNextActionContactOperator,
 	TerminalNextActionNone,
 }
@@ -352,19 +347,14 @@ func ValidateTerminalStatusError(value SubmissionStatusError) error {
 	if serverOwnedInputBudget {
 		action = TerminalNextActionContactOperator
 	}
-	if value.NextAction == string(TerminalNextActionRetryDreamFeedback) {
-		if !retryable || action != TerminalNextActionResubmitRemember || !value.Retryable ||
-			!validDreamFeedbackRetryRemediation(value.Remediation) {
-			return fmt.Errorf("remember: terminal error guidance for %q is inconsistent", code)
-		}
-	} else if value.Retryable != retryable || value.NextAction != string(action) {
+	if value.Retryable != retryable || value.NextAction != string(action) {
 		return fmt.Errorf("remember: terminal error guidance for %q is inconsistent", code)
 	}
 	canonical := TerminalStatusErrorWithDetails(code, value.ReasonCode, value.Details)
 	if value.Message != canonical.Message {
 		return fmt.Errorf("remember: terminal error message for %q is not canonical", code)
 	}
-	if value.NextAction != string(TerminalNextActionRetryDreamFeedback) {
+	{
 		if serverOwnedInputBudget {
 			if value.Remediation != serverOwnedInputBudgetRemediation {
 				return fmt.Errorf("remember: terminal error remediation for %q is not server-owned budget guidance", code)
@@ -387,25 +377,6 @@ func ValidateTerminalStatusError(value SubmissionStatusError) error {
 	return nil
 }
 
-const terminalDreamFeedbackRetryRemediationPrefix = "Retry resolve_dream_feedback with corrected evidence and idempotency_key "
-
-func DreamFeedbackRetryRemediation(idempotencyKey string) string {
-	return fmt.Sprintf("%s%q.", terminalDreamFeedbackRetryRemediationPrefix, idempotencyKey)
-}
-
-func validDreamFeedbackRetryRemediation(value string) bool {
-	if utf8.RuneCountInString(value) > maxTerminalRemediationRunes ||
-		!strings.HasPrefix(value, terminalDreamFeedbackRetryRemediationPrefix) ||
-		!strings.HasSuffix(value, ".") {
-		return false
-	}
-	quotedKey := strings.TrimSuffix(strings.TrimPrefix(value, terminalDreamFeedbackRetryRemediationPrefix), ".")
-	key, err := strconv.Unquote(quotedKey)
-	return err == nil && strings.TrimSpace(key) != "" &&
-		utf8.RuneCountInString(key) <= maxTerminalCorrelationIDRunes &&
-		DreamFeedbackRetryRemediation(key) == value
-}
-
 func terminalErrorGuidance(code TerminalErrorCode) (bool, TerminalNextAction) {
 	switch code {
 	case TerminalErrorProviderUnavailable, TerminalErrorProviderResponseInvalid,
@@ -415,7 +386,7 @@ func terminalErrorGuidance(code TerminalErrorCode) (bool, TerminalNextAction) {
 		TerminalErrorInternalFailure:
 		return true, TerminalNextActionRetrySameRequest
 	case TerminalErrorPolicyRejected, TerminalErrorStaleInput,
-		TerminalErrorIdempotencyConflict, TerminalErrorInputBudgetExceeded:
+		TerminalErrorIdempotencyConflict, TerminalErrorInputBudgetExceeded, TerminalErrorRetiredContract:
 		return false, TerminalNextActionResubmitRemember
 	case TerminalErrorConfigurationInvalid:
 		return false, TerminalNextActionContactOperator
@@ -428,22 +399,7 @@ func terminalErrorMessage(code TerminalErrorCode) string {
 	return submissionErrorMessages[SubmissionErrorCode(normalizeTerminalErrorCode(code))]
 }
 
-func terminalErrorRemediation(action TerminalNextAction) string {
-	switch action {
-	case TerminalNextActionRetrySameRequest:
-		return "Retry the same request with the same idempotency_key after the transient failure clears."
-	case TerminalNextActionResubmitRemember:
-		return "Submit the complete batch again with remember and a new idempotency_key after correcting the input."
-	case TerminalNextActionRetryCorrection:
-		return "Retry correct_relationship with current relationship state and a new idempotency_key."
-	case TerminalNextActionNone:
-		return "No action is required."
-	default:
-		return "Contact an operator with submission_id and correlation_id."
-	}
-}
-
-func ValidateTerminalRememberResult(result *TerminalRememberResult, evidenceCount int, relationshipRefs []string) error {
+func ValidateTerminalRememberResult(result *TerminalRememberResult, evidenceCount int) error {
 	if result == nil {
 		return errors.New("remember: terminal result is required")
 	}
@@ -574,60 +530,6 @@ func ValidateTerminalRememberResult(result *TerminalRememberResult, evidenceCoun
 			return fmt.Errorf("remember: terminal error %d is inconsistent with processing state", index)
 		}
 	}
-	if result.RelationshipResults == nil {
-		return errors.New("remember: terminal relationship results are required")
-	}
-	if len(result.RelationshipResults) != len(relationshipRefs) {
-		return fmt.Errorf("remember: terminal relationship count %d, expected %d", len(result.RelationshipResults), len(relationshipRefs))
-	}
-	seenRefs := make(map[string]struct{}, len(relationshipRefs))
-	for index, item := range result.RelationshipResults {
-		if err := validateNotStoredExplanation(item.Disposition, item.Reason, item.Message, item.Remediation); err != nil {
-			return fmt.Errorf("remember: relationship %d: %w", index, err)
-		}
-		if item.RelationshipRef != relationshipRefs[index] {
-			return fmt.Errorf("remember: terminal relationship ref %q is out of order", item.RelationshipRef)
-		}
-		if _, ok := seenRefs[item.RelationshipRef]; ok {
-			return fmt.Errorf("remember: terminal relationship ref %q is duplicated", item.RelationshipRef)
-		}
-		seenRefs[item.RelationshipRef] = struct{}{}
-		if item.Disposition != "stored" && item.Disposition != "not_stored" {
-			return fmt.Errorf("remember: terminal relationship disposition %q is invalid", item.Disposition)
-		}
-		if item.Splits == nil {
-			return fmt.Errorf("remember: terminal relationship %q splits are required", item.RelationshipRef)
-		}
-		if len(item.Splits) > maxTerminalRelationshipSplits {
-			return fmt.Errorf("remember: terminal relationship %q has too many splits", item.RelationshipRef)
-		}
-		if item.Disposition == "not_stored" && len(item.Splits) > 0 {
-			return fmt.Errorf("remember: non-stored relationship %q has splits", item.RelationshipRef)
-		}
-		if item.Disposition == "not_stored" && !terminalNotStoredReasonAllowedForResult(result, item.Reason) {
-			return fmt.Errorf("remember: non-stored relationship %q has unsupported reason", item.RelationshipRef)
-		}
-		if item.Disposition == "stored" {
-			if len(item.Splits) == 0 {
-				return fmt.Errorf("remember: stored relationship %q has no split", item.RelationshipRef)
-			}
-			if strings.TrimSpace(item.Reason) != "" {
-				return fmt.Errorf("remember: stored relationship %q has a reason", item.RelationshipRef)
-			}
-			for splitIndex, split := range item.Splits {
-				if split.SplitIndex != splitIndex {
-					return fmt.Errorf("remember: stored relationship %q split index %d is out of order", item.RelationshipRef, split.SplitIndex)
-				}
-				if _, err := uuid.Parse(split.RelationshipID); err != nil {
-					return fmt.Errorf("remember: stored relationship %q split has invalid relationship_id", item.RelationshipRef)
-				}
-				if split.RelationshipVersion < 1 || split.Status != "active" {
-					return fmt.Errorf("remember: stored relationship %q split is not active and versioned", item.RelationshipRef)
-				}
-			}
-			storedResult = true
-		}
-	}
 	switch result.ProcessingState {
 	case string(TerminalProcessingCompleted):
 		if len(result.Errors) > 0 {
@@ -660,7 +562,7 @@ func terminalNotStoredReasonAllowed(reason string) bool {
 		return false
 	}
 	switch trimmed {
-	case "not_supported_by_evidence", "stale_input", "submission_policy_rejected", "security_quarantine", "internal_failure", "idempotency_conflict":
+	case "stale_input", "submission_policy_rejected", "security_quarantine", "internal_failure", "idempotency_conflict":
 		return true
 	default:
 		return false
@@ -672,7 +574,7 @@ func terminalNotStoredReasonAllowedForResult(result *TerminalRememberResult, rea
 		return false
 	}
 	if result.ProcessingState == string(TerminalProcessingCompleted) {
-		return reason == "not_supported_by_evidence"
+		return false
 	}
 	for _, item := range result.Errors {
 		if reason == TerminalNotStoredReasonForError(TerminalErrorCode(item.Code)) {
@@ -700,17 +602,8 @@ func TerminalResultWithError(result *TerminalRememberResult, code TerminalErrorC
 		result.Evidence[index].Reason = notStoredReason
 		result.Evidence[index].Message, result.Evidence[index].Remediation = NotStoredGuidance(notStoredReason)
 	}
-	for index := range result.RelationshipResults {
-		result.RelationshipResults[index].Disposition = "not_stored"
-		result.RelationshipResults[index].Reason = notStoredReason
-		result.RelationshipResults[index].Message, result.RelationshipResults[index].Remediation = NotStoredGuidance(notStoredReason)
-		result.RelationshipResults[index].Splits = []SubmissionRelationshipSplit{}
-	}
 	if result.Evidence == nil {
 		result.Evidence = []TerminalEvidenceResult{}
-	}
-	if result.RelationshipResults == nil {
-		result.RelationshipResults = []SubmissionRelationshipResult{}
 	}
 	status := TerminalStatusError(code)
 	result.Errors = []SubmissionStatusError{status}

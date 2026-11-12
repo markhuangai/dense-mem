@@ -115,20 +115,6 @@
       "source": "internal/knowledge/postgres/session_service_integration_test.go"
     },
     {
-      "id": "repository/TestSessionServiceFactsDiagnosticsAndCheckpointRecoveryThroughPostgres",
-      "package": "./internal/knowledge/postgres",
-      "run": "^TestSessionServiceFactsDiagnosticsAndCheckpointRecoveryThroughPostgres$",
-      "phase": "precheck",
-      "source": "internal/knowledge/postgres/session_service_integration_test.go"
-    },
-    {
-      "id": "repository/TestTraceSessionProvenanceRequiresAuthenticatedPrivateOwner",
-      "package": "./internal/trace/postgres",
-      "run": "^TestTraceSessionProvenanceRequiresAuthenticatedPrivateOwner$",
-      "phase": "precheck",
-      "source": "internal/trace/postgres/session_provenance_integration_test.go"
-    },
-    {
       "id": "repository/TestSessionContextIndexBoundsPrivateLookupAcrossUnrelatedHistory",
       "package": "./internal/knowledge/postgres",
       "run": "^TestSessionContextIndexBoundsPrivateLookupAcrossUnrelatedHistory$",
@@ -148,6 +134,20 @@
       "run": "^TestSessionCancelledDiagnosticsCannotReviveSealedOrErasedGeneration$",
       "phase": "precheck",
       "source": "internal/knowledge/postgres/session_diagnostics_cancellation_integration_test.go"
+    },
+    {
+      "id": "session-ingest/TestEvidenceOnlyPostgresSessionExcerptsDiagnosticsAndCheckpointRecovery",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestEvidenceOnlyPostgresSessionExcerptsDiagnosticsAndCheckpointRecovery$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/session_service_integration_test.go"
+    },
+    {
+      "id": "session-ingest/TestEvidenceOnlyPostgresTraceSessionProvenanceRequiresAuthenticatedPrivateOwner",
+      "package": "./internal/trace/postgres",
+      "run": "^TestEvidenceOnlyPostgresTraceSessionProvenanceRequiresAuthenticatedPrivateOwner$",
+      "phase": "precheck",
+      "source": "internal/trace/postgres/session_provenance_integration_test.go"
     }
   ]
 }

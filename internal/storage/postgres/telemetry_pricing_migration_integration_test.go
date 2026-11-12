@@ -234,8 +234,7 @@ func TestTeamOwnedDreamingRepairHandlesLegacyTelemetryVersionSkip(t *testing.T) 
 		return err
 	}))
 
-	m := NewMigratorWithDB(sqlDB)
-	require.NoError(t, m.RunUp(ctx))
+	require.NoError(t, migrationUpTo(ctx, sqlDB, 2026073106))
 
 	assert.False(t, columnExists(t, ctx, sqlDB, "hypotheses", "owner_profile_id"))
 	assert.True(t, columnExists(t, ctx, sqlDB, "hypotheses", "created_by_profile_id"))

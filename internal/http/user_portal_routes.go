@@ -17,7 +17,6 @@ func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 	portal := &userPortalHandler{
 		teams:         deps.TeamSvc,
 		credentials:   deps.CredentialSvc,
-		graph:         deps.GraphView,
 		recall:        handler.NewRecallHandler(deps.RecallSvc),
 		audit:         handler.NewAuditHandler(deps.AuditSvc),
 		sso:           deps.SSOService,
@@ -66,8 +65,6 @@ func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 	teamSvcMW := userPortalServiceAvailable(deps.TeamSvc != nil, "team service unavailable")
 	credentialSvcMW := userPortalServiceAvailable(deps.CredentialSvc != nil, "credential service unavailable")
 
-	api.GET("/graph", portal.graphSnapshot, httpmw.RequireScopes("read"))
-	api.GET("/node-detail", portal.graphNodeDetail, httpmw.RequireScopes("read"))
 	api.GET("/team/audit-log", portal.audit.Get, httpmw.RequireScopes("read"))
 	api.POST("/credential/rotate", portal.rotateCurrentCredential, httpmw.RequireScopes("write"), credentialSvcMW)
 	if deps.PrivateMemory != nil {

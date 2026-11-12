@@ -13,10 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	community "github.com/markhuangai/dense-mem/internal/community/contract"
-	communitypg "github.com/markhuangai/dense-mem/internal/community/postgres"
-	communityapp "github.com/markhuangai/dense-mem/internal/community/service"
-	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
+
 	organization "github.com/markhuangai/dense-mem/internal/ontology"
 	"github.com/markhuangai/dense-mem/internal/ontology/assessment"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
@@ -24,58 +21,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type schedulerProjectionStore struct {
-	*communitypg.Store
-	before func(context.Context, community.TopicProjectionBatch) error
-	after  func(error)
-}
-
-func (s *schedulerProjectionStore) AppendTopicProjection(ctx context.Context, batch community.TopicProjectionBatch, now time.Time) error {
-	if s.before != nil {
-		if err := s.before(ctx, batch); err != nil {
-			return err
-		}
-	}
-	err := s.Store.AppendTopicProjection(ctx, batch, now)
-	if s.after != nil {
-		s.after(err)
-	}
-	return err
-}
-
-type schedulerProjectionObserver struct {
-	organization.ProjectionRunner
-	before func(context.Context)
-	mu     sync.Mutex
-	turns  []time.Duration
-}
-
-func (s *schedulerProjectionObserver) RunProjectionTurn(ctx context.Context) (bool, error) {
-	started := time.Now()
-	if s.before != nil {
-		s.before(ctx)
-	}
-	progress, err := s.ProjectionRunner.RunProjectionTurn(ctx)
-	s.mu.Lock()
-	s.turns = append(s.turns, time.Since(started))
-	s.mu.Unlock()
-	return progress, err
-}
-
 type schedulerMeasurement struct {
 	mu                       sync.Mutex
 	started                  time.Time
 	Fixture                  string         `json:"fixture"`
 	Configuration            map[string]int `json:"configuration"`
 	FirstDispatchMS          float64        `json:"first_dispatch_ms"`
-	FirstProjectionMS        float64        `json:"first_projection_publish_return_ms"`
 	CompletionMS             float64        `json:"completion_ms"`
 	ProviderCalls            int            `json:"provider_calls"`
 	MaxProviderOverlap       int            `json:"max_provider_overlap"`
-	MixedOverlap             bool           `json:"mixed_overlap"`
 	MaxAdmitted              int            `json:"max_admitted"`
 	MaxTeamAdmitted          map[string]int `json:"max_team_admitted"`
-	ProjectionTurnsMS        []float64      `json:"projection_turns_ms"`
 	PreparationTurnsMS       []float64      `json:"preparation_lease_ms"`
 	TerminalOutcomes         map[string]int `json:"terminal_outcomes"`
 	ReportedInput            int64          `json:"reported_input"`
@@ -84,10 +40,8 @@ type schedulerMeasurement struct {
 	PartialUsageAttempts     int64          `json:"partial_usage_attempts"`
 	CanonicalBefore          string         `json:"canonical_before"`
 	CanonicalAfter           string         `json:"canonical_after"`
-	ProjectionCoverage       any            `json:"projection_coverage"`
 	Errors                   []string       `json:"errors,omitempty"`
 	providers                int
-	projections              int
 }
 
 type schedulerPreparationObserver struct {
@@ -165,24 +119,10 @@ func (m *schedulerMeasurement) sample(f *ontologyFixture) {
 
 func schedulerTopic(t *testing.T, f *ontologyFixture) ontology.Record {
 	t.Helper()
-	ctx := context.Background()
-	subject := maintenanceEntity(t, f, "Scheduler project")
-	object, err := f.knowledge.CreateEntity(ctx, knowledge.CreateEntityInput{TeamID: f.team, OwnerProfileID: f.owners[0], EntityKind: "product", CanonicalName: "PostgreSQL"})
-	require.NoError(t, err)
-	owner := len(f.owners) - 1
-	text := "Scheduler project uses PostgreSQL."
-	ingest := f.evidence(t, owner, text)
-	decision, err := f.knowledge.ApplyRelationshipDecision(ctx, knowledge.ApplyRelationshipDecisionInput{
-		TeamID: f.team, OwnerProfileID: f.owners[owner], IngestID: ingest.IngestID,
-		SubjectEntityID: subject.ID, PredicateKey: "uses", ObjectEntityID: object.EntityID,
-		Support: &knowledge.EvidenceSupportInput{FragmentID: ingest.Evidence[0].FragmentID, SourceGroupKey: uuid.NewString(), SpanEnd: len(text), Authority: "primary"},
-	})
-	require.NoError(t, err)
-	handle := ontology.SourceHandle{Kind: ontology.RelationshipSource, ID: decision.Relationship.RelationshipID, Version: int64(decision.Relationship.Version)}
+	handle := f.organizationEvidence(t, len(f.owners)-1, "Scheduler project uses PostgreSQL.", nil)
 	topic := testTopic("scheduler-topic")
-	assignment := ontology.Record{ID: uuid.NewString(), Kind: ontology.AssignmentKind,
-		Assignment: &ontology.Assignment{Source: handle, DefinitionID: topic.ID}, Sources: []ontology.SourceDependency{f.source(t, handle)}}
-	_, err = f.store.PublishAutomatic(ctx, f.team, testPublication(uuid.NewString(), 0, ontology.Change{Record: topic}, ontology.Change{Record: assignment}))
+	assignment := ontology.Record{ID: uuid.NewString(), Kind: ontology.AssignmentKind, Assignment: &ontology.Assignment{Source: handle, DefinitionID: topic.ID}, Sources: []ontology.SourceDependency{f.source(t, handle)}}
+	_, err := f.store.PublishAutomatic(context.Background(), f.team, testPublication(uuid.NewString(), 0, ontology.Change{Record: topic}, ontology.Change{Record: assignment}))
 	require.NoError(t, err)
 	return topic
 }
@@ -259,23 +199,14 @@ func startScheduler(t *testing.T, service *organization.MaintenanceService, rele
 	return ctx, stop
 }
 
-func schedulerProjections(f *ontologyFixture, config *settings.AppConfigServiceImpl, before func(context.Context, community.TopicProjectionBatch) error, after func(error)) (*schedulerProjectionObserver, *communitypg.Store) {
-	store := communitypg.NewStore(f.app, f.rls).WithTopics(f.store.NewTopicCatalogReader(), f.store.NewTopicMembershipReader(), f.store.NewTopicProjectionAdmission(), f.store.NewTopicProjectionRelease())
-	wrapped := &schedulerProjectionStore{Store: store, before: before, after: after}
-	service := communityapp.New(communityapp.Dependencies{Store: wrapped, AppConfig: config})
-	return &schedulerProjectionObserver{ProjectionRunner: service}, store
-}
-
 func schedulerAssertDrained(t *testing.T, f *ontologyFixture) {
 	t.Helper()
-	var leases, batches, projections int
+	var leases, batches int
 	require.NoError(t, f.admin.Raw(`SELECT
 		(SELECT count(*) FROM ontology_maintenance_teams WHERE lease_until>clock_timestamp()),
-		(SELECT count(*) FROM ontology_maintenance_batches WHERE status='running'),
-		(SELECT count(*) FROM community_topic_work WHERE lease_until>clock_timestamp())`).Row().Scan(&leases, &batches, &projections))
+		(SELECT count(*) FROM ontology_maintenance_batches WHERE status='running')`).Row().Scan(&leases, &batches))
 	require.Zero(t, leases)
 	require.Zero(t, batches)
-	require.Zero(t, projections)
 	status, err := f.store.MaintenanceStatus(context.Background(), time.Now())
 	require.NoError(t, err)
 	var pending int64
@@ -294,7 +225,6 @@ func schedulerProvider(m *schedulerMeasurement, f *ontologyFixture, entered chan
 		m.ProviderCalls++
 		m.providers++
 		m.MaxProviderOverlap = max(m.MaxProviderOverlap, m.providers)
-		m.MixedOverlap = m.MixedOverlap || m.projections > 0
 		m.mu.Unlock()
 		m.sample(f)
 		select {

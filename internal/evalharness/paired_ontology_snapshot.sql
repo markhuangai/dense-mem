@@ -18,13 +18,10 @@ WITH scope AS (
 SELECT jsonb_build_object(
     'active_batches',(SELECT count(*) FROM ontology_maintenance_batches b WHERE b.status='running'),
     'active_preparations',(SELECT count(*) FROM ontology_maintenance_teams t WHERE t.lease_until>clock_timestamp()),
-    'active_projections',(SELECT count(*) FROM community_topic_work w WHERE w.status='building'),
     'unreconciled_attempts',(SELECT count(*) FROM ontology_maintenance_attempts a WHERE a.reconciled_at IS NULL),
     'budget_deferred',(SELECT count(*) FROM ontology_maintenance_sources x WHERE x.eligible AND x.status='budget_deferred'),
     'foreign_work',(SELECT count(*) FROM ontology_maintenance_batches b WHERE b.team_id<>s.team_id AND b.status='running'),
     'provider_attempts',COALESCE((SELECT jsonb_agg(receipt ORDER BY receipt->>'operation_key',receipt->>'assessment_id',receipt->>'number') FROM attempts),'[]'::jsonb),
-    'legacy_window',(SELECT jsonb_build_object('id',w.window_id,'reserved_input',w.reserved_input,
-        'reserved_output',w.reserved_output,'overrun',w.overrun) FROM ontology_maintenance_windows w
-        WHERE w.starts_at<=clock_timestamp() AND w.ends_at>clock_timestamp() ORDER BY w.starts_at DESC LIMIT 1)
+    'legacy_window',NULL
 )
 FROM scope AS s

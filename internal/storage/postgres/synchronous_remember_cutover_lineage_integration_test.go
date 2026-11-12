@@ -10,8 +10,56 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	remember "github.com/markhuangai/dense-mem/internal/remember/service"
 	"github.com/stretchr/testify/require"
 )
+
+type legacyV261RememberResult struct {
+	ContractVersion     string                            `json:"contract_version"`
+	SubmissionID        string                            `json:"submission_id"`
+	SubmissionKind      string                            `json:"submission_kind"`
+	ProcessingState     string                            `json:"processing_state"`
+	SearchState         string                            `json:"search_state"`
+	CorrelationID       string                            `json:"correlation_id"`
+	Evidence            []remember.TerminalEvidenceResult `json:"evidence"`
+	Errors              []remember.SubmissionStatusError  `json:"errors"`
+	RelationshipResults []struct {
+		RelationshipRef string `json:"ref"`
+		Disposition     string `json:"disposition"`
+		Reason          string `json:"reason"`
+		Splits          []struct {
+			SplitIndex          int    `json:"split_index"`
+			RelationshipID      string `json:"relationship_id"`
+			RelationshipVersion int    `json:"relationship_version"`
+			Status              string `json:"status"`
+		} `json:"splits"`
+	} `json:"relationship_results"`
+}
+
+func requireLegacyV261RememberResult(t *testing.T, result legacyV261RememberResult, submissionID, processingState, searchState string,
+	evidenceCount, relationshipCount int, errorCode string) {
+	t.Helper()
+	require.Equal(t, "dense-mem.v2.6.1", result.ContractVersion)
+	require.Equal(t, submissionID, result.SubmissionID)
+	require.Equal(t, "remember", result.SubmissionKind)
+	require.Equal(t, processingState, result.ProcessingState)
+	require.Equal(t, searchState, result.SearchState)
+	require.Equal(t, submissionID, result.CorrelationID)
+	require.NotNil(t, result.Evidence)
+	require.Len(t, result.Evidence, evidenceCount)
+	require.NotNil(t, result.RelationshipResults)
+	require.Len(t, result.RelationshipResults, relationshipCount)
+	require.NotNil(t, result.Errors)
+	if errorCode == "" {
+		require.Empty(t, result.Errors)
+		return
+	}
+	require.Len(t, result.Errors, 1)
+	require.Equal(t, errorCode, result.Errors[0].Code)
+	require.True(t, result.Errors[0].Retryable)
+	require.Equal(t, "resubmit_remember", result.Errors[0].NextAction)
+	require.Equal(t, "Submit the complete batch again with remember and a new idempotency_key after correcting the input.", result.Errors[0].Remediation)
+}
 
 func TestRememberSynchronousCutoverPreservesGroupedItemAssessmentHistory(t *testing.T) {
 	ctx := context.Background()

@@ -150,6 +150,8 @@ func TestMigrationControlRetirementDropsOnlyApprovedTablesAndPreservesMarker(t *
 	runGooseUpTo(t, ctx, sqlDB, migrationControlRetirementBaseVersion)
 	seedMigrationControlRetirementFixture(t, ctx, sqlDB)
 	retainedTeamID, _ := insertMigrationTeamProfile(t, ctx, sqlDB)
+	migrator := NewMigratorWithDB(sqlDB)
+	require.NoError(t, migrator.RunUp(ctx))
 	beforeCounts := migrationControlRetirementTableCounts(t, ctx, sqlDB)
 	for _, table := range migrationControlRetirementTables {
 		want := int64(1)
@@ -163,7 +165,6 @@ func TestMigrationControlRetirementDropsOnlyApprovedTablesAndPreservesMarker(t *
 	retainedTeamNameBefore := migrationControlRetirementTeamName(t, ctx, sqlDB, retainedTeamID)
 	ownedObjectsBefore := migrationControlRetirementOwnedObjectCounts(t, ctx, sqlDB)
 
-	migrator := NewMigratorWithDB(sqlDB)
 	require.NoError(t, migrator.RunMigrationControlRetirement(ctx))
 
 	for _, table := range migrationControlRetirementTables {
@@ -171,7 +172,7 @@ func TestMigrationControlRetirementDropsOnlyApprovedTablesAndPreservesMarker(t *
 	}
 	require.True(t, tableExists(t, ctx, sqlDB, "v2_compatibility_markers"))
 	require.True(t, tableExists(t, ctx, sqlDB, "teams"))
-	require.True(t, tableExists(t, ctx, sqlDB, "review_tasks"))
+	require.True(t, tableExists(t, ctx, sqlDB, "evidence_fragments"))
 	require.Equal(t, markerBefore, migrationControlRetirementAllMarkerSnapshot(t, ctx, sqlDB))
 	require.Equal(t, retainedDataBefore, migrationControlRetirementRetainedDataSnapshot(t, ctx, sqlDB))
 	require.Equal(t, retainedTeamNameBefore, migrationControlRetirementTeamName(t, ctx, sqlDB, retainedTeamID))
@@ -815,7 +816,7 @@ func migrationControlRetirementRetainedDataSnapshot(t *testing.T, ctx context.Co
 		"team_memberships",
 		"credentials",
 		"ownership_aliases",
-		"review_tasks",
+		"evidence_fragments",
 		"search_documents",
 		"operation_logs",
 	}

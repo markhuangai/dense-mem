@@ -9,11 +9,11 @@ func TestEvaluationRunnerLoadsInputsAndWritesAllArtifactProfiles(t *testing.T) {
 	root := writeEvalFixture(t)
 	manifestPath := filepath.Join(root, "seed_manifest.json")
 	suitePath := filepath.Join(root, "suite.jsonl")
-	manifest, corpus, cases, qrels, dreams, suite, seedHash, err := loadRunInputs(manifestPath, suitePath)
+	manifest, corpus, cases, qrels, suite, seedHash, err := loadRunInputs(manifestPath, suitePath)
 	if err != nil {
 		t.Fatalf("loadRunInputs: %v", err)
 	}
-	if err := validateRunInputs(manifestPath, manifest, corpus, cases, qrels, dreams, suite, seedHash); err != nil {
+	if err := validateRunInputs(manifestPath, manifest, corpus, cases, qrels, suite, seedHash); err != nil {
 		t.Fatalf("validateRunInputs: %v", err)
 	}
 	runConfig := RunConfig{Mode: "validate", SeedManifest: manifestPath, SeedHash: seedHash, SuitePath: suitePath}
@@ -32,11 +32,11 @@ func TestEvaluationRunnerLoadsInputsAndWritesAllArtifactProfiles(t *testing.T) {
 func TestEvaluationRunnerQrelAndManifestFailureBranches(t *testing.T) {
 	root := writeEvalFixture(t)
 	manifestPath := filepath.Join(root, "seed_manifest.json")
-	manifest, corpus, cases, qrels, dreams, suite, seedHash, err := loadRunInputs(manifestPath, filepath.Join(root, "suite.jsonl"))
+	manifest, corpus, cases, qrels, suite, seedHash, err := loadRunInputs(manifestPath, filepath.Join(root, "suite.jsonl"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := validateRunInputs(manifestPath, manifest, corpus, cases, append(qrels, QRel{CaseID: "unknown", RequiredRefs: []Ref{{SourceDocID: "doc-alpha"}}}), dreams, suite, seedHash); err == nil {
+	if err := validateRunInputs(manifestPath, manifest, corpus, cases, append(qrels, QRel{CaseID: "unknown", RequiredRefs: []Ref{{SourceDocID: "doc-alpha"}}}), suite, seedHash); err == nil {
 		t.Fatal("qrel for unknown case was accepted")
 	}
 	if err := validateRequiredQRelMappings(map[string]QRel{"case-1": {RequiredRefs: []Ref{{Type: "evidence", SourceDocID: "missing"}}}}, []SuiteCase{{CaseID: "case-1"}}, KnowledgeMapping{}); err == nil {

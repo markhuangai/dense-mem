@@ -9,14 +9,10 @@ const seedTeamName = requiredEnv("DENSE_MEM_E2E_TEAM_NAME");
 test("Evidence view resolves a case, handles stale review, and stays keyboard-safe without mobile overflow", async ({ page }, testInfo) => {
   await openControlPanel(page);
   await page.getByRole("button", { name: new RegExp(escapeRegExp(seedTeamName)) }).click();
-  await navigate(page, "Conflicts");
+  await navigate(page, "Evidence conflicts");
 
-  const evidenceTab = page.getByRole("tab", { name: "Evidence" });
-  await evidenceTab.focus();
-  await expect(evidenceTab).toBeFocused();
-  await page.keyboard.press("Enter");
-  await expect(page.getByRole("heading", { name: "Conflict queue" })).toBeVisible();
-  await expect(page.getByLabel("Evidence conflicts")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Evidence conflicts" })).toBeVisible();
+  await expect(page.getByLabel("Evidence conflicts", { exact: true })).toBeVisible();
 
   const initial = await listOpenConflicts(page);
   expect(initial.length).toBeGreaterThanOrEqual(2);

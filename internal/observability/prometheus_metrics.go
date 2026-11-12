@@ -35,8 +35,6 @@ type ScopedDiscoverabilityMetrics interface {
 	ObserveRecallLatencyFor(ctx context.Context, durationMs float64)
 	ObserveRecallFor(ctx context.Context, durationMs float64, resultCount int, outcome string)
 	ObserveRecallFeedbackFor(ctx context.Context, feedback recallcontract.FeedbackObservation)
-	ObserveDreamFeedbackFor(ctx context.Context, feedback DreamFeedback)
-	ObserveConflictReviewDurationFor(ctx context.Context, seconds float64, outcome string)
 }
 
 // PrometheusMetrics exports Dense-Mem operational metrics through a private
@@ -48,22 +46,21 @@ type PrometheusMetrics struct {
 	readPerformance *readPerformancePrometheusMetrics
 	credentialUsage *credentialUsagePrometheusMetrics
 
-	httpRequests                 *prometheus.CounterVec
-	httpDuration                 *prometheus.HistogramVec
-	embeddingCalls               *prometheus.CounterVec
-	embeddingErrors              *prometheus.CounterVec
-	embeddingDur                 *prometheus.HistogramVec
-	embeddingTokens              *prometheus.CounterVec
-	verifierCalls                *prometheus.CounterVec
-	verifierDur                  *prometheus.HistogramVec
-	verifierTokens               *prometheus.CounterVec
-	recallCalls                  *prometheus.CounterVec
-	recallDur                    *prometheus.HistogramVec
-	recallResults                *prometheus.HistogramVec
-	recallFeedback               *prometheus.CounterVec
-	recallQuality                *prometheus.HistogramVec
-	dreamFeedback                *prometheus.CounterVec
-	conflictReview               *prometheus.HistogramVec
+	httpRequests    *prometheus.CounterVec
+	httpDuration    *prometheus.HistogramVec
+	embeddingCalls  *prometheus.CounterVec
+	embeddingErrors *prometheus.CounterVec
+	embeddingDur    *prometheus.HistogramVec
+	embeddingTokens *prometheus.CounterVec
+	verifierCalls   *prometheus.CounterVec
+	verifierDur     *prometheus.HistogramVec
+	verifierTokens  *prometheus.CounterVec
+	recallCalls     *prometheus.CounterVec
+	recallDur       *prometheus.HistogramVec
+	recallResults   *prometheus.HistogramVec
+	recallFeedback  *prometheus.CounterVec
+	recallQuality   *prometheus.HistogramVec
+
 	verifyVerdicts               *prometheus.CounterVec
 	rememberAcknowledgements     *prometheus.CounterVec
 	rememberAcknowledgementDur   *prometheus.HistogramVec
@@ -81,11 +78,9 @@ type PrometheusMetrics struct {
 	assessorDuplicatePrevention  *prometheus.CounterVec
 	assessorConfidenceGate       *prometheus.CounterVec
 	assessorTerminalFailures     *prometheus.CounterVec
-	communityRuns                *prometheus.CounterVec
-	communitySummaries           *prometheus.CounterVec
-	communityRecalls             *prometheus.CounterVec
-	conflictAssessments          *prometheus.CounterVec
-	conflictResolutions          *prometheus.CounterVec
+
+	conflictAssessments *prometheus.CounterVec
+	conflictResolutions *prometheus.CounterVec
 }
 
 var _ DiscoverabilityMetrics = (*PrometheusMetrics)(nil)
@@ -166,15 +161,6 @@ func NewPrometheusMetrics(pricingResolvers ...AIPricingResolver) *PrometheusMetr
 			Help:    "Numeric host LLM online recall quality score.",
 			Buckets: []float64{0, 0.5, 1},
 		}, identityLabels()),
-		dreamFeedback: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "densemem_dream_feedback_total",
-			Help: "Dream feedback decision events with bounded labels.",
-		}, append(identityLabels(), "decision", "outcome", "from_status")),
-		conflictReview: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name:    "densemem_conflict_review_duration_seconds",
-			Help:    "Relationship conflict review duration.",
-			Buckets: []float64{0.1, 1, 5, 15, 30, 60, 300, 900},
-		}, append(identityLabels(), "outcome")),
 		verifyVerdicts: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "densemem_verify_verdict_total",
 			Help: "Claim verification outcomes.",
@@ -245,18 +231,6 @@ func NewPrometheusMetrics(pricingResolvers ...AIPricingResolver) *PrometheusMetr
 			Name: "densemem_assessor_terminal_failures_total",
 			Help: "Integrated assessor terminal failures by bounded stage.",
 		}, []string{"stage"}),
-		communityRuns: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "densemem_community_runs_total",
-			Help: "Community snapshot runs by bounded terminal status.",
-		}, append(identityLabels(), "status")),
-		communitySummaries: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "densemem_community_summaries_total",
-			Help: "Community summary provider outcomes.",
-		}, append(identityLabels(), "outcome")),
-		communityRecalls: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "densemem_community_recall_total",
-			Help: "Community recall outcomes.",
-		}, append(identityLabels(), "outcome")),
 		conflictAssessments: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "densemem_conflict_assessments_total",
 			Help: "Durably committed conflict assessment decisions by bounded outcome.",
@@ -274,7 +248,7 @@ func NewPrometheusMetrics(pricingResolvers ...AIPricingResolver) *PrometheusMetr
 		m.embeddingCalls, m.embeddingErrors, m.embeddingDur, m.embeddingTokens,
 		m.verifierCalls, m.verifierDur, m.verifierTokens,
 		m.recallCalls, m.recallDur, m.recallResults,
-		m.recallFeedback, m.recallQuality, m.dreamFeedback, m.conflictReview,
+		m.recallFeedback, m.recallQuality,
 		m.verifyVerdicts,
 		m.rememberAcknowledgements, m.rememberAcknowledgementDur,
 		m.aiOperationTokens, m.aiOperationCosts, m.aiOperationItems, m.aiOperationUnpriced,
@@ -282,7 +256,7 @@ func NewPrometheusMetrics(pricingResolvers ...AIPricingResolver) *PrometheusMetr
 		m.assessorCandidateTruncations, m.assessorPersistence, m.assessorDuplicatePrevention,
 		m.assessorConfidenceGate,
 		m.assessorTerminalFailures,
-		m.communityRuns, m.communitySummaries, m.communityRecalls,
+
 		m.conflictAssessments, m.conflictResolutions,
 	}
 	collectors = append(collectors, m.operational.collectors()...)
@@ -291,18 +265,6 @@ func NewPrometheusMetrics(pricingResolvers ...AIPricingResolver) *PrometheusMetr
 	collectors = append(collectors, promcollectors.NewGoCollector(), promcollectors.NewProcessCollector(promcollectors.ProcessCollectorOpts{}))
 	m.registry.MustRegister(collectors...)
 	return m
-}
-
-func (m *PrometheusMetrics) ObserveCommunityRun(ctx context.Context, status string, _, _, _ int) {
-	m.communityRuns.WithLabelValues(append(identityValues(ctx), normalizeLabel(status))...).Inc()
-}
-
-func (m *PrometheusMetrics) ObserveCommunitySummary(ctx context.Context, outcome string, _ int) {
-	m.communitySummaries.WithLabelValues(append(identityValues(ctx), normalizeLabel(outcome))...).Inc()
-}
-
-func (m *PrometheusMetrics) ObserveCommunityRecall(ctx context.Context, outcome string, _, _ int) {
-	m.communityRecalls.WithLabelValues(append(identityValues(ctx), normalizeLabel(outcome))...).Inc()
 }
 
 func (m *PrometheusMetrics) Handler() http.Handler {
@@ -521,31 +483,6 @@ func (m *PrometheusMetrics) ObserveRecallFeedbackFor(ctx context.Context, feedba
 	m.recallQuality.WithLabelValues(identityValues(ctx)...).Observe(recallFeedbackQualityScore(quality))
 }
 
-func (m *PrometheusMetrics) ObserveDreamFeedback(feedback DreamFeedback) {
-	m.ObserveDreamFeedbackFor(context.Background(), feedback)
-}
-
-func (m *PrometheusMetrics) ObserveDreamFeedbackFor(ctx context.Context, feedback DreamFeedback) {
-	m.observeDreamFeedbackAction(feedback.Decision, feedback.Outcome)
-	labels := append(identityValues(ctx),
-		normalizeDreamFeedbackDecision(feedback.Decision),
-		normalizeDreamFeedbackOutcome(feedback.Outcome),
-		normalizeDreamStatusLabel(feedback.FromStatus),
-	)
-	m.dreamFeedback.WithLabelValues(labels...).Inc()
-}
-
-func (m *PrometheusMetrics) ObserveConflictReviewDuration(seconds float64, outcome string) {
-	m.ObserveConflictReviewDurationFor(context.Background(), seconds, outcome)
-}
-
-func (m *PrometheusMetrics) ObserveConflictReviewDurationFor(ctx context.Context, seconds float64, outcome string) {
-	if seconds < 0 {
-		return
-	}
-	m.conflictReview.WithLabelValues(append(identityValues(ctx), normalizeLabel(outcome))...).Observe(seconds)
-}
-
 func (m *PrometheusMetrics) IncVerifyVerdict(outcome string) {
 	m.IncVerifyVerdictFor(context.Background(), unknownMetricLabel, outcome)
 }
@@ -687,33 +624,6 @@ func recallFeedbackQualityScore(quality string) float64 {
 	}
 }
 
-func normalizeDreamFeedbackDecision(value string) string {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "ignore", "reinforce", "stale", "reject", "confirm_true", "confirm_false", "promote_candidate":
-		return strings.ToLower(strings.TrimSpace(value))
-	default:
-		return unknownMetricLabel
-	}
-}
-
-func normalizeDreamFeedbackOutcome(value string) string {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "ok", "error":
-		return strings.ToLower(strings.TrimSpace(value))
-	default:
-		return unknownMetricLabel
-	}
-}
-
-func normalizeDreamStatusLabel(value string) string {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "proposed", "reinforced", "stale", "rejected", "promoted":
-		return strings.ToLower(strings.TrimSpace(value))
-	default:
-		return unknownMetricLabel
-	}
-}
-
 func boolLabel(value bool) string {
 	if value {
 		return "true"
@@ -826,27 +736,6 @@ func RecordRecallFeedback(ctx context.Context, metrics DiscoverabilityMetrics, f
 	metrics.ObserveRecallFeedback(feedback)
 }
 
-func RecordDreamFeedback(ctx context.Context, metrics DiscoverabilityMetrics, feedback DreamFeedback) {
-	if metrics == nil {
-		return
-	}
-	if scoped, ok := metrics.(ScopedDiscoverabilityMetrics); ok {
-		scoped.ObserveDreamFeedbackFor(ctx, feedback)
-		return
-	}
-	metrics.ObserveDreamFeedback(feedback)
-}
-
-func RecordConflictReviewDuration(ctx context.Context, metrics DiscoverabilityMetrics, seconds float64, outcome string) {
-	if metrics == nil || seconds < 0 {
-		return
-	}
-	if scoped, ok := metrics.(ScopedDiscoverabilityMetrics); ok {
-		scoped.ObserveConflictReviewDurationFor(ctx, seconds, outcome)
-		return
-	}
-	metrics.ObserveConflictReviewDuration(seconds, outcome)
-}
 func normalizeAssessorCallOutcome(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "ok", "provider_error", "malformed_exhausted", "catalog_error":
@@ -872,25 +761,6 @@ func normalizeAssessorValidationFieldFamily(value string) string {
 		"output_tokens",
 		"response",
 		"security_signals",
-		"entity_results",
-		"entity_results.ref",
-		"entity_results.span",
-		"entity_results.kind",
-		"entity_results.selection",
-		"entity_results.quality",
-		"entity_results.other",
-		"relationship_results",
-		"relationship_results.ref",
-		"relationship_results.subject",
-		"relationship_results.predicate",
-		"relationship_results.object",
-		"relationship_results.evidence",
-		"relationship_results.semantics",
-		"relationship_results.verdict",
-		"relationship_results.temporal",
-		"relationship_results.scope",
-		"relationship_results.quality",
-		"relationship_results.other",
 		"other":
 		return strings.ToLower(strings.TrimSpace(value))
 	default:

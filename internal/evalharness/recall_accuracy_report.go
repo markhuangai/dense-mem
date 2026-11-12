@@ -174,7 +174,7 @@ func readAccuracyRepetition(c PairConfig) (RecallAccuracyRepetition, string, err
 	if run.Pair.Status != "complete" {
 		return run, "", fmt.Errorf("incomplete paired coverage cannot establish recall accuracy")
 	}
-	seed, _, cases, _, _, suite, _, err := loadRunInputs(c.SeedManifest, c.Suite)
+	seed, _, cases, _, suite, _, err := loadRunInputs(c.SeedManifest, c.Suite)
 	if err != nil {
 		return run, "", err
 	}

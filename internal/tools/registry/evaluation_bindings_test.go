@@ -4,23 +4,16 @@ import (
 	"context"
 	"testing"
 
-	communitycontract "github.com/markhuangai/dense-mem/internal/community/contract"
-	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
+	evaluationcontract "github.com/markhuangai/dense-mem/internal/evaluation/contract"
 )
 
 type evaluationBindingsRepository struct{}
 
-// evaluationCommunityRepositoryStub only needs the native repository method
-// set because these tests exercise dependency precedence, not repository I/O.
-type evaluationCommunityRepositoryStub struct {
-	communitycontract.CommunityRepository
-}
-
-func (*evaluationBindingsRepository) ListEvaluationRefs(context.Context, dreamcontract.EvaluationListInput) (*dreamcontract.EvaluationPage, error) {
+func (*evaluationBindingsRepository) ListEvaluationRefs(context.Context, evaluationcontract.EvaluationListInput) (*evaluationcontract.EvaluationPage, error) {
 	return nil, nil
 }
 
-func (*evaluationBindingsRepository) GetEvaluationItem(context.Context, dreamcontract.EvaluationGetInput) (map[string]any, error) {
+func (*evaluationBindingsRepository) GetEvaluationItem(context.Context, evaluationcontract.EvaluationGetInput) (map[string]any, error) {
 	return nil, nil
 }
 
@@ -36,14 +29,12 @@ func TestEvaluationFacetSuppliesAuditAppender(t *testing.T) {
 
 func TestEvaluationBindingsKeepNativeContracts(t *testing.T) {
 	repository := &evaluationBindingsRepository{}
-	communities := &evaluationCommunityRepositoryStub{}
 	audit := &evaluationAuditStub{}
 	deps := Dependencies{EvaluationBindings: EvaluationBindings{
-		Repository:  repository,
-		Communities: communities,
-		Audit:       audit,
+		Repository: repository,
+		Audit:      audit,
 	}}
-	if deps.EvaluationBindings.Repository != repository || deps.EvaluationBindings.Communities != communities || deps.EvaluationBindings.Audit != audit {
+	if deps.EvaluationBindings.Repository != repository || deps.EvaluationBindings.Audit != audit {
 		t.Fatal("evaluation bindings did not preserve native contracts")
 	}
 }

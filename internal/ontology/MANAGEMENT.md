@@ -17,28 +17,27 @@ Removing the pin override explicitly unpins the definition. Existing corrections
 must be replaced using their ID and version or explicitly removed. Grouping
 retains the existing compatibility policy and every original source handle.
 
-## Definition parent meanings
+## Topic parents and direct membership
 
-The existing definition editor offers Organization only for topics, entity
-classes, and predicate concepts. Entity classes additionally offer Subclass of:
-every member of the child class is also a member of its parent class. Predicate
-concepts additionally offer Subproperty of: each use of the child predicate is a
-more specific use of its parent predicate. These edits do not expand Recall.
+The definition editor supports topics. A topic's optional `parent_id` organizes
+the catalog; it does not establish factual meaning or expand Recall to descendants.
+The server checks active topic parents, cycles, and the 32-link depth bound.
+Catalog pages are partial: an existing parent ID remains intact even when its
+topic is not in the loaded page.
 
-An absent `parent_relation` remains organizational; loading or saving a legacy
-parent never infers semantic meaning. A semantic relation requires a compatible
-parent. The server still checks the definition kind, matching class EntityKind,
-active parents, cycles, and the 32-link depth bound. Catalog pages are partial:
-an existing parent ID and meaning remain intact even when that parent is not in
-the loaded page.
+Set or clear Parent definition ID, save, reload, preview, and publish through
+the existing draft workflow. Rollback appends a revision restoring the prior
+parent. Entity classes, predicate concepts, `parent_relation`, Subclass of, and
+Subproperty of are retired under
+`adr/0017-evidence-only-memory-without-factual-relationships.md`; the graph-specific
+refinement in `adr/0017-automatic-ontology-refinement.md` has no current path.
 
-Choosing Organization only retains the parent and omits `parent_relation` from
-the replacement definition. Clearing the parent clears both `parent_id` and
-`parent_relation`; changing definition kind clears both editor choices. Other
-definition fields remain in the replacement. Details, draft review, and
-publication history show the stored meaning, or No parent for a root definition.
-Save, reload, preview, and publish the draft through the existing workflow.
-Rollback appends a new revision restoring the prior parent and meaning.
+Assignments classify eligible shared Evidence directly. Related-topic hints
+count authorized, eligible unseen Evidence and report truncation. Explicit
+`topic_ids` select the union of current direct memberships without descendant
+expansion. Missing, foreign, and stale IDs share `topic_unavailable`; ordinary
+Recall reports unexpected topic-reader failures as optional degradation.
+Pause preserves current reads; disabling organization removes topic reads.
 
 Preview shares publication validation, changes no state, and calls no provider.
 Counts cover the currently eligible stored dependency set; examples contain at
@@ -53,9 +52,11 @@ reports team coverage without global scheduling, model, or budget information.
 Rollback appends a compensating publication after checking intervening record
 changes and restored source eligibility. Canonical Knowledge is never edited.
 
-The additive draft migration creates empty tables and indexes without a canonical
-backfill or table rewrite. It forces owner and shared-generation RLS. Down
-refuses populated history; production recovery rolls forward.
+Draft tables enforce owner and shared-generation RLS. The Evidence-only migration
+discards incompatible unfinished graph drafts and preserves compatible topic
+drafts and Evidence lineage. Stop incompatible instances and verify the matching
+backup before cutover. After destructive commit, restoration requires that backup;
+after new writes, recover forward unless separately approved.
 
 Validate the unchanged nine-case/19-source organization cohort, actual Recall
 comparisons, the locked manager-correction cohort and the registered exclusive

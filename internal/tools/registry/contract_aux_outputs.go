@@ -31,7 +31,7 @@ func exportMemoryPackOutputSchema() map[string]any {
 	return closedObject(
 		[]string{"artifact_json", "content_sha256", "filename", "counts", "omissions"},
 		map[string]any{
-			"artifact_json":  schemaString("Canonical dense-mem.memory-pack.v2.4 JSON.", memoryPackArtifactMaxLength),
+			"artifact_json":  schemaString("Canonical dense-mem.memory-pack.v3.0 JSON.", memoryPackArtifactMaxLength),
 			"content_sha256": sHA256Schema(),
 			"filename":       schemaString("Suggested artifact filename.", 256),
 			"counts":         countMapSchema(),
@@ -44,8 +44,8 @@ func memoryPackOmissionSchema() map[string]any {
 	return closedObject(
 		[]string{"item_id", "reason"},
 		map[string]any{
-			"item_id": schemaString("Artifact-local item ID.", 128),
-			"reason":  schemaString("Bounded omission reason.", 1000),
+			"item_id": schemaString("Evidence ID, or artifact for an unscoped omission.", 128),
+			"reason":  schemaString("All omission reasons for this item, separated by semicolons.", 1000),
 		},
 	)
 }

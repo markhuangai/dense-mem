@@ -39,7 +39,7 @@ func TestRecallAccuracyGenerationMatchesFrozenLock(t *testing.T) {
 	require.NoError(t, err)
 	corpus, err := LoadCorpus(manifestPath, manifest)
 	require.NoError(t, err)
-	require.NoError(t, validateV2CorpusRelationships(manifest, corpus))
+	require.NoError(t, validateEvidenceCorpus(manifest, corpus))
 	for _, item := range corpus {
 		input, err := json.Marshal(corpusRememberInput(item))
 		require.NoError(t, err)

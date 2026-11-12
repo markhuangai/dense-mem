@@ -246,14 +246,6 @@ legend {
 .config-toggle { width: min(280px, 100%); }
 .config-toggle span { color: var(--text); font-size: 14px; font-weight: 600; text-transform: none; }
 
-.team-dreaming-section { margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--border); }
-.team-dreaming-panel { display: grid; gap: 12px; }
-.team-dreaming-panel .section-heading { margin-bottom: 0; }
-.team-dreaming-form { display: grid; gap: 10px; }
-.team-dreaming-row { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 10px; align-items: center; }
-.team-dreaming-row .button-row { min-width: 0; }
-.team-dreaming-row select, .team-dreaming-row input[type="number"], .team-dreaming-row input[type="time"] { max-width: 360px; }
-
 .span {
   grid-column: 1 / -1;
 }
@@ -511,17 +503,6 @@ legend {
   align-items: center;
   padding: 12px 0 16px;
   border-top: 1px solid var(--border);
-}
-
-.dream-list-toolbar {
-  grid-template-columns: repeat(3, minmax(130px, 190px));
-}
-
-.dream-list-toolbar label {
-  display: grid;
-  gap: 6px;
-  color: var(--muted);
-  font-size: 12px;
 }
 
 .metrics-block {

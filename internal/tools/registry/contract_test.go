@@ -65,54 +65,19 @@ func TestContractRememberBoundaryContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	input := flatRelationshipForContent(strings.Repeat("a", memoryEntryMaxLength))
+	input := evidenceOnlyForContent(strings.Repeat("a", memoryEntryMaxLength))
 	if err := ValidateContractInput(remember, input, []string{"read", "write"}); err != nil {
 		t.Fatalf("boundary content rejected: %v", err)
 	}
-	oversized := flatRelationshipForContent(strings.Repeat("a", memoryEntryMaxLength+1))
+	oversized := evidenceOnlyForContent(strings.Repeat("a", memoryEntryMaxLength+1))
 	err = ValidateContractInput(remember, oversized, []string{"read", "write"})
 	if err == nil || !strings.Contains(err.Error(), "maximum length") {
 		t.Fatalf("oversized content err = %v, want maximum length", err)
 	}
 }
 
-func TestTraceOutputSchemaAllowsOwnerPrefixedSourceGroupKeys(t *testing.T) {
-	const ownerPrefixedSourceGroupKeyLength = len("owner:") + 36 + len(":") + 256
-	for name, schema := range map[string]map[string]any{
-		"trace evidence support": traceEvidenceSupportSchema(),
-	} {
-		t.Run(name, func(t *testing.T) {
-			property, ok := schemaProperties(schema)["source_group_key"]
-			if !ok {
-				t.Fatal("source_group_key schema is missing")
-			}
-			maxLength, ok := property["maxLength"].(int)
-			if !ok {
-				t.Fatalf("maxLength has type %T", property["maxLength"])
-			}
-			if maxLength < ownerPrefixedSourceGroupKeyLength {
-				t.Fatalf("maxLength = %d, want at least %d", maxLength, ownerPrefixedSourceGroupKeyLength)
-			}
-		})
-	}
-}
-
-func flatRelationshipForContent(content string) map[string]any {
-	return map[string]any{
-		"idempotency_key": "remember-test-batch",
-		"target_space":    "team_shared",
-		"evidence": []any{
-			map[string]any{"content": content},
-		},
-		"relationships": []any{map[string]any{
-			"ref":              "a-relationship",
-			"subject":          map[string]any{"name": "a", "entity_kind": "project"},
-			"predicate":        map[string]any{"proposed_key": "uses"},
-			"object":           map[string]any{"entity": map[string]any{"name": "a", "entity_kind": "product"}},
-			"polarity":         "+",
-			"evidence_indices": []any{0},
-		}},
-	}
+func evidenceOnlyForContent(content string) map[string]any {
+	return map[string]any{"idempotency_key": "remember-test-batch", "target_space": "team_shared", "evidence": []any{map[string]any{"content": content}}}
 }
 
 func TestContractSchemaHasNoPublicVersionMarker(t *testing.T) {
@@ -139,21 +104,6 @@ func TestPublicInputSchemasAvoidConverterHostileComposition(t *testing.T) {
 	}
 }
 
-func TestRememberDescriptionShowsEntityAndValueObjectShapes(t *testing.T) {
-	tool, err := requireTool(toolMap(t), ToolRemember)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, example := range []string{
-		`{"object":{"entity":{"name":"PostgreSQL","entity_kind":"product"}}}`,
-		`{"object":{"value":{"type":"string","value":"PostgreSQL"}}}`,
-	} {
-		if !strings.Contains(tool.Description, example) {
-			t.Fatalf("remember description is missing %s", example)
-		}
-	}
-}
-
 func TestContractCatalogMetadata(t *testing.T) {
 	tools := ContractTools()
 	if len(tools) != len(ContractToolNames()) {
@@ -177,7 +127,8 @@ func TestContractCatalogMetadata(t *testing.T) {
 	}
 	for _, name := range []string{
 		ToolRemember,
-		ToolCorrectRelationship,
+		ToolIngestSession,
+		ToolRetractEvidence,
 		ToolRecallMemory,
 		ToolTraceMemory,
 		ToolExportMemoryPack,
@@ -216,7 +167,7 @@ func TestRememberRejectsMixedSourceRevisionBatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = ValidateContractInput(remember, withRequiredFlatRelationship(map[string]any{
+	err = ValidateContractInput(remember, withEvidenceOnlyRequest(map[string]any{
 		"evidence": []any{
 			map[string]any{
 				"content":         "first source fragment",
@@ -260,173 +211,10 @@ func TestRememberRejectsMixedSourceRevisionProvenance(t *testing.T) {
 			evidence := []any{cloneMap(base[0].(map[string]any)), cloneMap(base[1].(map[string]any))}
 			test.mutate(evidence[1].(map[string]any))
 
-			err := ValidateContractInput(remember, withRequiredFlatRelationship(map[string]any{"evidence": evidence}), []string{"read", "write"})
+			err := ValidateContractInput(remember, withEvidenceOnlyRequest(map[string]any{"evidence": evidence}), []string{"read", "write"})
 
 			require.ErrorContains(t, err, "including source provenance")
 		})
-	}
-}
-
-func TestFlatRelationshipsRequireExactlyOneObject(t *testing.T) {
-	remember, err := requireTool(toolMap(t), ToolRemember)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cases := []struct {
-		name   string
-		mutate func(map[string]any)
-	}{
-		{
-			name: "missing object",
-			mutate: func(input map[string]any) {
-				delete(relationship(input)["object"].(map[string]any), "entity")
-			},
-		},
-		{
-			name: "both object forms",
-			mutate: func(input map[string]any) {
-				relationship(input)["object"].(map[string]any)["value"] = map[string]any{
-					"type": "string", "value": "PostgreSQL",
-				}
-			},
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			input := validFlatRelationshipSubmission()
-			tc.mutate(input)
-			err := ValidateContractInput(remember, input, []string{"read", "write"})
-			if err == nil || !strings.Contains(err.Error(), "object requires exactly one entity or value") {
-				t.Fatalf("ValidateContractInput err = %v, want object choice error", err)
-			}
-		})
-	}
-}
-
-func TestFlatRelationshipCorrectionTargetRequiresCompleteShape(t *testing.T) {
-	remember, err := requireTool(toolMap(t), ToolRemember)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cases := []struct {
-		name   string
-		target map[string]any
-	}{
-		{
-			name: "missing relationship id",
-			target: map[string]any{
-				"expected_version": 1,
-			},
-		},
-		{
-			name: "missing expected version",
-			target: map[string]any{
-				"relationship_id": uuid.NewString(),
-			},
-		},
-		{
-			name: "zero expected version",
-			target: map[string]any{
-				"relationship_id":  uuid.NewString(),
-				"expected_version": 0,
-			},
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			input := validFlatRelationshipSubmission()
-			relationship(input)["correction_target"] = tc.target
-			err := ValidateContractInput(remember, input, []string{"read", "write"})
-			if err == nil || !strings.Contains(err.Error(), "correction_target") {
-				t.Fatalf("ValidateContractInput err = %v, want correction_target error", err)
-			}
-		})
-	}
-}
-
-func TestFlatRelationshipConflictContextRequiresCompleteShape(t *testing.T) {
-	remember, err := requireTool(toolMap(t), ToolRemember)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cases := []struct {
-		name    string
-		context map[string]any
-	}{
-		{
-			name: "missing conflict id",
-			context: map[string]any{
-				"expected_version": 1,
-			},
-		},
-		{
-			name: "missing expected version",
-			context: map[string]any{
-				"conflict_id": uuid.NewString(),
-			},
-		},
-		{
-			name: "zero expected version",
-			context: map[string]any{
-				"conflict_id":      uuid.NewString(),
-				"expected_version": 0,
-			},
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			input := validFlatRelationshipSubmission()
-			relationship(input)["conflict_context"] = tc.context
-			err := ValidateContractInput(remember, input, []string{"read", "write"})
-			if err == nil || !strings.Contains(err.Error(), "conflict_context") {
-				t.Fatalf("ValidateContractInput err = %v, want conflict_context error", err)
-			}
-		})
-	}
-
-	validInput := validFlatRelationshipSubmission()
-	relationship(validInput)["conflict_context"] = map[string]any{
-		"conflict_id":      uuid.NewString(),
-		"expected_version": 1,
-	}
-	if err := ValidateContractInput(remember, validInput, []string{"read", "write"}); err != nil {
-		t.Fatalf("ValidateContractInput valid conflict_context err = %v", err)
-	}
-}
-
-func TestFlatRelationshipValidityFieldsBelongToRelationship(t *testing.T) {
-	remember, err := requireTool(toolMap(t), ToolRemember)
-	if err != nil {
-		t.Fatal(err)
-	}
-	baseInput := validFlatRelationshipSubmission()
-	baseRelationship := relationship(baseInput)
-	baseRelationship["valid_from"] = "2026-07-01T00:00:00Z"
-	baseRelationship["valid_to"] = "2026-12-31T00:00:00Z"
-	baseRelationship["client_comment"] = "from release planning evidence"
-	if err := ValidateContractInput(remember, baseInput, []string{"read", "write"}); err != nil {
-		t.Fatalf("relationship-level validity fields rejected: %v", err)
-	}
-
-	invertedInput := validFlatRelationshipSubmission()
-	invertedRelationship := relationship(invertedInput)
-	invertedRelationship["valid_from"] = "2026-12-31T00:00:00Z"
-	invertedRelationship["valid_to"] = "2026-07-01T00:00:00Z"
-	err = ValidateContractInput(remember, invertedInput, []string{"read", "write"})
-	if err == nil || !strings.Contains(err.Error(), "valid_to") {
-		t.Fatalf("ValidateContractInput err = %v, want inverted validity rejection", err)
-	}
-
-	badInput := validFlatRelationshipSubmission()
-	relationship(badInput)["supports"] = []any{map[string]any{
-		"evidence_index": 0,
-		"start":          0,
-		"end":            26,
-		"valid_from":     "2026-07-01T00:00:00Z",
-	}}
-	err = ValidateContractInput(remember, badInput, []string{"read", "write"})
-	if err == nil {
-		t.Fatal("evidence-level valid_from accepted")
 	}
 }
 
@@ -453,7 +241,7 @@ func TestDefaultRecallDoesNotPermitCandidatesOrHypotheses(t *testing.T) {
 			t.Fatalf("recall result exposes %s", forbidden)
 		}
 	}
-	for _, required := range []string{"related_relationships", "related_communities", "search_states", "degradations"} {
+	for _, required := range []string{"related_topics", "topics_truncated", "search_states", "degradations"} {
 		if _, ok := props[required]; !ok {
 			t.Fatalf("recall output missing %s", required)
 		}
@@ -470,28 +258,6 @@ func TestDefaultRecallDoesNotPermitCandidatesOrHypotheses(t *testing.T) {
 	}
 }
 
-func TestRecallRelatedRelationshipSchemaIncludesSpaceKind(t *testing.T) {
-	recall, err := requireTool(toolMap(t), ToolRecallMemory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	outputProperties := schemaProperties(recall.OutputSchema)
-	relatedRelationships := outputProperties["related_relationships"]
-	item, ok := relatedRelationships["items"].(map[string]any)
-	if !ok {
-		t.Fatalf("related_relationships item schema = %#v", relatedRelationships["items"])
-	}
-	itemProperties := schemaProperties(item)
-	spaceKind := itemProperties["space_kind"]
-	enum, ok := spaceKind["enum"].([]string)
-	if !ok || !slices.Contains(enum, string(domain.MemorySpacePrivate)) {
-		t.Fatalf("space_kind enum = %#v", spaceKind["enum"])
-	}
-	if !slices.Contains(schemaRequiredFields(item), "space_kind") {
-		t.Fatalf("related relationship required fields = %#v", schemaRequiredFields(item))
-	}
-}
-
 func TestCanonicalInputFieldNames(t *testing.T) {
 	tools := toolMap(t)
 	cases := []struct {
@@ -500,12 +266,11 @@ func TestCanonicalInputFieldNames(t *testing.T) {
 		schemaRequired []string
 		forbidden      []string
 	}{
-		{ToolRemember, []string{"evidence", "relationships"}, nil, []string{"contract_version", "entity_hints", "relationship_hints", "proposal"}},
-		{ToolCorrectRelationship, []string{"action", "relationship_id", "expected_version", "patch", "supports", "reason", "submission_id", "confirmation_token", "selection"}, []string{"action", "idempotency_key"}, []string{"operation", "source_entity_id", "target_entity_id", "owned_observation_ids", "dry_run", "impact_token", "evidence"}},
-		{ToolRecallMemory, []string{"known_evidence_ids", "known_relationship_ids", "expand_from_entity_ids"}, nil, []string{"include_evidence", "use_communities"}},
-		{ToolTraceMemory, []string{"include_verification", "include_transitions", "max_depth", "predicate_keys", "topic", "min_relevance"}, nil, []string{"max_chars"}},
+		{ToolRemember, []string{"evidence"}, nil, []string{"contract_version", "entities", "relationships", "entity_hints", "relationship_hints", "proposal"}},
+		{ToolRecallMemory, []string{"known_evidence_ids", "topic_ids", "topic_limit"}, nil, []string{"include_evidence", "use_communities"}},
+		{ToolTraceMemory, []string{"evidence_id", "include_transitions", "include_evidence_content", "max_events", "max_fragment_content_runes"}, nil, []string{"max_chars"}},
 		{ToolSubmitRecallSessionFeedback, []string{"recalls"}, nil, nil},
-		{ToolExportMemoryPack, []string{"relationship_ids"}, []string{"name", "relationship_ids"}, []string{"include_support"}},
+		{ToolExportMemoryPack, []string{"evidence_ids"}, []string{"name", "evidence_ids"}, []string{"include_support"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.tool, func(t *testing.T) {
@@ -525,196 +290,6 @@ func TestCanonicalInputFieldNames(t *testing.T) {
 				if _, ok := props[field]; ok {
 					t.Errorf("contains legacy field %s", field)
 				}
-			}
-		})
-	}
-}
-
-func TestCorrectionRequiresSubmitOrConfirmFields(t *testing.T) {
-	tool, err := requireTool(toolMap(t), ToolCorrectRelationship)
-	if err != nil {
-		t.Fatal(err)
-	}
-	submit := map[string]any{
-		"action":           "submit",
-		"relationship_id":  "00000000-0000-0000-0000-000000000611",
-		"expected_version": 2,
-		"patch":            map[string]any{"predicate": map[string]any{"key": "works_with"}},
-		"supports":         []any{map[string]any{"evidence_id": "00000000-0000-0000-0000-000000000612", "start": 0, "end": 8}},
-		"reason":           "predicate resolved incorrectly",
-		"idempotency_key":  "correction-submit-1",
-	}
-	if err := ValidateContractInput(tool, submit, []string{"read", "write"}); err != nil {
-		t.Fatalf("submit rejected: %v", err)
-	}
-	confirm := map[string]any{
-		"action":             "confirm",
-		"submission_id":      "00000000-0000-0000-0000-000000000613",
-		"confirmation_token": "00000000-0000-0000-0000-000000000614",
-		"selection":          map[string]any{"subject_entity_id": "00000000-0000-0000-0000-000000000615"},
-		"idempotency_key":    "correction-confirm-1",
-	}
-	if err := ValidateContractInput(tool, confirm, []string{"read", "write"}); err != nil {
-		t.Fatalf("confirm rejected: %v", err)
-	}
-
-	for _, test := range []struct {
-		name      string
-		input     map[string]any
-		wantError string
-	}{
-		{
-			name: "submit with entity id",
-			input: mergeMap(submit, map[string]any{
-				"patch":           map[string]any{"object_entity": map[string]any{"entity_id": "00000000-0000-0000-0000-000000000616"}},
-				"idempotency_key": "correction-submit-entity-id",
-			}),
-		},
-		{
-			name: "submit with entity name and kind",
-			input: mergeMap(submit, map[string]any{
-				"patch":           map[string]any{"object_entity": map[string]any{"name": "PostgreSQL", "entity_kind": "product"}},
-				"idempotency_key": "correction-submit-entity-name",
-			}),
-		},
-		{
-			name: "submit entity missing kind",
-			input: mergeMap(submit, map[string]any{
-				"patch":           map[string]any{"object_entity": map[string]any{"name": "PostgreSQL"}},
-				"idempotency_key": "correction-submit-entity-missing-kind",
-			}),
-			wantError: "requires entity_id alone or name with entity_kind",
-		},
-		{
-			name: "submit entity mixes alternatives",
-			input: mergeMap(submit, map[string]any{
-				"patch": map[string]any{"subject_entity": map[string]any{
-					"entity_id": "00000000-0000-0000-0000-000000000617", "name": "PostgreSQL", "entity_kind": "product",
-				}},
-				"idempotency_key": "correction-submit-entity-mixed",
-			}),
-			wantError: "requires entity_id alone or name with entity_kind",
-		},
-		{
-			name: "submit missing supports",
-			input: map[string]any{
-				"action": "submit", "relationship_id": "00000000-0000-0000-0000-000000000611", "expected_version": 2,
-				"patch":  map[string]any{"predicate": map[string]any{"key": "works_with"}},
-				"reason": "predicate resolved incorrectly", "idempotency_key": "correction-submit-missing",
-			},
-			wantError: "supports is required",
-		},
-		{
-			name: "submit with confirmation field",
-			input: map[string]any{
-				"action": "submit", "relationship_id": "00000000-0000-0000-0000-000000000611", "expected_version": 2,
-				"patch":    map[string]any{"predicate": map[string]any{"key": "works_with"}},
-				"supports": []any{map[string]any{"evidence_id": "00000000-0000-0000-0000-000000000612", "start": 0, "end": 8}},
-				"reason":   "predicate resolved incorrectly", "submission_id": "not-accepted",
-				"idempotency_key": "correction-submit-mixed",
-			},
-			wantError: "submission_id is not accepted for action submit",
-		},
-		{
-			name: "confirm with submit field",
-			input: map[string]any{
-				"action": "confirm", "submission_id": "00000000-0000-0000-0000-000000000613", "confirmation_token": "00000000-0000-0000-0000-000000000614",
-				"selection": map[string]any{"subject_entity_id": "00000000-0000-0000-0000-000000000615"}, "relationship_id": "not-accepted",
-				"idempotency_key": "correction-confirm-mixed",
-			},
-			wantError: "relationship_id is not accepted for action confirm",
-		},
-		{
-			name: "confirm with empty selection",
-			input: map[string]any{
-				"action": "confirm", "submission_id": "00000000-0000-0000-0000-000000000613", "confirmation_token": "00000000-0000-0000-0000-000000000614",
-				"selection": map[string]any{}, "idempotency_key": "correction-confirm-empty",
-			},
-			wantError: "selection must choose at least one Entity candidate",
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			err := ValidateContractInput(tool, test.input, []string{"read", "write"})
-			if test.wantError == "" {
-				if err != nil {
-					t.Fatalf("ValidateContractInput: %v", err)
-				}
-				return
-			}
-			if err == nil || !strings.Contains(err.Error(), test.wantError) {
-				t.Fatalf("error = %v; want %q", err, test.wantError)
-			}
-		})
-	}
-}
-
-func TestCorrectRelationshipRejectsMalformedUUIDsAtContractBoundary(t *testing.T) {
-	tool, err := requireTool(toolMap(t), ToolCorrectRelationship)
-	if err != nil {
-		t.Fatal(err)
-	}
-	newSubmit := func() map[string]any {
-		return map[string]any{
-			"action":           "submit",
-			"relationship_id":  "00000000-0000-0000-0000-000000000631",
-			"expected_version": 2,
-			"patch":            map[string]any{"predicate": map[string]any{"key": "works_with"}},
-			"supports":         []any{map[string]any{"evidence_id": "00000000-0000-0000-0000-000000000632", "start": 0, "end": 8}},
-			"reason":           "predicate resolved incorrectly",
-			"idempotency_key":  "correction-uuid-validation",
-		}
-	}
-	newConfirm := func() map[string]any {
-		return map[string]any{
-			"action":             "confirm",
-			"submission_id":      "00000000-0000-0000-0000-000000000633",
-			"confirmation_token": "00000000-0000-0000-0000-000000000634",
-			"selection":          map[string]any{"subject_entity_id": "00000000-0000-0000-0000-000000000635"},
-			"idempotency_key":    "correction-uuid-validation-confirm",
-		}
-	}
-	cases := []struct {
-		name     string
-		input    func() map[string]any
-		mutate   func(map[string]any)
-		wantPath string
-	}{
-		{name: "relationship", input: newSubmit, mutate: func(input map[string]any) {
-			input["relationship_id"] = "relationship-source"
-		}, wantPath: "relationship_id"},
-		{name: "support evidence", input: newSubmit, mutate: func(input map[string]any) {
-			input["supports"].([]any)[0].(map[string]any)["evidence_id"] = "evidence-source"
-		}, wantPath: "supports[0].evidence_id"},
-		{name: "subject entity patch", input: newSubmit, mutate: func(input map[string]any) {
-			input["patch"] = map[string]any{"subject_entity": map[string]any{"entity_id": "entity-source"}}
-		}, wantPath: "patch.subject_entity.entity_id"},
-		{name: "object entity patch", input: newSubmit, mutate: func(input map[string]any) {
-			input["patch"] = map[string]any{"object_entity": map[string]any{"entity_id": "entity-source"}}
-		}, wantPath: "patch.object_entity.entity_id"},
-		{name: "submission", input: newConfirm, mutate: func(input map[string]any) {
-			input["submission_id"] = "correction-submission"
-		}, wantPath: "submission_id"},
-		{name: "confirmation token", input: newConfirm, mutate: func(input map[string]any) {
-			input["confirmation_token"] = "confirmation-token"
-		}, wantPath: "confirmation_token"},
-		{name: "subject selection", input: newConfirm, mutate: func(input map[string]any) {
-			input["selection"].(map[string]any)["subject_entity_id"] = "entity-selected"
-		}, wantPath: "selection.subject_entity_id"},
-		{name: "object selection", input: newConfirm, mutate: func(input map[string]any) {
-			input["selection"] = map[string]any{"object_entity_id": "entity-selected"}
-		}, wantPath: "selection.object_entity_id"},
-	}
-	for _, test := range cases {
-		t.Run(test.name, func(t *testing.T) {
-			input := test.input()
-			test.mutate(input)
-			err := ValidateContractInput(tool, input, []string{"read", "write"})
-			if err == nil || !strings.Contains(err.Error(), test.wantPath+" must be a valid UUID") {
-				t.Fatalf("ValidateContractInput error = %v, want %s UUID error", err, test.wantPath)
-			}
-			issues := ValidateContractInputIssues(tool, input, []string{"read", "write"})
-			if len(issues.Issues) != 1 || issues.Issues[0].Code != "format" || !strings.Contains(issues.Issues[0].Message, test.wantPath) {
-				t.Fatalf("validation issues = %#v, want one format issue for %s", issues, test.wantPath)
 			}
 		})
 	}

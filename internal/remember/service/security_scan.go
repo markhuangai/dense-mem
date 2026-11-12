@@ -4,10 +4,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"html"
 	"math"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"unicode"
@@ -113,12 +113,9 @@ type submissionSecurityInput struct {
 
 const (
 	submissionSecuritySourceEvidence = "evidence"
-	submissionSecuritySourceProposal = "proposal"
 
-	// SecuritySourceEvidence and SecuritySourceProposal identify the bounded
-	// input origin carried by batch scan signals.
+	// SecuritySourceEvidence identifies submitted text in bounded scan signals.
 	SecuritySourceEvidence = submissionSecuritySourceEvidence
-	SecuritySourceProposal = submissionSecuritySourceProposal
 )
 
 func buildOverridePattern() string {
@@ -176,70 +173,15 @@ func ScanSubmissionBatch(contents []string) (SubmissionSecurityBatchScan, error)
 	return scanSubmissionInputs(inputs)
 }
 
-func scanSubmissionWithProviderProposal(contents []string, proposal map[string]any) (SubmissionSecurityBatchScan, error) {
-	inputs := make([]submissionSecurityInput, 0)
-	for index, content := range contents {
-		inputs = append(inputs, submissionSecurityInput{
-			content:       content,
-			source:        submissionSecuritySourceEvidence,
-			evidenceIndex: index,
-		})
+func scanRememberEvidence(evidence []RememberEvidenceInput) (SubmissionSecurityBatchScan, error) {
+	inputs := make([]submissionSecurityInput, 0, 2*len(evidence))
+	for index, item := range evidence {
+		inputs = append(inputs, submissionSecurityInput{content: item.Content, source: submissionSecuritySourceEvidence, evidenceIndex: index})
+		if item.Source != "" {
+			inputs = append(inputs, submissionSecurityInput{content: item.Source, source: "provenance", evidenceIndex: index, path: fmt.Sprintf("/evidence/%d/source", index)})
+		}
 	}
-	if len(proposal) == 0 {
-		return scanSubmissionInputs(inputs)
-	}
-	proposalInputs, err := submissionSecurityProposalInputs(proposal)
-	if err != nil {
-		return SubmissionSecurityBatchScan{Items: make([]SubmissionSecurityScan, len(inputs)), EvidenceCount: len(contents)}, ErrEvidenceSecurityRejected
-	}
-	inputs = append(inputs, proposalInputs...)
 	return scanSubmissionInputs(inputs)
-}
-
-// ScanSubmissionWithProviderProposal scans submitted evidence and typed
-// proposal strings as one admission decision.
-func ScanSubmissionWithProviderProposal(contents []string, proposal map[string]any) (SubmissionSecurityBatchScan, error) {
-	return scanSubmissionWithProviderProposal(contents, proposal)
-}
-
-func submissionSecurityProposalInputs(proposal map[string]any) ([]submissionSecurityInput, error) {
-	encoded, err := json.Marshal(proposal)
-	if err != nil {
-		return nil, err
-	}
-	var normalized any
-	if err := json.Unmarshal(encoded, &normalized); err != nil {
-		return nil, err
-	}
-	inputs := make([]submissionSecurityInput, 0)
-	appendSubmissionSecurityProposalValues(normalized, "", &inputs)
-	return inputs, nil
-}
-
-func appendSubmissionSecurityProposalValues(value any, path string, inputs *[]submissionSecurityInput) {
-	appendValue := func(content, location string) {
-		*inputs = append(*inputs, submissionSecurityInput{content: content, source: submissionSecuritySourceProposal,
-			evidenceIndex: -1, path: diagnosticProposalPath(location)})
-	}
-	switch typed := value.(type) {
-	case string:
-		appendValue(typed, path)
-	case []any:
-		for index, item := range typed {
-			appendSubmissionSecurityProposalValues(item, diagnosticArrayPath(path, index), inputs)
-		}
-	case map[string]any:
-		keys := make([]string, 0, len(typed))
-		for key := range typed {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		for _, key := range keys {
-			location := path + "/" + strings.ReplaceAll(strings.ReplaceAll(key, "~", "~0"), "/", "~1")
-			appendValue(key, location)
-			appendSubmissionSecurityProposalValues(typed[key], location, inputs)
-		}
-	}
 }
 
 func scanSubmissionInputs(inputs []submissionSecurityInput) (SubmissionSecurityBatchScan, error) {

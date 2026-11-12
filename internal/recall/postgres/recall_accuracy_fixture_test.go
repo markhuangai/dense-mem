@@ -9,7 +9,6 @@ import (
 	"slices"
 	"testing"
 	"time"
-	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/evalharness"
@@ -22,14 +21,12 @@ import (
 
 type recallAccuracyFixture struct {
 	*recallOntologyFixture
-	cohort     []evalharness.RecallAccuracyCase
-	mapping    evalharness.KnowledgeMapping
-	sources    map[string]evalharness.RecallAccuracySource
-	evidence   map[string]ontology.SourceHandle
-	entities   map[string]string
-	predicates map[string]ontology.SourceHandle
-	vectors    bool
-	preserved  string
+	cohort    []evalharness.RecallAccuracyCase
+	mapping   evalharness.KnowledgeMapping
+	sources   map[string]evalharness.RecallAccuracySource
+	evidence  map[string]ontology.SourceHandle
+	vectors   bool
+	preserved string
 }
 
 func newRecallAccuracyFixture(t *testing.T, reverseIDs, vectors bool) *recallAccuracyFixture {
@@ -37,7 +34,7 @@ func newRecallAccuracyFixture(t *testing.T, reverseIDs, vectors bool) *recallAcc
 	f := &recallAccuracyFixture{recallOntologyFixture: newRecallOntologyFixture(t), cohort: evalharness.RecallAccuracyCohort(),
 		mapping: evalharness.KnowledgeMapping{BySourceDocID: map[string]evalharness.Ref{}},
 		sources: map[string]evalharness.RecallAccuracySource{}, evidence: map[string]ontology.SourceHandle{},
-		entities: map[string]string{}, predicates: map[string]ontology.SourceHandle{}, vectors: vectors}
+		vectors: vectors}
 	var evidenceTimestampDefault string
 	require.NoError(t, f.admin.Raw(`SELECT column_default FROM information_schema.columns
 		WHERE table_schema=current_schema() AND table_name='evidence_fragments' AND column_name='created_at'`).Row().Scan(&evidenceTimestampDefault))
@@ -71,27 +68,7 @@ func newRecallAccuracyFixture(t *testing.T, reverseIDs, vectors bool) *recallAcc
 		f.sources[id] = source
 		f.evidence[source.ID] = ontology.SourceHandle{Kind: ontology.EvidenceSource, ID: id, Version: 1}
 		f.mapping.BySourceDocID[source.ID] = evalharness.Ref{Type: "evidence", ID: id, SourceDocID: source.ID}
-		entity := func(kind, name string) string {
-			key := kind + ":" + name
-			if f.entities[key] == "" {
-				f.entities[key] = createSemanticEntity(t, ctx, f.knowledge, f.team, f.owners[owner], kind, name).EntityID
-			}
-			return f.entities[key]
-		}
-		subject, object := entity(source.SubjectKind, source.Subject), entity(source.ObjectKind, source.Object)
-		predicate, err := f.knowledge.EnsureSemanticReviewPredicateCandidate(ctx, knowledge.EnsureSemanticPredicateCandidateInput{
-			TeamID: f.team, OwnerProfileID: f.owners[owner], Predicate: source.Predicate, RelationshipKind: "state", SubjectKind: source.SubjectKind, ObjectKind: source.ObjectKind,
-		})
-		require.NoError(t, err)
-		f.predicates[source.ID] = ontology.SourceHandle{Kind: ontology.PredicateSource, ID: predicate.PredicateKey, Version: int64(predicate.Version)}
-		decision := applySemanticDecision(t, ctx, f.knowledge, ApplyRelationshipDecisionInput{
-			TeamID: f.team, OwnerProfileID: f.owners[owner], IngestID: ingest.IngestID,
-			SubjectEntityID: subject, PredicateKey: predicate.PredicateKey, PredicateVersion: predicate.Version, ObjectEntityID: object,
-			Polarity: source.Polarity, ValidFrom: accuracyTime(t, source.ValidFrom), ValidTo: accuracyTime(t, source.ValidTo),
-			Support: &EvidenceSupportInput{FragmentID: id, SourceGroupKey: source.ID, SpanStart: 0, SpanEnd: utf8.RuneCountInString(source.Text), Quote: source.Text, Authority: "primary"},
-		})
-		require.NotNil(t, decision.Relationship)
-		for documentIndex, ref := range []ontology.SourceHandle{f.evidence[source.ID], {Kind: ontology.RelationshipSource, ID: decision.Relationship.RelationshipID, Version: int64(decision.Relationship.Version)}} {
+		for documentIndex, ref := range []ontology.SourceHandle{f.evidence[source.ID]} {
 			document, err := f.search.UpsertSearchDocument(ctx, knowledge.UpsertSearchDocumentInput{
 				TeamID: f.team, OwnerProfileID: f.owners[owner], SpaceID: f.space, SpaceGeneration: f.generation,
 				SourceKind: string(ref.Kind), SourceID: ref.ID, SourceVersion: ref.Version, DocumentText: source.Text,
@@ -129,15 +106,12 @@ func newRecallAccuracyFixture(t *testing.T, reverseIDs, vectors bool) *recallAcc
 		hub.SourceIDs = append(hub.SourceIDs, c.Concept.SourceIDs...)
 	}
 	for _, concept := range concepts {
-		definition := ontology.Record{ID: uuid.NewString(), Kind: ontology.Kind(concept.Kind), Definition: &ontology.Definition{
+		definition := ontology.Record{ID: uuid.NewString(), Kind: ontology.Topic, Definition: &ontology.Definition{
 			Key: concept.Key, Label: concept.Key, Aliases: concept.Aliases}}
 		records := []ontology.Record{definition}
 		seen := map[string]bool{}
 		for _, sourceID := range concept.SourceIDs {
 			handle := f.evidence[sourceID]
-			if definition.Kind == ontology.PredicateConcept {
-				handle = f.predicates[sourceID]
-			}
 			key := ontology.SourceKey(handle)
 			if !seen[key] {
 				records = append(records, f.assignment(t, definition.ID, handle))
@@ -174,14 +148,14 @@ func accuracyTime(t testing.TB, value string) *time.Time {
 
 func (f *recallAccuracyFixture) canonicalSnapshot(t testing.TB) string {
 	t.Helper()
-	var evidence, relationships string
+	var evidence string
 	require.NoError(t, f.rls.WithTeamTx(f.actor(2, "member"), f.app, f.team, func(tx *gorm.DB) error {
 		if err := tx.Raw(`SELECT COALESCE(jsonb_agg(to_jsonb(e) ORDER BY fragment_id)::text,'[]') FROM evidence_fragments e WHERE team_id=?::uuid`, f.team).Scan(&evidence).Error; err != nil {
 			return err
 		}
-		return tx.Raw(`SELECT COALESCE(jsonb_agg(to_jsonb(r) ORDER BY relationship_id)::text,'[]') FROM relationship_records r WHERE team_id=?::uuid`, f.team).Scan(&relationships).Error
+		return nil
 	}))
-	return sha256Hex(evidence + relationships)
+	return sha256Hex(evidence)
 }
 
 type recallAccuracyObservation struct {
@@ -219,18 +193,12 @@ func (f *recallAccuracyFixture) branchTrace(t *testing.T, batch *recallcontract.
 	return branches
 }
 
-func (f *recallAccuracyFixture) observe(t *testing.T, c evalharness.RecallAccuracyCase, organization bool, variant string, expand bool) recallAccuracyObservation {
+func (f *recallAccuracyFixture) observe(t *testing.T, c evalharness.RecallAccuracyCase, organization bool, variant string) recallAccuracyObservation {
 	t.Helper()
 	input := RecallEvidenceInput{TeamID: f.team, SpaceID: f.space, Query: c.Case.Query, Limit: c.Case.Limit,
 		OrganizationEnabled: organization, ValidAt: accuracyTime(t, c.Case.ValidAt)}
 	if f.vectors {
 		input.QueryEmbedding = []float32{1, 0, 0}
-	}
-	if expand {
-		input.Query = ""
-		input.QueryEmbedding = nil
-		first := c.Sources[0]
-		input.ExpandFromEntityIDs = []string{f.entities[first.SubjectKind+":"+first.Subject]}
 	}
 	require.Equal(t, 10, input.Limit)
 	contract, err := f.search.GetActiveSearchContract(f.actor(2, "member"))

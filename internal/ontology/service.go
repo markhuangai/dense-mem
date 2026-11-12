@@ -138,7 +138,7 @@ func (s *Service) Organize(ctx context.Context, teamID string, input contract.Or
 	observation.Request, observation.SourceDependencies = &request, receipt.Sources
 	observation.Stage = "prepared"
 	s.provider.Observe(ctx, observation)
-	response := assessment.Response{HierarchyUpdates: []assessment.HierarchyUpdate{}, RequestID: request.RequestID, Definitions: []assessment.Definition{}, Items: []assessment.Decision{}, Equivalence: []assessment.Equivalence{}}
+	response := assessment.Response{RequestID: request.RequestID, Definitions: []assessment.Definition{}, Items: []assessment.Decision{}, Equivalence: []assessment.Equivalence{}}
 	if len(request.Items) > 0 {
 		deterministic := true
 		for _, item := range request.Items {

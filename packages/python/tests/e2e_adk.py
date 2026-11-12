@@ -119,11 +119,10 @@ async def main():
     for entry in response.memories:
         assert entry.custom_metadata["densemem"]["space_kind"] == "private"
         assert entry.id == entry.custom_metadata["densemem"]["evidence_id"]
-    related = response.custom_metadata["densemem"]["related_relationships"]
-    assert related
+    assert "related_topics" in response.custom_metadata["densemem"]
     client = DenseMemClient(endpoint, token=keys["alice"])
-    trace = await client.trace_memory({"relationship_id": related[0]["relationship_id"]})
-    for evidence in trace["evidence"]:
+    trace = await client.trace_memory({"evidence_id": sorted(evidence_ids)[0]})
+    for evidence in trace["occurrences"]:
         provenance = evidence["session"]
         assert provenance["framework"] == "google-adk" and provenance["session_id"] == live.id
         assert (

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"strings"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
@@ -36,13 +35,13 @@ func rememberConflictProcessError(
 	if cause == nil {
 		cause = rememberapp.ErrRememberConflict
 	}
-	evidence, relationshipResults := rememberFailureResults(input, rememberapp.TerminalNotStoredReasonForError(rememberapp.TerminalErrorIdempotencyConflict))
+	evidence := rememberFailureResults(input, rememberapp.TerminalNotStoredReasonForError(rememberapp.TerminalErrorIdempotencyConflict))
 	status := &rememberapp.SubmissionStatusResult{
 		SpaceKind:       input.SpaceKind,
 		ContractVersion: domain.ContractVersion, SubmissionID: submissionID, SubmissionKind: "remember",
 		ProcessingState: "failed", SearchState: "not_required", CorrelationID: rememberProcessCorrelationID(input.Metadata),
-		Evidence: evidence, RelationshipResults: relationshipResults,
-		Errors: []rememberapp.SubmissionStatusError{rememberapp.StatusErrorWithDetails(rememberapp.SubmissionErrorIdempotencyConflict, "idempotency_conflict", map[string]any{"component": "remember.idempotency", "server_owned": true})},
+		Evidence: evidence,
+		Errors:   []rememberapp.SubmissionStatusError{rememberapp.StatusErrorWithDetails(rememberapp.SubmissionErrorIdempotencyConflict, "idempotency_conflict", map[string]any{"component": "remember.idempotency", "server_owned": true})},
 	}
 	return &rememberapp.RememberProcessError{Status: status, Err: cause}
 }
@@ -50,7 +49,7 @@ func rememberConflictProcessError(
 func rememberFailureResults(
 	input rememberapp.RememberProcessRequest,
 	notStoredReason string,
-) ([]rememberapp.SubmissionEvidenceStatus, []rememberapp.SubmissionRelationshipResult) {
+) []rememberapp.SubmissionEvidenceStatus {
 	message, remediation := rememberapp.NotStoredGuidance(notStoredReason)
 	evidence := make([]rememberapp.SubmissionEvidenceStatus, len(input.Evidence))
 	for index := range evidence {
@@ -65,52 +64,7 @@ func rememberFailureResults(
 			Remediation:           remediation,
 		}
 	}
-	refs := rememberFailureRelationshipRefs(input.Proposal)
-	relationships := make([]rememberapp.SubmissionRelationshipResult, len(refs))
-	for index, ref := range refs {
-		relationships[index] = rememberapp.SubmissionRelationshipResult{
-			RelationshipRef: ref,
-			Disposition:     "not_stored",
-			Reason:          notStoredReason,
-			Message:         message,
-			Remediation:     remediation,
-			Splits:          []rememberapp.SubmissionRelationshipSplit{},
-		}
-	}
-	return evidence, relationships
-}
-
-func rememberFailureRelationshipRefs(proposal map[string]any) []string {
-	if proposal == nil {
-		return []string{}
-	}
-	raw := proposal["relationship_hints"]
-	if raw == nil {
-		raw = proposal["relationships"]
-	}
-	var values []any
-	switch typed := raw.(type) {
-	case []any:
-		values = typed
-	case []map[string]any:
-		values = make([]any, 0, len(typed))
-		for _, value := range typed {
-			values = append(values, value)
-		}
-	default:
-		return []string{}
-	}
-	refs := make([]string, 0, len(values))
-	for _, value := range values {
-		fields, ok := value.(map[string]any)
-		if !ok {
-			refs = append(refs, "")
-			continue
-		}
-		ref, _ := fields["ref"].(string)
-		refs = append(refs, strings.TrimSpace(ref))
-	}
-	return refs
+	return evidence
 }
 
 func rememberPreLockProcessError(

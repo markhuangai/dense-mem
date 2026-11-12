@@ -282,7 +282,7 @@ jobs:
             "shard:${{ matrix.shard }}/6"
 
   scenarios:
-    name: ${{ matrix.name == 'full' && 'dreaming_telemetry_portal' || matrix.name }}
+    name: ${{ matrix.name == 'full' && 'evidence_telemetry_portal' || matrix.name }}
     needs: [authorize, prechecks]
     if: needs.prechecks.result == 'success'
     strategy:

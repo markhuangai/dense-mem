@@ -25,7 +25,7 @@ func TestPairManifestRejectsUnsafeOrIncompatiblePreparedInputs(t *testing.T) {
 		{"runner_source", func(c *PairConfig) { c.Candidate.Runner.SourceRevision = c.Candidate.ImageID }},
 		{"unknown_protocol", func(c *PairConfig) { c.Candidate.Protocol = "future" }},
 		{"candidate_protocol", func(c *PairConfig) { c.Candidate.Protocol = "none" }},
-		{"legacy_processing", func(c *PairConfig) { c.Baseline.Protocol = "legacy" }},
+		{"baseline_mode", func(c *PairConfig) { c.Baseline.Mode = PairModeEvidenceOnlyV5 }},
 		{"scope_uuid", func(c *PairConfig) { c.Candidate.Scope.OwnerID = "other" }},
 		{"generation", func(c *PairConfig) { c.Candidate.Scope.Generation = 0 }},
 		{"global_capacity", func(c *PairConfig) { c.Candidate.Capacity.Global = 9 }},
@@ -36,7 +36,10 @@ func TestPairManifestRejectsUnsafeOrIncompatiblePreparedInputs(t *testing.T) {
 		{"credential_reference", func(c *PairConfig) { c.Candidate.Runtime.APIKeyEnv = "inline-credential" }},
 		{"runner_path", func(c *PairConfig) { c.Candidate.Runner.Path = "relative" }},
 		{"capture_path", func(c *PairConfig) { c.Baseline.CaptureDir = "relative" }},
-		{"unpinned_capture", func(c *PairConfig) { c.Baseline.CaptureDir = filepath.Join(t.TempDir(), "capture") }},
+		{"unpinned_capture", func(c *PairConfig) {
+			c.Baseline.CaptureDir = filepath.Join(t.TempDir(), "capture")
+			c.Baseline.CaptureSHA256 = ""
+		}},
 		{"shared_server", func(c *PairConfig) { c.Candidate.Runtime.ServerContainer = c.Baseline.Runtime.ServerContainer }},
 		{"remote_endpoint", func(c *PairConfig) { c.Candidate.Runtime.BaseURL = "http://example.org:8080" }},
 		{"credential_in_endpoint", func(c *PairConfig) { c.Candidate.Runtime.ControlURL = "http://operator:secret@127.0.0.1:8090" }},
@@ -68,7 +71,7 @@ func TestPairManifestRequiresPublicCohortProvenanceAndOneDocument(t *testing.T) 
 	require.NoError(t, readJSONFile(c.SeedManifest, &seed))
 	seed.SeedID = "public_6axis_1k_v3"
 	require.NoError(t, writeJSONFile(c.SeedManifest, seed))
-	_, _, _, _, _, _, c.SeedHash, err = loadRunInputs(c.SeedManifest, c.Suite)
+	_, _, _, _, _, c.SeedHash, err = loadRunInputs(c.SeedManifest, c.Suite)
 	require.NoError(t, err)
 	require.NoError(t, writePairJSON(config, c))
 	_, err = LoadPairConfig(config)

@@ -81,16 +81,20 @@ func privateMigrationIsSealed(table string) bool {
 		strings.HasPrefix(table, "relationship_conflict_") || strings.HasPrefix(table, "evidence_conflict_")
 }
 
-func inspectPrivateMigrationSchema(tx *gorm.DB) (map[string]*privateMigrationTable, error) {
+func inspectPrivateMigrationSchema(tx *gorm.DB, manifests ...[]string) (map[string]*privateMigrationTable, error) {
+	names := append(PrivateMemoryErasureManifest(), "audit_log")
+	if len(manifests) > 0 {
+		names = manifests[0]
+	}
 	tables := map[string]*privateMigrationTable{}
-	for _, name := range privateMemoryMigrationTables() {
+	for _, name := range names {
 		tables[name] = &privateMigrationTable{Name: name}
 	}
 	rows, err := tx.Raw(`SELECT c.relname, a.attname, format_type(a.atttypid,a.atttypmod), a.attgenerated <> ''
   FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
   JOIN pg_attribute a ON a.attrelid=c.oid
   WHERE n.nspname='public' AND c.relname=ANY(?::text[]) AND a.attnum>0 AND NOT a.attisdropped
-  ORDER BY c.relname,a.attnum`, pq.Array(privateMemoryMigrationTables())).Rows()
+  ORDER BY c.relname,a.attnum`, pq.Array(names)).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -115,7 +119,7 @@ func inspectPrivateMigrationSchema(tx *gorm.DB) (map[string]*privateMigrationTab
    JOIN pg_attribute a ON a.attrelid=k.confrelid AND a.attnum=key.attnum ORDER BY key.ord)
   FROM pg_constraint k JOIN pg_class child ON child.oid=k.conrelid JOIN pg_namespace n ON n.oid=child.relnamespace
   LEFT JOIN pg_class parent ON parent.oid=k.confrelid
-  WHERE n.nspname='public' AND child.relname=ANY(?::text[]) AND k.contype IN ('p','f') ORDER BY child.relname,k.conname`, pq.Array(privateMemoryMigrationTables())).Rows()
+  WHERE n.nspname='public' AND child.relname=ANY(?::text[]) AND k.contype IN ('p','f') ORDER BY child.relname,k.conname`, pq.Array(names)).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -158,10 +162,10 @@ func planPrivateMemoryMigration(ctx context.Context, tx *gorm.DB) (*privateMigra
 		report.SourceFingerprint = "sha256:" + hex.EncodeToString(digest[:])
 		return p, nil
 	}
-	if _, err := validatePrivateMemoryManifestTx(ctx, tx); err != nil {
+	if _, err := validatePrivateMemoryManifestFor(ctx, tx, privateMemoryLegacyMigrationManifest, append(append([]string{}, privateMemoryCatalogExclusions...), "dream_diagnostic_captures")); err != nil {
 		return nil, err
 	}
-	tables, err := inspectPrivateMigrationSchema(tx)
+	tables, err := inspectPrivateMigrationSchema(tx, privateMemoryMigrationTables())
 	if err != nil {
 		return nil, err
 	}
@@ -238,9 +242,6 @@ func planPrivateMemoryMigration(ctx context.Context, tx *gorm.DB) (*privateMigra
 		report.Tables = append(report.Tables, privacy.PrivateMemoryMigrationTable{Name: name, PrivateRows: count})
 	}
 	if err := p.resolveRoutes(); err != nil {
-		return nil, err
-	}
-	if err := p.planConflictRestoration(tx); err != nil {
 		return nil, err
 	}
 	sort.Strings(report.Blockers)
@@ -511,7 +512,7 @@ func (p *privateMigrationPlan) resolveRoutes() error {
 }
 
 func privateMemoryMigrationTables() []string {
-	tables := append(PrivateMemoryErasureManifest(), "audit_log")
+	tables := append(append([]string{}, privateMemoryLegacyMigrationManifest...), "audit_log")
 	sort.Strings(tables)
 	return tables
 }

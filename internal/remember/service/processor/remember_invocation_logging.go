@@ -230,7 +230,7 @@ func rememberInvocationMetricOutcome(classification string, cause error, status 
 	if outcome == "completed" && classification == "replay" {
 		return "replayed"
 	}
-	if outcome == "completed" && status != nil && len(status.RelationshipResults) == 0 {
+	if outcome == "completed" && status != nil && len(status.Evidence) == 0 {
 		return "evaluated_zero"
 	}
 	return outcome

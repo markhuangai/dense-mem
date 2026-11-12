@@ -75,7 +75,7 @@ func TestRecallFeedbackEventRepositoryRecordsSnapshotBeforeFeedback(t *testing.T
 		SearchIndexProfileVersion: "search-v1",
 		SearchState:               string(domain.SearchProjectionCurrent),
 		Degradation:               map[string]any{"vector": "unavailable"},
-		SnapshotMetadata:          map[string]any{"result_schema": "v2.evidence_relationship_refs.v1"},
+		SnapshotMetadata:          map[string]any{"result_schema": "v3.evidence_topic_refs.v1"},
 		ResultRefs: []domain.RecallFeedbackResultRef{{
 			Type:           domain.RecallFeedbackResultTypeEvidence,
 			ID:             "00000000-0000-0000-0000-00000000e001",
@@ -86,10 +86,6 @@ func TestRecallFeedbackEventRepositoryRecordsSnapshotBeforeFeedback(t *testing.T
 	})
 	require.NoError(t, err)
 
-	historicalFeedback := `[{"dream_id":"historical-hypothesis","quality":"medium","used":false}]`
-	require.NoError(t, rls.WithSystemTx(ctx, appDB, func(tx *gorm.DB) error {
-		return tx.Exec(`UPDATE recall_feedback_events SET dream_feedback=?::jsonb WHERE recall_id=?`, historicalFeedback, recallID).Error
-	}))
 	err = repo.RecordFeedback(ctx, domain.RecallFeedbackEvent{
 		RecallID:        recallID,
 		TeamID:          &teamID,
@@ -118,13 +114,12 @@ func TestRecallFeedbackEventRepositoryRecordsSnapshotBeforeFeedback(t *testing.T
 	require.Equal(t, domain.ContractVersion, got.ContractVersion)
 	require.Equal(t, string(domain.SearchProjectionCurrent), got.SearchState)
 	require.Equal(t, map[string]any{"vector": "unavailable"}, got.Degradation)
-	require.Equal(t, map[string]any{"result_schema": "v2.evidence_relationship_refs.v1"}, got.SnapshotMetadata)
+	require.Equal(t, map[string]any{"result_schema": "v3.evidence_topic_refs.v1"}, got.SnapshotMetadata)
 	require.Len(t, got.ResultRefs, 1)
 	require.Equal(t, domain.RecallFeedbackResultTypeEvidence, got.ResultRefs[0].Type)
 	require.Equal(t, "low", got.Quality)
 	require.NotNil(t, got.FeedbackAt)
 	require.Len(t, got.IrrelevantRefs, 1)
-	require.Equal(t, []domain.RecallFeedbackDreamFeedback{{DreamID: "historical-hypothesis", Quality: "medium", Used: false}}, got.DreamFeedback)
 
 	page, err := repo.List(ctx, domain.RecallFeedbackEventFilter{TeamID: &teamID})
 	require.NoError(t, err)

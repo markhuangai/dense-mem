@@ -352,7 +352,7 @@ export function RememberAttemptsPanel({ api, team, onOpenLogs, initialView = "at
                     <TableCell><span>{item.submission_kind}</span><small className="table-subline">{item.owner_profile_id ? `Owner ${shortId(item.owner_profile_id)}` : "Owner not recorded"}</small></TableCell>
                     <TableCell><span className={attemptOutcomeClass(item.outcome)}>{outcomeLabel(item.outcome)}</span></TableCell>
                     <TableCell><span>{item.failed_phase ? outcomeLabel(item.failed_phase) : "—"}</span>{item.error_code && <small className="table-subline">{outcomeLabel(item.error_code)}</small>}</TableCell>
-                    <TableCell><span>{item.evidence_count} evidence · {item.relationship_count} relationships</span><small className="table-subline">{item.duration_ms} ms</small></TableCell>
+                    <TableCell><span>{item.evidence_count} Evidence</span><small className="table-subline">{item.duration_ms} ms</small></TableCell>
                     <TableCell><Button variant="ghost" className="text-button" type="button" aria-label={`Inspect Remember attempt ${item.attempt_id}`} onClick={() => { selectAttempt(item.attempt_id); void loadDetail(item.attempt_id); }}>Inspect <ArrowRight size={14} aria-hidden="true" /></Button></TableCell>
                   </TableRow>
                 ))}
@@ -497,7 +497,6 @@ function RememberAttemptDetailView({ detail }: { detail: RememberAttemptDiagnost
         <Fact label="Created" value={formatDate(detail.created_at)} />
         <Fact label="Duration" value={`${detail.duration_ms} ms`} />
         <Fact label="Evidence" value={String(detail.evidence_count)} />
-        <Fact label="Relationships" value={String(detail.relationship_count)} />
       </div>
 
       {detail.error_code && <div className="submission-guidance"><span className="submission-guidance-icon"><AlertTriangle size={18} aria-hidden="true" /></span><div><strong>{outcomeLabel(detail.error_code)}</strong><small className="table-subline">{detail.error_code}</small><p>Processing stopped during {detail.failed_phase || "execution"}.</p></div></div>}
@@ -508,8 +507,6 @@ function RememberAttemptDetailView({ detail }: { detail: RememberAttemptDiagnost
           {result.evidence.length === 0 ? <div className="table-placeholder compact">No evidence dispositions recorded.</div> : <div className="mini-table">{result.evidence.map((item) => <div className="mini-table-row" style={{ "--mini-cols": 4 } as CSSProperties} key={`${item.evidence_index}:${item.evidence_id ?? "none"}`}><span>{item.evidence_index}</span><span>{item.disposition}</span><code>{item.evidence_id ? shortId(item.evidence_id) : "Not recorded"}</code><span>{item.reason || "—"}</span></div>)}</div>}
         </section>
         <section>
-          <h3>Relationship dispositions</h3>
-          {result.relationship_results.length === 0 ? <div className="table-placeholder compact">No relationship dispositions recorded.</div> : <div className="mini-table">{result.relationship_results.map((item) => <div className="mini-table-row" style={{ "--mini-cols": 3 } as CSSProperties} key={item.ref}><code>{item.ref}</code><span>{item.disposition}</span><span>{item.reason || "—"}</span></div>)}</div>}
         </section>
       </div>
 

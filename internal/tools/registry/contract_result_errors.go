@@ -3,6 +3,7 @@ package registry
 import (
 	"context"
 	"errors"
+	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
 	"strings"
 
 	"github.com/google/uuid"
@@ -47,6 +48,10 @@ func ActionableErrorData(ctx context.Context, tool string, err error) map[string
 		err = errors.New("unknown tool failure")
 	}
 	switch {
+	case errors.Is(err, recallcontract.ErrInvalidInput):
+		code, reasonCode, message, nextAction, remediation = domain.ErrorInvalidInput, "invalid_request", "The Recall request contains invalid query or topic parameters.", actionCorrectInput, "Use a query or 1 to 10 unique topic UUIDs and a topic_limit between 0 and 10."
+	case errors.Is(err, recallcontract.ErrTopicUnavailable):
+		code, reasonCode, message, nextAction, remediation = domain.ErrorInvalidInput, "topic_unavailable", "A requested topic is unavailable.", actionRefreshState, "Recall again to obtain current authorized topics, then retry with those topic IDs."
 	case errors.Is(err, domain.ErrMemoryTargetRequired), errors.Is(err, domain.ErrMemoryTargetInvalid):
 		code, reasonCode, message, nextAction, remediation = domain.ErrorInvalidInput, "memory_target_required", "Remember requires an explicit private or team_shared destination.", actionCorrectInput, "Set target_space to private or team_shared and resubmit the complete request."
 	case errors.Is(err, domain.ErrMemoryWriteDenied):
@@ -61,19 +66,15 @@ func ActionableErrorData(ctx context.Context, tool string, err error) map[string
 		code, reasonCode, message, nextAction, remediation = domain.ErrorDegraded, "tool_unavailable", "The "+tool+" operation is not available on this server.", actionContactOperator, "Contact an operator to enable the required server capability, then retry."
 	case errors.Is(err, rememberapp.ErrRememberAuthContext), errors.Is(err, lifecycle.ErrLifecycleAuthContext), errors.Is(err, traceapp.ErrTraceAuthContext), errors.Is(err, memorypack.ErrMemoryPackAuthContext):
 		code, reasonCode, message, nextAction, remediation = domain.ErrorUnauthorizedScope, "authenticated_context_required", "Dense-Mem could not authorize the "+tool+" operation.", actionAuthorization, "Authenticate with a credential that has access to this tool and retry."
-	case errors.Is(err, tracecontract.ErrRelationshipNotFound), errors.Is(err, traceapp.ErrTraceRelationshipNotFound):
+	case errors.Is(err, tracecontract.ErrEvidenceNotFound), errors.Is(err, traceapp.ErrTraceEvidenceNotFound):
 		code, reasonCode, message, nextAction, remediation = domain.ErrorInvalidInput, "reference_not_found", "The reference supplied to "+tool+" was not found or is no longer available.", actionRefreshState, "Refresh authorized state, then retry with a current reference."
-	case errors.Is(err, tracecontract.ErrRelationshipIDInvalid):
-		code, reasonCode, message, nextAction, remediation = domain.ErrorInvalidInput, "invalid_request", "The relationship_id supplied to "+tool+" must be a valid UUID.", actionCorrectInput, "Use a relationship_id returned by recall_memory and submit the corrected request again."
-		failureDetails["component"] = "trace.relationship_id"
+	case errors.Is(err, tracecontract.ErrEvidenceIDInvalid):
+		code, reasonCode, message, nextAction, remediation = domain.ErrorInvalidInput, "invalid_request", "The evidence_id supplied to "+tool+" must be a valid UUID.", actionCorrectInput, "Use a evidence_id returned by recall_memory and submit the corrected request again."
+		failureDetails["component"] = "trace.evidence_id"
 		failureDetails["client_controlled"] = true
 	case errors.Is(err, contract.ErrEvidenceLifecycleIDInvalid):
 		code, reasonCode, message, nextAction, remediation = domain.ErrorInvalidInput, "invalid_request", "The evidence_ids supplied to "+tool+" must contain valid UUIDs.", actionCorrectInput, "Use evidence IDs returned by remember or recall_memory and submit the corrected request again."
 		failureDetails["component"] = "retract_evidence.evidence_ids"
-		failureDetails["client_controlled"] = true
-	case errors.Is(err, memorypack.ErrMemoryPackRelationshipNotActive):
-		code, reasonCode, message, nextAction, remediation = domain.ErrorInvalidInput, "relationship_not_active", "The selected relationship for "+tool+" is no longer active.", actionRefreshState, "Refresh authorized relationships, remove inactive references, and submit the export again."
-		failureDetails["component"] = "memory_pack.relationship"
 		failureDetails["client_controlled"] = true
 	case errors.Is(err, contract.ErrSearchContractMismatch):
 		code, reasonCode, message, nextAction, remediation = domain.ErrorDegraded, "search_not_ready", "Dense-Mem search is not ready for the "+tool+" operation.", actionContactOperator, "Contact an operator to restore the configured search contract, then retry."
@@ -87,7 +88,7 @@ func ActionableErrorData(ctx context.Context, tool string, err error) map[string
 			if clientControlled, ok := measured["client_controlled"].(bool); ok && clientControlled {
 				message = "The submitted evidence and request context exceed the configured assessor input budget."
 				nextAction = actionCorrectInput
-				remediation = "Reduce the submitted evidence or relationship detail, then submit the corrected request with a new idempotency key."
+				remediation = "Reduce the submitted evidence detail, then submit the corrected request with a new idempotency key."
 			}
 		}
 	case errors.Is(err, rememberapp.ErrRememberStaleInput), errors.Is(err, rememberapp.ErrRememberCommitConflict):
@@ -247,7 +248,7 @@ func actionableTransientRemediation(tool string) string {
 
 func actionableToolRequiresIdempotency(tool string) bool {
 	switch strings.TrimSpace(tool) {
-	case ToolIngestSession, ToolRemember, ToolRetractEvidence, ToolCorrectRelationship, ToolSubmitRecallSessionFeedback:
+	case ToolIngestSession, ToolRemember, ToolRetractEvidence, ToolSubmitRecallSessionFeedback:
 		return true
 	default:
 		return false
@@ -304,21 +305,22 @@ func rememberToolResultError(ctx context.Context, spaceKind domain.MemorySpaceKi
 		"reason_code": value.ReasonCode, "details": value.Details,
 	}
 	return NewToolResultError(map[string]any{
-		"space_kind":           spaceKind,
-		"contract_version":     domainContractVersion(),
-		"submission_id":        submissionID,
-		"submission_kind":      "remember",
-		"processing_state":     processingState,
-		"search_state":         "not_required",
-		"correlation_id":       correlationID,
-		"evidence":             []any{},
-		"relationship_results": []any{},
-		"errors":               []any{errorPayload},
+		"space_kind":       spaceKind,
+		"contract_version": domainContractVersion(),
+		"submission_id":    submissionID,
+		"submission_kind":  "remember",
+		"processing_state": processingState,
+		"search_state":     "not_required",
+		"correlation_id":   correlationID,
+		"evidence":         []any{},
+		"errors":           []any{errorPayload},
 	})
 }
 
 func rememberErrorCode(err error) rememberapp.SubmissionErrorCode {
 	switch {
+	case errors.Is(err, rememberapp.ErrRememberRetiredContract):
+		return rememberapp.SubmissionErrorRetiredContract
 	case errors.Is(err, rememberapp.ErrRememberConflict):
 		return rememberapp.SubmissionErrorIdempotencyConflict
 	case errors.Is(err, rememberapp.ErrRememberPolicyRejected), errors.Is(err, rememberapp.ErrEvidenceSecurityRejected), errors.Is(err, rememberapp.ErrEncodedEvidenceNotAllowed):
@@ -348,125 +350,9 @@ func rememberErrorCode(err error) rememberapp.SubmissionErrorCode {
 	}
 }
 
-func correctionToolResultError(ctx context.Context, submissionID string, err error) error {
-	if isMemoryAccessError(err) {
-		return NewToolResultError(ActionableErrorData(ctx, ToolCorrectRelationship, err))
-	}
-	submissionID = strings.TrimSpace(submissionID)
-	if submissionID == "" {
-		submissionID = uuid.NewString()
-	}
-	code := rememberapp.SubmissionErrorDatabaseFailure
-	reasonCode := "relationship_correction_failed"
-	processingState := "failed"
-	switch {
-	case errors.Is(err, lifecycle.ErrLifecycleEmbeddingUnavailable):
-		code = rememberapp.SubmissionErrorEmbeddingUnavailable
-		reasonCode = "embedding_unavailable"
-	case errors.Is(err, lifecycle.ErrLifecycleEmbeddingInvalid):
-		code = rememberapp.SubmissionErrorEmbeddingResponseInvalid
-		reasonCode = "embedding_response_invalid"
-	case errors.Is(err, lifecycle.ErrLifecycleEmbeddingTimeout):
-		code = rememberapp.SubmissionErrorRequestTimeout
-		reasonCode = "embedding_timeout"
-	case errors.Is(err, context.DeadlineExceeded):
-		code = rememberapp.SubmissionErrorRequestTimeout
-		reasonCode = "request_timeout"
-	case errors.Is(err, context.Canceled):
-		code = rememberapp.SubmissionErrorRequestCancelled
-		reasonCode = "request_cancelled"
-	}
-	var apiErr *httperr.APIError
-	if errors.As(err, &apiErr) {
-		switch apiErr.Code {
-		case httperr.ErrEmbeddingUnavailable:
-			code = rememberapp.SubmissionErrorEmbeddingUnavailable
-		case httperr.ErrEmbeddingResponseInvalid:
-			code = rememberapp.SubmissionErrorEmbeddingResponseInvalid
-		case httperr.ErrEmbeddingTimeout:
-			code = rememberapp.SubmissionErrorRequestTimeout
-		case httperr.NOT_FOUND:
-			code = rememberapp.SubmissionErrorEntityNotFound
-		case httperr.CONFLICT:
-			code, processingState = correctionConflictCode(apiErr)
-			reasonCode = "relationship_correction_conflict"
-			if guidedReason := strings.TrimSpace(apiErr.ReasonCode); guidedReason != "" {
-				reasonCode = guidedReason
-			}
-		}
-	}
-	value := correctionStatusError(code)
-	value.ReasonCode = reasonCode
-	if apiErr != nil && reasonCode == "search_configuration_invalid" {
-		value.Retryable = apiErr.Retryable
-		if strings.TrimSpace(apiErr.NextAction) != "" {
-			value.NextAction = apiErr.NextAction
-		}
-		if strings.TrimSpace(apiErr.Remediation) != "" {
-			value.Remediation = apiErr.Remediation
-		}
-	}
-	value.Details = map[string]any{"component": "relationship_correction"}
-	if correctionErrorClientControlled(code) {
-		value.Details["client_controlled"] = true
-	} else {
-		value.Details["server_owned"] = true
-	}
-	errorPayload := map[string]any{
-		"code": value.Code, "message": value.Message, "retryable": value.Retryable,
-		"next_action": value.NextAction, "remediation": value.Remediation,
-		"reason_code": value.ReasonCode, "details": value.Details,
-	}
-	return NewToolResultError(map[string]any{
-		"contract_version": domainContractVersion(),
-		"submission_id":    submissionID,
-		"submission_kind":  "relationship_correction",
-		"processing_state": processingState,
-		"search_state":     "not_required",
-		"correlation_id":   rememberapp.NormalizeTerminalCorrelationID(correlation.FromContext(ctx)),
-		"errors":           []any{errorPayload},
-	})
-}
-
 func isMemoryAccessError(err error) bool {
 	return errors.Is(err, domain.ErrMemoryTargetRequired) || errors.Is(err, domain.ErrMemoryTargetInvalid) ||
 		errors.Is(err, domain.ErrMemoryWriteDenied) || errors.Is(err, domain.ErrMemoryOperationErased)
-}
-
-func correctionErrorClientControlled(code rememberapp.SubmissionErrorCode) bool {
-	switch code {
-	case rememberapp.SubmissionErrorEntityNotFound,
-		rememberapp.SubmissionErrorIdempotencyConflict,
-		rememberapp.SubmissionErrorConfirmationExpired,
-		rememberapp.SubmissionErrorRelationshipChanged:
-		return true
-	default:
-		return false
-	}
-}
-
-func correctionConflictCode(apiErr *httperr.APIError) (rememberapp.SubmissionErrorCode, string) {
-	switch {
-	case strings.TrimSpace(apiErr.ReasonCode) == "search_configuration_invalid":
-		return rememberapp.SubmissionErrorConfigurationInvalid, "failed"
-	case apiErrorDetailEquals(apiErr, "reason", string(rememberapp.SubmissionErrorIdempotencyConflict)):
-		return rememberapp.SubmissionErrorIdempotencyConflict, "failed"
-	case apiErrorDetailEquals(apiErr, "reason", string(rememberapp.SubmissionErrorConfirmationExpired)):
-		return rememberapp.SubmissionErrorConfirmationExpired, "rejected"
-	case apiErrorDetailEquals(apiErr, "reason", string(rememberapp.SubmissionErrorCommitConflict)):
-		return rememberapp.SubmissionErrorCommitConflict, "failed"
-	default:
-		return rememberapp.SubmissionErrorRelationshipChanged, "failed"
-	}
-}
-
-func correctionStatusError(code rememberapp.SubmissionErrorCode) rememberapp.SubmissionStatusError {
-	value := rememberapp.StatusError(code)
-	if code == rememberapp.SubmissionErrorIdempotencyConflict {
-		value.NextAction = string(rememberapp.SubmissionNextActionRetryCorrection)
-		value.Remediation = "Retry correct_relationship with current relationship state and a new idempotency_key."
-	}
-	return value
 }
 
 func apiErrorDetailEquals(apiErr *httperr.APIError, field, value string) bool {

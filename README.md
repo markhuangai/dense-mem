@@ -26,7 +26,7 @@
 
 Dense-Mem is a standalone HTTP MCP memory server using Streamable HTTP. It
 stages exact evidence, derives semantic state through validated server policy,
-and returns active evidence contexts with graph-shaped Relationship handles.
+and returns eligible Evidence with provenance and direct topic follow-up.
 PostgreSQL is the durable authority for knowledge, lifecycle, provenance,
 search, authorization, and audit; Redis is coordination only. A single-node
 deployment may use process-local coordination; a multi-instance deployment
@@ -48,21 +48,17 @@ Create a temporary isolated team at
 test disposable data before self-hosting.
 
 <p align="center">
-  <img src="assets/readme-hero.jpg" alt="AI clients submit evidence to a governed memory service, which records lifecycle and returns active relationships with provenance." />
+  <img src="assets/readme-hero.jpg" alt="AI clients submit evidence to a governed memory service, which records lifecycle and returns Evidence with provenance." />
 </p>
 
 ## Why Dense-Mem
 
 - Evidence is exact, durable, and append-only. A lifecycle action changes its
   effective state without deleting provenance or trace lineage.
-- Entity and typed Value are semantic nodes. Owner-alias-owned Relationships
-  become active graph edges only when their evidence support is eligible.
-- Provider output is a proposal. Closed-schema validation and deterministic
-  server policy decide durable state.
-- Default recall excludes candidates and Hypotheses and returns evidence only
-  when its active Relationship support path is eligible for the requested time.
-- Team visibility and owner mutation authority are distinct. An author can
-  change only their own evidence or owned semantic records.
+- Exact Evidence, occurrences, and source revisions retain their provenance.
+  Owner-authorized supersession and retraction append lifecycle history.
+- Recall selects eligible Evidence directly. Topics organize shared Evidence
+  without creating factual claims or expanding descendant memberships.
 
 Authentication resolves one immutable actor as `team + identity + membership +
 permanent owner alias + optional credential`. An SSO browser session uses the
@@ -106,7 +102,7 @@ Control portal: http://127.0.0.1:8090/
 Open the control portal with `CONTROL_PORTAL_TOKEN`, create a team from **All teams**,
 then open **Credentials** for its first API key. The sidebar groups team work,
 operations, and administration; its team picker changes the active workspace.
-The user portal offers **Search memory**, **Graph**, and the management pages
+The user portal offers **Search memory**, **Ontology**, and the management pages
 allowed by the session. **Connect** shows the team ID, MCP endpoint, and memory
 access. Both portals support System, Light, and Dark appearance, collapsible
 navigation, and section links that survive refresh and browser history.
@@ -259,8 +255,8 @@ Conflict selection requires both position and sufficiently-supported
 probabilities ≥0.99. Uncertainty retains complete generative review and exact
 security spans. Generative extraction and other semantic fields remain required.
 Required decision failures are visible and never silently invoke generation.
-Recall scores hydrated authorized shortlists of at most 50 evidence and 20
-Relationships per space, outside transactions; optional failures retain the
+Recall scores hydrated authorized shortlists of at most 50 Evidence items
+per space, outside transactions; optional failures retain the
 original ranking with an explicit degradation. Existing temporal, grouping, and
 cross-space fusion rules still apply. Reranking adds provider work; no live speed
 or quality improvement is claimed.
@@ -330,10 +326,10 @@ show effective `memory_access.private.{read,write}` and
 `memory_access.team_shared.{read,write}`. Supplied `memory_binding` fields are
 rejected, including null and empty values.
 
-The contract remains `dense-mem.v2.7.0`. Existing prerelease clients must refresh
-`tools/list`. Targetless requests fail validation even on retries, including
-historical requests already labeled v2.7.0; stored payloads, hashes, and receipts
-are preserved.
+The public contract is `dense-mem.v2.8.0`. Refresh `tools/list` after upgrading.
+Retired fields fail validation before provider work. Legacy Remember operation
+keys retain their original identity and outcome and return non-retryable
+`retired_contract` guidance.
 
 ### Upgrade Existing Private History
 
@@ -386,308 +382,121 @@ bindings. Deploying the new server also runs its required data migrations.
 
 ## Evidence Lifecycle
 
-`remember` durably stages exact evidence, completes provider validation and the
-semantic commit, then returns a terminal result. The response includes the
-owner-scoped processing and search state; it does not expose provider output or
-internal run IDs.
-
-Callers submit logical Entity, predicate, and Value proposals rather than text
-offsets. `remember` does not accept `span`, `surface`, or relationship `supports`
-fields. A nonempty `relationships` array is required. Each Relationship lists the
-zero-based `evidence_indices` that support it, and every evidence item must be
-cited by at least one proposal. Missing proposals or uncited evidence return
-detailed validation errors before intake or provider work. The single assessor session reviews every evidence item for security
-and grounds or normalizes only submitted Relationship proposals against their
-cited evidence. It never searches memory or discovers Relationships. Closed-schema
-validation and deterministic server policy decide what is safe to commit.
-
-Each Relationship may also list up to 20 explicit `known_evidence_ids`. These UUIDs
-are resolved only from evidence visible to the caller and remain read-only assessor
-context; they do not receive security results. A stored Relationship must still cite
-at least one submitted `evidence_indices` span. Entity grounding accepts current
-canonical or alias names, and a pronoun only when the assessor is given a server-issued
-anchor for an earlier exact name span. Inaccessible or stale known evidence leaves the
-Relationship unsupported without revealing whether an ID exists. The aggregate known
-evidence content in one request is bounded to 20,000 Unicode code points before
-assessor boundary expansion; larger requests return `input_budget_exceeded`. The
-current public contract is `dense-mem.v2.7.0`; v2.6.8, v2.6.7, v2.6.6, v2.6.3, and
-v2.6.2 remain accepted for compatible terminal Remember replays. Historical
-requests lacking an explicit target, proposals, or complete citations fail current validation even
-with their original keys; stored history is preserved.
-
-Dream generation, client hypothesis reads, confirmation, and legacy community
-clustering are retired. The private control portal retains Dream history,
-provenance, diagnostics, and diagnostic retention. Apply the retirement migration
-with every old server instance stopped, then start the matching v2.7.0 binary.
-Unfinished legacy runs and reservations are cancelled irreversibly; completed
-history and canonical memory remain intact. Down never restarts retired work.
-
-The existing ontology switch is the sole organization control. Stored values
-are preserved and missing values default off. Enabling admits active teams on
-the next minute tick under existing pause, schedule, concurrency, and global
-token bounds. Disabling stops admissions and drains dispatched work. Community
-reads use current topic projections; disabled ontology never restores old
-community snapshots. Retired per-team Dream flags do not affect enrollment.
-
-To replace a specific current evidence item you own, put its UUID in the new
-item's `supersedes_evidence_ids`. Direct targeting is separate from advancing a
-source revision with `previous_source_revision`; do not combine them.
+`remember` accepts exact Evidence and provenance under `dense-mem.v2.8.0`.
+Choose an explicit authenticated destination for the whole batch. Each item is
+bounded to 999 Unicode code points. Retired graph proposal fields fail
+validation before provider work.
 
 ```json
 {
-  "evidence": [
-    {
-      "content": "Dense-Mem now uses PostgreSQL as its only deployment target.",
-      "source_type": "manual",
-      "supersedes_evidence_ids": ["<owned-current-evidence-uuid>"]
-    }
-  ],
-  "relationships": [
-    {
-      "ref": "deployment-target",
-      "subject": {
-        "name": "Dense-Mem",
-        "entity_kind": "project"
-      },
-      "predicate": {
-        "proposed_key": "uses_as_only_deployment_target"
-      },
-      "object": {
-        "entity": {
-          "name": "PostgreSQL",
-          "entity_kind": "product"
-        }
-      },
-      "polarity": "+",
-      "evidence_indices": [0]
-    }
-  ],
-  "idempotency_key": "deployment-target-correction-batch-20260729"
+  "target_space": "team_shared",
+  "idempotency_key": "deployment-source-20261110",
+  "evidence": [{
+    "content": "Dense-Mem stores durable memory in PostgreSQL.",
+    "source_type": "manual",
+    "source": "Deployment decision"
+  }]
 }
 ```
 
-Direct supersession is staged with the complete batch. The target is retired
-only inside the accepted semantic transaction; a failed submission leaves it
-active. This prevents a replacement that never becomes supported memory from
-invalidating current evidence.
+Remember durably stages exact Evidence and processing intent before assessment.
+Complete security, equivalence, and Evidence-conflict decisions are validated
+before required embeddings. Evidence, occurrences, source revisions, lifecycle,
+search documents, and the terminal receipt commit atomically. A failed required
+provider call or cancellation cannot partially accept the batch. Initial
+security rejection remains content-free in diagnostics.
 
-Remember uses one assessor conversation for the complete batch. Every evidence
-item receives a security result. Unsafe
-evidence fails the complete batch with `submission_policy_rejected` and no
-semantic, search, or embedding writes. Safe evidence is stored and indexed even
-when every proposed Relationship is unsupported. The assessor may ground and
-normalize only submitted Relationship proposals against their cited evidence; it
-does not search memory, find support for evidence, or discover Relationships.
-Every submitted Relationship ref gets a `stored` or `not_stored` disposition;
-unsupported proposals include actionable `not_stored` reasons, messages, and
-remediation. Clients must inspect these outcomes and submit corrected requests
-with new keys. Exact client-owned changes
-after staging are reported as `stale_input`. Provider, configuration, database,
-and internal faults are typed operational failures. All accepted semantic effects
-commit atomically, with no partial replacement or interactive placement review.
+Retain the complete request and operation key. Replay the unchanged request to
+reconcile a timeout; a changed request with the same key conflicts. Operational
+failures retain typed retry guidance. Stored context never becomes new submitted
+Evidence merely because assessment or Recall used it.
 
-Remember requires one top-level `idempotency_key`; evidence-level and derived
-keys are not accepted. If a complete batch needs correction, submit the entire
-batch again with a new key.
+For replacement, supply `supersedes_evidence_ids` on the new Evidence item.
+Alternatively advance a source revision with `previous_source_revision`; do not
+combine these mechanisms. Replacement retires its owned current targets only
+inside successful atomic acceptance. `retract_evidence` accepts owned IDs, a
+bounded reason, and an idempotency key. Both append history; they preserve exact
+content and provenance. Shared reads do not grant mutation authority.
 
-To retract evidence without a replacement, call `retract_evidence` with owned
-current IDs, a bounded reason, and an idempotency key:
+Feature-gated `ingest_session` accepts exact user-authored events into private
+memory. `session_evidence_excerpts_v2` selects exact current-event excerpts with
+original Unicode offsets. Prior context is read-only. Empty extraction returns
+an explicit `memory_outcome: "no_memory"` terminal result. Event identity,
+request hashing, replay, cancellation, and generation fences remain enforced.
 
-```json
-{
-  "evidence_ids": ["<owned-current-evidence-uuid>"],
-  "reason": "The source was withdrawn.",
-  "idempotency_key": "withdrawn-source-20260729"
-}
-```
+## Recall, topics, Trace, and export
 
-Both operations append lifecycle events. They never physically delete evidence
-or trace lineage. Current recall excludes retired evidence, while a historical
-`known_at` view before the event can still show what the system knew then.
+`recall_memory` retrieves eligible Evidence directly with bounded exact context,
+equivalence IDs, explicit search states, conflicts, and degradation reporting.
+`known_evidence_ids` suppress already known eligible results.
 
-`correct_relationship` replaces a specific active Relationship owned by the
-caller's permanent owner alias. It does not rewrite or delete the original
-record. The caller
-supplies the current Relationship version, its exact effective evidence spans,
-a bounded reason, and only the endpoints or predicate that need correction:
+`related_topics` supplies topic identity, name, description, eligible unseen
+Evidence count, and rank. `topics_truncated` reports omitted hints. `topic_limit`
+defaults to three and accepts 0–10. Follow up with `topic_ids`: 1–10 unique UUIDs
+select the union of current direct memberships without descendant expansion.
+Evidence lifecycle, time, freshness, ownership, and known exclusions apply before
+selection and counting. Missing, foreign, and stale topics produce the same
+bounded `topic_unavailable` error for explicit filters. Ordinary Recall reports
+optional topic degradation. Topic metadata remains current during temporal reads.
 
-```json
-{
-  "action": "submit",
-  "relationship_id": "<owned-active-relationship-uuid>",
-  "expected_version": 1,
-  "patch": {
-    "object_entity": {
-      "entity_id": "<correct-same-team-entity-uuid>"
-    }
-  },
-  "supports": [
-    { "evidence_id": "<supporting-evidence-uuid>", "start": 0, "end": 38 }
-  ],
-  "reason": "The object was resolved to the wrong Entity.",
-  "idempotency_key": "relationship-correction-20260808"
-}
-```
+Ontology organizes only team-shared Evidence through topics, equivalence, and
+manager overrides. Private memory is excluded. Existing enable, pause, disable,
+concurrency, and generation fences remain authoritative. Pausing preserves
+eligible publications; disabling removes organization from Recall. Topic parent
+links are organizational metadata and do not establish factual support.
 
-On acceptance, Dense-Mem atomically supersedes the original Relationship,
-creates or reuses the active successor, copies the effective support lineage,
-and appends the correction event and `corrects` cross-reference. A different
-owner in the same team may read team-visible memory but cannot correct the
-author's Relationship. Ambiguous Entity names require one owner confirmation;
-the original remains active until that confirmation succeeds.
+`trace_memory` takes an `evidence_id`. It returns bounded Evidence decisions,
+occurrences, source revisions, and lifecycle. `include_evidence_content` and
+`include_transitions` control detail. Defaults are 100 events and 2,000 content
+runes; caps are 500 and 8,000.
 
-## Recall and Graph State
-
-`recall_memory` is evidence-first but support-path gated. Its `results[]`
-contain evidence contexts only after final hydration proves an active,
-query-relevant Relationship support path remains eligible for the requested
-`valid_at` and `known_at` view. Related Relationships, communities, and
-Hypotheses are separate bounded fields; candidates and Hypotheses are not
-default memory results.
-
-```text
-remember evidence + required Relationship proposals (+ optional Entity hints)
-        |
-        v
-durable staging -> validated terminal commit -> active eligible Relationships
-        |                                      |
-        +-- lifecycle event -------------------+
-                                               |
-                                               v
-                         support-gated evidence recall and trace lineage
-```
+`export_memory_pack` accepts a name and 1–500 Evidence IDs. Its
+`dense-mem.memory-pack.v3.0` artifact preserves provenance, canonical hashes,
+content bounds, and explicit omissions. Authorization applies to every target.
 
 ## Python Core Client
 
-The official Python core package is under [packages/python](packages/python).
-It uses the official MCP SDK 1.x, supports Python 3.11–3.14, and provides typed
-async and sync methods with static or caller-managed token-provider authentication.
-Install a verified wheel; PyPI publication and framework adapters are pending.
-Complete requests, terminal-result handling and unchanged-request replay examples
-are in the package README.
+The [Python package](packages/python) uses the official MCP SDK 1.x and supports
+Python 3.11–3.14. It provides async/sync clients, Google ADK ingestion, and a
+LangChain retriever using the same Evidence-only schemas. See its README for complete
+requests, terminal handling, and unchanged-request replay.
 
 ## MCP Tool Catalog
 
-Discover the current closed-schema catalog with MCP `tools/list`; callers do
-not select a contract version. The server applies the same scope, feature, and
-visibility checks to `tools/call`.
+Discover closed schemas with `tools/list`. The registry applies identical scope,
+feature, version, and visibility checks to `tools/call`.
 
-| Tool | Used by | Registration | Use case and capability |
-|------|---------|--------------|-------------------------|
-| `remember` | Both | Production and evaluation images | Production evidence intake; the harness also imports corpus rows through this real intake path. |
-| `retract_evidence` | Production | Production and evaluation images | Retire caller-owned evidence while preserving append-only provenance. |
-| `correct_relationship` | Production | Production and evaluation images | Owner-only replacement of an active supported Relationship; supersedes the original and preserves support lineage. |
-| `recall_memory` | Production | Production and evaluation images | Recall active evidence contexts and Relationship handles. When enabled features produce an actionable follow-up, the result includes `suggested_actions`. |
-| `trace_memory` | Production | Production and evaluation images | Trace one same-team Relationship through evidence, decisions, and lineage. |
-| `submit_recall_session_feedback` | Production | Conditional in both images | Record bounded session-level recall quality feedback. Registered only while recall feedback is enabled. |
-| `export_memory_pack` | Production | Production and evaluation images | Export selected active Relationships with support provenance. |
-| `eval_list_knowledge_refs` | Evaluation harness | Evaluation image only | Page stable team-scoped knowledge references used to map seed documents to stored records. |
-| `eval_run_recall_case` | Evaluation harness | Evaluation image only | Execute current recall logic and return ranked/context references for deterministic scoring. |
+| Tool | Contract |
+| --- | --- |
+| `remember` | Exact Evidence and provenance to an explicit private or shared destination. |
+| `ingest_session` | Feature-gated exact event excerpts into authenticated private memory. |
+| `retract_evidence` | Owner-authorized retirement with append-only lineage. |
+| `recall_memory` | Eligible Evidence, topic hints, and direct-topic follow-up. |
+| `trace_memory` | Evidence decisions, occurrences, revisions, and lifecycle. |
+| `submit_recall_session_feedback` | Conditional bounded voluntary Recall feedback. |
+| `export_memory_pack` | Bounded Evidence/provenance export. |
 
-The private control portal exposes bounded Dream investigation reads at
-`/control/api/teams/:teamId/dreaming/runs/:runId/diagnostics` and
-`/control/api/teams/:teamId/dreams/:dreamId/diagnostics`. They explain run,
-proposal, feedback, and confirmation outcomes without entering the memory
-graph. Retained provider projections expire after seven days and report
-unavailable or expired captures explicitly.
+The evaluation build adds `eval_list_knowledge_refs` and `eval_run_recall_case`.
+Production builds cannot register them through configuration. Factual graph,
+Dream, and community contracts are retired from both profiles.
 
-The production release binary is compiled without the `evaluation` build tag,
-so no environment variable or control-panel setting can register evaluation
-tools in a live release. The evaluation target adds only the three harness tools
-above. `eval_get_manifest`, `eval_get_knowledge_item`,
-`eval_list_recall_feedback_events`, `eval_get_recall_feedback_event`, and
-`eval_score_retrieval_case` are removed because the current harness does not use
-them.
+Before upgrading, stop incompatible instances and verify a matching restorable
+backup. Normal startup runs the ordered Evidence-only migration before workers
+or listeners. It preserves Evidence fingerprints and scoped operation identity,
+retires graph-specific data and mixed payloads, and blocks on legal holds or
+unexpected dependencies. No provider calls occur during migration. Before
+commit, errors roll back. After destructive commit, restore the matching backup;
+after new writes, recover forward unless separately approved. Never restart an
+old binary over the migrated database.
 
-Recall uses current published ontology groups only for authorized team-shared evidence.
-Each result retains its representative `evidence_id`, exact bounded `context`, and
-`space_kind`, plus up to 20 sorted `equivalent_evidence_ids` and an
-`equivalents_truncated` indicator. Distinct and partially overlapping facts remain
-separate. An eligible known member suppresses its whole current equivalence group;
-private, foreign, withdrawn, or stale handles cannot suppress another result.
-Published concept keys and unambiguous aliases add bounded discovery candidates.
-Temporal requests omit current-only organization and report that degradation.
-Disabling ontology maintenance restores ordinary retrieval; pausing it retains
-current published organization.
-
-Ontology definitions may declare `parent_relation: "subclass_of"` on entity
-classes or `parent_relation: "subproperty_of"` on predicate concepts. Both require
-a compatible `parent_id`; an omitted relation keeps the parent organizational.
-The metadata does not expand Recall or alter canonical Knowledge. Existing
-editor actions preserve it, and clearing a required parent blocks the edit.
-See [ADR 0016](adr/0016-explicit-ontology-hierarchy-semantics.md).
-
-Stop incompatible application instances before saving semantic drafts or
-publications: older strict revision readers cannot read the new field. Once
-semantic revisions exist, recover forward with compatible readers. Do not erase
-history or restore an incompatible binary over those revisions.
-
-For publication diagnosis, DEBUG `ontology_semantic_publication` includes bounded
-admitted input, scoped parent revisions, and precise rejection comparisons.
-WARN `ontology_semantic_publication_rejected` preserves the public error class;
-ERROR `ontology_semantic_publication_failed` records required storage failures.
-INFO `ontology_semantic_publication_committed` is emitted only after the outer
-transaction, including audit, commits. Filter by trusted team/profile,
-correlation, and operation identity. Payload chunks remain on stdout independently
-of telemetry; collect the complete Compose operation window before teardown
-without `--tail`. Reconstruct every payload in index order and verify the count
-and SHA-256 against its manifest. Missing or unavailable detail is incomplete
-evidence, even when the summary is present. Existing credential protection,
-2 KiB chunks, 16 KiB metadata, and 1 MiB publication-body bounds apply. Retain
-protected captures in private ignored paths; the management acceptance scenario
-also emits protected operation records for its run receipt.
-
-Operators configure the ontology model and its **Model context window (tokens)** in
-**Operations → Ontology maintenance**. This is the selected model’s capacity for
-one complete request and response, including regeneration history. No capacity
-is inferred from the model name. Missing or unusable capacity blocks model calls
-and is reported in the portal; pause and configuration controls remain available.
-Model, context, and concurrency changes activate together in the next window.
-
-Ontology has no cumulative token-spending budgets or allowance grants. The
-portal reports active work, unfinished attempts, reported tokens, and partial or
-unavailable usage. Unavailable usage does not mean zero consumption. Historical
-grants remain readable in run history, and historical budget accounting is
-preserved unchanged. Stop every old application instance before upgrading.
-Normal startup prepares budget retirement automatically: it durably pauses new
-admission when needed, waits up to five minutes for live leases, recovers expired
-coordination, closes drained legacy runs with an atomic retirement audit, and
-runs the unchanged migration. Unreconciled attempts block the
-upgrade without inventing usage. A successful upgrade restores only its own
-pause; deliberate operator pauses and disabled settings remain intact. An
-interrupted preparation resumes on the next startup. The first configured
-post-retirement window opens
-immediately and retains the existing scheduling boundary. See the
-[migration notes](migrations/postgres/v2_6/README.md) for recovery constraints.
-
-When recall feedback is enabled and a snapshot is stored, clients may voluntarily
-call `submit_recall_session_feedback` with `recall_id`; Recall does not prompt for
-session feedback. General feedback does not overwrite historical Dream-feedback
-records. Recall does not return or suggest actions for Hypotheses.
-
-For local evaluation, the committed compose example builds the evaluation
-target and loads the ignored repository-root `.env` by default:
-
-```bash
-docker compose -p densemem_eval \
-  -f examples/docker-compose.evaluation.yml up -d --build
-
-go run ./cmd/eval-seedgen \
-  --preset local_eval_100 \
-  --out tests/eval/seeds/local_eval_100 \
-  --suite tests/eval/suites/local_eval_100.jsonl
-```
-
-The `local_eval_100` CLI preset emits the versioned `local_eval_100_v2` seed
-identity with 100 corpus rows and 25 scored cases. It is a smoke check for the
-evaluation image and harness plumbing, not a replacement for the approved
-deterministic 1k release gate. Imports default to four concurrent requests;
-`IMPORT_CONCURRENCY` can override the monitor setting from 1 through 30.
-The server still enforces its pool-dependent admission capacity, so lower the
-setting if Remember reports `idempotency_lock_busy`.
-
-Memory-pack export emits the current `dense-mem.memory-pack.v2.4` artifact. Import
-and candidate-discovery workflows are not part of the public contract.
+The production log default remains TRACE. DEBUG includes protected assessment
+exchanges, exact admitted fields, topic selection reasons, and authorized
+Trace/export limits and omissions. WARN reports optional topic degradation and
+retired contracts; INFO records session resume and migration milestones; ERROR
+records blocked or failed migrations. Capture complete stdout operation windows
+before teardown and verify 2,048-byte chunks, hashes, and counts. Existing
+16 MiB provider-body, 64 MiB session-envelope, and seven-day diagnostic retention
+bounds remain. Missing, truncated, or interrupted capture is explicit.
 
 ## Supported HTTP Surfaces
 
@@ -704,8 +513,7 @@ depend on retired `/api/v1` paths.
 ## Telemetry Overlay
 
 Prometheus telemetry is optional and off by default. To collect HTTP, embedding,
-verifier, assessor, recall feedback, Remember, conflict-review, cost, Dream, and
-Relationship lifecycle telemetry, start the base stack with the telemetry
+verifier, assessor, recall feedback, Remember, cost, and Evidence lifecycle telemetry, start the base stack with the telemetry
 overlay:
 
 ```bash
@@ -738,8 +546,7 @@ because canonical lifecycle measures carry no team or credential dimensions.
 
 The control Metrics and user Usage dashboards were removed after real Grafana
 and Prometheus parity validation. Team-overview request summaries, private
-diagnostics, settings, and the control telemetry reader used by conflict-queue
-health remain. See [`examples/grafana/README.md`](examples/grafana/README.md)
+diagnostics, settings, and control telemetry remain. See [`examples/grafana/README.md`](examples/grafana/README.md)
 for provisioning and the series map.
 
 ### Grafana series map
@@ -758,9 +565,6 @@ to these identifiers. The metric names and labels remain available to operators.
 | `remember_requests`, `avg_remember_duration`, `p95_remember_duration` | `densemem_remember_acknowledgements_total`, `densemem_remember_acknowledgement_duration_seconds` | `internal/remember` | A successful scrape with no acknowledgements is zero. |
 | `assessor_requests`, `assessor_request_failures`, `assessor_validation_failures`, `assessor_tokens`, `avg_assessor_duration`, `assessor_duration`, `assessor_terminal_failures` | `densemem_assessor_requests_total`, `densemem_assessor_validation_failures_total`, `densemem_assessor_tokens_total`, `densemem_assessor_duration_seconds`, `densemem_assessor_terminal_failures_total` | Integrated assessor instrumentation | Token usage is unavailable when the provider does not report usage. |
 | `ai_cost_usd`, `verifier_cost_usd`, `embedding_cost_usd` | `densemem_ai_operation_cost_usd_total`, `densemem_ai_operation_unpriced_total` | `internal/observability/telemetry_cost.go` | Missing usage, pricing, or rate configuration remains unavailable, not zero cost. |
-| `avg_conflict_review_duration`, `conflict_review_duration` | `densemem_conflict_review_duration_seconds` | Conflict-review application | Requires a completed review sample. |
-| `conflict_queue_collection_success` | `densemem_conflict_queue_collection_success` | Conflict queue collector in `internal/observability` | Zero means collection failed; queue gauges are omitted on failure. |
-| `relationships_<status>`, `relationship_transitions_<status>`, `relationship_corrections` | `relationship_records`, `relationship_transition_events`, `relationship_correction_events` through the lifecycle reader | `internal/operations/postgres` | A successful ledger read with no matching rows is zero; ledger failure is unavailable. Status suffixes follow the current Relationship status registry. |
 
 Additional operational families are `densemem_mcp_transport_requests_total`,
 `densemem_mcp_transport_duration_seconds`, `densemem_mcp_tool_results_total`,
@@ -771,8 +575,7 @@ Additional operational families are `densemem_mcp_transport_requests_total`,
 `densemem_operation_provider_tokens_total`, and
 `densemem_operation_provider_usage_unpriced_total`. They distinguish MCP HTTP
 status from logical tool outcome, Remember execution/replay/conflict/recovery,
-bounded phase and provider usage, and canonical ledger state. Historical Dream
-metrics are marked retired and do not report an actionable hypothesis backlog. New families use closed labels without
+bounded phase and provider usage, and canonical ledger state. New families use closed labels without
 team, profile, request, model, or content values. Their histogram buckets
 include the 180-second Remember budget and larger overruns. The canonical ledger collector reports
 `densemem_operational_ledger_collection_success`; a zero collection status
@@ -797,8 +600,8 @@ written under the ignored evaluation runtime directory.
 | Area | Dense-Mem owns | Host LLM owns |
 |------|----------------|---------------|
 | Evidence | Exact staging, provenance, lifecycle, and owner checks | Choosing what source material to submit |
-| Semantic state | Validation, deterministic policy, support eligibility | Proposing Relationships and optional Entity hints |
-| Recall | Active evidence contexts and Relationship handles | Selecting what to cite or ask in the conversation |
+| Assessment | Complete validation, deterministic policy, and atomic acceptance | Selecting exact Evidence and provenance |
+| Recall | Eligible Evidence and topic hints | Selecting what to cite or ask in the conversation |
 | Corrections | Authorized supersession, retraction, and append-only lineage | Deciding whether a correction is warranted |
 | Operations | Teams, memberships, credentials, API keys, audit, and portals | MCP client configuration |
 
@@ -821,7 +624,7 @@ Enter registered scenario names in `scenarios`, separated by commas, or `all`
 for the entire scenario registry. Leave it blank for PostgreSQL-only testing.
 For `postgres_shards`, enter `0` through `5`, a comma-separated subset, or `all`;
 leave it blank for E2E-only testing. Select at least one group. The scenario
-named `full` runs Dream retirement, historical inspection, telemetry, and portal coverage; `all` runs
+named `full` runs Evidence lifecycle, telemetry, and portal coverage; `all` runs
 every registered scenario. Available names live in
 [`scripts/e2e-scenarios.json`](scripts/e2e-scenarios.json).
 

@@ -36,13 +36,6 @@
       "run": "^TestDreamCommunityRetirementMigrationPreservesSettingsAndHistory$",
       "phase": "precheck",
       "source": "internal/storage/postgres/dream_community_retirement_migration_integration_test.go"
-    },
-    {
-      "id": "repository/TestRetiredDreamHistoryPreservesProvenanceIsolationAndRetention",
-      "package": "./internal/dream/postgres",
-      "run": "^TestRetiredDreamHistoryPreservesProvenanceIsolationAndRetention$",
-      "phase": "precheck",
-      "source": "internal/dream/postgres/history_integration_test.go"
     }
   ]
 }

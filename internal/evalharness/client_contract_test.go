@@ -3,23 +3,21 @@ package evalharness
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 )
 
 func TestCorpusImportPayloadAndPreflightUseRememberContract(t *testing.T) {
-	item := CorpusItem{SourceDocID: "optional-labels", Content: "Project Alpha stores memory in PostgreSQL.", Relationships: []any{map[string]any{
-		"ref": "storage", "subject": map[string]any{"name": "Project Alpha", "entity_kind": "project"},
-		"predicate": map[string]any{"proposed_key": "stores_memory"}, "object": map[string]any{"value": map[string]any{"type": "string", "value": "PostgreSQL"}},
-		"polarity": "+", "evidence_indices": []int{0},
-	}}}
+	item := CorpusItem{SourceDocID: "optional-labels", Content: "Project Alpha stores memory in PostgreSQL."}
 	tool, ok := contractTool(registry.ToolRemember)
 	require.True(t, ok)
 	withoutLabels, err := pairRequestHash(item)
@@ -39,7 +37,7 @@ func TestCorpusImportPayloadAndPreflightUseRememberContract(t *testing.T) {
 			var wire map[string]any
 			require.NoError(t, json.Unmarshal(encoded, &wire))
 			wireErr := registry.ValidateContractInput(tool, wire, []string{"read", "write"})
-			preflightErr := validateV2CorpusRelationships(&SeedManifest{SchemaVersion: SeedSchemaVersionV2}, []CorpusItem{row})
+			preflightErr := validateEvidenceCorpus(&SeedManifest{SchemaVersion: SeedSchemaVersionV2}, []CorpusItem{row})
 			if test.valid {
 				require.NoError(t, wireErr)
 				require.NoError(t, preflightErr)
@@ -58,15 +56,15 @@ func TestCorpusImportPayloadAndPreflightUseRememberContract(t *testing.T) {
 
 func TestHTTPClientTargetContractDoesNotPollSubmissionStatus(t *testing.T) {
 	var statusCalls int32
-	server := newEvalHarnessServerWithContract(t, contractModeV262, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newEvalHarnessServerWithContract(t, contractModeEvidenceOnly, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "tool:remember":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"contract_version": "dense-mem.v2.6.2", "submission_id": "submission-target",
+				"contract_version": "dense-mem.v2.8.0", "submission_id": "submission-target",
 				"submission_kind": "remember", "processing_state": "completed", "search_state": "current",
-				"correlation_id":       "target-correlation",
-				"evidence":             []map[string]any{{"disposition": "stored", "evidence_id": "fragment-target", "evidence_index": 0, "superseded_evidence_ids": []string{}, "search_state": "current"}},
-				"relationship_results": []map[string]any{}, "errors": []map[string]any{},
+				"correlation_id": "target-correlation",
+				"evidence":       []map[string]any{{"disposition": "stored", "evidence_id": "fragment-target", "evidence_index": 0, "superseded_evidence_ids": []string{}, "search_state": "current"}},
+				"errors":         []map[string]any{},
 			})
 		case "tool:get_submission_status":
 			atomic.AddInt32(&statusCalls, 1)
@@ -86,17 +84,17 @@ func TestHTTPClientTargetContractDoesNotPollSubmissionStatus(t *testing.T) {
 
 func TestHTTPClientTargetStructuredPolicyFailurePreservesPayload(t *testing.T) {
 	var calls int32
-	server := newRawContractTestServer(t, contractModeV262, func(w http.ResponseWriter, name string, _ map[string]any) {
+	server := newRawContractTestServer(t, contractModeEvidenceOnly, func(w http.ResponseWriter, name string, _ map[string]any) {
 		if name != "remember" {
 			t.Fatalf("unexpected tool %s", name)
 		}
 		atomic.AddInt32(&calls, 1)
 		result := map[string]any{
-			"contract_version": "dense-mem.v2.6.2", "submission_id": "submission-policy-failure",
+			"contract_version": "dense-mem.v2.8.0", "submission_id": "submission-policy-failure",
 			"submission_kind": "remember", "processing_state": "failed", "search_state": "not_required",
-			"correlation_id":       "target-correlation",
-			"evidence":             []any{map[string]any{"disposition": "not_stored", "evidence_index": 0, "superseded_evidence_ids": []any{}, "search_state": "not_required", "reason": "submission_policy_rejected"}},
-			"relationship_results": []any{}, "errors": []any{map[string]any{"code": "submission_policy_rejected", "message": "submission was rejected by semantic policy", "retryable": false, "next_action": "resubmit_remember", "remediation": "Submit corrected evidence with a new idempotency_key."}},
+			"correlation_id": "target-correlation",
+			"evidence":       []any{map[string]any{"disposition": "not_stored", "evidence_index": 0, "superseded_evidence_ids": []any{}, "search_state": "not_required", "reason": "submission_policy_rejected"}},
+			"errors":         []any{map[string]any{"code": "submission_policy_rejected", "message": "submission was rejected by semantic policy", "retryable": false, "next_action": "resubmit_remember", "remediation": "Submit corrected evidence with a new idempotency_key."}},
 		}
 		payload, _ := json.Marshal(result)
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -119,17 +117,16 @@ func TestHTTPClientTargetStructuredPolicyFailurePreservesPayload(t *testing.T) {
 
 func TestHTTPClientRetriesOnlyStructuredRetrySameRequest(t *testing.T) {
 	var calls int32
-	server := newRawContractTestServer(t, contractModeV262, func(w http.ResponseWriter, name string, _ map[string]any) {
+	server := newRawContractTestServer(t, contractModeEvidenceOnly, func(w http.ResponseWriter, name string, _ map[string]any) {
 		if name != "remember" {
 			t.Fatalf("unexpected tool %s", name)
 		}
 		attempt := atomic.AddInt32(&calls, 1)
 		if attempt == 1 {
 			result := map[string]any{
-				"contract_version": "dense-mem.v2.6.2", "submission_id": "submission-retry",
+				"contract_version": "dense-mem.v2.8.0", "submission_id": "submission-retry",
 				"submission_kind": "remember", "processing_state": "failed", "search_state": "not_required",
-				"correlation_id": "target-correlation", "evidence": []any{}, "relationship_results": []any{},
-				"errors": []any{map[string]any{"code": "provider_unavailable", "message": "provider unavailable", "retryable": true, "next_action": "retry_same_request", "remediation": "retry"}},
+				"correlation_id": "target-correlation", "evidence": []any{}, "errors": []any{map[string]any{"code": "provider_unavailable", "message": "provider unavailable", "retryable": true, "next_action": "retry_same_request", "remediation": "retry"}},
 			}
 			payload, _ := json.Marshal(result)
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -174,7 +171,7 @@ func TestClassifyContractAllowsEvaluationToolsAndRejectsUnknownTools(t *testing.
 	}
 	mode, err := classifyContract(definitions)
 	require.NoError(t, err)
-	require.Equal(t, contractModeV262, mode)
+	require.Equal(t, contractModeEvidenceOnly, mode)
 
 	for _, name := range []string{"eval_run_dream_cycle", "unexpected_tool"} {
 		_, err = classifyContract(append(definitions, mcpToolDefinition{Name: name}))
@@ -192,10 +189,10 @@ func TestClassifyContractAllowsOmittedRuntimeOptionalTools(t *testing.T) {
 	}
 	mode, err := classifyContract(definitions)
 	require.NoError(t, err)
-	require.Equal(t, contractModeV263, mode)
+	require.Equal(t, contractModeEvidenceOnly, mode)
 }
 
-func TestClassifyContractAcceptsRetainedV262Schema(t *testing.T) {
+func TestEvidenceOnlyUnitClassifyContractRejectsRetiredV262Schema(t *testing.T) {
 	definitions := make([]mcpToolDefinition, 0, len(registry.ContractTools()))
 	for _, tool := range registry.ContractTools() {
 		schema := tool.OutputSchema
@@ -209,9 +206,8 @@ func TestClassifyContractAcceptsRetainedV262Schema(t *testing.T) {
 		}
 		definitions = append(definitions, mcpToolDefinition{Name: tool.Name, OutputSchema: schema})
 	}
-	mode, err := classifyContract(definitions)
-	require.NoError(t, err)
-	require.Equal(t, contractModeV263, mode)
+	_, err := classifyContract(definitions)
+	require.ErrorContains(t, err, "unsupported or mixed MCP contract")
 }
 
 func TestClassifyContractRejectsMixedUnknownContractVersions(t *testing.T) {
@@ -256,7 +252,7 @@ func TestHTTPClientRetriesContractDiscoveryAfterFailure(t *testing.T) {
 	require.Error(t, err)
 	mode, err := client.ensureContract(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, contractModeV262, mode)
+	require.Equal(t, contractModeEvidenceOnly, mode)
 	require.Equal(t, int32(2), atomic.LoadInt32(&calls))
 }
 
@@ -303,4 +299,47 @@ func newRawContractTestServer(t *testing.T, mode contractMode, call func(http.Re
 		}
 		call(w, request.Params.Name, request.Params.Arguments)
 	}))
+}
+
+func TestEvidenceOnlyUnitClientRetainsOneIdentityPreservingRecovery(t *testing.T) {
+	for _, retryable := range []bool{true, false} {
+		for _, failAgain := range []bool{true, false} {
+			t.Run(fmt.Sprintf("retryable=%t/fail_again=%t", retryable, failAgain), func(t *testing.T) {
+				originalID := uuid.NewString()
+				inputs := []map[string]any{}
+				server := newRawContractTestServer(t, contractModeEvidenceOnly, func(w http.ResponseWriter, name string, input map[string]any) {
+					require.Equal(t, "remember", name)
+					inputs = append(inputs, input)
+					var result map[string]any
+					failed := len(inputs) == 1 || failAgain
+					if failed {
+						result = map[string]any{"contract_version": "dense-mem.v2.8.0", "submission_id": originalID, "processing_state": "failed", "errors": []any{map[string]any{"code": "provider_unavailable", "retryable": retryable, "next_action": map[bool]string{true: "retry_same_request", false: "contact_operator"}[retryable]}}}
+					} else {
+						result = map[string]any{"contract_version": "dense-mem.v2.8.0", "submission_id": uuid.NewString(), "processing_state": "completed", "evidence": []any{map[string]any{"evidence_id": "stored", "disposition": "stored", "evidence_index": 0}}}
+					}
+					payload, err := json.Marshal(result)
+					require.NoError(t, err)
+					require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": 1, "result": map[string]any{"structuredContent": result, "content": []any{map[string]any{"type": "text", "text": string(payload)}}, "isError": failed}}))
+				})
+				defer server.Close()
+				client := &HTTPClient{BaseURL: server.URL, APIKey: "synthetic", Client: server.Client()}
+				mapping, err := client.ImportCorpus(context.Background(), []CorpusItem{{SourceDocID: "source", Content: "Exact original café Evidence"}})
+				if failAgain {
+					require.Error(t, err)
+				} else {
+					require.NoError(t, err)
+					require.Equal(t, "stored", mapping.BySourceDocID["source"].ID)
+				}
+				require.Len(t, inputs, 2)
+				require.Equal(t, inputs[0]["evidence"], inputs[1]["evidence"])
+				require.Equal(t, "team_shared", inputs[1]["target_space"])
+				key := "eval:source"
+				if !retryable {
+					key += ":resubmit1"
+				}
+				require.Equal(t, "eval:source", inputs[0]["idempotency_key"])
+				require.Equal(t, key, inputs[1]["idempotency_key"])
+			})
+		}
+	}
 }

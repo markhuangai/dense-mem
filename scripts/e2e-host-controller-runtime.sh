@@ -147,39 +147,6 @@ run_scenario() {
     identity_upgrade_api_key="$(helper_env_value "$identity_file" DENSE_MEM_E2E_UPGRADE_API_KEY)" || fail "identity cleanup seed credential is missing"
   fi
 
-  local -a conflict_driver_env=()
-  if [[ -f "${helper_dir}/conflict-review-driver" ]]; then
-    if [[ "$scenario" == "conflict" || "$scenario" == "conflict_queue" ]]; then
-      conflict_driver_env=(
-        "AI_API_URL=http://conflict-provider:8081/v1"
-        "AI_API_KEY=dense-mem-conflict-e2e-key"
-        "AI_API_EMBEDDING_MODEL=${embedding_model}"
-        "AI_API_EMBEDDING_DIMENSIONS=${embedding_dimensions}"
-        "AI_API_EMBEDDING_MAX_BATCH_ITEMS=${embedding_batch_items}"
-        "AI_VERIFIER_API_URL=http://conflict-provider:8081/v1"
-        "AI_VERIFIER_API_KEY=dense-mem-conflict-e2e-key"
-        "AI_VERIFIER_MODEL=dense-mem-conflict-e2e-verifier"
-        "AI_CONFLICT_REVIEW_MODEL=dense-mem-e2e-conflict-review"
-        "AI_VERIFIER_DISABLE_TEMPERATURE=true"
-      )
-    else
-      local provider_field provider_value
-      for provider_field in \
-        AI_API_URL AI_API_KEY AI_API_EMBEDDING_MODEL AI_API_EMBEDDING_DIMENSIONS AI_API_EMBEDDING_MAX_BATCH_ITEMS \
-        AI_VERIFIER_API_URL AI_VERIFIER_API_KEY AI_VERIFIER_MODEL \
-        AI_REMEMBER_MODEL AI_CONFLICT_REVIEW_MODEL \
-        AI_VERIFIER_DISABLE_TEMPERATURE AI_API_EMBEDDING_TIMEOUT_SECONDS AI_VERIFIER_TIMEOUT_SECONDS; do
-        if has_helper "$helpers" conflict_provider && [[ "$provider_field" == "AI_API_EMBEDDING_MAX_BATCH_ITEMS" ]]; then
-          provider_value="$embedding_batch_items"
-        else
-          provider_value="$(env_value "$provider_field" 2>/dev/null || true)"
-        fi
-        if [[ -n "$provider_value" ]]; then
-          conflict_driver_env+=("${provider_field}=${provider_value}")
-        fi
-      done
-    fi
-  fi
 
   docker_cli_paths
   local docker_socket
@@ -191,7 +158,7 @@ run_scenario() {
   fi
   if [[ -n "$ontology_database_capabilities" ]]; then
     local go_image
-    go_image="$(env_value DENSE_MEM_CI_GO_TEST_IMAGE 2>/dev/null || printf '%s' golang:1.26.9-bookworm)"
+    go_image="$(env_value DENSE_MEM_CI_GO_TEST_IMAGE 2>/dev/null || printf '%s' golang:1.26.11-bookworm)"
     run_go_source_container \
       "$source_dir" "$go_image" "$project" "$run_id" "$attempt" "$phase" "$scenario" "$digest" "${project}_ci" "$docker_socket" "$ENV_FILE" -- \
       "TESTCONTAINERS_RYUK_DISABLED=true" \
@@ -231,8 +198,6 @@ run_scenario() {
     oauth_harness="$(helper_env_value "$helper_runtime" DENSE_MEM_E2E_OAUTH_HARNESS_URL 2>/dev/null || true)"
   fi
   local result_file="/results/${scenario}-result.json"
-  local conflict_live=0
-  [[ "$scenario" == "conflict_queue" ]] && conflict_live=1
   local container_name="${project}-test-${scenario//_/-}"
   local created_at
   created_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -289,8 +254,6 @@ run_scenario() {
     -e "DENSE_MEM_E2E_POSTGRES_USER=${postgres_user}"
     -e "DENSE_MEM_E2E_POSTGRES_PASSWORD=${postgres_password}"
     -e "DENSE_MEM_E2E_POSTGRES_DB=${postgres_db}"
-    -e "DENSE_MEM_E2E_CONFLICT_PROVIDER_URL=http://conflict-provider:8081/v1"
-    -e "DENSE_MEM_E2E_CONFLICT_REVIEW_DRIVER=/helpers/conflict-review-driver"
     -e "AI_API_URL=${embedding_api_url}"
     -e "AI_API_KEY=${upstream_api_key}"
     -e "AI_API_EMBEDDING_MODEL=${embedding_model}"
@@ -303,17 +266,10 @@ run_scenario() {
     -e "DENSE_MEM_E2E_SSO_SESSION_TOKEN=${oauth_session_token}"
     -e "DENSE_MEM_E2E_SSO_CSRF_TOKEN=${oauth_csrf_token}"
     -e "DENSE_MEM_E2E_MEMORY_SCENARIO=${scenario}"
-    -e "DENSE_MEM_E2E_CONFLICT_REVIEW_LIVE=${conflict_live}"
     -e "DENSE_MEM_E2E_DIAGNOSTICS_FIXTURE_FILE=/results/${scenario}-diagnostics.json"
     -e "DENSE_MEM_E2E_REMEMBER_FAILURE_DIR=/tmp/dense-mem-remember-failures"
     -e "DENSE_MEM_CONTROL_TOKEN=${control_token}"
   )
-  if [[ -f "${helper_dir}/conflict-review-driver" ]]; then
-    local provider_env
-    for provider_env in "${conflict_driver_env[@]}"; do
-      docker_args+=(-e "$provider_env")
-    done
-  fi
   if [[ -f "${helper_dir}/ca.pem" ]]; then
     docker_args+=(-e "NODE_EXTRA_CA_CERTS=/oauth/ca.pem")
   fi
@@ -352,9 +308,6 @@ run_scenario() {
       if [[ -f /tmp/dense-mem-helper-compose.yml ]]; then
         install -m 0600 /tmp/dense-mem-helper-compose.yml /ci/helper-compose.yml
       fi
-      if [[ -f /tmp/dense-mem-conflict-review-driver ]]; then
-        install -m 0700 /tmp/dense-mem-conflict-review-driver /helpers/conflict-review-driver
-      fi
       if [[ -f /tmp/dense-mem-oauth-ca.pem ]]; then
         install -m 0644 /tmp/dense-mem-oauth-ca.pem /oauth/ca.pem
       fi
@@ -368,7 +321,7 @@ run_scenario() {
   collect_scenario_failure_diagnostics() {
     ((failure_diagnostics_collected == 0)) || return 0
     failure_diagnostics_collected=1
-    if [[ -n "$container" && ( "$scenario" == "ontology_organization" || -f "${helper_dir}/conflict-review-driver" ) ]]; then
+    if [[ -n "$container" && "$scenario" == "ontology_organization" ]]; then
       collect_remember_failure_diagnostics "$container" "$source_dir" "$project" ||
         printf '%s\n' 'Remember temporary failure diagnosis is unavailable' >&2
     fi
@@ -421,9 +374,6 @@ run_scenario() {
   copy_file_into_container "$container" "$DENSE_MEM_CI_COMPOSE_PLUGIN" /tmp/dense-mem-compose
   if [[ -f "$helper_overlay" ]]; then
     copy_file_into_container "$container" "$helper_overlay" /tmp/dense-mem-helper-compose.yml
-  fi
-  if [[ -f "${helper_dir}/conflict-review-driver" ]]; then
-    copy_file_into_container "$container" "${helper_dir}/conflict-review-driver" /tmp/dense-mem-conflict-review-driver
   fi
   if [[ -f "${helper_dir}/ca.pem" ]]; then
     copy_file_into_container "$container" "${helper_dir}/ca.pem" /tmp/dense-mem-oauth-ca.pem

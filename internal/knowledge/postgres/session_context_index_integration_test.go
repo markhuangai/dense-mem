@@ -39,7 +39,7 @@ func TestSessionContextIndexBoundsPrivateLookupAcrossUnrelatedHistory(t *testing
 	for i := range session.MaxEvents {
 		intake.Request.Events = append(intake.Request.Events, session.Event{EventID: fmt.Sprintf("target-%d", i), Text: "Thanks. Let's continue."})
 	}
-	store := NewStore(app, rls, ConflictRuntimeConfig{})
+	store := NewStore(app, rls)
 	completeSessionContextFixture(t, ctx, store, intake.Request)
 	plans := map[string]json.RawMessage{}
 	read := func(actor context.Context, scope session.Scope, req session.Request) *session.Submission {
@@ -201,7 +201,7 @@ func TestSessionContextIndexMigrationRetainsIntakeAndRepairsInterruptedBuild(t *
 	team := createLedgerTeam(t, admin, rls, "session-context-migration")
 	owner := createLedgerProfile(t, admin, rls, team, "owner")
 	ctx, intake := sessionIntakeFixture(t, admin, app, rls, team, owner, domain.MemorySpacePrivate)
-	store := NewStore(app, rls, ConflictRuntimeConfig{})
+	store := NewStore(app, rls)
 	completeSessionContextFixture(t, ctx, store, intake.Request)
 	snapshot := func() string {
 		var rows string

@@ -18,30 +18,17 @@ import (
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
-func TestFeedbackResultRefsPreservesOrderAndEarliestDuplicateRank(t *testing.T) {
-	result := &RecallResult{
-		SearchState: string(domain.SearchProjectionCurrent),
-		Results: []RecallResultItem{
-			{EvidenceID: "evidence-1", RelationshipIDs: []string{"relationship-1"}, Rank: 3},
-			{EvidenceID: "evidence-2", RelationshipIDs: []string{"relationship-1"}},
-		},
-		RelatedCommunities: []RecallDiscoveryPath{{
-			CommunityID: "community-1",
-			Rank:        4,
-			CommunityRelationships: []RelatedRelationshipSummary{{
-				RelationshipID: "relationship-1",
-				SearchState:    string(domain.SearchProjectionFailed),
-			}},
-		}},
-	}
-
-	refs := FeedbackResultRefs(result)
+func TestEvidenceOnlyUnitFeedbackRefsPreserveEvidenceAndTopicRanks(t *testing.T) {
+	result := &RecallResult{SearchState: "current", Results: []RecallResultItem{
+		{EvidenceID: "evidence-1", EquivalentEvidenceIDs: []string{"alias"}, Rank: 3},
+		{EvidenceID: "evidence-2", EquivalentEvidenceIDs: []string{"alias"}, Rank: 2},
+	}, RelatedTopics: []recallcontract.RelatedTopic{{TopicID: "topic-1", Rank: 4}}}
 	require.Equal(t, []domain.RecallFeedbackResultRef{
-		{Type: domain.RecallFeedbackResultTypeEvidence, ID: "evidence-1", Rank: 3, Tier: "evidence", StatusAtRecall: string(domain.SearchProjectionCurrent)},
-		{Type: domain.RecallFeedbackResultTypeRelationship, ID: "relationship-1", Rank: 2, Tier: "relationship", StatusAtRecall: string(domain.SearchProjectionCurrent)},
-		{Type: domain.RecallFeedbackResultTypeEvidence, ID: "evidence-2", Rank: 2, Tier: "evidence", StatusAtRecall: string(domain.SearchProjectionCurrent)},
-		{Type: domain.RecallFeedbackResultTypeCommunity, ID: "community-1", Rank: 4, StatusAtRecall: string(domain.SearchProjectionCurrent)},
-	}, refs)
+		{Type: "evidence", ID: "evidence-1", Rank: 3, Tier: "evidence", StatusAtRecall: "current"},
+		{Type: "evidence", ID: "alias", Rank: 2, EquivalentTo: "evidence-1", Tier: "evidence", StatusAtRecall: "current"},
+		{Type: "evidence", ID: "evidence-2", Rank: 2, Tier: "evidence", StatusAtRecall: "current"},
+		{Type: "topic", ID: "topic-1", Rank: 4, Tier: "topic", StatusAtRecall: "current"},
+	}, FeedbackResultRefs(result))
 	assert.Empty(t, FeedbackResultRefs(nil))
 }
 
@@ -117,7 +104,7 @@ func TestRecallFeedbackEventServiceRecordsSnapshotWithActorContext(t *testing.T)
 		Query:    "query",
 		ToolArgs: map[string]any{"input": map[string]any{"query": "query"}},
 		ResultRefs: []domain.RecallFeedbackResultRef{{
-			Type: domain.RecallFeedbackResultTypeFragment,
+			Type: domain.RecallFeedbackResultTypeEvidence,
 			ID:   "fragment-1",
 			Rank: 1,
 		}},
@@ -150,7 +137,7 @@ func TestRecallFeedbackEventServiceRecordsFeedbackForCapturedSnapshotAndPrunesRe
 			SpaceGeneration: 2,
 			SnapshotState:   domain.RecallFeedbackSnapshotCaptured,
 			ResultRefs: []domain.RecallFeedbackResultRef{{
-				Type: domain.RecallFeedbackResultTypeFragment,
+				Type: domain.RecallFeedbackResultTypeEvidence,
 				ID:   "fragment-1",
 				Rank: 1,
 			}},
@@ -169,7 +156,7 @@ func TestRecallFeedbackEventServiceRecordsFeedbackForCapturedSnapshotAndPrunesRe
 		Irrelevant:      false,
 		FeedbackComment: "knowledge explorer listbox pattern was missing",
 		IrrelevantRefs: []domain.RecallFeedbackJudgedResultRef{{
-			Type: domain.RecallFeedbackResultTypeFragment,
+			Type: domain.RecallFeedbackResultTypeEvidence,
 			ID:   "fragment-1",
 			Rank: 1,
 		}},
@@ -179,7 +166,7 @@ func TestRecallFeedbackEventServiceRecordsFeedbackForCapturedSnapshotAndPrunesRe
 	got := repo.feedbacks[0]
 	assert.Equal(t, domain.RecallFeedbackSnapshotCaptured, got.SnapshotState)
 	assert.Equal(t, []domain.RecallFeedbackResultRef{{
-		Type: domain.RecallFeedbackResultTypeFragment,
+		Type: domain.RecallFeedbackResultTypeEvidence,
 		ID:   "fragment-1",
 		Rank: 1,
 	}}, got.ResultRefs)
@@ -192,7 +179,7 @@ func TestRecallFeedbackEventServiceRecordsFeedbackForCapturedSnapshotAndPrunesRe
 	assert.True(t, *got.MissingContext)
 	assert.Equal(t, "knowledge explorer listbox pattern was missing", got.FeedbackComment)
 	assert.Equal(t, []domain.RecallFeedbackJudgedResultRef{{
-		Type: domain.RecallFeedbackResultTypeFragment,
+		Type: domain.RecallFeedbackResultTypeEvidence,
 		ID:   "fragment-1",
 		Rank: 1,
 	}}, got.IrrelevantRefs)
@@ -334,7 +321,7 @@ func TestRecallFeedbackEventServiceGetResolvesResults(t *testing.T) {
 			TeamID:    &teamID,
 			ProfileID: &profileID,
 			ResultRefs: []domain.RecallFeedbackResultRef{{
-				Type: domain.RecallFeedbackResultTypeFact,
+				Type: domain.RecallFeedbackResultTypeEvidence,
 				ID:   "fact-1",
 				Rank: 1,
 			}},
@@ -342,7 +329,7 @@ func TestRecallFeedbackEventServiceGetResolvesResults(t *testing.T) {
 	}
 	resolver := &recallFeedbackResolverStub{
 		resolved: []domain.RecallFeedbackResolvedResult{{
-			Type:             domain.RecallFeedbackResultTypeFact,
+			Type:             domain.RecallFeedbackResultTypeEvidence,
 			ID:               "fact-1",
 			Rank:             1,
 			ResolutionStatus: "found",
@@ -364,7 +351,7 @@ func TestRecallFeedbackEventServiceGetFallsBackToProfileScopeForLegacyRows(t *te
 			RecallID:  "rec_legacy",
 			ProfileID: &profileID,
 			ResultRefs: []domain.RecallFeedbackResultRef{{
-				Type: domain.RecallFeedbackResultTypeFragment,
+				Type: domain.RecallFeedbackResultTypeEvidence,
 				ID:   "fragment-1",
 				Rank: 1,
 			}},

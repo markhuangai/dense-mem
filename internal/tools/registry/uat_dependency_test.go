@@ -29,28 +29,16 @@ func TestBuildActiveExecutableToolsRequireDependencies(t *testing.T) {
 			},
 		},
 		{
-			name: ToolCorrectRelationship,
-			args: map[string]any{
-				"action":           "submit",
-				"relationship_id":  "relationship-source",
-				"expected_version": 1,
-				"patch":            map[string]any{"predicate": map[string]any{"key": "works_with"}},
-				"supports":         []any{map[string]any{"evidence_id": "evidence-1", "start": 0, "end": 8}},
-				"reason":           "predicate resolved incorrectly",
-				"idempotency_key":  "correction-1",
-			},
-		},
-		{
 			name: ToolTraceMemory,
 			args: map[string]any{
-				"relationship_id": "relationship-canonical",
+				"evidence_id": "00000000-0000-0000-0000-000000000001",
 			},
 		},
 		{
 			name: ToolExportMemoryPack,
 			args: map[string]any{
-				"name":             "PostgreSQL pack",
-				"relationship_ids": []any{"relationship-canonical"},
+				"name":         "PostgreSQL pack",
+				"evidence_ids": []any{"00000000-0000-0000-0000-000000000001"},
 			},
 		},
 	}

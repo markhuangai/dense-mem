@@ -11,7 +11,19 @@ import (
 )
 
 func TestRunImportModeImportsWithoutRecall(t *testing.T) {
-	dir := writeV2EvalImportFixture(t)
+	for _, schema := range []string{SeedSchemaVersion, SeedSchemaVersionV2} {
+		t.Run(schema, func(t *testing.T) {
+			dir := writeEvalFixture(t)
+			if schema == SeedSchemaVersionV2 {
+				dir = writeV2EvalImportFixture(t)
+			}
+			testRunEvidenceImportWithoutRecall(t, dir)
+		})
+	}
+}
+
+func testRunEvidenceImportWithoutRecall(t *testing.T, dir string) {
+	t.Helper()
 	rememberIDs := map[string]string{
 		"eval:doc-alpha": "evidence-alpha",
 		"eval:doc-beta":  "evidence-beta",
@@ -31,31 +43,32 @@ func TestRunImportModeImportsWithoutRecall(t *testing.T) {
 			if _, ok := rememberIDs[idempotencyKey]; !ok {
 				t.Fatalf("remember input = %#v", input)
 			}
-			relationships, ok := input["relationships"].([]any)
-			if !ok || len(relationships) != 1 {
-				t.Fatalf("remember relationships = %#v", input["relationships"])
-			}
-			relationship := relationships[0].(map[string]any)
-			evidenceIndices, ok := relationship["evidence_indices"].([]any)
-			if !ok || len(evidenceIndices) != 1 || evidenceIndices[0] != float64(0) {
-				t.Fatalf("remember relationship evidence_indices = %#v", relationship["evidence_indices"])
-			}
-			for _, legacyField := range []string{"span", "supports"} {
-				if _, exists := relationship[legacyField]; exists {
-					t.Fatalf("remember relationship contains legacy field %q: %#v", legacyField, relationship)
+			for _, retiredField := range []string{"relationships", "entities", "values"} {
+				if _, exists := input[retiredField]; exists {
+					t.Fatalf("remember contains retired field %q", retiredField)
 				}
+			}
+			evidence, ok := input["evidence"].([]any)
+			if !ok || len(evidence) != 1 {
+				t.Fatalf("remember evidence = %#v", input["evidence"])
+			}
+			item := evidence[0].(map[string]any)
+			sourceDocID := strings.TrimPrefix(idempotencyKey, "eval:")
+			content := map[string]string{"doc-alpha": "Alpha is the first Greek letter.", "doc-beta": "Beta is the second Greek letter."}
+			if item["content"] != content[sourceDocID] || nestedString(item, "metadata", "source_doc_id") != sourceDocID || input["target_space"] != "team_shared" {
+				t.Fatalf("remember did not preserve exact Evidence and provenance: %#v", input)
 			}
 			rememberCalls++
 			submissionID := strings.TrimPrefix(idempotencyKey, "eval:")
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"contract_version":     "dense-mem.v2.6.2",
-				"submission_id":        submissionID,
-				"submission_kind":      "remember",
-				"processing_state":     "completed",
-				"search_state":         "current",
-				"correlation_id":       "correlation-" + submissionID,
-				"evidence":             []map[string]any{{"disposition": "stored", "evidence_id": rememberIDs["eval:"+submissionID], "evidence_index": 0, "superseded_evidence_ids": []string{}, "search_state": "current"}},
-				"relationship_results": []map[string]any{}, "errors": []map[string]any{},
+				"contract_version": "dense-mem.v2.8.0",
+				"submission_id":    submissionID,
+				"submission_kind":  "remember",
+				"processing_state": "completed",
+				"search_state":     "current",
+				"correlation_id":   "correlation-" + submissionID,
+				"evidence":         []map[string]any{{"disposition": "stored", "evidence_id": rememberIDs["eval:"+submissionID], "evidence_index": 0, "superseded_evidence_ids": []string{}, "search_state": "current"}},
+				"errors":           []map[string]any{},
 			})
 		case "tool:eval_list_knowledge_refs":
 			var input map[string]any
@@ -70,8 +83,6 @@ func TestRunImportModeImportsWithoutRecall(t *testing.T) {
 					{"id": "evidence-alpha", "metadata": map[string]any{"source_doc_id": "doc-alpha"}},
 					{"id": "evidence-beta", "metadata": map[string]any{"source_doc_id": "doc-beta"}},
 				}})
-			case "entity", "value", "relationship":
-				_ = json.NewEncoder(w).Encode(map[string]any{"items": []map[string]any{}})
 			default:
 				t.Fatalf("unexpected export type %q", kind)
 			}
@@ -106,13 +117,8 @@ func TestRunImportModeImportsWithoutRecall(t *testing.T) {
 	if rememberCalls != 2 || recallCalls != 0 {
 		t.Fatalf("remember/recall calls = %d/%d", rememberCalls, recallCalls)
 	}
-	for _, kind := range []string{"evidence", "entity", "value", "relationship"} {
-		if exportCalls[kind] != 1 {
-			t.Fatalf("export calls = %#v; want one post-placement export per canonical type", exportCalls)
-		}
-	}
-	if len(exportCalls) != 4 {
-		t.Fatalf("export calls = %#v; want one post-placement export per knowledge type", exportCalls)
+	if exportCalls["evidence"] != 1 || len(exportCalls) != 1 {
+		t.Fatalf("export calls = %#v; want one post-placement Evidence export", exportCalls)
 	}
 	for _, name := range []string{"run_config.json", "seed_manifest.json", "suite.jsonl", "summary.json", "knowledge_mapping.json"} {
 		if !fileExists(filepath.Join(out, name)) {
@@ -154,14 +160,14 @@ func TestRunImportResumeSkipsOnlyCompletedDocumentsWithLiveEvidence(t *testing.T
 			sourceDocID := strings.TrimPrefix(input["idempotency_key"].(string), "eval:")
 			remembered = append(remembered, sourceDocID)
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"contract_version":     "dense-mem.v2.6.2",
-				"submission_id":        "submission-" + sourceDocID,
-				"submission_kind":      "remember",
-				"processing_state":     "completed",
-				"search_state":         "current",
-				"correlation_id":       "correlation-" + sourceDocID,
-				"evidence":             []map[string]any{{"disposition": "stored", "evidence_id": "evidence-" + sourceDocID, "evidence_index": 0, "superseded_evidence_ids": []string{}, "search_state": "current"}},
-				"relationship_results": []map[string]any{}, "errors": []map[string]any{},
+				"contract_version": "dense-mem.v2.8.0",
+				"submission_id":    "submission-" + sourceDocID,
+				"submission_kind":  "remember",
+				"processing_state": "completed",
+				"search_state":     "current",
+				"correlation_id":   "correlation-" + sourceDocID,
+				"evidence":         []map[string]any{{"disposition": "stored", "evidence_id": "evidence-" + sourceDocID, "evidence_index": 0, "superseded_evidence_ids": []string{}, "search_state": "current"}},
+				"errors":           []map[string]any{},
 			})
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
@@ -206,12 +212,18 @@ func TestRunImportResumeSkipsOnlyCompletedDocumentsWithLiveEvidence(t *testing.T
 	}
 }
 
-func TestRunRejectsV1SeedImportBeforeExternalCalls(t *testing.T) {
+func TestRunRejectsInvalidEvidenceBeforeExternalCalls(t *testing.T) {
 	dir := writeEvalFixture(t)
+	if err := writeJSONL(filepath.Join(dir, "corpus.jsonl"), []CorpusItem{
+		{SourceDocID: "doc-alpha", Content: ""},
+		{SourceDocID: "doc-beta", Content: "Beta is the second Greek letter."},
+	}); err != nil {
+		t.Fatal(err)
+	}
 	var requests int
 	server := newEvalHarnessServer(t, http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 		requests++
-		t.Fatal("V1 import must fail before any external call")
+		t.Fatal("invalid Evidence must fail before any external call")
 	}))
 	defer server.Close()
 
@@ -220,10 +232,11 @@ func TestRunRejectsV1SeedImportBeforeExternalCalls(t *testing.T) {
 		SeedManifestPath: filepath.Join(dir, "seed_manifest.json"),
 		SuitePath:        filepath.Join(dir, "suite.jsonl"),
 		BaseURL:          server.URL,
+		APIKey:           "api-key",
 		ImportSeed:       true,
 	})
-	if err == nil || !strings.Contains(err.Error(), "cannot be imported through the required flat relationship contract") {
-		t.Fatalf("Run V1 import error = %v", err)
+	if err == nil || !strings.Contains(err.Error(), "content") {
+		t.Fatalf("Run invalid Evidence import error = %v", err)
 	}
 	if requests != 0 {
 		t.Fatalf("external requests = %d, want 0", requests)
@@ -243,10 +256,6 @@ func writeV2EvalImportFixture(t *testing.T) string {
 		t.Fatalf("load fixture corpus: %v", err)
 	}
 	manifest.SchemaVersion = SeedSchemaVersionV2
-	manifest.RelationshipCount = len(corpus)
-	for i := range corpus {
-		corpus[i].Relationships = []any{evalImportRelationship(t, corpus[i].Content, "relationship-"+corpus[i].SourceDocID)}
-	}
 	if err := writeJSONL(filepath.Join(dir, manifest.CorpusFile), corpus); err != nil {
 		t.Fatalf("write V2 fixture corpus: %v", err)
 	}
@@ -254,50 +263,4 @@ func writeV2EvalImportFixture(t *testing.T) string {
 		t.Fatalf("write V2 fixture manifest: %v", err)
 	}
 	return dir
-}
-
-func evalImportRelationship(t *testing.T, content, ref string) map[string]any {
-	t.Helper()
-	runes := []rune(content)
-	firstSpace := -1
-	secondSpace := -1
-	for index, value := range runes {
-		if value != ' ' {
-			continue
-		}
-		if firstSpace < 0 {
-			firstSpace = index
-			continue
-		}
-		secondSpace = index
-		break
-	}
-	if firstSpace <= 0 || secondSpace <= firstSpace+1 || secondSpace+1 >= len(runes) {
-		t.Fatal("eval import fixture content must contain subject, predicate, and object")
-	}
-	objectEnd := len(runes)
-	for objectEnd > secondSpace+1 && strings.ContainsRune(".!?", runes[objectEnd-1]) {
-		objectEnd--
-	}
-	if objectEnd <= secondSpace+1 {
-		t.Fatal("eval import fixture content must contain an object")
-	}
-	subjectEnd := firstSpace
-	predicateStart := firstSpace + 1
-	predicateEnd := secondSpace
-	objectStart := secondSpace + 1
-	return map[string]any{
-		"ref": ref,
-		"subject": map[string]any{
-			"name": string(runes[:subjectEnd]), "entity_kind": "other",
-		},
-		"predicate": map[string]any{
-			"proposed_key": strings.ToLower(string(runes[predicateStart:predicateEnd])),
-		},
-		"object": map[string]any{"entity": map[string]any{
-			"name": string(runes[objectStart:objectEnd]), "entity_kind": "other",
-		}},
-		"polarity":         "+",
-		"evidence_indices": []any{0},
-	}
 }

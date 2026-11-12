@@ -7,7 +7,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/assessor"
 )
 
-func TestValidateServerStartupReportsCandidateContextBudgetWhenMinimumCannotFit(t *testing.T) {
+func TestValidateServerStartupAcceptsMinimumEvidenceOnlyCandidateContext(t *testing.T) {
 	clearEnv()
 	setRequiredEnv()
 	setRequiredEmbeddingEnv()
@@ -18,10 +18,8 @@ func TestValidateServerStartupReportsCandidateContextBudgetWhenMinimumCannotFit(
 	if err != nil {
 		t.Fatalf("Load() returned unexpected error: %v", err)
 	}
-	err = cfg.ValidateServerStartup()
-	validationErr, ok := err.(*ValidationError)
-	if !ok || validationErr.Field != "AI_VERIFIER_MAX_CANDIDATE_CONTEXT_TOKENS" {
-		t.Fatalf("ValidateServerStartup() error = %v, want assessor candidate-context budget validation error", err)
+	if err := cfg.ValidateServerStartup(); err != nil {
+		t.Fatalf("ValidateServerStartup() with empty optional Evidence context: %v", err)
 	}
 }
 

@@ -14,28 +14,16 @@ func TestValidateContractInputIssuesAggregatesRememberProblems(t *testing.T) {
 	remember, err := requireTool(toolMap(t), ToolRemember)
 	require.NoError(t, err)
 
+	evidence := make([]any, 21)
+	for index := range evidence {
+		evidence[index] = map[string]any{
+			"content": "", "source_key": "source-1", "unknown": true,
+			"supersedes_evidence_ids": []any{"evidence-old"},
+		}
+	}
 	args := map[string]any{
-		"unknown": true,
-		"evidence": []any{
-			map[string]any{
-				"content":                 "",
-				"source_key":              "source-1",
-				"supersedes_evidence_ids": []any{"evidence-old"},
-				"unknown":                 true,
-			},
-			"not-an-object",
-		},
-		"relationships": []any{
-			map[string]any{
-				"ref":              "duplicate",
-				"evidence_indices": []any{"bad"},
-				"unknown":          true,
-			},
-			map[string]any{
-				"ref":              "duplicate",
-				"evidence_indices": []any{0},
-			},
-		},
+		"unknown":  true,
+		"evidence": evidence,
 	}
 
 	result := ValidateContractInputIssues(remember, args, []string{"read", "write"})
@@ -59,11 +47,11 @@ func TestValidateContractInputIssuesHonorsEarlyScopeAndTenantGuards(t *testing.T
 	remember, err := requireTool(toolMap(t), ToolRemember)
 	require.NoError(t, err)
 
-	missingScope := ValidateContractInputIssues(remember, validFlatRelationshipSubmission(), nil)
+	missingScope := ValidateContractInputIssues(remember, validEvidenceOnlySubmission(), nil)
 	require.Len(t, missingScope.Issues, 1)
 	require.Equal(t, "missing_scope", missingScope.Issues[0].Code)
 
-	withTenant := validFlatRelationshipSubmission()
+	withTenant := validEvidenceOnlySubmission()
 	withTenant["team_id"] = "caller-selected-team"
 	tenant := ValidateContractInputIssues(remember, withTenant, []string{"read", "write"})
 	require.Len(t, tenant.Issues, 1)
@@ -71,6 +59,7 @@ func TestValidateContractInputIssuesHonorsEarlyScopeAndTenantGuards(t *testing.T
 }
 
 func TestValidateContractInputIssuesDispatchesToolSpecificValidation(t *testing.T) {
+	const duplicateID = "11111111-1111-4111-8111-111111111111"
 	cases := []struct {
 		name  string
 		tool  string
@@ -78,11 +67,9 @@ func TestValidateContractInputIssuesDispatchesToolSpecificValidation(t *testing.
 		scope string
 		want  string
 	}{
-		{name: "recall", tool: ToolRecallMemory, args: map[string]any{"known_evidence_ids": []any{"same", "same"}}, scope: "read", want: "duplicate"},
-		{name: "retract", tool: ToolRetractEvidence, args: map[string]any{"evidence_ids": []any{"same", "same"}}, scope: "write", want: "duplicate"},
-		{name: "trace", tool: ToolTraceMemory, args: map[string]any{"predicate_keys": []any{"same", "same"}}, scope: "read", want: "duplicate"},
-		{name: "export", tool: ToolExportMemoryPack, args: map[string]any{"relationship_ids": []any{"same", "same"}}, scope: "read", want: "duplicate"},
-		{name: "correction", tool: ToolCorrectRelationship, args: map[string]any{"action": "unknown"}, scope: "write", want: "submit or confirm"},
+		{name: "recall", tool: ToolRecallMemory, args: map[string]any{"query": "durable memory", "known_evidence_ids": []any{duplicateID, duplicateID}}, scope: "read", want: "duplicate"},
+		{name: "retract", tool: ToolRetractEvidence, args: map[string]any{"evidence_ids": []any{duplicateID, duplicateID}}, scope: "write", want: "duplicate"},
+		{name: "export", tool: ToolExportMemoryPack, args: map[string]any{"evidence_ids": []any{duplicateID, duplicateID}}, scope: "read", want: "duplicate"},
 		{name: "recall feedback", tool: ToolSubmitRecallSessionFeedback, args: map[string]any{"recalls": []any{map[string]any{"quality": "low"}}}, scope: "write", want: "feedback_comment"},
 	}
 	for _, tc := range cases {
@@ -99,7 +86,7 @@ func TestValidateContractInputIssuesRejectsMalformedRecallUUIDFilters(t *testing
 	recall, err := requireTool(toolMap(t), ToolRecallMemory)
 	require.NoError(t, err)
 
-	for _, field := range []string{"known_evidence_ids", "known_relationship_ids", "expand_from_entity_ids"} {
+	for _, field := range []string{"known_evidence_ids", "topic_ids"} {
 		t.Run(field, func(t *testing.T) {
 			result := ValidateContractInputIssues(recall, map[string]any{
 				"query": "durable memory",
@@ -114,7 +101,7 @@ func TestValidateContractInputIssuesRejectsMalformedRecallUUIDFilters(t *testing
 func TestValidateContractInputIssuesRememberValidAndMalformedShapes(t *testing.T) {
 	remember, err := requireTool(toolMap(t), ToolRemember)
 	require.NoError(t, err)
-	valid := ValidateContractInputIssues(remember, validFlatRelationshipSubmission(), []string{"read", "write"})
+	valid := ValidateContractInputIssues(remember, validEvidenceOnlySubmission(), []string{"read", "write"})
 	require.Empty(t, valid.Issues)
 
 	wrongEvidenceType := map[string]any{
@@ -124,12 +111,10 @@ func TestValidateContractInputIssuesRememberValidAndMalformedShapes(t *testing.T
 	result := ValidateContractInputIssues(remember, wrongEvidenceType, []string{"read", "write"})
 	require.Contains(t, issueMessages(result), "evidence must be an array")
 
-	wrongRelationshipsType := map[string]any{
-		"evidence":      []any{map[string]any{"content": "evidence"}},
-		"relationships": "not-an-array",
-	}
-	result = ValidateContractInputIssues(remember, wrongRelationshipsType, []string{"read", "write"})
-	require.Contains(t, issueMessages(result), "relationships must be an array")
+	retired := validEvidenceOnlySubmission()
+	retired["relationships"] = []any{}
+	result = ValidateContractInputIssues(remember, retired, []string{"read", "write"})
+	require.Contains(t, result.Issues, ContractValidationIssue{Path: "/relationships", Code: "unknown_field", Message: "unknown field: relationships"})
 }
 
 func TestContractIssueCollectorDeduplicatesAndTruncates(t *testing.T) {
@@ -149,7 +134,7 @@ func TestContractIssueCollectorDeduplicatesAndTruncates(t *testing.T) {
 func TestValidateContractInputIssuesEscapesJSONPointerTokens(t *testing.T) {
 	remember, err := requireTool(toolMap(t), ToolRemember)
 	require.NoError(t, err)
-	args := validFlatRelationshipSubmission()
+	args := validEvidenceOnlySubmission()
 	args["source/name"] = true
 	args["tilde~field"] = true
 
@@ -188,12 +173,6 @@ func TestContractIssueCollectorPreservesJSONPointerWhitespace(t *testing.T) {
 
 func TestContractValidationErrorsDoNotEchoSubmittedIdentifiers(t *testing.T) {
 	const secret = "submitted-secret-id"
-	rememberInput := validFlatRelationshipSubmission()
-	rememberRelationships := rememberInput["relationships"].([]any)
-	duplicate := cloneMap(relationship(rememberInput))
-	duplicate["ref"] = secret
-	rememberRelationships[0].(map[string]any)["ref"] = secret
-	rememberInput["relationships"] = append(rememberRelationships[:1], duplicate)
 
 	sourceRevisions := map[string]contractSourceRevision{}
 	_ = validateSourceRevisionBatch(0, map[string]any{
@@ -214,7 +193,6 @@ func TestContractValidationErrorsDoNotEchoSubmittedIdentifiers(t *testing.T) {
 			"source_key":      secret,
 			"source_revision": "two",
 		}, sourceRevisions)},
-		{name: "submitted relationship", err: validateSubmittedRelationships(rememberInput["relationships"].([]any), rememberInput["evidence"].([]any), "relationships")},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -231,100 +209,39 @@ func TestValidateContractInputIssuesBoundsOversizedTraversal(t *testing.T) {
 	for index := range evidence {
 		evidence[index] = map[string]any{"content": "evidence"}
 	}
-	relationships := make([]any, maxRememberRelationshipItems+1000)
-	for index := range relationships {
-		relationships[index] = map[string]any{"ref": "r", "evidence_indices": []any{0}}
-	}
-	result := ValidateContractInputIssues(remember, map[string]any{"evidence": evidence, "relationships": relationships}, []string{"read", "write"})
+	result := ValidateContractInputIssues(remember, map[string]any{"evidence": evidence}, []string{"read", "write"})
 	require.Contains(t, issueMessages(result), "evidence exceeds maximum item count of 20")
-	require.Contains(t, issueMessages(result), "relationships exceeds maximum item count of 200")
 }
 
-func TestValidateContractInputIssuesCoversRememberShapeBranches(t *testing.T) {
-	remember, err := requireTool(toolMap(t), ToolRemember)
+func TestEvidenceOnlyCatalogValidationRejectsMalformedEvidence(t *testing.T) {
+	tool, err := requireTool(toolMap(t), ToolRemember)
 	require.NoError(t, err)
-
-	missingRelationships := ValidateContractInputIssues(remember, map[string]any{
-		"evidence": []any{map[string]any{}},
-	}, []string{"read", "write"})
-	require.Contains(t, issueMessages(missingRelationships), "relationships must contain at least one proposal citing submitted evidence")
-	require.Contains(t, issueMessages(missingRelationships), "evidence.content is required")
-
-	nonStringContent := ValidateContractInputIssues(remember, map[string]any{
-		"evidence":      []any{map[string]any{"content": 42}},
-		"relationships": []any{map[string]any{"ref": ""}},
-	}, []string{"read", "write"})
-	require.Contains(t, issueMessages(nonStringContent), "evidence.content must be a string")
-	require.Contains(t, issueMessages(nonStringContent), "relationship.ref must not be blank")
-
-	sourceBatch := ValidateContractInputIssues(remember, map[string]any{
-		"evidence": []any{
-			map[string]any{"content": "first", "source_key": "source", "source_revision": "one"},
-			map[string]any{"content": "second", "source_key": "source", "source_revision": "two", "previous_source_revision": "one", "supersedes_evidence_ids": []any{"old"}},
-		},
-		"relationships": []any{map[string]any{"ref": "r", "evidence_indices": []any{0, "bad"}}},
-	}, []string{"read", "write"})
-	require.Contains(t, strings.Join(issueMessages(sourceBatch), "; "), "revision fields must match")
-	require.Contains(t, strings.Join(issueMessages(sourceBatch), "; "), "idempotency_key is required")
-
-	wrongRelationship := ValidateContractInputIssues(remember, map[string]any{
-		"evidence":      []any{map[string]any{"content": "evidence"}},
-		"relationships": []any{"not-an-object"},
-	}, []string{"read", "write"})
-	require.Contains(t, issueMessages(wrongRelationship), "relationship must be an object")
-
-	tooManyEvidence := make([]any, 21)
-	for index := range tooManyEvidence {
-		tooManyEvidence[index] = map[string]any{"content": "evidence"}
-	}
-	result := ValidateContractInputIssues(remember, map[string]any{
-		"evidence": tooManyEvidence, "relationships": []any{map[string]any{"ref": "r", "evidence_indices": []any{0}}},
-	}, []string{"read", "write"})
-	require.Contains(t, strings.Join(issueMessages(result), "; "), "evidence exceeds maximum item count")
-
-	unknownTool := Tool{Name: "custom", InputSchema: map[string]any{"type": "object", "required": []any{"required"}}}
-	unknownResult := ValidateContractInputIssues(unknownTool, map[string]any{}, nil)
-	require.Len(t, unknownResult.Issues, 1)
-	require.Equal(t, "required", unknownResult.Issues[0].Code)
-
-	for _, message := range []string{"unknown field", "required", "duplicate", "outside", "coverage", "rfc3339", "other"} {
-		classifyContractIssue(message)
+	for _, evidence := range []any{nil, []any{}, []any{map[string]any{}}, []any{map[string]any{"content": 42}}, []any{"not-an-object"}} {
+		result := ValidateContractInputIssues(tool, map[string]any{"target_space": "team_shared", "idempotency_key": "key", "evidence": evidence}, []string{"read", "write"})
+		require.NotEmpty(t, result.Issues)
 	}
 }
 
-func TestValidateContractInputIssuesUsesExactNestedJSONPointers(t *testing.T) {
-	remember, err := requireTool(toolMap(t), ToolRemember)
+func TestEvidenceOnlyCatalogValidationUsesExactEvidencePointers(t *testing.T) {
+	tool, err := requireTool(toolMap(t), ToolRemember)
 	require.NoError(t, err)
-
-	tests := []struct {
-		name   string
-		mutate func(map[string]any)
-		path   string
+	for _, tc := range []struct {
+		field string
+		value any
+		path  string
 	}{
-		{name: "known entity", path: "/relationships/0/subject/known_entity_id", mutate: func(input map[string]any) {
-			relationship(input)["subject"].(map[string]any)["known_entity_id"] = "not-a-uuid"
-		}},
-		{name: "typed value", path: "/relationships/0/object/value/value", mutate: func(input map[string]any) {
-			relationship(input)["object"] = map[string]any{"value": map[string]any{"type": "number", "value": "not-a-number"}}
-		}},
-		{name: "correction version", path: "/relationships/0/correction_target/expected_version", mutate: func(input map[string]any) {
-			relationship(input)["correction_target"] = map[string]any{"relationship_id": "relationship", "expected_version": 0}
-		}},
-		{name: "source revision", path: "/evidence/0/previous_source_revision", mutate: func(input map[string]any) {
-			input["evidence"].([]any)[0].(map[string]any)["previous_source_revision"] = "rev-1"
-		}},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			input := validFlatRelationshipSubmission()
-			test.mutate(input)
-			result := ValidateContractInputIssues(remember, input, []string{"read", "write"})
-			paths := make([]string, 0, len(result.Issues))
-			for _, issue := range result.Issues {
-				paths = append(paths, issue.Path)
-			}
-			require.Contains(t, paths, test.path)
-		})
+		{"previous_source_revision", "rev-1", "/evidence/0/previous_source_revision"},
+		{"content", 42, "/evidence/0/content"},
+		{"supersedes_evidence_ids", []any{"not-a-uuid"}, "/evidence/0/supersedes_evidence_ids/0"},
+	} {
+		input := validEvidenceOnlySubmission()
+		input["evidence"].([]any)[0].(map[string]any)[tc.field] = tc.value
+		result := ValidateContractInputIssues(tool, input, []string{"read", "write"})
+		paths := []string{}
+		for _, issue := range result.Issues {
+			paths = append(paths, issue.Path)
+		}
+		require.Contains(t, paths, tc.path)
 	}
 }
 

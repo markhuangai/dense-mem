@@ -58,7 +58,7 @@ func (r *Retrieval) RecallEvidence(ctx context.Context, input recallcontract.Rec
 	if err != nil {
 		return nil, err
 	}
-	if snapshots, ok := r.repository.(recallcontract.EvidenceSnapshotRepository); ok && input.OrganizationEnabled && input.ValidAt == nil && input.KnownAt == nil && (input.SpaceKind == "" || input.SpaceKind == string(domain.MemorySpaceTeamShared)) {
+	if snapshots, ok := r.repository.(recallcontract.EvidenceSnapshotRepository); ok && input.OrganizationEnabled && (input.SpaceKind == "" || input.SpaceKind == string(domain.MemorySpaceTeamShared)) {
 		err = snapshots.WithEvidenceSnapshot(ctx, input.TeamID, func(repository recallcontract.SearchRepository) error {
 			result, err = NewRetrieval(repository).recallEvidence(ctx, input, contract)
 			return err
@@ -121,7 +121,7 @@ func (r *Retrieval) recallEvidence(ctx context.Context, input recallcontract.Rec
 	conflicts, err := r.repository.LoadRecallConflicts(conflictsCtx, input, conflictSources)
 	count := 0
 	if conflicts != nil {
-		count = len(conflicts.Relationships) + len(conflicts.Evidence)
+		count = len(conflicts.Evidence)
 	}
 	conflictsStage.Finish(err, count)
 	if err != nil {
@@ -129,107 +129,8 @@ func (r *Retrieval) recallEvidence(ctx context.Context, input recallcontract.Rec
 	}
 	return &recallcontract.RecallEvidenceResult{
 		TeamID: input.TeamID, SearchState: searchState, Results: results, Degradations: organizationDegradation("evidence", organizationCode),
-		Conflicts: conflicts.Relationships, EvidenceConflicts: conflicts.Evidence,
+		EvidenceConflicts: conflicts.Evidence,
 	}, nil
-}
-
-func (r *Retrieval) RecallRelationships(ctx context.Context, input recallcontract.RecallRelationshipsInput) (result *recallcontract.RecallRelationshipsResult, err error) {
-	ctx, total := observability.StartReadStage(ctx, observability.ReadOperationRelationshipRecall, observability.ReadStageTotal)
-	defer func() {
-		items := 0
-		if result != nil {
-			items = len(result.Results)
-		}
-		total.Finish(err, items)
-	}()
-	input = normalizeRecallRelationshipsInput(input)
-	requestedInput := input
-	decisionEnabled := false
-	if _, enabled := recallDecisions(ctx); enabled && r != nil && r.decisions != nil {
-		input.Limit = maxRelatedRelationshipLimit
-		decisionEnabled = true
-	}
-	if err := validateRecallRelationshipsInput(input); err != nil {
-		return nil, err
-	}
-	if r == nil || r.repository == nil {
-		return nil, errors.New("recall: search repository is required")
-	}
-	contract, err := r.repository.GetActiveSearchContract(ctx)
-	if err != nil {
-		return nil, err
-	}
-	batch, err := r.repository.ReadRelationshipCandidates(ctx, input, contract, recallOverfetchLimit(input.Limit))
-	if err != nil {
-		return nil, fmt.Errorf("recall: search relationships: %w", err)
-	}
-	_, fusion := observability.StartReadStage(ctx, observability.ReadOperationRelationshipRecall, observability.ReadStageFusion)
-	candidates := fuseRecallCandidates(batch, "relationship", input.KnownRelationshipIDs)
-	fusion.Finish(nil, len(candidates))
-	vectorOmitted := len(input.QueryEmbedding) > 0 && batch.SearchState != string(domain.SearchProjectionCurrent)
-	if len(candidates) == 0 {
-		return &recallcontract.RecallRelationshipsResult{
-			TeamID: input.TeamID, SearchState: batch.SearchState, VectorOmitted: vectorOmitted, Degradations: organizationDegradation("relationships", batch.OrganizationDegradation),
-			Results: []recallcontract.RecallRelationshipHit{},
-		}, nil
-	}
-	ids := recallCandidateIDs(candidates)
-	hydrationCtx, hydration := observability.StartReadStage(ctx, observability.ReadOperationRelationshipRecall, observability.ReadStageHydration)
-	hydrated, err := r.repository.HydrateRelationships(hydrationCtx, input, contract, ids)
-	hydration.Finish(err, len(hydrated))
-	if err != nil {
-		return nil, fmt.Errorf("recall: hydrate relationships: %w", err)
-	}
-	_, selection := observability.StartReadStage(ctx, observability.ReadOperationRelationshipRecall, observability.ReadStageSelection)
-	results := make([]recallcontract.RecallRelationshipHit, 0)
-	seenGroups := map[string]struct{}{}
-	searchState := batch.SearchState
-	for _, candidate := range candidates {
-		hit, ok := hydrated[candidate.ID]
-		if !ok {
-			continue
-		}
-		if hit.SemanticGroupKey != "" {
-			if _, seen := seenGroups[hit.SemanticGroupKey]; seen {
-				continue
-			}
-			seenGroups[hit.SemanticGroupKey] = struct{}{}
-		}
-		hit.Score = candidate.Score
-		hit.SpaceKind = input.SpaceKind
-		hit.SearchState = domain.CombineSearchProjectionStates(candidate.SearchState, hit.SearchState)
-		if hit.SearchState == string(domain.SearchProjectionPending) || hit.SearchState == string(domain.SearchProjectionFailed) {
-			searchState = domain.CombineSearchProjectionStates(searchState, hit.SearchState)
-		}
-		results = append(results, hit)
-		if len(results) == input.Limit {
-			break
-		}
-	}
-	sortRecallRelationshipResults(results)
-	for i := range results {
-		results[i].Rank = i + 1
-	}
-	selection.Finish(nil, len(results))
-	result = &recallcontract.RecallRelationshipsResult{
-		TeamID: input.TeamID, SearchState: searchState, VectorOmitted: vectorOmitted, Results: results, Degradations: organizationDegradation("relationships", batch.OrganizationDegradation),
-	}
-	if decisionEnabled {
-		return r.finishDecisionRelationships(ctx, requestedInput, result)
-	}
-	return result, nil
-}
-
-func sortRecallRelationshipResults(results []recallcontract.RecallRelationshipHit) {
-	sort.SliceStable(results, func(i, j int) bool {
-		if results[i].Score != results[j].Score {
-			return results[i].Score > results[j].Score
-		}
-		if !results[i].CreatedAt.Equal(results[j].CreatedAt) {
-			return results[i].CreatedAt.Before(results[j].CreatedAt)
-		}
-		return results[i].RelationshipID < results[j].RelationshipID
-	})
 }
 
 type recallCandidate struct {
@@ -293,9 +194,6 @@ func sortRecallCandidates(result []recallCandidate, kind string) {
 		if result[i].Score != result[j].Score {
 			return result[i].Score > result[j].Score
 		}
-		if kind == "relationship" && result[i].BestBranchRank != result[j].BestBranchRank {
-			return result[i].BestBranchRank < result[j].BestBranchRank
-		}
 		return result[i].ID < result[j].ID
 	})
 }
@@ -323,8 +221,6 @@ func normalizeRecallEvidenceInput(input recallcontract.RecallEvidenceInput) reca
 	input.TeamID = strings.TrimSpace(input.TeamID)
 	input.Query = strings.TrimSpace(input.Query)
 	input.KnownEvidenceIDs = normalizeRecallRequestIDs(input.KnownEvidenceIDs)
-	input.KnownRelationshipIDs = normalizeRecallRequestIDs(input.KnownRelationshipIDs)
-	input.ExpandFromEntityIDs = normalizeRecallRequestIDs(input.ExpandFromEntityIDs)
 	input.SpaceID = strings.TrimSpace(input.SpaceID)
 	input.SpaceKind = strings.TrimSpace(input.SpaceKind)
 	if input.SpaceID == "" && input.SpaceKind == "" {
@@ -339,82 +235,28 @@ func normalizeRecallEvidenceInput(input recallcontract.RecallEvidenceInput) reca
 	return input
 }
 
-func normalizeRecallRelationshipsInput(input recallcontract.RecallRelationshipsInput) recallcontract.RecallRelationshipsInput {
-	input.TeamID = strings.TrimSpace(input.TeamID)
-	input.Query = strings.TrimSpace(input.Query)
-	input.KnownEvidenceIDs = normalizeRecallRequestIDs(input.KnownEvidenceIDs)
-	input.KnownRelationshipIDs = normalizeRecallRequestIDs(input.KnownRelationshipIDs)
-	input.ExpandFromEntityIDs = normalizeRecallRequestIDs(input.ExpandFromEntityIDs)
-	input.ExcludedGroupKeys = normalizeRecallGroupKeys(input.ExcludedGroupKeys)
-	input.SpaceID = strings.TrimSpace(input.SpaceID)
-	input.SpaceKind = strings.TrimSpace(input.SpaceKind)
-	if input.SpaceID == "" && input.SpaceKind == "" {
-		input.SpaceKind = string(domain.MemorySpaceTeamShared)
-	}
-	if input.Limit <= 0 {
-		input.Limit = defaultRelatedRelationshipLimit
-	}
-	if input.Limit > maxRelatedRelationshipLimit {
-		input.Limit = maxRelatedRelationshipLimit
-	}
-	return input
-}
-
-func normalizeRecallGroupKeys(values []string) []string {
-	seen := map[string]struct{}{}
-	result := make([]string, 0, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if _, exists := seen[value]; exists {
-			continue
-		}
-		seen[value] = struct{}{}
-		result = append(result, value)
-	}
-	sort.Strings(result)
-	return result
-}
-
 func validateRecallEvidenceInput(input recallcontract.RecallEvidenceInput) error {
-	return validateRecallRetrievalInput(input.TeamID, input.Query, input.ExpandFromEntityIDs,
-		input.KnownEvidenceIDs, input.KnownRelationshipIDs, input.SpaceID, input.SpaceKind)
-}
-
-func validateRecallRelationshipsInput(input recallcontract.RecallRelationshipsInput) error {
-	return validateRecallRetrievalInput(input.TeamID, input.Query, input.ExpandFromEntityIDs,
-		input.KnownEvidenceIDs, input.KnownRelationshipIDs, input.SpaceID, input.SpaceKind)
-}
-
-func validateRecallRetrievalInput(teamID, query string, expandIDs, knownEvidenceIDs, knownRelationshipIDs []string, spaceID, spaceKind string) error {
-	if _, err := uuid.Parse(teamID); err != nil {
+	if _, err := uuid.Parse(input.TeamID); err != nil {
 		return fmt.Errorf("team_id is required: %w", err)
 	}
-	if spaceKind != "" && !domain.MemorySpaceKind(spaceKind).Valid() {
-		return fmt.Errorf("space_kind is invalid: %s", spaceKind)
+	if input.SpaceKind != "" && !domain.MemorySpaceKind(input.SpaceKind).Valid() {
+		return errors.New("invalid space_kind")
 	}
-	if spaceKind != "" && spaceKind != string(domain.MemorySpaceTeamShared) && spaceID == "" {
-		return fmt.Errorf("space_id is required for private space kind %s", spaceKind)
+	if input.SpaceKind != "" && input.SpaceKind != string(domain.MemorySpaceTeamShared) && input.SpaceID == "" {
+		return errors.New("private space_id is required")
 	}
-	if spaceID != "" {
-		if _, err := uuid.Parse(spaceID); err != nil {
-			return fmt.Errorf("space_id is invalid: %w", err)
+	if input.SpaceID != "" {
+		if _, err := uuid.Parse(input.SpaceID); err != nil {
+			return err
 		}
 	}
-	if query == "" && len(expandIDs) == 0 {
-		return errors.New("query or expand_from_entity_ids is required")
+	if input.Query == "" && len(input.TopicIDs) == 0 {
+		return errors.New("query or topic_ids is required")
 	}
-	for _, field := range []struct {
-		label  string
-		values []string
-	}{{"known_evidence_ids", knownEvidenceIDs}, {"known_relationship_ids", knownRelationshipIDs}, {"expand_from_entity_ids", expandIDs}} {
-		for _, value := range field.values {
-			if _, err := uuid.Parse(value); err != nil {
-				return fmt.Errorf("%s contains invalid UUID %q: %w", field.label, value, err)
-			}
+	for _, id := range input.KnownEvidenceIDs {
+		if _, err := uuid.Parse(id); err != nil {
+			return errors.New("known_evidence_ids must contain UUIDs")
 		}
 	}
-	return nil
+	return validateRecallRequest(RecallRequest{Query: input.Query, TopicIDs: input.TopicIDs})
 }

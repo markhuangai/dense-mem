@@ -134,11 +134,6 @@ func (r *Store) commitRememberInTx(ctx context.Context, tx *gorm.DB, input Synch
 		if !created {
 			return ErrRememberReplay
 		}
-		stage = "predicate_catalog"
-		if err := seedTeamPredicateDefinitions(ctx, tx, input.TeamID); err != nil {
-			return err
-		}
-
 		stage = "evidence"
 		sources := make(map[string]SourceRevisionResult, len(input.Evidence))
 		sourcesByIndex := make(map[int]*SourceRevisionResult, len(input.Evidence))
@@ -194,10 +189,6 @@ func (r *Store) commitRememberInTx(ctx context.Context, tx *gorm.DB, input Synch
 		if err := applyEvidenceSupersessions(ctx, tx, createInput, input.IngestID, evidence); err != nil {
 			return err
 		}
-		if err := remapRememberCommitEvidenceReferences(&input.Commit, evidence); err != nil {
-			return err
-		}
-		applyRememberCommitSourceReferences(input.Commit.RelationshipObservations, evidence)
 		stage = "known_evidence_fence"
 		if err := reauthorizeSubmissionKnownEvidence(ctx, tx, input.Commit); err != nil {
 			return err
@@ -211,89 +202,8 @@ func (r *Store) commitRememberInTx(ctx context.Context, tx *gorm.DB, input Synch
 		if err := insertRememberSemanticAssessment(ctx, tx, input); err != nil {
 			return err
 		}
-		semanticResult := &submissionSemanticCommitState{Status: string(domain.SemanticReviewAccepted)}
-		common := CommitSemanticInput{
-			TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IngestID: input.IngestID,
-		}
-		stage = "entity_resolution"
-		entitiesByRef := make(map[string]string, len(input.Commit.EntityResolutions))
-		for _, entry := range input.Commit.EntityResolutions {
-			fragmentID := strings.TrimSpace(entry.Resolution.FragmentID)
-			if !rememberEvidenceExists(evidence, fragmentID) {
-				return errors.New("remember entity resolution fragment is outside the Remember request")
-			}
-			commit := common
-			commit.FragmentID = fragmentID
-			resolutionID, entityID, err := insertSemanticEntityResolution(ctx, tx, commit, entry.Resolution)
-			if err != nil {
-				return err
-			}
-			if entityID == "" {
-				return ErrSubmissionAssessmentNonPromotable
-			}
-			if _, exists := entitiesByRef[entry.Resolution.MentionRef]; exists {
-				return errors.New("remember entity resolution mention_ref is duplicated")
-			}
-			entitiesByRef[entry.Resolution.MentionRef] = entityID
-			semanticResult.EntityResolutionIDs = append(semanticResult.EntityResolutionIDs, resolutionID)
-		}
-
-		stage = "predicate_resolution"
-		if err := resolveSubmissionPredicates(ctx, tx, &input.Commit); err != nil {
-			return err
-		}
-		stage = "relationships"
-		appliedSplits := make([]submissionRelationshipAppliedSplit, 0, len(input.Commit.RelationshipObservations))
-		for _, entry := range input.Commit.RelationshipObservations {
-			fragmentID, err := rememberRelationshipFragmentID(entry)
-			if err != nil {
-				return err
-			}
-			if !rememberEvidenceExists(evidence, fragmentID) {
-				return errors.New("remember relationship observation requires submitted support")
-			}
-			for _, support := range relationshipEvidenceSupports(entry.Observation.Support, entry.Observation.Supports) {
-				if knownEvidenceSnapshotContains(input.Commit.KnownEvidenceSnapshot, support) {
-					continue
-				}
-				if strings.TrimSpace(support.EvidenceOwnerProfileID) == "" ||
-					support.EvidenceOwnerProfileID == input.OwnerProfileID ||
-					rememberSubmittedOccurrenceBelongsToOwner(evidence, support, input.OwnerProfileID) {
-					if !rememberEvidenceExists(evidence, support.FragmentID) {
-						return errors.New("remember relationship submitted support is outside the Remember request")
-					}
-					continue
-				}
-				return ErrSubmissionAssessmentKnownEvidenceStale
-			}
-			commit := common
-			commit.FragmentID = fragmentID
-			decision, err := relationshipDecisionFromSemanticObservation(ctx, tx, commit, entry.Observation, entitiesByRef)
-			if err != nil {
-				return err
-			}
-			if entry.Observation.ConflictContext != nil {
-				if err := requireRelationshipConflictContextMatchesDecision(ctx, tx, input.TeamID, *entry.Observation.ConflictContext, decision); err != nil {
-					return err
-				}
-			}
-			before := len(semanticResult.RelationshipResults)
-			if err := applySemanticRelationshipDecision(
-				ctx, tx, commit, decision, entry.Observation.CorrectionTarget,
-				entry.Observation.ConflictContext, fragmentID,
-				ConflictRuntimeConfig{ReviewTTLDays: r.conflictReviewTTLDays, Timezone: r.conflictReviewTimezone}, semanticResult,
-			); err != nil {
-				return err
-			}
-			if len(semanticResult.RelationshipResults) != before+1 {
-				return ErrSubmissionAssessmentNonPromotable
-			}
-			applied := semanticResult.RelationshipResults[len(semanticResult.RelationshipResults)-1]
-			if applied.Relationship == nil || applied.Relationship.Status != string(domain.RelationshipStatusActive) {
-				return ErrSubmissionAssessmentNonPromotable
-			}
-			appliedSplits = append(appliedSplits, submissionRelationshipAppliedSplit{RelationshipRef: entry.RelationshipRef, SplitIndex: entry.SplitIndex, Result: applied})
-		}
+		semanticResult := &submissionSemanticCommitState{}
+		common := RememberCommitScope{TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IngestID: input.IngestID}
 
 		stage = "search_documents"
 		for _, item := range evidence {
@@ -301,7 +211,6 @@ func (r *Store) commitRememberInTx(ctx context.Context, tx *gorm.DB, input Synch
 				continue
 			}
 			commit := common
-			commit.FragmentID = item.FragmentID
 			document, err := upsertSemanticEvidenceSearchDocumentWithContract(ctx, tx, commit, item.FragmentID, map[string]any{"remember_synchronous": true}, contract)
 			if err != nil {
 				return err
@@ -312,11 +221,7 @@ func (r *Store) commitRememberInTx(ctx context.Context, tx *gorm.DB, input Synch
 		if err := applyInlineSubmissionEmbeddings(ctx, tx, input.Commit, semanticResult, embeddings); err != nil {
 			return err
 		}
-		stage = "relationship_results"
-		if err := insertSubmissionRelationshipResults(ctx, tx, input.Commit.RememberCommitScope, input.Commit.RelationshipResults, appliedSplits); err != nil {
-			return err
-		}
-		publicResult := rememberPublicResult(input, evidence, semanticResult, appliedSplits)
+		publicResult := rememberPublicResult(input, evidence, semanticResult)
 		stage = "terminal_attempt"
 		if err := insertRememberAttemptInTx(ctx, tx, RememberAttemptRecordInput{
 			TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, AttemptID: input.IngestID,
@@ -324,15 +229,13 @@ func (r *Store) commitRememberInTx(ctx context.Context, tx *gorm.DB, input Synch
 			RequestHash: input.RequestHash, ContractVersion: domain.ContractVersion, SubmissionKind: "remember",
 			Outcome: "completed", CorrelationID: rememberCorrelationID(input.Metadata), PublicResult: publicResult,
 			RetryabilitySet: true, AssessorDiagnostics: input.AssessorDiagnostics,
-			EvidenceCount: len(evidence), RelationshipCount: len(input.Commit.RelationshipResults),
+			EvidenceCount: len(evidence),
 			DocumentCount: len(semanticResult.SearchDocuments), AssessorTurns: input.AssessorTurns, Duration: rememberAttemptDuration(input),
 		}); err != nil {
 			return err
 		}
 		result.PublicResult = publicResult
-		result.RelationshipResults = append([]RelationshipDecisionResult(nil), semanticResult.RelationshipResults...)
 		result.SearchDocuments = append([]SearchDocumentResult(nil), semanticResult.SearchDocuments...)
-		result.EntityResolutionIDs = append([]string(nil), semanticResult.EntityResolutionIDs...)
 		stage = "transaction_commit"
 		return nil
 	}
@@ -367,18 +270,6 @@ func validateRememberEmbeddingContractFence(embeddings []InlineEmbeddingResult) 
 		}
 	}
 	return nil
-}
-
-func knownEvidenceSnapshotContains(snapshot []SubmissionAssessmentKnownEvidence, support EvidenceSupportInput) bool {
-	for _, item := range snapshot {
-		if item.FragmentID == strings.TrimSpace(support.FragmentID) &&
-			item.OwnerProfileID == strings.TrimSpace(support.EvidenceOwnerProfileID) &&
-			item.SourceID == strings.TrimSpace(support.SourceID) &&
-			item.SourceRevisionID == strings.TrimSpace(support.SourceRevisionID) {
-			return true
-		}
-	}
-	return false
 }
 
 func validateRememberEmbeddingContractAgainstActive(embeddings []InlineEmbeddingResult, contract *ActiveSearchContract) error {

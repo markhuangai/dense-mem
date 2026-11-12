@@ -59,9 +59,7 @@ func TestPairCommandValidatesRealBinaryAndRetainsRunIdentity(t *testing.T) {
 	require.NoError(t, err)
 	c := pairedFixture(t)
 	c.Scorer = PairBinary{Path: binary, SourceRevision: revision, SHA256: hash}
-	for _, release := range []*PairRelease{&c.Baseline, &c.Candidate} {
-		release.Runner, release.SourceRevision = c.Scorer, revision
-	}
+	c.Candidate.Runner, c.Candidate.SourceRevision = c.Scorer, revision
 	t.Run("baseline_proof_before_identity", func(t *testing.T) {
 		c := c
 		c.OutDir = filepath.Join(t.TempDir(), "capture-source")
@@ -143,7 +141,7 @@ func TestPairCommandValidatesRealBinaryAndRetainsRunIdentity(t *testing.T) {
 	wrong.SourceRevision = strings.Repeat("f", 40)
 	require.ErrorContains(t, VerifyPairBinary(wrong), "pinned clean source")
 	c.OutDir = filepath.Join(t.TempDir(), "failed-run")
-	c.Baseline.Runner.SHA256 = pairBytesHash([]byte("different binary"))
+	c.Candidate.Runner.SHA256 = pairBytesHash([]byte("different binary"))
 	_, err = runFixturePairCommand(t, c, PairCommand{Action: "validate"})
 	require.ErrorContains(t, err, "hash mismatch")
 	require.NoFileExists(t, filepath.Join(c.OutDir, "identity.json"))

@@ -64,18 +64,17 @@ func (s *stubRememberService) Remember(ctx context.Context, req rememberapp.Reme
 		return nil, s.err
 	}
 	return &rememberapp.RememberResult{
-		SpaceKind:           req.TargetSpace,
-		ContractVersion:     domain.ContractVersion,
-		SubmissionID:        "ingest-canonical",
-		SubmissionKind:      "remember",
-		ProcessingState:     "completed",
-		SearchState:         string(domain.SearchProjectionCurrent),
-		Evidence:            []rememberapp.SubmissionEvidenceStatus{},
-		Errors:              []rememberapp.SubmissionStatusError{},
-		RelationshipResults: []rememberapp.SubmissionRelationshipResult{},
-		CorrelationID:       "corr-canonical",
-		Kind:                "terminal",
-		IngestID:            "ingest-canonical",
+		SpaceKind:       req.TargetSpace,
+		ContractVersion: domain.ContractVersion,
+		SubmissionID:    "ingest-canonical",
+		SubmissionKind:  "remember",
+		ProcessingState: "completed",
+		SearchState:     string(domain.SearchProjectionCurrent),
+		Evidence:        []rememberapp.SubmissionEvidenceStatus{},
+		Errors:          []rememberapp.SubmissionStatusError{},
+		CorrelationID:   "corr-canonical",
+		Kind:            "terminal",
+		IngestID:        "ingest-canonical",
 	}, nil
 }
 
@@ -92,11 +91,10 @@ func (s *stubRecallService) Recall(_ context.Context, req recall.RecallRequest) 
 	return &recall.RecallResult{
 		RecallID: "rec-canonical",
 		Results: []recall.RecallResultItem{{
-			EvidenceID:      "evidence-canonical",
-			RelationshipIDs: []string{"relationship-canonical"},
-			Rank:            1,
-			Context:         "Dense-Mem uses PostgreSQL.",
-			SpaceKind:       string(domain.MemorySpaceTeamShared),
+			EvidenceID: "evidence-canonical",
+			Rank:       1,
+			Context:    "Dense-Mem uses PostgreSQL.",
+			SpaceKind:  string(domain.MemorySpaceTeamShared),
 		}},
 		SearchState: string(domain.SearchProjectionCurrent),
 	}, nil
@@ -108,27 +106,10 @@ type stubTraceContext struct {
 
 func (s *stubTraceContext) Trace(_ context.Context, _ string, req traceapp.TraceRequest) (*traceapp.TraceResult, error) {
 	s.req = req
-	return &traceapp.TraceResult{
-		Semantic: &traceapp.SemanticTrace{
-			Relationship: &tracecontract.RelationshipTraceRecord{
-				RelationshipID:   "relationship-canonical",
-				TeamID:           "team-canonical",
-				SemanticGroupKey: "group-canonical",
-				PredicateKey:     "works_on",
-				Status:           string(domain.RelationshipStatusActive),
-			},
-			EvidenceSupports: []tracecontract.RelationshipEvidenceSupportRecord{{
-				SupportID:      "support-canonical",
-				RelationshipID: "relationship-canonical",
-				FragmentID:     "fragment-canonical",
-				SpanStart:      0,
-				SpanEnd:        12,
-			}},
-			SearchDocuments: []tracecontract.TraceSearchDocument{{
-				SearchDocumentID: "search-doc-canonical",
-			}},
-			StoppedReason: "max_edges",
-			Truncated:     true,
-		},
-	}, nil
+	return &traceapp.TraceResult{Semantic: &tracecontract.EvidenceTraceResult{
+		Evidence:    &tracecontract.TraceEvidenceFragment{FragmentID: "evidence-canonical", TeamID: "team-canonical", ContentHash: "hash-canonical"},
+		Occurrences: []tracecontract.TraceEvidenceFragment{}, SourceRevisions: []tracecontract.TraceSourceRevision{},
+		Decisions: []tracecontract.TraceEvidenceDecision{}, Lifecycle: []tracecontract.TraceEvidenceLifecycleEvent{},
+		SearchDocuments: []tracecontract.TraceSearchDocument{}, Omissions: []string{"occurrences_max_events"}, Truncated: true,
+	}}, nil
 }

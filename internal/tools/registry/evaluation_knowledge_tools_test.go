@@ -9,14 +9,14 @@ import (
 
 	"github.com/google/uuid"
 
-	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
+	evaluationcontract "github.com/markhuangai/dense-mem/internal/evaluation/contract"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
 func TestEvalKnowledgeToolsUseTeamScopeAndStripPayloads(t *testing.T) {
 	audit := &evaluationAuditStub{}
 	evaluation := &evalEvaluationStore{
-		listPage: &dreamcontract.EvaluationPage{
+		listPage: &evaluationcontract.EvaluationPage{
 			Items: []map[string]any{{
 				"type":             "evidence",
 				"id":               "00000000-0000-0000-0000-00000000e001",
@@ -90,21 +90,21 @@ func TestEvalKnowledgeToolRequiresRepository(t *testing.T) {
 }
 
 type evalEvaluationStore struct {
-	lastList dreamcontract.EvaluationListInput
-	lastGet  dreamcontract.EvaluationGetInput
-	listPage *dreamcontract.EvaluationPage
+	lastList evaluationcontract.EvaluationListInput
+	lastGet  evaluationcontract.EvaluationGetInput
+	listPage *evaluationcontract.EvaluationPage
 	item     map[string]any
 }
 
-func (s *evalEvaluationStore) ListEvaluationRefs(_ context.Context, input dreamcontract.EvaluationListInput) (*dreamcontract.EvaluationPage, error) {
+func (s *evalEvaluationStore) ListEvaluationRefs(_ context.Context, input evaluationcontract.EvaluationListInput) (*evaluationcontract.EvaluationPage, error) {
 	s.lastList = input
 	if s.listPage != nil {
 		return s.listPage, nil
 	}
-	return &dreamcontract.EvaluationPage{}, nil
+	return &evaluationcontract.EvaluationPage{}, nil
 }
 
-func (s *evalEvaluationStore) GetEvaluationItem(_ context.Context, input dreamcontract.EvaluationGetInput) (map[string]any, error) {
+func (s *evalEvaluationStore) GetEvaluationItem(_ context.Context, input evaluationcontract.EvaluationGetInput) (map[string]any, error) {
 	s.lastGet = input
 	if s.item != nil {
 		return s.item, nil

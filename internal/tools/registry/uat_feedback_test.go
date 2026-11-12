@@ -10,6 +10,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	recallapp "github.com/markhuangai/dense-mem/internal/recall"
+	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
 	"github.com/stretchr/testify/require"
 )
 
@@ -46,18 +47,16 @@ func TestBuildActiveRecallRecordsFeedbackSnapshot(t *testing.T) {
 	if snapshot.ContractVersion != domain.ContractVersion || snapshot.SearchState != string(domain.SearchProjectionCurrent) {
 		t.Fatalf("snapshot metadata = %+v", snapshot)
 	}
-	if got := snapshot.SnapshotMetadata["result_schema"]; got != "v2.evidence_community_relationship_refs.v1" {
+	if got := snapshot.SnapshotMetadata["result_schema"]; got != "v3.evidence_topic_refs.v1" {
 		t.Fatalf("snapshot result schema = %#v", got)
 	}
-	if len(snapshot.ResultRefs) != 2 {
-		t.Fatalf("snapshot refs = %+v; want evidence and relationship", snapshot.ResultRefs)
+	if len(snapshot.ResultRefs) != 1 {
+		t.Fatalf("snapshot refs = %+v; want Evidence only", snapshot.ResultRefs)
 	}
 	if snapshot.ResultRefs[0].Type != domain.RecallFeedbackResultTypeEvidence || snapshot.ResultRefs[0].ID != "evidence-canonical" {
 		t.Fatalf("evidence ref = %+v", snapshot.ResultRefs[0])
 	}
-	if snapshot.ResultRefs[1].Type != domain.RecallFeedbackResultTypeRelationship || snapshot.ResultRefs[1].ID != "relationship-canonical" {
-		t.Fatalf("relationship ref = %+v", snapshot.ResultRefs[1])
-	}
+
 }
 
 func TestBuildActiveRecallReportsFeedbackSnapshotFailure(t *testing.T) {
@@ -123,8 +122,8 @@ func TestBuildActiveSubmitRecallSessionFeedbackRecordsFeedback(t *testing.T) {
 			"missing_context":  false,
 			"irrelevant":       false,
 			"irrelevant_result_refs": []any{map[string]any{
-				"type": "relationship",
-				"id":   "relationship-canonical",
+				"type": "evidence",
+				"id":   "evidence-canonical",
 				"rank": 1,
 			}},
 		}},
@@ -142,7 +141,7 @@ func TestBuildActiveSubmitRecallSessionFeedbackRecordsFeedback(t *testing.T) {
 	if feedback.RecallID != "rec-canonical" || !feedback.Used || !feedback.AnswerSupported || feedback.Quality != "high" {
 		t.Fatalf("feedback submission = %+v", feedback)
 	}
-	if len(feedback.IrrelevantRefs) != 1 || feedback.IrrelevantRefs[0].ID != "relationship-canonical" {
+	if len(feedback.IrrelevantRefs) != 1 || feedback.IrrelevantRefs[0].Type != domain.RecallFeedbackResultTypeEvidence || feedback.IrrelevantRefs[0].ID != "evidence-canonical" {
 		t.Fatalf("irrelevant refs = %+v", feedback.IrrelevantRefs)
 	}
 	if got := len(metrics.RecallFeedbackSamples()); got != 1 {
@@ -236,22 +235,20 @@ func TestRecallFeedbackSnapshotHelpersCoverOptionalBranches(t *testing.T) {
 	validAt := time.Date(2026, 7, 17, 14, 0, 0, 0, time.UTC)
 	knownAt := validAt.Add(time.Hour)
 	args := recallFeedbackToolArgs(map[string]any{
-		"query":                  "PostgreSQL memory",
-		"known_evidence_ids":     []any{"evidence-canonical"},
-		"known_relationship_ids": []any{"relationship-canonical"},
-		"expand_from_entity_ids": []any{"entity-canonical"},
-		"contract_version":       "should not persist",
-		"include_evidence":       true,
-		"use_communities":        true,
-		"ignored":                "not persisted",
+		"query":              "PostgreSQL memory",
+		"known_evidence_ids": []any{"evidence-canonical"},
+		"topic_ids":          []any{"topic-canonical"},
+		"contract_version":   "should not persist",
+		"include_evidence":   true,
+		"use_communities":    true,
+		"ignored":            "not persisted",
 	}, recallapp.RecallRequest{
-		Query:                "PostgreSQL memory",
-		Limit:                7,
-		ValidAt:              &validAt,
-		KnownAt:              &knownAt,
-		KnownEvidenceIDs:     []string{"evidence-canonical"},
-		KnownRelationshipIDs: []string{"relationship-canonical"},
-		ExpandFromEntityIDs:  []string{"entity-canonical"},
+		Query:            "PostgreSQL memory",
+		Limit:            7,
+		ValidAt:          &validAt,
+		KnownAt:          &knownAt,
+		KnownEvidenceIDs: []string{"evidence-canonical"},
+		TopicIDs:         []string{"topic-canonical"},
 	})
 	input := args["input"].(map[string]any)
 	if _, ok := input["ignored"]; ok {
@@ -273,15 +270,8 @@ func TestRecallFeedbackSnapshotHelpersCoverOptionalBranches(t *testing.T) {
 		}
 	}
 
-	refs := recallapp.FeedbackResultRefs(&recallapp.RecallResult{
-		SearchState: string(domain.SearchProjectionFailed),
-		Results: []recallapp.RecallResultItem{{
-			RelationshipIDs: []string{"", "relationship-canonical"},
-		}},
-	})
-	if len(refs) != 1 || refs[0].Type != domain.RecallFeedbackResultTypeRelationship || refs[0].Rank != 1 {
-		t.Fatalf("relationship-only refs = %+v", refs)
-	}
+	refs := recallapp.FeedbackResultRefs(&recallapp.RecallResult{RelatedTopics: []recallcontract.RelatedTopic{{TopicID: "topic-canonical", Rank: 1}}})
+	require.Equal(t, []domain.RecallFeedbackResultRef{{Type: domain.RecallFeedbackResultTypeTopic, ID: "topic-canonical", Rank: 1, Tier: "topic", StatusAtRecall: "current"}}, refs)
 	if refs := recallapp.FeedbackResultRefs(nil); len(refs) != 0 {
 		t.Fatalf("nil result refs = %+v", refs)
 	}

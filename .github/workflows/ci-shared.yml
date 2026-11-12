@@ -137,7 +137,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: "1.26.9"
+          go-version: "1.26.11"
           cache: false
 
       - name: Set up Node.js
@@ -192,8 +192,6 @@ jobs:
           node scripts/coverage-gate.mjs browser web/coverage/coverage-summary.json
           node scripts/coverage-gate.mjs "MCP proxy" packages/mcp-proxy/coverage/coverage-summary.json
 
-      - name: Run scheduled-dreaming timing test
-        run: node --test tests/uat/team_dreaming_schedule.test.mjs
 
       - name: Run image release policy tests
         run: |
@@ -236,7 +234,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: "1.26.9"
+          go-version: "1.26.11"
           cache: false
 
       - name: Run Go tests
@@ -277,7 +275,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: "1.26.9"
+          go-version: "1.26.11"
           cache: false
 
       - name: Produce complete coverage part
@@ -307,7 +305,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: "1.26.9"
+          go-version: "1.26.11"
           cache: false
 
       - name: Download core coverage profiles

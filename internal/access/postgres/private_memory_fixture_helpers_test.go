@@ -24,8 +24,8 @@ func seedPrivateMemoryIngest(t *testing.T, db *gorm.DB, rls storagepostgres.RLSH
 		return tx.Exec(`
 			INSERT INTO knowledge_ingests (
 				team_id, ingest_id, owner_profile_id, request_hash, source_summary,
-				status, proposal, metadata, space_id, created_at, updated_at
-			) VALUES (?, ?, ?, ?, ?, 'queued', '{}'::jsonb, '{}'::jsonb, ?, ?, ?)
+				status, metadata, space_id, created_at, updated_at
+			) VALUES (?, ?, ?, ?, ?, 'queued', '{}'::jsonb, ?, ?, ?)
 		`, teamID, ingestID, ownerID, "hash-"+ingestID.String(), content, spaceID, createdAt, createdAt).Error
 	}))
 	return ingestID

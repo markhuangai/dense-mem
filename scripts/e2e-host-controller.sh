@@ -290,7 +290,6 @@ compose_base_env() {
   export DENSE_MEM_CI_PROMETHEUS_CONFIG_VOLUME_NAME="${project}_prometheus-config"
   export DENSE_MEM_CI_TELEMETRY_TOKEN_VOLUME_NAME="${project}_telemetry-scrape-token"
   export DENSE_MEM_CI_CLIENT_VOLUME_NAME="${project}_client-env"
-  export DENSE_MEM_CI_CONFLICT_VOLUME_NAME="${project}_conflict-provider-files"
   export DENSE_MEM_CI_OAUTH_VOLUME_NAME="${project}_oauth-provider-files"
   export DENSE_MEM_CI_SYNCHRONOUS_WRITE_VOLUME_NAME="${project}_synchronous-write-provider-files"
 }
@@ -454,7 +453,7 @@ precheck_capability() {
   trap cleanup_precheck EXIT INT TERM
 
   local test_image
-  test_image="$(env_value DENSE_MEM_CI_GO_TEST_IMAGE 2>/dev/null || printf '%s' golang:1.26.9-bookworm)"
+  test_image="$(env_value DENSE_MEM_CI_GO_TEST_IMAGE 2>/dev/null || printf '%s' golang:1.26.11-bookworm)"
   [[ "$test_image" =~ ^[A-Za-z0-9._/:@-]+$ ]] || fail "invalid precheck Go test image"
   local test_status=0
   local -a runner_command=(go -C cmd/e2e run . --root /workspace --phase precheck --timeout 40m --total-timeout 58m)
@@ -548,8 +547,8 @@ for (const entry of fs.readdirSync(directory).filter((item) => item.endsWith(".j
   const cases = [...packageCounts.values()].reduce((total, count) => total + count, 0);
   const weight = [...packageCounts.values()].reduce((total, count) => total + Math.ceil(count / batchSize), 0);
   const caseIds = selectedCases.map((item) => item.id);
-  // Community fanout and ontology-heavy Recall need more room than their case counts suggest in the bounded six-shard route.
-  const load = shardCount === 6 ? cases * (capability === "community" ? 5 : capability === "recall" ? 2 : 1) : cases;
+  // Evidence Recall hydration needs more room than its case count suggests in the bounded six-shard route.
+  const load = shardCount === 6 ? cases * (capability === "recall" ? 2 : 1) : cases;
   records.push({ capability, cases, load, packageCounts, weight, caseIds });
 }
 
@@ -561,7 +560,6 @@ const caseSelections = [];
 if (shardCount === 6) {
   // Keep discovery measurement isolated and balance measured ontology work across the other two selections.
   const ontology = records[ontologyIndex];
-  const refinement = ontology?.caseIds.filter((id) => /^repository\/TestOntology(?:AutomaticRefinement|Refinement)/.test(id)) || [];
   const dedicated = [
     "repository/TestOntologyMaintenanceFinalizationAdmissionAndIsolation",
     "repository/TestOntologyMaintenanceLargeBacklogAndFairTurns",
@@ -572,7 +570,6 @@ if (shardCount === 6) {
       "repository/TestOntologyOrganizationPreservesValidLargeSourceContext",
       "repository/TestOntologyOrganizationPreservesPerRecordDependencyBounds",
     ].filter((id) => ontology?.caseIds.includes(id)),
-    ...refinement,
   ].sort();
   const measurement = "repository/TestOntologyMaintenanceRevalidationDiscoveryMeasurement";
   const isolated = [...dedicated, measurement];
@@ -779,6 +776,14 @@ start_stack() (
     set +e
     [[ -z "$current_phase" ]] || report_phase "$current_phase" "$phase_started" "$status"
     local cleanup_status=0
+    printf 'dense-mem CI controller: startup server log window for %s\n' "$project" >&2
+    ci_compose logs --no-color --timestamps server 2>&1 |
+      redact_diagnostics "$ENV_FILE" "${DENSE_MEM_CI_TELEMETRY_SCRAPE_TOKEN:-}" "${DENSE_MEM_CI_IDENTITY_POSTGRES_PASSWORD:-}" >&2
+    local -a diagnostics_pipeline_status=("${PIPESTATUS[@]}")
+    if ((diagnostics_pipeline_status[0] != 0 || diagnostics_pipeline_status[1] != 0)); then
+      printf 'dense-mem CI controller: startup diagnostic capture incomplete for %s\n' "$project" >&2
+      cleanup_status=1
+    fi
     cleanup_identity_cleanup_lock || cleanup_status=1
     stop_stack "$project" || cleanup_status=1
     if [[ -n "$runtime_compose_path" && -e "$runtime_compose_path" ]]; then

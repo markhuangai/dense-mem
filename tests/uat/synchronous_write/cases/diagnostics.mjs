@@ -3,11 +3,13 @@ import { createHash, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { captureSemanticAssessmentWindow, reconstructDiagnosticBody } from "../../ontology_assessment_diagnostics.mjs";
 
 export const name = "diagnostics";
 const rememberModel = "dense-mem-synchronous-write-e2e-remember";
 
 export async function run({ rpc, rawRPC = rpc, expect, runStep }) {
+  const diagnosticSince = new Date().toISOString();
   const attempts = {};
   const idempotencyKeys = {};
   for (const [label, marker, expectedState, expectedCode] of [
@@ -27,11 +29,6 @@ export async function run({ rpc, rawRPC = rpc, expect, runStep }) {
 
   const diagnosticFaults = [
     ["repair", "[fixture-fault:repair]", "completed", ""],
-    ["predicate-repair", "[fixture-fault:assessment-predicate-repair]", "completed", ""],
-    ["predicate-key-repair", "[fixture-fault:assessment-predicate-key-repair]", "completed", ""],
-    ["span-marker-repair", "[fixture-fault:assessment-span-marker-repair]", "completed", ""],
-    ["span-support-repair", "[fixture-fault:assessment-span-support-repair]", "completed", ""],
-    ["span-blank-repair", "[fixture-fault:assessment-span-blank-repair]", "completed", ""],
     ["repair-exhausted", "[fixture-fault:repair-exhausted]", "failed", "provider_response_invalid"],
     ["provider-status", "[fixture-fault:unavailable]", "failed", "provider_unavailable"],
     ["provider-429", "[fixture-fault:status-429]", "failed", "provider_unavailable"],
@@ -117,7 +114,7 @@ export async function run({ rpc, rawRPC = rpc, expect, runStep }) {
             expect(response.ok, `assessment fixture health failed: ${response.status}`);
             const requests = (await response.json()).chat_requests.slice(assessmentRequestOffset);
             if (requests.some((request) => request.model === rememberModel &&
-              request.schema_name === "dense_mem_semantic_assessment_response" && request.fault === "assessment-timeout")) {
+              request.schema_name === "dense_mem_evidence_assessment_response" && request.fault === "assessment-timeout")) {
               assessmentController.abort();
               return;
             }
@@ -185,7 +182,7 @@ export async function run({ rpc, rawRPC = rpc, expect, runStep }) {
     expect(Array.isArray(diagnostics.provider_exchanges), `${label} detail must expose provider exchange state`);
     if (label === "completed") {
       const publicResult = terminalDetail.data?.public_result || {};
-      const allowedKeys = new Set(["contract_version", "space_kind", "submission_id", "submission_kind", "processing_state", "search_state", "correlation_id", "evidence", "relationship_results", "errors", "warnings"]);
+      const allowedKeys = new Set(["contract_version", "space_kind", "submission_id", "submission_kind", "processing_state", "search_state", "correlation_id", "evidence", "errors", "warnings"]);
       expect(Object.keys(publicResult).every((key) => allowedKeys.has(key)), "completed detail public result must use the terminal allowlist");
       expect(publicResult.space_kind === "team_shared", "completed detail must preserve the requested destination");
       expect(!Object.hasOwn(publicResult, "secret"), "completed detail public result must not expose secret fields");
@@ -231,20 +228,16 @@ export async function run({ rpc, rawRPC = rpc, expect, runStep }) {
   expect(attempts["embedding-409"].errors[0].reason_code === "embedding_request_rejected", "embedding 409 must preserve the request-rejection classification");
   expect(embeddingRejection.data.document_count === 0, "embedding rejection must not partially publish search documents");
 
-  const repairedReasonCodes = { "predicate-repair": "predicate_phrase_too_long", "predicate-key-repair": "predicate_outside_allowlist", "span-marker-repair": "range_boundary_unknown", "span-support-repair": "range_not_covered", "span-blank-repair": "predicate_phrase_blank" };
-  for (const label of ["completed", "repair", ...Object.keys(repairedReasonCodes), "repair-exhausted", "assessment-invalid", "provider-429", "timeout"]) {
+  for (const label of ["completed", "repair", "repair-exhausted", "assessment-invalid", "provider-429", "timeout"]) {
     const detail = await controlJSON(controlURL, token, `/control/api/teams/${teamID}/remember-attempts/${diagnosticAttemptIDs[label]}`);
     const measured = detail.data?.events?.find((event) => event.metadata?.assessor_diagnostics)?.metadata.assessor_diagnostics;
     expect(measured && Number.isInteger(measured.preparation_ms) && measured.preparation_ms >= 0, `${label} must retain assessment preparation timing`);
     expect(Number.isInteger(measured.elapsed_ms) && measured.elapsed_ms >= measured.preparation_ms, `${label} must retain inclusive assessment duration`);
     expect(Array.isArray(measured.turns) && measured.turns.length >= 1 && measured.turns.length <= 3, `${label} must retain bounded attempted turns`);
     expect(measured.turns.every((turn) => Number.isInteger(turn.elapsed_ms) && turn.provider && Number.isInteger(turn.provider.queue_ms) && Number.isInteger(turn.provider.http_ms)), `${label} must distinguish provider queue and HTTP durations`);
-    if (label === "repair" || Object.hasOwn(repairedReasonCodes, label)) {
+    if (label === "repair") {
       expect(measured.turns.length === 2 && measured.turns[0].error_count > 0 && measured.turns[1].error_count === 0, `${label} must retain failed-turn history after successful repair`);
-      expect(attempts[label].relationship_results.every((result) => result.disposition === "stored"), `${label} must preserve supported relationships`);
-    }
-    if (Object.hasOwn(repairedReasonCodes, label)) {
-      expect(measured.turns[0].issues.some((issue) => issue.code === repairedReasonCodes[label]), `${label} must retain its authoritative validation reason`);
+      expect(attempts[label].evidence.every((result) => result.disposition === "stored"), `${label} must preserve exact Evidence`);
     }
     if (label === "repair-exhausted") expect(measured.turns.length === 3, "exhausted validation must retain three complete attempts");
     if (label === "provider-429") expect(measured.turns[0].failure_class === "rate_limited" && measured.turns[0].status_code === 429, "rate limit must remain distinct from invalid response");
@@ -268,14 +261,6 @@ export async function run({ rpc, rawRPC = rpc, expect, runStep }) {
     ORDER BY created_at DESC, attempt_id DESC LIMIT 1;
   `);
   expect(repairRows === "2", `successful repair must retain two assessor turns: ${repairRows}`);
-  const predicateRepairRows = postgresQuery(`
-    SELECT assessor_turns FROM remember_attempts
-    WHERE team_id = '${sqlLiteral(teamID)}'::uuid
-      AND idempotency_key = '${sqlLiteral(idempotencyKeys["predicate-repair"])}'
-    ORDER BY created_at DESC, attempt_id DESC LIMIT 1;
-  `);
-  expect(predicateRepairRows === "2", `predicate-range feedback must repair the complete response in two turns: ${predicateRepairRows}`);
-
   const failed = attempts.failed;
   const failedList = await controlJSON(controlURL, token, `/control/api/remember-attempts?team_id=${encodeURIComponent(teamID)}&outcome=failed&limit=100`);
   const item = (failedList.data || []).find((candidate) => candidate.attempt_id === diagnosticAttemptIDs.failed);
@@ -323,8 +308,44 @@ export async function run({ rpc, rawRPC = rpc, expect, runStep }) {
   const serializedLogs = JSON.stringify(logs);
   expect(serializedLogs.includes("control_remember_attempt_diagnostic_access"), "diagnostic access must be present in the control operation audit");
   expect(!serializedLogs.includes("Diagnostics provider failure") && !serializedLogs.includes("diagnostics-persisted-secret") && !serializedLogs.includes("dense-mem-e2e-verifier-key"), "diagnostics content and credentials must not reach logs");
-  const serverLogs = composeServerLogs();
-  expect(!serverLogs.includes("Diagnostics provider failure") && !serverLogs.includes("diagnostics-persisted-secret") && !serverLogs.includes("dense-mem-e2e-verifier-key"), "diagnostics content and credentials must not reach server logs");
+  const serverLogs = captureSemanticAssessmentWindow({ project: requiredEnv("DENSE_MEM_E2E_COMPOSE_PROJECT"), composeFile: requiredEnv("DENSE_MEM_E2E_COMPOSE_FILE"), since: diagnosticSince,
+    directory: `${process.env.DENSE_MEM_E2E_REMEMBER_FAILURE_DIR || "/tmp/dense-mem-remember-failures"}/evidence-only-debug` });
+  expect(!serverLogs.includes("dense-mem-synchronous-write-e2e-key") && !serverLogs.includes(requiredEnv("DENSE_MEM_E2E_API_KEY")), "credential protector must remove operational and request-scoped credentials");
+  const records = serverLogs.split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line));
+  expect(!records.some((row) => row.level === "TRACE"), "DEBUG runtime must filter TRACE");
+  const requestBodies = records.filter((row) => row.msg === "ai_exchange_payload" && row.direction === "request");
+  expect(requestBodies.length > 0 && requestBodies.every((row) => row.level === "DEBUG"), "DEBUG must capture actual provider requests");
+  const serialized = requestBodies.map((row) => row.payload_chunk?.body || "").join("");
+  expect(serialized.includes("admitted token") && serialized.includes("admitted password") && serialized.includes("admitted secret"), "admitted user fields must survive credential protection");
+  for (const row of records.filter((row) => row.msg === "ai_exchange_payload")) expect(Buffer.byteLength(row.payload_chunk.body) <= 2048, "provider chunks must retain the 2048-byte bound");
+  const providerProof = diagnoseProviderHTTPLog(records.filter((row) => row.msg === "ai_exchange_payload").map(JSON.stringify).join("\n"));
+  expect(providerProof.exchanges.some((item) => ["no_response", "interrupted", "truncated"].includes(item.transport_capture_state) || item.capture_state !== "captured"), "cancellation must retain explicit incomplete provider capture");
+  expect(records.some((row) => row.msg === "remember_assessment_diagnostics" || row.assessor_diagnostics), "log-only diagnosis must include assessment attempts and validation cause");
+  for (const [label, expectedCode] of [["malformed", "provider_response_invalid"], ["assessment-invalid", "provider_response_invalid"], ["timeout", "provider_unavailable"], ["assessment-disconnect", "request_cancelled"]]) {
+    const matchingInvocations = new Set();
+    const requests = new Map();
+    for (const row of requestBodies) {
+      const group = requests.get(row.exchange_id) || [];
+      group.push(row); requests.set(row.exchange_id, group);
+    }
+    for (const chunks of requests.values()) {
+      chunks.sort((a,b) => a.payload_chunk.index-b.payload_chunk.index);
+      if (JSON.stringify(reconstructDiagnosticBody(chunks)).includes("[fixture:diagnostics-"+label+"]")) matchingInvocations.add(chunks[0].invocation_id);
+    }
+    const terminal = records.find((row) => row.msg === "remember_invocation_completed" && matchingInvocations.has(row.invocation_id) && row.error_code === expectedCode);
+    expect(terminal?.level === "ERROR" && terminal.canonical_attempt_id && terminal.duration_ms >= 0, label+" lacks correlated terminal failure logs");
+    const phase = records.find((row) => row.msg === "remember_phase_completed" && row.attempt_id === terminal.canonical_attempt_id && row.phase === "assessment");
+    expect(phase && phase.duration_ms >= 0 && phase.outcome !== "completed", label+" lacks assessment phase timing");
+    const diagnostic = phase.assessor_diagnostics || records.find((row) => row.submission_id === terminal.canonical_attempt_id && row.assessor_diagnostics)?.assessor_diagnostics;
+    expect(diagnostic?.turns?.length >= 1 && diagnostic.turns.length <= 3 && diagnostic.remaining_budget_ms >= 0, label+" lacks bounded attempts/deadline diagnostics");
+    expect(diagnostic.turns.every((turn) => turn.attempt >= 1 && turn.elapsed_ms >= 0 && turn.remaining_budget_ms >= 0), label+" lacks per-attempt timing and deadline");
+    expect(diagnostic.turns.some((turn) => turn.validation_stage || turn.failure_class || turn.issues?.length), label+" lacks validation or provider failure cause");
+    const exchanges = providerProof.exchanges.filter((row) => row.invocation_id === terminal.invocation_id);
+    expect(exchanges.some((row) => row.direction === "request") && exchanges.some((row) => row.direction === "response"), label+" lacks complete protected exchange directions");
+    expect(exchanges.every((row) => row.started_at && row.elapsed_ms >= 0), label+" lacks exchange timings");
+    if (label === "timeout" || label === "assessment-disconnect") expect(exchanges.some((row) => row.transport_capture_state !== "captured"), label+" lacks explicit interrupted capture");
+  }
+
 
   const expiredInvocationID = randomUUID();
   postgresQuery(`
@@ -413,7 +434,7 @@ export function diagnoseProviderHTTPLog(encoded) {
   for (const line of encoded.split(/\r?\n/).filter(Boolean)) {
     const row = JSON.parse(line);
     assert.equal(row.msg, "ai_exchange_payload");
-    assert(row.exchange_id && row.team_id && row.run_id && row.batch_id, "provider capture correlation is missing");
+    assert(row.exchange_id && ((row.team_id && row.run_id && row.batch_id) || row.invocation_id), "provider capture correlation is missing");
     const key = `${row.exchange_id}:${row.direction}`;
     const entry = exchanges.get(key) || { row, chunks: [] };
     entry.chunks.push(row.payload_chunk);
@@ -430,7 +451,7 @@ export function diagnoseProviderHTTPLog(encoded) {
     }).join("");
     if (chunks[0].state === "captured") assert.equal(createHash("sha256").update(body).digest("hex"), chunks[0].sha256, "provider capture digest mismatch");
     summaries.push({
-      exchange_id: row.exchange_id, team_id: row.team_id, run_id: row.run_id, batch_id: row.batch_id,
+      exchange_id: row.exchange_id, invocation_id: row.invocation_id, team_id: row.team_id, run_id: row.run_id, batch_id: row.batch_id,
       direction: row.direction, status_code: row.status_code || 0, started_at: row.started_at, elapsed_ms: row.elapsed_ms,
       capture_state: chunks[0].state, transport_capture_state: row.transport_capture_state,
       sha256: chunks[0].sha256, protected_bytes: Buffer.byteLength(body),
@@ -452,23 +473,11 @@ function analyzeFailureResponse(exchange) {
 function rememberArguments(label, marker) {
   const suffix = randomUUID();
   const idempotencyKey = `synchronous-write-diagnostics-${label}-${suffix}`;
-  const predicateContext = label === "predicate-repair" ? " This public fixture has additional background context.".repeat(6) : "";
-  return {
-    idempotencyKey,
-    payload: {
+  return { idempotencyKey, payload: {
     target_space: "team_shared",
-    evidence: [{ content: `Dense-Mem stores durable memory in PostgreSQL. [fixture:diagnostics-${label}] ${suffix} ${marker}${predicateContext}`, source_type: "manual" }],
-    relationships: [{
-      ref: "durable-store",
-      subject: { name: "Dense-Mem", entity_kind: "project" },
-      predicate: { proposed_key: "stores_memory_in" },
-      object: { value: { type: "string", value: "PostgreSQL" } },
-      polarity: "+",
-      evidence_indices: [0],
-    }],
+    evidence: [{ content: `Dense-Mem stores durable memory in PostgreSQL. [fixture:diagnostics-${label}] ${suffix} ${marker} User fields {"token":"admitted token","password":"admitted password","secret":"admitted secret"}.`, source_type: "manual" }],
     idempotency_key: idempotencyKey,
-    },
-  };
+  } };
 }
 
 async function controlJSON(base, token, path) {
@@ -498,14 +507,6 @@ function postgresQuery(sql) {
   const result = spawnSync("docker", ["compose", "-p", composeProject, "-f", composeFile, "exec", "-T", "postgres", "sh", "-ec", 'psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -c "$1"', "issue305-diagnostics", sql], { cwd: process.cwd(), encoding: "utf8" });
   if (result.status !== 0) throw new Error(`diagnostics PostgreSQL fixture failed (${result.status})`);
   return result.stdout.trim();
-}
-
-function composeServerLogs() {
-  const composeProject = requiredEnv("DENSE_MEM_E2E_COMPOSE_PROJECT");
-  const composeFile = requiredEnv("DENSE_MEM_E2E_COMPOSE_FILE");
-  const result = spawnSync("docker", ["compose", "-p", composeProject, "-f", composeFile, "logs", "--no-color", "server"], { cwd: process.cwd(), encoding: "utf8" });
-  if (result.status !== 0) throw new Error("diagnostics server log collection failed");
-  return `${result.stdout}\n${result.stderr}`;
 }
 
 function stopDisabledTelemetryPrometheus() {

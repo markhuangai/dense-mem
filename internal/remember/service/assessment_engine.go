@@ -11,7 +11,6 @@ import (
 // assessmentEngine contains request-scoped assessor mechanics only. It has no
 // ledger, placement identity, lease, retry, or background-worker state.
 type assessmentEngine struct {
-	catalog               SubmissionAssessmentCatalog
 	provider              assessor.Provider
 	limits                assessor.SemanticAssessmentLimits
 	teamID                string
@@ -30,7 +29,7 @@ func newAssessmentEngine(deps SynchronousAssessmentDependencies, teamID, ownerID
 		metrics = observability.NoopDiscoverabilityMetrics()
 	}
 	return &assessmentEngine{
-		catalog: deps.Catalog, provider: deps.Provider, limits: deps.Limits,
+		provider: deps.Provider, limits: deps.Limits,
 		teamID: strings.TrimSpace(teamID), ownerProfileID: strings.TrimSpace(ownerID),
 		now: time.Now, metrics: metrics, logger: deps.Logger,
 	}

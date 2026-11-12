@@ -3,15 +3,12 @@ package registry
 import (
 	"context"
 
-	communitycontract "github.com/markhuangai/dense-mem/internal/community/contract"
-
-	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
+	evaluationcontract "github.com/markhuangai/dense-mem/internal/evaluation/contract"
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
 	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 )
 
-type EvaluationRepository = dreamcontract.EvaluationRepository
-type CommunityRepository = communitycontract.CommunityRepository
+type EvaluationRepository = evaluationcontract.EvaluationRepository
 
 type EvaluationAuditAppender interface {
 	Append(ctx context.Context, entry accessservice.AuditLogEntry) error
@@ -28,6 +25,5 @@ type EvaluationApplication interface {
 type EvaluationBindings struct {
 	Application EvaluationApplication
 	Repository  EvaluationRepository
-	Communities CommunityRepository
 	Audit       EvaluationAuditAppender
 }

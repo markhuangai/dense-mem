@@ -24,15 +24,19 @@ type PairCapacity struct {
 }
 
 type PairImportAttempt struct {
-	Scope           PairScope `json:"scope"`
-	SourceDocID     string    `json:"source_doc_id"`
-	AttemptID       string    `json:"attempt_id"`
-	RequestHash     string    `json:"request_hash"`
-	ContractVersion string    `json:"contract_version,omitempty"`
-	Outcome         string    `json:"outcome"`
-	EvidenceIDs     []string  `json:"evidence_ids"`
-	ContentHashes   []string  `json:"content_hashes"`
-	Live            bool      `json:"live"`
+	Scope           PairScope  `json:"scope"`
+	SourceDocID     string     `json:"source_doc_id"`
+	AttemptID       string     `json:"attempt_id"`
+	RequestHash     string     `json:"request_hash"`
+	ContractVersion string     `json:"contract_version,omitempty"`
+	Outcome         string     `json:"outcome"`
+	EvidenceIDs     []string   `json:"evidence_ids"`
+	ContentHashes   []string   `json:"content_hashes"`
+	Live            bool       `json:"live"`
+	IdempotencyKey  string     `json:"idempotency_key,omitempty"`
+	ResubmissionOf  string     `json:"resubmission_of,omitempty"`
+	Retryable       *bool      `json:"retryable,omitempty"`
+	CreatedAt       *time.Time `json:"created_at,omitempty"`
 }
 
 type PairImportProgress struct {
@@ -41,7 +45,7 @@ type PairImportProgress struct {
 	PendingSourceIDs   []string `json:"pending_source_ids"`
 }
 
-func EvaluatePairImport(scope PairScope, corpus []CorpusItem, attempts []PairImportAttempt, fresh bool) (PairImportProgress, error) {
+func EvaluatePairImport(scope PairScope, corpus []CorpusItem, attempts []PairImportAttempt, fresh bool, releases ...PairRelease) (PairImportProgress, error) {
 	result := PairImportProgress{CompletedSourceIDs: []string{}, PendingSourceIDs: []string{}}
 	if fresh && len(attempts) != 0 {
 		return result, fmt.Errorf("paired import requires a fresh runtime")
@@ -49,21 +53,42 @@ func EvaluatePairImport(scope PairScope, corpus []CorpusItem, attempts []PairImp
 	wanted := sourceDocIDIndexForCorpus(corpus)
 	contents := map[string]string{}
 	requests := map[string]string{}
-	legacyRequests := map[string]string{}
+	retained := len(releases) == 1 && releases[0].Mode == PairModeRetainedBaseline
+	if !retained {
+		attempts = append([]PairImportAttempt(nil), attempts...)
+		for _, attempt := range attempts {
+			if attempt.CreatedAt == nil || attempt.CreatedAt.IsZero() {
+				return result, fmt.Errorf("import attempt creation identity unavailable")
+			}
+		}
+		sort.SliceStable(attempts, func(i, j int) bool {
+			if !attempts[i].CreatedAt.Equal(*attempts[j].CreatedAt) {
+				return attempts[i].CreatedAt.Before(*attempts[j].CreatedAt)
+			}
+			if (attempts[i].ResubmissionOf == "") != (attempts[j].ResubmissionOf == "") {
+				return attempts[i].ResubmissionOf == ""
+			}
+			return attempts[i].AttemptID < attempts[j].AttemptID
+		})
+	}
 	for _, item := range corpus {
-		hash, err := pairRequestHash(item)
+		var hash string
+		var err error
+		if retained {
+			hash, err = retainedCEvidenceRequestHash(item)
+		} else {
+			hash, err = pairRequestHash(item)
+		}
 		if err != nil {
 			return result, err
 		}
 		requests[item.SourceDocID] = hash
-		legacyRequests[item.SourceDocID], err = pairLegacyRequestHash(item)
-		if err != nil {
-			return result, err
-		}
 		contents[item.SourceDocID] = strings.TrimPrefix(pairBytesHash([]byte(item.Content)), "sha256:")
 	}
 	seen, identities := map[string]bool{}, map[string]bool{}
+	failedAttempts := map[string]PairImportAttempt{}
 	counts := map[string]int{}
+	previousBySource := map[string]PairImportAttempt{}
 	for _, row := range attempts {
 		if row.Scope != scope {
 			return result, fmt.Errorf("import receipt has a different team, owner, space or generation")
@@ -72,8 +97,8 @@ func EvaluatePairImport(scope PairScope, corpus []CorpusItem, attempts []PairImp
 			return result, fmt.Errorf("import receipt references unknown source %q", row.SourceDocID)
 		}
 		expected := requests[row.SourceDocID]
-		if row.ContractVersion == "dense-mem.v2.6.3" {
-			expected = legacyRequests[row.SourceDocID]
+		if (!retained && row.ContractVersion != "dense-mem.v2.8.0") || (retained && row.ContractVersion != "dense-mem.v2.7.0") {
+			return result, fmt.Errorf("import receipt uses a different contract")
 		}
 		if row.AttemptID == "" || row.RequestHash != expected {
 			return result, fmt.Errorf("import receipt does not match its exact request or attempt identity")
@@ -82,7 +107,29 @@ func EvaluatePairImport(scope PairScope, corpus []CorpusItem, attempts []PairImp
 			return result, fmt.Errorf("duplicate import receipt for source %q", row.SourceDocID)
 		}
 		identities[row.AttemptID] = true
+		if !retained {
+			if previous, exists := previousBySource[row.SourceDocID]; exists {
+				if previous.Outcome != "failed" {
+					return result, fmt.Errorf("source has an attempt after terminal completion")
+				}
+				if row.ResubmissionOf == "" && (previous.Retryable == nil || !*previous.Retryable) {
+					return result, fmt.Errorf("non-retryable intake requires linked fresh-key resubmission")
+				}
+			}
+			expectedKey := "eval:" + row.SourceDocID
+			if row.ResubmissionOf != "" {
+				original, ok := failedAttempts[row.ResubmissionOf]
+				if !ok || original.SourceDocID != row.SourceDocID || original.RequestHash != row.RequestHash || original.Retryable == nil || *original.Retryable || original.ResubmissionOf != "" {
+					return result, fmt.Errorf("unsupported or unlinked terminal resubmission")
+				}
+				expectedKey += ":resubmit1"
+			}
+			if row.IdempotencyKey != expectedKey || row.Retryable == nil {
+				return result, fmt.Errorf("import retry identity or original retryability is unavailable")
+			}
+		}
 		counts[row.SourceDocID]++
+		previousBySource[row.SourceDocID] = row
 		if counts[row.SourceDocID] > maxToolCallAttempts {
 			return result, fmt.Errorf("source %q exceeds the native retry bound", row.SourceDocID)
 		}
@@ -90,6 +137,7 @@ func EvaluatePairImport(scope PairScope, corpus []CorpusItem, attempts []PairImp
 			if row.Live || len(row.EvidenceIDs) != 0 || len(row.ContentHashes) != 0 {
 				return result, fmt.Errorf("failed import receipt for source %q contains semantic evidence", row.SourceDocID)
 			}
+			failedAttempts[row.AttemptID] = row
 			continue
 		}
 		if seen[row.SourceDocID] {
@@ -124,21 +172,6 @@ func EvaluatePairImport(scope PairScope, corpus []CorpusItem, attempts []PairImp
 	return result, nil
 }
 
-func pairLegacyRequestHash(item CorpusItem) (string, error) {
-	input := corpusRememberInput(item)
-	input["relationship_hints"] = input["relationships"]
-	delete(input, "relationships")
-	raw, err := json.Marshal(input)
-	if err != nil {
-		return "", err
-	}
-	var request remember.RememberRequest
-	if err := json.Unmarshal(raw, &request); err != nil {
-		return "", err
-	}
-	return remember.CanonicalRequestBodyHashForVersion("dense-mem.v2.6.2", request.Evidence, request.EntityHints, request.RelationshipHints)
-}
-
 func completedPairImports(attempts []PairImportAttempt) []PairImportAttempt {
 	completed := make([]PairImportAttempt, 0, len(attempts))
 	for _, row := range attempts {
@@ -147,21 +180,6 @@ func completedPairImports(attempts []PairImportAttempt) []PairImportAttempt {
 		}
 	}
 	return completed
-}
-
-func pairRequestHash(item CorpusItem) (string, error) {
-	input := corpusRememberInput(item)
-	input["relationship_hints"] = input["relationships"]
-	delete(input, "relationships")
-	raw, err := json.Marshal(input)
-	if err != nil {
-		return "", err
-	}
-	var request remember.RememberRequest
-	if err := json.Unmarshal(raw, &request); err != nil {
-		return "", err
-	}
-	return remember.CanonicalRequestHash(request)
 }
 
 type PairUsage struct {
@@ -218,7 +236,7 @@ type PairReadiness struct {
 
 func EvaluatePairReadiness(protocol string, observation PairObservation, frozen bool) (PairReadiness, error) {
 	r := PairReadiness{WaitingFor: []string{}, IncompleteReasons: []string{}}
-	if protocol != "adr0014" && protocol != "legacy" && protocol != "none" {
+	if protocol != "adr0014" && protocol != "legacy" && protocol != "none" && protocol != PairModeEvidenceOnlyV5 {
 		return r, fmt.Errorf("unsupported paired readiness protocol %q", protocol)
 	}
 	if observation.ObservedAt.IsZero() || observation.SourceHash == "" || observation.CanonicalHash == "" {
@@ -262,7 +280,7 @@ func EvaluatePairReadiness(protocol string, observation PairObservation, frozen 
 		if !observation.CoverageComplete || observation.Failed > 0 || observation.Ambiguous > 0 {
 			r.IncompleteReasons = append(r.IncompleteReasons, "ontology_coverage")
 		}
-		if !observation.ProjectionCoverageComplete || observation.FailedProjections > 0 {
+		if protocol != PairModeEvidenceOnlyV5 && (!observation.ProjectionCoverageComplete || observation.FailedProjections > 0) {
 			r.IncompleteReasons = append(r.IncompleteReasons, "projection_coverage")
 		}
 	}
@@ -368,4 +386,26 @@ func MeasurePairAttempts(attempts []PairProviderAttempt) (PairAttemptMeasurement
 		r.SpanSeconds = events[len(events)-1].at.Sub(events[0].at).Seconds()
 	}
 	return r, nil
+}
+
+func pairRequestHash(item CorpusItem) (string, error) {
+	raw, err := json.Marshal(corpusRememberInput(item))
+	if err != nil {
+		return "", err
+	}
+	var request remember.RememberRequest
+	if err := json.Unmarshal(raw, &request); err != nil {
+		return "", err
+	}
+	return remember.CanonicalRequestHash(request)
+}
+
+// This reproduces C's sealed experimental request identity without invoking a retired runtime.
+func retainedCEvidenceRequestHash(item CorpusItem) (string, error) {
+	body, err := canonicalRetainedEvidenceRequestBodyHash(corpusRememberInput(item)["evidence"])
+	if err != nil {
+		return "", err
+	}
+	scoped := pairBytesHash([]byte("remember.target-space.v1\nteam_shared\n" + body))
+	return pairBytesHash([]byte("dense-mem.eval.intake.v1:evidence_only:" + scoped)), nil
 }

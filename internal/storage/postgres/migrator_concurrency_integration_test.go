@@ -307,7 +307,7 @@ func TestMigratorRunUpAsRuntimeRoleWithoutCreateRole(t *testing.T) {
 
 	require.NoError(t, migrationUpTo(ctx, sqlDB, knownEvidenceSupportOwnershipMigrationBase))
 	knownEvidenceFixture := insertKnownEvidenceSupportOwnershipFixture(t, ctx, sqlDB, teamID, profileID, profileID)
-	require.NoError(t, NewMigratorWithDB(sqlDB).RunUp(ctx))
+	require.NoError(t, NewMigratorWithDB(sqlDB).PrepareEvidenceOnlyMigration(ctx))
 	var evidenceOwner string
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
 		return tx.QueryRowContext(ctx, `
@@ -401,6 +401,8 @@ func TestMigratorRunUpAsRuntimeRoleWithoutCreateRole(t *testing.T) {
 	require.Equal(t, lineageIngestID, mappedIngestID)
 	require.Zero(t, temporaryAssessmentPolicies)
 	require.Equal(t, 3, appendOnlyTriggerCount)
+	require.NoError(t, NewMigratorWithDB(sqlDB).RunUp(ctx))
+	assertEvidenceOnlyCatalog(t, ctx, sqlDB)
 
 	var cleanupApplied, temporaryCleanupPolicyExists bool
 	require.NoError(t, sqlDB.QueryRowContext(ctx, `

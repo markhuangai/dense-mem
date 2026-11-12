@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/lifecycle"
 )
 
@@ -90,83 +89,9 @@ func TestBuildActiveRetractEvidenceReportsDependencyValidationAndServiceErrors(t
 	}
 }
 
-func TestBuildActiveWiresExecutableCorrectRelationship(t *testing.T) {
-	stub := &stubLifecycleService{}
-	reg, err := BuildActive(Dependencies{LifecycleBindings: LifecycleBindings{Service: stub}})
-	if err != nil {
-		t.Fatalf("BuildActive: %v", err)
-	}
-	correct, ok := reg.Get(ToolCorrectRelationship)
-	if !ok {
-		t.Fatal("BuildActive did not register correct_relationship")
-	}
-	if correct.Invoke == nil {
-		t.Fatal("BuildActive correct_relationship invoker is nil")
-	}
-	out, err := correct.Invoke(contractInvokeContext("read", "write"), "ignored-profile", map[string]any{
-		"action":           "submit",
-		"relationship_id":  "00000000-0000-0000-0000-000000000621",
-		"expected_version": 2,
-		"patch":            map[string]any{"predicate": map[string]any{"key": "works_with"}},
-		"supports":         []any{map[string]any{"evidence_id": "00000000-0000-0000-0000-000000000622", "start": 0, "end": 8}},
-		"reason":           "predicate resolved incorrectly",
-		"idempotency_key":  "relationship-correction-1",
-	})
-	if err != nil {
-		t.Fatalf("correct_relationship.Invoke: %v", err)
-	}
-	if err := ValidateInput(Tool{InputSchema: correct.OutputSchema}, out); err != nil {
-		t.Fatalf("validate output: %v", err)
-	}
-	if out["submission_kind"] != "relationship_correction" || out["processing_state"] != "completed" {
-		t.Fatalf("correct output = %#v", out)
-	}
-	if stub.correctReq.Action != "submit" || stub.correctReq.RelationshipID != "00000000-0000-0000-0000-000000000621" {
-		t.Fatalf("stub correct request not populated: %#v", stub.correctReq)
-	}
-}
-
-func TestBuildActiveCorrectRelationshipRejectsTenantOverride(t *testing.T) {
-	reg, err := BuildActive(Dependencies{LifecycleBindings: LifecycleBindings{Service: &stubLifecycleService{}}})
-	if err != nil {
-		t.Fatalf("BuildActive: %v", err)
-	}
-	correct, ok := reg.Get(ToolCorrectRelationship)
-	if !ok {
-		t.Fatal("BuildActive did not register correct_relationship")
-	}
-	_, err = correct.Invoke(contractInvokeContext("read", "write"), "ignored-profile", map[string]any{
-		"team_id":          "attacker-team",
-		"action":           "submit",
-		"relationship_id":  "00000000-0000-0000-0000-000000000621",
-		"expected_version": 2,
-		"patch":            map[string]any{"predicate": map[string]any{"key": "works_with"}},
-		"supports":         []any{map[string]any{"evidence_id": "00000000-0000-0000-0000-000000000622", "start": 0, "end": 8}},
-		"reason":           "predicate resolved incorrectly",
-		"idempotency_key":  "relationship-correction-1",
-	})
-	if err == nil || !strings.Contains(err.Error(), "team_id") {
-		t.Fatalf("correct_relationship.Invoke err = %v, want tenant override rejection", err)
-	}
-}
-
 type stubLifecycleService struct {
-	correctReq lifecycle.CorrectRelationshipRequest
 	retractReq lifecycle.RetractEvidenceRequest
 	retractErr error
-}
-
-func (s *stubLifecycleService) CorrectRelationship(
-	_ context.Context,
-	req lifecycle.CorrectRelationshipRequest,
-) (*lifecycle.CorrectRelationshipReceipt, error) {
-	s.correctReq = req
-	return &lifecycle.CorrectRelationshipReceipt{
-		ContractVersion: domain.ContractVersion,
-		SubmissionID:    "correction-canonical", SubmissionKind: "relationship_correction",
-		ProcessingState: "completed", SearchState: "current", CorrelationID: "correlation-canonical",
-		Errors: []lifecycle.SubmissionStatusError{},
-	}, nil
 }
 
 func (s *stubLifecycleService) RetractEvidence(
@@ -178,11 +103,8 @@ func (s *stubLifecycleService) RetractEvidence(
 		return nil, s.retractErr
 	}
 	return &lifecycle.RetractEvidenceResult{
-		DecisionID:                      "evidence-decision-canonical",
-		ProcessingState:                 "completed",
-		RetractedEvidenceIDs:            append([]string(nil), req.EvidenceIDs...),
-		AffectedRelationshipCount:       1,
-		PendingRelationshipCount:        1,
-		RetainedActiveRelationshipCount: 0,
+		DecisionID:           "evidence-decision-canonical",
+		ProcessingState:      "completed",
+		RetractedEvidenceIDs: append([]string(nil), req.EvidenceIDs...),
 	}, nil
 }

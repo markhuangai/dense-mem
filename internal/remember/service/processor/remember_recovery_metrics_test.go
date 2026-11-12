@@ -21,7 +21,7 @@ func TestRememberRetryRecordsRecoveryAndOneLogicalCompletion(t *testing.T) {
 	}
 	commitResult := map[string]any{
 		"contract_version": domain.ContractVersion, "submission_id": "retried", "submission_kind": "remember",
-		"processing_state": "completed", "search_state": "current", "evidence": []any{}, "relationship_results": []any{}, "errors": []any{},
+		"processing_state": "completed", "search_state": "current", "evidence": []any{}, "errors": []any{},
 	}
 	ledger := &rememberPipelineLedgerStub{
 		rememberFailureLedgerStub: &rememberFailureLedgerStub{load: &knowledgecontract.RememberAttempt{
@@ -34,7 +34,7 @@ func TestRememberRetryRecordsRecoveryAndOneLogicalCompletion(t *testing.T) {
 		},
 	}
 	processor := &rememberSynchronousProcessor{
-		ledger: ledger, catalog: &processorAssessmentCatalogStub{},
+		ledger:   ledger,
 		provider: &processorAssessmentProviderStub{}, metrics: metrics,
 	}
 	status, err := processor.ProcessRemember(context.Background(), input)
@@ -62,7 +62,7 @@ func TestCanceledBeforeCommitRecordsCommitPhaseOutcome(t *testing.T) {
 		cancel: cancel,
 	}
 	processor := &rememberSynchronousProcessor{
-		ledger: ledger, catalog: &processorAssessmentCatalogStub{},
+		ledger:   ledger,
 		provider: &processorAssessmentProviderStub{}, metrics: metrics,
 	}
 

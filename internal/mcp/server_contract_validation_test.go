@@ -234,7 +234,7 @@ func TestServerProjectsDynamicRememberPreflightAsInvalidParams(t *testing.T) {
 	tool.Invoke = func(context.Context, string, map[string]any) (map[string]any, error) {
 		return nil, &registry.ContractValidationFailure{Result: registry.ContractValidationResult{
 			Issues: []registry.ContractValidationIssue{{
-				Path: "/relationships/0/subject/known_entity_id", Code: "unavailable", Message: "known_entity_id is unavailable",
+				Path: "/evidence/0/supersedes_evidence_ids/0", Code: "unavailable", Message: "superseded Evidence is unavailable",
 			}},
 		}}
 	}
@@ -248,12 +248,8 @@ func TestServerProjectsDynamicRememberPreflightAsInvalidParams(t *testing.T) {
 	_, rpcErr := server.invokeTool(testMemoryContext(ctx, nil), registry.ToolRemember, map[string]any{
 		"target_space":    "team_shared",
 		"idempotency_key": "dynamic-preflight",
-		"evidence":        []any{map[string]any{"content": "Dense-Mem uses PostgreSQL."}},
-		"relationships": []any{map[string]any{
-			"ref": "uses-postgresql", "subject": map[string]any{"name": "Dense-Mem"},
-			"predicate": map[string]any{"proposed_key": "uses"},
-			"object":    map[string]any{"entity": map[string]any{"name": "PostgreSQL"}},
-			"polarity":  "+", "evidence_indices": []any{0},
+		"evidence": []any{map[string]any{
+			"content": "Dense-Mem uses PostgreSQL.", "supersedes_evidence_ids": []any{uuid.NewString()},
 		}},
 	})
 	require.NotNil(t, rpcErr)

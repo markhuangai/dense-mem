@@ -4,107 +4,35 @@ package postgres
 
 import (
 	"context"
-	"encoding/json"
+
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/lib/pq"
+
 	"github.com/markhuangai/dense-mem/internal/domain"
-	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
+
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
 
-func maintenanceRelationship(t *testing.T, f *ontologyFixture) ontology.SourceHandle {
-	t.Helper()
-	subject := maintenanceEntity(t, f, "Atlas")
-	object := maintenanceEntity(t, f, "PostgreSQL")
-	predicate, err := f.knowledge.EnsureSemanticReviewPredicateCandidate(context.Background(), knowledge.EnsureSemanticPredicateCandidateInput{TeamID: f.team, OwnerProfileID: f.owners[0], Predicate: "uses", RelationshipKind: "state", SubjectKind: "project", ObjectKind: "project"})
-	require.NoError(t, err)
-	evidence := f.evidence(t, 0, "Atlas uses PostgreSQL.")
-	decision, err := f.knowledge.ApplyRelationshipDecision(context.Background(), knowledge.ApplyRelationshipDecisionInput{TeamID: f.team, OwnerProfileID: f.owners[0], IngestID: evidence.IngestID, SubjectEntityID: subject.ID, PredicateKey: predicate.PredicateKey, PredicateVersion: predicate.Version, ObjectEntityID: object.ID, Polarity: "+", Support: &knowledge.EvidenceSupportInput{FragmentID: evidence.Evidence[0].FragmentID, SourceGroupKey: uuid.NewString(), SpanEnd: len("Atlas uses PostgreSQL."), Authority: "primary"}})
-	require.NoError(t, err)
-	require.NotNil(t, decision.Relationship)
-	return ontology.SourceHandle{Kind: ontology.RelationshipSource, ID: decision.Relationship.RelationshipID, Version: int64(decision.Relationship.Version)}
-}
-
 func TestOntologyMaintenanceLargeBacklogAndFairTurns(t *testing.T) {
 	started := time.Now()
 	f := newOrganizationFixture(t)
 	ctx := context.Background()
-	relationship := maintenanceRelationship(t, f)
-	require.NoError(t, f.rls.WithSystemTx(ctx, f.app, func(tx *gorm.DB) error {
-		return tx.Exec(`INSERT INTO entity_records SELECT (jsonb_populate_record(NULL::entity_records,to_jsonb(template)||jsonb_build_object('entity_id',gen_random_uuid(),'identity_context',jsonb_build_object('backlog',index)))).*
-		 FROM (SELECT * FROM entity_records WHERE team_id=?::uuid LIMIT 1) AS template CROSS JOIN generate_series(1,5001) AS index`, f.team).Error
-	}))
-	// A single seed transaction can consume the deadline before backlog behavior runs.
-	for first := 1; first <= 20001; first += 1000 {
-		last := min(first+999, 20001)
+	template := f.organizationEvidence(t, 0, "Backlog template", nil)
+	for first := 1; first <= 25001; first += 1000 {
+		last := min(first+999, 25001)
 		require.NoError(t, f.rls.WithSystemTx(ctx, f.app, func(tx *gorm.DB) error {
-			if err := tx.Exec(`INSERT INTO relationship_records SELECT (jsonb_populate_record(NULL::relationship_records,to_jsonb(template)||jsonb_build_object('relationship_id',gen_random_uuid(),'scope_key','backlog:'||index,'semantic_group_key','backlog:'||index))).*
-			 FROM relationship_records AS template CROSS JOIN generate_series(?::int,?::int) AS index WHERE template.team_id=?::uuid AND template.relationship_id=?::uuid`, first, last, f.team, relationship.ID).Error; err != nil {
-				return err
-			}
-			if err := tx.Exec(`INSERT INTO relationship_evidence_supports SELECT (jsonb_populate_record(NULL::relationship_evidence_supports,to_jsonb(template)||jsonb_build_object('support_id',gen_random_uuid(),'relationship_id',relationship.relationship_id))).*
-			 FROM relationship_evidence_supports AS template JOIN relationship_records AS relationship ON relationship.team_id=template.team_id AND relationship.scope_key IN (SELECT 'backlog:'||index FROM generate_series(?::int,?::int) AS index)
-			 WHERE template.team_id=?::uuid AND template.relationship_id=?::uuid`, first, last, f.team, relationship.ID).Error; err != nil {
-				return err
-			}
-			return tx.Exec(`INSERT INTO relationship_support_decision_events SELECT (jsonb_populate_record(NULL::relationship_support_decision_events,to_jsonb(template)||jsonb_build_object('support_decision_id',gen_random_uuid(),'support_id',support.support_id,'relationship_id',support.relationship_id,'idempotency_key',gen_random_uuid()::text))).*
-			 FROM relationship_support_decision_events AS template JOIN relationship_evidence_supports AS support ON support.team_id=template.team_id AND support.relationship_id<>template.relationship_id
-			 JOIN relationship_records AS relationship ON relationship.team_id=support.team_id AND relationship.relationship_id=support.relationship_id
-			 WHERE template.team_id=?::uuid AND template.relationship_id=?::uuid AND template.decision='grant' AND relationship.scope_key IN (SELECT 'backlog:'||index FROM generate_series(?::int,?::int) AS index)`, f.team, relationship.ID, first, last).Error
+			return tx.Exec(`INSERT INTO evidence_fragments
+ SELECT (jsonb_populate_record(NULL::evidence_fragments,to_jsonb(template)||jsonb_build_object(
+ 'fragment_id',gen_random_uuid(),'evidence_index',index,'content','Backlog evidence '||index,
+ 'content_hash','sha256:'||encode(sha256(convert_to('Backlog evidence '||index,'UTF8')),'hex'),'force_insert',true))).*
+ FROM evidence_fragments AS template CROSS JOIN generate_series(?::int,?::int) AS index
+ WHERE template.team_id=?::uuid AND template.fragment_id=?::uuid`, first, last, f.team, template.ID).Error
 		}))
 	}
-	require.NoError(t, f.rls.WithSystemTx(ctx, f.app, func(tx *gorm.DB) error {
-		var supported int
-		if err := tx.Raw(`SELECT count(DISTINCT relationship.relationship_id) FROM relationship_records AS relationship
-		 JOIN relationship_evidence_supports AS support ON support.team_id=relationship.team_id AND support.relationship_id=relationship.relationship_id
-		 JOIN relationship_support_decision_events AS decision ON decision.team_id=support.team_id AND decision.support_id=support.support_id AND decision.relationship_id=relationship.relationship_id
-		 WHERE relationship.team_id=?::uuid AND relationship.scope_key LIKE 'backlog:%' AND decision.decision='grant'`, f.team).Row().Scan(&supported); err != nil {
-			return err
-		}
-		require.Equal(t, 20001, supported)
-		return nil
-	}))
-	require.NoError(t, f.rls.WithTeamTx(ctx, f.app, f.team, func(tx *gorm.DB) error {
-		var key string
-		var version int64
-		if err := tx.Raw(`SELECT predicate_key,predicate_version FROM relationship_records WHERE team_id=?::uuid AND relationship_id=?::uuid`, f.team, relationship.ID).Row().Scan(&key, &version); err != nil {
-			return err
-		}
-		var plan []byte
-		if err := tx.Raw(`EXPLAIN (ANALYZE,FORMAT JSON) `+predicateSourceSQL, f.team, f.space, f.generation, pq.Array([]string{key}), pq.Array([]int64{version})).Row().Scan(&plan); err != nil {
-			return err
-		}
-		type node struct {
-			Relation string  `json:"Relation Name"`
-			Loops    float64 `json:"Actual Loops"`
-			Rows     float64 `json:"Actual Rows"`
-			Plans    []node  `json:"Plans"`
-		}
-		var reports []struct{ Plan node }
-		if err := json.Unmarshal(plan, &reports); err != nil {
-			return err
-		}
-		require.Len(t, reports, 1)
-		require.Equal(t, float64(1), reports[0].Plan.Rows)
-		loops := float64(0)
-		var visit func(node)
-		visit = func(current node) {
-			if current.Relation == "relationship_support_decision_events" {
-				loops += current.Loops
-			}
-			for _, child := range current.Plans {
-				visit(child)
-			}
-		}
-		visit(reports[0].Plan)
-		require.Equal(t, float64(1), loops, "one eligible predicate needs one supporting decision, regardless of corpus size")
-		return nil
-	}))
 	other := maintenanceOtherTeam(t, f)
 	other.organizationEvidence(t, 0, "Small team's pending work.", nil)
 	third := maintenanceOtherTeam(t, f)
@@ -141,7 +69,7 @@ func TestOntologyMaintenanceLargeBacklogAndFairTurns(t *testing.T) {
 	var discovered bool
 	for range 800 {
 		require.NoError(t, f.store.discoverMaintenanceError(ctx, *big, ontology.MaintenancePageSize))
-		require.NoError(t, f.admin.Raw(`SELECT discovery_kind=4 FROM ontology_maintenance_teams WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=?`, f.team, f.space, f.generation).Row().Scan(&discovered))
+		require.NoError(t, f.admin.Raw(`SELECT discovery_kind=1 FROM ontology_maintenance_teams WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=?`, f.team, f.space, f.generation).Row().Scan(&discovered))
 		if discovered {
 			break
 		}
@@ -150,10 +78,9 @@ func TestOntologyMaintenanceLargeBacklogAndFairTurns(t *testing.T) {
 	status, err := f.store.MaintenanceStatus(ctx, time.Now().UTC())
 	require.NoError(t, err)
 	require.False(t, status.CoverageComplete)
-	var nodes, edges int
-	require.NoError(t, f.admin.Raw(`SELECT count(*) FILTER(WHERE source_kind='entity'),count(*) FILTER(WHERE source_kind='relationship') FROM ontology_maintenance_sources WHERE team_id=?::uuid AND eligible`, f.team).Row().Scan(&nodes, &edges))
-	require.Greater(t, nodes, 5000)
-	require.Greater(t, edges, 20000)
+	var evidenceCount int
+	require.NoError(t, f.admin.Raw(`SELECT count(*) FROM ontology_maintenance_sources WHERE team_id=?::uuid AND eligible AND source_kind='evidence'`, f.team).Row().Scan(&evidenceCount))
+	require.Greater(t, evidenceCount, 25000)
 	unrelated := testTopic("unrelated-large-marker")
 	_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("sparse-large-marker", 0, ontology.Change{Record: unrelated}))
 	require.NoError(t, err)
@@ -166,28 +93,8 @@ func TestOntologyMaintenanceLargeBacklogAndFairTurns(t *testing.T) {
 		return nil
 	}))
 	var cursor string
-	require.NoError(t, f.admin.Raw(`SELECT entity_id::text FROM entity_records WHERE team_id=?::uuid ORDER BY entity_id OFFSET 4900 LIMIT 1`, f.team).Row().Scan(&cursor))
+	require.NoError(t, f.admin.Raw(`SELECT fragment_id::text FROM evidence_fragments WHERE team_id=?::uuid ORDER BY fragment_id OFFSET 24900 LIMIT 1`, f.team).Row().Scan(&cursor))
 	assertNativeMaintenanceSeek(t, f, cursor)
-	var relationshipCursor string
-	require.NoError(t, f.admin.Raw(`SELECT relationship_id::text FROM relationship_records WHERE team_id=?::uuid ORDER BY relationship_id OFFSET 19900 LIMIT 1`, f.team).Row().Scan(&relationshipCursor))
-	var predicate string
-	require.NoError(t, f.admin.Raw(`SELECT predicate_key FROM relationship_records WHERE team_id=?::uuid AND relationship_id=?::uuid`, f.team, relationship.ID).Row().Scan(&predicate))
-	require.NoError(t, f.rls.WithTeamTx(ctx, f.app, f.team, func(tx *gorm.DB) error {
-		fence := scope{TeamID: f.team, SpaceID: f.space, Generation: f.generation}
-		marker := maintenanceMarker{TargetKind: "predicate", TargetID: predicate, Cursor: "relationship:" + relationshipCursor}
-		for range 3 {
-			page, err := maintenanceMarkerSources(tx, fence, marker, 20)
-			if err != nil {
-				return err
-			}
-			require.Len(t, page, 20)
-			for _, handle := range page {
-				require.Greater(t, ontology.SourceKey(handle), marker.Cursor)
-				marker.Cursor = ontology.SourceKey(handle)
-			}
-		}
-		return nil
-	}))
 	claim, err := f.store.ClaimMaintenanceBatch(ctx, *big, window.ID, time.Now().UTC())
 	require.NoError(t, err)
 	require.NotNil(t, claim)

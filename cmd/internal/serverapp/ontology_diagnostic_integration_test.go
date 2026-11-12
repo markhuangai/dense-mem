@@ -47,7 +47,7 @@ func TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads(t *testing.T)
 			require.NoError(t, accesspg.NewTeamRepository(admin, rls).Create(ctx, &domain.Team{ID: teamID, Name: "diagnostic-" + uuid.NewString()}))
 			credential := &domain.Credential{ID: ownerID, TeamID: teamID, Name: "diagnostic owner", KeyHash: "synthetic", KeyPrefix: strings.ReplaceAll(ownerID.String(), "-", "")[:24], KeySuffix: "test", Scopes: []string{"read", "write"}}
 			require.NoError(t, accesspg.NewCredentialRepository(admin, rls, nil).CreateCredential(ctx, credential))
-			store := knowledgepg.NewStore(app, rls, knowledge.ConflictRuntimeConfig{})
+			store := knowledgepg.NewStore(app, rls)
 			var sharedSpaceID string
 			var generation int64
 			require.NoError(t, admin.Raw(`SELECT id::text,generation FROM memory_spaces WHERE team_id=?::uuid AND kind='team_shared'`, teamID).Row().Scan(&sharedSpaceID, &generation))
@@ -107,12 +107,14 @@ func TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads(t *testing.T)
 								ValidationErrors []assessor.SemanticValidationError `json:"validation_errors"`
 							}
 							require.NoError(t, json.Unmarshal([]byte(envelope.Messages[len(envelope.Messages)-1].Content), &feedback))
-							require.Len(t, feedback.ValidationErrors, 2)
-							require.Contains(t, feedback.ValidationErrors[0].Field, "items[0]")
+							require.Len(t, feedback.ValidationErrors, 3)
+							require.Equal(t, "definitions[0]", feedback.ValidationErrors[0].Field)
+							require.Equal(t, "items[0].definition_ref", feedback.ValidationErrors[1].Field)
+							require.Equal(t, "items[0].reason", feedback.ValidationErrors[2].Field)
 							detail := (&assessor.SemanticAssessmentResponseValidationError{Errors: feedback.ValidationErrors}).Error()
 							require.Contains(t, detail, input.Items[0].Ref)
-							require.Contains(t, detail, "expected topic")
-							require.Contains(t, detail, `selects kind "entity_class"`)
+							require.Contains(t, detail, "requires an Evidence topic")
+							require.Contains(t, detail, `received kind "entity_class"`)
 							require.Contains(t, detail, "at most 128 bytes")
 							for _, issue := range feedback.ValidationErrors {
 								require.Empty(t, issue.Code)
@@ -121,7 +123,6 @@ func TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads(t *testing.T)
 						if mode == "repair_exhausted" || calls.Load() < 3 {
 							require.Len(t, response.Definitions, 1)
 							response.Definitions[0].Kind = "entity_class"
-							response.Definitions[0].BaseEntityKind = "project"
 							response.Items[0].Reason = strings.Repeat("x", 129)
 						}
 					}
@@ -216,7 +217,7 @@ func TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads(t *testing.T)
 					stage := "decode"
 					if mode == "repair_exhausted" {
 						stage = "validate"
-						require.Equal(t, "item_reason_limit", validation["code"])
+						require.Equal(t, "definition_record", validation["code"])
 					}
 					if mode == "unused_exhausted" {
 						stage = "validate"
@@ -244,7 +245,7 @@ func TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads(t *testing.T)
 			}
 			if mode == "repair_exhausted" {
 				require.Contains(t, string(encoded), "validation_errors")
-				require.Contains(t, string(encoded), "expected topic")
+				require.Contains(t, string(encoded), "requires an Evidence topic")
 				require.Contains(t, string(encoded), "entity_class")
 			}
 			if mode == "unused_exhausted" {

@@ -116,18 +116,12 @@ type PrometheusTelemetryService struct {
 	timeout       time.Duration
 	now           func() time.Time
 	logger        observability.LogProvider
-	lifecycle     operationscontract.TelemetryLifecycleReader
-	features      TelemetryFeatureResolver
+
+	features TelemetryFeatureResolver
 }
 
 type TelemetryFeatureResolver struct {
 	RecallFeedbackEnabled func(context.Context) (bool, error)
-}
-
-func (s *PrometheusTelemetryService) SetLifecycleReader(reader operationscontract.TelemetryLifecycleReader) {
-	if s != nil {
-		s.lifecycle = reader
-	}
 }
 
 func (s *PrometheusTelemetryService) SetFeatureResolver(resolver TelemetryFeatureResolver) {
@@ -201,21 +195,12 @@ func (s *PrometheusTelemetryService) Snapshot(ctx context.Context, filter Teleme
 		StateSeries:    initialStateSeries,
 	}
 	if s == nil || s.queries == nil {
-		var lifecycle operationscontract.TelemetryLifecycleSnapshot
-		var lifecycleErr error
-		if s != nil && s.lifecycle != nil {
-			lifecycleCtx, cancel := context.WithTimeout(ctx, s.timeout)
-			lifecycle, lifecycleErr = s.lifecycle.ReadTelemetryLifecycle(lifecycleCtx, operationscontract.TelemetryLifecycleFilter{TeamID: scope.TeamID, ProfileID: scope.ProfileID}, from, to)
-			cancel()
-		} else if hasLedgerSpecs(initialWindowedSpecs) || hasLedgerSpecs(initialCurrentSpecs) {
-			lifecycleErr = fmt.Errorf("telemetry lifecycle source is unavailable")
-		}
 		featureStates := map[string]telemetryFeatureState{}
 		if s != nil {
 			featureStates = s.telemetryFeatureStates(ctx, scope)
 		}
-		windowedCardsWithInternal := buildTelemetryCards(initialWindowedSpecs, nil, lifecycle, lifecycleErr, featureStates, scope)
-		currentCardsWithInternal := buildTelemetryCards(initialCurrentSpecs, nil, lifecycle, lifecycleErr, featureStates, scope)
+		windowedCardsWithInternal := buildTelemetryCards(initialWindowedSpecs, nil, featureStates, scope)
+		currentCardsWithInternal := buildTelemetryCards(initialCurrentSpecs, nil, featureStates, scope)
 		activitySeries := buildTelemetrySeries(initialActivitySpecs, nil, featureStates, from, to, windowedCardsWithInternal, scope)
 		stateSeries := buildTelemetrySeries(initialStateSpecs, nil, featureStates, from, to, windowedCardsWithInternal, scope)
 		windowedCards := visibleTelemetryCards(windowedCardsWithInternal)
@@ -259,18 +244,8 @@ func (s *PrometheusTelemetryService) Snapshot(ctx context.Context, filter Teleme
 		collectTelemetryRangeFailures(stateExecutableSpecs, stateResults),
 	)
 
-	var lifecycle operationscontract.TelemetryLifecycleSnapshot
-	var lifecycleErr error
-	if s.lifecycle != nil {
-		lifecycleCtx, lifecycleCancel := context.WithTimeout(ctx, s.timeout)
-		lifecycle, lifecycleErr = s.lifecycle.ReadTelemetryLifecycle(lifecycleCtx, operationscontract.TelemetryLifecycleFilter{TeamID: scope.TeamID, ProfileID: scope.ProfileID}, from, to)
-		lifecycleCancel()
-	} else if hasLedgerSpecs(windowedCardSpecs) || hasLedgerSpecs(currentCardSpecs) {
-		lifecycleErr = fmt.Errorf("telemetry lifecycle source is unavailable")
-	}
-
-	windowedCardsWithInternal := buildTelemetryCards(windowedCardSpecs, windowedResults, lifecycle, lifecycleErr, featureStates, scope)
-	currentCardsWithInternal := buildTelemetryCards(currentCardSpecs, currentResults, lifecycle, lifecycleErr, featureStates, scope)
+	windowedCardsWithInternal := buildTelemetryCards(windowedCardSpecs, windowedResults, featureStates, scope)
+	currentCardsWithInternal := buildTelemetryCards(currentCardSpecs, currentResults, featureStates, scope)
 	activitySeries := buildTelemetrySeries(activitySpecs, activityResults, featureStates, from, to, windowedCardsWithInternal, scope)
 	stateSeries := buildTelemetrySeries(stateSpecs, stateResults, featureStates, from, to, windowedCardsWithInternal, scope)
 	windowedCards := visibleTelemetryCards(windowedCardsWithInternal)
@@ -331,17 +306,14 @@ func telemetryWindowedCardSpecsForAudience(scope TelemetryScope, baseLabels map[
 		{ID: "llm_recall_quality_score", Label: "LLM recall quality", Unit: "percent", Query: telemetrySparseHistogramAverage("densemem_recall_feedback_quality_score", scope, baseLabels, nil, window, 100)},
 		{ID: "llm_recall_missing_context_rate", Label: "LLM missing context", Unit: "percent", Query: telemetryRecallFeedbackRate(scope, baseLabels, map[string]string{"missing_context": "true"}, window)},
 		{ID: "llm_recall_irrelevant_rate", Label: "LLM irrelevant recall", Unit: "percent", Query: telemetryRecallFeedbackRate(scope, baseLabels, map[string]string{"irrelevant": "true"}, window)},
-		{ID: "dream_feedbacks", Label: "Dream feedback", Unit: "events", Query: telemetrySparseCounterIncrease("densemem_dream_feedback_total", scope, baseLabels, nil, window)},
 		{ID: "avg_http_latency", Label: "Avg HTTP latency", Unit: "ms", Query: telemetryAverageLatency("densemem_http_request_duration_seconds", scope, baseLabels, window)},
 		{ID: "avg_embedding_latency", Label: "Avg embedding latency", Unit: "ms", Query: telemetrySparseHistogramAverage("densemem_embedding_duration_seconds", scope, baseLabels, nil, window, 1000)},
 		{ID: "avg_verifier_latency", Label: "Avg verifier latency", Unit: "ms", Query: telemetrySparseHistogramAverage("densemem_verifier_duration_seconds", scope, baseLabels, nil, window, 1000)},
-		{ID: "avg_conflict_review_duration", Label: "Avg conflict review", Unit: "ms", Query: telemetrySparseHistogramAverage("densemem_conflict_review_duration_seconds", scope, baseLabels, nil, window, 1000)},
 		{ID: "remember_requests", Label: "Remember calls", Unit: "requests", Query: telemetrySparseCounterIncrease("densemem_remember_acknowledgements_total", scope, baseLabels, nil, window)},
 		{ID: "avg_remember_duration", Label: "Avg Remember duration", Unit: "ms", Query: telemetrySparseHistogramAverage("densemem_remember_acknowledgement_duration_seconds", scope, baseLabels, nil, window, 1000)},
 		{ID: "p95_remember_duration", Label: "P95 Remember duration", Unit: "ms", Query: telemetryHistogramQuantile("densemem_remember_acknowledgement_duration_seconds", scope, baseLabels, nil, window, 0.95, 1000)},
 		{ID: telemetryRecallFeedbackActivityID, Query: telemetrySparseCounterIncrease("densemem_recall_feedback_total", scope, baseLabels, nil, window), Internal: true},
 	}
-	specs = append(specs, telemetryLifecycleWindowedCardSpecs()...)
 	if !includeCost {
 		return bindTelemetryCatalog(specs)
 	}
@@ -367,51 +339,6 @@ func telemetryWindowedCardSpecsForAudience(scope TelemetryScope, baseLabels map[
 
 func telemetryCurrentCardSpecs(scope TelemetryScope, baseLabels map[string]string) []telemetryQuerySpec {
 	return telemetryCurrentCardSpecsForAudience(scope, baseLabels, false)
-}
-
-func telemetryCurrentCardSpecsForAudience(scope TelemetryScope, baseLabels map[string]string, operator bool) []telemetryQuerySpec {
-	specs := telemetryLifecycleCurrentCardSpecs()
-	if !operator {
-		return bindTelemetryCatalog(specs)
-	}
-	if strings.EqualFold(scope.Type, "system") {
-		specs = append(specs, telemetryQuerySpec{
-			ID: "conflict_queue_collection_success", Label: "Conflict queue collection", Unit: "state",
-			Query: fmt.Sprintf("min(densemem_conflict_queue_collection_success%s)", telemetrySelector(scope, baseLabels)),
-		})
-	}
-	return bindTelemetryCatalog(specs)
-}
-
-func telemetryLifecycleWindowedCardSpecs() []telemetryQuerySpec {
-	specs := make([]telemetryQuerySpec, 0, len(domain.RelationshipStatuses())+1)
-	for _, status := range domain.RelationshipStatuses() {
-		specs = append(specs, telemetryQuerySpec{
-			ID:     "relationship_transitions_" + status,
-			Label:  "Relationship transitions: " + status,
-			Unit:   "transitions",
-			Ledger: true,
-		})
-	}
-	return bindTelemetryCatalog(append(specs, telemetryQuerySpec{
-		ID:     "relationship_corrections",
-		Label:  "Accepted Relationship corrections",
-		Unit:   "corrections",
-		Ledger: true,
-	}))
-}
-
-func telemetryLifecycleCurrentCardSpecs() []telemetryQuerySpec {
-	specs := make([]telemetryQuerySpec, 0, len(domain.RelationshipStatuses()))
-	for _, status := range domain.RelationshipStatuses() {
-		specs = append(specs, telemetryQuerySpec{
-			ID:     "relationships_" + status,
-			Label:  "Relationships: " + status,
-			Unit:   "relationships",
-			Ledger: true,
-		})
-	}
-	return bindTelemetryCatalog(specs)
 }
 
 func telemetrySeriesSpecs(selector string, rateWindow string) []telemetryQuerySpec {
@@ -442,8 +369,6 @@ func telemetryActivitySeriesSpecsForAudience(selector string, rateWindow string,
 		{ID: "llm_recall_quality_score", Label: "LLM recall quality", Unit: "percent", Query: telemetryRangeSparseHistogramAverage("densemem_recall_feedback_quality_score", selector, "", rateWindow, 100)},
 		{ID: "llm_recall_missing_context_rate", Label: "LLM missing context", Unit: "percent", Query: telemetryRangeRecallFeedbackRate(selector, `missing_context="true"`, rateWindow)},
 		{ID: "llm_recall_irrelevant_rate", Label: "LLM irrelevant recall", Unit: "percent", Query: telemetryRangeRecallFeedbackRate(selector, `irrelevant="true"`, rateWindow)},
-		{ID: "dream_feedbacks", Label: "Dream feedback", Unit: "events/s", Query: telemetryRangeSparseCounterRate("densemem_dream_feedback_total", selector, rateWindow)},
-		{ID: "conflict_review_duration", Label: "Conflict review", Unit: "ms", Query: telemetryRangeSparseHistogramAverage("densemem_conflict_review_duration_seconds", selector, "", rateWindow, 1000)},
 	}
 	if !includeTerminalFailures {
 		return bindTelemetryCatalog(specs)
@@ -775,4 +700,8 @@ func appendTelemetryQuerySpecs(groups ...[]telemetryQuerySpec) []telemetryQueryS
 		out = append(out, group...)
 	}
 	return out
+}
+
+func telemetryCurrentCardSpecsForAudience(scope TelemetryScope, baseLabels map[string]string, operator bool) []telemetryQuerySpec {
+	return []telemetryQuerySpec{}
 }

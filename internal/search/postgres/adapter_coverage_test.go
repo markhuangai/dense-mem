@@ -132,10 +132,9 @@ func TestSearchAdapterPureValidationAndHelpers(t *testing.T) {
 	}
 
 	assert.True(t, validSearchSourceKind("evidence"))
-	assert.True(t, validSearchSourceKind("relationship"))
-	assert.True(t, validSearchSourceKind("entity"))
+	assert.False(t, validSearchSourceKind("relationship"))
+	assert.False(t, validSearchSourceKind("entity"))
 	assert.False(t, validSearchSourceKind("value"))
-	assert.Equal(t, 2, defaultProjectionFormat("relationship"))
 	assert.Equal(t, 1, defaultProjectionFormat("evidence"))
 	assert.Equal(t, "[1,-2,0.5]", mustVectorLiteral(t, []float32{1, -2, .5}))
 	_, err := vectorLiteral([]float32{float32(math.NaN())})
@@ -274,7 +273,7 @@ func TestSearchAdapterActiveContractReadAndErrors(t *testing.T) {
 func TestSearchAdapterFullTextReadAndErrors(t *testing.T) {
 	teamID, _, sourceID, documentID, contractID, _ := searchIDs()
 	store, mock := newSearchMockStore(t)
-	mock.ExpectQuery("(?s)WITH.*FROM recall_relationship_generation").
+	mock.ExpectQuery(`(?s)SELECT document\.team_id::text.*FROM search_documents AS document.*document\.source_kind = 'evidence'.*evidence_exact_aliases`).
 		WillReturnRows(searchHitRows(teamID, documentID, sourceID, contractID))
 	hits, err := store.SearchFullText(context.Background(), searchcontract.FullTextSearchInput{TeamID: teamID, Query: "term", Limit: 1})
 	require.NoError(t, err)
@@ -283,19 +282,19 @@ func TestSearchAdapterFullTextReadAndErrors(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 
 	store, mock = newSearchMockStore(t)
-	mock.ExpectQuery("(?s)WITH.*FROM recall_relationship_generation").
+	mock.ExpectQuery(`(?s)SELECT document\.team_id::text.*FROM search_documents AS document.*document\.source_kind = 'evidence'.*evidence_exact_aliases`).
 		WillReturnRows(searchHitRows(teamID, documentID, sourceID, contractID))
 	hits, err = store.SearchFullText(context.Background(), searchcontract.FullTextSearchInput{TeamID: teamID, Query: "term", SourceKind: "evidence"})
 	require.NoError(t, err)
 	require.Len(t, hits, 1)
 
 	store, mock = newSearchMockStore(t)
-	mock.ExpectQuery("(?s)WITH.*FROM recall_relationship_generation").WillReturnError(errors.New("search failed"))
+	mock.ExpectQuery(`(?s)SELECT document\.team_id::text.*FROM search_documents AS document.*document\.source_kind = 'evidence'.*evidence_exact_aliases`).WillReturnError(errors.New("search failed"))
 	_, err = store.SearchFullText(context.Background(), searchcontract.FullTextSearchInput{TeamID: teamID, Query: "term"})
 	assert.Contains(t, err.Error(), "full-text search")
 
 	store, mock = newSearchMockStore(t)
-	mock.ExpectQuery("(?s)WITH.*FROM recall_relationship_generation").WillReturnRows(sqlmock.NewRows([]string{
+	mock.ExpectQuery(`(?s)SELECT document\.team_id::text.*FROM search_documents AS document.*document\.source_kind = 'evidence'.*evidence_exact_aliases`).WillReturnRows(sqlmock.NewRows([]string{
 		"team_id", "search_document_id", "source_kind", "source_id", "source_version",
 		"document_version", "embedding_contract_id", "search_state", "distance", "text_rank",
 	}).AddRow(teamID, documentID, "evidence", sourceID, "bad", 3, contractID, "current", .2, .3))
@@ -305,7 +304,7 @@ func TestSearchAdapterFullTextReadAndErrors(t *testing.T) {
 	store, mock = newSearchMockStore(t)
 	metrics := observability.NewInMemoryDiscoverabilityMetrics()
 	measuredCtx := observability.WithReadPerformance(context.Background(), metrics)
-	mock.ExpectQuery("(?s)WITH.*FROM recall_relationship_generation").WillReturnRows(sqlmock.NewRows([]string{
+	mock.ExpectQuery(`(?s)SELECT document\.team_id::text.*FROM search_documents AS document.*document\.source_kind = 'evidence'.*evidence_exact_aliases`).WillReturnRows(sqlmock.NewRows([]string{
 		"team_id", "search_document_id", "source_kind", "source_id", "source_version",
 		"document_version", "embedding_contract_id", "search_state", "distance", "text_rank",
 	}).AddRow(teamID, documentID, "evidence", sourceID, int64(2), int64(3), contractID, "current", .2, .3).
@@ -339,11 +338,11 @@ func TestSearchAdapterExactVectorReadAndFences(t *testing.T) {
 	store, mock := newSearchMockStore(t)
 	contract := activeSearchContract()
 	expectActiveContract(mock, contract)
-	mock.ExpectQuery(`(?s)WITH.*recall_relationship_generation_team.*SELECT count\(\*\).*JOIN search_documents AS document.*document\.projection_generation_id = generation\.projection_generation_id`).
-		WithArgs(teamID, teamID, contractID, contract.EmbeddingDimensions, contract.ExactMaxRows+1).
+	mock.ExpectQuery(`(?s)SELECT count\(\*\).*FROM search_documents AS document.*document\.source_kind = 'evidence'.*evidence_exact_aliases`).
+		WithArgs(teamID, contractID, contract.EmbeddingDimensions, contract.ExactMaxRows+1).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
-	mock.ExpectQuery(`(?s)WITH.*recall_relationship_generation_team.*SELECT document\.team_id::text, document\.search_document_id::text.*JOIN search_documents AS document.*document\.projection_generation_id = generation\.projection_generation_id`).
-		WithArgs(teamID, "[0.25,0.75]", teamID, contractID, contract.EmbeddingDimensions, "[0.25,0.75]", 1).
+	mock.ExpectQuery(`(?s)SELECT document\.team_id::text, document\.search_document_id::text.*FROM search_documents AS document.*document\.source_kind = 'evidence'.*evidence_exact_aliases`).
+		WithArgs("[0.25,0.75]", teamID, contractID, contract.EmbeddingDimensions, "[0.25,0.75]", 1).
 		WillReturnRows(searchHitRows(teamID, documentID, sourceID, contractID))
 	hits, err := store.SearchExactVector(context.Background(), searchcontract.ExactVectorSearchInput{TeamID: teamID, QueryEmbedding: []float32{.25, .75}, Limit: 1})
 	require.NoError(t, err)
@@ -353,14 +352,14 @@ func TestSearchAdapterExactVectorReadAndFences(t *testing.T) {
 
 	store, mock = newSearchMockStore(t)
 	expectActiveContract(mock, contract)
-	mock.ExpectQuery(`(?s)WITH.*recall_relationship_generation_team.*SELECT count\(\*\).*JOIN search_documents AS document.*document\.projection_generation_id = generation\.projection_generation_id`).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
-	mock.ExpectQuery(`(?s)WITH.*recall_relationship_generation_team.*SELECT document\.team_id::text, document\.search_document_id::text.*JOIN search_documents AS document.*document\.projection_generation_id = generation\.projection_generation_id`).WillReturnRows(searchHitRows(teamID, documentID, sourceID, contractID))
+	mock.ExpectQuery(`(?s)SELECT count\(\*\).*FROM search_documents AS document.*document\.source_kind = 'evidence'.*evidence_exact_aliases`).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`(?s)SELECT document\.team_id::text, document\.search_document_id::text.*FROM search_documents AS document.*document\.source_kind = 'evidence'.*evidence_exact_aliases`).WillReturnRows(searchHitRows(teamID, documentID, sourceID, contractID))
 	_, err = store.SearchExactVector(context.Background(), searchcontract.ExactVectorSearchInput{TeamID: teamID, QueryEmbedding: []float32{.25, .75}, SourceKind: "evidence"})
 	require.NoError(t, err)
 
 	store, mock = newSearchMockStore(t)
 	expectActiveContract(mock, contract)
-	mock.ExpectQuery(`(?s)WITH.*recall_relationship_generation_team.*SELECT count\(\*\).*JOIN search_documents AS document.*document\.projection_generation_id = generation\.projection_generation_id`).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(101))
+	mock.ExpectQuery(`(?s)SELECT count\(\*\).*FROM search_documents AS document.*document\.source_kind = 'evidence'.*evidence_exact_aliases`).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(101))
 	_, err = store.SearchExactVector(context.Background(), searchcontract.ExactVectorSearchInput{TeamID: teamID, QueryEmbedding: []float32{.25, .75}})
 	require.ErrorIs(t, err, ErrSearchContractMismatch)
 
@@ -401,11 +400,12 @@ func TestSearchAdapterReadinessClassifications(t *testing.T) {
 	store, mock := newSearchMockStore(t)
 	expectActiveContract(mock, contract)
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS (SELECT 1 FROM pg_extension")).WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
-	mock.ExpectQuery("(?s)WITH activated_generation.*SELECT EXISTS").WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
 	readiness, err := store.CheckSearchReadiness(context.Background())
 	require.NoError(t, err)
 	require.False(t, readiness.Ready)
-	assert.Len(t, readiness.Reasons, 2)
+	require.Len(t, readiness.Reasons, 1)
+	assert.Equal(t, "missing_pgvector_extension", readiness.Reasons[0].Code)
+	require.NoError(t, mock.ExpectationsWereMet())
 
 	contract = activeSearchContract()
 	contract.IndexStrategy = string(domain.VectorIndexVectorHNSW)
@@ -416,11 +416,11 @@ func TestSearchAdapterReadinessClassifications(t *testing.T) {
 	expectActiveContract(mock, contract)
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS (SELECT 1 FROM pg_extension")).WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
 	mock.ExpectQuery(regexp.QuoteMeta("FROM pg_class AS index_class")).WillReturnRows(sqlmock.NewRows([]string{"valid", "definition"}))
-	mock.ExpectQuery("(?s)WITH activated_generation.*SELECT EXISTS").WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 	readiness, err = store.CheckSearchReadiness(context.Background())
 	require.NoError(t, err)
 	require.False(t, readiness.Ready)
 	assert.Contains(t, readiness.Reasons[0].Code, "missing_physical_index")
+	require.NoError(t, mock.ExpectationsWereMet())
 
 	for _, valid := range []bool{false, true} {
 		store, mock = newSearchMockStore(t)
@@ -431,10 +431,10 @@ func TestSearchAdapterReadinessClassifications(t *testing.T) {
 			definition = "wrong definition"
 		}
 		mock.ExpectQuery(regexp.QuoteMeta("FROM pg_class AS index_class")).WillReturnRows(sqlmock.NewRows([]string{"valid", "definition"}).AddRow(valid, definition))
-		mock.ExpectQuery("(?s)WITH activated_generation.*SELECT EXISTS").WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 		readiness, err = store.CheckSearchReadiness(context.Background())
 		require.NoError(t, err)
 		require.False(t, readiness.Ready)
+		require.NoError(t, mock.ExpectationsWereMet())
 	}
 }
 

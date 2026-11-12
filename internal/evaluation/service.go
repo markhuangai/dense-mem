@@ -15,7 +15,7 @@ import (
 
 	"github.com/google/uuid"
 
-	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
+	evaluationcontract "github.com/markhuangai/dense-mem/internal/evaluation/contract"
 	"github.com/markhuangai/dense-mem/internal/recall/contract"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
@@ -30,7 +30,7 @@ const (
 var ErrToolUnavailable = errors.New("evaluation: required dependency is unavailable")
 
 // Repository is the narrow read port used by the evaluation application.
-type Repository = dreamcontract.EvaluationRepository
+type Repository = evaluationcontract.EvaluationRepository
 
 // AuditAppender is the only audit operation required by evaluation tools.
 type AuditAppender interface {
@@ -67,7 +67,7 @@ func (s *Service) ListKnowledgeRefs(ctx context.Context, fallbackTeamID, kind st
 	if s.deps.Repository == nil {
 		return nil, ErrToolUnavailable
 	}
-	page, err := s.deps.Repository.ListEvaluationRefs(ctx, dreamcontract.EvaluationListInput{
+	page, err := s.deps.Repository.ListEvaluationRefs(ctx, evaluationcontract.EvaluationListInput{
 		TeamID: teamID,
 		Type:   kind,
 		Limit:  limit,
@@ -232,12 +232,6 @@ func stripContent(kind string, item map[string]any) {
 	switch kind {
 	case "evidence":
 		delete(item, "content")
-	case "entity":
-		delete(item, "canonical_name")
-		delete(item, "identity_context")
-	case "value":
-		delete(item, "canonical_value")
-		delete(item, "display")
 	}
 }
 
@@ -267,9 +261,6 @@ func resultRefs(result *contract.RecallResult) []map[string]any {
 			rank = len(refs) + 1
 		}
 		ref := map[string]any{"rank": rank, "type": "evidence", "id": item.EvidenceID, "equivalent_evidence_ids": append([]string{}, item.EquivalentEvidenceIDs...), "equivalents_truncated": item.EquivalentsTruncated}
-		if len(item.RelationshipIDs) > 0 {
-			ref["relationship_ids"] = append([]string(nil), item.RelationshipIDs...)
-		}
 		refs = append(refs, ref)
 	}
 	return refs

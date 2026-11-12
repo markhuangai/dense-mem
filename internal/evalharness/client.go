@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/google/uuid"
 	"io"
 	"net/http"
 	"os"
@@ -31,11 +32,6 @@ type HTTPStatusError struct {
 	URL        string
 	StatusCode int
 	Body       string
-}
-
-type DreamCycleSeed struct {
-	Hypothesis string `json:"hypothesis"`
-	SourceRefs []Ref  `json:"source_refs"`
 }
 
 // StructuredToolError carries the bounded terminal payload returned by an MCP
@@ -453,9 +449,7 @@ func corpusRememberInput(item CorpusItem) map[string]any {
 		evidence["labels"] = item.Labels
 	}
 	input := map[string]any{"target_space": "team_shared", "idempotency_key": "eval:" + item.SourceDocID, "evidence": []map[string]any{evidence}}
-	if len(item.Relationships) > 0 {
-		input["relationships"] = item.Relationships
-	}
+
 	return input
 }
 
@@ -515,7 +509,7 @@ func (c *HTTPClient) ExportEvidenceMapping(ctx context.Context, limit int) (Know
 }
 
 func (c *HTTPClient) ExportKnowledgeMapping(ctx context.Context, limit int) (KnowledgeMapping, error) {
-	return c.exportKnowledgeMapping(ctx, limit, []string{"evidence", "entity", "value", "relationship"})
+	return c.exportKnowledgeMapping(ctx, limit, []string{"evidence"})
 }
 
 func (c *HTTPClient) exportKnowledgeMapping(ctx context.Context, limit int, kinds []string) (KnowledgeMapping, error) {
@@ -544,9 +538,7 @@ func (c *HTTPClient) exportKnowledgeMapping(ctx context.Context, limit int, kind
 				if id == "" {
 					continue
 				}
-				if kind == "dream" {
-					addDreamSourceRefs(&mapping, id, dreamSourceRefsFromKnowledgeItem(item))
-				}
+
 				sourceDocIDs := sourceDocIDsFromKnowledgeItem(kind, item, evidenceSourceDocIDs)
 				for _, sourceDocID := range sourceDocIDs {
 					addSourceMapping(&mapping, Ref{Type: kind, ID: id, SourceDocID: sourceDocID}, kind == "evidence")
@@ -590,12 +582,7 @@ func (c *HTTPClient) RunRecallCase(ctx context.Context, tc Case) (trace RecallTr
 	if tc.KnownAt != "" {
 		input["known_at"] = tc.KnownAt
 	}
-	if tc.IncludeDreams {
-		return RecallTrace{}, errors.New("legacy Dream evaluation is retired")
-	}
-	if tc.UseCommunities {
-		input["use_communities"] = true
-	}
+
 	var out map[string]any
 	if err := c.callToolWithRetry(ctx, "eval_run_recall_case", input, &out); err != nil {
 		return RecallTrace{}, err
@@ -603,7 +590,7 @@ func (c *HTTPClient) RunRecallCase(ctx context.Context, tc Case) (trace RecallTr
 	return traceFromToolOutput(tc, out), nil
 }
 
-const maxToolCallAttempts = 6
+const maxToolCallAttempts = 2
 
 func (c *HTTPClient) callToolWithRetry(ctx context.Context, name string, input any, out any) error {
 	var lastErr error
@@ -613,13 +600,24 @@ func (c *HTTPClient) callToolWithRetry(ctx context.Context, name string, input a
 			return nil
 		}
 		lastErr = err
-		if !isTransientCallToolError(err) || attempt == maxToolCallAttempts {
+		if attempt == maxToolCallAttempts {
 			return err
+		}
+		retryInput, originalID, originalRetryable, terminal := terminalRememberRetryInput(name, input, err)
+		if !isTransientCallToolError(err) && !terminal {
+			return err
+		}
+		if terminal {
+			input = retryInput
 		}
 		delay := time.Duration(attempt) * 750 * time.Millisecond
 		if op, _ := ctx.Value(operationContextKey{}).(*measuredOperation); op != nil {
 			event := op.event
 			event.Event, event.RetryDelayMS, event.Cause = "retry_scheduled", delay.Milliseconds(), err.Error()
+			if terminal {
+				event.IdempotencyKey = stringValue(retryInput["idempotency_key"])
+				event.OriginalAttemptID, event.OriginalRetryable, event.OriginalOutcome = originalID, &originalRetryable, "failed"
+			}
 			if captureErr := op.journal.append(event); captureErr != nil {
 				return errors.Join(err, captureErr)
 			}
@@ -631,6 +629,38 @@ func (c *HTTPClient) callToolWithRetry(ctx context.Context, name string, input a
 		}
 	}
 	return lastErr
+}
+
+func terminalRememberRetryInput(name string, input any, cause error) (map[string]any, string, bool, bool) {
+	var failure *StructuredToolError
+	if name != "remember" || !errors.As(cause, &failure) || failure.Tool != "remember" || submissionProcessingState(failure.Result) != "failed" {
+		return nil, "", false, false
+	}
+	id := stringValue(failure.Result["submission_id"])
+	if _, err := uuid.Parse(id); err != nil {
+		return nil, "", false, false
+	}
+	original, ok := input.(map[string]any)
+	if !ok {
+		return nil, "", false, false
+	}
+	key := stringValue(original["idempotency_key"])
+	if !strings.HasPrefix(key, "eval:") || strings.HasSuffix(key, ":resubmit1") {
+		return nil, "", false, false
+	}
+	retryable := structuredToolErrorRetryable(failure.Result)
+	if !retryable {
+		key += ":resubmit1"
+	}
+	if len(key) > 128 {
+		return nil, "", false, false
+	}
+	retry := make(map[string]any, len(original))
+	for name, value := range original {
+		retry[name] = value
+	}
+	retry["idempotency_key"] = key
+	return retry, id, retryable, true
 }
 
 func (c *HTTPClient) doJSON(ctx context.Context, method, url, bearer string, input any, out any) (err error) {
@@ -744,17 +774,6 @@ func sourceDocIDsFromKnowledgeItem(kind string, item map[string]any, evidenceSou
 	if sourceDocID != "" {
 		sourceDocIDs = append(sourceDocIDs, sourceDocID)
 	}
-	switch kind {
-	case "hypothesis":
-		for _, ref := range sourceRefsFromAny(item["source_refs"]) {
-			sourceDocIDs = append(sourceDocIDs, evidenceSourceDocIDs[ref.ID]...)
-		}
-		if payloadRefs, ok := nestedValue(item, "payload", "source_refs"); ok {
-			for _, ref := range sourceRefsFromAny(payloadRefs) {
-				sourceDocIDs = append(sourceDocIDs, evidenceSourceDocIDs[ref.ID]...)
-			}
-		}
-	}
 	return uniqueNonEmpty(sourceDocIDs)
 }
 
@@ -772,47 +791,6 @@ func stringsFromAny(value any) []string {
 		return uniqueNonEmpty(out)
 	default:
 		return nil
-	}
-}
-
-func dreamSourceRefsFromKnowledgeItem(item map[string]any) []Ref {
-	return sourceRefsFromAny(item["source_refs"])
-}
-
-func sourceRefsFromAny(value any) []Ref {
-	raw, ok := value.([]any)
-	if !ok {
-		return nil
-	}
-	refs := make([]Ref, 0, len(raw))
-	for _, value := range raw {
-		m, ok := value.(map[string]any)
-		if !ok {
-			continue
-		}
-		ref := Ref{
-			Type: stringValue(m["type"]),
-			ID:   stringValue(m["id"]),
-		}
-		if ref.Type != "" && ref.ID != "" {
-			refs = append(refs, ref)
-		}
-	}
-	return refs
-}
-
-func knowledgeItemID(kind string, item map[string]any) string {
-	switch kind {
-	case "fragment":
-		return firstNonEmpty(stringValue(item["fragment_id"]), stringValue(item["id"]))
-	case "claim":
-		return firstNonEmpty(stringValue(item["claim_id"]), stringValue(item["id"]))
-	case "fact":
-		return firstNonEmpty(stringValue(item["fact_id"]), stringValue(item["id"]))
-	case "dream":
-		return firstNonEmpty(stringValue(item["dream_id"]), stringValue(item["id"]))
-	default:
-		return stringValue(item["id"])
 	}
 }
 
@@ -834,7 +812,6 @@ func traceFromToolOutput(tc Case, out map[string]any) RecallTrace {
 		RankedRefs:          refsFromAny(out["ranked_refs"]),
 		ContextRefs:         refsFromAny(out["context_refs"]),
 		ContextEvidenceRefs: refsFromAny(out["context_evidence_refs"]),
-		DreamRefs:           refsFromAny(out["dream_refs"]),
 		LatencyMS:           int64Value(out["latency_ms"]),
 		ContextBlockChars:   intValue(out["context_block_chars"]),
 		Raw:                 out,
@@ -948,4 +925,11 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func knowledgeItemID(kind string, item map[string]any) string {
+	if kind != "evidence" {
+		return ""
+	}
+	return firstNonEmpty(stringValue(item["id"]), stringValue(item["evidence_id"]))
 }

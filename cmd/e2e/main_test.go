@@ -411,15 +411,17 @@ func TestLoadCasesReconcilesRegistryDeclarations(t *testing.T) {
 	if len(allCases) != 2 || allCases[0].Capability != "postgres" || allCases[1].Capability != "repository" {
 		t.Fatalf("unfiltered loadCases() = %+v, want deterministic capability ownership", allCases)
 	}
-	generated := filepath.Join(root, "tests", "eval", ".runtime", "fixture_integration_test.go")
-	if err := os.MkdirAll(filepath.Dir(generated), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(generated, []byte("//go:build integration\n\npackage generated\n\nfunc TestIgnored(t *testing.T) {}\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := loadCases(root, "precheck", "repository", "", ""); err != nil {
-		t.Fatalf("loadCases() should ignore generated evaluation trees: %v", err)
+	for _, directory := range []string{"tests/eval/.runtime", "tmp/historical-checkout", "temp/historical-checkout"} {
+		generated := filepath.Join(root, directory, "fixture_integration_test.go")
+		if err := os.MkdirAll(filepath.Dir(generated), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(generated, []byte("//go:build integration\n\npackage generated\n\nfunc TestIgnored(t *testing.T) {}\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := loadCases(root, "precheck", "repository", "", ""); err != nil {
+			t.Fatalf("loadCases() should ignore generated source tree %s: %v", directory, err)
+		}
 	}
 	if err := os.WriteFile(source, []byte("//go:build integration\n\npackage sample\n\nfunc TestRegistered(t *testing.T) {}\nfunc TestUnregistered(t *testing.T) {}\n"), 0o600); err != nil {
 		t.Fatal(err)

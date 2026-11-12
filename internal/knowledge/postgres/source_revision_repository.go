@@ -83,9 +83,6 @@ func (r *Store) AdvanceSourceRevision(ctx context.Context, input AdvanceSourceRe
 	}
 	var result *SourceRevisionResult
 	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
-		if err := seedTeamPredicateDefinitions(ctx, tx, input.TeamID); err != nil {
-			return err
-		}
 		var err error
 		result, err = advanceSourceRevisionInTx(ctx, tx, input, nil)
 		return err
@@ -296,10 +293,6 @@ func advanceSourceRevisionInTx(
 	if currentToken != input.ExpectedPreviousRevisionToken {
 		return nil, fmt.Errorf("%w: expected %q, got %q", ErrSourceRevisionConflict, input.ExpectedPreviousRevisionToken, currentToken)
 	}
-	supportsToRevoke, err := loadEffectiveSourceRevisionSupports(ctx, tx, input.TeamID, sourceID, currentRevisionID)
-	if err != nil {
-		return nil, err
-	}
 	revisionID, err := insertSourceRevision(ctx, tx, input, sourceID, currentRevisionID)
 	if err != nil {
 		return nil, err
@@ -320,9 +313,6 @@ func advanceSourceRevisionInTx(
 	if result.RowsAffected != 1 {
 		return nil, fmt.Errorf("%w: source revision changed concurrently", ErrSourceRevisionConflict)
 	}
-	if err := invalidateSourceRevisionSupports(ctx, tx, input, sourceID, currentRevisionID, revisionID, supportsToRevoke); err != nil {
-		return nil, err
-	}
 	advanced := SourceRevisionResult{
 		TeamID:                       input.TeamID,
 		SourceID:                     sourceID,
@@ -335,115 +325,6 @@ func advanceSourceRevisionInTx(
 		cache[cacheKey] = advanced
 	}
 	return &advanced, nil
-}
-
-type sourceRevisionSupportInvalidation struct {
-	SupportID      string
-	RelationshipID string
-	OwnerProfileID string
-}
-
-func loadEffectiveSourceRevisionSupports(
-	ctx context.Context,
-	tx *gorm.DB,
-	teamID string,
-	sourceID string,
-	sourceRevisionID string,
-) ([]sourceRevisionSupportInvalidation, error) {
-	if sourceRevisionID == "" {
-		return nil, nil
-	}
-	rows, err := tx.WithContext(ctx).Raw(`
-		WITH latest AS (
-			SELECT DISTINCT ON (support_id)
-			       support_id,
-			       decision
-			FROM relationship_support_decision_events
-			WHERE team_id = ?::uuid
-			ORDER BY support_id, created_at DESC, support_decision_id DESC
-		)
-		SELECT support.support_id::text,
-		       support.relationship_id::text,
-		       support.owner_profile_id::text
-		FROM relationship_evidence_supports AS support
-		JOIN latest
-		  ON latest.support_id = support.support_id
-		 AND latest.decision IN ('grant', 'reinstate')
-		LEFT JOIN evidence_quarantines AS quarantine
-		  ON quarantine.team_id = support.team_id
-		 AND quarantine.fragment_id = support.fragment_id
-		 AND quarantine.status = 'active'
-		WHERE support.team_id = ?::uuid
-		  AND support.source_id = ?::uuid
-		  AND support.source_revision_id = ?::uuid
-		  AND quarantine.quarantine_id IS NULL
-		ORDER BY support.relationship_id ASC, support.support_id ASC
-	`, teamID, teamID, sourceID, sourceRevisionID).Rows()
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []sourceRevisionSupportInvalidation{}
-	for rows.Next() {
-		var item sourceRevisionSupportInvalidation
-		if err := rows.Scan(&item.SupportID, &item.RelationshipID, &item.OwnerProfileID); err != nil {
-			return nil, err
-		}
-		out = append(out, item)
-	}
-	return out, rows.Err()
-}
-
-func invalidateSourceRevisionSupports(
-	ctx context.Context,
-	tx *gorm.DB,
-	input AdvanceSourceRevisionInput,
-	sourceID string,
-	supersededRevisionID string,
-	supersedingRevisionID string,
-	supports []sourceRevisionSupportInvalidation,
-) error {
-	if len(supports) == 0 {
-		return nil
-	}
-	return withSystemModeInTx(ctx, tx, input.TeamID, input.OwnerProfileID, func(systemTx *gorm.DB) error {
-		relationships := make(map[string]string)
-		for _, support := range supports {
-			decisionID, err := insertSupportDecisionEvent(ctx, systemTx, supportDecisionInput{
-				TeamID:         input.TeamID,
-				OwnerProfileID: support.OwnerProfileID,
-				ActorProfileID: input.OwnerProfileID,
-				SupportID:      support.SupportID,
-				RelationshipID: support.RelationshipID,
-				Decision:       string(domain.SupportRevoke),
-				Reason:         "source_revision_superseded",
-				IdempotencyKey: "source-revision:" + supersedingRevisionID + ":support:" + support.SupportID,
-				Metadata: map[string]any{
-					"source_id":                      sourceID,
-					"source_owner_profile_id":        input.OwnerProfileID,
-					"superseded_source_revision_id":  supersededRevisionID,
-					"superseding_source_revision_id": supersedingRevisionID,
-				},
-			})
-			if err != nil {
-				return err
-			}
-			relationships[support.RelationshipID] = decisionID
-		}
-		for relationshipID, decisionID := range relationships {
-			if _, err := recomputeRelationshipFromEffectiveSupport(
-				ctx,
-				systemTx,
-				input.TeamID,
-				relationshipID,
-				decisionID,
-				"source_revision_superseded",
-			); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
 }
 
 func withSystemModeInTx(

@@ -76,15 +76,13 @@ pair_snapshot() {
   pair_control /search/convergence > "${temporary}/search.json"
   if [[ "${protocol}" != none ]]; then
     pair_control /ontology/status > "${temporary}/ontology.json"
-    pair_control "/teams/$(pair_value '.scope.team_id')/community/status" > "${temporary}/community.json"
   else
     printf 'null\n' > "${temporary}/ontology.json"
-    printf 'null\n' > "${temporary}/community.json"
   fi
   jq -n --slurpfile database "${temporary}/database.json" --slurpfile search "${temporary}/search.json" \
-    --slurpfile ontology "${temporary}/ontology.json" --slurpfile community "${temporary}/community.json" \
-    '{database:$database[0],search:$search[0],ontology:$ontology[0],community:$community[0]}' > "${destination}"
-  rm "${temporary}/database.jsonl" "${temporary}/database.json" "${temporary}/search.json" "${temporary}/ontology.json" "${temporary}/community.json"
+    --slurpfile ontology "${temporary}/ontology.json" \
+    '{database:$database[0],search:$search[0],ontology:$ontology[0]}' > "${destination}"
+  rm "${temporary}/database.jsonl" "${temporary}/database.json" "${temporary}/search.json" "${temporary}/ontology.json"
   rmdir "${temporary}"
 }
 
@@ -118,9 +116,10 @@ pair_observe() {
 pair_remaining() {
   local deadline now
   deadline="$(date -u -d "$(jq -er '.deadline' "${PAIR_CONFIG}")" +%s)"
+  if [[ "$(jq -r '.campaign // ""' "${PAIR_CONFIG}")" == issue_681_evidence_only_v5 ]]; then deadline="$(( deadline-1800 ))"; fi
   now="$(date +%s)"
   if (( now >= deadline )); then
-    echo "paired observation deadline reached; retain stage evidence before resuming" >&2
+    echo "paired work deadline reached; preserve evidence and clean up without restarting" >&2
     return 124
   fi
   printf '%s\n' "$(( deadline-now ))"
@@ -186,7 +185,7 @@ pair_command() {
 pair_capacity() {
   pair_begin capacity
   if [[ "${pair_reused}" == true ]]; then pair_stage_dir=""; return; fi
-  if [[ "$(pair_value '.protocol')" == adr0014 ]]; then
+  if [[ "$(pair_value '.protocol')" == evidence_only_v5 ]]; then
     pair_command pause
     local body
     body="$(jq -c --arg side "${pair_side}" '.[$side] | {items:[
@@ -224,7 +223,7 @@ pair_drain() {
   pair_begin drain
   if [[ "${pair_reused}" == true ]]; then pair_stage_dir=""; return; fi
   pair_observe
-  if [[ "$(pair_value '.protocol')" == adr0014 ]]; then pair_command resume; fi
+  if [[ "$(pair_value '.protocol')" == evidence_only_v5 ]]; then pair_command resume; fi
   while true; do
     pair_observe
     if [[ "$(jq -r '.readiness.ready' "${pair_stage_dir}/observation-result.json")" == true ]]; then break; fi
@@ -233,7 +232,7 @@ pair_drain() {
       "$(jq -c '.readiness.waiting_for' "${pair_stage_dir}/observation-result.json")"
     pair_wait
   done
-  if [[ "$(pair_value '.protocol')" == adr0014 ]]; then pair_command pause; fi
+  if [[ "$(pair_value '.protocol')" == evidence_only_v5 ]]; then pair_command pause; fi
   pair_observe true
   pair_finish
 }
@@ -268,6 +267,10 @@ pair_score() {
 
 pair_on_error() {
   local pair_code="$1"
+  if [[ "${pair_stage}" == answers ]]; then
+    jq -n --argjson code "${pair_code}" --arg at "$(date -u +%FT%TZ)" '{exit_code:$code,failed_at:$at}' > "${pair_out}/answers/controller-failure.json"
+    exit "${pair_code}"
+  fi
   if [[ -n "${pair_stage_dir}" && "${pair_interrupted}" != true && "${pair_code}" != 124 ]]; then
     pair_tool fail --pair-directory "${pair_stage_dir}" >/dev/null || echo "failed to retain stage failure receipt" >&2
   fi
@@ -288,7 +291,7 @@ pair_ensure_runner() {
   printf -v pair_cleanup 'pair_cleanup_runner "$?" %q' "${pair_tools}"
   trap "${pair_cleanup}" EXIT
   PAIR_RUNNER="${pair_tools}/eval-runner"
-  go build -o "${PAIR_RUNNER}.tmp" ./cmd/eval-runner || return "$?"
+  /usr/local/go/bin/go build -o "${PAIR_RUNNER}.tmp" ./cmd/eval-runner || return "$?"
   mv "${PAIR_RUNNER}.tmp" "${PAIR_RUNNER}"
 }
 
@@ -310,10 +313,20 @@ pair_main() {
   pair_run_id="$(jq -er '.run_id' "${PAIR_CONFIG}")"
   trap 'pair_interrupted=true; if [[ -n "${pair_native_pid}" ]]; then kill -TERM "${pair_native_pid}" 2>/dev/null || true; wait "${pair_native_pid}" || true; fi; exit 130' INT TERM
   trap 'pair_on_error "$?"' ERR
+  if [[ "$(jq -r '.campaign // ""' "${PAIR_CONFIG}")" == issue_681_evidence_only_v5 ]]; then
+    pair_tool campaign-start > "${pair_out}/controller-start.json"
+    pair_side=candidate
+    pair_stage=answers
+    pair_stage_dir="${pair_out}/answers/baseline"
+    mkdir -p "${pair_stage_dir}"
+    pair_native "$(jq -er '.scorer.path' "${PAIR_CONFIG}")" --mode evidence-only-answer-score --pair-config "${PAIR_CONFIG}" --pair-side baseline
+    pair_tool verify-answer-score --pair-side baseline >/dev/null
+    pair_stage_dir=""
+  fi
   for pair_side in baseline candidate; do
     pair_begin validate
     if [[ "${pair_reused}" != true ]]; then
-      pair_native "$(pair_value '.runner.path')" --mode validate --seed "${pair_seed}" --suite "${pair_suite}" --out "${pair_stage_dir}/native"
+      pair_native "$(jq -er '.scorer.path' "${PAIR_CONFIG}")" --mode validate --seed "${pair_seed}" --suite "${pair_suite}" --out "${pair_stage_dir}/native"
       pair_finish
     else pair_stage_dir=""; fi
     pair_capture_dir="$(jq -r --arg side "${pair_side}" '.[$side].capture_dir // ""' "${PAIR_CONFIG}")"
@@ -344,5 +357,19 @@ pair_main() {
     fi
     pair_score
   done
+  if [[ "$(jq -r '.campaign // ""' "${PAIR_CONFIG}")" == issue_681_evidence_only_v5 ]]; then
+    pair_side=candidate
+    pair_stage=answers
+    local policy
+    for policy in one_call iterative; do
+      pair_stage_dir="${pair_out}/answers/candidate/${policy}"
+      mkdir -p "${pair_stage_dir}"
+      pair_native "$(jq -er '.scorer.path' "${PAIR_CONFIG}")" --mode evidence-only-host --pair-config "${PAIR_CONFIG}" --pair-side candidate --host-policy "${policy}"
+    done
+    pair_stage_dir="${pair_out}/answers/candidate"
+    pair_native "$(jq -er '.scorer.path' "${PAIR_CONFIG}")" --mode evidence-only-answer-score --pair-config "${PAIR_CONFIG}" --pair-side candidate
+    pair_tool verify-answer-score --pair-side candidate >/dev/null
+    pair_stage_dir=""
+  fi
   pair_tool report
 }

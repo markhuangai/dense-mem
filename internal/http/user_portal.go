@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	nethttp "net/http"
@@ -16,7 +15,6 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/graph"
 	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
 	"github.com/markhuangai/dense-mem/internal/http/dto"
 	"github.com/markhuangai/dense-mem/internal/http/handler"
@@ -37,7 +35,6 @@ type UserPortalDeps struct {
 	CredentialSvc            handler.CredentialServiceInterface
 	RateLimitSvc             accessservice.RateLimitServiceInterface
 	UsageMetrics             operations.UsageMetricsRecorder
-	GraphView                graph.Service
 	RecallSvc                recall.RecallService
 	AuditSvc                 accessservice.AuditService
 	SecuritySvc              httpmw.SecurityBanService
@@ -56,7 +53,6 @@ type UserPortalDeps struct {
 type userPortalHandler struct {
 	teams       handler.TeamServiceInterface
 	credentials handler.CredentialServiceInterface
-	graph       graph.Service
 	recall      *handler.RecallHandler
 
 	audit         *handler.AuditHandler
@@ -149,73 +145,6 @@ func (h *userPortalHandler) session(c echo.Context) error {
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": session})
 }
 
-func (h *userPortalHandler) graphSnapshot(c echo.Context) error {
-	c.Response().Header().Set(echo.HeaderCacheControl, "no-store")
-	if h.graph == nil {
-		return httperr.New(httperr.SERVICE_UNAVAILABLE, "graph view unavailable")
-	}
-	principal := httpmw.GetPrincipal(c.Request().Context())
-	if principal == nil {
-		return httperr.New(httperr.FORBIDDEN, "authentication required")
-	}
-	teamID := principal.GetTeamID()
-	if teamID == uuid.Nil {
-		return httperr.New(httperr.FORBIDDEN, "authenticated key is not team bound")
-	}
-
-	limit, err := userPortalOptionalIntQuery(c, "limit")
-	if err != nil {
-		return err
-	}
-	depth, err := userPortalOptionalIntQuery(c, "depth")
-	if err != nil {
-		return err
-	}
-	snapshot, err := h.graph.Graph(c.Request().Context(), teamID.String(), graph.Query{
-		Scope:      c.QueryParam("scope"),
-		Query:      c.QueryParam("q"),
-		Types:      userPortalGraphTypes(c.QueryParam("types")),
-		AnchorType: c.QueryParam("anchor_type"),
-		AnchorID:   c.QueryParam("anchor_id"),
-		Depth:      depth,
-		Limit:      limit,
-	})
-	if err != nil {
-		if errors.Is(err, graph.ErrMissingAnchor) || errors.Is(err, graph.ErrInvalidAnchorType) {
-			return httperr.New(httperr.VALIDATION_ERROR, err.Error())
-		}
-		return err
-	}
-	return c.JSON(nethttp.StatusOK, map[string]any{"data": snapshot})
-}
-
-func (h *userPortalHandler) graphNodeDetail(c echo.Context) error {
-	c.Response().Header().Set(echo.HeaderCacheControl, "no-store")
-	if h.graph == nil {
-		return httperr.New(httperr.SERVICE_UNAVAILABLE, "graph view unavailable")
-	}
-	principal := httpmw.GetPrincipal(c.Request().Context())
-	if principal == nil {
-		return httperr.New(httperr.FORBIDDEN, "authentication required")
-	}
-	teamID := principal.GetTeamID()
-	if teamID == uuid.Nil {
-		return httperr.New(httperr.FORBIDDEN, "authenticated key is not team bound")
-	}
-
-	node, err := h.graph.NodeDetail(c.Request().Context(), teamID.String(), c.QueryParam("type"), c.QueryParam("id"))
-	if err != nil {
-		if errors.Is(err, graph.ErrMissingNode) || errors.Is(err, graph.ErrInvalidNodeType) {
-			return httperr.New(httperr.VALIDATION_ERROR, err.Error())
-		}
-		if errors.Is(err, graph.ErrNodeNotFound) {
-			return httperr.New(httperr.NOT_FOUND, err.Error())
-		}
-		return err
-	}
-	return c.JSON(nethttp.StatusOK, map[string]any{"data": node})
-}
-
 func userPortalOptionalIntQuery(c echo.Context, name string) (int, error) {
 	raw := strings.TrimSpace(c.QueryParam(name))
 	if raw == "" {
@@ -226,16 +155,6 @@ func userPortalOptionalIntQuery(c echo.Context, name string) (int, error) {
 		return 0, httperr.New(httperr.VALIDATION_ERROR, name+" must be a non-negative integer")
 	}
 	return value, nil
-}
-
-func userPortalGraphTypes(raw string) []string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return nil
-	}
-	return strings.FieldsFunc(raw, func(r rune) bool {
-		return r == ',' || r == ' ' || r == '\t' || r == '\n'
-	})
 }
 
 func (h *userPortalHandler) rotateCurrentCredential(c echo.Context) error {

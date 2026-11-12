@@ -178,7 +178,7 @@ func FeedbackResultRefs(res *RecallResult) []domain.RecallFeedbackResultRef {
 	if res == nil {
 		return []domain.RecallFeedbackResultRef{}
 	}
-	refs := make([]domain.RecallFeedbackResultRef, 0, len(res.Results)*2+len(res.RelatedRelationships)+len(res.RelatedCommunities))
+	refs := make([]domain.RecallFeedbackResultRef, 0, len(res.Results)+len(res.RelatedTopics))
 	seen := map[string]int{}
 	appendRef := func(ref domain.RecallFeedbackResultRef) {
 		key := ref.Type + "\x00" + ref.ID
@@ -212,40 +212,9 @@ func FeedbackResultRefs(res *RecallResult) []domain.RecallFeedbackResultRef {
 				Tier: "evidence", StatusAtRecall: res.SearchState,
 			})
 		}
-		for _, relationshipID := range item.RelationshipIDs {
-			if relationshipID == "" {
-				continue
-			}
-			appendRef(domain.RecallFeedbackResultRef{
-				Type:           domain.RecallFeedbackResultTypeRelationship,
-				ID:             relationshipID,
-				Rank:           rank,
-				Tier:           "relationship",
-				StatusAtRecall: res.SearchState,
-			})
-		}
 	}
-	for _, community := range res.RelatedCommunities {
-		appendRef(domain.RecallFeedbackResultRef{
-			Type: domain.RecallFeedbackResultTypeCommunity, ID: community.CommunityID,
-			Rank: community.Rank, StatusAtRecall: res.SearchState,
-		})
-		for _, relationship := range community.CommunityRelationships {
-			appendRef(domain.RecallFeedbackResultRef{
-				Type:           domain.RecallFeedbackResultTypeRelationship,
-				ID:             relationship.RelationshipID,
-				Rank:           community.Rank,
-				StatusAtRecall: recallFeedbackFirstNonEmpty(relationship.SearchState, res.SearchState),
-			})
-		}
-	}
-	for rank, relationship := range res.RelatedRelationships {
-		appendRef(domain.RecallFeedbackResultRef{
-			Type:           domain.RecallFeedbackResultTypeRelationship,
-			ID:             relationship.RelationshipID,
-			Rank:           rank + 1,
-			StatusAtRecall: relationship.SearchState,
-		})
+	for _, topic := range res.RelatedTopics {
+		appendRef(domain.RecallFeedbackResultRef{Type: domain.RecallFeedbackResultTypeTopic, ID: topic.TopicID, Rank: topic.Rank, Tier: "topic", StatusAtRecall: "current"})
 	}
 	return refs
 }
@@ -625,16 +594,7 @@ func recallFeedbackRefKey(refType, id string) string {
 
 func recallFeedbackCanonicalResultType(refType string) string {
 	switch strings.TrimSpace(refType) {
-	case domain.RecallFeedbackResultTypeDream, domain.RecallFeedbackResultTypeHypothesis:
-		return domain.RecallFeedbackResultTypeHypothesis
-	case domain.RecallFeedbackResultTypeFragment,
-		domain.RecallFeedbackResultTypeClaim,
-		domain.RecallFeedbackResultTypeFact,
-		domain.RecallFeedbackResultTypeEvidence,
-		domain.RecallFeedbackResultTypeRelationship,
-		domain.RecallFeedbackResultTypeEntity,
-		domain.RecallFeedbackResultTypeValue,
-		domain.RecallFeedbackResultTypeCommunity:
+	case domain.RecallFeedbackResultTypeEvidence, domain.RecallFeedbackResultTypeTopic:
 		return strings.TrimSpace(refType)
 	default:
 		return ""

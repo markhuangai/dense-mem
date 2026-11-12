@@ -18,7 +18,7 @@ import (
 )
 
 func TestOntologyMaintenanceInvalidationFamilies(t *testing.T) {
-	families := []string{"entity_records", "entity_names", "evidence_fragments", "knowledge_ingests", "evidence_sources", "evidence_occurrences", "evidence_quarantines", "relationship_records", "relationship_evidence_supports", "relationship_support_decision_events", "team_predicate_definitions", "ontology_definition", "ontology_override", "teams"}
+	families := []string{"evidence_fragments", "knowledge_ingests", "evidence_sources", "evidence_occurrences", "evidence_quarantines", "ontology_definition", "ontology_override", "teams"}
 	for _, family := range families {
 		t.Run(family, func(t *testing.T) {
 			f := newOrganizationFixture(t)
@@ -32,16 +32,6 @@ func TestOntologyMaintenanceInvalidationFamilies(t *testing.T) {
 			markerFamily := family
 			system := func(fn func(*gorm.DB) error) { require.NoError(t, f.rls.WithSystemTx(ctx, f.app, fn)) }
 			switch family {
-			case "entity_records", "entity_names":
-				target = maintenanceEntity(t, f, "Atlas")
-				mutation = func() {
-					system(func(tx *gorm.DB) error {
-						if family == "entity_names" {
-							return tx.Exec(`UPDATE entity_names SET valid_to=clock_timestamp() WHERE team_id=?::uuid AND entity_id=?::uuid AND owner_profile_id=?::uuid AND valid_to IS NULL`, f.team, target.ID, f.owners[0]).Error
-						}
-						return tx.Exec(`UPDATE entity_records SET version=version+1,identity_context='{"qualification":"changed"}'::jsonb WHERE team_id=?::uuid AND entity_id=?::uuid`, f.team, target.ID).Error
-					})
-				}
 			case "evidence_sources":
 				source := func(revision, previous string) ontology.SourceHandle {
 					result, err := f.knowledge.CreateIngestForTest(ctx, knowledge.CreateIngestInput{TeamID: f.team, OwnerProfileID: f.owners[0], IdempotencyKey: "source-" + revision, RequestHash: testHash(revision), Evidence: []knowledge.EvidenceInput{{Content: "Atlas uses PostgreSQL " + revision, SourceType: "document", Authority: "primary", SourceKey: "doc://maintenance-policy", SourceRevisionToken: revision, ExpectedPreviousRevisionToken: previous}}})
@@ -51,46 +41,6 @@ func TestOntologyMaintenanceInvalidationFamilies(t *testing.T) {
 				target = source("rev-1", "")
 				unavailable = true
 				mutation = func() { source("rev-2", "rev-1") }
-			case "relationship_records", "relationship_evidence_supports", "relationship_support_decision_events", "team_predicate_definitions":
-				target = maintenanceRelationship(t, f)
-				if family == "relationship_records" {
-					mutation = func() {
-						system(func(tx *gorm.DB) error {
-							return tx.Exec(`UPDATE relationship_records SET version=version+1,metadata=metadata||'{"qualification":"changed"}'::jsonb WHERE team_id=?::uuid AND relationship_id=?::uuid`, f.team, target.ID).Error
-						})
-					}
-					break
-				}
-				var subject, object, predicate, supportID string
-				var version int
-				require.NoError(t, f.admin.Raw(`SELECT relationship.subject_entity_id::text,relationship.object_entity_id::text,relationship.predicate_key,relationship.predicate_version,support.support_id::text FROM relationship_records AS relationship JOIN relationship_evidence_supports AS support ON support.team_id=relationship.team_id AND support.relationship_id=relationship.relationship_id WHERE relationship.team_id=?::uuid AND relationship.relationship_id=?::uuid LIMIT 1`, f.team, target.ID).Row().Scan(&subject, &object, &predicate, &version, &supportID))
-				if family == "relationship_support_decision_events" {
-					unavailable = true
-					mutation = func() {
-						_, err := f.knowledge.ApplyRelationshipSupportDecision(ctx, knowledge.ApplyRelationshipSupportDecisionInput{TeamID: f.team, OwnerProfileID: f.owners[0], RelationshipID: target.ID, SupportID: supportID, Decision: "revoke", Reason: "maintenance source withdrawn", IdempotencyKey: "revoke-last-support"})
-						require.NoError(t, err)
-					}
-					break
-				}
-				if family == "team_predicate_definitions" {
-					target = ontology.SourceHandle{Kind: ontology.PredicateSource, ID: predicate, Version: int64(version)}
-					mutation = func() {
-						system(func(tx *gorm.DB) error {
-							if err := tx.Exec(`INSERT INTO team_predicate_definitions SELECT (jsonb_populate_record(NULL::team_predicate_definitions,to_jsonb(definition)||jsonb_build_object('version',?::integer,'aliases',jsonb_build_array('uses-new')))).* FROM team_predicate_definitions AS definition WHERE team_id=?::uuid AND predicate_key=? AND version=?`, version+1, f.team, predicate, version).Error; err != nil {
-								return err
-							}
-							return tx.Exec(`UPDATE relationship_records SET version=version+1,predicate_version=? WHERE team_id=?::uuid AND predicate_key=? AND predicate_version=?`, version+1, f.team, predicate, version).Error
-						})
-					}
-					break
-				}
-				mutation = func() {
-					text := "Independent evidence confirms Atlas uses PostgreSQL."
-					evidence := f.evidence(t, 0, text)
-					result, err := f.knowledge.ApplyRelationshipDecision(ctx, knowledge.ApplyRelationshipDecisionInput{TeamID: f.team, OwnerProfileID: f.owners[0], IngestID: evidence.IngestID, SubjectEntityID: subject, PredicateKey: predicate, PredicateVersion: version, ObjectEntityID: object, Polarity: "+", Support: &knowledge.EvidenceSupportInput{FragmentID: evidence.Evidence[0].FragmentID, SourceGroupKey: uuid.NewString(), SpanEnd: len(text), Authority: "primary"}})
-					require.NoError(t, err)
-					require.Equal(t, target.ID, result.Relationship.RelationshipID)
-				}
 			case "ontology_definition", "ontology_override":
 				markerFamily = "ontology_record_heads"
 				target = f.organizationEvidence(t, 0, "Atlas uses PostgreSQL.", nil)
@@ -261,16 +211,16 @@ func TestOntologyMaintenancePrivateGenerationAndABCIsolation(t *testing.T) {
 func TestOntologyMaintenanceMarkerFrameRLS(t *testing.T) {
 	f := newOrganizationFixture(t)
 	other := maintenanceOtherTeam(t, f)
-	old := maintenanceEntity(t, f, "Historical marker")
-	peer := maintenanceEntity(t, other, "Other-team marker")
+	old := maintenanceEvidence(t, f, "Historical marker")
+	peer := maintenanceEvidence(t, other, "Other-team marker")
 	require.NoError(t, f.rls.WithSystemTx(context.Background(), f.app, func(tx *gorm.DB) error {
 		return tx.Exec(`UPDATE memory_spaces SET generation=generation+1 WHERE team_id=?::uuid AND id=?::uuid`, f.team, f.space).Error
 	}))
 	f.generation++
-	current := maintenanceEntity(t, f, "Current marker")
+	current := maintenanceEvidence(t, f, "Current marker")
 	inspect := func(tx *gorm.DB) error {
 		var visible, historical, crossTeam int
-		err := tx.Raw(`SELECT count(*) FILTER (WHERE anchor_id=?),count(*) FILTER (WHERE anchor_id=?),count(*) FILTER (WHERE anchor_id=?) FROM ontology_maintenance_markers`, current.ID, old.ID, peer.ID).Row().Scan(&visible, &historical, &crossTeam)
+		err := tx.Raw(`SELECT count(DISTINCT anchor_id) FILTER (WHERE anchor_id=?),count(*) FILTER (WHERE anchor_id=?),count(*) FILTER (WHERE anchor_id=?) FROM ontology_maintenance_markers`, current.ID, old.ID, peer.ID).Row().Scan(&visible, &historical, &crossTeam)
 		if err != nil {
 			return err
 		}
@@ -286,21 +236,21 @@ func TestOntologyMaintenanceMarkerFrameRLS(t *testing.T) {
 			if err := inspect(tx); err != nil {
 				return err
 			}
-			if err := tx.Exec(`UPDATE ontology_maintenance_markers SET cursor='expanded' WHERE anchor_kind='entity_records' AND anchor_id=?`, current.ID).Error; err != nil {
+			if err := tx.Exec(`UPDATE ontology_maintenance_markers SET cursor='expanded' WHERE anchor_kind='evidence_fragments' AND anchor_id=?`, current.ID).Error; err != nil {
 				return err
 			}
-			if err := tx.Exec(`SELECT dense_mem_enqueue_ontology_marker(?::uuid,?::uuid,?,'entity_records',?,'entity',?)`, f.team, f.space, f.generation, current.ID, current.ID).Error; err != nil {
+			if err := tx.Exec(`SELECT dense_mem_enqueue_ontology_marker(?::uuid,?::uuid,?,'evidence_fragments',?,'evidence',?)`, f.team, f.space, f.generation, current.ID, current.ID).Error; err != nil {
 				return err
 			}
 			var cursor string
-			if err := tx.Raw(`SELECT cursor FROM ontology_maintenance_markers WHERE anchor_kind='entity_records' AND anchor_id=?`, current.ID).Row().Scan(&cursor); err != nil {
+			if err := tx.Raw(`SELECT cursor FROM ontology_maintenance_markers WHERE anchor_kind='evidence_fragments' AND anchor_id=?`, current.ID).Row().Scan(&cursor); err != nil {
 				return err
 			}
 			require.Empty(t, cursor)
 			return nil
 		}))
 		err := f.rls.WithTeamProfileTx(ctx, f.app, f.team, f.owners[owner], func(tx *gorm.DB) error {
-			return tx.Exec(`INSERT INTO ontology_maintenance_markers(team_id,shared_space_id,space_generation,anchor_kind,anchor_id,target_kind,target_id) VALUES (?::uuid,?::uuid,?,'entity_records',?,'entity',?)`, f.team, f.space, f.generation-1, uuid.NewString(), old.ID).Error
+			return tx.Exec(`INSERT INTO ontology_maintenance_markers(team_id,shared_space_id,space_generation,anchor_kind,anchor_id,target_kind,target_id) VALUES (?::uuid,?::uuid,?,'evidence_fragments',?,'evidence',?)`, f.team, f.space, f.generation-1, uuid.NewString(), old.ID).Error
 		})
 		require.ErrorContains(t, err, "row-level security")
 	}
@@ -318,7 +268,7 @@ func TestOntologyMaintenanceMarkerFrameRLS(t *testing.T) {
 				return err
 			}
 			var visible int
-			if err := tx.Raw(`SELECT count(*) FROM ontology_maintenance_markers WHERE anchor_id IN (?,?,?)`, current.ID, old.ID, peer.ID).Row().Scan(&visible); err != nil {
+			if err := tx.Raw(`SELECT count(DISTINCT anchor_id) FROM ontology_maintenance_markers WHERE anchor_id IN (?,?,?)`, current.ID, old.ID, peer.ID).Row().Scan(&visible); err != nil {
 				return err
 			}
 			require.Equal(t, 3, visible)

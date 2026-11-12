@@ -17,13 +17,6 @@
       "source": "internal/storage/postgres/private_memory_audit_migration_integration_test.go"
     },
     {
-      "id": "repository/TestPrivateMemoryCorrectionStatusHidesSealedGeneration",
-      "package": "./internal/knowledge/postgres",
-      "run": "^TestPrivateMemoryCorrectionStatusHidesSealedGeneration$",
-      "phase": "precheck",
-      "source": "internal/knowledge/postgres/relationship_correction_repository_integration_test.go"
-    },
-    {
       "id": "repository/TestPrivateMemoryCredentialErasureIsHeldIdempotentAndExact",
       "package": "./internal/privacy/postgres",
       "run": "^TestPrivateMemoryCredentialErasureIsHeldIdempotentAndExact$",
@@ -38,25 +31,11 @@
       "source": "internal/privacy/postgres/private_memory_credential_retirement_integration_test.go"
     },
     {
-      "id": "repository/TestPrivateMemoryErasureCleansPrivateSemanticDecisionLineage",
-      "package": "./internal/privacy/postgres",
-      "run": "^TestPrivateMemoryErasureCleansPrivateSemanticDecisionLineage$",
-      "phase": "precheck",
-      "source": "internal/privacy/postgres/private_memory_semantic_lineage_integration_test.go"
-    },
-    {
       "id": "repository/TestPrivateMemoryErasureCleansSynchronousAssessmentAfterAttemptOrder",
       "package": "./internal/privacy/postgres",
       "run": "^TestPrivateMemoryErasureCleansSynchronousAssessmentAfterAttemptOrder$",
       "phase": "precheck",
       "source": "internal/privacy/postgres/private_memory_remember_assessment_integration_test.go"
-    },
-    {
-      "id": "repository/TestPrivateMemoryErasureRemovesInboundCrossSpaceReferences",
-      "package": "./internal/privacy/postgres",
-      "run": "^TestPrivateMemoryErasureRemovesInboundCrossSpaceReferences$",
-      "phase": "precheck",
-      "source": "internal/privacy/postgres/private_memory_repository_integration_test.go"
     },
     {
       "id": "repository/TestPrivateMemoryExpiredLeaseIsReclaimedWithNewFence",
@@ -164,13 +143,6 @@
       "source": "internal/privacy/postgres/private_memory_migration_integration_test.go"
     },
     {
-      "id": "repository/TestPrivateMigrationRestoresForeignConflictAndScopesRelationshipHandles",
-      "package": "./internal/privacy/postgres",
-      "run": "^TestPrivateMigrationRestoresForeignConflictAndScopesRelationshipHandles$",
-      "phase": "precheck",
-      "source": "internal/privacy/postgres/private_memory_migration_integration_test.go"
-    },
-    {
       "id": "repository/TestPrivateMigrationDetectsStoppedStateDrift",
       "package": "./internal/privacy/postgres",
       "run": "^TestPrivateMigrationDetectsStoppedStateDrift$",
@@ -260,6 +232,13 @@
       "run": "^TestPrivateMigrationSessionOnlyRetentionPreservesAge$",
       "phase": "precheck",
       "source": "internal/privacy/postgres/private_memory_repository_integration_test.go"
+    },
+    {
+      "id": "privacy/TestEvidenceOnlyPostgresPrivateErasureCleansEvidenceAndDiagnosticLineage",
+      "package": "./internal/privacy/postgres",
+      "run": "^TestEvidenceOnlyPostgresPrivateErasureCleansEvidenceAndDiagnosticLineage$",
+      "phase": "precheck",
+      "source": "internal/privacy/postgres/private_memory_semantic_lineage_integration_test.go"
     }
   ]
 }

@@ -1,16 +1,8 @@
 package serverapp
 
 import (
-	"time"
-
 	"github.com/markhuangai/dense-mem/internal/assessor"
-	communitycontract "github.com/markhuangai/dense-mem/internal/community/contract"
-	communityapp "github.com/markhuangai/dense-mem/internal/community/service"
-	"github.com/markhuangai/dense-mem/internal/dream"
-	dreampostgres "github.com/markhuangai/dense-mem/internal/dream/postgres"
 	embeddingcontract "github.com/markhuangai/dense-mem/internal/embedding/contract"
-	"github.com/markhuangai/dense-mem/internal/graph"
-	graphcontract "github.com/markhuangai/dense-mem/internal/graph/contract"
 	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 	"github.com/markhuangai/dense-mem/internal/lifecycle"
 	"github.com/markhuangai/dense-mem/internal/memorypack"
@@ -30,11 +22,8 @@ import (
 
 type applicationCompositionDependencies struct {
 	Knowledge              *knowledgepostgres.Store
-	Dream                  *dreampostgres.Store
 	RememberPersistence    remembercontract.Persistence
-	GraphStore             graphcontract.Store
 	TraceStore             traceapp.SemanticTraceStore
-	RememberCatalog        remembercontract.SubmissionAssessmentCatalog
 	Search                 searchcontract.SearchRepository
 	RecallSearch           recallcontract.SearchRepository
 	RecallFeedbackEvents   recallcontract.FeedbackEventRepository
@@ -53,34 +42,23 @@ type applicationCompositionDependencies struct {
 	DiagnosticProtector    observability.DiagnosticProtector
 	Audit                  securityRejectionAuditAppender
 	AppConfig              settings.AppConfigService
-
-	CommunityStore communitycontract.CommunityRepository
-
-	CorrectionTimeout   time.Duration
-	CorrectionExecutor  lifecycle.LifecycleCorrectionExecutor
-	TelemetryPrometheus *operations.PrometheusTelemetryService
+	TelemetryPrometheus    *operations.PrometheusTelemetryService
 }
 
 type applicationBundle struct {
-	Remember  rememberapp.Service
-	Session   session.API
-	Recall    recall.RecallService
-	Community communityapp.Service
-	Lifecycle lifecycle.LifecycleService
-	Context   traceapp.Service
-
-	ControlDream            dream.ControlService
-	ControlDreamDiagnostics dream.DiagnosticService
-	Graph                   graph.Service
-	MemoryPack              memorypack.MemoryPackService
-	RecallFeedback          *recall.RecallFeedbackEventServiceImpl
+	Remember       rememberapp.Service
+	Session        session.API
+	Recall         recall.RecallService
+	Lifecycle      lifecycle.LifecycleService
+	Context        traceapp.Service
+	MemoryPack     memorypack.MemoryPackService
+	RecallFeedback *recall.RecallFeedbackEventServiceImpl
 }
 
 func buildApplicationBundle(deps applicationCompositionDependencies) applicationBundle {
 	embeddingExecutor := semanticwrite.NewProviderExecutor(deps.EmbeddingProvider)
 	rememberService := buildRememberApplication(rememberApplicationDependencies{
 		Persistence:         deps.RememberPersistence,
-		Catalog:             deps.RememberCatalog,
 		Assessor:            deps.Assessor,
 		Decisions:           deps.Decisions,
 		DecisionSettings:    deps.DecisionSettings,
@@ -92,46 +70,32 @@ func buildApplicationBundle(deps applicationCompositionDependencies) application
 		Audit:               deps.Audit,
 	})
 	sessionService := buildSessionApplication(rememberApplicationDependencies{
-		Persistence: deps.RememberPersistence, Catalog: deps.RememberCatalog, Assessor: deps.SessionAssessor,
+		Persistence: deps.RememberPersistence, Assessor: deps.SessionAssessor,
 		Decisions: deps.Decisions, DecisionSettings: deps.DecisionSettings,
 		EmbeddingExecutor: embeddingExecutor, Limits: deps.AssessmentLimits, Metrics: deps.Metrics,
 		Logger: deps.Logger, DiagnosticProtector: deps.DiagnosticProtector, Audit: deps.Audit,
 	}, deps.Knowledge, deps.GeneratorTransport, deps.RememberModel, deps.SessionEnabled)
 	recallService := buildRecallApplication(recallApplicationDependencies{
-		Search:         deps.RecallSearch,
-		Provider:       deps.RetryEmbeddingProvider,
-		Communities:    deps.CommunityStore,
-		OntologyConfig: deps.AppConfig,
-		Metrics:        deps.Metrics,
-		Decisions:      deps.Decisions, DecisionSettings: deps.DecisionSettings, Logger: deps.Logger,
-	})
-	communityService := buildCommunityApplication(communityApplicationDependencies{
-		Store:     deps.CommunityStore,
-		AppConfig: deps.AppConfig,
-		Metrics:   deps.Metrics,
+		DiagnosticProtector: deps.DiagnosticProtector,
+		Search:              deps.RecallSearch,
+		Provider:            deps.RetryEmbeddingProvider,
+		OntologyConfig:      deps.AppConfig,
+		Metrics:             deps.Metrics,
+		Decisions:           deps.Decisions, DecisionSettings: deps.DecisionSettings, Logger: deps.Logger,
 	})
 	lifecycleService := buildLifecycleApplication(lifecycleApplicationDependencies{
-		Port:                       deps.Knowledge,
-		CorrectionExecutor:         deps.CorrectionExecutor,
-		CorrectionEmbeddingTimeout: deps.CorrectionTimeout,
+		Port: deps.Knowledge,
 	})
-	contextService := buildContextApplication(deps.TraceStore)
+	contextService := buildContextApplication(deps.TraceStore, deps.Logger)
 	configureTelemetryFeatures(deps.TelemetryPrometheus, deps.AppConfig)
-	controlDreamService := buildControlDreamApplication(controlDreamApplicationDependencies{
-		Store: deps.Dream,
-	})
 	return applicationBundle{
-		Remember:                rememberService,
-		Session:                 sessionService,
-		Recall:                  recallService,
-		Community:               communityService,
-		Lifecycle:               lifecycleService,
-		Context:                 contextService,
-		ControlDream:            controlDreamService,
-		ControlDreamDiagnostics: dream.NewDiagnosticService(deps.Dream),
-		Graph:                   buildGraphApplication(deps.GraphStore),
-		MemoryPack:              buildMemoryPackApplication(memoryPackApplicationDependencies{Trace: deps.TraceStore}),
-		RecallFeedback:          buildRecallFeedbackApplication(recallFeedbackApplicationDependencies{Events: deps.RecallFeedbackEvents, Config: deps.AppConfig}),
+		Remember:       rememberService,
+		Session:        sessionService,
+		Recall:         recallService,
+		Lifecycle:      lifecycleService,
+		Context:        contextService,
+		MemoryPack:     buildMemoryPackApplication(memoryPackApplicationDependencies{Trace: deps.TraceStore, Logger: deps.Logger}),
+		RecallFeedback: buildRecallFeedbackApplication(recallFeedbackApplicationDependencies{Events: deps.RecallFeedbackEvents, Config: deps.AppConfig}),
 	}
 }
 

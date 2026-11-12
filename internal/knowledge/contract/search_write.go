@@ -7,8 +7,6 @@ import (
 	searchcontract "github.com/markhuangai/dense-mem/internal/search/contract"
 )
 
-const RelationshipForegroundRecallGenerationMetadataKey = "relationship_foreground_recall_generation_id"
-
 type ActiveSearchContract = searchcontract.ActiveSearchContract
 type FullTextSearchInput = searchcontract.FullTextSearchInput
 type ExactVectorSearchInput = searchcontract.ExactVectorSearchInput

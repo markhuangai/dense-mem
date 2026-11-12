@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -16,21 +15,17 @@ import (
 )
 
 type retrievalReadFixture struct {
-	evidenceBatch     *recallcontract.RecallCandidateBatch
-	relationshipBatch *recallcontract.RecallCandidateBatch
-	evidence          map[string]recallcontract.RecallEvidenceHit
-	relationships     map[string]recallcontract.RecallRelationshipHit
-	conflicts         *recallcontract.RecallConflicts
-	candidateError    error
-	hydrationError    error
-	conflictError     error
-	evidenceInput     recallcontract.RecallEvidenceInput
-	relationshipInput recallcontract.RecallRelationshipsInput
-	candidateLimit    int
-	evidenceReads     int
-	relationshipReads int
-	hydrationReads    int
-	conflictReads     int
+	evidenceBatch  *recallcontract.RecallCandidateBatch
+	evidence       map[string]recallcontract.RecallEvidenceHit
+	conflicts      *recallcontract.RecallConflicts
+	candidateError error
+	hydrationError error
+	conflictError  error
+	evidenceInput  recallcontract.RecallEvidenceInput
+	candidateLimit int
+	evidenceReads  int
+	hydrationReads int
+	conflictReads  int
 }
 
 func (f *retrievalReadFixture) GetActiveSearchContract(context.Context) (*searchcontract.ActiveSearchContract, error) {
@@ -42,20 +37,12 @@ func (f *retrievalReadFixture) ReadEvidenceCandidates(_ context.Context, input r
 	f.candidateLimit = limit
 	return f.evidenceBatch, f.candidateError
 }
-func (f *retrievalReadFixture) ReadRelationshipCandidates(_ context.Context, input recallcontract.RecallRelationshipsInput, _ *searchcontract.ActiveSearchContract, limit int) (*recallcontract.RecallCandidateBatch, error) {
-	f.relationshipReads++
-	f.relationshipInput = input
-	f.candidateLimit = limit
-	return f.relationshipBatch, f.candidateError
-}
+
 func (f *retrievalReadFixture) HydrateEvidence(context.Context, recallcontract.RecallEvidenceInput, *searchcontract.ActiveSearchContract, []string) (map[string]recallcontract.RecallEvidenceHit, error) {
 	f.hydrationReads++
 	return f.evidence, f.hydrationError
 }
-func (f *retrievalReadFixture) HydrateRelationships(context.Context, recallcontract.RecallRelationshipsInput, *searchcontract.ActiveSearchContract, []string) (map[string]recallcontract.RecallRelationshipHit, error) {
-	f.hydrationReads++
-	return f.relationships, f.hydrationError
-}
+
 func (f *retrievalReadFixture) LoadRecallConflicts(context.Context, recallcontract.RecallEvidenceInput, []recallcontract.RecallEvidenceHit) (*recallcontract.RecallConflicts, error) {
 	f.conflictReads++
 	if f.conflicts == nil {
@@ -115,44 +102,6 @@ func TestRetrievalFusesEvidenceAtOriginalBranchPositions(t *testing.T) {
 	require.Equal(t, 1, fixture.conflictReads)
 }
 
-func TestRetrievalPreservesRelationshipRepresentativeAndFinalAgeOrder(t *testing.T) {
-	team := uuid.NewString()
-	a, b, duplicate := uuid.NewString(), uuid.NewString(), uuid.NewString()
-	if a > b {
-		a, b = b, a
-	}
-	older := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	newer := older.Add(time.Hour)
-	fixture := &retrievalReadFixture{
-		relationshipBatch: &recallcontract.RecallCandidateBatch{
-			SearchState: "current",
-			TextHits: []searchcontract.SearchHit{
-				{SourceKind: "relationship", SourceID: a, SearchState: "current"},
-				{SourceKind: "relationship", SourceID: b, SearchState: "current"},
-				{SourceKind: "relationship", SourceID: duplicate, SearchState: "current"},
-			},
-			VectorHits: []searchcontract.SearchHit{
-				{SourceKind: "relationship", SourceID: b, SearchState: "current"},
-				{SourceKind: "relationship", SourceID: a, SearchState: "current"},
-			},
-		},
-		relationships: map[string]recallcontract.RecallRelationshipHit{
-			a:         {TeamID: team, RelationshipID: a, SemanticGroupKey: "one", CreatedAt: newer, SearchState: "current"},
-			b:         {TeamID: team, RelationshipID: b, SemanticGroupKey: "two", CreatedAt: older, SearchState: "current"},
-			duplicate: {TeamID: team, RelationshipID: duplicate, SemanticGroupKey: "one", CreatedAt: older, SearchState: "current"},
-		},
-	}
-	result, err := NewRetrieval(fixture).RecallRelationships(t.Context(), recallcontract.RecallRelationshipsInput{
-		TeamID: team, Query: "relationship", Limit: 2,
-	})
-	require.NoError(t, err)
-	require.Equal(t, []string{b, a}, []string{result.Results[0].RelationshipID, result.Results[1].RelationshipID})
-	require.Equal(t, []int{1, 2}, []int{result.Results[0].Rank, result.Results[1].Rank})
-	require.Equal(t, result.Results[0].Score, result.Results[1].Score)
-	require.False(t, result.VectorOmitted)
-	require.Equal(t, 60, fixture.candidateLimit)
-}
-
 func TestRetrievalTieBreakers(t *testing.T) {
 	a, b := uuid.NewString(), uuid.NewString()
 	if a > b {
@@ -171,27 +120,10 @@ func TestRetrievalTieBreakers(t *testing.T) {
 	require.Equal(t, []string{a, b}, recallCandidateIDs(evidence))
 	require.Equal(t, evidence[0].Score, evidence[1].Score)
 
-	relationships := []recallCandidate{
-		{ID: a, Score: 1, BestBranchRank: 2},
-		{ID: b, Score: 1, BestBranchRank: 1},
-	}
-	sortRecallCandidates(relationships, "relationship")
-	require.Equal(t, []string{b, a}, recallCandidateIDs(relationships))
-	relationships[1].BestBranchRank = 1
-	sortRecallCandidates(relationships, "relationship")
-	require.Equal(t, []string{a, b}, recallCandidateIDs(relationships))
-
-	created := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	results := []recallcontract.RecallRelationshipHit{
-		{RelationshipID: b, Score: 1, CreatedAt: created},
-		{RelationshipID: a, Score: 1, CreatedAt: created},
-	}
-	sortRecallRelationshipResults(results)
-	require.Equal(t, []string{a, b}, []string{results[0].RelationshipID, results[1].RelationshipID})
 }
 
 func TestRetrievalOntologyMembershipDoesNotAddRankingVotes(t *testing.T) {
-	for _, kind := range []string{"evidence", "relationship"} {
+	for _, kind := range []string{"evidence"} {
 		t.Run(kind, func(t *testing.T) {
 			batch := &recallcontract.RecallCandidateBatch{}
 			for index := range 60 {
@@ -213,7 +145,7 @@ func TestRetrievalOntologyMembershipDoesNotAddRankingVotes(t *testing.T) {
 }
 
 func TestRetrievalOntologyFallbackIsUniqueUnweightedAndKnownScoped(t *testing.T) {
-	for _, kind := range []string{"evidence", "relationship"} {
+	for _, kind := range []string{"evidence"} {
 		t.Run(kind, func(t *testing.T) {
 			batch := &recallcontract.RecallCandidateBatch{
 				TextHits: []searchcontract.SearchHit{{SourceKind: kind, SourceID: "scored", SearchState: "current"}},
@@ -238,35 +170,6 @@ func TestRetrievalOntologyFallbackIsUniqueUnweightedAndKnownScoped(t *testing.T)
 			require.Empty(t, fuseRecallCandidates(&recallcontract.RecallCandidateBatch{}, kind, nil))
 		})
 	}
-}
-
-func TestRetrievalSelectsDistinctSemanticGroupsBeforeLimit(t *testing.T) {
-	team := uuid.NewString()
-	first, duplicate, second := uuid.NewString(), uuid.NewString(), uuid.NewString()
-	fixture := &retrievalReadFixture{
-		relationshipBatch: &recallcontract.RecallCandidateBatch{
-			SearchState: "current",
-			TextHits: []searchcontract.SearchHit{
-				{SourceKind: "relationship", SourceID: first},
-				{SourceKind: "relationship", SourceID: duplicate},
-				{SourceKind: "relationship", SourceID: second},
-			},
-		},
-		relationships: map[string]recallcontract.RecallRelationshipHit{
-			first:     {RelationshipID: first, SemanticGroupKey: "same"},
-			duplicate: {RelationshipID: duplicate, SemanticGroupKey: "same"},
-			second:    {RelationshipID: second, SemanticGroupKey: "distinct"},
-		},
-	}
-	result, err := NewRetrieval(fixture).RecallRelationships(t.Context(), recallcontract.RecallRelationshipsInput{
-		TeamID: team, Query: "groups", Limit: 2,
-	})
-	require.NoError(t, err)
-	require.Equal(t, []string{first, second}, []string{result.Results[0].RelationshipID, result.Results[1].RelationshipID})
-	firstScore := 1.0 / 61
-	secondScore := 1.0 / 63
-	require.InDelta(t, firstScore, result.Results[0].Score, 1e-12)
-	require.InDelta(t, secondScore, result.Results[1].Score, 1e-12)
 }
 
 func TestRetrievalBoundsAndRequiredReadFailures(t *testing.T) {
@@ -304,9 +207,9 @@ func TestRetrievalBoundsAndRequiredReadFailures(t *testing.T) {
 	require.ErrorContains(t, err, "space_id is required")
 	require.Zero(t, fixture.evidenceReads)
 	_, err = NewRetrieval(fixture).RecallEvidence(t.Context(), recallcontract.RecallEvidenceInput{
-		TeamID: team, Query: "query", KnownRelationshipIDs: []string{"invalid"},
+		TeamID: team, Query: "query", KnownEvidenceIDs: []string{"invalid"},
 	})
-	require.ErrorContains(t, err, "known_relationship_ids")
+	require.ErrorContains(t, err, "known_evidence_ids")
 	require.Zero(t, fixture.evidenceReads)
 	require.Equal(t, 60, recallOverfetchLimit(1))
 	require.Equal(t, recallcontract.MaxRecallCandidateCount, recallOverfetchLimit(50))

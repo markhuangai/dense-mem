@@ -160,33 +160,11 @@ func TestLoadDefaults(t *testing.T) {
 	if budget.MaxInputTokens != DefaultAIVerifierMaxInputTokens ||
 		budget.MaxOutputTokens != DefaultAIVerifierMaxOutputTokens ||
 		budget.MaxCandidateContextTokens != DefaultAIVerifierMaxCandidateContextTokens ||
-		budget.MaxPredicateOptions != DefaultAIVerifierMaxPredicateOptions ||
 		budget.Tokenizer != DefaultAIVerifierTokenizer {
 		t.Fatalf("default assessor budget = %#v", budget)
 	}
 	if cfg.GetAppTimezone() != "Local" {
 		t.Errorf("AppTimezone default = %q, want Local", cfg.GetAppTimezone())
-	}
-	if cfg.GetConflictReviewTTLDays() != DefaultConflictReviewTTLDays {
-		t.Errorf("ConflictReviewTTLDays default = %d, want %d", cfg.GetConflictReviewTTLDays(), DefaultConflictReviewTTLDays)
-	}
-	if cfg.GetConflictReviewStartTimeLocal() != DefaultConflictReviewStartTime {
-		t.Errorf("ConflictReviewStartTimeLocal default = %q, want %q", cfg.GetConflictReviewStartTimeLocal(), DefaultConflictReviewStartTime)
-	}
-	if cfg.GetConflictReviewMaxConcurrency() != 1 {
-		t.Errorf("ConflictReviewMaxConcurrency default = %d, want 1", cfg.GetConflictReviewMaxConcurrency())
-	}
-	if cfg.GetConflictReviewBatchSize() != 100 {
-		t.Errorf("ConflictReviewBatchSize default = %d, want 100", cfg.GetConflictReviewBatchSize())
-	}
-	if cfg.GetConflictReviewLeaseSeconds() != 300 {
-		t.Errorf("ConflictReviewLeaseSeconds default = %d, want 300", cfg.GetConflictReviewLeaseSeconds())
-	}
-	if cfg.GetConflictReviewMaxAttempts() != 5 {
-		t.Errorf("ConflictReviewMaxAttempts default = %d, want 5", cfg.GetConflictReviewMaxAttempts())
-	}
-	if cfg.GetConflictReviewJitterSeconds() != 600 {
-		t.Errorf("ConflictReviewJitterSeconds default = %d, want 600", cfg.GetConflictReviewJitterSeconds())
 	}
 
 	// Test other defaults
@@ -926,52 +904,13 @@ func TestLoadControlPortalValidation(t *testing.T) {
 	})
 }
 
-func TestConflictReviewGettersUseDefaultsAndConfiguredValues(t *testing.T) {
+func TestAppTimezoneUsesDefaultAndConfiguredValue(t *testing.T) {
 	var defaults Config
 	if got := defaults.GetAppTimezone(); got != "Local" {
-		t.Fatalf("GetAppTimezone default = %q, want Local", got)
+		t.Fatalf("GetAppTimezone default=%q", got)
 	}
-	if got := defaults.GetConflictReviewTTLDays(); got != DefaultConflictReviewTTLDays {
-		t.Fatalf("GetConflictReviewTTLDays default = %d, want %d", got, DefaultConflictReviewTTLDays)
-	}
-	if got := defaults.GetConflictReviewStartTimeLocal(); got != DefaultConflictReviewStartTime {
-		t.Fatalf("GetConflictReviewStartTimeLocal default = %q, want %q", got, DefaultConflictReviewStartTime)
-	}
-	if got := defaults.GetConflictReviewMaxConcurrency(); got != 1 {
-		t.Fatalf("GetConflictReviewMaxConcurrency default = %d, want 1", got)
-	}
-	if got := defaults.GetConflictReviewBatchSize(); got != 100 {
-		t.Fatalf("GetConflictReviewBatchSize default = %d, want 100", got)
-	}
-	if got := defaults.GetConflictReviewLeaseSeconds(); got != 300 {
-		t.Fatalf("GetConflictReviewLeaseSeconds default = %d, want 300", got)
-	}
-	if got := defaults.GetConflictReviewMaxAttempts(); got != 5 {
-		t.Fatalf("GetConflictReviewMaxAttempts default = %d, want 5", got)
-	}
-	negativeJitter := Config{ConflictReviewJitterSeconds: -1}
-	if got := negativeJitter.GetConflictReviewJitterSeconds(); got != 0 {
-		t.Fatalf("GetConflictReviewJitterSeconds negative = %d, want 0", got)
-	}
-
-	configured := Config{
-		AppTimezone:                  "UTC",
-		ConflictReviewTTLDays:        3,
-		ConflictReviewStartTimeLocal: "05:30",
-		ConflictReviewMaxConcurrency: 2,
-		ConflictReviewBatchSize:      25,
-		ConflictReviewLeaseSeconds:   120,
-		ConflictReviewMaxAttempts:    4,
-		ConflictReviewJitterSeconds:  90,
-	}
-	if configured.GetAppTimezone() != "UTC" ||
-		configured.GetConflictReviewTTLDays() != 3 ||
-		configured.GetConflictReviewStartTimeLocal() != "05:30" ||
-		configured.GetConflictReviewMaxConcurrency() != 2 ||
-		configured.GetConflictReviewBatchSize() != 25 ||
-		configured.GetConflictReviewLeaseSeconds() != 120 ||
-		configured.GetConflictReviewMaxAttempts() != 4 ||
-		configured.GetConflictReviewJitterSeconds() != 90 {
-		t.Fatalf("configured conflict review getters returned unexpected values: %#v", configured)
+	configured := Config{AppTimezone: "UTC"}
+	if got := configured.GetAppTimezone(); got != "UTC" {
+		t.Fatalf("GetAppTimezone configured=%q", got)
 	}
 }

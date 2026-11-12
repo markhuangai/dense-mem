@@ -147,13 +147,8 @@ func TestMigratorRunUp(t *testing.T) {
 	`).Scan(&retirementApplied))
 	assert.False(t, retirementApplied, "destructive retirement must require its explicit maintenance runner")
 	require.NoError(t, ValidateStartupMigrationState(ctx, sqlDB, getMigrationsDir()))
-	for _, indexName := range []string{"community_records_scoped_logical_unique", "community_sources_group_idx", "community_sources_community_idx"} {
-		assert.True(t, indexExists(t, ctx, sqlDB, indexName), "migration index %s should exist", indexName)
-	}
+	assertEvidenceOnlyCatalog(t, ctx, sqlDB)
 	assert.False(t, indexExists(t, ctx, sqlDB, "idx_credentials_owner_team_active_unique"), "SSO credential ownership must not remain singleton")
-	var logicalCommunityIDNotNull int
-	require.NoError(t, sqlDB.QueryRowContext(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'community_records' AND column_name = 'logical_community_id' AND is_nullable = 'NO'`).Scan(&logicalCommunityIDNotNull))
-	assert.Equal(t, 1, logicalCommunityIDNotNull, "logical community IDs should be enforced after the committed backfill")
 }
 
 func TestMigratorRunUpAppliesPostCutoverCleanupAfterEmbeddingRetry(t *testing.T) {
@@ -196,7 +191,8 @@ func TestMigratorRunUpAppliesTopicProjectionAfterUpdatedMain(t *testing.T) {
 	require.False(t, tableExists(t, ctx, db, "ontology_draft_heads"))
 	migrator := NewMigratorWithDB(db)
 	require.NoError(t, migrator.RunUp(ctx))
-	require.True(t, tableExists(t, ctx, db, "community_topic_versions"))
+	require.False(t, tableExists(t, ctx, db, "community_topic_versions"))
+	assertEvidenceOnlyCatalog(t, ctx, db)
 	require.True(t, tableExists(t, ctx, db, "ontology_draft_heads"))
 	require.True(t, tableExists(t, ctx, db, "session_submissions"))
 	require.NoError(t, migrator.RunUp(ctx))
@@ -559,7 +555,7 @@ func TestPostCutoverCleanupMigrationFreshUpgradeSucceeds(t *testing.T) {
 	assert.False(t, columnExists(t, ctx, sqlDB, "placement_runs", "migration_claim_epoch"))
 
 	var markerCount int
-	require.NoError(t, sqlDB.QueryRowContext(ctx, `SELECT count(*)::int FROM v2_compatibility_markers`).Scan(&markerCount))
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `SELECT count(*)::int FROM v2_compatibility_markers WHERE marker_kind = 'v2_cutover'`).Scan(&markerCount))
 	assert.Equal(t, 1, markerCount, "the cutover migration records the compatible authority marker")
 	var markerVersion, markerStatus string
 	require.NoError(t, sqlDB.QueryRowContext(ctx, `SELECT version, status FROM v2_compatibility_markers WHERE marker_kind = 'v2_cutover'`).Scan(&markerVersion, &markerStatus))

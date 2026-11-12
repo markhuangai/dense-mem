@@ -248,12 +248,6 @@ function rememberInput(content, subject, predicate, object, targetSpace = "team_
     target_space: targetSpace,
     idempotency_key: `memory-space-e2e:${Date.now()}:${Math.random()}`,
     evidence: [{ content, source_type: "document", source: "memory-space-e2e", source_group: "memory-space-e2e" }],
-    relationships: [{
-      ref: `memory-space-e2e:${Date.now()}:${Math.random()}`,
-      subject: { name: subject, entity_kind: "project" },
-      predicate: { proposed_key: predicate },
-      object: { entity: { name: object, entity_kind: "concept" } },
-      polarity: "+", evidence_indices: [0],
-    }],
+
   };
 }

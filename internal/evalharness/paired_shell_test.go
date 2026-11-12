@@ -500,7 +500,7 @@ pair_begin drain`)
 	t.Setenv("PAIR_IMPORT_STAGE", imported.Directory)
 	output, err = run(configPath, `set -Eeuo pipefail
 source "$PAIR_SCRIPT"
-pair_stage_dir="$PAIR_IMPORT_STAGE"; pair_interrupted=false
+pair_stage=import; pair_stage_dir="$PAIR_IMPORT_STAGE"; pair_interrupted=false
 trap 'pair_on_error "$?"' ERR
 pair_tool complete-import-mapping --pair-side candidate --pair-directory "$pair_stage_dir"`)
 	require.ErrorAs(t, err, &exited, "%s", output)
@@ -592,7 +592,7 @@ func TestNonPairedMonitorRetainsImportAttempts(t *testing.T) {
 		case "tool:remember":
 			remembered.Add(1)
 			source := strings.TrimPrefix(stringValue(input["idempotency_key"]), "eval:")
-			_ = json.NewEncoder(w).Encode(map[string]any{"contract_version": "dense-mem.v2.6.2", "submission_id": "attempt-" + source, "submission_kind": "remember", "processing_state": "completed", "search_state": "current", "correlation_id": "server-" + source, "evidence": []map[string]any{{"disposition": "stored", "evidence_id": "evidence-" + source, "evidence_index": 0, "search_state": "current"}}, "relationship_results": []any{}, "errors": []any{}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"contract_version": "dense-mem.v2.8.0", "submission_id": "attempt-" + source, "submission_kind": "remember", "processing_state": "completed", "search_state": "current", "correlation_id": "server-" + source, "evidence": []map[string]any{{"disposition": "stored", "evidence_id": "evidence-" + source, "evidence_index": 0, "search_state": "current"}}, "errors": []any{}})
 		case "tool:eval_list_knowledge_refs":
 			_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{}})
 		case "tool:eval_run_recall_case":

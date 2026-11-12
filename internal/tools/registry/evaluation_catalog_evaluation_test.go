@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestEvaluationCatalogAddsOnlyHarnessTools(t *testing.T) {
+func TestEvidenceOnlyCatalogEvaluationAddsOnlyHarnessTools(t *testing.T) {
 	reg, err := BuildActive(Dependencies{})
 	if err != nil {
 		t.Fatalf("BuildActive: %v", err)

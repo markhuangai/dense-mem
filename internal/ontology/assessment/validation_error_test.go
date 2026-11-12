@@ -17,8 +17,8 @@ func TestOrganizationDecodeValidationDiagnostics(t *testing.T) {
 	encoded, err := json.Marshal(response)
 	require.NoError(t, err)
 	for name, raw := range map[string]string{
-		"syntax": `{`, "wrong_type": `{"request_id":[],"definitions":[],"items":[],"equivalence":[],"hierarchy_updates":[]}`, "trailing": string(encoded) + " {}", "null": "null",
-		"unknown":   `{"request_id":"request","definitions":[],"items":[],"equivalence":[],"hierarchy_updates":[],"synthetic-provider-secret raw-source-canary":true}`,
+		"syntax": `{`, "wrong_type": `{"request_id":[],"definitions":[],"items":[],"equivalence":[]}`, "trailing": string(encoded) + " {}", "null": "null",
+		"unknown":   `{"request_id":"request","definitions":[],"items":[],"equivalence":[],"synthetic-provider-secret raw-source-canary":true}`,
 		"duplicate": `{"synthetic-provider-secret":1,"synthetic-provider-secret":2}`,
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -32,8 +32,8 @@ func TestOrganizationDecodeValidationDiagnostics(t *testing.T) {
 	}
 	for _, tc := range []struct{ raw, field, family, message string }{
 		{`{}`, "request_id", "request_id", "is required"},
-		{`{"request_id":"request","items":[],"equivalence":[],"hierarchy_updates":[]}`, "definitions", "definitions", "is required"},
-		{strings.Replace(string(encoded), `"parent_ref":"",`, "", 1), "definitions[0].parent_ref", "definitions.parent_ref", "is required"},
+		{`{"request_id":"request","items":[],"equivalence":[]}`, "definitions", "definitions", "is required"},
+		{withoutDefinitionParentRef(t, encoded), "definitions[0].parent_ref", "definitions.parent_ref", "is required"},
 		{strings.Replace(string(encoded), `"reason":""`, `"reason":null`, 1), "items[0].reason", "items.reason", "must not be null"},
 	} {
 		_, err := Decode(tc.raw)
@@ -70,7 +70,7 @@ func TestOrganizationSemanticValidationDiagnostics(t *testing.T) {
 		{"item_ambiguous_classification", "items", func(_ *Request, r *Response) { r.Items[0].Status = "ambiguous" }},
 		{"item_definition_ref", "items", func(_ *Request, r *Response) { r.Items[0].DefinitionRef = "synthetic-provider-secret" }},
 		{"item_locked_classification", "items", func(q *Request, _ *Response) { q.Items[0].LockedDefinitionRef = "locked" }},
-		{"item_source_kind", "items", func(q *Request, _ *Response) { q.Items[0].Kind = ontology.PredicateSource }},
+		{"item_source_kind", "items", func(q *Request, _ *Response) { q.Items[0].Kind = ontology.SourceKind("predicate") }},
 		{"item_status", "items", func(_ *Request, r *Response) { r.Items[0].Status = "synthetic-provider-secret" }},
 		{"equivalence_ref", "equivalence", func(_ *Request, r *Response) { r.Equivalence[0].Ref = "outside" }},
 		{"equivalence_relation", "equivalence", func(_ *Request, r *Response) { r.Equivalence[0].Relation = "similar" }},
@@ -204,7 +204,7 @@ func TestOrganizationDecodeReportsIndependentIndexedFields(t *testing.T) {
 	_, response := assessmentFixture()
 	encoded, err := json.Marshal(response)
 	require.NoError(t, err)
-	raw := strings.Replace(string(encoded), `"parent_ref":"",`, "", 1)
+	raw := withoutDefinitionParentRef(t, encoded)
 	raw = strings.Replace(raw, `"ref":"a"`, `"ref":"a","unexpected":true`, 1)
 	raw = strings.Replace(raw, `"ref":"b","status":"classified"`, `"ref":"b","status":null`, 1)
 	result, err := Decode(raw)
@@ -237,18 +237,15 @@ func TestOrganizationDetailedSharedFeedbackRepairsCompleteResponses(t *testing.T
 			locked.Ref, locked.Key, locked.Label = "locked", "locked-topic", "Locked topic"
 			request.Definitions = []Definition{locked}
 			request.Items[0].LockedDefinitionRef = locked.Ref
-			request.Items[1].Kind = ontology.PredicateSource
 			request.Pairs[0].RequiredRelation = "distinct"
 			invalid.Items[1].Reason = strings.Repeat("x", 129)
 			invalidErr := Validate(request, invalid)
 			var rejected *assessor.SemanticAssessmentResponseValidationError
 			require.ErrorAs(t, invalidErr, &rejected)
-			require.Len(t, rejected.Errors, 4)
+			require.Len(t, rejected.Errors, 3)
 			require.Contains(t, invalidErr.Error(), `items[0].definition_ref: item "a" classification changes deterministic reuse: must equal locked_definition_ref "locked"; received "new-topic"`)
-			require.Contains(t, invalidErr.Error(), `items[1].definition_ref: item "b" has incompatible source kind "predicate": expected predicate_concept; definition_ref "new-topic" selects kind "topic"`)
 			require.Contains(t, invalidErr.Error(), `pair "pair" contradicts deterministic context or manager rule: must equal required_relation "distinct"; received "equivalent"`)
 			_, valid := assessmentFixture()
-			valid.Definitions[0].Kind = ontology.PredicateConcept
 			valid.Items[0].DefinitionRef = locked.Ref
 			valid.Equivalence[0].Relation = "distinct"
 			require.NoError(t, Validate(request, valid))

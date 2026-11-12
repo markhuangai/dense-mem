@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/config"
-	conflictpostgres "github.com/markhuangai/dense-mem/internal/conflict/postgres"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	operations "github.com/markhuangai/dense-mem/internal/operations"
 	operationscontract "github.com/markhuangai/dense-mem/internal/operations/contract"
@@ -28,8 +27,7 @@ func buildTelemetryApplication(
 	startupCtx context.Context,
 	cfg config.Config,
 	pricing operationscontract.TelemetryPricingReader,
-	conflictQueue *conflictpostgres.Store,
-	lifecycle operationscontract.TelemetryLifecycleReader,
+	operationalReader operationscontract.OperationalTelemetryReader,
 	logger observability.LogProvider,
 	protector *observability.CredentialProtector,
 ) (telemetryComposition, error) {
@@ -49,14 +47,8 @@ func buildTelemetryApplication(
 	composition.PricingRefreshEnabled = true
 	prometheusMetrics := observability.NewPrometheusMetrics(operations.NewTelemetryPricingResolver(pricing, cfg.GetAIVerifierModel(), cfg.GetAIEmbeddingModel()))
 	prometheusMetrics.SetCredentialMetadataProtector(protector)
-	operationalReader, _ := lifecycle.(operationscontract.OperationalTelemetryReader)
 	if err := prometheusMetrics.RegisterOperationalTelemetryCollector(operationalReader); err != nil {
 		return telemetryComposition{}, err
-	}
-	if conflictQueue != nil {
-		if err := prometheusMetrics.RegisterConflictQueueCollector(observability.NewConflictQueueCollector(conflictQueue.CollectConflictQueueMetrics)); err != nil {
-			return telemetryComposition{}, err
-		}
 	}
 	composition.Metrics = prometheusMetrics
 	composition.HTTPMetrics = prometheusMetrics
@@ -68,14 +60,13 @@ func buildTelemetryApplication(
 		cfg.GetTelemetryPrometheusJob(),
 		logger,
 	)
-	composition.Prometheus.SetLifecycleReader(lifecycle)
 	composition.Reader = composition.Prometheus
 	if cfg.OTLPEnabled {
 		exports, err := observability.NewOTLP(startupCtx, prometheusMetrics, observability.OTLPOptions{
 			TraceEndpoint: cfg.OTLPTraceEndpoint, MetricEndpoint: cfg.OTLPMetricEndpoint,
 			TraceHeaders: cfg.OTLPTraceHeaders, MetricHeaders: cfg.OTLPMetricHeaders,
 			Protector: protector, Logger: logger,
-			Models: []string{cfg.GetAIVerifierModel(), cfg.GetAIEmbeddingModel(), cfg.GetAIRememberModel(), cfg.GetAIConflictReviewModel()},
+			Models: []string{cfg.GetAIVerifierModel(), cfg.GetAIEmbeddingModel(), cfg.GetAIRememberModel()},
 		})
 		if err != nil {
 			return telemetryComposition{}, err

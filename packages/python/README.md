@@ -36,9 +36,8 @@ use inside an active event loop.
 Methods are initialize, list_tools, remember, ingest_session, recall_memory and
 trace_memory. Requests/results are typed dictionaries with py.typed. Server
 validation and authenticated discovery remain authoritative. Current-server
-compatibility is dense-mem.v2.7.0. Refresh tool discovery when upgrading: Remember
-now requires target_space even when the previous prerelease used this version string.
-Historical requests without a target fail validation, including retries.
+compatibility is dense-mem.v2.8.0. Refresh tool discovery after upgrading.
+Retired proposal fields fail validation before provider work.
 
 ## Complete Remember request and safe replay
 
@@ -48,45 +47,31 @@ from densemem import RememberRequest
 request: RememberRequest = {
     "target_space": "team_shared",
     "idempotency_key": retained_operation_key,
-    "evidence": [
-        {
-            "content": "Dense-Mem stores durable memory in PostgreSQL.",
-            "source_type": "manual",
-            "source": "Python core example",
-            "metadata": {"origin": "python-example"},
-        }
-    ],
-    "relationships": [
-        {
-            "ref": "durable-store",
-            "subject": {"name": "Dense-Mem", "entity_kind": "project"},
-            "predicate": {"proposed_key": "stores_durable_memory_in"},
-            "object": {"entity": {"name": "PostgreSQL", "entity_kind": "product"}},
-            "polarity": "+",
-            "evidence_indices": [0],
-        }
-    ],
+    "evidence": [{
+        "content": "Dense-Mem stores durable memory in PostgreSQL.",
+        "source_type": "manual",
+        "source": "Python core example",
+        "metadata": {"origin": "python-example"},
+    }],
 }
 result = await client.remember(request)
 ~~~
 
-Create the operation key once for a deliberate new operation, and retain this
-entire request before sending it. For a replay, resend this unchanged request,
-including target_space, metadata, and key. Never rotate a key to bypass a conflict. The client
-never retries automatically or fills in keys/defaults. Remember requires at least
-one proposal citing every evidence item. The client does not infer Relationships.
+Retain the complete request and key before sending. Replay the unchanged request
+including target, metadata, and key to reconcile an unknown outcome. The client
+never retries automatically or invents defaults. Legacy operation keys return
+non-retryable retired_contract guidance without duplicating accepted Evidence.
 
-Choose private for personal preferences or automation experience and team_shared
-for team knowledge. Every credential has separate private memory, including
-SSO-issued keys. Team-read-only credentials may remember privately; team_shared
-requires team write permission. The server never redirects a denied shared write.
-The response's space_kind confirms the selected destination.
+Choose private for personal memory and team_shared for team knowledge.
+Authentication selects the actual team, owner, and space. Every credential has
+separate private memory. Team-read-only credentials may remember privately;
+shared writes require current permission. The server never redirects a denied
+shared write.
 
-Inspect evidence and relationship_results: completed processing can include
-not_stored proposals and remediation. Returned warnings remain visible. Recall
-results preserve server order, equivalent IDs, conflicts, topic communities,
-provenance, search states and degradations. These frontiers do not
-establish new factual support. Trace requires a returned relationship_id.
+Inspect Evidence outcomes, search states, and explicit warnings. Recall preserves
+server order, equivalent IDs, Evidence conflicts, topic hints, and degradations.
+Trace takes an evidence_id. Export accepts 1–500 Evidence IDs and returns a
+versioned Evidence/provenance artifact with hashes and omission reporting.
 
 ## Exact private session ingestion
 
@@ -116,9 +101,10 @@ never authorization or private-space selection. The server must enable session
 ingestion and the caller must have effective private write access. Every active
 credential has its own private space, including team-read-only credentials;
 SSO sessions use their user/team membership's separate private space. Discovery
-hides unavailable tools. Remember requires its explicit target and proposals.
-Session semantic acceptance is atomic across the request. A no-fact completed
-result with search_state not_required is valid.
+hides unavailable tools. Remember requires its explicit target.
+Session acceptance is atomic across the request. The server selects exact
+current-event excerpts with original offsets using session_evidence_excerpts_v2.
+Empty extraction returns memory_outcome no_memory with search_state not_required.
 
 ## Failures and unknown outcomes
 
@@ -294,9 +280,7 @@ or credential logging; caller-configured LangChain callbacks receive the normal
 queries and returned Documents.
 
 k defaults to 10 and accepts only integers from 1 through 50. recall_options
-accepts the existing public options: relationship_limit, community_limit,
-community_relationship_limit, valid_at, known_at, known_evidence_ids,
-known_relationship_ids and expand_from_entity_ids. Values pass to the server
+accepts topic_ids, topic_limit, valid_at, known_at, and known_evidence_ids. Values pass to the server
 unchanged and are validated there. Query, limit, team and space overrides are
 rejected; invocation-time recall overrides are unsupported. Options are copied
 for each call. Server validation and authorization remain authoritative.
@@ -305,9 +289,9 @@ Each returned evidence item becomes one Document in server order. Document.id
 is its evidence_id, and page_content is the exact server-bounded context without
 additional truncation. Document.metadata["densemem"] contains evidence_id,
 equivalent_evidence_ids, equivalents_truncated, space_kind, recall_id,
-related_relationships, related_communities, conflicts, search_states, degradations
-and suggested_actions. These relationship/community frontiers describe the whole
-query, rather than a new per-document support association. The current public
+related_topics, topics_truncated, conflicts, search_states, degradations
+and suggested_actions. Topic hints describe the query and support bounded
+follow-up through 1–10 unique topic_ids without descendant expansion. The current public
 response exposes no document scores, ranks or source URLs, so none are invented.
 Identical private and shared text remains separate Documents.
 

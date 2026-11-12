@@ -259,11 +259,10 @@ func testOntologyOrganizationVocabularyAndSourceFences(t *testing.T) {
 			})
 		}
 	}
-	t.Run("definition name lookup is kind and team scoped", func(t *testing.T) {
+	t.Run("definition name lookup is team scoped", func(t *testing.T) {
 		f := newOrganizationFixture(t)
 		topic := testTopic("postgresql")
-		class := ontology.Record{ID: uuid.NewString(), Kind: ontology.EntityClass, Definition: &ontology.Definition{Key: "person", Label: "PostgreSQL", BaseEntityKind: "person"}}
-		_, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("same-name-different-kinds", 0, ontology.Change{Record: topic}, ontology.Change{Record: class}))
+		_, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("same-name-different-kinds", 0, ontology.Change{Record: topic}))
 		require.NoError(t, err)
 		query := ontology.Record{ID: ontology.OrganizationRecordID(f.team, ontology.Topic, "relational-store"), Kind: ontology.Topic, Definition: &ontology.Definition{Key: "relational-store", Label: "Relational storage", Aliases: []string{" POSTGRESQL "}}}
 		heads, err := f.store.ReadDefinitionHeads(context.Background(), f.team, query)

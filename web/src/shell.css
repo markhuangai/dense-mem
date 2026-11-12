@@ -3,8 +3,7 @@
   --muted: var(--muted-on-tint);
   --subtle: var(--muted);
 }
-:where(.surface, .team-directory-card, .auth-panel, .table-wrap, .knowledge-explorer,
-  .graph-panel, .knowledge-commandbar, .knowledge-results-toolbar, .knowledge-item,
+:where(.surface, .team-directory-card, .auth-panel, .table-wrap, .knowledge-explorer, .knowledge-commandbar, .knowledge-results-toolbar, .knowledge-item,
   .search-input-wrap, .mobile-navigation) {
   --muted: var(--secondary-text);
   --subtle: var(--muted);
@@ -161,10 +160,10 @@
   .surface { padding: 18px; }
   .section-heading { flex-wrap: wrap; gap: 12px; }
   .section-heading h2 { font-size: 19px; }
-  .edit-grid, .key-form, .security-grid, .team-dreaming-row { grid-template-columns: minmax(0, 1fr); }
+  .edit-grid, .key-form, .security-grid{ grid-template-columns: minmax(0, 1fr); }
   .edit-grid > label, .key-form > label, .security-grid > label { padding-top: 0; }
   .secret-box { grid-template-columns: minmax(0, 1fr); }
-  .security-summary, .metrics-summary, .dreaming-effective-grid, .dependency-grid, .conflict-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .security-summary, .metrics-summary, .dependency-grid, .conflict-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .table-page-size { margin-left: 0; }
   .table-pagination { flex-wrap: wrap; }
   .team-directory-toolbar { align-items: stretch; flex-direction: column; }

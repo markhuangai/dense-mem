@@ -168,20 +168,14 @@ func BeginPairStage(c PairConfig, side, stage string, process PairProcess) (Pair
 		return result, err
 	}
 	if stage == "import" {
-		_, corpus, _, _, _, _, _, err := loadRunInputs(c.SeedManifest, c.Suite)
+		_, corpus, _, _, _, _, err := loadRunInputs(c.SeedManifest, c.Suite)
 		if err != nil {
 			return result, err
 		}
 		requests := make([]map[string]string, 0, len(corpus))
 		for _, item := range corpus {
 			hash, err := pairRequestHash(item)
-			release, releaseErr := pairRelease(c, side)
-			if releaseErr != nil {
-				return result, releaseErr
-			}
-			if pairLegacyRelease(release) {
-				hash, err = pairLegacyRequestHash(item)
-			}
+
 			if err != nil {
 				return result, err
 			}
@@ -338,7 +332,7 @@ func validatePairStageOutputs(c PairConfig, intent PairStageIntent, dir string) 
 		if observation.Scope != r.Scope {
 			return fmt.Errorf("stage observation has a different scope")
 		}
-		if r.Protocol == "adr0014" && (observation.Policy != r.Capacity || observation.WindowID == "" || observation.Model != r.Models.Ontology) {
+		if (r.Protocol == "adr0014" || r.Protocol == PairModeEvidenceOnlyV5) && (observation.Policy != r.Capacity || observation.WindowID == "" || observation.Model != r.Models.Ontology) {
 			return fmt.Errorf("configured maintenance capacity is not active")
 		}
 		if intent.Stage == "capacity" {
@@ -347,11 +341,11 @@ func validatePairStageOutputs(c PairConfig, intent PairStageIntent, dir string) 
 			}
 			return nil
 		}
-		_, corpus, _, _, _, _, _, err := loadRunInputs(c.SeedManifest, c.Suite)
+		_, corpus, _, _, _, _, err := loadRunInputs(c.SeedManifest, c.Suite)
 		if err != nil {
 			return err
 		}
-		progress, err := EvaluatePairImport(r.Scope, corpus, observation.Imports, false)
+		progress, err := EvaluatePairImport(r.Scope, corpus, observation.Imports, false, r)
 		if err != nil {
 			return err
 		}
@@ -420,7 +414,7 @@ func validatePairMapping(c PairConfig, dir string) error {
 	if hash != config.MappingHash || config.SeedHash != c.SeedHash {
 		return fmt.Errorf("native mapping or seed hash mismatch")
 	}
-	_, corpus, _, qrels, _, suite, _, err := loadRunInputs(c.SeedManifest, c.Suite)
+	_, corpus, _, qrels, suite, _, err := loadRunInputs(c.SeedManifest, c.Suite)
 	if err != nil {
 		return err
 	}
@@ -445,7 +439,7 @@ func ValidatePairCapture(c PairConfig, dir string) error {
 	if err := validatePairMapping(c, dir); err != nil {
 		return err
 	}
-	_, _, _, _, _, suite, _, err := loadRunInputs(c.SeedManifest, c.Suite)
+	_, _, _, _, suite, _, err := loadRunInputs(c.SeedManifest, c.Suite)
 	if err != nil {
 		return err
 	}
@@ -592,11 +586,11 @@ func CompletePairImportMapping(c PairConfig, side, dir string) error {
 	if err := readPairJSON(filepath.Join(dir, "observation.json"), &observation); err != nil {
 		return err
 	}
-	_, corpus, _, _, _, _, _, err := loadRunInputs(c.SeedManifest, c.Suite)
+	_, corpus, _, _, _, _, err := loadRunInputs(c.SeedManifest, c.Suite)
 	if err != nil {
 		return err
 	}
-	progress, err := EvaluatePairImport(release.Scope, corpus, observation.Imports, false)
+	progress, err := EvaluatePairImport(release.Scope, corpus, observation.Imports, false, release)
 	if err != nil {
 		return err
 	}

@@ -58,8 +58,7 @@ try {
   await settle();
   assert.deepEqual(sourceAssessments(ids), fixedReceipts, "unused matching vocabulary must preserve each fixed source assessment");
   const preferenceCalls = (await providerCalls()).slice(callsBeforeVocabulary.length);
-  assert(preferenceCalls.every((call) => call.schema_name === "ontology_organization_v2" && call.source_kinds.length > 0 &&
-    call.source_kinds.every((kind) => ["entity", "predicate"].includes(kind))), "unused vocabulary must keep locked evidence and relationship work provider-free");
+  assert.equal(preferenceCalls.length, 0, "unused vocabulary must preserve fixed Evidence assessments without provider work");
   const revision = (await ui("/status")).revision;
   const input = { operation_key: randomUUID(), expected_version: 0, expected_revision: revision, reason: "Separate manager-selected paraphrases", edits: [{ action: "keep_separate", expected_version: 0, members: sources }] };
   const beforeCalls = await providerCalls();
@@ -110,7 +109,7 @@ try {
   await saveAndPublish([{ action: "remove_override", record_id: classification.id, expected_version: classification.version }]);
   assert((await ui(`/records/${classification.id}`)).retired, "the fixture correction must be removed before browser checks");
   assert.deepEqual(snapshot(), canonical, "corrections and rollback changed canonical facts or provenance");
-  await semanticHierarchyAcceptance(shared.credential.id, [c, readonly]);
+  await topicHierarchyAcceptance(shared.credential.id, [c, readonly]);
   assert.deepEqual(snapshot(), canonical, "semantic hierarchy changed canonical facts or provenance");
   await matchingAcceptance();
 
@@ -124,13 +123,13 @@ async function request(base, path, key, body, method = body ? "POST" : "GET") {
   return fetch(`${base}${path}`, { method, headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", Accept: "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) });
 }
 
-async function semanticHierarchyAcceptance(profileID, deniedActors) {
+async function topicHierarchyAcceptance(profileID, deniedActors) {
   const since = new Date(Date.now() - 1000).toISOString();
   const operations = [];
   const credentials = [manager, "dense-mem-ontology-e2e-key"];
   const protectedInput = (input) => JSON.parse(credentials.reduce((body, credential) => body.replaceAll(credential, "[REDACTED]"), JSON.stringify(input, (key, value) =>
-    (key === "aliases" && value.length === 0) || (["parent_id", "parent_relation"].includes(key) && value === "") ? undefined : value)));
-  const definition = (key, kind, parent, relation) => ({ key, label: key, description: "Exact admitted semantic vocabulary", aliases: [], ...(kind === "entity_class" ? { base_entity_kind: "person" } : {}), ...(parent ? { parent_id: parent } : {}), ...(relation ? { parent_relation: relation } : {}) });
+    (key === "aliases" && value.length === 0) || (key === "parent_id" && value === "") ? undefined : value)));
+  const definition = (key, parent) => ({ key, label: key, description: "Exact admitted topic vocabulary", aliases: [], ...(parent ? { parent_id: parent } : {}) });
   const edit = (kind, value, previous) => ({ action: "define", kind, expected_version: previous?.version ?? 0, ...(previous ? { record_id: previous.id } : {}), definition: value });
   const find = async (kind, key) => {
     const value = (await ui(`/records?kind=${kind}&limit=200`)).records.find((record) => record.definition?.key === key);
@@ -147,41 +146,33 @@ async function semanticHierarchyAcceptance(profileID, deniedActors) {
     const input = { operation_key: randomUUID(), expected_version: 0, expected_revision: observed - (stale ? 1 : 0), reason: "Log-only semantic rejection", edits };
     const correlationID = randomUUID();
     const response = await fetch(`${userURL}/ui/api/ontology/drafts`, { method: "POST", headers: { Authorization: `Bearer ${manager}`, "Content-Type": "application/json", "X-Correlation-ID": correlationID }, body: JSON.stringify(input) });
-    assert.equal(response.status, stale ? 409 : 422);
+    assert.equal(response.status, stale || reason === "parent_unavailable" ? 409 : 422);
     operations.push({ operationKey: input.operation_key, correlationID, teamID, profileID, reason, parents, credentials, outcomeEvent: "ontology_semantic_manager_rejected", input: protectedInput(input), ...(stale ? { expectedVersion: input.expected_revision, observedVersion: observed } : {}) });
   }
-  for (const [kind, relation] of [["entity_class", "subclass_of"], ["predicate_concept", "subproperty_of"]]) {
+  for (const kind of ["topic"]) {
     const prefix = `semantic-${kind}-${randomUUID()}`;
-    await saveAndPublish([edit(kind, definition(`${prefix}-parent`, kind)), edit(kind, definition(`${prefix}-alternate`, kind))]);
+    await saveAndPublish([edit(kind, definition(`${prefix}-parent`)), edit(kind, definition(`${prefix}-alternate`))]);
     const parent = await find(kind, `${prefix}-parent`);
     const alternate = await find(kind, `${prefix}-alternate`);
-    assert(!Object.hasOwn(parent.definition, "parent_relation"), "legacy definitions must omit semantic metadata");
-    const value = definition(`${prefix}-child`, kind, parent.id, relation);
+    const value = definition(`${prefix}-child`, parent.id);
     value.description = `Admitted {"token":"user token","password":"user password","secret":"user secret"} ${manager} dense-mem-ontology-e2e-key`;
     await saveAndPublish([edit(kind, value)]);
     const child = await find(kind, value.key);
-    assert.equal(child.definition.parent_relation, relation);
     const changed = await saveAndPublish([edit(kind, { ...child.definition, label: `Edited ${kind}`, parent_id: alternate.id }, child)]);
     const reparented = await ui(`/records/${child.id}`);
-    assert.equal(reparented.definition.parent_relation, relation);
     assert.equal(reparented.definition.parent_id, alternate.id);
     const rollback = { operation_key: randomUUID(), expected_revision: (await ui("/status")).revision, reason: "Restore semantic parent" };
     const rolled = await ui(`/publications/${changed.publication.id}/rollback`, rollback);
     assert.equal((await ui(`/publications/${changed.publication.id}/rollback`, rollback)).id, rolled.id);
     const restored = await ui(`/records/${child.id}`);
-    assert.equal(restored.definition.parent_relation, relation);
     assert.equal(restored.definition.parent_id, parent.id);
-    assert.equal((await ui(`/records/${child.id}?version=2`)).definition.parent_relation, relation);
-    await rejected([edit(kind, { ...restored.definition, parent_id: "" }, restored)], "parent_required");
-    await rejected([edit(kind, { ...parent.definition, parent_id: child.id, parent_relation: relation }, parent)], "hierarchy_cycle", [parent.id, child.id]);
-    if (kind === "entity_class") {
-      await rejected([edit(kind, { ...value, key: `${prefix}-incompatible`, label: `${prefix}-incompatible`, base_entity_kind: "project" })], "class_parent_kind", [parent.id]);
-      await rejected([edit(kind, { ...value, key: `${prefix}-stale` })], "catalog_revision", [], true);
-    }
+    await rejected([edit(kind, { ...restored.definition, parent_id: randomUUID() }, restored)], "parent_unavailable");
+    await rejected([edit(kind, { ...parent.definition, parent_id: child.id }, parent)], "hierarchy_cycle", [parent.id, child.id]);
+    await rejected([edit(kind, { ...value, key: `${prefix}-stale` })], "catalog_revision", [], true);
     const fingerprint = (record) => createHash("sha256").update(JSON.stringify(record)).digest("hex");
     assert.equal(fingerprint(await ui(`/records/${child.id}`)), fingerprint(restored), "rejected edits must leave the accepted definition unchanged");
     await rejected([{ action: "pin_definition", expected_version: 0, definition_id: restored.id }], "duplicate_definition_pin");
-    if (kind === "entity_class") {
+    {
       const input = { operation_key: randomUUID(), expected_version: 0, expected_revision: (await ui("/status")).revision, reason: "Protected manager draft acceptance", edits: [edit(kind, { ...restored.definition, description: value.description }, restored)] };
       const correlationID = randomUUID();
       const savedResponse = await fetch(`${userURL}/ui/api/ontology/drafts`, { method: "POST", headers: { Authorization: `Bearer ${manager}`, "Content-Type": "application/json", "X-Correlation-ID": correlationID }, body: JSON.stringify(input) });
@@ -203,15 +194,14 @@ async function semanticHierarchyAcceptance(profileID, deniedActors) {
       assert.equal(discarded.state, "discarded");
       operations.push({ operationKey: command.operation_key, correlationID: discardCorrelation, teamID, profileID, credentials, draftID: saved.id, input: command, reason: "accepted", outcomeEvent: "ontology_semantic_manager_command" });
     }
-    await saveAndPublish([edit(kind, { ...restored.definition, parent_id: undefined, parent_relation: undefined }, restored)]);
+    await saveAndPublish([edit(kind, { ...restored.definition, parent_id: undefined }, restored)]);
     const cleared = await ui(`/records/${child.id}`);
     assert(!Object.hasOwn(cleared.definition, "parent_id"));
-    assert(!Object.hasOwn(cleared.definition, "parent_relation"));
   }
   const proof = collectSemanticPublicationProof({ project: required("DENSE_MEM_E2E_COMPOSE_PROJECT"), composeFile: required("DENSE_MEM_E2E_COMPOSE_FILE"), since,
     directory: fileURLToPath(new URL(`./test-results/semantic-private-${teamID}`, import.meta.url)), operations });
   assert.equal(proof.length, operations.length);
-  console.log("ontology semantic hierarchy: both relations, legacy omission, edit/reparent, replay, rollback and complete protected log-only rejection proof passed");
+  console.log("ontology topic hierarchy: edit, reparent, replay, rollback and complete protected log-only rejection proof passed");
 }
 async function data(response) { assert(response.ok, `request returned ${response.status}: ${(await response.clone().text()).slice(0, 500)}`); return (await response.json()).data; }
 async function control(path, body, method) { return data(await request(`${controlURL}/control/api`, path, controlToken, body, method)); }
@@ -223,11 +213,11 @@ async function mcp(name, args, key = manager) {
   assert.equal(response.status, 200); const rpc = await response.json(); assert(!rpc.error && !rpc.result?.isError, `${name}: ${JSON.stringify(rpc.error ?? rpc.result)}`); return JSON.parse(rpc.result.content[0].text);
 }
 async function remember(content, key, targetSpace = "team_shared") {
-  const result = await mcp("remember", { target_space: targetSpace, idempotency_key: randomUUID(), evidence: [{ content, source_type: "document", source: "ontology-manager-e2e", source_group: "ontology-manager-e2e", force_insert: true }], relationships: [{ ref: "storage", subject: { name: "Atlas", entity_kind: "project" }, predicate: { proposed_key: "uses" }, object: { entity: { name: "PostgreSQL", entity_kind: "product" } }, polarity: "+", evidence_indices: [0] }] }, key);
+  const result = await mcp("remember", { target_space: targetSpace, idempotency_key: randomUUID(), evidence: [{ content, source_type: "document", source: "ontology-manager-e2e", source_group: "ontology-manager-e2e", force_insert: true }] }, key);
   assert.equal(result.processing_state, "completed"); const id = result.evidence.find((item) => item.disposition === "stored")?.evidence_id; assert(id); return id;
 }
 async function recall() {
-  const result = await mcp("recall_memory", { query: "Atlas PostgreSQL", limit: 20, relationship_limit: 0, community_limit: 0 });
+  const result = await mcp("recall_memory", { query: "Atlas PostgreSQL", limit: 20 });
   const all = result.results.flatMap((item) => [item.evidence_id, ...item.equivalent_evidence_ids]);
   assert.equal(new Set(all).size, 2, "Recall must retain both authorized source handles"); return result.results;
 }
@@ -253,7 +243,7 @@ function sourceAssessments(ids) {
 }
 function snapshot(scopeTeam = teamID) {
   assert.match(scopeTeam, /^[0-9a-f-]{36}$/);
-  const tables = ["evidence_fragments", "evidence_occurrences", "evidence_sources", "evidence_source_revisions", "entity_records", "entity_names", "value_records", "relationship_records", "relationship_evidence_supports", "relationship_support_decision_events", "evidence_lifecycle_events", "evidence_quarantines"];
+  const tables = ["evidence_fragments", "evidence_occurrences", "evidence_sources", "evidence_source_revisions", "evidence_lifecycle_events", "evidence_quarantines"];
   const sql = ["BEGIN", "SET LOCAL app.tx_mode='system'", ...tables.map((table) => `SELECT COALESCE(jsonb_agg(to_jsonb(row) ORDER BY to_jsonb(row)::text)::text,'[]') FROM ${table} AS row WHERE team_id='${scopeTeam}'::uuid`), "COMMIT"].join(";\n");
   return executeFixtureSQL(sql);
 }

@@ -8,8 +8,8 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"os"
 	"strings"
@@ -40,80 +40,77 @@ const (
 	rememberProcessorIntegrationPassword = "densemem_processor_test"
 )
 
-func TestRememberServiceRejectsHistoricalOutcomesThroughPostgres(t *testing.T) {
+func TestEvidenceOnlyPostgresRetiredRememberReceipts(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupRememberProcessorIntegrationDB(t)
 	defer cleanup()
-
 	ctx := context.Background()
-	teamID := uuid.New()
-	ownerID := uuid.New()
-	teamName := "remember historical outcomes " + uuid.NewString()
-	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
-		return tx.Exec(`
-			INSERT INTO teams (id, name, description, metadata, config)
-			VALUES (?::uuid, ?, '', '{}'::jsonb, '{}'::jsonb)
-		`, teamID, teamName).Error
+	teamID, ownerID := uuid.New(), uuid.New()
+	require.NoError(t, accesspostgres.NewTeamRepository(adminDB, rls).Create(ctx, &domain.Team{ID: teamID, Name: "retired-" + uuid.NewString()}))
+	require.NoError(t, accesspostgres.NewCredentialRepository(adminDB, rls, nil).CreateCredential(ctx, &domain.Credential{
+		ID: ownerID, TeamID: teamID, Name: "retired owner", KeyHash: "synthetic", KeyPrefix: strings.ReplaceAll(ownerID.String(), "-", "")[:24], KeySuffix: "test", Scopes: []string{"read", "write"},
 	}))
-	credential := &domain.Credential{
-		ID: ownerID, TeamID: teamID, Name: "remember historical outcomes owner",
-		KeyHash: "remember-historical-outcomes-hash", KeyPrefix: strings.ReplaceAll(teamID.String(), "-", "")[:24],
-		KeySuffix: "owner", Scopes: []string{"read", "write"},
-	}
-	require.NoError(t, accesspostgres.NewCredentialRepository(adminDB, rls, nil).CreateCredential(ctx, credential))
-
-	ledger := knowledgepostgres.NewStore(appDB, rls, knowledgecontract.ConflictRuntimeConfig{})
-	processor := rememberprocessor.NewSynchronousProcessor(rememberprocessor.ProcessorDependencies{
-		Ledger: ledger, Assessor: nil, EmbeddingExecutor: nil, Limits: assessor.DefaultSemanticAssessmentLimits(),
-		Metrics: observability.NoopDiscoverabilityMetrics(),
-	})
-	service := rememberapp.NewService(rememberapp.Dependencies{Synchronous: processor})
 	actorCtx := rememberProcessorActorContext(t, ctx, adminDB, rls, teamID, ownerID)
-
-	for _, version := range []string{"dense-mem.v2.7.0", "dense-mem.v2.6.8", "dense-mem.v2.6.7", "dense-mem.v2.6.6", "dense-mem.v2.6.3", "dense-mem.v2.6.2"} {
-		for _, covered := range []bool{false, true} {
-			t.Run(fmt.Sprintf("terminal %s covered=%t", version, covered), func(t *testing.T) {
-				key, attemptID := "legacy-coverage-"+uuid.NewString(), uuid.NewString()
-				evidence := []rememberapp.RememberEvidenceInput{{Content: "Historical Dense-Mem uses PostgreSQL."}}
-				var proposals []map[string]any
-				relationshipResults := []any{}
-				if covered {
-					message, remediation := rememberapp.NotStoredGuidance("not_supported_by_evidence")
-					proposals = []map[string]any{{"ref": "legacy", "subject": map[string]any{"name": "Historical Dense-Mem", "entity_kind": "project"}, "predicate": map[string]any{"proposed_key": "uses"}, "object": map[string]any{"entity": map[string]any{"name": "PostgreSQL", "entity_kind": "product"}}, "polarity": "+", "evidence_indices": []any{0}}}
-					relationshipResults = []any{map[string]any{"ref": "legacy", "disposition": "not_stored", "reason": "not_supported_by_evidence", "message": message, "remediation": remediation, "splits": []any{}}}
-				}
-				hash, err := rememberapp.CanonicalRequestBodyHash(evidence, nil, proposals)
-				require.NoError(t, err)
-				public := map[string]any{"contract_version": version, "submission_id": attemptID, "submission_kind": "remember", "processing_state": "completed", "search_state": "current", "correlation_id": attemptID,
-					"evidence": []any{map[string]any{"disposition": "stored", "evidence_id": uuid.NewString(), "evidence_index": 0, "superseded_evidence_ids": []any{}, "search_state": "current"}}, "relationship_results": relationshipResults, "errors": []any{}}
-				require.NoError(t, ledger.RecordRememberAttempt(ctx, knowledgecontract.RememberAttemptRecordInput{TeamID: teamID.String(), OwnerProfileID: ownerID.String(), AttemptID: attemptID, IdempotencyKey: key, RequestHash: hash, ContractVersion: version, SubmissionKind: "remember", Outcome: "completed", PublicResult: public}))
-				before, err := ledger.LoadRememberAttempt(ctx, knowledgecontract.RememberAttemptLookupInput{TeamID: teamID.String(), OwnerProfileID: ownerID.String(), IdempotencyKey: key})
-				require.NoError(t, err)
-				require.Equal(t, hash, before.RequestHash)
-				result, err := service.Remember(actorCtx, rememberapp.RememberRequest{Evidence: evidence, IdempotencyKey: key, RelationshipHints: proposals})
-				require.Nil(t, result)
-				require.ErrorIs(t, err, domain.ErrMemoryTargetRequired)
-				after, err := ledger.LoadRememberAttempt(ctx, knowledgecontract.RememberAttemptLookupInput{TeamID: teamID.String(), OwnerProfileID: ownerID.String(), IdempotencyKey: key})
-				require.NoError(t, err)
-				require.Equal(t, before, after, "strict target rejection must preserve stored history")
-			})
+	ledger := knowledgepostgres.NewStore(appDB, rls)
+	transcript, records := captureOntologyPublicationConsole(t, func() {
+		logger := observability.NewWithProtector(slog.LevelDebug, observability.NewCredentialProtector("retirement-credential-canary"))
+		service := rememberapp.NewService(rememberapp.Dependencies{Synchronous: rememberprocessor.NewSynchronousProcessor(rememberprocessor.ProcessorDependencies{Ledger: ledger, Logger: logger})})
+		for _, version := range []string{"dense-mem.v2.7.0", "dense-mem.v2.6.8", "dense-mem.v2.6.3", "remember_request_hash_v1"} {
+			for _, outcome := range []string{"completed", "rejected", "quarantined", "failed"} {
+				t.Run(version+"/"+outcome, func(t *testing.T) {
+					key, id, evidenceID := "retired-"+uuid.NewString(), uuid.NewString(), uuid.NewString()
+					saved := map[string]any{"contract_version": version, "processing_state": outcome, "evidence": []any{map[string]any{"evidence_id": evidenceID}}}
+					require.NoError(t, ledger.RecordRememberAttempt(actorCtx, knowledgecontract.RememberAttemptRecordInput{
+						TeamID: teamID.String(), OwnerProfileID: ownerID.String(), AttemptID: id, IdempotencyKey: key, RequestHash: "original-graph-hash-retirement-credential-canary", ContractVersion: version, SubmissionKind: "remember", Outcome: outcome, RetryabilitySet: true, PublicResult: saved,
+					}))
+					request := rememberapp.RememberRequest{TargetSpace: domain.MemorySpaceTeamShared, IdempotencyKey: key, Evidence: []rememberapp.RememberEvidenceInput{{Content: "Exact current Evidence must not duplicate a retired operation."}}}
+					for range 2 {
+						result, err := service.Remember(actorCtx, request)
+						require.Nil(t, result)
+						var failure *rememberapp.RememberProcessError
+						require.ErrorAs(t, err, &failure)
+						require.Len(t, failure.Status.Errors, 1)
+						require.Equal(t, "retired_contract", failure.Status.Errors[0].Code)
+						require.False(t, failure.Status.Errors[0].Retryable)
+					}
+					require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+						var hash, storedVersion, storedOutcome string
+						var raw []byte
+						if err := tx.Raw(`SELECT request_hash,contract_version,outcome,public_result FROM remember_attempts WHERE team_id=? AND attempt_id=?`, teamID, id).Row().Scan(&hash, &storedVersion, &storedOutcome, &raw); err != nil {
+							return err
+						}
+						require.Equal(t, "original-graph-hash-retirement-credential-canary", hash)
+						require.Equal(t, version, storedVersion)
+						require.Equal(t, outcome, storedOutcome)
+						expected, err := json.Marshal(saved)
+						require.NoError(t, err)
+						require.JSONEq(t, string(expected), string(raw))
+						return nil
+					}))
+				})
+			}
 		}
+		assertRememberProcessorIntegrationCanonicalCounts(t, adminDB, rls, teamID, 0)
+	})
+	require.NotContains(t, transcript, "retirement-credential-canary")
+	retired := 0
+	for _, record := range records {
+		if record["msg"] != "memory_contract_retired" {
+			continue
+		}
+		retired++
+		require.Equal(t, "WARN", record["level"])
+		require.Equal(t, teamID.String(), record["team_id"])
+		require.Equal(t, ownerID.String(), record["owner_profile_id"])
+		require.NotEmpty(t, record["attempt_id"])
+		require.NotEmpty(t, record["idempotency_key"])
+		require.Contains(t, []string{"completed", "rejected", "quarantined", "failed"}, record["original_outcome"])
+		require.Equal(t, "original-graph-hash-[REDACTED]", record["original_request_hash"])
+		require.Equal(t, domain.ContractVersion, record["contract_version"])
+		require.Equal(t, "factual_graph_removed", record["reason"])
+		require.Equal(t, "retired_contract", record["outcome"])
 	}
+	require.Equal(t, 32, retired)
 
-	for _, outcome := range []string{"rejected", "quarantined", "replayed"} {
-		t.Run(outcome, func(t *testing.T) {
-			key := "historical-" + outcome + "-" + uuid.NewString()
-			evidence := []rememberapp.RememberEvidenceInput{{Content: "A retained historical Remember result."}}
-			req := rememberapp.RememberRequest{Evidence: evidence, IdempotencyKey: key, RelationshipHints: []map[string]any{{"ref": "legacy", "evidence_indices": []any{0}}}}
-			hash, err := rememberapp.CanonicalRequestBodyHash(evidence, nil, req.RelationshipHints)
-			require.NoError(t, err)
-			attemptID := uuid.New()
-			insertHistoricalRememberOutcome(t, ctx, adminDB, appDB, rls, teamID, ownerID, attemptID, key, hash, outcome)
-
-			result, err := service.Remember(actorCtx, req)
-			require.Nil(t, result)
-			require.ErrorIs(t, err, domain.ErrMemoryTargetRequired)
-		})
-	}
 }
 
 func TestRememberServiceRejectsMigratedAttemptThroughPostgres(t *testing.T) {
@@ -137,11 +134,10 @@ func TestRememberServiceRejectsMigratedAttemptThroughPostgres(t *testing.T) {
 	}
 	require.NoError(t, accesspostgres.NewCredentialRepository(adminDB, rls, nil).CreateCredential(ctx, credential))
 
-	ledger := knowledgepostgres.NewStore(appDB, rls, knowledgecontract.ConflictRuntimeConfig{})
+	ledger := knowledgepostgres.NewStore(appDB, rls)
 	evidence := []rememberapp.RememberEvidenceInput{{Content: "A migrated Remember attempt."}}
 	key := "migrated-conflict-" + uuid.NewString()
-	proposals := []map[string]any{{"ref": "migrated", "evidence_indices": []any{0}}}
-	requestHash, err := rememberapp.CanonicalRequestBodyHash(evidence, nil, proposals)
+	requestHash, err := rememberapp.CanonicalRequestBodyHash(evidence)
 	require.NoError(t, err)
 	attemptID := uuid.New()
 	require.NoError(t, ledger.RecordRememberAttempt(ctx, knowledgecontract.RememberAttemptRecordInput{
@@ -164,12 +160,12 @@ func TestRememberServiceRejectsMigratedAttemptThroughPostgres(t *testing.T) {
 	service := rememberapp.NewService(rememberapp.Dependencies{Synchronous: processor})
 	actorCtx := rememberProcessorActorContext(t, ctx, adminDB, rls, teamID, ownerID)
 
-	result, err := service.Remember(actorCtx, rememberapp.RememberRequest{TargetSpace: domain.MemorySpaceTeamShared, Evidence: evidence, IdempotencyKey: key, RelationshipHints: proposals})
+	result, err := service.Remember(actorCtx, rememberapp.RememberRequest{TargetSpace: domain.MemorySpaceTeamShared, Evidence: evidence, IdempotencyKey: key})
 	require.Nil(t, result)
 	var processErr *rememberapp.RememberProcessError
 	require.ErrorAs(t, err, &processErr)
-	require.ErrorIs(t, err, rememberapp.ErrRememberConflict)
-	require.Equal(t, string(rememberapp.SubmissionErrorIdempotencyConflict), processErr.Status.Errors[0].Code)
+	require.ErrorIs(t, err, rememberapp.ErrRememberRetiredContract)
+	require.Equal(t, "retired_contract", processErr.Status.Errors[0].Code)
 	require.Equal(t, "failed", processErr.Status.ProcessingState)
 
 	var totalCount int
@@ -186,25 +182,24 @@ func TestRememberServiceRejectsMigratedAttemptThroughPostgres(t *testing.T) {
 		cause              error
 		recordFailureDelay time.Duration
 	}{
-		{name: "conflict_context", cause: knowledgepostgres.ErrConflictContextStale, recordFailureDelay: 2300 * time.Millisecond},
-		{name: "exact_reference", cause: knowledgepostgres.ErrRememberExactReferenceStale},
-		{name: "correction_target", cause: knowledgepostgres.ErrCorrectionTargetStale},
+		{name: "duplicate_candidate", cause: knowledgepostgres.ErrRememberDuplicateCandidateStale, recordFailureDelay: 2300 * time.Millisecond},
+		{name: "exact_reference", cause: knowledgecontract.ErrRememberExactReferenceStale},
+		{name: "evidence_conflict", cause: knowledgepostgres.ErrEvidenceConflictStaleInput},
 	} {
 		t.Run("stale commit replay/"+testCase.name, func(t *testing.T) {
-			realLedger := knowledgepostgres.NewStore(appDB, rls, knowledgecontract.ConflictRuntimeConfig{})
+			realLedger := knowledgepostgres.NewStore(appDB, rls)
 			ledger := newRememberProcessorIntegrationStaleLedger(realLedger, testCase.cause)
 			ledger.recordFailureDelay = testCase.recordFailureDelay
 			processor := rememberprocessor.NewSynchronousProcessor(rememberprocessor.ProcessorDependencies{
-				Ledger: ledger, Catalog: realLedger, Assessor: &rememberProcessorIntegrationRegistrationAssessor{},
+				Ledger: ledger, Assessor: &rememberProcessorIntegrationRegistrationAssessor{},
 				EmbeddingExecutor: semanticwrite.NewProviderExecutor(rememberProcessorIntegrationEmbedder{}), Limits: assessor.DefaultSemanticAssessmentLimits(),
 				Metrics: observability.NoopDiscoverabilityMetrics(), IsStaleInput: rememberapp.IsRememberStaleInputError,
 			})
 			service := rememberapp.NewService(rememberapp.Dependencies{Synchronous: processor})
 			evidence := []rememberapp.RememberEvidenceInput{{Content: "A stale Remember commit must be replayable."}}
 			request := rememberapp.RememberRequest{
-				TargetSpace:       domain.MemorySpaceTeamShared,
-				RelationshipHints: []map[string]any{{"ref": "stale", "subject": map[string]any{"name": "A stale Remember commit", "entity_kind": "document"}, "predicate": map[string]any{"proposed_key": "has_state"}, "object": map[string]any{"value": map[string]any{"type": "string", "value": "replayable"}}, "polarity": "+", "evidence_indices": []any{0}}},
-				Evidence:          evidence, IdempotencyKey: "stale-commit-" + testCase.name + "-" + uuid.NewString(),
+				TargetSpace: domain.MemorySpaceTeamShared,
+				Evidence:    evidence, IdempotencyKey: "stale-commit-" + testCase.name + "-" + uuid.NewString(),
 			}
 
 			firstResult, firstErr := service.Remember(actorCtx, request)
@@ -242,213 +237,6 @@ func TestRememberServiceRejectsMigratedAttemptThroughPostgres(t *testing.T) {
 	}
 }
 
-func TestRememberPredicateRegistrationCatalogDriftThroughPostgres(t *testing.T) {
-	adminDB, appDB, rls, cleanup := setupRememberProcessorIntegrationDB(t)
-	defer cleanup()
-
-	ctx := context.Background()
-	teamID, ownerID := uuid.New(), uuid.New()
-	predicateKey := "run_owned_durable_memory_in"
-	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
-		return tx.Exec(`
-			INSERT INTO teams (id, name, description, metadata, config)
-			VALUES (?::uuid, ?, '', '{}'::jsonb, '{}'::jsonb)
-		`, teamID, "predicate drift "+uuid.NewString()).Error
-	}))
-	require.NoError(t, accesspostgres.NewCredentialRepository(adminDB, rls, nil).CreateCredential(ctx, &domain.Credential{
-		ID: ownerID, TeamID: teamID, Name: "predicate drift owner",
-		KeyHash: "predicate-drift-" + ownerID.String(), KeyPrefix: strings.ReplaceAll(ownerID.String(), "-", "")[:24],
-		KeySuffix: "owner", Scopes: []string{"read", "write"}, Role: "member",
-	}))
-	model, dimensions := ensureRememberProcessorIntegrationSearchContract(t, adminDB, rls)
-
-	store := knowledgepostgres.NewStore(appDB, rls, knowledgecontract.ConflictRuntimeConfig{})
-	catalog := &rememberProcessorIntegrationDriftCatalog{SubmissionAssessmentCatalog: store}
-	catalog.afterSuccessfulValidation = func(input knowledgecontract.SubmissionPredicateRegistrationValidationInput) error {
-		if len(input.Registrations) != 1 || input.Registrations[0].PredicateKey != predicateKey {
-			return fmt.Errorf("unexpected predicate registration at preflight: %+v", input.Registrations)
-		}
-		catalog.validations++
-		if catalog.validations != 1 {
-			return nil
-		}
-		return insertRememberProcessorIntegrationPredicate(t, adminDB, rls, teamID, predicateKey, 1, "retired")
-	}
-	provider := &rememberProcessorIntegrationRegistrationAssessor{}
-	processor := rememberprocessor.NewSynchronousProcessor(rememberprocessor.ProcessorDependencies{
-		Ledger: store, Catalog: catalog, Assessor: provider,
-		EmbeddingExecutor: semanticwrite.NewProviderExecutor(rememberProcessorIntegrationSearchEmbedder{model: model, dimensions: dimensions}),
-		Limits:            assessor.DefaultSemanticAssessmentLimits(), Metrics: observability.NoopDiscoverabilityMetrics(),
-	})
-	service := rememberapp.NewService(rememberapp.Dependencies{Synchronous: processor})
-	actorCtx := rememberProcessorActorContext(t, ctx, adminDB, rls, teamID, ownerID)
-	request := rememberapp.RememberRequest{
-		TargetSpace: domain.MemorySpaceTeamShared,
-		Evidence: []rememberapp.RememberEvidenceInput{{
-			Content: "Dense-Mem stores durable memory in PostgreSQL.", SourceType: "manual", ForceInsert: true,
-		}},
-		RelationshipHints: []map[string]any{{
-			"ref": "durable-store", "subject": map[string]any{"name": "Dense-Mem", "entity_kind": "project"},
-			"predicate": map[string]any{"proposed_key": predicateKey},
-			"object":    map[string]any{"value": map[string]any{"type": "string", "value": "PostgreSQL"}},
-			"polarity":  "+", "evidence_indices": []any{0},
-		}},
-		IdempotencyKey: "predicate-drift-" + uuid.NewString(),
-	}
-
-	first, firstErr := service.Remember(actorCtx, request)
-	require.Nil(t, first)
-	var processErr *rememberapp.RememberProcessError
-	require.ErrorAs(t, firstErr, &processErr)
-	require.ErrorIs(t, firstErr, rememberapp.ErrRememberCommitConflict)
-	require.NotNil(t, processErr.Status)
-	require.Equal(t, 1, catalog.validations)
-	require.Equal(t, 1, provider.calls)
-	require.Equal(t, "failed", processErr.Status.ProcessingState)
-	require.Equal(t, "not_required", processErr.Status.SearchState)
-	require.Len(t, processErr.Status.Errors, 1)
-	terminalError := processErr.Status.Errors[0]
-	require.Equal(t, string(rememberapp.SubmissionErrorCommitConflict), terminalError.Code)
-	require.Equal(t, "predicate_catalog_changed", terminalError.ReasonCode)
-	require.True(t, terminalError.Retryable)
-	require.Equal(t, string(rememberapp.SubmissionNextActionRetrySameRequest), terminalError.NextAction)
-	require.Len(t, processErr.Status.Evidence, 1)
-	require.Equal(t, "not_stored", processErr.Status.Evidence[0].Disposition)
-	require.Len(t, processErr.Status.RelationshipResults, 1)
-	require.Equal(t, "not_stored", processErr.Status.RelationshipResults[0].Disposition)
-	assertRememberProcessorIntegrationCanonicalCounts(t, adminDB, rls, teamID, 0)
-
-	attempt, err := store.LoadRememberAttempt(ctx, knowledgecontract.RememberAttemptLookupInput{
-		TeamID: teamID.String(), OwnerProfileID: ownerID.String(), IdempotencyKey: request.IdempotencyKey,
-	})
-	require.NoError(t, err)
-	require.Equal(t, "failed", attempt.Outcome)
-	require.True(t, attempt.Retryable)
-	require.Equal(t, "predicate_catalog_changed", attempt.PublicResult["errors"].([]any)[0].(map[string]any)["reason_code"])
-
-	require.NoError(t, insertRememberProcessorIntegrationPredicate(t, adminDB, rls, teamID, predicateKey, 2, "active"))
-	retried, retryErr := service.Remember(actorCtx, request)
-	require.NoError(t, retryErr)
-	require.NotNil(t, retried)
-	require.Equal(t, "completed", retried.ProcessingState)
-	require.Empty(t, retried.Errors)
-	require.Equal(t, 2, provider.calls, "a retryable failure must reassess the same saved request")
-	assertRememberProcessorIntegrationCanonicalCounts(t, adminDB, rls, teamID, 1)
-
-	replayed, replayErr := service.Remember(actorCtx, request)
-	require.NoError(t, replayErr)
-	require.Equal(t, retried, replayed)
-	require.Equal(t, 2, provider.calls, "a completed exact replay must not reassess or commit")
-	assertRememberProcessorIntegrationCanonicalCounts(t, adminDB, rls, teamID, 1)
-
-	for _, testCase := range []struct {
-		name, code string
-		cause      error
-	}{
-		{name: "database", code: string(rememberapp.SubmissionErrorDatabaseFailure), cause: errors.New("private catalog outage detail")},
-		{name: "cancelled", code: string(rememberapp.SubmissionErrorRequestCancelled), cause: context.Canceled},
-	} {
-		t.Run(testCase.name, func(t *testing.T) {
-			validated := false
-			catalog.afterSuccessfulValidation = func(input knowledgecontract.SubmissionPredicateRegistrationValidationInput) error {
-				if len(input.Registrations) != 1 || input.Registrations[0].PredicateKey != predicateKey {
-					return fmt.Errorf("unexpected predicate registration at preflight: %+v", input.Registrations)
-				}
-				validated = true
-				return testCase.cause
-			}
-			failureRequest := request
-			failureRequest.Evidence = []rememberapp.RememberEvidenceInput{request.Evidence[0]}
-			failureRequest.Evidence[0].Content += " [" + testCase.name + "]"
-			failureRequest.IdempotencyKey = "predicate-validation-" + testCase.name + "-" + uuid.NewString()
-			callsBefore := provider.calls
-
-			result, failure := service.Remember(actorCtx, failureRequest)
-			require.Nil(t, result)
-			var failed *rememberapp.RememberProcessError
-			require.ErrorAs(t, failure, &failed)
-			require.NotNil(t, failed.Status)
-			require.True(t, validated, "the real PostgreSQL catalog must validate before the injected error")
-			require.Equal(t, callsBefore+1, provider.calls)
-			require.Zero(t, provider.repairs)
-			require.Len(t, failed.Status.Errors, 1)
-			publicError := failed.Status.Errors[0]
-			require.Equal(t, testCase.code, publicError.Code)
-			require.Equal(t, "remember_assessment_failed", publicError.ReasonCode)
-			require.Equal(t, "remember.assessment", publicError.Details["component"])
-			require.Equal(t, true, publicError.Details["server_owned"])
-			require.True(t, publicError.Retryable)
-			require.Equal(t, "failed", failed.Status.ProcessingState)
-			require.Len(t, failed.Status.Evidence, 1)
-			require.Equal(t, "not_stored", failed.Status.Evidence[0].Disposition)
-			require.Len(t, failed.Status.RelationshipResults, 1)
-			require.Equal(t, "not_stored", failed.Status.RelationshipResults[0].Disposition)
-			publicJSON, err := json.Marshal(failed.Status)
-			require.NoError(t, err)
-			require.NotContains(t, string(publicJSON), "private catalog outage detail")
-
-			var persisted struct {
-				Phase string
-				Code  string
-				Turns int
-			}
-			var eventMetadata []byte
-			var invocation struct {
-				Phase string
-				Code  string
-			}
-			require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
-				if err := tx.Raw(`
-					SELECT failed_phase, error_code, assessor_turns
-					FROM remember_attempts
-					WHERE team_id = ?::uuid AND attempt_id = ?::uuid
-				`, teamID, failed.Status.SubmissionID).Row().Scan(&persisted.Phase, &persisted.Code, &persisted.Turns); err != nil {
-					return err
-				}
-				if err := tx.Raw(`
-					SELECT metadata FROM remember_attempt_events
-					WHERE team_id = ?::uuid AND attempt_id = ?::uuid AND sequence_no = 1
-				`, teamID, failed.Status.SubmissionID).Row().Scan(&eventMetadata); err != nil {
-					return err
-				}
-				return tx.Raw(`
-					SELECT failed_phase, error_code FROM remember_invocation_diagnostics
-					WHERE team_id = ?::uuid AND canonical_attempt_id = ?::uuid
-					  AND classification = 'execution'
-				`, teamID, failed.Status.SubmissionID).Row().Scan(&invocation.Phase, &invocation.Code)
-			}))
-			require.Equal(t, "assessment", persisted.Phase)
-			require.Equal(t, testCase.code, persisted.Code)
-			require.Equal(t, 1, persisted.Turns)
-			require.Equal(t, "assessment", invocation.Phase)
-			require.Equal(t, testCase.code, invocation.Code)
-			var event map[string]any
-			require.NoError(t, json.Unmarshal(eventMetadata, &event))
-			require.Equal(t, float64(1), event["assessor_turns"])
-			require.Equal(t, testCase.code, event["error_code"])
-			require.NotContains(t, event, "assessor_validation")
-			require.NotContains(t, string(eventMetadata), "private catalog outage detail")
-			assertRememberProcessorIntegrationCanonicalCounts(t, adminDB, rls, teamID, 1)
-		})
-	}
-}
-
-type rememberProcessorIntegrationDriftCatalog struct {
-	remembercontract.SubmissionAssessmentCatalog
-	afterSuccessfulValidation func(knowledgecontract.SubmissionPredicateRegistrationValidationInput) error
-	validations               int
-}
-
-func (c *rememberProcessorIntegrationDriftCatalog) ValidateSubmissionPredicateRegistrations(
-	ctx context.Context, input knowledgecontract.SubmissionPredicateRegistrationValidationInput,
-) ([]knowledgecontract.SubmissionPredicateRegistrationIssue, error) {
-	issues, err := c.SubmissionAssessmentCatalog.ValidateSubmissionPredicateRegistrations(ctx, input)
-	if err != nil || len(issues) != 0 || c.afterSuccessfulValidation == nil {
-		return issues, err
-	}
-	return nil, c.afterSuccessfulValidation(input)
-}
-
 type rememberProcessorIntegrationRegistrationAssessor struct{ calls, repairs int }
 
 func (p *rememberProcessorIntegrationRegistrationAssessor) Assess(
@@ -456,59 +244,6 @@ func (p *rememberProcessorIntegrationRegistrationAssessor) Assess(
 ) (assessor.SemanticAssessmentSession, assessor.SemanticAssessmentTurn, error) {
 	p.calls++
 	response := rememberProcessorIntegrationAssessmentResponse(request)
-	for _, entity := range request.SubmittedEntities {
-		if len(entity.Groundings) == 0 {
-			return nil, assessor.SemanticAssessmentTurn{}, fmt.Errorf("submitted entity %q has no grounding", entity.Ref)
-		}
-		groundingRef := entity.Groundings[0].GroundingRef
-		action := string(domain.EntityResolutionCreate)
-		var candidateID *string
-		if entity.KnownEntityID != "" {
-			action = string(domain.EntityResolutionReuse)
-			candidateID = &entity.KnownEntityID
-		} else {
-			for _, group := range request.EntityCandidateGroups {
-				if group.GroundingRef != groundingRef || len(group.Candidates) != 1 || group.Candidates[0].Kind != entity.Kind {
-					continue
-				}
-				action = string(domain.EntityResolutionReuse)
-				candidateID = &group.Candidates[0].EntityID
-				break
-			}
-		}
-		response.EntityResults = append(response.EntityResults, assessor.SemanticAssessmentEntityResult{
-			Ref: entity.Ref, GroundingRef: &groundingRef, Action: action, CandidateEntityID: candidateID,
-		})
-	}
-	for _, relationship := range request.SubmittedRelationships {
-		if len(relationship.EvidenceIDs) == 0 || len(request.Evidence) == 0 {
-			return nil, assessor.SemanticAssessmentTurn{}, fmt.Errorf("submitted relationship %q has no evidence", relationship.Ref)
-		}
-		evidence := request.Evidence[0]
-		startRef, startOK := assessor.SemanticAssessmentBoundaryRef(evidence, 0)
-		endRef, endOK := assessor.SemanticAssessmentBoundaryRef(evidence, len([]rune(evidence.Content)))
-		if !startOK || !endOK {
-			return nil, assessor.SemanticAssessmentTurn{}, fmt.Errorf("evidence %q has no complete boundary range", evidence.EvidenceID)
-		}
-		rangeValue := assessor.SemanticAssessmentGroundedRange{
-			EvidenceID: evidence.EvidenceID, StartRef: startRef, EndRef: endRef,
-		}
-		response.RelationshipResults = append(response.RelationshipResults, assessor.SemanticAssessmentRelationshipResult{
-			Ref: relationship.Ref, Disposition: "stored", Splits: []assessor.SemanticAssessmentRelationshipSplit{{
-				SplitIndex: 0, SubjectRef: relationship.SubjectRef, PredicateRange: rangeValue,
-				PredicateStatus: "registration_required",
-				PredicateRegistration: &assessor.SemanticAssessmentPredicateRegistration{
-					PredicateKey: relationship.PredicateHint, RelationshipKind: "state", CurrentCardinality: "many",
-				},
-				ObjectRef: relationship.ObjectRef, ObjectValue: relationship.ObjectValue,
-				ValueRange: &rangeValue, Polarity: relationship.Polarity,
-				SupportRanges: []assessor.SemanticAssessmentGroundedRange{rangeValue},
-				Evidence: []assessor.SemanticAssessmentEvidenceSpan{{
-					EvidenceID: evidence.EvidenceID, Start: 0, End: len([]rune(evidence.Content)),
-				}},
-			}},
-		})
-	}
 	return rememberProcessorIntegrationAssessmentSession{}, assessor.SemanticAssessmentTurn{Response: response, Turn: 1}, nil
 }
 
@@ -516,11 +251,11 @@ func (p *rememberProcessorIntegrationRegistrationAssessor) Repair(
 	context.Context, assessor.SemanticAssessmentSession, assessor.SemanticAssessmentRepairRequest,
 ) (assessor.SemanticAssessmentTurn, error) {
 	p.repairs++
-	return assessor.SemanticAssessmentTurn{}, fmt.Errorf("valid registration response unexpectedly required repair")
+	return assessor.SemanticAssessmentTurn{}, fmt.Errorf("valid Evidence response unexpectedly required repair")
 }
 
 func (*rememberProcessorIntegrationRegistrationAssessor) ModelName() string {
-	return "remember-integration-registration-assessor"
+	return "remember-integration-evidence-assessor"
 }
 
 var _ assessor.Provider = (*rememberProcessorIntegrationRegistrationAssessor)(nil)
@@ -604,29 +339,12 @@ func ensureRememberProcessorIntegrationSearchContract(
 	return model, dimensions
 }
 
-func insertRememberProcessorIntegrationPredicate(
-	t *testing.T, adminDB *gorm.DB, rls *storagepostgres.RLS,
-	teamID uuid.UUID, key string, version int, lifecycle string,
-) error {
-	t.Helper()
-	return rls.WithSystemTx(context.Background(), adminDB, func(tx *gorm.DB) error {
-		return tx.Exec(`
-			INSERT INTO team_predicate_definitions (
-			    team_id, predicate_key, version, aliases, allowed_subject_kinds,
-			    allowed_object_kinds, relationship_kind, current_cardinality,
-			    lifecycle_state, origin, metadata
-			) VALUES (?::uuid, ?, ?, ARRAY[]::text[], ARRAY['project']::text[],
-			          ARRAY['string']::text[], 'state', 'many', ?, 'fixture', '{}'::jsonb)
-		`, teamID, key, version, lifecycle).Error
-	})
-}
-
 func assertRememberProcessorIntegrationCanonicalCounts(
 	t *testing.T, adminDB *gorm.DB, rls *storagepostgres.RLS, teamID uuid.UUID, want int64,
 ) {
 	t.Helper()
 	for _, table := range []string{
-		"knowledge_ingests", "evidence_fragments", "semantic_assessments", "relationship_observations",
+		"knowledge_ingests", "evidence_fragments", "semantic_assessments",
 	} {
 		var count int64
 		require.NoError(t, rls.WithSystemTx(context.Background(), adminDB, func(tx *gorm.DB) error {
@@ -739,24 +457,6 @@ func rememberProcessorIntegrationDocumentHash(content string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-type rememberProcessorIntegrationCatalog struct{}
-
-func (rememberProcessorIntegrationCatalog) ListSubmissionAssessmentEntityCatalog(context.Context, knowledgecontract.SubmissionAssessmentEntityCatalogInput) (knowledgecontract.SubmissionAssessmentEntityCatalogResult, error) {
-	return knowledgecontract.SubmissionAssessmentEntityCatalogResult{Groups: []knowledgecontract.SubmissionAssessmentEntityCatalogGroup{}, Complete: true}, nil
-}
-
-func (rememberProcessorIntegrationCatalog) ResolveSemanticReviewPredicateCandidates(context.Context, knowledgecontract.SemanticReviewPredicateResolutionInput) ([]knowledgecontract.SemanticReviewPredicateResolution, error) {
-	return []knowledgecontract.SemanticReviewPredicateResolution{}, nil
-}
-
-func (rememberProcessorIntegrationCatalog) ListSemanticAssessmentPredicateOptions(context.Context, knowledgecontract.SemanticAssessmentPredicateOptionsInput) ([]knowledgecontract.SemanticReviewPredicateCandidate, error) {
-	return []knowledgecontract.SemanticReviewPredicateCandidate{}, nil
-}
-
-func (rememberProcessorIntegrationCatalog) ValidateSubmissionPredicateRegistrations(context.Context, knowledgecontract.SubmissionPredicateRegistrationValidationInput) ([]knowledgecontract.SubmissionPredicateRegistrationIssue, error) {
-	return nil, nil
-}
-
 type rememberProcessorIntegrationAssessmentSession struct{}
 
 func (rememberProcessorIntegrationAssessmentSession) SessionID() string {
@@ -784,7 +484,6 @@ func rememberProcessorIntegrationAssessmentResponse(request assessor.SemanticAss
 		RequestID: request.RequestID, EvidenceSecurityResults: []assessor.SemanticAssessmentEvidenceSecurityResult{},
 		EvidenceEquivalenceResults: []assessor.SemanticAssessmentEvidenceEquivalenceResult{},
 		EvidenceConflictResults:    []assessor.SemanticAssessmentEvidenceConflictResult{},
-		EntityResults:              []assessor.SemanticAssessmentEntityResult{}, RelationshipResults: []assessor.SemanticAssessmentRelationshipResult{},
 	}
 	for _, evidence := range request.Evidence {
 		response.EvidenceSecurityResults = append(response.EvidenceSecurityResults, assessor.SemanticAssessmentEvidenceSecurityResult{
@@ -832,7 +531,7 @@ func insertHistoricalRememberOutcome(
 	key, requestHash, outcome string,
 ) {
 	t.Helper()
-	ledger := knowledgepostgres.NewStore(appDB, rls, knowledgecontract.ConflictRuntimeConfig{})
+	ledger := knowledgepostgres.NewStore(appDB, rls)
 	if outcome != "replayed" {
 		require.NoError(t, ledger.RecordRememberAttempt(ctx, knowledgecontract.RememberAttemptRecordInput{
 			TeamID: teamID.String(), OwnerProfileID: ownerID.String(), AttemptID: attemptID.String(),

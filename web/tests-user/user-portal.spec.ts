@@ -66,8 +66,8 @@ const memberCredential: TestKey = {
 const evidences = [
   {
     evidence_id: "evidence-1",
-    relationship_ids: ["relationship-1"],
     rank: 1,
+    space_kind: "team_shared", equivalent_evidence_ids: [], equivalents_truncated: false,
     context: "Alice uses Dense-Mem for project-x.",
     source: "notes",
     source_type: "manual",
@@ -75,8 +75,8 @@ const evidences = [
   },
   {
     evidence_id: "evidence-2",
-    relationship_ids: ["relationship-2"],
     rank: 2,
+    space_kind: "team_shared", equivalent_evidence_ids: [], equivalents_truncated: false,
     context: "Alice works on project-x with Dense-Mem.",
     source: "notes",
     source_type: "manual",
@@ -84,97 +84,14 @@ const evidences = [
   },
 ];
 
-const relationships = [
-  {
-    relationship_id: "relationship-1",
-    tier: "verified",
-    subject: { entity_id: "entity-alice", name: "Alice", kind: "person" },
-    predicate: "uses",
-    object: { entity_id: "entity-dense-mem", name: "Dense-Mem", kind: "software" },
-    polarity: "+",
-    valid_from: "2026-05-02T12:00:00Z",
-    evidence_ids: ["evidence-1"],
-    search_state: "current",
-  },
-  {
-    relationship_id: "relationship-2",
-    tier: "verified",
-    subject: { entity_id: "entity-alice", name: "Alice", kind: "person" },
-    predicate: "works_on",
-    object: { value_id: "value-project-x", value: "project-x", type: "project" },
-    polarity: "+",
-    valid_from: "2026-05-03T12:00:00Z",
-    evidence_ids: ["evidence-2"],
-    search_state: "current",
-  },
-];
 
-const graphSnapshot = {
-  scope: "overview",
-  depth: 2,
-  limit: 80,
-  truncated: false,
-  nodes: [
-    {
-      key: "entity:entity-alice",
-      id: "entity-alice",
-      type: "entity",
-      title: "Alice",
-    },
-    {
-      key: "entity:entity-dense-mem",
-      id: "entity-dense-mem",
-      type: "entity",
-      title: "Dense-Mem",
-    },
-    {
-      key: "value:value-project-x",
-      id: "value-project-x",
-      type: "value",
-      title: "project-x",
-    },
-  ],
-  edges: [
-    { id: "relationship-1", source: "entity:entity-alice", target: "entity:entity-dense-mem", relationship: "USES", directed: true },
-    { id: "relationship-2", source: "entity:entity-alice", target: "value:value-project-x", relationship: "WORKS_ON", directed: true },
-  ],
-};
 
-const graphNodeDetails = {
-  "entity:entity-alice": {
-    key: "entity:entity-alice",
-    id: "entity-alice",
-    type: "entity",
-    title: "Alice",
-    body: "Person",
-    status: "active",
-    score: 0.94,
-    recorded_at: "2026-05-02T12:00:00Z",
-  },
-  "entity:entity-dense-mem": {
-    key: "entity:entity-dense-mem",
-    id: "entity-dense-mem",
-    type: "entity",
-    title: "Dense-Mem",
-    body: "Software",
-    status: "active",
-    score: 0.88,
-    recorded_at: "2026-05-02T12:00:00Z",
-  },
-  "value:value-project-x": {
-    key: "value:value-project-x",
-    id: "value-project-x",
-    type: "value",
-    title: "project-x",
-    body: "project-x",
-    status: "active",
-    score: 0.75,
-    recorded_at: "2026-05-02T12:00:00Z",
-  },
-};
+
+
+
 
 for (const width of [1440, 900, 390]) for (const theme of ["light", "dark"] as const) {
-  test(`redesign knowledge ${width}px ${theme}: search, graph, ontology and connection`, async ({ page }, testInfo) => {
+  test(`redesign knowledge ${width}px ${theme}: Evidence search, ontology and connection`, async ({ page }, testInfo) => {
     const pageErrors: string[] = [];
     page.on("pageerror", (error) => pageErrors.push(error.message));
     await page.setViewportSize({ width, height: 1000 });
@@ -192,28 +109,15 @@ for (const width of [1440, 900, 390]) for (const theme of ["light", "dark"] as c
     await expect(page.getByLabel("Current workspace")).toContainText("Research Team");
     await page.getByLabel("Keyword").fill("project");
     await page.getByRole("button", { name: "Search", exact: true }).click();
-    await expect(page.getByRole("listbox", { name: "Recall result list" }).getByRole("option")).toHaveCount(3);
-    await page.getByRole("button", { name: "Filters", exact: true }).click();
-    await page.getByRole("checkbox", { name: /Relationship/ }).uncheck();
-    await page.keyboard.press("Escape");
-    await expect(page.getByRole("listbox")).not.toContainText("uses: Dense-Mem");
+    await expect(page.getByRole("listbox", { name: "Recall result list" }).getByRole("option")).toHaveCount(2);
+    await page.getByLabel("Source", { exact: true }).selectOption("notes");
     await expectPageContained(page);
     expect((await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze()).violations).toEqual([]);
     await page.screenshot({ path: testInfo.outputPath("knowledge-search.png"), fullPage: true });
     await page.getByRole("option").first().focus();
     await page.keyboard.press("Enter");
-    await expect(page.getByRole("tab", { name: "Lineage", exact: true })).toBeVisible();
-    await page.getByRole("tab", { name: "Evidence", exact: true }).focus();
-    await page.keyboard.press("ArrowRight");
-    await expect(page.getByRole("tab", { name: "Lineage", exact: true })).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByText("Evidence details", { exact: true })).toBeVisible();
     if (await page.getByRole("dialog").isVisible()) await page.keyboard.press("Escape");
-    await navigate(page, "Graph");
-    await expect(page.locator(".graph-canvas canvas").first()).toBeVisible();
-    await page.getByLabel("Inspect graph node").selectOption("entity:entity-alice");
-    await expect(page.getByRole("heading", { name: "Alice", exact: true })).toBeVisible();
-    if (await page.getByRole("dialog").isVisible()) await page.keyboard.press("Escape");
-    await expectPageContained(page);
-    await page.screenshot({ path: testInfo.outputPath("knowledge-graph.png"), fullPage: true });
     await navigate(page, "My credentials");
     await expectPageContained(page);
     await page.screenshot({ path: testInfo.outputPath("knowledge-credentials.png"), fullPage: true });
@@ -241,12 +145,12 @@ for (const width of [1440, 900, 390]) for (const theme of ["light", "dark"] as c
   });
 }
 for (const width of [1440, 768, 390]) for (const theme of ["light", "dark"] as const) {
-  test(`ontology semantic controls and long draft/history labels ${width}px ${theme}`, async ({ page }, testInfo) => {
+  test(`ontology topic controls and long draft/history labels ${width}px ${theme}`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 1000 });
     await page.emulateMedia({ colorScheme: theme });
     await mockUserApi(page, { key: managerKey, canManageTeam: true });
     const reason = "Browser correction ".padEnd(512, "x");
-    const records = [{ id: "people", version: 1, kind: "entity_class", current: true, definition: { key: "people", label: "People", description: "People vocabulary", base_entity_kind: "person" } }, { id: "researchers", version: 1, kind: "entity_class", current: true, definition: { key: "researchers", label: "Researchers", description: "Researcher vocabulary", base_entity_kind: "person", parent_id: "people", parent_relation: "subclass_of" } }];
+    const records = [{ id: "people", version: 1, kind: "topic", current: true, definition: { key: "people", label: "People", description: "People vocabulary" } }, { id: "researchers", version: 1, kind: "topic", current: true, definition: { key: "researchers", label: "Researchers", description: "Researcher vocabulary", parent_id: "people" } }];
     const publication = { id: "publication-long", revision: 1, origin: "manager", reason, records: [], record_views: records };
     const otherPublication = { ...publication, id: "publication-other", revision: 2, reason: "Another reviewed publication" };
     let draft: OntologyDraft | null = null;
@@ -275,11 +179,8 @@ for (const width of [1440, 768, 390]) for (const theme of ["light", "dark"] as c
     await page.getByLabel("Definition key").fill("browser-long");
     await page.getByLabel("Definition label").fill("Vocabulary ".padEnd(256, "y"));
     await page.getByLabel("Definition description").fill("Review a saved correction on a narrow screen.");
-    await page.getByLabel("Definition type").selectOption("entity_class");
+    await page.getByLabel("Definition type").selectOption("topic");
     await page.getByLabel("Definition parent").fill("people");
-    await page.getByLabel("Parent meaning").press("ArrowDown");
-    await page.getByLabel("Parent meaning").press("Enter");
-    await expect(page.getByLabel("Parent meaning")).toHaveValue("subclass_of");
     await page.getByLabel("Audit reason").fill(reason);
     await page.getByRole("button", { name: "Add correction to draft" }).click();
     await page.getByRole("button", { name: "Save draft", exact: true }).click();
@@ -299,7 +200,7 @@ for (const width of [1440, 768, 390]) for (const theme of ["light", "dark"] as c
     await expectPageContained(page);
     await page.getByRole("button", { name: `Revision 1 · manager · ${reason}`, exact: true }).click();
     await expect(page.getByRole("heading", { name: "Publication revision 1", exact: true })).toBeVisible();
-    await expect(page.locator('[aria-label="Publication detail"]')).toContainText("Subclass of: People (people)");
+    await expect(page.locator('[aria-label="Publication detail"]')).toContainText("Parent: People (people)");
     await page.screenshot({ path: testInfo.outputPath("ontology-semantic-history.png"), fullPage: true });
     await page.getByLabel("Rollback reason", { exact: true }).fill("Keep this unsaved reason");
     const other = page.getByRole("button", { name: "Revision 2 · manager · Another reviewed publication", exact: true });
@@ -316,155 +217,27 @@ for (const width of [1440, 768, 390]) for (const theme of ["light", "dark"] as c
   });
 }
 
-test("API key login, recall, and read-only navigation", async ({ page }) => {
+test("API key login, Evidence recall, and read-only navigation", async ({ page }) => {
   const calls = await mockUserApi(page, { key: readKey });
   await openUserPortal(page, "dm_read");
-
   await expect(page.getByLabel("Current workspace")).toBeVisible();
-  await expect(page.getByLabel("Current workspace")).not.toContainText("Mine");
   await expect(page.getByText("Other credential")).toBeHidden();
-
   await page.getByLabel("Keyword").fill("project");
-  await page.getByRole("button", { name: "Search" }).click();
-  await expect(page.getByRole("heading", { name: "Alice uses Dense-Mem for project-x." }).first()).toBeVisible();
-  await expect(page.getByText("project-x").first()).toBeVisible();
-  await expect(page.getByRole("listbox", { name: "Recall result list" })).toContainText("Dense-Mem");
-  await expect(page.getByRole("listbox", { name: "Recall result list" }).getByRole("option")).toHaveCount(3);
-  await page.getByRole("option").first().click();
-  await expect(page.getByLabel("Inspector", { exact: true })).toContainText("Evidence");
-  await page.getByRole("button", { name: "Close details panel" }).click();
-  await page.getByRole("option").filter({ hasText: "uses: Dense-Mem" }).click();
-  await expect(page.getByLabel("Inspector", { exact: true })).toContainText("Relationship");
-  await expect(page.getByLabel("Inspector", { exact: true })).toContainText("Tier verified");
-  await page.getByRole("button", { name: "Close details panel" }).click();
-  await page.getByRole("button", { name: "Filters", exact: true }).click();
-  await expect(page.getByLabel("Knowledge filters")).toBeVisible();
-  await page.getByRole("checkbox", { name: /Relationship/ }).click();
-  await page.keyboard.press("Escape");
-  await expect(page.getByRole("listbox", { name: "Recall result list" })).not.toContainText("uses: Dense-Mem");
-  await page.getByRole("button", { name: "Open details", exact: true }).click();
-  await expect(page.getByLabel("Inspector", { exact: true })).toContainText("Evidence");
-  await page.getByRole("button", { name: "Close details panel" }).click();
-  await page.getByRole("button", { name: "Filters", exact: true }).click();
-  await page.getByRole("checkbox", { name: /Evidence/ }).click();
-  await page.keyboard.press("Escape");
-  await expect(page.getByRole("option")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Open details", exact: true })).toBeDisabled();
-
+  await page.getByRole("button", { name: "Search", exact: true }).click();
+  const results = page.getByRole("listbox", { name: "Recall result list" });
+  await expect(results.getByRole("option")).toHaveCount(2);
+  await expect(results).toContainText("Alice uses Dense-Mem for project-x.");
+  await results.getByRole("option").first().click();
+  await expect(page.getByText("Evidence details", { exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Graph", exact: true })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "Usage" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Evidence" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Relationships" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Communities" })).toHaveCount(0);
   expect(calls.disallowedCredentialCalls).toEqual([]);
   expect(calls.telemetryRequests).toEqual([]);
 });
 
-test("graph tab renders a nonblank memory graph", async ({ page }) => {
-  const calls = await mockUserApi(page, { key: readKey });
-  await openUserPortal(page, "dm_read");
 
-  await navigate(page, "Graph");
-  await expect(page.getByLabel("Knowledge graph")).toBeVisible();
-  await page.getByRole("button", { name: "Open details", exact: true }).click();
-  await expect(page.getByLabel("Graph inspector", { exact: true })).toContainText("Select a node");
-  await page.getByRole("button", { name: "Close details panel" }).click();
-  const canvas = page.locator(".graph-canvas canvas").first();
-  await expect(canvas).toBeVisible();
-  await expect.poll(async () => canvas.evaluate((element) => {
-    const canvasElement = element as HTMLCanvasElement;
-    const context = canvasElement.getContext("2d");
-    if (!context || canvasElement.width === 0 || canvasElement.height === 0) {
-      return 0;
-    }
-    const data = context.getImageData(0, 0, canvasElement.width, canvasElement.height).data;
-    let painted = 0;
-    for (let index = 3; index < data.length; index += 4) {
-      if (data[index] > 0) {
-        painted += 1;
-      }
-    }
-    return painted;
-  })).toBeGreaterThan(0);
-  expect(calls.graphRequests.some((url) => url.includes("/ui/api/graph?scope=overview"))).toBe(true);
 
-  await page.getByRole("button", { name: "Graph controls", exact: true }).click();
-  const controls = page.getByLabel("Graph controls", { exact: true });
-  await controls.getByRole("button", { name: "Local" }).click();
-  await controls.getByLabel("Anchor ID").fill("entity-alice");
-  await controls.getByLabel("Depth").focus();
-  await controls.getByLabel("Depth").press("End");
-  await expect(controls.getByLabel("Depth")).toHaveValue("5");
-  await controls.getByLabel("Relationship limit").fill("181");
-  await controls.getByRole("button", { name: "Refresh", exact: true }).click();
-  await expect.poll(() => calls.graphRequests.some((requestUrl) => {
-    const url = new URL(requestUrl);
-    return url.searchParams.get("depth") === "5" && url.searchParams.get("limit") === "181";
-  })).toBe(true);
-});
 
-test("graph refresh replaces a corrected endpoint while the graph stays open", async ({ page }) => {
-  await page.addInitScript(() => {
-    const trackedWindow = window as Window & { __denseMemGraphLabels?: string[] };
-    trackedWindow.__denseMemGraphLabels = [];
-    const clearRect = CanvasRenderingContext2D.prototype.clearRect;
-    CanvasRenderingContext2D.prototype.clearRect = function (x, y, width, height) {
-      trackedWindow.__denseMemGraphLabels = [];
-      return clearRect.call(this, x, y, width, height);
-    };
-    const fillText = CanvasRenderingContext2D.prototype.fillText;
-    CanvasRenderingContext2D.prototype.fillText = function (text, x, y, maxWidth) {
-      const labels = trackedWindow.__denseMemGraphLabels ?? [];
-      labels.push(String(text));
-      if (labels.length > 10_000) {
-        labels.splice(0, labels.length - 5_000);
-      }
-      trackedWindow.__denseMemGraphLabels = labels;
-      if (maxWidth === undefined) {
-        return fillText.call(this, text, x, y);
-      }
-      return fillText.call(this, text, x, y, maxWidth);
-    };
-  });
-  const original = {
-    ...graphSnapshot,
-    nodes: [
-      { key: "entity:entity-alice", id: "entity-alice", type: "entity", title: "Alice" },
-      { key: "entity:entity-wrong-project", id: "entity-wrong-project", type: "entity", title: "Wrong Project" },
-    ],
-    edges: [
-      { id: "relationship-original", source: "entity:entity-alice", target: "entity:entity-wrong-project", relationship: "USES", directed: true },
-    ],
-  };
-  const corrected = {
-    ...graphSnapshot,
-    nodes: [
-      { key: "entity:entity-alice", id: "entity-alice", type: "entity", title: "Alice" },
-      { key: "entity:entity-corrected-project", id: "entity-corrected-project", type: "entity", title: "Corrected Project" },
-    ],
-    edges: [
-      { id: "relationship-successor", source: "entity:entity-alice", target: "entity:entity-corrected-project", relationship: "USES", directed: true },
-    ],
-  };
-  const harness = await mockUserApi(page, {
-    key: readKey,
-    graphSnapshots: [original, corrected],
-  });
-  await openUserPortal(page, "dm_read");
-
-  await navigate(page, "Graph");
-  await expect.poll(() => graphCanvasLabels(page)).toContain("Wrong Project");
-  const requestsBeforeRefresh = harness.graphRequests.length;
-
-  harness.correctRelationship();
-  await page.getByRole("button", { name: "Graph controls", exact: true }).click();
-  await page.getByLabel("Graph controls", { exact: true }).getByRole("button", { name: "Refresh", exact: true }).click();
-  await expect.poll(() => harness.graphRequests.length).toBeGreaterThan(requestsBeforeRefresh);
-  await expect.poll(() => graphCanvasLabels(page)).toContain("Corrected Project");
-  await page.waitForTimeout(300);
-  const labels = await graphCanvasLabels(page);
-  expect(labels).toContain("Corrected Project");
-  expect(labels).not.toContain("Wrong Project");
-});
 
 test("read-only key cannot regenerate itself", async ({ page }) => {
   await mockUserApi(page, { key: readKey });
@@ -704,20 +477,17 @@ async function mockUserApi(
     key: TestKey;
     canManageTeam?: boolean;
     credentials?: TestKey[];
-    graphSnapshots?: Array<typeof graphSnapshot>;
   },
 ) {
   const calls = {
     rotateBodies: [] as string[],
     disallowedCredentialCalls: [] as string[],
     telemetryRequests: [] as string[],
-    graphRequests: [] as string[],
   };
   let currentTeam = { ...team };
   let currentKey = { ...state.key };
   let currentCredentials = (state.credentials ?? []).map((credential) => ({ ...credential }));
   let portalSessionCreated = false;
-  let graphSnapshotIndex = 0;
 
   await page.route("**/ui/api/sso/providers", async (route) => {
     await route.fulfill({
@@ -840,28 +610,9 @@ async function mockUserApi(
     await route.fulfill({ status: 404 });
   });
 
-  await page.route("**/ui/api/node-detail**", async (route) => {
-    const url = new URL(route.request().url());
-    const key = `${url.searchParams.get("type")}:${url.searchParams.get("id")}`;
-    const node = graphNodeDetails[key as keyof typeof graphNodeDetails] ?? graphNodeDetails["entity:entity-alice"];
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ data: node }),
-    });
-  });
 
-  await page.route("**/ui/api/graph**", async (route) => {
-    calls.graphRequests.push(route.request().url());
-    const snapshots = state.graphSnapshots ?? [graphSnapshot];
-    const snapshot = snapshots[Math.min(graphSnapshotIndex, snapshots.length - 1)];
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      headers: { "Cache-Control": "no-store" },
-      body: JSON.stringify({ data: snapshot }),
-    });
-  });
+
+
 
   await page.route("**/ui/api/recall**", async (route) => {
     await route.fulfill({
@@ -872,21 +623,16 @@ async function mockUserApi(
           recall_id: "rec-test",
           results: evidences,
           conflicts: [],
-          related_relationships: [relationships[0]],
-          related_communities: [{ relationships, evidence_ids: evidences.map((evidence) => evidence.evidence_id) }],
-          search_states: { evidence: "current", relationships: "current" },
+          related_topics: [], topics_truncated: false,
+          search_states: { evidence: "current" },
+          suggested_actions: [],
           degradations: [],
         },
       }),
     });
   });
 
-  return {
-    ...calls,
-    correctRelationship() {
-      graphSnapshotIndex = Math.max(0, (state.graphSnapshots?.length ?? 1) - 1);
-    },
-  };
+  return calls;
 }
 
 async function mockSSOUserApi(page: Page, credentials: SSOTestCredential[], role: "member" | "manager" = "member") {
@@ -990,10 +736,4 @@ async function mockSSOUserApi(page: Page, credentials: SSOTestCredential[], role
   });
 
   return calls;
-}
-
-async function graphCanvasLabels(page: Page): Promise<string[]> {
-  return page.evaluate(() => (
-    (window as Window & { __denseMemGraphLabels?: string[] }).__denseMemGraphLabels ?? []
-  ));
 }

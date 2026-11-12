@@ -10,16 +10,8 @@ const (
 	RecallFeedbackSnapshotCaptured     = "captured"
 	RecallFeedbackSnapshotFeedbackOnly = "feedback_only"
 
-	RecallFeedbackResultTypeFragment     = "fragment"
-	RecallFeedbackResultTypeClaim        = "claim"
-	RecallFeedbackResultTypeFact         = "fact"
-	RecallFeedbackResultTypeDream        = "dream"
-	RecallFeedbackResultTypeEvidence     = "evidence"
-	RecallFeedbackResultTypeRelationship = "relationship"
-	RecallFeedbackResultTypeEntity       = "entity"
-	RecallFeedbackResultTypeValue        = "value"
-	RecallFeedbackResultTypeCommunity    = "community"
-	RecallFeedbackResultTypeHypothesis   = "hypothesis"
+	RecallFeedbackResultTypeEvidence = "evidence"
+	RecallFeedbackResultTypeTopic    = "topic"
 )
 
 // RecallFeedbackEvent is the durable investigation record that connects a
@@ -55,8 +47,8 @@ type RecallFeedbackEvent struct {
 	Irrelevant                *bool                           `json:"irrelevant,omitempty"`
 	FeedbackComment           string                          `json:"feedback_comment,omitempty"`
 	IrrelevantRefs            []RecallFeedbackJudgedResultRef `json:"irrelevant_result_refs,omitempty"`
-	DreamFeedback             []RecallFeedbackDreamFeedback   `json:"dream_feedback,omitempty"`
-	ResolvedResults           []RecallFeedbackResolvedResult  `json:"resolved_results,omitempty"`
+
+	ResolvedResults []RecallFeedbackResolvedResult `json:"resolved_results,omitempty"`
 }
 
 // RecallFeedbackResultRef is a content-free reference to one result returned by
@@ -90,7 +82,6 @@ type RecallFeedbackSubmission struct {
 	Irrelevant      bool
 	FeedbackComment string
 	IrrelevantRefs  []RecallFeedbackJudgedResultRef
-	DreamFeedback   []RecallFeedbackDreamFeedback
 }
 
 // RecallFeedbackJudgedResultRef is a host-LLM judgment about one returned
@@ -99,16 +90,6 @@ type RecallFeedbackJudgedResultRef struct {
 	Type string `json:"type"`
 	ID   string `json:"id"`
 	Rank int    `json:"rank,omitempty"`
-}
-
-// RecallFeedbackDreamFeedback captures host-LLM quality judgments for
-// hypothesis-lane dreams without mutating dream status.
-type RecallFeedbackDreamFeedback struct {
-	DreamID         string `json:"dream_id"`
-	Used            bool   `json:"used"`
-	Quality         string `json:"quality"`
-	Contradicted    bool   `json:"contradicted"`
-	FeedbackComment string `json:"feedback_comment,omitempty"`
 }
 
 // RecallFeedbackEventFilter controls control-portal event listing.
@@ -131,7 +112,7 @@ type RecallFeedbackEventPage struct {
 	Total int64                 `json:"total"`
 }
 
-// RecallFeedbackResolvedResult is the current graph state for a stored result
+// RecallFeedbackResolvedResult is the current Evidence or topic state for a stored result
 // reference. Missing rows are explicit so investigations can distinguish hard
 // deletion from a retracted-but-present result.
 type RecallFeedbackResolvedResult struct {

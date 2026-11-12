@@ -34,7 +34,6 @@ func buildPublication(teamID string, context contract.OrganizationContext, reque
 			continue
 		}
 		if _, accepted := current[record.ID]; !accepted {
-			record.Definition.ParentRelation = definition.ParentRelation
 			if definition.ParentRef != "" {
 				record.Definition.ParentID = definitions[definition.ParentRef].ID
 			}
@@ -50,29 +49,6 @@ func buildPublication(teamID string, context contract.OrganizationContext, reque
 		}
 		changes[record.ID] = record
 		definitions[definition.Ref] = record
-	}
-	for _, update := range response.HierarchyUpdates {
-		record, exists := definitions[update.DefinitionRef]
-		if !exists || record.Definition == nil {
-			return publication, contract.ErrInvalid
-		}
-		if _, duplicate := changes[record.ID]; duplicate {
-			return publication, contract.ErrConflict
-		}
-		definition := *record.Definition
-		definition.ParentID, definition.ParentRelation = "", update.ParentRelation
-		if update.ParentRef != "" {
-			parent, exists := definitions[update.ParentRef]
-			if !exists || parent.Definition == nil {
-				return publication, contract.ErrInvalid
-			}
-			definition.ParentID = parent.ID
-		}
-		if reflect.DeepEqual(record.Definition, &definition) {
-			continue
-		}
-		record.Definition, record.Dependencies = &definition, nil
-		changes[record.ID], definitions[update.DefinitionRef] = record, record
 	}
 	definitionRecords := map[string]contract.Record{}
 	for id, view := range current {
@@ -167,9 +143,6 @@ func buildPublication(teamID string, context contract.OrganizationContext, reque
 		}
 		sort.Slice(members, func(i, j int) bool { return contract.SourceKey(members[i]) < contract.SourceKey(members[j]) })
 		kind := contract.EvidenceGroup
-		if members[0].Kind == contract.RelationshipSource {
-			kind = contract.RelationshipGroup
-		}
 		id := contract.OrganizationRecordID(teamID, kind, contract.SourceKey(members[0]))
 		var previousIDs []string
 		for _, view := range context.Records {
@@ -248,26 +221,8 @@ func buildPublication(teamID string, context contract.OrganizationContext, reque
 
 func refreshOrganizationDefinition(id string, definitions, changes map[string]contract.Record, path map[string]bool) (bool, error) {
 	record, exists := definitions[id]
-	if !exists || record.Definition == nil {
+	if !exists || record.Definition == nil || record.Kind != contract.Topic {
 		return false, contract.ErrInvalid
-	}
-	if path == nil {
-		path = map[string]bool{}
-	}
-	if path[id] || len(path) > contract.MaxParentDepth {
-		return false, contract.ErrInvalid
-	}
-	path[id] = true
-	defer delete(path, id)
-	if record.Kind != contract.Topic && record.Definition.ParentID != "" {
-		parentChanged, err := refreshOrganizationDefinition(record.Definition.ParentID, definitions, changes, path)
-		if err != nil {
-			return false, err
-		}
-		if _, changed := changes[id]; parentChanged && !changed {
-			record.Dependencies = nil
-			changes[id] = record
-		}
 	}
 	_, changed := changes[id]
 	return changed, nil
@@ -275,7 +230,7 @@ func refreshOrganizationDefinition(id string, definitions, changes map[string]co
 
 func proposedDefinition(teamID string, definition assessment.Definition) contract.Record {
 	return contract.Record{ID: contract.OrganizationRecordID(teamID, definition.Kind, contract.NormalizeName(definition.Key)), Kind: definition.Kind,
-		Definition: &contract.Definition{Key: definition.Key, Label: definition.Label, Description: definition.Description, Aliases: definition.Aliases, BaseEntityKind: definition.BaseEntityKind}}
+		Definition: &contract.Definition{Key: definition.Key, Label: definition.Label, Description: definition.Description, Aliases: definition.Aliases}}
 }
 
 func resolveDefinition(record contract.Record, records []contract.RecordView) (contract.Record, error) {
@@ -311,7 +266,6 @@ func resolveDefinition(record contract.Record, records []contract.RecordView) (c
 		record.ID = matched.ID
 		record.Definition.Key = matched.Definition.Key
 		record.Definition.ParentID = matched.Definition.ParentID
-		record.Definition.ParentRelation = matched.Definition.ParentRelation
 	}
 	return record, nil
 }

@@ -36,7 +36,7 @@ func TestOntologyReconstructedBoundedRequestReportsProtectionBudget(t *testing.T
 		require.NoError(t, json.Unmarshal(body, &envelope))
 		var request assessment.Request
 		require.NoError(t, json.Unmarshal([]byte(envelope.Messages[1].Content), &request))
-		response := assessment.Response{HierarchyUpdates: []assessment.HierarchyUpdate{}, RequestID: request.RequestID, Definitions: []assessment.Definition{{Ref: "new-topic", Kind: contract.Topic,
+		response := assessment.Response{RequestID: request.RequestID, Definitions: []assessment.Definition{{Ref: "new-topic", Kind: contract.Topic,
 			Key: "diagnostic-witness", Label: "Diagnostic witness", Description: "Reconstructed synthetic diagnostic input", Aliases: []string{}}},
 			Items: []assessment.Decision{}, Equivalence: []assessment.Equivalence{}}
 		for _, item := range request.Items {

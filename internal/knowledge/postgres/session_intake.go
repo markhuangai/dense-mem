@@ -319,11 +319,10 @@ func loadSessionCheckpoints(ctx context.Context, tx *gorm.DB, scope session.Scop
 		if err := rows.Scan(&index, &body); err != nil {
 			return err
 		}
-		if index == -1 {
-			submission.Linked = body
-		} else {
-			submission.Extractions[index] = body
+		if index < 0 {
+			return session.ErrStale
 		}
+		submission.Extractions[index] = body
 	}
 	return rows.Err()
 }

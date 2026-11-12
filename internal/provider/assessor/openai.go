@@ -223,7 +223,6 @@ func SemanticAssessmentLimitsForConfig(cfg config.ConfigProvider) assessor.Seman
 	limits.MaxInputTokens = budget.MaxInputTokens
 	limits.MaxOutputTokens = budget.MaxOutputTokens
 	limits.MaxCandidateContextTokens = budget.MaxCandidateContextTokens
-	limits.MaxPredicateOptions = budget.MaxPredicateOptions
 	return limits
 }
 

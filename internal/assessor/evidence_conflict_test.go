@@ -27,7 +27,6 @@ func TestSemanticAssessmentEvidenceConflictCitationsResolveUnicodeRanges(t *test
 			{EvidenceID: "submitted", StartRef: startSubmitted, EndRef: endSubmitted},
 			{EvidenceID: "known", StartRef: startKnown, EndRef: endKnown},
 		}}},
-		EntityResults: []SemanticAssessmentEntityResult{}, RelationshipResults: []SemanticAssessmentRelationshipResult{},
 	}
 	validated, errs := PrepareSemanticAssessmentResponse(prepared, response, DefaultSemanticAssessmentLimits())
 	require.Empty(t, errs)
@@ -57,7 +56,6 @@ func TestSemanticAssessmentEvidenceConflictRejectsUnsubmittedAndEquivalenceReuse
 			{EvidenceID: "submitted", StartRef: startSubmitted, EndRef: endSubmitted},
 			{EvidenceID: "candidate", StartRef: startCandidate, EndRef: endCandidate},
 		}}},
-		EntityResults: []SemanticAssessmentEntityResult{}, RelationshipResults: []SemanticAssessmentRelationshipResult{},
 	}
 	_, errs = PrepareSemanticAssessmentResponse(prepared, response, DefaultSemanticAssessmentLimits())
 	joined := semanticAssessmentJoinedErrors(errs)
@@ -175,7 +173,7 @@ func TestSemanticAssessmentEvidenceConflictRejectsOversizedQuoteAndDuplicateCase
 	startKnown, _ := SemanticAssessmentBoundaryRef(prepared.KnownEvidence[0], 0)
 	endKnown, _ := SemanticAssessmentBoundaryRef(prepared.KnownEvidence[0], 5)
 	base := SemanticAssessmentEvidenceConflictResult{Positions: []SemanticAssessmentEvidenceConflictPosition{{EvidenceID: "submitted", StartRef: startSubmitted, EndRef: endSubmitted}, {EvidenceID: "known", StartRef: startKnown, EndRef: endKnown}}}
-	response := SemanticAssessmentResponse{RequestID: prepared.RequestID, EvidenceSecurityResults: []SemanticAssessmentEvidenceSecurityResult{{EvidenceID: "submitted", Decision: "pass", Signals: []SemanticAssessmentSecuritySignal{}}}, EvidenceEquivalenceResults: []SemanticAssessmentEvidenceEquivalenceResult{}, EvidenceConflictResults: []SemanticAssessmentEvidenceConflictResult{base, base}, EntityResults: []SemanticAssessmentEntityResult{}, RelationshipResults: []SemanticAssessmentRelationshipResult{}}
+	response := SemanticAssessmentResponse{RequestID: prepared.RequestID, EvidenceSecurityResults: []SemanticAssessmentEvidenceSecurityResult{{EvidenceID: "submitted", Decision: "pass", Signals: []SemanticAssessmentSecuritySignal{}}}, EvidenceEquivalenceResults: []SemanticAssessmentEvidenceEquivalenceResult{}, EvidenceConflictResults: []SemanticAssessmentEvidenceConflictResult{base, base}}
 	_, errs = PrepareSemanticAssessmentResponse(prepared, response, limits)
 	joined := semanticAssessmentJoinedErrors(errs)
 	require.Contains(t, joined, "quote must contain at most 4000 runes")
@@ -202,6 +200,5 @@ func validEvidenceConflictAssessment(t *testing.T) (SemanticAssessmentRequest, S
 			{EvidenceID: "submitted", StartRef: startSubmitted, EndRef: endSubmitted},
 			{EvidenceID: "known", StartRef: startKnown, EndRef: endKnown},
 		}}},
-		EntityResults: []SemanticAssessmentEntityResult{}, RelationshipResults: []SemanticAssessmentRelationshipResult{},
 	}
 }

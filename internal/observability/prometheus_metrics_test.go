@@ -36,8 +36,6 @@ func TestPrometheusMetricsRecordsActiveScopedSignals(t *testing.T) {
 	metrics.ObserveRecallLatencyFor(ctx, 42)
 	metrics.ObserveRecallFor(ctx, 42, 3, "ok")
 	metrics.ObserveRecallFeedbackFor(ctx, recallcontract.FeedbackObservation{Used: true, AnswerSupported: true, Quality: "high"})
-	metrics.ObserveDreamFeedbackFor(ctx, DreamFeedback{Decision: "confirm_true", Outcome: "ok", FromStatus: "proposed"})
-	metrics.ObserveConflictReviewDurationFor(ctx, 2.5, "completed")
 
 	body := scrapePrometheusMetrics(t, metrics)
 	for _, want := range []string{
@@ -60,10 +58,6 @@ func TestPrometheusMetricsRecordsActiveScopedSignals(t *testing.T) {
 		`used="true"`,
 		`answer_supported="true"`,
 		`quality="high"`,
-		`densemem_dream_feedback_total{`,
-		`decision="confirm_true"`,
-		`densemem_conflict_review_duration_seconds_bucket{`,
-		`outcome="completed"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("scraped metrics missing %q\n%s", want, body)
@@ -100,9 +94,6 @@ func TestPrometheusMetricsRecordsUnknownLabelsAndHelpers(t *testing.T) {
 	metrics.ObserveRecallLatency(2)
 	metrics.ObserveRecall(2, 0, "")
 	metrics.ObserveRecallFeedback(recallcontract.FeedbackObservation{Quality: "bad"})
-	metrics.ObserveDreamFeedback(DreamFeedback{})
-	metrics.ObserveConflictReviewDuration(1, "")
-	metrics.ObserveConflictReviewDurationFor(ctx, -1, "ignored")
 	metrics.IncVerifyVerdict("")
 
 	RecordEmbeddingLatency(ctx, metrics, "embed-model", 1, "ok")
@@ -114,8 +105,6 @@ func TestPrometheusMetricsRecordsUnknownLabelsAndHelpers(t *testing.T) {
 	RecordRecallLatency(ctx, metrics, 1)
 	RecordRecall(ctx, metrics, 1, 2, "ok")
 	RecordRecallFeedback(ctx, metrics, recallcontract.FeedbackObservation{Quality: "medium"})
-	RecordDreamFeedback(ctx, metrics, DreamFeedback{Decision: "reject", Outcome: "error", FromStatus: "proposed"})
-	RecordConflictReviewDuration(ctx, metrics, 1, "completed")
 	exerciseNilMetricHelpers(ctx)
 
 	body := scrapePrometheusMetrics(t, metrics)
@@ -132,7 +121,6 @@ func TestPrometheusMetricsRecordsUnknownLabelsAndHelpers(t *testing.T) {
 			t.Fatalf("scraped metrics missing %q\n%s", want, body)
 		}
 	}
-	requirePrometheusMetricLabels(t, body, "densemem_dream_feedback_total", `decision="unknown"`, `outcome="unknown"`, `from_status="unknown"`)
 }
 
 func TestPrometheusMetricsRecordsLifecycleAndPricedAIOperations(t *testing.T) {
@@ -176,11 +164,11 @@ func TestPrometheusMetricsRecordsLifecycleAndPricedAIOperations(t *testing.T) {
 		},
 	)
 	RecordAIOperationUsage(
-		WithAIOperation(ctx, AIOperationDreamGeneration, 1),
+		WithAIOperation(ctx, AIOperationOntologyOrganization, 1),
 		metrics,
 		AIOperationUsage{
 			Component:    AIComponentVerifier,
-			Model:        "dream-override",
+			Model:        "organization-override",
 			InputTokens:  1_000_000,
 			OutputTokens: 500_000,
 			Source:       AITokenSourceProvider,
@@ -202,11 +190,11 @@ func TestPrometheusMetricsRecordsLifecycleAndPricedAIOperations(t *testing.T) {
 		t.Fatalf("verifier item count = %v; want 2", got)
 	}
 	for _, line := range strings.Split(body, "\n") {
-		if strings.HasPrefix(line, "densemem_ai_operation_cost_usd_total{") && strings.Contains(line, "model=\"dream-override\"") {
+		if strings.HasPrefix(line, "densemem_ai_operation_cost_usd_total{") && strings.Contains(line, "model=\"organization-override\"") {
 			t.Fatalf("override verifier unexpectedly has a cost: %s", line)
 		}
 	}
-	if got := prometheusCounterValue(t, body, "densemem_ai_operation_unpriced_total", append(identity, "operation=\"dream_generation\"", "component=\"verifier\"", "model=\"dream-override\"", "reason=\"missing_price\"")...); got != 1 {
+	if got := prometheusCounterValue(t, body, "densemem_ai_operation_unpriced_total", append(identity, "operation=\"ontology_organization\"", "component=\"verifier\"", "model=\"organization-override\"", "reason=\"missing_price\"")...); got != 1 {
 		t.Fatalf("override verifier unpriced count = %v; want 1", got)
 	}
 
@@ -288,13 +276,13 @@ func TestPrometheusMetrics_RecordsAssessorMetricsWithoutIdentityLabels(t *testin
 	metrics.ObserveAssessorCall(200, 50, 0.25, "ok")
 	metrics.ObserveAssessorCall(317, 70, 0.5, "catalog_error")
 	metrics.IncAssessorValidationFailure("response")
-	metrics.IncAssessorValidationFieldFailure("response_contract", "relationship_results.predicate")
+	metrics.IncAssessorValidationFieldFailure("response_contract", "security_signals")
 	metrics.IncAssessorValidationFieldFailure("not-a-stage", "provider supplied arbitrary field")
 	metrics.IncAssessorCandidateTruncation()
 	metrics.IncAssessorAssessmentPersistence("persisted")
 	metrics.IncAssessorDuplicateRequestPrevention("post_persist")
 	metrics.IncAssessorConfidenceGate("below_write_threshold")
-	metrics.IncAssessorTerminalFailure("predicate_options_overflow")
+	metrics.IncAssessorTerminalFailure("assessment_input_overflow")
 
 	body := scrapePrometheusMetrics(t, metrics)
 	for _, want := range []string{
@@ -305,13 +293,13 @@ func TestPrometheusMetrics_RecordsAssessorMetricsWithoutIdentityLabels(t *testin
 		`densemem_assessor_tokens_total{kind="input"}`,
 		`densemem_assessor_tokens_total{kind="output"}`,
 		`densemem_assessor_validation_failures_total{stage="response"}`,
-		`densemem_assessor_validation_field_failures_total{family="relationship_results.predicate",stage="response_contract"}`,
+		`densemem_assessor_validation_field_failures_total{family="security_signals",stage="response_contract"}`,
 		`densemem_assessor_validation_field_failures_total{family="other",stage="unknown"}`,
 		`densemem_assessor_candidate_truncations_total 1`,
 		`densemem_assessor_assessment_persistence_total{outcome="persisted"}`,
 		`densemem_assessor_duplicate_request_prevented_total{stage="post_persist"}`,
 		`densemem_assessor_confidence_gate_total{band="below_write_threshold"}`,
-		`densemem_assessor_terminal_failures_total{stage="predicate_options_overflow"} 1`,
+		`densemem_assessor_terminal_failures_total{stage="assessment_input_overflow"} 1`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("scraped assessor metrics missing %q\n%s", want, body)
@@ -363,8 +351,6 @@ func TestNoopDiscoverabilityMetrics_ConsumesCalls(t *testing.T) {
 	metrics.ObserveRecallLatency(1)
 	metrics.ObserveRecall(1, 2, "ok")
 	metrics.ObserveRecallFeedback(recallcontract.FeedbackObservation{Used: true, AnswerSupported: true, Quality: "high"})
-	metrics.ObserveDreamFeedback(DreamFeedback{Decision: "reinforce", Outcome: "ok", FromStatus: "proposed"})
-	metrics.ObserveConflictReviewDuration(1, "completed")
 	metrics.IncVerifyVerdict("verified")
 	assessor.ObserveAssessorCall(10, 5, 1, "ok")
 	assessor.IncAssessorValidationFailure("response")
@@ -418,7 +404,7 @@ func TestAssessorMetricHelpersRecordInMemorySamples(t *testing.T) {
 	if got := NormalizeAssessorTerminalFailureStage("unexpected stage"); got != "unknown" {
 		t.Fatalf("NormalizeAssessorTerminalFailureStage() = %q, want unknown", got)
 	}
-	for _, stage := range []string{"predicate_catalog", "extraction", "preflight"} {
+	for _, stage := range []string{"assessment", "extraction", "preflight"} {
 		if got := NormalizeAssessorTerminalFailureStage(stage); got != stage {
 			t.Fatalf("NormalizeAssessorTerminalFailureStage(%q) = %q, want %q", stage, got, stage)
 		}
@@ -500,6 +486,4 @@ func exerciseNilMetricHelpers(ctx context.Context) {
 	RecordRecallLatency(ctx, nil, 1)
 	RecordRecall(ctx, nil, 1, 1, "ok")
 	RecordRecallFeedback(ctx, nil, recallcontract.FeedbackObservation{Quality: "high"})
-	RecordDreamFeedback(ctx, nil, DreamFeedback{Decision: "reinforce", Outcome: "ok", FromStatus: "proposed"})
-	RecordConflictReviewDuration(ctx, nil, 1, "completed")
 }

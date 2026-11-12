@@ -28,7 +28,7 @@ func TestRecallEvidenceHistoricalIncludesNonCurrentSearchDocuments(t *testing.T)
 			teamID := createLedgerTeam(t, adminDB, rls, "recall-history-"+tc.state)
 			ownerID := createLedgerProfile(t, adminDB, rls, teamID, "recall-history-owner")
 			insertSearchTestContract(t, adminDB, rls, "recall-history-"+tc.state, 3, "exact", "")
-			ledgerRepo := knowledgepostgres.NewStore(appDB, rls, knowledgepostgres.ConflictRuntimeConfig{})
+			ledgerRepo := knowledgepostgres.NewStore(appDB, rls)
 			searchRepo := newSearchFixtureStore(appDB, rls)
 			content := tc.token + " PostgreSQL evidence was current before projection state changed."
 			ingest, err := ledgerRepo.CreateIngestForTest(ctx, CreateIngestInput{
@@ -95,7 +95,7 @@ func TestRecallEvidenceHistoricalExcludesEvidenceRetractedAtKnownAt(t *testing.T
 	teamID := createLedgerTeam(t, adminDB, rls, "recall-history-lifecycle-team")
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "recall-history-lifecycle-owner")
 	insertSearchTestContract(t, adminDB, rls, "recall-history-lifecycle", 3, "exact", "")
-	ledgerRepo := knowledgepostgres.NewStore(appDB, rls, knowledgepostgres.ConflictRuntimeConfig{})
+	ledgerRepo := knowledgepostgres.NewStore(appDB, rls)
 	searchRepo := newSearchFixtureStore(appDB, rls)
 	content := "lifecyclehistory PostgreSQL evidence was current before it was retracted."
 	ingest, err := ledgerRepo.CreateIngestForTest(ctx, CreateIngestInput{

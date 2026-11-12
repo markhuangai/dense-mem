@@ -1,4 +1,12 @@
-# Typed-Value Relationship corrections
+# Historical Typed-Value Relationship corrections
+
+This document records the retired v2 factual graph contract. None of the tools
+or storage paths below is available under `dense-mem.v2.8.0`. The governing
+decision is [Evidence-only memory](../adr/0017-evidence-only-memory-without-factual-relationships.md).
+Current corrections submit exact new Evidence through `remember` with an explicit
+owned supersession target; retraction uses the Evidence lifecycle contract.
+Trace and export retain Evidence provenance. The historical limitations below
+do not define the current API.
 
 The supported correction workflow depends on the original observation and its
 current effective support. Accepted ADRs govern any future contract change.

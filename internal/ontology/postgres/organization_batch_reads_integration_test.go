@@ -4,7 +4,7 @@ package postgres
 
 import (
 	"context"
-	"encoding/json"
+
 	"fmt"
 	"testing"
 
@@ -26,8 +26,10 @@ func TestOntologyOrganizationBatchedSources(t *testing.T) {
 	privateContext := requestctx.WithAllowedSpaces(context.Background(), []domain.MemorySpaceAccess{{ID: credential.MemorySpaceID, Kind: domain.MemorySpacePrivate, Generation: credential.MemorySpaceGeneration}})
 	private, err := f.knowledge.CreateIngestForTest(privateContext, knowledge.CreateIngestInput{TeamID: f.team, OwnerProfileID: f.owners[0], SpaceID: credential.MemorySpaceID.String(), SpaceGeneration: credential.MemorySpaceGeneration, Evidence: []knowledge.EvidenceInput{{Content: "Private PostgreSQL evidence."}}})
 	require.NoError(t, err)
-	stale := handles[0]
-	stale.Version++
+	stale := f.organizationEvidence(t, 0, "Retracted PostgreSQL batch evidence.", nil)
+	_, err = f.knowledge.RetractEvidence(f.actor(0, "member"), knowledge.RetractEvidenceInput{
+		TeamID: f.team, OwnerProfileID: f.owners[0], EvidenceIDs: []string{stale.ID}, Reason: "withdraw batch fixture", IdempotencyKey: uuid.NewString(), RequestHash: testHash("initial batch source retraction")})
+	require.NoError(t, err)
 	input := []ontology.SourceHandle{handles[3], handles[2], handles[0], handles[1], handles[4], handles[3], stale,
 		{Kind: ontology.EvidenceSource, ID: uuid.NewString(), Version: 1}, foreign,
 		{Kind: ontology.EvidenceSource, ID: private.Evidence[0].FragmentID, Version: 1}}
@@ -48,6 +50,10 @@ func TestOntologyOrganizationBatchedSources(t *testing.T) {
 				actual, err := organizationSources(tx, fence, input)
 				require.NoError(t, err)
 				require.Equal(t, expected, actual)
+				invalid := handles[0]
+				invalid.Version++
+				_, err = organizationSources(tx, fence, []ontology.SourceHandle{invalid})
+				require.ErrorIs(t, err, ontology.ErrInvalid)
 				count := 0
 				for i, snapshot := range actual {
 					require.Equal(t, input[i], snapshot.SourceHandle)
@@ -76,21 +82,14 @@ func TestOntologyOrganizationBatchedSources(t *testing.T) {
 		require.Equal(t, before, f.canonicalSnapshot(t))
 	}
 	check(6)
-	require.NoError(t, f.rls.WithTeamTx(context.Background(), f.app, f.team, func(tx *gorm.DB) error {
-		return tx.Exec(`UPDATE entity_records SET status='retired',updated_at=now() WHERE team_id=?::uuid AND entity_id=?::uuid`, f.team, handles[0].ID).Error
-	}))
-	supported, err := f.store.ReadSources(context.Background(), f.team, handles[1:2])
+	_, err = f.knowledge.RetractEvidence(f.actor(0, "member"), knowledge.RetractEvidenceInput{
+		TeamID: f.team, OwnerProfileID: f.owners[0], EvidenceIDs: []string{handles[0].ID}, Reason: "withdraw current source", IdempotencyKey: uuid.NewString(), RequestHash: testHash("batch source retraction")})
 	require.NoError(t, err)
-	require.True(t, supported[0].Eligible)
 	check(5)
-	snapshots, err := f.store.ReadSources(context.Background(), f.team, handles[1:2])
+	_, err = f.knowledge.RetractEvidence(f.actor(1, "member"), knowledge.RetractEvidenceInput{
+		TeamID: f.team, OwnerProfileID: f.owners[1], EvidenceIDs: []string{handles[1].ID}, Reason: "withdraw peer source", IdempotencyKey: uuid.NewString(), RequestHash: testHash("batch peer retraction")})
 	require.NoError(t, err)
-	var supports [][]string
-	require.NoError(t, json.Unmarshal([]byte(snapshots[0].State["supports"]), &supports))
-	require.NotEmpty(t, supports)
-	_, err = f.knowledge.RetractEvidence(f.actor(0, "member"), knowledge.RetractEvidenceInput{TeamID: f.team, OwnerProfileID: f.owners[0], EvidenceIDs: []string{supports[0][1]}, Reason: "withdraw relationship support", IdempotencyKey: uuid.NewString(), RequestHash: testHash("withdraw batch support")})
-	require.NoError(t, err)
-	check(3)
+	check(4)
 }
 
 func TestOntologyOrganizationBatchedQueryCounts(t *testing.T) {
@@ -106,7 +105,7 @@ func TestOntologyOrganizationBatchedQueryCounts(t *testing.T) {
 		actualSources, err := organizationSources(tx, fence, handles)
 		require.NoError(t, err)
 		require.Equal(t, expectedSources, actualSources)
-		require.EqualValues(t, 4, counter.queries.Load())
+		require.EqualValues(t, 1, counter.queries.Load())
 		require.Less(t, counter.queries.Load(), individualSources)
 		counter.queries.Store(0)
 		var expectedViews []ontology.RecordView
@@ -233,21 +232,18 @@ func TestOntologyOrganizationFreshnessStopsAfterStaleBatch(t *testing.T) {
 
 func TestOntologyOrganizationBatchedDependencyBounds(t *testing.T) {
 	f := newOrganizationFixture(t)
-	source := maintenanceEntity(t, f, "child-bounded-left child-bounded-right")
-	var records, children []ontology.Record
+	source := maintenanceEvidence(t, f, "bounded-left bounded-right")
+	var records []ontology.Record
 	var changes []ontology.Change
 	for _, key := range []string{"bounded-left", "bounded-right"} {
-		parent := ontology.Record{ID: uuid.NewString(), Kind: ontology.EntityClass, Definition: &ontology.Definition{Key: key, Label: key, BaseEntityKind: "project"}}
-		child := ontology.Record{ID: uuid.NewString(), Kind: ontology.EntityClass, Definition: &ontology.Definition{Key: "child-" + key, Label: "child-" + key, BaseEntityKind: "project", ParentID: parent.ID, ParentRelation: ontology.SubclassOf}}
-		records = append(records, parent)
-		children = append(children, child)
-		changes = append(changes, ontology.Change{Record: parent}, ontology.Change{Record: child})
+		topic := ontology.Record{ID: uuid.NewString(), Kind: ontology.Topic, Definition: &ontology.Definition{Key: key, Label: key}}
+		records = append(records, topic)
+		changes = append(changes, ontology.Change{Record: topic})
 	}
 	publication, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication(uuid.NewString(), 0, changes...))
 	require.NoError(t, err)
 	for i := range records {
 		records[i].Version = 1
-		children[i].Version = 1
 	}
 	addPins := func(target string, count int) {
 		t.Helper()
@@ -283,47 +279,28 @@ func TestOntologyOrganizationBatchedDependencyBounds(t *testing.T) {
 			require.Equal(t, singleton, view)
 			require.True(t, view.Current)
 		}
-		views, err = f.store.organizationViews(tx, fence, children)
-		require.NoError(t, err)
-		for _, forced := range [][]string{nil, {children[1].ID}} {
-			contextData := ontology.OrganizationContext{Candidates: views}
-			require.NoError(t, f.store.organizationDefinitionContext(tx, fence, &contextData, forced))
-			require.Len(t, contextData.Candidates, 2)
-			expected := children[0].ID
-			if len(forced) > 0 {
-				expected = forced[0]
-			}
-			require.Equal(t, expected, contextData.Candidates[0].ID)
-			require.Equal(t, contextData.Candidates[0].Definition.ParentID, contextData.Candidates[1].ID)
-			require.Equal(t, ontology.SubclassOf, contextData.Candidates[0].Definition.ParentRelation)
+		for _, view := range views {
+			contextData := ontology.OrganizationContext{Candidates: []ontology.RecordView{view}}
+			require.NoError(t, f.store.organizationDefinitionContext(tx, fence, &contextData, []string{view.ID}))
+			require.Len(t, contextData.Candidates, 1)
+			require.Equal(t, view.ID, contextData.Candidates[0].ID)
 			require.Len(t, contextData.Records, ontology.MaxDependencyRecords/2)
 			for _, pin := range contextData.Records {
 				require.True(t, pin.Current)
-				require.Equal(t, contextData.Candidates[1].ID, pin.Override.TargetID)
+				require.Equal(t, view.ID, pin.Override.TargetID)
 			}
 			dependencies, err := ontology.OrganizationDependencies(contextData)
 			require.NoError(t, err)
-			require.Len(t, dependencies, 2+ontology.MaxDependencyRecords/2)
+			require.Len(t, dependencies, 1+ontology.MaxDependencyRecords/2)
 		}
-		contextData := ontology.OrganizationContext{Candidates: views}
-		require.ErrorIs(t, f.store.organizationDefinitionContext(tx, fence, &contextData, []string{children[0].ID, children[1].ID}), ontology.ErrContextBound)
+		for _, forced := range [][]string{nil, {records[0].ID, records[1].ID}} {
+			contextData := ontology.OrganizationContext{Candidates: views}
+			require.ErrorIs(t, f.store.organizationDefinitionContext(tx, fence, &contextData, forced), ontology.ErrContextBound)
+		}
 		return nil
 	}))
-	contextData, err := f.store.ReadOrganization(context.Background(), f.team, []ontology.SourceHandle{source})
-	require.NoError(t, err)
-	require.Len(t, contextData.Candidates, 2)
-	require.Len(t, contextData.Records, ontology.MaxDependencyRecords/2)
-	parentID := ""
-	for _, candidate := range contextData.Candidates {
-		if candidate.Definition.ParentID == "" {
-			parentID = candidate.ID
-		}
-	}
-	require.NotEmpty(t, parentID)
-	for _, pin := range contextData.Records {
-		require.True(t, pin.Current)
-		require.Equal(t, parentID, pin.Override.TargetID)
-	}
+	_, err = f.store.ReadOrganization(context.Background(), f.team, []ontology.SourceHandle{source})
+	require.ErrorIs(t, err, ontology.ErrContextBound)
 	addPins(records[0].ID, ontology.MaxDependencyRecords/2)
 	require.NoError(t, f.store.withScope(context.Background(), f.team, true, func(tx *gorm.DB, fence scope) error {
 		_, err := f.store.currentView(tx, fence, records[0])

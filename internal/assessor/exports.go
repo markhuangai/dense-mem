@@ -36,15 +36,6 @@ func ResolveSemanticAssessmentRange(
 	return nil
 }
 
-// ValidateSemanticAssessmentSubmissionResponse validates the complete
-// submitted Entity and Relationship contract against an assessor response.
-func ValidateSemanticAssessmentSubmissionResponse(
-	contract *SemanticAssessmentSubmissionContract,
-	response SemanticAssessmentResponse,
-) []SemanticValidationError {
-	return validateSemanticAssessmentSubmissionResponse(contract, response)
-}
-
 // NormalizeSemanticAssessmentLimits applies the contract defaults to an
 // externally supplied limit set.
 func NormalizeSemanticAssessmentLimits(limits SemanticAssessmentLimits) SemanticAssessmentLimits {

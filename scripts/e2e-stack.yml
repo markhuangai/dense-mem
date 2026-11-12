@@ -86,16 +86,6 @@ services:
       - ci
     labels: *ci-labels
 
-  conflict-provider:
-    image: node:24-alpine
-    command: ["sh", "-c", "sleep infinity"]
-    volumes:
-      - conflict-provider-files:/e2e
-    networks:
-      - ci
-    labels: *ci-labels
-    profiles: [conflict_provider, conflict_review]
-
   oauth-provider-mock:
     image: node:26-alpine
     command: ["sh", "-c", "sleep infinity"]
@@ -170,9 +160,6 @@ volumes:
     external: true
   client-env:
     name: ${DENSE_MEM_CI_CLIENT_VOLUME_NAME:?DENSE_MEM_CI_CLIENT_VOLUME_NAME is required}
-    labels: *ci-labels
-  conflict-provider-files:
-    name: ${DENSE_MEM_CI_CONFLICT_VOLUME_NAME:?DENSE_MEM_CI_CONFLICT_VOLUME_NAME is required}
     labels: *ci-labels
   oauth-provider-files:
     name: ${DENSE_MEM_CI_OAUTH_VOLUME_NAME:?DENSE_MEM_CI_OAUTH_VOLUME_NAME is required}

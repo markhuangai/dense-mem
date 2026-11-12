@@ -10,9 +10,6 @@
     },
     {
       "path": "internal/knowledge/postgres/search_reconciliation_integration_test.go"
-    },
-    {
-      "path": "internal/knowledge/postgres/search_relationship_reconciliation_integration_test.go"
     }
   ],
   "go": {

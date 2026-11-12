@@ -37,28 +37,32 @@ type ExecutionMeasurements struct {
 }
 
 type executionEvent struct {
-	Counts        map[string]int `json:"counts,omitempty"`
-	LastCompleted string         `json:"last_completed_work,omitempty"`
-	Sequence      int            `json:"sequence"`
-	CaptureID     string         `json:"capture_id"`
-	RunID         string         `json:"run_id"`
-	Event         string         `json:"event"`
-	At            time.Time      `json:"at"`
-	OperationID   string         `json:"operation_id,omitempty"`
-	Kind          string         `json:"kind,omitempty"`
-	ItemID        string         `json:"item_id,omitempty"`
-	Phase         string         `json:"phase,omitempty"`
-	AttemptID     string         `json:"attempt_id,omitempty"`
-	Method        string         `json:"method,omitempty"`
-	Outcome       string         `json:"outcome,omitempty"`
-	ElapsedMS     *float64       `json:"elapsed_ms,omitempty"`
-	Dispatched    bool           `json:"dispatched,omitempty"`
-	StatusCode    int            `json:"status_code,omitempty"`
-	CorrelationID string         `json:"correlation_id,omitempty"`
-	ErrorCode     string         `json:"error_code,omitempty"`
-	Cause         string         `json:"cause,omitempty"`
-	RetryDelayMS  int64          `json:"retry_delay_ms,omitempty"`
-	TraceHash     string         `json:"trace_sha256,omitempty"`
+	Counts            map[string]int `json:"counts,omitempty"`
+	LastCompleted     string         `json:"last_completed_work,omitempty"`
+	Sequence          int            `json:"sequence"`
+	CaptureID         string         `json:"capture_id"`
+	RunID             string         `json:"run_id"`
+	Event             string         `json:"event"`
+	At                time.Time      `json:"at"`
+	OperationID       string         `json:"operation_id,omitempty"`
+	Kind              string         `json:"kind,omitempty"`
+	ItemID            string         `json:"item_id,omitempty"`
+	Phase             string         `json:"phase,omitempty"`
+	AttemptID         string         `json:"attempt_id,omitempty"`
+	Method            string         `json:"method,omitempty"`
+	Outcome           string         `json:"outcome,omitempty"`
+	ElapsedMS         *float64       `json:"elapsed_ms,omitempty"`
+	Dispatched        bool           `json:"dispatched,omitempty"`
+	StatusCode        int            `json:"status_code,omitempty"`
+	CorrelationID     string         `json:"correlation_id,omitempty"`
+	ErrorCode         string         `json:"error_code,omitempty"`
+	Cause             string         `json:"cause,omitempty"`
+	RetryDelayMS      int64          `json:"retry_delay_ms,omitempty"`
+	IdempotencyKey    string         `json:"idempotency_key,omitempty"`
+	OriginalAttemptID string         `json:"original_attempt_id,omitempty"`
+	OriginalRetryable *bool          `json:"original_retryable,omitempty"`
+	OriginalOutcome   string         `json:"original_outcome,omitempty"`
+	TraceHash         string         `json:"trace_sha256,omitempty"`
 }
 
 type executionJournal struct {

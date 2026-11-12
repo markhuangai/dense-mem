@@ -7,23 +7,17 @@ import (
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/config"
-	conflictpostgres "github.com/markhuangai/dense-mem/internal/conflict/postgres"
-	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/embedding"
 	embeddingcontract "github.com/markhuangai/dense-mem/internal/embedding/contract"
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
-	recallpostgres "github.com/markhuangai/dense-mem/internal/recall/postgres"
 	searchapp "github.com/markhuangai/dense-mem/internal/search"
 	searchcontract "github.com/markhuangai/dense-mem/internal/search/contract"
 	searchmaintenance "github.com/markhuangai/dense-mem/internal/search/maintenance"
 	searchpostgres "github.com/markhuangai/dense-mem/internal/search/postgres"
 	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
-	tracecontract "github.com/markhuangai/dense-mem/internal/trace/contract"
-	"gorm.io/gorm"
 )
 
 type searchApplication struct {
@@ -55,41 +49,6 @@ func buildSearchRepositoryApplication(
 		return nil, nil, err
 	}
 	return searchOwner, contract, nil
-}
-
-func searchRecallConflictReader() recallpostgres.RelationshipConflictReader {
-	return func(ctx context.Context, tx *gorm.DB, teamID string, knownAt *time.Time, results []recallcontract.RecallEvidenceHit) ([]tracecontract.RelationshipConflictCaseRecord, error) {
-		relationshipIDs := make([]string, 0)
-		seen := make(map[string]struct{})
-		for _, hit := range results {
-			for _, relationshipID := range hit.RelationshipIDs {
-				if _, ok := seen[relationshipID]; ok {
-					continue
-				}
-				seen[relationshipID] = struct{}{}
-				relationshipIDs = append(relationshipIDs, relationshipID)
-			}
-		}
-		conflicts, err := conflictpostgres.LoadRelationshipConflictRecordsInSpace(ctx, tx, teamID, relationshipIDs, knownAt, "")
-		if err != nil {
-			return nil, err
-		}
-		filtered := make([]tracecontract.RelationshipConflictCaseRecord, 0, len(conflicts))
-		seenConflicts := make(map[string]struct{})
-		for _, conflict := range conflicts {
-			if conflict.Status != string(domain.RelationshipConflictOpen) &&
-				conflict.Status != string(domain.RelationshipConflictOverdue) &&
-				conflict.Status != string(domain.RelationshipConflictResolved) {
-				continue
-			}
-			if _, ok := seenConflicts[conflict.ConflictID]; ok {
-				continue
-			}
-			seenConflicts[conflict.ConflictID] = struct{}{}
-			filtered = append(filtered, conflict)
-		}
-		return filtered, nil
-	}
 }
 
 func buildSearchProviders(

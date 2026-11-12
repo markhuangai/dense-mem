@@ -4,7 +4,7 @@ package registry
 
 import "testing"
 
-func TestProductionCatalogExcludesEvaluationTools(t *testing.T) {
+func TestEvidenceOnlyCatalogProductionExcludesEvaluationTools(t *testing.T) {
 	reg, err := BuildActive(Dependencies{})
 	if err != nil {
 		t.Fatalf("BuildActive: %v", err)

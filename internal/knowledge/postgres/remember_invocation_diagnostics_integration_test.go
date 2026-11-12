@@ -30,7 +30,7 @@ func TestRememberInvocationDiagnosticsTrimsAgainstJSONBTextLimit(t *testing.T) {
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "remember-invocation-jsonb-limit-owner")
 	// Keep the synthetic 64 MiB payload out of slow-query logs consumed by the CI output filter.
 	appDB = appDB.Session(&gorm.Session{Logger: appDB.Logger.LogMode(gormlogger.Error)})
-	repo := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	repo := NewStore(appDB, rls)
 	body := []byte(strings.Repeat("x", 16<<20))
 	exchanges := make([]knowledgecontract.RememberAttemptDiagnosticInput, 4)
 	for index := range exchanges {
@@ -64,7 +64,7 @@ func TestRememberInvocationDiagnosticsFiltersIdentityAndRetryable(t *testing.T) 
 	ctx := context.Background()
 	teamID := createLedgerTeam(t, adminDB, rls, "remember-invocation-filter-team")
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "remember-invocation-filter-owner")
-	repo := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	repo := NewStore(appDB, rls)
 	canonicalID := uuid.NewString()
 	retryableID := uuid.NewString()
 	nonRetryableID := uuid.NewString()
@@ -103,7 +103,7 @@ func TestRememberProcessorPersistsInvocationDiagnosticsThroughPostgres(t *testin
 	space, err := ensurePrivateSpaceForOwner(t, appDB, rls, ctx, uuid.MustParse(teamID), uuid.MustParse(ownerID))
 	require.NoError(t, err)
 	spaceGeneration := privateSpaceGeneration(t, ctx, adminDB, rls, space.ID)
-	repo := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	repo := NewStore(appDB, rls)
 	rememberProcessor := processor.NewSynchronousProcessor(processor.ProcessorDependencies{
 		Ledger: repo, Logger: observability.New(slog.LevelError),
 		DiagnosticProtector: observability.NewCredentialProtector("admitted-secret"),
@@ -218,7 +218,7 @@ func TestRememberInvocationDiagnosticsRejectsPrivateSpaceSealRace(t *testing.T) 
 	space, err := ensurePrivateSpaceForOwner(t, appDB, rls, ctx, uuid.MustParse(teamID), uuid.MustParse(ownerID))
 	require.NoError(t, err)
 	generation := privateSpaceGeneration(t, ctx, adminDB, rls, space.ID)
-	repo := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	repo := NewStore(appDB, rls)
 	invocationID := uuid.NewString()
 
 	sealReady := make(chan struct{})
@@ -281,7 +281,7 @@ func TestRememberInvocationDiagnosticsScopesBodiesAndPurgesExpiredRows(t *testin
 	teamA := createLedgerTeam(t, adminDB, rls, "remember-invocation-diagnostics-a")
 	teamB := createLedgerTeam(t, adminDB, rls, "remember-invocation-diagnostics-b")
 	ownerA := createLedgerProfile(t, adminDB, rls, teamA, "remember-invocation-diagnostics-owner-a")
-	repo := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	repo := NewStore(appDB, rls)
 	privateSpace, err := ensurePrivateSpaceForOwner(t, appDB, rls, ctx, uuid.MustParse(teamA), uuid.MustParse(ownerA))
 	require.NoError(t, err)
 	invocationID := "00000000-0000-4000-8000-000000000801"
@@ -391,7 +391,7 @@ func TestRememberInvocationLeavesCanonicalAttemptEmptyAfterRollback(t *testing.T
 	defer func() {
 		require.NoError(t, adminDB.Exec(`DROP TRIGGER reject_remember_failure_for_test ON remember_attempts; DROP FUNCTION reject_remember_failure_for_test();`).Error)
 	}()
-	repo := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	repo := NewStore(appDB, rls)
 	rememberProcessor := processor.NewSynchronousProcessor(processor.ProcessorDependencies{Ledger: repo, DiagnosticProtector: observability.NewCredentialProtector()})
 	_, err = rememberProcessor.ProcessRemember(ctx, rememberapp.RememberProcessRequest{
 		TeamID: teamID, OwnerProfileID: ownerID, SpaceID: space.ID.String(), SpaceGeneration: generation,

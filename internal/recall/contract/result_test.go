@@ -8,38 +8,31 @@ import (
 
 func TestRecallResultJSONOmitsExecutionState(t *testing.T) {
 	result := RecallResult{
-		RecallID:          "recall-1",
-		DiscoveryGuidance: "internal",
-		SearchState:       "current",
-		Degradation:       &RecallDegradationResult{Code: "internal"},
-		Results:           []RecallResultItem{{EvidenceID: "evidence-1", EquivalentEvidenceIDs: []string{}}},
+		RecallID:    "recall-1",
+		SearchState: "current",
+		Degradation: &RecallDegradationResult{Code: "internal"},
+		Results:     []RecallResultItem{{EvidenceID: "evidence-1", EquivalentEvidenceIDs: []string{}}},
 	}
 	encoded, err := json.Marshal(result)
 	if err != nil {
 		t.Fatalf("marshal recall result: %v", err)
 	}
-	if got := string(encoded); got != `{"recall_id":"recall-1","results":[{"equivalent_evidence_ids":[],"equivalents_truncated":false,"evidence_id":"evidence-1","rank":0}],"conflicts":null,"related_relationships":null,"related_communities":null,"search_states":{"evidence":"","relationships":""},"degradations":null,"suggested_actions":null}` {
-		t.Fatalf("unexpected recall result JSON: %s", got)
+	var wire map[string]any
+	if err := json.Unmarshal(encoded, &wire); err != nil {
+		t.Fatal(err)
 	}
-}
-
-func TestRecallDiscoveryPathJSONShapes(t *testing.T) {
-	community, err := json.Marshal(RecallDiscoveryPath{
-		CommunityID:            "community-1",
-		Relationships:          []RecallRelationshipHandle{{RelationshipID: "relationship-1"}},
-		CommunityRelationships: []RelatedRelationshipSummary{{RelationshipID: "relationship-2"}},
-	})
-	if err != nil || !containsAll(string(community), `"community_id":"community-1"`, `"relationships"`, `"relationship_id":"relationship-2"`) {
-		t.Fatalf("unexpected community path JSON: %s (%v)", community, err)
+	for _, retired := range []string{"search_state", "degradation", "related_relationships", "related_communities", "discovery_paths"} {
+		if _, found := wire[retired]; found {
+			t.Fatalf("retired/internal field %s exposed", retired)
+		}
 	}
-	relationship, err := json.Marshal(RecallDiscoveryPath{Relationships: []RecallRelationshipHandle{{RelationshipID: "relationship-1"}}, EvidenceIDs: []string{"evidence-1"}})
-	if err != nil || !containsAll(string(relationship), `"relationships"`, `"relationship_id":"relationship-1"`, `"evidence_ids":["evidence-1"]`) {
-		t.Fatalf("unexpected relationship path JSON: %s (%v)", relationship, err)
+	if _, found := wire["related_topics"]; !found {
+		t.Fatal("topic hints missing")
 	}
 }
 
 func TestRecallConflictSummaryJSONShapes(t *testing.T) {
-	for _, kind := range []string{"relationship_conflict", "evidence_conflict"} {
+	for _, kind := range []string{"evidence_conflict"} {
 		encoded, err := json.Marshal(RecallConflictSummary{
 			ConflictID: "conflict-1",
 			Kind:       kind,

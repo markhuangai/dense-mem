@@ -161,7 +161,7 @@ func TestOntologySemanticManagerRealLoggerCommandsAndProtection(t *testing.T) {
 				ctx := requestctx.WithActor(context.Background(), requestctx.Actor{TeamID: team, OwnerID: profile})
 				ctx = correlation.WithID(ctx, "manager-command-test")
 				input := contract.SaveDraftInput{OperationKey: "manager-command-key", ExpectedVersion: 1, ExpectedRevision: 2, Reason: "Admitted token password secret " + secret,
-					Edits: []contract.ManagementEdit{{Action: "define", Kind: contract.EntityClass, Definition: &contract.Definition{Key: "people", Label: "People", Description: "Admitted description", BaseEntityKind: "person", ParentID: uuid.NewString(), ParentRelation: contract.SubclassOf}}}}
+					Edits: []contract.ManagementEdit{{Action: "define", Kind: contract.Topic, Definition: &contract.Definition{Key: "people", Label: "People", Description: "Admitted description", ParentID: uuid.NewString()}}}}
 				sink := &ontologyDiagnosticTestSink{}
 				console, records := captureOntologyPublicationConsole(t, func() {
 					protector := observability.NewCredentialProtector(secret)

@@ -12,9 +12,11 @@ corpus row
   -> qrel-based retrieval metrics
 ```
 
-The evaluation harness does not use legacy memory-pack import tools or an
-answer-judge model. It measures retrieval against deterministic qrels after the
-terminal Remember result has been returned.
+The retrieval harness uses deterministic qrels after the terminal Remember
+result. The Evidence-only v5 paired campaign also scores retained and candidate
+terminal answers against its frozen rubric; it uses no legacy memory-pack import.
+Historical graph recipes below document their original pinned v2 runners and
+cannot be executed with the current Evidence-only runtime or runner.
 
 The normal release image contains no evaluation MCP tools. The committed
 `examples/docker-compose.evaluation.yml` builds the separate `evaluation`
@@ -44,13 +46,9 @@ Keep only the latest overall result in `baseline.json`, including source identit
 Ticket-specific reports, approvals, and historical receipts belong in issue/PR comments and concise project memory with immutable evidence links and hashes.
 Source locks, scoring, generators, and required policy/test fixtures remain versioned.
 
-A seed corpus row is plain evidence: `source_doc_id`, `content`, and optional
-source metadata. Content is split rather than truncated, and the Go harness
-rejects any corpus row above 999 Unicode code points. Legacy `claims` and
-`auto_promote` fields are rejected because they bypass production extraction
-and synchronous Remember.
+See [the Evidence-only intake and v5 campaign contract](evidence-only-v5.md) for current corpus bounds, execution, thresholds, budgets, and preservation requirements.
 
-## Locked relationship derivation
+## Historical locked relationship derivation
 
 `public_6axis_1k_v2` is derived from the selected V1 cohort; it never replaces
 or normalizes corpus evidence. It adds a flat `relationships` array to each
@@ -114,7 +112,7 @@ comparison run must set `ALLOW_UNGATED_EVALUATION=1` and omit
 `RELEASE_GATE_POLICY`; this records ordinary candidate metrics without
 presenting the result as a release-gate decision.
 
-## Repaired 1k v3 seed generator
+## Historical repaired 1k v3 seed generator
 
 `public_6axis_1k_v3` retains the locked 991-document, 204-case cohort. The dataset revision still uses `dense-mem.eval.seed.v2`. It
 repairs 26 reversible UTF-8-as-Latin-1 sequences in 12 evidence records and
@@ -506,8 +504,8 @@ and run artifacts are no longer needed.
 ## Search and Recall read-pipeline benchmark
 
 Use a separate disposable PostgreSQL benchmark. It does not consume
-the public 1k evaluation dataset. The benchmark seeds deterministic evidence,
-one supported Relationship, a credential-private evidence item, fixed vectors,
+the public 1k evaluation dataset. The benchmark seeds deterministic Evidence,
+a credential-private Evidence item, fixed vectors,
 and an HNSW index through the real PostgreSQL adapters.
 
 Run it after the plan-conformance audit passes:
@@ -540,7 +538,7 @@ Preserve raw benchmark output under the ignored
 `tests/eval/runs/issue-456` directory; retain the compact summary in issue/PR
 comments with the measured source commit and add its link to project memory.
 
-## Relationship projection query comparison
+## Historical Relationship projection query comparison
 
 After the plan audit passes, compare the exact base commit and candidate on the
 same host without concurrent test load. Keep the base production files at the
@@ -781,7 +779,7 @@ projection, large fanout, bounded previews, independent freshness, lifecycle and
 RLS. The former legacy detector comparison requires its archived source; current
 code does not expose that retired mode. Retain its historical receipt in issue/PR comments and project memory without changing its observations.
 
-## Private session evaluation
+## Historical private session evaluation
 
 Generate the frozen 32-case
 cohort and twelve existing Remember payload controls into an ignored path:
@@ -888,7 +886,7 @@ judgments require each genuine position to identify its expected capacity and
 state; exact unrelated substrings and positions containing both alternatives
 do not pass. Matching retries reuse
 the receipt without another assessment; changed requests conflict. Cross-team
-Recall must not expose any evidence, Relationships or conflict cases. The
+Recall must not expose Evidence or conflict cases. The
 production-entry synchronous-write scenario additionally proves same-team
 private-owner A/B/C isolation. Known baseline rejections remain visible;
 unexpected provider failures stop the run and retain the incomplete report.
@@ -912,17 +910,15 @@ includes body reads. A failed first call can have one diagnostic turn while
 Configured HTTP timeout is not the remaining request deadline.
 
 Per-turn `validation_ms` includes provider response validation and application
-validation, including predicate-catalog checks. It overlaps the inclusive turn
+validation of complete Evidence decisions. It overlaps the inclusive turn
 duration; do not add the two. Provider time overlaps that duration too.
 `issues` holds at most twenty normalized field paths and server-owned codes;
-`truncated` and the bounded error count describe omitted detail. Predicate codes
-distinguish allowlist, nullability, endpoint-kind, inactive-catalog and alias
-conflicts. Evidence codes distinguish required, unknown, duplicate and missing
-results. Span codes distinguish unknown evidence or markers, empty/reversed
-ranges, blank/overlong predicate phrases, and ranges outside same-evidence
-support. Unclassified reasons use `other`. Provider messages and submitted text
-are excluded even when raw diagnostic capture is unavailable. These internal
-codes are never serialized into repair feedback or public memory results.
+`truncated` and the bounded error count describe omitted detail. Evidence codes
+distinguish required, unknown, duplicate, and missing results. Span codes
+identify unknown Evidence and invalid or out-of-bounds Unicode ranges.
+Unclassified reasons use `other`. These internal codes are never serialized
+into public memory results. Complete protected provider exchanges remain
+available independently through the DEBUG stdout diagnostic chunks.
 
 Correlate `remember_phase_completed` structured logs by team, owner, attempt and
 correlation IDs. The phases are `duplicate_embedding`, `assessment`, `embedding`
@@ -931,7 +927,7 @@ therefore log-only; it is not appended to the already committed attempt event.
 These logs and durable assessment diagnostics do not depend on optional metrics.
 Absent measurements are omitted; observed sub-millisecond durations are zero.
 
-Repair feedback names the failed compatibility or range rule without changing acceptance. An incompatible catalog key cannot be repaired by registering it again, an exact known key cannot be substituted, and invalid citations do not justify dropping a supported claim. Ranges remain exact Unicode boundaries; predicate/value ranges must fit within one support range for the same evidence.
+Repair feedback names the failed complete-response or range rule without changing acceptance. Exact Evidence and original Unicode offsets remain authoritative; invalid responses are regenerated completely without partial semantic commit.
 
 Ontology attempt receipts optionally contain `diagnostics` with measured
 `queue_ms`, `admission_ms`, `http_ms`, `reconciliation_ms`, the configured

@@ -17,7 +17,7 @@ func TestEvalRunnerRecallAccuracyCLI(t *testing.T) {
 	require.Contains(t, stdout, "seed_id=recall_accuracy_v1 cases=24")
 	manifest, err := evalharness.LoadSeedManifest(filepath.Join(out, "seed_manifest.json"))
 	require.NoError(t, err)
-	require.Equal(t, evalharness.SeedSchemaVersionV2, manifest.SchemaVersion)
+	require.Equal(t, evalharness.SeedSchemaVersion, manifest.SchemaVersion)
 	before, err := os.ReadFile(filepath.Join(out, "source_lock.json"))
 	require.NoError(t, err)
 	stdout, stderr, err = runTokenDiagnosticsCLI(t, nil, "-mode", "generate-recall-accuracy", "-out", out)

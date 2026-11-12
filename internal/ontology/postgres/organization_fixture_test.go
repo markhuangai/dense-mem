@@ -43,7 +43,7 @@ func (f *ontologyFixture) organizationEvidence(t *testing.T, owner int, text str
 }
 
 func organizationFixtureResponse(request assessment.Request, equivalent func(assessment.Item, assessment.Item) bool) assessment.Response {
-	response := assessment.Response{HierarchyUpdates: []assessment.HierarchyUpdate{}, RequestID: request.RequestID, Definitions: []assessment.Definition{}, Items: []assessment.Decision{}, Equivalence: []assessment.Equivalence{}}
+	response := assessment.Response{RequestID: request.RequestID, Definitions: []assessment.Definition{}, Items: []assessment.Decision{}, Equivalence: []assessment.Equivalence{}}
 	definitions := map[string]string{}
 	items := map[string]assessment.Item{}
 	for _, item := range request.Items {
@@ -54,27 +54,18 @@ func organizationFixtureResponse(request assessment.Request, equivalent func(ass
 		}
 		if ref == "" {
 			for _, d := range request.Definitions {
-				if (item.Kind == ontology.EvidenceSource || item.Kind == ontology.RelationshipSource) && d.Kind == ontology.Topic {
+				if item.Kind == ontology.EvidenceSource && d.Kind == ontology.Topic {
 					ref = d.Ref
 					break
 				}
 			}
 		}
 		if ref == "" {
-			kind, key, base := ontology.Topic, "postgresql", ""
-			if item.Kind == ontology.EntitySource {
-				kind = ontology.EntityClass
-				key = item.EntityKind
-				base = item.EntityKind
-			}
-			if item.Kind == ontology.PredicateSource {
-				kind = ontology.PredicateConcept
-				key = "registered-predicate"
-			}
+			kind, key := ontology.Topic, "postgresql"
 			if definitions[key] == "" {
 				ref = "new-" + key
 				definitions[key] = ref
-				response.Definitions = append(response.Definitions, assessment.Definition{Ref: ref, Kind: kind, Key: key, Label: key, Description: "Synthetic organization vocabulary", Aliases: []string{}, BaseEntityKind: base})
+				response.Definitions = append(response.Definitions, assessment.Definition{Ref: ref, Kind: kind, Key: key, Label: key, Description: "Synthetic organization vocabulary", Aliases: []string{}})
 			} else {
 				ref = definitions[key]
 			}

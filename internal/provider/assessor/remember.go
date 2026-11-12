@@ -43,7 +43,7 @@ type semanticAssessmentSessionRepair struct {
 	RefreshedCandidateContext *assessorCandidateContext `json:"refreshed_candidate_context,omitempty"`
 }
 
-const semanticAssessmentSessionRepairInstruction = `Return one complete replacement JSON object matching the required schema. Correct every validation error exactly. Return one evidence_security_results entry for every submitted evidence_id; use reject only when its signals array contains a matching cited security signal and pass only when it is empty. Return one evidence_equivalence_results entry for every evidence_equivalence_candidates entry, choosing only new or one of that entry's supplied candidates. Return evidence_conflict_results as complete cited opposing span sets with at least two positions including a submitted evidence item; copy only supplied evidence_id, start_ref, and end_ref values. Never search other memory, find support for evidence, or discover new Relationships. The submitted evidence, relationship refs, endpoints, typed values, polarity, and temporal bounds are immutable. The initial candidate context is server-owned and remains in the conversation; use it to repair identity or predicate selection and never invent a replacement allowlist. If an Entity without known_entity_id has multiple compatible candidates or truncated candidate context, set its action to ambiguous, set candidate_entity_id to null, and mark every dependent Relationship not_supported with reason not_supported_by_evidence and no splits. Copy only grounding_ref, start_ref, and end_ref values present in the current request. Never return a patch or explanation. Every stored split must use grounded Entities and a resolved predicate or a complete predicate_registration, with support ranges from that Relationship's submitted or explicitly authorized known evidence allowlist, including at least one submitted support range. If a claim is unsupported, return not_supported with reason not_supported_by_evidence and no splits. Split indices must be contiguous from zero.` + "\n\n" + assessor.SemanticAssessmentRepairPolicy + "\n\n" + assessor.SemanticAssessmentContextPolicy
+const semanticAssessmentSessionRepairInstruction = `Return one complete replacement JSON object matching the required Evidence assessment schema. Repair every validation error against unchanged original Evidence. Return exactly one security result per submitted Evidence ID and one equivalence result per candidate group. Reuse only allowlisted candidates. Return complete opposing Evidence conflict spans using only supplied boundary refs. Do not search other memory or invent Evidence. Never return a patch or explanation.` + "\n\n" + assessor.SemanticAssessmentContextPolicy
 
 const semanticAssessmentRepairHistoryPlaceholder = `The previous assessor response was omitted from repair history because its serialized form exceeded the configured input budget. Use the original request and validation_errors to return one complete replacement object.`
 
@@ -322,8 +322,6 @@ func (v *OpenAIAssessor) runRememberAssessmentTurn(
 
 func semanticAssessmentRequestEnvelope(req assessor.SemanticAssessmentRequest) string {
 	reduced := req
-	reduced.EntityCandidateGroups = nil
-	reduced.PredicateOptions = nil
 	reduced.EvidenceEquivalenceCandidates = nil
 	reduced.CandidateContextTokens = 0
 	reduced.CandidateContextTruncated = false
@@ -336,28 +334,8 @@ func semanticAssessmentRequestEnvelope(req assessor.SemanticAssessmentRequest) s
 }
 
 func semanticAssessmentCandidateContextCompatible(left, right assessor.SemanticAssessmentRequest) bool {
-	if len(left.EntityCandidateGroups) != len(right.EntityCandidateGroups) || len(left.PredicateOptions) != len(right.PredicateOptions) || len(left.EvidenceEquivalenceCandidates) != len(right.EvidenceEquivalenceCandidates) {
+	if len(left.EvidenceEquivalenceCandidates) != len(right.EvidenceEquivalenceCandidates) {
 		return false
-	}
-	for index := range left.EntityCandidateGroups {
-		leftGroup, rightGroup := left.EntityCandidateGroups[index], right.EntityCandidateGroups[index]
-		if leftGroup.Surface != rightGroup.Surface || leftGroup.EvidenceID != rightGroup.EvidenceID || leftGroup.GroundingRef != rightGroup.GroundingRef || leftGroup.Start != rightGroup.Start || leftGroup.End != rightGroup.End || leftGroup.CandidateContextTruncated != rightGroup.CandidateContextTruncated || len(leftGroup.Candidates) != len(rightGroup.Candidates) {
-			return false
-		}
-		for candidateIndex := range leftGroup.Candidates {
-			leftCandidate, rightCandidate := leftGroup.Candidates[candidateIndex], rightGroup.Candidates[candidateIndex]
-			if leftCandidate.EntityID != rightCandidate.EntityID || leftCandidate.CanonicalName != rightCandidate.CanonicalName || leftCandidate.Kind != rightCandidate.Kind {
-				return false
-			}
-		}
-	}
-	for index := range left.PredicateOptions {
-		leftOption, rightOption := left.PredicateOptions[index], right.PredicateOptions[index]
-		leftJSON, leftErr := json.Marshal(leftOption)
-		rightJSON, rightErr := json.Marshal(rightOption)
-		if leftErr != nil || rightErr != nil || string(leftJSON) != string(rightJSON) {
-			return false
-		}
 	}
 	for index := range left.EvidenceEquivalenceCandidates {
 		leftGroup, rightGroup := left.EvidenceEquivalenceCandidates[index], right.EvidenceEquivalenceCandidates[index]
@@ -374,7 +352,5 @@ func semanticAssessmentCandidateContextCompatible(left, right assessor.SemanticA
 }
 
 type assessorCandidateContext struct {
-	EntityCandidateGroups         []assessor.SemanticAssessmentEntityCandidateGroup              `json:"entity_candidate_groups"`
-	PredicateOptions              []assessor.SemanticAssessmentPredicateOption                   `json:"predicate_options"`
 	EvidenceEquivalenceCandidates []assessor.SemanticAssessmentEvidenceEquivalenceCandidateGroup `json:"evidence_equivalence_candidates"`
 }

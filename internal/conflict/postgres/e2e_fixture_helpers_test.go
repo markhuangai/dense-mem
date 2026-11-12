@@ -5,10 +5,10 @@ package postgres
 import (
 	"context"
 	"crypto/sha256"
-	"database/sql"
+
 	"encoding/hex"
 	"encoding/json"
-	"errors"
+
 	"fmt"
 	"sort"
 	"strings"
@@ -65,7 +65,7 @@ type conflictKnowledgeFixtureStore struct {
 }
 
 func newConflictKnowledgeFixtureStore(db *gorm.DB, rls storagepostgres.RLSHelper) *conflictKnowledgeFixtureStore {
-	knowledge := knowledgepostgres.NewStore(db, rls, knowledgepostgres.ConflictRuntimeConfig{})
+	knowledge := knowledgepostgres.NewStore(db, rls)
 	return &conflictKnowledgeFixtureStore{
 		Store:         knowledge,
 		conflictStore: NewStore(db, rls, knowledge),
@@ -92,10 +92,6 @@ func duplicateTeamSharedSpace(t *testing.T, db *gorm.DB, rls storagepostgres.RLS
 		return tx.Raw(`SELECT id::text, generation FROM memory_spaces WHERE team_id = ?::uuid AND kind = 'team_shared' LIMIT 1`, teamID).Row().Scan(&spaceID, &generation)
 	}))
 	return spaceID, generation
-}
-
-func seedTeamPredicateDefinitions(ctx context.Context, tx *gorm.DB, teamID string) error {
-	return storagepostgres.SeedTeamPredicateDefinitions(ctx, tx, teamID)
 }
 
 func createLedgerSSOIdentity(t *testing.T, db *gorm.DB, rls storagepostgres.RLSHelper, teamID uuid.UUID) uuid.UUID {
@@ -137,60 +133,6 @@ func createOwnedCredential(t *testing.T, repo *accesspostgres.CredentialReposito
 
 func privateMemoryHash(parts ...string) string {
 	return privacypostgres.Hash(parts...)
-}
-
-func ensureConflictSystemProfile(ctx context.Context, tx *gorm.DB, teamID string) (string, error) {
-	var profileID string
-	err := tx.WithContext(ctx).Raw(`SELECT id::text FROM actor_identities WHERE team_id = ?::uuid AND kind = 'system' LIMIT 1`, teamID).Row().Scan(&profileID)
-	if err == nil {
-		return profileID, nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return "", err
-	}
-	profileID = uuid.NewString()
-	if err := tx.WithContext(ctx).Exec(`INSERT INTO actor_identities (id, kind, team_id, display_name, active, created_at, updated_at) VALUES (?::uuid, 'system', ?::uuid, ?, false, now(), now())`, profileID, teamID, "__dense_mem_conflict_system__:"+profileID).Error; err != nil {
-		return "", err
-	}
-	if err := tx.WithContext(ctx).Exec(`INSERT INTO team_memberships (actor_identity_id, team_id, status, team_admin, maximum_grants) VALUES (?::uuid, ?::uuid, 'revoked', false, ARRAY[]::text[])`, profileID, teamID).Error; err != nil {
-		return "", err
-	}
-	if err := tx.WithContext(ctx).Exec(`INSERT INTO ownership_aliases (team_id, legacy_owner_id, canonical_identity_id, credential_id, reason) VALUES (?::uuid, ?::uuid, ?::uuid, NULL, 'system')`, teamID, profileID, profileID).Error; err != nil {
-		return "", err
-	}
-	return profileID, nil
-}
-
-func enqueueConflictDerivedEvidenceTasks(ctx context.Context, tx *gorm.DB, resolutionPlanID string, targets []ConflictDerivedEvidenceTarget) ([]ConflictDerivedEvidenceTarget, error) {
-	result := make([]ConflictDerivedEvidenceTarget, 0, len(targets))
-	for _, target := range targets {
-		var taskID, spaceID string
-		var spaceGeneration int64
-		err := tx.WithContext(ctx).Raw(`
-			INSERT INTO relationship_conflict_derived_evidence_tasks (
-				team_id, space_id, space_generation, resolution_plan_id, conflict_id,
-				target_fragment_id, target_owner_profile_id, selected_position_id,
-				system_profile_id, source_group_key, origin_evidence_index
-			)
-			SELECT ?::uuid, conflict.space_id, conflict.space_generation, ?::uuid, ?::uuid,
-				   ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?, ?
-			FROM relationship_conflict_cases AS conflict
-			WHERE conflict.team_id = ?::uuid AND conflict.conflict_id = ?::uuid
-			ON CONFLICT (team_id, conflict_id, target_fragment_id) DO NOTHING
-			RETURNING derived_evidence_task_id::text, space_id::text, space_generation
-		`, target.TeamID, resolutionPlanID, target.ConflictID, target.TargetFragmentID, target.TargetOwnerProfileID, target.SelectedPositionID, target.SystemProfileID, target.SourceGroupKey, target.EvidenceIndex, target.TeamID, target.ConflictID).Row().Scan(&taskID, &spaceID, &spaceGeneration)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return nil, err
-		}
-		if taskID == "" {
-			if err := tx.WithContext(ctx).Raw(`SELECT derived_evidence_task_id::text, space_id::text, space_generation FROM relationship_conflict_derived_evidence_tasks WHERE team_id = ?::uuid AND conflict_id = ?::uuid AND target_fragment_id = ?::uuid`, target.TeamID, target.ConflictID, target.TargetFragmentID).Row().Scan(&taskID, &spaceID, &spaceGeneration); err != nil {
-				return nil, err
-			}
-		}
-		target.TaskID, target.SpaceID, target.SpaceGeneration = taskID, spaceID, spaceGeneration
-		result = append(result, target)
-	}
-	return result, nil
 }
 
 var conflictSearchTestContractSequence atomic.Int32
@@ -277,60 +219,4 @@ func duplicateCount(t *testing.T, db *gorm.DB, rls storagepostgres.RLSHelper, qu
 
 func loadRecallEvidenceConflictCase(ctx context.Context, tx *gorm.DB, teamID, conflictID string, knownAt *time.Time) (*recallpostgres.EvidenceConflictCaseRecord, error) {
 	return recallpostgres.LoadRecallEvidenceConflictCase(ctx, tx, teamID, conflictID, knownAt)
-}
-
-func commitConflictRememberFixture(t testing.TB, ctx context.Context, repo *knowledgepostgres.Store, teamID, ownerID, subjectID, objectID, content, key string) *SynchronousRememberCommitResult {
-	return commitConflictRememberFixtureWithSupports(t, ctx, repo, teamID, ownerID, subjectID, objectID, content, key, nil)
-}
-
-func commitConflictRememberFixtureWithSupports(t testing.TB, ctx context.Context, repo *knowledgepostgres.Store, teamID, ownerID, subjectID, objectID, content, key string, supports []EvidenceSupportInput) *SynchronousRememberCommitResult {
-	t.Helper()
-	input := conflictRememberFixtureInput(teamID, ownerID, subjectID, objectID, content, key, supports)
-	if len(supports) > 0 {
-		knownIDs := make([]string, 0, len(supports))
-		for _, support := range supports {
-			if support.EvidenceOwnerProfileID != "" {
-				knownIDs = append(knownIDs, support.FragmentID)
-			}
-		}
-		if len(knownIDs) > 0 {
-			known, err := repo.ListSubmissionAssessmentKnownEvidence(ctx, SubmissionAssessmentKnownEvidenceInput{TeamID: teamID, OwnerProfileID: ownerID, EvidenceIDs: knownIDs})
-			require.NoError(t, err)
-			input.Commit.KnownEvidenceSnapshot = known.Evidence
-		}
-	}
-	plan, err := repo.PlanRememberEmbeddings(ctx, input)
-	require.NoError(t, err)
-	vectors := make([]InlineEmbeddingResult, 0, len(plan.Documents))
-	for index, document := range plan.Documents {
-		vector := []float32{1, 0, 0}
-		if index%2 == 1 {
-			vector = []float32{0, 1, 0}
-		}
-		vectors = append(vectors, InlineEmbeddingResult{DocumentHash: document.DocumentHash, Embedding: vector, EmbeddingContractID: plan.EmbeddingContractID, EmbeddingDimensions: plan.EmbeddingDimensions, EmbeddingModel: plan.EmbeddingModel, SearchIndexGenerationID: plan.SearchIndexGenerationID, IndexGeneration: plan.IndexGeneration})
-	}
-	result, err := repo.CommitRememberWithEmbeddings(ctx, input, vectors)
-	require.NoError(t, err)
-	return result
-}
-
-func conflictRememberFixtureInput(teamID, ownerID, subjectID, objectID, content, key string, supports []EvidenceSupportInput) SynchronousRememberCommitInput {
-	fragmentID, ingestID, assessmentID := uuid.NewString(), uuid.NewString(), uuid.NewString()
-	relationshipRef := key + ":relationship"
-	return SynchronousRememberCommitInput{
-		TeamID: teamID, OwnerProfileID: ownerID, IngestID: ingestID, IdempotencyKey: key, RequestHash: sha256Hex(content), SourceSummary: key,
-		Evidence:                []EvidenceInput{{FragmentID: fragmentID, Content: content, ContentHash: sha256Hex(content), SourceType: "conversation", Authority: "primary"}},
-		EvidenceSecurityResults: []EvidenceSecurityResult{{FragmentID: fragmentID, EvidenceIndex: 0, Decision: "pass", Safe: true}},
-		AssessmentID:            assessmentID, AssessmentJSON: json.RawMessage(`{"request_id":"` + key + `"}`), ProviderTurns: 1,
-		Commit: CommitSubmissionAssessmentInput{
-			AssessmentID: assessmentID, Items: []SubmissionAssessmentItemInput{{FragmentID: fragmentID}},
-			EntityResolutions: []SubmissionAssessmentEntityResolutionInput{
-				{Resolution: SemanticEntityResolutionInput{MentionRef: "subject", Action: string(domain.EntityResolutionReuse), EntityID: subjectID, ExactEntityID: subjectID, FragmentID: fragmentID, AssessmentID: assessmentID}},
-				{Resolution: SemanticEntityResolutionInput{MentionRef: "object", Action: string(domain.EntityResolutionReuse), EntityID: objectID, ExactEntityID: objectID, FragmentID: fragmentID, AssessmentID: assessmentID}},
-			},
-			RelationshipObservations: []SubmissionAssessmentRelationshipObservationInput{{RelationshipRef: relationshipRef, Observation: SemanticRelationshipDecisionInput{Ref: relationshipRef, SubjectRef: "subject", OriginalPredicate: "primary_database", PredicateKey: "primary_database", PredicateVersion: 1, ObjectRef: "object", Polarity: "+", AssessorAccepted: true, AssessmentID: assessmentID, Support: &EvidenceSupportInput{FragmentID: fragmentID, SourceGroupKey: key, SpanStart: 0, SpanEnd: len(content), Quote: content, Authority: "primary"}, Supports: supports}}},
-			RelationshipResults:      []SubmissionRelationshipResultInput{{RelationshipRef: relationshipRef, Disposition: "stored"}},
-			Payload:                  map[string]any{"response_hash": sha256Hex(key), "model": "test-model", "tokenizer": "o200k_base", "candidate_context_tokens": 0, "candidate_context_truncated": false},
-		},
-	}
 }

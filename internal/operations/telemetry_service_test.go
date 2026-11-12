@@ -35,7 +35,7 @@ func TestPrometheusTelemetryService_UnconfiguredReturnsUnavailableSnapshot(t *te
 	require.Equal(t, "telemetry backend is not configured", snapshot.Message)
 	require.NotEmpty(t, snapshot.Cards)
 	require.NotEmpty(t, snapshot.WindowedCards)
-	require.NotEmpty(t, snapshot.CurrentCards)
+	require.Empty(t, snapshot.CurrentCards)
 	require.NotEmpty(t, snapshot.Series)
 	require.NotEmpty(t, snapshot.ActivitySeries)
 	require.Empty(t, snapshot.StateSeries)
@@ -49,38 +49,6 @@ func TestPrometheusTelemetryService_UnconfiguredReturnsUnavailableSnapshot(t *te
 	require.Contains(t, string(payload), `"current_cards"`)
 	require.Contains(t, string(payload), `"activity_series"`)
 	require.Contains(t, string(payload), `"state_series"`)
-}
-
-func TestPrometheusTelemetryService_UnconfiguredPrometheusKeepsLifecycleCards(t *testing.T) {
-	active := "active"
-	lifecycle := &telemetryLifecycleReaderStub{snapshot: operationscontract.TelemetryLifecycleSnapshot{
-		Transitions: map[string]float64{active: 2},
-		Corrections: 1,
-		Current:     map[string]float64{active: 3},
-	}}
-	svc := NewPrometheusTelemetryService(nil, time.Second, "", nil)
-	svc.now = func() time.Time { return time.Date(2026, 5, 2, 13, 0, 0, 0, time.UTC) }
-	svc.SetLifecycleReader(lifecycle)
-
-	snapshot, err := svc.Snapshot(context.Background(), TelemetryFilter{Window: "15m", Scope: "system", Audience: TelemetryAudienceOperator})
-
-	require.NoError(t, err)
-	require.True(t, snapshot.Available)
-	require.Equal(t, TelemetrySnapshotDegraded, snapshot.Status)
-	require.Equal(t, "telemetry backend is not configured", snapshot.Message)
-	transition := telemetrySpecByID(snapshot.WindowedCards, "relationship_transitions_active")
-	require.NotNil(t, transition)
-	require.Equal(t, TelemetryItemReady, transition.Status)
-	require.Equal(t, 2.0, transition.Value)
-	current := telemetrySpecByID(snapshot.CurrentCards, "relationships_active")
-	require.NotNil(t, current)
-	require.Equal(t, TelemetryItemReady, current.Status)
-	require.Equal(t, 3.0, current.Value)
-	httpRequests := telemetrySpecByID(snapshot.WindowedCards, "http_requests")
-	require.NotNil(t, httpRequests)
-	require.Equal(t, TelemetryItemUnavailable, httpRequests.Status)
-	require.Equal(t, "source_unconfigured", httpRequests.ReasonCode)
-	require.Equal(t, 1, lifecycle.calls)
 }
 
 func TestTelemetryCostCardsAreOperatorOnly(t *testing.T) {
@@ -205,9 +173,9 @@ func TestPrometheusTelemetryService_QueriesTypedScope(t *testing.T) {
 	require.Len(t, snapshot.Cards, len(snapshot.WindowedCards)+len(snapshot.CurrentCards))
 	require.Len(t, snapshot.Series, len(snapshot.ActivitySeries)+len(snapshot.StateSeries))
 	require.NotNil(t, telemetrySpecByID(snapshot.WindowedCards, "http_requests"))
-	require.NotNil(t, telemetrySpecByID(snapshot.WindowedCards, "avg_conflict_review_duration"))
-	require.NotEmpty(t, snapshot.CurrentCards)
-	require.NotNil(t, telemetrySeriesByID(snapshot.ActivitySeries, "conflict_review_duration"))
+	require.Nil(t, telemetrySpecByID(snapshot.WindowedCards, "avg_conflict_review_duration"))
+	require.Empty(t, snapshot.CurrentCards)
+	require.Nil(t, telemetrySeriesByID(snapshot.ActivitySeries, "conflict_review_duration"))
 	require.Empty(t, snapshot.StateSeries)
 	require.Condition(t, func() bool {
 		for _, query := range queries {
@@ -329,22 +297,12 @@ func TestPrometheusTelemetryService_ValidationBranches(t *testing.T) {
 	rangeFeedbackQuery := telemetryRangeRecallFeedbackRate(`{job="dense-mem"}`, `used="true"`, "1m")
 	require.Contains(t, rangeFeedbackQuery, `min_over_time(densemem_recall_feedback_total{job="dense-mem",used="true"}[1m]) unless ignoring(__name__) last_over_time(densemem_recall_feedback_total{job="dense-mem",used="true"}[1m] offset 1m)`)
 	require.NotContains(t, rangeFeedbackQuery, `count_over_time(densemem_recall_feedback_total{job="dense-mem",used="true"}[1m]) < bool on(job, instance) group_left() count_over_time(up[1m])`)
-	require.Condition(t, func() bool {
-		for _, spec := range telemetryCardSpecs(TelemetryScope{}, nil, "1h") {
-			if spec.ID == "dream_feedbacks" {
-				return strings.Contains(spec.Query, `min_over_time(densemem_dream_feedback_total[1h])`)
-			}
-		}
-		return false
-	})
-	require.Condition(t, func() bool {
-		for _, spec := range telemetrySeriesSpecs(`{job="dense-mem"}`, "1m") {
-			if spec.ID == "dream_feedbacks" {
-				return strings.Contains(spec.Query, "densemem_dream_feedback_total")
-			}
-		}
-		return false
-	})
+	for _, spec := range telemetryCardSpecs(TelemetryScope{}, nil, "1h") {
+		require.NotContains(t, spec.Query, "dream")
+	}
+	for _, spec := range telemetrySeriesSpecs(`{job="dense-mem"}`, "1m") {
+		require.NotContains(t, spec.Query, "dream")
+	}
 	require.Contains(t, telemetryRangeHistogramQuantile("densemem_recall_duration_seconds", "", "", "1m", 0.95, 1000), "histogram_quantile(0.95")
 	quantileQuery := telemetryRangeHistogramQuantile("densemem_recall_duration_seconds", "", "", "1m", 0.95, 1000)
 	require.Contains(t, quantileQuery, "min_over_time")
@@ -355,7 +313,6 @@ func TestPrometheusTelemetryService_ValidationBranches(t *testing.T) {
 		"embedding_errors",
 		"verifier_requests",
 		"recalls",
-		"avg_conflict_review_duration",
 	})
 	activityIDs := telemetryQuerySpecIDs(telemetryActivitySeriesSpecs("", "1m"))
 	require.Subset(t, activityIDs, []string{
@@ -363,20 +320,14 @@ func TestPrometheusTelemetryService_ValidationBranches(t *testing.T) {
 		"embedding_errors",
 		"verifier_requests",
 		"recalls",
-		"conflict_review_duration",
 	})
 	for _, retiredID := range []string{"fragment_creates", "claim_creates", "promotions", "retractions", "facts_requeued", "community_runs", "promote_lock_wait"} {
 		require.NotContains(t, windowedIDs, retiredID)
 		require.NotContains(t, activityIDs, retiredID)
 	}
-	require.NotEmpty(t, telemetryCurrentCardSpecs(TelemetryScope{}, nil))
-	operatorCards := telemetryCurrentCardSpecsForAudience(TelemetryScope{Type: "system"}, nil, true)
-	require.Equal(t, "conflict_queue_collection_success", operatorCards[len(operatorCards)-1].ID)
-	require.Contains(t, operatorCards[len(operatorCards)-1].Query, "min(densemem_conflict_queue_collection_success")
-	userCards := telemetryCurrentCardSpecsForAudience(TelemetryScope{Type: "system"}, nil, false)
-	require.NotEmpty(t, userCards)
-	require.Len(t, operatorCards, len(userCards)+1)
-	require.NotContains(t, telemetryQuerySpecIDs(userCards), "conflict_queue_collection_success")
+	require.Empty(t, telemetryCurrentCardSpecs(TelemetryScope{}, nil))
+	require.Empty(t, telemetryCurrentCardSpecsForAudience(TelemetryScope{Type: "system"}, nil, true))
+	require.Empty(t, telemetryCurrentCardSpecsForAudience(TelemetryScope{Type: "system"}, nil, false))
 	require.Empty(t, telemetryStateSeriesSpecs(""))
 
 	scope, err = normalizeTelemetryScope(TelemetryFilter{Scope: "self", TeamID: &teamID, ProfileID: &profileID})
@@ -431,34 +382,6 @@ func TestPrometheusTelemetryServiceKeepsSuccessfulItemsWhenOneQueryFails(t *test
 	payload, marshalErr := json.Marshal(snapshot)
 	require.NoError(t, marshalErr)
 	require.NotContains(t, string(payload), `"points":null`)
-}
-
-func TestPrometheusTelemetryServiceKeepsLifecycleItemsWhenPrometheusTimesOut(t *testing.T) {
-	prom := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		<-r.Context().Done()
-	}))
-	defer prom.Close()
-
-	lifecycle := &telemetryLifecycleReaderStub{snapshot: operationscontract.TelemetryLifecycleSnapshot{
-		Transitions: map[string]float64{"active": 1},
-		Current:     map[string]float64{"active": 1},
-	}}
-	svc := NewPrometheusTelemetryService(operationsprometheus.NewClient(prom.URL, 20*time.Millisecond), 20*time.Millisecond, "", nil)
-	svc.SetLifecycleReader(lifecycle)
-
-	snapshot, err := svc.Snapshot(context.Background(), TelemetryFilter{Window: "15m", Scope: "system", Audience: TelemetryAudienceOperator})
-	require.NoError(t, err)
-	require.Equal(t, TelemetrySnapshotDegraded, snapshot.Status)
-	require.True(t, snapshot.Available)
-	active := telemetrySpecByID(snapshot.CurrentCards, "relationships_active")
-	require.NotNil(t, active)
-	require.Equal(t, TelemetryItemReady, active.Status)
-	require.Equal(t, 1.0, active.Value)
-	require.Equal(t, 1, lifecycle.calls)
-	require.NoError(t, lifecycle.contextErr)
-	require.True(t, lifecycle.hasDeadline)
-	require.Positive(t, lifecycle.remainingBudget)
-	require.LessOrEqual(t, lifecycle.remainingBudget, 20*time.Millisecond)
 }
 
 func TestPrometheusTelemetryServicePreservesSparseFirstObservations(t *testing.T) {
@@ -548,7 +471,7 @@ func TestPrometheusTelemetryServiceReportsFeatureAndScopeStates(t *testing.T) {
 	snapshot, err := svc.Snapshot(context.Background(), TelemetryFilter{Window: "15m", Scope: "profile", TeamID: &teamID, ProfileID: &profileID, Audience: TelemetryAudienceOperator})
 	require.NoError(t, err)
 	require.Equal(t, TelemetryItemInactive, telemetrySpecByID(snapshot.WindowedCards, "llm_recall_used_rate").Status)
-	require.Equal(t, "feature_retired", telemetrySpecByID(snapshot.WindowedCards, "dream_feedbacks").ReasonCode)
+	require.Nil(t, telemetrySpecByID(snapshot.WindowedCards, "dream_feedbacks"))
 	require.Equal(t, TelemetryItemUnsupported, telemetrySpecByID(snapshot.WindowedCards, "embedding_requests").Status)
 	require.Equal(t, TelemetryItemUnsupported, telemetrySpecByID(snapshot.WindowedCards, "embedding_cost_usd").Status)
 	require.Nil(t, telemetrySpecByID(snapshot.WindowedCards, "assessor_requests"))
@@ -564,10 +487,7 @@ func TestTelemetryCostCardsFailClosedWhenActivityIsUnpriced(t *testing.T) {
 		"verifier_cost_usd":  {Scalar: operationscontract.TelemetryScalar{}},
 		"embedding_cost_usd": {Scalar: operationscontract.TelemetryScalar{}},
 	}
-	cards := buildTelemetryCards(specs, results, operationscontract.TelemetryLifecycleSnapshot{
-		Transitions: map[string]float64{},
-		Current:     map[string]float64{},
-	}, nil, nil, scope)
+	cards := buildTelemetryCards(specs, results, nil, scope)
 
 	verifier := telemetrySpecByID(cards, "verifier_cost_usd")
 	require.NotNil(t, verifier)
@@ -588,10 +508,7 @@ func TestTelemetryAggregateCostIncludesUnpricedEmbeddingActivity(t *testing.T) {
 		"ai_cost_usd":        {Scalar: operationscontract.TelemetryScalar{}},
 		"embedding_cost_usd": {Scalar: operationscontract.TelemetryScalar{}},
 	}
-	cards := buildTelemetryCards(specs, results, operationscontract.TelemetryLifecycleSnapshot{
-		Transitions: map[string]float64{},
-		Current:     map[string]float64{},
-	}, nil, nil, scope)
+	cards := buildTelemetryCards(specs, results, nil, scope)
 
 	aggregate := telemetrySpecByID(cards, "ai_cost_usd")
 	require.NotNil(t, aggregate)
@@ -623,10 +540,7 @@ func TestTelemetryCostCardsPreserveUnpricedUsageReasons(t *testing.T) {
 			results["verifier_cost_usd"] = telemetryInstantResult{Scalar: operationscontract.TelemetryScalar{
 				Labels: map[string]string{"reason": tc.reason},
 			}}
-			cards := buildTelemetryCards(specs, results, operationscontract.TelemetryLifecycleSnapshot{
-				Transitions: map[string]float64{},
-				Current:     map[string]float64{},
-			}, nil, nil, scope)
+			cards := buildTelemetryCards(specs, results, nil, scope)
 			card := telemetrySpecByID(cards, "verifier_cost_usd")
 			require.NotNil(t, card)
 			require.Equal(t, TelemetryItemUnavailable, card.Status)
@@ -635,31 +549,13 @@ func TestTelemetryCostCardsPreserveUnpricedUsageReasons(t *testing.T) {
 	}
 }
 
-func TestTelemetryConflictQueueFailureSentinelIsUnavailable(t *testing.T) {
-	scope := TelemetryScope{Type: "system"}
-	specs := telemetryCurrentCardSpecsForAudience(scope, nil, true)
-	cards := buildTelemetryCards(specs, map[string]telemetryInstantResult{
-		"conflict_queue_collection_success": {Scalar: operationscontract.TelemetryScalar{Value: 0, Available: true}},
-	}, operationscontract.TelemetryLifecycleSnapshot{
-		Transitions: map[string]float64{},
-		Current:     map[string]float64{},
-	}, nil, nil, scope)
-	card := telemetrySpecByID(cards, "conflict_queue_collection_success")
-	require.NotNil(t, card)
-	require.Equal(t, TelemetryItemUnavailable, card.Status)
-	require.Equal(t, "query_failed", card.ReasonCode)
-}
-
 func TestTelemetryRecallFeedbackParentUsesEventCount(t *testing.T) {
 	scope := TelemetryScope{Type: "system"}
 	specs := telemetryWindowedCardSpecsForAudience(scope, nil, "1h", false)
 	cards := buildTelemetryCards(specs, map[string]telemetryInstantResult{
 		telemetryRecallFeedbackActivityID: {Scalar: operationscontract.TelemetryScalar{Value: 3, Available: true}},
 		"llm_recall_used_rate":            {Scalar: operationscontract.TelemetryScalar{Value: 0, Available: true}},
-	}, operationscontract.TelemetryLifecycleSnapshot{
-		Transitions: map[string]float64{},
-		Current:     map[string]float64{},
-	}, nil, nil, scope)
+	}, nil, scope)
 	quality := telemetrySpecByID(cards, "llm_recall_quality_score")
 	require.NotNil(t, quality)
 	require.Equal(t, TelemetryItemUnavailable, quality.Status)
@@ -676,7 +572,7 @@ func TestTelemetryParentActivityMakesMissingDerivedItemsUnavailable(t *testing.T
 	cards := buildTelemetryCards(cardSpecs, map[string]telemetryInstantResult{
 		"recalls":            {Scalar: operationscontract.TelemetryScalar{Value: 2, Available: true}},
 		"avg_recall_results": {Scalar: operationscontract.TelemetryScalar{}},
-	}, operationscontract.TelemetryLifecycleSnapshot{Transitions: map[string]float64{}, Current: map[string]float64{}}, nil, nil, scope)
+	}, nil, scope)
 	card := telemetrySpecByID(cards, "avg_recall_results")
 	require.NotNil(t, card)
 	require.Equal(t, TelemetryItemUnavailable, card.Status)
@@ -702,7 +598,7 @@ func TestTelemetryParentActivityMakesMissingDerivedItemsUnavailable(t *testing.T
 	zeroUsageCards := buildTelemetryCards(cardSpecs, map[string]telemetryInstantResult{
 		"verifier_requests": {Scalar: operationscontract.TelemetryScalar{Value: 0, Available: true}},
 		"verifier_tokens":   {Scalar: operationscontract.TelemetryScalar{}},
-	}, operationscontract.TelemetryLifecycleSnapshot{Transitions: map[string]float64{}, Current: map[string]float64{}}, nil, nil, scope)
+	}, nil, scope)
 	zeroUsage := telemetrySpecByID(zeroUsageCards, "verifier_tokens")
 	require.NotNil(t, zeroUsage)
 	require.Equal(t, TelemetryItemInactive, zeroUsage.Status)
@@ -718,7 +614,7 @@ func TestAssessorFailureTelemetryUsesReadyZeroWhenRequestsAreHealthy(t *testing.
 		"assessor_validation_failures": {Scalar: operationscontract.TelemetryScalar{Value: 0, Available: false}},
 		"assessor_terminal_failures":   {Scalar: operationscontract.TelemetryScalar{Value: 0, Available: false}},
 	}
-	cards := buildTelemetryCards(windowedSpecs, windowedResults, operationscontract.TelemetryLifecycleSnapshot{}, nil, nil, scope)
+	cards := buildTelemetryCards(windowedSpecs, windowedResults, nil, scope)
 	for _, id := range []string{"assessor_request_failures", "assessor_validation_failures", "assessor_terminal_failures"} {
 		card := telemetrySpecByID(cards, id)
 		require.NotNil(t, card, id)
@@ -752,7 +648,7 @@ func TestAssessorFailureTelemetryUsesReadyZeroWhenRequestsAreHealthy(t *testing.
 		require.Equal(t, 0.0, item.Points[1].Value, item.ID)
 	}
 
-	noParent := buildTelemetryCards(windowedSpecs, map[string]telemetryInstantResult{}, operationscontract.TelemetryLifecycleSnapshot{}, nil, nil, scope)
+	noParent := buildTelemetryCards(windowedSpecs, map[string]telemetryInstantResult{}, nil, scope)
 	missingParentFailure := telemetrySpecByID(noParent, "assessor_request_failures")
 	require.NotNil(t, missingParentFailure)
 	require.Equal(t, TelemetryItemUnavailable, missingParentFailure.Status)
@@ -799,29 +695,6 @@ type captureTelemetryLogger struct {
 	attrs       []string
 	warnMessage string
 	warnAttrs   []string
-}
-
-type telemetryLifecycleReaderStub struct {
-	contextErr      error
-	hasDeadline     bool
-	remainingBudget time.Duration
-	snapshot        operationscontract.TelemetryLifecycleSnapshot
-	err             error
-	calls           int
-}
-
-func (s *telemetryLifecycleReaderStub) ReadTelemetryLifecycle(ctx context.Context, _ operationscontract.TelemetryLifecycleFilter, _, _ time.Time) (operationscontract.TelemetryLifecycleSnapshot, error) {
-	s.calls++
-	s.contextErr = ctx.Err()
-	deadline, bounded := ctx.Deadline()
-	s.hasDeadline = bounded
-	if bounded {
-		s.remainingBudget = time.Until(deadline)
-	}
-	if s.contextErr != nil {
-		return operationscontract.TelemetryLifecycleSnapshot{}, s.contextErr
-	}
-	return s.snapshot, s.err
 }
 
 func containsTelemetryAttr(attrs []string, want string) bool {

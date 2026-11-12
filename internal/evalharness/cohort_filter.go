@@ -34,64 +34,6 @@ type cohortJSONLRow struct {
 // ValidateV2CohortDerivation proves that the filtered V1 seed contains only
 // the cohort-lock's declared omissions and that V2 preserves every retained
 // V1 evidence item while adding relationship properties.
-func ValidateV2CohortDerivation(opts V2CohortValidationOptions) (V2CohortValidationReport, error) {
-	if err := validateV2CohortValidationOptions(opts); err != nil {
-		return V2CohortValidationReport{}, err
-	}
-	lock, lockHash, err := loadCohortFilterLock(opts.CohortLockPath)
-	if err != nil {
-		return V2CohortValidationReport{}, err
-	}
-	parentManifest, err := LoadSeedManifest(opts.ParentManifestPath)
-	if err != nil {
-		return V2CohortValidationReport{}, err
-	}
-	filteredManifest, err := LoadSeedManifest(opts.FilteredManifestPath)
-	if err != nil {
-		return V2CohortValidationReport{}, err
-	}
-	if parentManifest.SchemaVersion != SeedSchemaVersion || filteredManifest.SchemaVersion != SeedSchemaVersion {
-		return V2CohortValidationReport{}, fmt.Errorf("parent and filtered cohort seeds must use %q", SeedSchemaVersion)
-	}
-	parentHash, err := SeedHash(opts.ParentManifestPath, parentManifest)
-	if err != nil {
-		return V2CohortValidationReport{}, fmt.Errorf("hash parent V1 seed: %w", err)
-	}
-	filteredHash, err := SeedHash(opts.FilteredManifestPath, filteredManifest)
-	if err != nil {
-		return V2CohortValidationReport{}, fmt.Errorf("hash filtered V1 seed: %w", err)
-	}
-	if err := validateCohortFilterLockBinding(lock, parentManifest, filteredManifest, parentHash, filteredHash); err != nil {
-		return V2CohortValidationReport{}, err
-	}
-	if err := validateV1CohortFiles(opts, parentManifest, filteredManifest, lock); err != nil {
-		return V2CohortValidationReport{}, err
-	}
-
-	derivation, err := ValidateV2Derivation(
-		opts.FilteredManifestPath,
-		opts.FilteredSuitePath,
-		opts.DerivedManifestPath,
-		opts.DerivedSuitePath,
-	)
-	if err != nil {
-		return V2CohortValidationReport{}, err
-	}
-	return V2CohortValidationReport{
-		SchemaVersion:          v2CohortValidationSchema,
-		Status:                 "passed",
-		CohortLockHash:         lockHash,
-		ParentSeedHash:         parentHash,
-		FilteredSeedHash:       filteredHash,
-		DerivedSeedHash:        derivation.DerivedSeedHash,
-		RemovedSourceDocIDs:    append([]string(nil), lock.RemovedSourceDocIDs...),
-		DroppedCaseIDs:         append([]string(nil), lock.DroppedCaseIDs...),
-		RetainedCorpusCount:    derivation.CorpusCount,
-		RetainedCaseCount:      filteredManifest.Counts["cases"],
-		RelationshipCount:      derivation.RelationshipCount,
-		ContractValidatedCount: derivation.ContractValidatedCount,
-	}, nil
-}
 
 func validateV2CohortValidationOptions(opts V2CohortValidationOptions) error {
 	for name, path := range map[string]string{
@@ -224,7 +166,6 @@ func validateV1CohortFiles(
 	}
 	for name, files := range map[string][2]string{
 		"hard_negatives": {parent.HardNegativesFile, filtered.HardNegativesFile},
-		"dreams":         {parent.DreamsFile, filtered.DreamsFile},
 		"licenses":       {parent.LicensesFile, filtered.LicensesFile},
 	} {
 		parentFile, filteredFile := files[0], files[1]
@@ -254,7 +195,6 @@ func validateCohortManifestDeclarations(parent, filtered *SeedManifest) error {
 		"answers":        {parent.AnswersFile, filtered.AnswersFile},
 		"hard_negatives": {parent.HardNegativesFile, filtered.HardNegativesFile},
 		"transforms":     {parent.TransformsFile, filtered.TransformsFile},
-		"dreams":         {parent.DreamsFile, filtered.DreamsFile},
 		"licenses":       {parent.LicensesFile, filtered.LicensesFile},
 	} {
 		parentFile, filteredFile := files[0], files[1]

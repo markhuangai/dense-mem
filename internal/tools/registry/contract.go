@@ -7,27 +7,22 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 )
 
 const (
 	ToolRemember                    = "remember"
 	ToolIngestSession               = "ingest_session"
 	ToolRetractEvidence             = "retract_evidence"
-	ToolCorrectRelationship         = "correct_relationship"
 	ToolRecallMemory                = "recall_memory"
 	ToolTraceMemory                 = "trace_memory"
 	ToolSubmitRecallSessionFeedback = "submit_recall_session_feedback"
 	ToolExportMemoryPack            = "export_memory_pack"
 )
 
-// Community analysis stays server-controlled recall context and first-party
-// portal data; it is intentionally absent from the public MCP catalog.
 var contractToolNames = []string{
 	ToolRemember,
 	ToolIngestSession,
 	ToolRetractEvidence,
-	ToolCorrectRelationship,
 	ToolRecallMemory,
 	ToolTraceMemory,
 	ToolSubmitRecallSessionFeedback,
@@ -52,13 +47,6 @@ func ContractTools() []Tool {
 			[]string{"read"},
 			retractEvidenceInputSchema(),
 			retractEvidenceOutputSchema(),
-		),
-		contractTool(
-			ToolCorrectRelationship,
-			contractToolDescription(ToolCorrectRelationship),
-			[]string{"read"},
-			correctRelationshipInputSchema(),
-			correctRelationshipOutputSchema(),
 		),
 		contractTool(
 			ToolRecallMemory,
@@ -171,14 +159,10 @@ func ValidateContractInput(tool Tool, args map[string]any, scopes []string) erro
 		return validateRecall(args)
 	case ToolRetractEvidence:
 		return validateUniqueStringArray(args, "evidence_ids")
-	case ToolTraceMemory:
-		return validateUniqueStringArray(args, "predicate_keys")
-	case ToolCorrectRelationship:
-		return validateCorrectRelationship(args)
 	case ToolSubmitRecallSessionFeedback:
 		return validateRecallFeedback(args)
 	case ToolExportMemoryPack:
-		return validateUniqueStringArray(args, "relationship_ids")
+		return validateUniqueStringArray(args, "evidence_ids")
 	default:
 		return nil
 	}
@@ -218,17 +202,17 @@ func validateRemember(args map[string]any) error {
 	if err := validateDirectEvidenceSupersessions(evidence); err != nil {
 		return err
 	}
-	if err := validateSubmittedRelationships(args["relationships"], evidence, "relationships", true); err != nil {
-		return err
-	}
-	return wrapRememberValidationError(rememberapp.ValidateRelationshipCoverage(len(evidence), objectArray(args["relationships"])))
+	return nil
 }
 
 func validateRecall(args map[string]any) error {
+	if strings.TrimSpace(stringInput(args["query"])) == "" && len(collectAnyArray(args["topic_ids"])) == 0 {
+		return fmt.Errorf("query or topic_ids is required")
+	}
+
 	for _, field := range []string{
 		"known_evidence_ids",
-		"known_relationship_ids",
-		"expand_from_entity_ids",
+		"topic_ids",
 	} {
 		if err := validateUniqueStringArray(args, field); err != nil {
 			return err

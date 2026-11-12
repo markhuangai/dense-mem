@@ -22,7 +22,6 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/domain"
-	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/operations"
@@ -94,14 +93,14 @@ func TestBootstrapWrappersAndEarlyServerGuards(t *testing.T) {
 
 func TestCompositionHelpersCoverTelemetryAndMaintenanceBranches(t *testing.T) {
 	logger := observability.New(0)
-	disabled, err := buildTelemetryApplication(context.Background(), config.Config{}, telemetryPricingStub{}, nil, nil, logger, nil)
+	disabled, err := buildTelemetryApplication(context.Background(), config.Config{}, telemetryPricingStub{}, nil, logger, nil)
 	if err != nil || disabled.PricingRefreshEnabled || disabled.Reader != nil || disabled.Metrics == nil {
 		t.Fatalf("disabled telemetry composition = %+v, %v", disabled, err)
 	}
 	unavailable, err := buildTelemetryApplication(context.Background(), config.Config{
 		TelemetryEnabled: true,
 		AIVerifierModel:  "configured-verifier",
-	}, telemetryPricingStub{err: errors.New("pricing unavailable")}, nil, nil, logger, observability.NewCredentialProtector())
+	}, telemetryPricingStub{err: errors.New("pricing unavailable")}, nil, logger, observability.NewCredentialProtector())
 	if err != nil || !unavailable.PricingRefreshEnabled || unavailable.Reader == nil || unavailable.ScrapeHandler == nil || unavailable.Prometheus == nil {
 		t.Fatalf("telemetry composition with unavailable pricing = %+v, %v", unavailable, err)
 	}
@@ -109,7 +108,7 @@ func TestCompositionHelpersCoverTelemetryAndMaintenanceBranches(t *testing.T) {
 	enabled, err := buildTelemetryApplication(context.Background(), config.Config{
 		TelemetryEnabled: true,
 		AIVerifierModel:  "configured-verifier",
-	}, telemetryPricingStub{config: domain.TelemetryPricingRuntimeConfig{VerifierInputUSDPerMillionTokens: &rate}}, nil, nil, logger, observability.NewCredentialProtector())
+	}, telemetryPricingStub{config: domain.TelemetryPricingRuntimeConfig{VerifierInputUSDPerMillionTokens: &rate}}, nil, logger, observability.NewCredentialProtector())
 	if err != nil || !enabled.PricingRefreshEnabled || enabled.Reader == nil || enabled.ScrapeHandler == nil || enabled.Prometheus == nil {
 		t.Fatalf("enabled telemetry composition = %+v, %v", enabled, err)
 	}
@@ -149,19 +148,16 @@ func TestCompositionHelpersCoverTelemetryAndMaintenanceBranches(t *testing.T) {
 	if !configuredModelPriced || !overrideModelUnpriced {
 		t.Fatalf("telemetry pricing did not separate configured and override models: %s", body)
 	}
-	if buildTraceStore(nil, nil) == nil || buildContextApplication(nil) == nil || buildRememberAttemptDiagnostics(nil) == nil {
+	if buildTraceStore(nil, nil) == nil || buildContextApplication(nil, logger) == nil || buildRememberAttemptDiagnostics(nil) == nil {
 		t.Fatal("maintenance composition returned nil service")
 	}
 	if _, _, err := buildSearchRepositoryApplication(context.Background(), config.Config{}, &postgres.DB{}, nil, nil); err == nil {
 		t.Fatal("missing knowledge owner was accepted")
 	}
-	knowledge := knowledgepostgres.NewStore(nil, nil, knowledgecontract.ConflictRuntimeConfig{})
+	knowledge := knowledgepostgres.NewStore(nil, nil)
 	searchStore, _, err := buildSearchRepositoryApplication(context.Background(), config.Config{AIEmbeddingModel: "model", AIEmbeddingDimensions: 2}, &postgres.DB{}, nil, knowledge)
 	if err == nil || searchStore != nil || !strings.Contains(err.Error(), "database") {
 		t.Fatalf("invalid search database result = %v, store=%v", err, searchStore)
-	}
-	if buildSemanticWriteCorrectionExecutor(nil) == nil {
-		t.Fatal("semantic write executor was nil")
 	}
 	if got := controlListenerClose(nil); got != nil {
 		t.Fatalf("nil control listener close = %v", got)
@@ -412,7 +408,7 @@ func TestTelemetryCompositionUsesConfiguredQueryAdapter(t *testing.T) {
 				_, _ = w.Write([]byte(`{"status":"success","data":{"result":[{"value":[1770000000,"7"],"values":[[1770000000,"7"]]}]}}`))
 			}))
 			defer server.Close()
-			composed, err := buildTelemetryApplication(context.Background(), config.Config{TelemetryEnabled: true, TelemetryPrometheusURL: " " + server.URL + "/ ", TelemetryPrometheusJob: "composition-job", TelemetryQueryTimeoutSeconds: 1}, telemetryPricingStub{}, nil, nil, observability.New(0), observability.NewCredentialProtector())
+			composed, err := buildTelemetryApplication(context.Background(), config.Config{TelemetryEnabled: true, TelemetryPrometheusURL: " " + server.URL + "/ ", TelemetryPrometheusJob: "composition-job", TelemetryQueryTimeoutSeconds: 1}, telemetryPricingStub{}, nil, observability.New(0), observability.NewCredentialProtector())
 			if err != nil {
 				t.Fatal(err)
 			}

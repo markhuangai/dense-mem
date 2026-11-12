@@ -22,34 +22,16 @@ func main() {
 	var baselineRun string
 	var candidateRun string
 	var captureDir string
-	var relationshipLedgerPath string
-	var derivedSeedID string
-	var parentV1ManifestPath string
-	var parentV1SuitePath string
-	var filteredV1ManifestPath string
-	var filteredV1SuitePath string
-	var derivedV2ManifestPath string
-	var derivedV2SuitePath string
-	var cohortLockPath string
-	var repairLockPath string
 	var metricsURL string
 	var experimentManifest string
-	flag.StringVar(&opts.Mode, "mode", "validate", "validate, validate-capture, import, baseline, candidate, compare, compare-v2-cohort, derive-v2, derive-v3, generate-recall-accuracy, recall-accuracy-report, validate-v2-cohort, token-diagnostics, or runtime")
+	var hostPolicy string
+	flag.StringVar(&hostPolicy, "host-policy", "one_call", "one_call or iterative")
+	flag.StringVar(&opts.Mode, "mode", "validate", "validate, validate-capture, import, baseline, candidate, compare, generate-recall-accuracy, recall-accuracy-report, token-diagnostics, runtime, evidence-only-launch, evidence-only-host, or evidence-only-answer-score")
 	flag.StringVar(&metricsURL, "metrics-url", "", "direct Prometheus scrape URL (or DENSE_MEM_EVAL_METRICS_URL) for token-diagnostics")
 	flag.StringVar(&experimentManifest, "experiment-manifest", "", "paired-run manifest for recall-accuracy-report")
-	flag.StringVar(&opts.SeedManifestPath, "seed", "", "seed manifest path (source seed for derive-v2; derive-v3 uses parent/filtered V1 inputs)")
-	flag.StringVar(&opts.SuitePath, "suite", "", "suite JSONL path (source suite for derive-v2; derive-v3 uses parent/filtered V1 inputs)")
+	flag.StringVar(&opts.SeedManifestPath, "seed", "", "seed manifest path")
+	flag.StringVar(&opts.SuitePath, "suite", "", "suite JSONL path")
 	flag.StringVar(&opts.OutDir, "out", "", "output run directory")
-	flag.StringVar(&relationshipLedgerPath, "relationship-ledger", "", "relationship ledger JSONL path required for derive-v2 or derive-v3")
-	flag.StringVar(&derivedSeedID, "derived-seed-id", "public_6axis_1k_v2", "derived seed ID for derive-v2")
-	flag.StringVar(&parentV1ManifestPath, "parent-v1-seed", "", "unfiltered V1 manifest required for derive-v3, V2 cohort validation, or comparison")
-	flag.StringVar(&parentV1SuitePath, "parent-v1-suite", "", "unfiltered V1 suite required for derive-v3, V2 cohort validation, or comparison")
-	flag.StringVar(&filteredV1ManifestPath, "filtered-v1-seed", "", "filtered V1 manifest required for derive-v3, V2 cohort validation, or comparison")
-	flag.StringVar(&filteredV1SuitePath, "filtered-v1-suite", "", "filtered V1 suite required for derive-v3, V2 cohort validation, or comparison")
-	flag.StringVar(&derivedV2ManifestPath, "derived-v2-seed", "", "derived V2 manifest required for V2 cohort validation or comparison")
-	flag.StringVar(&derivedV2SuitePath, "derived-v2-suite", "", "derived V2 suite required for V2 cohort validation or comparison")
-	flag.StringVar(&cohortLockPath, "cohort-lock", "", "committed cohort lock for derive-v2, derive-v3, V2 cohort validation, or V2 cohort comparison")
-	flag.StringVar(&repairLockPath, "repair-lock", "", "encoding repair source lock required for derive-v3")
 	flag.StringVar(&opts.BaseURL, "base-url", "http://127.0.0.1:8080", "Dense-Mem HTTP base URL (or DENSE_MEM_BASE_URL)")
 	flag.StringVar(&opts.APIKey, "api-key", "", "read/write API key (prefer DENSE_MEM_API_KEY)")
 	flag.BoolVar(&opts.ImportSeed, "import-seed", false, "import corpus through remember before running cases")
@@ -76,11 +58,16 @@ func main() {
 	registerFloatGate("min-evidence-required-rank1-rate", "minimum share of evidence-scored cases with a required evidence ref first", &opts.Gates.MinEvidenceRequiredRank1Rate, validateRate)
 	registerFloatGate("max-average-evidence-bad-at-k", "maximum average bad evidence refs@k allowed when evidence qrels are present", &opts.Gates.MaxAverageEvidenceBadAtK, validateNonNegative)
 	registerFloatGate("max-evidence-bad-rank1-rate", "maximum share of evidence-scored cases with a bad evidence ref first", &opts.Gates.MaxEvidenceBadRank1Rate, validateRate)
-	registerFloatGate("min-dream-recall-at-k", "minimum average dream recall@k required when dream qrels are present", &opts.Gates.MinDreamRecallAtK, validateRate)
-	registerFloatGate("min-dream-required-rank1-rate", "minimum share of dream-scored cases with a required dream ref first", &opts.Gates.MinDreamRequiredRank1Rate, validateRate)
-	registerFloatGate("max-average-dream-bad-at-k", "maximum average bad dream refs@k allowed when dream qrels are present", &opts.Gates.MaxAverageDreamBadAtK, validateNonNegative)
-	registerFloatGate("max-dream-bad-rank1-rate", "maximum share of dream-scored cases with a bad dream ref first", &opts.Gates.MaxDreamBadRank1Rate, validateRate)
 	flag.Parse()
+	if opts.Mode == "evidence-only-launch" {
+		if opts.OutDir == "" {
+			exitf("out is required for campaign launch")
+		}
+		if err := evalharness.StartEvidenceOnlyCampaign(opts.OutDir); err != nil {
+			exitf("campaign launch: %v", err)
+		}
+		return
+	}
 	if opts.Mode == "recall-accuracy-report" {
 		report, err := evalharness.WriteRecallAccuracyReport(experimentManifest)
 		if err != nil {
@@ -128,6 +115,12 @@ func main() {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+	if opts.Mode == "evidence-only-host" || opts.Mode == "evidence-only-answer-score" {
+		if err := runAnswerCampaign(ctx, opts, *paired, hostPolicy); err != nil {
+			exitf("answer campaign: %v", err)
+		}
+		return
+	}
 	if opts.Mode == "token-diagnostics" {
 		if err := runTokenDiagnostics(ctx, metricsURL, opts.OutDir, opts.APIKey); err != nil {
 			exitf("%v", err)
@@ -135,7 +128,7 @@ func main() {
 		fmt.Println("token diagnostics written")
 		return
 	}
-	if opts.Mode == "import" || opts.Mode == "baseline" || opts.Mode == "candidate" || opts.Mode == "compare" || opts.Mode == "compare-v2-cohort" || opts.Mode == "validate-capture" {
+	if opts.Mode == "import" || opts.Mode == "baseline" || opts.Mode == "candidate" || opts.Mode == "compare" || opts.Mode == "validate-capture" {
 		var err error
 		opts.Logger, opts.Protector, err = evaluationDiagnostics(opts.APIKey)
 		if err != nil {
@@ -179,111 +172,11 @@ func main() {
 				comparison.EvidenceBadAtKDelta,
 			)
 		}
-		if comparison.DreamRecallDelta != 0 || comparison.DreamMRRDelta != 0 || comparison.DreamNDCGDelta != 0 || comparison.DreamBadAtKDelta != 0 {
-			msg += fmt.Sprintf(" dream_recall_delta=%.4f dream_mrr_delta=%.4f dream_ndcg_delta=%.4f dream_bad_at_k_delta=%.4f",
-				comparison.DreamRecallDelta,
-				comparison.DreamMRRDelta,
-				comparison.DreamNDCGDelta,
-				comparison.DreamBadAtKDelta,
-			)
-		}
+
 		fmt.Println(msg)
 		return
 	}
-	if opts.Mode == "compare-v2-cohort" {
-		comparison, err := evalharness.CompareV2CohortRunDirs(evalharness.V2CohortComparisonOptions{
-			Logger: opts.Logger,
-			Cohort: evalharness.V2CohortValidationOptions{
-				ParentManifestPath:   parentV1ManifestPath,
-				ParentSuitePath:      parentV1SuitePath,
-				FilteredManifestPath: filteredV1ManifestPath,
-				FilteredSuitePath:    filteredV1SuitePath,
-				DerivedManifestPath:  derivedV2ManifestPath,
-				DerivedSuitePath:     derivedV2SuitePath,
-				CohortLockPath:       cohortLockPath,
-			},
-			BaselineRunDir:  baselineRun,
-			CandidateRunDir: candidateRun,
-			OutDir:          opts.OutDir,
-		})
-		if err != nil {
-			exitf("compare V2 cohort: %v", err)
-		}
-		fmt.Printf("v2_cohort_comparison=%s baseline_seed_hash=%s candidate_seed_hash=%s cases=%d recall_delta=%.4f mrr_delta=%.4f ndcg_delta=%.4f bad_at_k_delta=%.4f\n",
-			comparison.Status,
-			comparison.BaselineSeedHash,
-			comparison.CandidateSeedHash,
-			comparison.RetainedCaseCount,
-			comparison.Comparison.RecallDelta,
-			comparison.Comparison.MRRDelta,
-			comparison.Comparison.NDCGDelta,
-			comparison.Comparison.BadAtKDelta,
-		)
-		return
-	}
-	if opts.Mode == "derive-v3" {
-		report, err := evalharness.DeriveV3Seed(evalharness.DeriveV3SeedOptions{
-			Cohort: evalharness.V2CohortValidationOptions{
-				ParentManifestPath: parentV1ManifestPath, ParentSuitePath: parentV1SuitePath,
-				FilteredManifestPath: filteredV1ManifestPath, FilteredSuitePath: filteredV1SuitePath,
-				CohortLockPath: cohortLockPath,
-			},
-			RelationshipLedgerPath: relationshipLedgerPath, RepairLockPath: repairLockPath, OutputDir: opts.OutDir,
-		})
-		if err != nil {
-			exitf("derive V3 seed: %v", err)
-		}
-		fmt.Printf("derived_seed_id=%s seed_hash=%s corpus=%d repaired_documents=%d repaired_sequences=%d admission_validated=%d out=%s\n",
-			report.Derivation.DerivedSeedID, report.Derivation.DerivedSeedHash, report.Derivation.CorpusCount,
-			report.RepairedDocuments, report.RepairedSequences, report.AdmissionValidatedCount, opts.OutDir)
-		return
-	}
-	if opts.Mode == "derive-v2" {
-		report, err := evalharness.DeriveV2Seed(evalharness.DeriveV2SeedOptions{
-			SourceManifestPath:     opts.SeedManifestPath,
-			SourceSuitePath:        opts.SuitePath,
-			RelationshipLedgerPath: relationshipLedgerPath,
-			CohortLockPath:         cohortLockPath,
-			OutputDir:              opts.OutDir,
-			SeedID:                 derivedSeedID,
-		})
-		if err != nil {
-			exitf("derive V2 seed: %v", err)
-		}
-		fmt.Printf("derived_seed_id=%s seed_hash=%s corpus=%d relationships=%d contract_validated=%d out=%s\n",
-			report.DerivedSeedID,
-			report.DerivedSeedHash,
-			report.CorpusCount,
-			report.RelationshipCount,
-			report.ContractValidatedCount,
-			opts.OutDir,
-		)
-		return
-	}
-	if opts.Mode == "validate-v2-cohort" {
-		report, err := evalharness.ValidateV2CohortDerivation(evalharness.V2CohortValidationOptions{
-			ParentManifestPath:   parentV1ManifestPath,
-			ParentSuitePath:      parentV1SuitePath,
-			FilteredManifestPath: filteredV1ManifestPath,
-			FilteredSuitePath:    filteredV1SuitePath,
-			DerivedManifestPath:  derivedV2ManifestPath,
-			DerivedSuitePath:     derivedV2SuitePath,
-			CohortLockPath:       cohortLockPath,
-		})
-		if err != nil {
-			exitf("validate V2 cohort: %v", err)
-		}
-		fmt.Printf("v2_cohort_validation=passed parent_seed_hash=%s filtered_seed_hash=%s derived_seed_hash=%s corpus=%d cases=%d relationships=%d contract_validated=%d\n",
-			report.ParentSeedHash,
-			report.FilteredSeedHash,
-			report.DerivedSeedHash,
-			report.RetainedCorpusCount,
-			report.RetainedCaseCount,
-			report.RelationshipCount,
-			report.ContractValidatedCount,
-		)
-		return
-	}
+
 	if opts.OutDir == "" {
 		opts.OutDir = "tests/eval/runs/" + time.Now().UTC().Format("20060102T150405Z") + "_" + opts.Mode
 	}
@@ -326,17 +219,7 @@ func main() {
 			summary.EvidenceBadRank1Rate,
 		)
 	}
-	if summary.DreamScoredCaseCount > 0 {
-		msg += fmt.Sprintf(" dream_scored=%d dream_recall_at_k=%.4f dream_mrr=%.4f dream_ndcg_at_k=%.4f dream_bad_at_k=%.4f dream_required_rank1=%.4f dream_bad_rank1=%.4f",
-			summary.DreamScoredCaseCount,
-			summary.AverageDreamRecallAtK,
-			summary.AverageDreamMRR,
-			summary.AverageDreamNDCGAtK,
-			summary.AverageDreamBadAtK,
-			summary.DreamRequiredRank1Rate,
-			summary.DreamBadRank1Rate,
-		)
-	}
+
 	fmt.Printf("%s out=%s\n", msg, opts.OutDir)
 }
 

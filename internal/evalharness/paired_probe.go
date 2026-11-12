@@ -31,7 +31,7 @@ func VerifyPairProbe(c PairConfig, side, directory string, snapshot PairNativeSn
 	if err != nil {
 		return PairImportProgress{}, err
 	}
-	if r.Protocol == "adr0014" {
+	if r.Protocol == "adr0014" || r.Protocol == PairModeEvidenceOnlyV5 {
 		var status struct {
 			Enabled bool
 			Paused  bool
@@ -50,7 +50,7 @@ func VerifyPairProbe(c PairConfig, side, directory string, snapshot PairNativeSn
 	if len(rows) != 5 || len(o.Imports) != 5 || !o.SearchConverged {
 		return PairImportProgress{}, fmt.Errorf("qualification requires five exact completions and current search")
 	}
-	_, corpus, _, _, _, _, hash, err := loadRunInputs(c.SeedManifest, c.Suite)
+	_, corpus, _, _, _, hash, err := loadRunInputs(c.SeedManifest, c.Suite)
 	if err != nil {
 		return PairImportProgress{}, err
 	}
@@ -80,7 +80,7 @@ func VerifyPairProbe(c PairConfig, side, directory string, snapshot PairNativeSn
 		}
 		selected = append(selected, item)
 	}
-	progress, err := EvaluatePairImport(r.Scope, selected, o.Imports, false)
+	progress, err := EvaluatePairImport(r.Scope, selected, o.Imports, false, r)
 	if err != nil {
 		return progress, err
 	}
@@ -96,10 +96,13 @@ func RunPairProbe(c PairConfig, side string, ids []string, directory string, out
 	if err != nil {
 		return err
 	}
+	if r.Mode == PairModeRetainedBaseline {
+		return fmt.Errorf("retained baseline is offline only")
+	}
 	if len(ids) != 5 || !pairWithin(c.OutDir, directory) {
 		return fmt.Errorf("probe requires five source IDs and a new directory inside paired output")
 	}
-	_, corpus, _, _, _, _, hash, err := loadRunInputs(c.SeedManifest, c.Suite)
+	_, corpus, _, _, _, hash, err := loadRunInputs(c.SeedManifest, c.Suite)
 	if err != nil {
 		return err
 	}
@@ -130,13 +133,9 @@ func RunPairProbe(c PairConfig, side string, ids []string, directory string, out
 	ctx, cancel := context.WithDeadline(context.Background(), c.Deadline)
 	defer cancel()
 	client := &HTTPClient{BaseURL: r.Runtime.BaseURL, APIKey: key}
-	legacy := pairLegacyRelease(r)
 	call := func(id string) PairProbeRow {
 		item := items[id]
 		input := corpusRememberInput(item)
-		if legacy {
-			delete(input, "target_space")
-		}
 		started := time.Now()
 		row := PairProbeRow{SourceDocID: id, StartedAt: started.UTC(), ClientSubmissions: 1}
 		err := client.CallTool(ctx, "remember", input, &row.Response)

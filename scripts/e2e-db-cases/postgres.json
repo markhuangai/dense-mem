@@ -784,6 +784,69 @@
       "run": "^TestMigratorRunUpAppliesTopicProjectionAfterUpdatedMain$",
       "phase": "precheck",
       "source": "internal/storage/postgres/client_integration_test.go"
+    },
+    {
+      "id": "postgres/TestEvidenceOnlyPostgresFreshInstall",
+      "package": "./internal/storage/postgres",
+      "run": "^TestEvidenceOnlyPostgresFreshInstall$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/evidence_only_migration_integration_test.go"
+    },
+    {
+      "id": "postgres/TestEvidenceOnlyPostgresPopulatedUpgradePreservesEvidenceAndLegacyIdentity",
+      "package": "./internal/storage/postgres",
+      "run": "^TestEvidenceOnlyPostgresPopulatedUpgradePreservesEvidenceAndLegacyIdentity$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/evidence_only_migration_integration_test.go"
+    },
+    {
+      "id": "postgres/TestEvidenceOnlyPostgresLegalHoldBlocksAndRollsBack",
+      "package": "./internal/storage/postgres",
+      "run": "^TestEvidenceOnlyPostgresLegalHoldBlocksAndRollsBack$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/evidence_only_migration_integration_test.go"
+    },
+    {
+      "id": "postgres/TestEvidenceOnlyPostgresCancellationAfterRemovalRollsBack",
+      "package": "./internal/storage/postgres",
+      "run": "^TestEvidenceOnlyPostgresCancellationAfterRemovalRollsBack$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/evidence_only_migration_integration_test.go"
+    },
+    {
+      "id": "postgres/TestEvidenceOnlyPostgresUnexpectedDependencyBlocksBeforeRemoval",
+      "package": "./internal/storage/postgres",
+      "run": "^TestEvidenceOnlyPostgresUnexpectedDependencyBlocksBeforeRemoval$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/evidence_only_migration_integration_test.go"
+    },
+    {
+      "id": "postgres/TestEvidenceOnlyPostgresSessionMigrationPreservesRawIdentityAndTerminalOutcomes",
+      "package": "./internal/storage/postgres",
+      "run": "^TestEvidenceOnlyPostgresSessionMigrationPreservesRawIdentityAndTerminalOutcomes$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/evidence_only_migration_integration_test.go"
+    },
+    {
+      "id": "postgres/TestEvidenceOnlyPostgresNullableOntologyCollections",
+      "package": "./internal/storage/postgres",
+      "run": "^TestEvidenceOnlyPostgresNullableOntologyCollections$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/evidence_only_migration_integration_test.go"
+    },
+    {
+      "id": "postgres/TestEvidenceOnlyPostgresMalformedOntologyCollectionsRollBack",
+      "package": "./internal/storage/postgres",
+      "run": "^TestEvidenceOnlyPostgresMalformedOntologyCollectionsRollBack$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/evidence_only_migration_integration_test.go"
+    },
+    {
+      "id": "postgres/TestEvidenceOnlyPostgresMixedOntologyReceiptsAndDrafts",
+      "package": "./internal/storage/postgres",
+      "run": "^TestEvidenceOnlyPostgresMixedOntologyReceiptsAndDrafts$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/evidence_only_migration_integration_test.go"
     }
   ]
 }

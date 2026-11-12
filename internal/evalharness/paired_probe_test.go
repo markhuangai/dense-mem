@@ -15,7 +15,7 @@ import (
 )
 
 func TestPairProbeSingleSubmissionsAndNativeSerialization(t *testing.T) {
-	for _, scenario := range []string{"current", "legacy", "serial_failure", "parallel_failure"} {
+	for _, scenario := range []string{"current", "serial_failure", "parallel_failure"} {
 		t.Run(scenario, func(t *testing.T) {
 			c := pairedFixture(t)
 			items := []CorpusItem{}
@@ -24,13 +24,10 @@ func TestPairProbeSingleSubmissionsAndNativeSerialization(t *testing.T) {
 				items = append(items, CorpusItem{SourceDocID: id, Content: "Exact Unicode evidence: café " + id})
 			}
 			require.NoError(t, writeJSONL(filepath.Join(filepath.Dir(c.SeedManifest), "corpus.jsonl"), items))
-			_, _, _, _, _, _, hash, err := loadRunInputs(c.SeedManifest, c.Suite)
+			_, _, _, _, _, hash, err := loadRunInputs(c.SeedManifest, c.Suite)
 			require.NoError(t, err)
 			c.SeedHash = hash
-			if scenario == "legacy" {
-				c.Baseline.Protocol, c.Baseline.Release, c.Baseline.SourceRevision = "none", "v2.6.5", "49ba9d36acaf19bde5a8ddbe7552fd04621d19bd"
-			}
-			t.Setenv(c.Baseline.Runtime.APIKeyEnv, "fixture-key")
+			t.Setenv(c.Candidate.Runtime.APIKeyEnv, "fixture-key")
 			var mu sync.Mutex
 			inputs := []map[string]any{}
 			parallel := 0
@@ -75,9 +72,9 @@ func TestPairProbeSingleSubmissionsAndNativeSerialization(t *testing.T) {
 				_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "result": map[string]any{"content": []map[string]string{{"type": "text", "text": string(response)}}}})
 			}))
 			defer server.Close()
-			c.Baseline.Runtime.BaseURL = server.URL
+			c.Candidate.Runtime.BaseURL = server.URL
 			directory := filepath.Join(c.OutDir, "qualification")
-			err = RunPairProbe(c, "baseline", ids, directory, io.Discard)
+			err = RunPairProbe(c, "candidate", ids, directory, io.Discard)
 			if strings.HasSuffix(scenario, "failure") {
 				require.Error(t, err)
 			} else {
@@ -101,9 +98,6 @@ func TestPairProbeSingleSubmissionsAndNativeSerialization(t *testing.T) {
 				require.Equal(t, 1, row.ClientSubmissions)
 				require.GreaterOrEqual(t, row.ElapsedSeconds, 0.0)
 				wantInput := corpusRememberInput(items[i])
-				if scenario == "legacy" {
-					delete(wantInput, "target_space")
-				}
 				encoded, err := json.Marshal(wantInput)
 				require.NoError(t, err)
 				actual, err := json.Marshal(byKey["eval:"+ids[i]])
@@ -117,24 +111,20 @@ func TestPairProbeSingleSubmissionsAndNativeSerialization(t *testing.T) {
 				imports := []PairImportAttempt{}
 				for i, item := range items {
 					hash, err := pairRequestHash(item)
-					version := "dense-mem.v2.7.0"
-					if scenario == "legacy" {
-						hash, err = pairLegacyRequestHash(item)
-						version = "dense-mem.v2.6.3"
-					}
+					version := "dense-mem.v2.8.0"
 					require.NoError(t, err)
-					imports = append(imports, PairImportAttempt{Scope: c.Baseline.Scope, SourceDocID: item.SourceDocID, AttemptID: stringValue(rows[i].Response["submission_id"]),
-						RequestHash: hash, ContractVersion: version, Outcome: "completed", EvidenceIDs: []string{"evidence-" + item.SourceDocID}, ContentHashes: []string{pairBytesHash([]byte(item.Content))}, Live: true})
+					imports = append(imports, PairImportAttempt{Scope: c.Candidate.Scope, SourceDocID: item.SourceDocID, AttemptID: stringValue(rows[i].Response["submission_id"]),
+						RequestHash: hash, ContractVersion: version, CreatedAt: timePointer(rows[i].StartedAt), Retryable: boolPointer(false), IdempotencyKey: "eval:" + item.SourceDocID, Outcome: "completed", EvidenceIDs: []string{"evidence-" + item.SourceDocID}, ContentHashes: []string{pairBytesHash([]byte(item.Content))}, Live: true})
 				}
-				snapshot := commandNativeSnapshot(t, c.Baseline, imports)
-				progress, err := VerifyPairProbe(c, "baseline", directory, snapshot)
+				snapshot := commandNativeSnapshot(t, c.Candidate, imports)
+				progress, err := VerifyPairProbe(c, "candidate", directory, snapshot)
 				require.NoError(t, err)
 				require.True(t, progress.Complete)
 				if scenario == "current" {
 					disabled := snapshot
 					disabled.Ontology = json.RawMessage(`{"enabled":false,"paused":false}`)
 					disabled.Community = json.RawMessage(`{"legacy_processing_retired":true,"effective_config":{"enabled":false}}`)
-					_, err := VerifyPairProbe(c, "baseline", directory, disabled)
+					_, err := VerifyPairProbe(c, "candidate", directory, disabled)
 					require.ErrorContains(t, err, "enabled and paused before ingestion")
 				}
 				for _, change := range []func(*PairImportAttempt){
@@ -146,15 +136,22 @@ func TestPairProbeSingleSubmissionsAndNativeSerialization(t *testing.T) {
 				} {
 					changed := append([]PairImportAttempt(nil), imports...)
 					change(&changed[0])
-					_, err := VerifyPairProbe(c, "baseline", directory, commandNativeSnapshot(t, c.Baseline, changed))
+					_, err := VerifyPairProbe(c, "candidate", directory, commandNativeSnapshot(t, c.Candidate, changed))
 					require.Error(t, err)
 				}
 				snapshot.Search = json.RawMessage(`{"status":"drifted","expected_documents":5,"current_documents":4,"drifted_documents":1}`)
-				_, err = VerifyPairProbe(c, "baseline", directory, snapshot)
+				_, err = VerifyPairProbe(c, "candidate", directory, snapshot)
 				require.ErrorContains(t, err, "current search")
 			}
-			require.ErrorContains(t, RunPairProbe(c, "baseline", ids, directory, io.Discard), "must be new")
+			require.ErrorContains(t, RunPairProbe(c, "candidate", ids, directory, io.Discard), "must be new")
 			require.Len(t, inputs, want)
 		})
 	}
+}
+
+func TestEvidenceOnlyUnitPairProbeCannotStartRetainedBaseline(t *testing.T) {
+	c := pairedFixture(t)
+	err := RunPairProbe(c, "baseline", []string{"one", "two", "three", "four", "five"}, filepath.Join(c.OutDir, "probe"), io.Discard)
+	require.ErrorContains(t, err, "offline only")
+	require.NoDirExists(t, c.OutDir)
 }

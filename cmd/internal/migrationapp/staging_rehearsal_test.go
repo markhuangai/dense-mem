@@ -7,7 +7,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"log/slog"
 	"net/url"
 	"os"
 	"os/exec"
@@ -20,6 +22,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/markhuangai/dense-mem/cmd/internal/migrationapp"
 	"github.com/markhuangai/dense-mem/cmd/internal/serverapp"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	privacy "github.com/markhuangai/dense-mem/internal/privacy/contract"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres/testfixture"
@@ -42,9 +45,11 @@ type stagingRehearsalLogger struct {
 	t *testing.T
 }
 
-func (l stagingRehearsalLogger) Info(message string, _ ...any) {
-	l.t.Log(message)
+func (l stagingRehearsalLogger) Info(message string, args ...any) {
+	l.t.Log(message, args)
 }
+
+func (l stagingRehearsalLogger) Error(message string, args ...any) { l.t.Log(message, args) }
 
 func TestStagingMigrationRehearsal(t *testing.T) {
 	dsn := strings.TrimSpace(os.Getenv("DENSE_MEM_STAGE_POSTGRES_DSN"))
@@ -131,9 +136,14 @@ func rehearseStagingMigrations(t *testing.T, migrationCtx context.Context, db *g
 		t.Fatal("staging migration rehearsal received an invalid private memory preflight report")
 	}
 	if report.Status == "complete" {
-		if err := migrationapp.RunUp(migrationCtx, db, 30*time.Minute, stagingRehearsalLogger{t: t}); err != nil {
+		before := stagingEvidenceFingerprints(t, migrationCtx, db)
+		connection, err := pgconn.ParseConfig(dsn)
+		require.NoError(t, err)
+		logger := observability.NewWithProtector(slog.LevelDebug, observability.NewCredentialProtector(dsn, connection.Password))
+		if err := migrationapp.RunUp(migrationCtx, db, 30*time.Minute, logger.Slog()); err != nil {
 			t.Fatal("staging migration rehearsal failed while applying migrations; database details suppressed")
 		}
+		require.Equal(t, before, stagingEvidenceFingerprints(t, migrationCtx, db), "Evidence identity/content/provenance changed through startup migration")
 	} else if err := serverapp.RunPrivateMemoryMigration(migrationCtx, []string{
 		"--maintenance-confirmed", "--source-fingerprint", report.SourceFingerprint,
 	}, io.Discard); err != nil {
@@ -152,8 +162,50 @@ func rehearseStagingMigrations(t *testing.T, migrationCtx context.Context, db *g
 	if err := storagepostgres.CheckPGVectorExtension(validationCtx, db); err != nil {
 		t.Fatal("staging migration rehearsal failed pgvector validation; database details suppressed")
 	}
+	assertStagingEvidenceOnlyCatalog(t, validationCtx, db)
 
 	t.Log("staging migrations and startup migration state validation completed")
+}
+
+func stagingEvidenceFingerprints(t *testing.T, ctx context.Context, db *gorm.DB) map[string]string {
+	t.Helper()
+	result := map[string]string{}
+	err := storagepostgres.NewRLS().WithSystemReadOnlyRepeatableTx(ctx, db, func(tx *gorm.DB) error {
+		for _, table := range []string{"evidence_sources", "evidence_source_revisions", "evidence_exact_aliases", "evidence_occurrences", "evidence_fragments", "evidence_security_events", "evidence_security_signals", "evidence_quarantines", "evidence_lifecycle_operations", "evidence_lifecycle_events", "evidence_conflict_cases", "evidence_conflict_positions", "evidence_conflict_events"} {
+			var hash string
+			query := fmt.Sprintf(`SELECT encode(sha256(convert_to(COALESCE(jsonb_agg(to_jsonb(row_value) ORDER BY to_jsonb(row_value)::text)::text,'[]'),'UTF8')),'hex') FROM %s row_value`, table)
+			if err := tx.Raw(query).Row().Scan(&hash); err != nil {
+				return err
+			}
+			result[table] = hash
+		}
+		return nil
+	})
+	require.NoError(t, err)
+	return result
+}
+
+func assertStagingEvidenceOnlyCatalog(t *testing.T, ctx context.Context, db *gorm.DB) {
+	t.Helper()
+	var remaining int
+	require.NoError(t, db.WithContext(ctx).Raw(`SELECT count(*) FROM pg_class WHERE relnamespace='public'::regnamespace AND relname ~ '^(entity_|value_|relationship_|predicate_|team_predicate_|hypothes|dream_|community_)'`).Row().Scan(&remaining))
+	require.Zero(t, remaining, "factual graph catalog remains after rehearsal")
+	var metadata []byte
+	require.NoError(t, storagepostgres.NewRLS().WithSystemReadOnlyRepeatableTx(ctx, db, func(tx *gorm.DB) error {
+		return tx.Raw(`SELECT metadata FROM v2_compatibility_markers WHERE marker_kind='evidence_only' AND version='dense-mem.v2.8.0' AND status='compatible'`).Row().Scan(&metadata)
+	}))
+	var receipt struct {
+		Verified bool             `json:"retained_fingerprints_verified"`
+		Retained map[string]int64 `json:"retained_counts"`
+		Removed  map[string]int64 `json:"removed_counts"`
+		Outcome  string           `json:"transaction_outcome"`
+	}
+	require.NoError(t, json.Unmarshal(metadata, &receipt))
+	require.True(t, receipt.Verified)
+	require.Len(t, receipt.Retained, 13)
+	require.NotEmpty(t, receipt.Removed)
+	require.Equal(t, "committed", receipt.Outcome)
+	t.Log("Evidence-only rehearsal verified retained fingerprints, explicit graph-object absence, and committed inventory receipt")
 }
 
 func stopStagingServer(ctx context.Context, directory string) error {

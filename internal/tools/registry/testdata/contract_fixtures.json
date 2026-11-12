@@ -1,6 +1,6 @@
 [
   {
-    "name": "valid remember with source revision and relationships",
+    "name": "valid remember with source revision",
     "tool": "remember",
     "scopes": [
       "read",
@@ -19,33 +19,10 @@
           "source_revision": "rev-1"
         }
       ],
-      "relationships": [
-        {
-          "ref": "rel:authority",
-          "subject": {
-            "name": "Dense-Mem",
-            "entity_kind": "project",
-            "known_entity_id": null
-          },
-          "predicate": {
-            "proposed_key": "uses_durable_authority"
-          },
-          "object": {
-            "value": {
-              "type": "string",
-              "value": "PostgreSQL with pgvector"
-            }
-          },
-          "polarity": "+",
-          "evidence_indices": [
-            0
-          ]
-        }
-      ],
       "target_space": "team_shared"
     },
     "output": {
-      "contract_version": "dense-mem.v2.6.2",
+      "contract_version": "dense-mem.v2.8.0",
       "submission_id": "ing-1",
       "submission_kind": "remember",
       "processing_state": "completed",
@@ -60,86 +37,8 @@
           "search_state": "current"
         }
       ],
-      "relationship_results": [
-        {
-          "ref": "rel:authority",
-          "disposition": "stored",
-          "splits": [
-            {
-              "split_index": 0,
-              "relationship_id": "rel-authority",
-              "relationship_version": 1,
-              "status": "active"
-            }
-          ]
-        }
-      ],
       "errors": [],
       "space_kind": "team_shared"
-    }
-  },
-  {
-    "name": "valid relationship correction submit",
-    "tool": "correct_relationship",
-    "scopes": [
-      "read",
-      "write"
-    ],
-    "valid": true,
-    "input": {
-      "action": "submit",
-      "relationship_id": "00000000-0000-0000-0000-000000000601",
-      "expected_version": 2,
-      "patch": {
-        "predicate": {
-          "key": "works_with"
-        }
-      },
-      "supports": [
-        {
-          "evidence_id": "00000000-0000-0000-0000-000000000602",
-          "start": 0,
-          "end": 34
-        }
-      ],
-      "reason": "The predicate was resolved incorrectly.",
-      "idempotency_key": "relationship-correction-1"
-    },
-    "output": {
-      "contract_version": "dense-mem.v2.6.2",
-      "submission_id": "correction-1",
-      "submission_kind": "relationship_correction",
-      "processing_state": "completed",
-      "search_state": "current",
-      "correlation_id": "req-correction-1",
-      "errors": []
-    }
-  },
-  {
-    "name": "valid relationship correction confirm",
-    "tool": "correct_relationship",
-    "scopes": [
-      "read",
-      "write"
-    ],
-    "valid": true,
-    "input": {
-      "action": "confirm",
-      "submission_id": "00000000-0000-0000-0000-000000000603",
-      "confirmation_token": "00000000-0000-0000-0000-000000000604",
-      "selection": {
-        "object_entity_id": "00000000-0000-0000-0000-000000000605"
-      },
-      "idempotency_key": "relationship-correction-confirm-1"
-    },
-    "output": {
-      "contract_version": "dense-mem.v2.6.2",
-      "submission_id": "correction-1",
-      "submission_kind": "relationship_correction",
-      "processing_state": "completed",
-      "search_state": "current",
-      "correlation_id": "req-correction-confirm-1",
-      "errors": []
     }
   },
   {
@@ -156,12 +55,6 @@
       "known_at": null,
       "known_evidence_ids": [
         "00000000-0000-4000-8000-000000000001"
-      ],
-      "known_relationship_ids": [
-        "00000000-0000-4000-8000-000000000002"
-      ],
-      "expand_from_entity_ids": [
-        "00000000-0000-4000-8000-000000000003"
       ]
     },
     "output": {
@@ -176,76 +69,37 @@
         }
       ],
       "conflicts": [],
-      "related_relationships": [
-        {
-          "relationship_id": "rel-2",
-          "equivalent_relationship_ids": [
-            "rel-2"
-          ],
-          "subject": {
-            "entity_id": "entity-1",
-            "name": "Dense-Mem"
-          },
-          "predicate": "uses",
-          "object": {
-            "value_id": "value-1",
-            "type": "string",
-            "value": "PostgreSQL"
-          },
-          "polarity": "+",
-          "evidence_ids": [
-            "ev-2"
-          ],
-          "space_kind": "team_shared",
-          "search_state": "current"
-        }
-      ],
-      "related_communities": [],
       "search_states": {
-        "evidence": "current",
-        "relationships": "current"
+        "evidence": "current"
       },
       "degradations": [],
-      "suggested_actions": []
+      "suggested_actions": [],
+      "related_topics": [],
+      "topics_truncated": false
     }
   },
   {
-    "name": "valid relationship trace",
+    "name": "valid Evidence trace",
     "tool": "trace_memory",
     "scopes": [
       "read"
     ],
     "valid": true,
     "input": {
-      "relationship_id": "rel-1",
-      "include_evidence_content": true,
-      "include_verification": true,
-      "include_transitions": true,
-      "max_depth": 0,
-      "max_edges": 0,
-      "predicate_keys": [],
-      "topic": null,
-      "min_relevance": null
+      "evidence_id": "00000000-0000-0000-0000-000000000001"
     },
     "output": {
-      "relationship": {
-        "relationship_id": "rel-1"
+      "evidence": {
+        "evidence_id": "00000000-0000-0000-0000-000000000001",
+        "content_hash": "hash"
       },
-      "observations": [],
-      "evidence_supports": [],
-      "evidence_support_decision_events": [],
-      "evidence": [],
-      "evidence_lifecycle_events": [],
-      "verification_events": [],
-      "transitions": [],
-      "conflicts": [],
-      "cross_profile_references": [],
-      "identity_corrections": [],
-      "supersession_lineage": [],
-      "semantic_nodes": [],
-      "semantic_edges": [],
-      "visited_entity_ids": [],
-      "stopped_reason": "depth_limit"
+      "occurrences": [],
+      "source_revisions": [],
+      "decisions": [],
+      "lifecycle": [],
+      "search_documents": [],
+      "omissions": [],
+      "truncated": false
     }
   },
   {
@@ -268,8 +122,8 @@
           "feedback_comment": "The result omitted the current architecture.",
           "irrelevant_result_refs": [
             {
-              "type": "relationship",
-              "id": "rel-old",
+              "type": "evidence",
+              "id": "00000000-0000-0000-0000-000000000001",
               "rank": 1
             }
           ]
@@ -290,19 +144,17 @@
     "valid": true,
     "input": {
       "name": "release-workflow",
-      "description": "Reusable release relationships",
-      "relationship_ids": [
-        "rel-1"
-      ],
+      "description": "Reusable release Evidence",
       "include_evidence": true,
-      "include_entity_names": true
+      "evidence_ids": [
+        "00000000-0000-0000-0000-000000000001"
+      ]
     },
     "output": {
-      "artifact_json": "{\"format\":\"dense-mem.memory-pack.v2.4\"}",
+      "artifact_json": "{\"format\":\"dense-mem.memory-pack.v3.0\",\"evidence\":[]}",
       "content_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "filename": "release-workflow.json",
       "counts": {
-        "relationships": 1,
         "evidence": 1
       },
       "omissions": []
@@ -316,7 +168,6 @@
       "write"
     ],
     "valid": false,
-    "want_error": "unknown field: tier",
     "input": {
       "idempotency_key": "fixture-remember-invalid-1",
       "tier": "fact",
@@ -358,7 +209,6 @@
       "write"
     ],
     "valid": false,
-    "want_error": "unknown field: entity_hints",
     "input": {
       "idempotency_key": "fixture-remember-invalid-2",
       "evidence": [
@@ -400,20 +250,18 @@
       "write"
     ],
     "valid": false,
-    "want_error": "evidence is required",
     "input": {
       "target_space": "team_shared"
     }
   },
   {
-    "name": "duplicate relationship ref",
+    "name": "retired Relationship payload",
     "tool": "remember",
     "scopes": [
       "read",
       "write"
     ],
     "valid": false,
-    "want_error": "duplicate ref",
     "input": {
       "idempotency_key": "fixture-remember-invalid-3",
       "evidence": [
@@ -471,7 +319,6 @@
     "tool": "remember",
     "scopes": [],
     "valid": false,
-    "want_error": "missing required scope",
     "input": {
       "evidence": [
         {
@@ -488,63 +335,12 @@
       "read"
     ],
     "valid": false,
-    "want_error": "duplicate value",
     "input": {
       "query": "postgres",
       "known_evidence_ids": [
         "00000000-0000-4000-8000-000000000001",
         "00000000-0000-4000-8000-000000000001"
       ]
-    }
-  },
-  {
-    "name": "cross profile override rejected",
-    "tool": "correct_relationship",
-    "scopes": [
-      "read",
-      "write"
-    ],
-    "valid": false,
-    "want_error": "team_id and profile_id are not accepted",
-    "input": {
-      "profile_id": "profile-b",
-      "action": "submit",
-      "relationship_id": "relationship-a",
-      "expected_version": 1,
-      "patch": {
-        "predicate": {
-          "key": "works_with"
-        }
-      },
-      "supports": [
-        {
-          "evidence_id": "evidence-1",
-          "start": 0,
-          "end": 8
-        }
-      ],
-      "reason": "The predicate was resolved incorrectly.",
-      "idempotency_key": "relationship-correction-override-1"
-    }
-  },
-  {
-    "name": "mixed relationship correction confirm rejected",
-    "tool": "correct_relationship",
-    "scopes": [
-      "read",
-      "write"
-    ],
-    "valid": false,
-    "want_error": "relationship_id is not accepted for action confirm",
-    "input": {
-      "action": "confirm",
-      "submission_id": "00000000-0000-0000-0000-000000000603",
-      "confirmation_token": "00000000-0000-0000-0000-000000000604",
-      "selection": {
-        "object_entity_id": "00000000-0000-0000-0000-000000000605"
-      },
-      "relationship_id": "00000000-0000-0000-0000-000000000601",
-      "idempotency_key": "relationship-correction-confirm-mixed-1"
     }
   },
   {
@@ -555,7 +351,6 @@
       "write"
     ],
     "valid": false,
-    "want_error": "source_key and source_revision must appear together",
     "input": {
       "idempotency_key": "fixture-remember-invalid-4",
       "evidence": [
@@ -601,7 +396,6 @@
       "write"
     ],
     "valid": false,
-    "want_error": "feedback_comment is required",
     "input": {
       "recalls": [
         {
@@ -769,33 +563,10 @@
           "source_revision": "rev-1"
         }
       ],
-      "relationships": [
-        {
-          "ref": "rel:authority",
-          "subject": {
-            "name": "Dense-Mem",
-            "entity_kind": "project",
-            "known_entity_id": null
-          },
-          "predicate": {
-            "proposed_key": "uses_durable_authority"
-          },
-          "object": {
-            "value": {
-              "type": "string",
-              "value": "PostgreSQL with pgvector"
-            }
-          },
-          "polarity": "+",
-          "evidence_indices": [
-            0
-          ]
-        }
-      ],
       "target_space": "private"
     },
     "output": {
-      "contract_version": "dense-mem.v2.6.2",
+      "contract_version": "dense-mem.v2.8.0",
       "submission_id": "ing-1",
       "submission_kind": "remember",
       "processing_state": "completed",
@@ -808,20 +579,6 @@
           "evidence_index": 0,
           "superseded_evidence_ids": [],
           "search_state": "current"
-        }
-      ],
-      "relationship_results": [
-        {
-          "ref": "rel:authority",
-          "disposition": "stored",
-          "splits": [
-            {
-              "split_index": 0,
-              "relationship_id": "rel-authority",
-              "relationship_version": 1,
-              "status": "active"
-            }
-          ]
         }
       ],
       "errors": [],

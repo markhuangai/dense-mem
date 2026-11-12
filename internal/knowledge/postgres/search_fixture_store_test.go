@@ -2,7 +2,6 @@ package postgres
 
 import (
 	"context"
-	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -31,14 +30,11 @@ type RecallEvidenceInput = recallpostgres.RecallEvidenceInput
 
 func newSearchFixtureStore(db *gorm.DB, rls storagepostgres.RLSHelper) *searchFixtureStore {
 	read := searchpostgres.NewStore(db, rls)
-	relationshipReader := func(context.Context, *gorm.DB, string, *time.Time, []recallpostgres.RecallEvidenceHit) ([]recallpostgres.RelationshipConflictCaseRecord, error) {
-		return []recallpostgres.RelationshipConflictCaseRecord{}, nil
-	}
-	recallStore := recallpostgres.NewStore(db, rls, read, relationshipReader, recallpostgres.LoadRecallEvidenceConflictRecords)
+	recallStore := recallpostgres.NewStore(db, rls, read, recallpostgres.LoadRecallEvidenceConflictRecords)
 	return &searchFixtureStore{
 		Repository: recallStore,
 		read:       read,
-		projection: NewStore(db, rls, ConflictRuntimeConfig{}),
+		projection: NewStore(db, rls),
 		recall:     recallStore,
 	}
 }
@@ -57,9 +53,6 @@ func (s *searchFixtureStore) SearchExactVector(ctx context.Context, input search
 }
 func (s *searchFixtureStore) RecallEvidence(ctx context.Context, input recallpostgres.RecallEvidenceInput) (*recallpostgres.RecallEvidenceResult, error) {
 	return recallservice.NewRetrieval(s.recall).RecallEvidence(ctx, input)
-}
-func (s *searchFixtureStore) RecallRelationships(ctx context.Context, input recallpostgres.RecallRelationshipsInput) (*recallpostgres.RecallRelationshipsResult, error) {
-	return recallservice.NewRetrieval(s.recall).RecallRelationships(ctx, input)
 }
 func (s *searchFixtureStore) UpsertSearchDocument(ctx context.Context, input knowledgecontract.UpsertSearchDocumentInput) (*knowledgecontract.SearchDocumentResult, error) {
 	return s.projection.UpsertSearchDocument(ctx, input)

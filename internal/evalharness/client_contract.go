@@ -15,10 +15,7 @@ import (
 type contractMode string
 
 const (
-	contractModeV263 contractMode = "v2.6.3"
-	// contractModeV262 remains an alias for fixtures that exercise the retained
-	// v2.6.2 request/replay path.
-	contractModeV262 contractMode = contractModeV263
+	contractModeEvidenceOnly contractMode = "v2.8.0"
 )
 
 type mcpToolsListResponse struct {
@@ -91,7 +88,7 @@ func classifyContract(tools []mcpToolDefinition) (contractMode, error) {
 	}
 	version := contractVersionFromSchema(rememberSchema)
 	if domain.ContractVersionCompatible(version) && matchesContractToolSet(names, registry.ContractToolNames()) {
-		return contractModeV263, nil
+		return contractModeEvidenceOnly, nil
 	}
 	return "", fmt.Errorf("unsupported or mixed MCP contract: remember=%q", version)
 }

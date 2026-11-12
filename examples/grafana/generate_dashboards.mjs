@@ -19,7 +19,6 @@ const countSeverity = [{ color: "green", value: null }, { color: "yellow", value
 const sampleFloor = 20;
 const teamUUID = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
 const labels = Object.freeze({
-  statuses: ["pending_evidence", "active", "needs_review", "rejected", "retracted", "superseded", "quarantined", "disputed"],
   embeddingErrorCodes: [
     "provider_rate_limited",
     "provider_timeout",
@@ -141,10 +140,6 @@ function teamDiagnosticsPanel(id) {
   };
 }
 
-const statusPanels = labels.statuses.flatMap((status, index) => [
-  panel(100 + index, `Current Relationships: ${status}`, "short", ledgerGauge("densemem_operational_relationships_current", "status", `status="${status}"`), stat, `card/relationships_${status}`),
-  panel(120 + index, `Relationship transitions: ${status}`, "short", ledgerGauge("densemem_operational_relationship_transitions", "window,status", `window="$window",status="${status}"`), stat, `card/relationship_transitions_${status}`),
-]);
 
 const dashboards = [
   {
@@ -160,7 +155,6 @@ const dashboards = [
     panels: [
       panel(1, "Prometheus scrape health", "short", 'min(up{job=~"$job"})', stat, "", "0 means the Dense-Mem target is not being scraped.", healthyWhenOne),
       panel(2, "Canonical ledger collection", "short", 'min(densemem_operational_ledger_collection_success{job=~"$job"}) * min(up{job=~"$job"})', stat, "", "0 means the canonical ledger collector failed; lifecycle values may be stale.", healthyWhenOne),
-      panel(3, "Conflict queue collection", "short", 'min(densemem_conflict_queue_collection_success{job=~"$job"}) * min(up{job=~"$job"})', stat, "card/conflict_queue_collection_success", "0 means conflict queue collection failed.", healthyWhenOne),
       panel(10, "HTTP error percentage", "percent", `(100 * ${plainCounter("densemem_http_requests_total", 'status_class=~"4xx|5xx"', true)} / ${plainCounter("densemem_http_requests_total")}) and on() (${plainIncrease("densemem_http_requests_total")} > 0)`, stat, "", "Editable defaults: warning at 1%, critical at 5% of requests in the rolling window. No data means no observed requests.", percentageSeverity),
       panel(11, "HTTP p95 latency", "ms", `${quantile("densemem_http_request_duration_seconds", "0.95", 1000)} and on() (${sparseIncrease("densemem_http_request_duration_seconds_count")} >= ${sampleFloor})`, stat, "", `Needs ${sampleFloor} observations; otherwise no data. Editable defaults: warning at 500 ms, critical at 1500 ms.`, latencySeverity),
       panel(15, "MCP tool failures", "short", `${counterWithParentZero("densemem_mcp_tool_results_total", 'outcome=~"cancelled|rpc_error|tool_error|missing_result|other"', "densemem_mcp_tool_results_total")} and on() (${sparseIncrease("densemem_mcp_tool_results_total")} > 0)`, stat, "", "Logical MCP failures, including cancellation, separate from HTTP transport errors. No data means no observed tool results.", countSeverity),
@@ -170,7 +164,6 @@ const dashboards = [
       panel(13, "AI operations without complete pricing", "short", `${counterWithParentZero("densemem_ai_operation_unpriced_total", "", "densemem_ai_operation_tokens_total")} and on() (((${sparseIncrease("densemem_ai_operation_unpriced_total")} or vector(0)) + (${sparseIncrease("densemem_ai_operation_items_total")} or vector(0))) > 0)`, stat, "", "A positive value means estimated cost is incomplete. No data means no observed AI operation.", countSeverity),
       panel(14, "Slowest read stage p95", "ms", `max((1000 * histogram_quantile(0.95, ${sparseIncrease("densemem_read_stage_duration_seconds_bucket", "", "$window", "le,operation,stage")})) and on(operation,stage) (${sparseIncrease("densemem_read_stage_duration_seconds_count", "", "$window", "operation,stage")} >= ${sampleFloor}))`, stat, "", `Shows no data for stages with fewer than ${sampleFloor} observations. Inspect the Performance dashboard to find the stage.`, latencySeverity),
       panel(17, "Read stage observations", "short", counter("densemem_read_stage_duration_seconds_count"), stat, "", `Total stage executions; each stage needs ${sampleFloor} observations for the overview p95.`),
-      panel(18, "Hypothesis backlog", "short", ledgerGauge("densemem_operational_hypothesis_backlog", "lane"), timeseries, "", "Canonical backlog by lane; missing ledger collection stays no-data."),
       panel(19, "Estimated AI spend", "currencyUSD", `${cost()} and on() (${sparseIncrease("densemem_ai_operation_items_total")} > 0)`, stat, "", "No data means cost is incomplete or there was no priced activity. Check unpriced usage and feature details."),
     ],
   },
@@ -183,7 +176,7 @@ const dashboards = [
       { start: 50, title: "Feature and model usage" },
       { start: 1, title: "Embedding and verifier" },
       { start: 12, title: "Recall and host feedback" },
-      { start: 28, title: "Dream and assessor" },
+      { start: 30, title: "Evidence assessor" },
       { start: 42, title: "Cost and provider completeness" },
     ],
     panels: [
@@ -221,8 +214,6 @@ const dashboards = [
       panel(25, "LLM recall quality", "percent", histogramAverage("densemem_recall_feedback_quality_score", 100, "$__rate_interval"), timeseries, "series/llm_recall_quality_score"),
       panel(26, "LLM missing context rate", "percent", `100 * (${rate("densemem_recall_feedback_total", 'missing_context="true"', true)}) / (${rate("densemem_recall_feedback_total")})`, timeseries, "series/llm_recall_missing_context_rate"),
       panel(27, "LLM irrelevant recall rate", "percent", `100 * (${rate("densemem_recall_feedback_total", 'irrelevant="true"', true)}) / (${rate("densemem_recall_feedback_total")})`, timeseries, "series/llm_recall_irrelevant_rate"),
-      panel(28, "Dream feedback", "short", counter("densemem_dream_feedback_total"), stat, "card/dream_feedbacks"),
-      panel(29, "Dream feedback rate", "short", rate("densemem_dream_feedback_total"), timeseries, "series/dream_feedbacks"),
       panel(30, "Assessor requests", "short", counter("densemem_assessor_requests_total"), stat, "card/assessor_requests"),
       panel(31, "Assessor request failures", "short", counterWithParentZero("densemem_assessor_requests_total", 'outcome=~"provider_error|malformed_exhausted"', "densemem_assessor_requests_total"), stat, "card/assessor_request_failures"),
       panel(32, "Assessor validation failures", "short", counterWithParentZero("densemem_assessor_validation_failures_total", "", "densemem_assessor_requests_total"), stat, "card/assessor_validation_failures"),
@@ -238,23 +229,19 @@ const dashboards = [
       panel(42, "AI cost", "currencyUSD", cost(), stat, "card/ai_cost_usd", "No data means missing usage or pricing; configure the retained Telemetry pricing settings."),
       panel(43, "Verifier cost", "currencyUSD", cost("verifier"), stat, "card/verifier_cost_usd", "No data means missing usage or pricing; configure the retained Telemetry pricing settings."),
       panel(44, "Embedding cost", "currencyUSD", cost("embedding"), stat, "card/embedding_cost_usd", "No data means missing usage or pricing; configure the retained Telemetry pricing settings."),
-      panel(45, "Average conflict review duration", "ms", histogramAverage("densemem_conflict_review_duration_seconds", 1000), stat, "card/avg_conflict_review_duration"),
-      panel(46, "Conflict review latency", "ms", histogramAverage("densemem_conflict_review_duration_seconds", 1000, "$__rate_interval"), timeseries, "series/conflict_review_duration"),
       panel(47, "Provider usage without pricing or usage", "short", counterBy("densemem_operation_provider_usage_unpriced_total", "operation,component,reason"), timeseries, "", "Counts missing provider usage and pricing. Label values are closed and contain no identity or content."),
       panel(48, "Provider token volume", "short", counterBy("densemem_operation_provider_tokens_total", "operation,component,kind,source"), timeseries, "", "Bounded operation, component, token kind, and source labels; no provider or model identity."),
     ],
   },
   {
     uid: "dense-mem-workflows",
-    title: "Dense-Mem Remember and Dream",
+    title: "Dense-Mem Remember and Evidence",
     tags: ["dense-mem", "operations", "workflows"],
-    description: "System-wide Remember and Dream activity plus canonical Hypothesis and lifecycle data. Durable collector values are gauges for rolling windows, never counters.",
+    description: "System-wide Remember, MCP operations, and durable Evidence intake outcomes. Durable collector values are gauges for rolling windows, never counters.",
     groups: [
       { start: 1, title: "Remember acknowledgement" },
       { start: 7, title: "MCP and logical operations" },
-      { start: 14, title: "Dream and Recall workflows" },
-      { start: 21, title: "Canonical Dream and Hypothesis state" },
-      { start: 36, title: "Relationship lifecycle" },
+      { start: 32, title: "Durable Remember outcomes" },
     ],
     panels: [
       panel(1, "Remember calls", "short", counter("densemem_remember_acknowledgements_total"), stat, "card/remember_requests"),
@@ -271,30 +258,7 @@ const dashboards = [
       panel(12, "Logical operation recoveries", "short", counterBy("densemem_logical_operation_recoveries_total", "operation,outcome"), timeseries),
       panel(13, "Remember phase duration", "s", histogramAverage("densemem_remember_phase_duration_seconds", 1, "$__rate_interval", "phase,outcome"), timeseries),
       panel(37, "Remember phase outcomes", "short", counterBy("densemem_remember_phase_duration_seconds_count", "phase,outcome"), timeseries, "", "Assessment, embedding, and commit phase counts by outcome; use with phase duration to locate failures."),
-      panel(14, "Dream cycle attempts", "short", counterBy("densemem_dream_cycle_attempts_total", "lane,status"), timeseries),
-      panel(15, "Dream cycle duration", "s", histogramAverage("densemem_dream_cycle_duration_seconds", 1, "$__rate_interval", "lane,status"), timeseries),
-      panel(16, "Dream provider attempts", "short", counterBy("densemem_dream_provider_attempts_total", "stage,outcome"), timeseries),
-      panel(17, "Dream provider duration", "s", histogramAverage("densemem_dream_provider_duration_seconds", 1, "$__rate_interval", "stage,outcome"), timeseries),
-      panel(18, "Dream feedback actions", "short", counterBy("densemem_dream_feedback_actions_total", "decision,outcome"), timeseries),
-      panel(19, "Recall Hypothesis expansions", "short", counterBy("densemem_recall_hypothesis_expansions_total", "outcome"), timeseries),
-      panel(20, "Recall Hypotheses returned", "short", counter("densemem_recall_hypotheses_returned_total", "", false, "$__rate_interval"), timeseries),
-      panel(21, "Dream runs", "short", ledgerGauge("densemem_operational_dream_runs", "window,lane,status", 'window="$window"'), timeseries),
-      panel(22, "Dream input targets", "short", ledgerGauge("densemem_operational_dream_input_targets", "window,lane,status", 'window="$window"'), timeseries),
-      panel(23, "Dream evidence targets", "short", ledgerGauge("densemem_operational_dream_evidence_targets", "window,lane,status", 'window="$window"'), timeseries),
-      panel(24, "Dream targets evaluated", "short", ledgerGauge("densemem_operational_dream_evaluated_targets", "window,lane,status", 'window="$window"'), timeseries),
-      panel(25, "Dream provider proposals", "short", ledgerGauge("densemem_operational_dream_provider_proposals", "window,lane,status", 'window="$window"'), timeseries),
-      panel(26, "Dream Hypotheses created", "short", ledgerGauge("densemem_operational_dream_created_hypotheses", "window,lane,status", 'window="$window"'), timeseries),
-      panel(27, "Dream Hypotheses rejected", "short", ledgerGauge("densemem_operational_dream_rejected_hypotheses", "window,lane,status", 'window="$window"'), timeseries),
-      panel(28, "Current Hypotheses", "short", ledgerGauge("densemem_operational_hypotheses", "lane,status"), timeseries),
-      panel(29, "Hypothesis backlog", "short", ledgerGauge("densemem_operational_hypothesis_backlog", "lane"), stat),
-      panel(30, "Oldest Hypothesis backlog age", "s", ledgerGauge("densemem_operational_hypothesis_oldest_backlog_age_seconds", "lane"), stat),
-      panel(31, "Dream feedback events", "short", ledgerGauge("densemem_operational_dream_feedback_events", "window,decision", 'window="$window"'), timeseries),
       panel(32, "Remember attempts", "short", ledgerGauge("densemem_operational_remember_attempts", "window,outcome", 'window="$window"'), timeseries),
-      panel(33, "Dream-confirmed Relationships", "short", ledgerGauge("densemem_operational_dream_confirmed_relationships", "window,status", 'window="$window"'), timeseries),
-      panel(34, "Relationship lifecycle transitions", "short", ledgerGauge("densemem_operational_relationship_transitions", "window,status", 'window="$window"'), timeseries),
-      panel(35, "Relationship corrections", "short", ledgerGauge("densemem_operational_relationship_corrections", "window" , 'window="$window"'), timeseries),
-      panel(36, "Relationship corrections", "short", ledgerGauge("densemem_operational_relationship_corrections", "window", 'window="$window"'), stat, "card/relationship_corrections"),
-      ...statusPanels,
     ],
   },
   {

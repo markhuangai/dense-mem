@@ -11,36 +11,10 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	remember "github.com/markhuangai/dense-mem/internal/remember/service"
 	"github.com/stretchr/testify/require"
 )
 
 const synchronousRememberCutoverMigrationVersion int64 = 20260831010001
-
-func requireLegacyV261RememberResult(t *testing.T, result remember.TerminalRememberResult, submissionID, processingState, searchState string,
-	evidenceCount, relationshipCount int, errorCode string) {
-	t.Helper()
-	require.Equal(t, "dense-mem.v2.6.1", result.ContractVersion)
-	require.Equal(t, submissionID, result.SubmissionID)
-	require.Equal(t, "remember", result.SubmissionKind)
-	require.Equal(t, processingState, result.ProcessingState)
-	require.Equal(t, searchState, result.SearchState)
-	require.Equal(t, submissionID, result.CorrelationID)
-	require.NotNil(t, result.Evidence)
-	require.Len(t, result.Evidence, evidenceCount)
-	require.NotNil(t, result.RelationshipResults)
-	require.Len(t, result.RelationshipResults, relationshipCount)
-	require.NotNil(t, result.Errors)
-	if errorCode == "" {
-		require.Empty(t, result.Errors)
-		return
-	}
-	require.Len(t, result.Errors, 1)
-	require.Equal(t, errorCode, result.Errors[0].Code)
-	require.True(t, result.Errors[0].Retryable)
-	require.Equal(t, "resubmit_remember", result.Errors[0].NextAction)
-	require.Equal(t, "Submit the complete batch again with remember and a new idempotency_key after correcting the input.", result.Errors[0].Remediation)
-}
 
 func TestRememberSynchronousCutoverPreservesTerminalHistoryBeforeRetirement(t *testing.T) {
 	ctx := context.Background()
@@ -274,7 +248,7 @@ func TestRememberSynchronousCutoverPreservesTerminalHistoryBeforeRetirement(t *t
 		FROM remember_attempts
 		WHERE team_id = $1::uuid AND attempt_id = $2::uuid
 	`, teamID, ingestID).Scan(&migratedCompletedJSON))
-	var migratedCompleted remember.TerminalRememberResult
+	var migratedCompleted legacyV261RememberResult
 	require.NoError(t, json.Unmarshal(migratedCompletedJSON, &migratedCompleted))
 	requireLegacyV261RememberResult(t, migratedCompleted, ingestID.String(), "completed", "current", 1, 1, "")
 	require.Equal(t, 0, migratedCompleted.Evidence[0].EvidenceIndex)
@@ -308,7 +282,7 @@ func TestRememberSynchronousCutoverPreservesTerminalHistoryBeforeRetirement(t *t
 		FROM remember_attempts
 		WHERE team_id = $1::uuid AND attempt_id = $2::uuid
 	`, teamID, rejectedIngestID).Scan(&migratedRejectedJSON))
-	var migratedRejected remember.TerminalRememberResult
+	var migratedRejected legacyV261RememberResult
 	require.NoError(t, json.Unmarshal(migratedRejectedJSON, &migratedRejected))
 	requireLegacyV261RememberResult(t, migratedRejected, rejectedIngestID.String(), "rejected", "not_required", 1, 0, "no_supported_memory")
 	require.Equal(t, 0, migratedRejected.Evidence[0].EvidenceIndex)
@@ -331,7 +305,7 @@ func TestRememberSynchronousCutoverPreservesTerminalHistoryBeforeRetirement(t *t
 		FROM remember_attempts
 		WHERE team_id = $1::uuid AND attempt_id = $2::uuid
 	`, teamID, expiredIngestID).Scan(&migratedQuarantinedJSON))
-	var migratedQuarantined remember.TerminalRememberResult
+	var migratedQuarantined legacyV261RememberResult
 	require.NoError(t, json.Unmarshal(migratedQuarantinedJSON, &migratedQuarantined))
 	requireLegacyV261RememberResult(
 		t, migratedQuarantined, expiredIngestID.String(), "quarantined", "not_required", 0, 0, "submission_quarantined",

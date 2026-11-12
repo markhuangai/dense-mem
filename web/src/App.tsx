@@ -45,11 +45,10 @@ const SecurityPanel = lazy(() => import("./control/SecurityPanel").then((module)
 const SSOPanel = lazy(() => import("./control/SSOPanel").then((module) => ({ default: module.SSOPanel })));
 const ConfigPanel = lazy(() => import("./control/ConfigPanel").then((module) => ({ default: module.ConfigPanel })));
 const OntologyConfigPanel = lazy(() => import("./control/ConfigPanel").then((module) => ({ default: module.OntologyConfigPanel })));
-const ControlDreamsPanel = lazy(() => import("./control/DreamsPanel").then((module) => ({ default: module.ControlDreamsPanel })));
 const LogsPanel = lazy(() => import("./control/LogsPanel").then((module) => ({ default: module.LogsPanel })));
 const RecallFeedbackPanel = lazy(() => import("./control/RecallFeedbackPanel").then((module) => ({ default: module.RecallFeedbackPanel })));
-const ConflictQueuePanel = lazy(() => import("./control/ConflictQueuePanel").then((module) => ({ default: module.ConflictQueuePanel })));
 const SearchConvergencePanel = lazy(() => import("./control/SearchConvergencePanel").then((module) => ({ default: module.SearchConvergencePanel })));
+const ConflictQueuePanel = lazy(() => import("./control/ConflictQueuePanel").then(module => ({ default: module.ConflictQueuePanel })));
 const RememberAttemptsPanel = lazy(() => import("./control/RememberAttemptsPanel").then((module) => ({ default: module.RememberAttemptsPanel })));
 
 const TOKEN_STORAGE_KEY = "denseMem.controlToken";
@@ -208,7 +207,7 @@ function Portal({ api, theme, themeMenu, onSignOut }: { api: ControlApi; theme: 
   const requestedSection = parameters.get("section");
   const legacyRemember = parameters.has("remember_view") || parameters.has("attempt_id") || parameters.has("invocation_id");
   const activeTab: PortalTab = sections.includes(requestedSection as PortalTab) ? requestedSection as PortalTab : legacyRemember ? "teams" : "all-teams";
-  const workspaceTabs: TeamWorkspaceTab[] = ["overview", "credentials", "remember-attempts", "conflicts", "dreams", "settings"];
+  const workspaceTabs: TeamWorkspaceTab[] = ["overview", "credentials", "remember-attempts", "evidence-conflicts", "settings"];
   const requestedWorkspace = parameters.get("team_tab");
   const teamWorkspaceTab = workspaceTabs.includes(requestedWorkspace as TeamWorkspaceTab) ? requestedWorkspace as TeamWorkspaceTab : legacyRemember ? "remember-attempts" : "overview";
   const [teams, setTeams] = useState<Team[]>([]);
@@ -287,8 +286,9 @@ function Portal({ api, theme, themeMenu, onSignOut }: { api: ControlApi; theme: 
       ["overview", "Overview", <Activity size={17} aria-hidden="true" />],
       ["credentials", "Credentials", <KeyRound size={17} aria-hidden="true" />],
       ["remember-attempts", "Remember history", <Activity size={17} aria-hidden="true" />],
-      ["conflicts", "Conflicts", <AlertTriangle size={17} aria-hidden="true" />],
-      ["dreams", "Dream history", <Moon size={17} aria-hidden="true" />],
+      ["evidence-conflicts", "Evidence conflicts", <AlertTriangle size={17} aria-hidden="true" />],
+
+
       ["settings", "Team settings", <Settings size={17} aria-hidden="true" />],
     ] as const).map(([id, label, icon]) => ({ id, label, icon, group: "Team", active: activeTab === "teams" && teamWorkspaceTab === id, disabled: !selectedTeam, href: portalHref({ section: "teams", team_id: selectedTeamId, team_tab: id, correlation_id: null, invocation_id: null }), onClick: () => openTeamWorkspace(id) })),
     ...([
@@ -409,6 +409,7 @@ function TeamWorkspace({
     <TeamWorkspaceShell team={team} activeTab={activeTab}>
       {activeTab === "overview" && <TeamOverviewPanel api={api} team={team} />}
       {activeTab === "credentials" && <TeamCredentialsPanel api={api} team={team} embedded />}
+      {activeTab === "evidence-conflicts" && <ConflictQueuePanel api={api} team={team} /> }
       {activeTab === "remember-attempts" && (
         <Suspense fallback={<div className="team-embedded-panel"><LoadingState label="Loading Remember attempts" /></div>}>
           <RememberAttemptsPanel
@@ -418,16 +419,6 @@ function TeamWorkspace({
             initialInvocationID={initialRememberLink?.invocationID}
             onSelectionChange={onRememberSelection}
           />
-        </Suspense>
-      )}
-      {activeTab === "conflicts" && (
-        <Suspense fallback={<div className="team-embedded-panel"><LoadingState label="Loading conflict queue" /></div>}>
-          <ConflictQueuePanel api={api} team={team} />
-        </Suspense>
-      )}
-        {activeTab === "dreams" && (
-        <Suspense fallback={<div className="team-embedded-panel"><LoadingState label="Loading dreams" /></div>}>
-          <ControlDreamsPanel api={api} team={team} embedded />
         </Suspense>
       )}
       {activeTab === "settings" && (

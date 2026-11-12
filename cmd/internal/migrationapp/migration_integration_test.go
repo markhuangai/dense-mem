@@ -5,7 +5,10 @@ package migrationapp
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -14,6 +17,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+	access "github.com/markhuangai/dense-mem/internal/access/postgres"
+	"github.com/markhuangai/dense-mem/internal/domain"
+	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
+	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
+	"github.com/markhuangai/dense-mem/internal/observability"
+	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres/testfixture"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
@@ -32,6 +42,179 @@ const (
 	migrationTestSafetyTimeout    = 30 * time.Second
 	migrationTestLockProbeTimeout = time.Second
 )
+
+func TestEvidenceOnlyPostgresMigrationDiagnostics(t *testing.T) {
+	db := openMigrationIntegrationDB(t)
+	ctx := context.Background()
+	migrator, err := storagepostgres.NewMigrator(db)
+	require.NoError(t, err)
+	require.NoError(t, migrator.PrepareEvidenceOnlyMigration(ctx))
+	const secret = "credential_canary_731"
+	const dependency = "evidence_only_credential_canary_731"
+	require.NoError(t, db.Exec(`CREATE TABLE `+dependency+` (team_id uuid,relationship_id uuid,FOREIGN KEY(team_id,relationship_id) REFERENCES relationship_records(team_id,relationship_id))`).Error)
+	path := filepath.Join(t.TempDir(), "migration.jsonl")
+	output, err := os.Create(path)
+	require.NoError(t, err)
+	previous := os.Stdout
+	os.Stdout = output
+	logger := observability.NewWithProtector(slog.LevelDebug, observability.NewCredentialProtector(secret))
+	os.Stdout = previous
+	t.Cleanup(func() { _ = output.Close() })
+	require.ErrorContains(t, migrateEvidenceOnly(ctx, db, migrator, logger.Slog()), "unhandled retained dependency")
+	require.NoError(t, db.Exec(`DROP TABLE `+dependency).Error)
+	require.NoError(t, migrateEvidenceOnly(ctx, db, migrator, logger.Slog()))
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	require.Error(t, migrateEvidenceOnly(cancelled, db, migrator, logger.Slog()))
+	require.NoError(t, output.Close())
+	body, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.NotContains(t, string(body), secret)
+	require.Contains(t, string(body), "evidence_only_[REDACTED]")
+	seen := map[string]map[string]any{}
+	for _, line := range strings.Split(strings.TrimSpace(string(body)), "\n") {
+		var record map[string]any
+		require.NoError(t, json.Unmarshal([]byte(line), &record))
+		require.Equal(t, storagepostgres.EvidenceOnlyMigrationInventorySHA256, record["inventory_identity"])
+		seen[record["msg"].(string)] = record
+	}
+	require.Contains(t, seen, "evidence_only_migration_started")
+	blocked := seen["evidence_only_migration_blocked"]
+	require.Equal(t, "ERROR", blocked["level"])
+	require.Contains(t, blocked["error"], "unhandled retained dependency")
+	require.Equal(t, "P0001", blocked["sqlstate"])
+	require.Contains(t, blocked["database_context"], "RAISE")
+	require.Equal(t, "apply", blocked["phase"])
+	completed := seen["evidence_only_migration_completed"]
+	require.Equal(t, "INFO", completed["level"])
+	require.Equal(t, "committed", completed["transaction_outcome"])
+	receipt := completed["receipt"].(map[string]any)
+	require.Equal(t, true, receipt["retained_fingerprints_verified"])
+	require.Len(t, receipt["retained_counts"], 13)
+	require.NotEmpty(t, receipt["removed_counts"])
+	failed := seen["evidence_only_migration_failed"]
+	require.Equal(t, "ERROR", failed["level"])
+	require.Equal(t, "prepare", failed["phase"])
+	require.Equal(t, "not_started", failed["transaction_outcome"])
+}
+
+func TestEvidenceOnlyPostgresMigrationRollbackLogs(t *testing.T) {
+	for _, mode := range []string{"legal_hold", "fingerprint", "interruption"} {
+		t.Run(mode, func(t *testing.T) {
+			db := openMigrationIntegrationDB(t)
+			ctx := context.Background()
+			rls := storagepostgres.NewRLS()
+			migrator, err := storagepostgres.NewMigrator(db)
+			require.NoError(t, err)
+			require.NoError(t, migrator.PrepareEvidenceOnlyMigration(ctx))
+			team := &domain.Team{Name: "migration-rollback-" + mode}
+			require.NoError(t, access.NewTeamRepository(db, rls).Create(ctx, team))
+			owner := &domain.Credential{ID: uuid.New(), TeamID: team.ID, Name: "migration owner", KeyHash: "synthetic", KeyPrefix: uuid.NewString()[:20], KeySuffix: "test", Scopes: []string{"read", "write"}}
+			require.NoError(t, access.NewCredentialRepository(db, rls, nil).CreateCredential(ctx, owner))
+			var space string
+			var generation int64
+			require.NoError(t, rls.WithSystemTx(ctx, db, func(tx *gorm.DB) error {
+				return tx.Raw(`SELECT id::text,generation FROM memory_spaces WHERE team_id=?::uuid AND kind='private'`, team.ID).Row().Scan(&space, &generation)
+			}))
+			const content = "Exact rollback Evidence. café 🧭"
+			ingest, err := knowledgepostgres.NewStore(db, rls).CreateIngestForTest(ctx, knowledge.CreateIngestInput{TeamID: team.ID.String(), OwnerProfileID: owner.ID.String(), SpaceID: space, SpaceGeneration: generation, IdempotencyKey: "original-operation", RequestHash: "original-hash", Evidence: []knowledge.EvidenceInput{{Content: content}}})
+			require.NoError(t, err)
+			id := ingest.Evidence[0].FragmentID
+			var before string
+			require.NoError(t, db.Raw(`SELECT md5(to_jsonb(evidence)::text) FROM evidence_fragments evidence WHERE fragment_id=?::uuid`, id).Row().Scan(&before))
+			if mode == "legal_hold" {
+				require.NoError(t, rls.WithSystemTx(ctx, db, func(tx *gorm.DB) error {
+					return tx.Exec(`INSERT INTO private_memory_legal_holds(team_id,space_id,reason_code,actor_class) VALUES(?::uuid,?::uuid,'migration_test','control')`, team.ID, space).Error
+				}))
+			}
+			if mode == "fingerprint" {
+				root := t.TempDir()
+				source := storagepostgres.MigrationsDir()
+				files, err := filepath.Glob(filepath.Join(source, "*", "*.sql"))
+				require.NoError(t, err)
+				for _, file := range files {
+					relative, err := filepath.Rel(source, file)
+					require.NoError(t, err)
+					destination := filepath.Join(root, "migrations", "postgres", relative)
+					body, err := os.ReadFile(file)
+					require.NoError(t, err)
+					if filepath.Base(file) == "20261110010000_evidence_only_memory.sql" {
+						fault := fmt.Sprintf("ALTER TABLE evidence_fragments DISABLE TRIGGER USER; UPDATE evidence_fragments SET content='controlled corruption' WHERE fragment_id='%s'::uuid;\n", id)
+						body = []byte(strings.Replace(string(body), "-- EVIDENCE_ONLY_REBIND_FINGERPRINTS", fault+"-- EVIDENCE_ONLY_REBIND_FINGERPRINTS", 1))
+					}
+					require.NoError(t, os.MkdirAll(filepath.Dir(destination), 0755))
+					require.NoError(t, os.WriteFile(destination, body, 0600))
+				}
+				t.Chdir(root)
+				migrator, err = storagepostgres.NewMigrator(db)
+				require.NoError(t, err)
+			}
+			path := filepath.Join(t.TempDir(), "migration-rollback.jsonl")
+			output, err := os.Create(path)
+			require.NoError(t, err)
+			defer output.Close()
+			previous := os.Stdout
+			os.Stdout = output
+			logger := observability.NewWithProtector(slog.LevelDebug, observability.NewCredentialProtector("migration-rollback-canary"))
+			os.Stdout = previous
+			if mode == "interruption" {
+				blocker := db.Begin()
+				require.NoError(t, blocker.Error)
+				defer blocker.Rollback()
+				require.NoError(t, blocker.Exec(`LOCK TABLE v2_compatibility_markers IN ACCESS EXCLUSIVE MODE`).Error)
+				operation, cancel := context.WithCancel(ctx)
+				defer cancel()
+				done := make(chan error, 1)
+				go func() { done <- migrateEvidenceOnly(operation, db, migrator, logger.Slog()) }()
+				require.Eventually(t, func() bool {
+					var waiting bool
+					require.NoError(t, db.Raw(`SELECT EXISTS(SELECT 1 FROM pg_locks WHERE relation='public.v2_compatibility_markers'::regclass AND NOT granted)`).Row().Scan(&waiting))
+					return waiting
+				}, 30*time.Second, 20*time.Millisecond)
+				cancel()
+				require.Error(t, <-done)
+				require.NoError(t, blocker.Rollback().Error)
+			} else {
+				expected := "legal hold"
+				if mode == "fingerprint" {
+					expected = "retained fingerprint mismatch"
+				}
+				require.ErrorContains(t, migrateEvidenceOnly(ctx, db, migrator, logger.Slog()), expected)
+			}
+			var after string
+			var graphExists, applied bool
+			require.NoError(t, db.Raw(`SELECT md5(to_jsonb(evidence)::text) FROM evidence_fragments evidence WHERE fragment_id=?::uuid`, id).Row().Scan(&after))
+			require.Equal(t, before, after)
+			require.NoError(t, db.Raw(`SELECT to_regclass('public.relationship_records') IS NOT NULL,EXISTS(SELECT 1 FROM goose_db_version WHERE version_id=20261110010000 AND is_applied)`).Row().Scan(&graphExists, &applied))
+			require.True(t, graphExists)
+			require.False(t, applied)
+			require.NoError(t, output.Close())
+			body, err := os.ReadFile(path)
+			require.NoError(t, err)
+			require.NotContains(t, string(body), "migration-rollback-canary")
+			failure := map[string]any{}
+			for _, line := range strings.Split(strings.TrimSpace(string(body)), "\n") {
+				var record map[string]any
+				require.NoError(t, json.Unmarshal([]byte(line), &record))
+				require.NotEqual(t, "evidence_only_migration_completed", record["msg"])
+				if record["level"] == "ERROR" {
+					failure = record
+				}
+			}
+			require.NotEmpty(t, failure)
+			require.Equal(t, "apply", failure["phase"])
+			require.Equal(t, "not_committed", failure["transaction_outcome"])
+			require.Equal(t, storagepostgres.EvidenceOnlyMigrationInventorySHA256, failure["inventory_identity"])
+			if mode == "interruption" {
+				require.Contains(t, failure["error"], "cancel")
+			} else if mode == "fingerprint" {
+				require.Contains(t, failure["error"], "retained fingerprint mismatch")
+			} else {
+				require.Contains(t, failure["error"], "legal hold")
+			}
+		})
+	}
+}
 
 func TestRunUpTimeoutRollsBackBlockedMigrationAndReleasesLock(t *testing.T) {
 	for _, timeout := range []time.Duration{0, migrationTestOperationTimeout} {

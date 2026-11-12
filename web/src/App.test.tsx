@@ -2,9 +2,9 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
-import { ControlMetrics, Credential, Dream, DreamRun, DreamStatus, GeneralConfig, OperationLog, OperationLogConfig, SecurityBan, SecuritySettings, SSOConfig, Team } from "./api";
+import { ControlMetrics, Credential, GeneralConfig, OperationLog, OperationLogConfig, SecurityBan, SecuritySettings, SSOConfig, Team } from "./api";
 
-import { dreamRationale, dreamRunSnapshot, dreamSnapshot, dreamStatusSnapshot, generalConfigSnapshot, jsonResponse, keyA, metricsSnapshot, mockPortalFetch, operationLogConfigSnapshot, operationLogsSnapshot, page, profileA, securityBan, securitySettings, ssoConfigSnapshot } from "./App.test-helpers";
+import { generalConfigSnapshot, jsonResponse, keyA, metricsSnapshot, mockPortalFetch, operationLogConfigSnapshot, operationLogsSnapshot, page, profileA, securityBan, securitySettings, ssoConfigSnapshot } from "./App.test-helpers";
 
 beforeEach(() => {
   sessionStorage.clear();
@@ -373,19 +373,19 @@ describe("App", () => {
     const attempts = ["attempt-a", "attempt-b"].map((attemptID) => ({
       summary: {
         team_id: profileA.id, team_name: profileA.name, owner_profile_id: "owner-1", attempt_id: attemptID,
-        contract_version: "dense-mem.v2.6", submission_kind: "remember", outcome: "completed",
-        evidence_count: 0, relationship_count: 0, document_count: 0, assessor_turns: 0,
+        contract_version: "dense-mem.v2.8.0", submission_kind: "remember", outcome: "completed",
+        evidence_count: 0, document_count: 0, assessor_turns: 0,
         duration_ms: 1, created_at: "2026-08-18T01:00:00Z",
       },
       detail: {
         team_id: profileA.id, team_name: profileA.name, owner_profile_id: "owner-1", attempt_id: attemptID,
-        contract_version: "dense-mem.v2.6", submission_kind: "remember", outcome: "completed",
-        evidence_count: 0, relationship_count: 0, document_count: 0, assessor_turns: 0,
+        contract_version: "dense-mem.v2.8.0", submission_kind: "remember", outcome: "completed",
+        evidence_count: 0, document_count: 0, assessor_turns: 0,
         duration_ms: 1, created_at: "2026-08-18T01:00:00Z",
         public_result: {
-          contract_version: "dense-mem.v2.6", submission_id: attemptID, submission_kind: "remember",
+          contract_version: "dense-mem.v2.8.0", submission_id: attemptID, submission_kind: "remember",
           processing_state: "completed", search_state: "current", correlation_id: "corr",
-          evidence: [], relationship_results: [], errors: [],
+          evidence: [], errors: [],
         },
         events: [], diagnostics: { original_request: null, provider_exchanges: [], caller_response: null },
       },
@@ -497,20 +497,7 @@ describe("App", () => {
     expect(window.location.search).not.toContain("missing-attempt");
   });
 
-  it("shows dream rationale behind an info tooltip", async () => {
-    mockPortalFetch({ teams: [profileA], keys: [keyA()] });
-    sessionStorage.setItem("denseMem.controlToken", "secret");
 
-    render(<App />);
-    await screen.findByRole("button", { name: /Default/ });
-    await userEvent.click(screen.getByRole("link", { name: "Dream history" }));
-
-    expect(await screen.findByText("A may affect B.")).toBeInTheDocument();
-    expect(screen.getByLabelText("Dream history status")).toHaveTextContent("Retired");
-    const trigger = screen.getByRole("button", { name: /why this hypothesis: A may affect B\./i });
-    await userEvent.hover(trigger);
-    expect(await screen.findByRole("tooltip")).toHaveTextContent(dreamRationale);
-  });
 
   it("edits SSO runtime config", async () => {
     const fetchMock = mockPortalFetch({ teams: [profileA], keys: [keyA()] });

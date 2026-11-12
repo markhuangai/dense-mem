@@ -25,30 +25,6 @@ type SemanticReviewEvidence struct {
 	CurrentSourceRevisionID string         `json:"-"`
 }
 
-// RelationshipCorrectionTarget carries server-trusted correction context
-// through the in-process assessor request without exposing it to providers.
-type RelationshipCorrectionTarget struct {
-	RelationshipID  string
-	ExpectedVersion int
-}
-
-// RelationshipConflictContext carries server-trusted conflict context through
-// the in-process assessor request without exposing it to providers.
-type RelationshipConflictContext struct {
-	ConflictID      string
-	ExpectedVersion int
-}
-
-// SemanticValueObservation is the typed-value shape shared by provider
-// proposals and the closed submission contract.
-type SemanticValueObservation struct {
-	Ref     string `json:"ref"`
-	Type    string `json:"type"`
-	Value   string `json:"value"`
-	Display string `json:"display,omitempty"`
-	Unit    string `json:"unit,omitempty"`
-}
-
 // SemanticValidationError is a bounded field-level contract validation error.
 type SemanticValidationError struct {
 	Field   string `json:"field"`

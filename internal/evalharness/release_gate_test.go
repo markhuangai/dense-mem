@@ -12,7 +12,7 @@ func TestRunValidateChecksReleaseGateInputBeforeLiveWork(t *testing.T) {
 	dir := writeEvalFixture(t)
 	manifestPath := filepath.Join(dir, "seed_manifest.json")
 	suitePath := filepath.Join(dir, "suite.jsonl")
-	_, _, _, _, _, _, seedHash, err := loadRunInputs(manifestPath, suitePath)
+	_, _, _, _, _, seedHash, err := loadRunInputs(manifestPath, suitePath)
 	if err != nil {
 		t.Fatalf("load fixture: %v", err)
 	}

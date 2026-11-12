@@ -86,7 +86,7 @@ function receiptBytes(receipt) { return `${JSON.stringify(receipt)}\n`; }
 
 function requiredForkJobs(scenarios) {
   return ["Fork rootless controller precheck", ...[0, 1, 2, 3, 4, 5].map((shard) => `Fork PostgreSQL precheck shard ${shard}`),
-    ...scenarios.map((name) => `Fork scenario ${name === "full" ? "dreaming_telemetry_portal" : name}`),
+    ...scenarios.map((name) => `Fork scenario ${name === "full" ? "evidence_telemetry_portal" : name}`),
     "Sign fork E2E receipt"];
 }
 

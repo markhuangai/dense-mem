@@ -158,7 +158,7 @@ func (x *discoveryFixture) drain(t *testing.T) {
 	for range 300 {
 		require.NoError(t, x.f.store.discoverMaintenanceError(context.Background(), x.turn, ontology.MaintenancePageSize))
 		var complete bool
-		require.NoError(t, x.f.admin.Raw(`SELECT discovery_kind=4 AND NOT EXISTS(SELECT 1 FROM ontology_maintenance_markers WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=?)
+		require.NoError(t, x.f.admin.Raw(`SELECT discovery_kind=1 AND NOT EXISTS(SELECT 1 FROM ontology_maintenance_markers WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=?)
 		 FROM ontology_maintenance_teams WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=?`, x.f.team, x.f.space, x.f.generation, x.f.team, x.f.space, x.f.generation).Row().Scan(&complete))
 		if complete {
 			return

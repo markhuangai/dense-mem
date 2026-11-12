@@ -79,7 +79,7 @@ func TestPrivateMemoryPreflightCommandBoundsLegacyReportAndReturnsBlockers(t *te
 	files, err := filepath.Glob(filepath.Join(source, "*", "*.sql"))
 	require.NoError(t, err)
 	for _, file := range files {
-		if strings.HasPrefix(filepath.Base(file), "2026101401000") {
+		if strings.HasPrefix(filepath.Base(file), "2026101401000") || filepath.Base(file) >= "20261110010000" {
 			continue
 		}
 		relative, err := filepath.Rel(source, file)

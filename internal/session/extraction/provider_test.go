@@ -3,7 +3,7 @@ package extraction
 import (
 	"context"
 	"encoding/json"
-	"fmt"
+
 	"strings"
 	"testing"
 
@@ -29,14 +29,11 @@ func extractionFixture() (session.ExtractionRequest, session.ExtractionResponse)
 	request := session.ExtractionRequest{RequestID: "request-one", Window: session.Window{Index: 0, Core: []session.Segment{segment}}, Prior: []session.PriorEvent{}}
 	response := session.ExtractionResponse{
 		RequestID: request.RequestID, Coverage: []string{segment.Ref},
-		Entities:        []session.EntityProposal{{Ref: "ari", Name: "Ari", Kind: "person"}, {Ref: "go", Name: "Go", Kind: "product"}},
-		Relationships:   []session.RelationshipProposal{{Ref: "uses-go", SubjectRef: "ari", Predicate: "uses", ObjectRef: stringPointer("go"), Polarity: "+", Citations: []session.Citation{{StartRef: segment.Ref, EndRef: segment.Ref}}, KnownEvidenceIDs: []string{}}},
+		Excerpts:        []session.Excerpt{{EventIndex: 0, Start: 0, End: 12, Content: segment.Text}},
 		SecuritySignals: []session.ExtractionSignal{},
 	}
 	return request, response
 }
-
-func stringPointer(value string) *string { return &value }
 
 func TestSessionProviderRegeneratesCompleteUnknownReferenceResponse(t *testing.T) {
 	request, valid := extractionFixture()
@@ -63,11 +60,11 @@ func TestSessionProviderRegeneratesWhitespaceCitationBeforeCheckpointing(t *test
 	blank := session.Segment{Ref: "blank", EventIndex: 0, Start: 0, End: 512, Text: strings.Repeat("\u2003", 512)}
 	request.Window.Core = append([]session.Segment{blank}, request.Window.Core...)
 	valid.Coverage = append([]string{blank.Ref}, valid.Coverage...)
+	valid.Excerpts[0].Start, valid.Excerpts[0].End = 512, 524
 	validJSON, err := json.Marshal(valid)
 	require.NoError(t, err)
 	invalid := valid
-	invalid.Relationships = append([]session.RelationshipProposal(nil), valid.Relationships...)
-	invalid.Relationships[0].Citations = []session.Citation{{StartRef: blank.Ref, EndRef: blank.Ref}}
+	invalid.Excerpts = []session.Excerpt{{EventIndex: 0, Start: 0, End: 512, Content: blank.Text}}
 	invalidJSON, err := json.Marshal(invalid)
 	require.NoError(t, err)
 	transport := &outboundFixture{bodies: []string{string(invalidJSON), string(validJSON)}}
@@ -77,17 +74,17 @@ func TestSessionProviderRegeneratesWhitespaceCitationBeforeCheckpointing(t *test
 	require.Equal(t, valid, response)
 	require.Len(t, transport.requests, 2)
 	require.Equal(t, transport.requests[0].Messages[1], transport.requests[1].Messages[1])
-	require.Contains(t, transport.requests[1].Messages[2].Content, "non-whitespace")
-	valid.Relationships[0].Citations = []session.Citation{{StartRef: blank.Ref, EndRef: request.Window.Core[1].Ref}}
+	require.Contains(t, transport.requests[1].Messages[2].Content, "excerpt bounds")
+	valid.Excerpts[0] = session.Excerpt{EventIndex: 0, Start: 0, End: 524, Content: blank.Text + request.Window.Core[1].Text}
 	require.NoError(t, session.ValidateExtraction(request, valid))
 }
 
 func TestSessionProviderNeverSplicesIncompleteResponses(t *testing.T) {
 	request, valid := extractionFixture()
 	first := valid
-	first.Relationships = nil
+	first.Excerpts = nil
 	second := valid
-	second.Entities = nil
+	second.Coverage = nil
 	firstJSON, err := json.Marshal(first)
 	require.NoError(t, err)
 	secondJSON, err := json.Marshal(second)
@@ -100,88 +97,6 @@ func TestSessionProviderNeverSplicesIncompleteResponses(t *testing.T) {
 	require.ErrorAs(t, err, &malformed)
 	require.Equal(t, 3, malformed.Attempts)
 	require.Len(t, transport.requests, 3)
-}
-
-func TestSessionLinkingRequiresCompleteCompatibleGroups(t *testing.T) {
-	request := session.LinkingRequest{RequestID: "link", Entities: []session.EntityProposal{
-		{Ref: "first", Name: "Jordan", Kind: "person"}, {Ref: "second", Name: "Jordan", Kind: "person"}, {Ref: "product", Name: "Go", Kind: "product"},
-	}}
-	valid := session.LinkingResponse{RequestID: "link", Groups: []session.EntityGroup{
-		{Ref: "designer", CanonicalRef: "first", Members: []string{"first"}},
-		{Ref: "musician", CanonicalRef: "second", Members: []string{"second"}},
-		{Ref: "go", CanonicalRef: "product", Members: []string{"product"}},
-	}}
-	require.NoError(t, session.ValidateLinking(request, valid))
-	invalid := valid
-	invalid.Groups = valid.Groups[:2]
-	require.Error(t, session.ValidateLinking(request, invalid))
-	invalid = valid
-	invalid.Groups = []session.EntityGroup{{Ref: "mixed", CanonicalRef: "first", Members: []string{"first", "second", "product"}}}
-	require.Error(t, session.ValidateLinking(request, invalid))
-}
-
-func TestSessionLinkingReportsCanonicalBudgetAfterCompleteValidation(t *testing.T) {
-	request := session.LinkingRequest{RequestID: "link-budget", Entities: []session.EntityProposal{}}
-	complete := session.LinkingResponse{RequestID: request.RequestID, Groups: []session.EntityGroup{}}
-	for index := range 401 {
-		ref := fmt.Sprintf("e%d", index)
-		request.Entities = append(request.Entities, session.EntityProposal{Ref: ref, Name: fmt.Sprintf("Person%d", index), Kind: "person"})
-		complete.Groups = append(complete.Groups, session.EntityGroup{Ref: fmt.Sprint(index), CanonicalRef: ref, Members: []string{ref}})
-	}
-	request.Entities[400].Name = request.Entities[0].Name
-	invalid := session.LinkingResponse{RequestID: request.RequestID, Groups: append([]session.EntityGroup(nil), complete.Groups...)}
-	invalid.Groups[400].Members = []string{"unknown"}
-	deduplicated := session.LinkingResponse{RequestID: request.RequestID, Groups: append([]session.EntityGroup(nil), complete.Groups[:400]...)}
-	deduplicated.Groups[0].Members = []string{"e0", "e400"}
-	for _, test := range []struct {
-		name     string
-		first    session.LinkingResponse
-		attempts int
-		budget   bool
-	}{
-		{"complete overflow", complete, 1, true},
-		{"unknown member then overflow", invalid, 2, true},
-		{"duplicate drafts within canonical limit", deduplicated, 1, false},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			first, err := json.Marshal(test.first)
-			require.NoError(t, err)
-			last, err := json.Marshal(complete)
-			require.NoError(t, err)
-			transport := &outboundFixture{bodies: []string{string(first), string(last)}}
-			response, err := NewProvider(transport, "fixture", assessor.DefaultSemanticAssessmentLimits()).Link(context.Background(), request)
-			if test.budget {
-				require.ErrorIs(t, err, session.ErrBudget)
-				require.Equal(t, session.LinkingResponse{}, response)
-			} else {
-				require.NoError(t, err)
-				require.Equal(t, deduplicated, response)
-			}
-			require.Len(t, transport.requests, test.attempts)
-			groups := transport.requests[0].Schema["properties"].(map[string]any)["groups"].(map[string]any)
-			require.GreaterOrEqual(t, groups["maxItems"].(int), len(request.Entities))
-		})
-	}
-}
-
-func TestSessionLinkingRegenerationIdentifiesWrongRequestID(t *testing.T) {
-	request := session.LinkingRequest{RequestID: "session:556a0828-82d8-491e-84d2-5c24afb45717:linking", Entities: []session.EntityProposal{{Ref: "ari", Name: "Ari", Kind: "person"}}}
-	valid := session.LinkingResponse{RequestID: request.RequestID, Groups: []session.EntityGroup{{Ref: "ari", CanonicalRef: "ari", Members: []string{"ari"}}}}
-	invalid := valid
-	invalid.RequestID = "session:556a0828-82d2-491e-84d2-5c24afb45717:linking"
-	invalidJSON, err := json.Marshal(invalid)
-	require.NoError(t, err)
-	validJSON, err := json.Marshal(valid)
-	require.NoError(t, err)
-	transport := &outboundFixture{bodies: []string{string(invalidJSON), string(validJSON)}}
-	response, err := NewProvider(transport, "fixture-model", assessor.DefaultSemanticAssessmentLimits()).Link(context.Background(), request)
-	require.NoError(t, err)
-	require.Equal(t, valid, response)
-	require.Len(t, transport.requests, 2)
-	require.Equal(t, transport.requests[0].Messages[1], transport.requests[1].Messages[1])
-	require.Contains(t, transport.requests[1].Messages[2].Content, "request_id must equal")
-	require.Contains(t, transport.requests[1].Messages[2].Content, request.RequestID)
-	require.NotEqual(t, request.RequestID, invalid.RequestID)
 }
 
 func TestSessionProviderCancellationAndInputBudgetPreventOutboundCalls(t *testing.T) {

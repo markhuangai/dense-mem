@@ -356,17 +356,6 @@ func addMissingCanonicalSearchStats(
 			  AND fragment.space_generation = dense_mem_active_space_generation(fragment.team_id, fragment.space_id)
 			  AND (fragment.source_id IS NULL OR source.current_revision_id = fragment.source_revision_id)
 			  AND COALESCE(fragment.metadata->>'conflict_resolution_deletion_only', '') <> 'true'
-			UNION ALL
-			SELECT relationship.team_id, relationship.relationship_id AS source_id,
-			       'relationship'::text AS source_kind, relationship.created_at
-			FROM relationship_records AS relationship
-			JOIN teams AS team
-			  ON team.id = relationship.team_id
-			 AND team.status = 'active'
-			 AND team.deleted_at IS NULL
-			WHERE relationship.status = 'active'
-			  AND relationship.support_count > 0
-			  AND relationship.identity_alias_of_relationship_id IS NULL
 		)
 		SELECT source.team_id::text, count(*),
 		       COALESCE(EXTRACT(EPOCH FROM (clock_timestamp() - min(source.created_at))), 0)

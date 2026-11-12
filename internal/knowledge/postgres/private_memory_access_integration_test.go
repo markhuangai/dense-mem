@@ -14,6 +14,8 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	storage "github.com/markhuangai/dense-mem/internal/storage/postgres"
+	tracecontract "github.com/markhuangai/dense-mem/internal/trace/contract"
+	tracepostgres "github.com/markhuangai/dense-mem/internal/trace/postgres"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -36,7 +38,7 @@ func TestPrivateMemoryReadOnlyCommitRetractionAndLiveSharedRevocation(t *testing
 	otherKey, err := keys.GetByIDForTeam(ctx, uuid.MustParse(team), uuid.MustParse(other))
 	require.NoError(t, err)
 	originalContext := privateCredentialContext(key)
-	store := NewStore(app, rls, ConflictRuntimeConfig{})
+	store := NewStore(app, rls)
 	shared := evidenceOnlyRememberInput(team, owner, "before-revocation-shared")
 	shared.SpaceID, shared.SpaceGeneration = key.TeamSharedSpaceID.String(), key.TeamSharedSpaceGeneration
 	shared.Metadata = map[string]any{"target_space": "team_shared"}
@@ -60,14 +62,12 @@ func TestPrivateMemoryReadOnlyCommitRetractionAndLiveSharedRevocation(t *testing
 	stored, err := store.CommitRememberWithEmbeddings(privateContext, private, rememberTestEmbeddings(prepared, false))
 	require.NoError(t, err)
 	require.Equal(t, "private", stored.PublicResult["space_kind"])
-	visible, err := store.ListSubmissionAssessmentKnownEvidence(privateContext, SubmissionAssessmentKnownEvidenceInput{TeamID: team, OwnerProfileID: owner, SpaceID: private.SpaceID, EvidenceIDs: []string{private.Evidence[0].FragmentID}})
+	traces := tracepostgres.New(app, rls)
+	visible, err := traces.TraceEvidence(privateContext, tracecontract.Input{TeamID: team, EvidenceID: private.Evidence[0].FragmentID})
 	require.NoError(t, err)
-	require.Len(t, visible.Evidence, 1)
-	for _, target := range []string{private.SpaceID, otherKey.MemorySpaceID.String()} {
-		visible, err = store.ListSubmissionAssessmentKnownEvidence(privateCredentialContext(otherKey), SubmissionAssessmentKnownEvidenceInput{TeamID: team, OwnerProfileID: other, SpaceID: target, EvidenceIDs: []string{private.Evidence[0].FragmentID}})
-		require.NoError(t, err)
-		require.Empty(t, visible.Evidence, "the production evidence reader must scope sources before returning IDs")
-	}
+	require.Equal(t, private.Evidence[0].Content, visible.Evidence.Content)
+	_, err = traces.TraceEvidence(privateCredentialContext(otherKey), tracecontract.Input{TeamID: team, EvidenceID: private.Evidence[0].FragmentID})
+	require.ErrorIs(t, err, tracecontract.ErrEvidenceNotFound)
 	_, err = store.RetractEvidence(privateContext, RetractEvidenceInput{TeamID: team, OwnerProfileID: owner, EvidenceIDs: []string{private.Evidence[0].FragmentID}, IdempotencyKey: "private-retract", RequestHash: "private-retract-hash", Reason: "automation corrected its memory"})
 	require.NoError(t, err)
 	erasure := privacy.NewPrivateMemoryRepository(app, rls)
@@ -157,49 +157,23 @@ func TestSharedLifecycleRequiresLiveWritePermissionForOwnedRecords(t *testing.T)
 	team := createLedgerTeam(t, admin, rls, "shared-lifecycle-revocation")
 	owner := createLedgerProfile(t, admin, rls, team, "owner")
 	insertSearchTestContract(t, admin, rls, "shared-lifecycle-revocation", 3, "exact", "")
-	store := NewStore(app, rls, ConflictRuntimeConfig{})
+	store := NewStore(app, rls)
 	keys := access.NewCredentialRepository(app, rls, nil)
 	key, err := keys.GetByIDForTeam(ctx, uuid.MustParse(team), uuid.MustParse(owner))
 	require.NoError(t, err)
 	actorCtx := privateCredentialContext(key)
-	subject := createSemanticEntity(t, ctx, store, team, owner, "person", "Automation")
-	wrong := createSemanticEntity(t, ctx, store, team, owner, "project", "Old project")
-	first := createSemanticEntity(t, ctx, store, team, owner, "project", "Atlas")
-	createSemanticEntity(t, ctx, store, team, owner, "project", "Atlas")
-	content := "Automation works on Atlas."
-	ingest := createSemanticIngest(t, ctx, store, team, owner, "shared-lifecycle-source", content)
-	source := applySemanticDecision(t, ctx, store, ApplyRelationshipDecisionInput{
-		TeamID: team, OwnerProfileID: owner, IngestID: ingest.IngestID, SubjectEntityID: subject.EntityID, PredicateKey: "works_on", ObjectEntityID: wrong.EntityID,
-		Support: &EvidenceSupportInput{FragmentID: ingest.Evidence[0].FragmentID, SourceGroupKey: "source", SpanStart: 0, SpanEnd: len(content), Authority: "primary"},
-	}).Relationship
-	submit := CorrectRelationshipInput{TeamID: team, OwnerProfileID: owner, Action: "submit", RelationshipID: source.RelationshipID, ExpectedVersion: source.Version,
-		Patch:    RelationshipCorrectionPatch{ObjectEntity: &RelationshipCorrectionEntityPatch{Name: "Atlas", EntityKind: "project"}},
-		Supports: []RelationshipCorrectionSupport{{EvidenceID: ingest.Evidence[0].FragmentID, Start: 0, End: len(content)}}, Reason: "resolve project", IdempotencyKey: "before-revocation"}
-	pending, err := store.CorrectRelationship(actorCtx, submit)
-	require.NoError(t, err)
-	require.Equal(t, "awaiting_confirmation", pending.ProcessingState)
-	confirm := CorrectRelationshipInput{TeamID: team, OwnerProfileID: owner, Action: "confirm", SubmissionID: pending.SubmissionID, ConfirmationToken: pending.Confirmation.Token,
-		Selection: RelationshipCorrectionSelection{ObjectEntityID: first.EntityID}, IdempotencyKey: "confirm-after-revocation"}
-	plan, err := store.PlanRelationshipCorrectionEmbeddings(actorCtx, confirm)
-	require.NoError(t, err)
-	require.NotEmpty(t, plan.Documents)
+	ingest := createSemanticIngest(t, ctx, store, team, owner, "shared-lifecycle-source", "Automation works on Atlas.")
 	require.NoError(t, rls.WithSystemTx(ctx, admin, func(tx *gorm.DB) error {
 		return tx.Exec(`UPDATE credentials SET scopes=ARRAY['read'] WHERE id=?`, key.ID).Error
 	}))
-	_, err = store.CorrectRelationshipWithEmbeddings(actorCtx, confirm, nil)
-	require.ErrorIs(t, err, domain.ErrMemoryWriteDenied, "commit must recheck even after provider planning")
-	_, err = store.PlanRelationshipCorrectionEmbeddings(actorCtx, confirm)
-	require.ErrorIs(t, err, domain.ErrMemoryWriteDenied, "confirmation must fail before provider work")
-	_, err = store.CorrectRelationship(actorCtx, submit)
-	require.ErrorIs(t, err, domain.ErrMemoryWriteDenied, "replaying an owned shared submission requires current write permission")
 	_, err = store.RetractEvidence(actorCtx, RetractEvidenceInput{TeamID: team, OwnerProfileID: owner, EvidenceIDs: []string{ingest.Evidence[0].FragmentID}, Reason: "revoked writer", IdempotencyKey: "denied", RequestHash: "denied"})
 	require.ErrorIs(t, err, domain.ErrMemoryWriteDenied)
 	require.NoError(t, rls.WithSystemTx(ctx, admin, func(tx *gorm.DB) error {
-		var state string
-		if err := tx.Raw(`SELECT status FROM relationship_records WHERE team_id=? AND relationship_id=?`, team, source.RelationshipID).Row().Scan(&state); err != nil {
+		var count int
+		if err := tx.Raw(`SELECT count(*) FROM evidence_lifecycle_events WHERE team_id=? AND target_fragment_id=?`, team, ingest.Evidence[0].FragmentID).Row().Scan(&count); err != nil {
 			return err
 		}
-		require.Equal(t, "active", state)
+		require.Zero(t, count)
 		return nil
 	}))
 }

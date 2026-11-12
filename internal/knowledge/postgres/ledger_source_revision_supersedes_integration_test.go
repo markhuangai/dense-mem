@@ -16,7 +16,7 @@ func TestLedgerCreateIngestAdvancesWholeSourceRevisionWithoutEvidenceTargetList(
 	ctx := context.Background()
 	teamID := createLedgerTeam(t, adminDB, rls, "team-source-revision-whole")
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "source-revision-owner")
-	repo := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	repo := NewStore(appDB, rls)
 
 	first, err := repo.CreateIngestForTest(ctx, CreateIngestInput{
 		TeamID:         teamID,
@@ -82,7 +82,7 @@ func TestRememberRejectsMismatchedProvenanceWhenReusingSourceRevision(t *testing
 	ctx := context.Background()
 	teamID := createLedgerTeam(t, adminDB, rls, "remember-source-reuse-team")
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "remember-source-reuse-owner")
-	ledger := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	ledger := NewStore(appDB, rls)
 	const (
 		sourceKey     = "doc://remember-source-reuse"
 		revisionToken = "rev-1"

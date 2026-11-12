@@ -19,9 +19,6 @@ const DefaultAppConfigCacheCheckInterval = 5 * time.Second
 const DefaultAppTimezone = "Local"
 const DefaultOperationLogRetentionDays = 30
 const DefaultRecallFeedbackRetentionDays = 30
-const DefaultCommunityDetectionStartTimeLocal = "03:30"
-const DefaultCommunityDetectionMaxConcurrency = 1
-const DefaultCommunityDetectionJitterSeconds = 600
 
 const (
 	DefaultSSOEntitlementCacheTTL = accessservice.DefaultSSOEntitlementCacheTTL

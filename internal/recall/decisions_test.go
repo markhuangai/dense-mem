@@ -11,7 +11,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
 	searchcontract "github.com/markhuangai/dense-mem/internal/search/contract"
-	tracecontract "github.com/markhuangai/dense-mem/internal/trace/contract"
+
 	"github.com/stretchr/testify/require"
 )
 
@@ -43,17 +43,14 @@ func scoreAnswer(score float64) modelprovider.DecisionAnswer {
 
 func TestRecallDecisionFinalProvenanceMatchesCrossSpaceAndCommunitySelection(t *testing.T) {
 	branch := &RecallResult{
-		Results:              []RecallResultItem{{EvidenceID: "returned", Rank: 1}, {EvidenceID: "removed", Rank: 2}},
-		RelatedRelationships: []RelatedRelationshipSummary{{RelationshipID: "relationship"}},
+		Results: []RecallResultItem{{EvidenceID: "returned", Rank: 1}, {EvidenceID: "removed", Rank: 2}},
 		DecisionStages: []modelprovider.DecisionStage{
 			{References: map[string]string{"evidence_0": "returned", "evidence_1": "removed"}, SelectedIDs: []string{"returned", "removed"}},
-			{References: map[string]string{"relationship_0": "relationship"}, SelectedIDs: []string{"relationship"}},
 		},
 	}
-	final := fuseRecallResults([]*RecallResult{branch}, 1, 0)
+	final := fuseRecallResults([]*RecallResult{branch}, 1)
 	reconcileDecisionSelections(context.Background(), nil, final)
 	require.Equal(t, []string{"returned"}, final.DecisionStages[0].SelectedIDs)
-	require.Empty(t, final.DecisionStages[1].SelectedIDs)
 	require.Len(t, FeedbackResultRefs(final), 1)
 }
 
@@ -128,48 +125,11 @@ func TestRecallDecisionFailuresKeepOriginalOrderAndCancellationFails(t *testing.
 	}
 }
 
-func TestRecallDecisionRelationshipShortlistPreservesSemanticGrouping(t *testing.T) {
-	fixture := &retrievalReadFixture{relationshipBatch: &recallcontract.RecallCandidateBatch{SearchState: "current"}, relationships: map[string]recallcontract.RecallRelationshipHit{}}
-	ids := []string{}
-	for index := 0; index < 25; index++ {
-		id := uuid.NewString()
-		ids = append(ids, id)
-		fixture.relationshipBatch.TextHits = append(fixture.relationshipBatch.TextHits, searchcontract.SearchHit{SourceKind: "relationship", SourceID: id})
-		fixture.relationships[id] = recallcontract.RecallRelationshipHit{RelationshipID: id, SemanticGroupKey: fmt.Sprintf("group_%d", index/2), SubjectName: "Atlas", PredicateKey: "uses", ObjectName: fmt.Sprint(index)}
-	}
-	provider := recallDecisionFunction(func(_ context.Context, request modelprovider.DecisionRequest) (modelprovider.DecisionResult, error) {
-		require.Len(t, request.Groups, 13)
-		answers := map[string]modelprovider.DecisionAnswer{}
-		for index, group := range request.Groups {
-			score := 0.0
-			if index == 12 {
-				score = 3
-			}
-			answers[group.Questions[0].Name] = scoreAnswer(score)
-		}
-		return modelprovider.DecisionResult{Answers: answers}, nil
-	})
-	result, err := (&Retrieval{repository: fixture, decisions: provider}).RecallRelationships(recallDecisionTestContext(), recallcontract.RecallRelationshipsInput{TeamID: uuid.NewString(), Query: "Atlas uses", Limit: 1})
-	require.NoError(t, err)
-	require.Len(t, result.Results, 1)
-	require.Equal(t, ids[24], result.Results[0].RelationshipID)
-	require.Equal(t, 1, result.Results[0].Rank)
-}
-
 func TestRecallDecisionSelectionKeepsOnlyRelevantConflictMetadata(t *testing.T) {
-	conflict := func(id string, evidence, relationships []string) tracecontract.RelationshipConflictCaseRecord {
-		return tracecontract.RelationshipConflictCaseRecord{ConflictID: id, Positions: []domain.RelationshipConflictPositionRecord{{EvidenceIDs: evidence, RelationshipIDs: relationships}}}
-	}
 	result := &recallcontract.RecallEvidenceResult{
 		Results: []recallcontract.RecallEvidenceHit{
-			{EvidenceID: "dropped", RelationshipIDs: []string{"dropped-relationship"}},
-			{EvidenceID: "selected", EquivalentEvidenceIDs: []string{"selected-alias"}, RelationshipIDs: []string{"selected-relationship"}},
-		},
-		Conflicts: []tracecontract.RelationshipConflictCaseRecord{
-			conflict("by-evidence", []string{"selected"}, nil),
-			conflict("by-alias", []string{"selected-alias"}, nil),
-			conflict("by-relationship", nil, []string{"selected-relationship"}),
-			conflict("dropped-conflict", []string{"dropped"}, []string{"dropped-relationship"}),
+			{EvidenceID: "dropped"},
+			{EvidenceID: "selected", EquivalentEvidenceIDs: []string{"selected-alias"}},
 		},
 		EvidenceConflicts: []recallcontract.EvidenceConflictCaseRecord{
 			{ConflictID: "selected-conflict", Positions: []recallcontract.EvidenceConflictPositionRecord{{CanonicalEvidenceID: "selected"}}},
@@ -193,8 +153,6 @@ func TestRecallDecisionSelectionKeepsOnlyRelevantConflictMetadata(t *testing.T) 
 	require.Len(t, selected.Results, 1)
 	require.Equal(t, "selected", selected.Results[0].EvidenceID)
 	require.Equal(t, []string{"selected"}, selected.DecisionStages[0].SelectedIDs)
-	require.Len(t, selected.Conflicts, 3)
-	require.Equal(t, []string{"by-evidence", "by-alias", "by-relationship"}, []string{selected.Conflicts[0].ConflictID, selected.Conflicts[1].ConflictID, selected.Conflicts[2].ConflictID})
 	require.Len(t, selected.EvidenceConflicts, 2)
 	require.Equal(t, "selected-conflict", selected.EvidenceConflicts[0].ConflictID)
 	require.Equal(t, "alias-conflict", selected.EvidenceConflicts[1].ConflictID)

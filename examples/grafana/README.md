@@ -1,7 +1,7 @@
 # Grafana dashboards
 
 These dashboards are for private Dense-Mem operators. The overview shows
-system health. Canonical lifecycle detail is grouped in the Remember and Dream
+system health. Canonical lifecycle detail is grouped in the Remember and Evidence
 view; team and credential usage has its own private view.
 
 ## Start Grafana
@@ -37,7 +37,7 @@ asks, then choose the `job` variable matching the scrape configuration.
 | --- | --- |
 | Dense-Mem Overview | Scrape and collector health, HTTP and MCP failures, Remember failures, tail latency, read-stage backlog and pricing completeness. |
 | Dense-Mem AI and Recall | Provider, assessor, recall and feedback signals, plus AI usage by feature, model, token source and pricing status. |
-| Dense-Mem Remember and Dream | Remember calls, attempts, phase outcomes and durations, MCP outcomes, Dream runs and canonical lifecycle results. |
+| Dense-Mem Remember and Evidence | Remember calls, attempts, phase outcomes and durations, MCP outcomes, and durable Evidence intake results. |
 | Dense-Mem Team and Credential Usage | Requests, errors, MCP outcomes, provider attempts, tokens and estimated cost by team, credential ID and protected credential name. |
 | Dense-Mem Performance and Dependencies | Read-stage p50/p95/p99, SQL and item volume, Remember phases, provider latency, HTTP transport detail, process health and optional dependency exporters. |
 
@@ -57,8 +57,8 @@ node examples/grafana/generate_dashboards.mjs
 
 Existing counter families retain their current names and labels. Windowed
 counts and histogram measures use the telemetry service's sparse first-sample
-fallback; range panels use Grafana's scrape-safe rate interval. Lifecycle
-and Dream measures use windowed ledger gauges. Gauge queries group away the
+fallback; range panels use Grafana's scrape-safe rate interval. Durable Remember
+attempt measures use windowed ledger gauges. Gauge queries group away the
 replica dimension with `max`; applying counter `rate` or `increase` to these
 gauges would count the same canonical rows multiple times. Provider usage that
 was not reported, missing pricing, absent host feedback, scrape failure, and
@@ -156,6 +156,6 @@ rehearsal times and warns that staging-only Remember history and test records
 are replaced. Keep staging-only diagnostics outside that database if they must
 survive a rehearsal.
 
-The control telemetry reader remains for conflict-queue health and
-operator diagnostics; team-overview request summaries and private diagnostics
+The control telemetry reader remains for provider, Recall, and operator
+diagnostics; team-overview request summaries and private diagnostics
 remain in the browser portals.

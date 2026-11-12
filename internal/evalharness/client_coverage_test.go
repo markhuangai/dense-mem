@@ -97,10 +97,7 @@ func TestHTTPClientCallToolBoundaryResponses(t *testing.T) {
 	if got := nestedStringPath(map[string]any{}, ""); got != "" || nestedStringPath(nil) != "" {
 		t.Fatal("empty nested path was not empty")
 	}
-	if got := knowledgeItemID("claim", map[string]any{"claim_id": "claim"}); got != "claim" || knowledgeItemID("fact", map[string]any{"fact_id": "fact"}) != "fact" {
-		t.Fatalf("knowledge item IDs = %q/%q", got, knowledgeItemID("fact", map[string]any{"fact_id": "fact"}))
-	}
-	if refs := sourceRefsFromAny([]any{"bad", map[string]any{"type": "evidence", "id": "e"}}); len(refs) != 1 {
-		t.Fatalf("source refs = %#v", refs)
+	if got := knowledgeItemID("evidence", map[string]any{"evidence_id": "e"}); got != "e" {
+		t.Fatalf("Evidence identity = %q", got)
 	}
 }

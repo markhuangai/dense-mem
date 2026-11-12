@@ -28,14 +28,13 @@ func TestRunCandidateWithKnowledgeMappingScoresEvidenceRefs(t *testing.T) {
 			}
 			kind := stringValue(input["type"])
 			requestedTypes = append(requestedTypes, kind)
-			items := []map[string]any{}
+			var items []map[string]any
 			switch kind {
 			case "evidence":
 				items = []map[string]any{
 					{"id": "evidence-alpha", "metadata": map[string]any{"source_doc_id": "doc-alpha"}},
 					{"id": "evidence-beta", "metadata": map[string]any{"source_doc_id": "doc-beta"}},
 				}
-			case "entity", "value", "relationship":
 			default:
 				t.Fatalf("unexpected export type %q", kind)
 			}
@@ -76,7 +75,7 @@ func TestRunCandidateWithKnowledgeMappingScoresEvidenceRefs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run candidate with mapping: %v", err)
 	}
-	if strings.Join(requestedTypes, ",") != "evidence,entity,value,relationship" {
+	if strings.Join(requestedTypes, ",") != "evidence" {
 		t.Fatalf("requested types = %v", requestedTypes)
 	}
 	if summary.AverageRecallAtK != 1 || summary.UnmappedSourceRefs != 0 {

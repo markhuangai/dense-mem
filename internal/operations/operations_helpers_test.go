@@ -150,7 +150,7 @@ func TestConfigureTelemetryFeaturesEvaluatesApplicationAndTeamSettings(t *testin
 func TestTelemetryEmptyBuildersAndWindowBounds(t *testing.T) {
 	require.NotEmpty(t, telemetryEmptyCards())
 	require.NotEmpty(t, telemetryEmptyWindowedCards())
-	require.NotEmpty(t, telemetryEmptyCurrentCards())
+	require.Empty(t, telemetryEmptyCurrentCards())
 	require.NotEmpty(t, telemetryEmptySeries())
 	require.NotEmpty(t, telemetryEmptySeriesForAudience(true))
 	require.NotEmpty(t, telemetryEmptyActivitySeriesForAudience(true))
@@ -173,7 +173,7 @@ func TestTelemetryFeatureErrorsAndRangeBuilders(t *testing.T) {
 	})
 	states := service.telemetryFeatureStates(context.Background(), TelemetryScope{Type: "team", TeamID: &teamID})
 	require.True(t, states["recall"].Set)
-	require.True(t, states["dream"].Set)
+	require.NotContains(t, states, "dream")
 
 	require.NotEmpty(t, telemetryRangeHistogramAverage("latency", "{team_id=\"x\"}", "", "1m", 1000))
 	require.NotEmpty(t, telemetryRangeHistogramQuantile("latency", "{team_id=\"x\"}", "le=\"1\"", "1m", 0.95, 1))

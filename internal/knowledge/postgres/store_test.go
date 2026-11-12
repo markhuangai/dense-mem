@@ -6,18 +6,15 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 )
 
 var (
 	_ RememberPort  = (*Store)(nil)
 	_ LifecyclePort = (*Store)(nil)
-	_ ConflictPort  = (*Store)(nil)
 )
 
 func TestStoreExposesOnlyCapabilityPortsToComposition(t *testing.T) {
-	store := NewStore(nil, nil, knowledgecontract.ConflictRuntimeConfig{})
+	store := NewStore(nil, nil)
 	if store == nil {
 		t.Fatal("NewStore returned nil")
 	}
@@ -25,7 +22,7 @@ func TestStoreExposesOnlyCapabilityPortsToComposition(t *testing.T) {
 }
 
 func TestRememberDiagnosticPurgerCanBeCanceledAndJoined(t *testing.T) {
-	store := NewStore(nil, nil, knowledgecontract.ConflictRuntimeConfig{})
+	store := NewStore(nil, nil)
 	done := store.StartRememberAttemptDiagnosticPurger(context.Background(), time.Hour, nil)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -40,7 +37,7 @@ func TestRememberDiagnosticPurgerCanBeCanceledAndJoined(t *testing.T) {
 }
 
 func TestRememberDiagnosticPurgerJoinsDelayedPurge(t *testing.T) {
-	store := NewStore(nil, nil, knowledgecontract.ConflictRuntimeConfig{})
+	store := NewStore(nil, nil)
 	started := make(chan struct{})
 	store.rememberDiagnosticPurgeFn = func(ctx context.Context) (int, error) {
 		close(started)
@@ -74,7 +71,7 @@ func TestRememberDiagnosticPurgerTimeoutRetainsLifecycleForRetry(t *testing.T) {
 	purgeStarted := make(chan struct{})
 	purgeBlock := make(chan struct{})
 	var purgeStartedOnce sync.Once
-	store := NewStore(nil, nil, knowledgecontract.ConflictRuntimeConfig{})
+	store := NewStore(nil, nil)
 	store.rememberDiagnosticPurgeFn = func(context.Context) (int, error) {
 		purgeStartedOnce.Do(func() { close(purgeStarted) })
 		<-purgeBlock

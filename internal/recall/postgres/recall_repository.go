@@ -15,7 +15,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
+
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
@@ -27,17 +27,16 @@ const (
 var _ recallcontract.Repository = (*Store)(nil)
 
 func (r *Store) ReadEvidenceCandidates(ctx context.Context, input RecallEvidenceInput, contract *ActiveSearchContract, candidateLimit int) (*recallcontract.RecallCandidateBatch, error) {
-	var textHits, vectorHits, expansionHits, ontologyHits []SearchHit
+	var textHits, vectorHits, ontologyHits []SearchHit
 	searchState := string(domain.SearchProjectionCurrent)
 	organizationCode := ""
 	err := r.withRecallTx(ctx, input.TeamID, input.OrganizationEnabled, func(tx *gorm.DB) error {
 		var err error
-		input.ExpandFromEntityIDs, err = storagepostgres.ResolveMemoryHandlesTx(ctx, tx, input.TeamID, "entity_records", input.ExpandFromEntityIDs, input.SpaceID)
+		input.KnownEvidenceIDs, err = storagepostgres.ResolveMemoryHandlesTx(ctx, tx, input.TeamID, "evidence_fragments", input.KnownEvidenceIDs, input.SpaceID)
 		if err != nil {
 			return err
 		}
-		input.KnownEvidenceIDs, err = storagepostgres.ResolveMemoryHandlesTx(ctx, tx, input.TeamID, "evidence_fragments", input.KnownEvidenceIDs, input.SpaceID)
-		if err != nil {
+		if err = r.resolveTopicFilter(ctx, tx, &input); err != nil {
 			return err
 		}
 		if input.Query != "" {
@@ -56,10 +55,8 @@ func (r *Store) ReadEvidenceCandidates(ctx context.Context, input RecallEvidence
 				return err
 			}
 		}
-		if len(input.ExpandFromEntityIDs) > 0 {
-			stageCtx, stage := observability.StartReadStage(ctx, observability.ReadOperationEvidenceRecall, observability.ReadStageExpansion)
-			expansionHits, err = searchRecallEntityExpansion(stageCtx, tx, input, contract, candidateLimit)
-			stage.Finish(err, len(expansionHits))
+		if input.Query == "" && input.TopicIDs != nil {
+			ontologyHits, err = r.topicEvidenceCandidates(ctx, tx, input, contract, candidateLimit)
 			if err != nil {
 				return err
 			}
@@ -71,7 +68,7 @@ func (r *Store) ReadEvidenceCandidates(ctx context.Context, input RecallEvidence
 		var organizationIDs []string
 		if input.OrganizationEnabled {
 			organizationIDs = append(organizationIDs, input.KnownEvidenceIDs...)
-			for _, hits := range [][]SearchHit{textHits, vectorHits, expansionHits} {
+			for _, hits := range [][]SearchHit{textHits, vectorHits} {
 				for _, hit := range hits {
 					organizationIDs = append(organizationIDs, hit.SourceID)
 				}
@@ -83,10 +80,11 @@ func (r *Store) ReadEvidenceCandidates(ctx context.Context, input RecallEvidence
 			return err
 		}
 		organizationCode = organization.Degradation
-		ontologyHits, err = r.organizationEvidenceCandidates(ctx, tx, input, contract, organization, candidateLimit)
-		if err != nil {
-			return &ontologyReadError{cause: err}
+		discovered, discoverErr := r.organizationEvidenceCandidates(ctx, tx, input, contract, organization, candidateLimit)
+		if discoverErr != nil {
+			return &ontologyReadError{cause: discoverErr}
 		}
+		ontologyHits = mergeRecallExpansion(ontologyHits, discovered, candidateLimit)
 		// Exhaustive text and exact-vector searches already rank the full eligible pool in this snapshot.
 		if len(input.QueryEmbedding) > 0 && contract.IndexStrategy != string(domain.VectorIndexExact) {
 			vectorHits, err = augmentRecallVectorChannel(vectorHits, ontologyHits, candidateLimit, func(ids []string) ([]SearchHit, error) {
@@ -112,7 +110,7 @@ func (r *Store) ReadEvidenceCandidates(ctx context.Context, input RecallEvidence
 	}
 	return &recallcontract.RecallCandidateBatch{
 		OrganizationDegradation: organizationCode,
-		TextHits:                textHits, VectorHits: vectorHits, ExpansionHits: expansionHits, OntologyHits: ontologyHits, SearchState: searchState,
+		TextHits:                textHits, VectorHits: vectorHits, OntologyHits: ontologyHits, SearchState: searchState,
 	}, nil
 }
 
@@ -120,12 +118,11 @@ func (r *Store) HydrateEvidence(ctx context.Context, input RecallEvidenceInput, 
 	var hydrated map[string]RecallEvidenceHit
 	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
 		var err error
-		input.ExpandFromEntityIDs, err = storagepostgres.ResolveMemoryHandlesTx(ctx, tx, input.TeamID, "entity_records", input.ExpandFromEntityIDs, input.SpaceID)
+		input.KnownEvidenceIDs, err = storagepostgres.ResolveMemoryHandlesTx(ctx, tx, input.TeamID, "evidence_fragments", input.KnownEvidenceIDs, input.SpaceID)
 		if err != nil {
 			return err
 		}
-		input.KnownEvidenceIDs, err = storagepostgres.ResolveMemoryHandlesTx(ctx, tx, input.TeamID, "evidence_fragments", input.KnownEvidenceIDs, input.SpaceID)
-		if err != nil {
+		if err = r.resolveTopicFilter(ctx, tx, &input); err != nil {
 			return err
 		}
 		hydrated, err = hydrateRecallEvidence(ctx, tx, input, contract, candidateIDs)
@@ -135,116 +132,47 @@ func (r *Store) HydrateEvidence(ctx context.Context, input RecallEvidenceInput, 
 }
 
 func (r *Store) LoadRecallConflicts(ctx context.Context, input RecallEvidenceInput, results []RecallEvidenceHit) (*recallcontract.RecallConflicts, error) {
-	var relationships []RelationshipConflictCaseRecord
 	var evidence []EvidenceConflictCaseRecord
 	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
-		if r.relationshipConflicts == nil || r.evidenceConflicts == nil {
-			return errors.New("recall: conflict readers are required")
+		if r.evidenceConflicts == nil {
+			return errors.New("recall: evidence conflict reader is required")
 		}
 		var err error
-		relationships, err = r.relationshipConflicts(ctx, tx, input.TeamID, input.KnownAt, results)
-		if err != nil {
-			return err
-		}
 		evidence, err = r.evidenceConflicts(ctx, tx, input, results)
 		return err
 	})
-	if err != nil {
-		return nil, err
-	}
-	return &recallcontract.RecallConflicts{Relationships: relationships, Evidence: evidence}, nil
+	return &recallcontract.RecallConflicts{Evidence: evidence}, err
 }
 
-func recallEvidenceSearchState(
-	ctx context.Context,
-	tx *gorm.DB,
-	input RecallEvidenceInput,
-	contract *ActiveSearchContract,
-) (string, error) {
-	eventAt := recallEventAt(input.ValidAt, input.KnownAt)
-	spaceClause := recallSpacePredicate("document.space_id", input.TeamID, input.SpaceID, input.SpaceKind)
+func recallEvidenceSearchState(ctx context.Context, tx *gorm.DB, input RecallEvidenceInput, contract *ActiveSearchContract) (string, error) {
+	filter, args := recallEvidenceEligibility(input, "fragment", true)
+	parameters := []any{input.TeamID, contract.EmbeddingContractID, recallEventAt(input.ValidAt, input.KnownAt)}
+	parameters = append(parameters, args...)
 	var state string
-	err := tx.WithContext(ctx).Raw(`
-		WITH eligible AS NOT MATERIALIZED (
-			SELECT document.search_state
-			FROM search_documents AS document
-			JOIN evidence_fragments AS fragment
-			  ON fragment.team_id = document.team_id
-			 AND fragment.fragment_id = document.source_id
-			LEFT JOIN evidence_quarantines AS quarantine
-			  ON quarantine.team_id = fragment.team_id
-			 AND quarantine.fragment_id = fragment.fragment_id
-			 AND quarantine.status = 'active'
-			LEFT JOIN evidence_sources AS source
-			  ON source.team_id = fragment.team_id
-			 AND source.source_id = fragment.source_id
-			WHERE document.team_id = ?::uuid
-			  AND document.source_kind = 'evidence'
-			  AND document.embedding_contract_id = ?::uuid
-			  AND (document.search_state IN ('pending', 'current', 'failed')
-			       OR (?::timestamptz IS NOT NULL AND document.search_state = 'not_required'))
-			  AND quarantine.quarantine_id IS NULL
-			  AND COALESCE(fragment.metadata->>'conflict_resolution_deletion_only', '') <> 'true'
-			  `+recallEvidenceAliasVisibilitySQL("fragment")+`
-			  AND NOT EXISTS (
-			      SELECT 1
-			      FROM evidence_lifecycle_events AS lifecycle
-			      WHERE lifecycle.team_id = fragment.team_id
-			        AND lifecycle.target_fragment_id = fragment.fragment_id
-			        AND (?::timestamptz IS NULL OR lifecycle.created_at <= ?::timestamptz)
-			  )
-			  `+recallEvidenceHistoricalSourceVisibilitySQL("fragment", "source")+`
-			  AND (?::timestamptz IS NULL OR fragment.created_at <= ?::timestamptz)
-			`+spaceClause+`
-		)
-		SELECT CASE
-		           WHEN EXISTS (SELECT 1 FROM eligible WHERE search_state = 'failed') THEN 'failed'
-		           WHEN EXISTS (SELECT 1 FROM eligible WHERE search_state = 'pending') THEN 'pending'
-		           ELSE 'current'
-		       END
-		`, input.TeamID, contract.EmbeddingContractID, eventAt, input.KnownAt, eventAt, eventAt,
-		input.KnownAt, input.KnownAt, eventAt, eventAt).Scan(&state).Error
-	if err != nil {
-		return "", err
-	}
-	if state == "" {
-		state = string(domain.SearchProjectionCurrent)
-	}
-	return state, nil
+	err := tx.WithContext(ctx).Raw(`SELECT CASE WHEN bool_or(document.search_state='failed') THEN 'failed'
+        WHEN bool_or(document.search_state='pending') THEN 'pending' ELSE 'current' END
+        FROM search_documents AS document JOIN evidence_fragments AS fragment
+          ON fragment.team_id=document.team_id AND fragment.fragment_id=document.source_id
+        WHERE document.team_id=?::uuid AND document.source_kind='evidence' AND document.embedding_contract_id=?::uuid
+          AND (document.search_state IN ('pending','current','failed') OR (?::timestamptz IS NOT NULL AND document.search_state='not_required'))
+        `+filter, parameters...).Row().Scan(&state)
+	return state, err
 }
 
-func searchRecallFullText(
-	ctx context.Context,
-	tx *gorm.DB,
-	input RecallEvidenceInput,
-	contract *ActiveSearchContract,
-	limit int,
-) ([]SearchHit, error) {
-	eventAt := recallEventAt(input.ValidAt, input.KnownAt)
-	spaceClause := recallSpacePredicate("search_documents.space_id", input.TeamID, input.SpaceID, input.SpaceKind)
-	rows, err := tx.WithContext(ctx).Raw(`
-		SELECT search_documents.team_id::text, search_documents.search_document_id::text,
-		       search_documents.source_kind, search_documents.source_id::text,
-		       search_documents.source_version, search_documents.document_version,
-		       search_documents.embedding_contract_id::text,
-		       search_documents.search_state,
-		       0::double precision AS distance,
-		       ts_rank_cd(search_documents.search_tsv, plainto_tsquery('simple', ?))::double precision AS text_rank
-		FROM search_documents
-		JOIN evidence_fragments AS source_fragment
-		  ON source_fragment.team_id = search_documents.team_id
-		 AND source_fragment.fragment_id = search_documents.source_id
-		WHERE search_documents.team_id = ?::uuid
-		  AND search_documents.source_kind = 'evidence'
-		  AND search_documents.embedding_contract_id = ?::uuid
-		  AND (search_documents.search_state IN ('pending', 'current', 'failed') OR (?::timestamptz IS NOT NULL AND search_documents.search_state = 'not_required'))
-		  AND COALESCE(source_fragment.metadata->>'conflict_resolution_deletion_only', '') <> 'true'
-		  `+recallEvidenceAliasVisibilitySQL("source_fragment")+`
-		  AND search_documents.search_tsv @@ plainto_tsquery('simple', ?)
-	`+spaceClause+`
-		ORDER BY text_rank DESC, search_documents.updated_at DESC, search_documents.search_document_id ASC
-		LIMIT ?
-	`, input.Query, input.TeamID, contract.EmbeddingContractID, eventAt, input.KnownAt, input.Query, limit).Rows()
+func searchRecallFullText(ctx context.Context, tx *gorm.DB, input RecallEvidenceInput, contract *ActiveSearchContract, limit int) ([]SearchHit, error) {
+	filter, args := recallEvidenceEligibility(input, "source_fragment", true)
+	parameters := []any{input.Query, input.TeamID, contract.EmbeddingContractID, recallEventAt(input.ValidAt, input.KnownAt), input.Query}
+	parameters = append(parameters, args...)
+	parameters = append(parameters, limit)
+	rows, err := tx.WithContext(ctx).Raw(`SELECT search_documents.team_id::text,search_documents.search_document_id::text,
+        search_documents.source_kind,search_documents.source_id::text,search_documents.source_version,search_documents.document_version,
+        search_documents.embedding_contract_id::text,search_documents.search_state,0::double precision,
+        ts_rank_cd(search_documents.search_tsv,plainto_tsquery('simple',?))::double precision AS text_rank
+        FROM search_documents `+recallEvidenceSourceJoin(false)+`
+        WHERE search_documents.team_id=?::uuid AND search_documents.source_kind='evidence' AND search_documents.embedding_contract_id=?::uuid
+          AND (search_documents.search_state IN ('pending','current','failed') OR (?::timestamptz IS NOT NULL AND search_documents.search_state='not_required'))
+          AND search_documents.search_tsv @@ plainto_tsquery('simple',?) `+filter+`
+        ORDER BY text_rank DESC,search_documents.updated_at DESC,search_documents.search_document_id ASC LIMIT ?`, parameters...).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -287,8 +215,8 @@ func searchRecallExactVectorSources(ctx context.Context, tx *gorm.DB, input Reca
 	if err != nil {
 		return nil, err
 	}
-	spaceClause := recallSpacePredicate("search_documents.space_id", input.TeamID, input.SpaceID, input.SpaceKind)
-	sourceClause, args := recallSourceFilter("search_documents.source_id", sourceIDs, []any{vectorLiteral, input.TeamID, contract.EmbeddingContractID, contract.EmbeddingDimensions, input.KnownAt})
+	filter, filterArgs := recallEvidenceEligibility(input, "source_fragment", true)
+	sourceClause, _ := recallSourceFilter("search_documents.source_id", sourceIDs, nil)
 	query := `
 		SELECT search_documents.team_id::text, search_documents.search_document_id::text,
 		       search_documents.source_kind, search_documents.source_id::text,
@@ -305,10 +233,12 @@ func searchRecallExactVectorSources(ctx context.Context, tx *gorm.DB, input Reca
 		  AND search_documents.embedding_dimensions = ?
 		  AND search_documents.search_state = 'current'
 		  AND search_documents.embedding IS NOT NULL
-		  AND COALESCE(source_fragment.metadata->>'conflict_resolution_deletion_only', '') <> 'true'
-		  ` + recallEvidenceAliasVisibilitySQL("source_fragment") + `
-		` + spaceClause + sourceClause + `
+		` + filter + sourceClause + `
 	`
+	args := append([]any{vectorLiteral, input.TeamID, contract.EmbeddingContractID, contract.EmbeddingDimensions}, filterArgs...)
+	if sourceIDs != nil {
+		args = append(args, pq.Array(sourceIDs))
+	}
 	if sourceIDs != nil {
 		query = recallBoundedVectorQuery(query)
 		args = append(args, limit)
@@ -350,7 +280,7 @@ func searchRecallANNVector(
 	if err := setRecallANNQueryEFSearch(ctx, tx, contract, candidateLimit); err != nil {
 		return nil, err
 	}
-	spaceClause := recallSpacePredicate("search_documents.space_id", input.TeamID, input.SpaceID, input.SpaceKind)
+	filter, filterArgs := recallEvidenceEligibility(input, "source_fragment", true)
 	query := fmt.Sprintf(`
 		WITH ann_candidates AS MATERIALIZED (
 			SELECT search_documents.team_id, search_documents.search_document_id
@@ -364,8 +294,6 @@ func searchRecallANNVector(
 			  AND search_documents.embedding_dimensions = %d
 			  AND search_documents.search_state = 'current'
 			  AND search_documents.embedding IS NOT NULL
-			  AND COALESCE(source_fragment.metadata->>'conflict_resolution_deletion_only', '') <> 'true'
-			  `+recallEvidenceAliasVisibilitySQL("source_fragment")+`
 			%s
 			ORDER BY %s ASC, search_documents.search_document_id ASC
 			LIMIT ?
@@ -386,17 +314,10 @@ func searchRecallANNVector(
 		 AND document.search_document_id = candidate.search_document_id
 		ORDER BY document.embedding <=> ?::vector ASC, document.search_document_id ASC
 		LIMIT ?
-	`, contractLiteral, contract.EmbeddingDimensions, spaceClause, annDistance)
-	rows, err := tx.WithContext(ctx).Raw(
-		query,
-		input.TeamID,
-		input.KnownAt,
-		vectorLiteral,
-		candidateLimit,
-		vectorLiteral,
-		vectorLiteral,
-		limit,
-	).Rows()
+	`, contractLiteral, contract.EmbeddingDimensions, filter, annDistance)
+	args := append([]any{input.TeamID}, filterArgs...)
+	args = append(args, vectorLiteral, candidateLimit, vectorLiteral, vectorLiteral, limit)
+	rows, err := tx.WithContext(ctx).Raw(query, args...).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -481,321 +402,62 @@ func recallEventAt(validAt, knownAt *time.Time) *time.Time {
 	return validAt
 }
 
-func searchRecallEntityExpansion(
-	ctx context.Context,
-	tx *gorm.DB,
-	input RecallEvidenceInput,
-	contract *ActiveSearchContract,
-	limit int,
-) ([]SearchHit, error) {
-	eventAt := recallEventAt(input.ValidAt, input.KnownAt)
-	spaceClause := recallSpacePredicate("document.space_id", input.TeamID, input.SpaceID, input.SpaceKind)
-	rows, err := tx.WithContext(ctx).Raw(`
-			WITH latest_support_decision AS (
-				SELECT DISTINCT ON (team_id, support_id)
-				       team_id, support_id, decision
-				FROM relationship_support_decision_events
-				WHERE team_id = ?::uuid
-				  AND (?::timestamptz IS NULL OR created_at <= ?::timestamptz)
-				ORDER BY team_id, support_id, created_at DESC, support_decision_id DESC
-			)
-		SELECT document.team_id::text,
-		       document.search_document_id::text,
-		       document.source_kind,
-		       document.source_id::text,
-		       document.source_version,
-		       document.document_version,
-		       document.embedding_contract_id::text,
-		       document.search_state,
-		       0::double precision AS distance,
-		       0::double precision AS text_rank
-		FROM relationship_records AS relationship
-		JOIN relationship_evidence_supports AS support
-		  ON support.team_id = relationship.team_id
-		 AND support.relationship_id = relationship.relationship_id
-		JOIN latest_support_decision AS latest
-		  ON latest.team_id = support.team_id
-		 AND latest.support_id = support.support_id
-		 AND latest.decision IN ('grant', 'reinstate')
-		LEFT JOIN evidence_exact_aliases AS support_alias ON support_alias.team_id = support.team_id AND support_alias.alias_fragment_id = support.fragment_id
-				JOIN search_documents AS document
-				  ON document.team_id = support.team_id
-				 AND document.source_kind = 'evidence'
-				 AND document.source_id = CASE
-				     WHEN support_alias.alias_fragment_id IS NOT NULL
-				          AND support_alias.created_at > COALESCE(?::timestamptz, 'infinity'::timestamptz)
-				     THEN support_alias.alias_fragment_id
-				     ELSE COALESCE(support_alias.canonical_fragment_id, support.fragment_id)
-				 END
-				 AND document.embedding_contract_id = ?::uuid
-				 AND (document.search_state IN ('pending', 'current', 'failed') OR (?::timestamptz IS NOT NULL AND document.search_state = 'not_required'))
-			JOIN evidence_fragments AS source_fragment
-				  ON source_fragment.team_id = support.team_id
-				 AND source_fragment.fragment_id = document.source_id
-				LEFT JOIN evidence_quarantines AS quarantine
-				  ON quarantine.team_id = support.team_id
-				 AND quarantine.fragment_id = support.fragment_id
-				 AND quarantine.status = 'active'
-				LEFT JOIN evidence_quarantines AS canonical_quarantine ON canonical_quarantine.team_id = source_fragment.team_id
-				 AND canonical_quarantine.fragment_id = source_fragment.fragment_id AND canonical_quarantine.status = 'active'
-			LEFT JOIN LATERAL (
-			    SELECT transition.to_status AS status
-			    FROM relationship_transition_events AS transition
-			    WHERE ?::timestamptz IS NOT NULL
-			      AND transition.team_id = relationship.team_id
-			      AND transition.relationship_id = relationship.relationship_id
-			      AND transition.created_at <= ?::timestamptz
-			    ORDER BY transition.created_at DESC, transition.transition_id DESC
-			    LIMIT 1
-			) AS known_status ON TRUE
-			WHERE relationship.team_id = ?::uuid
-			  AND relationship.identity_alias_of_relationship_id IS NULL
-			  AND (
-			      COALESCE(known_status.status, relationship.status) = 'active'
-		      OR (
-		          COALESCE(known_status.status, relationship.status) = 'superseded'
-		          AND (
-		              (?::timestamptz IS NOT NULL
-		               AND (relationship.valid_from IS NULL OR relationship.valid_from <= ?::timestamptz)
-		               AND (relationship.valid_to IS NULL OR relationship.valid_to > ?::timestamptz))
-		              OR (?::timestamptz IS NOT NULL
-		                  AND relationship.created_at <= ?::timestamptz
-		                  AND (relationship.recorded_to IS NULL OR relationship.recorded_to > ?::timestamptz))
-		          )
-		      )
-			  )
-		  AND (?::timestamptz IS NOT NULL OR relationship.support_count > 0)
-		  AND quarantine.quarantine_id IS NULL
-		  AND canonical_quarantine.quarantine_id IS NULL
-		  AND COALESCE(source_fragment.metadata->>'conflict_resolution_deletion_only', '') <> 'true'
-		  AND (
-		      relationship.subject_entity_id = ANY(?::uuid[])
-		      OR relationship.object_entity_id = ANY(?::uuid[])
-		      OR relationship.predicate_key = ANY(?::text[])
-		      OR relationship.relationship_id = ANY(?::uuid[])
-		  )
-		  AND (
-		      ?::timestamptz IS NULL
-		      OR ((relationship.valid_from IS NULL OR relationship.valid_from <= ?::timestamptz)
-		          AND (relationship.valid_to IS NULL OR relationship.valid_to > ?::timestamptz))
-		  )
-		  AND (
-		      ?::timestamptz IS NULL
-		      OR (relationship.created_at <= ?::timestamptz
-		          AND support.created_at <= ?::timestamptz
-		          AND (relationship.recorded_to IS NULL OR relationship.recorded_to > ?::timestamptz))
-		  )
-		  AND (
-		      cardinality(?::uuid[]) = 0
-		      OR relationship.relationship_id <> ALL(?::uuid[])
-		  )
-		  `+spaceClause+`
-		GROUP BY document.team_id, document.search_document_id, document.source_kind,
-		         document.source_id, document.source_version, document.document_version,
-		         document.embedding_contract_id, document.search_state
-		ORDER BY max(relationship.updated_at) DESC, document.search_document_id ASC
-		LIMIT ?
-		`, input.TeamID, eventAt, eventAt, input.KnownAt,
-		contract.EmbeddingContractID, eventAt,
-		eventAt, eventAt,
-		input.TeamID,
-		input.ValidAt, input.ValidAt, input.ValidAt,
-		input.KnownAt, input.KnownAt, input.KnownAt,
-		eventAt,
-		pq.Array(input.ExpandFromEntityIDs), pq.Array(input.ExpandFromEntityIDs),
-		pq.Array(organizationSourceIDs(input.OrganizationSources, ontology.PredicateSource)), pq.Array(organizationSourceIDs(input.OrganizationSources, ontology.RelationshipSource)),
-		input.ValidAt, input.ValidAt, input.ValidAt,
-		input.KnownAt, input.KnownAt, input.KnownAt, input.KnownAt,
-		pq.Array(input.KnownRelationshipIDs), pq.Array(input.KnownRelationshipIDs),
-		limit).Rows()
+func hydrateRecallEvidence(ctx context.Context, tx *gorm.DB, input RecallEvidenceInput, contract *ActiveSearchContract, evidenceIDs []string) (map[string]RecallEvidenceHit, error) {
+	filter, args := recallEvidenceEligibility(input, "fragment", false)
+	parameters := []any{pq.Array(evidenceIDs), input.TeamID, contract.EmbeddingContractID, recallEventAt(input.ValidAt, input.KnownAt)}
+	parameters = append(parameters, args...)
+	rows, err := tx.WithContext(ctx).Raw(`SELECT fragment.fragment_id::text,fragment.content,
+        COALESCE(NULLIF(fragment.source_ref,''),NULLIF(source.source_key,''),''),fragment.source_type,fragment.created_at,
+        document.search_state
+        FROM evidence_fragments AS fragment
+        JOIN search_documents AS document ON document.team_id=fragment.team_id AND document.source_kind='evidence'
+          AND document.source_id=fragment.fragment_id
+        LEFT JOIN evidence_sources AS source ON source.team_id=fragment.team_id AND source.source_id=fragment.source_id
+        WHERE fragment.fragment_id=ANY(?::uuid[]) AND fragment.team_id=?::uuid AND document.embedding_contract_id=?::uuid
+          AND (document.search_state IN ('pending','current','failed') OR (?::timestamptz IS NOT NULL AND document.search_state='not_required'))
+        `+filter, parameters...).Rows()
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	return scanSearchHits(rows)
-}
-
-func hydrateRecallEvidence(
-	ctx context.Context,
-	tx *gorm.DB,
-	input RecallEvidenceInput,
-	contract *ActiveSearchContract,
-	evidenceIDs []string,
-) (map[string]RecallEvidenceHit, error) {
-	eventAt := recallEventAt(input.ValidAt, input.KnownAt)
-	spaceClause := recallSpacePredicate("fragment.space_id", input.TeamID, input.SpaceID, input.SpaceKind)
-	rows, err := tx.WithContext(ctx).Raw(`
-		WITH requested AS (
-			SELECT unnest(?::uuid[]) AS fragment_id
-		),
-			latest_support_decision AS (
-				SELECT DISTINCT ON (team_id, support_id)
-				       team_id, support_id, decision
-				FROM relationship_support_decision_events
-				WHERE team_id = ?::uuid
-				  AND (?::timestamptz IS NULL OR created_at <= ?::timestamptz)
-				ORDER BY team_id, support_id, created_at DESC, support_decision_id DESC
-				),
-			eligible AS (
-				SELECT fragment.fragment_id::text AS evidence_id,
-				       fragment.content AS context,
-				       COALESCE(NULLIF(fragment.source_ref, ''), NULLIF(fragment_source.source_key, ''), '') AS source,
-				       fragment.source_type,
-				       fragment.created_at,
-				       document.search_state,
-				       relationship.relationship_id::text AS relationship_id
-				FROM requested
-			JOIN evidence_fragments AS fragment
-			  ON fragment.team_id = ?::uuid
-			 AND fragment.fragment_id = requested.fragment_id
-			JOIN search_documents AS document
-			  ON document.team_id = fragment.team_id
-			 AND document.source_kind = 'evidence'
-			 AND document.source_id = fragment.fragment_id
-			 AND document.embedding_contract_id = ?::uuid
-			 AND (document.search_state IN ('pending', 'current', 'failed') OR (?::timestamptz IS NOT NULL AND document.search_state = 'not_required'))
-			LEFT JOIN evidence_quarantines AS quarantine
-			  ON quarantine.team_id = fragment.team_id
-			 AND quarantine.fragment_id = fragment.fragment_id
-			 AND quarantine.status = 'active'
-			LEFT JOIN evidence_sources AS fragment_source
-			  ON fragment_source.team_id = fragment.team_id
-			 AND fragment_source.source_id = fragment.source_id
-		LEFT JOIN relationship_evidence_supports AS support
-		  ON support.team_id = fragment.team_id
-		 AND (support.fragment_id = fragment.fragment_id OR EXISTS (SELECT 1 FROM evidence_exact_aliases AS support_alias
-		     WHERE support_alias.team_id = support.team_id AND support_alias.alias_fragment_id = support.fragment_id
-		       AND support_alias.canonical_fragment_id = fragment.fragment_id
-		       AND support_alias.created_at <= COALESCE(?::timestamptz, 'infinity'::timestamptz)))
-		 AND NOT EXISTS (SELECT 1 FROM evidence_quarantines AS support_quarantine
-		     WHERE support_quarantine.team_id = support.team_id AND support_quarantine.fragment_id = support.fragment_id
-		       AND support_quarantine.status = 'active')
-		LEFT JOIN latest_support_decision AS latest
-		  ON latest.team_id = support.team_id
-		 AND latest.support_id = support.support_id
-		 AND latest.decision IN ('grant', 'reinstate')
-				LEFT JOIN evidence_sources AS support_source
-				  ON support_source.team_id = support.team_id
-				  AND support_source.source_id = support.source_id
-				LEFT JOIN LATERAL (
-				    SELECT relationship.relationship_id
-				    FROM relationship_records AS relationship
-				    LEFT JOIN LATERAL (
-				        SELECT transition.to_status AS status
-				        FROM relationship_transition_events AS transition
-				        WHERE ?::timestamptz IS NOT NULL
-				          AND transition.team_id = relationship.team_id
-				          AND transition.relationship_id = relationship.relationship_id
-				          AND transition.created_at <= ?::timestamptz
-				        ORDER BY transition.created_at DESC, transition.transition_id DESC
-				        LIMIT 1
-				    ) AS known_status ON TRUE
-				    WHERE relationship.team_id = support.team_id
-				      AND relationship.relationship_id = support.relationship_id
-				      AND latest.support_id IS NOT NULL
-				      AND relationship.identity_alias_of_relationship_id IS NULL
-				      AND (
-				          COALESCE(known_status.status, relationship.status) = 'active'
-				          OR (
-				              COALESCE(known_status.status, relationship.status) = 'superseded'
-				              AND (
-				                  (?::timestamptz IS NOT NULL
-				                   AND (relationship.valid_from IS NULL OR relationship.valid_from <= ?::timestamptz)
-				                   AND (relationship.valid_to IS NULL OR relationship.valid_to > ?::timestamptz))
-				                  OR (?::timestamptz IS NOT NULL
-				                      AND relationship.created_at <= ?::timestamptz
-				                      AND (relationship.recorded_to IS NULL OR relationship.recorded_to > ?::timestamptz))
-				              )
-				          )
-				      )
-				      AND (?::timestamptz IS NOT NULL OR relationship.support_count > 0)
-				      AND (
-				          support.source_id IS NULL
-				          OR support_source.current_revision_id = support.source_revision_id
-				      )
-				      AND (
-				          ?::timestamptz IS NULL
-				          OR ((relationship.valid_from IS NULL OR relationship.valid_from <= ?::timestamptz)
-				              AND (relationship.valid_to IS NULL OR relationship.valid_to > ?::timestamptz))
-				      )
-				      AND (
-				          ?::timestamptz IS NULL
-				          OR (relationship.created_at <= ?::timestamptz
-				              AND support.created_at <= ?::timestamptz
-				              AND (relationship.recorded_to IS NULL OR relationship.recorded_to > ?::timestamptz))
-				      )
-				      AND (
-				          cardinality(?::uuid[]) = 0
-				          OR relationship.relationship_id <> ALL(?::uuid[])
-				      )
-				    LIMIT 1
-				) AS relationship ON TRUE
-			WHERE quarantine.quarantine_id IS NULL
-			  AND COALESCE(fragment.metadata->>'conflict_resolution_deletion_only', '') <> 'true'
-			  `+recallEvidenceAliasVisibilitySQL("fragment")+`
-			  AND NOT EXISTS (
-			      SELECT 1
-			      FROM evidence_lifecycle_events AS lifecycle
-			      WHERE lifecycle.team_id = fragment.team_id
-			        AND lifecycle.target_fragment_id = fragment.fragment_id
-			        AND (?::timestamptz IS NULL OR lifecycle.created_at <= ?::timestamptz)
-			  )
-			  `+recallEvidenceHistoricalSourceVisibilitySQL("fragment", "fragment_source")+`
-			  AND (?::timestamptz IS NULL OR fragment.created_at <= ?::timestamptz)
-			  `+spaceClause+`
-			)
-			SELECT evidence_id,
-			       max(context) AS context,
-			       max(source) AS source,
-			       max(source_type) AS source_type,
-			       max(created_at) AS created_at,
-			       COALESCE(
-			           array_remove(array_agg(DISTINCT relationship_id ORDER BY relationship_id), NULL),
-			           ARRAY[]::text[]
-		       ) AS relationship_ids,
-		       CASE
-		           WHEN bool_or(search_state = 'failed') THEN 'failed'
-		           WHEN bool_or(search_state = 'pending') THEN 'pending'
-		           ELSE 'current'
-		       END AS search_state
-		FROM eligible
-		GROUP BY evidence_id
-		`, pq.Array(evidenceIDs), input.TeamID, eventAt, eventAt,
-		input.TeamID, contract.EmbeddingContractID, eventAt, input.KnownAt,
-		eventAt, eventAt,
-		input.ValidAt, input.ValidAt, input.ValidAt,
-		input.KnownAt, input.KnownAt, input.KnownAt,
-		eventAt,
-		input.ValidAt, input.ValidAt, input.ValidAt,
-		input.KnownAt, input.KnownAt, input.KnownAt, input.KnownAt,
-		pq.Array(input.KnownRelationshipIDs), pq.Array(input.KnownRelationshipIDs),
-		input.KnownAt,
-		input.KnownAt, input.KnownAt, input.KnownAt,
-		input.KnownAt, input.KnownAt, input.KnownAt).Rows()
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := make(map[string]RecallEvidenceHit)
+	out := map[string]RecallEvidenceHit{}
 	for rows.Next() {
-		var evidenceID, context, source, sourceType, searchState string
-		var createdAt time.Time
-		var relationshipIDs pq.StringArray
-		if err := rows.Scan(&evidenceID, &context, &source, &sourceType, &createdAt, &relationshipIDs, &searchState); err != nil {
+		var hit RecallEvidenceHit
+		if err := rows.Scan(&hit.EvidenceID, &hit.Context, &hit.Source, &hit.SourceType, &hit.CreatedAt, &hit.SearchState); err != nil {
 			return nil, err
 		}
-		out[evidenceID] = RecallEvidenceHit{
-			TeamID:          input.TeamID,
-			EvidenceID:      evidenceID,
-			RelationshipIDs: []string(relationshipIDs),
-			Context:         truncateRecallContext(context),
-			Source:          source,
-			SourceType:      sourceType,
-			CreatedAt:       createdAt,
-			SearchState:     searchState,
-		}
+		hit.TeamID = input.TeamID
+		hit.Context = truncateRecallContext(hit.Context)
+		out[hit.EvidenceID] = hit
 	}
 	return out, rows.Err()
+}
+
+func recallEvidenceEligibility(input RecallEvidenceInput, alias string, excludeKnown bool) (string, []any) {
+	filter := recallSpacePredicate(alias+".space_id", input.TeamID, input.SpaceID, input.SpaceKind)
+	filter += ` AND COALESCE(` + alias + `.metadata->>'conflict_resolution_deletion_only','')<>'true'
+        AND NOT EXISTS (SELECT 1 FROM evidence_quarantines AS quarantine WHERE quarantine.team_id=` + alias + `.team_id
+          AND quarantine.fragment_id=` + alias + `.fragment_id AND quarantine.status='active') ` + recallEvidenceAliasVisibilitySQL(alias) + `
+        AND NOT EXISTS (SELECT 1 FROM evidence_lifecycle_events AS lifecycle WHERE lifecycle.team_id=` + alias + `.team_id
+          AND lifecycle.target_fragment_id=` + alias + `.fragment_id AND (?::timestamptz IS NULL OR lifecycle.created_at<=?::timestamptz))
+        AND (` + alias + `.source_id IS NULL OR EXISTS (SELECT 1 FROM evidence_sources AS eligible_source
+          WHERE eligible_source.team_id=` + alias + `.team_id AND eligible_source.source_id=` + alias + `.source_id
+          ` + recallEvidenceHistoricalSourceVisibilitySQL(alias, "eligible_source") + `))
+        AND (?::timestamptz IS NULL OR ` + alias + `.created_at<=?::timestamptz)`
+	args := []any{input.KnownAt, input.KnownAt, input.KnownAt, input.KnownAt, input.KnownAt, input.KnownAt, input.KnownAt}
+	if input.TopicIDs != nil {
+		if input.TopicEvidenceIDs == nil {
+			filter += " AND FALSE"
+		} else {
+			filter += " AND " + alias + ".fragment_id=ANY(?::uuid[])"
+			args = append(args, pq.Array(input.TopicEvidenceIDs))
+		}
+	}
+	if excludeKnown && len(input.KnownEvidenceIDs) > 0 {
+		filter += " AND " + alias + ".fragment_id<>ALL(?::uuid[])"
+		args = append(args, pq.Array(input.KnownEvidenceIDs))
+	}
+	return filter, args
 }
 
 func scanSearchHits(rows *sql.Rows) ([]SearchHit, error) {

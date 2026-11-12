@@ -15,17 +15,18 @@ func TestGenerationOmitsServerCompletedTasksAndValidatesAssembly(t *testing.T) {
 	require.NotContains(t, properties, "evidence_security_results")
 	require.NotContains(t, properties, "evidence_equivalence_results")
 	require.Contains(t, properties, "evidence_conflict_results")
-	raw := []byte(`{"request_id":"request","evidence_conflict_results":[],"entity_results":[],"relationship_results":[]}`)
+	raw := []byte(`{"request_id":"request","evidence_conflict_results":[]}`)
 	response, err := DecodeSemanticAssessmentGeneration(raw, request, DefaultSemanticAssessmentLimits())
 	require.NoError(t, err)
 	require.Equal(t, request.DecisionRouting.Security, response.EvidenceSecurityResults)
 	require.Equal(t, request.DecisionRouting.Equivalence, response.EvidenceEquivalenceResults)
 	for _, invalid := range []string{
-		`{"request_id":"request","evidence_security_results":[],"evidence_conflict_results":[],"entity_results":[],"relationship_results":[]}`,
-		`{"request_id":"request","evidence_equivalence_results":[],"evidence_conflict_results":[],"entity_results":[],"relationship_results":[]}`,
-		`{"request_id":"request","evidence_conflict_results":[],"entity_results":[],"relationship_results":[],"unexpected":true}`,
-		`{"request_id":"request","evidence_conflict_results":[],"entity_results":[]}`,
-		`{"request_id":"request","request_id":"other","evidence_conflict_results":[],"entity_results":[],"relationship_results":[]}`,
+		`{"request_id":"request","evidence_security_results":[],"evidence_conflict_results":[]}`,
+		`{"request_id":"request","evidence_equivalence_results":[],"evidence_conflict_results":[]}`,
+		`{"request_id":"request","evidence_conflict_results":[],"unexpected":true}`,
+		`{"request_id":"request"}`,
+		`{"request_id":"request","request_id":"other","evidence_conflict_results":[]}`,
+		`{"request_id":"request","evidence_conflict_results":[],"entity_results":[],"relationship_results":[]}`,
 	} {
 		_, err := DecodeSemanticAssessmentGeneration([]byte(invalid), request, DefaultSemanticAssessmentLimits())
 		require.Error(t, err)
@@ -54,17 +55,17 @@ func TestGenerationPreservesRawValidationErrorsAndRouting(t *testing.T) {
 			}
 			before, err := json.Marshal(request.DecisionRouting)
 			require.NoError(t, err)
-			for _, test := range []struct{ name, relationship, field, message string }{
-				{"missing", `{"ref":"r","reason":null,"splits":[]}`, "relationship_results[0].disposition", "is required"},
-				{"null", `{"ref":"r","disposition":null,"reason":null,"splits":[]}`, "relationship_results[0].disposition", "must not be null"},
-				{"unknown", `{"ref":"r","disposition":"not_supported","reason":null,"splits":[],"unexpected":true}`, "relationship_results[0].unexpected", "is unknown"},
-				{"duplicate", `{"ref":"r","disposition":"stored","disposition":"not_supported","reason":null,"splits":[]}`, "", "duplicate JSON field"},
-				{"wrong type", `{"ref":"r","disposition":42,"reason":null,"splits":[]}`, "", "cannot unmarshal number"},
+			for _, test := range []struct{ name, position, field, message string }{
+				{"missing", `{"evidence_id":"evidence","end_ref":"end"}`, "evidence_conflict_results[0].positions[0].start_ref", "is required"},
+				{"null", `{"evidence_id":"evidence","start_ref":null,"end_ref":"end"}`, "evidence_conflict_results[0].positions[0].start_ref", "must not be null"},
+				{"unknown", `{"evidence_id":"evidence","start_ref":"start","end_ref":"end","unexpected":true}`, "evidence_conflict_results[0].positions[0].unexpected", "is unknown"},
+				{"duplicate", `{"evidence_id":"evidence","start_ref":"start","start_ref":"other","end_ref":"end"}`, "", "duplicate JSON field"},
+				{"wrong type", `{"evidence_id":"evidence","start_ref":42,"end_ref":"end"}`, "", "cannot unmarshal number"},
 			} {
 				t.Run(test.name, func(t *testing.T) {
 					fields := map[string]json.RawMessage{
-						"request_id": []byte(`"request"`), "entity_results": []byte(`[]`), "evidence_conflict_results": []byte(`[]`),
-						"relationship_results": []byte("[" + test.relationship + "]"),
+						"request_id":                []byte(`"request"`),
+						"evidence_conflict_results": []byte(`[{"positions":[` + test.position + `]}]`),
 					}
 					if !route.security {
 						fields["evidence_security_results"] = []byte(`[]`)
@@ -86,7 +87,7 @@ func TestGenerationPreservesRawValidationErrorsAndRouting(t *testing.T) {
 					if test.name == "wrong type" {
 						var typed *json.UnmarshalTypeError
 						require.ErrorAs(t, err, &typed)
-						require.True(t, strings.HasSuffix(typed.Field, "disposition"))
+						require.True(t, strings.HasSuffix(typed.Field, "start_ref"))
 					}
 					after, err := json.Marshal(request.DecisionRouting)
 					require.NoError(t, err)

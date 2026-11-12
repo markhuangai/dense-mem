@@ -6,23 +6,22 @@ import (
 )
 
 func terminalRememberOutputSchema(version string) map[string]any {
-	return terminalRememberOutputSchemaForActions(version, terminalErrorNextActions(false))
+	return terminalRememberOutputSchemaForActions(version, terminalErrorNextActions())
 }
 
 func terminalRememberOutputSchemaForActions(version string, nextActions []string) map[string]any {
 	return closedObject(
-		[]string{"contract_version", "submission_id", "submission_kind", "processing_state", "search_state", "correlation_id", "evidence", "relationship_results", "errors"},
+		[]string{"contract_version", "submission_id", "submission_kind", "processing_state", "search_state", "correlation_id", "evidence", "errors"},
 		map[string]any{
-			"contract_version":     schemaEnum(contractVersionSchemaValues(version)),
-			"submission_id":        schemaString("Submission ID.", 128),
-			"submission_kind":      schemaEnum([]string{"remember"}),
-			"processing_state":     schemaEnum([]string{"completed", "failed"}),
-			"search_state":         schemaEnum([]string{"current", "not_required"}),
-			"correlation_id":       schemaString("Request correlation ID.", 128),
-			"evidence":             array(terminalEvidenceSchema(), 0, 20),
-			"relationship_results": submissionRelationshipResultsSchema(),
-			"errors":               array(terminalErrorSchemaForActions(nextActions), 0, 50),
-			"warnings":             stringArraySchema("Bounded server diagnostics about optional assessor context.", 20, 512),
+			"contract_version": schemaEnum(contractVersionSchemaValues(version)),
+			"submission_id":    schemaString("Submission ID.", 128),
+			"submission_kind":  schemaEnum([]string{"remember"}),
+			"processing_state": schemaEnum([]string{"completed", "failed"}),
+			"search_state":     schemaEnum([]string{"current", "not_required"}),
+			"correlation_id":   schemaString("Request correlation ID.", 128),
+			"evidence":         array(terminalEvidenceSchema(), 0, 20),
+			"errors":           array(terminalErrorSchemaForActions(nextActions), 0, 50),
+			"warnings":         stringArraySchema("Bounded server diagnostics about optional assessor context.", 20, 512),
 		},
 	)
 }
@@ -44,23 +43,6 @@ func terminalEvidenceSchema() map[string]any {
 	)
 }
 
-func terminalCorrectionOutputSchema(version string) map[string]any {
-	return closedObject(
-		[]string{"contract_version", "submission_id", "submission_kind", "processing_state", "search_state", "correlation_id", "errors"},
-		map[string]any{
-			"contract_version":      schemaEnum(contractVersionSchemaValues(version)),
-			"submission_id":         schemaString("Correction submission ID.", 128),
-			"submission_kind":       schemaEnum([]string{"relationship_correction"}),
-			"processing_state":      schemaEnum([]string{"awaiting_confirmation", "completed", "rejected", "failed"}),
-			"search_state":          schemaEnum([]string{"current", "pending", "not_required", "failed"}),
-			"correlation_id":        schemaString("Request correlation ID.", 128),
-			"awaiting_confirmation": relationshipCorrectionConfirmationSchema(),
-			"correction_result":     relationshipCorrectionResultSchema(),
-			"errors":                array(terminalErrorSchema(), 0, 50),
-		},
-	)
-}
-
 func contractVersionSchemaValues(version string) []string {
 	if version == domain.ContractVersion {
 		return domain.AcceptedContractVersions()
@@ -69,7 +51,7 @@ func contractVersionSchemaValues(version string) []string {
 }
 
 func terminalErrorSchema() map[string]any {
-	return terminalErrorSchemaForActions(terminalErrorNextActions(false))
+	return terminalErrorSchemaForActions(terminalErrorNextActions())
 }
 
 func terminalErrorSchemaForActions(nextActions []string) map[string]any {
@@ -87,16 +69,12 @@ func terminalErrorSchemaForActions(nextActions []string) map[string]any {
 	)
 }
 
-func terminalErrorNextActions(includeDreamFeedback bool) []string {
+func terminalErrorNextActions() []string {
 	result := []string{
 		string(rememberapp.TerminalNextActionRetrySameRequest),
 		string(rememberapp.TerminalNextActionResubmitRemember),
-		string(rememberapp.TerminalNextActionRetryCorrection),
 		string(rememberapp.TerminalNextActionContactOperator),
 		string(rememberapp.TerminalNextActionNone),
-	}
-	if includeDreamFeedback {
-		result = append(result, string(rememberapp.TerminalNextActionRetryDreamFeedback))
 	}
 	return result
 }

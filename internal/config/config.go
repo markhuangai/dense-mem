@@ -29,13 +29,8 @@ const (
 	DefaultAIVerifierMaxInputTokens            = 200000
 	DefaultAIVerifierMaxOutputTokens           = 65536
 	DefaultAIVerifierMaxCandidateContextTokens = 50000
-	DefaultAIVerifierMaxPredicateOptions       = 100
-	MaxAIVerifierMaxPredicateOptions           = 2000
 	DefaultAIVerifierTokenizer                 = "o200k_base"
 	DefaultMemoryAutoWriteConfidenceThreshold  = 0.7
-	DefaultConflictReviewTTLDays               = 7
-	DefaultConflictReviewStartTime             = "04:00"
-	conflictReviewLeaseSafetySeconds           = 30
 )
 
 var obsoleteAssessorEnvVars = []string{
@@ -153,11 +148,10 @@ type Config struct {
 	AIEmbeddingMaxConcurrency       int
 	AIEmbeddingMaxBatchItems        int
 	// Knowledge-pipeline knobs (AC-X3)
-	AIVerifierAPIURL      string
-	AIVerifierAPIKey      string `json:"-"`
-	AIVerifierModel       string
-	AIRememberModel       string
-	AIConflictReviewModel string
+	AIVerifierAPIURL string
+	AIVerifierAPIKey string `json:"-"`
+	AIVerifierModel  string
+	AIRememberModel  string
 
 	AIVerifierDisableTemperature          bool
 	AIVerifierTimeoutSeconds              int
@@ -165,7 +159,6 @@ type Config struct {
 	AIVerifierMaxInputTokens              int
 	AIVerifierMaxOutputTokens             int
 	AIVerifierMaxCandidateContextTokens   int
-	AIVerifierMaxPredicateOptions         int
 	AIVerifierTokenizer                   string
 	MemoryAutoWriteConfidenceThreshold    float64
 	memoryAutoWriteConfidenceThresholdSet bool
@@ -186,13 +179,6 @@ type Config struct {
 	AuditExportEnabled                    bool
 	DiagnosticBundleEnabled               bool
 	AppTimezone                           string
-	ConflictReviewTTLDays                 int
-	ConflictReviewStartTimeLocal          string
-	ConflictReviewMaxConcurrency          int
-	ConflictReviewBatchSize               int
-	ConflictReviewLeaseSeconds            int
-	ConflictReviewMaxAttempts             int
-	ConflictReviewJitterSeconds           int
 }
 
 // Ensure Config implements ConfigProvider
@@ -263,9 +249,6 @@ func (c *Config) GetAIVerifierModel() string { return c.AIVerifierModel }
 func (c *Config) GetAIRememberModel() string {
 	return effectiveAISessionModel(c.AIRememberModel, c.AIVerifierModel)
 }
-func (c *Config) GetAIConflictReviewModel() string {
-	return effectiveAISessionModel(c.AIConflictReviewModel, c.AIVerifierModel)
-}
 
 func effectiveAISessionModel(override, fallback string) string {
 	if override = strings.TrimSpace(override); override != "" {
@@ -300,48 +283,6 @@ func (c *Config) GetAppTimezone() string {
 		return "Local"
 	}
 	return c.AppTimezone
-}
-func (c *Config) GetConflictReviewTTLDays() int {
-	if c.ConflictReviewTTLDays <= 0 {
-		return DefaultConflictReviewTTLDays
-	}
-	return c.ConflictReviewTTLDays
-}
-func (c *Config) GetConflictReviewStartTimeLocal() string {
-	if strings.TrimSpace(c.ConflictReviewStartTimeLocal) == "" {
-		return DefaultConflictReviewStartTime
-	}
-	return c.ConflictReviewStartTimeLocal
-}
-func (c *Config) GetConflictReviewMaxConcurrency() int {
-	if c.ConflictReviewMaxConcurrency <= 0 {
-		return 1
-	}
-	return c.ConflictReviewMaxConcurrency
-}
-func (c *Config) GetConflictReviewBatchSize() int {
-	if c.ConflictReviewBatchSize <= 0 {
-		return 100
-	}
-	return c.ConflictReviewBatchSize
-}
-func (c *Config) GetConflictReviewLeaseSeconds() int {
-	if c.ConflictReviewLeaseSeconds <= 0 {
-		return 300
-	}
-	return c.ConflictReviewLeaseSeconds
-}
-func (c *Config) GetConflictReviewMaxAttempts() int {
-	if c.ConflictReviewMaxAttempts <= 0 {
-		return 5
-	}
-	return c.ConflictReviewMaxAttempts
-}
-func (c *Config) GetConflictReviewJitterSeconds() int {
-	if c.ConflictReviewJitterSeconds < 0 {
-		return 0
-	}
-	return c.ConflictReviewJitterSeconds
 }
 
 // ValidationError represents a configuration validation failure.
@@ -588,7 +529,6 @@ func loadWithPostgresDSN(postgresDSN string) (Config, error) {
 	}
 	cfg.AIVerifierModel = os.Getenv("AI_VERIFIER_MODEL")
 	cfg.AIRememberModel = os.Getenv("AI_REMEMBER_MODEL")
-	cfg.AIConflictReviewModel = os.Getenv("AI_CONFLICT_REVIEW_MODEL")
 	cfg.AIVerifierDisableTemperature, err = parseBoolOrDefault("AI_VERIFIER_DISABLE_TEMPERATURE", false)
 	if err != nil {
 		return cfg, err
@@ -600,7 +540,6 @@ func loadWithPostgresDSN(postgresDSN string) (Config, error) {
 		{"AI_VERIFIER_MAX_INPUT_TOKENS", DefaultAIVerifierMaxInputTokens, func(c *Config, value int) { c.AIVerifierMaxInputTokens = value }},
 		{"AI_VERIFIER_MAX_OUTPUT_TOKENS", DefaultAIVerifierMaxOutputTokens, func(c *Config, value int) { c.AIVerifierMaxOutputTokens = value }},
 		{"AI_VERIFIER_MAX_CANDIDATE_CONTEXT_TOKENS", DefaultAIVerifierMaxCandidateContextTokens, func(c *Config, value int) { c.AIVerifierMaxCandidateContextTokens = value }},
-		{"AI_VERIFIER_MAX_PREDICATE_OPTIONS", DefaultAIVerifierMaxPredicateOptions, func(c *Config, value int) { c.AIVerifierMaxPredicateOptions = value }},
 	}); err != nil {
 		return cfg, err
 	}
@@ -616,17 +555,6 @@ func loadWithPostgresDSN(postgresDSN string) (Config, error) {
 	}
 	cfg.memoryAutoWriteConfidenceThresholdSet = true
 	cfg.AppTimezone = getEnvOrDefault("APP_TIMEZONE", "Local")
-	cfg.ConflictReviewStartTimeLocal = getEnvOrDefault("CONFLICT_REVIEW_START_TIME_LOCAL", DefaultConflictReviewStartTime)
-	if err := applyIntEnvSpecs(&cfg, []intEnvSpec{
-		{"CONFLICT_REVIEW_TTL_DAYS", DefaultConflictReviewTTLDays, func(c *Config, value int) { c.ConflictReviewTTLDays = value }},
-		{"CONFLICT_REVIEW_MAX_CONCURRENCY", 1, func(c *Config, value int) { c.ConflictReviewMaxConcurrency = value }},
-		{"CONFLICT_REVIEW_BATCH_SIZE", 100, func(c *Config, value int) { c.ConflictReviewBatchSize = value }},
-		{"CONFLICT_REVIEW_LEASE_SECONDS", 300, func(c *Config, value int) { c.ConflictReviewLeaseSeconds = value }},
-		{"CONFLICT_REVIEW_MAX_ATTEMPTS", 5, func(c *Config, value int) { c.ConflictReviewMaxAttempts = value }},
-		{"CONFLICT_REVIEW_JITTER_SECONDS", 600, func(c *Config, value int) { c.ConflictReviewJitterSeconds = value }},
-	}); err != nil {
-		return cfg, err
-	}
 	cfg.ControlHTTPAddr = getEnvOrDefault("CONTROL_HTTP_ADDR", ":8090")
 	cfg.ControlPortalToken = os.Getenv("CONTROL_PORTAL_TOKEN")
 	if transport := strings.ToLower(strings.TrimSpace(os.Getenv("MCP_TRANSPORT"))); transport != "" && transport != "sdk" {
@@ -691,12 +619,6 @@ func loadWithPostgresDSN(postgresDSN string) (Config, error) {
 		{"AI_VERIFIER_MAX_INPUT_TOKENS", cfg.AIVerifierMaxInputTokens},
 		{"AI_VERIFIER_MAX_OUTPUT_TOKENS", cfg.AIVerifierMaxOutputTokens},
 		{"AI_VERIFIER_MAX_CANDIDATE_CONTEXT_TOKENS", cfg.AIVerifierMaxCandidateContextTokens},
-		{"AI_VERIFIER_MAX_PREDICATE_OPTIONS", cfg.AIVerifierMaxPredicateOptions},
-		{"CONFLICT_REVIEW_TTL_DAYS", cfg.ConflictReviewTTLDays},
-		{"CONFLICT_REVIEW_MAX_CONCURRENCY", cfg.ConflictReviewMaxConcurrency},
-		{"CONFLICT_REVIEW_BATCH_SIZE", cfg.ConflictReviewBatchSize},
-		{"CONFLICT_REVIEW_LEASE_SECONDS", cfg.ConflictReviewLeaseSeconds},
-		{"CONFLICT_REVIEW_MAX_ATTEMPTS", cfg.ConflictReviewMaxAttempts},
 		{"TELEMETRY_QUERY_TIMEOUT_SECONDS", cfg.TelemetryQueryTimeoutSeconds},
 	}
 
@@ -720,12 +642,7 @@ func loadWithPostgresDSN(postgresDSN string) (Config, error) {
 			Message: fmt.Sprintf("must be less than or equal to AI_VERIFIER_MAX_INPUT_TOKENS, got %d > %d", cfg.AIVerifierMaxCandidateContextTokens, cfg.AIVerifierMaxInputTokens),
 		}
 	}
-	if cfg.AIVerifierMaxPredicateOptions > MaxAIVerifierMaxPredicateOptions {
-		return cfg, &ValidationError{
-			Field:   "AI_VERIFIER_MAX_PREDICATE_OPTIONS",
-			Message: fmt.Sprintf("must be less than or equal to %d, got %d", MaxAIVerifierMaxPredicateOptions, cfg.AIVerifierMaxPredicateOptions),
-		}
-	}
+
 	if math.IsNaN(cfg.MemoryAutoWriteConfidenceThreshold) ||
 		math.IsInf(cfg.MemoryAutoWriteConfidenceThreshold, 0) ||
 		cfg.MemoryAutoWriteConfidenceThreshold < 0 ||
@@ -739,59 +656,6 @@ func loadWithPostgresDSN(postgresDSN string) (Config, error) {
 		return cfg, &ValidationError{
 			Field:   "AI_VERIFIER_TOKENIZER",
 			Message: fmt.Sprintf("unsupported tokenizer %q", cfg.AIVerifierTokenizer),
-		}
-	}
-	if cfg.ConflictReviewTTLDays > 30 {
-		return cfg, &ValidationError{
-			Field:   "CONFLICT_REVIEW_TTL_DAYS",
-			Message: fmt.Sprintf("must be less than or equal to 30, got %d", cfg.ConflictReviewTTLDays),
-		}
-	}
-	if cfg.ConflictReviewMaxConcurrency > 16 {
-		return cfg, &ValidationError{
-			Field:   "CONFLICT_REVIEW_MAX_CONCURRENCY",
-			Message: fmt.Sprintf("must be less than or equal to 16, got %d", cfg.ConflictReviewMaxConcurrency),
-		}
-	}
-	if cfg.ConflictReviewBatchSize > 500 {
-		return cfg, &ValidationError{
-			Field:   "CONFLICT_REVIEW_BATCH_SIZE",
-			Message: fmt.Sprintf("must be less than or equal to 500, got %d", cfg.ConflictReviewBatchSize),
-		}
-	}
-	if cfg.ConflictReviewLeaseSeconds < 30 || cfg.ConflictReviewLeaseSeconds > 1800 {
-		return cfg, &ValidationError{
-			Field:   "CONFLICT_REVIEW_LEASE_SECONDS",
-			Message: fmt.Sprintf("must be between 30 and 1800, got %d", cfg.ConflictReviewLeaseSeconds),
-		}
-	}
-	if cfg.AIEmbeddingTimeoutSeconds > 0 &&
-		cfg.ConflictReviewLeaseSeconds <= cfg.AIEmbeddingTimeoutSeconds+conflictReviewLeaseSafetySeconds {
-		return cfg, &ValidationError{
-			Field: "CONFLICT_REVIEW_LEASE_SECONDS",
-			Message: fmt.Sprintf(
-				"must exceed AI_API_EMBEDDING_TIMEOUT_SECONDS plus %d seconds, got %d <= %d",
-				conflictReviewLeaseSafetySeconds, cfg.ConflictReviewLeaseSeconds,
-				cfg.AIEmbeddingTimeoutSeconds+conflictReviewLeaseSafetySeconds,
-			),
-		}
-	}
-	if cfg.ConflictReviewMaxAttempts > 20 {
-		return cfg, &ValidationError{
-			Field:   "CONFLICT_REVIEW_MAX_ATTEMPTS",
-			Message: fmt.Sprintf("must be less than or equal to 20, got %d", cfg.ConflictReviewMaxAttempts),
-		}
-	}
-	if cfg.ConflictReviewJitterSeconds < 0 || cfg.ConflictReviewJitterSeconds > 3600 {
-		return cfg, &ValidationError{
-			Field:   "CONFLICT_REVIEW_JITTER_SECONDS",
-			Message: fmt.Sprintf("must be between 0 and 3600, got %d", cfg.ConflictReviewJitterSeconds),
-		}
-	}
-	if _, err := time.Parse("15:04", cfg.ConflictReviewStartTimeLocal); err != nil {
-		return cfg, &ValidationError{
-			Field:   "CONFLICT_REVIEW_START_TIME_LOCAL",
-			Message: fmt.Sprintf("invalid HH:MM value: %s", cfg.ConflictReviewStartTimeLocal),
 		}
 	}
 	if _, err := time.LoadLocation(cfg.GetAppTimezone()); err != nil {

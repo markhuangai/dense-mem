@@ -72,20 +72,7 @@ describe("ControlApi", () => {
     expect(fetchMock).toHaveBeenCalledWith("/control/api/metrics?window_minutes=60&team_id=team-1", expect.any(Object));
   });
 
-  it("requests the conflict queue with bounded filters and cursor", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      data: { summary: {}, items: [], next_cursor: null },
-    }), { status: 200 }));
-    vi.stubGlobal("fetch", fetchMock);
 
-    const api = new ControlApi("secret", "/control/api");
-    await api.getConflictQueue("team/1", { status: "overdue", limit: 50, cursor: "cursor-value" });
-
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/control/api/teams/team%2F1/conflicts/queue?status=overdue&limit=50&cursor=cursor-value",
-      expect.any(Object),
-    );
-  });
 
   it("requests telemetry with window and profile filters", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
@@ -177,26 +164,6 @@ describe("ControlApi", () => {
 
 
 
-  it("requests team dreams with cursor pagination", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      data: {
-        items: [],
-        next_cursor: "next-dream",
-      },
-    }), { status: 200 }));
-    vi.stubGlobal("fetch", fetchMock);
 
-    const api = new ControlApi("secret", "/control/api");
-    const result = await api.listTeamDreams("team-1", {
-      limit: 50,
-      status: "proposed",
-      cursor: "current-dream",
-      sort: "created_at",
-      direction: "asc",
-    });
-
-    expect(result.next_cursor).toBe("next-dream");
-    expect(fetchMock).toHaveBeenCalledWith("/control/api/teams/team-1/dreams?limit=50&status=proposed&cursor=current-dream&sort=created_at&direction=asc", expect.any(Object));
-  });
 
 });

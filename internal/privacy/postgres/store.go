@@ -46,40 +46,38 @@ const (
 // tables owned by a memory space. Prepare compares this list to the live
 // catalog before any erasure worker starts.
 var privateMemoryErasureManifest = []string{
-	"session_submissions", "session_events", "session_extraction_checkpoints", "session_submission_receipts",
+	"session_submissions",
+	"session_events",
+	"session_extraction_checkpoints",
+	"session_submission_receipts",
 	"session_submission_diagnostics",
-	"knowledge_ingests", "evidence_sources", "evidence_source_revisions",
-	"evidence_exact_aliases", "evidence_occurrences", "evidence_fragments", "evidence_security_events", "evidence_security_signals",
-	"evidence_quarantines", "evidence_lifecycle_operations", "evidence_lifecycle_events",
-	"submission_relationship_results",
-	"predicate_registration_events",
-	"entity_records", "entity_names", "entity_resolution_events",
-	"entity_correction_plans", "entity_correction_events", "value_records",
-	"relationship_records", "relationship_observations", "relationship_evidence_supports",
-	"relationship_support_decision_events", "relationship_transition_events",
-	"relationship_cross_references", "relationship_correction_submissions",
-	"relationship_correction_events", "verification_events", "review_tasks",
-	"hypotheses", "hypothesis_derivation_sources", "hypothesis_feedback_events",
-	"remember_attempts", "remember_attempt_events", "remember_attempt_diagnostics", "remember_failure_artifacts", "remember_invocation_diagnostics", "semantic_assessments", "relationship_conflict_cases",
-	"relationship_conflict_positions", "relationship_conflict_position_members",
-	"relationship_conflict_events", "relationship_conflict_review_runs",
-	"relationship_conflict_derived_evidence_tasks", "relationship_conflict_evidence_derivations",
-	"relationship_conflict_resolution_plans", "relationship_conflict_ai_assessment_attempts",
-	"relationship_conflict_ai_assessment_events", "search_documents",
-	"evidence_conflict_cases", "evidence_conflict_positions", "evidence_conflict_events",
-	"community_snapshot_runs", "community_records", "community_memberships",
-	"community_sources", "community_summary_attempts", "community_topic_versions",
-	"community_topic_dependencies", "community_topic_work", "dream_cycle_runs",
-	"dream_path_evaluations", "dream_path_evaluation_run_links", "dream_evidence_target_attempts", "dream_evidence_target_evaluations",
-	"hypothesis_evidence_derivation_sources", "recall_feedback_events",
+	"knowledge_ingests",
+	"evidence_sources",
+	"evidence_source_revisions",
+	"evidence_exact_aliases",
+	"evidence_occurrences",
+	"evidence_fragments",
+	"evidence_security_events",
+	"evidence_security_signals",
+	"evidence_quarantines",
+	"evidence_lifecycle_operations",
+	"evidence_lifecycle_events",
+	"remember_attempts",
+	"remember_attempt_events",
+	"remember_attempt_diagnostics",
+	"remember_failure_artifacts",
+	"remember_invocation_diagnostics",
+	"semantic_assessments",
+	"search_documents",
+	"evidence_conflict_cases",
+	"evidence_conflict_positions",
+	"evidence_conflict_events",
+	"recall_feedback_events",
 }
 
 var privateMemoryCatalogExclusions = []string{
 	"private_memory_erasure_operations",
 	"private_memory_legal_holds",
-	// Team-shared Dream diagnostics are governed by their own seven-day
-	// retention worker and cascade with their run/hypothesis owners.
-	"dream_diagnostic_captures",
 }
 
 type PrivateMemoryErasureRequest = privacycontract.PrivateMemoryErasureRequest
@@ -146,7 +144,9 @@ func (r *PrivateMemoryRepositoryImpl) Prepare(ctx context.Context) error {
 }
 
 func validatePrivateMemoryManifestTx(ctx context.Context, tx *gorm.DB) ([]string, error) {
-	expected := PrivateMemoryErasureManifest()
+	return validatePrivateMemoryManifestFor(ctx, tx, PrivateMemoryErasureManifest(), privateMemoryCatalogExclusions)
+}
+func validatePrivateMemoryManifestFor(ctx context.Context, tx *gorm.DB, expected, exclusions []string) ([]string, error) {
 	rows, err := tx.WithContext(ctx).Raw(`
 		SELECT tables.table_name
 		FROM information_schema.tables AS tables
@@ -159,7 +159,7 @@ func validatePrivateMemoryManifestTx(ctx context.Context, tx *gorm.DB) ([]string
 		  AND NOT (tables.table_name = ANY($1::text[]))
 		  AND (space_column.table_name IS NOT NULL OR tables.table_name = ANY($2::text[]))
 		ORDER BY tables.table_name
-	`, pq.Array(privateMemoryCatalogExclusions), pq.Array(expected)).Rows()
+	`, pq.Array(exclusions), pq.Array(expected)).Rows()
 	if err != nil {
 		return nil, fmt.Errorf("%w: read catalog: %v", ErrPrivateMemoryManifest, err)
 	}

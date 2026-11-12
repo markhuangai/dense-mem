@@ -1,767 +1,95 @@
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FileText, Search } from "lucide-react";
 import { Button } from "../ui/primitives/button";
 import { Label } from "../ui/primitives/label";
-import { Checkbox } from "../ui/primitives/checkbox";
-import { NativeSelect, NativeSelectOption } from "../ui/primitives/native-select";
 import { Input } from "../ui/primitives/input";
-import { CSSProperties, FormEvent, lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
-import {
-  ChevronDown,
-  ExternalLink,
-  FileText,
-  GitBranch,
-  Network,
-  Search,
-  SlidersHorizontal,
-} from "lucide-react";
-import { Popover, PopoverContent, PopoverTrigger } from "../ui/primitives/popover";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/primitives/tabs";
+import { NativeSelect, NativeSelectOption } from "../ui/primitives/native-select";
+import { LoadingState } from "../ui/components";
 import { ResponsiveInspector, useCompactWorkspace } from "../ui/inspector";
-import { LoadingState, SectionHeading } from "../ui/components";
-import { GraphNodeType, RecallCommunity, RecallEvidenceContext, RecallHit, RecallRelationship, UserApi } from "./api";
-
-const ResultGraphPreview = lazy(() => import("./GraphPanel").then((module) => ({ default: module.ResultGraphPreview })));
-
-type RecallResultKind = "evidence" | "relationship" | "community";
-type RecallResultStatus = "verified" | "provisional" | "disputed" | "deprecated";
-type RecallSortMode = "relevance" | "date";
-type ResultDensity = "comfortable" | "compact";
-type InspectorTab = "evidence" | "lineage" | "recall" | "graph";
-type RecallDisplayItem = RecallEvidenceContext | RecallRelationship | RecallCommunity | undefined;
-
-type IndexedRecallResult = {
-  hit: RecallHit;
-  key: string;
-  kind: RecallResultKind;
-};
+import { RecallEvidenceContext, RecallPayload, RelatedTopic, UserApi } from "./api";
 
 export function SearchPanel({ api }: { api: UserApi }) {
-  const requestSequence = useRef(0);
-  useEffect(() => () => { requestSequence.current += 1; }, [api]);
+  const sequence = useRef(0);
+  useEffect(() => () => { sequence.current += 1; }, [api]);
   const [query, setQuery] = useState("");
-  const [hits, setHits] = useState<RecallHit[]>([]);
-  const [selectedKey, setSelectedKey] = useState("");
-  const [enabledTypes, setEnabledTypes] = useState<Record<RecallResultKind, boolean>>({
-    evidence: true,
-    relationship: true,
-    community: true,
-  });
-  const [enabledStatuses, setEnabledStatuses] = useState<Record<RecallResultStatus, boolean>>({
-    verified: true,
-    provisional: true,
-    disputed: false,
-    deprecated: false,
-  });
-  const [dateMode, setDateMode] = useState<"all" | "custom">("all");
-  const [startDate, setStartDate] = useState("");
-  const [endDate, setEndDate] = useState("");
-  const [sourceFilter, setSourceFilter] = useState("all");
-  const [sortMode, setSortMode] = useState<RecallSortMode>("relevance");
-  const [density, setDensity] = useState<ResultDensity>("comfortable");
-  const [inspectorOpen, setInspectorOpen] = useState(false);
-  const { ref, compact } = useCompactWorkspace();
-  const [inspectorTab, setInspectorTab] = useState<InspectorTab>("evidence");
+  const [payload, setPayload] = useState<RecallPayload | null>(null);
+  const [topic, setTopic] = useState<RelatedTopic | null>(null);
+  const [selectedID, setSelectedID] = useState("");
+  const [source, setSource] = useState("all");
+  const [sort, setSort] = useState("relevance");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [inspectorOpen, setInspectorOpen] = useState(false);
+  const { ref, compact } = useCompactWorkspace();
 
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const trimmed = query.trim();
-    if (!trimmed) {
-      setError("Query is required.");
-      return;
-    }
-    const request = ++requestSequence.current;
+  async function recall(selectedTopic: RelatedTopic | null) {
+    const text = selectedTopic ? "" : query.trim();
+    if (!text && !selectedTopic) { setError("Query is required."); return; }
+    const request = ++sequence.current;
     setLoading(true);
     setError("");
     try {
-      const nextHits = await api.recall(trimmed, 10);
-      if (request !== requestSequence.current) return;
-      setHits(nextHits);
-      setSourceFilter("all");
+      const result = await api.recall(text, 10, selectedTopic ? { topicIDs: [selectedTopic.topic_id] } : {});
+      if (request !== sequence.current) return;
+      setPayload(result);
+      setTopic(selectedTopic);
+      setSelectedID(result.results[0]?.evidence_id ?? "");
+      setSource("all");
       setInspectorOpen(!compact);
-      setInspectorTab("evidence");
-      setSelectedKey(nextHits[0] ? recallKey(nextHits[0], 0) : "");
-    } catch (err) {
-      if (request === requestSequence.current) setError(readError(err));
+    } catch (cause) {
+      if (request === sequence.current) setError(cause instanceof Error ? cause.message : "Recall failed.");
     } finally {
-      if (request === requestSequence.current) setLoading(false);
+      if (request === sequence.current) setLoading(false);
     }
   }
 
-  const entities = useMemo(() => deriveEntities(hits), [hits]);
-  const indexedHits = useMemo(() => hits.map((hit, index) => ({
-    hit,
-    key: recallKey(hit, index),
-    kind: recallResultKind(hit),
-  })), [hits]);
-  const filteredHits = useMemo(() => (
-    indexedHits.filter((indexed) => {
-      const item = resultItem(indexed.hit);
-      const status = recallResultStatus(item);
-      return enabledTypes[indexed.kind]
-        && (status === null || enabledStatuses[status])
-        && sourceMatches(item, sourceFilter)
-        && dateMatches(item, dateMode, startDate, endDate);
-    })
-  ), [indexedHits, enabledTypes, enabledStatuses, sourceFilter, dateMode, startDate, endDate]);
-  const sortedHits = useMemo(() => sortRecallResults(filteredHits, sortMode), [filteredHits, sortMode]);
-  const selectedResult = useMemo(() => (
-    sortedHits.find((item) => item.key === selectedKey) ?? sortedHits[0] ?? null
-  ), [sortedHits, selectedKey]);
-  const typeCounts = useMemo(() => indexedHits.reduce<Record<RecallResultKind, number>>((counts, item) => ({
-    ...counts,
-    [item.kind]: counts[item.kind] + 1,
-  }), { evidence: 0, relationship: 0, community: 0 }), [indexedHits]);
-  const statusCounts = useMemo(() => indexedHits.reduce<Record<RecallResultStatus, number>>((counts, indexed) => {
-    const status = recallResultStatus(resultItem(indexed.hit));
-    if (status === null) {
-      return counts;
-    }
-    return {
-      ...counts,
-      [status]: counts[status] + 1,
-    };
-  }, { verified: 0, provisional: 0, disputed: 0, deprecated: 0 }), [indexedHits]);
-  const sourceOptions = useMemo(() => {
-    const values = new Set<string>();
-    for (const hit of indexedHits) {
-      values.add(sourceLabel(resultItem(hit.hit)));
-    }
-    return Array.from(values).sort((left, right) => left.localeCompare(right));
-  }, [indexedHits]);
+  function submit(event: FormEvent<HTMLFormElement>) { event.preventDefault(); void recall(null); }
+  const sources = useMemo(() => [...new Set((payload?.results ?? []).map(sourceLabel))].sort(), [payload]);
+  const results = useMemo(() => {
+    const items = (payload?.results ?? []).filter((item) => source === "all" || sourceLabel(item) === source);
+    return sort === "date" ? [...items].sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? "")) : items;
+  }, [payload, source, sort]);
+  const selected = results.find((item) => item.evidence_id === selectedID) ?? results[0];
 
-  function toggleType(kind: RecallResultKind) {
-    setEnabledTypes((current) => ({
-      ...current,
-      [kind]: !current[kind],
-    }));
-  }
-
-  function toggleStatus(status: RecallResultStatus) {
-    setEnabledStatuses((current) => ({
-      ...current,
-      [status]: !current[status],
-    }));
-  }
-
-  function clearFilters() {
-    setEnabledTypes({ evidence: true, relationship: true, community: true });
-    setEnabledStatuses({ verified: true, provisional: true, disputed: false, deprecated: false });
-    setDateMode("all");
-    setStartDate("");
-    setEndDate("");
-    setSourceFilter("all");
-  }
-
-  return (
-    <section ref={ref} className={inspectorOpen && !compact ? "knowledge-explorer has-inspector" : "knowledge-explorer"} aria-label="Knowledge explorer">
-
-
-      <section className="knowledge-results-panel" aria-label="Recall results">
-        <form className="knowledge-commandbar" onSubmit={submit}>
-          <Label className="sr-only" htmlFor="recall-query">Keyword</Label>
-          <div className="search-input-wrap large">
-            <Search size={17} aria-hidden="true" />
-            <Input
-              id="recall-query"
-              aria-label="Keyword"
-              placeholder="Search knowledge..."
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-            />
-          </div>
-          <Button variant="default" className="primary-button compact" type="submit" disabled={loading}>
-            <Search size={16} aria-hidden="true" />
-            Search
-          </Button>
-        </form>
-        <div className="knowledge-results-toolbar">
-          <div>
-            <h2>{filteredHits.length.toLocaleString()} results</h2>
-            <span>{query.trim() ? `for "${query.trim()}"` : "Search across evidence and relationships"}</span>
-          </div>
-          <div className="toolbar-actions">
-            <Popover><PopoverTrigger asChild><Button variant="outline"><SlidersHorizontal size={15} aria-hidden="true" />Filters</Button></PopoverTrigger>
-      <PopoverContent className="explorer-filter-popover" align="start" aria-label="Knowledge filters">
-        <SectionHeading
-          title="Filters"
-          actions={(
-            <Button variant="ghost"
-              className="text-button"
-              type="button"
-              onClick={clearFilters}
-            >
-              Clear all
-            </Button>
-          )}
-        />
-        <fieldset className="filter-stack">
-          <legend>Type</legend>
-          {(["evidence", "relationship", "community"] as RecallResultKind[]).map((kind) => (
-            <Label className="filter-row" key={kind}>
-              <Checkbox
-                checked={enabledTypes[kind]}
-                onCheckedChange={() => toggleType(kind)}
-              />
-              <span>{recallResultKindLabel(kind)}</span>
-              <small>{typeCounts[kind]}</small>
-            </Label>
-          ))}
-        </fieldset>
-        <fieldset className="filter-stack">
-          <legend>Status</legend>
-          {(["verified", "provisional", "disputed", "deprecated"] as RecallResultStatus[]).map((status) => (
-            <Label className="filter-row" key={status}>
-              <Checkbox checked={enabledStatuses[status]} onCheckedChange={() => toggleStatus(status)} />
-              <span>{recallResultStatusLabel(status)}</span>
-              <small>{statusCounts[status]}</small>
-            </Label>
-          ))}
-        </fieldset>
-        <div className="filter-stack">
-          <strong>Date</strong>
-          <NativeSelect aria-label="Date range" value={dateMode} onChange={(event) => setDateMode(event.target.value as "all" | "custom")}>
-            <NativeSelectOption value="all">All time</NativeSelectOption>
-            <NativeSelectOption value="custom">Custom</NativeSelectOption>
-          </NativeSelect>
-          {dateMode === "custom" && (
-            <>
-              <Input aria-label="Start date" type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} />
-              <Input aria-label="End date" type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} />
-            </>
-          )}
+  return <section ref={ref} className={inspectorOpen && !compact ? "knowledge-explorer has-inspector" : "knowledge-explorer"} aria-label="Knowledge explorer">
+    <section className="knowledge-results-panel" aria-label="Recall results">
+      <form className="knowledge-commandbar" onSubmit={submit}>
+        <Label className="sr-only" htmlFor="recall-query">Keyword</Label>
+        <div className="search-input-wrap large"><Search size={17} aria-hidden="true" /><Input id="recall-query" aria-label="Keyword" placeholder="Search evidence..." value={query} onChange={(event) => setQuery(event.target.value)} /></div>
+        <Button type="submit" disabled={loading}><Search size={16} aria-hidden="true" />Search</Button>
+      </form>
+      <div className="knowledge-results-toolbar">
+        <div><h2>{results.length} results</h2><span>{topic ? `Topic: ${topic.name}` : "Search memory Evidence"}</span></div>
+        <div className="toolbar-actions">
+          <NativeSelect aria-label="Source" value={source} onChange={(event) => setSource(event.target.value)}><NativeSelectOption value="all">All sources</NativeSelectOption>{sources.map((value) => <NativeSelectOption key={value} value={value}>{value}</NativeSelectOption>)}</NativeSelect>
+          <NativeSelect aria-label="Sort" value={sort} onChange={(event) => setSort(event.target.value)}><NativeSelectOption value="relevance">Relevance</NativeSelectOption><NativeSelectOption value="date">Date</NativeSelectOption></NativeSelect>
+          {!inspectorOpen && <Button variant="outline" type="button" disabled={!selected} onClick={() => setInspectorOpen(true)}>Open details</Button>}
         </div>
-        <div className="filter-stack">
-          <strong>Source</strong>
-          <NativeSelect aria-label="Source" value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)}>
-            <NativeSelectOption value="all">All sources</NativeSelectOption>
-            {sourceOptions.map((source) => <NativeSelectOption key={source} value={source}>{source}</NativeSelectOption>)}
-          </NativeSelect>
-        </div>
-        {entities.length > 0 && (
-          <div className="filter-stack" aria-label="Related entities">
-            <strong>Tag</strong>
-            <div className="entity-strip">
-              {entities.map((entity) => <span className="status-pill neutral" key={entity}>{entity}</span>)}
-            </div>
-          </div>
-        )}
-      </PopoverContent>
-            </Popover>
-            <Button variant="outline"
-              className="select-like compact"
-              type="button"
-              aria-label={`Sort by ${sortMode === "relevance" ? "date" : "relevance"}`}
-              onClick={() => setSortMode((current) => (current === "relevance" ? "date" : "relevance"))}
-            >
-              Sort: {sortMode === "relevance" ? "Relevance" : "Date"} <ChevronDown size={14} aria-hidden="true" />
-            </Button>
-            <Button variant="ghost" size="icon"
-              className={density === "compact" ? "icon-button active" : "icon-button"}
-              type="button"
-              aria-label={density === "compact" ? "Use comfortable density" : "Use compact density"}
-              aria-pressed={density === "compact"}
-              onClick={() => setDensity((current) => (current === "comfortable" ? "compact" : "comfortable"))}
-            >
-              <FileText size={16} aria-hidden="true" />
-            </Button>
-            {!inspectorOpen && (
-              <Button variant="outline" className="ghost-button compact explorer-details-trigger" type="button" disabled={!selectedResult} onClick={() => setInspectorOpen(true)}>
-                <FileText size={15} aria-hidden="true" />
-                Open details
-              </Button>
-            )}
-          </div>
-        </div>
-        {error && <div className="banner error" role="alert">{error}</div>}
-        {loading && <LoadingState label="Searching knowledge" />}
-        {!loading && (
-          <RecallResults
-            items={sortedHits}
-            selectedKey={selectedResult?.key ?? ""}
-            onSelect={(key) => { setSelectedKey(key); setInspectorOpen(true); }}
-            density={density}
-          />
-        )}
-      </section>
-
-      <ResponsiveInspector compact={compact} open={inspectorOpen} onOpenChange={setInspectorOpen} title="Inspector">
-        <KnowledgeInspector api={api} result={selectedResult} activeTab={inspectorTab} onSelectTab={setInspectorTab} />
-      </ResponsiveInspector>
-    </section>
-  );
-}
-
-function RecallResults({
-  items,
-  selectedKey,
-  onSelect,
-  density,
-}: {
-  items: IndexedRecallResult[];
-  selectedKey: string;
-  onSelect: (key: string) => void;
-  density: ResultDensity;
-}) {
-  if (items.length === 0) {
-    return <div className="table-placeholder">No recall results</div>;
-  }
-  return (
-    <div className={density === "compact" ? "knowledge-list compact-list dense" : "knowledge-list compact-list"} role="listbox" aria-label="Recall result list">
-      {items.map((result) => {
-        const item = resultItem(result.hit);
-        const status = recallResultStatus(item);
-        return (
-          <article
-            aria-selected={result.key === selectedKey}
-            className={
-              result.key === selectedKey
-                ? "knowledge-item knowledge-result-option selected"
-                : "knowledge-item knowledge-result-option"
-            }
-            key={result.key}
-            onClick={() => onSelect(result.key)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" || event.key === " ") {
-                event.preventDefault();
-                onSelect(result.key);
-              }
-            }}
-            role="option"
-            tabIndex={0}
-          >
-            <div className="knowledge-item-head">
-              <div className="result-kicker">
-                {resultIcon(result.kind)}
-                <span className="status-pill neutral">{recallResultKindLabel(result.kind)}</span>
-                {status && <span className={statusPillClass(status)}>{recallResultStatusLabel(status)}</span>}
-              </div>
-            </div>
-            <h3>{itemTitle(item)}</h3>
-            <p>{itemBody(item)}</p>
-            <div className="result-meta-row">
-              <span>Source: {sourceLabel(item)}</span>
-              <time>{itemDate(item)}</time>
-            </div>
-          </article>
-        );
-      })}
-    </div>
-  );
-}
-
-function KnowledgeInspector({
-  api,
-  result,
-  activeTab,
-  onSelectTab,
-}: {
-  api: UserApi;
-  result: IndexedRecallResult | null;
-  activeTab: InspectorTab;
-  onSelectTab: (tab: InspectorTab) => void;
-}) {
-  if (!result) {
-    return <div className="table-placeholder compact">Select a result</div>;
-  }
-
-  const item = resultItem(result.hit);
-  const status = recallResultStatus(item);
-  const evidenceContexts = result.hit.evidences ?? [];
-  const tabs: Array<{ id: InspectorTab; label: string }> = [
-    { id: "evidence", label: "Evidence" },
-    { id: "lineage", label: "Lineage" },
-    { id: "recall", label: "Recall" },
-    { id: "graph", label: "Graph" },
-  ];
-  return (
-    <Tabs className="inspector-card" value={activeTab} onValueChange={(value) => onSelectTab(value as InspectorTab)}>
-      <TabsList aria-label="Result sections">
-        {tabs.map((tab) => <TabsTrigger key={tab.id} value={tab.id}>{tab.label}</TabsTrigger>)}
-      </TabsList>
-      <div className="inspector-status-row">
-        <span className="status-pill neutral">{recallResultKindLabel(result.kind)}</span>
-        {status && <span className={statusPillClass(status)}>{recallResultStatusLabel(status)}</span>}
       </div>
-      <h3>{itemTitle(item)}</h3>
-      <TabsContent value="evidence" className="inspector-section">
-          <h4>Evidence</h4>
-          <p>{itemBody(item)}</p>
-          {evidenceContexts.length > 0 && (
-            <ul className="evidence-list compact">
-              {evidenceContexts.map((evidence) => (
-                <li key={evidence.evidence_id}>
-                  <strong>{shortId(evidence.evidence_id)}</strong>
-                  <span>{evidence.context}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-          <dl className="evidence-list">
-            <div>
-              <dt>Source</dt>
-              <dd>
-                {sourceLabel(item)}
-                <ExternalLink size={13} aria-hidden="true" />
-              </dd>
-            </div>
-            <div>
-              <dt>Collected</dt>
-              <dd>{itemDate(item)}</dd>
-            </div>
-            <div>
-              <dt>Confidence</dt>
-              <dd>
-                <span>{scoreLabel(result.hit.score ?? result.hit.final_score) || "n/a"}</span>
-                <span className="confidence-bar" style={{ "--confidence": confidencePercent(result.hit) } as CSSProperties} />
-              </dd>
-            </div>
-          </dl>
-        </TabsContent>
-      <TabsContent value="lineage" className="inspector-section">
-          <h4>Lineage</h4>
-          <dl className="evidence-list">
-            <div>
-              <dt>Derived from</dt>
-              <dd>{sourceLabel(item)}</dd>
-            </div>
-            <div>
-              <dt>Recorded</dt>
-              <dd>{itemDate(item)}</dd>
-            </div>
-            <div>
-              <dt>Status</dt>
-              <dd>{status ? recallResultStatusLabel(status) : "n/a"}</dd>
-            </div>
-          </dl>
-        </TabsContent>
-      <TabsContent value="recall" className="inspector-section">
-          <h4>Recall</h4>
-          <dl className="evidence-list">
-            <div>
-              <dt>Final score</dt>
-              <dd>{scoreLabel(result.hit.final_score ?? result.hit.score) || "n/a"}</dd>
-            </div>
-            <div>
-              <dt>Semantic rank</dt>
-              <dd>{rankLabel(result.hit.semantic_rank)}</dd>
-            </div>
-            <div>
-              <dt>Keyword rank</dt>
-              <dd>{rankLabel(result.hit.keyword_rank)}</dd>
-            </div>
-          </dl>
-        </TabsContent>
-      <TabsContent value="graph" className="inspector-section">
-          <h4>Graph</h4>
-          <Suspense fallback={<LoadingState label="Loading graph" compact />}>
-            <ResultGraphPreview api={api} anchor={recallGraphAnchor(result)} />
-          </Suspense>
-        </TabsContent>
-      <dl className="inspector-details">
-        <div>
-          <dt>Tier</dt>
-          <dd>{tierLabel(result.hit)}</dd>
-        </div>
-        <div>
-          <dt>Type</dt>
-          <dd>{recallResultKindLabel(result.kind)}</dd>
-        </div>
-      </dl>
-    </Tabs>
-  );
+      {error && <div className="banner error" role="alert">{error}</div>}
+      {payload?.degradations.map((item, index) => <div className="banner warning" role="status" key={`${item.code}-${index}`}>{item.message}</div>)}
+      {payload && payload.conflicts.length > 0 && <div className="banner warning" role="status">{payload.conflicts.length} Evidence conflicts are included in this recall.</div>}
+      {loading ? <LoadingState label="Searching evidence" /> : results.length === 0 ? <div className="table-placeholder">No recall results</div> :
+        <div className="knowledge-list compact-list" role="listbox" aria-label="Recall result list">{results.map((item) =>
+          <article key={item.evidence_id} role="option" aria-selected={item.evidence_id === selected?.evidence_id} tabIndex={0}
+            className={item.evidence_id === selected?.evidence_id ? "knowledge-item knowledge-result-option selected" : "knowledge-item knowledge-result-option"}
+            onClick={() => { setSelectedID(item.evidence_id); setInspectorOpen(true); }}
+            onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedID(item.evidence_id); setInspectorOpen(true); } }}>
+            <div className="result-kicker"><FileText size={15} aria-hidden="true" /><span className="status-pill neutral">Evidence</span></div>
+            <p>{item.context}</p><div className="result-meta-row"><span>Source: {sourceLabel(item)}</span><time>{item.created_at ? new Date(item.created_at).toLocaleString() : "Unknown date"}</time></div>
+          </article>)}</div>}
+      {payload && payload.related_topics.length > 0 && <section className="inspector-section" aria-label="Related topics"><h3>Related topics</h3>{payload.related_topics.map((item) =>
+        <div key={item.topic_id}><Button variant="outline" type="button" disabled={loading} onClick={() => void recall(item)}>{item.name} · {item.eligible_evidence_count} Evidence</Button><p>{item.description}</p></div>)}</section>}
+      {payload?.topics_truncated && <p role="status">More related topics are available.</p>}
+    </section>
+    <ResponsiveInspector compact={compact} open={inspectorOpen} onOpenChange={setInspectorOpen} title="Evidence details">
+      {selected ? <div className="inspector-card"><h3>Evidence</h3><p>{selected.context}</p><dl className="evidence-list">
+        <div><dt>ID</dt><dd>{selected.evidence_id}</dd></div><div><dt>Source</dt><dd>{sourceLabel(selected)}</dd></div>
+        <div><dt>Destination</dt><dd>{selected.space_kind ?? "Unknown"}</dd></div><div><dt>Rank</dt><dd>{selected.rank}</dd></div>
+        <div><dt>Equivalent Evidence</dt><dd>{selected.equivalent_evidence_ids.join(", ") || "None"}{selected.equivalents_truncated ? " (truncated)" : ""}</dd></div>
+      </dl></div> : <div className="table-placeholder compact">Select a result</div>}
+    </ResponsiveInspector>
+  </section>;
 }
 
-function recallGraphAnchor(result: IndexedRecallResult): { type: GraphNodeType; id: string } | null {
-  const relationship = result.hit.relationship ?? result.hit.relationships?.[0] ?? result.hit.community?.relationships?.[0];
-  if (relationship?.subject?.entity_id) {
-    return { type: "entity", id: relationship.subject.entity_id };
-  }
-  if (relationship?.object?.entity_id) {
-    return { type: "entity", id: relationship.object.entity_id };
-  }
-  if (relationship?.object?.value_id) {
-    return { type: "value", id: relationship.object.value_id };
-  }
-  return null;
-}
-
-function deriveEntities(hits: RecallHit[]): string[] {
-  const values = new Set<string>();
-  for (const hit of hits) {
-    for (const entity of hit.community?.top_entities ?? []) {
-      addEntity(values, entity.name);
-    }
-    for (const relationship of [hit.relationship, ...(hit.relationships ?? [])]) {
-      if (relationship) {
-        addEntity(values, relationship.subject?.name);
-        addEntity(values, relationship.predicate);
-        addEntity(values, relationship.object?.name ?? relationship.object?.value);
-      }
-    }
-  }
-  return Array.from(values).slice(0, 20);
-}
-
-function addEntity(values: Set<string>, value: string | undefined) {
-  const trimmed = value?.trim();
-  if (trimmed) {
-    values.add(trimmed);
-  }
-}
-
-function itemTitle(item: RecallDisplayItem): string {
-  if (!item) {
-    return "Result";
-  }
-  if (isEvidence(item)) {
-    return firstEvidenceLine(item.context) || shortId(item.evidence_id);
-  }
-  if (isRelationship(item)) {
-    return item.subject?.name || shortId(item.relationship_id);
-  }
-  if (isCommunity(item)) {
-    return item.summary || `Community ${shortId(item.community_id ?? "")}`;
-  }
-  return "Result";
-}
-
-function itemBody(item: RecallDisplayItem): string {
-  if (!item) {
-  return "";
-  }
-  if (isEvidence(item)) {
-    return item.context;
-  }
-  if (isRelationship(item)) {
-    const object = item.object?.name || item.object?.value || "";
-    return [item.predicate, object].filter(Boolean).join(": ");
-  }
-  if (isCommunity(item)) {
-    return `${item.entity_count} entities · ${item.relationship_count} relationships${item.relationships_truncated ? " · truncated" : ""}`;
-  }
-  return "";
-}
-
-function tierLabel(hit: RecallHit): string {
-  if (hit.evidence) {
-    return "Evidence";
-  }
-  const tier = hit.tier?.trim();
-  if (tier) {
-    return `Tier ${tier}`;
-  }
-  return recallResultKindLabel(recallResultKind(hit));
-}
-
-function recallResultKind(hit: RecallHit): RecallResultKind {
-  if (hit.community) {
-    return "community";
-  }
-  if (hit.evidence) {
-    return "evidence";
-  }
-  return "relationship";
-}
-
-function recallResultKindLabel(kind: RecallResultKind): string {
-  if (kind === "evidence") {
-    return "Evidence";
-  }
-  if (kind === "community") {
-    return "Community";
-  }
-  return "Relationship";
-}
-
-function resultItem(hit: RecallHit): RecallDisplayItem {
-  return hit.community ?? hit.evidence ?? hit.relationship;
-}
-
-function recallResultStatus(item: RecallDisplayItem): RecallResultStatus | null {
-  if (item && isEvidence(item)) {
-    return null;
-  }
-  if (item && isRelationship(item)) {
-    const searchState = item.search_state?.toLowerCase() ?? "";
-    if (searchState === "pending") {
-      return "provisional";
-    }
-    if (searchState === "failed") {
-      return "disputed";
-    }
-    const tier = item.tier?.toLowerCase() ?? "";
-    if (tier.includes("candidate") || tier.includes("pending") || tier.includes("provisional") || tier.includes("raw")) {
-      return "provisional";
-    }
-    return "verified";
-  }
-  if (item && isCommunity(item)) {
-    return null;
-  }
-  return null;
-}
-
-function recallResultStatusLabel(status: RecallResultStatus): string {
-  if (status === "verified") {
-    return "Verified";
-  }
-  if (status === "provisional") {
-    return "Provisional";
-  }
-  if (status === "disputed") {
-    return "Disputed";
-  }
-  return "Deprecated";
-}
-
-function statusPillClass(status: RecallResultStatus): string {
-  if (status === "verified") {
-    return "status-pill success";
-  }
-  if (status === "provisional") {
-    return "status-pill warning";
-  }
-  if (status === "disputed") {
-    return "status-pill danger";
-  }
-  return "status-pill neutral";
-}
-
-function sourceMatches(item: RecallDisplayItem, sourceFilter: string): boolean {
-  return sourceFilter === "all" || sourceLabel(item) === sourceFilter;
-}
-
-function dateMatches(item: RecallDisplayItem, dateMode: "all" | "custom", startDate: string, endDate: string): boolean {
-  if (dateMode === "all" || (!startDate && !endDate)) {
-    return true;
-  }
-  const raw = itemRawDate(item);
-  if (!raw) {
-    return false;
-  }
-  const itemTime = new Date(raw).getTime();
-  if (Number.isNaN(itemTime)) {
-    return false;
-  }
-  if (startDate && itemTime < startOfDay(startDate)) {
-    return false;
-  }
-  if (endDate && itemTime > endOfDay(endDate)) {
-    return false;
-  }
-  return true;
-}
-
-function sortRecallResults(items: IndexedRecallResult[], sortMode: RecallSortMode): IndexedRecallResult[] {
-  if (sortMode === "relevance") {
-    return items;
-  }
-  return [...items].sort((left, right) => {
-    return itemTimestamp(right) - itemTimestamp(left);
-  });
-}
-
-function itemTimestamp(result: IndexedRecallResult): number {
-  const value = new Date(itemRawDate(resultItem(result.hit))).getTime();
-  return Number.isNaN(value) ? 0 : value;
-}
-
-function itemRawDate(item: RecallDisplayItem): string {
-  if (!item) {
-    return "";
-  }
-  if (isEvidence(item)) {
-    return item.created_at ?? "";
-  }
-  if (isRelationship(item)) {
-    return item.valid_from ?? item.valid_to ?? "";
-  }
-  return "";
-}
-
-function startOfDay(value: string): number {
-  return new Date(`${value}T00:00:00`).getTime();
-}
-
-function endOfDay(value: string): number {
-  return new Date(`${value}T23:59:59.999`).getTime();
-}
-
-function resultIcon(kind: RecallResultKind) {
-  if (kind === "evidence") {
-    return <FileText size={15} aria-hidden="true" />;
-  }
-  if (kind === "community") {
-    return <Network size={15} aria-hidden="true" />;
-  }
-  return <GitBranch size={15} aria-hidden="true" />;
-}
-
-function recallKey(hit: RecallHit, index: number): string {
-  return hit.community?.community_id ?? hit.evidence?.evidence_id ?? hit.relationship?.relationship_id ?? String(index);
-}
-
-function sourceLabel(item: RecallDisplayItem): string {
-  if (!item) {
-    return "unknown";
-  }
-  if (isEvidence(item)) {
-    return item.source || item.source_type || "evidence";
-  }
-  if (isCommunity(item)) {
-    return "semantic community";
-  }
-  return "relationship graph";
-}
-
-function itemDate(item: RecallDisplayItem): string {
-  if (!item) {
-    return "";
-  }
-  const raw = itemRawDate(item);
-  if (!raw) {
-    return "";
-  }
-  return new Date(raw).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-}
-
-function confidencePercent(hit: RecallHit): string {
-  const score = hit.score ?? hit.final_score ?? 0;
-  return `${Math.max(0, Math.min(1, score)) * 100}%`;
-}
-
-function scoreLabel(value: number | undefined): string {
-  if (value === undefined || Number.isNaN(value)) {
-    return "";
-  }
-  return value.toFixed(value >= 1 ? 0 : 3);
-}
-
-function rankLabel(value: number | undefined): string {
-  return value === undefined ? "n/a" : String(value);
-}
-
-function isRelationship(item: RecallDisplayItem): item is RecallRelationship {
-  return Boolean(item && "relationship_id" in item);
-}
-
-function isEvidence(item: RecallDisplayItem): item is RecallEvidenceContext {
-  return Boolean(item && "evidence_id" in item && "context" in item);
-}
-
-function isCommunity(item: RecallDisplayItem): item is RecallCommunity {
-  return Boolean(item && "community_id" in item && "summary" in item && "relationships" in item);
-}
-
-function firstEvidenceLine(value: string): string {
-  return value.split(/\r?\n/).map((line) => line.trim()).find(Boolean)?.slice(0, 120) ?? "";
-}
-
-function readError(error: unknown): string {
-  return error instanceof Error ? error.message : "Request failed.";
-}
-
-function shortId(id: string): string {
-  return id.length <= 8 ? id : id.slice(0, 8);
-}
+function sourceLabel(item: RecallEvidenceContext) { return item.source || item.source_type || "Unknown source"; }

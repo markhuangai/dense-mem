@@ -3,13 +3,6 @@
   "capability": "search",
   "cases": [
     {
-      "id": "repository/TestSearchConvergenceHydratesRelationshipDocumentsAfterClosingDocumentRows",
-      "package": "./internal/knowledge/postgres",
-      "run": "^TestSearchConvergenceHydratesRelationshipDocumentsAfterClosingDocumentRows$",
-      "phase": "precheck",
-      "source": "internal/knowledge/postgres/search_relationship_reconciliation_integration_test.go"
-    },
-    {
       "id": "repository/TestSearchReconciliationCanonicalSourceSetAndSpaceFence",
       "package": "./internal/knowledge/postgres",
       "run": "^TestSearchReconciliationCanonicalSourceSetAndSpaceFence$",
@@ -85,13 +78,6 @@
       "run": "^TestSearchReconciliationRepairWriteRaceSkipsStaleSnapshot$",
       "phase": "precheck",
       "source": "internal/knowledge/postgres/search_reconciliation_integration_test.go"
-    },
-    {
-      "id": "repository/TestSearchReconciliationSelectionFillsRelationshipCapacity",
-      "package": "./internal/knowledge/postgres",
-      "run": "^TestSearchReconciliationSelectionFillsRelationshipCapacity$",
-      "phase": "precheck",
-      "source": "internal/knowledge/postgres/search_relationship_reconciliation_integration_test.go"
     },
     {
       "id": "repository/TestSearchReconciliationSuppressesHistoricalEvidenceAliases",

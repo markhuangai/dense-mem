@@ -17,87 +17,62 @@ inside their owning capability.
 
 ## Native owners
 
-- `internal/ontology/contract` owns versioned organization definitions,
-  assignments, equivalence compatibility, persistent override policy, seeding,
-  and dependency fingerprints. `internal/ontology/postgres` owns active shared
-  source reads and atomic append-only publications, revisions, and rollback.
-  It never writes canonical Knowledge. Its maintenance worker supplies bounded
-  topic-assignment readers through public contracts to the Community projection
-  service. Community owns resumable derived sources, membership, publication,
-  dependency freshness, deterministic summaries, and coverage. Composition
-  injects the readers; Community never imports the private ontology adapter.
-  Projection admission consumes the existing global ontology team-lease capacity
-  independently of organization model tokens; scoped Recall reads are repeatable.
-  Recall consumes independently eligible topics through existing Community ports.
-- `internal/knowledge/contract` and `internal/knowledge/postgres` own
-  authoritative evidence, semantic, relationship, search-document, canonical
-  projection, and reconciliation writes. The contract owns predicate identity,
-  compatibility, support-driven lifecycle and correction/conflict eligibility;
-  PostgreSQL loads locked facts and commits state, history and search effects.
-  Search projection repair uses Knowledge operation ports and one transaction
-  per repair operation.
-- `internal/search` owns query and reconciliation orchestration, provider
-  bounds, readiness, ranking, and error projection. `internal/search/postgres`
-  owns query reads, bootstrap, and index mechanics; it does not persist the
-  canonical projection or reconciliation run state.
-- `internal/storage/postgres` owns shared relationship projection-generation SQL
-  components for Search and Recall. Search retains its all-team readiness
-  selection, and Recall retains its stricter current-generation vector selection.
-  `internal/knowledge/contract` owns the foreground-generation metadata key.
-- `internal/storage/postgres/conflictread` is the private shared owner of
-  Conflict projection, supporter and history reads used by Knowledge and
-  Conflict adapters. It receives each caller's transaction. Conflict's contract
-  owns temporal disposition policy; Knowledge retains canonical conflict writes.
-- `internal/recall` owns evidence and relationship candidate fusion, known-result
-  suppression, ranking, and final selection. Its PostgreSQL adapter supplies
-  bounded candidate batches, hydration, and conflict reads under team RLS.
-- `internal/graph`, `internal/trace`, `internal/recall`, `internal/dream`,
-  `internal/community`, `internal/conflict`, and `internal/memorypack` own
-  their capability APIs and contracts. Their PostgreSQL packages implement
-  private adapters for those APIs.
-- Graph's contract owns query defaults and type normalization; Trace's contract
-  owns input budgets and completeness. Dream retains operator history, derivation
-  readers, and diagnostic retention. Community owns current topic projection
-  publication/read policy and community recall priorities. The adapters retain
-  scoped SQL, fixed expression mapping, top-k selection and transactional reads.
-- `internal/service/access`, `internal/privacy/service`,
-  `internal/settings`, `internal/operations`, `internal/audit`, and
-  `internal/remember/service` own Access, privacy, settings, operational,
-  audit, and Remember policy respectively. The root `internal/service` package
-  is not an application facade.
-- Privacy's contract owns operation hashing and retry/exhaustion decisions.
-  Access's contract owns native directory-page validation, with the shared
-  maximum in `internal/domain`. Operations' contract owns operation-log query
-  and severity normalization and the telemetry query port. Its private
-  `internal/operations/prometheus` adapter owns HTTP transport and decoding;
-  Operations retains snapshot, scope, pricing and partial-availability policy.
-- `internal/http` binds and translates transport contracts. Logger, credential
-  lookup, and verifier implementations are supplied by composition; HTTP does
-  not import observability or crypto implementations directly.
+- `internal/remember/service` stages exact Evidence and processing intent, invokes
+  assessment and required embeddings outside the authoritative transaction, and
+  orchestrates atomic acceptance through Knowledge ports. `internal/assessor`
+  validates complete security, equivalence, and Evidence-conflict decisions.
+- `internal/knowledge/contract` and `internal/knowledge/postgres` own Evidence,
+  occurrences, source revisions, lifecycle, conflicts, search documents, and
+  reconciliation writes. Scoped operation keys and request hashes determine
+  replay. Retired contracts remain non-retryable historical outcomes.
+- `internal/session` owns exact current-event excerpt selection and original
+  Unicode offsets. Prior context is read-only. Session acceptance uses the same
+  Evidence assessment and atomic commit owners as Remember.
+- `internal/ontology/contract` owns organizational topics, direct Evidence
+  memberships, equivalence, manager overrides, dependency fingerprints, and
+  publication policy. Its PostgreSQL adapter implements current shared-source
+  reads, maintenance coordination, and atomic publications. Organization never
+  writes submitted Evidence or establishes factual support.
+- `internal/recall` owns Evidence candidate fusion, ranking, known-result
+  suppression, current topic hints, and direct-topic follow-up. Its adapter
+  scopes selection and counting before hydration and reauthorizes hydrated data.
+- `internal/trace` owns Evidence provenance and lifecycle budgets.
+  `internal/memorypack` owns bounded Evidence export, canonical hashes, and
+  omission reporting. Their adapters implement authorized repeatable reads.
+- `internal/search` owns query and reconciliation orchestration, provider bounds,
+  readiness, ranking, and error projection. Its adapter owns query reads,
+  bootstrap, and index mechanics; Knowledge persists canonical projections.
+- `internal/storage/postgres` owns shared RLS, migrations, locks, and transaction
+  infrastructure. The ordered Evidence-only migration has an explicit inventory
+  and fingerprint check; it does not call providers.
+- Access, Privacy, Settings, Operations, and Audit retain their native application
+  owners. Privacy inventories distinguish legacy upgrade sequencing from the
+  final Evidence-only catalog. Audit and operator diagnostics retain separate
+  exposure contracts. HTTP and MCP bind and translate application contracts;
+  composition supplies private adapters and credential protection.
 
-Every live implementation has one owner. Test fixtures use owner-local
-helpers or public capability ports without exposing a second runtime authority.
+Every live implementation has one owner. Test fixtures use owner-local helpers
+or public capability ports without creating a second runtime authority.
 
 ## Cross-capability contracts
 
-- Conflict's current/history modes, bounded presentation and full voting counts
-  remain distinct. Shared readers do not begin transactions; adapters keep
-  caller-owned RLS, locks and canonical writes. Support/correction mutation
-  requires the owning profile even where same-team reads are visible.
-- Graph preserves service versus adapter type ordering and validation order.
-  Trace keeps authorized-record-derived space. Dream and Community retain
-  distinct eligibility/ranking; SQL sorts before LIMIT, and Recall's explicit
-  zero disables Community context while direct adapter zero selects defaults.
-- Privacy/Access credential retirement remains one transaction. Operation logs
-  preserve diagnostic exposure and sink-failure policy; Audit retains its
-  separate bounded/redacted lineage contract. Owner and credential usage totals
-  remain distinct.
-- Settings, Audit, the Search/Recall pilot, Remember provider orchestration,
-  shared RLS/space/projection/traversal mechanics, browser transports and worker
-  ownership are retained. Evaluation composition consumes the same native
-  contracts, with independent production/evaluation discovery. Private readers
-  have adapter consumers; the Prometheus implementation is supplied by
-  composition rather than imported by application policy.
+- Team, authenticated spaces, ownership, active generations, and current write
+  permissions bound every read and mutation. Read visibility does not grant
+  another owner's lifecycle authority. Private Evidence never enters ontology.
+- Recall's topic filter selects the union of current direct memberships without
+  descendant expansion. Lifecycle, temporal eligibility, freshness, and known
+  exclusions apply before selection and counts. Topic metadata remains current
+  during temporal Evidence reads. Pause preserves eligible publications;
+  disabling organization removes it from Recall.
+- Trace derives its space from the authorized Evidence target. Export retains
+  exact provenance and separately reports content omissions. Neither reconstructs
+  a factual graph or promotes retrieved context into submitted Evidence.
+- Evaluation composition uses the same native Evidence contracts with separate
+  build-profile discovery. Historical experimental captures are data artifacts;
+  they do not register executable graph contracts.
+- Required errors remain visible. Optional Recall degradation is explicit.
+  Provider exchanges use bounded protected stdout capture independently of
+  optional telemetry; public errors and audit remain bounded separately.
 
 ## Database-case registry
 

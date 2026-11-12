@@ -240,7 +240,6 @@ test("shared CI partitions slow gates into independent hosted jobs", async () =>
     "Run repository lint",
     "Run architecture conformance",
     "Run MCP proxy tests",
-    "Run scheduled-dreaming timing test",
     "Run image release policy tests",
     "Run prerelease version tests",
     "Run Go vulnerability scan policy tests",

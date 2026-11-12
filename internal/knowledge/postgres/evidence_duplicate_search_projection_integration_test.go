@@ -17,7 +17,7 @@ func TestRememberDuplicateExactReuseRequiresCurrentSearchProjection(t *testing.T
 	insertSearchTestContract(t, adminDB, rls, "duplicate-exact-search-fence", 2, "exact", "")
 	teamID := createLedgerTeam(t, adminDB, rls, "duplicate-exact-search-fence-team")
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "duplicate-exact-search-fence-owner")
-	repo := NewStore(appDB, rls, ConflictRuntimeConfig{})
+	repo := NewStore(appDB, rls)
 	content := "exact evidence with a current search projection"
 	canonical := duplicateRememberInput(teamID, ownerID, "duplicate-exact-search-fence-canonical", content, false)
 	commitDuplicateFixture(t, ctx, repo, canonical)

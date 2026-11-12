@@ -5,17 +5,17 @@ import (
 	"testing"
 )
 
-func TestEvaluationQueryUsesBoundFiltersForValueStatus(t *testing.T) {
+func TestEvaluationQueryUsesBoundFiltersForEvidenceStatus(t *testing.T) {
 	query, args, err := evaluationQuery(EvaluationListInput{
 		TeamID: "00000000-0000-0000-0000-000000000101",
-		Type:   "value",
+		Type:   "evidence",
 		Status: "active",
 	}, 11, 7)
 	if err != nil {
 		t.Fatalf("evaluationQuery: %v", err)
 	}
 	if !strings.Contains(query, "AND status = ?") {
-		t.Fatalf("value query did not include status filter:\n%s", query)
+		t.Fatalf("Evidence query did not include status filter:\n%s", query)
 	}
 	if len(args) != 4 {
 		t.Fatalf("args = %#v; want team, status, limit, offset", args)
@@ -28,12 +28,12 @@ func TestEvaluationQueryUsesBoundFiltersForValueStatus(t *testing.T) {
 func TestEvaluationInputNormalization(t *testing.T) {
 	input := normalizeEvaluationListInput(EvaluationListInput{
 		TeamID: " 00000000-0000-0000-0000-000000000101 ",
-		Type:   " relationship ",
+		Type:   " evidence ",
 		Limit:  1000,
 		Status: " Active ",
 		Cursor: " 10 ",
 	})
-	if input.Type != "relationship" || input.Status != "active" || input.Cursor != "10" || input.Limit != 500 {
+	if input.Type != "evidence" || input.Status != "active" || input.Cursor != "10" || input.Limit != 500 {
 		t.Fatalf("normalized input = %+v", input)
 	}
 	if offset := evaluationCursorOffset("-1"); offset != 0 {

@@ -25,7 +25,6 @@ import (
 // assessment, one embedding batch, and one terminal repository transaction.
 type rememberSynchronousProcessor struct {
 	ledger             rememberSynchronousLedger
-	catalog            rememberapp.SubmissionAssessmentCatalog
 	provider           assessor.Provider
 	decisions          modelprovider.DecisionProvider
 	decisionSettings   modelprovider.DecisionSettings
@@ -48,7 +47,6 @@ type rememberSynchronousLedger = remembercontract.Persistence
 // needed for one request-owned Remember execution.
 type ProcessorDependencies struct {
 	Ledger              Persistence
-	Catalog             rememberapp.SubmissionAssessmentCatalog
 	Assessor            assessor.Provider
 	Decisions           modelprovider.DecisionProvider
 	DecisionSettings    modelprovider.DecisionSettings
@@ -75,7 +73,7 @@ func NewSynchronousProcessor(deps ProcessorDependencies) *rememberSynchronousPro
 		staleInput = rememberapp.IsRememberStaleInputError
 	}
 	return &rememberSynchronousProcessor{
-		ledger: deps.Ledger, catalog: deps.Catalog, provider: deps.Assessor, embeddingExecutor: deps.EmbeddingExecutor,
+		ledger: deps.Ledger, provider: deps.Assessor, embeddingExecutor: deps.EmbeddingExecutor,
 		limits: deps.Limits, metrics: deps.Metrics, logger: deps.Logger, protector: deps.DiagnosticProtector,
 		isStaleInput: staleInput, commitFailureStage: deps.CommitFailureStage,
 		decisions: deps.Decisions, decisionSettings: deps.DecisionSettings,
@@ -218,12 +216,12 @@ func (p *rememberSynchronousProcessor) processRememberUnlocked(
 		SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration,
 	})
 	if lookupErr == nil && attempt != nil {
-		if !rememberAttemptMatchesRequest(attempt, input) {
-			processErr := rememberConflictProcessError(input, ingestID, rememberapp.ErrRememberConflict)
+		if !domain.ContractVersionCompatible(strings.TrimSpace(attempt.ContractVersion)) {
+			processErr := p.retiredRememberContract(ctx, input, attempt)
 			p.recordRememberInvocation(ctx, input, ingestID, "conflict", attempt.AttemptID, "idempotency", processErr, processErr.Status, exchangeRecorder.Snapshot())
 			return nil, processErr
 		}
-		if version := strings.TrimSpace(attempt.ContractVersion); version != "" && !domain.ContractVersionCompatible(version) {
+		if !rememberAttemptMatchesRequest(attempt, input) {
 			processErr := rememberConflictProcessError(input, ingestID, rememberapp.ErrRememberConflict)
 			p.recordRememberInvocation(ctx, input, ingestID, "conflict", attempt.AttemptID, "idempotency", processErr, processErr.Status, exchangeRecorder.Snapshot())
 			return nil, processErr
@@ -316,7 +314,7 @@ func (p *rememberSynchronousProcessor) processRememberUnlocked(
 		return nil, err
 	}
 	if err != nil {
-		return fail(normalizeRememberCommitFailure(err, len(commitInput.Commit.PredicateRegistrations) > 0), "commit")
+		return fail(normalizeRememberCommitFailure(err), "commit")
 	}
 	if committed == nil {
 		return fail(errors.New("remember processor: nil Remember commit result"), "commit")
@@ -376,10 +374,6 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 	}
 	code := rememberFailureCode(phase, failure)
 	reasonCode, details := rememberapp.RememberFailureDetails(failure, phase)
-	if code == rememberapp.SubmissionErrorCommitConflict && errors.Is(failure, repository.ErrSubmissionPredicateRegistrationHeld) {
-		reasonCode = "predicate_catalog_changed"
-		details = map[string]any{"component": "remember.predicate_catalog", "server_owned": true}
-	}
 	if reasonCode == "" {
 		reasonCode = "remember_" + strings.TrimSpace(phase) + "_failed"
 		details = map[string]any{"component": "remember." + strings.TrimSpace(phase), "server_owned": true}
@@ -388,13 +382,13 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 	correlationID := rememberProcessCorrelationID(input.Metadata)
 	processingState := "failed"
 	notStoredReason := rememberapp.TerminalNotStoredReasonForError(rememberapp.TerminalErrorCode(code))
-	evidence, relationshipResults := rememberFailureResults(input, notStoredReason)
+	evidence := rememberFailureResults(input, notStoredReason)
 	status := &rememberapp.SubmissionStatusResult{
 		SpaceKind:       input.SpaceKind,
 		ContractVersion: domain.ContractVersion, SubmissionID: attemptID, SubmissionKind: "remember",
 		ProcessingState: processingState, SearchState: "not_required", CorrelationID: correlationID,
-		Evidence: evidence, RelationshipResults: relationshipResults,
-		Errors: []rememberapp.SubmissionStatusError{publicError},
+		Evidence: evidence,
+		Errors:   []rememberapp.SubmissionStatusError{publicError},
 	}
 	publicResult, terminalResult := terminalRememberFailureResult(status)
 	var exchanges []modelprovider.ProviderExchange
@@ -499,10 +493,7 @@ func normalizeRememberFailureWithClassifier(failure error, isStaleInput func(err
 	return failure
 }
 
-func normalizeRememberCommitFailure(failure error, predicateRegistrationsValidated bool) error {
-	if predicateRegistrationsValidated && errors.Is(failure, repository.ErrSubmissionPredicateRegistrationHeld) {
-		return fmt.Errorf("%w: predicate catalog changed before commit: %w", rememberapp.ErrRememberCommitConflict, failure)
-	}
+func normalizeRememberCommitFailure(failure error) error {
 	if errors.Is(failure, repository.ErrSearchStaleVersion) || errors.Is(failure, repository.ErrSearchContractMismatch) {
 		return fmt.Errorf("%w: search state changed before commit", rememberapp.ErrRememberCommitConflict)
 	}
@@ -535,13 +526,13 @@ func rememberFailureProcessErrorWithStatus(
 	reasonCode string,
 	component string,
 ) *rememberapp.RememberProcessError {
-	evidence, relationshipResults := rememberFailureResults(input, "internal_failure")
+	evidence := rememberFailureResults(input, "internal_failure")
 	status := &rememberapp.SubmissionStatusResult{
 		SpaceKind:       input.SpaceKind,
 		ContractVersion: domain.ContractVersion, SubmissionID: submissionID, SubmissionKind: "remember",
 		ProcessingState: "failed", SearchState: "not_required", CorrelationID: rememberProcessCorrelationID(input.Metadata),
-		Evidence: evidence, RelationshipResults: relationshipResults,
-		Errors: []rememberapp.SubmissionStatusError{rememberapp.TerminalStatusErrorWithDetails(code, reasonCode, map[string]any{"component": component, "server_owned": true})},
+		Evidence: evidence,
+		Errors:   []rememberapp.SubmissionStatusError{rememberapp.TerminalStatusErrorWithDetails(code, reasonCode, map[string]any{"component": component, "server_owned": true})},
 	}
 	return &rememberapp.RememberProcessError{Status: status, Err: rememberFailurePersistenceError(cause)}
 }
@@ -659,8 +650,6 @@ func rememberCommitOperationalLogError(err error, stageFn func(error) string) er
 
 func rememberEmbeddingPlanFailureMetadata(err error) (string, string) {
 	switch {
-	case errors.Is(err, rememberapp.ErrRememberCommitConflict) && errors.Is(err, repository.ErrSubmissionPredicateRegistrationHeld):
-		return "fence_conflict", "predicate_catalog_changed"
 	case errors.Is(err, repository.ErrSearchContractMismatch):
 		return "configuration", "search_contract_mismatch"
 	case errors.Is(err, repository.ErrInlineEmbeddingPlanMismatch):
@@ -678,8 +667,6 @@ func rememberEmbeddingPlanFailureMetadata(err error) (string, string) {
 
 func rememberCommitFailureMetadata(err error) (string, string) {
 	switch {
-	case errors.Is(err, rememberapp.ErrRememberCommitConflict) && errors.Is(err, repository.ErrSubmissionPredicateRegistrationHeld):
-		return "fence_conflict", "predicate_catalog_changed"
 	case errors.Is(err, rememberapp.ErrRememberCommitConflict):
 		return "fence_conflict", "search_state_changed"
 	case errors.Is(err, repository.ErrInlineEmbeddingPlanMismatch):
@@ -718,8 +705,6 @@ func rememberFailureCode(phase string, err error) rememberapp.SubmissionErrorCod
 	var planFailure *rememberEmbeddingPlanFailure
 	if errors.As(err, &planFailure) {
 		switch {
-		case errors.Is(planFailure.cause, rememberapp.ErrRememberCommitConflict) && errors.Is(planFailure.cause, repository.ErrSubmissionPredicateRegistrationHeld):
-			return rememberapp.SubmissionErrorCommitConflict
 		case errors.Is(planFailure.cause, repository.ErrInlineEmbeddingPlanTooLarge):
 			return rememberapp.SubmissionErrorInputBudgetExceeded
 		case errors.Is(planFailure.cause, repository.ErrSearchContractMismatch):
@@ -796,9 +781,6 @@ func rememberAttemptStatus(attempt *repository.RememberAttempt) (*rememberapp.Su
 	if replay.Evidence == nil {
 		replay.Evidence = []rememberapp.SubmissionEvidenceStatus{}
 	}
-	if replay.RelationshipResults == nil {
-		replay.RelationshipResults = []rememberapp.SubmissionRelationshipResult{}
-	}
 	if replay.Errors == nil {
 		replay.Errors = []rememberapp.SubmissionStatusError{}
 	}
@@ -871,7 +853,6 @@ func rememberAssessmentSnapshot(
 	}
 	return rememberapp.RememberAssessmentSnapshot{
 		Scope:                  rememberapp.RememberAssessmentScope{TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IngestID: ingestID, SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration},
-		Proposal:               input.Proposal,
 		Evidence:               evidence,
 		Items:                  items,
 		ExactDuplicateEvidence: make(map[int]repository.RememberDuplicateResolution),

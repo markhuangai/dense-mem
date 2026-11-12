@@ -1,12 +1,7 @@
 package http
 
 import (
-	nethttp "net/http"
-
-	communityapp "github.com/markhuangai/dense-mem/internal/community/service"
 	"github.com/markhuangai/dense-mem/internal/conflict/evidence"
-	"github.com/markhuangai/dense-mem/internal/conflict/queue"
-	"github.com/markhuangai/dense-mem/internal/dream"
 	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
 	"github.com/markhuangai/dense-mem/internal/http/handler"
 	"github.com/markhuangai/dense-mem/internal/ontology"
@@ -16,6 +11,7 @@ import (
 	searchapp "github.com/markhuangai/dense-mem/internal/search"
 	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	settings "github.com/markhuangai/dense-mem/internal/settings"
+	nethttp "net/http"
 )
 
 type ControlPortalTelemetry struct {
@@ -32,11 +28,7 @@ type ControlPortalTelemetry struct {
 	Decisions           settings.DecisionConfigService
 	Logs                operations.OperationLogReader
 	RecallFeedback      recall.RecallFeedbackEventReader
-	Dreams              dream.ControlService
-	DreamDiagnostics    dream.DiagnosticService
-	Communities         communityapp.Service
 	Ontology            *ontology.MaintenanceService
-	ConflictQueue       conflictqueue.Reader
 	EvidenceConflicts   evidenceconflict.Reader
 	Convergence         searchapp.SearchConvergenceReader
 	RememberAttempts    rememberapp.RememberAttemptDiagnosticsReader
@@ -54,11 +46,7 @@ type controlPortalHandler struct {
 	telemetry           operations.TelemetryReader
 	operationLogs       operations.OperationLogReader
 	recallFeedback      recall.RecallFeedbackEventReader
-	dreams              dream.ControlService
-	dreamDiagnostics    dream.DiagnosticService
-	communities         communityapp.Service
 	ontology            *ontology.MaintenanceService
-	conflictQueue       conflictqueue.Reader
 	evidenceConflicts   evidenceconflict.Reader
 	convergence         searchapp.SearchConvergenceReader
 	rememberAttempts    rememberapp.RememberAttemptDiagnosticsReader

@@ -2,7 +2,14 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"github.com/google/uuid"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
+	"github.com/markhuangai/dense-mem/internal/observability"
+	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
+	"log/slog"
 	"sort"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -82,6 +89,9 @@ func (r *Store) readOrganization(ctx context.Context, tx *gorm.DB, input RecallE
 func (r *Store) HydrateOrganizedEvidence(ctx context.Context, input RecallEvidenceInput, contract *ActiveSearchContract, ids []string) (*recallcontract.EvidenceHydration, error) {
 	result := &recallcontract.EvidenceHydration{}
 	err := r.withRecallTx(ctx, input.TeamID, input.OrganizationEnabled, func(tx *gorm.DB) error {
+		if err := r.resolveTopicFilter(ctx, tx, &input); err != nil {
+			return err
+		}
 		requested := domain.NormalizeReadIDList(append(append([]string(nil), ids...), input.KnownEvidenceIDs...))
 		organization, err := r.readOrganization(ctx, tx, input, requested, nil, recallcontract.MaxRecallCandidateCount)
 		if err != nil {
@@ -131,30 +141,11 @@ func organizationSourceIDs(sources []ontology.SourceHandle, kind ontology.Source
 	return domain.NormalizeReadIDList(ids)
 }
 
-func hasOrganizationGraphSources(sources []ontology.SourceHandle) bool {
-	for _, source := range sources {
-		if source.Kind == ontology.EntitySource || source.Kind == ontology.PredicateSource || source.Kind == ontology.RelationshipSource {
-			return true
-		}
-	}
-	return false
-}
-
 func (r *Store) organizationEvidenceCandidates(ctx context.Context, tx *gorm.DB, input RecallEvidenceInput, contract *ActiveSearchContract, organization ontology.RecallOrganization, limit int) ([]SearchHit, error) {
 	if len(organization.Sources) == 0 {
 		return nil, nil
 	}
-	expanded := input
-	expanded.ExpandFromEntityIDs = organizationSourceIDs(organization.Sources, ontology.EntitySource)
-	expanded.OrganizationSources = organization.Sources
 	var hits []SearchHit
-	if hasOrganizationGraphSources(organization.Sources) {
-		var err error
-		hits, err = searchRecallEntityExpansion(ctx, tx, expanded, contract, limit)
-		if err != nil {
-			return nil, err
-		}
-	}
 	ids := organizationSourceIDs(organization.Sources, ontology.EvidenceSource)
 	states := map[string]string{}
 	for _, hit := range hits {
@@ -173,36 +164,188 @@ func (r *Store) organizationEvidenceCandidates(ctx context.Context, tx *gorm.DB,
 	return mergeRecallExpansion(nil, additional, limit), nil
 }
 
-func (r *Store) organizationRelationshipCandidates(ctx context.Context, tx *gorm.DB, input RecallRelationshipsInput, contract *ActiveSearchContract, organization ontology.RecallOrganization, limit int) ([]SearchHit, error) {
-	if len(organization.Sources) == 0 {
-		return nil, nil
+func (r *Store) resolveTopicFilter(ctx context.Context, tx *gorm.DB, input *RecallEvidenceInput) (err error) {
+	if input.TopicIDs == nil {
+		return nil
 	}
-	expanded := input
-	expanded.ExpandFromEntityIDs = organizationSourceIDs(organization.Sources, ontology.EntitySource)
-	expanded.OrganizationSources = organization.Sources
-	var hits []SearchHit
-	if hasOrganizationGraphSources(organization.Sources) {
-		var err error
-		hits, err = searchRecallRelationshipEntityExpansion(ctx, tx, expanded, contract, limit)
-		if err != nil {
-			return nil, err
+	var selection ontology.TopicReadResult
+	defer func() {
+		if r.topicLogger == nil {
+			return
 		}
+		captureID := uuid.NewString()
+		attrs := []observability.LogAttr{
+			observability.String("team_id", input.TeamID), observability.String("space_id", input.SpaceID),
+			observability.String("diagnostic_capture_id", captureID),
+			{Key: "requested_ids", Value: input.TopicIDs}, {Key: "generation", Value: selection.Generation},
+			{Key: "topic_count", Value: len(selection.Topics)},
+			{Key: "known_exclusions", Value: input.KnownEvidenceIDs}, {Key: "organization_enabled", Value: input.OrganizationEnabled},
+		}
+		if root, ok := r.topicLogger.(interface{ ContextSlog() *slog.Logger }); ok {
+			body, encodeErr := json.Marshal(selection)
+			if encodeErr != nil {
+				r.topicLogger.Warn("diagnostic_body_unavailable", append(attrs, observability.String("reason_code", "diagnostic_encoding_failed"))...)
+			} else {
+				observability.LogDiagnosticBody(ctx, root.ContextSlog(), r.topicProtector, "recall_topic_filter_payload", body, modelprovider.MaxProviderDiagnosticBodyBytes,
+					slog.String("team_id", input.TeamID), slog.String("space_id", input.SpaceID), slog.String("diagnostic_capture_id", captureID))
+			}
+		}
+		level, event := slog.LevelDebug, "recall_topic_selection"
+		if err != nil {
+			level, event = slog.LevelWarn, "recall_topic_degraded"
+			attrs = append(attrs, observability.String("reason", err.Error()), observability.String("outcome", "unavailable"))
+		} else {
+			attrs = append(attrs, observability.String("outcome", "filter_selected"))
+		}
+		if logger, ok := r.topicLogger.(observability.ContextLogProvider); ok {
+			logger.LogContext(ctx, level, event, attrs...)
+		} else if err != nil {
+			r.topicLogger.Warn(event, attrs...)
+		} else {
+			r.topicLogger.Debug(event, attrs...)
+		}
+	}()
+	if !input.OrganizationEnabled || r.topics == nil || (input.SpaceKind != "" && input.SpaceKind != string(domain.MemorySpaceTeamShared)) {
+		return recallcontract.ErrTopicUnavailable
 	}
-	ids := organizationSourceIDs(organization.Sources, ontology.RelationshipSource)
-	for _, hit := range hits {
-		ids = append(ids, hit.SourceID)
+	selection, err = r.topics(ctx, tx, input.TeamID, ontology.TopicReadInput{SpaceID: input.SpaceID, TopicIDs: input.TopicIDs})
+	if err != nil {
+		return fmt.Errorf("%w: %w", recallcontract.ErrTopicUnavailable, err)
 	}
-	if len(ids) == 0 {
-		return nil, nil
+	if len(selection.Topics) != len(input.TopicIDs) {
+		return recallcontract.ErrTopicUnavailable
 	}
-	hydrated, err := hydrateRecallRelationships(ctx, tx, input, contract, domain.NormalizeReadIDList(ids))
+	input.TopicEvidenceIDs = []string{}
+	for _, topic := range selection.Topics {
+		input.TopicEvidenceIDs = append(input.TopicEvidenceIDs, topic.EvidenceIDs...)
+	}
+	input.TopicEvidenceIDs = domain.NormalizeReadIDList(input.TopicEvidenceIDs)
+	return nil
+}
+
+func (r *Store) topicEvidenceCandidates(ctx context.Context, tx *gorm.DB, input RecallEvidenceInput, contract *ActiveSearchContract, limit int) ([]SearchHit, error) {
+	filter, args := recallEvidenceEligibility(input, "fragment", true)
+	parameters := []any{input.TeamID, contract.EmbeddingContractID, recallEventAt(input.ValidAt, input.KnownAt)}
+	parameters = append(parameters, args...)
+	parameters = append(parameters, limit)
+	rows, err := tx.WithContext(ctx).Raw(`SELECT document.team_id::text,document.search_document_id::text,
+        document.source_kind,document.source_id::text,document.source_version,document.document_version,
+        document.embedding_contract_id::text,document.search_state,0::double precision,0::double precision
+        FROM search_documents AS document JOIN evidence_fragments AS fragment
+          ON fragment.team_id=document.team_id AND fragment.fragment_id=document.source_id
+        WHERE document.team_id=?::uuid AND document.source_kind='evidence' AND document.embedding_contract_id=?::uuid
+          AND (document.search_state IN ('pending','current','failed') OR (?::timestamptz IS NOT NULL AND document.search_state='not_required'))
+        `+filter+` ORDER BY document.source_id LIMIT ?`, parameters...).Rows()
 	if err != nil {
 		return nil, err
 	}
-	additional := []SearchHit{}
-	for id, hit := range hydrated {
-		additional = append(additional, SearchHit{TeamID: input.TeamID, SourceKind: "relationship", SourceID: id, SearchState: hit.SearchState})
+	defer rows.Close()
+	return scanSearchHits(rows)
+}
+
+func (r *Store) RelatedEvidenceTopics(ctx context.Context, input RecallEvidenceInput, returned []string, limit int) (recallcontract.RelatedTopicResult, error) {
+	result := recallcontract.RelatedTopicResult{Topics: []recallcontract.RelatedTopic{}, Diagnostics: map[string]any{}}
+	if limit < 0 || limit > 10 {
+		return result, recallcontract.ErrTopicUnavailable
 	}
-	sort.Slice(additional, func(i, j int) bool { return additional[i].SourceID < additional[j].SourceID })
-	return mergeRecallExpansion(nil, additional, limit), nil
+	if !input.OrganizationEnabled || r.topics == nil {
+		return result, recallcontract.ErrTopicUnavailable
+	}
+	err := r.withRecallTx(ctx, input.TeamID, true, func(tx *gorm.DB) error {
+		if err := r.resolveTopicFilter(ctx, tx, &input); err != nil {
+			return err
+		}
+		var err error
+		input.KnownEvidenceIDs, err = storagepostgres.ResolveMemoryHandlesTx(ctx, tx, input.TeamID, "evidence_fragments", input.KnownEvidenceIDs, input.SpaceID)
+		if err != nil {
+			return err
+		}
+		selection, err := r.topics(ctx, tx, input.TeamID, ontology.TopicReadInput{SpaceID: input.SpaceID, EvidenceIDs: returned})
+		result.Diagnostics = map[string]any{"space_id": selection.SpaceID, "generation": selection.Generation, "rejected": selection.Rejected, "memberships": selection.Topics}
+		if err != nil {
+			return err
+		}
+		ids := []string{}
+		for _, topic := range selection.Topics {
+			ids = append(ids, topic.EvidenceIDs...)
+		}
+		ids = domain.NormalizeReadIDList(ids)
+		if len(ids) > ontology.MaxDependencyRecords {
+			return ontology.ErrContextBound
+		}
+		contract, err := r.GetActiveSearchContract(ctx)
+		if err != nil {
+			return err
+		}
+		countInput := input
+		countInput.TopicIDs, countInput.TopicEvidenceIDs = nil, nil
+		eligible, err := hydrateRecallEvidence(ctx, tx, countInput, contract, ids)
+		if err != nil {
+			return err
+		}
+		known, seen := map[string]bool{}, map[string]bool{}
+		for _, id := range input.KnownEvidenceIDs {
+			known[id] = true
+		}
+		for _, id := range returned {
+			seen[id] = true
+		}
+		for _, topic := range selection.Topics {
+			counted := map[string]bool{}
+			hint := recallcontract.RelatedTopic{TopicID: topic.ID, Name: topic.Name, Description: topic.Description}
+			for _, id := range topic.EvidenceIDs {
+				if counted[id] || known[id] {
+					continue
+				}
+				counted[id] = true
+				if _, ok := eligible[id]; !ok {
+					continue
+				}
+				hint.EligibleEvidenceCount++
+				if seen[id] {
+					hint.MatchingResultCount++
+				} else {
+					hint.AdditionalEvidenceCount++
+				}
+			}
+			if hint.MatchingResultCount > 0 {
+				result.Topics = append(result.Topics, hint)
+			}
+		}
+		sort.Slice(result.Topics, func(i, j int) bool {
+			left, right := result.Topics[i], result.Topics[j]
+			if left.MatchingResultCount != right.MatchingResultCount {
+				return left.MatchingResultCount > right.MatchingResultCount
+			}
+			if left.AdditionalEvidenceCount != right.AdditionalEvidenceCount {
+				return left.AdditionalEvidenceCount > right.AdditionalEvidenceCount
+			}
+			return left.TopicID < right.TopicID
+		})
+		counts := map[string]map[string]int{}
+		for _, topic := range result.Topics {
+			counts[topic.TopicID] = map[string]int{"eligible_evidence_count": topic.EligibleEvidenceCount, "matching_result_count": topic.MatchingResultCount, "additional_evidence_count": topic.AdditionalEvidenceCount}
+		}
+		result.Diagnostics["counts"] = counts
+		result.Truncated = len(result.Topics) > limit
+		if result.Truncated {
+			result.Topics = result.Topics[:limit]
+		}
+		for index := range result.Topics {
+			result.Topics[index].Rank = index + 1
+		}
+		result.Diagnostics["eligible_ids"] = sortedRecallEvidenceIDs(eligible)
+		result.Diagnostics["known_exclusions"] = input.KnownEvidenceIDs
+		return nil
+	})
+	return result, err
+}
+
+func sortedRecallEvidenceIDs(hits map[string]RecallEvidenceHit) []string {
+	ids := make([]string, 0, len(hits))
+	for id := range hits {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
 }

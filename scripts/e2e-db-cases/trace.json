@@ -3,53 +3,18 @@
   "capability": "trace",
   "cases": [
     {
-      "id": "repository/TestSemanticTraceAndGraphIsolatePrivateSpacesWithinAndAcrossTeams",
-      "package": "./internal/graph/postgres",
-      "run": "^TestSemanticTraceAndGraphIsolatePrivateSpacesWithinAndAcrossTeams$",
-      "phase": "precheck",
-      "source": "internal/graph/postgres/semantic_trace_graph_integration_test.go"
-    },
-    {
-      "id": "repository/TestSemanticTraceRelationshipHydratesLineageAndBoundedGraph",
-      "package": "./internal/graph/postgres",
-      "run": "^TestSemanticTraceRelationshipHydratesLineageAndBoundedGraph$",
-      "phase": "precheck",
-      "source": "internal/graph/postgres/semantic_trace_graph_integration_test.go"
-    },
-    {
-      "id": "repository/TestTraceRelationshipMarksLifecycleEventLimitAsTruncated",
-      "package": "./internal/knowledge/postgres",
-      "run": "^TestTraceRelationshipMarksLifecycleEventLimitAsTruncated$",
-      "phase": "precheck",
-      "source": "internal/knowledge/postgres/evidence_lifecycle_repository_integration_test.go"
-    },
-    {
-      "id": "repository/TestTraceVerificationPreservesNullableLegacyVerdicts",
+      "id": "trace/TestEvidenceOnlyPostgresMemoryPackMaximumOmissionCardinality",
       "package": "./internal/trace/postgres",
-      "run": "^TestTraceVerificationPreservesNullableLegacyVerdicts$",
+      "run": "^TestEvidenceOnlyPostgresMemoryPackMaximumOmissionCardinality$",
       "phase": "precheck",
-      "source": "internal/trace/postgres/semantic_trace_repository_integration_test.go"
+      "source": "internal/trace/postgres/evidence_only_integration_test.go"
     },
     {
-      "id": "repository/TestTraceOwnershipBoundsAndCompleteness",
+      "id": "trace/TestEvidenceOnlyPostgresTraceBudgetsAndMemoryPackCanonicalProvenance",
       "package": "./internal/trace/postgres",
-      "run": "^TestTraceOwnershipBoundsAndCompleteness$",
+      "run": "^TestEvidenceOnlyPostgresTraceBudgetsAndMemoryPackCanonicalProvenance$",
       "phase": "precheck",
-      "source": "internal/trace/postgres/trace_ownership_integration_test.go"
-    },
-    {
-      "id": "repository/TestTraceOwnershipServiceAndAdapterEquivalent",
-      "package": "./internal/trace/postgres",
-      "run": "^TestTraceOwnershipServiceAndAdapterEquivalent$",
-      "phase": "precheck",
-      "source": "internal/trace/postgres/trace_ownership_integration_test.go"
-    },
-    {
-      "id": "repository/TestTraceOwnershipLegacyFragmentRuneBounds",
-      "package": "./internal/trace/postgres",
-      "run": "^TestTraceOwnershipLegacyFragmentRuneBounds$",
-      "phase": "precheck",
-      "source": "internal/trace/postgres/trace_ownership_integration_test.go"
+      "source": "internal/trace/postgres/evidence_only_integration_test.go"
     }
   ]
 }

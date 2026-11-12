@@ -95,22 +95,6 @@ type EvidenceFragment struct {
 	SupersededEvidenceIDs []string
 }
 
-type SubmissionRelationshipSplit struct {
-	SplitIndex          int    `json:"split_index"`
-	RelationshipID      string `json:"relationship_id"`
-	RelationshipVersion int    `json:"relationship_version"`
-	Status              string `json:"status"`
-}
-
-type SubmissionRelationshipResult struct {
-	RelationshipRef string                        `json:"ref"`
-	Disposition     string                        `json:"disposition"`
-	Reason          string                        `json:"reason,omitempty"`
-	Message         string                        `json:"message,omitempty"`
-	Remediation     string                        `json:"remediation,omitempty"`
-	Splits          []SubmissionRelationshipSplit `json:"splits"`
-}
-
 // SecurityRejectionAuditor receives only bounded scanner metadata. Evidence,
 // decoded content, and provider payloads are intentionally absent.
 type SecurityRejectionAuditor interface {
@@ -140,20 +124,9 @@ type SecurityRejectionAuditSignal struct {
 	SpanEnd       int
 }
 
-type SubmissionAssessmentCatalog interface {
-	ListSubmissionAssessmentEntityCatalog(context.Context, knowledgecontract.SubmissionAssessmentEntityCatalogInput) (knowledgecontract.SubmissionAssessmentEntityCatalogResult, error)
-	ResolveSemanticReviewPredicateCandidates(context.Context, knowledgecontract.SemanticReviewPredicateResolutionInput) ([]knowledgecontract.SemanticReviewPredicateResolution, error)
-	ListSemanticAssessmentPredicateOptions(context.Context, knowledgecontract.SemanticAssessmentPredicateOptionsInput) ([]knowledgecontract.SemanticReviewPredicateCandidate, error)
-	ValidateSubmissionPredicateRegistrations(context.Context, knowledgecontract.SubmissionPredicateRegistrationValidationInput) ([]knowledgecontract.SubmissionPredicateRegistrationIssue, error)
-}
-
-type SubmissionAssessmentKnownEvidenceCatalog interface {
-	ListSubmissionAssessmentKnownEvidence(context.Context, knowledgecontract.SubmissionAssessmentKnownEvidenceInput) (knowledgecontract.SubmissionAssessmentKnownEvidenceResult, error)
-}
-
 type Persistence interface {
-	ResolveMemoryHandles(context.Context, string, string, string, map[string][]string) (map[string]map[string]string, error)
 	LoadRememberAttempt(context.Context, knowledgecontract.RememberAttemptLookupInput) (*knowledgecontract.RememberAttempt, error)
+	ResolveMemoryHandles(context.Context, string, string, string, map[string][]string) (map[string]map[string]string, error)
 	PlanRememberDuplicateEmbeddings(context.Context, knowledgecontract.RememberDuplicateCandidateInput) (*knowledgecontract.RememberDuplicateEmbeddingPlan, error)
 	ResolveRememberDuplicateCandidates(context.Context, knowledgecontract.RememberDuplicateCandidateInput, []knowledgecontract.InlineEmbeddingResult) (*knowledgecontract.RememberDuplicateResolutionResult, error)
 	PlanRememberEmbeddings(context.Context, knowledgecontract.SynchronousRememberCommitInput) (*knowledgecontract.InlineEmbeddingPlan, error)

@@ -36,27 +36,23 @@ func TestEvaluationRunnerLoaderAndInputBoundaryErrors(t *testing.T) {
 			if err := writeJSONFile(path, copyManifest); err != nil {
 				t.Fatal(err)
 			}
-			if _, _, _, _, _, _, _, err := loadRunInputs(path, filepath.Join(root, "suite.jsonl")); err == nil {
+			if _, _, _, _, _, _, err := loadRunInputs(path, filepath.Join(root, "suite.jsonl")); err == nil {
 				t.Fatal("missing loader input was accepted")
 			}
 		})
 	}
 
-	loaded, corpus, cases, qrels, dreams, suite, seedHash, err := loadRunInputs(manifestPath, filepath.Join(root, "suite.jsonl"))
+	loaded, corpus, cases, qrels, suite, seedHash, err := loadRunInputs(manifestPath, filepath.Join(root, "suite.jsonl"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := validateRunInputs(manifestPath, loaded, corpus, cases, append(qrels, QRel{CaseID: "missing-qrel"}), dreams, suite, seedHash); err == nil || !strings.Contains(err.Error(), "missing from seed cases") {
+	if err := validateRunInputs(manifestPath, loaded, corpus, cases, append(qrels, QRel{CaseID: "missing-qrel"}), suite, seedHash); err == nil || !strings.Contains(err.Error(), "missing from seed cases") {
 		t.Fatal("qrel case missing from cases was accepted")
 	}
 	missingSuiteQrel := append([]SuiteCase(nil), suite...)
 	missingSuiteQrel[0].CaseID = "missing-qrel"
-	if err := validateRunInputs(manifestPath, loaded, corpus, cases, qrels, dreams, missingSuiteQrel, seedHash); err == nil || !strings.Contains(err.Error(), "missing from seed cases") {
+	if err := validateRunInputs(manifestPath, loaded, corpus, cases, qrels, missingSuiteQrel, seedHash); err == nil || !strings.Contains(err.Error(), "missing from seed cases") {
 		t.Fatal("suite case missing from cases was accepted")
-	}
-	expected := []ExpectedDream{{SourceDocID: "dream", CaseID: "missing-case", SourceRefs: []Ref{{SourceDocID: corpus[0].SourceDocID}, {SourceDocID: corpus[0].SourceDocID}}}}
-	if err := validateRunInputs(manifestPath, loaded, corpus, cases, qrels, expected, suite, seedHash); err == nil || !strings.Contains(err.Error(), "missing case") {
-		t.Fatal("expected dream missing case was accepted")
 	}
 
 	counts := &SeedManifest{Counts: map[string]int{"qrels": 2}}

@@ -2,70 +2,13 @@ package postgres
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"fmt"
 	"strings"
 
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 )
-
-func loadInlineEmbeddingEntityNames(ctx context.Context, tx *gorm.DB, teamID string, resolutions []SubmissionAssessmentEntityResolutionInput) (map[string]string, error) {
-	names := make(map[string]string, len(resolutions))
-	for _, entry := range resolutions {
-		ref := strings.TrimSpace(entry.Resolution.MentionRef)
-		if ref == "" {
-			continue
-		}
-		name := strings.TrimSpace(entry.Resolution.CanonicalName)
-		if entry.Resolution.EntityID != "" {
-			name = entry.Resolution.EntityID
-			var canonical string
-			err := tx.WithContext(ctx).Raw(`
-				SELECT display_name FROM entity_names
-				WHERE team_id = ?::uuid AND entity_id = ?::uuid
-				  AND name_kind = 'canonical' AND valid_to IS NULL
-				ORDER BY created_at DESC, entity_name_id DESC LIMIT 1
-			`, teamID, entry.Resolution.EntityID).Row().Scan(&canonical)
-			if err != nil && !errors.Is(err, sql.ErrNoRows) {
-				return nil, err
-			}
-			if strings.TrimSpace(canonical) != "" {
-				name = strings.TrimSpace(canonical)
-			}
-		}
-		if previous, exists := names[ref]; exists && previous != name {
-			return nil, fmt.Errorf("%w: entity %q has conflicting names", ErrInlineEmbeddingPlanMismatch, ref)
-		}
-		names[ref] = name
-	}
-	return names, nil
-}
-
-func loadInlineEmbeddingValueProjection(ctx context.Context, tx *gorm.DB, teamID, spaceID string, input SemanticValueInput) (SemanticValueInput, error) {
-	input = normalizeSemanticValueInput(input)
-	var persisted SemanticValueInput
-	err := tx.WithContext(ctx).Raw(`
-		SELECT value_type, canonical_value, COALESCE(unit, ''), COALESCE(display, '')
-		FROM value_records
-		WHERE team_id = ?::uuid AND space_id = ?::uuid AND value_type = ? AND canonical_value = ?
-		  AND unit IS NOT DISTINCT FROM NULLIF(?, '') AND normalization_version = ?
-		ORDER BY value_id LIMIT 1
-	`, teamID, spaceID, input.ValueType, input.CanonicalValue, input.Unit, input.NormalizationVersion).Row().Scan(&persisted.ValueType, &persisted.CanonicalValue, &persisted.Unit, &persisted.Display)
-	if errors.Is(err, sql.ErrNoRows) {
-		return input, nil
-	}
-	if err != nil {
-		return SemanticValueInput{}, err
-	}
-	if strings.TrimSpace(persisted.Display) == "" {
-		persisted.Display = persisted.CanonicalValue
-	}
-	return persisted, nil
-}
 
 func searchDocumentHash(text string) string {
 	return strings.TrimPrefix(sha256Hex(strings.TrimSpace(text)), "sha256:")
@@ -91,22 +34,6 @@ func applyInlineSubmissionEmbeddings(ctx context.Context, tx *gorm.DB, input Com
 		}
 	}
 	return nil
-}
-
-func previewSubmissionPredicateKey(ctx context.Context, tx *gorm.DB, input CommitSubmissionAssessmentInput, registration SubmissionPredicateRegistrationInput) (string, error) {
-	requestedKey := strings.TrimSpace(registration.PredicateKey)
-	canonicalKey := knowledgecontract.CanonicalGeneratedPredicateKey(requestedKey)
-	loaded, err := loadLatestSubmissionPredicate(ctx, tx, input.TeamID, requestedKey, canonicalKey)
-	if err == nil && loaded != nil {
-		if field, _, _ := knowledgecontract.SubmissionPredicateRegistrationCompatibility(*loaded, registration); field != "" {
-			return "", ErrSubmissionPredicateRegistrationHeld
-		}
-		return loaded.PredicateKey, nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return "", err
-	}
-	return canonicalKey, nil
 }
 
 func completeInlineEmbeddingResultsInTx(ctx context.Context, tx *gorm.DB, teamID, ownerID string, searchDocumentIDs []string, inlineEmbeddings []InlineEmbeddingResult) (map[string]struct{}, error) {

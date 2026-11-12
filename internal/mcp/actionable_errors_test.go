@@ -23,10 +23,7 @@ func TestSDKContractToolFailureIsStructuredActionableError(t *testing.T) {
 
 	result, err := server.sdkToolHandler(tool.Name)(testMemoryContext(context.Background(), nil), &sdkmcp.CallToolRequest{
 		Params: &sdkmcp.CallToolParamsRaw{Arguments: json.RawMessage(`{
-			"target_space":"team_shared","idempotency_key":"key","evidence":[{"content":"Dense-Mem stores knowledge in PostgreSQL."}],
-			"relationships":[{"ref":"stores","subject":{"name":"Dense-Mem","entity_kind":"project"},
-			"predicate":{"proposed_key":"stores_in"},"object":{"entity":{"name":"PostgreSQL","entity_kind":"product"}},
-			"polarity":"+","evidence_indices":[0]}]
+			"target_space":"team_shared","idempotency_key":"key","evidence":[{"content":"Dense-Mem stores knowledge in PostgreSQL."}]
 		}`)},
 	})
 	require.NoError(t, err)
@@ -62,10 +59,7 @@ func TestSDKActionableErrorsPreserveCapabilityRecoveryAndOutputSchema(t *testing
 			name:     "mutation timeout",
 			toolName: registry.ToolRemember,
 			arguments: `{
-				"target_space":"team_shared","idempotency_key":"key","evidence":[{"content":"Dense-Mem stores knowledge in PostgreSQL."}],
-				"relationships":[{"ref":"stores","subject":{"name":"Dense-Mem","entity_kind":"project"},
-				"predicate":{"proposed_key":"stores_in"},"object":{"entity":{"name":"PostgreSQL","entity_kind":"product"}},
-				"polarity":"+","evidence_indices":[0]}]
+				"target_space":"team_shared","idempotency_key":"key","evidence":[{"content":"Dense-Mem stores knowledge in PostgreSQL."}]
 			}`,
 			wantRemediat: "Retry the same request with the same idempotency key after the timeout clears.",
 		},

@@ -34,6 +34,13 @@ func (h *RecallHandler) Handle(c echo.Context) error {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "recall unavailable")
 	}
 
+	for key := range c.QueryParams() {
+		switch key {
+		case "query", "limit", "topic_ids", "topic_limit", "valid_at", "known_at", "known_evidence_ids":
+		default:
+			return httperr.New(httperr.VALIDATION_ERROR, "unknown recall query parameter")
+		}
+	}
 	var req dto.RecallRequest
 	if err := c.Bind(&req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid query parameters")
@@ -41,28 +48,20 @@ func (h *RecallHandler) Handle(c echo.Context) error {
 	if err := validation.ValidateStruct(&req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
+	if strings.TrimSpace(req.Query) == "" && len(req.TopicIDs) == 0 {
+		return httperr.New(httperr.VALIDATION_ERROR, "query or topic_ids is required")
+	}
 	result, err := h.svc.Recall(ctx, recall.RecallRequest{
-		Query:                      req.Query,
-		Limit:                      req.Limit,
-		RelationshipLimit:          req.RelationshipLimit,
-		CommunityLimit:             req.CommunityLimit,
-		CommunityRelationshipLimit: req.CommunityRelationshipLimit,
-		ValidAt:                    req.ValidAt,
-		KnownAt:                    req.KnownAt,
-		KnownEvidenceIDs: append(
-			[]string(nil),
-			req.KnownEvidenceIDs...,
-		),
-		KnownRelationshipIDs: append(
-			[]string(nil),
-			req.KnownRelationshipIDs...,
-		),
-		ExpandFromEntityIDs: append(
-			[]string(nil),
-			req.ExpandFromEntityIDs...,
-		),
+		Query: req.Query, Limit: req.Limit, TopicIDs: append([]string(nil), req.TopicIDs...), TopicLimit: req.TopicLimit,
+		ValidAt: req.ValidAt, KnownAt: req.KnownAt, KnownEvidenceIDs: append([]string{}, req.KnownEvidenceIDs...),
 	})
 	if err != nil {
+		if errors.Is(err, recall.ErrInvalidInput) {
+			return httperr.New(httperr.VALIDATION_ERROR, "invalid recall query parameters")
+		}
+		if errors.Is(err, recall.ErrTopicUnavailable) {
+			return httperr.WithGuidance(httperr.New(httperr.VALIDATION_ERROR, "A requested topic is unavailable."), "topic_unavailable", "refresh_state", "Recall again to obtain current authorized topic IDs.", false, nil, "")
+		}
 		if errors.Is(err, recall.ErrRecallAuthContext) {
 			return httperr.New(httperr.FORBIDDEN, "authentication required")
 		}
@@ -90,26 +89,14 @@ func recallHTTPResult(result *recall.RecallResult) recall.RecallResult {
 	if out.Conflicts == nil {
 		out.Conflicts = []recall.RecallConflictSummary{}
 	}
-	if out.RelatedRelationships == nil {
-		out.RelatedRelationships = []recall.RelatedRelationshipSummary{}
-	}
-	if out.RelatedCommunities == nil {
-		out.RelatedCommunities = []recall.RecallDiscoveryPath{}
-	}
-	if out.DiscoveryPaths == nil {
-		out.DiscoveryPaths = []recall.RecallDiscoveryPath{}
+	if out.RelatedTopics == nil {
+		out.RelatedTopics = []recall.RelatedTopic{}
 	}
 	if out.Degradations == nil {
 		out.Degradations = []recall.RecallDegradationResult{}
 	}
 	if out.SearchStates.Evidence == "" {
 		out.SearchStates.Evidence = string(domain.SearchProjectionCurrent)
-	}
-	if out.SearchStates.Relationships == "" {
-		out.SearchStates.Relationships = string(domain.SearchProjectionCurrent)
-	}
-	if strings.TrimSpace(out.DiscoveryGuidance) == "" {
-		out.DiscoveryGuidance = "No additional discovery guidance."
 	}
 	return out
 }

@@ -116,7 +116,6 @@ func generateLocalEval100(outDir, suitePath string) error {
 		buildLocalEval100(),
 		25,
 		0,
-		true,
 	)
 }
 
@@ -129,19 +128,14 @@ func generateLocalEval1K(outDir, suitePath string) error {
 		buildLocalEval1K(),
 		100,
 		900,
-		false,
 	)
 }
 
-func generateLocalEval(outDir, suitePath, seedID, description string, generated []generatedCase, sanityCases, adversarialCases int, withRelationships bool) error {
+func generateLocalEval(outDir, suitePath, seedID, description string, generated []generatedCase, sanityCases, adversarialCases int) error {
 	corpusCount := len(generated) * 4
 	hardNegativeCount := len(generated) * 3
 	schemaVersion := evalharness.SeedSchemaVersion
-	relationshipCount := 0
-	if withRelationships {
-		schemaVersion = evalharness.SeedSchemaVersionV2
-		relationshipCount = corpusCount
-	}
+
 	manifest := evalharness.SeedManifest{
 		SchemaVersion:     schemaVersion,
 		SeedID:            seedID,
@@ -154,7 +148,7 @@ func generateLocalEval(outDir, suitePath, seedID, description string, generated 
 		HardNegativesFile: "hard_negatives.jsonl",
 		TransformsFile:    "transforms.jsonl",
 		LicensesFile:      "licenses.md",
-		RelationshipCount: relationshipCount,
+
 		Counts: map[string]int{
 			"cases":             len(generated),
 			"corpus":            corpusCount,
@@ -183,15 +177,7 @@ func generateLocalEval(outDir, suitePath, seedID, description string, generated 
 	transforms := make([]transformRow, 0, len(generated))
 	suite := make([]evalharness.SuiteCase, 0, len(generated))
 	for _, item := range generated {
-		if withRelationships {
-			for index := range item.Corpus {
-				relationship, err := localEval100Relationship(item.Corpus[index].Content)
-				if err != nil {
-					return fmt.Errorf("build relationship for %s: %w", item.Corpus[index].SourceDocID, err)
-				}
-				item.Corpus[index].Relationships = []any{relationship}
-			}
-		}
+
 		corpus = append(corpus, item.Corpus...)
 		cases = append(cases, item.Case)
 		qrels = append(qrels, item.QRel)
@@ -225,64 +211,6 @@ func generateLocalEval(outDir, suitePath, seedID, description string, generated 
 		return err
 	}
 	return writeJSONL(suitePath, suite)
-}
-
-func localEval100Relationship(content string) (map[string]any, error) {
-	subject, err := localEvalToken(content, "account L")
-	if err != nil {
-		return nil, err
-	}
-	object, err := localEvalToken(content, "team-")
-	if err != nil {
-		return nil, err
-	}
-	predicateSurface := ""
-	predicateKey := ""
-	switch {
-	case strings.HasPrefix(content, "Canonical owner registry"):
-		predicateSurface, predicateKey = "current primary owner for", "has_current_primary_owner"
-	case strings.HasPrefix(content, "Legacy note"):
-		predicateSurface, predicateKey = "previously used", "previously_used"
-	case strings.HasPrefix(content, "Unapproved draft"):
-		predicateSurface, predicateKey = "proposed owner for", "has_proposed_owner"
-	case strings.HasPrefix(content, "Neighbor account"):
-		predicateSurface, predicateKey = "currently uses", "currently_uses"
-	default:
-		return nil, fmt.Errorf("unsupported smoke content shape")
-	}
-	if !strings.Contains(content, predicateSurface) {
-		return nil, fmt.Errorf("predicate %q is not present", predicateSurface)
-	}
-	return map[string]any{
-		"ref": "relationship_1",
-		"subject": map[string]any{
-			"name": subject, "entity_kind": "other",
-		},
-		"predicate": map[string]any{
-			"proposed_key": predicateKey,
-		},
-		"object": map[string]any{"entity": map[string]any{
-			"name": object, "entity_kind": "other",
-		}},
-		"polarity":         "+",
-		"evidence_indices": []any{0},
-	}, nil
-}
-
-func localEvalToken(content, prefix string) (string, error) {
-	start := strings.Index(content, prefix)
-	if start < 0 {
-		return "", fmt.Errorf("token prefix %q is not present", prefix)
-	}
-	end := start + len(prefix)
-	for end < len(content) {
-		value := content[end]
-		if (value < 'a' || value > 'z') && (value < 'A' || value > 'Z') && (value < '0' || value > '9') && value != '-' {
-			break
-		}
-		end++
-	}
-	return content[start:end], nil
 }
 
 func buildLocalEval100() []generatedCase {

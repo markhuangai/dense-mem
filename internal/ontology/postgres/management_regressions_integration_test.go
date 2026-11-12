@@ -19,41 +19,34 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestOntologyManagementPredicateLookupBeyondFirstPage(t *testing.T) {
+func TestOntologyManagementEvidenceLookupBeyondFirstPage(t *testing.T) {
 	f := newOntologyFixture(t)
 	ctx := f.actor(0, "manager")
 	manager := managementService(f)
-	subject := maintenanceEntity(t, f, "Atlas")
-	object := maintenanceEntity(t, f, "PostgreSQL")
-	text := "Atlas has independently supported storage classifications."
-	evidence := f.evidence(t, 0, text)
-	var last ontology.SourceHandle
+	var handles []ontology.SourceHandle
 	for index := range 51 {
-		predicate, err := f.knowledge.EnsureSemanticReviewPredicateCandidate(context.Background(), knowledge.EnsureSemanticPredicateCandidateInput{TeamID: f.team, OwnerProfileID: f.owners[0], Predicate: fmt.Sprintf("ordered_storage_%03d", index), RelationshipKind: "state", SubjectKind: "project", ObjectKind: "project"})
-		require.NoError(t, err)
-		decision, err := f.knowledge.ApplyRelationshipDecision(context.Background(), knowledge.ApplyRelationshipDecisionInput{TeamID: f.team, OwnerProfileID: f.owners[0], IngestID: evidence.IngestID, SubjectEntityID: subject.ID, ObjectEntityID: object.ID, PredicateKey: predicate.PredicateKey, PredicateVersion: predicate.Version, Polarity: "+", Support: &knowledge.EvidenceSupportInput{FragmentID: evidence.Evidence[0].FragmentID, SourceGroupKey: uuid.NewString(), SpanEnd: len(text), Authority: "primary"}})
-		require.NoError(t, err)
-		require.NotNil(t, decision.Relationship)
-		last = ontology.SourceHandle{Kind: ontology.PredicateSource, ID: predicate.PredicateKey, Version: int64(predicate.Version)}
+		handles = append(handles, f.organizationEvidence(t, 0, fmt.Sprintf("ordered_storage_%03d", index), nil))
 	}
+	slices.SortFunc(handles, func(a, b ontology.SourceHandle) int { return strings.Compare(a.ID, b.ID) })
+	last := handles[len(handles)-1]
 	before := f.canonicalSnapshot(t)
-	first, err := manager.Sources(ctx, ontology.PredicateSource, "", "", 50)
+	first, err := manager.Sources(ctx, ontology.EvidenceSource, "", "", 50)
 	require.NoError(t, err)
 	require.Len(t, first.Sources, 50)
 	require.NotEmpty(t, first.NextCursor)
 	for _, source := range first.Sources {
 		require.NotEqual(t, last.ID, source.ID)
 	}
-	found, err := manager.Sources(ctx, ontology.PredicateSource, "", last.ID, 50)
+	found, err := manager.Sources(ctx, ontology.EvidenceSource, "", last.ID, 50)
 	require.NoError(t, err)
 	require.Len(t, found.Sources, 1)
 	require.Equal(t, last, found.Sources[0].SourceHandle)
 	require.Empty(t, found.NextCursor)
-	filtered, err := manager.Sources(ctx, ontology.PredicateSource, "", "ordered_storage", 50)
+	filtered, err := manager.Sources(ctx, ontology.EvidenceSource, "", "ordered_storage", 50)
 	require.NoError(t, err)
 	require.Equal(t, first, filtered)
 	foreign := maintenanceOtherTeam(t, f)
-	denied, err := manager.Sources(foreign.actor(0, "manager"), ontology.PredicateSource, "", last.ID, 50)
+	denied, err := manager.Sources(foreign.actor(0, "manager"), ontology.EvidenceSource, "", last.ID, 50)
 	require.NoError(t, err)
 	require.Empty(t, denied.Sources)
 	require.Equal(t, before, f.canonicalSnapshot(t))
@@ -145,37 +138,18 @@ func TestOntologyManagementEditAndUnpinTogether(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestOntologyManagementReplacesAdvancedSourceAndRemovesWithdrawnCorrection(t *testing.T) {
+func TestOntologyManagementRemovesWithdrawnCorrection(t *testing.T) {
 	f := newOrganizationFixture(t)
 	manager := managementService(f)
 	ctx := f.actor(0, "manager")
-	source := maintenanceRelationship(t, f)
-	topic := testTopic("support-version")
+	topic := testTopic("source-lifecycle")
 	_, err := f.store.PublishAutomatic(context.Background(), f.team, testPublication("topic", 0, ontology.Change{Record: topic}))
 	require.NoError(t, err)
-	draft, err := manager.SaveDraft(ctx, "", managementInput(1, ontology.ManagementEdit{Action: "classify", Source: &source, DefinitionID: topic.ID}))
-	require.NoError(t, err)
-	pub, err := manager.CommandDraft(ctx, draft.ID, "publish", managementCommand(draft))
-	require.NoError(t, err)
-	var subject, object, predicate string
-	var predicateVersion int
-	require.NoError(t, f.admin.Raw(`SELECT subject_entity_id::text,object_entity_id::text,predicate_key,predicate_version FROM relationship_records WHERE team_id=?::uuid AND relationship_id=?::uuid`, f.team, source.ID).Row().Scan(&subject, &object, &predicate, &predicateVersion))
-	evidence := f.evidence(t, 0, "Another source confirms Atlas uses PostgreSQL.")
-	decision, err := f.knowledge.ApplyRelationshipDecision(context.Background(), knowledge.ApplyRelationshipDecisionInput{TeamID: f.team, OwnerProfileID: f.owners[0], IngestID: evidence.IngestID, SubjectEntityID: subject, ObjectEntityID: object, PredicateKey: predicate, PredicateVersion: predicateVersion, Polarity: "+", Support: &knowledge.EvidenceSupportInput{FragmentID: evidence.Evidence[0].FragmentID, SourceGroupKey: uuid.NewString(), SpanEnd: len("Another source confirms Atlas uses PostgreSQL."), Authority: "primary"}})
-	require.NoError(t, err)
-	require.Equal(t, source.ID, decision.Relationship.RelationshipID)
-	require.Greater(t, int64(decision.Relationship.Version), source.Version)
-	page, err := manager.Records(ctx, ontology.OverrideKind, "", 200)
-	require.NoError(t, err)
-	override := page.Records[0]
-	source.Version = int64(decision.Relationship.Version)
-	draft, err = manager.SaveDraft(ctx, "", managementInput(pub.Publication.Revision, ontology.ManagementEdit{Action: "classify", RecordID: override.ID, ExpectedVersion: override.Version, Source: &source, DefinitionID: topic.ID}))
-	require.NoError(t, err)
-	_, err = manager.CommandDraft(ctx, draft.ID, "publish", managementCommand(draft))
-	require.NoError(t, err)
+	var draft, pub ontology.ManagementDraft
+	var override ontology.RecordView
 	withdrawn := f.evidence(t, 0, "Withdraw this classification source.")
 	handle := ontology.SourceHandle{Kind: ontology.EvidenceSource, ID: withdrawn.Evidence[0].FragmentID, Version: 1}
-	page, err = manager.Records(ctx, "", "", 1)
+	page, err := manager.Records(ctx, "", "", 1)
 	require.NoError(t, err)
 	draft, err = manager.SaveDraft(ctx, "", managementInput(page.Revision, ontology.ManagementEdit{Action: "classify", Source: &handle, DefinitionID: topic.ID}))
 	require.NoError(t, err)
@@ -249,7 +223,7 @@ func TestOntologyManagementStatusCountsOnlyAuthenticatedTeam(t *testing.T) {
 			}))
 		}
 		require.NoError(t, f.rls.WithSystemTx(context.Background(), f.admin, func(tx *gorm.DB) error {
-			if err := tx.Exec(`INSERT INTO ontology_maintenance_teams(team_id,shared_space_id,space_generation,discovery_kind) VALUES(?::uuid,?::uuid,?,4) ON CONFLICT(team_id,shared_space_id,space_generation) DO UPDATE SET discovery_kind=4`, team.team, team.space, team.generation).Error; err != nil {
+			if err := tx.Exec(`INSERT INTO ontology_maintenance_teams(team_id,shared_space_id,space_generation,discovery_kind) VALUES(?::uuid,?::uuid,?,1) ON CONFLICT(team_id,shared_space_id,space_generation) DO UPDATE SET discovery_kind=1`, team.team, team.space, team.generation).Error; err != nil {
 				return err
 			}
 			return tx.Exec(`DELETE FROM ontology_maintenance_markers WHERE team_id=?::uuid`, team.team).Error

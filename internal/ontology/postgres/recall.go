@@ -335,7 +335,7 @@ func recallDiscoveryRecords(tx *gorm.DB, fence scope, names, evidenceIDs []strin
 		SELECT head.record_id,revision.body FROM ontology_record_heads AS head
 		`+recallRevisionJoinSQL+`
 		JOIN scope USING(team_id,shared_space_id,space_generation)
-		WHERE NOT head.retired AND head.kind IN ('entity_class','predicate_concept','topic') AND head.names && scope.names
+		WHERE NOT head.retired AND head.kind IN ('topic') AND head.names && scope.names
 		ORDER BY head.record_id LIMIT ?
 	), assignments AS (
 		SELECT head.record_id,revision.body FROM ontology_record_heads AS head

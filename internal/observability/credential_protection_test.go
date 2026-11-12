@@ -16,6 +16,47 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestEvidenceOnlyUnitDiagnosticBudgetNeverLeaksOrPartiallyCaptures(t *testing.T) {
+	const secret = "diagnostic-budget-credential-canary"
+	const admitted = "Admitted token and password text."
+	protector := NewCredentialProtector(secret)
+	pointerText := "Exact pointer text."
+	for _, value := range []any{
+		nil, true, int64(-123456789), uint64(123456789), json.Number("9007199254740993"),
+		[]any{nil, true, int64(12), "nested"}, [3]any{true, 7, nil},
+		[]byte(`{"original":"Exact JSON text."}`), [3]byte{'a', 'b', 'c'},
+		map[string]any{"quoted-key": "quoted \"value\"", "secret": secret},
+		&pointerText,
+	} {
+		t.Run(fmt.Sprintf("%T", value), func(t *testing.T) {
+			input := map[string]any{"admitted": admitted, "credential": secret, "value": value}
+			available, unavailable := 0, 0
+			for budget := 1; budget <= 512; budget++ {
+				result := protector.Snapshot(input, budget)
+				if result.UnavailableReason != CredentialProtectionAvailable {
+					unavailable++
+					require.Nil(t, result.Value, "unavailable capture must omit the whole payload")
+					continue
+				}
+				available++
+				raw, err := json.Marshal(result.Value)
+				require.NoError(t, err)
+				require.LessOrEqual(t, len(raw), budget)
+				require.NotContains(t, string(raw), secret)
+				var output map[string]json.RawMessage
+				require.NoError(t, json.Unmarshal(raw, &output))
+				require.Len(t, output, 3)
+				require.JSONEq(t, strconv.Quote(admitted), string(output["admitted"]))
+			}
+			require.Positive(t, available)
+			require.Positive(t, unavailable)
+		})
+	}
+	unsupported := protector.Snapshot(&struct{ Text string }{Text: secret}, 512)
+	require.Equal(t, CredentialProtectionUnsupported, unsupported.UnavailableReason)
+	require.Nil(t, unsupported.Value)
+}
+
 func TestCredentialProtectorPreservesAdmittedContentAndProtectsSuppliedSecrets(t *testing.T) {
 	configured := "configured-key"
 	escaped := `a"b`

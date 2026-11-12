@@ -14,10 +14,10 @@ func TestHTTPClientImportCorpusRejectsPolicyFailureEvenWithEvidence(t *testing.T
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"contract_version": "dense-mem.v2.6.2", "submission_id": "submission-review-terminal", "submission_kind": "remember",
+			"contract_version": "dense-mem.v2.8.0", "submission_id": "submission-review-terminal", "submission_kind": "remember",
 			"processing_state": "failed", "search_state": "not_required", "correlation_id": "correlation-policy-failure",
-			"evidence":             []map[string]any{{"disposition": "not_stored", "evidence_index": 0, "superseded_evidence_ids": []string{}, "search_state": "not_required", "reason": "submission_policy_rejected"}},
-			"relationship_results": []map[string]any{}, "errors": []map[string]any{{"code": "submission_policy_rejected", "message": "submission was rejected by semantic policy"}},
+			"evidence": []map[string]any{{"disposition": "not_stored", "evidence_index": 0, "superseded_evidence_ids": []string{}, "search_state": "not_required", "reason": "submission_policy_rejected"}},
+			"errors":   []map[string]any{{"code": "submission_policy_rejected", "message": "submission was rejected by semantic policy"}},
 		})
 	}))
 	defer server.Close()
@@ -35,9 +35,9 @@ func TestHTTPClientImportCorpusRejectsUnknownProcessingStateWithEvidence(t *test
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"contract_version": "dense-mem.v2.6.2", "submission_id": "submission-unknown-state", "submission_kind": "remember",
+			"contract_version": "dense-mem.v2.8.0", "submission_id": "submission-unknown-state", "submission_kind": "remember",
 			"processing_state": "unknown_state", "search_state": "not_required", "correlation_id": "correlation-unknown-state",
-			"evidence": []map[string]any{}, "relationship_results": []map[string]any{}, "errors": []map[string]any{},
+			"evidence": []map[string]any{}, "errors": []map[string]any{},
 		})
 	}))
 	defer server.Close()

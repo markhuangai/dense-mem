@@ -263,7 +263,9 @@ func skipGeneratedEvaluationTree(root, path string) (bool, error) {
 		return false, err
 	}
 	relative = filepath.ToSlash(relative)
-	return relative == "tests/eval" || strings.HasPrefix(relative, "tests/eval/"), nil
+	return relative == "tests/eval" || strings.HasPrefix(relative, "tests/eval/") ||
+		relative == "tmp" || strings.HasPrefix(relative, "tmp/") ||
+		relative == "temp" || strings.HasPrefix(relative, "temp/"), nil
 }
 
 func reconcileCaseRegistry(root string, cases []databaseCase) error {

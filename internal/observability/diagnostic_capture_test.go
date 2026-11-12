@@ -11,8 +11,27 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/markhuangai/dense-mem/internal/correlation"
 	"github.com/stretchr/testify/require"
 )
+
+func TestEvidenceOnlyUnitAuthenticationSecretsRemainSeparateFromLoggedCorrelation(t *testing.T) {
+	const apiKey, password = "configured-api-key-canary", "configured-database-password-canary"
+	ctx := WithAuthenticationSecrets(t.Context(), apiKey, password)
+	require.Empty(t, correlation.FromContext(ctx))
+	const id = "d9f96a34-1a70-43df-a6bd-b72e614ab22c"
+	ctx = correlation.WithID(ctx, id)
+	var console bytes.Buffer
+	logger := NewWithHandler(slog.NewJSONHandler(&console, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	LogDiagnosticBody(ctx, logger.ContextSlog(), NewCredentialProtector(apiKey, password), "ai_exchange_payload",
+		[]byte(`{"message":"exact admitted text","password":"ordinary admitted value","authentication":"`+apiKey+`","credential":"`+password+`"}`), 1<<20)
+	require.NotContains(t, console.String(), apiKey)
+	require.NotContains(t, console.String(), password)
+	require.Contains(t, console.String(), id)
+	require.Contains(t, console.String(), "exact admitted text")
+	require.Contains(t, console.String(), "ordinary admitted value")
+	require.Contains(t, console.String(), CredentialProtectionRedacted)
+}
 
 func TestDebugPayloadsStayOutOfPortalOperationLogs(t *testing.T) {
 	var console bytes.Buffer

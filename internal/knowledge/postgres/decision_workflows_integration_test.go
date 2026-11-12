@@ -12,21 +12,18 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/config"
-	conflictassessment "github.com/markhuangai/dense-mem/internal/conflict/assessment"
-	conflictpostgres "github.com/markhuangai/dense-mem/internal/conflict/postgres"
-	conflictreview "github.com/markhuangai/dense-mem/internal/conflict/review"
+
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	assessorprovider "github.com/markhuangai/dense-mem/internal/provider/assessor"
 	decisionprovider "github.com/markhuangai/dense-mem/internal/provider/decision"
 	"github.com/markhuangai/dense-mem/internal/recall"
-	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
+
 	recallpostgres "github.com/markhuangai/dense-mem/internal/recall/postgres"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 	"github.com/markhuangai/dense-mem/internal/remember/service/processor"
@@ -35,7 +32,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
 	"github.com/markhuangai/dense-mem/internal/settings"
 	settingspostgres "github.com/markhuangai/dense-mem/internal/settings/postgres"
-	tracecontract "github.com/markhuangai/dense-mem/internal/trace/contract"
+
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -149,7 +146,7 @@ func TestDecisionRememberPostgresAtomicityReplayIsolationAndSettingsSnapshot(t *
 	otherTeam := createLedgerTeam(t, admin, rls, "decision-other")
 	ownerC := createLedgerProfile(t, admin, rls, otherTeam, "decision-c")
 	shared, generation := duplicateTeamSharedSpace(t, admin, rls, team)
-	store := NewStore(app, rls, ConflictRuntimeConfig{})
+	store := NewStore(app, rls)
 	for _, fixture := range []struct{ team, owner, kind, content string }{{team, ownerB, "private", "PRIVATE DECISION CANARY"}, {otherTeam, ownerC, "team_shared", "FOREIGN DECISION CANARY"}} {
 		space, gen := duplicateTeamSharedSpace(t, admin, rls, fixture.team)
 		if fixture.kind == "private" {
@@ -189,7 +186,7 @@ func TestDecisionRememberPostgresAtomicityReplayIsolationAndSettingsSnapshot(t *
 	decisions, err := decisionprovider.New(config.DecisionProviderConfig{Provider: "openai", APIURL: server.URL + "/v1", APIKey: "decision-fixture-key", Model: "gpt-6-luna", MaxInputTokens: 32000, MaxQuestionInputTokens: 32000, MaxConcurrency: 2, TimeoutSeconds: 10}, "o200k_base", server.Client(), logger, protector, nil)
 	require.NoError(t, err)
 	generative := assessorprovider.NewOpenAIAssessor(&config.Config{AIVerifierAPIURL: server.URL + "/v1", AIVerifierAPIKey: "decision-fixture-key", AIVerifierModel: "fixture", AIVerifierMaxConcurrency: 2}, server.Client())
-	api := processor.NewSynchronousProcessor(processor.ProcessorDependencies{Ledger: store, Catalog: store, Assessor: generative, Decisions: decisions, DecisionSettings: controls, EmbeddingExecutor: semanticwrite.NewProviderExecutor(&sessionFactsEmbedder{}), Limits: assessor.DefaultSemanticAssessmentLimits(), Logger: logger, DiagnosticProtector: protector})
+	api := processor.NewSynchronousProcessor(processor.ProcessorDependencies{Ledger: store, Assessor: generative, Decisions: decisions, DecisionSettings: controls, EmbeddingExecutor: semanticwrite.NewProviderExecutor(&sessionFactsEmbedder{}), Limits: assessor.DefaultSemanticAssessmentLimits(), Logger: logger, DiagnosticProtector: protector})
 	input := rememberapp.RememberProcessRequest{TeamID: team, OwnerProfileID: ownerA, SpaceID: shared, SpaceGeneration: generation, SpaceKind: domain.MemorySpaceTeamShared, IdempotencyKey: "decision-initial", RequestHash: "decision-initial", Evidence: rememberapp.RepositoryEvidenceInputs([]rememberapp.RememberEvidenceInput{{Content: "Decision shared evidence uses PostgreSQL.", SourceType: "manual"}})}
 	var unauthorized atomic.Bool
 	fixture.onDecision = func(raw string) {
@@ -281,14 +278,7 @@ func TestDecisionRememberPostgresAtomicityReplayIsolationAndSettingsSnapshot(t *
 	visible.SpaceID, visible.SpaceGeneration = shared, generation
 	commitDuplicateFixture(t, ctx, store, visible)
 	search := searchpostgres.NewStore(app, rls)
-	reader := func(readCtx context.Context, tx *gorm.DB, teamID string, knownAt *time.Time, hits []recallcontract.RecallEvidenceHit) ([]tracecontract.RelationshipConflictCaseRecord, error) {
-		ids := []string{}
-		for _, hit := range hits {
-			ids = append(ids, hit.RelationshipIDs...)
-		}
-		return conflictpostgres.LoadRelationshipConflictRecordsInSpace(readCtx, tx, teamID, ids, knownAt, shared)
-	}
-	read := recallpostgres.NewStore(app, rls, search, reader, recallpostgres.LoadRecallEvidenceConflictRecords)
+	read := recallpostgres.NewStore(app, rls, search, recallpostgres.LoadRecallEvidenceConflictRecords)
 	recallAPI := recall.NewRecallService(recall.RecallDependencies{Search: read, Provider: &sessionFactsEmbedder{}, Decisions: decisions, DecisionSettings: controls, Logger: logger})
 	fixture.onDecision = func(raw string) {
 		if strings.Contains(raw, "PRIVATE DECISION CANARY") || strings.Contains(raw, "FOREIGN DECISION CANARY") {
@@ -297,7 +287,7 @@ func TestDecisionRememberPostgresAtomicityReplayIsolationAndSettingsSnapshot(t *
 	}
 	actorCtx := requestctx.WithActor(ctx, requestctx.Actor{TeamID: uuid.MustParse(team), OwnerID: uuid.MustParse(ownerA), AllowedSpaces: []domain.MemorySpaceAccess{{ID: uuid.MustParse(shared), Kind: domain.MemorySpaceTeamShared}}})
 	zero := 0
-	recalled, err := recallAPI.Recall(actorCtx, recall.RecallRequest{Query: "Decision", Limit: 1, RelationshipLimit: &zero, CommunityLimit: &zero})
+	recalled, err := recallAPI.Recall(actorCtx, recall.RecallRequest{Query: "Decision", Limit: 1, TopicLimit: &zero})
 	require.NoError(t, err)
 	require.Len(t, recalled.Results, 1)
 	require.NotEmpty(t, recalled.DecisionStages)
@@ -330,10 +320,10 @@ func TestDecisionRememberPostgresAtomicityReplayIsolationAndSettingsSnapshot(t *
 						ValidationErrors []assessor.SemanticValidationError `json:"validation_errors"`
 					}
 					require.NoError(t, json.Unmarshal([]byte(messages[len(messages)-1].Content), &feedback))
-					require.Equal(t, []assessor.SemanticValidationError{{Field: "relationship_results", Message: "is required"}}, feedback.ValidationErrors)
+					require.Equal(t, []assessor.SemanticValidationError{{Field: "evidence_conflict_results", Message: "is required"}}, feedback.ValidationErrors)
 				}
 				if len(requests) == 1 || exhausted {
-					delete(fields, "relationship_results")
+					delete(fields, "evidence_conflict_results")
 				}
 			}
 			defer func() { fixture.onAssessment = nil }()
@@ -345,7 +335,7 @@ func TestDecisionRememberPostgresAtomicityReplayIsolationAndSettingsSnapshot(t *
 				require.NotNil(t, failed.Status)
 				require.Equal(t, "failed", failed.Status.ProcessingState)
 				require.Len(t, requests, 3)
-				for _, table := range []string{"knowledge_ingests", "evidence_occurrences", "semantic_assessments", "relationship_records"} {
+				for _, table := range []string{"knowledge_ingests", "evidence_occurrences", "semantic_assessments"} {
 					require.Zero(t, duplicateCount(t, admin, rls, `SELECT count(*) FROM `+table+` WHERE team_id=?::uuid`, repairTeam), table)
 				}
 				return
@@ -356,130 +346,6 @@ func TestDecisionRememberPostgresAtomicityReplayIsolationAndSettingsSnapshot(t *
 			require.EqualValues(t, 1, duplicateCount(t, admin, rls, `SELECT count(*) FROM knowledge_ingests WHERE team_id=?::uuid`, repairTeam))
 			require.EqualValues(t, 2, duplicateCount(t, admin, rls, `SELECT count(*) FROM evidence_occurrences WHERE team_id=?::uuid`, repairTeam))
 			require.EqualValues(t, 1, duplicateCount(t, admin, rls, `SELECT count(*) FROM semantic_assessments WHERE team_id=?::uuid`, repairTeam))
-		})
-	}
-}
-
-type decisionConflictGenerative struct{ calls atomic.Int64 }
-
-func (p *decisionConflictGenerative) ModelName() string { return "fixture-generative" }
-func (p *decisionConflictGenerative) AssessRelationshipConflict(context.Context, conflictassessment.ConflictAssessmentRequest) (conflictassessment.ConflictAssessmentResponse, error) {
-	p.calls.Add(1)
-	return conflictassessment.ConflictAssessmentResponse{}, fmt.Errorf("unexpected generative call")
-}
-
-func TestDecisionConflictPostgresSelectionFailureAndStaleFence(t *testing.T) {
-	admin, app, rls, cleanup := setupLedgerRepositoryDB(t)
-	defer cleanup()
-	ctx := context.Background()
-	installOwnerSearchContract(t, admin, rls, "decision-conflict", 3, 1)
-	for _, mode := range []string{"select", "failure", "stale"} {
-		t.Run(mode, func(t *testing.T) {
-			team := createLedgerTeam(t, admin, rls, "decision-conflict-"+mode)
-			a := createLedgerProfile(t, admin, rls, team, "decision-conflict-a")
-			b := createLedgerProfile(t, admin, rls, team, "decision-conflict-b")
-			ledger := NewStore(app, rls, ConflictRuntimeConfig{ReviewTTLDays: 2, Timezone: "UTC"})
-			subject := createSemanticEntity(t, ctx, ledger, team, a, "project", "Decision conflict")
-			left := createSemanticEntity(t, ctx, ledger, team, a, "product", "PostgreSQL")
-			right := createSemanticEntity(t, ctx, ledger, team, a, "product", "GraphDB")
-			commitConflictRememberFixture(t, ctx, ledger, team, a, subject.EntityID, left.EntityID, "Decision conflict uses PostgreSQL.", "decision-left")
-			commitConflictRememberFixture(t, ctx, ledger, team, b, subject.EntityID, right.EntityID, "Decision conflict uses GraphDB.", "decision-right")
-			var id string
-			var due time.Time
-			require.NoError(t, rls.WithSystemTx(ctx, admin, func(tx *gorm.DB) error {
-				return tx.Raw(`SELECT conflict_id::text,review_due_at FROM relationship_conflict_cases WHERE team_id=?::uuid`, team).Row().Scan(&id, &due)
-			}))
-			now := due.Add(time.Minute)
-			run, claimed, err := ledger.ReserveRelationshipConflictReviewRun(ctx, ConflictReviewRunInput{TeamID: team, WorkerID: "decision-worker", LocalRunDate: now, Timezone: "UTC", Lease: time.Minute})
-			require.NoError(t, err)
-			require.True(t, claimed)
-			cases, err := ledger.ClaimRelationshipConflictCases(ctx, ClaimRelationshipConflictCasesInput{TeamID: team, WorkerID: "decision-worker", ReviewRunID: run.ReviewRunID, Limit: 10, Lease: time.Minute, MaxAttempts: 5, Now: now})
-			require.NoError(t, err)
-			require.Len(t, cases, 1)
-			fixture := &decisionWorkflowHTTP{}
-			var versionChanged atomic.Bool
-			if mode == "failure" {
-				fixture.status.Store(401)
-			}
-			if mode == "stale" {
-				fixture.onDecision = func(string) {
-					if err := rls.WithSystemTx(ctx, admin, func(tx *gorm.DB) error {
-						update := tx.Exec(`UPDATE relationship_conflict_cases SET version=version+1 WHERE team_id=?::uuid AND conflict_id=?::uuid`, team, id)
-						if update.Error != nil {
-							return update.Error
-						}
-						if update.RowsAffected != 1 {
-							return fmt.Errorf("expected one changed conflict")
-						}
-						versionChanged.Store(true)
-						return nil
-					}); err != nil {
-						t.Error(err)
-					}
-				}
-			}
-			server := httptest.NewServer(fixture)
-			defer server.Close()
-			logger := observability.New(slog.LevelError)
-			decisions, err := decisionprovider.New(config.DecisionProviderConfig{Provider: "openai", APIURL: server.URL + "/v1", APIKey: "decision-fixture", Model: "gpt-6-luna", MaxInputTokens: 32000, MaxQuestionInputTokens: 32000, MaxConcurrency: 1, TimeoutSeconds: 10}, "o200k_base", server.Client(), logger, observability.NewCredentialProtector("decision-fixture"), nil)
-			require.NoError(t, err)
-			controls := settings.NewAppConfigServiceWithDecisions(settingspostgres.NewAppConfigRepository(app, rls), nil, settings.DecisionSettingsOptions{Provider: domain.DecisionProviderStatus{Configured: true, Provider: "openai", Model: "gpt-6-luna"}})
-			generative := &decisionConflictGenerative{}
-			service, err := conflictreview.New(conflictreview.Dependencies{Repository: ledger, Provider: generative, Embeddings: &sessionFactsEmbedder{}, EmbeddingTimeout: time.Second, Timezone: "UTC", Limits: conflictassessment.DefaultSemanticAssessmentLimits(), Decisions: decisions, DecisionSettings: controls, Logger: logger})
-			require.NoError(t, err)
-			result, err := service.ReviewRelationshipConflictCase(ctx, ReviewRelationshipConflictCaseInput{TeamID: team, WorkerID: "decision-worker", ReviewRunID: run.ReviewRunID, ConflictID: id, Now: now})
-			require.Zero(t, generative.calls.Load())
-			require.EqualValues(t, 1, fixture.calls.Load())
-			if mode == "failure" {
-				require.Error(t, err)
-				for day := 1; day <= ConflictAssessmentMaxFailedDays+1; day++ {
-					reviewAt := now.AddDate(0, 0, day)
-					dailyRun, claimed, runErr := ledger.ReserveRelationshipConflictReviewRun(ctx, ConflictReviewRunInput{TeamID: team, WorkerID: "decision-worker", LocalRunDate: reviewAt, Timezone: "UTC", Lease: time.Minute})
-					require.NoError(t, runErr)
-					require.True(t, claimed)
-					dailyCases, claimErr := ledger.ClaimRelationshipConflictCases(ctx, ClaimRelationshipConflictCasesInput{TeamID: team, WorkerID: "decision-worker", ReviewRunID: dailyRun.ReviewRunID, Limit: 10, Lease: time.Minute, MaxAttempts: 5, Now: reviewAt})
-					require.NoError(t, claimErr)
-					require.Len(t, dailyCases, 1)
-					recovering := day == ConflictAssessmentMaxFailedDays+1
-					if recovering {
-						fixture.status.Store(0)
-					}
-					dailyResult, dailyErr := service.ReviewRelationshipConflictCase(ctx, ReviewRelationshipConflictCaseInput{TeamID: team, WorkerID: "decision-worker", ReviewRunID: dailyRun.ReviewRunID, ConflictID: id, Now: reviewAt})
-					require.EqualValues(t, day+1, fixture.calls.Load(), "every day must attempt the required provider, including after legacy failure exhaustion")
-					if recovering {
-						require.NoError(t, dailyErr)
-						require.Equal(t, ConflictReviewOutcomeResolve, dailyResult.Outcome)
-						require.Equal(t, "ai", dailyResult.ResolutionMethod)
-					} else {
-						require.Error(t, dailyErr)
-						require.Equal(t, "overdue_assessment_failed", dailyResult.Stage)
-						require.Zero(t, duplicateCount(t, admin, rls, `SELECT count(*) FROM relationship_records WHERE team_id=?::uuid AND status='superseded'`, team))
-					}
-				}
-				require.Zero(t, generative.calls.Load())
-				return
-			} else if mode == "stale" {
-				require.True(t, versionChanged.Load(), "the source version must change successfully during provider work")
-				if err != nil {
-					require.ErrorIs(t, err, ErrConflictAssessmentStale)
-				} else {
-					require.Equal(t, "overdue_assessment_stale", result.Stage)
-				}
-			} else {
-				require.NoError(t, err)
-			}
-			if mode == "select" {
-				require.Equal(t, ConflictReviewOutcomeResolve, result.Outcome)
-				require.NotEmpty(t, result.PreferredPositionID)
-				var metadata []byte
-				require.NoError(t, rls.WithSystemTx(ctx, admin, func(tx *gorm.DB) error {
-					return tx.Raw(`SELECT metadata FROM relationship_conflict_ai_assessment_events WHERE team_id=?::uuid AND metadata ? 'decision_stage' ORDER BY created_at DESC LIMIT 1`, team).Row().Scan(&metadata)
-				}))
-				require.Contains(t, string(metadata), "decision_position_probability")
-				require.Contains(t, string(metadata), "select_typed_position")
-			} else {
-				require.Zero(t, duplicateCount(t, admin, rls, `SELECT count(*) FROM relationship_records WHERE team_id=?::uuid AND status='superseded'`, team))
-			}
 		})
 	}
 }

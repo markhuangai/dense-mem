@@ -72,7 +72,7 @@ func recallEvidenceSourceJoin(bounded bool) string {
 	}
 	// Keep bounded scoring on keyed source lookups even when table statistics underestimate the candidate pool.
 	return `JOIN LATERAL (
-		SELECT team_id, fragment_id, metadata FROM evidence_fragments
+		SELECT team_id, fragment_id, metadata, source_id, source_revision_id, owner_profile_id, created_at, space_id, space_generation FROM evidence_fragments
 		WHERE team_id = search_documents.team_id AND fragment_id = search_documents.source_id
 		LIMIT 1
 	) AS source_fragment ON TRUE`

@@ -16,8 +16,7 @@ type DiscoverabilityMetrics interface {
 	ObserveRecallLatency(durationMs float64)
 	ObserveRecall(durationMs float64, resultCount int, outcome string)
 	ObserveRecallFeedback(feedback recallcontract.FeedbackObservation)
-	ObserveDreamFeedback(feedback DreamFeedback)
-	ObserveConflictReviewDuration(seconds float64, outcome string)
+
 	IncVerifyVerdict(outcome string)
 }
 
@@ -47,9 +46,7 @@ func (noopMetrics) IncEmbeddingError(string)                                 {}
 func (noopMetrics) ObserveRecallLatency(float64)                             {}
 func (noopMetrics) ObserveRecall(float64, int, string)                       {}
 func (noopMetrics) ObserveRecallFeedback(recallcontract.FeedbackObservation) {}
-func (noopMetrics) ObserveDreamFeedback(DreamFeedback)                       {}
-func (noopMetrics) ObserveConflictReviewDuration(float64, string) {
-}
+
 func (noopMetrics) IncVerifyVerdict(string)                       {}
 func (noopMetrics) ObserveAssessorCall(int, int, float64, string) {}
 func (noopMetrics) IncAssessorValidationFailure(string)           {}
@@ -63,16 +60,15 @@ func (noopMetrics) IncAssessorTerminalFailure(string)            {}
 
 // InMemoryDiscoverabilityMetrics is a test-friendly recorder.
 type InMemoryDiscoverabilityMetrics struct {
-	mu                          sync.Mutex
-	readStageSamples            []ReadStageSample
-	readSQLStatements           map[readStatementKey]int
-	embeddingSamples            []EmbeddingSample
-	embeddingErrors             map[string]int
-	recallLatencies             []float64
-	recallSamples               []RecallSample
-	recallFeedbackSamples       []RecallFeedbackSample
-	dreamFeedbackSamples        []DreamFeedbackSample
-	conflictReviewSamples       []ConflictReviewSample
+	mu                    sync.Mutex
+	readStageSamples      []ReadStageSample
+	readSQLStatements     map[readStatementKey]int
+	embeddingSamples      []EmbeddingSample
+	embeddingErrors       map[string]int
+	recallLatencies       []float64
+	recallSamples         []RecallSample
+	recallFeedbackSamples []RecallFeedbackSample
+
 	verifyVerdicts              map[string]int
 	assessorCalls               []AssessorCallSample
 	assessorValidation          map[string]int
@@ -127,26 +123,6 @@ type RecallFeedbackSample struct {
 	QualityScore    float64
 	MissingContext  bool
 	Irrelevant      bool
-}
-
-// DreamFeedback is one bounded dream-feedback decision.
-type DreamFeedback struct {
-	Decision   string
-	Outcome    string
-	FromStatus string
-}
-
-// DreamFeedbackSample is one recorded dream-feedback decision.
-type DreamFeedbackSample struct {
-	Decision   string
-	Outcome    string
-	FromStatus string
-}
-
-// ConflictReviewSample is one conflict-review duration observation.
-type ConflictReviewSample struct {
-	Seconds float64
-	Outcome string
 }
 
 var _ DiscoverabilityMetrics = (*InMemoryDiscoverabilityMetrics)(nil)
@@ -252,22 +228,6 @@ func (m *InMemoryDiscoverabilityMetrics) ObserveRecallFeedback(feedback recallco
 	})
 }
 
-func (m *InMemoryDiscoverabilityMetrics) ObserveDreamFeedback(feedback DreamFeedback) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.dreamFeedbackSamples = append(m.dreamFeedbackSamples, DreamFeedbackSample{
-		Decision:   normalizeDreamFeedbackDecision(feedback.Decision),
-		Outcome:    normalizeDreamFeedbackOutcome(feedback.Outcome),
-		FromStatus: normalizeDreamStatusLabel(feedback.FromStatus),
-	})
-}
-
-func (m *InMemoryDiscoverabilityMetrics) ObserveConflictReviewDuration(seconds float64, outcome string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.conflictReviewSamples = append(m.conflictReviewSamples, ConflictReviewSample{Seconds: seconds, Outcome: outcome})
-}
-
 func (m *InMemoryDiscoverabilityMetrics) IncVerifyVerdict(outcome string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -309,22 +269,6 @@ func (m *InMemoryDiscoverabilityMetrics) RecallFeedbackSamples() []RecallFeedbac
 	defer m.mu.Unlock()
 	out := make([]RecallFeedbackSample, len(m.recallFeedbackSamples))
 	copy(out, m.recallFeedbackSamples)
-	return out
-}
-
-func (m *InMemoryDiscoverabilityMetrics) DreamFeedbackSamples() []DreamFeedbackSample {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	out := make([]DreamFeedbackSample, len(m.dreamFeedbackSamples))
-	copy(out, m.dreamFeedbackSamples)
-	return out
-}
-
-func (m *InMemoryDiscoverabilityMetrics) ConflictReviewSamples() []ConflictReviewSample {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	out := make([]ConflictReviewSample, len(m.conflictReviewSamples))
-	copy(out, m.conflictReviewSamples)
 	return out
 }
 
@@ -439,14 +383,13 @@ func (m *InMemoryDiscoverabilityMetrics) AssessorTerminalFailureCount(stage stri
 func NormalizeAssessorTerminalFailureStage(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "trusted_context_validation",
-		"deterministic_security_scan", "catalog_context_overflow",
-		"catalog_context_validation", "predicate_options_overflow",
+		"deterministic_security_scan",
 		"assessment_input_overflow", "candidate_context_validation", "candidate_context_limit",
 		"candidate_prefetch", "assessment_attempt_consumed", "assessment", "provider",
 		"security_signal", "confidence_policy", "policy_validation",
 		"deterministic_policy", "replacement_conflict", "assessment_scope",
 		"stale_source", "semantic_commit", "verification", "stored_response",
-		"predicate_catalog", "extraction", "preflight":
+		"extraction", "preflight":
 		return strings.ToLower(strings.TrimSpace(value))
 	default:
 		return "unknown"

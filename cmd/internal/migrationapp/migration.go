@@ -14,6 +14,7 @@ const HeartbeatInterval = 10 * time.Second
 
 type infoLogger interface {
 	Info(msg string, args ...any)
+	Error(msg string, args ...any)
 }
 
 type migrationFunc func(context.Context, *gorm.DB) error
@@ -125,4 +126,14 @@ func logInfo(ctx context.Context, logger infoLogger, message string, args ...any
 		return
 	}
 	logger.Info(message, args...)
+}
+
+func logError(ctx context.Context, logger infoLogger, message string, args ...any) {
+	if contextual, ok := logger.(interface {
+		ErrorContext(context.Context, string, ...any)
+	}); ok {
+		contextual.ErrorContext(ctx, message, args...)
+		return
+	}
+	logger.Error(message, args...)
 }

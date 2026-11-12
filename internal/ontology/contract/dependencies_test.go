@@ -25,21 +25,9 @@ func TestOntologyRejectsMismatchedMemberVersions(t *testing.T) {
 	}
 }
 
-func TestOntologyClassificationOverrideRequiresCompatibleEntityKind(t *testing.T) {
-	snapshot := policySnapshot("person", EntitySource, "")
-	class := Record{ID: uuid.NewString(), Version: 1, Kind: EntityClass, Definition: &Definition{Key: "project", Label: "Project", BaseEntityKind: "project"}}
-	for _, record := range []Record{
-		{ID: uuid.NewString(), Kind: AssignmentKind, Assignment: &Assignment{Source: snapshot.SourceHandle, DefinitionID: class.ID}, Sources: []SourceDependency{sourceDependency(t, snapshot)}},
-		{ID: uuid.NewString(), Kind: OverrideKind, Override: &Override{Action: SetClassification, DefinitionID: class.ID, Members: []SourceHandle{snapshot.SourceHandle}}, Sources: []SourceDependency{sourceDependency(t, snapshot)}},
-	} {
-		_, err := PreparePublication(policyCatalog(t, class), map[string]SourceSnapshot{SourceKey(snapshot.SourceHandle): snapshot}, publicationFor(record), false)
-		require.ErrorIs(t, err, ErrInvalid)
-	}
-}
-
 func TestOntologyEnrichedDependenciesAreBounded(t *testing.T) {
-	snapshot := policySnapshot("person", EntitySource, "")
-	class := Record{ID: uuid.NewString(), Version: 1, Kind: EntityClass, Definition: &Definition{Key: "person", Label: "Person", BaseEntityKind: "person"}}
+	snapshot := policySnapshot("evidence", EvidenceSource, "")
+	class := Record{ID: uuid.NewString(), Version: 1, Kind: Topic, Definition: &Definition{Key: "people", Label: "People"}}
 	catalog := policyCatalog(t, class)
 	snapshots := map[string]SourceSnapshot{SourceKey(snapshot.SourceHandle): snapshot}
 	for i := 0; i < MaxMembers+1; i++ {

@@ -43,21 +43,18 @@
 
 ## Target Architecture
 
-- PostgreSQL with `pgvector` is the only durable authority for knowledge,
-  workflow, security, audit, full-text search, vector search, and graph-shaped
-  reads.
-- Neo4j is legacy migration input only. Any bridge must be explicit,
-  boot-gated, read-only, and absent from normal boot, remember, recall, trace,
-  and evaluation paths. Never add permanent dual-write or fallback reads.
+- PostgreSQL with `pgvector` is the only durable authority for Evidence,
+  provenance, workflow, security, audit, search, and organizational topics.
+  The factual graph and Neo4j have no executable production or evaluation path.
 - Redis and process memory are coordination only. A single-node deployment may
   use process-local coordination; a multi-instance deployment requires Redis or
   an equivalent distributed implementation. Neither stores canonical memory.
 - Dependency direction is transport -> application service -> domain and ports.
   PostgreSQL, Redis, and provider packages implement ports; they do not define
   domain policy.
-- Model providers propose structured results. Closed-schema validation and
-  deterministic server policy decide durable state, tier, status, ownership,
-  and support.
+- Model providers propose structured assessments and exact session excerpts.
+  Closed-schema validation and deterministic server policy decide durable
+  Evidence state, lifecycle, ownership, and organizational eligibility.
 - Preserve existing package patterns where they enforce these boundaries. Do
   not rename the tree or create parallel v2 packages without a concrete need.
 - Apply KISS ("Keep It Simple, Stupid"): choose the simplest sufficient design
@@ -68,20 +65,27 @@
 
 ## Semantic Invariants
 
-- Entity and typed Value are the semantic node kinds. Profile-owned
-  Relationships carry semantic lifecycle and produce read-model edges only when
-  active and eligible.
-- Candidates and Hypotheses never enter default recall or active graph reads.
-  Stored knowledge and search context never become submitted evidence.
-- Remember durably stages exact evidence and processing intent before
-  acknowledgement. Provider calls occur outside the authoritative semantic
-  transaction.
-- Validate each complete verifier response. Invalid, missing, duplicate,
+- Exact Evidence is canonical memory. Retain its occurrences, source revisions,
+  provenance, lifecycle, and Evidence conflicts. Factual Relationships,
+  Entities, typed Values, predicates, support, and Dream are retired.
+- Topics, direct Evidence membership, equivalence, and topic hierarchy are
+  derived organizational metadata. Topic filters select the union of current
+  direct memberships without descendant expansion. Stored memory and search
+  context never become submitted Evidence.
+- Remember accepts Evidence and provenance under `dense-mem.v2.8.0`, rejecting
+  retired graph fields before provider work. It durably stages exact input and
+  intent, then completes assessment, required embeddings, and atomic commit
+  before returning success. Provider calls stay outside that transaction.
+- Validate each complete assessment response. Invalid, missing, duplicate,
   unknown, or out-of-allowlist results trigger bounded complete regeneration
   and zero partial semantic commit; do not coerce or splice responses.
-- Commit accepted evidence decisions, lifecycle history, current state, search
-  documents, and embedding jobs atomically in PostgreSQL. Embeddings are
-  derived, asynchronous, versioned state and cannot overwrite newer sources.
+- Commit accepted Evidence, decisions, provenance, lifecycle, search state, and
+  the replay receipt atomically in PostgreSQL. Required foreground embeddings
+  must succeed before commit; versioned derived state cannot overwrite newer
+  sources. Session intake uses exact current-event excerpts and original offsets;
+  empty extraction produces an explicit no-memory outcome.
+- Trace and memory-pack export use authorized Evidence IDs. Retain original
+  content, canonical hashes, provenance, bounded history, and explicit omissions.
 - Required failures remain visible and typed. Optional degradation must be
   reported; never replace a required failure with an empty result or silent
   fallback.
@@ -97,15 +101,14 @@
   explicit private or team_shared target; authentication selects its actual ID.
   Team-read-only callers may mutate their own private memory. Shared mutations
   require current write permission and semantic ownership. Normal lifecycle,
-  support, identity, correction, and forget operations retain owner checks.
+  supersession, retraction, conflict, and forget operations retain owner checks.
 - PostgreSQL work crosses trust boundaries through explicit transactions with
   transaction-local team/profile RLS context. System and migration modes are
   separate, audited, and never request-selectable.
-- Scope source, full-text, vector, and adjacency queries before IDs leave an
+- Scope source, full-text, vector, and topic-membership queries before IDs leave an
   adapter, then authorize again during hydration or mutation. Redis namespacing
   prevents collisions; it is not an authorization boundary.
-- Use bound SQL parameters. A legacy Neo4j migration adapter must use bounded,
-  parameterized, read-only queries.
+- Use bound SQL parameters.
 - Strictly bind and validate HTTP/MCP inputs. MCP `tools/list` and `tools/call`
   use one registry and the same version, feature, scope, and visibility checks.
 - MCP is the supported external memory integration contract. Browser handlers

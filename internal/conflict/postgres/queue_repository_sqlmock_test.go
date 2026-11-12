@@ -4,80 +4,20 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"regexp"
+
 	"testing"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/stretchr/testify/assert"
+
 	"github.com/stretchr/testify/require"
 	gormpostgres "gorm.io/driver/postgres"
 	"gorm.io/gorm"
 
 	conflictpostgres "github.com/markhuangai/dense-mem/internal/conflict/postgres"
-	"github.com/markhuangai/dense-mem/internal/domain"
+
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
-
-func TestConflictStoreCollectsQueueMetricsWithBoundedQueries(t *testing.T) {
-	db, mock, gormDB := newConflictSQLMockDB(t)
-	defer db.Close()
-	store := conflictpostgres.NewStore(gormDB, conflictSQLMockRLS{}, nil)
-	collectedAt := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
-
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT transaction_timestamp()")).
-		WillReturnRows(sqlmock.NewRows([]string{"transaction_timestamp"}).AddRow(collectedAt))
-	mock.ExpectQuery("WITH relevant_teams").
-		WillReturnRows(sqlmock.NewRows([]string{"team_id"}).AddRow("team-a"))
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT team_id::text, status, COUNT(*)::double precision")).
-		WillReturnRows(sqlmock.NewRows([]string{"team_id", "status", "count"}).AddRow("team-a", "open", 3.0))
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT team_id::text, status")).
-		WithArgs(collectedAt).
-		WillReturnRows(sqlmock.NewRows([]string{"team_id", "status", "age"}).AddRow("team-a", "open", 42.5))
-	mock.ExpectQuery("SELECT team_id::text,\\s+CASE").
-		WithArgs(collectedAt).
-		WillReturnRows(sqlmock.NewRows([]string{"team_id", "lease_state", "count"}).AddRow("team-a", "active", 1.0))
-	mock.ExpectQuery("SELECT team_id::text,\\s+CASE WHEN").
-		WillReturnRows(sqlmock.NewRows([]string{"team_id", "status", "count"}).AddRow("team-a", "pending", 2.0))
-
-	snapshot, err := store.CollectConflictQueueMetrics(context.Background())
-	require.NoError(t, err)
-	require.Len(t, snapshot.Cases, 2)
-	require.Equal(t, domain.ConflictQueueMetricCase{TeamID: "team-a", Status: "open", Value: 3}, snapshot.Cases[0])
-	require.Equal(t, domain.ConflictQueueMetricCase{TeamID: "team-a", Status: "overdue"}, snapshot.Cases[1])
-	require.NoError(t, mock.ExpectationsWereMet())
-}
-
-func TestConflictStoreCollectMetricsPropagatesQueryAndScanFailures(t *testing.T) {
-	t.Run("query error", func(t *testing.T) {
-		db, mock, gormDB := newConflictSQLMockDB(t)
-		defer db.Close()
-		store := conflictpostgres.NewStore(gormDB, conflictSQLMockRLS{}, nil)
-		databaseErr := errors.New("queue metrics query failed")
-		mock.ExpectQuery(regexp.QuoteMeta("SELECT transaction_timestamp()")).WillReturnError(databaseErr)
-
-		_, err := store.CollectConflictQueueMetrics(context.Background())
-		assert.ErrorIs(t, err, databaseErr)
-		assert.NoError(t, mock.ExpectationsWereMet())
-	})
-
-	t.Run("scan error", func(t *testing.T) {
-		db, mock, gormDB := newConflictSQLMockDB(t)
-		defer db.Close()
-		store := conflictpostgres.NewStore(gormDB, conflictSQLMockRLS{}, nil)
-		collectedAt := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
-		mock.ExpectQuery(regexp.QuoteMeta("SELECT transaction_timestamp()")).
-			WillReturnRows(sqlmock.NewRows([]string{"transaction_timestamp"}).AddRow(collectedAt))
-		mock.ExpectQuery("WITH relevant_teams").
-			WillReturnRows(sqlmock.NewRows([]string{"team_id"}).AddRow("team-a"))
-		mock.ExpectQuery(regexp.QuoteMeta("SELECT team_id::text, status, COUNT(*)::double precision")).
-			WillReturnRows(sqlmock.NewRows([]string{"team_id", "status", "count"}).AddRow("team-a", "open", "not-a-number"))
-
-		_, err := store.CollectConflictQueueMetrics(context.Background())
-		assert.Error(t, err)
-		assert.NoError(t, mock.ExpectationsWereMet())
-	})
-}
 
 func TestListEvidenceConflictsHydratesOnlyRetainedPage(t *testing.T) {
 	db, mock, gormDB := newConflictSQLMockDB(t)

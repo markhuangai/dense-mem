@@ -19,7 +19,7 @@ import (
 )
 
 func testOntologyOrganizationAtomicReplayAndIsolation(t *testing.T) {
-	f := newOrganizationFixtureWithMaintenance(t, false)
+	f := newOrganizationFixture(t)
 	a := f.organizationEvidence(t, 0, "Atlas stores data in PostgreSQL.", nil)
 	b := f.organizationEvidence(t, 1, "PostgreSQL is Atlas's data store.", nil)
 	before := f.canonicalSnapshot(t)
@@ -67,12 +67,11 @@ func testOntologyOrganizationAtomicReplayAndIsolation(t *testing.T) {
 	require.Equal(t, before, f.canonicalSnapshot(t))
 	require.Error(t, f.admin.Exec(`UPDATE ontology_assessments SET body='{}'::jsonb WHERE team_id=?::uuid`, f.team).Error)
 	require.Error(t, f.admin.Exec(`DELETE FROM ontology_assessments WHERE team_id=?::uuid`, f.team).Error)
-	require.ErrorContains(t, rollbackOntologySchemaTo(t, f.admin, 20261004113210), "cannot roll back populated ontology assessments")
 }
 
 func testOntologyOrganizationRejectsStaleAndMalformedPublication(t *testing.T) {
 	t.Run("freshness comparison diagnostics", testOrganizationFreshnessComparisons)
-	for _, mode := range []string{"item_source_kind", "definition_unused"} {
+	for _, mode := range []string{"definition_record", "definition_unused"} {
 		t.Run("bounded complete rejection "+mode, func(t *testing.T) {
 			f := newOrganizationFixture(t)
 			a := f.organizationEvidence(t, 0, "Atlas uses PostgreSQL.", nil)
@@ -81,8 +80,8 @@ func testOntologyOrganizationRejectsStaleAndMalformedPublication(t *testing.T) {
 			var turns atomic.Int32
 			service, calls := organizationFixtureService(t, f, nil, func(_ assessment.Request, response *assessment.Response) {
 				turn := turns.Add(1)
-				if mode == "item_source_kind" {
-					response.Definitions[0].Kind = ontology.PredicateConcept
+				if mode == "definition_record" {
+					response.Definitions[0].Kind = ontology.Kind("predicate_concept")
 				} else {
 					response.Definitions = append(response.Definitions, assessment.Definition{Ref: fmt.Sprintf("unused%d", turn), Kind: ontology.Topic,
 						Key: fmt.Sprintf("unused_topic_%d", turn), Label: "Unused proposal", Description: "New unused definition", Aliases: []string{}})

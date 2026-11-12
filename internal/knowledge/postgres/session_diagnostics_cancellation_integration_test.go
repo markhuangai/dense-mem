@@ -29,7 +29,7 @@ func TestSessionCancelledDiagnosticsCannotReviveSealedOrErasedGeneration(t *test
 			team := createLedgerTeam(t, admin, rls, "cancelled-diagnostic")
 			owner := createLedgerProfile(t, admin, rls, team, "owner")
 			base, intake := sessionIntakeFixture(t, admin, app, rls, team, owner, domain.MemorySpacePrivate)
-			store := NewStore(app, rls, ConflictRuntimeConfig{})
+			store := NewStore(app, rls)
 			outbound := &sessionOutbound{block: true, entered: make(chan struct{}, 1)}
 			var logs bytes.Buffer
 			api := service.NewService(service.Dependencies{Enabled: true, Repository: store, Preparer: processor.NewSynchronousProcessor(processor.ProcessorDependencies{Ledger: store}), Tokenizer: "o200k_base",

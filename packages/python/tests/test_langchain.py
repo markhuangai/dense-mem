@@ -42,17 +42,15 @@ def recall():
                 "equivalents_truncated": True,
             },
         ],
-        "related_relationships": [
+        "related_topics": [
             {
-                "relationship_id": "relationship-1",
-                "equivalent_relationship_ids": ["alternate"],
-                "evidence_ids": ["shared-1"],
-                "space_kind": "team_shared",
+                "topic_id": "topic-1", "name": "Languages", "description": "Tools",
+                "eligible_evidence_count": 2, "rank": 1,
             },
         ],
-        "related_communities": [{"community_id": "community-1", "rank": 2}],
+        "topics_truncated": True,
         "conflicts": [{"conflict_id": "conflict-1", "status": "open"}],
-        "search_states": {"evidence": "current", "relationships": "pending"},
+        "search_states": {"evidence": "current"},
         "degradations": [],
         "suggested_actions": [{"tool": "submit_recall_session_feedback", "guidance": "optional"}],
     }
@@ -87,8 +85,8 @@ def assert_mapping(documents, result):
         assert metadata["space_kind"] == evidence["space_kind"]
         assert metadata["recall_id"] == "recall-1"
         for key in (
-            "related_relationships",
-            "related_communities",
+            "related_topics",
+            "topics_truncated",
             "conflicts",
             "search_states",
             "degradations",
@@ -96,12 +94,14 @@ def assert_mapping(documents, result):
         ):
             assert metadata[key] == result[key]
         assert not {"source", "score", "rank", "relationship_ids"} & metadata.keys()
-    documents[0].metadata["densemem"]["related_relationships"].clear()
-    assert documents[1].metadata["densemem"]["related_relationships"]
-    assert result["related_relationships"]
+    documents[0].metadata["densemem"]["related_topics"].clear()
+    assert documents[1].metadata["densemem"]["related_topics"]
+    assert result["related_topics"]
 
 
-def test_sync_real_interface_order_metadata_callbacks_and_read_only(wire_server, recall):
+def test_evidence_only_sync_real_interface_order_metadata_callbacks_and_read_only(
+    wire_server, recall
+):
     endpoint, state = wire_server
     state["result"] = recall
     callback = Callbacks()
@@ -116,18 +116,15 @@ def test_sync_real_interface_order_metadata_callbacks_and_read_only(wire_server,
     assert not hasattr(retriever, "remember") and not hasattr(retriever, "add_documents")
 
 
-async def test_native_async_auth_rotation_and_options_snapshot(wire_server, recall):
+async def test_evidence_only_native_async_auth_rotation_and_options_snapshot(wire_server, recall):
     endpoint, state = wire_server
     state["result"] = recall
     options = {
-        "relationship_limit": 0,
-        "community_limit": 0,
-        "community_relationship_limit": 1,
+        "topic_limit": 0,
+        "topic_ids": ["b7a0c1ad-7792-4d9e-af43-86f3199d1e09"],
         "known_at": None,
         "valid_at": "2026-10-22T00:00:00Z",
         "known_evidence_ids": ["known"],
-        "known_relationship_ids": [],
-        "expand_from_entity_ids": [],
     }
     snapshot = copy.deepcopy(options)
     resolutions = []
@@ -165,8 +162,14 @@ def test_invalid_k_fails_before_network(wire_server, k):
     assert not state["calls"]
 
 
-@pytest.mark.parametrize("key", ["query", "limit", "k", "team_id", "space_id", "target_space", "x"])
-async def test_options_cannot_override_authorization_or_invocation(wire_server, key):
+@pytest.mark.parametrize(
+    "key",
+    [
+        "query", "limit", "k", "team_id", "space_id", "target_space", "x",
+        "relationship_limit", "community_limit", "known_relationship_ids", "expand_from_entity_ids",
+    ],
+)
+async def test_evidence_only_options_cannot_override_authorization_or_invocation(wire_server, key):
     endpoint, state = wire_server
     with pytest.raises(ValueError):
         DenseMemRetriever(endpoint, token="key", recall_options={key: "forbidden"})
@@ -197,7 +200,9 @@ def test_credentials_are_absent_from_pydantic_and_langchain_serialization(wire_s
 
 
 @pytest.mark.parametrize("empty", [True, False])
-async def test_optional_warning_preserves_response_even_when_empty(wire_server, recall, empty):
+async def test_evidence_only_optional_warning_preserves_response_even_when_empty(
+    wire_server, recall, empty
+):
     endpoint, state = wire_server
     recall["degradations"] = [
         {
@@ -248,7 +253,7 @@ async def test_required_degradation_raises_without_success_callback(wire_server,
         ("equivalents_truncated", "false"),
     ],
 )
-async def test_malformed_evidence_never_returns_partial_documents(
+async def test_evidence_only_malformed_evidence_never_returns_partial_documents(
     wire_server, recall, field, value
 ):
     endpoint, state = wire_server
@@ -259,9 +264,9 @@ async def test_malformed_evidence_never_returns_partial_documents(
 
 
 @pytest.mark.parametrize(
-    "field", ["recall_id", "related_relationships", "search_states", "results"]
+    "field", ["recall_id", "related_topics", "topics_truncated", "search_states", "results"]
 )
-async def test_missing_public_fields_are_protocol_errors(wire_server, recall, field):
+async def test_evidence_only_missing_public_fields_are_protocol_errors(wire_server, recall, field):
     endpoint, state = wire_server
     del recall[field]
     state["result"] = recall

@@ -8,11 +8,12 @@ import (
 	"github.com/google/uuid"
 	access "github.com/markhuangai/dense-mem/internal/access/postgres"
 	"github.com/markhuangai/dense-mem/internal/domain"
-	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
+
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	"github.com/markhuangai/dense-mem/internal/settings"
 	settingspostgres "github.com/markhuangai/dense-mem/internal/settings/postgres"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func maintenanceOtherTeam(t *testing.T, parent *ontologyFixture) *ontologyFixture {
@@ -29,11 +30,9 @@ func maintenanceOtherTeam(t *testing.T, parent *ontologyFixture) *ontologyFixtur
 	return f
 }
 
-func maintenanceEntity(t *testing.T, f *ontologyFixture, name string) ontology.SourceHandle {
+func maintenanceEvidence(t *testing.T, f *ontologyFixture, text string) ontology.SourceHandle {
 	t.Helper()
-	entity, err := f.knowledge.CreateEntity(context.Background(), knowledge.CreateEntityInput{TeamID: f.team, OwnerProfileID: f.owners[0], EntityKind: "project", CanonicalName: name})
-	require.NoError(t, err)
-	return ontology.SourceHandle{Kind: ontology.EntitySource, ID: entity.EntityID, Version: int64(entity.Version)}
+	return f.organizationEvidence(t, 0, text, nil)
 }
 
 func maintenanceSettings(t *testing.T, f *ontologyFixture) *settings.AppConfigServiceImpl {
@@ -73,4 +72,17 @@ func maintenanceClaim(t *testing.T, f *ontologyFixture, window *ontology.Mainten
 func (s *Store) discoverMaintenanceError(ctx context.Context, turn ontology.MaintenanceTurn, limit int) error {
 	_, err := s.DiscoverMaintenance(ctx, turn, limit)
 	return err
+}
+
+func appendMaintenanceOccurrence(tx *gorm.DB, f *ontologyFixture, source ontology.SourceHandle) error {
+	ingestID := uuid.NewString()
+	if err := tx.Exec(`INSERT INTO knowledge_ingests
+ SELECT (jsonb_populate_record(NULL::knowledge_ingests,to_jsonb(ingest)||jsonb_build_object('ingest_id',?::uuid,'idempotency_key',?::text))).*
+ FROM knowledge_ingests AS ingest JOIN evidence_fragments AS fragment ON fragment.team_id=ingest.team_id AND fragment.ingest_id=ingest.ingest_id
+ WHERE fragment.team_id=?::uuid AND fragment.fragment_id=?::uuid`, ingestID, "maintenance:"+ingestID, f.team, source.ID).Error; err != nil {
+		return err
+	}
+	return tx.Exec(`INSERT INTO evidence_occurrences
+ SELECT (jsonb_populate_record(NULL::evidence_occurrences,to_jsonb(occurrence)||jsonb_build_object('occurrence_id',?::uuid,'ingest_id',?::uuid,'created_at',clock_timestamp()))).*
+ FROM evidence_occurrences AS occurrence WHERE team_id=?::uuid AND canonical_fragment_id=?::uuid LIMIT 1`, uuid.NewString(), ingestID, f.team, source.ID).Error
 }

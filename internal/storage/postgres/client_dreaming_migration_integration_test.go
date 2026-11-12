@@ -129,8 +129,7 @@ func TestTeamOwnedDreamingMigrationCanonicalizesLegacyRows(t *testing.T) {
 	`).Scan(&seededLegacyConfigCount))
 	require.Equal(t, 3, seededLegacyConfigCount)
 
-	m := NewMigratorWithDB(sqlDB)
-	require.NoError(t, m.RunUp(ctx))
+	require.NoError(t, migrationUpTo(ctx, sqlDB, 2026073104))
 
 	var (
 		canonicalRunCount        int
@@ -243,6 +242,6 @@ func TestTeamOwnedDreamingMigrationCanonicalizesLegacyRows(t *testing.T) {
 	assert.Equal(t, 1, canonicalNullHashCount)
 	assert.Equal(t, 1, nullHashAliasCount)
 	assert.True(t, strings.HasPrefix(backfilledHash, "sha256:"))
-	assert.Equal(t, "false", enabled, "the full upgrade retires Dream enablement while preserving canonicalized history")
+	assert.Equal(t, "true", enabled, "the historical ownership migration preserves explicit force enablement")
 	assert.Zero(t, legacyConfigCount)
 }

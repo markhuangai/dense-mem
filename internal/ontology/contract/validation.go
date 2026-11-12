@@ -5,12 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"slices"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
-	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/jsonstrict"
 )
 
@@ -76,7 +74,7 @@ func ValidateRecord(record Record) error {
 	}
 	var err error
 	switch record.Kind {
-	case EntityClass, PredicateConcept, Topic:
+	case Topic:
 		if record.Definition == nil {
 			return fmt.Errorf("%w: definition body required", ErrInvalid)
 		}
@@ -86,7 +84,7 @@ func ValidateRecord(record Record) error {
 			return fmt.Errorf("%w: assignment body required", ErrInvalid)
 		}
 		err = ValidateSourceHandle(record.Assignment.Source)
-	case EvidenceGroup, RelationshipGroup:
+	case EvidenceGroup:
 		if record.Group == nil {
 			return fmt.Errorf("%w: group body required", ErrInvalid)
 		}
@@ -144,24 +142,6 @@ func validateDefinition(kind Kind, definition Definition) error {
 	if definition.ParentID != "" && !validID(definition.ParentID) {
 		return &PublicationRejection{Cause: fmt.Errorf("%w: parent ID", ErrInvalid), Reason: "parent_id", ParentID: definition.ParentID}
 	}
-	if definition.ParentRelation != "" {
-		if definition.ParentRelation != SubclassOf && definition.ParentRelation != SubpropertyOf {
-			return &PublicationRejection{Cause: fmt.Errorf("%w: unknown parent relation", ErrInvalid), Reason: "parent_relation", Observed: string(definition.ParentRelation)}
-		}
-		if (definition.ParentRelation == SubclassOf && kind != EntityClass) || (definition.ParentRelation == SubpropertyOf && kind != PredicateConcept) {
-			return &PublicationRejection{Cause: fmt.Errorf("%w: parent relation is incompatible with definition kind", ErrInvalid), Reason: "parent_relation_kind", Expected: string(definition.ParentRelation), Observed: string(kind)}
-		}
-		if definition.ParentID == "" {
-			return &PublicationRejection{Cause: fmt.Errorf("%w: semantic parent relation requires a parent", ErrInvalid), Reason: "parent_required", Expected: "parent_id", Observed: "missing"}
-		}
-	}
-	if kind == EntityClass {
-		if !slices.Contains(domain.EntityKinds(), definition.BaseEntityKind) {
-			return fmt.Errorf("%w: class requires an existing entity kind", ErrInvalid)
-		}
-	} else if definition.BaseEntityKind != "" {
-		return fmt.Errorf("%w: only classes carry an entity kind", ErrInvalid)
-	}
 	seen := map[string]bool{}
 	for _, alias := range definition.Aliases {
 		name := NormalizeName(alias)
@@ -213,20 +193,8 @@ func validateMembers(members []SourceHandle, minimum int) error {
 }
 
 func ValidateSourceHandle(handle SourceHandle) error {
-	if handle.Version < 1 {
-		return fmt.Errorf("%w: source version required", ErrInvalid)
-	}
-	switch handle.Kind {
-	case PredicateSource:
-		if !boundedText(handle.ID, 128) {
-			return fmt.Errorf("%w: predicate key required", ErrInvalid)
-		}
-	case EntitySource, EvidenceSource, RelationshipSource:
-		if !validID(handle.ID) {
-			return fmt.Errorf("%w: source UUID required", ErrInvalid)
-		}
-	default:
-		return fmt.Errorf("%w: unknown source kind", ErrInvalid)
+	if handle.Kind != EvidenceSource || handle.Version != 1 || !validID(handle.ID) {
+		return fmt.Errorf("%w: Evidence source UUID and version 1 required", ErrInvalid)
 	}
 	return nil
 }

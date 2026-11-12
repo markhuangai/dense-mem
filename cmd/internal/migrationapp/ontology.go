@@ -26,7 +26,7 @@ func migrateOntology(ctx context.Context, db *gorm.DB, migrator *postgres.Migrat
 	if err := service.Prepare(ctx, observe); err != nil {
 		return fmt.Errorf("prepare ontology upgrade: %w", err)
 	}
-	if err := migrator.RunUp(ctx); err != nil {
+	if err := migrateEvidenceOnly(ctx, db, migrator, logger); err != nil {
 		return err
 	}
 	if !required {

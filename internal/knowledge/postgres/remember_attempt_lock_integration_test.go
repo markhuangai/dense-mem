@@ -18,8 +18,8 @@ func TestRememberAttemptLockSerializesAcrossRepositoryInstances(t *testing.T) {
 	_, appDB, _, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
 
-	firstRepo := NewStore(appDB, nil, ConflictRuntimeConfig{})
-	secondRepo := NewStore(appDB, nil, ConflictRuntimeConfig{})
+	firstRepo := NewStore(appDB, nil)
+	secondRepo := NewStore(appDB, nil)
 	teamID, ownerID, key := uuid.NewString(), uuid.NewString(), "remember-lock-cross-instance"
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -65,7 +65,7 @@ func TestRememberAttemptLockDifferentKeysUseIndependentCallbacks(t *testing.T) {
 	_, appDB, _, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
 
-	repo := NewStore(appDB, nil, ConflictRuntimeConfig{})
+	repo := NewStore(appDB, nil)
 	teamID, ownerID := uuid.NewString(), uuid.NewString()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -88,7 +88,7 @@ func TestRememberAttemptLockReleasesAfterContextCancellation(t *testing.T) {
 	_, appDB, _, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
 
-	repo := NewStore(appDB, nil, ConflictRuntimeConfig{})
+	repo := NewStore(appDB, nil)
 	teamID, ownerID, key := uuid.NewString(), uuid.NewString(), "remember-lock-cancel"
 	ctx, cancel := context.WithCancel(context.Background())
 	entered := make(chan struct{})
@@ -116,7 +116,7 @@ func TestRememberAttemptLockReleasesAfterCallbackPanic(t *testing.T) {
 	_, appDB, _, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
 
-	repo := NewStore(appDB, nil, ConflictRuntimeConfig{})
+	repo := NewStore(appDB, nil)
 	teamID, ownerID, key := uuid.NewString(), uuid.NewString(), "remember-lock-panic"
 	func() {
 		defer func() {
@@ -140,7 +140,7 @@ func TestRememberAttemptLockBoundsDifferentKeysByPoolAdmission(t *testing.T) {
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(sharedAdvisoryLockAdmissionLimit + 1)
 	sqlDB.SetMaxIdleConns(sharedAdvisoryLockAdmissionLimit + 1)
-	repo := NewStore(appDB, nil, ConflictRuntimeConfig{})
+	repo := NewStore(appDB, nil)
 	teamID, ownerID := uuid.NewString(), uuid.NewString()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -195,7 +195,7 @@ func TestRememberAttemptLockRejectsPoolWithoutApplicationCapacity(t *testing.T) 
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
 	sqlDB.SetMaxIdleConns(1)
-	repo := NewStore(appDB, nil, ConflictRuntimeConfig{})
+	repo := NewStore(appDB, nil)
 	called := false
 	err = repo.WithRememberAttemptLock(context.Background(), uuid.NewString(), uuid.NewString(), "remember-lock-no-capacity", func(bool) error {
 		called = true

@@ -37,7 +37,9 @@ def test_url_cannot_carry_credentials(endpoint):
         DenseMemClient(endpoint, token="x")
 
 
-async def test_sdk_discovery_and_every_method_preserve_payload_and_result(wire_server):
+async def test_evidence_only_sdk_discovery_and_every_method_preserve_payload_and_result(
+    wire_server,
+):
     endpoint, state = wire_server
     client = DenseMemClient(endpoint, token="static-secret")
     initialized = await client.initialize()
@@ -47,22 +49,20 @@ async def test_sdk_discovery_and_every_method_preserve_payload_and_result(wire_s
         "ingest_session",
         "recall_memory",
         "trace_memory",
+        "export_memory_pack",
     }
     response = {
         "processing_state": "completed",
         "search_state": "not_required",
-        "relationship_results": [
-            {
-                "ref": "one",
-                "disposition": "not_stored",
-                "splits": [],
-                "reason": "unsupported",
-                "remediation": "Supply evidence.",
-            }
-        ],
+        "contract_version": "dense-mem.v2.8.0",
+        "evidence": [{"evidence_id": "stored", "disposition": "stored"}],
         "results": [{"context": " café 🧭\n", "equivalent_evidence_ids": ["B", "A"]}],
         "conflicts": [{"positions": ["second", "first"]}],
-        "related_communities": [{"logical_community_id": "topic", "summary": "derived"}],
+        "related_topics": [{
+            "topic_id": "topic", "name": "Languages", "description": "Tools",
+            "eligible_evidence_count": 2, "rank": 1,
+        }],
+        "topics_truncated": False,
         "degradations": [{"code": "optional_context_omitted"}],
         "warnings": ["context omitted"],
         "session": {"event_id": "immutable"},
@@ -80,11 +80,12 @@ async def test_sdk_discovery_and_every_method_preserve_payload_and_result(wire_s
         client.ingest_session,
         client.recall_memory,
         client.trace_memory,
+        client.export_memory_pack,
     ):
         assert await method(request) == response
     assert all(args == original for _, args in state["calls"])
     assert request == original
-    assert len(state["calls"]) == 4
+    assert len(state["calls"]) == 5
     assert all(auth == b"Bearer static-secret" for auth, _ in state["requests"])
 
 
@@ -106,7 +107,7 @@ async def test_provider_is_once_per_operation_and_rotation_is_caller_owned(wire_
     assert all(auth == b"Bearer access-token-2" for auth, _ in state["requests"][first:])
 
 
-async def test_request_is_snapshotted_before_credential_await(wire_server):
+async def test_evidence_only_request_is_snapshotted_before_credential_await(wire_server):
     endpoint, state = wire_server
     started, release = asyncio.Event(), asyncio.Event()
 
@@ -127,7 +128,9 @@ async def test_request_is_snapshotted_before_credential_await(wire_server):
     assert state["calls"][0][1] == original
 
 
-async def test_failed_receipt_preserves_identifiers_and_actionable_fields(wire_server):
+async def test_evidence_only_failed_receipt_preserves_identifiers_and_actionable_fields(
+    wire_server,
+):
     endpoint, state = wire_server
     state["result"] = {
         "processing_state": "failed",
@@ -306,7 +309,7 @@ async def test_cross_origin_redirect_is_not_followed(wire_server):
         await DenseMemClient(endpoint, token="token").initialize()
 
 
-async def test_timeout_closes_sdk_tasks_and_preserves_unknown_receipt(wire_server):
+async def test_evidence_only_timeout_closes_sdk_tasks_and_preserves_unknown_receipt(wire_server):
     endpoint, state = wire_server
     state["delay"] = 10
     baseline = set(asyncio.all_tasks())
@@ -320,7 +323,7 @@ async def test_timeout_closes_sdk_tasks_and_preserves_unknown_receipt(wire_serve
     assert set(asyncio.all_tasks()) == baseline
 
 
-async def test_cancellation_closes_sdk_tasks(wire_server):
+async def test_evidence_only_cancellation_closes_sdk_tasks(wire_server):
     endpoint, state = wire_server
     state["delay"] = 10
     baseline = set(asyncio.all_tasks())
@@ -344,5 +347,25 @@ def test_sync_uses_the_same_sdk_transport(wire_server):
     endpoint, state = wire_server
     client = SyncDenseMemClient(endpoint, token="token")
     assert client.initialize().serverInfo.name == "densemem-client-test"
-    assert len(client.list_tools().tools) == 4
+    assert len(client.list_tools().tools) == 5
     assert client.remember({"idempotency_key": "retained"}) == state["result"]
+
+
+async def test_evidence_only_retired_contract_preserves_original_outcome(wire_server):
+    endpoint, state = wire_server
+    result = {
+        "contract_version": "dense-mem.v2.8.0",
+        "submission_id": "original-submission",
+        "processing_state": "failed",
+        "original_contract_version": "dense-mem.v2.7.0",
+        "memory_outcome": "retired_contract",
+        "retired_payload": True,
+        "errors": [{"code": "retired_contract", "message": "Use a new v2.8.0 request.",
+                    "retryable": False, "next_action": "new_request"}],
+    }
+    state.update(result=result, is_error=True)
+    with pytest.raises(DenseMemOperationError) as raised:
+        await DenseMemClient(endpoint, token="key").ingest_session({"idempotency_key": "old"})
+    assert raised.value.result == result
+    assert raised.value.submission_id == "original-submission"
+    assert len(state["calls"]) == 1

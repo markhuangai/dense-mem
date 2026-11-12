@@ -18,7 +18,7 @@ func pairedFixture(t *testing.T) PairConfig {
 	t.Helper()
 	root := writeEvalFixture(t)
 	seed, suite := filepath.Join(root, "seed_manifest.json"), filepath.Join(root, "suite.jsonl")
-	_, _, _, _, _, _, hash, err := loadRunInputs(seed, suite)
+	_, _, _, _, _, hash, err := loadRunInputs(seed, suite)
 	require.NoError(t, err)
 	suiteHash, err := PairFileHash(suite)
 	require.NoError(t, err)
@@ -26,22 +26,41 @@ func pairedFixture(t *testing.T) PairConfig {
 	models := PairModels{Provider: "openai", Remember: "fixture", Ontology: "fixture", BackingRevision: "unknown", VerifierEndpointSHA256: pairBytesHash([]byte("http://provider")), EmbeddingEndpointSHA256: pairBytesHash([]byte("http://provider")), EmbeddingModel: "embedding", EmbeddingDimensions: 3, EmbeddingIndexStrategy: "exact"}
 	release := func(side string) PairRelease {
 		return PairRelease{Release: side, SourceRevision: binary.SourceRevision, ImageID: "sha256:" + strings.Repeat("c", 64), Runner: binary,
-			Scope: PairScope{TeamID: uuid.NewString(), OwnerID: uuid.NewString(), SpaceID: uuid.NewString(), Generation: 1}, Models: models, Protocol: "adr0014", Capacity: PairCapacity{Global: 8, Team: 4, ContextWindowTokens: 300000}, ImportConcurrency: 1, AdmissionLimit: 4,
+			Scope: PairScope{TeamID: uuid.NewString(), OwnerID: uuid.NewString(), SpaceID: uuid.NewString(), Generation: 1}, Models: models, Mode: PairModeEvidenceOnlyV5, Protocol: PairModeEvidenceOnlyV5, Capacity: PairCapacity{Global: 8, Team: 4, ContextWindowTokens: 300000}, ImportConcurrency: 1, AdmissionLimit: 4,
 			Runtime: PairRuntime{Project: side, ServerContainer: side + "-server", PostgresContainer: side + "-postgres", BaseURL: "http://127.0.0.1:18080", ControlURL: "http://127.0.0.1:18090", CredentialID: uuid.NewString(), APIKeyEnv: "PAIR_API_KEY", ControlTokenEnv: "PAIR_CONTROL_TOKEN", StateDir: filepath.Join(root, side+"-runtime")}}
 	}
-	return PairConfig{SchemaVersion: PairSchema, RunID: "pair-fixture", SeedManifest: seed, Suite: suite, SeedHash: hash, SuiteSHA256: suiteHash, OutDir: filepath.Join(root, "pair"), Deadline: time.Now().Add(time.Hour), Baseline: release("baseline"), Candidate: release("candidate"), Scorer: binary}
+	c := PairConfig{SchemaVersion: PairSchema, RunID: "pair-fixture", SeedManifest: seed, Suite: suite, SeedHash: hash, SuiteSHA256: suiteHash, OutDir: filepath.Join(root, "pair"), Deadline: time.Now().Add(time.Hour), Baseline: release("baseline"), Candidate: release("candidate"), Scorer: binary}
+	c.Baseline.Mode, c.Baseline.IntakeVariant, c.Baseline.Protocol = PairModeRetainedBaseline, "evidence_only", "adr0014"
+	c.Baseline.Runner.SourceManifestSHA256 = pairBytesHash([]byte("retained source manifest"))
+	c.Baseline.CaptureDir = filepath.Join(root, "retained-capture")
+	writePairNativeCapture(t, c, c.Baseline.CaptureDir)
+	observation := pairFixtureObservation(t, c, c.Baseline)
+	observation.Failed, observation.CoverageComplete = 1, false
+	files, err := pairCaptureHashes(c.Baseline.CaptureDir)
+	require.NoError(t, err)
+	proof := PairCaptureProof{SchemaVersion: PairSchema, Identity: capturePairIdentity(c, c.Baseline), Before: observation, After: observation, Files: files}
+	require.NoError(t, writePairJSON(filepath.Join(c.Baseline.CaptureDir, "pair_capture.json"), proof))
+	c.Baseline.CaptureSHA256, err = PairFileHash(filepath.Join(c.Baseline.CaptureDir, "pair_capture.json"))
+	require.NoError(t, err)
+	return c
+
 }
 
 func pairFixtureObservation(t *testing.T, c PairConfig, r PairRelease) PairObservation {
 	t.Helper()
 	o := drainedPairObservation()
 	o.Scope, o.Policy, o.Paused, o.Model = r.Scope, r.Capacity, true, r.Models.Ontology
-	_, corpus, _, _, _, _, _, err := loadRunInputs(c.SeedManifest, c.Suite)
+	_, corpus, _, _, _, _, err := loadRunInputs(c.SeedManifest, c.Suite)
 	require.NoError(t, err)
 	for _, item := range corpus {
 		hash, err := pairRequestHash(item)
+		version := "dense-mem.v2.8.0"
+		if r.Mode == PairModeRetainedBaseline {
+			hash, err = retainedCEvidenceRequestHash(item)
+			version = "dense-mem.v2.7.0"
+		}
 		require.NoError(t, err)
-		o.Imports = append(o.Imports, PairImportAttempt{Scope: r.Scope, SourceDocID: item.SourceDocID, AttemptID: "attempt-" + item.SourceDocID, RequestHash: hash, Outcome: "completed", Live: true, EvidenceIDs: []string{"fragment-" + strings.TrimPrefix(item.SourceDocID, "doc-")}, ContentHashes: []string{pairBytesHash([]byte(item.Content))}})
+		o.Imports = append(o.Imports, PairImportAttempt{Scope: r.Scope, SourceDocID: item.SourceDocID, AttemptID: "attempt-" + item.SourceDocID, RequestHash: hash, ContractVersion: version, IdempotencyKey: "eval:" + item.SourceDocID, Retryable: boolPointer(false), CreatedAt: timePointer(time.Unix(1794270000, 0)), Outcome: "completed", Live: true, EvidenceIDs: []string{"fragment-" + strings.TrimPrefix(item.SourceDocID, "doc-")}, ContentHashes: []string{pairBytesHash([]byte(item.Content))}})
 	}
 	return o
 }
@@ -163,6 +182,8 @@ func TestPairCommonReportRetainsIncompleteCoverageAndSourceCaptures(t *testing.T
 		failed := o.Imports[0]
 		failed.AttemptID, failed.Outcome, failed.Live = "failed-attempt", "failed", false
 		failed.EvidenceIDs, failed.ContentHashes = nil, nil
+		failed.CreatedAt = timePointer(failed.CreatedAt.Add(-time.Second))
+		failed.Retryable = boolPointer(true)
 		o.Imports = append(o.Imports, failed)
 	}
 	for _, side := range []string{"baseline", "candidate"} {
@@ -489,7 +510,11 @@ func TestPairCaptureProofRejectsIncompleteAndUnfrozenHistory(t *testing.T) {
 			require.NoError(t, readPairJSON(path, &proof))
 			test.edit(&proof)
 			require.NoError(t, writePairJSON(path, proof))
-			_, err := VerifyPairCaptureProof(c, c.Baseline, dir)
+			r := c.Baseline
+			var err error
+			r.CaptureSHA256, err = PairFileHash(path)
+			require.NoError(t, err)
+			_, err = VerifyPairCaptureProof(c, r, dir)
 			require.Error(t, err)
 		})
 	}
@@ -497,11 +522,17 @@ func TestPairCaptureProofRejectsIncompleteAndUnfrozenHistory(t *testing.T) {
 	writePairCompletedStage(t, c, "baseline", "import")
 	dir := filepath.Join(writePairCompletedStage(t, c, "baseline", "capture"), "native")
 	r := c.Baseline
-	r.CaptureSHA256 = pairBytesHash([]byte("different proof"))
-	_, err := VerifyPairCaptureProof(c, r, dir)
+	proofHash, err := PairFileHash(filepath.Join(dir, "pair_capture.json"))
+	require.NoError(t, err)
+	r.CaptureSHA256 = proofHash
+	_, err = VerifyPairCaptureProof(c, r, dir)
+	require.NoError(t, err)
+	changed := r
+	changed.CaptureSHA256 = pairBytesHash([]byte("different proof"))
+	_, err = VerifyPairCaptureProof(c, changed, dir)
 	require.ErrorContains(t, err, "proof hash mismatch")
 	require.NoError(t, os.Symlink(filepath.Join(dir, "summary.json"), filepath.Join(dir, "linked-artifact")))
-	_, err = VerifyPairCaptureProof(c, c.Baseline, dir)
+	_, err = VerifyPairCaptureProof(c, r, dir)
 	require.ErrorContains(t, err, "regular files")
 }
 

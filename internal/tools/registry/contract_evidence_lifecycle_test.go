@@ -15,11 +15,10 @@ func TestRememberContractDirectEvidenceSupersessionRules(t *testing.T) {
 	valid := map[string]any{
 		"target_space":    "team_shared",
 		"idempotency_key": "replacement-batch",
-		"evidence":        validFlatRelationshipSubmission()["evidence"],
+		"evidence":        validEvidenceOnlySubmission()["evidence"],
 	}
 	evidence := valid["evidence"].([]any)
 	evidence[0].(map[string]any)["supersedes_evidence_ids"] = []any{targetA}
-	valid["relationships"] = validFlatRelationshipSubmission()["relationships"]
 	require.NoError(t, ValidateContractInput(remember, valid, []string{"read", "write"}))
 
 	tests := []struct {
@@ -57,7 +56,7 @@ func TestRememberContractDirectEvidenceSupersessionRules(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			err := ValidateContractInput(remember, withRequiredFlatRelationship(tc.input), []string{"read", "write"})
+			err := ValidateContractInput(remember, withEvidenceOnlyRequest(tc.input), []string{"read", "write"})
 			require.ErrorContains(t, err, tc.want)
 		})
 	}

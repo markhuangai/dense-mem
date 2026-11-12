@@ -47,14 +47,14 @@ type RememberAttemptRecordInput struct {
 	Retryable                         bool
 	// RetryabilitySet distinguishes an explicit false from legacy callers that
 	// predate the retryability field. New application writers set this flag.
-	RetryabilitySet                  bool
-	CorrelationID                    string
-	PublicResult                     map[string]any
-	EvidenceCount, RelationshipCount int
-	DocumentCount, AssessorTurns     int
-	Duration                         time.Duration
-	AssessorValidation               map[string]any
-	AssessorDiagnostics              map[string]any
+	RetryabilitySet              bool
+	CorrelationID                string
+	PublicResult                 map[string]any
+	EvidenceCount                int
+	DocumentCount, AssessorTurns int
+	Duration                     time.Duration
+	AssessorValidation           map[string]any
+	AssessorDiagnostics          map[string]any
 }
 
 type RememberAttempt struct {
@@ -205,7 +205,7 @@ type RememberAttemptDiagnosticRecord struct {
 	Outcome, FailedPhase, ErrorCode             string
 	Retryable                                   bool
 	CorrelationID                               string
-	EvidenceCount, RelationshipCount            int
+	EvidenceCount                               int
 	DocumentCount, AssessorTurns                int
 	Duration                                    time.Duration
 	CreatedAt                                   time.Time

@@ -23,16 +23,12 @@ type controlAppConfigSvc struct {
 	settings.AppConfigService
 	generalSettings       *domain.GeneralConfigSettings
 	settings              *domain.SSOConfigSettings
-	dreamingSettings      *domain.DreamingConfigSettings
-	communitySettings     *domain.CommunityDetectionConfigSettings
 	operationLogSettings  *domain.OperationLogConfigSettings
 	privateMemorySettings *domain.PrivateMemoryConfigSettings
 	recallSettings        *domain.RecallFeedbackConfigSettings
 	telemetrySettings     *domain.TelemetryPricingConfigSettings
 	generalValues         map[string]string
 	values                map[string]string
-	dreamingValues        map[string]string
-	communityValues       map[string]string
 	operationLogValues    map[string]string
 	privateMemoryValues   map[string]string
 	recallValues          map[string]string
@@ -41,8 +37,6 @@ type controlAppConfigSvc struct {
 	updateErr             error
 	ssoRuntime            accessservice.SSORuntimeConfig
 	ssoRuntimeErr         error
-	dreamingRuntime       domain.DreamingRuntimeConfig
-	dreamingRuntimeErr    error
 	recallRuntime         domain.RecallFeedbackRuntimeConfig
 	recallRuntimeErr      error
 	telemetryRuntime      domain.TelemetryPricingRuntimeConfig
@@ -99,54 +93,6 @@ func (s *controlAppConfigSvc) SSORuntimeConfig(context.Context) (accessservice.S
 		return accessservice.SSORuntimeConfig{}, s.ssoRuntimeErr
 	}
 	return s.ssoRuntime, nil
-}
-
-func (s *controlAppConfigSvc) GetDreamingSettings(context.Context) (*domain.DreamingConfigSettings, error) {
-	if s.getErr != nil {
-		return nil, s.getErr
-	}
-	return s.dreamingSettings, nil
-}
-
-func (s *controlAppConfigSvc) UpdateDreamingSettings(_ context.Context, values map[string]string, _, _, _ string) (*domain.DreamingConfigSettings, error) {
-	if s.updateErr != nil {
-		return nil, s.updateErr
-	}
-	if s.dreamingValues == nil {
-		s.dreamingValues = make(map[string]string)
-	}
-	for key, value := range values {
-		s.dreamingValues[key] = value
-	}
-	return s.dreamingSettings, nil
-}
-
-func (s *controlAppConfigSvc) DreamingRuntimeConfig(context.Context) (domain.DreamingRuntimeConfig, error) {
-	return s.dreamingRuntime, s.dreamingRuntimeErr
-}
-
-func (s *controlAppConfigSvc) GetCommunityDetectionSettings(context.Context) (*domain.CommunityDetectionConfigSettings, error) {
-	if s.getErr != nil {
-		return nil, s.getErr
-	}
-	return s.communitySettings, nil
-}
-
-func (s *controlAppConfigSvc) UpdateCommunityDetectionSettings(_ context.Context, values map[string]string, _, _, _ string) (*domain.CommunityDetectionConfigSettings, error) {
-	if s.updateErr != nil {
-		return nil, s.updateErr
-	}
-	if s.communityValues == nil {
-		s.communityValues = make(map[string]string)
-	}
-	for key, value := range values {
-		s.communityValues[key] = value
-	}
-	return s.communitySettings, nil
-}
-
-func (s *controlAppConfigSvc) CommunityDetectionRuntimeConfig(context.Context) (domain.CommunityDetectionRuntimeConfig, error) {
-	return domain.CommunityDetectionRuntimeConfig{}, nil
 }
 
 func (s *controlAppConfigSvc) GetOperationLogSettings(context.Context) (*domain.OperationLogConfigSettings, error) {

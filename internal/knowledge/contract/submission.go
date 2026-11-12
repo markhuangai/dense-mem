@@ -14,41 +14,30 @@ type RememberCommitScope struct {
 }
 
 type SubmissionAssessment struct {
-	TeamID                                  string
-	AssessmentID                            string
-	OwnerProfileID                          string
-	IngestID                                string
-	RequestID                               string
-	AssessorContractVersion                 string
-	Model                                   string
-	Tokenizer                               string
-	RevisionNumber                          int
-	ProviderTurns                           int
-	InputTokens                             int
-	OutputTokens                            int
-	CandidateContextTokens                  int
-	CandidateContextTruncated               bool
-	CandidateContextOmittedCandidates       int
-	CandidateContextOmittedPredicateOptions int
-	NormalizedResponse                      json.RawMessage
-	ResponseHash                            string
-	ValidatedAt                             time.Time
-	CreatedAt                               time.Time
+	TeamID                            string
+	AssessmentID                      string
+	OwnerProfileID                    string
+	IngestID                          string
+	RequestID                         string
+	AssessorContractVersion           string
+	Model                             string
+	Tokenizer                         string
+	RevisionNumber                    int
+	ProviderTurns                     int
+	InputTokens                       int
+	OutputTokens                      int
+	CandidateContextTokens            int
+	CandidateContextTruncated         bool
+	CandidateContextOmittedCandidates int
+	NormalizedResponse                json.RawMessage
+	ResponseHash                      string
+	ValidatedAt                       time.Time
+	CreatedAt                         time.Time
 }
 
 type SubmissionAssessmentItemInput struct {
 	FragmentID string
 	EvidenceID string
-}
-
-type SubmissionAssessmentEntityResolutionInput struct {
-	Resolution SemanticEntityResolutionInput
-}
-
-type SubmissionAssessmentRelationshipObservationInput struct {
-	RelationshipRef string
-	SplitIndex      int
-	Observation     SemanticRelationshipDecisionInput
 }
 
 // EvidenceConflictPositionInput is a validated assessor citation. EvidenceID
@@ -65,55 +54,6 @@ type EvidenceConflictResultInput struct {
 	Positions []EvidenceConflictPositionInput
 }
 
-type SubmissionRelationshipSplitInput struct {
-	SplitIndex          int    `json:"split_index"`
-	RelationshipID      string `json:"relationship_id"`
-	RelationshipVersion int    `json:"relationship_version"`
-	Status              string `json:"status"`
-}
-
-// SubmissionRelationshipResult is the durable disposition of one submitted
-// relationship ref, independent of whether an active semantic record exists.
-type SubmissionRelationshipResult struct {
-	RelationshipRef string                             `json:"ref"`
-	Disposition     string                             `json:"disposition"`
-	Reason          string                             `json:"reason,omitempty"`
-	Message         string                             `json:"message,omitempty"`
-	Remediation     string                             `json:"remediation,omitempty"`
-	Splits          []SubmissionRelationshipSplitInput `json:"splits"`
-}
-
-type SubmissionRelationshipResultInput struct {
-	RelationshipRef string
-	Disposition     string
-	Reason          string
-	Message         string
-	Remediation     string
-	Splits          []SubmissionRelationshipSplitInput
-}
-
-type SubmissionPredicateRegistrationInput struct {
-	RelationshipRef    string
-	PredicateKey       string
-	SubjectKind        string
-	ObjectKind         string
-	RelationshipKind   string
-	CurrentCardinality string
-}
-
-type SubmissionPredicateRegistrationValidationInput struct {
-	TeamID         string
-	OwnerProfileID string
-	Registrations  []SubmissionPredicateRegistrationInput
-}
-
-type SubmissionPredicateRegistrationIssue struct {
-	Code              string `json:"-"`
-	RegistrationIndex int
-	Field             string
-	Message           string
-}
-
 type CommitSubmissionAssessmentInput struct {
 	RememberCommitScope
 	AssessmentID            string
@@ -125,10 +65,6 @@ type CommitSubmissionAssessmentInput struct {
 	// Keys are submitted request evidence IDs and values are candidate fragment
 	// IDs returned by the bounded duplicate-candidate lookup.
 	EvidenceConflictCandidateEvidenceIDs map[string][]string
-	EntityResolutions                    []SubmissionAssessmentEntityResolutionInput
-	RelationshipObservations             []SubmissionAssessmentRelationshipObservationInput
-	PredicateRegistrations               []SubmissionPredicateRegistrationInput
-	RelationshipResults                  []SubmissionRelationshipResultInput
 	Payload                              map[string]any
 }
 
@@ -149,41 +85,38 @@ type EvidenceSecurityResult struct {
 // one final Remember transaction. Provider work happens before this input is
 // committed; no field represents a pre-provider reservation.
 type SynchronousRememberCommitInput struct {
-	AssessorDiagnostics                     map[string]any
-	TeamID                                  string
-	OwnerProfileID                          string
-	IngestID                                string
-	SpaceID                                 string
-	SpaceGeneration                         int64
-	IdempotencyKey                          string
-	RequestHash                             string
-	SourceSummary                           string
-	Proposal                                map[string]any
-	Metadata                                map[string]any
-	Evidence                                []EvidenceInput
-	AssessmentID                            string
-	AssessmentJSON                          json.RawMessage
-	EvidenceSecurityResults                 []EvidenceSecurityResult
-	ProviderTurns                           int
-	InputTokens                             int
-	OutputTokens                            int
-	CandidateContextOmittedCandidates       int
-	CandidateContextOmittedPredicateOptions int
-	AssessorTurns                           int
-	Duration                                time.Duration
-	StartedAt                               time.Time
-	CorrelationID                           string
-	PublicResult                            map[string]any
-	DuplicateResolutions                    []RememberDuplicateResolution
-	Commit                                  CommitSubmissionAssessmentInput
+	AssessorDiagnostics map[string]any
+	TeamID              string
+	OwnerProfileID      string
+	IngestID            string
+	SpaceID             string
+	SpaceGeneration     int64
+	IdempotencyKey      string
+	RequestHash         string
+	SourceSummary       string
+
+	Metadata                          map[string]any
+	Evidence                          []EvidenceInput
+	AssessmentID                      string
+	AssessmentJSON                    json.RawMessage
+	EvidenceSecurityResults           []EvidenceSecurityResult
+	ProviderTurns                     int
+	InputTokens                       int
+	OutputTokens                      int
+	CandidateContextOmittedCandidates int
+	AssessorTurns                     int
+	Duration                          time.Duration
+	StartedAt                         time.Time
+	CorrelationID                     string
+	PublicResult                      map[string]any
+	DuplicateResolutions              []RememberDuplicateResolution
+	Commit                            CommitSubmissionAssessmentInput
 }
 
 type CommitSubmissionAssessmentResult struct {
-	Status              string
-	OutcomeIDs          []string
-	RelationshipResults []RelationshipDecisionResult
-	SearchDocuments     []SearchDocumentResult
-	EntityResolutionIDs []string
+	Status          string
+	OutcomeIDs      []string
+	SearchDocuments []SearchDocumentResult
 }
 
 type SubmissionAssessmentSecurityQuarantineInput struct {

@@ -14,8 +14,6 @@ func TestNoopDiscoverabilityMetricsNeverPanics(t *testing.T) {
 	m.ObserveRecallLatency(5)
 	m.ObserveRecall(5, 2, "ok")
 	m.ObserveRecallFeedback(recallcontract.FeedbackObservation{Used: true, AnswerSupported: true, Quality: "high"})
-	m.ObserveDreamFeedback(DreamFeedback{Decision: "reinforce", Outcome: "ok", FromStatus: "proposed"})
-	m.ObserveConflictReviewDuration(1, "completed")
 	m.IncVerifyVerdict("verified")
 }
 
@@ -31,9 +29,6 @@ func TestInMemoryDiscoverabilityMetricsRecordsActiveSignals(t *testing.T) {
 		Quality:         "medium",
 		MissingContext:  true,
 	})
-	m.ObserveDreamFeedback(DreamFeedback{Decision: "confirm_true", Outcome: "ok", FromStatus: "proposed"})
-	m.ObserveDreamFeedback(DreamFeedback{Decision: "invalid", Outcome: "invalid", FromStatus: "invalid"})
-	m.ObserveConflictReviewDuration(2.5, "completed")
 	m.IncVerifyVerdict("verified")
 
 	if got := m.EmbeddingSamples(); len(got) != 1 || got[0].DurationMs != 123.4 || got[0].Outcome != "ok" {
@@ -51,12 +46,7 @@ func TestInMemoryDiscoverabilityMetricsRecordsActiveSignals(t *testing.T) {
 	if got := m.RecallFeedbackSamples(); len(got) != 1 || got[0].Quality != "medium" || got[0].QualityScore != 0.5 || !got[0].MissingContext {
 		t.Fatalf("recall feedback = %+v", got)
 	}
-	if got := m.DreamFeedbackSamples(); len(got) != 2 || got[0].Decision != "confirm_true" || got[1].Decision != unknownMetricLabel {
-		t.Fatalf("dream feedback = %+v", got)
-	}
-	if got := m.ConflictReviewSamples(); len(got) != 1 || got[0].Seconds != 2.5 || got[0].Outcome != "completed" {
-		t.Fatalf("conflict review samples = %+v", got)
-	}
+
 	if got := m.VerifyVerdictCount("verified"); got != 1 {
 		t.Fatalf("verified verdict count = %d; want 1", got)
 	}
@@ -75,9 +65,6 @@ func TestRecordDiscoverabilityMetricsUsesUnscopedRecorder(t *testing.T) {
 	RecordRecallLatency(ctx, metrics, 7)
 	RecordRecall(ctx, metrics, 8, 2, "ok")
 	RecordRecallFeedback(ctx, metrics, recallcontract.FeedbackObservation{Used: true, Quality: "high"})
-	RecordDreamFeedback(ctx, metrics, DreamFeedback{Decision: "confirm_true", Outcome: "ok", FromStatus: "proposed"})
-	RecordConflictReviewDuration(ctx, metrics, 1.5, "completed")
-	RecordConflictReviewDuration(ctx, metrics, -1, "ignored")
 
 	if got := metrics.EmbeddingSamples(); len(got) != 1 || got[0].DurationMs != 12 {
 		t.Fatalf("embedding samples = %+v", got)
@@ -91,12 +78,7 @@ func TestRecordDiscoverabilityMetricsUsesUnscopedRecorder(t *testing.T) {
 	if got := metrics.RecallFeedbackSamples(); len(got) != 1 || got[0].Quality != "high" {
 		t.Fatalf("recall feedback = %+v", got)
 	}
-	if got := metrics.DreamFeedbackSamples(); len(got) != 1 || got[0].Decision != "confirm_true" {
-		t.Fatalf("dream feedback = %+v", got)
-	}
-	if got := metrics.ConflictReviewSamples(); len(got) != 1 || got[0].Seconds != 1.5 {
-		t.Fatalf("conflict review samples = %+v", got)
-	}
+
 	if got := metrics.VerifyVerdictCount("verified"); got != 1 {
 		t.Fatalf("verify verdicts = %d, want 1", got)
 	}
@@ -112,8 +94,6 @@ func TestInMemoryDiscoverabilityMetricsIsConcurrentSafe(t *testing.T) {
 			m.IncEmbeddingError("timeout")
 			m.ObserveRecall(1, 1, "ok")
 			m.ObserveRecallFeedback(recallcontract.FeedbackObservation{Quality: "high"})
-			m.ObserveDreamFeedback(DreamFeedback{Decision: "reinforce", Outcome: "ok", FromStatus: "proposed"})
-			m.ObserveConflictReviewDuration(1, "completed")
 			m.IncVerifyVerdict("verified")
 		}()
 	}
@@ -123,9 +103,7 @@ func TestInMemoryDiscoverabilityMetricsIsConcurrentSafe(t *testing.T) {
 	if got := len(m.EmbeddingSamples()); got != 50 {
 		t.Fatalf("embedding samples = %d; want 50", got)
 	}
-	if got := len(m.ConflictReviewSamples()); got != 50 {
-		t.Fatalf("conflict review samples = %d; want 50", got)
-	}
+
 	if got := m.VerifyVerdictCount("verified"); got != 50 {
 		t.Fatalf("verified verdict count = %d; want 50", got)
 	}

@@ -31,7 +31,7 @@ func ValidateSaveDraft(input SaveDraftInput) error {
 		shape.Action, shape.RecordID, shape.ExpectedVersion = "", "", 0
 		switch edit.Action {
 		case "define":
-			if edit.Definition == nil || (edit.Kind != EntityClass && edit.Kind != PredicateConcept && edit.Kind != Topic) {
+			if edit.Definition == nil || edit.Kind != Topic {
 				return ErrInvalid
 			}
 			if err := validateDefinition(edit.Kind, *edit.Definition); err != nil {

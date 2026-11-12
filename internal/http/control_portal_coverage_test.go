@@ -33,15 +33,6 @@ func TestControlPortalFilterAndPaginationBranches(t *testing.T) {
 	if filter, err := controlRecallFeedbackEventsFilter(c); err != nil || filter.Quality != "high" || !filter.IncludePending {
 		t.Fatalf("feedback filter = %+v, %v", filter, err)
 	}
-	if got, err := controlDreamLimit("10"); err != nil || got != 10 {
-		t.Fatalf("dream limit = %d, %v", got, err)
-	}
-	if _, err := controlDreamLimit("0"); err == nil {
-		t.Fatal("invalid dream limit was accepted")
-	}
-	if _, err := controlDreamListOptions(controlCoverageContext("/?status=invalid")); err == nil {
-		t.Fatal("invalid dream status was accepted")
-	}
 	if got, _ := optionalControlBool("true", "flag"); got == nil || !*got {
 		t.Fatal("optional boolean was not parsed")
 	}

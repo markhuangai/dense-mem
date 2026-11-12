@@ -50,9 +50,8 @@ const values = {
   AI_VERIFIER_API_KEY: "dense-mem-e2e-verifier-key",
   AI_VERIFIER_MODEL: "dense-mem-e2e-verifier",
   AI_REMEMBER_MODEL: "dense-mem-e2e-remember",
-  AI_CONFLICT_REVIEW_MODEL: "dense-mem-e2e-conflict-review",
   AI_VERIFIER_DISABLE_TEMPERATURE: "true",
-  DENSE_MEM_CI_GO_TEST_IMAGE: "golang:1.26.9-bookworm",
+  DENSE_MEM_CI_GO_TEST_IMAGE: "golang:1.26.11-bookworm",
 };
 fs.writeFileSync(path.join(directory, ".env"),
   Object.entries(values).map(([key, value]) => `${key}=${value}`).join("\n") + "\n", { mode: 0o600 });

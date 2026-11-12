@@ -80,7 +80,7 @@ func seedOntologyUpgrade(t *testing.T, db *gorm.DB) string {
 	require.NoError(t, rls.WithSystemTx(ctx, db, func(tx *gorm.DB) error {
 		return tx.Raw(`SELECT id::text,generation FROM memory_spaces WHERE team_id=?::uuid AND kind='team_shared'`, team.ID).Row().Scan(&space, &generation)
 	}))
-	store := knowledgepostgres.NewStore(db, rls, knowledge.ConflictRuntimeConfig{})
+	store := knowledgepostgres.NewStore(db, rls)
 	fragment := uuid.NewString()
 	_, err = store.CreateIngestForTest(ctx, knowledge.CreateIngestInput{TeamID: team.ID.String(), OwnerProfileID: credential.ID.String(), IdempotencyKey: "ontology-upgrade-history", RequestHash: "ontology-upgrade-history", Evidence: []knowledge.EvidenceInput{{FragmentID: fragment, Content: "Atlas uses PostgreSQL."}}})
 	require.NoError(t, err)
@@ -126,7 +126,7 @@ func ontologyUpgradeSnapshot(t *testing.T, db *gorm.DB) map[string]string {
 	t.Helper()
 	result := map[string]string{}
 	require.NoError(t, storage.NewRLS().WithSystemTx(context.Background(), db, func(tx *gorm.DB) error {
-		for _, table := range []string{"entity_records", "value_records", "relationship_records", "evidence_fragments", "relationship_evidence_supports", "ontology_maintenance_windows", "ontology_maintenance_attempts", "ontology_assessments"} {
+		for _, table := range []string{"evidence_fragments", "ontology_maintenance_windows", "ontology_maintenance_attempts", "ontology_assessments"} {
 			var value string
 			if err := tx.Raw(`SELECT COALESCE(jsonb_agg(to_jsonb(row)-'estimated_input_tokens'-'max_output_tokens' ORDER BY to_jsonb(row)::text)::text,'[]') FROM ` + table + ` AS row`).Row().Scan(&value); err != nil {
 				return err

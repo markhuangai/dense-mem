@@ -37,6 +37,61 @@ func TestInlineEmbeddingResultsFromDocumentsCopiesPlanMetadataAndVectors(t *test
 	require.Empty(t, inlineEmbeddingResultsFromDocuments(documents, nil))
 }
 
+func TestEvidenceOnlyUnitRememberCommitRacesPreserveOriginalOutcome(t *testing.T) {
+	input := rememberapp.RememberProcessRequest{TeamID: "team", OwnerProfileID: "owner", IdempotencyKey: "key", RequestHash: "hash", Evidence: []rememberapp.EvidenceInput{{Content: "Exact Evidence.", ForceInsert: true}}}
+	for _, outcome := range []string{"completed", "failed", "conflict", "unavailable"} {
+		t.Run(outcome, func(t *testing.T) {
+			state := "completed"
+			if outcome == "failed" {
+				state = "failed"
+			}
+			attempt := &knowledgecontract.RememberAttempt{AttemptID: "original", RequestHash: input.RequestHash, ContractVersion: domain.ContractVersion, Outcome: state, PublicResult: map[string]any{"contract_version": domain.ContractVersion, "submission_id": "original", "submission_kind": "remember", "processing_state": state, "search_state": "not_required", "evidence": []any{}, "errors": []any{}}}
+			if outcome == "conflict" {
+				attempt.RequestHash = "different"
+			}
+			if outcome == "unavailable" {
+				attempt = nil
+			}
+			base := &rememberFailureLedgerStub{loadSequence: []*knowledgecontract.RememberAttempt{nil, attempt}}
+			ledger := &rememberPipelineLedgerStub{rememberFailureLedgerStub: base, commitErr: knowledgecontract.ErrRememberReplay}
+			processor := &rememberSynchronousProcessor{ledger: ledger, provider: &processorAssessmentProviderStub{}}
+			result, err := processor.ProcessRemember(context.Background(), input)
+			if outcome == "completed" {
+				require.NoError(t, err)
+				require.Equal(t, "original", result.SubmissionID)
+				require.Equal(t, "completed", result.ProcessingState)
+			} else {
+				require.Error(t, err)
+			}
+			want := "replay"
+			if outcome == "conflict" {
+				want = "conflict"
+				require.ErrorIs(t, err, rememberapp.ErrRememberConflict)
+			}
+			require.Equal(t, want, base.invocation.Classification)
+			require.Empty(t, base.failure.Attempt.AttemptID, "a commit race must not create a new failed intake")
+		})
+	}
+	for _, cause := range []error{domain.ErrMemoryWriteDenied, domain.ErrMemoryOperationErased} {
+		ledger := &rememberPipelineLedgerStub{rememberFailureLedgerStub: &rememberFailureLedgerStub{}, commitErr: cause}
+		result, err := (&rememberSynchronousProcessor{ledger: ledger, provider: &processorAssessmentProviderStub{}}).ProcessRemember(context.Background(), input)
+		require.ErrorIs(t, err, cause)
+		require.Nil(t, result)
+		require.Empty(t, ledger.failure.Attempt.AttemptID)
+	}
+}
+
+func TestEvidenceOnlyUnitRememberWaiterReturnsCompletedReplay(t *testing.T) {
+	base := &rememberFailureLedgerStub{load: &knowledgecontract.RememberAttempt{AttemptID: "original", RequestHash: "hash", ContractVersion: domain.ContractVersion, Outcome: "completed", PublicResult: map[string]any{"contract_version": domain.ContractVersion, "submission_id": "original", "submission_kind": "remember", "processing_state": "completed", "search_state": "not_required", "evidence": []any{}, "errors": []any{}}}}
+	ledger := &rememberWaitAwareLedgerStub{rememberFailureLedgerStub: base, waited: true}
+	result, err := (&rememberSynchronousProcessor{ledger: ledger}).ProcessRemember(context.Background(), rememberapp.RememberProcessRequest{TeamID: "team", OwnerProfileID: "owner", IdempotencyKey: "key", RequestHash: "hash"})
+	require.NoError(t, err)
+	require.Equal(t, "original", result.SubmissionID)
+	require.Equal(t, "completed", result.ProcessingState)
+	require.Equal(t, "replay", base.invocation.Classification)
+	require.Empty(t, base.failure.Attempt.AttemptID)
+}
+
 func TestInlineEmbeddingResultsFromDuplicateDocumentsCopiesPlanMetadata(t *testing.T) {
 	plan := &knowledgecontract.RememberDuplicateEmbeddingPlan{
 		EmbeddingContractID: "contract-v1", EmbeddingDimensions: 3, EmbeddingModel: "embed-v2",
@@ -295,7 +350,7 @@ func TestRememberProcessorRecordsAssessmentRejectionTrails(t *testing.T) {
 	t.Run("repeated invalid assessor output", func(t *testing.T) {
 		ledger := &rememberPipelineLedgerStub{rememberFailureLedgerStub: &rememberFailureLedgerStub{}}
 		provider := &processorAssessmentProviderStub{invalid: true}
-		processor := &rememberSynchronousProcessor{ledger: ledger, catalog: &processorAssessmentCatalogStub{}, provider: provider, protector: observability.NewCredentialProtector()}
+		processor := &rememberSynchronousProcessor{ledger: ledger, provider: provider, protector: observability.NewCredentialProtector()}
 		_, err := processor.ProcessRemember(context.Background(), input)
 		var processErr *rememberapp.RememberProcessError
 		require.ErrorAs(t, err, &processErr)
@@ -309,7 +364,7 @@ func TestRememberProcessorRecordsAssessmentRejectionTrails(t *testing.T) {
 	t.Run("later assessor rejection retains admitted request", func(t *testing.T) {
 		ledger := &rememberPipelineLedgerStub{rememberFailureLedgerStub: &rememberFailureLedgerStub{}}
 		provider := &processorAssessmentProviderStub{reject: true}
-		processor := &rememberSynchronousProcessor{ledger: ledger, catalog: &processorAssessmentCatalogStub{}, provider: provider, protector: observability.NewCredentialProtector()}
+		processor := &rememberSynchronousProcessor{ledger: ledger, provider: provider, protector: observability.NewCredentialProtector()}
 		_, err := processor.ProcessRemember(context.Background(), input)
 		var processErr *rememberapp.RememberProcessError
 		require.ErrorAs(t, err, &processErr)
@@ -377,7 +432,7 @@ func TestNormalizeRememberCommitFailureMapsSearchFenceErrors(t *testing.T) {
 		{name: "other", err: errors.New("database down"), want: nil},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			got := normalizeRememberCommitFailure(test.err, false)
+			got := normalizeRememberCommitFailure(test.err)
 			if test.want == nil {
 				require.ErrorIs(t, got, test.err)
 				return
@@ -466,17 +521,16 @@ func (s *rememberFailureLogSink) WriteLog(ctx context.Context, record observabil
 func TestRememberAttemptStatusValidatesAndFillsDefaults(t *testing.T) {
 	_, err := rememberAttemptStatus(nil)
 	require.EqualError(t, err, "remember processor: attempt is required")
-	status, err := rememberAttemptStatus(&knowledgecontract.RememberAttempt{AttemptID: "attempt", PublicResult: map[string]any{}})
+	status, err := rememberAttemptStatus(&knowledgecontract.RememberAttempt{AttemptID: "attempt", PublicResult: map[string]any{}, ContractVersion: domain.ContractVersion})
 	require.NoError(t, err)
 	require.Equal(t, "attempt", status.SubmissionID)
 	require.Equal(t, "remember", status.SubmissionKind)
 	require.Empty(t, status.ProcessingState)
 	require.Empty(t, status.Evidence)
-	require.Empty(t, status.RelationshipResults)
 	require.Empty(t, status.Errors)
-	_, err = rememberAttemptStatus(&knowledgecontract.RememberAttempt{PublicResult: map[string]any{"evidence": make(chan int)}})
+	_, err = rememberAttemptStatus(&knowledgecontract.RememberAttempt{PublicResult: map[string]any{"evidence": make(chan int)}, ContractVersion: domain.ContractVersion})
 	require.Error(t, err)
-	_, err = rememberAttemptStatus(&knowledgecontract.RememberAttempt{PublicResult: map[string]any{"evidence": "invalid"}})
+	_, err = rememberAttemptStatus(&knowledgecontract.RememberAttempt{PublicResult: map[string]any{"evidence": "invalid"}, ContractVersion: domain.ContractVersion})
 	require.Error(t, err)
 	require.Equal(t, "first", firstNonEmptyString("", " first ", "second"))
 	require.Empty(t, firstNonEmptyString("", "  "))
@@ -507,14 +561,6 @@ func TestRememberFailureHelpersCoverReplayAndInputConversions(t *testing.T) {
 	require.Equal(t, "submission_policy_rejected", rememberapp.TerminalNotStoredReasonForError(rememberapp.TerminalErrorPolicyRejected))
 	require.Equal(t, "stale_input", rememberapp.TerminalNotStoredReasonForError(rememberapp.TerminalErrorStaleInput))
 	require.Equal(t, "internal_failure", rememberapp.TerminalNotStoredReasonForError(rememberapp.TerminalErrorDatabaseFailure))
-	require.Empty(t, rememberFailureRelationshipRefs(nil))
-	require.Equal(t, []string{"a", ""}, rememberFailureRelationshipRefs(map[string]any{
-		"relationship_hints": []any{map[string]any{"ref": " a "}, "not-an-object"},
-	}))
-	require.Equal(t, []string{"b"}, rememberFailureRelationshipRefs(map[string]any{
-		"relationships": []map[string]any{{"ref": " b "}},
-	}))
-	require.Empty(t, rememberFailureRelationshipRefs(map[string]any{"relationships": "invalid"}))
 
 	var nilStale *rememberStaleInputError
 	require.Equal(t, []error{rememberapp.ErrRememberStaleInput}, nilStale.Unwrap())
@@ -606,24 +652,6 @@ func (s *rememberPipelineLedgerStub) CommitRememberWithEmbeddings(_ context.Cont
 	return s.commitResult, nil
 }
 
-type processorAssessmentCatalogStub struct{}
-
-func (*processorAssessmentCatalogStub) ListSubmissionAssessmentEntityCatalog(context.Context, knowledgecontract.SubmissionAssessmentEntityCatalogInput) (knowledgecontract.SubmissionAssessmentEntityCatalogResult, error) {
-	return knowledgecontract.SubmissionAssessmentEntityCatalogResult{Complete: true}, nil
-}
-
-func (*processorAssessmentCatalogStub) ResolveSemanticReviewPredicateCandidates(context.Context, knowledgecontract.SemanticReviewPredicateResolutionInput) ([]knowledgecontract.SemanticReviewPredicateResolution, error) {
-	return nil, nil
-}
-
-func (*processorAssessmentCatalogStub) ListSemanticAssessmentPredicateOptions(context.Context, knowledgecontract.SemanticAssessmentPredicateOptionsInput) ([]knowledgecontract.SemanticReviewPredicateCandidate, error) {
-	return nil, nil
-}
-
-func (*processorAssessmentCatalogStub) ValidateSubmissionPredicateRegistrations(context.Context, knowledgecontract.SubmissionPredicateRegistrationValidationInput) ([]knowledgecontract.SubmissionPredicateRegistrationIssue, error) {
-	return nil, nil
-}
-
 type processorAssessmentSessionStub struct{}
 
 func (*processorAssessmentSessionStub) SessionID() string { return "processor-assessment" }
@@ -659,8 +687,6 @@ func (p *processorAssessmentProviderStub) response(request assessor.SemanticAsse
 		RequestID: request.RequestID, EvidenceSecurityResults: security,
 		EvidenceEquivalenceResults: []assessor.SemanticAssessmentEvidenceEquivalenceResult{},
 		EvidenceConflictResults:    []assessor.SemanticAssessmentEvidenceConflictResult{},
-		EntityResults:              []assessor.SemanticAssessmentEntityResult{},
-		RelationshipResults:        []assessor.SemanticAssessmentRelationshipResult{},
 	}
 }
 

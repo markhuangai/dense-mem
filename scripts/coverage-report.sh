@@ -113,7 +113,7 @@ run_transitional() {
 	mapfile -t packages < <(
 		go list -f '{{if .TestGoFiles}}{{.ImportPath}}{{end}}' ./internal/... |
 			sed '/^$/d' |
-			grep -Ev '/(evalharness|repository|knowledge/postgres|dream/postgres|trace/postgres|graph/postgres)$|/storage/(postgres|redis)$'
+			grep -Ev '/(evalharness|repository|knowledge/postgres|trace/postgres)$|/storage/(postgres|redis)$'
 	)
 	printf '%s\n' "${packages[@]}"
 	go test "${packages[@]}" -timeout=30m -covermode=atomic -coverprofile="${profile}" -count=1
@@ -147,7 +147,7 @@ complete_paths() {
 	root_profile="${COVERAGE_DIR}/core/go-root-complete.raw"
 	evaluation_profile="${COVERAGE_DIR}/core/go-evaluation-complete.raw"
 	postgres_profile="${COVERAGE_DIR}/postgres/go-postgres-complete.raw"
-	community_scale_profile="${support_directory}/go-community-scale-complete.raw"
+	evidence_only_profile="${support_directory}/go-evidence-only-complete.raw"
 	audit_profile="${support_directory}/go-audit-complete.raw"
 	session_profile="${support_directory}/go-session-complete.raw"
 	e2e_profile="${COVERAGE_DIR}/core/go-e2e-complete.raw"
@@ -163,7 +163,7 @@ complete_paths() {
 	complete_report="${COVERAGE_DIR}/go-complete.txt"
 	core_profiles=("${root_profile}" "${evaluation_profile}" "${e2e_profile}")
 	postgres_profiles=("${postgres_profile}")
-	postgres_support_profiles=("${community_scale_profile}" "${audit_profile}" "${session_profile}")
+	postgres_support_profiles=("${evidence_only_profile}" "${audit_profile}" "${session_profile}")
 }
 
 coverage_identity() {
@@ -244,9 +244,9 @@ run_complete_part() {
 		run_complete_part postgres-support
 	elif [[ "$part" == postgres ]]; then
 		local ordinary_profile="${directory}/go-postgres-ordinary.raw" parallel_profile="${directory}/go-postgres-parallel.raw"
-		DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test -tags integration ./internal/ontology/postgres ./internal/community/postgres ./internal/dream/postgres ./cmd/internal/serverapp \
-			-run '^(TestOntologyMaintenance(Finalization.*|Parallel.*|Revalidation.*|CurrentReceiptCompletion|DiscoveryCommittedDiagnostics|Cohort|MatchingCohort|RegenerationFailureRetry|ProviderPauseDrain|AccountingFailurePreventsPublication|ContextConfigurationAndManualReuse|BudgetRetirement.*|GlobalAccounting|LeaseInterruptionReturnsPending|ProgressBeyondFormerBudgets|ProviderFailureReleasesCapacity|DirectOrganizationRejectsMissingContext|ControlInterruptionResumesSameWindow|PauseCommandsAndWindows|OperatorHTTPAndScheduler|CommandAuditIsAtomic)|TestOntologyMatching.*|TestOntologyAutomaticRetirementPreservesGroupingOverrides|TestOntologyCurrentReadersDistinguishDependencyAndSourceChanges|TestOntologyGroupingOverridesPreserveAssignmentFreshness|TestOntologyCurrentReadersReportCanonicalFingerprintAndVersionChanges|TestOntologyVocabularyUsesCurrentCandidateWindow|TestOntologyVocabularyWindowPreservesTeamIsolationAndNameReuse|TestOntologyFollowupCohort|TestOntologyMaintenanceBoundedCompletionUsesPersistedOutcomes|TestOntologyMaintenanceEarlierAmbiguityKeepsBoundedRunIncomplete|TestOntologyMaintenanceScheduledRecoveryClearsCurrentReason|TestOntologyMaintenanceCompletedRunDoesNotHideUnrelatedFailures|TestOntologyMaintenanceConcurrentInterruptionPreservesRunWork|TestOntologyMixedSeparationOverrideProtectsEvidenceGroups|TestOntologyManagement.*|TestOntologySemantic.*|TestCommunityTopic.*|TestRetiredDreamHistoryPreservesProvenanceIsolationAndRetention|TestServerLifecycle.*|TestRunActiveServerCanceledBeforeWorkersDoesNotBuildRuntimeWorker|TestPrivateMemoryCommandsInspectFreshDatabaseWithoutStartingOrMigrating|TestPrivateMemoryPreflightCommandBoundsLegacyReportAndReturnsBlockers|TestPairedEvaluation.*|TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads|TestOntologyCoverageFailureWitnesses)$' \
-			-skip '^(TestCommunityTopicLargeFanoutResumesAndRotates|TestOntologyMaintenanceRevalidationDiscoveryMeasurement|TestOntologyMaintenanceParallel.*)$' \
+		DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test -tags integration ./internal/ontology/postgres ./cmd/internal/serverapp \
+			-run '^(TestOntologyMaintenance(Finalization.*|Parallel.*|Revalidation.*|CurrentReceiptCompletion|DiscoveryCommittedDiagnostics|Cohort|MatchingCohort|RegenerationFailureRetry|ProviderPauseDrain|AccountingFailurePreventsPublication|ContextConfigurationAndManualReuse|BudgetRetirement.*|GlobalAccounting|LeaseInterruptionReturnsPending|ProgressBeyondFormerBudgets|ProviderFailureReleasesCapacity|DirectOrganizationRejectsMissingContext|ControlInterruptionResumesSameWindow|PauseCommandsAndWindows|OperatorHTTPAndScheduler|CommandAuditIsAtomic)|TestOntologyMatching.*|TestOntologyAutomaticRetirementPreservesGroupingOverrides|TestOntologyCurrentReadersDistinguishDependencyAndSourceChanges|TestOntologyGroupingOverridesPreserveAssignmentFreshness|TestOntologyCurrentReadersReportCanonicalFingerprintAndVersionChanges|TestOntologyVocabularyUsesCurrentCandidateWindow|TestOntologyVocabularyWindowPreservesTeamIsolationAndNameReuse|TestOntologyFollowupCohort|TestOntologyMaintenanceBoundedCompletionUsesPersistedOutcomes|TestOntologyMaintenanceEarlierAmbiguityKeepsBoundedRunIncomplete|TestOntologyMaintenanceScheduledRecoveryClearsCurrentReason|TestOntologyMaintenanceCompletedRunDoesNotHideUnrelatedFailures|TestOntologyMaintenanceConcurrentInterruptionPreservesRunWork|TestOntologyMixedSeparationOverrideProtectsEvidenceGroups|TestOntologyManagement.*|TestOntologySemantic.*|TestServerLifecycle.*|TestRunActiveServerCanceledBeforeWorkersDoesNotBuildRuntimeWorker|TestPrivateMemoryCommandsInspectFreshDatabaseWithoutStartingOrMigrating|TestPrivateMemoryPreflightCommandBoundsLegacyReportAndReturnsBlockers|TestPairedEvaluation.*|TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads|TestOntologyCoverageFailureWitnesses)$' \
+			-skip '^(TestOntologyMaintenanceRevalidationDiscoveryMeasurement|TestOntologyMaintenanceParallel.*)$' \
 			-count=1 -timeout=30m -covermode=atomic -coverpkg="${coverpkg}" -coverprofile="${ordinary_profile}"
 		DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test -tags integration ./internal/ontology/postgres \
 			-run '^TestOntologyMaintenanceParallel.*$' \
@@ -254,9 +254,9 @@ run_complete_part() {
 		merge_profiles "${postgres_profile}" "${ordinary_profile}" "${parallel_profile}"
 		seal_complete_part postgres "${postgres_profiles[@]}"
 	else
-		DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test -tags integration ./internal/community/postgres \
-			-run '^TestCommunityTopicLargeFanoutResumesAndRotates$' \
-			-count=1 -timeout=15m -covermode=atomic -coverpkg="${coverpkg}" -coverprofile="${community_scale_profile}"
+		DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test -tags integration ./internal/storage/postgres ./internal/knowledge/postgres ./internal/recall/postgres ./internal/trace/postgres ./internal/privacy/postgres ./internal/operations/postgres ./cmd/internal/migrationapp ./cmd/internal/serverapp \
+			-run '^TestEvidenceOnlyPostgres' \
+			-count=1 -timeout=30m -covermode=atomic -coverpkg="${coverpkg}" -coverprofile="${evidence_only_profile}"
 		DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test -tags integration ./internal/service \
 			-run '^TestAudit' -count=1 -timeout=5m -covermode=atomic -coverpkg="${coverpkg}" -coverprofile="${audit_profile}"
 		DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 DENSE_MEM_REQUIRE_POSTGRES_TESTS=1 go test -tags integration ./internal/knowledge/postgres ./internal/settings \
@@ -270,7 +270,7 @@ merge_complete() {
 	verify_complete_parts
 	merge_profiles "${root_dedup_profile}" "${root_profile}"
 	merge_profiles "${evaluation_dedup_profile}" "${evaluation_profile}"
-	merge_profiles "${postgres_dedup_profile}" "${postgres_profile}" "${community_scale_profile}" "${audit_profile}" "${session_profile}"
+	merge_profiles "${postgres_dedup_profile}" "${postgres_profile}" "${evidence_only_profile}" "${audit_profile}" "${session_profile}"
 	merge_profiles "${e2e_dedup_profile}" "${e2e_profile}"
 	merge_profiles "${merged_profile}" "${root_dedup_profile}" "${evaluation_dedup_profile}" "${postgres_dedup_profile}" "${e2e_dedup_profile}"
 	report_total "${root_dedup_profile}" "${root_report}" "${ROOT_DIR}"

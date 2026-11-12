@@ -1,6 +1,13 @@
 package recall
 
 import (
+	"context"
+	"encoding/json"
+	"github.com/google/uuid"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
+	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
+	"log/slog"
 	"sort"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -97,11 +104,9 @@ func selectRecallEvidence(candidates []recallCandidate, hydration *recallcontrac
 		}
 		for _, id := range hit.EquivalentEvidenceIDs {
 			alternate := hydration.Hits[id]
-			hit.RelationshipIDs = append(hit.RelationshipIDs, alternate.RelationshipIDs...)
 			hit.SearchState = domain.CombineSearchProjectionStates(hit.SearchState, alternate.SearchState)
 			conflicts = append(conflicts, alternate)
 		}
-		hit.RelationshipIDs = domain.NormalizeReadIDList(hit.RelationshipIDs)
 		hit.Score, hit.SpaceKind, hit.Rank = candidate.Score, input.SpaceKind, len(results)+1
 		hit.SearchState = domain.CombineSearchProjectionStates(candidate.SearchState, hit.SearchState)
 		results = append(results, hit)
@@ -115,4 +120,97 @@ func selectRecallEvidence(candidates []recallCandidate, hydration *recallcontrac
 		code = "ontology_group_overlap"
 	}
 	return results, conflicts, code
+}
+
+func (s *recallService) relatedTopics(ctx context.Context, req RecallRequest, result *RecallResult) error {
+	result.RelatedTopics = []recallcontract.RelatedTopic{}
+	limit := recallOptionalLimitValue(req.TopicLimit)
+	if limit == 0 {
+		return nil
+	}
+	actor, _ := requestctx.ActorFromContext(ctx)
+	input := recallcontract.RecallEvidenceInput{TeamID: actor.TeamID.String(), Query: req.Query, TopicIDs: req.TopicIDs, KnownEvidenceIDs: req.KnownEvidenceIDs, ValidAt: req.ValidAt, KnownAt: req.KnownAt, SpaceKind: string(domain.MemorySpaceTeamShared)}
+	shared := false
+	for _, space := range actor.AllowedSpaces {
+		if space.Kind == domain.MemorySpaceTeamShared {
+			input.SpaceID = space.ID.String()
+			shared = true
+			break
+		}
+	}
+	if len(actor.AllowedSpaces) == 0 {
+		shared = true
+	}
+	if !shared {
+		if req.TopicIDs != nil {
+			return ErrTopicUnavailable
+		}
+		return nil
+	}
+	var selection recallcontract.RelatedTopicResult
+	var err error
+	if s.ontologyConfig == nil {
+		err = ErrTopicUnavailable
+	} else {
+		config, configErr := s.ontologyConfig.OntologyMaintenanceRuntimeConfig(ctx)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if configErr != nil {
+			err = configErr
+		} else if !config.Enabled {
+			if req.TopicIDs != nil {
+				err = ErrTopicUnavailable
+			} else {
+				return nil
+			}
+		} else if reader, ok := s.search.(recallcontract.TopicDiscoveryRepository); ok {
+			input.OrganizationEnabled = true
+			selection, err = reader.RelatedEvidenceTopics(ctx, input, recallResultEvidenceIDs(result.Results), limit)
+		} else {
+			err = ErrTopicUnavailable
+		}
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	captureID := uuid.NewString()
+	attrs := []observability.LogAttr{observability.String("team_id", input.TeamID), observability.String("owner_profile_id", actor.OwnerID.String()), observability.String("recall_id", result.RecallID), observability.String("diagnostic_capture_id", captureID), {Key: "requested_ids", Value: req.TopicIDs}, {Key: "known_evidence_ids", Value: req.KnownEvidenceIDs}, {Key: "returned_evidence_ids", Value: recallResultEvidenceIDs(result.Results)}, {Key: "topic_limit", Value: limit}, {Key: "topic_count", Value: len(selection.Topics)}, {Key: "truncated", Value: selection.Truncated}}
+	if root, ok := s.logger.(interface{ ContextSlog() *slog.Logger }); ok {
+		body, encodeErr := json.Marshal(selection)
+		if encodeErr != nil {
+			s.logTopics(ctx, slog.LevelWarn, "diagnostic_body_unavailable", append(attrs, observability.String("reason_code", "diagnostic_encoding_failed")))
+		} else {
+			observability.LogDiagnosticBody(ctx, root.ContextSlog(), s.diagnosticProtector, "recall_topic_selection_payload", body, modelprovider.MaxProviderDiagnosticBodyBytes,
+				slog.String("team_id", input.TeamID), slog.String("recall_id", result.RecallID), slog.String("diagnostic_capture_id", captureID))
+		}
+	}
+	if err != nil {
+		attrs = append(attrs, observability.String("reason", err.Error()), observability.String("outcome", "unavailable"))
+		s.logTopics(ctx, slog.LevelWarn, "recall_topic_degraded", attrs)
+		if req.TopicIDs != nil {
+			return ErrTopicUnavailable
+		}
+		result.Degradations = append(result.Degradations, RecallDegradationResult{Frontier: "topics", Optional: true, Code: "topic_unavailable", Message: "Related topics are unavailable."})
+		result.Degradation = &result.Degradations[0]
+		return nil
+	}
+	result.RelatedTopics = selection.Topics
+	result.TopicsTruncated = selection.Truncated
+	attrs = append(attrs, observability.String("outcome", "selected"))
+	s.logTopics(ctx, slog.LevelDebug, "recall_topic_selection", attrs)
+	return nil
+}
+
+func (s *recallService) logTopics(ctx context.Context, level slog.Level, event string, attrs []observability.LogAttr) {
+	if s.logger == nil {
+		return
+	}
+	if contextual, ok := s.logger.(observability.ContextLogProvider); ok {
+		contextual.LogContext(ctx, level, event, attrs...)
+	} else if level >= slog.LevelWarn {
+		s.logger.Warn(event, attrs...)
+	} else {
+		s.logger.Debug(event, attrs...)
+	}
 }

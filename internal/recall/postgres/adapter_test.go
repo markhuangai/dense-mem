@@ -79,7 +79,7 @@ func addRecallHit(rows *sqlmock.Rows, kind, id, state string) *sqlmock.Rows {
 func TestRecallStoreConstructionPreservesDependenciesAndReportsMissingOnes(t *testing.T) {
 	db, _ := newRecallSQLMockDB(t)
 	contract := recallTestContract()
-	store := NewStore(db, recallQueryRLS{}, recallSearchContract{contract: contract}, nil, nil)
+	store := NewStore(db, recallQueryRLS{}, recallSearchContract{contract: contract}, nil)
 	got, err := store.GetActiveSearchContract(t.Context())
 	require.NoError(t, err)
 	require.Same(t, contract, got)
@@ -93,5 +93,5 @@ func TestRecallStoreConstructionPreservesDependenciesAndReportsMissingOnes(t *te
 	require.EqualError(t, err, "recall: search adapter is required")
 	fn := func(*gorm.DB) error { t.Fatal("unexpected query"); return nil }
 	require.EqualError(t, missing.withTeamTx(t.Context(), recallTeam, fn), "recall: database is required")
-	require.EqualError(t, NewStore(db, nil, nil, nil, nil).withTeamTx(t.Context(), recallTeam, fn), "recall: rls helper is required")
+	require.EqualError(t, NewStore(db, nil, nil, nil).withTeamTx(t.Context(), recallTeam, fn), "recall: rls helper is required")
 }

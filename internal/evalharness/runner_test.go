@@ -211,14 +211,14 @@ func TestRunBaselineLiveHTTPFlow(t *testing.T) {
 			callsMu.Unlock()
 			submissionID := strings.TrimPrefix(idempotencyKey, "eval:")
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"contract_version":     "dense-mem.v2.6.2",
-				"submission_id":        submissionID,
-				"submission_kind":      "remember",
-				"processing_state":     "completed",
-				"search_state":         "current",
-				"correlation_id":       "correlation-" + submissionID,
-				"evidence":             []map[string]any{{"disposition": "stored", "evidence_id": rememberIDs["eval:"+submissionID], "evidence_index": 0, "superseded_evidence_ids": []string{}, "search_state": "current"}},
-				"relationship_results": []map[string]any{}, "errors": []map[string]any{},
+				"contract_version": "dense-mem.v2.8.0",
+				"submission_id":    submissionID,
+				"submission_kind":  "remember",
+				"processing_state": "completed",
+				"search_state":     "current",
+				"correlation_id":   "correlation-" + submissionID,
+				"evidence":         []map[string]any{{"disposition": "stored", "evidence_id": rememberIDs["eval:"+submissionID], "evidence_index": 0, "superseded_evidence_ids": []string{}, "search_state": "current"}},
+				"errors":           []map[string]any{},
 			})
 		case "tool:eval_list_knowledge_refs":
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -446,89 +446,6 @@ func TestRunValidationRejectsCrossFileInconsistency(t *testing.T) {
 			t.Fatalf("Run err = %v; want validation seed hash mismatch", err)
 		}
 	})
-}
-
-func TestRunValidateLoadsAndValidatesExpectedDreams(t *testing.T) {
-	dir := t.TempDir()
-	manifest := SeedManifest{
-		SchemaVersion: SeedSchemaVersion,
-		SeedID:        "dream-fixture",
-		CorpusFile:    "corpus.jsonl",
-		CasesFile:     "cases.jsonl",
-		QrelsFile:     "qrels.jsonl",
-		DreamsFile:    "expected_dreams.jsonl",
-		Counts: map[string]int{
-			"cases":         1,
-			"corpus":        2,
-			"docs_per_case": 2,
-			"qrels":         1,
-			"dreams":        1,
-		},
-	}
-	if err := writeJSONFile(filepath.Join(dir, "seed_manifest.json"), manifest); err != nil {
-		t.Fatalf("write manifest: %v", err)
-	}
-	if err := writeJSONL(filepath.Join(dir, "corpus.jsonl"), []CorpusItem{
-		{SourceDocID: "doc-employer", Content: "Employer fact source."},
-		{SourceDocID: "doc-location", Content: "Location fact source."},
-	}); err != nil {
-		t.Fatalf("write corpus: %v", err)
-	}
-	if err := writeJSONL(filepath.Join(dir, "cases.jsonl"), []Case{
-		{CaseID: "case-dream", Query: "which hypothesis?", IncludeDreams: true},
-	}); err != nil {
-		t.Fatalf("write cases: %v", err)
-	}
-	if err := writeJSONL(filepath.Join(dir, "qrels.jsonl"), []QRel{{
-		CaseID:            "case-dream",
-		RequiredRefs:      []Ref{{Type: "fragment", SourceDocID: "doc-employer", Grade: 1}},
-		RequiredDreamRefs: []Ref{{Type: "dream", SourceDocID: "expected-dream", Grade: 1}},
-	}}); err != nil {
-		t.Fatalf("write qrels: %v", err)
-	}
-	if err := writeJSONL(filepath.Join(dir, "expected_dreams.jsonl"), []ExpectedDream{{
-		SourceDocID: "expected-dream",
-		CaseID:      "case-dream",
-		SourceRefs: []Ref{
-			{Type: "fragment", SourceDocID: "doc-employer"},
-			{Type: "fragment", SourceDocID: "doc-location"},
-		},
-	}}); err != nil {
-		t.Fatalf("write expected dreams: %v", err)
-	}
-	if err := writeJSONL(filepath.Join(dir, "suite.jsonl"), []SuiteCase{{CaseID: "case-dream"}}); err != nil {
-		t.Fatalf("write suite: %v", err)
-	}
-
-	summary, err := Run(context.Background(), RunOptions{
-		Mode:             "validate",
-		SeedManifestPath: filepath.Join(dir, "seed_manifest.json"),
-		SuitePath:        filepath.Join(dir, "suite.jsonl"),
-		OutDir:           filepath.Join(dir, "run"),
-	})
-	if err != nil {
-		t.Fatalf("Run validate with expected dreams: %v", err)
-	}
-	if summary.CaseCount != 1 || summary.SeedHash == "" {
-		t.Fatalf("summary = %+v", summary)
-	}
-
-	if err := writeJSONL(filepath.Join(dir, "qrels.jsonl"), []QRel{{
-		CaseID:            "case-dream",
-		RequiredRefs:      []Ref{{Type: "fragment", SourceDocID: "doc-employer", Grade: 1}},
-		RequiredDreamRefs: []Ref{{Type: "dream", SourceDocID: "missing-dream", Grade: 1}},
-	}}); err != nil {
-		t.Fatalf("rewrite qrels: %v", err)
-	}
-	_, err = Run(context.Background(), RunOptions{
-		Mode:             "validate",
-		SeedManifestPath: filepath.Join(dir, "seed_manifest.json"),
-		SuitePath:        filepath.Join(dir, "suite.jsonl"),
-		OutDir:           filepath.Join(dir, "run-invalid"),
-	})
-	if err == nil || !strings.Contains(err.Error(), "missing-dream") {
-		t.Fatalf("Run validate missing expected dream err = %v", err)
-	}
 }
 
 func TestRunLiveSuiteAndCompareErrorBranches(t *testing.T) {
@@ -852,50 +769,6 @@ func TestScoreTracesKeepsExplicitEmptyContextEvidenceRefs(t *testing.T) {
 	}
 	if summary.AverageEvidenceRecallAtK != 0 {
 		t.Fatalf("explicit empty evidence summary = %+v; want no evidence recall", summary)
-	}
-}
-
-func TestScoreTracesScoresDreamRefsSeparately(t *testing.T) {
-	suite := []SuiteCase{{CaseID: "case-1", Slices: []string{"dream_neighbor_hypothesis"}}}
-	cases := map[string]Case{
-		"case-1": {CaseID: "case-1", Query: "which hypothesis?", Limit: 2, IncludeDreams: true},
-	}
-	qrels := map[string]QRel{
-		"case-1": {
-			CaseID:            "case-1",
-			RequiredRefs:      []Ref{{Type: "fact", SourceDocID: "doc-fact"}},
-			RequiredDreamRefs: []Ref{{Type: "dream", SourceDocID: "dream-good"}},
-			BadDreamRefs:      []Ref{{Type: "dream", SourceDocID: "dream-bad"}},
-		},
-	}
-	traces := []RecallTrace{{
-		CaseID:     "case-1",
-		Query:      "which hypothesis?",
-		RankedRefs: []Ref{{Type: "fact", ID: "fact-1"}},
-		DreamRefs:  []Ref{{Type: "dream", ID: "dream-1"}, {Type: "dream", ID: "dream-bad-1"}},
-	}}
-	mapping := KnowledgeMapping{BySourceDocID: map[string]Ref{
-		"doc-fact":   {Type: "fact", ID: "fact-1", SourceDocID: "doc-fact"},
-		"dream-good": {Type: "dream", ID: "dream-1", SourceDocID: "dream-good"},
-		"dream-bad":  {Type: "dream", ID: "dream-bad-1", SourceDocID: "dream-bad"},
-	}}
-
-	scores, summary, err := ScoreTraces("run-1", "baseline", "seed-1", "sha256:test", "suite.jsonl", suite, cases, qrels, traces, mapping)
-	if err != nil {
-		t.Fatalf("ScoreTraces: %v", err)
-	}
-	score := scores[0]
-	if score.RecallAtK != 1 || score.BadAtK != 0 {
-		t.Fatalf("memory score = %+v", score)
-	}
-	if !score.DreamScored || score.DreamRecallAtK != 1 || score.DreamBadAtK != 1 || score.DreamFirstRequiredRank != 1 || score.DreamFirstBadRank != 2 {
-		t.Fatalf("dream score = %+v", score)
-	}
-	if summary.DreamScoredCaseCount != 1 || summary.AverageDreamRecallAtK != 1 || summary.AverageDreamBadAtK != 1 || summary.DreamRequiredRank1Rate != 1 {
-		t.Fatalf("dream summary = %+v", summary)
-	}
-	if summary.Slices["dream_neighbor_hypothesis"].DreamScoredCaseCount != 1 || summary.Slices["dream_neighbor_hypothesis"].AverageDreamBadAtK != 1 {
-		t.Fatalf("slice summary = %+v", summary.Slices)
 	}
 }
 

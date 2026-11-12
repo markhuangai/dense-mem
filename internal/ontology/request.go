@@ -15,7 +15,7 @@ type requestBinding struct {
 }
 
 func (s *Service) request(context contract.OrganizationContext, receipt *contract.OrganizationReceipt) (assessment.Request, requestBinding, error) {
-	request := assessment.Request{RequestID: receipt.ID, Items: []assessment.Item{}, Definitions: []assessment.Definition{}, Pairs: []assessment.Pair{}, HierarchyUpdateRefs: []string{}}
+	request := assessment.Request{RequestID: receipt.ID, Items: []assessment.Item{}, Definitions: []assessment.Definition{}, Pairs: []assessment.Pair{}}
 	binding := requestBinding{sources: map[string]contract.SourceSnapshot{}, definitions: map[string]contract.Record{}, outcomeIndices: map[string]int{}}
 	definitionRefs := map[string]string{}
 	for i, view := range context.Candidates {
@@ -24,7 +24,7 @@ func (s *Service) request(context contract.OrganizationContext, receipt *contrac
 	for _, view := range context.Candidates {
 		d := view.Definition
 		ref := definitionRefs[view.ID]
-		request.Definitions = append(request.Definitions, assessment.Definition{Ref: ref, Kind: view.Kind, Key: d.Key, Label: d.Label, Description: d.Description, Aliases: append([]string{}, d.Aliases...), ParentRef: definitionRefs[d.ParentID], ParentRelation: d.ParentRelation, BaseEntityKind: d.BaseEntityKind})
+		request.Definitions = append(request.Definitions, assessment.Definition{Ref: ref, Kind: view.Kind, Key: d.Key, Label: d.Label, Description: d.Description, Aliases: append([]string{}, d.Aliases...), ParentRef: definitionRefs[d.ParentID]})
 		binding.definitions[ref] = view.Record
 	}
 	for len(request.Definitions) > 0 {
@@ -40,35 +40,9 @@ func (s *Service) request(context contract.OrganizationContext, receipt *contrac
 		delete(binding.definitions, last.Ref)
 		request.Definitions = request.Definitions[:len(request.Definitions)-1]
 	}
-	for changed := true; changed; {
-		changed = false
-		retained := request.Definitions[:0]
-		for _, definition := range request.Definitions {
-			stored := binding.definitions[definition.Ref]
-			if definition.Kind != contract.Topic && stored.Definition.ParentID != "" && definition.ParentRef == "" {
-				delete(definitionRefs, stored.ID)
-				delete(binding.definitions, definition.Ref)
-				changed = true
-				continue
-			}
-			if definition.ParentRef != "" {
-				if _, exists := binding.definitions[definition.ParentRef]; !exists {
-					if definition.Kind != contract.Topic {
-						delete(definitionRefs, binding.definitions[definition.Ref].ID)
-						delete(binding.definitions, definition.Ref)
-						changed = true
-						continue
-					}
-					definition.ParentRef = ""
-				}
-			}
-			retained = append(retained, definition)
-		}
-		request.Definitions = retained
-	}
-	for _, view := range context.Candidates {
-		if ref := definitionRefs[view.ID]; ref != "" && contract.OrganizationHierarchyEditable(view, context.Records) {
-			request.HierarchyUpdateRefs = append(request.HierarchyUpdateRefs, ref)
+	for i := range request.Definitions {
+		if _, exists := binding.definitions[request.Definitions[i].ParentRef]; !exists {
+			request.Definitions[i].ParentRef = ""
 		}
 	}
 	keys := map[string]bool{}
@@ -93,10 +67,7 @@ func (s *Service) request(context contract.OrganizationContext, receipt *contrac
 		}
 		ref := fmt.Sprintf("s%d", i)
 		displayContext := contract.SourceDisplayContext(source)
-		if source.Kind == contract.PredicateSource {
-			displayContext["predicate"] = source.ID
-		}
-		item := assessment.Item{Ref: ref, Kind: source.Kind, Text: contract.SourceDisplayText(source), OwnerRef: owners[source.OwnerID], EntityKind: source.EntityKind, Context: displayContext}
+		item := assessment.Item{Ref: ref, Kind: source.Kind, Text: contract.SourceDisplayText(source), OwnerRef: owners[source.OwnerID], Context: displayContext}
 		locked, preferred := contract.OrganizationClassification(source, context.Records, context.Candidates)
 		item.PreferredDefinitionRef = definitionRefs[preferred]
 		item.LockedDefinitionRef = definitionRefs[locked]
@@ -167,7 +138,7 @@ func organizationPairs(items []assessment.Item, sources map[string]contract.Sour
 	pairs := []assessment.Pair{}
 	for i, left := range items {
 		for _, right := range items[i+1:] {
-			if left.Kind != right.Kind || (left.Kind != contract.EvidenceSource && left.Kind != contract.RelationshipSource) {
+			if left.Kind != right.Kind || left.Kind != contract.EvidenceSource {
 				continue
 			}
 			a, b := lookup[left.Ref], lookup[right.Ref]

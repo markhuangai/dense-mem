@@ -16,10 +16,6 @@ func (r *Store) SaveSessionExtraction(ctx context.Context, scope session.Scope, 
 	return r.saveSessionCheckpoint(ctx, scope, id, index, body)
 }
 
-func (r *Store) SaveSessionLinking(ctx context.Context, scope session.Scope, id string, body json.RawMessage) error {
-	return r.saveSessionCheckpoint(ctx, scope, id, -1, body)
-}
-
 func (r *Store) saveSessionCheckpoint(ctx context.Context, scope session.Scope, id string, index int, body json.RawMessage) error {
 	if !json.Valid(body) {
 		return session.ErrInvalidInput

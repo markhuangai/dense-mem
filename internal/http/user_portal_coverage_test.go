@@ -29,9 +29,7 @@ func TestUserPortalQueryAndPrincipalHelpersCoverBounds(t *testing.T) {
 			t.Fatalf("invalid optional int %q was accepted", raw)
 		}
 	}
-	if userPortalGraphTypes("") != nil || strings.Join(userPortalGraphTypes("entity, value\tclaim"), ",") != "entity,value,claim" {
-		t.Fatal("graph type parsing was incorrect")
-	}
+
 	teamID := uuid.New()
 	ownerID := uuid.New()
 	credentialID := uuid.New()

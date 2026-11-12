@@ -39,32 +39,24 @@ const catalog = postgresRow(`
       WHERE version_id = 2026081602 AND is_applied
     ), '|',
     (
-      SELECT count(*) = 32
+      SELECT count(DISTINCT constraint_state.conrelid) = 9
       FROM pg_constraint AS constraint_state
       WHERE constraint_state.contype = 'f'
         AND constraint_state.conrelid::regclass::text = ANY(ARRAY[
-          'dream_cycle_runs', 'entity_correction_events', 'entity_correction_plans',
-          'entity_names', 'entity_resolution_events', 'evidence_fragments', 'evidence_lifecycle_operations',
-          'evidence_quarantines', 'evidence_security_events', 'evidence_security_signals',
-          'evidence_source_revisions', 'evidence_sources', 'hypotheses', 'hypothesis_feedback_events',
-          'knowledge_ingests',
-          'relationship_conflict_derived_evidence_tasks', 'relationship_conflict_events',
-          'relationship_conflict_evidence_derivations', 'relationship_correction_submissions',
-          'relationship_cross_references', 'relationship_evidence_supports', 'relationship_observations',
-          'relationship_records', 'relationship_support_decision_events', 'relationship_transition_events',
-          'review_tasks', 'search_documents', 'verification_events'
+          'evidence_fragments', 'evidence_lifecycle_operations', 'evidence_quarantines',
+          'evidence_security_events', 'evidence_security_signals', 'evidence_source_revisions',
+          'evidence_sources', 'knowledge_ingests', 'search_documents'
         ]::text[])
         AND constraint_state.confrelid = 'ownership_aliases'::regclass
         AND constraint_state.convalidated
         AND constraint_state.confdeltype = 'r'
     ), '|',
     (
-      SELECT count(*) = 5
+      SELECT count(DISTINCT constraint_state.conrelid) = 1
       FROM pg_constraint AS constraint_state
       WHERE constraint_state.contype = 'f'
         AND constraint_state.conrelid::regclass::text = ANY(ARRAY[
-          'community_snapshot_runs', 'entity_records', 'search_projection_generations',
-          'team_predicate_definitions', 'value_records'
+          'search_projection_generations'
         ]::text[])
         AND constraint_state.confrelid = 'teams'::regclass
         AND constraint_state.convalidated
@@ -296,20 +288,11 @@ console.log(JSON.stringify({
 
 function rememberInput() {
   const content = "Identity cleanup uses canonical credentials.";
-  const subject = "Identity cleanup";
-  const predicate = "uses";
-  const object = "canonical credentials";
   return {
     target_space: "team_shared",
     idempotency_key: `${runID}:batch`,
     evidence: [{ content, source_type: "document", source: `${runID}:source`, source_group: runID }],
-    relationships: [{
-      ref: `${runID}:relationship`,
-      subject: { name: subject, entity_kind: "concept" },
-      predicate: { proposed_key: predicate },
-      object: { entity: { name: object, entity_kind: "concept" } },
-      polarity: "+", evidence_indices: [0],
-    }],
+
   };
 }
 

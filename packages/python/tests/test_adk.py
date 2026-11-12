@@ -43,7 +43,13 @@ def service(endpoint, **kwargs):
 
 
 def terminal():
-    return {"processing_state": "completed", "search_state": "not_required", "submission_id": "s"}
+    return {
+        "contract_version": "dense-mem.v2.8.0",
+        "processing_state": "completed",
+        "search_state": "not_required",
+        "memory_outcome": "no_memory",
+        "submission_id": "s",
+    }
 
 
 @pytest.mark.parametrize(
@@ -78,7 +84,7 @@ def test_operation_bounds(kwargs):
         service("http://localhost/mcp", **kwargs)
 
 
-def test_real_adk_mapping_filters_without_mutating():
+def test_evidence_only_real_adk_mapping_filters_without_mutating():
     mixed = event()
     mixed.content.parts = [
         types.Part(text="  Ari"),
@@ -137,7 +143,9 @@ async def test_interface_rejects_unsupported_and_foreign_empty_calls(wire_server
 
 
 @pytest.mark.parametrize("count,sizes", [(21, [20, 1]), (40, [20, 20]), (41, [20, 20, 1])])
-async def test_batches_and_growing_session_retain_keys_and_payload(wire_server, count, sizes):
+async def test_evidence_only_batches_and_growing_session_retain_keys_and_payload(
+    wire_server, count, sizes
+):
     endpoint, state = wire_server
     state["result"] = terminal()
     memory = service(endpoint)
@@ -220,7 +228,9 @@ async def test_snapshot_precedes_provider_await_and_users_do_not_mix(wire_server
     assert resolutions == [("app", name) for name in ("alice", "bob", "carol")]
 
 
-async def test_partial_failure_preserves_original_error_and_replay_request(wire_server):
+async def test_evidence_only_partial_failure_preserves_original_error_and_replay_request(
+    wire_server,
+):
     endpoint, state = wire_server
     failed = {
         "processing_state": "failed",
@@ -476,7 +486,9 @@ async def test_provider_failure_and_token_redaction(wire_server, caplog):
 
 
 @pytest.mark.parametrize("empty", [False, True])
-async def test_search_retains_provenance_order_and_empty_degradation(wire_server, empty):
+async def test_evidence_only_search_retains_provenance_order_and_empty_degradation(
+    wire_server, empty
+):
     endpoint, state = wire_server
     evidence = [
         {
@@ -491,6 +503,10 @@ async def test_search_retains_provenance_order_and_empty_degradation(wire_server
     result = {
         "results": [] if empty else evidence,
         "recall_id": "recall",
+        "related_topics": [],
+        "topics_truncated": False,
+        "search_states": {"evidence": "current"},
+        "suggested_actions": [],
         "conflicts": [{"kind": "evidence_conflict"}],
         "degradations": [{"code": "optional_context_omitted"}],
     }

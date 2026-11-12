@@ -16,7 +16,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	embeddingcontract "github.com/markhuangai/dense-mem/internal/embedding/contract"
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
-	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
+
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
@@ -75,9 +75,9 @@ func TestRememberFailureCodeMapsDuplicateCandidateStaleToStaleInput(t *testing.T
 func TestNormalizeRememberFailurePreservesAdapterStaleCause(t *testing.T) {
 	processor := &rememberSynchronousProcessor{isStaleInput: rememberapp.IsRememberStaleInputError}
 	for _, stale := range []error{
-		knowledgepostgres.ErrConflictContextStale,
-		knowledgepostgres.ErrRememberExactReferenceStale,
-		knowledgepostgres.ErrCorrectionTargetStale,
+		knowledgecontract.ErrEvidenceConflictStaleInput,
+		knowledgecontract.ErrRememberExactReferenceStale,
+		knowledgecontract.ErrEvidenceLifecycleConflict,
 	} {
 		normalized := processor.normalizeRememberFailure(stale)
 		require.ErrorIs(t, normalized, rememberapp.ErrRememberStaleInput)
@@ -191,7 +191,7 @@ func TestRememberInvocationDiagnosticsRecordOutcomeAndCause(t *testing.T) {
 		TeamID: "11111111-1111-4111-8111-111111111111", OwnerProfileID: "22222222-2222-4222-8222-222222222222",
 		InvocationStartedAt: started, RequestHash: "sha256:request", OriginalRequest: []byte(`{"evidence":[{"content":"admitted"}]}`),
 	}, "33333333-3333-4333-8333-333333333333", "execution", "33333333-3333-4333-8333-333333333333", "commit", nil, status, nil)
-	require.Equal(t, "evaluated_zero", ledger.invocation.Outcome)
+	require.Equal(t, "completed", ledger.invocation.Outcome)
 	require.Empty(t, ledger.invocation.FailedPhase)
 	require.Equal(t, "sha256:request", ledger.invocation.RequestHash)
 	require.WithinDuration(t, started, ledger.invocation.CreatedAt, 50*time.Millisecond)
@@ -357,11 +357,12 @@ func TestRememberFailureRecoveryContextUsesPersistenceBudget(t *testing.T) {
 
 func TestRememberReplayReloadUsesBoundedRecoveryContext(t *testing.T) {
 	ledger := &rememberFailureLedgerStub{loadSequence: []*knowledgecontract.RememberAttempt{{
-		AttemptID: "77777777-7777-7777-7777-777777777777", Outcome: "completed",
+		AttemptID: "77777777-7777-7777-7777-777777777777", ContractVersion: domain.ContractVersion, Outcome: "completed",
 		PublicResult: map[string]any{
 			"contract_version": domain.ContractVersion, "submission_id": "77777777-7777-7777-7777-777777777777",
 			"submission_kind": "remember", "processing_state": "completed", "search_state": "current",
-			"evidence": []any{}, "relationship_results": []any{}, "errors": []any{},
+			"space_kind": "team_shared",
+			"evidence":   []any{}, "errors": []any{},
 		},
 	}}}
 	processor := &rememberSynchronousProcessor{ledger: ledger}
@@ -385,7 +386,6 @@ func TestRememberReplayReloadFailurePreservesCompleteTypedResult(t *testing.T) {
 		TeamID: "team", OwnerProfileID: "owner", IdempotencyKey: "remember-key",
 		RequestHash: "request-hash", Metadata: map[string]any{"actor": map[string]any{"correlation_id": "replay-correlation"}},
 		Evidence: []rememberapp.EvidenceInput{{Content: "first"}, {Content: "second"}},
-		Proposal: map[string]any{"relationship_hints": []map[string]any{{"ref": "rel-a"}, {"ref": "rel-b"}}},
 	}
 
 	_, err := processor.loadRememberReplay(context.Background(), input, "88888888-8888-8888-8888-888888888888")
@@ -394,49 +394,25 @@ func TestRememberReplayReloadFailurePreservesCompleteTypedResult(t *testing.T) {
 	require.Equal(t, string(rememberapp.SubmissionErrorDatabaseFailure), processErr.Status.Errors[0].Code)
 	require.Equal(t, "replay-correlation", processErr.Status.CorrelationID)
 	require.Len(t, processErr.Status.Evidence, 2)
-	require.Len(t, processErr.Status.RelationshipResults, 2)
 }
 
 func TestRememberAttemptMatchesRequestDoesNotAcceptMigratedHash(t *testing.T) {
 	input := rememberapp.RememberProcessRequest{RequestHash: "current"}
 
-	require.True(t, rememberAttemptMatchesRequest(&knowledgecontract.RememberAttempt{RequestHash: "current"}, input))
+	require.True(t, rememberAttemptMatchesRequest(&knowledgecontract.RememberAttempt{RequestHash: "current", ContractVersion: domain.ContractVersion}, input))
 	require.False(t, rememberAttemptMatchesRequest(&knowledgecontract.RememberAttempt{
 		RequestHash: "legacy", ContractVersion: "remember_request_hash_v1",
 	}, input))
 }
 
-func TestRememberAttemptStatusForRequestRestoresRelationshipOrder(t *testing.T) {
-	attempt := &knowledgecontract.RememberAttempt{
-		AttemptID: "77777777-7777-7777-7777-777777777777", Outcome: "completed",
-		PublicResult: map[string]any{
-			"contract_version": domain.ContractVersion, "submission_id": "77777777-7777-7777-7777-777777777777",
-			"submission_kind": "remember", "processing_state": "completed", "search_state": "current",
-			"evidence": []any{}, "relationship_results": []any{
-				map[string]any{"ref": "rel-a", "disposition": "stored", "splits": []any{}},
-				map[string]any{"ref": "rel-b", "disposition": "stored", "splits": []any{}},
-			}, "errors": []any{},
-		},
-	}
-	status, err := rememberAttemptStatusForRequest(attempt, rememberapp.RememberProcessRequest{
-		Proposal: map[string]any{"relationship_hints": []map[string]any{{"ref": "rel-b"}, {"ref": "rel-a"}}},
-	})
-	require.NoError(t, err)
-	require.Equal(t, []string{"rel-b", "rel-a"}, []string{
-		status.RelationshipResults[0].RelationshipRef,
-		status.RelationshipResults[1].RelationshipRef,
-	})
-}
-
 func TestRememberAttemptReplayRejectsLegacyOutcomes(t *testing.T) {
 	input := rememberapp.RememberProcessRequest{
 		RequestHash: "request-hash",
-		Proposal:    map[string]any{"relationship_hints": []map[string]any{{"ref": "rel-a"}}},
 	}
 	publicResult := map[string]any{
 		"contract_version": domain.ContractVersion, "submission_id": "77777777-7777-7777-7777-777777777777",
 		"submission_kind": "remember", "processing_state": "completed", "search_state": "current",
-		"correlation_id": "correlation", "evidence": []any{}, "relationship_results": []any{}, "errors": []any{},
+		"correlation_id": "correlation", "evidence": []any{}, "errors": []any{},
 	}
 	for _, outcome := range []string{"rejected", "quarantined", "replayed"} {
 		t.Run(outcome, func(t *testing.T) {
@@ -459,7 +435,7 @@ func TestRememberAttemptReplayAcceptsOnlyCurrentTerminalOutcomes(t *testing.T) {
 		PublicResult: map[string]any{
 			"contract_version": domain.ContractVersion, "submission_id": "77777777-7777-7777-7777-777777777777",
 			"submission_kind": "remember", "processing_state": "completed", "search_state": "current",
-			"correlation_id": "correlation", "evidence": []any{}, "relationship_results": []any{}, "errors": []any{},
+			"correlation_id": "correlation", "evidence": []any{}, "errors": []any{},
 		},
 	}
 	status, err := rememberAttemptReplay(completed, input)
@@ -471,7 +447,7 @@ func TestRememberAttemptReplayAcceptsOnlyCurrentTerminalOutcomes(t *testing.T) {
 	failed.PublicResult = map[string]any{
 		"contract_version": domain.ContractVersion, "submission_id": completed.AttemptID,
 		"submission_kind": "remember", "processing_state": "failed", "search_state": "not_required",
-		"correlation_id": "correlation", "evidence": []any{}, "relationship_results": []any{},
+		"correlation_id": "correlation", "evidence": []any{},
 		"errors": []any{map[string]any{"code": "provider_unavailable", "retryable": true, "next_action": "retry_same_request", "message": "the semantic assessor was unavailable", "remediation": "Retry the same request with the same idempotency_key after the transient failure clears."}},
 	}
 	status, err = rememberAttemptReplay(&failed, input)
@@ -488,7 +464,7 @@ func TestRememberAttemptReplayRejectsRequestHashMismatch(t *testing.T) {
 		PublicResult: map[string]any{
 			"contract_version": domain.ContractVersion, "submission_id": "77777777-7777-7777-7777-777777777777",
 			"submission_kind": "remember", "processing_state": "completed", "search_state": "current",
-			"evidence": []any{}, "relationship_results": []any{}, "errors": []any{},
+			"evidence": []any{}, "errors": []any{},
 		},
 	}
 	_, err := rememberAttemptReplay(attempt, rememberapp.RememberProcessRequest{RequestHash: "different-request-hash"})
@@ -558,7 +534,7 @@ func TestRememberProcessorPreservesCompletedResultWhenLockCleanupFails(t *testin
 		PublicResult: map[string]any{
 			"contract_version": domain.ContractVersion, "submission_id": attemptID,
 			"submission_kind": "remember", "processing_state": "completed", "search_state": "current",
-			"evidence": []any{}, "relationship_results": []any{}, "errors": []any{},
+			"evidence": []any{}, "errors": []any{},
 		},
 	}}
 	cleanupErr := errors.New("lock cleanup failed")
@@ -584,7 +560,7 @@ func TestRememberProcessorWaiterRejectsRequestHashMismatch(t *testing.T) {
 		PublicResult: map[string]any{
 			"contract_version": domain.ContractVersion, "submission_id": "77777777-7777-7777-7777-777777777777",
 			"submission_kind": "remember", "processing_state": "completed", "search_state": "current",
-			"evidence": []any{}, "relationship_results": []any{}, "errors": []any{},
+			"evidence": []any{}, "errors": []any{},
 		},
 	}}
 	locker := &rememberWaitAwareLedgerStub{rememberFailureLedgerStub: ledger, waited: true}
@@ -657,7 +633,6 @@ func TestRememberProcessorFailureProjectsEverySubmittedItem(t *testing.T) {
 		TeamID: "team", OwnerProfileID: "owner", IdempotencyKey: "remember-key", RequestHash: "request-hash",
 		Metadata: map[string]any{"actor": map[string]any{"correlation_id": "failure-correlation"}},
 		Evidence: []rememberapp.EvidenceInput{{Content: "first"}, {Content: "second"}},
-		Proposal: map[string]any{"relationship_hints": []map[string]any{{"ref": " rel-a "}, {"ref": "rel-b"}}},
 	}
 
 	_, err := processor.ProcessRemember(context.Background(), input)
@@ -665,7 +640,6 @@ func TestRememberProcessorFailureProjectsEverySubmittedItem(t *testing.T) {
 	require.ErrorAs(t, err, &processErr)
 	require.Equal(t, string(rememberapp.SubmissionErrorProviderUnavailable), processErr.Status.Errors[0].Code)
 	require.Len(t, processErr.Status.Evidence, 2)
-	require.Len(t, processErr.Status.RelationshipResults, 2)
 	for index, evidence := range processErr.Status.Evidence {
 		require.Equal(t, "not_stored", evidence.Disposition)
 		require.Equal(t, index, evidence.EvidenceIndex)
@@ -673,19 +647,11 @@ func TestRememberProcessorFailureProjectsEverySubmittedItem(t *testing.T) {
 		require.Equal(t, "not_required", evidence.SearchState)
 		require.Empty(t, evidence.SupersededEvidenceIDs)
 	}
-	for index, relationship := range processErr.Status.RelationshipResults {
-		require.Equal(t, []string{"rel-a", "rel-b"}[index], relationship.RelationshipRef)
-		require.Equal(t, "not_stored", relationship.Disposition)
-		require.Equal(t, "internal_failure", relationship.Reason)
-		require.Empty(t, relationship.Splits)
-	}
 
 	publicEvidence, ok := ledger.failure.Attempt.PublicResult["evidence"].([]any)
 	require.True(t, ok)
 	require.Len(t, publicEvidence, 2)
-	publicRelationships, ok := ledger.failure.Attempt.PublicResult["relationship_results"].([]any)
-	require.True(t, ok)
-	require.Len(t, publicRelationships, 2)
+	require.NotContains(t, ledger.failure.Attempt.PublicResult, "relationship_results")
 }
 
 func TestRememberProcessorPersistsBoundedAssessorValidationDiagnostics(t *testing.T) {
@@ -698,7 +664,7 @@ func TestRememberProcessorPersistsBoundedAssessorValidationDiagnostics(t *testin
 	snapshot, _ := rememberAssessmentSnapshot(input, "88888888-8888-8888-8888-888888888888")
 	_, _, err := processor.recordRememberFailure(context.Background(), input, "88888888-8888-8888-8888-888888888888", snapshot, time.Now(), "assessment", 3, &assessor.MalformedResponseError{
 		FailureClass: "malformed_exhausted", Attempts: 3, ValidationStage: "response_contract",
-		ValidationFieldFamilies: []string{"relationship_results[0].object_value", "unknown-secret-field"},
+		ValidationFieldFamilies: []string{"evidence_security_results[0].decision", "unknown-secret-field"},
 	})
 	require.Error(t, err)
 	require.NotNil(t, ledger.failure.Attempt.AssessorValidation)
@@ -736,7 +702,6 @@ func TestRememberProcessorFailurePersistencePreservesDatabaseResult(t *testing.T
 	input := rememberapp.RememberProcessRequest{
 		TeamID: "team", OwnerProfileID: "owner", IdempotencyKey: "remember-key", RequestHash: "request-hash",
 		Evidence: []rememberapp.EvidenceInput{{Content: "first"}, {Content: "second"}},
-		Proposal: map[string]any{"relationship_hints": []map[string]any{{"ref": "rel-a"}, {"ref": "rel-b"}}},
 	}
 	snapshot, _ := rememberAssessmentSnapshot(input, "88888888-8888-8888-8888-888888888888")
 
@@ -753,12 +718,7 @@ func TestRememberProcessorFailurePersistencePreservesDatabaseResult(t *testing.T
 	want.Details = map[string]any{"component": "remember.failure_record", "server_owned": true}
 	require.Equal(t, want, processErr.Status.Errors[0])
 	require.Len(t, processErr.Status.Evidence, 2)
-	require.Len(t, processErr.Status.RelationshipResults, 2)
 	for _, item := range processErr.Status.Evidence {
-		require.Equal(t, "not_stored", item.Disposition)
-		require.Equal(t, "internal_failure", item.Reason)
-	}
-	for _, item := range processErr.Status.RelationshipResults {
 		require.Equal(t, "not_stored", item.Disposition)
 		require.Equal(t, "internal_failure", item.Reason)
 	}
@@ -793,7 +753,6 @@ func TestRememberProcessorConflictProjectsEverySubmittedItem(t *testing.T) {
 		TeamID: "team", OwnerProfileID: "owner", IdempotencyKey: "remember-key", RequestHash: "request-hash",
 		Metadata: map[string]any{"actor": map[string]any{"correlation_id": "conflict-correlation"}},
 		Evidence: []rememberapp.EvidenceInput{{Content: "first"}, {Content: "second"}},
-		Proposal: map[string]any{"relationship_hints": []map[string]any{{"ref": " rel-a "}, {"ref": "rel-b"}}},
 	}
 
 	assertConflict := func(t *testing.T, ledger *rememberFailureLedgerStub) {
@@ -814,7 +773,6 @@ func TestRememberProcessorConflictProjectsEverySubmittedItem(t *testing.T) {
 		require.Equal(t, "conflict", ledger.invocation.Classification)
 		require.NoError(t, func() error { _, err := uuid.Parse(processErr.Status.SubmissionID); return err }())
 		require.Len(t, processErr.Status.Evidence, 2)
-		require.Len(t, processErr.Status.RelationshipResults, 2)
 		for index, evidence := range processErr.Status.Evidence {
 			require.Equal(t, "not_stored", evidence.Disposition)
 			require.Equal(t, index, evidence.EvidenceIndex)
@@ -825,20 +783,12 @@ func TestRememberProcessorConflictProjectsEverySubmittedItem(t *testing.T) {
 			require.Equal(t, "not_required", evidence.SearchState)
 			require.Empty(t, evidence.SupersededEvidenceIDs)
 		}
-		for index, relationship := range processErr.Status.RelationshipResults {
-			require.Equal(t, []string{"rel-a", "rel-b"}[index], relationship.RelationshipRef)
-			require.Equal(t, "not_stored", relationship.Disposition)
-			require.Equal(t, "idempotency_conflict", relationship.Reason)
-			require.Equal(t, publicError.Message, relationship.Message)
-			require.Equal(t, publicError.Remediation, relationship.Remediation)
-			require.Empty(t, relationship.Splits)
-		}
 		_, terminal := terminalRememberFailureResult(processErr.Status)
-		require.NoError(t, rememberapp.ValidateTerminalRememberResult(terminal, 2, []string{"rel-a", "rel-b"}))
+		require.NoError(t, rememberapp.ValidateTerminalRememberResult(terminal, 2))
 	}
 
 	t.Run("existing request mismatch", func(t *testing.T) {
-		assertConflict(t, &rememberFailureLedgerStub{load: &knowledgecontract.RememberAttempt{RequestHash: "different"}})
+		assertConflict(t, &rememberFailureLedgerStub{load: &knowledgecontract.RememberAttempt{RequestHash: "different", ContractVersion: domain.ContractVersion}})
 	})
 	t.Run("persistence race", func(t *testing.T) {
 		assertConflict(t, &rememberFailureLedgerStub{failureErr: knowledgecontract.ErrIdempotencyConflict})

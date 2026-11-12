@@ -6,20 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
-	"gorm.io/gorm"
-
-	graphcontract "github.com/markhuangai/dense-mem/internal/graph/contract"
 	storage "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	tracecontract "github.com/markhuangai/dense-mem/internal/trace/contract"
-)
-
-var (
-	ErrTraceRelationshipNotFound  = tracecontract.ErrRelationshipNotFound
-	ErrTraceRelationshipIDInvalid = tracecontract.ErrRelationshipIDInvalid
+	"gorm.io/gorm"
 )
 
 type traceExecutionInput struct {
@@ -27,801 +19,244 @@ type traceExecutionInput struct {
 	spaceID string
 }
 
-func (r *Store) TraceRelationship(
-	ctx context.Context,
-	input TraceRelationshipInput,
-) (*RelationshipTraceResult, error) {
+func (r *Store) TraceEvidence(ctx context.Context, input TraceEvidenceInput) (*EvidenceTraceResult, error) {
 	input = tracecontract.NormalizeInput(input)
-	if err := validateTraceRelationshipInput(input); err != nil {
-		return nil, err
+	if id, err := uuid.Parse(input.TeamID); err != nil || id == uuid.Nil {
+		return nil, tracecontract.ErrEvidenceIDInvalid
 	}
-	result := &RelationshipTraceResult{}
+	if id, err := uuid.Parse(input.EvidenceID); err != nil || id == uuid.Nil {
+		return nil, tracecontract.ErrEvidenceIDInvalid
+	}
+	result := &EvidenceTraceResult{Occurrences: []TraceEvidenceFragment{}, SourceRevisions: []tracecontract.TraceSourceRevision{}, Decisions: []tracecontract.TraceEvidenceDecision{}, Lifecycle: []TraceEvidenceLifecycleEvent{}, SearchDocuments: []TraceSearchDocument{}, Omissions: []string{}}
 	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
-		resolved, err := storage.ResolveMemoryHandleTx(ctx, tx, input.TeamID, "relationship_records", input.RelationshipID, "")
+		resolved, err := storage.ResolveMemoryHandleTx(ctx, tx, input.TeamID, "evidence_fragments", input.EvidenceID, "")
 		if err != nil {
 			return err
 		}
-		input.RelationshipID = resolved
-		relationship, err := loadTraceRelationship(ctx, tx, input.TeamID, input.RelationshipID)
+		input.EvidenceID = resolved
+		root, err := loadTraceEvidenceRoot(ctx, tx, input)
 		if errors.Is(err, sql.ErrNoRows) {
-			return ErrTraceRelationshipNotFound
+			return tracecontract.ErrEvidenceNotFound
 		}
 		if err != nil {
 			return err
 		}
-		result.Relationship = relationship
-		execution := traceExecutionInput{Input: input, spaceID: relationship.SpaceID}
-
-		observations, err := loadTraceObservations(ctx, tx, execution)
+		result.Evidence = root
+		input.EvidenceID = root.FragmentID
+		execution := traceExecutionInput{Input: input, spaceID: root.SpaceID}
+		remaining := input.MaxEvents
+		occurrenceIDs, err := traceEvidenceOccurrenceIDs(ctx, tx, execution)
 		if err != nil {
 			return err
 		}
-		result.Observations = observations
-		observationIDs := traceObservationIDs(observations)
-
-		supports, err := loadTraceSupports(ctx, tx, execution)
+		occurrences, err := loadTraceEvidenceOccurrences(ctx, tx, execution, occurrenceIDs)
 		if err != nil {
 			return err
 		}
-		result.EvidenceSupports = supports
-		fragmentIDs := traceSupportFragmentIDs(supports)
-		lifecycleFragmentIDs := traceSupportLifecycleFragmentIDs(supports)
-
-		decisions, err := loadTraceSupportDecisions(ctx, tx, execution)
-		if err != nil {
-			return err
+		result.Occurrences = tracecontract.BoundEvents(occurrences, &remaining, result, "occurrences")
+		sources := []string{}
+		if root.SourceID != "" {
+			sources = append(sources, root.SourceID)
 		}
-		result.SupportDecisionEvents = decisions
-
-		evidence, err := loadTraceEvidenceForSupports(ctx, tx, execution, supports)
-		if err != nil {
-			return err
-		}
-		result.EvidenceFragments = evidence
-		lifecycleEvents, err := loadTraceEvidenceLifecycleEvents(ctx, tx, input.TeamID, execution.spaceID, lifecycleFragmentIDs, input.MaxEvents)
-		if err != nil {
-			return err
-		}
-		result.EvidenceLifecycleEvents = lifecycleEvents
-
-		if boolDefault(input.IncludeVerification, true) {
-			verification, err := loadTraceVerificationEvents(ctx, tx, execution)
-			if err != nil {
-				return err
+		for _, occurrence := range result.Occurrences {
+			if occurrence.SourceID != "" {
+				sources = append(sources, occurrence.SourceID)
 			}
-			result.VerificationEvents = verification
 		}
+		revisions, err := loadTraceSourceRevisions(ctx, tx, execution, sources, remaining+1)
+		if err != nil {
+			return err
+		}
+		result.SourceRevisions = tracecontract.BoundEvents(revisions, &remaining, result, "source_revisions")
+		decisions, err := loadTraceEvidenceDecisions(ctx, tx, execution, remaining+1)
+		if err != nil {
+			return err
+		}
+		result.Decisions = tracecontract.BoundEvents(decisions, &remaining, result, "decisions")
 		if boolDefault(input.IncludeTransitions, true) {
-			transitions, err := loadTraceTransitions(ctx, tx, execution)
+			lifecycleIDs := []string{root.FragmentID}
+			for _, occurrence := range occurrences {
+				lifecycleIDs = append(lifecycleIDs, occurrence.OccurrenceID)
+			}
+			lifecycle, err := loadTraceEvidenceLifecycleEvents(ctx, tx, input.TeamID, root.SpaceID, lifecycleIDs, remaining+1)
 			if err != nil {
 				return err
 			}
-			result.Transitions = transitions
+			result.Lifecycle = tracecontract.BoundEvents(lifecycle, &remaining, result, "lifecycle")
+		} else {
+			result.Omissions = append(result.Omissions, "lifecycle_excluded_by_request")
 		}
-		if r.conflicts != nil {
-			conflicts, err := r.conflicts(ctx, tx, input.TeamID, relationship.RelationshipID, execution.spaceID)
-			if err != nil {
-				return err
-			}
-			result.Conflicts = conflicts
-		}
-		crossRefs, err := loadTraceCrossReferences(ctx, tx, execution)
+		documents, err := loadTraceEvidenceSearch(ctx, tx, execution, remaining+1)
 		if err != nil {
 			return err
 		}
-		result.CrossProfileReferences = crossRefs
-
-		corrections, err := loadTraceIdentityCorrections(ctx, tx, input.TeamID, execution.spaceID, observationIDs, input.MaxEvents)
-		if err != nil {
-			return err
+		result.SearchDocuments = tracecontract.BoundEvents(documents, &remaining, result, "search_documents")
+		if !boolDefault(input.IncludeEvidenceContent, true) {
+			result.Omissions = append(result.Omissions, "evidence_content_excluded_by_request")
 		}
-		result.IdentityCorrections = corrections
-
-		lineage, err := loadTraceSupersessionLineage(ctx, tx, input.TeamID, relationship, input.MaxEvents)
-		if err != nil {
-			return err
+		truncated := root.ContentTruncated
+		for _, occurrence := range result.Occurrences {
+			truncated = truncated || occurrence.ContentTruncated
 		}
-		result.SupersessionLineage = lineage
-
-		searchDocs, err := loadTraceSearchDocuments(ctx, tx, input.TeamID, execution.spaceID, input.RelationshipID, fragmentIDs, input.MaxEvents)
-		if err != nil {
-			return err
+		if truncated {
+			result.Truncated = true
+			result.Omissions = append(result.Omissions, "evidence_content_max_runes")
 		}
-		result.SearchDocuments = searchDocs
-
-		nodes, edges, err := r.loadTraceGraphContext(ctx, tx, relationship, input)
-		if err != nil {
-			return err
-		}
-		result.SemanticNodes = nodes
-		result.SemanticEdges = edges
-		result.VisitedEntityIDs = traceVisitedEntityIDs(relationship, nodes)
-		result.Truncated, result.StoppedReason = tracecontract.Completeness(input, result)
+		result.Selection = map[string]any{"evidence_id": root.FragmentID, "space_id": root.SpaceID, "generation": root.SpaceGeneration, "occurrences": len(result.Occurrences), "source_revisions": len(result.SourceRevisions), "decisions": len(result.Decisions), "lifecycle": len(result.Lifecycle), "events_remaining": remaining}
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("semantic trace: %w", err)
+		return nil, err
 	}
 	return result, nil
 }
 
-func validateTraceRelationshipInput(input TraceRelationshipInput) error {
-	if _, err := uuid.Parse(input.TeamID); err != nil {
-		return fmt.Errorf("team_id is required: %w", err)
-	}
-	if _, err := uuid.Parse(input.RelationshipID); err != nil {
-		return fmt.Errorf("%w: relationship_id is required: %w", ErrTraceRelationshipIDInvalid, err)
-	}
-	return nil
-}
-
-func (r *Store) loadTraceGraphContext(
-	ctx context.Context,
-	tx *gorm.DB,
-	relationship *RelationshipTraceRecord,
-	input TraceRelationshipInput,
-) ([]SemanticGraphNode, []SemanticGraphEdge, error) {
-	if relationship == nil || input.MaxEdges <= 0 || input.MaxDepth <= 0 {
-		return nil, nil, nil
-	}
-	if r.graph == nil {
-		return nil, nil, nil
-	}
-	snapshot, err := r.graph(ctx, tx, graphcontract.Query{
-		TeamID:       input.TeamID,
-		Scope:        "local",
-		Query:        strings.ToLower(input.Topic),
-		Types:        []string{"entity", "value"},
-		AnchorType:   "entity",
-		AnchorID:     relationship.SubjectEntityID,
-		Depth:        input.MaxDepth,
-		Limit:        input.MaxEdges,
-		MinRelevance: optionalRelevanceValue(input.MinRelevance),
-	}, relationship.SpaceID)
-	if err != nil {
-		return nil, nil, err
-	}
-	return snapshot.Nodes, snapshot.Edges, nil
-}
-
-func loadTraceRelationship(
-	ctx context.Context,
-	tx *gorm.DB,
-	teamID string,
-	relationshipID string,
-) (*RelationshipTraceRecord, error) {
-	rows, err := tx.WithContext(ctx).Raw(`
-		SELECT r.team_id::text, r.relationship_id::text, r.owner_profile_id::text,
-		       r.space_id::text,
-		       r.semantic_group_key, r.subject_entity_id::text,
-		       COALESCE(subject_name.display_name, r.subject_entity_id::text),
-		       subject.entity_kind,
-		       r.predicate_key, r.predicate_version,
-		       COALESCE(r.object_entity_id::text, ''),
-		       COALESCE(object_name.display_name, ''),
-		       COALESCE(object.entity_kind, ''),
-		       COALESCE(r.object_value_id::text, ''),
-		       COALESCE(value.canonical_value, ''),
-		       COALESCE(value.value_type, ''),
-		       r.relationship_kind, r.current_cardinality, r.status,
-		       r.polarity, COALESCE(r.scope_key, ''), r.valid_from, r.valid_to,
-		       COALESCE(r.identity_alias_of_relationship_id::text, ''),
-		       r.support_count, r.source_group_count, r.version,
-		       r.created_at, r.updated_at, r.recorded_to
-		FROM relationship_records r
-		JOIN entity_records subject
-		  ON subject.team_id = r.team_id
-		 AND subject.entity_id = r.subject_entity_id
-		 AND subject.space_id = r.space_id
-		 AND `+activeSemanticSpaceGenerationSQL("subject")+`
-		LEFT JOIN LATERAL (
-		  SELECT display_name
-		  FROM entity_names
-		  WHERE team_id = r.team_id
-		    AND entity_id = r.subject_entity_id
-		    AND space_id = r.space_id
-		    AND `+activeSemanticSpaceGenerationSQL("entity_names")+`
-		    AND name_kind = 'canonical'
-		    AND valid_to IS NULL
-		  ORDER BY created_at DESC, entity_name_id DESC
-		  LIMIT 1
-		) subject_name ON true
-		LEFT JOIN entity_records object
-		  ON object.team_id = r.team_id
-		 AND object.entity_id = r.object_entity_id
-		 AND object.space_id = r.space_id
-		 AND `+activeSemanticSpaceGenerationSQL("object")+`
-		LEFT JOIN LATERAL (
-		  SELECT display_name
-		  FROM entity_names
-		  WHERE team_id = r.team_id
-		    AND entity_id = r.object_entity_id
-		    AND space_id = r.space_id
-		    AND `+activeSemanticSpaceGenerationSQL("entity_names")+`
-		    AND name_kind = 'canonical'
-		    AND valid_to IS NULL
-		  ORDER BY created_at DESC, entity_name_id DESC
-		  LIMIT 1
-		) object_name ON true
-		LEFT JOIN value_records value
-		  ON value.team_id = r.team_id
-		 AND value.value_id = r.object_value_id
-		 AND value.space_id = r.space_id
-		 AND `+activeSemanticSpaceGenerationSQL("value")+`
-		WHERE r.team_id = ?::uuid
-		  AND r.relationship_id = ?::uuid
-		  AND (
-		    r.space_id = dense_mem_team_shared_space(r.team_id)
-		    OR dense_mem_space_allowed(r.space_id)
-		  )
-		  AND `+activeSemanticSpaceGenerationSQL("r")+`
-		LIMIT 1
-	`, teamID, relationshipID).Rows()
+func loadTraceEvidenceRoot(ctx context.Context, tx *gorm.DB, input TraceEvidenceInput) (*TraceEvidenceFragment, error) {
+	include := boolDefault(input.IncludeEvidenceContent, true)
+	var row TraceEvidenceFragment
+	var metadata, sessionJSON string
+	err := tx.WithContext(ctx).Raw(`SELECT fragment.team_id::text,fragment.fragment_id::text,fragment.ingest_id::text,
+        fragment.owner_profile_id::text,fragment.space_id::text,fragment.space_generation,
+        COALESCE(fragment.source_id::text,''),COALESCE(fragment.source_revision_id::text,''),COALESCE(source.source_key,''),
+        COALESCE(source.source_kind,''),COALESCE(revision.revision_token,''),COALESCE(source.current_revision_id::text,''),fragment.evidence_index,
+        CASE WHEN ? THEN left(fragment.content,?) ELSE '' END,fragment.content_hash,
+        CASE WHEN ? THEN char_length(fragment.content)>? ELSE false END,
+        fragment.source_type,fragment.authority,fragment.source_ref,fragment.labels,fragment.metadata::text,fragment.created_at,
+        CASE WHEN session.submission_id IS NOT NULL THEN COALESCE(fragment.metadata->'session','null'::jsonb)::text ELSE 'null' END
+        FROM evidence_fragments AS selected
+        LEFT JOIN evidence_exact_aliases AS alias ON alias.team_id=selected.team_id AND alias.alias_fragment_id=selected.fragment_id
+        JOIN evidence_fragments AS fragment ON fragment.team_id=selected.team_id AND fragment.fragment_id=COALESCE(alias.canonical_fragment_id,selected.fragment_id)
+          AND fragment.space_id=selected.space_id
+        JOIN memory_spaces AS space ON space.team_id=fragment.team_id AND space.id=fragment.space_id
+        LEFT JOIN evidence_sources AS source ON source.team_id=fragment.team_id AND source.source_id=fragment.source_id
+          AND source.owner_profile_id=fragment.owner_profile_id AND source.space_id=fragment.space_id
+        LEFT JOIN evidence_source_revisions AS revision ON revision.team_id=fragment.team_id AND revision.source_revision_id=fragment.source_revision_id
+          AND revision.owner_profile_id=fragment.owner_profile_id AND revision.space_id=fragment.space_id
+        LEFT JOIN session_submissions AS session ON session.team_id=fragment.team_id AND session.submission_id=fragment.ingest_id
+          AND session.owner_profile_id=fragment.owner_profile_id AND session.space_id=fragment.space_id AND session.space_generation=fragment.space_generation
+        WHERE selected.team_id=?::uuid AND selected.fragment_id=?::uuid
+          AND (space.kind='team_shared' OR dense_mem_space_allowed(space.id))
+          AND `+activeSemanticSpaceGenerationSQL("selected")+` AND `+activeSemanticSpaceGenerationSQL("fragment")+`
+          AND (source.source_id IS NULL OR `+activeSemanticSpaceGenerationSQL("source")+`)
+          AND (revision.source_revision_id IS NULL OR `+activeSemanticSpaceGenerationSQL("revision")+`)
+        LIMIT 1`, include, input.MaxFragmentContentRunes, include, input.MaxFragmentContentRunes, input.TeamID, input.EvidenceID).Row().Scan(
+		&row.TeamID, &row.FragmentID, &row.IngestID, &row.OwnerProfileID, &row.SpaceID, &row.SpaceGeneration,
+		&row.SourceID, &row.SourceRevisionID, &row.SourceKey, &row.SourceKind, &row.RevisionToken, &row.CurrentRevisionID, &row.EvidenceIndex,
+		&row.Content, &row.ContentHash, &row.ContentTruncated, &row.SourceType, &row.Authority, &row.SourceRef, pq.Array(&row.Labels), &metadata, &row.CreatedAt, &sessionJSON)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	if !rows.Next() {
-		if err := rows.Err(); err != nil {
+	row.ContentOmitted = !include
+	if err := json.Unmarshal([]byte(metadata), &row.Metadata); err != nil {
+		return nil, err
+	}
+	if sessionJSON != "null" {
+		row.Session = &tracecontract.SessionProvenance{}
+		if err := json.Unmarshal([]byte(sessionJSON), row.Session); err != nil {
 			return nil, err
 		}
-		return nil, sql.ErrNoRows
 	}
-	var record RelationshipTraceRecord
-	var validFrom, validTo, recordedTo sql.NullTime
-	if err := rows.Scan(
-		&record.TeamID, &record.RelationshipID, &record.OwnerProfileID, &record.SpaceID,
-		&record.SemanticGroupKey, &record.SubjectEntityID, &record.SubjectName,
-		&record.SubjectKind, &record.PredicateKey, &record.PredicateVersion,
-		&record.ObjectEntityID, &record.ObjectEntityName, &record.ObjectEntityKind,
-		&record.ObjectValueID, &record.ObjectValue, &record.ObjectValueType,
-		&record.RelationshipKind, &record.CurrentCardinality, &record.Status,
-		&record.Polarity, &record.ScopeKey, &validFrom, &validTo,
-		&record.IdentityAliasOfID,
-		&record.SupportCount, &record.SourceGroupCount, &record.Version,
-		&record.CreatedAt, &record.UpdatedAt, &recordedTo,
-	); err != nil {
-		return nil, err
-	}
-	record.ValidFrom = timePtr(validFrom)
-	record.ValidTo = timePtr(validTo)
-	record.RecordedTo = timePtr(recordedTo)
-	return &record, rows.Err()
+	return &row, nil
 }
 
-func loadTraceObservations(
-	ctx context.Context,
-	tx *gorm.DB,
-	input traceExecutionInput,
-) ([]RelationshipObservationRecord, error) {
-	rows, err := tx.WithContext(ctx).Raw(`
-		SELECT observation_id::text, relationship_id::text, ingest_id::text,
-		       owner_profile_id::text,
-		       subject_ref, original_predicate, object_ref,
-		       COALESCE(subject_entity_id::text, ''), COALESCE(predicate_key, ''),
-		       COALESCE(predicate_version, 0), COALESCE(object_entity_id::text, ''),
-		       COALESCE(object_value_id::text, ''), polarity, COALESCE(scope_key, ''),
-		       valid_from, valid_to, evidence::text, metadata::text, created_at
-		FROM relationship_observations
-		WHERE team_id = ?::uuid
-		  AND relationship_id = ?::uuid
-		  AND space_id = ?::uuid
-		  AND `+activeSemanticSpaceGenerationSQL("relationship_observations")+`
-		ORDER BY created_at ASC, observation_id ASC
-		LIMIT ?
-	`, input.TeamID, input.RelationshipID, input.spaceID, input.MaxEvents).Rows()
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []RelationshipObservationRecord
-	for rows.Next() {
-		var row RelationshipObservationRecord
-		var validFrom, validTo sql.NullTime
-		var evidenceJSON, metadataJSON string
-		if err := rows.Scan(
-			&row.ObservationID, &row.RelationshipID, &row.IngestID,
-			&row.OwnerProfileID, &row.SubjectRef,
-			&row.OriginalPredicate, &row.ObjectRef, &row.SubjectEntityID,
-			&row.PredicateKey, &row.PredicateVersion, &row.ObjectEntityID,
-			&row.ObjectValueID, &row.Polarity, &row.ScopeKey, &validFrom,
-			&validTo, &evidenceJSON, &metadataJSON, &row.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		row.ValidFrom = timePtr(validFrom)
-		row.ValidTo = timePtr(validTo)
-		row.Evidence = jSON(evidenceJSON)
-		row.Metadata = jSONMap(metadataJSON)
-		out = append(out, row)
-	}
-	return out, rows.Err()
-}
-
-func loadTraceSupports(
-	ctx context.Context,
-	tx *gorm.DB,
-	input traceExecutionInput,
-) ([]RelationshipEvidenceSupportRecord, error) {
-	rows, err := tx.WithContext(ctx).Raw(`
-		SELECT support.support_id::text, support.relationship_id::text, support.observation_id::text,
-		       support.verification_event_id::text,
-		       COALESCE(alias.canonical_fragment_id, occurrence.canonical_fragment_id, support.fragment_id)::text,
-		       support.occurrence_id::text,
-		       support.owner_profile_id::text,
-		       support.evidence_owner_profile_id::text,
-		       support.source_group_key, COALESCE(support.source_id::text, ''),
-		       COALESCE(support.source_revision_id::text, ''), support.span_start, support.span_end,
-		       support.quote, support.authority, support.metadata::text, support.created_at
-		FROM relationship_evidence_supports AS support
-		LEFT JOIN evidence_occurrences AS occurrence
-		  ON occurrence.team_id = support.team_id
-		 AND occurrence.occurrence_id = support.occurrence_id
-		 AND occurrence.owner_profile_id = support.occurrence_owner_profile_id
-		 AND occurrence.space_id = support.space_id
-		 AND `+activeSemanticSpaceGenerationSQL("occurrence")+`
-		LEFT JOIN evidence_exact_aliases AS alias
-		  ON alias.team_id = support.team_id
-		 AND alias.alias_fragment_id = support.fragment_id
-		WHERE support.team_id = ?::uuid
-		  AND support.relationship_id = ?::uuid
-		  AND support.space_id = ?::uuid
-		  AND `+activeSemanticSpaceGenerationSQL("support")+`
-		ORDER BY support.created_at ASC, support.support_id ASC
-		LIMIT ?
-	`, input.TeamID, input.RelationshipID, input.spaceID, input.MaxEvents).Rows()
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []RelationshipEvidenceSupportRecord
-	for rows.Next() {
-		var row RelationshipEvidenceSupportRecord
-		var metadataJSON string
-		if err := rows.Scan(
-			&row.SupportID, &row.RelationshipID, &row.ObservationID,
-			&row.VerificationEventID, &row.FragmentID, &row.OccurrenceID, &row.OwnerProfileID,
-			&row.EvidenceOwnerProfileID,
-			&row.SourceGroupKey, &row.SourceID, &row.SourceRevisionID,
-			&row.SpanStart, &row.SpanEnd, &row.Quote, &row.Authority,
-			&metadataJSON, &row.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		row.Metadata = jSONMap(metadataJSON)
-		out = append(out, row)
-	}
-	return out, rows.Err()
-}
-
-func loadTraceSupportDecisions(
-	ctx context.Context,
-	tx *gorm.DB,
-	input traceExecutionInput,
-) ([]RelationshipSupportDecisionEvent, error) {
-	rows, err := tx.WithContext(ctx).Raw(`
-		SELECT support_decision_id::text, support_id::text, relationship_id::text,
-		       owner_profile_id::text, COALESCE(actor_profile_id::text, ''),
-		       decision, reason, metadata::text, created_at
-		FROM relationship_support_decision_events AS decision
-		WHERE decision.team_id = ?::uuid
-		  AND decision.relationship_id = ?::uuid
-		  AND decision.space_id = ?::uuid
-		  AND `+activeSemanticSpaceGenerationSQL("decision")+`
-		ORDER BY decision.created_at ASC, decision.support_decision_id ASC
-		LIMIT ?
-	`, input.TeamID, input.RelationshipID, input.spaceID, input.MaxEvents).Rows()
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []RelationshipSupportDecisionEvent
-	for rows.Next() {
-		var row RelationshipSupportDecisionEvent
-		var metadataJSON string
-		if err := rows.Scan(&row.SupportDecisionID, &row.SupportID, &row.RelationshipID,
-			&row.OwnerProfileID, &row.ActorProfileID, &row.Decision, &row.Reason,
-			&metadataJSON, &row.CreatedAt); err != nil {
-			return nil, err
-		}
-		row.Metadata = jSONMap(metadataJSON)
-		out = append(out, row)
-	}
-	return out, rows.Err()
-}
-
-func loadTraceEvidenceFragments(
-	ctx context.Context,
-	tx *gorm.DB,
-	input traceExecutionInput,
-	fragmentIDs []string,
-) ([]TraceEvidenceFragment, error) {
-	if len(fragmentIDs) == 0 {
-		return nil, nil
-	}
-	includeContent := boolDefault(input.IncludeEvidenceContent, true)
-	rows, err := tx.WithContext(ctx).Raw(`
-		SELECT f.fragment_id::text, f.ingest_id::text, f.owner_profile_id::text,
-		       COALESCE(f.source_id::text, ''), COALESCE(f.source_revision_id::text, ''),
-		       COALESCE(src.source_key, ''), COALESCE(src.source_kind, ''),
-		       COALESCE(rev.revision_token, ''), COALESCE(src.current_revision_id::text, ''),
-		       f.evidence_index,
-		       CASE WHEN ? THEN left(f.content, ?) ELSE '' END,
-		       f.content_hash,
-		       CASE WHEN ? THEN char_length(f.content) > ? ELSE false END,
-		       f.source_type, f.authority, f.source_ref, f.labels,
-		       f.metadata::text, f.created_at,
-           CASE WHEN session.submission_id IS NOT NULL THEN COALESCE(f.metadata->'session', 'null'::jsonb)::text ELSE 'null' END
-		FROM evidence_fragments f
-		LEFT JOIN evidence_sources src
-		  ON src.team_id = f.team_id
-		 AND src.source_id = f.source_id
-		 AND src.space_id = f.space_id
-		LEFT JOIN evidence_source_revisions rev
-		  ON rev.team_id = f.team_id
-		 AND rev.source_revision_id = f.source_revision_id
-		 AND rev.space_id = f.space_id
-        LEFT JOIN session_submissions AS session
-          ON session.team_id = f.team_id AND session.space_id = f.space_id
-         AND session.owner_profile_id = f.owner_profile_id
-         AND session.space_generation = f.space_generation
-         AND session.submission_id = f.ingest_id
-		WHERE f.team_id = ?::uuid
-		  AND f.fragment_id = ANY(?::uuid[])
-		  AND f.space_id = ?::uuid
-		  AND `+activeSemanticSpaceGenerationSQL("f")+`
-		  AND (
-		    src.source_id IS NULL
-		    OR `+activeSemanticSpaceGenerationSQL("src")+`
-		  )
-		  AND (
-		    rev.source_revision_id IS NULL
-		    OR `+activeSemanticSpaceGenerationSQL("rev")+`
-		  )
-		ORDER BY f.evidence_index ASC, f.fragment_id ASC
-	`, includeContent, input.MaxFragmentContentRunes, includeContent, input.MaxFragmentContentRunes,
-		input.TeamID, pq.Array(fragmentIDs), input.spaceID).Rows()
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []TraceEvidenceFragment
-	for rows.Next() {
-		var row TraceEvidenceFragment
-		var metadataJSON, sessionJSON string
-		if err := rows.Scan(
-			&row.FragmentID, &row.IngestID, &row.OwnerProfileID,
-			&row.SourceID, &row.SourceRevisionID, &row.SourceKey,
-			&row.SourceKind, &row.RevisionToken, &row.CurrentRevisionID,
-			&row.EvidenceIndex, &row.Content, &row.ContentHash,
-			&row.ContentTruncated, &row.SourceType, &row.Authority,
-			&row.SourceRef, pq.Array(&row.Labels), &metadataJSON, &row.CreatedAt, &sessionJSON,
-		); err != nil {
-			return nil, err
-		}
-		row.Metadata = jSONMap(metadataJSON)
-		if sessionJSON != "null" {
-			row.Session = &tracecontract.SessionProvenance{}
-			if err := json.Unmarshal([]byte(sessionJSON), row.Session); err != nil {
-				return nil, err
-			}
-		}
-		out = append(out, row)
-	}
-	return out, rows.Err()
-}
-
-func loadTraceVerificationEvents(
-	ctx context.Context,
-	tx *gorm.DB,
-	input traceExecutionInput,
-) ([]RelationshipVerificationEvent, error) {
-	rows, err := tx.WithContext(ctx).Raw(`
-		SELECT v.verification_event_id::text, v.observation_id::text,
-		       v.owner_profile_id::text, v.evidence_verdict, v.confidence,
-		       COALESCE(v.rationale, ''), v.model, v.response_hash, v.metadata::text, v.created_at
-		FROM verification_events v
-		JOIN relationship_observations o
-		  ON o.team_id = v.team_id
-		 AND o.observation_id = v.observation_id
-		 AND o.space_id = v.space_id
-		WHERE v.team_id = ?::uuid
-		  AND o.relationship_id = ?::uuid
-		  AND v.space_id = ?::uuid
-		  AND `+activeSemanticSpaceGenerationSQL("v")+`
-		  AND `+activeSemanticSpaceGenerationSQL("o")+`
-		ORDER BY v.created_at ASC, v.verification_event_id ASC
-		LIMIT ?
-	`, input.TeamID, input.RelationshipID, input.spaceID, input.MaxEvents).Rows()
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []RelationshipVerificationEvent
-	for rows.Next() {
-		var row RelationshipVerificationEvent
-		var confidence sql.NullFloat64
-		var metadataJSON string
-		if err := rows.Scan(&row.VerificationEventID, &row.ObservationID,
-			&row.OwnerProfileID, &row.EvidenceVerdict, &confidence,
-			&row.Rationale, &row.Model, &row.ResponseHash, &metadataJSON,
-			&row.CreatedAt); err != nil {
-			return nil, err
-		}
-		if confidence.Valid {
-			row.Confidence = &confidence.Float64
-		}
-		row.Metadata = jSONMap(metadataJSON)
-		out = append(out, row)
-	}
-	return out, rows.Err()
-}
-
-func loadTraceTransitions(
-	ctx context.Context,
-	tx *gorm.DB,
-	input traceExecutionInput,
-) ([]RelationshipTransitionEvent, error) {
-	rows, err := tx.WithContext(ctx).Raw(`
-		SELECT transition_id::text, relationship_id::text, owner_profile_id::text,
-		       COALESCE(from_status, ''), to_status,
-		       reason, COALESCE(verification_event_id::text, ''),
-		       COALESCE(support_decision_id::text, ''), metadata::text, created_at
-		FROM relationship_transition_events AS transition
-		WHERE transition.team_id = ?::uuid
-		  AND transition.relationship_id = ?::uuid
-		  AND transition.space_id = ?::uuid
-		  AND `+activeSemanticSpaceGenerationSQL("transition")+`
-		ORDER BY transition.created_at ASC, transition.transition_id ASC
-		LIMIT ?
-	`, input.TeamID, input.RelationshipID, input.spaceID, input.MaxEvents).Rows()
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []RelationshipTransitionEvent
-	for rows.Next() {
-		var row RelationshipTransitionEvent
-		var metadataJSON string
-		if err := rows.Scan(
-			&row.TransitionID, &row.RelationshipID, &row.OwnerProfileID,
-			&row.FromStatus, &row.ToStatus, &row.Reason, &row.VerificationEventID, &row.SupportDecisionID,
-			&metadataJSON, &row.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		row.Metadata = jSONMap(metadataJSON)
-		out = append(out, row)
-	}
-	return out, rows.Err()
-}
-
-func loadTraceCrossReferences(
-	ctx context.Context,
-	tx *gorm.DB,
-	input traceExecutionInput,
-) ([]RelationshipCrossReferenceRecord, error) {
-	rows, err := tx.WithContext(ctx).Raw(`
-		SELECT cross_reference.cross_reference_id::text, cross_reference.author_profile_id::text,
-		       cross_reference.source_relationship_id::text, cross_reference.source_relationship_version,
-		       cross_reference.target_relationship_id::text, cross_reference.target_relationship_version,
-		       cross_reference.kind, cross_reference.verification_event_id::text,
-		       cross_reference.metadata::text, cross_reference.created_at
-		FROM relationship_cross_references AS cross_reference
-		JOIN relationship_records AS source_relationship
-		  ON source_relationship.team_id = cross_reference.team_id
-		 AND source_relationship.relationship_id = cross_reference.source_relationship_id
-		 AND source_relationship.space_id = cross_reference.space_id
-		JOIN relationship_records AS target_relationship
-		  ON target_relationship.team_id = cross_reference.team_id
-		 AND target_relationship.relationship_id = cross_reference.target_relationship_id
-		WHERE cross_reference.team_id = ?::uuid
-		  AND `+activeSemanticSpaceGenerationSQL("cross_reference")+`
-		  AND (
-		    source_relationship.space_id = dense_mem_team_shared_space(cross_reference.team_id)
-		    OR dense_mem_space_allowed(source_relationship.space_id)
-		  )
-		  AND `+activeSemanticSpaceGenerationSQL("source_relationship")+`
-		  AND (
-		    target_relationship.space_id = dense_mem_team_shared_space(cross_reference.team_id)
-		    OR dense_mem_space_allowed(target_relationship.space_id)
-		  )
-		  AND `+activeSemanticSpaceGenerationSQL("target_relationship")+`
-		  AND (
-		    cross_reference.source_relationship_id = ?::uuid
-		    OR cross_reference.target_relationship_id = ?::uuid
-		  )
-		ORDER BY cross_reference.created_at ASC, cross_reference.cross_reference_id ASC
-		LIMIT ?
-	`, input.TeamID, input.RelationshipID, input.RelationshipID, input.MaxEvents).Rows()
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []RelationshipCrossReferenceRecord
-	for rows.Next() {
-		var row RelationshipCrossReferenceRecord
-		var metadataJSON string
-		if err := rows.Scan(
-			&row.CrossReferenceID, &row.AuthorProfileID,
-			&row.SourceRelationshipID, &row.SourceRelationshipVersion,
-			&row.TargetRelationshipID, &row.TargetRelationshipVersion,
-			&row.Kind, &row.VerificationEventID, &metadataJSON, &row.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		row.Metadata = jSONMap(metadataJSON)
-		out = append(out, row)
-	}
-	return out, rows.Err()
-}
-
-func loadTraceIdentityCorrections(
-	ctx context.Context,
-	tx *gorm.DB,
-	teamID string,
-	spaceID string,
-	observationIDs []string,
-	limit int,
-) ([]EntityCorrectionEventRecord, error) {
-	if len(observationIDs) == 0 {
-		return nil, nil
-	}
-	rows, err := tx.WithContext(ctx).Raw(`
-		SELECT correction_event_id::text, owner_profile_id::text, action,
-		       COALESCE(survivor_entity_id::text, ''), COALESCE(new_entity_id::text, ''),
-		       selected_observation_ids::text[], reason, metadata::text, created_at
-		FROM entity_correction_events
-		WHERE team_id = ?::uuid
-		  AND space_id = ?::uuid
-		  AND selected_observation_ids && ?::uuid[]
-		  AND `+activeSemanticSpaceGenerationSQL("entity_correction_events")+`
-		ORDER BY created_at ASC, correction_event_id ASC
-		LIMIT ?
-	`, teamID, spaceID, pq.Array(observationIDs), limit).Rows()
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []EntityCorrectionEventRecord
-	for rows.Next() {
-		var row EntityCorrectionEventRecord
-		var metadataJSON string
-		if err := rows.Scan(
-			&row.CorrectionEventID, &row.OwnerProfileID, &row.Action,
-			&row.SurvivorEntityID, &row.NewEntityID,
-			pq.Array(&row.SelectedObservationIDs), &row.Reason,
-			&metadataJSON, &row.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		row.Metadata = jSONMap(metadataJSON)
-		out = append(out, row)
-	}
-	return out, rows.Err()
-}
-
-func loadTraceSupersessionLineage(
-	ctx context.Context,
-	tx *gorm.DB,
-	teamID string,
-	relationship *RelationshipTraceRecord,
-	limit int,
-) ([]RelationshipTraceRecord, error) {
-	if relationship == nil || relationship.SemanticGroupKey == "" {
-		return nil, nil
-	}
-	rows, err := tx.WithContext(ctx).Raw(`
-		SELECT relationship_id::text
-		FROM relationship_records
-		WHERE team_id = ?::uuid
-		  AND space_id = ?::uuid
-		  AND semantic_group_key = ?
-		  AND relationship_id <> ?::uuid
-		  AND status IN ('superseded', 'retracted', 'disputed')
-		  AND `+activeSemanticSpaceGenerationSQL("relationship_records")+`
-		ORDER BY updated_at DESC, relationship_id ASC
-		LIMIT ?
-	`, teamID, relationship.SpaceID, relationship.SemanticGroupKey, relationship.RelationshipID, limit).Rows()
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
+func traceEvidenceOccurrenceIDs(ctx context.Context, tx *gorm.DB, input traceExecutionInput) ([]string, error) {
 	var ids []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	if err := rows.Err(); err != nil {
+	err := tx.WithContext(ctx).Raw(`SELECT occurrence.occurrence_id::text FROM evidence_occurrences AS occurrence
+        LEFT JOIN evidence_exact_aliases AS alias ON alias.team_id=occurrence.team_id AND alias.alias_fragment_id=occurrence.occurrence_id
+        WHERE occurrence.team_id=?::uuid AND occurrence.space_id=?::uuid
+          AND COALESCE(alias.canonical_fragment_id,occurrence.canonical_fragment_id)=?::uuid
+          AND `+activeSemanticSpaceGenerationSQL("occurrence")+`
+        ORDER BY occurrence.created_at,occurrence.occurrence_id LIMIT ?`, input.TeamID, input.spaceID, input.EvidenceID, input.MaxEvents+1).Scan(&ids).Error
+	return ids, err
+}
+
+func loadTraceSourceRevisions(ctx context.Context, tx *gorm.DB, input traceExecutionInput, ids []string, limit int) ([]tracecontract.TraceSourceRevision, error) {
+	rows, err := tx.WithContext(ctx).Raw(`SELECT source.source_id::text,revision.source_revision_id::text,revision.owner_profile_id::text,
+        source.source_key,revision.revision_token,COALESCE(revision.supersedes_revision_id::text,''),COALESCE(source.current_revision_id::text,''),
+        revision.content_hash,revision.envelope::text,revision.created_at
+        FROM evidence_source_revisions AS revision JOIN evidence_sources AS source ON source.team_id=revision.team_id
+          AND source.source_id=revision.source_id AND source.owner_profile_id=revision.owner_profile_id AND source.space_id=revision.space_id
+        WHERE revision.team_id=?::uuid AND revision.space_id=?::uuid AND revision.source_id=ANY(?::uuid[])
+          AND `+activeSemanticSpaceGenerationSQL("revision")+` AND `+activeSemanticSpaceGenerationSQL("source")+`
+        ORDER BY revision.created_at,revision.source_revision_id LIMIT ?`, input.TeamID, input.spaceID, pq.Array(ids), limit).Rows()
+	if err != nil {
 		return nil, err
 	}
-	out := make([]RelationshipTraceRecord, 0, len(ids))
-	for _, id := range ids {
-		record, err := loadTraceRelationship(ctx, tx, teamID, id)
-		if err != nil {
+	defer rows.Close()
+	out := []tracecontract.TraceSourceRevision{}
+	for rows.Next() {
+		var row tracecontract.TraceSourceRevision
+		var envelope string
+		if err := rows.Scan(&row.SourceID, &row.SourceRevisionID, &row.OwnerProfileID, &row.SourceKey, &row.RevisionToken, &row.SupersedesRevisionID, &row.CurrentRevisionID, &row.ContentHash, &envelope, &row.CreatedAt); err != nil {
 			return nil, err
 		}
-		out = append(out, *record)
+		if err := json.Unmarshal([]byte(envelope), &row.Envelope); err != nil {
+			return nil, err
+		}
+		out = append(out, row)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
-func traceObservationIDs(observations []RelationshipObservationRecord) []string {
-	out := make([]string, 0, len(observations))
-	for _, observation := range observations {
-		if observation.ObservationID != "" {
-			out = append(out, observation.ObservationID)
-		}
+func loadTraceEvidenceDecisions(ctx context.Context, tx *gorm.DB, input traceExecutionInput, limit int) ([]tracecontract.TraceEvidenceDecision, error) {
+	rows, err := tx.WithContext(ctx).Raw(`WITH selected_occurrences AS (
+        SELECT occurrence.* FROM evidence_occurrences AS occurrence
+        LEFT JOIN evidence_exact_aliases AS alias ON alias.team_id=occurrence.team_id AND alias.alias_fragment_id=occurrence.occurrence_id
+        WHERE occurrence.team_id=?::uuid AND occurrence.space_id=?::uuid
+          AND COALESCE(alias.canonical_fragment_id,occurrence.canonical_fragment_id)=?::uuid
+          AND `+activeSemanticSpaceGenerationSQL("occurrence")+`
+    ), decisions AS (
+        SELECT event.security_event_id::text AS decision_id,event.ingest_id::text,COALESCE(event.occurrence_id::text,'') AS occurrence_id,
+          event.event_kind AS kind,event.decision,left(event.reason,512) AS reason,event.created_at
+        FROM evidence_security_events AS event
+        WHERE event.team_id=?::uuid AND event.space_id=?::uuid AND `+activeSemanticSpaceGenerationSQL("event")+`
+          AND (event.fragment_id=?::uuid OR event.occurrence_id IN (SELECT occurrence_id FROM selected_occurrences))
+        UNION ALL
+        SELECT assessment.semantic_assessment_id::text || ':' || policy.kind || ':' || occurrence.evidence_index::text,
+          occurrence.ingest_id::text,occurrence.occurrence_id::text,policy.kind,
+          COALESCE(item->>'decision',item->>'action'),'assessor_accepted',assessment.validated_at
+        FROM selected_occurrences AS occurrence
+        JOIN semantic_assessments AS assessment ON assessment.team_id=occurrence.team_id AND assessment.attempt_id=occurrence.ingest_id
+          AND assessment.owner_profile_id=occurrence.owner_profile_id AND assessment.space_id=occurrence.space_id
+          AND assessment.space_generation=occurrence.space_generation
+        CROSS JOIN LATERAL jsonb_array_elements(assessment.response_history) WITH ORDINALITY AS history(body,ordinal)
+        CROSS JOIN LATERAL (VALUES ('security',history.body->'normalized_response'->'evidence_security_results'),
+          ('equivalence',history.body->'normalized_response'->'evidence_equivalence_results')) AS policy(kind,results)
+        CROSS JOIN LATERAL jsonb_array_elements(COALESCE(policy.results,'[]'::jsonb)) AS item
+        WHERE history.ordinal=assessment.accepted_revision AND item->>'evidence_id'='evidence:' || occurrence.evidence_index::text
+    ) SELECT decision_id,ingest_id,occurrence_id,kind,decision,reason,created_at FROM decisions
+      ORDER BY created_at,decision_id LIMIT ?`, input.TeamID, input.spaceID, input.EvidenceID, input.TeamID, input.spaceID, input.EvidenceID, limit).Rows()
+	if err != nil {
+		return nil, err
 	}
-	return out
+	defer rows.Close()
+	out := []tracecontract.TraceEvidenceDecision{}
+	for rows.Next() {
+		var row tracecontract.TraceEvidenceDecision
+		if err := rows.Scan(&row.DecisionID, &row.IngestID, &row.OccurrenceID, &row.Kind, &row.Decision, &row.Reason, &row.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
 }
 
-func traceSupportFragmentIDs(supports []RelationshipEvidenceSupportRecord) []string {
-	seen := map[string]struct{}{}
-	out := make([]string, 0, len(supports))
-	for _, support := range supports {
-		if support.FragmentID == "" {
-			continue
-		}
-		if _, exists := seen[support.FragmentID]; exists {
-			continue
-		}
-		seen[support.FragmentID] = struct{}{}
-		out = append(out, support.FragmentID)
+func loadTraceEvidenceSearch(ctx context.Context, tx *gorm.DB, input traceExecutionInput, limit int) ([]TraceSearchDocument, error) {
+	rows, err := tx.WithContext(ctx).Raw(`SELECT search_document_id::text,owner_profile_id::text,source_kind,source_id::text,source_version,
+        document_version,embedding_contract_id::text,embedding_dimensions,search_state,document_hash,created_at,updated_at
+        FROM search_documents AS document WHERE team_id=?::uuid AND space_id=?::uuid AND source_kind='evidence' AND source_id=?::uuid
+          AND `+activeSemanticSpaceGenerationSQL("document")+` ORDER BY created_at,search_document_id LIMIT ?`, input.TeamID, input.spaceID, input.EvidenceID, limit).Rows()
+	if err != nil {
+		return nil, err
 	}
-	return out
-}
-
-func traceSupportLifecycleFragmentIDs(supports []RelationshipEvidenceSupportRecord) []string {
-	ids := traceSupportFragmentIDs(supports)
-	seen := make(map[string]struct{}, len(ids))
-	for _, id := range ids {
-		seen[id] = struct{}{}
-	}
-	for _, support := range supports {
-		if support.OccurrenceID == "" {
-			continue
+	defer rows.Close()
+	out := []TraceSearchDocument{}
+	for rows.Next() {
+		var row TraceSearchDocument
+		if err := rows.Scan(&row.SearchDocumentID, &row.OwnerProfileID, &row.SourceKind, &row.SourceID, &row.SourceVersion, &row.DocumentVersion, &row.EmbeddingContractID, &row.EmbeddingDimensions, &row.SearchState, &row.DocumentHash, &row.CreatedAt, &row.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("trace: search projection: %w", err)
 		}
-		if _, exists := seen[support.OccurrenceID]; exists {
-			continue
-		}
-		seen[support.OccurrenceID] = struct{}{}
-		ids = append(ids, support.OccurrenceID)
+		out = append(out, row)
 	}
-	return ids
-}
-
-func traceVisitedEntityIDs(relationship *RelationshipTraceRecord, nodes []SemanticGraphNode) []string {
-	seen := map[string]struct{}{}
-	out := []string{}
-	add := func(id string) {
-		if id == "" {
-			return
-		}
-		if _, exists := seen[id]; exists {
-			return
-		}
-		seen[id] = struct{}{}
-		out = append(out, id)
-	}
-	if relationship != nil {
-		add(relationship.SubjectEntityID)
-		add(relationship.ObjectEntityID)
-	}
-	for _, node := range nodes {
-		if node.Type == "entity" {
-			add(node.ID)
-		}
-	}
-	return out
-}
-
-func optionalRelevanceValue(value *float64) float64 {
-	if value == nil {
-		return 0
-	}
-	return *value
+	return out, rows.Err()
 }

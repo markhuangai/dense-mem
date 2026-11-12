@@ -191,14 +191,6 @@ type controlSSOConfigRequest struct {
 	Items []controlSSOConfigItemRequest `json:"items"`
 }
 
-type controlDreamingConfigRequest struct {
-	Items []controlSSOConfigItemRequest `json:"items"`
-}
-
-type controlCommunityDetectionConfigRequest struct {
-	Items []controlSSOConfigItemRequest `json:"items"`
-}
-
 type controlOperationLogConfigRequest struct {
 	Items []controlSSOConfigItemRequest `json:"items"`
 }
