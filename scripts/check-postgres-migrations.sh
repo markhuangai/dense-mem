@@ -8,6 +8,9 @@ BASE_REF="${1:-origin/main}"
 KNOWN_EVIDENCE_REPAIR_VERSION="20260902010001"
 KNOWN_EVIDENCE_REPAIR_BASE_SHA="d2fb2b615e840e63e8c0f291d65047869741b3c6ea69a29856cce8f283710eec"
 KNOWN_EVIDENCE_REPAIR_CURRENT_SHA="4c24cbf39d5fd9d81bb8f04cee73e4da2f4436681fc1b4a57a8f9ad1ea6c18f3"
+KNOWN_ONTOLOGY_LOOKUP_REPAIR_VERSION="20261110010000"
+KNOWN_ONTOLOGY_LOOKUP_REPAIR_BASE_SHA="fa5a8b04c7ff72dc6469c675e3c68433a8397aa3c3911f51e1edd8a64f39ccae"
+KNOWN_ONTOLOGY_LOOKUP_REPAIR_CURRENT_SHA="269a4d203f7568d06818c96817883db7aa1fe722207dcb32d2547294ada4b104"
 
 cd "${ROOT_DIR}"
 git rev-parse --verify "${BASE_REF}^{commit}" >/dev/null 2>&1 || {
@@ -46,7 +49,10 @@ is_approved_migration_repair() {
   local current_sha="$3"
   [[ "${version}" == "${KNOWN_EVIDENCE_REPAIR_VERSION}" &&
      "${base_sha}" == "${KNOWN_EVIDENCE_REPAIR_BASE_SHA}" &&
-     "${current_sha}" == "${KNOWN_EVIDENCE_REPAIR_CURRENT_SHA}" ]]
+     "${current_sha}" == "${KNOWN_EVIDENCE_REPAIR_CURRENT_SHA}" ]] ||
+  [[ "${version}" == "${KNOWN_ONTOLOGY_LOOKUP_REPAIR_VERSION}" &&
+     "${base_sha}" == "${KNOWN_ONTOLOGY_LOOKUP_REPAIR_BASE_SHA}" &&
+     "${current_sha}" == "${KNOWN_ONTOLOGY_LOOKUP_REPAIR_CURRENT_SHA}" ]]
 }
 
 mapfile -t base_paths < <(
@@ -110,13 +116,12 @@ for version in "${!base_sha_by_version[@]}"; do
     exit 1
   fi
   if [[ "${base_sha_by_version[${version}]}" != "${current_sha_by_version[${version}]}" ]]; then
-    # This release migration failed before applying on a durable deployment.
-    # Exact hashes make the authorized repair one-use without weakening later checks.
+    # Exact hashes bind maintainer-approved repairs without permitting later history edits.
     if ! is_approved_migration_repair "${version}" "${base_sha_by_version[${version}]}" "${current_sha_by_version[${version}]}"; then
       echo "deployed migration version ${version} was modified" >&2
       exit 1
     fi
-    echo "approved release-candidate migration repair accepted for version ${version}"
+    echo "approved migration repair accepted for version ${version}"
   fi
   if [[ "${base_filename_by_version[${version}]}" != "${current_filename_by_version[${version}]}" ]]; then
     echo "deployed migration version ${version} was renamed" >&2
