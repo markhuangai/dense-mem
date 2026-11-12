@@ -83,7 +83,7 @@ func heartbeatProgress(ctx context.Context, logger infoLogger, db *sql.DB, sampl
 		}
 		return
 	}
-	if kind == "Lock" || blockers > 0 {
+	if kind != "" || blockers > 0 {
 		attrs := append(progressAttrs(p.Snapshot()), "wait_event_type", kind, "wait_event", event, "blocker_count", blockers)
 		logInfo(ctx, logger, "evidence_only_migration_wait", attrs...)
 	}

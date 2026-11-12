@@ -251,7 +251,7 @@ func TestEvidenceOnlyPostgresProgressLiveSQL(t *testing.T) {
 		waits := 0
 		var last any
 		for _, event := range logs.records(t) {
-			if event["msg"] == "evidence_only_migration_wait" {
+			if event["msg"] == "evidence_only_migration_wait" && event["wait_event_type"] == "Lock" && event["phase"] == "ontology_seed" {
 				if waits > 0 {
 					require.Equal(t, last, event["last_progress_at"])
 				}
@@ -337,7 +337,7 @@ func TestEvidenceOnlyPostgresProgressLiveSQL(t *testing.T) {
 }
 
 func TestEvidenceOnlyPostgresProgressWaitCancellation(t *testing.T) {
-	for _, mode := range []string{"advisory", "table", "disconnect", "missing_capture", "malformed", "oversized", "gap"} {
+	for _, mode := range []string{"advisory", "table", "non_lock", "disconnect", "missing_capture", "malformed", "oversized", "gap"} {
 		t.Run(mode, func(t *testing.T) {
 			db, dsn := openMigrationProgressDB(t)
 			migrator, err := postgres.NewMigrator(db)
@@ -384,7 +384,11 @@ func TestEvidenceOnlyPostgresProgressWaitCancellation(t *testing.T) {
 				require.Len(t, logs.records(t), count)
 				return
 			}
-			if mode == "advisory" {
+			if mode == "non_lock" {
+				copyProgressMigration(t, func(s string) string {
+					return strings.Replace(s, "DO $closure$", "SELECT pg_sleep(30);\nDO $closure$", 1)
+				})
+			} else if mode == "advisory" {
 				_, err = blocker.ExecContext(context.Background(), `SELECT pg_advisory_lock(4097083626)`)
 				defer blocker.ExecContext(context.Background(), `SELECT pg_advisory_unlock(4097083626)`)
 			} else {
@@ -396,7 +400,22 @@ func TestEvidenceOnlyPostgresProgressWaitCancellation(t *testing.T) {
 			defer cancel()
 			done := make(chan error, 1)
 			go func() { done <- RunUp(ctx, db, time.Minute, logs.logger) }()
-			require.Eventually(t, func() bool { return progressHas(t, logs, "evidence_only_migration_wait", "") }, 20*time.Second, 20*time.Millisecond)
+			require.Eventually(t, func() bool {
+				for _, event := range logs.records(t) {
+					if event["msg"] != "evidence_only_migration_wait" {
+						continue
+					}
+					if mode == "non_lock" && event["wait_event_type"] == "Timeout" && event["wait_event"] == "PgSleep" {
+						require.Zero(t, event["blocker_count"])
+						require.Equal(t, "ontology_seed", event["phase"])
+						return true
+					}
+					if mode != "non_lock" && event["wait_event_type"] == "Lock" {
+						return true
+					}
+				}
+				return false
+			}, 20*time.Second, 20*time.Millisecond)
 			if mode == "disconnect" {
 				var pid int
 				require.NoError(t, db.Raw(`SELECT pid FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND pid<>pg_backend_pid() LIMIT 1`).Row().Scan(&pid))
