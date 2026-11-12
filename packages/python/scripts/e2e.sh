@@ -4,8 +4,39 @@ set -euo pipefail
   printf 'Python E2E tooling must run in the disposable scenario container\n' >&2
   exit 1
 }
-apt-get update -qq
-apt-get install -y --no-install-recommends git python3 python3-venv
+node --input-type=module <<'NODE'
+import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { constants } from "node:os";
+
+const context = {
+  event: "python_dependency_setup",
+  run_id: process.env.DENSE_MEM_E2E_RUN_ID ?? null,
+  run_attempt: process.env.DENSE_MEM_E2E_RUN_ATTEMPT ?? null,
+  scenario: process.env.DENSE_MEM_E2E_SCENARIO ?? null,
+  source_revision: process.env.DENSE_MEM_E2E_COMMIT_SHA ?? null,
+};
+try {
+  context.nameservers = [...readFileSync("/etc/resolv.conf", "utf8").matchAll(/^\s*nameserver\s+(\S+)/gm)].map((match) => match[1]);
+  context.resolver_capture_state = "captured";
+} catch (error) {
+  context.resolver_capture_state = "unavailable";
+  context.resolver_error_code = error.code;
+}
+
+function setupPhase(phase, command, args) {
+  const started = performance.now();
+  const log = (details) => console.log(JSON.stringify({ ...context, time: new Date().toISOString(), phase, elapsed_ms: Math.round(performance.now() - started), ...details }));
+  log({ level: "INFO", outcome: "started" });
+  const result = spawnSync(command, args, { stdio: "inherit" });
+  const status = result.status ?? (result.signal ? 128 + constants.signals[result.signal] : 1);
+  log({ level: status === 0 ? "INFO" : "ERROR", outcome: status === 0 ? "passed" : "failed", exit_code: status, signal: result.signal, error_code: result.error?.code });
+  if (status !== 0) process.exit(status);
+}
+
+setupPhase("apt_index_refresh", "apt-get", ["update", "-qq", "-o", "APT::Update::Error-Mode=any"]);
+setupPhase("apt_package_install", "apt-get", ["install", "-y", "--no-install-recommends", "git", "python3", "python3-venv"]);
+NODE
 OUTPUT="$(mktemp -d /tmp/densemem-python-e2e.XXXXXX)"
 trap 'rm -r -- "$OUTPUT"' EXIT
 bash /workspace/packages/python/scripts/check.sh --output "$OUTPUT/artifacts"
