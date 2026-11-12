@@ -755,8 +755,9 @@ model.
 All phase counts describe attempted transaction-local work. Only
 `evidence_only_migration_completed` with `transaction_outcome=committed` and its
 verified receipt confirms durable results. A validation or hold failure identifies
-the bounded reason and failing phase. `rolled_back` requires absent commit
-receipts and an ended original transaction; `unconfirmed` means outcome
+the bounded reason and failing phase. `rolled_back` requires PostgreSQL to report the exact migration transaction
+aborted. In-progress completion is observed for at most five seconds; another
+starter's commit cannot replace this attempt's outcome. `unconfirmed` means outcome
 verification failed or the state could not be reconciled. Do not infer success
 from the SQL stream finishing. Already-applied or concurrently completed upgrades
 emit an explicit skipped event with no newly attempted or committed migration

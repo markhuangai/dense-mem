@@ -2,6 +2,7 @@ package migrationapp
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -113,34 +114,63 @@ func migrateEvidenceOnly(ctx context.Context, db *gorm.DB, migrator *postgres.Mi
 }
 
 func evidenceOnlyOutcome(ctx context.Context, db *gorm.DB, progress *postgres.MigrationProgress) (outcome string, metadata map[string]any, err error) {
-	outcome = "unconfirmed"
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
 	snapshot := progress.Snapshot()
-	err = postgres.NewRLS().WithSystemReadOnlyRepeatableTx(ctx, db, func(tx *gorm.DB) error {
-		var applied, compatible, active bool
-		progress.RecordCollectionQuery()
-		if err := tx.Raw(`SELECT EXISTS(SELECT 1 FROM goose_db_version WHERE version_id=? AND is_applied),
-   EXISTS(SELECT 1 FROM v2_compatibility_markers WHERE marker_kind='evidence_only' AND version='dense-mem.v2.8.0' AND status='compatible' AND metadata->>'retained_fingerprints_verified'='true' AND metadata->>'transaction_outcome'='committed'),
-   EXISTS(SELECT 1 FROM pg_stat_activity WHERE pid=? AND backend_start=? AND xact_start IS NOT NULL AND pid<>pg_backend_pid())`, evidenceOnlyMigrationVersion, snapshot.BackendPID, snapshot.BackendStart).Row().Scan(&applied, &compatible, &active); err != nil {
-			return err
-		}
-		if applied && compatible {
-			var receipt []byte
+	for {
+		outcome = "unconfirmed"
+		pending := false
+		err = postgres.NewRLS().WithSystemReadOnlyRepeatableTx(ctx, db, func(tx *gorm.DB) error {
+			var applied, compatible bool
+			var status sql.NullString
 			progress.RecordCollectionQuery()
-			if err := tx.Raw(`SELECT metadata FROM v2_compatibility_markers WHERE marker_kind='evidence_only' AND version='dense-mem.v2.8.0' AND status='compatible'`).Row().Scan(&receipt); err != nil {
+			if err := tx.Raw(`SELECT EXISTS(SELECT 1 FROM goose_db_version WHERE version_id=? AND is_applied),
+    EXISTS(SELECT 1 FROM v2_compatibility_markers WHERE marker_kind='evidence_only' AND version='dense-mem.v2.8.0' AND status='compatible' AND metadata->>'retained_fingerprints_verified'='true' AND metadata->>'transaction_outcome'='committed'),
+    pg_xact_status(NULLIF(?,'')::xid8)`, evidenceOnlyMigrationVersion, snapshot.TransactionID).Row().Scan(&applied, &compatible, &status); err != nil {
 				return err
 			}
-			if err := json.Unmarshal(receipt, &metadata); err != nil {
-				return err
+			outcome = evidenceOnlyTransactionOutcome(applied, compatible, snapshot.TransactionID, status.String)
+			pending = snapshot.TransactionID != "" && status.String == "in progress"
+			if outcome == "committed" {
+				var receipt []byte
+				progress.RecordCollectionQuery()
+				if err := tx.Raw(`SELECT metadata FROM v2_compatibility_markers WHERE marker_kind='evidence_only' AND version='dense-mem.v2.8.0' AND status='compatible'`).Row().Scan(&receipt); err != nil {
+					return err
+				}
+				return json.Unmarshal(receipt, &metadata)
 			}
-			outcome = "committed"
-		} else if !applied && !compatible && !active {
-			if !snapshot.TransactionStarted {
-				outcome = "not_started"
-			} else {
-				outcome = "rolled_back"
+			return nil
+		})
+		if err != nil || !pending {
+			return outcome, metadata, err
+		}
+		timer := time.NewTimer(25 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return "unconfirmed", nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func evidenceOnlyTransactionOutcome(applied, compatible bool, xid, status string) string {
+	if xid != "" {
+		switch status {
+		case "aborted":
+			return "rolled_back"
+		case "committed":
+			if applied && compatible {
+				return "committed"
 			}
 		}
-		return nil
-	})
-	return outcome, metadata, err
+		return "unconfirmed"
+	}
+	if applied && compatible {
+		return "committed"
+	}
+	if !applied && !compatible {
+		return "not_started"
+	}
+	return "unconfirmed"
 }

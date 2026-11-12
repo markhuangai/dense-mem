@@ -46,6 +46,7 @@ type MigrationSnapshot struct {
 	BackendPID         int
 	BackendStart       time.Time
 	TransactionStarted bool
+	TransactionID      string
 	CaptureState       string
 	CaptureReason      string
 	CollectionQueries  int64
@@ -150,14 +151,16 @@ func (p *MigrationProgress) recordLocked(o MigrationObservation, now time.Time) 
 
 func (p *MigrationProgress) beginTransaction(ctx context.Context, tx *sql.Tx) error {
 	var pid int
+	var xid string
 	var started time.Time
 	p.RecordCollectionQuery()
-	if err := tx.QueryRowContext(ctx, `SELECT pid,backend_start FROM pg_stat_activity WHERE pid=pg_backend_pid()`).Scan(&pid, &started); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT pid,backend_start,pg_current_xact_id()::text FROM pg_stat_activity WHERE pid=pg_backend_pid()`).Scan(&pid, &started, &xid); err != nil {
 		return err
 	}
 	p.mu.Lock()
 	p.snapshot.BackendPID, p.snapshot.BackendStart = pid, started
 	p.snapshot.TransactionStarted = true
+	p.snapshot.TransactionID = xid
 	p.snapshot.MigrationVersion = evidenceOnlyMigrationVersion
 	id := p.snapshot.ExecutionID
 	p.mu.Unlock()

@@ -46,3 +46,23 @@ func TestMigrationProgressRealLoggerAndUnknownCounts(t *testing.T) {
 		})
 	}
 }
+
+func TestMigrationProgressTransactionOutcome(t *testing.T) {
+	for _, test := range []struct {
+		name, xid, status   string
+		applied, compatible bool
+		want                string
+	}{
+		{"aborted despite a later starter committing", "42", "aborted", true, true, "rolled_back"},
+		{"rollback still in progress", "42", "in progress", false, false, "unconfirmed"},
+		{"confirmed own commit", "42", "committed", true, true, "committed"},
+		{"commit lacks receipt", "42", "committed", true, false, "unconfirmed"},
+		{"expired transaction status", "42", "", true, true, "unconfirmed"},
+		{"verified prior commit", "", "", true, true, "committed"},
+		{"not started", "", "", false, false, "not_started"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			require.Equal(t, test.want, evidenceOnlyTransactionOutcome(test.applied, test.compatible, test.xid, test.status))
+		})
+	}
+}
