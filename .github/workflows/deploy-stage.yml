@@ -108,9 +108,14 @@ jobs:
           unset GHCR_TOKEN
 
           expected_revision="$(git -C .staging-image-source rev-parse HEAD)"
-          exec .github/scripts/deploy-staging-copy.sh \
+          deployment_script="${HOME}/dense-mem-stage/deploy-staging-copy.sh"
+          if [[ ! -x "${deployment_script}" ]]; then
+            echo '::error::Install the host-only staging deployment script before deploying.'
+            exit 1
+          fi
+          exec "${deployment_script}" \
             "${HOME}/dense-mem-stage" "${IMAGE_TAG}" "${expected_revision}" \
-            "${GITHUB_WORKSPACE}/.staging-image-source/migrations/postgres"
+            "${GITHUB_WORKSPACE}/.staging-image-source/migrations/postgres" "${GITHUB_WORKSPACE}"
           DEPLOY
 
   deployment-result:

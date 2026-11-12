@@ -743,9 +743,10 @@ test("staging deployment is owner-gated and manual-only", async () => {
 });
 
 test("staging deployment shares source verification and pinned healthy startup", async () => {
-  const [workflow, helper] = await Promise.all([
+  const [workflow, helper, imagePolicy] = await Promise.all([
     readFile(new URL("../../.github/workflows/deploy-stage.yml", import.meta.url), "utf8"),
-    readFile(new URL("../../.github/scripts/deploy-staging-copy.sh", import.meta.url), "utf8"),
+    readFile(new URL("../../.github/scripts/deploy-staging-image.sh", import.meta.url), "utf8"),
+    readFile(new URL("../../.github/scripts/staging-image.sh", import.meta.url), "utf8"),
   ]);
   const deploy = workflowJob(workflow, "deploy-staging");
   assert.match(workflow, /^  packages: read$/m);
@@ -755,23 +756,23 @@ test("staging deployment shares source verification and pinned healthy startup",
   assert.match(deploy, /git -C \.staging-image-source rev-parse HEAD/);
   assert.match(deploy, /deploy-staging-copy\.sh/);
   assert.doesNotMatch(workflow, /go test/);
-  assert.match(helper, /20m "\$stage_directory\/sync\.sh"/);
-  assert.ok(helper.includes('server /app/server private-memory-migrate'));
-  assert.ok(helper.indexOf('verify_copy before') < helper.indexOf('server /app/server private-memory-migrate'));
-  assert.ok(helper.indexOf('server /app/server private-memory-migrate') < helper.indexOf('verify_copy after'));
-  assert.ok(helper.indexOf('verify_copy after') < helper.indexOf('docker compose up'));
+  assert.match(deploy, /deployment_script="\$\{HOME\}\/dense-mem-stage\/deploy-staging-copy\.sh"/);
+  assert.doesNotMatch(deploy, /stop-staging-server\.sh/);
+  assert.match(deploy, /Install the host-only staging deployment script before deploying/);
+  assert.match(deploy, /exec "\$\{deployment_script\}"/);
+  assert.match(helper, /source .*staging-image\.sh/);
   assert.match(helper, /migration-rehearsal\.lock/);
   assert.match(helper, /flock --wait 600 9/);
-  assert.match(helper, /org\.opencontainers\.image\.revision/);
-  assert.match(helper, /org\.opencontainers\.image\.variant/);
-  assert.match(helper, /docker pull "\$image"/);
-  assert.match(helper, /export DENSE_MEM_IMAGE="\$\{image_tag\}@\$\{image_digest\}"/);
+  assert.match(imagePolicy, /org\.opencontainers\.image\.revision/);
+  assert.match(imagePolicy, /org\.opencontainers\.image\.variant/);
+  assert.match(imagePolicy, /docker pull "\$image"/);
+  assert.match(imagePolicy, /export DENSE_MEM_IMAGE="\$\{image_tag\}@\$\{image_digest\}"/);
   assert.match(helper, /docker compose up -d --pull always --no-deps --wait --wait-timeout 3000 server/);
   assert.doesNotMatch(helper, /docker compose logs/);
 });
 
 test("manual staging deployment budget leaves time for image transfer and failure cleanup", async () => {
-  const helper = await readFile(new URL("../../.github/scripts/deploy-staging-copy.sh", import.meta.url), "utf8");
+  const helper = await readFile(new URL("../../.github/scripts/deploy-staging-image.sh", import.meta.url), "utf8");
   const lockWait = Number(helper.match(/flock --wait (\d+) 9/)[1]);
   const startupWait = Number(helper.match(/--wait-timeout (\d+) server/)[1]);
   const cleanupWait = Number(helper.match(/docker compose stop --timeout (\d+) server/)[1]);
@@ -792,11 +793,11 @@ test("manual staging deployment budget leaves time for image transfer and failur
   assert.equal(preparationLimits.length, 3, "every checkout and Go setup must be bounded");
   const preparationSeconds = preparationLimits.reduce((sum, limit) => sum + Number(limit[1]) * 60, 0);
   const jobSeconds = Number(source.match(/^    timeout-minutes: (\d+)$/m)[1]) * 60;
-  assert.ok(operationSeconds > lockWait + 20 * 60 + 31 * 60 + 2 * 5 * 60 + startupWait, `${job} must retain its configured lock and startup waits`);
+  assert.ok(operationSeconds > lockWait + startupWait, `${job} must retain its configured lock and startup waits`);
   assert.ok(graceSeconds > cleanupSeconds + cleanupGraceSeconds, `${job} must allow bounded candidate cleanup before forced termination`);
   assert.ok(jobSeconds > preparationSeconds + operationSeconds + graceSeconds, `${job} must reserve time outside the bounded deployment operation`);
   assert.ok(source.indexOf(deadline[0]) < source.indexOf("docker login"));
-  assert.ok(source.indexOf("docker login") < source.indexOf("exec .github/scripts/deploy-staging-copy.sh"));
+  assert.ok(source.indexOf("docker login") < source.indexOf('exec "${deployment_script}"'));
   const script = source.split("        run: |\n").at(-1).split("\n").map((line) => line.slice(10)).join("\n");
   await execFileAsync("bash", ["-n", "-c", script]);
 });

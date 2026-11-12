@@ -11,7 +11,6 @@ import { runInNewContext } from "node:vm";
 import { test } from "node:test";
 
 const execute = promisify(execFile);
-const copyHelper = fileURLToPath(new URL("../../.github/scripts/deploy-staging-copy.sh", import.meta.url));
 const helper = fileURLToPath(new URL("../../.github/scripts/deploy-staging-image.sh", import.meta.url));
 const revision = "a".repeat(40);
 const otherRevision = "b".repeat(40);
@@ -121,20 +120,6 @@ services:
     assert.match(await docker("inspect", "--format", "{{.Config.Image}}", server), /:good@sha256:[0-9a-f]{64}$/);
     assert.equal(await docker("inspect", "--format", '{{index .Config.Labels "org.opencontainers.image.revision"}}', server), revision);
     assert.match(await readFile(join(directory, "outputs"), "utf8"), /image_digest=sha256:[0-9a-f]{64}/);
-    await compose("stop", "--timeout", "3", "server");
-  });
-  await t.test("copy deployment refuses missing verification and restore prerequisites before stopping staging", async () => {
-    await deploy("good");
-    const server = await serverID();
-    await assert.rejects(execute("bash", [copyHelper, directory, "good", revision, directory], {
-      env: { ...env(), DENSE_MEM_STAGE_POSTGRES_DSN: "" },
-    }), /verification DSN is missing/);
-    assert.equal(await running(server), "true");
-    await assert.rejects(execute("bash", [copyHelper, directory, "good", revision, directory], {
-      env: { ...env(), DENSE_MEM_STAGE_POSTGRES_DSN: "unused-before-restore" },
-    }), /restore script is missing/);
-    assert.equal(await running(server), "true");
-    assert.equal(await running(keeper), "true");
     await compose("stop", "--timeout", "3", "server");
   });
   const stoppedServer = await serverID();

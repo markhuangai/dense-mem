@@ -165,12 +165,19 @@ func assertStagingEvidenceOnlyCatalog(t *testing.T, ctx context.Context, db *gor
 	t.Log("Evidence-only rehearsal verified retained fingerprints, explicit graph-object absence, and committed inventory receipt")
 }
 
-func stagingScript(name string) string {
-	return filepath.Join(filepath.Dir(filepath.Dir(storagepostgres.MigrationsDir())), ".github", "scripts", name)
-}
-
 func stopStagingServer(ctx context.Context, directory string) error {
-	return exec.CommandContext(ctx, "bash", stagingScript("stop-staging-server.sh"), directory).Run()
+	// Existing Compose identity avoids requiring the image selected for a later deployment.
+	output, err := exec.CommandContext(ctx, "docker", "ps", "--no-trunc",
+		"--filter", "label=com.docker.compose.project.working_dir="+directory,
+		"--filter", "label=com.docker.compose.service=server", "--format", "{{.ID}}").Output()
+	if err != nil {
+		return err
+	}
+	containerIDs := strings.Fields(string(output))
+	if len(containerIDs) == 0 {
+		return nil
+	}
+	return exec.CommandContext(ctx, "docker", append([]string{"stop", "-t", "30"}, containerIDs...)...).Run()
 }
 
 func TestStopStagingServerWithoutImageSelection(t *testing.T) {
@@ -383,6 +390,9 @@ func TestPrivateMemoryRehearsalFromDeployedSchema(t *testing.T) {
 	var output bytes.Buffer
 	err = serverapp.RunPrivateMemoryPreflight(ctx, &output)
 	require.ErrorContains(t, err, "manifest")
+	imageSnapshot := filepath.Join(t.TempDir(), "legacy-image-evidence.json")
+	writeStagingEvidenceSnapshot(t, ctx, db, imageSnapshot)
+	require.False(t, stagingPrivateMemoryComplete(t, ctx, db))
 	for range 2 {
 		rehearseStagingMigrations(t, ctx, db, dsn)
 	}
@@ -394,6 +404,7 @@ func TestPrivateMemoryRehearsalFromDeployedSchema(t *testing.T) {
 		require.Equal(t, 1, count)
 		return nil
 	}))
+	require.NoError(t, compareStagingEvidenceSnapshot(t, ctx, db, imageSnapshot))
 	assertStagingImageEvidenceSnapshot(t, ctx, db)
 
 }
@@ -402,9 +413,12 @@ func TestStagingMigrationRehearsalFreshDatabase(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	db, dsn := stagingMigrationTestDatabase(t, ctx)
+	snapshot := filepath.Join(t.TempDir(), "fresh-image-evidence.json")
+	writeStagingEvidenceSnapshot(t, ctx, db, snapshot)
 	for range 2 {
 		rehearseStagingMigrations(t, ctx, db, dsn)
 	}
+	require.NoError(t, compareStagingEvidenceSnapshot(t, ctx, db, snapshot))
 }
 
 func openStagingDatabase(t *testing.T) (*gorm.DB, string) {
@@ -464,9 +478,7 @@ func TestStagingImageMigrationVerification(t *testing.T) {
 	snapshot := os.Getenv("DENSE_MEM_STAGE_EVIDENCE_SNAPSHOT")
 	switch os.Getenv("DENSE_MEM_STAGE_IMAGE_PHASE") {
 	case "before":
-		data, err := json.Marshal(stagingEvidenceFingerprints(t, ctx, db))
-		require.NoError(t, err)
-		require.NoError(t, os.WriteFile(snapshot, data, 0o600))
+		writeStagingEvidenceSnapshot(t, ctx, db, snapshot)
 	case "after":
 		require.NoError(t, compareStagingEvidenceSnapshot(t, ctx, db, snapshot))
 		sqlDB, err := db.DB()
@@ -485,15 +497,28 @@ func compareStagingEvidenceSnapshot(t *testing.T, ctx context.Context, db *gorm.
 	if err != nil {
 		return err
 	}
-	var before map[string]string
+	var before stagingImageEvidenceSnapshot
 	if err := json.Unmarshal(data, &before); err != nil {
 		return err
 	}
-	if len(before) != 13 {
-		return errors.New("retained Evidence snapshot is incomplete")
+	if !stagingPrivateMemoryComplete(t, ctx, db) {
+		return errors.New("private-memory migration is incomplete after image migration")
+	}
+	switch before.PrivateMemoryStatus {
+	case "pending":
+		if len(before.Evidence) != 0 {
+			return errors.New("pending private-memory snapshot contains unexpected exact fingerprints")
+		}
+		return nil
+	case "complete":
+		if len(before.Evidence) != 13 {
+			return errors.New("retained Evidence snapshot is incomplete")
+		}
+	default:
+		return errors.New("retained Evidence snapshot has an invalid private-memory status")
 	}
 	after := stagingEvidenceFingerprints(t, ctx, db)
-	for table, hash := range before {
+	for table, hash := range before.Evidence {
 		if after[table] != hash {
 			return fmt.Errorf("retained Evidence fingerprint changed: %s", table)
 		}
@@ -504,10 +529,7 @@ func compareStagingEvidenceSnapshot(t *testing.T, ctx context.Context, db *gorm.
 func assertStagingImageEvidenceSnapshot(t *testing.T, ctx context.Context, db *gorm.DB) {
 	t.Helper()
 	snapshot := filepath.Join(t.TempDir(), "evidence.json")
-	before := stagingEvidenceFingerprints(t, ctx, db)
-	data, err := json.Marshal(before)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(snapshot, data, 0o600))
+	writeStagingEvidenceSnapshot(t, ctx, db, snapshot)
 	require.NoError(t, compareStagingEvidenceSnapshot(t, ctx, db, snapshot))
 
 	require.NoError(t, storagepostgres.NewRLS().WithSystemTx(ctx, db, func(tx *gorm.DB) error {
@@ -516,7 +538,37 @@ func assertStagingImageEvidenceSnapshot(t *testing.T, ctx context.Context, db *g
 	}))
 	require.ErrorContains(t, compareStagingEvidenceSnapshot(t, ctx, db, snapshot), "fingerprint changed")
 	require.NoError(t, os.WriteFile(snapshot, []byte(`{}`), 0o600))
-	require.ErrorContains(t, compareStagingEvidenceSnapshot(t, ctx, db, snapshot), "incomplete")
+	require.ErrorContains(t, compareStagingEvidenceSnapshot(t, ctx, db, snapshot), "invalid private-memory status")
 	require.NoError(t, os.WriteFile(snapshot, []byte(`invalid`), 0o600))
 	require.Error(t, compareStagingEvidenceSnapshot(t, ctx, db, snapshot))
+}
+
+type stagingImageEvidenceSnapshot struct {
+	PrivateMemoryStatus string            `json:"private_memory_status"`
+	Evidence            map[string]string `json:"evidence_fingerprints,omitempty"`
+}
+
+func stagingPrivateMemoryComplete(t *testing.T, ctx context.Context, db *gorm.DB) bool {
+	t.Helper()
+	var complete bool
+	require.NoError(t, storagepostgres.NewRLS().WithSystemReadOnlyRepeatableTx(ctx, db, func(tx *gorm.DB) error {
+		var installed bool
+		if err := tx.Raw(`SELECT to_regclass('public.private_memory_migration_state') IS NOT NULL`).Row().Scan(&installed); err != nil || !installed {
+			return err
+		}
+		return tx.Raw(`SELECT EXISTS(SELECT 1 FROM private_memory_migration_state WHERE singleton AND phase='complete')`).Row().Scan(&complete)
+	}))
+	return complete
+}
+
+func writeStagingEvidenceSnapshot(t *testing.T, ctx context.Context, db *gorm.DB, path string) {
+	t.Helper()
+	snapshot := stagingImageEvidenceSnapshot{PrivateMemoryStatus: "pending"}
+	if stagingPrivateMemoryComplete(t, ctx, db) {
+		snapshot.PrivateMemoryStatus = "complete"
+		snapshot.Evidence = stagingEvidenceFingerprints(t, ctx, db)
+	}
+	data, err := json.Marshal(snapshot)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, data, 0o600))
 }
