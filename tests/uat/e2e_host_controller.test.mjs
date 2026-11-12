@@ -7,7 +7,8 @@ import { once } from "node:events";
 import { promisify } from "node:util";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { devNull, tmpdir } from "node:os";
+import { devNull, tmpdir, userInfo } from "node:os";
+import { createServer } from "node:http";
 import { createRedactor, redactChunks, valueFromEnvFile } from "../../scripts/e2e-redact-diagnostics.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -26,6 +27,7 @@ const [
   scenarioWorkflow,
   packageJSON,
   realController,
+  pythonE2E,
 ] = await Promise.all([
   readFile(join(scripts, "e2e-host-controller.sh"), "utf8"),
   readFile(join(scripts, "e2e-host-controller-stack.sh"), "utf8"),
@@ -38,12 +40,106 @@ const [
   readFile(join(root, ".github/workflows/production-e2e-scenario.yml"), "utf8"),
   readFile(join(root, "package.json"), "utf8"),
   readFile(join(root, "tests/uat/e2e_host_controller_real.sh"), "utf8"),
+  readFile(join(root, "packages/python/scripts/e2e.sh"), "utf8"),
 ]);
 
 async function executable(path, contents) {
   await writeFile(path, contents, { mode: 0o700 });
   await chmod(path, 0o700);
 }
+
+function pythonDependencySetup() {
+  const setup = pythonE2E.match(/node --input-type=module <<'NODE'\n([\s\S]*?)\nNODE/);
+  assert.ok(setup, "Python setup must retain its executable dependency owner");
+  return setup[1];
+}
+
+test("Python dependency setup retains inherited resolvers and records successful phases", async () => {
+  const setup = pythonDependencySetup();
+  const helper = setup.slice(0, setup.indexOf('\nsetupPhase("apt_index_refresh"'));
+  const { stdout } = await run(process.execPath, ["--input-type=module", "-e", `${helper}\nsetupPhase("apt_index_refresh", process.execPath, ["-e", "console.log('exact admitted setup output')"]);`], {
+    env: { ...process.env, DENSE_MEM_E2E_RUN_ID: "741", DENSE_MEM_E2E_RUN_ATTEMPT: "1", DENSE_MEM_E2E_SCENARIO: "python_client", DENSE_MEM_E2E_COMMIT_SHA: "a".repeat(40), AI_API_KEY: "private-setup-canary" },
+  });
+  const events = stdout.trim().split("\n").filter((line) => line.startsWith("{")).map((line) => JSON.parse(line));
+  assert.equal(events.length, 2);
+  assert.deepEqual(events.map(({ outcome, level }) => [outcome, level]), [["started", "INFO"], ["passed", "INFO"]]);
+  const nameservers = [...(await readFile("/etc/resolv.conf", "utf8")).matchAll(/^\s*nameserver\s+(\S+)/gm)].map((match) => match[1]);
+  for (const event of events) {
+    assert.equal(event.event, "python_dependency_setup");
+    assert.equal(event.phase, "apt_index_refresh");
+    assert.equal(event.run_id, "741");
+    assert.equal(event.run_attempt, "1");
+    assert.equal(event.scenario, "python_client");
+    assert.equal(event.source_revision, "a".repeat(40));
+    assert.equal(event.resolver_capture_state, "captured");
+    assert.deepEqual(event.nameservers, nameservers);
+    assert.ok(event.elapsed_ms >= 0);
+  }
+  assert.equal(events[1].exit_code, 0);
+  assert.match(stdout, /exact admitted setup output/);
+  assert.doesNotMatch(stdout, /private-setup-canary/);
+});
+
+test("Python dependency setup preserves failing and signalled command outcomes", async () => {
+  const setup = pythonDependencySetup();
+  const helper = setup.slice(0, setup.indexOf('\nsetupPhase("apt_index_refresh"'));
+  for (const [command, status, signal] of [["console.error('setup command failed');process.exit(23)", 23, null], ["process.kill(process.pid,'SIGTERM')", 143, "SIGTERM"]]) {
+    await assert.rejects(run(process.execPath, ["--input-type=module", "-e", `${helper}\nsetupPhase("apt_package_install", process.execPath, ["-e", ${JSON.stringify(command)}]);`]), (error) => {
+      assert.equal(error.code, status);
+      const events = error.stdout.trim().split("\n").map((line) => JSON.parse(line));
+      assert.equal(events[0].outcome, "started");
+      assert.equal(events[1].outcome, "failed");
+      assert.equal(events[1].level, "ERROR");
+      assert.equal(events[1].phase, "apt_package_install");
+      assert.equal(events[1].exit_code, status);
+      assert.equal(events[1].signal, signal);
+      if (!signal) assert.match(error.stderr, /setup command failed/);
+      return true;
+    });
+  }
+});
+
+test("Python dependency setup stops after a real APT index download failure", { timeout: 20000 }, async (t) => {
+  const fixture = await mkdtemp(join(tmpdir(), "dense-mem-python-apt-"));
+  let requests = 0;
+  const server = createServer((_request, response) => {
+    requests += 1;
+    response.writeHead(503, "Service Unavailable");
+    response.end("temporary fixture outage");
+  });
+  try {
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    for (const directory of ["lists/partial", "archives/partial", "cache", "log", "apt.conf.d", "sources.list.d"]) await mkdir(join(fixture, directory), { recursive: true });
+    await writeFile(join(fixture, "status"), "");
+    await writeFile(join(fixture, "main.conf"), "");
+    await writeFile(join(fixture, "sources.list"), `deb [trusted=yes] http://127.0.0.1:${server.address().port} stable main\n`);
+    const config = [
+      `Dir::Etc "${fixture}";`, `Dir::Etc::parts "${fixture}/apt.conf.d";`, `Dir::Etc::main "${fixture}/main.conf";`,
+      `Dir::Etc::sourcelist "${fixture}/sources.list";`, `Dir::Etc::sourceparts "${fixture}/sources.list.d";`,
+      `Dir::State "${fixture}";`, `Dir::State::lists "${fixture}/lists";`, `Dir::State::status "${fixture}/status";`,
+      `Dir::Cache "${fixture}/cache";`,
+      `Dir::Cache::archives "${fixture}/archives";`, `Dir::Log "${fixture}/log";`,
+      'Dir::Bin::dpkg "/bin/false";', `APT::Sandbox::User "${userInfo().username}";`,
+      'Acquire::Retries "0";', 'Acquire::http::Timeout "2";', 'Acquire::http::Proxy "DIRECT";',
+    ].join("\n");
+    await writeFile(join(fixture, "apt.conf"), `${config}\n`);
+    await assert.rejects(run(process.execPath, ["--input-type=module", "-e", pythonDependencySetup()], {
+      env: { ...process.env, APT_CONFIG: join(fixture, "apt.conf") }, timeout: 15000,
+    }), (error) => {
+      assert.equal(error.code, 100);
+      const events = error.stdout.split("\n").filter((line) => line.startsWith("{")).map((line) => JSON.parse(line));
+      assert.deepEqual(events.map(({ phase, outcome }) => [phase, outcome]), [["apt_index_refresh", "started"], ["apt_index_refresh", "failed"]]);
+      assert.equal(events[1].exit_code, 100);
+      assert.match(error.stderr, /503\s+Service Unavailable/);
+      assert.ok(requests > 0, "the real APT client must reach the loopback repository");
+      t.diagnostic(JSON.stringify({ event: "python_dependency_failure_reproduction", phases: events, apt_error: error.stderr }));
+      return true;
+    });
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await rm(fixture, { recursive: true, force: true });
+  }
+});
 
 test("production Compose bundle renders with distinct retained volume identities", async () => {
   const fixture = await mkdtemp(join(tmpdir(), "dense-mem-compose-contract-"));
@@ -1500,14 +1596,18 @@ test("six precheck shards account for package batches while the legacy route ret
     const directory = join(fixture, "scripts/e2e-db-cases");
     await mkdir(directory, { recursive: true });
     const ontologyIDs = [
+      "repository/TestOntologyMaintenanceCurrentReceiptCompletion",
       "repository/TestOntologyMaintenanceFinalizationAdmissionAndIsolation",
       "repository/TestOntologyMaintenanceLargeBacklogAndFairTurns",
       "repository/TestOntologyMaintenanceReadMeasurement",
       "repository/TestOntologyOrganizationVocabularyAndSourceFences",
+      "repository/TestOntologyOrganizationBatchedDependencyBounds",
+      "repository/TestOntologyOrganizationRejectsStaleAndMalformedPublication",
+      "repository/TestOntologyVocabularyUsesCurrentCandidateWindow",
       "repository/TestOntologyMaintenanceRevalidationDiscoveryMeasurement",
       "repository/TestOntologyRemaining",
     ];
-    for (const [capability, count] of [["ontology", 6], ["alpha", 41], ["beta", 40], ["gamma", 39], ["delta", 1]]) {
+    for (const [capability, count] of [["ontology", ontologyIDs.length], ["alpha", 41], ["beta", 40], ["gamma", 39], ["delta", 1]]) {
       const cases = Array.from({ length: count }, (_, index) => ({
         id: capability === "ontology" ? ontologyIDs[index] : `${capability}/TestCase${index}`,
         phase: "precheck",
@@ -1525,6 +1625,12 @@ test("six precheck shards account for package batches while the legacy route ret
     const ordinary = six.slice(3).map((selection) => selection.split(","));
     assert.deepEqual(ordinary.flat().sort(), ["alpha", "beta", "delta", "gamma"]);
     assert.ok(ordinary.find((group) => group.includes("delta")).includes("alpha"));
+    assert.deepEqual(await partition(3), ["ontology", "beta,delta", "gamma,alpha"]);
+    const ontologyPath = join(directory, "ontology.json");
+    const incomplete = JSON.parse(await readFile(ontologyPath, "utf8"));
+    incomplete.cases = incomplete.cases.filter(({ id }) => id !== "repository/TestOntologyMaintenanceCurrentReceiptCompletion");
+    await writeFile(ontologyPath, JSON.stringify(incomplete));
+    await assert.rejects(partition(6), /six precheck shards require dedicated ontology cases/);
     assert.deepEqual(await partition(3), ["ontology", "beta,delta", "gamma,alpha"]);
   } finally {
     await rm(fixture, { recursive: true, force: true });
@@ -1547,10 +1653,14 @@ test("six precheck shards preserve every real runner selection exactly once", as
   const selections = stdout.trim().split(/\r?\n/);
   assert.equal(selections.length, 6);
   const dedicated = [
+    "repository/TestOntologyMaintenanceCurrentReceiptCompletion",
     "repository/TestOntologyMaintenanceFinalizationAdmissionAndIsolation",
     "repository/TestOntologyMaintenanceLargeBacklogAndFairTurns",
     "repository/TestOntologyMaintenanceReadMeasurement",
     "repository/TestOntologyOrganizationVocabularyAndSourceFences",
+    "repository/TestOntologyOrganizationBatchedDependencyBounds",
+    "repository/TestOntologyOrganizationRejectsStaleAndMalformedPublication",
+    "repository/TestOntologyVocabularyUsesCurrentCandidateWindow",
     "repository/TestOntologyOrganizationPreservesPerRecordDependencyBounds",
     "repository/TestOntologyOrganizationPreservesValidLargeSourceContext",
     "repository/TestOntologyUnavailableSnapshotRetainsScopedHandleForMaintenance",
@@ -1566,10 +1676,12 @@ test("six precheck shards preserve every real runner selection exactly once", as
     inventory.push(...fragment.cases.filter((item) => item.phase === "precheck").map((item) => item.id));
   }
   const actual = [];
+  const counts = [];
   for (const selection of selections) {
     const args = selection.startsWith("cases:") ? ["--case", selection.slice(6)] : ["--capability", selection];
     const selected = await run("go", ["-C", join(root, "cmd/e2e"), "run", ".", "--root", root, "--phase", "precheck", ...args, "--list"]);
     const ids = selected.stdout.trim().split(/\r?\n/);
+    counts.push(ids.length);
     assert.ok(ids.length > 0);
     if (selection === selections[0]) assert.deepEqual(ids, dedicated);
     if (selection === selections[1]) assert.deepEqual(ids, [measurement]);
@@ -1584,6 +1696,7 @@ test("six precheck shards preserve every real runner selection exactly once", as
   assert.equal(new Set(actual).size, actual.length);
   assert.deepEqual(actual.sort(), inventory.sort());
   assert.equal(actual.length, 597);
+  assert.deepEqual(counts, [11, 1, 136, 170, 123, 156]);
   assert.equal((await run("bash", ["-c", command, "six-shards", root])).stdout, stdout);
   await assert.rejects(run("bash", ["-c", `${helper}\npartition_precheck_capabilities "$1" 4`, "bad-shards", root]), /three or six shards/);
 });
