@@ -39,19 +39,31 @@ type MigrationObservation struct {
 
 type MigrationSnapshot struct {
 	MigrationObservation
-	MigrationVersion   int64
-	ExecutionID        string
-	PhaseStartedAt     time.Time
-	ObservedAt         time.Time
-	LastProgressAt     time.Time
-	BackendPID         int
-	BackendStart       time.Time
-	TransactionStarted bool
-	TransactionID      string
-	CaptureState       string
-	CaptureReason      string
-	CollectionQueries  int64
-	SQLNotices         int64
+	MigrationVersion        int64
+	ExecutionID             string
+	PhaseStartedAt          time.Time
+	ObservedAt              time.Time
+	LastProgressAt          time.Time
+	BackendPID              int
+	BackendStart            time.Time
+	TransactionStarted      bool
+	TransactionID           string
+	CaptureState            string
+	CaptureReason           string
+	CollectionQueries       int64
+	SQLNotices              int64
+	CheckpointFingerprint   string
+	InventoryFingerprint    string
+	SourceFingerprint       string
+	SourceSchemaFingerprint string
+	DurableRows             int64
+	DurableBatches          int64
+	WorkDurability          string
+	TransactionOutcome      string
+	FailureReason           string
+	ExpectedFingerprint     string
+	ObservedFingerprint     string
+	SQLState                string
 }
 
 // MigrationProgress owns only observations; it never decides whether database work committed.
@@ -266,10 +278,19 @@ type MigrationFailure struct {
 	Reason string
 }
 
-func (e *MigrationFailure) Error() string { return "evidence_only_migration_failed: " + e.Reason }
+func (e *MigrationFailure) Error() string {
+	if strings.HasPrefix(e.Reason, "feature_storage_") {
+		return "feature_storage_migration_failed: " + e.Reason
+	}
+	return "evidence_only_migration_failed: " + e.Reason
+}
 func (e *MigrationFailure) Unwrap() error { return e.Cause }
 
 func MigrationFailureReason(err error) string {
+	var bounded *MigrationFailure
+	if errors.As(err, &bounded) {
+		return bounded.Reason
+	}
 	switch {
 	case errors.Is(err, context.Canceled):
 		return "canceled"

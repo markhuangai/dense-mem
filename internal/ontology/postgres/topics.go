@@ -44,7 +44,7 @@ func (s *Store) ReadEvidenceTopics(ctx context.Context, tx *gorm.DB, teamID stri
               ON assignment.team_id=source_dependency.team_id AND assignment.shared_space_id=source_dependency.shared_space_id
               AND assignment.space_generation=source_dependency.space_generation AND assignment.record_id=source_dependency.record_id
               AND assignment.version=source_dependency.record_version AND assignment.kind='assignment' AND NOT assignment.retired
-            JOIN ontology_record_revisions AS revision
+            JOIN ontology_revision_records AS revision
               ON revision.team_id=assignment.team_id AND revision.shared_space_id=assignment.shared_space_id
               AND revision.space_generation=assignment.space_generation AND revision.record_id=assignment.record_id AND revision.version=assignment.version
             WHERE source_dependency.team_id=head.team_id AND source_dependency.shared_space_id=head.shared_space_id

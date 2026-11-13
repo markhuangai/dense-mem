@@ -128,7 +128,8 @@ func TestOperationLogRepositoryAppendsListsAndPrunes(t *testing.T) {
 	require.EqualValues(t, 1, page.Total)
 	require.Len(t, page.Items, 1)
 	require.Equal(t, "warning", page.Items[0].Message)
-	require.NoError(t, repo.PruneBefore(context.Background(), now))
+	_, err = repo.PruneBefore(context.Background(), now)
+	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -222,7 +223,8 @@ func TestOperationLogRepositoryReportsWriteAndPruneErrors(t *testing.T) {
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO operation_logs")).WillReturnError(errors.New("insert failed"))
 	require.ErrorContains(t, repo.AppendBatch(context.Background(), []domain.OperationLog{entry}), "failed to append operation logs")
 	mock.ExpectExec(regexp.QuoteMeta("DELETE FROM operation_logs WHERE timestamp < $1")).WillReturnError(errors.New("delete failed"))
-	require.ErrorContains(t, repo.PruneBefore(context.Background(), entry.Timestamp), "failed to prune operation logs")
+	_, err := repo.PruneBefore(context.Background(), entry.Timestamp)
+	require.ErrorContains(t, err, "failed to prune operation logs")
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

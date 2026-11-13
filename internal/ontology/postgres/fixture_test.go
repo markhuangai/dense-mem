@@ -108,6 +108,11 @@ func newOntologyFixtureWithMode(t *testing.T, historical, maintenance bool) *ont
 		schema = ontologySchemaSnapshot(t, admin)
 		require.NoError(t, rollbackOntologySchemaTo(t, admin, 20261004190000))
 	}
+	if historical {
+		pool, err := admin.DB()
+		require.NoError(t, err)
+		require.NoError(t, testfixture.InstallLegacyOntologyStorage(context.Background(), pool))
+	}
 	require.NoError(t, admin.Exec(`CREATE ROLE ontology_app LOGIN PASSWORD 'ontology_test' NOSUPERUSER NOBYPASSRLS;
 		GRANT USAGE ON SCHEMA public TO ontology_app;
 		GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO ontology_app;

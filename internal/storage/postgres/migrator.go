@@ -264,6 +264,23 @@ func newMigrationProviderWithFilesystem(
 		excludedNames = append(excludedNames, evidenceOnlyMigrationSQLName)
 		goMigrations = append(goMigrations, migration)
 	}
+	for _, item := range []struct {
+		name    string
+		version int64
+		cutover bool
+	}{
+		{featureStorageDataSQLName, FeatureStorageDataVersion, false},
+		{featureStorageCutoverSQLName, FeatureStorageCutoverVersion, true},
+	} {
+		if source, ok := filesystem[item.name]; ok {
+			migration, err := featureMigrationRegistration(item.version, source.Data, item.cutover)
+			if err != nil {
+				return nil, err
+			}
+			excludedNames = append(excludedNames, item.name)
+			goMigrations = append(goMigrations, migration)
+		}
+	}
 	if len(excludedNames) > 0 {
 		options = append(options, goose.WithExcludeNames(excludedNames), goose.WithGoMigrations(goMigrations...))
 	}
@@ -320,6 +337,24 @@ func (m *Migrator) RunUp(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func (m *Migrator) RunUpThroughEvidenceOnly(ctx context.Context) error {
+	provider, err := newRuntimeMigrationProvider(m.dir, m.db, true)
+	if err != nil {
+		return err
+	}
+	_, err = provider.UpTo(ctx, evidenceOnlyMigrationVersion)
+	return err
+}
+
+func (m *Migrator) PrepareFeatureStorageMigration(ctx context.Context) error {
+	provider, err := newRuntimeMigrationProvider(m.dir, m.db, true)
+	if err != nil {
+		return err
+	}
+	_, err = provider.UpTo(ctx, FeatureStoragePrepareVersion)
+	return err
 }
 
 func (m *Migrator) PreparePrivateMemoryMigration(ctx context.Context) error {

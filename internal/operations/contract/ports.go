@@ -16,7 +16,7 @@ import (
 type OperationLogRepository interface {
 	AppendBatch(context.Context, []domain.OperationLog) error
 	List(context.Context, domain.OperationLogFilter) (*domain.OperationLogPage, error)
-	PruneBefore(context.Context, time.Time) error
+	PruneBefore(context.Context, time.Time) (int64, error)
 }
 
 func NormalizeOperationLogFilter(filter domain.OperationLogFilter) domain.OperationLogFilter {

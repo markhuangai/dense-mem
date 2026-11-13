@@ -17,6 +17,7 @@ import (
 	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 	storage "github.com/markhuangai/dense-mem/internal/storage/postgres"
+	"github.com/markhuangai/dense-mem/internal/storage/postgres/testfixture"
 	"github.com/stretchr/testify/require"
 	gormpostgres "gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -69,6 +70,9 @@ func seedOntologyUpgrade(t *testing.T, db *gorm.DB) string {
 	t.Chdir(root)
 	require.NoError(t, storage.RunUp(context.Background(), db))
 	t.Chdir(cwd)
+	pool, err := db.DB()
+	require.NoError(t, err)
+	require.NoError(t, testfixture.InstallLegacyOntologyStorage(context.Background(), pool))
 
 	ctx, rls := context.Background(), storage.NewRLS()
 	team := &domain.Team{Name: "ontology-upgrade-fixture"}

@@ -111,7 +111,7 @@ func prepareOntologyRollback(tx *gorm.DB, fence scope, input ontology.Publicatio
 			desired.Retired = true
 		} else {
 			var body []byte
-			if err := tx.Raw(`SELECT body FROM ontology_record_revisions WHERE team_id=?::uuid
+			if err := tx.Raw(`SELECT body FROM ontology_revision_records WHERE team_id=?::uuid
 				AND shared_space_id=?::uuid AND space_generation=? AND record_id=?::uuid AND version=?`,
 				fence.TeamID, fence.SpaceID, fence.Generation, ref.ID, ref.Version-1).Row().Scan(&body); err != nil {
 				return input, err

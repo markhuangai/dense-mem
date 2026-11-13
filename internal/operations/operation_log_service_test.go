@@ -88,9 +88,9 @@ func (s *operationLogRepoStub) List(_ context.Context, filter domain.OperationLo
 	}, nil
 }
 
-func (s *operationLogRepoStub) PruneBefore(_ context.Context, cutoff time.Time) error {
+func (s *operationLogRepoStub) PruneBefore(_ context.Context, cutoff time.Time) (int64, error) {
 	s.prunedAt = &cutoff
-	return s.pruneErr
+	return 0, s.pruneErr
 }
 
 type operationLogRetentionStub struct {
@@ -186,8 +186,8 @@ func TestOperationLogServiceBatchesAndPropagatesErrors(t *testing.T) {
 
 	repo = &operationLogRepoStub{pruneErr: errors.New("prune failed")}
 	svc = NewOperationLogService(repo, operationLogRetentionStub{err: errors.New("config unavailable")})
-	require.ErrorContains(t, svc.Prune(ctx), "prune failed")
-	require.NotNil(t, repo.prunedAt)
+	require.ErrorContains(t, svc.Prune(ctx), "config unavailable")
+	require.Nil(t, repo.prunedAt)
 }
 
 func TestOperationLogServiceReportsQueueBackpressure(t *testing.T) {

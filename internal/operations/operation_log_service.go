@@ -82,6 +82,7 @@ type OperationLogServiceImpl struct {
 	probeMu        sync.Mutex
 	probeID        uuid.UUID
 	minimumLevel   slog.Level
+	pruneLogger    *slog.Logger
 }
 
 var _ OperationLogService = (*OperationLogServiceImpl)(nil)
@@ -107,6 +108,15 @@ func (s *OperationLogServiceImpl) SetMinimumLevel(level slog.Level) {
 	s.stateMu.Lock()
 	s.minimumLevel = level
 	s.stateMu.Unlock()
+}
+
+func (s *OperationLogServiceImpl) SetPruneLogger(logger *slog.Logger) {
+	if s == nil {
+		return
+	}
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+	s.pruneLogger = logger
 }
 
 func (s *OperationLogServiceImpl) WriteLog(ctx context.Context, record observability.LogRecord) error {
@@ -571,19 +581,43 @@ func (s *OperationLogServiceImpl) DroppedEvents() int64 {
 	return s.dropped
 }
 
-func (s *OperationLogServiceImpl) Prune(ctx context.Context) error {
+func (s *OperationLogServiceImpl) Prune(ctx context.Context) (err error) {
 	if s == nil || s.repo == nil {
 		return nil
 	}
+	started := time.Now()
+	s.stateMu.RLock()
+	logger := s.pruneLogger
+	s.stateMu.RUnlock()
+	var deleted int64
 	days := settings.DefaultOperationLogRetentionDays
-	if s.retention != nil {
-		cfg, err := s.retention.OperationLogRuntimeConfig(ctx)
-		if err == nil && cfg.RetentionDays > 0 {
-			days = cfg.RetentionDays
+	var cutoff time.Time
+	defer func() {
+		if logger == nil {
+			return
 		}
+		attrs := []any{"retention_days", days, "retention_available", days > 0, "cutoff", cutoff, "deleted_rows", deleted, "duration_ms", time.Since(started).Milliseconds()}
+		logCtx := observability.WithSinkSuppressed(context.WithoutCancel(ctx))
+		if err != nil {
+			logger.ErrorContext(logCtx, "operation_log_prune_failed", append(attrs, "error", err)...)
+			return
+		}
+		logger.InfoContext(logCtx, "operation_log_prune_completed", attrs...)
+	}()
+	if s.retention != nil {
+		days = 0
+		cfg, configErr := s.retention.OperationLogRuntimeConfig(ctx)
+		if configErr != nil {
+			return fmt.Errorf("read operation log retention: %w", configErr)
+		}
+		if cfg.RetentionDays <= 0 {
+			return errors.New("operation log retention must be positive")
+		}
+		days = cfg.RetentionDays
 	}
-	cutoff := time.Now().UTC().AddDate(0, 0, -days)
-	return s.repo.PruneBefore(observability.WithSinkSuppressed(ctx), cutoff)
+	cutoff = time.Now().UTC().AddDate(0, 0, -days)
+	deleted, err = s.repo.PruneBefore(observability.WithSinkSuppressed(ctx), cutoff)
+	return err
 }
 
 func (s *OperationLogServiceImpl) Start(ctx context.Context) {

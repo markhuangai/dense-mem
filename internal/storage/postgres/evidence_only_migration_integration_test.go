@@ -142,7 +142,7 @@ func TestEvidenceOnlyPostgresFreshInstall(t *testing.T) {
 	require.NoError(t, NewMigratorWithDB(db).RunUp(replayCtx), "an applied migration must not analyze the holds table again")
 	require.NoError(t, blocker.Rollback())
 
-	require.ErrorContains(t, migrationDown(ctx, db), "irreversible after commit")
+	require.ErrorContains(t, migrationDown(ctx, db), "recovery rolls forward")
 	_, err = db.ExecContext(ctx, `CREATE ROLE evidence_only_marker_writer NOSUPERUSER NOBYPASSRLS;
  GRANT USAGE ON SCHEMA public TO evidence_only_marker_writer;
  GRANT INSERT ON v2_compatibility_markers TO evidence_only_marker_writer;

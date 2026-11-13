@@ -154,10 +154,8 @@ func (s *Store) commitPublication(tx *gorm.DB, fence scope, input ontology.Publi
 		if err != nil {
 			return ontology.PublicationResult{}, err
 		}
-		if err := tx.Exec(`INSERT INTO ontology_record_revisions(team_id,shared_space_id,space_generation,
-			record_id,version,kind,publication_id,retired,body,fingerprint)
-			VALUES (?::uuid,?::uuid,?,?::uuid,?,?,?::uuid,?,?::jsonb,?)`, fence.TeamID, fence.SpaceID, fence.Generation,
-			record.ID, record.Version, string(record.Kind), result.ID, record.Retired, string(body), record.Fingerprint).Error; err != nil {
+		if err := tx.Exec(`SELECT dense_mem_insert_ontology_revision(?::uuid,?::uuid,?,?::uuid,?::jsonb)`,
+			fence.TeamID, fence.SpaceID, fence.Generation, result.ID, string(body)).Error; err != nil {
 			return ontology.PublicationResult{}, err
 		}
 	}

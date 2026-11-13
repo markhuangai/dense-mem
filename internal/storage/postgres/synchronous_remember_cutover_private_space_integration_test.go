@@ -126,7 +126,7 @@ func TestRememberSynchronousCutoverPreservesPrivateAttemptLineageForErasure(t *t
 	require.NoError(t, err)
 	defer tx.Rollback()
 	for key, value := range map[string]string{
-		"app.tx_mode":                  "system",
+		"app.storage_layout": FeatureStorageLayout, "app.tx_mode": "system",
 		"app.private_erasure_space_id": spaceID.String(),
 	} {
 		_, err = tx.ExecContext(ctx, `SELECT set_config($1, $2, true)`, key, value)
