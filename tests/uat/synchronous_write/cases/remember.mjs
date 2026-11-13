@@ -108,7 +108,7 @@ async function runBudgetContextCase({ expect }) {
   const actor = await createKnownEvidenceCredential(teamID, `assessor-budget-${Date.now()}`);
   const candidateContents = [];
   for (let index = 0; index < 10; index += 1) {
-    const content = `Large stored candidate ${index} ${"candidate context material ".repeat(28)} [fixture:budget-candidate]`;
+    const content = `Large stored candidate ${index} ${"candidate context material ".repeat(160)} [fixture:budget-candidate]`;
     candidateContents.push(content);
     const seeded = await rememberWithKey(actor.apiKey, {
       target_space: "team_shared",

@@ -13,6 +13,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -53,7 +54,7 @@ func (p *progressPostgresAssessor) Complete(ctx context.Context, r modelprovider
 		}
 		defer modelprovider.ReleaseConcurrency(p.gate)
 	}
-	if strings.Contains(r.Messages[1].Content, "[progress:block-partition]") {
+	if strings.Contains(regexp.MustCompile(`⟦[^⟧]+⟧`).ReplaceAllString(r.Messages[1].Content, ""), "[progress:block-partition]") {
 		p.entered <- "partition"
 		select {
 		case <-p.release:

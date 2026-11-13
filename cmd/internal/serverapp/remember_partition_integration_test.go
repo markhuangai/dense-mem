@@ -85,7 +85,7 @@ func TestRememberPartitionPostgres(t *testing.T) {
 			require.NoError(t, access.NewTeamRepository(admin, rls).Create(t.Context(), &domain.Team{ID: team, Name: "partition-" + team.String()}))
 		}
 		id := uuid.New()
-		require.NoError(t, access.NewCredentialRepository(admin, rls, nil).CreateCredential(t.Context(), &domain.Credential{ID: id, TeamID: team, Name: "partition actor", Role: "member", KeyHash: id.String(), KeyPrefix: strings.ReplaceAll(id.String(), "-", "")[:24], KeySuffix: "test", Scopes: []string{"read", "write"}}))
+		require.NoError(t, access.NewCredentialRepository(admin, rls, nil).CreateCredential(t.Context(), &domain.Credential{ID: id, TeamID: team, Name: "partition actor " + id.String(), Role: "member", KeyHash: id.String(), KeyPrefix: strings.ReplaceAll(id.String(), "-", "")[:24], KeySuffix: "test", Scopes: []string{"read", "write"}}))
 		return rememberProcessorActorContext(t, t.Context(), admin, rls, team, id)
 	}
 	a := newActor(uuid.Nil)

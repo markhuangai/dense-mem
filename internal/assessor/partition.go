@@ -48,6 +48,8 @@ type PartitionResponse struct {
 func NaturalBoundaryOffsets(content string, words bool) []int {
 	runes := []rune(content)
 	boundaries := map[int]bool{0: true, len(runes): true}
+	// Space citation anchors across long passages so annotations leave complete regeneration headroom.
+	wordInterval, lastWord := max(1, len(runes)/1024), 0
 	for i, r := range runes {
 		if r == '\n' || r == '\r' || unicode.IsPunct(r) {
 			end := i + 1
@@ -60,9 +62,10 @@ func NaturalBoundaryOffsets(content string, words bool) []int {
 				boundaries[i+1] = true
 			}
 		}
-		if words && unicode.IsSpace(r) {
+		if words && unicode.IsSpace(r) && i-lastWord >= wordInterval {
 			boundaries[i] = true
 			boundaries[i+1] = true
+			lastWord = i
 		}
 	}
 	result := make([]int, 0, len(boundaries))

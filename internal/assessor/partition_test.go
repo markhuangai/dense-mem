@@ -102,3 +102,23 @@ func TestRememberPartitionCountBound(t *testing.T) {
 	_, err := ValidatePartitionResponse(req, body)
 	require.ErrorContains(t, err, "partition count")
 }
+
+func TestRememberPartitionLongAssessmentFitsRegenerationBudget(t *testing.T) {
+	for _, phrase := range []string{"Boreal keeps this supporting context together ", "界😀 words preserve Unicode boundaries "} {
+		content := string([]rune(strings.Repeat(phrase, 600))[:knowledge.MaxRememberItemRunes])
+		request, issues := PrepareSemanticAssessmentRequest(SemanticAssessmentRequest{
+			RequestID: "long-assessment",
+			TeamID:    "team",
+			Evidence:  []SemanticReviewEvidence{{EvidenceID: "evidence:0", Content: content}},
+		}, DefaultSemanticAssessmentLimits())
+		require.Empty(t, issues)
+		require.LessOrEqual(t, request.InputTokens, semanticAssessmentConversationInputLimit(DefaultSemanticAssessmentLimits()))
+		prepared := request.Evidence[0]
+		reconstructed := prepared.BoundaryText
+		for ref := range prepared.BoundaryRefs {
+			reconstructed = strings.ReplaceAll(reconstructed, "⟦"+ref+"⟧", "")
+		}
+		require.Equal(t, content, reconstructed)
+		require.Less(t, len(prepared.BoundaryRefs), 2200)
+	}
+}
