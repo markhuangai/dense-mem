@@ -14,18 +14,19 @@ func PrepareSemanticAssessmentEvidence(evidence SemanticReviewEvidence) Semantic
 	runes := []rune(evidence.Content)
 	prefix := semanticAssessmentBoundaryPrefix(evidence.Content)
 	evidence.BoundaryPrefix = prefix
-	refs := make(map[string]int, len(runes)+1)
+	boundaries := NaturalBoundaryOffsets(evidence.Content, true)
+	refs := make(map[string]int, len(boundaries))
 	var annotated strings.Builder
-	annotated.Grow(len(evidence.Content) + (len(runes)+1)*16)
-	for index := 0; index <= len(runes); index++ {
+	annotated.Grow(len(evidence.Content) + len(boundaries)*16)
+	start := 0
+	for _, index := range boundaries {
+		annotated.WriteString(string(runes[start:index]))
 		ref := prefix + strconv.FormatInt(int64(index), 36)
 		refs[ref] = index
 		annotated.WriteString("⟦")
 		annotated.WriteString(ref)
 		annotated.WriteString("⟧")
-		if index < len(runes) {
-			annotated.WriteRune(runes[index])
-		}
+		start = index
 	}
 	evidence.BoundaryText = annotated.String()
 	evidence.BoundaryRefs = refs

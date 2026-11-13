@@ -36,9 +36,9 @@ func TestRecallBoundsAndContextHelpers(t *testing.T) {
 	if got := domain.CombineSearchProjectionStates(string(domain.SearchProjectionNotRequired), string(domain.SearchProjectionCurrent)); got != string(domain.SearchProjectionCurrent) {
 		t.Fatalf("current state was downgraded = %q", got)
 	}
-	long := strings.Repeat("a", 2100)
-	if got := truncateRecallContext(long); len(got) != 2000 {
-		t.Fatalf("truncated length = %d, want 2000", len(got))
+	long := strings.Repeat("a", 20000)
+	if got := truncateRecallContext(long); len(got) != 16384 {
+		t.Fatalf("truncated length = %d, want 16384", len(got))
 	}
 }
 

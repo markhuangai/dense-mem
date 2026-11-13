@@ -16,7 +16,7 @@ const (
 	SemanticAssessmentSchemaName                       = "dense_mem_evidence_assessment_response"
 	SemanticAssessmentMaxProviderTurns                 = 3
 	SemanticAssessmentMaxCorrectionErrors              = 100
-	SemanticAssessmentMaxEvidenceSpans                 = 20
+	SemanticAssessmentMaxEvidenceSpans                 = knowledgecontract.MaxRememberPartitions
 	SemanticAssessmentMaxEvidenceConflictResults       = knowledgecontract.EvidenceConflictMaxResults
 	SemanticAssessmentMaxEvidenceConflictPositions     = knowledgecontract.EvidenceConflictMaxPositions
 	SemanticAssessmentMaxEvidenceConflictQuoteRunes    = knowledgecontract.EvidenceConflictMaxQuoteRunes
@@ -33,7 +33,7 @@ For every evidence_equivalence_candidates group return exactly one evidence_equi
 
 Return evidence_conflict_results as an array of genuinely incompatible assertions. Each conflict has at least two opposing exact positions, includes submitted Evidence, and uses only supplied submitted, known, or associated candidate Evidence. Candidate Evidence selected for reuse cannot also oppose its submitted Evidence.
 
-boundary_text inserts request-local markers around each Unicode code point. Copy evidence_id, start_ref and end_ref exactly; start is inclusive and end exclusive. Never return numeric offsets. On validation errors, return a complete replacement object with every required result; never a patch or explanation.` + "\n\n" + SemanticAssessmentContextPolicy
+boundary_text inserts request-local markers at supplied punctuation, structural and word boundaries. Copy evidence_id, start_ref and end_ref exactly; start is inclusive and end exclusive. Select enclosing supplied boundaries when an exact substring has no anchor. Never return numeric offsets. On validation errors, return a complete replacement object with every required result; never a patch or explanation.` + "\n\n" + SemanticAssessmentContextPolicy
 
 const semanticAssessmentCorrectionInstruction = `Return one complete replacement JSON object matching the schema and immutable request. Correct all validation errors together. Preserve valid unrelated results. Copy only supplied evidence_id, candidate_evidence_id, start_ref, and end_ref values. Never return a patch, partial response, invented reference, numeric offset, or explanation.` + "\n\n" + SemanticAssessmentContextPolicy
 

@@ -15,6 +15,7 @@ import (
 	repository "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
 // SynchronousAssessmentDependencies are the provider-facing dependencies for a
@@ -204,7 +205,7 @@ func AssessSynchronousRemember(
 ) (result *SynchronousAssessmentResult, resultErr error) {
 	assessmentCtx, cancel := ContextForPhase(ctx, RememberPhaseAssessment)
 	defer cancel()
-	ctx = assessmentCtx
+	ctx = requestctx.WithProgressOperation(assessmentCtx, "assessment")
 	diagnostics := &assessmentDiagnostics{started: time.Now(), remainingMS: remainingAssessmentBudget(ctx)}
 	defer func() {
 		data := diagnostics.snapshot()

@@ -12,6 +12,8 @@ var semanticHiddenControlMarkupPattern = regexp.MustCompile(`(?is)<!--|<\s*(?:sc
 // SemanticReviewEvidence is the immutable evidence envelope shared by the
 // active proposal and assessor contracts.
 type SemanticReviewEvidence struct {
+	SourceItemID            string         `json:"source_item_id,omitempty"`
+	PartitionIndex          int            `json:"partition_index,omitempty"`
 	EvidenceID              string         `json:"evidence_id"`
 	FragmentID              string         `json:"-"`
 	EvidenceIndex           int            `json:"-"`

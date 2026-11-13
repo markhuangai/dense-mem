@@ -12,8 +12,10 @@ import (
 )
 
 func TestRememberProgressFollowsReachedStagesAndReplay(t *testing.T) {
-	all := []rememberapp.ProgressStage{rememberapp.ProgressPreparingIntake, rememberapp.ProgressCheckingDuplicates,
-		rememberapp.ProgressAssessingEvidence, rememberapp.ProgressPreparingSearch, rememberapp.ProgressCommitting}
+	all := []rememberapp.ProgressStage{rememberapp.ProgressCheckingReplay, rememberapp.ProgressPreparingIntake,
+		rememberapp.ProgressPreparingBoundaries, rememberapp.ProgressPartitioning, rememberapp.ProgressValidatingPartitions,
+		rememberapp.ProgressDuplicateEmbeddings, rememberapp.ProgressCheckingDuplicates, rememberapp.ProgressAssessingEvidence,
+		rememberapp.ProgressValidatingAssessment, rememberapp.ProgressPreparingSearch, rememberapp.ProgressCommitting, rememberapp.ProgressPreparingResult}
 	for _, outcome := range []string{"success", "duplicate", "assessment", "embedding", "commit", "replay", "conflict", "security"} {
 		t.Run(outcome, func(t *testing.T) {
 			input := rememberapp.RememberProcessRequest{TeamID: "team", OwnerProfileID: "owner",
@@ -27,15 +29,16 @@ func TestRememberProgressFollowsReachedStagesAndReplay(t *testing.T) {
 			switch outcome {
 			case "duplicate":
 				ledger.duplicatePlanErr = errors.New("duplicate plan unavailable")
-				want = all[:2]
+				want = append(append([]rememberapp.ProgressStage{}, all[:6]...), rememberapp.ProgressRecordingFailure)
 			case "assessment":
 				provider.invalid = true
-				want = all[:3]
+				want = append(append([]rememberapp.ProgressStage{}, all[:8]...), rememberapp.ProgressValidatingAssessment, rememberapp.ProgressRegeneratingAssessment, rememberapp.ProgressValidatingAssessment, rememberapp.ProgressRegeneratingAssessment, rememberapp.ProgressValidatingAssessment, rememberapp.ProgressRecordingFailure)
 			case "embedding":
 				ledger.planErr = errors.New("embedding plan unavailable")
-				want = all[:4]
+				want = append(append([]rememberapp.ProgressStage{}, all[:10]...), rememberapp.ProgressRecordingFailure)
 			case "commit":
 				ledger.commitErr = errors.New("commit unavailable")
+				want = append(append([]rememberapp.ProgressStage{}, all[:11]...), rememberapp.ProgressRecordingFailure)
 			case "replay", "conflict":
 				hash := "hash"
 				if outcome == "conflict" {
@@ -43,10 +46,13 @@ func TestRememberProgressFollowsReachedStagesAndReplay(t *testing.T) {
 				}
 				ledger.load = &knowledgecontract.RememberAttempt{AttemptID: "original", RequestHash: hash,
 					ContractVersion: domain.ContractVersion, Outcome: "completed", PublicResult: public}
-				want = nil
+				want = []rememberapp.ProgressStage{rememberapp.ProgressCheckingReplay}
+				if outcome == "replay" {
+					want = append(want, rememberapp.ProgressReturningReplay)
+				}
 			case "security":
 				input.SecurityRejected = true
-				want = nil
+				want = []rememberapp.ProgressStage{rememberapp.ProgressCheckingReplay, rememberapp.ProgressRecordingFailure}
 			}
 			var reached []rememberapp.ProgressStage
 			ctx := rememberapp.WithProgressObserver(t.Context(), func(_ context.Context, stage rememberapp.ProgressStage) {

@@ -61,9 +61,10 @@ func (p *rememberSynchronousProcessor) prepareRemember(ctx context.Context, inpu
 		SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration,
 		Evidence: rememberEvidenceInputsForCommit(input, snapshot),
 	}
-	rememberapp.ReportProgress(ctx, rememberapp.ProgressCheckingDuplicates)
+	rememberapp.ReportProgress(ctx, rememberapp.ProgressDuplicateEmbeddings)
 	embeddingStarted := time.Now()
 	duplicateEmbeddingCtx, duplicateEmbeddingCancel := rememberapp.ContextForPhase(ctx, rememberapp.RememberPhaseEmbedding)
+	duplicateEmbeddingCtx = requestctx.WithProgressOperation(duplicateEmbeddingCtx, "duplicate_embedding")
 	duplicatePlan, err := p.ledger.PlanRememberDuplicateEmbeddings(duplicateEmbeddingCtx, duplicateInput)
 	if err != nil {
 		duplicateEmbeddingCancel()
@@ -80,6 +81,7 @@ func (p *rememberSynchronousProcessor) prepareRemember(ctx context.Context, inpu
 		return fail(err, "embedding")
 	}
 	duplicateEmbeddings := inlineEmbeddingResultsFromDuplicateDocuments(duplicateDocuments, duplicatePlan)
+	rememberapp.ReportProgress(ctx, rememberapp.ProgressCheckingDuplicates)
 	duplicateResolution, err := p.ledger.ResolveRememberDuplicateCandidates(ctx, duplicateInput, duplicateEmbeddings)
 	p.observeRememberPhase(ctx, input, ingestID, "duplicate_embedding", err, embeddingStarted, nil)
 	if err != nil {
@@ -117,6 +119,7 @@ func (p *rememberSynchronousProcessor) prepareRemember(ctx context.Context, inpu
 		Duration: time.Since(started),
 	})
 	commitInput.StartedAt = started
+	commitInput.SubmittedItems = input.SubmittedItems
 	if buildErr != nil {
 		if p.isRememberStaleInput(buildErr) {
 			return fail(newRememberStaleInputError(buildErr), "assessment")
@@ -129,6 +132,7 @@ func (p *rememberSynchronousProcessor) prepareRemember(ctx context.Context, inpu
 	}
 	embeddingStarted = time.Now()
 	embeddingCtx, embeddingCancel := rememberapp.ContextForPhase(ctx, rememberapp.RememberPhaseEmbedding)
+	embeddingCtx = requestctx.WithProgressOperation(embeddingCtx, "embedding")
 	defer embeddingCancel()
 	rememberapp.ReportProgress(embeddingCtx, rememberapp.ProgressPreparingSearch)
 	plan, err := p.ledger.PlanRememberEmbeddings(embeddingCtx, commitInput)

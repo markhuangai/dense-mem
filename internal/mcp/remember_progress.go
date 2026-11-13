@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
@@ -37,7 +39,9 @@ type sdkRememberProgress struct {
 	http     sdkProgressHTTP
 	metadata sdkProgressMetadata
 	token    any
-	seen     map[rememberapp.ProgressStage]bool
+	mu       sync.Mutex
+	last     requestctx.ProgressUpdate
+	hasLast  bool
 	sequence int
 	closed   bool
 }
@@ -71,8 +75,8 @@ func (s *Server) withSDKRememberProgress(ctx context.Context, name string, req *
 	// The SDK decodes metadata numbers through float64; restore the exact wire token before using its accessor.
 	req.Params.Meta["progressToken"] = token
 	progress := &sdkRememberProgress{server: s, session: req.Session, http: transport, metadata: metadata,
-		token: req.Params.GetProgressToken(), seen: make(map[rememberapp.ProgressStage]bool, 5)}
-	return rememberapp.WithProgressObserver(ctx, progress.emit), func() { progress.closed = true }
+		token: req.Params.GetProgressToken()}
+	return requestctx.WithProgressObserver(ctx, progress.emitUpdate), func() { progress.mu.Lock(); defer progress.mu.Unlock(); progress.closed = true }
 }
 
 func sdkProgressToken(raw json.RawMessage) (any, bool) {
@@ -108,21 +112,72 @@ func progressMessage(stage rememberapp.ProgressStage) string {
 		return "Preparing search state"
 	case rememberapp.ProgressCommitting:
 		return "Committing"
+	case rememberapp.ProgressValidatingInput:
+		return "Validating input"
+	case rememberapp.ProgressCheckingReplay:
+		return "Checking previous result"
+	case rememberapp.ProgressReturningReplay:
+		return "Returning saved result"
+	case rememberapp.ProgressPreparingBoundaries:
+		return "Preparing semantic boundaries"
+	case rememberapp.ProgressPartitioning:
+		return "Partitioning submitted text"
+	case rememberapp.ProgressValidatingPartitions:
+		return "Validating partitions"
+	case rememberapp.ProgressRegeneratingPartitions:
+		return "Regenerating partitions"
+	case rememberapp.ProgressDuplicateEmbeddings:
+		return "Preparing duplicate-search embeddings"
+	case rememberapp.ProgressValidatingAssessment:
+		return "Validating assessment"
+	case rememberapp.ProgressRegeneratingAssessment:
+		return "Regenerating assessment"
+	case rememberapp.ProgressPreparingResult:
+		return "Preparing result"
+	case rememberapp.ProgressRecordingFailure:
+		return "Recording failure result"
+	case "idempotency_wait":
+		return "Waiting for an identical request"
 	default:
 		return ""
 	}
 }
 
-func (p *sdkRememberProgress) emit(ctx context.Context, stage rememberapp.ProgressStage) {
-	message := progressMessage(stage)
-	if p.closed || p.seen[stage] || message == "" || ctx.Err() != nil {
+func (p *sdkRememberProgress) emitUpdate(ctx context.Context, update requestctx.ProgressUpdate) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	message := progressMessage(rememberapp.ProgressStage(update.Stage))
+	operation := map[string]string{"partition": "partition provider", "assessment": "assessment provider", "duplicate_embedding": "duplicate embedding provider", "embedding": "embedding provider"}[update.Operation]
+	if operation != "" {
+		switch update.Stage {
+		case "provider_wait":
+			message = "Waiting for " + operation + " capacity"
+		case "provider_retry":
+			message = "Waiting before retrying " + operation
+		case "provider_request":
+			message = "Calling " + operation
+		case "embedding_batch":
+			message = "Preparing embedding batch"
+		}
+	}
+	if message == "" {
 		return
 	}
-	p.seen[stage] = true
+	if update.Attempt > 0 && update.Total >= update.Attempt && update.Total <= 100 {
+		message += fmt.Sprintf(" (%d/%d)", update.Attempt, update.Total)
+	}
+	if update.Batch > 0 && update.Batches >= update.Batch && update.Batches <= 256 {
+		message += fmt.Sprintf(" (%d/%d)", update.Batch, update.Batches)
+	}
+	if p.closed || (p.hasLast && p.last == update) || message == "" || ctx.Err() != nil {
+		return
+	}
+	p.last, p.hasLast = update, true
 	p.sequence++
 	attrs := []LogField{
 		{Key: "request_id", Value: json.RawMessage(p.metadata.requestID)},
-		{Key: "progress_token", Value: p.token}, {Key: "stage", Value: string(stage)},
+		{Key: "progress_token", Value: p.token}, {Key: "stage", Value: update.Stage},
+		{Key: "operation", Value: update.Operation}, {Key: "attempt", Value: update.Attempt}, {Key: "batch", Value: update.Batch},
 		{Key: "sequence", Value: p.sequence}, {Key: "protocol_version", Value: p.http.protocol},
 		{Key: "invocation_id", Value: requestctx.RememberInvocationIDFromContext(ctx)},
 		{Key: "write_budget_ms", Value: rememberProgressWriteBudget.Milliseconds()},

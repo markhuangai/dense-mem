@@ -37,14 +37,16 @@ func traceEvidenceLifecycleEventSchema() map[string]any {
 	return closedObject(
 		[]string{"lifecycle_event_id", "lifecycle_operation_id", "target_evidence_id", "action", "created_at"},
 		map[string]any{
-			"lifecycle_event_id":      schemaString("Append-only evidence lifecycle event ID.", 128),
-			"lifecycle_operation_id":  schemaString("Append-only evidence lifecycle operation ID.", 128),
-			"target_evidence_id":      schemaString("Retired evidence ID.", 128),
-			"owner_profile_id":        schemaString("Lifecycle operation owner.", 128),
-			"replacement_evidence_id": nullableString("Replacement evidence ID when superseded.", 128),
-			"action":                  schemaEnum([]string{"supersede", "retract"}),
-			"reason":                  schemaString("Bounded lifecycle reason.", 1000),
-			"created_at":              map[string]any{"type": "string", "format": "date-time"},
+			"lifecycle_event_id":         schemaString("Append-only evidence lifecycle event ID.", 128),
+			"lifecycle_operation_id":     schemaString("Append-only evidence lifecycle operation ID.", 128),
+			"target_evidence_id":         schemaString("Retired evidence ID.", 128),
+			"owner_profile_id":           schemaString("Lifecycle operation owner.", 128),
+			"replacement_evidence_id":    nullableString("Replacement evidence ID when superseded.", 128),
+			"replacement_evidence_ids":   stringArraySchema("Complete replacement Evidence set.", 100, 128),
+			"replacement_occurrence_ids": stringArraySchema("Ordered exact replacement occurrences.", 100, 128),
+			"action":                     schemaEnum([]string{"supersede", "retract"}),
+			"reason":                     schemaString("Bounded lifecycle reason.", 1000),
+			"created_at":                 map[string]any{"type": "string", "format": "date-time"},
 		},
 	)
 }
@@ -54,7 +56,7 @@ func traceEvidenceSchema() map[string]any {
 	for _, field := range []string{"evidence_id", "occurrence_id", "ingest_id", "owner_profile_id", "occurrence_owner_profile_id", "source_id", "source_revision_id", "source_key", "source_kind", "revision_token", "current_revision_id", "content_hash", "source_type", "authority", "source_ref"} {
 		properties[field] = schemaString("Evidence provenance field.", 1024)
 	}
-	properties["content"] = schemaString("Exact bounded Evidence content.", 8000)
+	properties["content"] = schemaString("Exact bounded Evidence content.", memoryEntryMaxLength)
 	properties["evidence_index"] = map[string]any{"type": "integer", "minimum": 0, "maximum": 99}
 	properties["content_truncated"] = map[string]any{"type": "boolean"}
 	properties["content_omitted"] = map[string]any{"type": "boolean"}
@@ -62,6 +64,9 @@ func traceEvidenceSchema() map[string]any {
 	properties["labels"] = stringArraySchema("Original Evidence label.", 20, 64)
 	properties["metadata"] = boundedMap("Original admitted metadata.")
 	properties["session"] = sessionProvenanceSchema()
+	properties["partition"] = closedObject([]string{"source_item_id", "submitted_index", "partition_index", "span_start", "span_end", "original_content_hash", "policy_version"}, map[string]any{
+		"source_item_id": uuidStringSchema("Immutable original submitted item."), "submitted_index": map[string]any{"type": "integer", "minimum": 0, "maximum": 19}, "partition_index": map[string]any{"type": "integer", "minimum": 0, "maximum": 99}, "span_start": map[string]any{"type": "integer", "minimum": 0, "maximum": memoryEntryMaxLength}, "span_end": map[string]any{"type": "integer", "minimum": 1, "maximum": memoryEntryMaxLength}, "original_content_hash": schemaString("Original exact item hash.", 128), "policy_version": schemaString("Server partition policy version.", 128),
+	})
 	return closedObject([]string{"evidence_id", "content_hash"}, properties)
 }
 func traceSourceRevisionSchema() map[string]any {

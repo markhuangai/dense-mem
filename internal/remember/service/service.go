@@ -10,12 +10,14 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
 	"github.com/markhuangai/dense-mem/internal/correlation"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/jsonstrict"
+	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
@@ -45,7 +47,7 @@ var (
 
 const (
 	maxRememberEvidenceItems = 20
-	maxRememberEvidenceRunes = 999
+	maxRememberEvidenceRunes = knowledge.MaxRememberItemRunes
 )
 
 // Service is the public application boundary for synchronous Remember.
@@ -139,6 +141,11 @@ type SubmissionStatusResult struct {
 }
 
 type SubmissionEvidenceStatus struct {
+	PartitionIndex        *int                   `json:"partition_index,omitempty"`
+	SourceItemID          string                 `json:"source_item_id,omitempty"`
+	SpanStart             *int                   `json:"span_start,omitempty"`
+	SpanEnd               *int                   `json:"span_end,omitempty"`
+	OccurrenceID          string                 `json:"occurrence_id,omitempty"`
 	Disposition           string                 `json:"disposition"`
 	EvidenceID            string                 `json:"evidence_id,omitempty"`
 	ContentHash           string                 `json:"content_hash,omitempty"`
@@ -169,6 +176,7 @@ func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberR
 	if err != nil {
 		return nil, err
 	}
+	ReportProgress(ctx, ProgressValidatingInput)
 	if len(req.Evidence) == 0 {
 		return nil, errors.New("remember: evidence is required")
 	}
@@ -176,7 +184,7 @@ func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberR
 		return nil, fmt.Errorf("remember: evidence must contain at most %d entries", maxRememberEvidenceItems)
 	}
 	for index, evidence := range req.Evidence {
-		if len([]rune(evidence.Content)) == 0 || len([]rune(evidence.Content)) > maxRememberEvidenceRunes {
+		if !utf8.ValidString(evidence.Content) || len([]rune(evidence.Content)) == 0 || len([]rune(evidence.Content)) > maxRememberEvidenceRunes {
 			return nil, fmt.Errorf("remember: evidence[%d].content must contain between 1 and %d characters", index, maxRememberEvidenceRunes)
 		}
 	}
@@ -432,6 +440,7 @@ func rememberResultFromStatus(status *SubmissionStatusResult, ingestID string) *
 	}
 	for _, evidence := range result.Evidence {
 		terminal.Evidence = append(terminal.Evidence, TerminalEvidenceResult{
+			PartitionIndex: evidence.PartitionIndex, SourceItemID: evidence.SourceItemID, SpanStart: evidence.SpanStart, SpanEnd: evidence.SpanEnd, OccurrenceID: evidence.OccurrenceID,
 			Disposition:           evidence.Disposition,
 			EvidenceID:            evidence.EvidenceID,
 			ContentHash:           evidence.ContentHash,

@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
@@ -65,6 +66,7 @@ func (r *Store) withRememberLock(ctx context.Context, teamID, ownerProfileID, id
 	if existing, ok := r.rememberIdempotencyLocks[localKey]; ok {
 		ready := existing.ready
 		r.rememberIdempotencyLockMu.Unlock()
+		requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "idempotency_wait"})
 		select {
 		case <-ready:
 			r.rememberIdempotencyLockMu.Lock()
@@ -193,6 +195,9 @@ func acquireRememberSessionAdvisoryLock(ctx context.Context, conn *sql.Conn, key
 		}
 		if acquired {
 			return true, waited, nil
+		}
+		if !waited {
+			requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "idempotency_wait"})
 		}
 		waited = true
 		timer := time.NewTimer(rememberIdempotencyLockPollInterval)

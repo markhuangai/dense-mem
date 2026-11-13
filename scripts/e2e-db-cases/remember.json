@@ -3,6 +3,13 @@
   "capability": "remember",
   "cases": [
     {
+      "id": "remember/TestRememberPartitionPostgres",
+      "package": "./cmd/internal/serverapp",
+      "run": "^TestRememberPartitionPostgres$",
+      "phase": "precheck",
+      "source": "cmd/internal/serverapp/remember_partition_integration_test.go"
+    },
+    {
       "id": "remember/TestRememberProgressPostgres",
       "package": "./cmd/internal/serverapp",
       "run": "^TestRememberProgressPostgres$",

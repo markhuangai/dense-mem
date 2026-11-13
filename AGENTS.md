@@ -73,9 +73,12 @@
   direct memberships without descendant expansion. Stored memory and search
   context never become submitted Evidence.
 - Remember accepts Evidence and provenance under `dense-mem.v2.8.0`, rejecting
-  retired graph fields before provider work. It durably stages exact input and
-  intent, then completes assessment, required embeddings, and atomic commit
-  before returning success. Provider calls stay outside that transaction.
+  retired graph fields before provider work. Every new item is partitioned by semantic meaning using server-enumerated
+  boundary IDs, preserving up to 16,384 code points exactly. Original submitted
+  items and ordered occurrence spans are immutable provenance. Remember completes
+  partitioning, assessment, required embeddings, and atomic publication before
+  returning success; it does not stage intake before providers. Session intake
+  retains its durable staging contract. Provider calls stay outside that transaction.
 - Validate each complete assessment response. Invalid, missing, duplicate,
   unknown, or out-of-allowlist results trigger bounded complete regeneration
   and zero partial semantic commit; do not coerce or splice responses.
@@ -111,6 +114,11 @@
 - Use bound SQL parameters.
 - Strictly bind and validate HTTP/MCP inputs. MCP `tools/list` and `tools/call`
   use one registry and the same version, feature, scope, and visibility checks.
+- Progress-capable MCP clients receive every meaningful processing stage and
+  blocking wait, including provider capacity and retries. Delivery is bounded,
+  isolated by request/token, cancellable, and nonterminal; only the final result
+  acknowledges success. Remember implements this in #762; #764 covers the
+  remaining tools.
 - MCP is the supported external memory integration contract. Browser handlers
   are first-party interfaces, and the separate control listener remains private
   or behind dedicated administrative ingress.

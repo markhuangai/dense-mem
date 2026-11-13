@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 )
 
 // Dependencies is the wiring bundle used to construct the active tool catalog.
@@ -46,8 +47,8 @@ func BuildActive(deps Dependencies) (Registry, error) {
 // --- schema + marshaling helpers ------------------------------------------
 
 const (
-	memoryEntryMaxLength = 999
-	memoryEntryGuidance  = "Split large scenarios into multiple semantic entries under 1000 characters. Store one decision, fact, correction, preference, project milestone, or other claim-worthy unit per entry; attach typed claims to the smallest supporting entry and use multiple supported_by IDs only when one claim needs cross-entry evidence."
+	memoryEntryMaxLength = knowledge.MaxRememberItemRunes
+	memoryEntryGuidance  = "Submit exact text up to 16,384 Unicode code points per item. The server partitions independent meanings into exact Evidence slices, preserving dependent sentences, whitespace and source offsets. The terminal receipt maps each submitted item to all stored slices."
 )
 
 func memoryEntryString(description string) map[string]any {

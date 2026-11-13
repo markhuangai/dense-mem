@@ -116,6 +116,35 @@ def test_evidence_only_sync_real_interface_order_metadata_callbacks_and_read_onl
     assert not hasattr(retriever, "remember") and not hasattr(retriever, "add_documents")
 
 
+@pytest.mark.parametrize("truncated", [None, False, True])
+def test_remember_partition_long_unicode_and_optional_context_flag(wire_server, recall, truncated):
+    endpoint, state = wire_server
+    content = " \n" + ("界😀é " * 4096)[:16380] + "\n "
+    assert len(content) == 16384
+    evidence = {**recall["results"][0], "context": content}
+    if truncated is not None:
+        evidence["context_truncated"] = truncated
+    state["result"] = {**recall, "results": [evidence]}
+    document = DenseMemRetriever(endpoint, token="key").invoke("tail retrieval")[0]
+    assert document.page_content == content
+    if truncated is None:
+        assert "context_truncated" not in document.metadata["densemem"]
+    else:
+        assert document.metadata["densemem"]["context_truncated"] is truncated
+
+
+@pytest.mark.parametrize("change", ["invalid flag", "oversized context"])
+def test_remember_partition_rejects_malformed_context_metadata(wire_server, recall, change):
+    endpoint, state = wire_server
+    if change == "invalid flag":
+        recall["results"][0]["context_truncated"] = 1
+    else:
+        recall["results"][0]["context"] = "界" * 16385
+    state["result"] = recall
+    with pytest.raises(DenseMemProtocolError):
+        DenseMemRetriever(endpoint, token="key").invoke("q")
+
+
 async def test_evidence_only_native_async_auth_rotation_and_options_snapshot(wire_server, recall):
     endpoint, state = wire_server
     state["result"] = recall

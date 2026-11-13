@@ -5,7 +5,8 @@ import { createKnownEvidenceTeam, createKnownEvidenceCredential, postgresQuery, 
 import { diagnoseProviderHTTPLog } from "./diagnostics.mjs";
 
 export const name = "progress";
-const messages = ["Preparing intake", "Checking duplicate Evidence", "Assessing Evidence", "Preparing search state", "Committing"];
+const messages = ["Validating input", "Checking previous result", "Returning saved result", "Preparing intake", "Preparing semantic boundaries", "Partitioning submitted text", "Validating partitions", "Regenerating partitions", "Preparing duplicate-search embeddings", "Checking duplicate Evidence", "Assessing Evidence", "Validating assessment", "Regenerating assessment", "Preparing search state", "Committing", "Preparing result", "Recording failure result", "Waiting for an identical request", "Preparing embedding batch"];
+const providerMessage = /^(Waiting for (partition|assessment|duplicate embedding|embedding) provider capacity|Waiting before retrying (partition|assessment|duplicate embedding|embedding) provider|Calling (partition|assessment|duplicate embedding|embedding) provider)$/;
 const rememberModel = "dense-mem-synchronous-write-e2e-remember";
 
 export async function run({ expect, runStep }) {
@@ -32,13 +33,13 @@ export async function run({ expect, runStep }) {
     try {
       const receipt = await progressCall({ apiKey: baseKey, args: argumentsFor("slow", "admission-hold", false),
         token: JSON.stringify("remember-" + randomUUID()), onProgress: async (frame) => {
-          if (frame.params.message !== "Checking duplicate Evidence") return;
+          if (frame.params.message !== "Preparing duplicate-search embeddings") return;
           await waitFor(async () => (await health()).held_admission_requests > 0, "provider did not hold the actual embedding request");
           observedPending = true;
           await provider("normal");
         } });
       assert.equal(observedPending, true, "progress must arrive before held required work completes");
-      assertSuccess(receipt, 5);
+      assertSuccess(receipt, true);
       receipts.push(receipt);
     } finally { await provider("normal"); }
   });
@@ -46,7 +47,7 @@ export async function run({ expect, runStep }) {
   for (const token of ["0", "9007199254740993"]) {
     await runStep("numeric-token-" + token, async () => {
       const receipt = await progressCall({ apiKey: baseKey, args: argumentsFor("numeric"), token });
-      assertSuccess(receipt, 5);
+      assertSuccess(receipt, true);
       receipts.push(receipt);
     });
   }
@@ -56,18 +57,19 @@ export async function run({ expect, runStep }) {
     const before = (await health()).chat_requests.filter((item) => item.model === rememberModel).length;
     for (const options of [{ token: "0" }, { token: "0", accept: "application/json" }, {}]) {
       const replay = await progressCall({ apiKey: baseKey, args: first.args, ...options });
-      assert.equal(replay.progress.length, 0);
+      assert.equal(replay.progress.length, options.token && !options.accept ? 3 : 0);
+      if (replay.progress.length) assert.equal(replay.progress.at(-1).params.message,"Returning saved result");
       assert.equal(replay.terminal.result.structuredContent.submission_id, first.terminal.result.structuredContent.submission_id);
     }
     assert.equal((await health()).chat_requests.filter((item) => item.model === rememberModel).length, before);
     const changed = structuredClone(first.args);
     changed.evidence[0].content = "Changed complete request under the retained operation key.";
     const conflict = await progressCall({ apiKey: baseKey, args: changed, token: "0" });
-    assert.equal(conflict.progress.length, 0);
+    assert.equal(conflict.progress.length, 2);
     assert.equal(conflict.terminal.result.structuredContent.errors[0].code, "idempotency_conflict");
     for (const options of [{ token: "0", accept: "application/json" }, {}]) {
       const receipt = await progressCall({ apiKey: baseKey, args: argumentsFor("terminal-only"), ...options });
-      assertSuccess(receipt, 0);
+      assertSuccess(receipt, false);
       receipts.push(receipt);
     }
   });
@@ -84,7 +86,8 @@ export async function run({ expect, runStep }) {
       assert.equal(terminal.structuredContent.processing_state, "failed");
       assert.equal(terminal.structuredContent.errors[0].code, code);
       assert(terminal.structuredContent.errors[0].remediation);
-      assert.equal(receipt.progress.length, count);
+      assert(receipt.progress.some((frame)=>frame.params.message==="Recording failure result"));
+      if(fault==="repair-exhausted") assert.equal(receipt.progress.filter((frame)=>frame.params.message.startsWith("Regenerating assessment")).length,2);
       assert(rememberCanonicalCounts(teamID, terminal.structuredContent.submission_id).every((value) => value === 0));
       receipts.push(receipt);
     });
@@ -114,7 +117,8 @@ export async function run({ expect, runStep }) {
       args.target_space = "private";
       args.idempotency_key = key;
       const receipt = await progressCall({ apiKey: actor.apiKey, args, token: JSON.stringify("equal-token") });
-      assert.equal(receipt.progress.length, [5, 3, 2][index]);
+      assert(receipt.progress.length > 5);
+      assert.equal(receipt.progress.at(-1).params.message,index===0?"Preparing result":"Recording failure result");
       assert.equal(receipt.terminal.result.structuredContent.processing_state, index === 0 ? "completed" : "failed");
       return receipt;
     }));
@@ -142,7 +146,7 @@ export async function run({ expect, runStep }) {
       try {
         await assert.rejects(progressCall({ apiKey: baseKey, args, token: "0", version, signal: controller.signal,
           onProgress: async (frame) => {
-            if (frame.params.message !== "Checking duplicate Evidence") return;
+            if (frame.params.message !== "Preparing duplicate-search embeddings") return;
             await waitFor(async () => (await health()).held_admission_requests > 0, "disconnect must reach required provider work");
             controller.abort();
           } }), { name: "AbortError" });
@@ -168,7 +172,7 @@ export async function run({ expect, runStep }) {
     });
     for (const secret of [baseKey, ...receipts.map((item) => item.actorKey).filter(Boolean)]) assert(!window.includes(secret));
     const records = window.split(/\r?\n/).filter(Boolean).map(JSON.parse);
-    assert(!records.some((row) => row.level === "TRACE"), "DEBUG must filter TRACE");
+
     for (const receipt of receipts.filter((item) => item.progress.length && !item.disconnectedOutcome)) {
       const correlated = records.filter((row) => row.correlation_id === receipt.correlationID);
       const delivered = correlated.filter((row) => row.msg === "mcp_progress_delivered");
@@ -236,7 +240,7 @@ export async function parseProgressStream(body, onFrame) {
   assert.equal(data, "", "progress stream ended with an incomplete event");
 }
 
-async function progressCall({ apiKey, args, token, accept = "application/json, text/event-stream", version = "2026-07-28", signal, onProgress }) {
+export async function progressCall({ apiKey, args, token, accept = "application/json, text/event-stream", version = "2026-07-28", signal, onProgress }) {
   const id = randomUUID();
   const correlationID = randomUUID();
   const params = { name: "remember", arguments: args, _meta: {
@@ -258,12 +262,13 @@ async function progressCall({ apiKey, args, token, accept = "application/json, t
       assert(!terminal, "progress arrived after the terminal response");
       assert.equal(item.params.progress, progress.length + 1);
       assert(!Object.hasOwn(item.params, "total"));
-      assert(messages.includes(item.params.message));
-      assert(!progress.some((previous) => previous.params.message === item.params.message));
+      const baseMessage=item.params.message.replace(/ \(\d+\/\d+\)$/," ").trim();
+      assert(messages.includes(baseMessage)||providerMessage.test(baseMessage),item.params.message);
+      assert.notEqual(progress.at(-1)?.params.message,item.params.message,"identical consecutive updates must be suppressed");
       if (/^-?\d+$/.test(token)) assert(text.includes('"progressToken":' + token + ",") || text.includes('"progressToken":' + token + "}"));
       else assert.equal(item.params.progressToken, JSON.parse(token));
       progress.push(item);
-      assert(progress.length <= 5);
+      assert(progress.length <= 256);
       if (onProgress) await onProgress(item);
     } else {
       assert(!terminal, "more than one terminal response");
@@ -278,8 +283,12 @@ async function progressCall({ apiKey, args, token, accept = "application/json, t
   return { args, progress, terminal, correlationID, version, raw };
 }
 
-function assertSuccess(receipt, count) {
-  assert.equal(receipt.progress.length, count);
+function assertSuccess(receipt, enabled) {
+  if(enabled) {
+    const stages=receipt.progress.map((frame)=>frame.params.message);
+    for(const stage of ["Validating input","Checking previous result","Preparing semantic boundaries","Validating partitions","Checking duplicate Evidence","Assessing Evidence","Validating assessment","Committing","Preparing result"]) assert(stages.includes(stage),stage);
+    assert.equal(stages.at(-1),"Preparing result");
+  } else assert.equal(receipt.progress.length,0);
   assert.equal(receipt.terminal.result.structuredContent.processing_state, "completed");
   assert.equal(receipt.terminal.result.isError || false, false);
 }

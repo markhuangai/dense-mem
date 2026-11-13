@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/google/uuid"
+	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	tracecontract "github.com/markhuangai/dense-mem/internal/trace/contract"
 	"log/slog"
@@ -16,7 +17,7 @@ import (
 const (
 	maxExportEvidence             = 500
 	maxTraceEvents                = 100
-	maxFragmentContentRunes       = 8000
+	maxFragmentContentRunes       = knowledge.MaxRememberItemRunes
 	maxMemoryPackNameBytes        = 256
 	maxMemoryPackDescriptionBytes = 1024
 	maxMemoryPackArtifactBytes    = 4 * 1024 * 1024

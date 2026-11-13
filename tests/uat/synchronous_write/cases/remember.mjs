@@ -52,7 +52,7 @@ async function runEvidenceContractCase({ rawRPC, expect }) {
   for (const [label, mutate, path] of [
     ["missing", (args) => { delete args.evidence; }, "/evidence"],
     ["empty", (args) => { args.evidence = []; }, "/evidence"],
-    ["oversized", (args) => { args.evidence[0].content = "x".repeat(1000); }, "/evidence/0/content"],
+    ["oversized", (args) => { args.evidence[0].content = "x".repeat(16385); }, "/evidence/0/content"],
     ...["relationships", "entities", "predicates", "proposal"].map((field) => [field, (args) => { args[field] = []; }, `/${field}`]),
   ]) {
     const args = singleItemArguments(`invalid-${label}`, "");

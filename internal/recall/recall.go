@@ -339,6 +339,7 @@ func recallResultFromRepository(
 		results = make([]RecallResultItem, 0, len(recalled.Results))
 		for _, item := range recalled.Results {
 			results = append(results, RecallResultItem{
+				ContextTruncated:      item.ContextTruncated,
 				EvidenceID:            item.EvidenceID,
 				EquivalentEvidenceIDs: append([]string{}, item.EquivalentEvidenceIDs...),
 				EquivalentsTruncated:  item.EquivalentsTruncated,

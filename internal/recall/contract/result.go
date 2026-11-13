@@ -92,6 +92,7 @@ type RecallEvidenceResult struct {
 }
 
 type RecallEvidenceHit struct {
+	ContextTruncated      bool
 	EquivalentEvidenceIDs []string
 	EquivalentsTruncated  bool
 	TeamID                string
@@ -129,6 +130,7 @@ type RecallSuggestedAction struct {
 }
 
 type RecallResultItem struct {
+	ContextTruncated      bool       `json:"context_truncated,omitempty"`
 	EquivalentEvidenceIDs []string   `json:"equivalent_evidence_ids"`
 	EquivalentsTruncated  bool       `json:"equivalents_truncated"`
 	EvidenceID            string     `json:"evidence_id"`

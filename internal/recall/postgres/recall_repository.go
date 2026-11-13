@@ -8,12 +8,14 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	"github.com/markhuangai/dense-mem/internal/observability"
 
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
@@ -427,6 +429,7 @@ func hydrateRecallEvidence(ctx context.Context, tx *gorm.DB, input RecallEvidenc
 			return nil, err
 		}
 		hit.TeamID = input.TeamID
+		hit.ContextTruncated = utf8.RuneCountInString(hit.Context) > knowledge.MaxRememberItemRunes
 		hit.Context = truncateRecallContext(hit.Context)
 		out[hit.EvidenceID] = hit
 	}
@@ -505,10 +508,8 @@ func recallSpacePredicate(column, teamID, spaceID, spaceKind string) string {
 }
 
 func truncateRecallContext(value string) string {
-	value = strings.TrimSpace(value)
-	const max = 2000
-	if len(value) <= max {
+	if utf8.RuneCountInString(value) <= knowledge.MaxRememberItemRunes {
 		return value
 	}
-	return strings.TrimSpace(value[:max])
+	return string([]rune(value)[:knowledge.MaxRememberItemRunes])
 }

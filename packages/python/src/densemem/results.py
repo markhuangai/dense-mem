@@ -16,6 +16,11 @@ class PublicError(TypedDict):
 
 
 class EvidenceResult(TypedDict):
+    partition_index: NotRequired[int]
+    source_item_id: NotRequired[str]
+    occurrence_id: NotRequired[str]
+    span_start: NotRequired[int]
+    span_end: NotRequired[int]
     evidence_index: int
     disposition: Literal["stored", "not_stored"]
     superseded_evidence_ids: list[str]
@@ -61,6 +66,7 @@ class SessionResult(TerminalResult):
 
 
 class RecallEvidence(TypedDict):
+    context_truncated: NotRequired[bool]
     evidence_id: str
     context: str
     space_kind: Literal["private", "team_shared"]

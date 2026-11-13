@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 )
 
@@ -194,11 +195,55 @@ func (c *HTTPClient) importTerminalRememberResult(item CorpusItem, out map[strin
 		}
 		return mapping, fmt.Errorf("import %s: remember processing_state %s", item.SourceDocID, processing)
 	}
-	fragmentID := evidenceIDFromSubmission(out)
-	if fragmentID == "" {
+	entries, _ := out["evidence"].([]any)
+	if len(entries) == 0 {
 		return mapping, fmt.Errorf("import %s: remember response missing evidence id", item.SourceDocID)
 	}
-	addSourceMapping(&mapping, Ref{Type: "fragment", ID: fragmentID, SourceDocID: item.SourceDocID}, true)
+	var partitions []ImportedPartition
+	pending := newKnowledgeMapping()
+	start := 0
+	occurrences := map[string]bool{}
+	runes := []rune(item.Content)
+	for i, raw := range entries {
+		entry, ok := raw.(map[string]any)
+		if !ok {
+			return mapping, fmt.Errorf("import %s: invalid Evidence entry", item.SourceDocID)
+		}
+		id := firstNonEmpty(stringValue(entry["evidence_id"]), stringValue(entry["id"]), stringValue(entry["fragment_id"]))
+		if id == "" || (stringValue(entry["disposition"]) != "" && stringValue(entry["disposition"]) != "stored") {
+			return mapping, fmt.Errorf("import %s: remember response missing stored evidence id", item.SourceDocID)
+		}
+		if _, partitioned := entry["partition_index"]; partitioned {
+			p := ImportedPartition{EvidenceID: id, OccurrenceID: stringValue(entry["occurrence_id"]), SourceItemID: stringValue(entry["source_item_id"]), PartitionIndex: intValue(entry["partition_index"]), SpanStart: intValue(entry["span_start"]), SpanEnd: intValue(entry["span_end"]), ContentHash: stringValue(entry["content_hash"])}
+			if intValue(entry["evidence_index"]) != 0 || p.PartitionIndex != i || p.SpanStart != start || p.SpanEnd <= start || p.SpanEnd > len(runes) || p.SourceItemID == "" || p.OccurrenceID == "" || p.ContentHash != knowledge.EvidenceContentHash(string(runes[start:p.SpanEnd])) {
+				return mapping, fmt.Errorf("import %s: incomplete or invalid partition mapping", item.SourceDocID)
+			}
+			if len(partitions) > 0 && p.SourceItemID != partitions[0].SourceItemID || occurrences[p.OccurrenceID] {
+				return mapping, fmt.Errorf("import %s: inconsistent partition identity", item.SourceDocID)
+			}
+			for _, field := range []string{"evidence_index", "partition_index", "span_start", "span_end"} {
+				if _, present := entry[field]; !present {
+					return mapping, fmt.Errorf("import %s: missing partition %s", item.SourceDocID, field)
+				}
+			}
+			occurrences[p.OccurrenceID] = true
+			partitions = append(partitions, p)
+			start = p.SpanEnd
+		} else if len(partitions) > 0 {
+			return mapping, fmt.Errorf("import %s: mixed partition mapping", item.SourceDocID)
+		}
+		addSourceMapping(&pending, Ref{Type: "fragment", ID: id, SourceDocID: item.SourceDocID}, i == 0)
+	}
+	if len(partitions) > 0 {
+		if len(partitions) != len(entries) || start != len(runes) {
+			return mapping, fmt.Errorf("import %s: incomplete partition coverage", item.SourceDocID)
+		}
+		if mapping.Partitions == nil {
+			mapping.Partitions = map[string][]ImportedPartition{}
+		}
+		mapping.Partitions[item.SourceDocID] = partitions
+	}
+	mergeKnowledgeMapping(&mapping, pending)
 	return mapping, nil
 }
 

@@ -72,7 +72,7 @@ func TestEvidenceOnlyUnitMemoryPackExportsExactEvidenceProvenanceAndCanonicalHas
 	require.Equal(t, []string{id + ":decisions_max_events"}, result.Omissions)
 	require.Equal(t, []string{"decisions_max_events"}, wire.Evidence[0].Omissions)
 	require.Equal(t, 100, reader.inputs[0].MaxEvents)
-	require.Equal(t, 8000, reader.inputs[0].MaxFragmentContentRunes)
+	require.Equal(t, 16384, reader.inputs[0].MaxFragmentContentRunes)
 	require.True(t, *reader.inputs[0].IncludeEvidenceContent)
 }
 

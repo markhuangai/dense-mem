@@ -132,7 +132,10 @@ func validateCreateIngestInput(input CreateIngestInput) error {
 					return fmt.Errorf("evidence[%d].supersedes_evidence_ids contains invalid UUID %q: %w", i, evidenceID, err)
 				}
 				if previous, exists := supersessionTargets[evidenceID]; exists {
-					return fmt.Errorf("evidence[%d].supersedes_evidence_ids duplicates evidence target from evidence[%d]", i, previous)
+					previousPartition := input.Evidence[previous].Partition
+					if previous == i || previousPartition == nil || item.Partition == nil || previousPartition.SourceItemID != item.Partition.SourceItemID {
+						return fmt.Errorf("evidence[%d].supersedes_evidence_ids duplicates evidence target from evidence[%d]", i, previous)
+					}
 				}
 				supersessionTargets[evidenceID] = i
 			}

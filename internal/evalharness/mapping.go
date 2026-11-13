@@ -49,6 +49,12 @@ func hasMappedRef(refs []Ref, want Ref) bool {
 }
 
 func mergeKnowledgeMapping(dst *KnowledgeMapping, src KnowledgeMapping) {
+	for id, parts := range src.Partitions {
+		if dst.Partitions == nil {
+			dst.Partitions = map[string][]ImportedPartition{}
+		}
+		dst.Partitions[id] = append([]ImportedPartition(nil), parts...)
+	}
 	for _, ref := range src.BySourceDocID {
 		addSourceMapping(dst, ref, true)
 	}
@@ -72,6 +78,12 @@ func mergeFilteredKnowledgeMapping(dst *KnowledgeMapping, src KnowledgeMapping, 
 	if len(keepSourceDocIDs) == 0 {
 		mergeKnowledgeMapping(dst, src)
 		return
+	}
+	for id, parts := range src.Partitions {
+		if dst.Partitions == nil {
+			dst.Partitions = map[string][]ImportedPartition{}
+		}
+		dst.Partitions[id] = append([]ImportedPartition(nil), parts...)
 	}
 	for sourceDocID, ref := range src.BySourceDocID {
 		if _, ok := keepSourceDocIDs[sourceDocID]; ok {
@@ -115,6 +127,12 @@ func resolveSourceMapping(mapping KnowledgeMapping, sourceDocID, refType string)
 			case 1:
 				resolved := refs[0]
 				if strings.TrimSpace(resolved.ID) != "" {
+					return resolved, true
+				}
+			}
+			if len(mapping.Partitions[sourceDocID]) > 0 && (refType == "fragment" || refType == "evidence") {
+				resolved, ok := mapping.BySourceDocID[sourceDocID]
+				if ok && resolved.ID != "" {
 					return resolved, true
 				}
 			}

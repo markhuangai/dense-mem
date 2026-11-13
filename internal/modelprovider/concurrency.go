@@ -1,6 +1,9 @@
 package modelprovider
 
-import "context"
+import (
+	"context"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
+)
 
 // ConcurrencyGate is the process-wide limit for outbound model requests.
 // Providers share one gate when several capability adapters use one model
@@ -23,6 +26,13 @@ func AcquireConcurrency(ctx context.Context, gate ConcurrencyGate) error {
 	}
 	select {
 	case gate <- struct{}{}:
+		return nil
+	default:
+	}
+	requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "provider_wait"})
+	select {
+	case gate <- struct{}{}:
+		requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "provider_request"})
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()

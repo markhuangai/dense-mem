@@ -26,7 +26,7 @@ type postgresProgressFrame struct {
 	} `json:"result"`
 }
 
-func readPostgresProgressFrames(body io.Reader) ([]postgresProgressFrame, error) {
+func readPostgresProgressFrames(body io.Reader, observe ...func(postgresProgressFrame)) ([]postgresProgressFrame, error) {
 	var frames []postgresProgressFrame
 	var data strings.Builder
 	scanner := bufio.NewScanner(body)
@@ -36,6 +36,9 @@ func readPostgresProgressFrames(body io.Reader) ([]postgresProgressFrame, error)
 			var frame postgresProgressFrame
 			if err := json.Unmarshal([]byte(data.String()), &frame); err != nil {
 				return frames, err
+			}
+			for _, observer := range observe {
+				observer(frame)
 			}
 			frames = append(frames, frame)
 			data.Reset()

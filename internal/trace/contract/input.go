@@ -1,12 +1,15 @@
 package contract
 
-import "strings"
+import (
+	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
+	"strings"
+)
 
 const (
 	defaultTraceEvents        = 100
 	maxTraceEvents            = 500
 	defaultTraceFragmentRunes = 2000
-	maxTraceFragmentRunes     = 8000
+	maxTraceFragmentRunes     = knowledge.MaxRememberItemRunes
 )
 
 type Input struct {

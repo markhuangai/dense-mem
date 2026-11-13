@@ -46,6 +46,8 @@ const (
 // tables owned by a memory space. Prepare compares this list to the live
 // catalog before any erasure worker starts.
 var privateMemoryErasureManifest = []string{
+	"remember_submitted_items",
+	"remember_item_partitions",
 	"session_submissions",
 	"session_events",
 	"session_extraction_checkpoints",

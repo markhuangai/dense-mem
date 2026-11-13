@@ -9,13 +9,13 @@ import (
 )
 
 func TestPrepareSemanticAssessmentEvidenceUsesUnicodeCodePointBoundaries(t *testing.T) {
-	content := "A😀界e\u0301"
+	content := "A 😀界 e\u0301"
 	prepared := PrepareSemanticAssessmentEvidence(SemanticReviewEvidence{EvidenceID: "evidence:0", Content: content})
 	runes := []rune(content)
 
-	require.Len(t, prepared.BoundaryRefs, len(runes)+1)
+	require.Less(t, len(prepared.BoundaryRefs), len(runes)+1)
 	seen := map[string]struct{}{}
-	for offset := 0; offset <= len(runes); offset++ {
+	for _, offset := range NaturalBoundaryOffsets(content, true) {
 		ref, ok := SemanticAssessmentBoundaryRef(prepared, offset)
 		require.True(t, ok, "missing boundary %d", offset)
 		_, duplicate := seen[ref]
@@ -26,8 +26,8 @@ func TestPrepareSemanticAssessmentEvidenceUsesUnicodeCodePointBoundaries(t *test
 		assert.Equal(t, offset, resolved)
 	}
 
-	startRef, _ := SemanticAssessmentBoundaryRef(prepared, 1)
-	endRef, _ := SemanticAssessmentBoundaryRef(prepared, 3)
+	startRef, _ := SemanticAssessmentBoundaryRef(prepared, 2)
+	endRef, _ := SemanticAssessmentBoundaryRef(prepared, 4)
 	rangeValue := SemanticAssessmentGroundedRange{EvidenceID: prepared.EvidenceID, StartRef: startRef, EndRef: endRef}
 	require.NoError(t, ResolveSemanticAssessmentRange(map[string]SemanticReviewEvidence{prepared.EvidenceID: prepared}, &rangeValue))
 	quote, err := SemanticEvidenceSpan(prepared.Content, rangeValue.Start, rangeValue.End)
@@ -36,11 +36,11 @@ func TestPrepareSemanticAssessmentEvidenceUsesUnicodeCodePointBoundaries(t *test
 }
 
 func TestSemanticAssessmentRangeFailuresHaveAuthoritativeReasons(t *testing.T) {
-	evidence := PrepareSemanticAssessmentEvidence(SemanticReviewEvidence{EvidenceID: "evidence:0", Content: "A😀界e\u0301 literal ⟦bdeadbeef_0⟧"})
+	evidence := PrepareSemanticAssessmentEvidence(SemanticReviewEvidence{EvidenceID: "evidence:0", Content: "A 😀界 e\u0301 literal ⟦bdeadbeef_0⟧"})
 	other := PrepareSemanticAssessmentEvidence(SemanticReviewEvidence{EvidenceID: "evidence:1", Content: "Another document"})
-	start, _ := SemanticAssessmentBoundaryRef(evidence, 1)
-	end, _ := SemanticAssessmentBoundaryRef(evidence, 3)
-	foreign, _ := SemanticAssessmentBoundaryRef(other, 1)
+	start, _ := SemanticAssessmentBoundaryRef(evidence, 2)
+	end, _ := SemanticAssessmentBoundaryRef(evidence, 4)
+	foreign, _ := SemanticAssessmentBoundaryRef(other, 0)
 	for _, test := range []struct {
 		name, evidenceID, start, end, code, message string
 	}{

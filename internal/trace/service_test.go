@@ -103,7 +103,7 @@ func TestEvidenceOnlyUnitTracePreservesLimitsAndOmissions(t *testing.T) {
 	require.NoError(t, err)
 	require.Same(t, store.result, result.Semantic)
 	require.Equal(t, 500, store.input.MaxEvents)
-	require.Equal(t, 8000, store.input.MaxFragmentContentRunes)
+	require.Equal(t, 16384, store.input.MaxFragmentContentRunes)
 	require.False(t, *store.input.IncludeEvidenceContent)
 	require.False(t, *store.input.IncludeTransitions)
 	require.Equal(t, []string{"occurrences_max_events"}, result.Semantic.Omissions)

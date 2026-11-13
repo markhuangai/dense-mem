@@ -3,6 +3,12 @@
   "capability": "remember-application",
   "source_ownership": [
     {
+      "path": "cmd/internal/serverapp/remember_partition_integration_test.go"
+    },
+    {
+      "path": "cmd/internal/serverapp/partition_provider_integration_test.go"
+    },
+    {
       "path": "cmd/internal/serverapp/remember_progress_integration_test.go"
     },
     {

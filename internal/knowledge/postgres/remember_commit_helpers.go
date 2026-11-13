@@ -13,6 +13,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 )
 
 func normalizeSynchronousRememberCommitInput(input SynchronousRememberCommitInput) SynchronousRememberCommitInput {
@@ -65,6 +66,9 @@ func validateSynchronousRememberCommitInput(input SynchronousRememberCommitInput
 }
 
 func validateSynchronousRememberCommitInputWithSecurity(input SynchronousRememberCommitInput, allowUnsafe bool) error {
+	if err := knowledge.ValidateRememberPartitions(input.SubmittedItems, input.Evidence); err != nil {
+		return err
+	}
 	for label, value := range map[string]string{"team_id": input.TeamID, "owner_profile_id": input.OwnerProfileID, "ingest_id": input.IngestID} {
 		if _, err := uuid.Parse(value); err != nil {
 			return fmt.Errorf("%s is required: %w", label, err)
