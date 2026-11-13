@@ -31,7 +31,7 @@ func TestFeatureStorageUnitMigrationPoolRestoresAfterOverlappingStarters(t *test
 	db.SetMaxOpenConns(1)
 	first := reserveMigrationPool(db)
 	second := reserveMigrationPool(db)
-	require.Equal(t, 2, db.Stats().MaxOpenConnections)
+	require.Equal(t, 3, db.Stats().MaxOpenConnections)
 	first()
 	require.Equal(t, 2, db.Stats().MaxOpenConnections)
 	second()

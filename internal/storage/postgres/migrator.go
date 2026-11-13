@@ -342,30 +342,15 @@ func (m *Migrator) RunUp(ctx context.Context) error {
 }
 
 func (m *Migrator) RunUpThroughEvidenceOnly(ctx context.Context) error {
-	provider, err := newRuntimeMigrationProvider(m.dir, m.db, true)
-	if err != nil {
-		return err
-	}
-	_, err = provider.UpTo(ctx, evidenceOnlyMigrationVersion)
-	return err
+	return m.runUpTo(ctx, evidenceOnlyMigrationVersion)
 }
 
 func (m *Migrator) PrepareFeatureStorageMigration(ctx context.Context) error {
-	provider, err := newRuntimeMigrationProvider(m.dir, m.db, true)
-	if err != nil {
-		return err
-	}
-	_, err = provider.UpTo(ctx, FeatureStoragePrepareVersion)
-	return err
+	return m.runUpTo(ctx, FeatureStoragePrepareVersion)
 }
 
 func (m *Migrator) PreparePrivateMemoryMigration(ctx context.Context) error {
-	provider, err := newRuntimeMigrationProvider(m.dir, m.db, true)
-	if err != nil {
-		return err
-	}
-	_, err = provider.UpTo(ctx, 20261014010001)
-	return err
+	return m.runUpTo(ctx, 20261014010001)
 }
 
 func (m *Migrator) IncludesEvidenceOnlyMigration() (bool, error) {
@@ -378,11 +363,17 @@ func (m *Migrator) IncludesEvidenceOnlyMigration() (bool, error) {
 }
 
 func (m *Migrator) PrepareEvidenceOnlyMigration(ctx context.Context) error {
+	return m.runUpTo(ctx, 20261108010000)
+}
+
+func (m *Migrator) runUpTo(ctx context.Context, version int64) error {
+	releasePool := reserveMigrationPool(m.db)
+	defer releasePool()
 	provider, err := newRuntimeMigrationProvider(m.dir, m.db, true)
 	if err != nil {
 		return err
 	}
-	_, err = provider.UpTo(ctx, 20261108010000)
+	_, err = provider.UpTo(ctx, version)
 	return err
 }
 
@@ -392,6 +383,8 @@ func (m *Migrator) RunMigrationControlRetirement(ctx context.Context) error {
 	if err := m.RunUp(ctx); err != nil {
 		return fmt.Errorf("failed to run runtime migrations before migration-control retirement: %w", err)
 	}
+	releasePool := reserveMigrationPool(m.db)
+	defer releasePool()
 	provider, err := newMigrationProvider(m.dir, m.db, true)
 	if err != nil {
 		return err

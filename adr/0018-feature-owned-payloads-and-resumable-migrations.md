@@ -33,6 +33,8 @@ the owned data that must change without promising zero data work.
 
 Deployed migrations are immutable. Older databases finish the existing
 Evidence-only migration before preparation, data conversion, and cutover.
+ADR 0017's separately approved reset governs a still-pending Evidence-only
+cutover; this change preserves the organization present after that boundary.
 This executor establishes the contract for this and subsequent migrations;
 it does not retrofit resumability into historical migrations.
 
@@ -45,6 +47,9 @@ existing overall migration timeout still applies. Checkpoints commit with the
 data, carrying executor/inventory/schema identities, phase, keyset cursor,
 counts, fingerprints, and completion state. Repeated keys must contain the
 same JSON payload. Source fingerprint scans and verification use bounded units.
+Goose needs a connection for each waiting locker and a separate executor slot;
+finite pools temporarily retain that capacity during migration and restore the
+configured limit after the last overlapping starter exits.
 
 Normal application writers remain fenced until cutover and must set the
 transaction-local storage layout thereafter. Migration transactions are the

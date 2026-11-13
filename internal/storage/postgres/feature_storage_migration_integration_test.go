@@ -55,6 +55,79 @@ func TestFeatureStoragePostgresSingleConnectionPool(t *testing.T) {
 	require.NoError(t, ValidateStartupMigrationState(ctx, db, MigrationsDir()))
 }
 
+func TestFeatureStoragePostgresOverlappingSingleConnectionStarters(t *testing.T) {
+	for _, preparation := range []bool{false, true} {
+		name := "run_up"
+		if preparation {
+			name = "preparation"
+		}
+		t.Run(name, func(t *testing.T) {
+			db, _ := featureStorageFixture(t, 3)
+			db.SetMaxOpenConns(1)
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			acquired, allowExecutor := make(chan struct{}, 1), make(chan struct{})
+			defer func() {
+				select {
+				case <-allowExecutor:
+				default:
+					close(allowExecutor)
+				}
+			}()
+			firstCtx, firstProgress := ObserveMigration(ctx, func(s MigrationSnapshot) {
+				if s.Phase == "migration_lock" && s.State == "completed" {
+					acquired <- struct{}{}
+					select {
+					case <-allowExecutor:
+					case <-ctx.Done():
+					}
+				}
+			})
+			defer firstProgress.Close()
+			first := make(chan error, 1)
+			go func() { first <- NewMigratorWithDB(db).RunUp(firstCtx) }()
+			select {
+			case <-acquired:
+			case <-ctx.Done():
+				t.Fatal("first starter did not acquire Goose ownership")
+			}
+			waiting := make(chan struct{}, 1)
+			secondCtx, secondProgress := ObserveMigration(ctx, func(s MigrationSnapshot) {
+				if s.Phase == "migration_lock" && s.State == "started" {
+					waiting <- struct{}{}
+				}
+			})
+			defer secondProgress.Close()
+			second := make(chan error, 1)
+			go func() {
+				m := NewMigratorWithDB(db)
+				if preparation {
+					second <- m.PrepareEvidenceOnlyMigration(secondCtx)
+				} else {
+					second <- m.RunUp(secondCtx)
+				}
+			}()
+			select {
+			case <-waiting:
+			case <-ctx.Done():
+				t.Fatal("second starter did not reserve its Goose connection")
+			}
+			require.Equal(t, 2, db.Stats().InUse)
+			close(allowExecutor)
+			for _, result := range []<-chan error{first, second} {
+				select {
+				case err := <-result:
+					require.NoError(t, err)
+				case <-ctx.Done():
+					t.Fatal("overlapping starters exhausted executor capacity")
+				}
+			}
+			require.Equal(t, 1, db.Stats().MaxOpenConnections)
+			require.NoError(t, ValidateStartupMigrationState(ctx, db, MigrationsDir()))
+		})
+	}
+}
+
 func TestFeatureStoragePostgresRestartAndWriterFence(t *testing.T) {
 	db, _ := featureStorageFixture(t, 210)
 	before := featureStorageSnapshot(t, db, "ontology_record_revisions")

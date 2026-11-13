@@ -7,8 +7,10 @@ import (
 
 var migrationPools = struct {
 	sync.Mutex
-	users map[*sql.DB]int
-}{users: map[*sql.DB]int{}}
+	users map[*sql.DB]*migrationPoolReservation
+}{users: map[*sql.DB]*migrationPoolReservation{}}
+
+type migrationPoolReservation struct{ limit, users int }
 
 func reserveMigrationPool(db *sql.DB) func() {
 	if db == nil {
@@ -16,21 +18,27 @@ func reserveMigrationPool(db *sql.DB) func() {
 	}
 	migrationPools.Lock()
 	defer migrationPools.Unlock()
-	if migrationPools.users[db] == 0 {
-		if db.Stats().MaxOpenConnections != 1 {
+	reservation := migrationPools.users[db]
+	if reservation == nil {
+		limit := db.Stats().MaxOpenConnections
+		if limit == 0 {
 			return func() {}
 		}
-		// Goose holds its lock connection while transaction-disabled migrations reserve theirs.
-		db.SetMaxOpenConns(2)
+		reservation = &migrationPoolReservation{limit: limit}
+		migrationPools.users[db] = reservation
 	}
-	migrationPools.users[db]++
+	reservation.users++
+	// Each waiting Goose locker pins a connection, so retain one additional executor slot.
+	db.SetMaxOpenConns(max(reservation.limit, reservation.users+1))
 	return func() {
 		migrationPools.Lock()
 		defer migrationPools.Unlock()
-		migrationPools.users[db]--
-		if migrationPools.users[db] == 0 {
+		reservation.users--
+		if reservation.users == 0 {
 			delete(migrationPools.users, db)
-			db.SetMaxOpenConns(1)
+			db.SetMaxOpenConns(reservation.limit)
+		} else {
+			db.SetMaxOpenConns(max(reservation.limit, reservation.users+1))
 		}
 	}
 }

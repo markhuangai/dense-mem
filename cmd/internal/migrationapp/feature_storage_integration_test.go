@@ -18,6 +18,7 @@ func TestFeatureStoragePostgresLogOnlyFailureAndRecovery(t *testing.T) {
 	require.NoError(t, migrator.PrepareEvidenceOnlyMigration(context.Background()))
 	seedProgressMigration(t, db, 210, 0)
 	require.NoError(t, migrator.RunUpThroughEvidenceOnly(context.Background()))
+	seedFeatureStorageProgress(t, db, 210)
 	require.NoError(t, migrator.PrepareFeatureStorageMigration(context.Background()))
 	installFeatureStorageFailure(t, db)
 	logs := newProgressLog(t)

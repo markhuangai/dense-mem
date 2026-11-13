@@ -910,6 +910,13 @@
       "run": "^TestFeatureStoragePostgresSingleConnectionPool$",
       "phase": "precheck",
       "source": "internal/storage/postgres/feature_storage_migration_integration_test.go"
+    },
+    {
+      "id": "postgres/TestFeatureStoragePostgresOverlappingSingleConnectionStarters",
+      "package": "./internal/storage/postgres",
+      "run": "^TestFeatureStoragePostgresOverlappingSingleConnectionStarters$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/feature_storage_migration_integration_test.go"
     }
   ]
 }
