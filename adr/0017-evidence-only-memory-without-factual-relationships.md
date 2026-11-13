@@ -47,6 +47,36 @@ boundary, and recovery from a verified pre-cutover backup. Deployed migrations
 remain immutable. This decision record does not execute a database migration
 or authorize deployment.
 
+### One-time ontology reset at the pending cutover
+
+On 2026-11-13, after a production-copy staging run spent more than 50 minutes
+in selective ontology dependency closure, the maintainer explicitly chose to
+reset all derived organization during migration `20261110010000` and rebuild it
+from retained Evidence. This narrowly supersedes ADR 0008's stable organization
+identity, immutable organization history, and override preservation at that
+cutover. It does not change those guarantees for ordinary v2.8 operation.
+
+The pending migration atomically clears the catalog, publications, records,
+dependencies, assessments, drafts, source queue, and dirty markers through an
+explicit table inventory without cascading deletion. Existing topics, IDs,
+manual assignments, overrides, and organization history are not preserved.
+Preserve original Evidence and its fingerprints, provenance, lifecycle,
+conflicts, legal holds, unrelated security/audit history, saved maintenance
+settings and pause state, and maintenance usage accounting. Unexpected foreign
+keys or applicable holds block the transaction. Keep the existing stopped-service
+and verified-backup recovery boundary.
+
+Reset discovery cursors and leases so normal maintenance rediscovers existing
+eligible Evidence in active team-shared spaces and current generations; clients
+need not resubmit it. Private and unavailable sources remain excluded. Rebuild
+requires enabled, unpaused maintenance and model capacity, runs after startup,
+and can produce different organization. It is not part of migration completion.
+Already-applied cutovers skip this migration and retain newly built organization.
+The maintainer authorized this exact amendment of the pending migration; the
+migration-history guard binds its previous and replacement file hashes. Other
+deployed migrations remain immutable, and this does not authorize production
+deployment or restore.
+
 ## Risk
 
 - Graph removal can sever Evidence lineage or erase source records through
