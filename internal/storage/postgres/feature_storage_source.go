@@ -127,10 +127,12 @@ func readFeatureBatch(ctx context.Context, tx *sql.Tx, source featureSource, cur
 	size := 0
 	for rows.Next() {
 		var row featureRow
-		if err := rows.Scan(&row.Cursor, &row.Body); err != nil {
+		var cursor []byte
+		if err := rows.Scan(&cursor, &row.Body); err != nil {
 			rows.Close()
 			return nil, err
 		}
+		row.Cursor = cursor
 		size += len(row.Body)
 		if size > featureStorageBatchBytes {
 			rows.Close()
