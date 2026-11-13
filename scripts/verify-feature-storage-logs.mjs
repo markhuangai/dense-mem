@@ -26,7 +26,7 @@ if (outcome === 'failed') {
   assert.equal(failure.transaction_outcome, 'rolled_back');
   assert.equal(failure.capture_state, 'incomplete');
   assert.equal(failure.recovery_action, 'resume_matching_application_after_resolving_reported_cause');
-  assert.ok(!events.some(event => event.msg === 'server_started'), 'failed startup must not report a listener');
+  assert.ok(!events.some(event => event.msg === 'starting server'), 'failed startup must not report a listener');
 } else {
   const complete = migration.find(event => event.phase === 'cutover' && event.state === 'completed');
   assert.ok(complete, 'recovery must record verified cutover');
