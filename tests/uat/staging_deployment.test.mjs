@@ -40,8 +40,10 @@ test("prerelease publication leaves staging startup manual and preserves rehears
     assert.match(caller, /group: release-version-tags\n  cancel-in-progress: false\n  queue: max/);
   }
   const deployment = job(manual, "deploy-staging");
-  assert.match(deployment, /EXPECTED_REVISION: \$\{\{ needs\.staging-migration-rehearsal\.outputs\.revision \}\}/);
-  assert.match(deployment, /deploy-staging-image\.sh \\\n            "\$\{HOME\}\/dense-mem-stage" "\$\{IMAGE_TAG\}" "\$\{EXPECTED_REVISION\}"/);
+  assert.match(deployment, /ref: \$\{\{ github\.workflow_sha \}\}/);
+  assert.match(deployment, /path: \.staging-image-source/);
+  assert.match(deployment, /deploy-staging-copy\.sh/);
+  assert.doesNotMatch(manual, /uses: \.\/\.github\/workflows\/staging-migration-rehearsal\.yml/);
   const queue = rehearsal.match(/group: \$\{\{ (.+) \}\}/)[1];
   const evaluateQueue = (workflow) => runInNewContext(queue, { github: { workflow, run_id: 42 }, format: (template, id) => template.replace("{0}", id) });
   assert.equal(evaluateQueue("Staging migration rehearsal"), "release-version-tags");
@@ -188,5 +190,17 @@ services:
     assert.equal(await running(await serverID()), "false");
     assert.equal(await running(keeper), "true");
     assert.match(await readFile(summary, "utf8"), /Healthy: `false`[\s\S]*Failure: The verified candidate did not become healthy/);
+  });
+});
+
+test("real PostgreSQL preserves staging Evidence through fresh and legacy upgrades", { timeout: 600_000 }, async (t) => {
+  await execute("go", [
+    "test", "-tags=staging_rehearsal", "./cmd/internal/migrationapp",
+    "-run", "^(TestValidateStagingDSN|TestStopStagingServerWithoutImageSelection|TestPrivateMemoryRehearsalFromDeployedSchema|TestStagingMigrationRehearsalFreshDatabase)$",
+    "-count=1", "-timeout=8m",
+  ], {
+    cwd: fileURLToPath(new URL("../../", import.meta.url)),
+    signal: t.signal,
+    maxBuffer: 4 * 1024 * 1024,
   });
 });
