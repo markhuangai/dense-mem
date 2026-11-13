@@ -47,10 +47,25 @@ func TestFeatureStoragePostgresLogOnlyFailureAndRecovery(t *testing.T) {
 	require.NoError(t, db.Exec(`DROP TRIGGER feature_storage_fixture_failure ON ontology_topic_revision_payloads;DROP FUNCTION feature_storage_fixture_failure()`).Error)
 	require.NoError(t, RunUp(context.Background(), db, 0, logs.logger))
 	complete := false
-	for _, event := range logs.records(t) {
+	events := logs.records(t)
+	for _, event := range events {
 		if event["msg"] == "feature_storage_migration_progress" && event["phase"] == "cutover" && event["state"] == "completed" {
 			require.Equal(t, "committed", event["transaction_outcome"])
-			require.Equal(t, "complete", event["capture_state"])
+			if event["capture_state"] == "incomplete" {
+				require.Equal(t, "wait_observation_unavailable", event["capture_reason"], "%v", event)
+				warned := false
+				for _, observation := range events {
+					if observation["msg"] == "feature_storage_migration_capture_incomplete" && observation["migration_execution_id"] == event["migration_execution_id"] {
+						require.Equal(t, "WARN", observation["level"])
+						require.Equal(t, "wait_observation_unavailable", observation["capture_reason"])
+						warned = true
+					}
+				}
+				require.True(t, warned, "incomplete capture requires its warning: %v", event)
+			} else {
+				require.Equal(t, "complete", event["capture_state"], "%v", event)
+				require.Empty(t, event["capture_reason"])
+			}
 			complete = true
 		}
 	}

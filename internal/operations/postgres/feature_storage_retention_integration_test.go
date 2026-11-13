@@ -27,7 +27,8 @@ func TestFeatureStoragePostgresRetentionCountsAndConfigurationFailure(t *testing
 	root = root.With(observability.String("fixture_auth", "fixture-operation-credential")).(*observability.Logger)
 	ctx := observability.WithAuthenticationSecrets(context.Background(), "fixture-operation-credential")
 	repo := NewOperationLogRepository(app, rls)
-	service := operations.NewOperationLogService(repo, settings.NewAppConfigService(settingspostgres.NewAppConfigRepository(app, rls), nil))
+	retention := settings.NewAppConfigService(settingspostgres.NewAppConfigRepository(app, rls), nil)
+	service := operations.NewOperationLogService(repo, retention)
 	service.SetPruneLogger(root.ContextSlog())
 	require.NoError(t, root.AttachSink(service))
 	old := domain.OperationLog{Timestamp: time.Now().UTC().AddDate(0, 0, -31), Severity: "INFO", SeverityRank: 20, Message: "expired authored fixture", Source: "fixture"}
@@ -41,21 +42,38 @@ func TestFeatureStoragePostgresRetentionCountsAndConfigurationFailure(t *testing
 	require.NoError(t, err)
 	require.Len(t, page.Items, 1)
 	require.NoError(t, repo.AppendBatch(ctx, []domain.OperationLog{old}))
+	updatedAt := time.Now().UTC()
+	_, err = settingspostgres.NewAppConfigRepository(admin, rls).UpdateValues(ctx,
+		map[string]string{domain.AppConfigOperationLogRetentionDays: "90"}, updatedAt.Format(time.RFC3339Nano), updatedAt)
+	require.NoError(t, err)
 	require.NoError(t, admin.Exec(`REVOKE SELECT ON app_config FROM densemem_rls_test`).Error)
 	t.Cleanup(func() { require.NoError(t, admin.Exec(`GRANT SELECT ON app_config TO densemem_rls_test`).Error) })
-	service = operations.NewOperationLogService(repo, settings.NewAppConfigService(settingspostgres.NewAppConfigRepository(app, rls), nil))
-	service.SetPruneLogger(root.ContextSlog())
-	require.ErrorContains(t, service.Prune(ctx), "read operation log retention")
+	cold := operations.NewOperationLogService(repo, settings.NewAppConfigService(settingspostgres.NewAppConfigRepository(app, rls), nil))
+	cold.SetPruneLogger(root.ContextSlog())
+	require.ErrorContains(t, cold.Prune(ctx), "read operation log retention")
+	require.Eventually(t, func() bool {
+		_, err := retention.OperationLogRuntimeConfig(ctx)
+		return err != nil
+	}, 2*settings.DefaultAppConfigCacheCheckInterval, 10*time.Millisecond, "warmed retention must report a failed refresh")
+	require.ErrorContains(t, service.Prune(ctx), "refresh operation log retention")
 	page, err = repo.List(ctx, domain.OperationLogFilter{})
 	require.NoError(t, err)
 	require.Len(t, page.Items, 2)
 	require.NoError(t, admin.Exec(`GRANT SELECT ON app_config TO densemem_rls_test`).Error)
+	require.Eventually(t, func() bool {
+		cfg, err := retention.OperationLogRuntimeConfig(ctx)
+		return err == nil && cfg.RetentionDays == 90
+	}, 2*settings.DefaultAppConfigCacheCheckInterval, 10*time.Millisecond, "retention must recover the current setting")
+	require.NoError(t, service.Prune(ctx))
+	page, err = repo.List(ctx, domain.OperationLogFilter{})
+	require.NoError(t, err)
+	require.Len(t, page.Items, 2)
 	require.NotContains(t, output.String(), "fixture-operation-credential")
 	var success, failure map[string]any
 	for _, line := range strings.Split(strings.TrimSpace(output.String()), "\n") {
 		var record map[string]any
 		require.NoError(t, json.Unmarshal([]byte(line), &record))
-		if record["msg"] == "operation_log_prune_completed" {
+		if record["msg"] == "operation_log_prune_completed" && success == nil {
 			success = record
 		}
 		if record["msg"] == "operation_log_prune_failed" {

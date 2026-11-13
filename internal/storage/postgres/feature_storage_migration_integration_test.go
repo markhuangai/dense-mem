@@ -108,12 +108,18 @@ func TestFeatureStoragePostgresLargeRetainedRows(t *testing.T) {
 			}
 			if variant != "resume" {
 				require.NoError(t, execPostgresTxMode(context.Background(), db, "migration", func(tx *sql.Tx) error {
+					if _, err := tx.Exec(`ALTER TABLE remember_invocation_diagnostics DISABLE TRIGGER remember_invocation_diagnostics_append_only`); err != nil {
+						return err
+					}
 					query := `UPDATE remember_invocation_diagnostics SET request_hash='changed prefix' WHERE team_id=$1::uuid AND invocation_id=$2::uuid`
 					if variant == "changed_suffix" {
 						query = `UPDATE remember_invocation_diagnostics SET provider_exchanges=jsonb_set(provider_exchanges,'{3,response_body}',to_jsonb('changed suffix'::text))
 						 WHERE team_id=$1::uuid AND invocation_id=$2::uuid`
 					}
-					_, err := tx.Exec(query, fixture.team, invocation)
+					if _, err := tx.Exec(query, fixture.team, invocation); err != nil {
+						return err
+					}
+					_, err := tx.Exec(`ALTER TABLE remember_invocation_diagnostics ENABLE TRIGGER remember_invocation_diagnostics_append_only`)
 					return err
 				}))
 				require.ErrorContains(t, NewMigratorWithDB(db).RunUp(context.Background()), "feature_storage_source_fingerprint_mismatch")

@@ -32,7 +32,15 @@ if (outcome === 'failed') {
   assert.ok(complete, 'recovery must record verified cutover');
   assert.equal(complete.level, 'INFO');
   assert.equal(complete.transaction_outcome, 'committed');
-  assert.equal(complete.capture_state, 'complete');
+  if (complete.capture_state === 'incomplete') {
+    assert.equal(complete.capture_reason, 'wait_observation_unavailable');
+    assert.ok(migration.some(event => event.msg === 'feature_storage_migration_capture_incomplete'
+      && event.migration_execution_id === complete.migration_execution_id && event.level === 'WARN'
+      && event.capture_reason === complete.capture_reason), 'incomplete capture requires its warning');
+  } else {
+    assert.equal(complete.capture_state, 'complete');
+    assert.equal(complete.capture_reason, '');
+  }
 }
 process.stdout.write(`${JSON.stringify({ scenario: 'ontology_upgrade', feature_storage_log_diagnosis: outcome,
   checkpoint_rows: checkpoint.committed_rows, execution_id: checkpoint.migration_execution_id })}\n`);
