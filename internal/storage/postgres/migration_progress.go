@@ -39,31 +39,32 @@ type MigrationObservation struct {
 
 type MigrationSnapshot struct {
 	MigrationObservation
-	MigrationVersion        int64
-	ExecutionID             string
-	PhaseStartedAt          time.Time
-	ObservedAt              time.Time
-	LastProgressAt          time.Time
-	BackendPID              int
-	BackendStart            time.Time
-	TransactionStarted      bool
-	TransactionID           string
-	CaptureState            string
-	CaptureReason           string
-	CollectionQueries       int64
-	SQLNotices              int64
-	CheckpointFingerprint   string
-	InventoryFingerprint    string
-	SourceFingerprint       string
-	SourceSchemaFingerprint string
-	DurableRows             int64
-	DurableBatches          int64
-	WorkDurability          string
-	TransactionOutcome      string
-	FailureReason           string
-	ExpectedFingerprint     string
-	ObservedFingerprint     string
-	SQLState                string
+	MigrationVersion           int64
+	ExecutionID                string
+	PhaseStartedAt             time.Time
+	ObservedAt                 time.Time
+	LastProgressAt             time.Time
+	BackendPID                 int
+	BackendStart               time.Time
+	TransactionStarted         bool
+	TransactionID              string
+	CaptureState               string
+	CaptureReason              string
+	WaitObservationUnavailable bool
+	CollectionQueries          int64
+	SQLNotices                 int64
+	CheckpointFingerprint      string
+	InventoryFingerprint       string
+	SourceFingerprint          string
+	SourceSchemaFingerprint    string
+	DurableRows                int64
+	DurableBatches             int64
+	WorkDurability             string
+	TransactionOutcome         string
+	FailureReason              string
+	ExpectedFingerprint        string
+	ObservedFingerprint        string
+	SQLState                   string
 }
 
 // MigrationProgress owns only observations; it never decides whether database work committed.
@@ -126,6 +127,20 @@ func (p *MigrationProgress) Incomplete(reason string) {
 	}
 	p.snapshot.CaptureState = "incomplete"
 	p.snapshot.CaptureReason = reason
+}
+
+func (p *MigrationProgress) MarkWaitObservationUnavailable() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed || p.snapshot.WaitObservationUnavailable {
+		return false
+	}
+	p.snapshot.WaitObservationUnavailable = true
+	p.snapshot.CaptureState = "incomplete"
+	if p.snapshot.CaptureReason == "" {
+		p.snapshot.CaptureReason = "wait_observation_unavailable"
+	}
+	return true
 }
 
 func (p *MigrationProgress) Report(phase, work, state, metric, unit string, completed, total *int64) {

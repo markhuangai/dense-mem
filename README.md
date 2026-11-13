@@ -770,6 +770,12 @@ authorize terminating its blockers. Repetitive progress is coalesced to at most
 once per second; phase/table boundaries and final counts are retained.
 `evidence_only_migration_capture_incomplete` and `capture_reason` identify missing,
 invalid, oversized or interrupted notices and unavailable wait observations.
+`wait_observation_unavailable=true` separately retains wait-probe degradation
+without replacing an existing notice-capture reason. The first failed wait sample
+emits a warning with a bounded `wait_observation_failure_reason`; repeated failed
+samples do not repeat that warning. The flag remains on subsequent progress and
+final records, including when wait sampling recovers. Investigate both notice
+decoding and the classified observation failure when both causes are present.
 A committed migration can have incomplete diagnostic capture. Preserve the log
 and investigate the stated capture reason rather than treating missing counts
 as zero. `collection_queries` counts additional client round trips; notice-helper

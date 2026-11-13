@@ -62,7 +62,7 @@ func TestFeatureStorageUnitCaptureGapSurvivesCommittedCutover(t *testing.T) {
 	})
 	defer progress.Close()
 	progress.SetMigrationVersion(postgres.FeatureStorageCutoverVersion)
-	progress.Incomplete("wait_observation_unavailable")
+	require.True(t, progress.MarkWaitObservationUnavailable())
 	progress.BindFeatureTransaction(123, time.Now().UTC())
 	progress.FeatureStorageCheckpoint("cutover", "catalog", "completed", 210, 3, "checkpoint", "inventory", "source", "schema")
 	var event map[string]any
@@ -70,4 +70,5 @@ func TestFeatureStorageUnitCaptureGapSurvivesCommittedCutover(t *testing.T) {
 	require.Equal(t, "committed", event["transaction_outcome"])
 	require.Equal(t, "incomplete", event["capture_state"])
 	require.Equal(t, "wait_observation_unavailable", event["capture_reason"])
+	require.Equal(t, true, event["wait_observation_unavailable"])
 }

@@ -214,6 +214,7 @@ export async function run({ expect, runStep }) {
 export async function parseProgressStream(body, onFrame) {
   const decoder = new TextDecoder();
   let pending = "";
+  let data = "";
   let bytes = 0;
   for await (const chunk of body) {
     bytes += chunk.byteLength;
@@ -223,11 +224,16 @@ export async function parseProgressStream(body, onFrame) {
     while ((newline = pending.indexOf("\n")) >= 0) {
       const line = pending.slice(0, newline).replace(/\r$/, "");
       pending = pending.slice(newline + 1);
-      if (line.startsWith("data: ")) await onFrame(JSON.parse(line.slice(6)), line.slice(6));
+      if (line === "" && data !== "") {
+        const text = data.slice(0, -1);
+        await onFrame(JSON.parse(text), text);
+        data = "";
+      } else if (line.startsWith("data:")) data += line.slice(5).replace(/^ /, "") + "\n";
     }
   }
   pending += decoder.decode();
   assert.equal(pending.trim(), "", "progress stream ended with an incomplete event");
+  assert.equal(data, "", "progress stream ended with an incomplete event");
 }
 
 async function progressCall({ apiKey, args, token, accept = "application/json, text/event-stream", version = "2026-07-28", signal, onProgress }) {

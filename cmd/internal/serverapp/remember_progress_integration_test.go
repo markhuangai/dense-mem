@@ -3,7 +3,6 @@
 package serverapp
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -62,19 +61,6 @@ func (p *progressPostgresEmbedder) EmbedBatch(ctx context.Context, texts []strin
 		}
 	}
 	return p.rememberProcessorIntegrationSearchEmbedder.EmbedBatch(ctx, texts)
-}
-
-type postgresProgressFrame struct {
-	Method string `json:"method"`
-	Params struct {
-		Token    json.RawMessage `json:"progressToken"`
-		Progress int             `json:"progress"`
-		Message  string          `json:"message"`
-	} `json:"params"`
-	Result *struct {
-		IsError bool                               `json:"isError"`
-		Status  rememberapp.SubmissionStatusResult `json:"structuredContent"`
-	} `json:"result"`
 }
 
 func TestRememberProgressPostgres(t *testing.T) {
@@ -173,15 +159,8 @@ func TestRememberProgressPostgres(t *testing.T) {
 			require.NoError(t, json.NewDecoder(response.Body).Decode(&frame))
 			return append(frames, frame)
 		}
-		scanner := bufio.NewScanner(response.Body)
-		for scanner.Scan() {
-			if line := scanner.Text(); strings.HasPrefix(line, "data: ") {
-				var frame postgresProgressFrame
-				require.NoError(t, json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &frame))
-				frames = append(frames, frame)
-			}
-		}
-		require.NoError(t, scanner.Err())
+		frames, err = readPostgresProgressFrames(response.Body)
+		require.NoError(t, err)
 		return frames
 	}
 

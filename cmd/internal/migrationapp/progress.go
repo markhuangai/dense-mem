@@ -24,6 +24,7 @@ func progressAttrs(s postgres.MigrationSnapshot) []any {
 			"last_progress_at", s.LastProgressAt, "metric", s.Metric, "unit", s.Unit, "completed", s.Completed, "total", s.Total, "total_kind", "unknown",
 			"committed_rows", s.DurableRows, "committed_batches", s.DurableBatches, "checkpoint_fingerprint", s.CheckpointFingerprint,
 			"work_durability", s.WorkDurability, "transaction_outcome", s.TransactionOutcome, "capture_state", s.CaptureState, "capture_reason", s.CaptureReason,
+			"wait_observation_unavailable", s.WaitObservationUnavailable,
 			"failure_reason", s.FailureReason, "sqlstate", s.SQLState, "expected_fingerprint", s.ExpectedFingerprint, "observed_fingerprint", s.ObservedFingerprint,
 			"recovery_action", "resume_matching_application_after_resolving_reported_cause", "eta_seconds", nil, "eta_unavailable_reason", "remaining_phase_cost_unknown"}
 	}
@@ -48,7 +49,8 @@ func progressAttrs(s postgres.MigrationSnapshot) []any {
 		"phase_started_at", s.PhaseStartedAt, "phase_elapsed_ms", time.Since(s.PhaseStartedAt).Milliseconds(), "observed_at", s.ObservedAt,
 		"last_progress_at", last, "metric", s.Metric, "unit", s.Unit, "completed", s.Completed, "total", s.Total, "remaining", remaining, "total_kind", totalKind,
 		"discovered", s.Discovered, "iterations", s.Iterations, "sequence", s.Sequence, "attempted", s.TransactionStarted, "work_durability", "transaction_local",
-		"capture_state", s.CaptureState, "capture_reason", s.CaptureReason, "eta_seconds", nil, "eta_unavailable_reason", "remaining_phase_cost_unknown"}
+		"capture_state", s.CaptureState, "capture_reason", s.CaptureReason, "wait_observation_unavailable", s.WaitObservationUnavailable,
+		"eta_seconds", nil, "eta_unavailable_reason", "remaining_phase_cost_unknown"}
 }
 
 func withProgressSlot(ctx context.Context) context.Context {
@@ -92,9 +94,9 @@ func heartbeatProgress(ctx context.Context, logger infoLogger, db *sql.DB, sampl
 	defer cancel()
 	kind, event, blockers, err := p.SampleWait(observationCtx, db)
 	if err != nil {
-		if p.Snapshot().CaptureReason != "wait_observation_unavailable" {
-			p.Incomplete("wait_observation_unavailable")
-			logWarn(context.WithoutCancel(ctx), logger, prefix+"capture_incomplete", progressAttrs(p.Snapshot())...)
+		if p.MarkWaitObservationUnavailable() {
+			attrs := append(progressAttrs(p.Snapshot()), "wait_observation_failure_reason", postgres.MigrationFailureReason(err))
+			logWarn(context.WithoutCancel(ctx), logger, prefix+"capture_incomplete", attrs...)
 		}
 		return
 	}
