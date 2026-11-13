@@ -82,7 +82,7 @@ func runWithInterval(parent context.Context, db *gorm.DB, timeout time.Duration,
 	if db != nil {
 		sqlDB, _ = db.DB()
 	}
-	go reportHeartbeat(ctx, stopHeartbeat, heartbeatStopped, startedAt, timeout, direction, logger, interval, sqlDB)
+	go reportHeartbeat(ctx, stopHeartbeat, heartbeatStopped, logger, interval, sqlDB)
 
 	var stopOnce sync.Once
 	stop := func() {
@@ -113,7 +113,7 @@ func runWithInterval(parent context.Context, db *gorm.DB, timeout time.Duration,
 	return nil
 }
 
-func reportHeartbeat(ctx context.Context, stop <-chan struct{}, stopped chan<- struct{}, startedAt time.Time, timeout time.Duration, direction string, logger infoLogger, interval time.Duration, db *sql.DB) {
+func reportHeartbeat(ctx context.Context, stop <-chan struct{}, stopped chan<- struct{}, logger infoLogger, interval time.Duration, db *sql.DB) {
 	defer close(stopped)
 
 	samples := time.NewTicker(time.Second)
@@ -143,12 +143,6 @@ func reportHeartbeat(ctx context.Context, stop <-chan struct{}, stopped chan<- s
 			default:
 			}
 			heartbeatProgress(ctx, logger, db, false)
-			logInfo(ctx, logger,
-				"postgres migrations still running",
-				"direction", direction,
-				"elapsed_seconds", int64(time.Since(startedAt)/time.Second),
-				"timeout_seconds", int64(timeout/time.Second),
-			)
 		}
 	}
 }
