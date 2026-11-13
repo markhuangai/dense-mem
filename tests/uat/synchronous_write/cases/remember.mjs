@@ -925,7 +925,7 @@ export function rememberCanonicalCounts(teamID, submissionID) {
   `).split(/\r?\n/).filter(Boolean).map(Number);
 }
 
-function postgresExec(sql, label) {
+export function postgresExec(sql, label) {
   const composeProject = requiredEnv("DENSE_MEM_E2E_COMPOSE_PROJECT");
   const composeFile = requiredEnv("DENSE_MEM_E2E_COMPOSE_FILE");
   const composeOverlay = requiredEnv("DENSE_MEM_E2E_COMPOSE_OVERLAY_FILE");

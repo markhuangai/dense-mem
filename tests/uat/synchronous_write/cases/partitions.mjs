@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { progressCall } from "./progress.mjs";
-import { postgresQuery, rememberCanonicalCounts } from "./remember.mjs";
+import { postgresExec, postgresQuery, rememberCanonicalCounts } from "./remember.mjs";
 import { captureSemanticAssessmentWindow, reconstructDiagnosticBody } from "../../ontology_assessment_diagnostics.mjs";
 
 export const name = "partitions";
@@ -17,7 +17,7 @@ export async function run({ rpc, rawRPC, runStep }) {
   const content = header + marker + [...fill].slice(0, 16384 - [...header + marker + suffix].length).join("") + suffix;
   assert.equal([...content].length, 16384);
   const argsFor = (text) => ({ target_space: "private", idempotency_key: randomUUID(), evidence: [{ content: text, source_type: "manual", force_insert: true }] });
-  let receipt, rollback;
+  let receipt, rollback, diagnosticProof;
   await runStep("long-source-roundtrip-and-replay", async () => {
     receipt = await progressCall({ apiKey, args: argsFor(content), token: JSON.stringify("partition-" + randomUUID()) });
     const result = receipt.terminal.result.structuredContent;
@@ -77,11 +77,11 @@ export async function run({ rpc, rawRPC, runStep }) {
   await runStep("publication-rollback-capture", async () => {
     const fn="partition_capture_"+randomUUID().replaceAll("-","");
     const args=argsFor("Intended original.\nIntended tail. [fixture-fault:partition-split]");
-    postgresQuery(`CREATE FUNCTION ${fn}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.idempotency_key='${args.idempotency_key}' AND NEW.outcome='completed' THEN RAISE EXCEPTION 'partition publication rollback'; END IF; RETURN NEW; END $$; CREATE TRIGGER ${fn} BEFORE INSERT ON remember_attempts FOR EACH ROW EXECUTE FUNCTION ${fn}()`);
+    postgresExec(`CREATE FUNCTION ${fn}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.idempotency_key='${args.idempotency_key}' AND NEW.outcome='completed' THEN RAISE EXCEPTION 'partition publication rollback'; END IF; RETURN NEW; END $$; CREATE TRIGGER ${fn} BEFORE INSERT ON remember_attempts FOR EACH ROW EXECUTE FUNCTION ${fn}()`, "synchronous-write-partition-setup");
     try {
       rollback=await progressCall({apiKey,args,token:"0"});
       assert.equal(rollback.terminal.result.structuredContent.errors[0].code,"database_failure");
-    } finally {postgresQuery(`DROP TRIGGER ${fn} ON remember_attempts; DROP FUNCTION ${fn}()`);}
+    } finally {postgresExec(`DROP TRIGGER ${fn} ON remember_attempts; DROP FUNCTION ${fn}()`, "synchronous-write-partition-cleanup");}
   });
   await runStep("partition-rejection-from-collected-logs", async () => {
     const logs = captureSemanticAssessmentWindow({ project: process.env.DENSE_MEM_E2E_COMPOSE_PROJECT, composeFile: process.env.DENSE_MEM_E2E_COMPOSE_FILE, since,
@@ -117,6 +117,24 @@ export async function run({ rpc, rawRPC, runStep }) {
       assert.equal(manifest.items[0].boundary_text.replace(/⟦[^⟧]+⟧/g, ""), call.args.evidence[0].content);
       assert(rows.some((row) => row.msg === "remember_invocation_completed" && row.outcome && row.canonical_attempt_id));
     }
+    const correlations = new Set([receipt, rollback, ...rejected].map((call) => call.correlationID));
+    const retained = records.filter((row) => correlations.has(row.correlation_id));
+    const exchanges = new Map();
+    for (const row of retained) {
+      assert.equal(row.team_id, team);
+      assert(row.profile_id, "trusted profile must accompany correlated diagnostics");
+      if (row.msg !== "ai_exchange_payload") continue;
+      const key = `${row.exchange_id}:${row.direction}`;
+      const group = exchanges.get(key) || [];
+      group.push(row); exchanges.set(key, group);
+    }
+    for (const group of exchanges.values()) {
+      reconstructDiagnosticBody(group);
+      assert(exchanges.has(`${group[0].exchange_id}:request`) && exchanges.has(`${group[0].exchange_id}:response`), "provider exchange capture is incomplete");
+    }
+    const retainedText = retained.map(JSON.stringify).join("\n") + "\n";
+    diagnosticProof = { records: retained.length, exchanges: exchanges.size / 2, sha256: createHash("sha256").update(retainedText).digest("hex"), complete: true };
+    for (const row of retained) console.log(`remember_partition_diagnostic_record ${JSON.stringify(row)}`);
   });
-  return { status: "ok", source_code_points: 16384, partitions: 2, tail_citation: true, malformed_regeneration: true };
+  return { status: "ok", source_code_points: 16384, partitions: 2, tail_citation: true, malformed_regeneration: true, diagnostics: diagnosticProof };
 }

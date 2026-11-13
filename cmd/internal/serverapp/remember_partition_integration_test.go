@@ -278,7 +278,7 @@ func TestRememberPartitionPostgres(t *testing.T) {
 		repo := privacy.NewPrivateMemoryRepository(app, rls)
 		require.NoError(t, repo.Prepare(t.Context()))
 		erase := privacy.PrivateMemoryErasureRequest{TeamID: actorA.TeamID, OwnerID: actorA.OwnerID, CredentialID: *actorA.CredentialID, IdempotencyScopeHash: strings.Repeat("e", 64), RequestHash: strings.Repeat("f", 64), ReasonCode: "owner_requested"}
-		_, _, err = repo.PlaceLegalHold(t.Context(), space, "partition provenance")
+		_, _, err = repo.PlaceLegalHold(t.Context(), space, "partition_provenance")
 		require.NoError(t, err)
 		_, _, err = repo.RequestCredentialErasure(a, erase)
 		require.ErrorIs(t, err, privacy.ErrPrivateMemoryLegalHold)
