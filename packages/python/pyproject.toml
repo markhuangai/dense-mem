@@ -26,7 +26,7 @@ Documentation = "https://github.com/markhuangai/dense-mem/wiki/Framework-Integra
 Issues = "https://github.com/markhuangai/dense-mem/issues"
 
 [project.optional-dependencies]
-adk = ["google-adk==2.7.0"]
+adk = ["google-adk==2.14.1"]
 langchain = ["langchain-core==1.5.4"]
 
 [tool.hatch.build.targets.wheel]

@@ -8,7 +8,7 @@ prepared for release; PyPI publication is pending. Install a verified wheel:
 python -m pip install /path/to/densemem-VERSION-py3-none-any.whl
 ~~~
 
-The optional adk extra provides the Google ADK 2.7.0 memory service.
+The optional adk extra provides the Google ADK 2.14.1 memory service.
 The langchain extra provides a read-only LangChain Core 1.5.4 retriever.
 The core installs neither framework.
 
@@ -127,7 +127,7 @@ commit or reach its bounded deadline. Cancellation does not prove that a write
 was prevented. Retain the unchanged request/key for recovery.
 
 
-## Google ADK 2.7.0
+## Google ADK 2.14.1
 
 Install the verified wheel with its optional extra:
 
@@ -197,7 +197,7 @@ the entire bounded recall result in response.custom_metadata["densemem"], includ
 conflicts and degradations on an empty result. Missing author/timestamps remain
 unset. The adapter does not add trace calls or post-filter authorized shared memory.
 
-The extra is pinned to google-adk==2.7.0. Core and extra installed-wheel checks,
+The extra is pinned to google-adk==2.14.1. Core and extra installed-wheel checks,
 Python 3.11–3.14 and MCP SDK minimum/latest matrices, and google_adk_memory E2E
 are release gates. Package publication and live wiki publication remain separate.
 
