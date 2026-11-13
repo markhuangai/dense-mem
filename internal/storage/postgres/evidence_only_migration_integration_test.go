@@ -15,7 +15,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/markhuangai/dense-mem/internal/jsonstrict"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	"github.com/stretchr/testify/require"
@@ -24,6 +23,32 @@ import (
 const evidenceOnlyMigrationBase int64 = 20261108010000
 
 var evidenceOnlyRetainedTables = []string{"evidence_sources", "evidence_source_revisions", "evidence_exact_aliases", "evidence_occurrences", "evidence_fragments", "evidence_security_events", "evidence_security_signals", "evidence_quarantines", "evidence_lifecycle_operations", "evidence_lifecycle_events", "evidence_conflict_cases", "evidence_conflict_positions", "evidence_conflict_events"}
+
+var evidenceOnlyResetTables = []string{"ontology_catalog_heads", "ontology_publications", "ontology_record_heads", "ontology_record_revisions", "ontology_source_dependencies", "ontology_revision_dependencies", "ontology_assessments", "ontology_draft_heads", "ontology_draft_revisions", "ontology_maintenance_sources", "ontology_maintenance_markers"}
+
+func assertEvidenceOnlyOntologyReset(t *testing.T, ctx context.Context, db *sql.DB) {
+	t.Helper()
+	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+		for _, table := range evidenceOnlyResetTables {
+			var count int
+			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM `+quoteMigrationIdentifier(table)).Scan(&count); err != nil {
+				return err
+			}
+			require.Zero(t, count, table)
+		}
+		var receipt []byte
+		if err := tx.QueryRowContext(ctx, `SELECT metadata->'reset_ontology_counts' FROM v2_compatibility_markers WHERE marker_kind='evidence_only'`).Scan(&receipt); err != nil {
+			return err
+		}
+		var counts map[string]int64
+		require.NoError(t, json.Unmarshal(receipt, &counts))
+		require.Len(t, counts, len(evidenceOnlyResetTables))
+		for _, table := range evidenceOnlyResetTables {
+			require.Contains(t, counts, table)
+		}
+		return nil
+	}))
+}
 
 type evidenceOnlyMigrationFixture struct {
 	team, owner, space, ingest, evidence, source, revision, occurrence string
@@ -187,12 +212,8 @@ CREATE EVENT TRIGGER require_evidence_only_hold_statistics ON ddl_command_start
 	assertEvidenceOnlyCatalog(t, ctx, db)
 }
 
-func TestEvidenceOnlyPostgresPopulatedUpgradePreservesEvidenceAndLegacyIdentity(t *testing.T) {
-	ctx := context.Background()
-	db, cleanup := openMigrationSQLDB(t, ctx)
-	defer cleanup()
-	require.NoError(t, evidenceOnlyMigrationUpTo(ctx, db, evidenceOnlyMigrationBase))
-	fixture := insertEvidenceOnlyMigrationFixture(t, ctx, db, false)
+func seedEvidenceOnlyOntology(t *testing.T, ctx context.Context, db *sql.DB, fixture evidenceOnlyMigrationFixture) {
+	t.Helper()
 	topic := ontology.Record{ID: uuid.NewString(), Version: 1, Kind: ontology.Topic,
 		Definition: &ontology.Definition{Key: "retained-topic", Label: "Retained topic", Description: "Evidence organization survives graph removal"}}
 	fingerprint, err := ontology.RecordFingerprintWithAcceptedSources(topic, nil)
@@ -232,27 +253,35 @@ func TestEvidenceOnlyPostgresPopulatedUpgradePreservesEvidenceAndLegacyIdentity(
 		_, err := tx.ExecContext(ctx, `INSERT INTO ontology_revision_dependencies(team_id,shared_space_id,space_generation,record_id,record_version,dependency_id,dependency_version) VALUES($1::uuid,$2::uuid,$3,$4::uuid,1,$5::uuid,1)`, fixture.team, fixture.space, fixture.generation, assignment.ID, topic.ID)
 		return err
 	}))
-	ontologySnapshot := func() map[string]string {
-		result := map[string]string{}
-		require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
-			for _, table := range []string{"ontology_record_heads", "ontology_record_revisions", "ontology_source_dependencies", "ontology_revision_dependencies"} {
-				var body string
-				query := `SELECT COALESCE(jsonb_agg(to_jsonb(row_value) ORDER BY to_jsonb(row_value)::text),'[]'::jsonb)::text FROM ` + quoteMigrationIdentifier(table) + ` row_value WHERE team_id=$1::uuid AND shared_space_id=$2::uuid AND space_generation=$3 AND record_id IN ($4::uuid,$5::uuid)`
-				if err := tx.QueryRowContext(ctx, query, fixture.team, fixture.space, fixture.generation, topic.ID, assignment.ID).Scan(&body); err != nil {
-					return err
-				}
-				require.NotEqual(t, "[]", body, table)
-				result[table] = body
+}
+
+func evidenceOnlyOntologySnapshot(t *testing.T, ctx context.Context, db *sql.DB) map[string]string {
+	t.Helper()
+	result := map[string]string{}
+	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+		for _, table := range evidenceOnlyResetTables {
+			var body string
+			if err := tx.QueryRowContext(ctx, `SELECT COALESCE(jsonb_agg(to_jsonb(row_value) ORDER BY to_jsonb(row_value)::text),'[]'::jsonb)::text FROM `+quoteMigrationIdentifier(table)+` row_value`).Scan(&body); err != nil {
+				return err
 			}
-			return nil
-		}))
-		return result
-	}
-	beforeOntology := ontologySnapshot()
+			result[table] = body
+		}
+		return nil
+	}))
+	return result
+}
+
+func TestEvidenceOnlyPostgresPopulatedUpgradePreservesEvidenceAndLegacyIdentity(t *testing.T) {
+	ctx := context.Background()
+	db, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+	require.NoError(t, evidenceOnlyMigrationUpTo(ctx, db, evidenceOnlyMigrationBase))
+	fixture := insertEvidenceOnlyMigrationFixture(t, ctx, db, false)
+	seedEvidenceOnlyOntology(t, ctx, db, fixture)
 	before := evidenceOnlyFingerprints(t, ctx, db)
 	require.NoError(t, evidenceOnlyMigrationUpTo(ctx, db, evidenceOnlyMigrationVersion))
 	require.Equal(t, before, evidenceOnlyFingerprints(t, ctx, db))
-	require.Equal(t, beforeOntology, ontologySnapshot())
+	assertEvidenceOnlyOntologyReset(t, ctx, db)
 	assertEvidenceOnlyCatalog(t, ctx, db)
 	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
 		var legacyKeys int
@@ -270,6 +299,10 @@ func TestEvidenceOnlyPostgresPopulatedUpgradePreservesEvidenceAndLegacyIdentity(
 		require.Equal(t, "true", retired)
 		return nil
 	}))
+	seedEvidenceOnlyOntology(t, ctx, db, fixture)
+	rebuilt := evidenceOnlyOntologySnapshot(t, ctx, db)
+	require.NoError(t, NewMigratorWithDB(db).RunUp(ctx))
+	require.Equal(t, rebuilt, evidenceOnlyOntologySnapshot(t, ctx, db), "an applied cutover must preserve new organization")
 	require.Error(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `UPDATE evidence_fragments SET content='forbidden rewrite' WHERE team_id=$1::uuid AND fragment_id=$2::uuid`, fixture.team, fixture.evidence)
 		return err
@@ -306,7 +339,9 @@ func TestEvidenceOnlyPostgresCancellationAfterRemovalRollsBack(t *testing.T) {
 	db, cleanup := openMigrationSQLDB(t, ctx)
 	defer cleanup()
 	require.NoError(t, evidenceOnlyMigrationUpTo(ctx, db, evidenceOnlyMigrationBase))
-	insertEvidenceOnlyMigrationFixture(t, ctx, db, false)
+	fixture := insertEvidenceOnlyMigrationFixture(t, ctx, db, false)
+	seedEvidenceOnlyOntology(t, ctx, db, fixture)
+	beforeOntology := evidenceOnlyOntologySnapshot(t, ctx, db)
 	before := evidenceOnlyFingerprints(t, ctx, db)
 	blocker, err := db.BeginTx(ctx, nil)
 	require.NoError(t, err)
@@ -337,6 +372,7 @@ func TestEvidenceOnlyPostgresCancellationAfterRemovalRollsBack(t *testing.T) {
 		t.Fatal("cancelled migration did not release transaction")
 	}
 	require.NoError(t, blocker.Rollback())
+	require.Equal(t, beforeOntology, evidenceOnlyOntologySnapshot(t, ctx, db))
 	require.Equal(t, before, evidenceOnlyFingerprints(t, ctx, db))
 	var exists bool
 	require.NoError(t, db.QueryRowContext(ctx, `SELECT to_regclass('public.relationship_records') IS NOT NULL`).Scan(&exists))
@@ -344,6 +380,7 @@ func TestEvidenceOnlyPostgresCancellationAfterRemovalRollsBack(t *testing.T) {
 	require.NoError(t, evidenceOnlyMigrationUpTo(ctx, db, evidenceOnlyMigrationVersion))
 	require.Equal(t, before, evidenceOnlyFingerprints(t, ctx, db))
 	assertEvidenceOnlyCatalog(t, ctx, db)
+	assertEvidenceOnlyOntologyReset(t, ctx, db)
 }
 
 func TestEvidenceOnlyPostgresUnexpectedDependencyBlocksBeforeRemoval(t *testing.T) {
@@ -351,13 +388,23 @@ func TestEvidenceOnlyPostgresUnexpectedDependencyBlocksBeforeRemoval(t *testing.
 	db, cleanup := openMigrationSQLDB(t, ctx)
 	defer cleanup()
 	require.NoError(t, evidenceOnlyMigrationUpTo(ctx, db, evidenceOnlyMigrationBase))
-	_, err := db.ExecContext(ctx, `CREATE TABLE evidence_only_test_dependency(team_id uuid,relationship_id uuid,FOREIGN KEY(team_id,relationship_id) REFERENCES relationship_records(team_id,relationship_id))`)
-	require.NoError(t, err)
-	require.ErrorContains(t, evidenceOnlyMigrationUpTo(ctx, db, evidenceOnlyMigrationVersion), "unhandled retained dependency")
-	_, err = db.ExecContext(ctx, `DROP TABLE evidence_only_test_dependency`)
-	require.NoError(t, err)
+	fixture := insertEvidenceOnlyMigrationFixture(t, ctx, db, false)
+	seedEvidenceOnlyOntology(t, ctx, db, fixture)
+	before := evidenceOnlyOntologySnapshot(t, ctx, db)
+	for _, definition := range []string{
+		`team_id uuid,relationship_id uuid,FOREIGN KEY(team_id,relationship_id) REFERENCES relationship_records(team_id,relationship_id)`,
+		`team_id uuid,shared_space_id uuid,space_generation bigint,FOREIGN KEY(team_id,shared_space_id,space_generation) REFERENCES ontology_catalog_heads(team_id,shared_space_id,space_generation)`,
+	} {
+		_, err := db.ExecContext(ctx, `CREATE TABLE evidence_only_test_dependency(`+definition+`)`)
+		require.NoError(t, err)
+		require.ErrorContains(t, evidenceOnlyMigrationUpTo(ctx, db, evidenceOnlyMigrationVersion), "unhandled retained dependency")
+		require.Equal(t, before, evidenceOnlyOntologySnapshot(t, ctx, db))
+		_, err = db.ExecContext(ctx, `DROP TABLE evidence_only_test_dependency`)
+		require.NoError(t, err)
+	}
 	require.NoError(t, evidenceOnlyMigrationUpTo(ctx, db, evidenceOnlyMigrationVersion))
 	assertEvidenceOnlyCatalog(t, ctx, db)
+	assertEvidenceOnlyOntologyReset(t, ctx, db)
 }
 
 func TestEvidenceOnlyPostgresSessionMigrationPreservesRawIdentityAndTerminalOutcomes(t *testing.T) {
@@ -473,40 +520,10 @@ func TestEvidenceOnlyPostgresNullableOntologyCollections(t *testing.T) {
 	require.NoError(t, evidenceOnlyMigrationUpTo(ctx, db, evidenceOnlyMigrationVersion))
 	require.Equal(t, before, evidenceOnlyFingerprints(t, ctx, db))
 	assertEvidenceOnlyCatalog(t, ctx, db)
-	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
-		var body []byte
-		if err := tx.QueryRowContext(ctx, `SELECT body FROM ontology_assessments WHERE assessment_id=$1::uuid`, assessmentID).Scan(&body); err != nil {
-			return err
-		}
-		var retained ontology.OrganizationReceipt
-		require.NoError(t, jsonstrict.Decode(strings.NewReader(string(body)), &retained, ontology.MaxPublicationBytes))
-		require.NoError(t, ontology.ValidateOrganizationReceipt(retained))
-		require.Equal(t, receipt.ID, retained.ID)
-		require.Equal(t, receipt.OperationKey, retained.OperationKey)
-		require.Equal(t, receipt.InputHash, retained.InputHash)
-		require.Equal(t, receipt.Sources, retained.Sources)
-		require.Empty(t, retained.Dependencies)
-		require.NotNil(t, retained.Result.Publication)
-		require.Equal(t, publication.ID, retained.Result.Publication.ID)
-		require.Empty(t, retained.Result.Publication.Records)
-		if err := tx.QueryRowContext(ctx, `SELECT result FROM ontology_publications WHERE publication_id=$1::uuid`, publicationID).Scan(&body); err != nil {
-			return err
-		}
-		var result ontology.PublicationResult
-		require.NoError(t, json.Unmarshal(body, &result))
-		require.Equal(t, publication.ID, result.ID)
-		require.Empty(t, result.Records)
-		for _, table := range []string{"ontology_draft_heads", "ontology_draft_revisions"} {
-			if err := tx.QueryRowContext(ctx, `SELECT body FROM `+table+` WHERE draft_id=$1::uuid`, draftID).Scan(&body); err != nil {
-				return err
-			}
-			require.JSONEq(t, string(draftBody), string(body))
-		}
-		return nil
-	}))
+	assertEvidenceOnlyOntologyReset(t, ctx, db)
 }
 
-func TestEvidenceOnlyPostgresMalformedOntologyCollectionsRollBack(t *testing.T) {
+func TestEvidenceOnlyPostgresMalformedOntologyCollectionsReset(t *testing.T) {
 	ctx := context.Background()
 	db, cleanup := openMigrationSQLDB(t, ctx)
 	defer cleanup()
@@ -520,27 +537,10 @@ func TestEvidenceOnlyPostgresMalformedOntologyCollectionsRollBack(t *testing.T) 
 		return err
 	}))
 	before := evidenceOnlyFingerprints(t, ctx, db)
-	err := evidenceOnlyMigrationUpTo(ctx, db, evidenceOnlyMigrationVersion)
-	var databaseError *pgconn.PgError
-	require.ErrorAs(t, err, &databaseError)
-	require.Equal(t, "22023", databaseError.Code)
+	require.NoError(t, evidenceOnlyMigrationUpTo(ctx, db, evidenceOnlyMigrationVersion))
 	require.Equal(t, before, evidenceOnlyFingerprints(t, ctx, db))
-	var graphExists bool
-	require.NoError(t, db.QueryRowContext(ctx, `SELECT to_regclass('public.relationship_records') IS NOT NULL`).Scan(&graphExists))
-	require.True(t, graphExists)
-	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
-		var retained []byte
-		if err := tx.QueryRowContext(ctx, `SELECT body FROM ontology_assessments WHERE assessment_id=$1::uuid`, assessmentID).Scan(&retained); err != nil {
-			return err
-		}
-		require.JSONEq(t, body, string(retained))
-		var committed bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM v2_compatibility_markers WHERE marker_kind='evidence_only')`).Scan(&committed); err != nil {
-			return err
-		}
-		require.False(t, committed)
-		return nil
-	}))
+	assertEvidenceOnlyCatalog(t, ctx, db)
+	assertEvidenceOnlyOntologyReset(t, ctx, db)
 }
 
 func TestEvidenceOnlyPostgresMixedOntologyReceiptsAndDrafts(t *testing.T) {
@@ -654,78 +654,20 @@ func TestEvidenceOnlyPostgresMixedOntologyReceiptsAndDrafts(t *testing.T) {
 	require.NoError(t, evidenceOnlyMigrationUpTo(ctx, db, evidenceOnlyMigrationVersion))
 	require.Equal(t, before, evidenceOnlyFingerprints(t, ctx, db))
 	assertEvidenceOnlyCatalog(t, ctx, db)
+	assertEvidenceOnlyOntologyReset(t, ctx, db)
 	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
-		var body []byte
-		if err := tx.QueryRowContext(ctx, `SELECT body FROM ontology_assessments WHERE assessment_id=$1::uuid`, assessmentID).Scan(&body); err != nil {
+		var revisions, publications, drafts, assessments int
+		if err := tx.QueryRowContext(ctx, `SELECT (metadata->'reset_ontology_counts'->>'ontology_record_revisions')::int,
+ (metadata->'reset_ontology_counts'->>'ontology_publications')::int,
+ (metadata->'reset_ontology_counts'->>'ontology_draft_revisions')::int,
+ (metadata->'reset_ontology_counts'->>'ontology_assessments')::int
+ FROM v2_compatibility_markers WHERE marker_kind='evidence_only'`).Scan(&revisions, &publications, &drafts, &assessments); err != nil {
 			return err
 		}
-		var retained ontology.OrganizationReceipt
-		require.NoError(t, jsonstrict.Decode(strings.NewReader(string(body)), &retained, ontology.MaxPublicationBytes))
-		require.NoError(t, ontology.ValidateOrganizationReceipt(retained))
-		require.Len(t, retained.Sources, 2)
-		require.Len(t, retained.Result.Outcomes, 2)
-		require.Empty(t, retained.Dependencies)
-		require.Equal(t, receipt.Result.Attempts, retained.Result.Attempts)
-		require.Equal(t, receipt.InputHash, retained.InputHash)
-		require.Equal(t, []string{groupID}, retained.Result.Outcomes[0].RecordIDs)
-		require.Equal(t, []ontology.RevisionRef{{ID: groupID, Version: 1}}, retained.Result.Publication.Records)
-		if err := tx.QueryRowContext(ctx, `SELECT body FROM ontology_record_revisions WHERE record_id=$1::uuid`, groupID).Scan(&body); err != nil {
-			return err
-		}
-		var rebound ontology.Record
-		require.NoError(t, json.Unmarshal(body, &rebound))
-		require.NoError(t, ontology.ValidateRecord(rebound))
-		expected, err := ontology.RecordFingerprintWithAcceptedSources(rebound, map[string]ontology.Record{groupID: rebound, overrideID: retainedOverride})
-		require.NoError(t, err)
-		require.Equal(t, expected, rebound.Fingerprint)
-		require.NotEqual(t, digest, rebound.Fingerprint)
-		require.Equal(t, assessmentID, rebound.Group.AssessmentID)
-		if err := tx.QueryRowContext(ctx, `SELECT revision.body FROM ontology_record_heads head JOIN ontology_record_revisions revision USING(team_id,shared_space_id,space_generation,record_id,version) WHERE head.record_id=$1::uuid`, overrideID).Scan(&body); err != nil {
-			return err
-		}
-		var preserved ontology.Record
-		require.NoError(t, json.Unmarshal(body, &preserved))
-		require.Equal(t, retainedOverride, preserved)
-		var obsolete, currentSources int
-		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM ontology_record_revisions WHERE record_id=$1::uuid AND version=1`, overrideID).Scan(&obsolete); err != nil {
-			return err
-		}
-		require.Zero(t, obsolete)
-		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM ontology_source_dependencies WHERE record_id=$1::uuid AND record_version=2`, overrideID).Scan(&currentSources); err != nil {
-			return err
-		}
-		require.Equal(t, 2, currentSources)
-		for index, publication := range []string{oldOverridePublication, newOverridePublication} {
-			if err := tx.QueryRowContext(ctx, `SELECT result FROM ontology_publications WHERE publication_id=$1::uuid`, publication).Scan(&body); err != nil {
-				return err
-			}
-			var result ontology.PublicationResult
-			require.NoError(t, json.Unmarshal(body, &result))
-			if index == 0 {
-				require.Empty(t, result.Records)
-			} else {
-				require.Equal(t, []ontology.RevisionRef{{ID: overrideID, Version: 2}}, result.Records)
-			}
-		}
-		for index, id := range draftIDs {
-			var state string
-			var edits, prepared int
-			var original sql.NullString
-			if err := tx.QueryRowContext(ctx, `SELECT state,jsonb_array_length(body->'draft'->'edits'),COALESCE(jsonb_array_length(body->'prepared'->'changes'),0),body->>'original_state' FROM ontology_draft_heads WHERE draft_id=$1::uuid`, id).Scan(&state, &edits, &prepared, &original); err != nil {
-				return err
-			}
-			if index == 0 {
-				require.Equal(t, "open", state)
-				require.Equal(t, 1, edits)
-				require.Equal(t, 1, prepared)
-				require.False(t, original.Valid)
-			} else {
-				require.Equal(t, "discarded", state)
-				require.Zero(t, edits)
-				require.Zero(t, prepared)
-				require.Equal(t, "open", original.String)
-			}
-		}
+		require.Equal(t, 4, revisions)
+		require.Equal(t, 3, publications)
+		require.Equal(t, 2, drafts)
+		require.Equal(t, 1, assessments)
 		return nil
 	}))
 }

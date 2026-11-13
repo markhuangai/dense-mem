@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/domain"
+	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	storage "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"github.com/pressly/goose/v3"
@@ -29,6 +30,144 @@ type legacyMaintenance struct {
 	window, run, batch, assessment, grant string
 	deferred                              ontology.SourceHandle
 	endsAt, pendingAt                     time.Time
+}
+
+func TestOntologyEvidenceOnlyResetRebuildsExistingEvidence(t *testing.T) {
+	f := newHistoricalOntologyFixture(t)
+	other := maintenanceOtherTeam(t, f)
+	ctx := context.Background()
+	old := f.organizationEvidence(t, 0, "Historical generation uses PostgreSQL.", nil)
+	peer := other.organizationEvidence(t, 0, "Actor C uses PostgreSQL.", nil)
+	config := maintenanceSettings(t, f)
+	service, calls := maintenanceServiceFixture(t, f, config, nil)
+	drainMaintenance(t, service)
+	require.Positive(t, calls())
+	require.NoError(t, f.rls.WithSystemTx(ctx, f.app, func(tx *gorm.DB) error {
+		return tx.Exec(`UPDATE memory_spaces SET generation=generation+1 WHERE team_id=?::uuid AND id=?::uuid`, f.team, f.space).Error
+	}))
+	f.generation++
+	shared := []ontology.SourceHandle{
+		f.organizationEvidence(t, 0, "Actor A uses PostgreSQL.", nil),
+		f.organizationEvidence(t, 1, "Actor B uses PostgreSQL.", nil),
+	}
+	credential := f.credentials[0]
+	private, err := f.knowledge.CreateIngestForTest(ctx, knowledge.CreateIngestInput{
+		TeamID: f.team, OwnerProfileID: f.owners[0], SpaceID: credential.MemorySpaceID.String(), SpaceGeneration: credential.MemorySpaceGeneration,
+		IdempotencyKey: uuid.NewString(), RequestHash: testHash("private reset Evidence"), Evidence: []knowledge.EvidenceInput{{Content: "Private source must never enter the rebuilt shared ontology."}},
+	})
+	require.NoError(t, err)
+	drainMaintenance(t, service)
+	_, err = config.UpdateOntologyMaintenanceSettings(ctx, map[string]string{domain.AppConfigOntologyEnabled: "false"}, "control", "", "")
+	require.NoError(t, err)
+	require.NoError(t, f.rls.WithSystemTx(ctx, f.app, func(tx *gorm.DB) error {
+		return tx.Exec(`UPDATE ontology_maintenance_state SET paused=true`).Error
+	}))
+	unfinished := uuid.NewString()
+	require.NoError(t, f.rls.WithSystemTx(ctx, f.app, func(tx *gorm.DB) error {
+		result := tx.Exec(`INSERT INTO ontology_maintenance_batches
+ SELECT (jsonb_populate_record(NULL::ontology_maintenance_batches,to_jsonb(batch)||jsonb_build_object(
+ 'batch_id',?::uuid,'status','running','failure_code','','completed_at',NULL,'lease_token',gen_random_uuid(),
+ 'lease_until',clock_timestamp()+interval '1 hour'))).*
+ FROM ontology_maintenance_batches batch WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND status='completed'
+ ORDER BY created_at DESC LIMIT 1`, unfinished, f.team, f.space, f.generation)
+		if result.Error != nil {
+			return result.Error
+		}
+		require.EqualValues(t, 1, result.RowsAffected)
+		attempt := tx.Exec(`INSERT INTO ontology_maintenance_attempts(batch_id,assessment_id,attempt,window_id,
+ reserved_input,reserved_output,estimated_input_tokens,max_output_tokens,admitted_at)
+ SELECT batch_id,gen_random_uuid(),1,window_id,0,0,11,17,clock_timestamp()
+ FROM ontology_maintenance_batches WHERE batch_id=?::uuid`, unfinished)
+		if attempt.Error != nil {
+			return attempt.Error
+		}
+		require.EqualValues(t, 1, attempt.RowsAffected)
+		return tx.Exec(`UPDATE ontology_maintenance_attempts SET reported_input=3,reported_output=5,reported_total=8,
+ reconciled_at=clock_timestamp() WHERE batch_id=?::uuid`, unfinished).Error
+	}))
+	before, otherBefore := f.canonicalSnapshot(t), other.canonicalSnapshot(t)
+	history := func() map[string]string {
+		result := map[string]string{}
+		for _, table := range []string{"ontology_maintenance_state", "ontology_maintenance_windows", "ontology_maintenance_runs", "ontology_maintenance_attempts"} {
+			var body string
+			require.NoError(t, f.admin.Raw(`SELECT COALESCE(jsonb_agg(to_jsonb(row_value) ORDER BY to_jsonb(row_value)::text)::text,'[]') FROM `+table+` row_value`).Row().Scan(&body))
+			result[table] = body
+		}
+		var settings string
+		require.NoError(t, f.admin.Raw(`SELECT jsonb_agg(to_jsonb(row_value) ORDER BY key)::text FROM app_config row_value WHERE key LIKE 'ONTOLOGY_%'`).Row().Scan(&settings))
+		result["settings"] = settings
+		var batches string
+		require.NoError(t, f.admin.Raw(`SELECT jsonb_agg(to_jsonb(row_value)-ARRAY['sources','revisions','status','failure_code','completed_at'] ORDER BY batch_id)::text FROM ontology_maintenance_batches row_value`).Row().Scan(&batches))
+		result["batch_identity"] = batches
+		return result
+	}
+	beforeHistory, beforeCalls := history(), calls()
+	var oldRecords int
+	require.NoError(t, f.admin.Raw(`SELECT count(*) FROM ontology_record_revisions`).Row().Scan(&oldRecords))
+	require.Positive(t, oldRecords)
+	migrator, err := storage.NewMigrator(f.admin)
+	require.NoError(t, err)
+	require.NoError(t, migrator.RunUp(ctx))
+	require.Equal(t, beforeCalls, calls(), "the migration must not call a provider")
+	require.Equal(t, beforeHistory, history())
+	var retired, completed int
+	require.NoError(t, f.admin.Raw(`SELECT count(*) FILTER(WHERE batch_id=?::uuid AND status='lost' AND failure_code='retired_contract' AND completed_at IS NOT NULL),
+ count(*) FILTER(WHERE batch_id<>?::uuid AND status='completed' AND completed_at IS NOT NULL)
+ FROM ontology_maintenance_batches`, unfinished, unfinished).Row().Scan(&retired, &completed))
+	require.Equal(t, 1, retired)
+	var batchIdentities []json.RawMessage
+	require.NoError(t, json.Unmarshal([]byte(beforeHistory["batch_identity"]), &batchIdentities))
+	require.Greater(t, len(batchIdentities), 1)
+	require.Equal(t, len(batchIdentities)-1, completed)
+	require.Equal(t, before, f.canonicalSnapshot(t))
+	require.Equal(t, otherBefore, other.canonicalSnapshot(t))
+	for _, table := range []string{"ontology_catalog_heads", "ontology_publications", "ontology_record_heads", "ontology_record_revisions", "ontology_source_dependencies", "ontology_revision_dependencies", "ontology_assessments", "ontology_draft_heads", "ontology_draft_revisions", "ontology_maintenance_sources", "ontology_maintenance_markers"} {
+		var count int
+		require.NoError(t, f.admin.Raw(`SELECT count(*) FROM `+table).Row().Scan(&count))
+		require.Zero(t, count, table)
+	}
+	var staleCursors int
+	require.NoError(t, f.admin.Raw(`SELECT count(*) FROM ontology_maintenance_teams WHERE discovery_kind<>0 OR discovery_cursor<>'' OR lease_token IS NOT NULL OR lease_until IS NOT NULL`).Row().Scan(&staleCursors))
+	require.Zero(t, staleCursors)
+	window := maintenanceWindow(t, f, config)
+	_, err = f.store.ClaimMaintenanceTurn(ctx, window.ID, time.Now().UTC(), time.Minute)
+	require.ErrorIs(t, err, ontology.ErrMaintenancePaused)
+	require.NoError(t, f.rls.WithSystemTx(ctx, f.app, func(tx *gorm.DB) error {
+		return tx.Exec(`UPDATE ontology_maintenance_state SET paused=false`).Error
+	}))
+	_, err = f.store.ClaimMaintenanceTurn(ctx, window.ID, time.Now().UTC(), time.Minute)
+	require.ErrorIs(t, err, ontology.ErrMaintenanceDisabled)
+	_, err = config.UpdateOntologyMaintenanceSettings(ctx, map[string]string{domain.AppConfigOntologyEnabled: "true"}, "control", "", "")
+	require.NoError(t, err)
+	drainMaintenance(t, service)
+	require.Greater(t, calls(), beforeCalls)
+	for _, item := range []struct {
+		fixture *ontologyFixture
+		source  ontology.SourceHandle
+	}{{f, shared[0]}, {f, shared[1]}, {other, peer}} {
+		var count int
+		require.NoError(t, f.admin.Raw(`SELECT count(*) FROM ontology_maintenance_sources WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND source_id=? AND eligible AND status='organized'`, item.fixture.team, item.fixture.space, item.fixture.generation, item.source.ID).Row().Scan(&count))
+		require.Equal(t, 1, count)
+		view, err := item.fixture.store.ListRecords(item.fixture.actor(0, "member"), item.fixture.team, ontology.Topic, "", 20)
+		require.NoError(t, err)
+		require.NotEmpty(t, view.Records)
+	}
+	var excluded, leaked int
+	require.NoError(t, f.admin.Raw(`SELECT count(*) FROM ontology_maintenance_sources WHERE source_id IN (?,?)`, old.ID, private.Evidence[0].FragmentID).Row().Scan(&excluded))
+	require.Zero(t, excluded)
+	require.NoError(t, f.rls.WithTeamTx(other.actor(0, "member"), f.app, other.team, func(tx *gorm.DB) error {
+		return tx.Raw(`SELECT count(*) FROM ontology_record_heads WHERE team_id=?::uuid`, f.team).Row().Scan(&leaked)
+	}))
+	require.Zero(t, leaked)
+	var rebuilt int
+	require.NoError(t, f.admin.Raw(`SELECT count(*) FROM ontology_record_revisions`).Row().Scan(&rebuilt))
+	require.Positive(t, rebuilt)
+	require.NoError(t, migrator.RunUp(ctx))
+	var afterRestart int
+	require.NoError(t, f.admin.Raw(`SELECT count(*) FROM ontology_record_revisions`).Row().Scan(&afterRestart))
+	require.Equal(t, rebuilt, afterRestart)
+	require.Equal(t, before, f.canonicalSnapshot(t))
+	require.Equal(t, otherBefore, other.canonicalSnapshot(t))
 }
 
 func legacyMaintenanceFixture(t *testing.T) legacyMaintenance {
