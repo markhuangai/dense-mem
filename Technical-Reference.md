@@ -92,9 +92,9 @@ Illustrative successful terminal result:
 
 Inspect every Evidence disposition, `errors`, optional `warnings`, and search state. Successful processing is terminal; there is no public polling step. See [Conflicts And Corrections](Conflicts-And-Corrections) for replacement procedures.
 
-### Optional Progress (Target)
+### Optional Progress
 
-This section specifies the approved target; see [implementation status](Documentation-Maintenance#implementation-status). Progress uses the existing synchronous `remember` call. Its workflow and failure ordering are illustrated in [Memory Write Pipeline](Write-Pipeline#atomic-commit-and-deadlines).
+Progress uses the existing synchronous `remember` call. Its workflow and failure ordering are illustrated in [Memory Write Pipeline](Write-Pipeline#atomic-commit-and-deadlines).
 
 Complete request envelope after initialization, sent over Streamable HTTP with `Accept: application/json, text/event-stream`:
 
@@ -124,7 +124,7 @@ An optional notification on the originating response stream while request `41` r
   "params": {
     "progressToken": "remember-41",
     "progress": 1,
-    "message": "Assessing Evidence."
+    "message": "Preparing intake"
   }
 }
 ~~~
@@ -186,16 +186,16 @@ An alternative final actionable-error response; actual codes and remediation dep
 }
 ~~~
 
-| Field or delivery condition | Target contract |
+| Field or delivery condition | Contract |
 | --- | --- |
 | `params._meta.progressToken` | Client-supplied string or integer, including `0`, unique across that client's active requests; preserve the exact value/type. Protocol metadata sits beside `arguments`; it is not a Remember argument, credential, or idempotency key. |
 | Notification fields | `progressToken` echoes the request token; numeric `progress` increases; `message` is fixed human-readable stage text. |
-| `total` | Omitted for Remember because cached/skipped work and regeneration make a fixed total misleading. Progress values do not estimate elapsed time. |
+| `total` | Omitted for Remember. Progress values are increasing stage sequence numbers; they do not measure elapsed time or a completion percentage. |
 | SSE and valid token | May receive at most five notifications before the final response. Only reached stages appear; retained-result replay produces none. |
 | Missing/invalid token or JSON-only response | Keep the existing terminal response without progress. No separate subscription or polling is required. |
 | Completion | Exactly one final response for the request ID; no later progress. Final result/error schemas retain their existing meaning. |
 
-The wire examples are JSON-RPC messages carried by the response stream; they omit SSE `data:` framing. The [MCP progress specification](https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/progress) defines the protocol; [Request Lifecycle And Security](Request-Lifecycle-And-Security#progress-notification-boundary-target) owns isolation and exposure.
+The wire examples are JSON-RPC messages carried by the response stream; they omit SSE `data:` framing. The [MCP progress specification](https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/progress) defines the protocol; [Request Lifecycle And Security](Request-Lifecycle-And-Security#progress-notification-boundary) owns isolation and exposure.
 
 Fixed stage text is `Preparing intake`, `Checking duplicate Evidence`, `Assessing Evidence`, `Preparing search state`, and `Committing`. Duplicate checking can embed candidates before assessment. Search preparation can reuse cached vectors or skip a provider call; no status promises that a provider was invoked. A bounded regeneration remains within the assessment stage.
 

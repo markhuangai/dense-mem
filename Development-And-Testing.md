@@ -59,13 +59,24 @@ The [scenario registry](https://github.com/markhuangai/dense-mem/blob/152448a4c4
 
 | Path | Include an adverse case |
 | --- | --- |
-| Remember | Retired/unknown fields, security rejection, invalid complete assessment, provider/embedding failure, unchanged replay, and changed-key payload conflict. |
+| Remember | Retired/unknown fields, security rejection, invalid complete assessment, provider/embedding failure, unchanged replay, changed-key payload conflict, and bounded request-isolated progress before the terminal response. |
 | Session intake | Changed event, exact Unicode/whitespace offsets, prior-context exclusion, explicit empty extraction, and private erasure fences. |
 | Recall/topics | Private/team isolation, unavailable or stale topics, direct membership without descendant expansion, and visible optional degradation. |
 | Lifecycle/conflicts | Different owners, stale versions/revisions, exact conflict positions, and rollback preserving source history. |
 | Trace/export | Unauthorized targets, bounded history/content, canonical hashes, and explicit omissions. |
 
 Isolation-sensitive cross-profile behavior needs real A/B/C actors, including different read-visible and mutation-owning profiles.
+
+## Staging Validation
+
+| Path | Verification boundary |
+| --- | --- |
+| Prerelease rehearsal | Restore a production copy, run migrations from the selected source, and verify state before image publication. Application startup is separate. |
+| Deploy staging | The manually installed host helper restores through `sync.sh`, migrates with the pinned image, runs read-only checks, and starts that image. Follow [Operations Runbook](Operations-Runbook#staging-deployment). |
+| Repository checks | Exercise image/source/digest policy and real PostgreSQL migration preservation. Live host-helper installation and execution require their own evidence. |
+| Evidence-only cutover | Cover reset counts, retained Evidence, holds, unexpected dependencies, rollback, saved controls/accounting, enabled/paused rebuild, private/generation isolation, and skipping an already-applied migration. |
+
+Record exact source, image digest, scenario selections, and outcome. A successful rehearsal does not establish a running application or completed background organization rebuild.
 
 ## Python Package And Frameworks
 
@@ -95,6 +106,6 @@ Owner, other-author, and fork validation paths differ. Consult the governing [re
 
 ## Data, Migrations, And Artifacts
 
-Deployed migrations are immutable. Add an ordered migration with lock/rewrite analysis, RLS impact, constraints, recovery, and required PostgreSQL tests. Stop incompatible writers before destructive boundaries.
+Deployed migrations are immutable. Add an ordered migration with lock/rewrite analysis, RLS impact, constraints, recovery, and required PostgreSQL tests. The [schema migration rules](PostgreSQL-Cluster-Safe-Schema#migrations-and-proof) identify the exact approved Evidence-only cutover hash transition. Stop incompatible writers before destructive boundaries.
 
 Generated seeds, downloaded data, runtime databases, full runs/comparisons, and protected captures stay ignored. Keep reproducible generators, locks, scoring/validation, and required safe fixtures. Only the latest overall measured result belongs in `tests/eval/baseline.json`; keep limitations and unavailable measurements intact.

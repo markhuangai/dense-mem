@@ -48,6 +48,20 @@ Counts and selection apply visibility, lifecycle, temporal eligibility, freshnes
 
 Maintenance uses existing bounded scheduling, concurrency, provider backoff, and complete-response validation. Request context limits constrain individual model calls. There is no cumulative token allowance or spending budget. Exact controls are in [Configuration](Configuration#ontology-maintenance); operator procedures are in [Operations Runbook](Operations-Runbook#ontology-maintenance).
 
+## Evidence-Only Cutover
+
+The one-time migration `20261110010000` resets derived organization before normal Evidence-based maintenance resumes.
+
+| State | Cutover behavior |
+| --- | --- |
+| Topics, IDs, assignments, equivalence, overrides, publications, assessments, drafts, and derived queues | Cleared together through the explicit reset inventory. Manual organization is not retained. |
+| Original Evidence, fingerprints, provenance, lifecycle, conflicts, legal holds, and unrelated security/audit history | Retained and checked by the migration. |
+| Maintenance settings, pause state, and usage accounting | Retained; discovery cursors and leases reset. |
+| Existing eligible shared Evidence | Rediscovered in active spaces and current generations without resubmission. Private and unavailable sources remain excluded. |
+| Already-applied cutover | Skipped; current organization remains intact. |
+
+Rebuilding runs after startup when maintenance is enabled, unpaused, and has model capacity. Rediscover topic handles afterward; rebuilt organization can differ. Ordinary publication and override rules below continue to apply. [Operations Runbook](Operations-Runbook#evidence-only-cutover) owns execution and recovery.
+
 ## Manager Workflow
 
 Managers use the user portal's **Ontology** section. Inspection requires read access; saving and publication commands require write access. Drafts belong to their creator.

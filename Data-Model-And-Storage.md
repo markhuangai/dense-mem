@@ -49,6 +49,8 @@ Provider calls occur outside the authoritative semantic transaction. Authorizati
 | Topic assignment/equivalence | Reassess eligible current shared sources with dependency and publication fences. |
 | Operational aggregates | Recompute through their owner; expose collection failures rather than stale success. |
 
+The one-time [Evidence-only cutover](Topics-And-Organization#evidence-only-cutover) clears derived organization through an explicit inventory. [Operations Runbook](Operations-Runbook#evidence-only-cutover) separates migration completion from subsequent rebuilding.
+
 Rebuildability is not permission to omit required foreground work. Remember success requires its required search embeddings and receipt to commit. Derived metadata never becomes newly submitted Evidence.
 
 ## Isolation And Private Erasure

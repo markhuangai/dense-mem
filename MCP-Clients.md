@@ -64,9 +64,9 @@ processing limits.
 The version-sensitive source is the
 [official Codex MCP documentation](https://developers.openai.com/codex/mcp).
 
-## Remember Progress (Target)
+## Remember Progress
 
-The target experience adds changing status text while `remember` remains pending. See [implementation status](Documentation-Maintenance#implementation-status), the [canonical processing sequence](Write-Pipeline#atomic-commit-and-deadlines), and [protocol examples](Technical-Reference#optional-progress-target).
+A supporting host can display changing status while `remember` remains pending. See the [processing sequence](Write-Pipeline#atomic-commit-and-deadlines) and [protocol examples](Technical-Reference#optional-progress).
 
 Illustrative text for a host that displays progress; each arrow replaces the running status:
 
@@ -76,23 +76,23 @@ dense-mem · remember
           ↓
   Checking duplicate Evidence
           ↓
-  Assessing Evidence…
+  Assessing Evidence
           ↓
-  Preparing search state…
+  Preparing search state
           ↓
-  Committing…
+  Committing
           ↓
   Final result: saved Evidence or actionable error
 ~~~
 
 The final line comes from the tool result. A progress message alone never establishes success or a reason to resubmit.
 
-| Client inspected on 2026-11-12 | Verified boundary | Remaining uncertainty |
+| Client tested on 2026-11-12 | Observed CLI display | Verification limit |
 | --- | --- | --- |
-| Claude Code 2.1.288 | A controlled fixture using the verified candidate wire sequence received its numeric token, delivered five notifications, and showed live stage updates before the terminal result in the captured CLI view. | The first model turn skipped the tool call and required a follow-up instruction. This was a presentation fixture; IDE/desktop behavior and a deployed Dense-Mem connection were not tested. |
-| Codex 0.166.0 | The same controlled fixture received its numeric token and delivered all five notifications plus the terminal result. | The captured CLI view showed generic working/tool status without stage text. Its app-server protocol support does not establish CLI or IDE rendering. |
+| Claude Code 2.1.288 | Live stage text before the terminal result. | Controlled presentation fixture; invocation remained host-dependent. IDE/desktop and a deployed Dense-Mem connection were not tested. |
+| Codex 0.166.0 | Generic working/tool status without stage text, despite receiving all five notifications and the final result. | Controlled presentation fixture; app-server protocol support does not establish CLI or IDE rendering. |
 
-Issue #742 separately verifies the production server and each installed client's presentation using a controlled fixture with the verified notification sequence. A fixture probe does not write real memory. Record whether the client supplies a progress token and whether its actual terminal shows the stage text; receiving a valid terminal result alone does not prove visible progress. Candidate verification and exact source/run evidence belong to [Documentation Maintenance](Documentation-Maintenance#implementation-status).
+The [client probes](https://github.com/markhuangai/dense-mem/pull/745) used numeric progress tokens. A valid final result alone does not prove that a host displays progress.
 
 Claude Code documents automatic backgrounding of main-conversation MCP calls after two minutes by default; the task view retains the latest progress and later delivers the tool outcome. This is host behavior around the same server call. See [Claude Code's MCP reference](https://code.claude.com/docs/en/mcp#automatic-backgrounding-of-long-tool-calls).
 

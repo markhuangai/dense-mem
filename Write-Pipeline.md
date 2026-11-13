@@ -13,10 +13,12 @@ flowchart TB
   Replay -->|"Changed / retired request"| Error["Actionable error"]
   Replay -->|"New or eligible retry"| Stage[("Durable exact intake")]
   Stage --> Context["Authorized duplicate/conflict context"]
-  Context --> Provider["Complete assessment + required embeddings"]
-  Provider --> Commit[("Fenced atomic commit")]
+  Context --> Assessment["Validate complete assessment"]
+  Assessment --> Search["Prepare required search state<br/>Reuse or generate embeddings"]
+  Search --> Commit[("Fenced atomic commit")]
   Commit --> Done["Terminal Evidence receipt"]
-  Provider -->|"Required failure"| Failed["No new semantic memory<br/>Retain intake and diagnostics"]
+  Assessment -->|"Required failure"| Failed["No new semantic memory<br/>Retain intake and diagnostics"]
+  Search -->|"Required failure"| Failed
   Commit -->|"Rollback"| Failed
 ```
 
@@ -44,7 +46,7 @@ Optional typed decision providers resolve only supported tasks under server-owne
 
 ## Atomic Commit And Deadlines
 
-This sequence includes **Target** progress notifications; see [implementation status](Documentation-Maintenance#implementation-status). The application owns actual stage transitions; the MCP transport translates them into optional notifications. [Technical Reference](Technical-Reference#optional-progress-target) owns the complete wire examples.
+The application owns actual stage transitions; the MCP transport translates them into optional notifications. [Technical Reference](Technical-Reference#optional-progress) owns the complete wire examples.
 
 ```mermaid
 %%{init: {"sequence": {"rightAngles": true}}}%%
@@ -54,17 +56,17 @@ sequenceDiagram
   participant AI as Model providers
   participant PG as PostgreSQL
   Host->>App: remember (same call remains pending)
-  App->>PG: Stage exact intake and processing intent
-  opt Target: progress requested over SSE
-    App-->>Host: Nonterminal reached-stage notification
+  opt Progress requested over SSE
+    App-->>Host: Preparing intake (nonterminal)
   end
+  App->>PG: Stage exact intake and processing intent
   App->>AI: Bounded provider work outside semantic transaction
   AI-->>App: Assessment proposals / vectors / required failure
   Note over App: Validate complete responses<br/>and apply server policy
   alt Required processing fails
     App-->>Host: Final actionable error
   else Ready to commit
-    opt Target: progress requested over SSE
+    opt Progress requested over SSE
       App-->>Host: Committing (nonterminal)
     end
     App->>PG: Begin transaction and recheck authority/versions
@@ -80,9 +82,9 @@ sequenceDiagram
   end
 ```
 
-Target notifications follow reached preparation, duplicate checking, assessment, search preparation and commit boundaries. Duplicate-candidate embedding can precede assessment; cached or empty embedding work adds no provider call. Regeneration does not repeat the assessment notification. Notifications add no model calls and never imply accepted memory. Notify before entering the semantic transaction; no network notification delivery belongs inside it. A retained-result replay returns directly without simulated processing.
+Notifications follow reached preparation, duplicate checking, assessment, search preparation and commit boundaries. Duplicate-candidate embedding can precede assessment; cached or empty embedding work adds no provider call. Regeneration does not repeat the assessment notification. Notifications add no model calls and never imply accepted memory. Notify before entering the semantic transaction; no network notification delivery belongs inside it. A retained-result replay returns directly without simulated processing.
 
-Each optional notification write has a 100 ms cap within the existing request/phase deadline. Unsupported write deadlines or a delivery error disable further notifications for that call. Required processing still owns its terminal outcome; a broken response stream can make receipt delivery unknown.
+Optional notification writes follow the [bounded delivery rules](Request-Lifecycle-And-Security#progress-notification-boundary). Required processing still owns its terminal outcome; a broken response stream can make receipt delivery unknown.
 
 The 180-second operation budget bounds required processing. Assessment has a 160-second phase bound; embedding and commit have their existing bounded phases within the total deadline. Earlier context cancellation and remaining time still apply. Provider timeouts and optional progress delivery cannot extend a phase or operation deadline.
 
@@ -100,7 +102,7 @@ Background search reconciliation repairs derived state after later changes. It d
 
 A lost response is not proof of rollback. The Python client does not automatically retry or generate replacement operation keys. See [Framework Integrations](Framework-Integrations#failures-and-unknown-outcomes).
 
-The controlled disconnect fixture in [candidate 66e103ed](https://github.com/markhuangai/dense-mem/commit/66e103ed04b93c6658e8cbed607bc4decfc01e42), verified by [Development E2E 43263787048](https://github.com/markhuangai/dense-mem/actions/runs/43263787048), observed different retained outcomes by negotiated protocol: `2025-11-25` completed processing after disconnect, while `2026-07-28` retained `failed` with `request_cancelled`. Resending the unchanged complete request and original key recovered to completion for both. These are candidate observations under controlled timing; inspect the retained outcome and use unchanged-request recovery for an actual disconnect.
+Disconnect cancellation follows the [negotiated protocol](Request-Lifecycle-And-Security#progress-notification-boundary). Preserve the request and key whenever the final receipt is unavailable.
 
 ## Private Session Intake
 

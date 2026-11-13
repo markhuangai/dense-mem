@@ -48,4 +48,6 @@ Redis wakeups or short coordination leases do not replace these durable records.
 
 Startup serializes ordered migrations under a PostgreSQL session lock. Deployed migrations remain immutable. Every schema change needs lock/rewrite analysis, RLS and constraint review, and an explicit recovery or irreversible boundary.
 
+Migration `20261110010000` resets organization with an explicit `TRUNCATE ... RESTRICT` inventory in the same transaction as its preservation checks and receipt. Unexpected retained dependencies or applicable holds block the transaction. The migration-history guard accepts only explicitly approved hash transitions for this cutover; other deployed migration files remain immutable. See [cutover semantics](Topics-And-Organization#evidence-only-cutover) and [operating procedure](Operations-Runbook#evidence-only-cutover).
+
 Real PostgreSQL integration tests must prove tenant joins, RLS, transaction atomicity, concurrency, idempotency, generation fencing, and migration preservation. Mocked repository calls do not establish those guarantees. Commands and deployment procedures belong to [Development And Testing](Development-And-Testing) and [Operations Runbook](Operations-Runbook).

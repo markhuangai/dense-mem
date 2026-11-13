@@ -53,7 +53,7 @@ Review the matching [environment example](https://github.com/markhuangai/dense-m
 | `POSTGRES_SLOW_QUERY_THRESHOLD_MS` | `200` | Positive slow-query threshold. |
 | `POSTGRES_HOST_PORT` | `15432` in evaluation Compose | Evaluation-only published port. |
 
-Startup requires a writable primary and rejects unsupported replica/distributed topology, including separate `POSTGRES_READ_DSN` configuration. Migration progress is logged every ten seconds. The image healthcheck has a 30-minute start period; extend startup/rollout grace for longer migrations. Budget connections across all replicas.
+Startup requires a writable primary and rejects unsupported replica/distributed topology, including separate `POSTGRES_READ_DSN` configuration. Migration phase/count updates and liveness heartbeats follow the [migration observation contract](Telemetry#migration-observations). The image healthcheck has a 30-minute start period; extend startup/rollout grace for longer migrations. Budget connections across all replicas.
 
 ## Embedding Provider And Contract
 

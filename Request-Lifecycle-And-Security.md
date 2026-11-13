@@ -144,11 +144,11 @@ A field name or secret-like phrase alone does not cause masking. Registered oper
 
 Long-lived streams honor cancellation and configured lifetime/concurrency bounds, releasing slots on every disconnect or error. Multiple instances require distributed coordination; they cannot silently fall back to independent counters.
 
-## Progress Notification Boundary (Target)
+## Progress Notification Boundary
 
-See [implementation status](Documentation-Maintenance#implementation-status) and the [protocol contract](Technical-Reference#optional-progress-target).
+See [implementation status](Documentation-Maintenance#implementation-status) and the [protocol contract](Technical-Reference#optional-progress).
 
-| Boundary | Target rule |
+| Boundary | Rule |
 | --- | --- |
 | Request and actor | Route progress only to the originating authenticated call/session. Equal tokens from different clients never merge routing or authority. |
 | Correlation token | Client metadata correlates messages; it cannot choose team, profile, destination, ownership, or another request. Treat it as untrusted caller metadata when producing diagnostics. |
@@ -156,9 +156,16 @@ See [implementation status](Documentation-Maintenance#implementation-status) and
 | Delivery | Bound each optional write to 100 ms and the earlier phase/request deadline, outside semantic transactions. Unsupported write deadlines or delivery failure disable subsequent updates. Preserve required outcomes and existing disconnect/cancellation rules. |
 | Lifetime | Stop notifications before the final response; preserve phase/operation deadlines and release stream resources on every exit. |
 
-A progress update does not extend a request deadline or prove a commit. A disconnect can still leave receipt delivery unknown; follow [unchanged-request recovery](Write-Pipeline#replay-and-recovery).
+A progress update does not extend a request deadline or prove a commit.
 
-Lossless envelope-token decoding prevents large integer tokens from being rounded by SDK metadata conversion. The token stays outside the tool arguments and canonical request hash. Eligibility logs omit its value before admission; stage-delivery diagnostics use the existing credential protector.
+| Negotiated MCP protocol | Disconnect behavior |
+| --- | --- |
+| `2025-11-25` | Closing the client connection can leave server processing running. |
+| `2026-07-28` | The transport propagates request cancellation. |
+
+A disconnect can lose receipt delivery after a commit under either protocol. Follow [unchanged-request recovery](Write-Pipeline#replay-and-recovery).
+
+Envelope-token decoding preserves large integer values exactly. The token stays outside the tool arguments and canonical request hash. Eligibility logs omit its value before admission; stage-delivery diagnostics use the existing credential protector.
 
 ## Private Erasure Boundary
 

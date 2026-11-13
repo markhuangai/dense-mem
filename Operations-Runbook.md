@@ -30,11 +30,11 @@ curl -fsS http://127.0.0.1:8080/health
 curl -fsS http://127.0.0.1:8080/ready
 ```
 
-Migrations have no overall deadline by default (`POSTGRES_MIGRATION_TIMEOUT_SECONDS=0`); shutdown still cancels. Progress logs appear every ten seconds. Extend startup/healthcheck grace and rollout deadlines for a long migration instead of launching a competing migration process. See [Configuration](Configuration#postgresql-and-pgvector).
+Migrations have no overall deadline by default (`POSTGRES_MIGRATION_TIMEOUT_SECONDS=0`); shutdown still cancels. Structured phase/count observations and liveness heartbeats are described in [Telemetry](Telemetry#migration-observations). Extend startup/healthcheck grace and rollout deadlines for a long migration instead of launching a competing migration process. See [Configuration](Configuration#postgresql-and-pgvector).
 
 ### Destructive Migration Boundary
 
-If pending Evidence-only migrations remove retired graph data, stop incompatible readers/writers and verify a matching restore-tested backup before starting the new binary. The migration uses an explicit inventory/fingerprint, bounded lock acquisition, and one transaction without provider calls. A blocked inventory or retained dependency needs investigation, not manual deletion.
+Before the pending Evidence-only cutover, stop incompatible readers/writers and verify a matching restore-tested backup. Migration `20261110010000` removes retired graph data and resets derived organization in one transaction with inventory, hold, dependency, and retained-Evidence checks. A blocked check stops the upgrade; inspect the bounded failure before proceeding.
 
 Before destructive commit, transaction rollback preserves the prior state. After commit, restoration requires the matching backup; after new accepted writes, use forward recovery unless separately authorized. Ordinary rolling changes must remain compatible with the previous supported binary.
 
@@ -51,7 +51,49 @@ When an operator deliberately invokes the existing migration command with a reta
   --source-fingerprint='<preflight-source-fingerprint>'
 ```
 
-Do not guess ownership to clear a preflight blocker. Partial migration remains a readiness failure. The deprecated maintenance-confirmation flag is not an activation requirement.
+The standalone command writes its final status to stdout and uses a WARN-level console logger on stderr. Do not guess ownership to clear a preflight blocker. Partial migration remains a readiness failure. The deprecated maintenance-confirmation flag is not an activation requirement.
+
+### Evidence-Only Cutover
+
+~~~mermaid
+%%{init: {"flowchart": {"curve": "linear"}}}%%
+flowchart TB
+  Backup["Stop incompatible readers/writers<br/>Verify restore-tested backup"] --> Pending{"Migration 20261110010000<br/>pending?"}
+  Pending -->|"Yes"| Migrate["Apply atomic cutover<br/>Reset derived organization"]
+  Pending -->|"No"| Skip["Skip reset<br/>Keep current organization"]
+  Migrate --> Receipt{"Committed receipt<br/>verified?"}
+  Skip --> Receipt
+  Receipt -->|"No"| Stop["Stop and inspect<br/>transaction outcome"]
+  Receipt -->|"Yes"| Start["Start compatible application"]
+  Start --> Enabled{"Maintenance enabled<br/>and unpaused?"}
+  Enabled -->|"No"| Wait["Wait for enable / resume"]
+  Enabled -->|"Yes"| Rebuild["Rediscover eligible shared Evidence<br/>Rebuild within model capacity"]
+  Wait -. "Enable / resume" .-> Rebuild
+~~~
+
+[Topics And Organization](Topics-And-Organization#evidence-only-cutover) defines the retained and reset state. The rebuild uses existing eligible Evidence without resubmission. It runs after startup under the saved maintenance settings and can produce different topics, IDs, and assignments. Migration completion does not establish rebuild completion.
+
+Inspect the transaction outcome and retained receipt using [migration observations](Telemetry#migration-observations). After a committed destructive cutover, recovery of the previous organization requires the matching backup and the restore procedure below.
+
+## Staging Deployment
+
+~~~mermaid
+%%{init: {"flowchart": {"curve": "linear"}}}%%
+flowchart TB
+  Select["Authorize image tag<br/>Resolve exact source revision"] --> Pin["Verify production variant<br/>Pin immutable image digest"]
+  Pin --> Restore["Stop staging application<br/>Restore production copy"]
+  Restore --> Migrate["Run migrations using<br/>the pinned application image"]
+  Migrate -->|"Success"| Verify{"Read-only state, catalog,<br/>and Evidence checks pass?"}
+  Verify -->|"Yes"| Start["Start the same pinned image<br/>Wait for health and readiness"]
+  Verify -->|"No"| Stop["Leave application stopped<br/>Inspect failure and receipt"]
+  Migrate -->|"Failure"| Stop
+~~~
+
+Install `deploy-staging-copy.sh` and its `sync.sh` dependency beside the staging Compose configuration before dispatching **Deploy staging**. The workflow runs through the protected `staging-migration` environment and passes the selected image revision and migration inventory to that host helper.
+
+Validation checks migration state, catalog compatibility, and Evidence preservation. Existing completed private attribution uses exact retained fingerprints; pending legacy attribution retains its supported identity remapping. A failed migration or deployment does not restart an older fallback image.
+
+Prerelease publication performs its separate source-based production-copy rehearsal before publishing images. It does not start the staging application. The [deployment workflow](https://github.com/markhuangai/dense-mem/blob/41e278673679c1d9634cd63a68d13c74e8a46452/.github/workflows/deploy-stage.yml) owns invocation and image selection; [Development And Testing](Development-And-Testing#staging-validation) describes the verification boundaries.
 
 ## Health Triage
 

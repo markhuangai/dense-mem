@@ -1,25 +1,18 @@
 # Documentation Maintenance
 
-This wiki holds the approved target architecture and recommended workflows. Accepted ADRs and explicit maintainer decisions govern the target; registries, implementations, migrations, callers, and tests establish implemented behavior. Describe approved targets before implementation, label the affected sections, and record their implementation gaps here. Verify implementation and deployment claims separately.
+This wiki holds the approved target architecture and recommended workflows. Describe behavior, boundaries, and outcomes directly. Keep design rationale and decision history in ADRs and issues. Label approved behavior that awaits implementation and verify deployment availability separately.
 
-The current audit uses [source snapshot 152448a4](https://github.com/markhuangai/dense-mem/commit/152448a4c4c4192a7492ad3ae2ca311fcb82851a) and contract `dense-mem.v2.8.0`. Source state does not establish a deployed release.
+The reviewed source is [41e27867](https://github.com/markhuangai/dense-mem/commit/41e278673679c1d9634cd63a68d13c74e8a46452), using contract `dense-mem.v2.8.0`.
 
 ## Implementation Status
 
-| Subject | Approved target | Inspected implementation |
+| Subject | Source behavior | Availability boundary |
 | --- | --- | --- |
-| Remember outcome | Required work finishes in the originating call; final success or actionable failure remains authoritative. | Synchronous processing is present in the audited Evidence-only baseline. |
-| Remember progress | Optional request-scoped stage notifications while the same call remains pending. | Implemented and verified in [candidate 66e103ed](https://github.com/markhuangai/dense-mem/commit/66e103ed04b93c6658e8cbed607bc4decfc01e42), [PR #745](https://github.com/markhuangai/dense-mem/pull/745). Not merged or deployed. |
+| Remember | Synchronous terminal outcomes with optional bounded progress notifications. | Implemented in the reviewed source; [client presentation](MCP-Clients#remember-progress) depends on the host. |
+| Evidence-only cutover | Migration `20261110010000` resets derived organization and retains Evidence for subsequent maintenance. | Applies once to databases where the migration is pending; see [cutover and rebuild](Operations-Runbook#evidence-only-cutover). |
+| Staging deployment | The selected image performs migrations before read-only verification and startup. | Requires the manually installed host helper; live installation and deployment were not inspected in this audit. |
 
-The #742 candidate passed independent plan audit (`gpt-6.1-sol/max`, round 5), selective local checks, and [Development E2E 43263787048](https://github.com/markhuangai/dense-mem/actions/runs/43263787048): all five selected scenarios and PostgreSQL shard 4. The tested production image was `sha256:85f1338975f758b941aaa2dc2865a58fc7755331f2466da3c571d521911af8f6`; [cleanup 43265955042](https://github.com/markhuangai/dense-mem/actions/runs/43265955042) deleted its owned version. Client fixture probes separately verified visible stage updates in Claude Code 2.1.288 and generic tool status without stage text in Codex 0.166.0. These results establish candidate behavior, not deployment. The maintainer-approved 1k evaluation waiver and replacement verification are recorded in the [issue contract](https://github.com/markhuangai/dense-mem/issues/742#issuecomment-6823449787).
-
-The maintainer authorized [Codex-only review for this delivery](https://github.com/markhuangai/dense-mem/issues/742#issuecomment-6826236791). The separate AI reviewer error remains excluded from that gate. Codex completed without findings, and CodeQL plus CodeQL analysis passed on `66e103ed04b93c6658e8cbed607bc4decfc01e42`.
-
-Full Repository CI and production-image E2E passed in [run 43266534414, attempt 2](https://github.com/markhuangai/dense-mem/actions/runs/43266534414/attempts/2), including all 30 scenarios and six PostgreSQL shards. The initial `ontology_organization` failure was a verified transient embedding-provider HTTP 502; its one scoped retry passed on the unchanged source and image. The production image was `sha256:20a5843dc5061e61d8eb46a39d429f72690f560ee9568550dde9fcdf00fb8c9f`. The candidate includes main `007fbb6fafed69411c09666de37cc0a20ec24523`; the PR remains open and requires human approval.
-
-Sections marked **Target** specify the approved progress behavior. Keep candidate verification separate from merge and deployment status. Client-specific inspection and UI uncertainty belong to [MCP Clients](MCP-Clients#remember-progress-target).
-
-[ADR 0001](https://github.com/markhuangai/dense-mem/blob/66e103ed04b93c6658e8cbed607bc4decfc01e42/adr/0001-predictable-mcp-tool-contracts.md#decision) requires synchronous terminal outcomes. The candidate clarification preserves that decision while allowing optional activity notifications.
+Source implementation does not establish the state of a deployed image or database. [ADR 0001](https://github.com/markhuangai/dense-mem/blob/41e278673679c1d9634cd63a68d13c74e8a46452/adr/0001-predictable-mcp-tool-contracts.md) governs terminal MCP outcomes; [ADR 0017](https://github.com/markhuangai/dense-mem/blob/41e278673679c1d9634cd63a68d13c74e8a46452/adr/0017-evidence-only-memory-without-factual-relationships.md) defines the Evidence-only boundary. Detailed verification receipts remain with the linked changes: [Remember progress](https://github.com/markhuangai/dense-mem/pull/745), [organization reset](https://github.com/markhuangai/dense-mem/pull/757), and [staging deployment](https://github.com/markhuangai/dense-mem/pull/753).
 
 ## Canonical Page Ownership
 
@@ -67,7 +60,7 @@ flowchart TB
 
 Keep complete schemas/examples in Technical Reference, defaults in Configuration, policy in its owning page, and procedures in their workflow/runbook. Framework-native snippets may illustrate their integration without restating the wire schema. Short reader summaries are useful; copied decision tables and full diagrams create competing authority.
 
-Prefer an illustrative diagram for relationships, ordering, boundaries, and failure paths. Use a small table for fields or outcomes. Keep prose for intent, exceptions, and details the visual cannot express. Preserve distinct subjects rather than merging unrelated responsibilities to reduce page count.
+Prefer an illustrative diagram for relationships, ordering, boundaries, and failure paths. Use a small table for fields or outcomes. Keep prose for constraints, exceptions, and details the visual cannot express. Preserve distinct subjects rather than merging unrelated responsibilities to reduce page count.
 
 Retired feature URLs retain only short pointers and are absent from active navigation. Delete redundant pages after moving any unique current material. Remove completed plans and obsolete release narratives; preserve exact identifiers still emitted by code, such as artifact formats and `retired_contract`.
 
@@ -81,7 +74,7 @@ Retired feature URLs retain only short pointers and are absent from active navig
 
 | Material | Verification |
 | --- | --- |
-| Complete tool JSON | Current registry schemas and semantic input validation; validate target protocol envelopes separately and retain their implementation label. Substitute only explicit returned-ID/new-key placeholders. |
+| Complete tool JSON | Current registry schemas and semantic input validation; also validate complete protocol envelopes and any explicitly labeled target examples. Substitute only explicit returned-ID/new-key placeholders. |
 | Python snippets | Parse/compile and check current client types, methods, options, and constructor signatures. |
 | Shell/config snippets | Syntax plus existing scripts, routes, parser settings, and deployment examples. |
 | Source/lifecycle claims | Domain policy, adapters, migrations, real PostgreSQL tests and supported consumers. |

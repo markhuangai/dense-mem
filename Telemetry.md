@@ -57,17 +57,65 @@ Remember body captures expire after seven days, subject to applicable holds and 
 
 Ontology diagnostics join trusted team/actor, correlation, operation, run/batch/assessment, and provider-exchange identities. Complete protected DEBUG chunks are stdout-only and independent of optional telemetry. Preserve the full operation window and validate manifest hashes and chunk counts; missing required chunks cannot establish a diagnosis. Successful publication observations occur after transaction/audit success. Rejected assessment receipts can include bounded server-owned validation identifiers; absence does not imply success.
 
-### Remember Progress Diagnostics (Candidate)
+### Remember Progress Diagnostics
 
-The #742 candidate uses the existing process logger and level policy; deployment verbosity is unchanged. [Documentation Maintenance](Documentation-Maintenance#implementation-status) records verification and deployment status.
+Remember progress uses the process logger and configured level policy. [MCP Clients](MCP-Clients#remember-progress) describes user-visible status.
 
 | Event | Level and evidence |
 | --- | --- |
 | `mcp_progress_eligibility` | DEBUG: response mode, protocol and eligibility reason; no token value before admission. |
-| `mcp_progress_sending` / `mcp_progress_delivered` | DEBUG: trusted team/profile and correlation, request/invocation identity, protected token, stage, sequence, 100 ms write budget and delivery duration. |
+| `mcp_progress_sending` / `mcp_progress_delivered` | DEBUG: trusted team/profile and correlation, request/invocation identity, protected token, stage, sequence, write budget and delivery duration. |
 | `mcp_progress_delivery_failed` | WARN: causal error, elapsed time, reason and disabled state; correlate with the terminal MCP and HTTP delivery events. |
 
 Collect the complete server console operation window, including `remember_request_payload` and `ai_exchange_payload` at DEBUG. Reconstruct protected chunks by exchange/direction and verify counts/hashes. Required provider bodies are console-only and remain available with optional telemetry disabled; the control log summary alone cannot prove complete capture. Use existing phase, processing-failure and invocation events for cause, retry eligibility, canonical attempt, request hash and final outcome. Initial security rejection remains content-free.
+
+## Migration Observations
+
+Capture startup migration events with the console logger at INFO or more verbose. Before the operation-log sink attaches, they are console-only. See [logging configuration](Configuration#telemetry-and-logging) for `LOG_LEVEL` and [PostgreSQL settings](Configuration#postgresql-and-pgvector) for migration deadlines.
+
+All event names below start with `evidence_only_migration_`. Group an execution by `migration_execution_id`.
+
+| Event suffix | Meaning |
+| --- | --- |
+| `started`, `progress` | Current phase/work unit, elapsed time, metric/unit, completed/total/remaining counts, and last meaningful progress time. |
+| `heartbeat` | Liveness every ten seconds; does not advance `last_progress_at`. |
+| `wait` | Current wait type/event and blocker count, without query text. |
+| `completed`, `skipped` | The final `completed` record carries the verified outcome and receipt. `skipped` identifies no newly attempted migration work; receipt verification still follows. |
+| `blocked`, `failed`, `cancellation_requested`, `capture_incomplete` | Bounded failure or cancellation information and diagnostic-capture state. Cancellation request alone does not establish rollback. |
+
+~~~mermaid
+%%{init: {"flowchart": {"curve": "linear"}}}%%
+flowchart TB
+  Observe["Phase + count observations<br/>Attempted transaction-local work"] --> Verify["Verify this execution's outcome"]
+  Verify -->|"committed"| Commit["Committed receipt<br/>Durable result"]
+  Verify -->|"rolled_back"| Rollback["Transaction aborted<br/>No durable cutover"]
+  Verify -->|"not_started"| Absent["No cutover<br/>transaction started"]
+  Verify -->|"unconfirmed"| Unknown["Inspect retained state<br/>Outcome unknown"]
+~~~
+
+Only `completed` with `transaction_outcome=committed` and a verified receipt establishes the durable result. `committed_work` identifies new committed work; `previous_commit_verified` identifies an already-applied or concurrent winner's receipt. `rolled_back` requires PostgreSQL to report this attempt's transaction aborted. Missing or unreconciled outcome evidence remains `unconfirmed`.
+
+| Metric | Count meaning |
+| --- | --- |
+| `counted` | Exact counted rows. |
+| `affected` | PostgreSQL command row count; it does not measure rows scanned or values changed. |
+| `matched` | Matching legal holds. |
+| `verified` | Retained fingerprints whose equality check passed. |
+| `completed` with unit `tables` | Completed table work units, including checked absent tables. |
+
+Unknown totals and remaining work stay unknown. Long SQL statements can have no intermediate row count. Repeated observations are coalesced to at most once per second; phase/table boundaries and final counts are retained. ETA is unavailable.
+
+A committed migration can have incomplete capture. `capture_reason` records notice-capture problems; `wait_observation_unavailable` separately records wait-probe degradation and remains set if sampling later recovers. The first failed wait sample reports `wait_observation_failure_reason`; it does not overwrite an existing notice-capture reason. Preserve the complete console window and investigate each reported cause. `collection_queries` counts additional client round trips, while `sql_notices` counts captured database notices.
+
+Collect one startup execution from the bundled stack:
+
+~~~bash
+docker compose -f examples/docker-compose.base.yml logs --no-color --no-log-prefix server |
+  jq -Rc --arg run "$MIGRATION_EXECUTION_ID" \
+    'fromjson? | select(.migration_execution_id == $run)'
+~~~
+
+Set `MIGRATION_EXECUTION_ID` to the observed execution ID. WARN-level filtering hides INFO progress. Wait observations do not authorize terminating blockers. Follow [Operations Runbook](Operations-Runbook#evidence-only-cutover) for cutover, recovery, and subsequent organization rebuilding.
 
 ## Dashboard States
 
