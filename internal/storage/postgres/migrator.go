@@ -272,7 +272,7 @@ func newMigrationProviderWithFilesystem(
 		if err != nil {
 			return nil, fmt.Errorf("failed to create postgres migration lock: %w", err)
 		}
-		options = append(options, goose.WithSessionLocker(locker))
+		options = append(options, goose.WithSessionLocker(observedMigrationLocker{locker}))
 	}
 	provider, err := goose.NewProvider(goose.DialectPostgres, db, filesystem, options...)
 	if err != nil {

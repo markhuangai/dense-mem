@@ -725,3 +725,55 @@ in CI; they do not establish that live fork acceptance has completed.
 ## License
 
 Apache-2.0
+
+### Evidence-only migration progress
+
+The Evidence-only upgrade emits structured `evidence_only_migration_progress`
+events before listeners start. At `LOG_LEVEL=info` or more verbose (the default
+is `trace`), collect one execution from the server console:
+
+```bash
+docker compose -f examples/docker-compose.base.yml logs --no-color --no-log-prefix server |
+  jq -Rc --arg run "$MIGRATION_EXECUTION_ID" \
+    'fromjson? | select(.migration_execution_id == $run)'
+```
+
+Each observation identifies the phase, table or work unit, phase start and
+elapsed time, metric and unit, completed/total/remaining counts, and the last
+meaningful progress time. The ten-second heartbeat is liveness; it never
+advances that progress time. A long SQL statement can have a known table and an
+unknown row-progress count until it finishes. `counted` is an exact count,
+`affected` is PostgreSQL's command row count (not a measurement of scanned rows
+or changed values), `matched` counts hold matches, and `verified` counts retained
+fingerprints only after the equality check succeeds. Fingerprint-copy command
+counts use `affected` rows; they do not claim canonical Evidence was rewritten. Table completion counts table work units, including checked absent
+tables. No catalog estimate is represented as an exact count. Dependency closure
+reports discovered records and iterations; its remaining work is unknown until
+convergence. ETA is unavailable because the remaining phases have no stable cost
+model.
+
+All phase counts describe attempted transaction-local work. Only
+`evidence_only_migration_completed` with `transaction_outcome=committed` and its
+verified receipt confirms durable results. A validation or hold failure identifies
+the bounded reason and failing phase. `rolled_back` requires PostgreSQL to report the exact migration transaction
+aborted. In-progress completion is observed for at most five seconds; another
+starter's commit cannot replace this attempt's outcome. `unconfirmed` means outcome
+verification failed or the state could not be reconciled. Do not infer success
+from the SQL stream finishing. Already-applied or concurrently completed upgrades
+emit an explicit skipped event with no newly attempted or committed migration
+work; `previous_commit_verified` describes their existing receipt.
+
+`evidence_only_migration_wait` records the current phase, wait type/event and
+blocker count without query text. The migration session lock can be waiting
+between PostgreSQL lock probes. A wait event explains a stall; it does not
+authorize terminating its blockers. Repetitive progress is coalesced to at most
+once per second; phase/table boundaries and final counts are retained.
+`evidence_only_migration_capture_incomplete` and `capture_reason` identify missing,
+invalid, oversized or interrupted notices and unavailable wait observations.
+A committed migration can have incomplete diagnostic capture. Preserve the log
+and investigate the stated capture reason rather than treating missing counts
+as zero. `collection_queries` counts additional client round trips; notice-helper
+SQL executes inside the original batches and is represented by `sql_notices`
+and measured elapsed overhead. WARN-level filtering excludes INFO progress; keep INFO or more verbose
+when collecting migration evidence. These events contain no memory text or row
+identifiers and use the existing credential-protected root logger.

@@ -2,6 +2,8 @@ package migrationapp
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -56,9 +58,17 @@ func runWithInterval(parent context.Context, db *gorm.DB, timeout time.Duration,
 		return fmt.Errorf("migration logger is required")
 	}
 
-	ctx, cancel := WithTimeout(parent, timeout)
+	ctx, cancel := WithTimeout(withProgressSlot(parent), timeout)
 	defer cancel()
 
+	var execution *postgres.MigrationProgress
+	if direction == "up" {
+		ctx, execution = postgres.ObserveMigration(ctx, func(s postgres.MigrationSnapshot) {
+			logInfo(ctx, logger, "evidence_only_migration_progress", progressAttrs(s)...)
+		})
+		detach := attachProgress(ctx, execution)
+		defer detach()
+	}
 	startedAt := time.Now()
 	logInfo(ctx, logger,
 		"running postgres migrations",
@@ -68,7 +78,11 @@ func runWithInterval(parent context.Context, db *gorm.DB, timeout time.Duration,
 
 	stopHeartbeat := make(chan struct{})
 	heartbeatStopped := make(chan struct{})
-	go reportHeartbeat(ctx, stopHeartbeat, heartbeatStopped, startedAt, timeout, direction, logger, interval)
+	var sqlDB *sql.DB
+	if db != nil {
+		sqlDB, _ = db.DB()
+	}
+	go reportHeartbeat(ctx, stopHeartbeat, heartbeatStopped, startedAt, timeout, direction, logger, interval, sqlDB)
 
 	var stopOnce sync.Once
 	stop := func() {
@@ -82,6 +96,12 @@ func runWithInterval(parent context.Context, db *gorm.DB, timeout time.Duration,
 	err = migrate(ctx, db)
 	stop()
 	if err != nil {
+		var bounded *postgres.MigrationFailure
+		if execution != nil && execution.Snapshot().BackendPID > 0 && !errors.As(err, &bounded) {
+			reason := postgres.MigrationFailureReason(err)
+			logError(context.WithoutCancel(ctx), logger, "postgres migrations failed", append(progressAttrs(execution.Snapshot()), "error", reason, "transaction_outcome", "not_started")...)
+			err = &postgres.MigrationFailure{Cause: err, Reason: reason}
+		}
 		return err
 	}
 
@@ -93,21 +113,36 @@ func runWithInterval(parent context.Context, db *gorm.DB, timeout time.Duration,
 	return nil
 }
 
-func reportHeartbeat(ctx context.Context, stop <-chan struct{}, stopped chan<- struct{}, startedAt time.Time, timeout time.Duration, direction string, logger infoLogger, interval time.Duration) {
+func reportHeartbeat(ctx context.Context, stop <-chan struct{}, stopped chan<- struct{}, startedAt time.Time, timeout time.Duration, direction string, logger infoLogger, interval time.Duration, db *sql.DB) {
 	defer close(stopped)
 
+	samples := time.NewTicker(time.Second)
+	defer samples.Stop()
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-stop:
 			return
+		case <-ctx.Done():
+			slot, _ := ctx.Value(progressSlotKey{}).(*progressSlot)
+			if slot != nil {
+				slot.mu.Lock()
+				if slot.current != nil {
+					logInfo(context.WithoutCancel(ctx), logger, "evidence_only_migration_cancellation_requested", progressAttrs(slot.current.Snapshot())...)
+				}
+				slot.mu.Unlock()
+			}
+			return
+		case <-samples.C:
+			heartbeatProgress(ctx, logger, db, true)
 		case <-ticker.C:
 			select {
 			case <-stop:
 				return
 			default:
 			}
+			heartbeatProgress(ctx, logger, db, false)
 			logInfo(ctx, logger,
 				"postgres migrations still running",
 				"direction", direction,
