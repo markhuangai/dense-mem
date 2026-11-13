@@ -116,6 +116,7 @@ func newOntologyFixtureWithMode(t *testing.T, historical, maintenance bool) *ont
 	require.NoError(t, admin.Exec(`CREATE ROLE ontology_app LOGIN PASSWORD 'ontology_test' NOSUPERUSER NOBYPASSRLS;
 		GRANT USAGE ON SCHEMA public TO ontology_app;
 		GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO ontology_app;
+		ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT,INSERT,UPDATE,DELETE ON TABLES TO ontology_app;
 		GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO ontology_app;
 		GRANT EXECUTE ON FUNCTION dense_mem_active_space_generation(UUID,UUID) TO ontology_app;
 		GRANT EXECUTE ON FUNCTION dense_mem_lock_memory_space(UUID,UUID) TO ontology_app`).Error)

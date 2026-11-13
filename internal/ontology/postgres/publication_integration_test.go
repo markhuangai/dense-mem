@@ -56,8 +56,9 @@ func TestOntologyMigrationRLSAndHistory(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, history, 1)
 	require.Equal(t, "manager", history[0].Origin)
-	require.Error(t, f.admin.Exec(`UPDATE ontology_record_revisions SET body='{}'::jsonb`).Error)
-	require.Error(t, f.admin.Exec(`DELETE FROM ontology_publications`).Error)
+	require.ErrorContains(t, f.admin.Exec(`UPDATE ontology_record_revisions SET fingerprint=fingerprint`).Error, "ontology_record_revisions is append-only")
+	require.ErrorContains(t, f.admin.Exec(`UPDATE ontology_topic_revision_payloads SET body=body`).Error, "ontology_topic_revision_payloads is append-only")
+	require.ErrorContains(t, f.admin.Exec(`DELETE FROM ontology_publications`).Error, "ontology_publications is append-only")
 	require.Equal(t, before, f.canonicalSnapshot(t))
 }
 

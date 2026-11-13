@@ -27,14 +27,15 @@ func TestFeatureStoragePostgresPreservesOrganizationDraftsAndIsolation(t *testin
 	f.credentials = append(f.credentials, third)
 	f.owners = append(f.owners, third.ID.String())
 	a := f.organizationEvidence(t, 0, "Exact storage Evidence A. café 🧭", nil)
-	b := f.organizationEvidence(t, 1, "Exact storage Evidence B. 🧭", nil)
+	b := f.organizationEvidence(t, 0, "Exact storage Evidence A. café 🧭", nil)
+	otherOwner := f.organizationEvidence(t, 1, "Exact storage Evidence B. 🧭", nil)
 	topic := testTopic("feature-storage")
 	assignment := func(source ontology.SourceHandle) ontology.Record {
 		return ontology.Record{ID: uuid.NewString(), Kind: ontology.AssignmentKind, Assignment: &ontology.Assignment{Source: source, DefinitionID: topic.ID}, Sources: []ontology.SourceDependency{f.source(t, source)}}
 	}
-	left, right := assignment(a), assignment(b)
+	left, right, peer := assignment(a), assignment(b), assignment(otherOwner)
 	group := ontology.Record{ID: uuid.NewString(), Kind: ontology.EvidenceGroup, Group: &ontology.Group{Members: []ontology.SourceHandle{a, b}}, Sources: []ontology.SourceDependency{f.source(t, a), f.source(t, b)}}
-	publication, err := f.store.PublishAutomatic(context.Background(), f.team, testPublication("all-features", 0, ontology.Change{Record: topic}, ontology.Change{Record: left}, ontology.Change{Record: right}, ontology.Change{Record: group}))
+	publication, err := f.store.PublishAutomatic(context.Background(), f.team, testPublication("all-features", 0, ontology.Change{Record: topic}, ontology.Change{Record: left}, ontology.Change{Record: right}, ontology.Change{Record: peer}, ontology.Change{Record: group}))
 	require.NoError(t, err)
 	pin := ontology.Record{ID: uuid.NewString(), Kind: ontology.OverrideKind, Override: &ontology.Override{Action: ontology.PinDefinition, TargetID: topic.ID}}
 	publication, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("pin", publication.Revision, ontology.Change{Record: pin}))
@@ -53,7 +54,7 @@ func TestFeatureStoragePostgresPreservesOrganizationDraftsAndIsolation(t *testin
 		}
 		return tx.Raw(`SELECT COALESCE(jsonb_agg(to_jsonb(row) ORDER BY id)::text,'[]') FROM private_memory_legal_holds row`).Row().Scan(&holds)
 	}))
-	ids := []string{topic.ID, left.ID, right.ID, group.ID, pin.ID}
+	ids := []string{topic.ID, left.ID, right.ID, peer.ID, group.ID, pin.ID}
 	views := make([]ontology.RecordView, len(ids))
 	for index, id := range ids {
 		views[index], err = f.store.GetRecord(f.actor(2, "member"), f.team, id, 0)
@@ -71,7 +72,7 @@ func TestFeatureStoragePostgresPreservesOrganizationDraftsAndIsolation(t *testin
 	}
 	topics := readTopics()
 	require.Len(t, topics.Topics, 1)
-	require.Len(t, topics.Topics[0].EvidenceIDs, 2)
+	require.Len(t, topics.Topics[0].EvidenceIDs, 3)
 	measure := func(label string) {
 		t.Helper()
 		samples := make([]time.Duration, 20)
@@ -85,7 +86,6 @@ func TestFeatureStoragePostgresPreservesOrganizationDraftsAndIsolation(t *testin
 	}
 	measure("before")
 	require.NoError(t, migrator.RunUp(context.Background()))
-	require.NoError(t, f.admin.Exec(`GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO ontology_app`).Error)
 	for index, id := range ids {
 		actual, err := f.store.GetRecord(f.actor(2, "member"), f.team, id, 0)
 		require.NoError(t, err)

@@ -261,7 +261,17 @@ func evidenceOnlyOntologySnapshot(t *testing.T, ctx context.Context, db *sql.DB)
 	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
 		for _, table := range evidenceOnlyResetTables {
 			var body string
-			if err := tx.QueryRowContext(ctx, `SELECT COALESCE(jsonb_agg(to_jsonb(row_value) ORDER BY to_jsonb(row_value)::text),'[]'::jsonb)::text FROM `+quoteMigrationIdentifier(table)+` row_value`).Scan(&body); err != nil {
+			relation := table
+			if view := map[string]string{"ontology_record_revisions": "ontology_revision_records", "ontology_draft_heads": "ontology_draft_head_records", "ontology_draft_revisions": "ontology_draft_revision_records"}[table]; view != "" {
+				var available sql.NullString
+				if err := tx.QueryRowContext(ctx, `SELECT to_regclass($1)::text`, view).Scan(&available); err != nil {
+					return err
+				}
+				if available.Valid {
+					relation = view
+				}
+			}
+			if err := tx.QueryRowContext(ctx, `SELECT COALESCE(jsonb_agg(to_jsonb(row_value) ORDER BY to_jsonb(row_value)::text),'[]'::jsonb)::text FROM `+quoteMigrationIdentifier(relation)+` row_value`).Scan(&body); err != nil {
 				return err
 			}
 			result[table] = body

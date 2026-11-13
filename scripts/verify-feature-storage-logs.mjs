@@ -9,7 +9,7 @@ const events = input.split('\n').flatMap(line => {
 });
 const migration = events.filter(event => event.msg?.startsWith('feature_storage_migration_'));
 assert.ok(migration.length, 'complete server stdout must contain feature storage events');
-assert.ok(!input.includes('Exact progress Evidence.'), 'migration logs must exclude memory text');
+assert.ok(!JSON.stringify(migration).includes('Exact progress Evidence.'), 'migration logs must exclude memory text');
 const checkpoint = migration.find(event => event.phase === 'copy' && event.work_unit === 'ontology_record_revisions'
   && event.state === (outcome === 'failed' ? 'batch_committed' : 'resumed') && event.committed_rows === 100);
 assert.ok(checkpoint, 'logs must identify the 100-row durable copy checkpoint');

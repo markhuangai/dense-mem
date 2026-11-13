@@ -563,6 +563,7 @@ run_feature_storage_startup_matrix() {
   local source_dir="$1" project="$2" before state observed=0
   reset_identity_cleanup_database
   seed_ontology_upgrade_database "$source_dir" "$project" interrupted DENSE_MEM_E2E_FEATURE_STORAGE_VARIANT || fail "feature storage fixture seed failed"
+  start_ontology_upgrade_helpers "$source_dir" "$project"
   before="$(feature_storage_fixture_fingerprints ontology_record_revisions)" || fail "feature storage preservation snapshot failed"
   ci_compose up -d redis prometheus server >/dev/null || fail "feature storage failure probe failed to start"
   for _ in $(seq 1 90); do
@@ -611,22 +612,26 @@ assert_ontology_upgrade_blocked() {
   [[ "$state" == "true|true|true|true|true" || "$state" == "t|t|t|t|t" ]] || fail "ontology upgrade did not preserve its blocked state: ${state}"
 }
 
+start_ontology_upgrade_helpers() {
+  local source_dir="$1" project="$2" observed=0
+  ci_compose --profile verifier up -d redis prometheus synchronous-write-provider >/dev/null || fail "ontology upgrade helpers failed to start"
+  start_stack_helpers "$project" "$source_dir" verifier
+  for _ in $(seq 1 30); do
+    if ci_compose exec -T synchronous-write-provider node -e 'fetch("http://127.0.0.1:8787/health",{signal:AbortSignal.timeout(5000)}).then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))' >/dev/null 2>&1; then
+      observed=1
+      break
+    fi
+    sleep 1
+  done
+  ((observed == 1)) || fail "ontology upgrade provider was not ready before startup reconciliation"
+}
+
 run_ontology_upgrade_startup_matrix() {
   local source_dir="$1" project="$2" variant before state observed
   for variant in expired unreconciled live; do
     reset_identity_cleanup_database
     seed_ontology_upgrade_database "$source_dir" "$project" "$variant" || fail "ontology upgrade fixture seed failed"
-    ci_compose --profile verifier up -d redis prometheus synchronous-write-provider >/dev/null || fail "ontology upgrade helpers failed to start"
-    start_stack_helpers "$project" "$source_dir" verifier
-    observed=0
-    for _ in $(seq 1 30); do
-      if ci_compose exec -T synchronous-write-provider node -e 'fetch("http://127.0.0.1:8787/health",{signal:AbortSignal.timeout(5000)}).then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))' >/dev/null 2>&1; then
-        observed=1
-        break
-      fi
-      sleep 1
-    done
-    ((observed == 1)) || fail "ontology upgrade provider was not ready before startup reconciliation"
+    start_ontology_upgrade_helpers "$source_dir" "$project"
     before="$(ontology_upgrade_fingerprints)" || fail "ontology upgrade history snapshot failed"
     if [[ "$variant" == "unreconciled" ]]; then
       for _ in 1 2; do
