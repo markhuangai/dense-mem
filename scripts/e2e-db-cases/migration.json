@@ -93,6 +93,20 @@
       "run": "^TestEvidenceOnlyPostgresProgressConcurrentStarters$",
       "phase": "precheck",
       "source": "cmd/internal/migrationapp/progress_integration_test.go"
+    },
+    {
+      "id": "migration/TestFeatureStoragePostgresLogOnlyFailureAndRecovery",
+      "package": "./cmd/internal/migrationapp",
+      "run": "^TestFeatureStoragePostgresLogOnlyFailureAndRecovery$",
+      "phase": "precheck",
+      "source": "cmd/internal/migrationapp/feature_storage_integration_test.go"
+    },
+    {
+      "id": "migration/TestFeatureStoragePostgresRestrictedRuntimeReceipt",
+      "package": "./cmd/internal/migrationapp",
+      "run": "^TestFeatureStoragePostgresRestrictedRuntimeReceipt$",
+      "phase": "precheck",
+      "source": "cmd/internal/migrationapp/feature_storage_integration_test.go"
     }
   ]
 }

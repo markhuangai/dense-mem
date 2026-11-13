@@ -210,5 +210,25 @@ func ValidateStartupMigrationState(ctx context.Context, db *sql.DB, migrationsDi
 			return err
 		}
 	}
+	if state.DatabaseLatest >= FeatureStorageCutoverVersion {
+		tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		if _, err := tx.ExecContext(ctx, `SELECT set_config('app.tx_mode','system',true)`); err != nil {
+			return err
+		}
+		var valid bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM v2_compatibility_markers marker JOIN data_migration_runs run ON run.migration_version=20261113010001 AND run.phase='complete' WHERE marker.marker_kind='feature_storage' AND marker.version='feature-storage-v1' AND marker.status='compatible' AND marker.metadata->>'source_fingerprint'=run.source_fingerprint AND marker.metadata->>'retained_fingerprints_verified'='true' AND marker.metadata->>'transaction_outcome'='committed')`).Scan(&valid); err != nil {
+			return err
+		}
+		if !valid {
+			return fmt.Errorf("%w: feature storage cutover receipt is missing or incompatible", ErrInvalidMigrationState)
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+	}
 	return nil
 }

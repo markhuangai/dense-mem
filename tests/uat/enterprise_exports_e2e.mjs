@@ -114,7 +114,7 @@ assert.equal((await controlRaw("/audit/export")).status, 200);
 // The child restarts the server, so the parent must keep processing pooled socket closures.
 await promisify(execFile)(process.execPath, [new URL("./private_memory_erasure_e2e.mjs", import.meta.url).pathname], { env: process.env, encoding: "utf8", timeout: 300000, maxBuffer: 8 << 20 });
 function sql(statement) {
-  const result = spawnSync("docker", ["exec", "-i", postgresID, "sh", "-ec", 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -At'], { input: statement, encoding: "utf8", timeout: 10000 });
+  const result = spawnSync("docker", ["exec", "-i", "-e", "PGOPTIONS=-c app.storage_layout=feature-storage-v1", postgresID, "sh", "-ec", 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -At'], { input: statement, encoding: "utf8", timeout: 10000 });
   assert.equal(result.status, 0, "export authorization fixture SQL failed"); return result.stdout.trim();
 }
 const [providerID, identityID] = sql("BEGIN; SELECT set_config('app.tx_mode','system',true); SELECT provider_id,id FROM sso_identities WHERE active ORDER BY id LIMIT 1; COMMIT;").split("\n").find((line) => /^[0-9a-f-]{36}\|[0-9a-f-]{36}$/.test(line)).split("|");

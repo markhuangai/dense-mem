@@ -384,7 +384,7 @@ func deprecatedANNQueryResults(t *testing.T, ctx context.Context, db *sql.DB) []
 	defer tx.Rollback()
 	require.NoError(t, func() error {
 		_, err := tx.ExecContext(ctx, `
-			SELECT set_config('app.tx_mode', 'system', true),
+			SELECT set_config('app.tx_mode', 'system', true),set_config('app.storage_layout','feature-storage-v1',true),
 			       set_config('app.current_team_id', '', true),
 			       set_config('app.current_profile_id', '', true),
 			       set_config('enable_seqscan', 'off', true)
@@ -443,7 +443,7 @@ func deprecatedANNQueryPlan(t *testing.T, ctx context.Context, db *sql.DB) strin
 	defer tx.Rollback()
 	require.NoError(t, func() error {
 		_, err := tx.ExecContext(ctx, `
-			SELECT set_config('app.tx_mode', 'system', true),
+			SELECT set_config('app.tx_mode', 'system', true),set_config('app.storage_layout','feature-storage-v1',true),
 			       set_config('app.current_team_id', '', true),
 			       set_config('app.current_profile_id', '', true),
 			       set_config('enable_seqscan', 'off', true)

@@ -68,7 +68,7 @@ func catalogRevision(tx *gorm.DB, fence scope) (int64, error) {
 
 func loadHeads(tx *gorm.DB, fence scope, ids, names, sourceKeys []string) (map[string]ontology.Record, error) {
 	rows, err := tx.Raw(`SELECT revision.body
-		FROM ontology_record_heads AS head JOIN ontology_record_revisions AS revision
+		FROM ontology_record_heads AS head JOIN ontology_revision_records AS revision
 		  USING (team_id,shared_space_id,space_generation,record_id,version)
 		WHERE head.team_id=?::uuid AND head.shared_space_id=?::uuid AND head.space_generation=?
 		  AND (head.record_id=ANY(?::uuid[])
@@ -121,7 +121,7 @@ func validationCatalogWithLoader(tx *gorm.DB, fence scope, records []ontology.Re
 			  ON head.team_id=dependency.team_id AND head.shared_space_id=dependency.shared_space_id
 			  AND head.space_generation=dependency.space_generation AND head.record_id=dependency.record_id
 			  AND head.version=dependency.record_version
-			JOIN ontology_record_revisions AS revision
+			JOIN ontology_revision_records AS revision
 			  ON revision.team_id=head.team_id AND revision.shared_space_id=head.shared_space_id
 			  AND revision.space_generation=head.space_generation AND revision.record_id=head.record_id
 			  AND revision.version=head.version
@@ -204,7 +204,7 @@ func (s *Store) GetRecord(ctx context.Context, teamID, recordID string, version 
 	var result ontology.RecordView
 	err := s.withScope(ctx, teamID, true, func(tx *gorm.DB, fence scope) error {
 		var body []byte
-		err := tx.Raw(`SELECT revision.body FROM ontology_record_revisions AS revision
+		err := tx.Raw(`SELECT revision.body FROM ontology_revision_records AS revision
 			JOIN ontology_record_heads AS head USING (team_id,shared_space_id,space_generation,record_id)
 			WHERE revision.team_id=?::uuid AND revision.shared_space_id=?::uuid AND revision.space_generation=?
 			  AND revision.record_id=?::uuid AND revision.version=CASE WHEN ?=0 THEN head.version ELSE ? END`, fence.TeamID, fence.SpaceID, fence.Generation, recordID, version, version).Row().Scan(&body)
@@ -385,7 +385,7 @@ func (s *Store) ListRecords(ctx context.Context, teamID string, kind ontology.Ki
 	result := ontology.Page{Records: []ontology.RecordView{}}
 	err := s.withScope(ctx, teamID, true, func(tx *gorm.DB, fence scope) error {
 		rows, err := tx.Raw(`SELECT revision.body FROM ontology_record_heads AS head
-			JOIN ontology_record_revisions AS revision USING (team_id,shared_space_id,space_generation,record_id,version)
+			JOIN ontology_revision_records AS revision USING (team_id,shared_space_id,space_generation,record_id,version)
 			WHERE head.team_id=?::uuid AND head.shared_space_id=?::uuid AND head.space_generation=?
 			  AND (?='' OR head.kind=?) AND (?='' OR head.record_id>NULLIF(?,'')::uuid)
 			ORDER BY head.record_id LIMIT ?`, fence.TeamID, fence.SpaceID, fence.Generation, string(kind), string(kind), after, after, limit+1).Rows()

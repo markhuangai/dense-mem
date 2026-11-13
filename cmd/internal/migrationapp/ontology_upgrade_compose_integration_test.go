@@ -17,6 +17,10 @@ import (
 )
 
 func TestOntologyUpgradeComposeSeed(t *testing.T) {
+	if os.Getenv("DENSE_MEM_E2E_FEATURE_STORAGE_VARIANT") != "" {
+		seedFeatureStorageCompose(t)
+		return
+	}
 	variant := os.Getenv("DENSE_MEM_E2E_ONTOLOGY_UPGRADE_VARIANT")
 	if variant == "" {
 		t.Skip("ontology upgrade seed requires its dedicated production-image scenario")

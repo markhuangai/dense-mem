@@ -210,6 +210,9 @@ func (s *AppConfigServiceImpl) OperationLogRuntimeConfig(ctx context.Context) (d
 	if err != nil {
 		return domain.OperationLogRuntimeConfig{}, err
 	}
+	if cache.refreshErr != nil {
+		return domain.OperationLogRuntimeConfig{}, fmt.Errorf("refresh operation log retention: %w", cache.refreshErr)
+	}
 	return cache.opLogs.Effective, nil
 }
 

@@ -141,6 +141,13 @@
       "run": "^TestEvidenceOnlyPostgresOperationalTelemetryFailureIsVisible$",
       "phase": "precheck",
       "source": "internal/operations/postgres/telemetry_repository_integration_test.go"
+    },
+    {
+      "id": "operations/TestFeatureStoragePostgresRetentionCountsAndConfigurationFailure",
+      "package": "./internal/operations/postgres",
+      "run": "^TestFeatureStoragePostgresRetentionCountsAndConfigurationFailure$",
+      "phase": "precheck",
+      "source": "internal/operations/postgres/feature_storage_retention_integration_test.go"
     }
   ]
 }

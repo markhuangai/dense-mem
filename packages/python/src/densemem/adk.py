@@ -1,4 +1,4 @@
-"""Google ADK 2.7.0 integration, installed with densemem[adk]."""
+"""Google ADK 2.14.1 integration, installed with densemem[adk]."""
 
 import asyncio
 import copy

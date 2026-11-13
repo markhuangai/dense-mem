@@ -31,7 +31,7 @@ const maintenanceDefinitionSourcesSQL = `), roots AS (
  AND scope.space_generation=dependency.space_generation
 ), words AS (
  SELECT head.names || tsvector_to_array(` + vocabularyVectorSQL + `) AS terms
- FROM ontology_record_heads AS head JOIN ontology_record_revisions AS revision
+ FROM ontology_record_heads AS head JOIN ontology_revision_records AS revision
  USING(team_id,shared_space_id,space_generation,record_id,version)
  JOIN input AS scope USING(team_id,shared_space_id,space_generation)
  WHERE head.record_id=scope.record_id AND head.kind IN ('topic')

@@ -108,9 +108,15 @@ func newOntologyFixtureWithMode(t *testing.T, historical, maintenance bool) *ont
 		schema = ontologySchemaSnapshot(t, admin)
 		require.NoError(t, rollbackOntologySchemaTo(t, admin, 20261004190000))
 	}
+	if historical {
+		pool, err := admin.DB()
+		require.NoError(t, err)
+		require.NoError(t, testfixture.InstallLegacyOntologyStorage(context.Background(), pool))
+	}
 	require.NoError(t, admin.Exec(`CREATE ROLE ontology_app LOGIN PASSWORD 'ontology_test' NOSUPERUSER NOBYPASSRLS;
 		GRANT USAGE ON SCHEMA public TO ontology_app;
 		GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO ontology_app;
+		ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT,INSERT,UPDATE,DELETE ON TABLES TO ontology_app;
 		GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO ontology_app;
 		GRANT EXECUTE ON FUNCTION dense_mem_active_space_generation(UUID,UUID) TO ontology_app;
 		GRANT EXECUTE ON FUNCTION dense_mem_lock_memory_space(UUID,UUID) TO ontology_app`).Error)
@@ -238,6 +244,11 @@ func ontologyMigrationProvider(t *testing.T, db *gorm.DB) *goose.Provider {
 func rollbackOntologySchemaTo(t *testing.T, db *gorm.DB, target int64) error {
 	t.Helper()
 	ctx := context.Background()
+	if target < 20261011220000 {
+		if err := db.Exec(`DROP VIEW IF EXISTS ontology_draft_head_records, ontology_draft_revision_records`).Error; err != nil {
+			return err
+		}
+	}
 	provider := ontologyMigrationProvider(t, db)
 	versions, err := goosedb.NewStore(goosedb.DialectPostgres, "goose_db_version")
 	require.NoError(t, err)

@@ -185,7 +185,7 @@ func TestEmbeddingReconciliationMigrationBackfillsJobsWithoutIncidentState(t *te
 	_, err = requestTx.ExecContext(ctx, "SET LOCAL ROLE "+quotedRole)
 	require.NoError(t, err)
 	for key, value := range map[string]string{
-		"app.tx_mode": "team", "app.current_team_id": teamID, "app.current_profile_id": profileID,
+		"app.storage_layout": FeatureStorageLayout, "app.tx_mode": "team", "app.current_team_id": teamID, "app.current_profile_id": profileID,
 	} {
 		_, err = requestTx.ExecContext(ctx, `SELECT set_config($1, $2, true)`, key, value)
 		require.NoError(t, err)

@@ -139,7 +139,7 @@ func TestRememberSynchronousCutoverEnforcesForceRLSForRuntimeRole(t *testing.T) 
 			return err
 		}
 		for key, value := range map[string]string{
-			"app.tx_mode": txMode, "app.current_team_id": currentTeamID,
+			"app.storage_layout": FeatureStorageLayout, "app.tx_mode": txMode, "app.current_team_id": currentTeamID,
 			"app.current_profile_id": currentProfileID, "app.private_erasure_space_id": privateSpace,
 		} {
 			if _, err := tx.ExecContext(ctx, `SELECT set_config($1, $2, true)`, key, value); err != nil {

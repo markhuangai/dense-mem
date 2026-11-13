@@ -74,7 +74,7 @@ func (s *Store) organizationContext(tx *gorm.DB, fence scope, handles []ontology
 		keys = append(keys, ontology.SourceKey(handle))
 	}
 	rows, err := tx.Raw(`SELECT DISTINCT revision.body, head.record_id
-            FROM ontology_record_heads AS head JOIN ontology_record_revisions AS revision
+            FROM ontology_record_heads AS head JOIN ontology_revision_records AS revision
               USING (team_id,shared_space_id,space_generation,record_id,version)
             JOIN ontology_source_dependencies AS dependency
               ON dependency.team_id=head.team_id AND dependency.shared_space_id=head.shared_space_id
@@ -188,7 +188,7 @@ func (s *Store) organizationVocabulary(tx *gorm.DB, fence scope, sources []ontol
     ts_rank_cd(`+vocabularyVectorSQL+`,
      websearch_to_tsquery('simple',?)) AS rank
    FROM ontology_record_heads AS head
-   JOIN ontology_record_revisions AS revision USING(team_id,shared_space_id,space_generation,record_id,version)
+   JOIN ontology_revision_records AS revision USING(team_id,shared_space_id,space_generation,record_id,version)
    WHERE head.team_id=?::uuid AND head.shared_space_id=?::uuid AND head.space_generation=?
     AND NOT head.retired AND head.kind IN ('topic')
     AND (head.record_id=ANY(?::uuid[]) OR head.names && ?::text[]

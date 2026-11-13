@@ -264,6 +264,23 @@ func newMigrationProviderWithFilesystem(
 		excludedNames = append(excludedNames, evidenceOnlyMigrationSQLName)
 		goMigrations = append(goMigrations, migration)
 	}
+	for _, item := range []struct {
+		name    string
+		version int64
+		cutover bool
+	}{
+		{featureStorageDataSQLName, FeatureStorageDataVersion, false},
+		{featureStorageCutoverSQLName, FeatureStorageCutoverVersion, true},
+	} {
+		if source, ok := filesystem[item.name]; ok {
+			migration, err := featureMigrationRegistration(item.version, source.Data, item.cutover)
+			if err != nil {
+				return nil, err
+			}
+			excludedNames = append(excludedNames, item.name)
+			goMigrations = append(goMigrations, migration)
+		}
+	}
 	if len(excludedNames) > 0 {
 		options = append(options, goose.WithExcludeNames(excludedNames), goose.WithGoMigrations(goMigrations...))
 	}
@@ -310,6 +327,8 @@ func migrationDown(ctx context.Context, db *sql.DB) error {
 
 // RunUp runs all pending up migrations.
 func (m *Migrator) RunUp(ctx context.Context) error {
+	releasePool := reserveMigrationPool(m.db)
+	defer releasePool()
 	provider, err := newRuntimeMigrationProvider(m.dir, m.db, true)
 	if err != nil {
 		return err
@@ -322,13 +341,16 @@ func (m *Migrator) RunUp(ctx context.Context) error {
 	return nil
 }
 
+func (m *Migrator) RunUpThroughEvidenceOnly(ctx context.Context) error {
+	return m.runUpTo(ctx, evidenceOnlyMigrationVersion)
+}
+
+func (m *Migrator) PrepareFeatureStorageMigration(ctx context.Context) error {
+	return m.runUpTo(ctx, FeatureStoragePrepareVersion)
+}
+
 func (m *Migrator) PreparePrivateMemoryMigration(ctx context.Context) error {
-	provider, err := newRuntimeMigrationProvider(m.dir, m.db, true)
-	if err != nil {
-		return err
-	}
-	_, err = provider.UpTo(ctx, 20261014010001)
-	return err
+	return m.runUpTo(ctx, 20261014010001)
 }
 
 func (m *Migrator) IncludesEvidenceOnlyMigration() (bool, error) {
@@ -341,11 +363,17 @@ func (m *Migrator) IncludesEvidenceOnlyMigration() (bool, error) {
 }
 
 func (m *Migrator) PrepareEvidenceOnlyMigration(ctx context.Context) error {
+	return m.runUpTo(ctx, 20261108010000)
+}
+
+func (m *Migrator) runUpTo(ctx context.Context, version int64) error {
+	releasePool := reserveMigrationPool(m.db)
+	defer releasePool()
 	provider, err := newRuntimeMigrationProvider(m.dir, m.db, true)
 	if err != nil {
 		return err
 	}
-	_, err = provider.UpTo(ctx, 20261108010000)
+	_, err = provider.UpTo(ctx, version)
 	return err
 }
 
@@ -355,6 +383,8 @@ func (m *Migrator) RunMigrationControlRetirement(ctx context.Context) error {
 	if err := m.RunUp(ctx); err != nil {
 		return fmt.Errorf("failed to run runtime migrations before migration-control retirement: %w", err)
 	}
+	releasePool := reserveMigrationPool(m.db)
+	defer releasePool()
 	provider, err := newMigrationProvider(m.dir, m.db, true)
 	if err != nil {
 		return err

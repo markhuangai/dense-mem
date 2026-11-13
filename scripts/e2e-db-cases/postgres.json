@@ -854,6 +854,76 @@
       "run": "^TestEvidenceOnlyPostgresMixedOntologyReceiptsAndDrafts$",
       "phase": "precheck",
       "source": "internal/storage/postgres/evidence_only_migration_integration_test.go"
+    },
+    {
+      "id": "postgres/TestFeatureStoragePostgresFreshAndPopulated",
+      "package": "./internal/storage/postgres",
+      "run": "^TestFeatureStoragePostgresFreshAndPopulated$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/feature_storage_migration_integration_test.go"
+    },
+    {
+      "id": "postgres/TestFeatureStoragePostgresRestartAndWriterFence",
+      "package": "./internal/storage/postgres",
+      "run": "^TestFeatureStoragePostgresRestartAndWriterFence$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/feature_storage_migration_integration_test.go"
+    },
+    {
+      "id": "postgres/TestFeatureStoragePostgresRejectsChangedSourcesAndPayloads",
+      "package": "./internal/storage/postgres",
+      "run": "^TestFeatureStoragePostgresRejectsChangedSourcesAndPayloads$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/feature_storage_migration_integration_test.go"
+    },
+    {
+      "id": "postgres/TestFeatureStoragePostgresConnectionLossResumesCommittedBatch",
+      "package": "./internal/storage/postgres",
+      "run": "^TestFeatureStoragePostgresConnectionLossResumesCommittedBatch$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/feature_storage_migration_integration_test.go"
+    },
+    {
+      "id": "postgres/TestFeatureStoragePostgresCutoverReceiptRecovery",
+      "package": "./internal/storage/postgres",
+      "run": "^TestFeatureStoragePostgresCutoverReceiptRecovery$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/feature_storage_migration_integration_test.go"
+    },
+    {
+      "id": "postgres/TestFeatureStoragePostgresConcurrentStartersAndCancellation",
+      "package": "./internal/storage/postgres",
+      "run": "^TestFeatureStoragePostgresConcurrentStartersAndCancellation$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/feature_storage_migration_integration_test.go"
+    },
+    {
+      "id": "postgres/TestFeatureStoragePostgresActiveBatchInterruption",
+      "package": "./internal/storage/postgres",
+      "run": "^TestFeatureStoragePostgresActiveBatchInterruption$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/feature_storage_migration_integration_test.go"
+    },
+    {
+      "id": "postgres/TestFeatureStoragePostgresSingleConnectionPool",
+      "package": "./internal/storage/postgres",
+      "run": "^TestFeatureStoragePostgresSingleConnectionPool$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/feature_storage_migration_integration_test.go"
+    },
+    {
+      "id": "postgres/TestFeatureStoragePostgresLargeRetainedRows",
+      "package": "./internal/storage/postgres",
+      "run": "^TestFeatureStoragePostgresLargeRetainedRows$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/feature_storage_migration_integration_test.go"
+    },
+    {
+      "id": "postgres/TestFeatureStoragePostgresOverlappingSingleConnectionStarters",
+      "package": "./internal/storage/postgres",
+      "run": "^TestFeatureStoragePostgresOverlappingSingleConnectionStarters$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/feature_storage_migration_integration_test.go"
     }
   ]
 }

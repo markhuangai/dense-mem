@@ -57,7 +57,7 @@ func (r *RLS) WithTeamTx(ctx context.Context, db *gorm.DB, teamID string, fn fun
 			if err := setAllowedSpaceIDs(setupTx, ctx); err != nil {
 				return err
 			}
-			if err := setupTx.Exec("SELECT set_config('app.tx_mode', 'team', true)").Error; err != nil {
+			if err := setupTx.Exec("SELECT set_config('app.tx_mode', 'team', true), set_config('app.storage_layout', 'feature-storage-v1', true)").Error; err != nil {
 				return fmt.Errorf("failed to set app.tx_mode: %w", err)
 			}
 			return nil
@@ -84,7 +84,7 @@ func (r *RLS) WithTeamProfileTx(ctx context.Context, db *gorm.DB, teamID string,
 		if err := setAllowedSpaceIDs(tx, ctx); err != nil {
 			return err
 		}
-		if err := tx.Exec("SELECT set_config('app.tx_mode', 'profile', true)").Error; err != nil {
+		if err := tx.Exec("SELECT set_config('app.tx_mode', 'profile', true), set_config('app.storage_layout', 'feature-storage-v1', true)").Error; err != nil {
 			return fmt.Errorf("failed to set app.tx_mode: %w", err)
 		}
 		return fn(tx)
@@ -112,7 +112,7 @@ func (r *RLS) WithSystemTx(ctx context.Context, db *gorm.DB, fn func(tx *gorm.DB
 			if err := setupTx.Exec("SELECT set_config('app.allowed_space_ids', '', true)").Error; err != nil {
 				return fmt.Errorf("failed to set app.allowed_space_ids: %w", err)
 			}
-			if err := setupTx.Exec("SELECT set_config('app.tx_mode', 'system', true)").Error; err != nil {
+			if err := setupTx.Exec("SELECT set_config('app.tx_mode', 'system', true), set_config('app.storage_layout', 'feature-storage-v1', true)").Error; err != nil {
 				return fmt.Errorf("failed to set app.tx_mode: %w", err)
 			}
 			if err := setupTx.Exec("SELECT set_config('app.role', 'admin', true)").Error; err != nil {
@@ -142,7 +142,7 @@ func (r *RLS) WithTeamReadOnlyRepeatableTx(ctx context.Context, db *gorm.DB, tea
 		if err := setAllowedSpaceIDs(tx, ctx); err != nil {
 			return err
 		}
-		if err := tx.Exec("SELECT set_config('app.tx_mode', 'team', true)").Error; err != nil {
+		if err := tx.Exec("SELECT set_config('app.tx_mode', 'team', true), set_config('app.storage_layout', 'feature-storage-v1', true)").Error; err != nil {
 			return fmt.Errorf("failed to set app.tx_mode: %w", err)
 		}
 		return fn(tx)
@@ -162,7 +162,7 @@ func (r *RLS) WithTeamProfileReadOnlyRepeatableTx(ctx context.Context, db *gorm.
 		if err := setAllowedSpaceIDs(tx, ctx); err != nil {
 			return err
 		}
-		if err := tx.Exec("SELECT set_config('app.tx_mode', 'profile', true)").Error; err != nil {
+		if err := tx.Exec("SELECT set_config('app.tx_mode', 'profile', true), set_config('app.storage_layout', 'feature-storage-v1', true)").Error; err != nil {
 			return fmt.Errorf("failed to set app.tx_mode: %w", err)
 		}
 		return fn(tx)
@@ -182,7 +182,7 @@ func (r *RLS) WithSystemReadOnlyRepeatableTx(ctx context.Context, db *gorm.DB, f
 		if err := tx.Exec("SELECT set_config('app.allowed_space_ids', '', true)").Error; err != nil {
 			return fmt.Errorf("failed to set app.allowed_space_ids: %w", err)
 		}
-		if err := tx.Exec("SELECT set_config('app.tx_mode', 'system', true)").Error; err != nil {
+		if err := tx.Exec("SELECT set_config('app.tx_mode', 'system', true), set_config('app.storage_layout', 'feature-storage-v1', true)").Error; err != nil {
 			return fmt.Errorf("failed to set app.tx_mode: %w", err)
 		}
 		if err := tx.Exec("SELECT set_config('app.role', 'admin', true)").Error; err != nil {

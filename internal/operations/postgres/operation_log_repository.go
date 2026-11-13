@@ -151,14 +151,17 @@ func (r *OperationLogRepositoryImpl) List(ctx context.Context, filter domain.Ope
 	return &page, nil
 }
 
-func (r *OperationLogRepositoryImpl) PruneBefore(ctx context.Context, cutoff time.Time) error {
+func (r *OperationLogRepositoryImpl) PruneBefore(ctx context.Context, cutoff time.Time) (int64, error) {
+	var deleted int64
 	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
-		return tx.Exec("DELETE FROM operation_logs WHERE timestamp < $1", cutoff.UTC()).Error
+		result := tx.Exec("DELETE FROM operation_logs WHERE timestamp < $1", cutoff.UTC())
+		deleted = result.RowsAffected
+		return result.Error
 	})
 	if err != nil {
-		return fmt.Errorf("failed to prune operation logs: %w", err)
+		return 0, fmt.Errorf("failed to prune operation logs: %w", err)
 	}
-	return nil
+	return deleted, nil
 }
 
 func (r *OperationLogRepositoryImpl) withSystemTx(ctx context.Context, fn func(tx *gorm.DB) error) error {

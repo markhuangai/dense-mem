@@ -48,6 +48,8 @@ def sql(query):
         os.environ["DENSE_MEM_E2E_COMPOSE_FILE"],
         "exec",
         "-T",
+        "-e",
+        "PGOPTIONS=-c app.storage_layout=feature-storage-v1",
         "postgres",
         "sh",
         "-ec",

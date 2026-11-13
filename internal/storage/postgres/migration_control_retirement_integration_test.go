@@ -151,7 +151,17 @@ func TestMigrationControlRetirementDropsOnlyApprovedTablesAndPreservesMarker(t *
 	seedMigrationControlRetirementFixture(t, ctx, sqlDB)
 	retainedTeamID, _ := insertMigrationTeamProfile(t, ctx, sqlDB)
 	migrator := NewMigratorWithDB(sqlDB)
+	assertFeatureFences := func(want bool) {
+		for _, table := range migrationControlRetirementTables {
+			var fenced bool
+			require.NoError(t, sqlDB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass($1) AND tgname='feature_storage_write_gate')`, table).Scan(&fenced))
+			require.Equal(t, want, fenced, table)
+		}
+	}
+	require.NoError(t, migrator.PrepareFeatureStorageMigration(ctx))
+	assertFeatureFences(true)
 	require.NoError(t, migrator.RunUp(ctx))
+	assertFeatureFences(false)
 	beforeCounts := migrationControlRetirementTableCounts(t, ctx, sqlDB)
 	for _, table := range migrationControlRetirementTables {
 		want := int64(1)
@@ -789,23 +799,6 @@ SELECT 1;
 	require.Equal(t, migrationControlRetirementBaseVersion, state.RepositoryLatest)
 	require.Equal(t, "database migration is newer than this binary", state.Reason)
 	require.Error(t, ValidateStartupMigrationState(ctx, sqlDB, oldMigrationsDir))
-}
-
-func migrationControlRetirementAllMarkerSnapshot(t *testing.T, ctx context.Context, db *sql.DB) string {
-	t.Helper()
-	var snapshot string
-	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
-		return tx.QueryRowContext(ctx, `
-			SELECT COALESCE(string_agg(
-				format('%s|%s|%s|%s|%s|%s|%s|%s|%s',
-				       marker_id::text, marker_kind, version, status,
-				       COALESCE(run_id::text, ''), corpus_hash, gate_report_hash,
-				       metadata::text, created_at::text),
-				E'\n' ORDER BY created_at, marker_id), '')
-			FROM v2_compatibility_markers
-		`).Scan(&snapshot)
-	}))
-	return snapshot
 }
 
 func migrationControlRetirementRetainedDataSnapshot(t *testing.T, ctx context.Context, db *sql.DB) map[string]int64 {
