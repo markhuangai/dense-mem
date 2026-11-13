@@ -43,7 +43,10 @@ func TestRememberPartitionLiveSemanticCohort(t *testing.T) {
 		{"question answer", "Question: Where does Atlas store Evidence?\nAnswer: Atlas stores Evidence in PostgreSQL.", 1},
 		{"table header", "Atlas service ports:\n| Service | Port |\n| API | 8080 |\n| Control | 8081 |", 1},
 		{"procedure", "To rotate the Atlas key:\n1. Create a replacement key.\n2. Update the clients to use it.\n3. Revoke the old key after verifying those clients.", 1},
+		{"paper heading", "QASPER evidence. Paper: Character-Level Question Answering with Attention.\nIn our experiments, the Memory Neural Networks (MemNNs) proposed in babidataset serve as the baselines.", 1},
+		{"local acronym", "The Atlas Query Router (AQR) routes client requests to a region. The AQR rejects requests when that region is unavailable.", 1},
 		{"independent paragraphs", "Atlas stores durable Evidence in PostgreSQL.\n\nBoreal's office opens at 09:00 on Mondays.", 2},
+		{"heading with independent paragraphs", "Field notes:\nAtlas stores durable Evidence in PostgreSQL.\n\nBoreal's office opens at 09:00 on Mondays.", 2},
 		{"independent messages", "Mira: My preferred editor is Vim.\n\nNoah: My birthday is June 12.", 2},
 	}
 	for repetition := 1; repetition <= 3; repetition++ {
