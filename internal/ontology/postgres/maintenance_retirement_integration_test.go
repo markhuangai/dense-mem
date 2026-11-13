@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	access "github.com/markhuangai/dense-mem/internal/access/postgres"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
@@ -42,6 +43,7 @@ func TestOntologyEvidenceOnlyResetRebuildsExistingEvidence(t *testing.T) {
 	service, calls := maintenanceServiceFixture(t, f, config, nil)
 	drainMaintenance(t, service)
 	require.Positive(t, calls())
+	staleActor := f.actor(0, "member")
 	require.NoError(t, f.rls.WithSystemTx(ctx, f.app, func(tx *gorm.DB) error {
 		return tx.Exec(`UPDATE memory_spaces SET generation=generation+1 WHERE team_id=?::uuid AND id=?::uuid`, f.team, f.space).Error
 	}))
@@ -141,14 +143,27 @@ func TestOntologyEvidenceOnlyResetRebuildsExistingEvidence(t *testing.T) {
 	require.NoError(t, err)
 	drainMaintenance(t, service)
 	require.Greater(t, calls(), beforeCalls)
+	_, err = f.store.ListRecords(staleActor, f.team, ontology.Topic, "", 20)
+	require.ErrorIs(t, err, ontology.ErrUnauthorized)
+	credentials := access.NewCredentialRepository(f.app, f.rls, nil)
+	for index, original := range f.credentials {
+		refreshed, err := credentials.GetActiveByID(ctx, original.ID)
+		require.NoError(t, err)
+		require.NotNil(t, refreshed)
+		require.Equal(t, original.ID, refreshed.ID)
+		require.Equal(t, original.OwnerID, refreshed.OwnerID)
+		require.Equal(t, f.generation, refreshed.TeamSharedSpaceGeneration)
+		f.credentials[index] = refreshed
+	}
 	for _, item := range []struct {
 		fixture *ontologyFixture
 		source  ontology.SourceHandle
-	}{{f, shared[0]}, {f, shared[1]}, {other, peer}} {
+		owner   int
+	}{{f, shared[0], 0}, {f, shared[1], 1}, {other, peer, 0}} {
 		var count int
 		require.NoError(t, f.admin.Raw(`SELECT count(*) FROM ontology_maintenance_sources WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND source_id=? AND eligible AND status='organized'`, item.fixture.team, item.fixture.space, item.fixture.generation, item.source.ID).Row().Scan(&count))
 		require.Equal(t, 1, count)
-		view, err := item.fixture.store.ListRecords(item.fixture.actor(0, "member"), item.fixture.team, ontology.Topic, "", 20)
+		view, err := item.fixture.store.ListRecords(item.fixture.actor(item.owner, "member"), item.fixture.team, ontology.Topic, "", 20)
 		require.NoError(t, err)
 		require.NotEmpty(t, view.Records)
 	}
