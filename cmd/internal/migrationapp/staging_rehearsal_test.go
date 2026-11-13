@@ -312,14 +312,12 @@ func stagingMigrationTestDatabase(t *testing.T, ctx context.Context) (*gorm.DB, 
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, adminSQL.Close()) })
 	require.NoError(t, admin.Exec(`CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS pg_trgm;
- CREATE ROLE migration_rehearsal_owner NOSUPERUSER NOBYPASSRLS;
+ CREATE ROLE migration_rehearsal_owner LOGIN PASSWORD 'migration_rehearsal_test' NOSUPERUSER NOBYPASSRLS;
  GRANT ALL ON SCHEMA public TO migration_rehearsal_owner;
  DO $$ BEGIN EXECUTE format('GRANT CREATE ON DATABASE %I TO migration_rehearsal_owner',current_database()); END $$;`).Error)
 	connection, err := url.Parse(dsn)
 	require.NoError(t, err)
-	query := connection.Query()
-	query.Set("role", "migration_rehearsal_owner")
-	connection.RawQuery = query.Encode()
+	connection.User = url.UserPassword("migration_rehearsal_owner", "migration_rehearsal_test")
 	t.Setenv("POSTGRES_DSN", connection.String())
 	db, err := gorm.Open(gormpostgres.Open(connection.String()), &gorm.Config{})
 	require.NoError(t, err)
@@ -329,6 +327,10 @@ func stagingMigrationTestDatabase(t *testing.T, ctx context.Context) (*gorm.DB, 
 	var bypass bool
 	require.NoError(t, db.Raw(`SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname=current_user`).Row().Scan(&bypass))
 	require.False(t, bypass)
+	var authenticatedOwner, ownActivityVisible bool
+	require.NoError(t, db.Raw(`SELECT session_user=current_user,(SELECT backend_start IS NOT NULL FROM pg_stat_activity WHERE pid=pg_backend_pid())`).Row().Scan(&authenticatedOwner, &ownActivityVisible))
+	require.True(t, authenticatedOwner)
+	require.True(t, ownActivityVisible)
 	return db, connection.String()
 }
 
