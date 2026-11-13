@@ -842,9 +842,9 @@
       "source": "internal/storage/postgres/evidence_only_migration_integration_test.go"
     },
     {
-      "id": "postgres/TestEvidenceOnlyPostgresMalformedOntologyCollectionsRollBack",
+      "id": "postgres/TestEvidenceOnlyPostgresMalformedOntologyCollectionsReset",
       "package": "./internal/storage/postgres",
-      "run": "^TestEvidenceOnlyPostgresMalformedOntologyCollectionsRollBack$",
+      "run": "^TestEvidenceOnlyPostgresMalformedOntologyCollectionsReset$",
       "phase": "precheck",
       "source": "internal/storage/postgres/evidence_only_migration_integration_test.go"
     },

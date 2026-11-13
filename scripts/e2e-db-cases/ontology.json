@@ -752,6 +752,13 @@
       "source": "internal/ontology/postgres/maintenance_concurrency_integration_test.go"
     },
     {
+      "id": "repository/TestOntologyEvidenceOnlyResetRebuildsExistingEvidence",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyEvidenceOnlyResetRebuildsExistingEvidence$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_retirement_integration_test.go"
+    },
+    {
       "id": "repository/TestOntologyMaintenanceBudgetRetirementHistoryAndRequeue",
       "package": "./internal/ontology/postgres",
       "run": "^TestOntologyMaintenanceBudgetRetirementHistoryAndRequeue$",
