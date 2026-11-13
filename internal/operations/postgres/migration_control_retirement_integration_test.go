@@ -103,7 +103,8 @@ func testOperationLogRetentionSurvivesRepositoryRestart(t *testing.T, appDB *gor
 	}))
 
 	repo := NewOperationLogRepository(appDB, rls)
-	require.NoError(t, repo.PruneBefore(ctx, now.Add(-24*time.Hour)))
+	_, err := repo.PruneBefore(ctx, now.Add(-24*time.Hour))
+	require.NoError(t, err)
 	require.NoError(t, repo.AppendBatch(ctx, []domain.OperationLog{{
 		Timestamp: now, Severity: "INFO", SeverityRank: 20, Message: "flushed before restart", Source: "test",
 	}}))

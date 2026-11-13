@@ -73,7 +73,7 @@ def count_events(session_id):
 
 
 async def main():
-    assert importlib.metadata.version("google-adk") == "2.7.0"
+    assert importlib.metadata.version("google-adk") == "2.14.1"
     keys = {"alice": credential(TEAM), "bob": credential(TEAM)}
     other_team = control("/teams", {"name": "ADK C " + str(uuid4())})["id"]
     keys["carol"] = credential(other_team)
@@ -187,7 +187,7 @@ async def main():
         "status": "ok",
         "scenario": "google_adk_memory",
         "tested_commit": os.environ["DENSE_MEM_E2E_COMMIT_SHA"],
-        "adk": "2.7.0",
+        "adk": "2.14.1",
         "installed_wheel": True,
         "user_text_only": True,
         "private_isolation_actors": 3,

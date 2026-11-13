@@ -84,7 +84,7 @@ func migrateEvidenceOnly(ctx context.Context, db *gorm.DB, migrator *postgres.Mi
 		logInfo(ctx, logger, "evidence_only_migration_skipped", append(progressAttrs(progress.Snapshot()), "reason", "already_applied")...)
 	}
 	attempted = !skipped
-	if err = migrator.RunUp(ctx); err != nil {
+	if err = migrator.RunUpThroughEvidenceOnly(ctx); err != nil {
 		verificationCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		if verified, _, checkErr := evidenceOnlyOutcome(verificationCtx, db, progress); checkErr != nil {

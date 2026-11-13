@@ -36,7 +36,7 @@ func validateAssessmentProvenance(tx *gorm.DB, fence scope, record ontology.Reco
 	if version == 0 {
 		return ontology.ErrInvalid
 	}
-	err = tx.Raw(`SELECT body FROM ontology_record_revisions WHERE team_id=?::uuid AND shared_space_id=?::uuid
+	err = tx.Raw(`SELECT body FROM ontology_revision_records WHERE team_id=?::uuid AND shared_space_id=?::uuid
         AND space_generation=? AND record_id=?::uuid AND version=?`, fence.TeamID, fence.SpaceID, fence.Generation, record.ID, version).Row().Scan(&body)
 	if err != nil {
 		return err

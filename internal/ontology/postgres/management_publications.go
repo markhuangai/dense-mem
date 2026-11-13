@@ -66,7 +66,7 @@ func (s *Store) GetManagementPublication(ctx context.Context, teamID, id string)
 		}
 		for _, ref := range result.Records {
 			var body []byte
-			if err := tx.Raw(`SELECT body FROM ontology_record_revisions WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND record_id=?::uuid AND version=?`, fence.TeamID, fence.SpaceID, fence.Generation, ref.ID, ref.Version).Row().Scan(&body); err != nil {
+			if err := tx.Raw(`SELECT body FROM ontology_revision_records WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND record_id=?::uuid AND version=?`, fence.TeamID, fence.SpaceID, fence.Generation, ref.ID, ref.Version).Row().Scan(&body); err != nil {
 				return err
 			}
 			record, err := decodeRecord(body)

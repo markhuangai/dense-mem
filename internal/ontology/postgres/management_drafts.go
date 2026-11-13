@@ -57,10 +57,17 @@ func loadManagementDraft(tx *gorm.DB, fence scope, owner, id string, lock bool) 
 	if parsed, err := uuid.Parse(id); err != nil || parsed == uuid.Nil || parsed.String() != id {
 		return result, ontology.ErrInvalid
 	}
-	query := `SELECT body FROM ontology_draft_heads WHERE ` + draftScopeSQL + ` AND draft_id=?::uuid`
 	if lock {
-		query += ` FOR UPDATE`
+		var version int64
+		err := tx.Raw(`SELECT version FROM ontology_draft_heads WHERE `+draftScopeSQL+` AND draft_id=?::uuid FOR UPDATE`, append(draftScopeArgs(fence, owner), id)...).Row().Scan(&version)
+		if errors.Is(err, sql.ErrNoRows) {
+			return result, ontology.ErrNotFound
+		}
+		if err != nil {
+			return result, err
+		}
 	}
+	query := `SELECT body FROM ontology_draft_head_records WHERE ` + draftScopeSQL + ` AND draft_id=?::uuid`
 	var body []byte
 	err := tx.Raw(query, append(draftScopeArgs(fence, owner), id)...).Row().Scan(&body)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -82,7 +89,7 @@ func replayManagementDraft(tx *gorm.DB, fence scope, owner, key, hash string) (s
 	var result storedManagementDraft
 	var storedHash string
 	var body []byte
-	err := tx.Raw(`SELECT request_hash,body FROM ontology_draft_revisions WHERE `+draftScopeSQL+` AND operation_key=?`, append(draftScopeArgs(fence, owner), key)...).Row().Scan(&storedHash, &body)
+	err := tx.Raw(`SELECT request_hash,body FROM ontology_draft_revision_records WHERE `+draftScopeSQL+` AND operation_key=?`, append(draftScopeArgs(fence, owner), key)...).Row().Scan(&storedHash, &body)
 	if errors.Is(err, sql.ErrNoRows) {
 		return result, false, nil
 	}
@@ -105,23 +112,15 @@ func persistManagementDraft(tx *gorm.DB, fence scope, owner, key, hash string, p
 	if err != nil {
 		return err
 	}
-	args := append(draftScopeArgs(fence, owner), stored.Draft.ID, stored.Draft.Version, stored.Draft.State, string(body), stored.Draft.UpdatedAt)
-	if previous == 0 {
-		err = tx.Exec(`INSERT INTO ontology_draft_heads(team_id,shared_space_id,space_generation,owner_profile_id,draft_id,version,state,body,updated_at)
-		 VALUES(?::uuid,?::uuid,?,?::uuid,?::uuid,?,?,?::jsonb,?)`, args...).Error
-	} else {
-		updated := tx.Exec(`UPDATE ontology_draft_heads SET version=?,state=?,body=?::jsonb,updated_at=? WHERE `+draftScopeSQL+` AND draft_id=?::uuid AND version=? AND state='open'`,
-			append([]any{stored.Draft.Version, stored.Draft.State, string(body), stored.Draft.UpdatedAt}, append(draftScopeArgs(fence, owner), stored.Draft.ID, previous)...)...)
-		err = updated.Error
-		if err == nil && updated.RowsAffected != 1 {
-			return ontology.ErrConflict
-		}
-	}
-	if err != nil {
+	var written bool
+	if err := tx.Raw(`SELECT dense_mem_persist_ontology_draft(?::uuid,?::uuid,?,?::uuid,?,?,?,?::jsonb)`,
+		fence.TeamID, fence.SpaceID, fence.Generation, owner, key, hash, previous, string(body)).Row().Scan(&written); err != nil {
 		return err
 	}
-	return tx.Exec(`INSERT INTO ontology_draft_revisions(team_id,shared_space_id,space_generation,owner_profile_id,draft_id,version,operation_key,request_hash,body)
-	 VALUES(?::uuid,?::uuid,?,?::uuid,?::uuid,?,?,?,?::jsonb)`, append(draftScopeArgs(fence, owner), stored.Draft.ID, stored.Draft.Version, key, hash, string(body))...).Error
+	if !written {
+		return ontology.ErrConflict
+	}
+	return nil
 }
 
 func insertManagementAudit(ctx context.Context, tx *gorm.DB, prepare ontology.ManagementAudit, event ontology.ManagementAuditEvent) error {
@@ -218,7 +217,7 @@ func (s *Store) ListManagementDrafts(ctx context.Context, teamID, cursor string,
 		}
 	}
 	err := s.withManagerScope(ctx, teamID, false, func(tx *gorm.DB, fence scope, owner string) error {
-		rows, err := tx.Raw(`SELECT body FROM ontology_draft_heads WHERE `+draftScopeSQL+` AND draft_id>COALESCE(NULLIF(?,'')::uuid,'00000000-0000-0000-0000-000000000000'::uuid) ORDER BY draft_id LIMIT ?`, append(draftScopeArgs(fence, owner), cursor, limit+1)...).Rows()
+		rows, err := tx.Raw(`SELECT body FROM ontology_draft_head_records WHERE `+draftScopeSQL+` AND draft_id>COALESCE(NULLIF(?,'')::uuid,'00000000-0000-0000-0000-000000000000'::uuid) ORDER BY draft_id LIMIT ?`, append(draftScopeArgs(fence, owner), cursor, limit+1)...).Rows()
 		if err != nil {
 			return err
 		}

@@ -118,7 +118,7 @@ extra = sys.argv[2]
 if extra == 'adk':
     from densemem.adk import DenseMemMemoryService
     from google.adk.memory.base_memory_service import BaseMemoryService
-    assert md.version('google-adk') == '2.7.0'
+    assert md.version('google-adk') == '2.14.1'
     assert issubclass(DenseMemMemoryService, BaseMemoryService)
     framework = {'adk': md.version('google-adk')}
 else:

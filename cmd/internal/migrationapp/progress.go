@@ -16,6 +16,18 @@ type progressSlot struct {
 }
 
 func progressAttrs(s postgres.MigrationSnapshot) []any {
+	if s.MigrationVersion >= postgres.FeatureStoragePrepareVersion {
+		return []any{"migration_execution_id", s.ExecutionID, "migration_version", s.MigrationVersion, "executor_version", postgres.FeatureStorageLayout,
+			"inventory_identity", s.InventoryFingerprint, "source_schema_fingerprint", s.SourceSchemaFingerprint,
+			"source_fingerprint", s.SourceFingerprint, "phase", s.Phase, "work_unit", s.WorkUnit, "state", s.State,
+			"phase_started_at", s.PhaseStartedAt, "phase_elapsed_ms", time.Since(s.PhaseStartedAt).Milliseconds(), "observed_at", s.ObservedAt,
+			"last_progress_at", s.LastProgressAt, "metric", s.Metric, "unit", s.Unit, "completed", s.Completed, "total", s.Total, "total_kind", "unknown",
+			"committed_rows", s.DurableRows, "committed_batches", s.DurableBatches, "checkpoint_fingerprint", s.CheckpointFingerprint,
+			"work_durability", s.WorkDurability, "transaction_outcome", s.TransactionOutcome, "capture_state", s.CaptureState, "capture_reason", s.CaptureReason,
+			"wait_observation_unavailable", s.WaitObservationUnavailable,
+			"failure_reason", s.FailureReason, "sqlstate", s.SQLState, "expected_fingerprint", s.ExpectedFingerprint, "observed_fingerprint", s.ObservedFingerprint,
+			"recovery_action", "resume_matching_application_after_resolving_reported_cause", "eta_seconds", nil, "eta_unavailable_reason", "remaining_phase_cost_unknown"}
+	}
 	var version any
 	if s.MigrationVersion != 0 {
 		version = s.MigrationVersion
@@ -67,8 +79,12 @@ func heartbeatProgress(ctx context.Context, logger infoLogger, db *sql.DB, sampl
 	if p == nil {
 		return
 	}
+	prefix := "evidence_only_migration_"
+	if p.Snapshot().MigrationVersion >= postgres.FeatureStoragePrepareVersion {
+		prefix = "feature_storage_migration_"
+	}
 	if !sample {
-		logInfo(context.WithoutCancel(ctx), logger, "evidence_only_migration_heartbeat", progressAttrs(p.Snapshot())...)
+		logInfo(context.WithoutCancel(ctx), logger, prefix+"heartbeat", progressAttrs(p.Snapshot())...)
 		return
 	}
 	if db == nil {
@@ -80,13 +96,13 @@ func heartbeatProgress(ctx context.Context, logger infoLogger, db *sql.DB, sampl
 	if err != nil {
 		if p.MarkWaitObservationUnavailable() {
 			attrs := append(progressAttrs(p.Snapshot()), "wait_observation_failure_reason", postgres.MigrationFailureReason(err))
-			logWarn(context.WithoutCancel(ctx), logger, "evidence_only_migration_capture_incomplete", attrs...)
+			logWarn(context.WithoutCancel(ctx), logger, prefix+"capture_incomplete", attrs...)
 		}
 		return
 	}
 	if kind != "" || blockers > 0 {
 		attrs := append(progressAttrs(p.Snapshot()), "wait_event_type", kind, "wait_event", event, "blocker_count", blockers)
-		logInfo(ctx, logger, "evidence_only_migration_wait", attrs...)
+		logInfo(ctx, logger, prefix+"wait", attrs...)
 	}
 }
 

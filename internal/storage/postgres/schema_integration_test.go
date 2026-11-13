@@ -180,7 +180,7 @@ func execPostgresTxModeRollback(ctx context.Context, db *sql.DB, txMode string, 
 	defer func() {
 		_ = tx.Rollback()
 	}()
-	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.tx_mode', $1, true)`, txMode); err != nil {
+	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.tx_mode', $1, true),set_config('app.storage_layout','feature-storage-v1',true)`, txMode); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.current_team_id', '', true)`); err != nil {

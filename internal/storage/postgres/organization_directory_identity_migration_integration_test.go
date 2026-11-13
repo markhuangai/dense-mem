@@ -88,7 +88,7 @@ func execMigrationRoleConfigInsert(ctx context.Context, db *sql.DB, quotedRole, 
 	if _, err := tx.ExecContext(ctx, "SET LOCAL ROLE "+quotedRole); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.tx_mode', $1, true)`, mode); err != nil {
+	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.tx_mode', $1, true),set_config('app.storage_layout','feature-storage-v1',true)`, mode); err != nil {
 		return err
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO app_config (key, value) VALUES ($1, '')`, key)

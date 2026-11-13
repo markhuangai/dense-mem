@@ -29,6 +29,9 @@ func migrateOntology(ctx context.Context, db *gorm.DB, migrator *postgres.Migrat
 	if err := migrateEvidenceOnly(ctx, db, migrator, logger); err != nil {
 		return err
 	}
+	if err := migrateFeatureStorage(ctx, migrator, logger); err != nil {
+		return err
+	}
 	if !required {
 		return nil
 	}

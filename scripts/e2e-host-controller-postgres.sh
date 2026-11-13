@@ -119,7 +119,7 @@ identity_postgres_scalar() {
   local statement="$1"
   ci_compose exec -T \
     -e "PGPASSWORD=${DENSE_MEM_CI_IDENTITY_POSTGRES_PASSWORD}" \
-    -e "PGOPTIONS=-c app.tx_mode=system" \
+    -e "PGOPTIONS=-c app.tx_mode=system -c app.storage_layout=feature-storage-v1" \
     postgres psql -X -v ON_ERROR_STOP=1 -At \
     -h 127.0.0.1 \
     -U "$DENSE_MEM_CI_IDENTITY_POSTGRES_USER" \
@@ -321,6 +321,7 @@ stage_identity_cleanup_retirement_preflight() {
     -v approved_commit="$DENSE_MEM_CI_IMAGE_DIGEST" <<'SQL' >/dev/null
 BEGIN;
 SELECT set_config('app.tx_mode', 'system', true);
+SELECT set_config('app.storage_layout','feature-storage-v1',true);
 SELECT set_config('app.current_team_id', '', true);
 SELECT set_config('app.current_profile_id', '', true);
 
@@ -521,7 +522,7 @@ run_identity_cleanup_startup_matrix() {
 }
 
 seed_ontology_upgrade_database() {
-  local source_dir="$1" project="$2" variant="$3" go_image database_url
+  local source_dir="$1" project="$2" variant="$3" seed_variable="${4:-DENSE_MEM_E2E_ONTOLOGY_UPGRADE_VARIANT}" go_image database_url
   go_image="$(env_value DENSE_MEM_CI_GO_TEST_IMAGE 2>/dev/null || printf '%s' golang:1.26.11-bookworm)"
   database_url="$(node - "$DENSE_MEM_CI_IDENTITY_POSTGRES_USER" "$DENSE_MEM_CI_IDENTITY_POSTGRES_PASSWORD" "$DENSE_MEM_CI_IDENTITY_POSTGRES_DATABASE" <<'NODE'
 const [user, password, database] = process.argv.slice(2);
@@ -537,10 +538,61 @@ NODE
     "$source_dir" "$go_image" "$project" "$DENSE_MEM_CI_RUN_ID" "$DENSE_MEM_CI_RUN_ATTEMPT" \
     "$DENSE_MEM_CI_PHASE" "$DENSE_MEM_CI_SCENARIO" "$DENSE_MEM_CI_IMAGE_DIGEST" "${project}_ci" "" "$ENV_FILE" \
     "$DENSE_MEM_CI_IDENTITY_POSTGRES_PASSWORD" -- \
-    "DENSE_MEM_E2E_ONTOLOGY_UPGRADE_VARIANT=${variant}" "DATABASE_URL=${database_url}" \
+    "${seed_variable}=${variant}" "DATABASE_URL=${database_url}" \
     "DENSE_MEM_REQUIRE_POSTGRES_TESTS=1" -- \
     go -C cmd/e2e run . --root /workspace --phase scenario --scenario ontology_upgrade \
       --timeout 10m --total-timeout 12m >&2
+}
+
+feature_storage_fixture_fingerprints() {
+  local revision_table="$1" table
+  for table in evidence_sources evidence_source_revisions evidence_exact_aliases evidence_occurrences evidence_fragments evidence_security_events evidence_security_signals evidence_quarantines evidence_lifecycle_operations evidence_lifecycle_events evidence_conflict_cases evidence_conflict_positions evidence_conflict_events; do
+    identity_postgres_scalar "SELECT '${table}:'||md5(COALESCE(jsonb_agg(to_jsonb(row) ORDER BY to_jsonb(row)::text)::text,'[]')) FROM ${table} AS row" || return
+  done
+  identity_postgres_scalar "SELECT 'ontology_revisions:'||md5(COALESCE(jsonb_agg(to_jsonb(row) ORDER BY to_jsonb(row)::text)::text,'[]')) FROM ${revision_table} AS row"
+}
+
+collect_feature_storage_logs() {
+  local source_dir="$1" outcome="$2" output
+  output="$(ci_compose logs --no-color --no-log-prefix server 2>&1)" || fail "feature storage stdout capture failed"
+  printf '%s\n' "$output" | redact_diagnostics "$ENV_FILE" "$DENSE_MEM_CI_IDENTITY_POSTGRES_PASSWORD" >&2 || fail "feature storage diagnostic protection failed"
+  printf '%s\n' "$output" | node "$source_dir/scripts/verify-feature-storage-logs.mjs" "$outcome" >&2 || fail "feature storage log-only diagnosis failed"
+}
+
+run_feature_storage_startup_matrix() {
+  local source_dir="$1" project="$2" before state observed=0
+  reset_identity_cleanup_database
+  seed_ontology_upgrade_database "$source_dir" "$project" interrupted DENSE_MEM_E2E_FEATURE_STORAGE_VARIANT || fail "feature storage fixture seed failed"
+  start_ontology_upgrade_helpers "$source_dir" "$project"
+  before="$(feature_storage_fixture_fingerprints ontology_record_revisions)" || fail "feature storage preservation snapshot failed"
+  ci_compose up -d redis prometheus server >/dev/null || fail "feature storage failure probe failed to start"
+  for _ in $(seq 1 90); do
+    if ci_compose logs --no-color --no-log-prefix server 2>&1 | grep -F 'feature_storage_migration_failed' >/dev/null; then observed=1; break; fi
+    sleep 1
+  done
+  ci_compose stop server >/dev/null || fail "feature storage failure probe failed to stop"
+  collect_feature_storage_logs "$source_dir" failed
+  ((observed == 1)) || fail "feature storage startup did not report its required failure"
+  state="$(identity_postgres_scalar "SELECT concat(
+    (SELECT count(*) FROM ontology_topic_revision_payloads),'|',
+    (SELECT row_count FROM data_migration_checkpoints WHERE migration_version=20261113010001 AND phase='copy' AND work_unit='ontology_record_revisions'),'|',
+    NOT EXISTS(SELECT 1 FROM v2_compatibility_markers WHERE marker_kind='feature_storage'),'|',
+    NOT EXISTS(SELECT 1 FROM goose_db_version WHERE version_id=20261113010001 AND is_applied))")"
+  [[ "$state" == '100|100|true|true' || "$state" == '100|100|t|t' ]] || fail "feature storage failed batch did not retain only committed progress: ${state}"
+  [[ "$(feature_storage_fixture_fingerprints ontology_record_revisions)" == "$before" ]] || fail "feature storage failed conversion changed original data"
+  identity_postgres_scalar 'DROP TRIGGER feature_storage_fixture_failure ON ontology_topic_revision_payloads; DROP FUNCTION feature_storage_fixture_failure()' >/dev/null || fail "feature storage fixture failure removal failed"
+  if ! ci_compose up -d --force-recreate --wait --wait-timeout 300 redis prometheus server >/dev/null; then
+    collect_feature_storage_logs "$source_dir" resumed
+    fail "feature storage recovery failed to become healthy"
+  fi
+  collect_feature_storage_logs "$source_dir" resumed
+  verify_postgres_runtime_migration_state
+  [[ "$(feature_storage_fixture_fingerprints ontology_revision_records)" == "$before" ]] || fail "feature storage resumed conversion changed original data"
+  state="$(identity_postgres_scalar "SELECT concat(
+    (SELECT count(*) FROM ontology_topic_revision_payloads),'|',
+    EXISTS(SELECT 1 FROM data_migration_runs run JOIN v2_compatibility_markers marker ON marker.marker_kind='feature_storage' AND marker.version='feature-storage-v1' AND marker.status='compatible' WHERE run.migration_version=20261113010001 AND run.phase='complete' AND marker.metadata->>'source_fingerprint'=run.source_fingerprint))")"
+  [[ "$state" == '210|true' || "$state" == '210|t' ]] || fail "feature storage recovery receipt is incomplete: ${state}"
+  printf '%s\n' '{"scenario":"ontology_upgrade","feature_storage_failed_batch_rolled_back":true,"feature_storage_resumed":true,"feature_storage_evidence_preserved":true}' >&2
 }
 
 ontology_upgrade_fingerprints() {
@@ -560,22 +612,26 @@ assert_ontology_upgrade_blocked() {
   [[ "$state" == "true|true|true|true|true" || "$state" == "t|t|t|t|t" ]] || fail "ontology upgrade did not preserve its blocked state: ${state}"
 }
 
+start_ontology_upgrade_helpers() {
+  local source_dir="$1" project="$2" observed=0
+  ci_compose --profile verifier up -d redis prometheus synchronous-write-provider >/dev/null || fail "ontology upgrade helpers failed to start"
+  start_stack_helpers "$project" "$source_dir" verifier
+  for _ in $(seq 1 30); do
+    if ci_compose exec -T synchronous-write-provider node -e 'fetch("http://127.0.0.1:8787/health",{signal:AbortSignal.timeout(5000)}).then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))' >/dev/null 2>&1; then
+      observed=1
+      break
+    fi
+    sleep 1
+  done
+  ((observed == 1)) || fail "ontology upgrade provider was not ready before startup reconciliation"
+}
+
 run_ontology_upgrade_startup_matrix() {
   local source_dir="$1" project="$2" variant before state observed
   for variant in expired unreconciled live; do
     reset_identity_cleanup_database
     seed_ontology_upgrade_database "$source_dir" "$project" "$variant" || fail "ontology upgrade fixture seed failed"
-    ci_compose --profile verifier up -d redis prometheus synchronous-write-provider >/dev/null || fail "ontology upgrade helpers failed to start"
-    start_stack_helpers "$project" "$source_dir" verifier
-    observed=0
-    for _ in $(seq 1 30); do
-      if ci_compose exec -T synchronous-write-provider node -e 'fetch("http://127.0.0.1:8787/health",{signal:AbortSignal.timeout(5000)}).then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))' >/dev/null 2>&1; then
-        observed=1
-        break
-      fi
-      sleep 1
-    done
-    ((observed == 1)) || fail "ontology upgrade provider was not ready before startup reconciliation"
+    start_ontology_upgrade_helpers "$source_dir" "$project"
     before="$(ontology_upgrade_fingerprints)" || fail "ontology upgrade history snapshot failed"
     if [[ "$variant" == "unreconciled" ]]; then
       for _ in 1 2; do

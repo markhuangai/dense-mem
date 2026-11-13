@@ -1044,6 +1044,13 @@
       "run": "^TestOntologyManagementRemovesWithdrawnCorrection$",
       "phase": "precheck",
       "source": "internal/ontology/postgres/management_regressions_integration_test.go"
+    },
+    {
+      "id": "ontology/TestFeatureStoragePostgresPreservesOrganizationDraftsAndIsolation",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestFeatureStoragePostgresPreservesOrganizationDraftsAndIsolation$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/feature_storage_integration_test.go"
     }
   ]
 }

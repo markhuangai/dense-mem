@@ -94,7 +94,7 @@ func seedIdentityUpgradeState(
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
 	_, err = tx.ExecContext(ctx, `
-		SELECT set_config('app.tx_mode', 'system', true),
+		SELECT set_config('app.tx_mode', 'system', true),set_config('app.storage_layout','feature-storage-v1',true),
 		       set_config('app.current_team_id', $1, true),
 		       set_config('app.current_profile_id', $2, true)
 	`, teamID.String(), profileID.String())

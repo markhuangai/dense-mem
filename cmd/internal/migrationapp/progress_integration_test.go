@@ -168,25 +168,8 @@ func seedProgressMigration(t testing.TB, db *gorm.DB, recordCount, logCount int)
 		if err := tx.Exec(`INSERT INTO ontology_publications(team_id,shared_space_id,space_generation,publication_id,revision,operation_key,request_hash,origin,reason,result) VALUES(?::uuid,?::uuid,?,?::uuid,1,'progress',?,'automatic','progress fixture','{}')`, team.ID, shared, generation, publication, "sha256:"+strings.Repeat("a", 64)).Error; err != nil {
 			return err
 		}
-		for offset := 0; offset < recordCount; offset += 500 {
-			var records []ontology.Record
-			for i := offset; i < recordCount && i < offset+500; i++ {
-				record := ontology.Record{ID: uuid.NewString(), Version: 1, Kind: ontology.Topic, Definition: &ontology.Definition{Key: fmt.Sprintf("topic_%d", i), Label: fmt.Sprintf("Topic %d", i), Description: "synthetic volume"}}
-				var err error
-				record.Fingerprint, err = ontology.RecordFingerprintWithAcceptedSources(record, nil)
-				if err != nil {
-					return err
-				}
-				records = append(records, record)
-			}
-			data, err := json.Marshal(records)
-			if err != nil {
-				return err
-			}
-			if err := tx.Exec(`INSERT INTO ontology_record_revisions(team_id,shared_space_id,space_generation,record_id,version,kind,publication_id,retired,body,fingerprint)
-    SELECT ?::uuid,?::uuid,?,(body->>'id')::uuid,1,'topic',?::uuid,false,body,body->>'fingerprint' FROM jsonb_array_elements(?::jsonb) body`, team.ID, shared, generation, publication, string(data)).Error; err != nil {
-				return err
-			}
+		if err := insertProgressTopics(tx, team.ID.String(), shared, generation, publication, recordCount); err != nil {
+			return err
 		}
 		root, child, grandchild := uuid.NewString(), uuid.NewString(), uuid.NewString()
 		for i, id := range []string{root, child, grandchild} {
@@ -484,4 +467,28 @@ func TestEvidenceOnlyPostgresProgressConcurrentStarters(t *testing.T) {
 	require.Len(t, executions, 2)
 	require.Equal(t, 1, newlyCommitted)
 	require.Equal(t, before, progressEvidenceFingerprint(t, db))
+}
+
+func insertProgressTopics(tx *gorm.DB, team, shared string, generation int64, publication string, recordCount int) error {
+	for offset := 0; offset < recordCount; offset += 500 {
+		var records []ontology.Record
+		for i := offset; i < recordCount && i < offset+500; i++ {
+			record := ontology.Record{ID: uuid.NewString(), Version: 1, Kind: ontology.Topic, Definition: &ontology.Definition{Key: fmt.Sprintf("topic_%d", i), Label: fmt.Sprintf("Topic %d", i), Description: "synthetic volume"}}
+			var err error
+			record.Fingerprint, err = ontology.RecordFingerprintWithAcceptedSources(record, nil)
+			if err != nil {
+				return err
+			}
+			records = append(records, record)
+		}
+		data, err := json.Marshal(records)
+		if err != nil {
+			return err
+		}
+		if err := tx.Exec(`INSERT INTO ontology_record_revisions(team_id,shared_space_id,space_generation,record_id,version,kind,publication_id,retired,body,fingerprint)
+    SELECT ?::uuid,?::uuid,?,(body->>'id')::uuid,1,'topic',?::uuid,false,body,body->>'fingerprint' FROM jsonb_array_elements(?::jsonb) body`, team, shared, generation, publication, string(data)).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }

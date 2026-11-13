@@ -292,7 +292,7 @@ func (c *recallReadCache) cacheGroups(views []ontology.RecordView, ids []string)
 
 // Keep revision lookups correlated so sparse table statistics cannot turn them into scope-wide body scans.
 const recallRevisionJoinSQL = `JOIN LATERAL (
-	SELECT revision.body FROM ontology_record_revisions AS revision
+	SELECT revision.body FROM ontology_revision_records AS revision
 	WHERE revision.team_id=head.team_id AND revision.shared_space_id=head.shared_space_id
 	AND revision.space_generation=head.space_generation AND revision.record_id=head.record_id AND revision.version=head.version
 	LIMIT 1

@@ -180,7 +180,7 @@ func oauthMigrationRoleVisibility(ctx context.Context, db *sql.DB, quotedRole, m
 	if _, err := tx.ExecContext(ctx, "SET LOCAL ROLE "+quotedRole); err != nil {
 		return 0, 0, 0, err
 	}
-	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.tx_mode', $1, true)`, mode); err != nil {
+	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.tx_mode', $1, true),set_config('app.storage_layout','feature-storage-v1',true)`, mode); err != nil {
 		return 0, 0, 0, err
 	}
 	var providers int

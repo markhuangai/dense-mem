@@ -158,6 +158,9 @@ func RunActiveServer(
 	appConfigService := buildDecisionConfigurationApplication(appConfigRepo, auditService, cfg, logger)
 	operationLogService := buildOperationLogApplication(operationLogRepo, appConfigService)
 	operationLogService.SetMinimumLevel(level)
+	if contextual, ok := logger.(interface{ ContextSlog() *slog.Logger }); ok {
+		operationLogService.SetPruneLogger(contextual.ContextSlog())
+	}
 	if root, ok := logger.(observability.SinkAttacher); ok {
 		if err := root.AttachSink(operationLogService); err != nil {
 			return fmt.Errorf("attach operation log sink: %w", err)
