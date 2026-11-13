@@ -244,6 +244,11 @@ func ontologyMigrationProvider(t *testing.T, db *gorm.DB) *goose.Provider {
 func rollbackOntologySchemaTo(t *testing.T, db *gorm.DB, target int64) error {
 	t.Helper()
 	ctx := context.Background()
+	if target < 20261011220000 {
+		if err := db.Exec(`DROP VIEW IF EXISTS ontology_draft_head_records, ontology_draft_revision_records`).Error; err != nil {
+			return err
+		}
+	}
 	provider := ontologyMigrationProvider(t, db)
 	versions, err := goosedb.NewStore(goosedb.DialectPostgres, "goose_db_version")
 	require.NoError(t, err)
