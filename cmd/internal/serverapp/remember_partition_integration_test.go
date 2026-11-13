@@ -96,7 +96,11 @@ func TestRememberPartitionPostgres(t *testing.T) {
 		require.NoError(t, rls.WithSystemTx(t.Context(), admin, func(tx *gorm.DB) error {
 			query := tx.Table(table).Where("team_id = ?", actorA.TeamID)
 			if ingest != "" {
-				query = query.Where("ingest_id = ?", ingest)
+				column := "ingest_id"
+				if table == "semantic_assessments" {
+					column = "attempt_id"
+				}
+				query = query.Where(column+" = ?", ingest)
 			}
 			return query.Count(&n).Error
 		}))

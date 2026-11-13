@@ -169,7 +169,7 @@ test("partition fixture faults survive boundary annotations and exercise complet
   const requestFor = (fault) => structuredRequest("dense_mem_semantic_partition_response", {
     request_id: "partition",
     policy_version: "fixture",
-    items: [{ item_id: "item:0", boundary_text: `⟦p0⟧First meaning.\n⟦p1⟧Second meaning [⟦p2⟧fixture-⟦p3⟧fault:⟦p4⟧${fault}]⟦p5⟧` }],
+    items: [{ item_id: "item:0", boundary_text: `⟦p0⟧First meaning.\r\n\r\n ⟦p1⟧Second meaning [⟦p2⟧fixture-⟦p3⟧fault:⟦p4⟧${fault}]⟦p5⟧` }],
   });
   for (const fault of ["partition-split", "partition-missing", "partition-unknown", "partition-repair"]) {
     const request = requestFor(fault);

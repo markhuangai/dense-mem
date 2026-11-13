@@ -276,7 +276,7 @@ function fixtureChatResponse(payload, requestFault = "none", attempt = 1) {
     const input = structuredInput(payload, (value) => Array.isArray(value.items) && value.policy_version);
     const result = { request_id: input.request_id, items: input.items.map((item) => {
       const refs = [...item.boundary_text.matchAll(/⟦([^⟧]+)⟧/g)].map((match) => match[1]);
-      const breakRef = [...item.boundary_text.matchAll(/[\r\n]+⟦([^⟧]+)⟧/g)].map((match) => match[1]).find((ref) => ref !== refs.at(-1));
+      const breakRef = [...item.boundary_text.matchAll(/[\r\n]\s*⟦([^⟧]+)⟧/g)].map((match) => match[1]).find((ref) => ref !== refs.at(-1));
       return { item_id: item.item_id, end_refs: requestFault === "partition-split" && breakRef ? [breakRef, refs.at(-1)] : [refs.at(-1)] };
     }) };
     if (requestFault === "partition-missing") result.items = [];
