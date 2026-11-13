@@ -801,23 +801,6 @@ SELECT 1;
 	require.Error(t, ValidateStartupMigrationState(ctx, sqlDB, oldMigrationsDir))
 }
 
-func migrationControlRetirementAllMarkerSnapshot(t *testing.T, ctx context.Context, db *sql.DB) string {
-	t.Helper()
-	var snapshot string
-	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
-		return tx.QueryRowContext(ctx, `
-			SELECT COALESCE(string_agg(
-				format('%s|%s|%s|%s|%s|%s|%s|%s|%s',
-				       marker_id::text, marker_kind, version, status,
-				       COALESCE(run_id::text, ''), corpus_hash, gate_report_hash,
-				       metadata::text, created_at::text),
-				E'\n' ORDER BY created_at, marker_id), '')
-			FROM v2_compatibility_markers
-		`).Scan(&snapshot)
-	}))
-	return snapshot
-}
-
 func migrationControlRetirementRetainedDataSnapshot(t *testing.T, ctx context.Context, db *sql.DB) map[string]int64 {
 	t.Helper()
 	tables := []string{
