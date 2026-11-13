@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"database/sql"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -21,6 +22,24 @@ func TestFeatureStorageUnitCursorUsesNativeOrderedKeys(t *testing.T) {
 	require.ErrorContains(t, err, "key width changed")
 	_, _, err = featureBatchQuery(featureSource{Name: "invalid"}, nil)
 	require.ErrorContains(t, err, "no primary key")
+}
+
+func TestFeatureStorageUnitMigrationPoolRestoresAfterOverlappingStarters(t *testing.T) {
+	db, err := sql.Open("pgx", "")
+	require.NoError(t, err)
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	first := reserveMigrationPool(db)
+	second := reserveMigrationPool(db)
+	require.Equal(t, 2, db.Stats().MaxOpenConnections)
+	first()
+	require.Equal(t, 2, db.Stats().MaxOpenConnections)
+	second()
+	require.Equal(t, 1, db.Stats().MaxOpenConnections)
+	db.SetMaxOpenConns(4)
+	release := reserveMigrationPool(db)
+	release()
+	require.Equal(t, 4, db.Stats().MaxOpenConnections)
 }
 
 func TestFeatureStorageUnitFingerprintBindsOrderAndExactContent(t *testing.T) {

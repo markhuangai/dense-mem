@@ -91,14 +91,14 @@ func TestFeatureStoragePostgresPreservesOrganizationDraftsAndIsolation(t *testin
 		require.NoError(t, err)
 		require.Equal(t, views[index], actual)
 	}
-	actualDraft, err := manager.GetDraft(f.actor(0, "manager"), draft.ID)
+	actualDraft, err := manager.Draft(f.actor(0, "manager"), draft.ID)
 	require.NoError(t, err)
 	require.Equal(t, draft, actualDraft)
 	replay, err := manager.SaveDraft(f.actor(0, "manager"), "", input)
 	require.NoError(t, err)
 	require.Equal(t, draft, replay)
 	for _, owner := range []int{1, 2} {
-		_, err = manager.GetDraft(f.actor(owner, "manager"), draft.ID)
+		_, err = manager.Draft(f.actor(owner, "manager"), draft.ID)
 		require.ErrorIs(t, err, ontology.ErrNotFound)
 	}
 	measure("after")

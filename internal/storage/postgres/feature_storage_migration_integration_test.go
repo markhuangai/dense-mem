@@ -45,6 +45,16 @@ func TestFeatureStoragePostgresFreshAndPopulated(t *testing.T) {
 	})
 }
 
+func TestFeatureStoragePostgresSingleConnectionPool(t *testing.T) {
+	db, _ := featureStorageFixture(t, 3)
+	db.SetMaxOpenConns(1)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	require.NoError(t, NewMigratorWithDB(db).RunUp(ctx))
+	require.Equal(t, 1, db.Stats().MaxOpenConnections)
+	require.NoError(t, ValidateStartupMigrationState(ctx, db, MigrationsDir()))
+}
+
 func TestFeatureStoragePostgresRestartAndWriterFence(t *testing.T) {
 	db, _ := featureStorageFixture(t, 210)
 	before := featureStorageSnapshot(t, db, "ontology_record_revisions")

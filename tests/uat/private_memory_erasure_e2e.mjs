@@ -1067,7 +1067,7 @@ function postgresErrorSummary(result) {
 
 function postgresCommand(sql) {
   return spawnSync("docker", [
-    "compose", "-p", composeProject, "-f", composeFile, "exec", "-T", "postgres", "sh", "-ec",
+    "compose", "-p", composeProject, "-f", composeFile, "exec", "-T", "-e", "PGOPTIONS=-c app.storage_layout=feature-storage-v1", "postgres", "sh", "-ec",
     'psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -F "|" -c "$1"',
     "private-memory-erasure-e2e", sql,
   ], { cwd: repositoryRoot(), encoding: "utf8", maxBuffer: 20 * 1024 * 1024 });

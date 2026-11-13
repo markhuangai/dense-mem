@@ -321,6 +321,7 @@ stage_identity_cleanup_retirement_preflight() {
     -v approved_commit="$DENSE_MEM_CI_IMAGE_DIGEST" <<'SQL' >/dev/null
 BEGIN;
 SELECT set_config('app.tx_mode', 'system', true);
+SELECT set_config('app.storage_layout','feature-storage-v1',true);
 SELECT set_config('app.current_team_id', '', true);
 SELECT set_config('app.current_profile_id', '', true);
 

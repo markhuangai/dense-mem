@@ -327,6 +327,8 @@ func migrationDown(ctx context.Context, db *sql.DB) error {
 
 // RunUp runs all pending up migrations.
 func (m *Migrator) RunUp(ctx context.Context) error {
+	releasePool := reserveMigrationPool(m.db)
+	defer releasePool()
 	provider, err := newRuntimeMigrationProvider(m.dir, m.db, true)
 	if err != nil {
 		return err

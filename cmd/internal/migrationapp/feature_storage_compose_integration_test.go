@@ -13,10 +13,9 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestFeatureStorageComposeSeed(t *testing.T) {
-	if os.Getenv("DENSE_MEM_E2E_FEATURE_STORAGE_VARIANT") != "interrupted" {
-		t.Skip("feature storage seed requires its dedicated production-image scenario")
-	}
+func seedFeatureStorageCompose(t *testing.T) {
+	t.Helper()
+	require.Equal(t, "interrupted", os.Getenv("DENSE_MEM_E2E_FEATURE_STORAGE_VARIANT"))
 	dsn := os.Getenv("DATABASE_URL")
 	require.NotEmpty(t, dsn)
 	db, err := gorm.Open(gormpostgres.Open(dsn), &gorm.Config{})

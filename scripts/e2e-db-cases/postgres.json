@@ -903,6 +903,13 @@
       "run": "^TestFeatureStoragePostgresActiveBatchInterruption$",
       "phase": "precheck",
       "source": "internal/storage/postgres/feature_storage_migration_integration_test.go"
+    },
+    {
+      "id": "postgres/TestFeatureStoragePostgresSingleConnectionPool",
+      "package": "./internal/storage/postgres",
+      "run": "^TestFeatureStoragePostgresSingleConnectionPool$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/feature_storage_migration_integration_test.go"
     }
   ]
 }

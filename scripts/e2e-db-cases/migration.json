@@ -95,14 +95,6 @@
       "source": "cmd/internal/migrationapp/progress_integration_test.go"
     },
     {
-      "id": "migration/TestFeatureStorageComposeSeed",
-      "package": "./cmd/internal/migrationapp",
-      "run": "^TestFeatureStorageComposeSeed$",
-      "phase": "scenario",
-      "source": "cmd/internal/migrationapp/feature_storage_compose_integration_test.go",
-      "scenario": "ontology_upgrade"
-    },
-    {
       "id": "migration/TestFeatureStoragePostgresLogOnlyFailureAndRecovery",
       "package": "./cmd/internal/migrationapp",
       "run": "^TestFeatureStoragePostgresLogOnlyFailureAndRecovery$",

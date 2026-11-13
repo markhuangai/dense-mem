@@ -504,7 +504,7 @@ function requiredEnv(name) {
 function postgresQuery(sql) {
   const composeProject = requiredEnv("DENSE_MEM_E2E_COMPOSE_PROJECT");
   const composeFile = requiredEnv("DENSE_MEM_E2E_COMPOSE_FILE");
-  const result = spawnSync("docker", ["compose", "-p", composeProject, "-f", composeFile, "exec", "-T", "postgres", "sh", "-ec", 'psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -c "$1"', "issue305-diagnostics", sql], { cwd: process.cwd(), encoding: "utf8" });
+  const result = spawnSync("docker", ["compose", "-p", composeProject, "-f", composeFile, "exec", "-T", "-e", "PGOPTIONS=-c app.storage_layout=feature-storage-v1", "postgres", "sh", "-ec", 'psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -c "$1"', "issue305-diagnostics", sql], { cwd: process.cwd(), encoding: "utf8" });
   if (result.status !== 0) throw new Error(`diagnostics PostgreSQL fixture failed (${result.status})`);
   return result.stdout.trim();
 }
