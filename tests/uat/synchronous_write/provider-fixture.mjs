@@ -387,7 +387,7 @@ export function fixtureFault(payload, route) {
   const schemaName = payload.response_format?.json_schema?.name;
   if (schemaName === "dense_mem_semantic_partition_response") {
     const input = structuredInput(payload, (value) => Array.isArray(value.items) && value.policy_version);
-    const fault = faultMarker(input.items.map((item) => item.boundary_text));
+    const fault = faultMarker(input.items.map((item) => item.boundary_text.replace(/⟦[^⟧]+⟧/g, "")));
     return fault.startsWith("partition-") ? fault : "";
   }
   if (schemaName === "session_evidence_excerpts_v2") {

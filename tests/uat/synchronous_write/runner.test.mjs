@@ -165,6 +165,24 @@ test("provider fixture emits complete Evidence assessment and invalid allowlist 
   assert.equal(fixtureChatResponse(request, "assessment-missing").evidence_security_results.length, 0);
 });
 
+test("partition fixture faults survive boundary annotations and exercise complete responses", () => {
+  const requestFor = (fault) => structuredRequest("dense_mem_semantic_partition_response", {
+    request_id: "partition",
+    policy_version: "fixture",
+    items: [{ item_id: "item:0", boundary_text: `⟦p0⟧First meaning.\n⟦p1⟧Second meaning [⟦p2⟧fixture-⟦p3⟧fault:⟦p4⟧${fault}]⟦p5⟧` }],
+  });
+  for (const fault of ["partition-split", "partition-missing", "partition-unknown", "partition-repair"]) {
+    const request = requestFor(fault);
+    assert.equal(fixtureFault(request, "assessment"), fault);
+    const response = fixtureChatResponse(request, fixtureFault(request, "assessment"));
+    if (fault === "partition-split") assert.deepEqual(response.items[0].end_refs, ["p1", "p5"]);
+    else if (fault === "partition-missing") assert.deepEqual(response.items, []);
+    else assert.deepEqual(response.items[0].end_refs, ["invented"]);
+  }
+  const repaired = requestFor("partition-repair");
+  assert.deepEqual(fixtureChatResponse(repaired, fixtureFault(repaired, "assessment"), 2).items[0].end_refs, ["p5"]);
+});
+
 test("provider fixture scopes faults to the active Evidence, topic or session input", () => {
   const staleContext = structuredRequest("dense_mem_evidence_assessment_response", { evidence: [{ content: "[fixture-fault:security] stale" }] });
   staleContext.messages.push({ role: "user", content: JSON.stringify({ evidence: [{ content: "Current evidence." }], known_evidence: [{ content: "[fixture-fault:security] recalled evidence" }] }) });

@@ -127,7 +127,9 @@ func TestRememberPartitionPostgres(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, traced.Evidence.Partition)
 		require.Equal(t, knowledge.EvidenceContentHash(content), traced.Evidence.Partition.OriginalContentHash)
-		require.Equal(t, item.OccurrenceID, traced.Evidence.OccurrenceID)
+		require.Len(t, traced.Occurrences, 1)
+		require.Equal(t, item.OccurrenceID, traced.Occurrences[0].OccurrenceID)
+		require.Equal(t, traced.Evidence.Partition, traced.Occurrences[0].Partition)
 		reconstructed += traced.Evidence.Content
 	}
 	require.Equal(t, content, reconstructed)

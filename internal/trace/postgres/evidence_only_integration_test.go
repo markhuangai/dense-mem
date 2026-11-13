@@ -131,7 +131,7 @@ func TestEvidenceOnlyPostgresTraceBudgetsAndMemoryPackCanonicalProvenance(t *tes
 	owner := createLedgerProfile(t, admin, rls, team, "owner A")
 	peer := createLedgerProfile(t, admin, rls, team, "reader B")
 	store := knowledge.NewStore(app, rls)
-	content := strings.Repeat("界🙂", 4000) + "尾"
+	content := strings.Repeat("界🙂", 9000) + "尾"
 	ingest, err := store.CreateIngestForTest(ctx, knowledge.CreateIngestInput{TeamID: team, OwnerProfileID: owner, IdempotencyKey: "retained-long-evidence", RequestHash: "retained-long-evidence", Evidence: []knowledge.EvidenceInput{{Content: content, SourceKey: "document:trace", SourceRevisionToken: "revision-1", SourceRef: "document:trace", SourceRevisionEnvelope: map[string]any{"exact": "Original source envelope"}}}})
 	require.NoError(t, err)
 	id := ingest.Evidence[0].FragmentID
