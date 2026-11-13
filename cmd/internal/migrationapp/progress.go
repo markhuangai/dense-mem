@@ -37,7 +37,8 @@ func progressAttrs(s postgres.MigrationSnapshot) []any {
 		"phase_started_at", s.PhaseStartedAt, "phase_elapsed_ms", time.Since(s.PhaseStartedAt).Milliseconds(), "observed_at", s.ObservedAt,
 		"last_progress_at", last, "metric", s.Metric, "unit", s.Unit, "completed", s.Completed, "total", s.Total, "remaining", remaining, "total_kind", totalKind,
 		"discovered", s.Discovered, "iterations", s.Iterations, "sequence", s.Sequence, "attempted", s.TransactionStarted, "work_durability", "transaction_local",
-		"capture_state", s.CaptureState, "capture_reason", s.CaptureReason, "eta_seconds", nil, "eta_unavailable_reason", "remaining_phase_cost_unknown"}
+		"capture_state", s.CaptureState, "capture_reason", s.CaptureReason, "wait_observation_unavailable", s.WaitObservationUnavailable,
+		"eta_seconds", nil, "eta_unavailable_reason", "remaining_phase_cost_unknown"}
 }
 
 func withProgressSlot(ctx context.Context) context.Context {
@@ -77,9 +78,9 @@ func heartbeatProgress(ctx context.Context, logger infoLogger, db *sql.DB, sampl
 	defer cancel()
 	kind, event, blockers, err := p.SampleWait(observationCtx, db)
 	if err != nil {
-		if p.Snapshot().CaptureReason != "wait_observation_unavailable" {
-			p.Incomplete("wait_observation_unavailable")
-			logWarn(context.WithoutCancel(ctx), logger, "evidence_only_migration_capture_incomplete", progressAttrs(p.Snapshot())...)
+		if p.MarkWaitObservationUnavailable() {
+			attrs := append(progressAttrs(p.Snapshot()), "wait_observation_failure_reason", postgres.MigrationFailureReason(err))
+			logWarn(context.WithoutCancel(ctx), logger, "evidence_only_migration_capture_incomplete", attrs...)
 		}
 		return
 	}

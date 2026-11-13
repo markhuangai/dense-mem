@@ -776,6 +776,14 @@ esac
   }
 });
 
+test("scenario browser image matches the installed Playwright browser version", async () => {
+  const lock = JSON.parse(await readFile(join(root, "web/package-lock.json"), "utf8"));
+  const version = lock.packages["node_modules/playwright-core"].version;
+  const { stdout } = await run("bash", ["-c", 'source "$1"; printf "%s" "$SCENARIO_TEST_IMAGE"',
+    "browser-image-test", join(scripts, "e2e-host-controller-runtime.sh")]);
+  assert.equal(stdout, `mcr.microsoft.com/playwright:v${version}-noble`);
+});
+
 test("scenario containers discover a per-user Docker Compose plugin", async () => {
   const fixture = await mkdtemp(join(tmpdir(), "dense-mem-compose-plugin-"));
   try {

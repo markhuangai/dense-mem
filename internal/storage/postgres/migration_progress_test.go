@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -124,6 +126,54 @@ func TestMigrationProgressCountsAndLiveness(t *testing.T) {
 	p.Report("ontology_reset", "ontology_catalog_heads", "progress", "affected", "rows", &n, &total)
 	require.Len(t, observations, 2)
 	require.True(t, p.Snapshot().LastProgressAt.After(first.LastProgressAt))
+}
+
+func TestMigrationProgressRetainsNoticeAndWaitFailures(t *testing.T) {
+	for _, waitFirst := range []bool{false, true} {
+		t.Run(fmt.Sprint(waitFirst), func(t *testing.T) {
+			_, p := ObserveMigration(context.Background(), nil)
+			defer p.Close()
+			p.snapshot.BackendPID = 123
+			if waitFirst {
+				require.True(t, p.MarkWaitObservationUnavailable())
+				require.Equal(t, "wait_observation_unavailable", p.Snapshot().CaptureReason)
+			}
+			receiveMigrationNotice(123, migrationNoticePrefix+p.Snapshot().ExecutionID+`:{"body":"private-canary"}`)
+			require.Equal(t, !waitFirst, p.MarkWaitObservationUnavailable())
+			require.False(t, p.MarkWaitObservationUnavailable())
+			p.CaptureFinished()
+			snapshot := p.Snapshot()
+			require.Equal(t, "invalid_notice", snapshot.CaptureReason)
+			require.Equal(t, "incomplete", snapshot.CaptureState)
+			require.True(t, snapshot.WaitObservationUnavailable)
+		})
+	}
+}
+
+func TestMigrationProgressWaitFailureTransitionIsAtomic(t *testing.T) {
+	_, p := ObserveMigration(context.Background(), nil)
+	defer p.Close()
+	var transitions atomic.Int32
+	var workers sync.WaitGroup
+	for range 32 {
+		workers.Go(func() {
+			if p.MarkWaitObservationUnavailable() {
+				transitions.Add(1)
+			}
+			_ = p.Snapshot()
+		})
+	}
+	workers.Wait()
+	require.EqualValues(t, 1, transitions.Load())
+	p.CaptureFinished()
+	require.Equal(t, "wait_observation_unavailable", p.Snapshot().CaptureReason)
+	require.Equal(t, "incomplete", p.Snapshot().CaptureState)
+
+	_, closed := ObserveMigration(context.Background(), nil)
+	closed.Close()
+	before := closed.Snapshot()
+	require.False(t, closed.MarkWaitObservationUnavailable())
+	require.Equal(t, before, closed.Snapshot())
 }
 func TestMigrationProgressFailureDoesNotExposeDatabasePayload(t *testing.T) {
 	original := &pgconn.PgError{Code: "22P02", Message: "private-canary legal hold retained fingerprint mismatch", Detail: "credential-canary", InternalQuery: "private-canary"}

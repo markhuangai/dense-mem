@@ -3,6 +3,7 @@ package migrationapp
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -30,7 +31,9 @@ func TestMigrationProgressRealLoggerAndUnknownCounts(t *testing.T) {
 			defer progress.Close()
 			progress.Report("ontology_reset", "ontology_catalog_heads", "started", "affected", "rows", nil, nil)
 			progress.Incomplete("notice_sequence_gap")
-			logWarn(ctx, logger, "evidence_only_migration_capture_incomplete", progressAttrs(progress.Snapshot())...)
+			require.True(t, progress.MarkWaitObservationUnavailable())
+			logWarn(ctx, logger, "evidence_only_migration_capture_incomplete", append(progressAttrs(progress.Snapshot()),
+				"wait_observation_failure_reason", postgres.MigrationFailureReason(sql.ErrConnDone))...)
 			require.NotContains(t, output.String(), "configured-canary")
 			lines := strings.Split(strings.TrimSpace(output.String()), "\n")
 			if level == slog.LevelWarn {
@@ -46,6 +49,12 @@ func TestMigrationProgressRealLoggerAndUnknownCounts(t *testing.T) {
 				require.Nil(t, event["eta_seconds"])
 				require.Equal(t, "transaction_local", event["work_durability"])
 				require.NotEmpty(t, event["migration_execution_id"])
+				if event["level"] == "WARN" {
+					require.Equal(t, "incomplete", event["capture_state"])
+					require.Equal(t, "notice_sequence_gap", event["capture_reason"])
+					require.Equal(t, true, event["wait_observation_unavailable"])
+					require.Equal(t, "database connection closed", event["wait_observation_failure_reason"])
+				}
 			}
 		})
 	}

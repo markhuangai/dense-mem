@@ -328,6 +328,7 @@ func TestEvidenceOnlyPostgresProgressLiveSQL(t *testing.T) {
 }
 
 func TestEvidenceOnlyPostgresProgressWaitCancellation(t *testing.T) {
+	t.Run("malformed_then_wait_unavailable", testProgressCombinedCaptureFailure)
 	for _, mode := range []string{"advisory", "table", "non_lock", "disconnect", "missing_capture", "malformed", "oversized", "gap"} {
 		t.Run(mode, func(t *testing.T) {
 			db, dsn := openMigrationProgressDB(t)

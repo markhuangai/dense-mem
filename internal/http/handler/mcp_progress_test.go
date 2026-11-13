@@ -115,6 +115,9 @@ func TestMCPHandlerRememberProgressArrivesBeforeCompletion(t *testing.T) {
 	require.Contains(t, line, "notifications/progress")
 	require.Contains(t, line, "Assessing Evidence")
 	require.NotContains(t, line, "completed")
+	line, err = reader.ReadString('\n')
+	require.NoError(t, err)
+	require.Equal(t, "\n", line)
 	unblock()
 	_, err = io.ReadAll(reader)
 	require.NoError(t, err)
@@ -443,15 +446,7 @@ func progressHTTPCall(t *testing.T, url, version, accept, token, name, id string
 
 func decodeProgressFrames(t *testing.T, body io.Reader) []progressFrame {
 	t.Helper()
-	var frames []progressFrame
-	scanner := bufio.NewScanner(body)
-	for scanner.Scan() {
-		if line := scanner.Text(); strings.HasPrefix(line, "data: ") {
-			var frame progressFrame
-			require.NoError(t, json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &frame))
-			frames = append(frames, frame)
-		}
-	}
-	require.NoError(t, scanner.Err())
+	frames, err := readProgressFrames(body)
+	require.NoError(t, err)
 	return frames
 }
