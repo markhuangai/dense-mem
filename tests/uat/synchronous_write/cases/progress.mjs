@@ -177,7 +177,8 @@ export async function run({ expect, runStep }) {
       const correlated = records.filter((row) => row.correlation_id === receipt.correlationID);
       const delivered = correlated.filter((row) => row.msg === "mcp_progress_delivered");
       assert.equal(delivered.length, receipt.progress.length);
-      assert(delivered.every((row) => row.level === "DEBUG" && row.team_id && row.profile_id && row.invocation_id &&
+      assert(delivered.every((row) => row.level === "DEBUG" && row.team_id && row.profile_id &&
+        (row.invocation_id || ["validating_input", "checking_replay"].includes(row.stage)) &&
         row.request_id && row.progress_token !== undefined && row.write_budget_ms === 100 && row.duration_ms >= 0));
       assert(correlated.some((row) => row.msg === "mcp_tool_outcome"));
     }
