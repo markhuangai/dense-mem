@@ -47,6 +47,10 @@ existing overall migration timeout still applies. Checkpoints commit with the
 data, carrying executor/inventory/schema identities, phase, keyset cursor,
 counts, fingerprints, and completion state. Repeated keys must contain the
 same JSON payload. Source fingerprint scans and verification use bounded units.
+Retained rows larger than one batch use byte fragments and a primary-key cursor
+with a byte offset; each fragment checkpoints its fingerprint, and row counts
+advance only when the complete row has been scanned. Prefix verification also
+revalidates committed fragments before resuming an incomplete row.
 Goose needs a connection for each waiting locker and a separate executor slot;
 finite pools temporarily retain that capacity during migration and restore the
 configured limit after the last overlapping starter exits.

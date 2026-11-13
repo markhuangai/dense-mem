@@ -11,17 +11,30 @@ import (
 
 func TestFeatureStorageUnitCursorUsesNativeOrderedKeys(t *testing.T) {
 	source := featureSource{Name: "ontology_record_revisions", Key: []featureColumn{{Name: "team_id", Type: "uuid"}, {Name: "version", Type: "bigint"}}}
-	query, args, err := featureBatchQuery(source, json.RawMessage(`["00000000-0000-0000-0000-000000000001",9007199254740993]`))
+	query, args, offset, err := featureBatchQuery(source, json.RawMessage(`["00000000-0000-0000-0000-000000000001",9007199254740993]`))
 	require.NoError(t, err)
 	require.Contains(t, query, `("team_id","version")>($1::uuid,$2::bigint)`)
 	require.Contains(t, query, "LIMIT 100")
-	require.Contains(t, query, "cumulative_bytes<=8388608")
+	require.Zero(t, offset)
+	require.NotContains(t, query, "to_jsonb(source)")
 	require.NotContains(t, query, "9007199254740993")
 	require.Equal(t, json.Number("9007199254740993"), args[1])
-	_, _, err = featureBatchQuery(source, json.RawMessage(`[1]`))
+	_, _, _, err = featureBatchQuery(source, json.RawMessage(`[1]`))
 	require.ErrorContains(t, err, "key width changed")
-	_, _, err = featureBatchQuery(featureSource{Name: "invalid"}, nil)
+	_, _, _, err = featureBatchQuery(featureSource{Name: "invalid"}, nil)
 	require.ErrorContains(t, err, "no primary key")
+}
+
+func TestFeatureStorageUnitPartialRowCursorPreservesNativeKeys(t *testing.T) {
+	source := featureSource{Name: "history", Key: []featureColumn{{Name: "id", Type: "bigint"}}}
+	_, args, offset, err := featureBatchQuery(source, json.RawMessage(`[9007199254740993,8388608]`))
+	require.NoError(t, err)
+	require.Equal(t, []any{json.Number("9007199254740993")}, args)
+	require.EqualValues(t, featureStorageBatchBytes, offset)
+	for _, cursor := range []string{`[1,0]`, `[1,-8388608]`, `[1,1]`, `[1,"8388608"]`, `[1,1e100]`} {
+		_, _, _, err := featureBatchQuery(source, json.RawMessage(cursor))
+		require.ErrorContains(t, err, "invalid checkpoint cursor")
+	}
 }
 
 func TestFeatureStorageUnitMigrationPoolRestoresAfterOverlappingStarters(t *testing.T) {

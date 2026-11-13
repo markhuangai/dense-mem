@@ -19,7 +19,7 @@ func (m *featureMigration) scan(ctx context.Context, phase string, source featur
 		return err
 	}
 	m.report(phase, source.Name, "started", cp)
-	if cp.Rows > 0 {
+	if cp.Rows > 0 || !bytes.Equal(cp.Cursor, []byte(`[]`)) {
 		if err := m.verifyPrefix(ctx, source, cp, phase == "verify"); err != nil {
 			return err
 		}
@@ -36,18 +36,23 @@ func (m *featureMigration) scan(ctx context.Context, phase string, source featur
 			}
 			for _, row := range rows {
 				if copyPayload {
+					if !row.Complete {
+						return errors.New("feature_storage_blocked: source row exceeds batch byte bound")
+					}
 					if err := copyFeaturePayload(ctx, tx, source.Name, row.Body); err != nil {
 						return err
 					}
 				}
 				if phase == "verify" {
-					if err := verifyFeaturePayload(ctx, tx, source.Name, row.Body); err != nil {
+					if err := verifyFeaturePayload(ctx, tx, source.Name, row); err != nil {
 						return err
 					}
 				}
 				cp.Fingerprint = advanceFeatureFingerprint(cp.Fingerprint, row.Body)
 				cp.Cursor = row.Cursor
-				cp.Rows++
+				if row.Complete {
+					cp.Rows++
+				}
 			}
 			cp.Batches++
 			cp.Complete = len(rows) == 0
@@ -74,7 +79,7 @@ func (m *featureMigration) scan(ctx context.Context, phase string, source featur
 
 func (m *featureMigration) verifyPrefix(ctx context.Context, source featureSource, expected featureCheckpoint, verifyPayload bool) error {
 	current := featureCheckpoint{Cursor: json.RawMessage(`[]`)}
-	for current.Rows < expected.Rows {
+	for !bytes.Equal(current.Cursor, expected.Cursor) {
 		err := m.transaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 			rows, err := readFeatureBatch(ctx, tx, source, current.Cursor)
 			if err != nil {
@@ -84,17 +89,22 @@ func (m *featureMigration) verifyPrefix(ctx context.Context, source featureSourc
 				return errors.New("feature_storage_blocked: source fingerprint mismatch")
 			}
 			for _, row := range rows {
-				if current.Rows == expected.Rows {
-					break
-				}
 				if verifyPayload {
-					if err := verifyFeaturePayload(ctx, tx, source.Name, row.Body); err != nil {
+					if err := verifyFeaturePayload(ctx, tx, source.Name, row); err != nil {
 						return err
 					}
 				}
 				current.Fingerprint = advanceFeatureFingerprint(current.Fingerprint, row.Body)
 				current.Cursor = row.Cursor
-				current.Rows++
+				if row.Complete {
+					current.Rows++
+				}
+				if current.Rows > expected.Rows {
+					return errors.New("feature_storage_blocked: source fingerprint mismatch")
+				}
+				if bytes.Equal(current.Cursor, expected.Cursor) {
+					break
+				}
 			}
 			return nil
 		})
@@ -102,7 +112,7 @@ func (m *featureMigration) verifyPrefix(ctx context.Context, source featureSourc
 			return err
 		}
 	}
-	if current.Fingerprint != expected.Fingerprint || !bytes.Equal(current.Cursor, expected.Cursor) {
+	if current.Rows != expected.Rows || current.Fingerprint != expected.Fingerprint {
 		if m.progress != nil {
 			m.progress.FeatureFingerprintMismatch(expected.Fingerprint, current.Fingerprint)
 		}
@@ -170,12 +180,15 @@ func copyFeaturePayload(ctx context.Context, tx *sql.Tx, table string, body []by
 	}
 }
 
-func verifyFeaturePayload(ctx context.Context, tx *sql.Tx, table string, body []byte) error {
+func verifyFeaturePayload(ctx context.Context, tx *sql.Tx, table string, source featureRow) error {
 	if table != "ontology_record_revisions" && table != "ontology_draft_revisions" && table != "ontology_draft_heads" {
 		return nil
 	}
+	if !source.Complete {
+		return errors.New("feature_storage_blocked: source row exceeds batch byte bound")
+	}
 	var row featurePayloadRow
-	if err := json.Unmarshal(body, &row); err != nil {
+	if err := json.Unmarshal(source.Body, &row); err != nil {
 		return err
 	}
 	var same bool

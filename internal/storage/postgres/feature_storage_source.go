@@ -24,8 +24,9 @@ type featureSource struct {
 	Columns, Key []featureColumn
 }
 type featureRow struct {
-	Cursor json.RawMessage
-	Body   []byte
+	Cursor   json.RawMessage
+	Body     []byte
+	Complete bool
 }
 
 func featureSources(ctx context.Context, tx *sql.Tx) ([]featureSource, error) {
@@ -78,72 +79,124 @@ func featureSources(ctx context.Context, tx *sql.Tx) ([]featureSource, error) {
 	return result, nil
 }
 
-func featureBatchQuery(source featureSource, cursor json.RawMessage) (string, []any, error) {
-	var keys, ordered, join []string
+func featureBatchQuery(source featureSource, cursor json.RawMessage) (string, []any, int64, error) {
+	var keys, ordered []string
 	for _, key := range source.Key {
 		name := pq.QuoteIdentifier(key.Name)
 		keys = append(keys, name)
 		ordered = append(ordered, "source."+name)
-		join = append(join, name)
 	}
 	if len(keys) == 0 {
-		return "", nil, errors.New("feature_storage_blocked: source table has no primary key")
+		return "", nil, 0, errors.New("feature_storage_blocked: source table has no primary key")
 	}
 	where := "true"
 	var args []any
+	var offset int64
 	if len(cursor) > 0 && string(cursor) != "[]" {
 		decoder := json.NewDecoder(bytes.NewReader(cursor))
 		decoder.UseNumber()
 		if err := decoder.Decode(&args); err != nil {
-			return "", nil, err
+			return "", nil, 0, err
+		}
+		if len(args) == len(keys)+1 {
+			value, ok := args[len(keys)].(json.Number)
+			if !ok {
+				return "", nil, 0, errors.New("feature_storage_blocked: invalid checkpoint cursor")
+			}
+			var err error
+			offset, err = value.Int64()
+			if err != nil || offset <= 0 || offset%featureStorageBatchBytes != 0 {
+				return "", nil, 0, errors.New("feature_storage_blocked: invalid checkpoint cursor")
+			}
+			args = args[:len(keys)]
 		}
 		if len(args) != len(keys) {
-			return "", nil, errors.New("feature storage: checkpoint key width changed")
+			return "", nil, 0, errors.New("feature storage: checkpoint key width changed")
 		}
 		var binds []string
 		for index, key := range source.Key {
 			binds = append(binds, fmt.Sprintf("$%d::%s", index+1, key.Type))
 		}
-		where = "(" + strings.Join(keys, ",") + ")>(" + strings.Join(binds, ",") + ")"
+		comparison := ">"
+		if offset > 0 {
+			comparison = ">="
+		}
+		where = "(" + strings.Join(keys, ",") + ")" + comparison + "(" + strings.Join(binds, ",") + ")"
 	}
 	table := pq.QuoteIdentifier(source.Name)
-	query := `WITH candidates AS MATERIALIZED (SELECT ` + strings.Join(keys, ",") + `,octet_length(to_jsonb(source)::text) AS payload_bytes FROM ` + table + ` source WHERE ` + where + ` ORDER BY ` + strings.Join(keys, ",") + ` LIMIT 100),
-	bounded AS (SELECT *,sum(payload_bytes) OVER (ORDER BY ` + strings.Join(keys, ",") + `) AS cumulative_bytes,row_number() OVER (ORDER BY ` + strings.Join(keys, ",") + `) AS position FROM candidates)
-	SELECT jsonb_build_array(` + strings.Join(ordered, ",") + `)::text,to_jsonb(source)::text FROM bounded JOIN ` + table + ` source USING(` + strings.Join(join, ",") + `)
-	WHERE cumulative_bytes<=8388608 OR position=1 ORDER BY ` + strings.Join(ordered, ",")
-	return query, args, nil
+	query := `SELECT jsonb_build_array(` + strings.Join(ordered, ",") + `)::text FROM ` + table + ` source WHERE ` + where + ` ORDER BY ` + strings.Join(keys, ",") + ` LIMIT 100`
+	return query, args, offset, nil
 }
 
 func readFeatureBatch(ctx context.Context, tx *sql.Tx, source featureSource, cursor json.RawMessage) ([]featureRow, error) {
-	query, args, err := featureBatchQuery(source, cursor)
+	query, args, offset, err := featureBatchQuery(source, cursor)
 	if err != nil {
 		return nil, err
+	}
+	if offset > 0 {
+		row, err := readFeatureRow(ctx, tx, source, cursor, offset, featureStorageBatchBytes)
+		if err != nil {
+			return nil, err
+		}
+		return []featureRow{row}, nil
 	}
 	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
-	var result []featureRow
-	size := 0
+	var keys []json.RawMessage
 	for rows.Next() {
-		var row featureRow
 		var cursor []byte
-		if err := rows.Scan(&cursor, &row.Body); err != nil {
+		if err := rows.Scan(&cursor); err != nil {
 			rows.Close()
 			return nil, err
 		}
-		row.Cursor = cursor
-		size += len(row.Body)
-		if size > featureStorageBatchBytes {
-			rows.Close()
-			return nil, errors.New("feature_storage_blocked: source row exceeds batch byte bound")
-		}
-		result = append(result, row)
+		keys = append(keys, json.RawMessage(cursor))
 	}
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 		return nil, err
 	}
+	var result []featureRow
+	remaining := featureStorageBatchBytes
+	for _, key := range keys {
+		row, err := readFeatureRow(ctx, tx, source, key, 0, remaining)
+		if err != nil {
+			return nil, err
+		}
+		if !row.Complete && len(result) > 0 {
+			break
+		}
+		result = append(result, row)
+		remaining -= len(row.Body)
+		if remaining == 0 {
+			break
+		}
+	}
 	return result, nil
+}
+
+func readFeatureRow(ctx context.Context, tx *sql.Tx, source featureSource, cursor json.RawMessage, offset int64, limit int) (featureRow, error) {
+	var keys, values []string
+	for index, key := range source.Key {
+		keys = append(keys, "source."+pq.QuoteIdentifier(key.Name))
+		values = append(values, fmt.Sprintf("($1::jsonb->>%d)::%s", index, key.Type))
+	}
+	query := `WITH payload AS MATERIALIZED (
+	 SELECT jsonb_build_array(` + strings.Join(keys, ",") + `) AS row_key,convert_to(to_jsonb(source)::text,'UTF8') AS body
+	 FROM ` + pq.QuoteIdentifier(source.Name) + ` source WHERE (` + strings.Join(keys, ",") + `)=(` + strings.Join(values, ",") + `)
+	), chunk AS MATERIALIZED (
+	 SELECT row_key,octet_length(body) AS payload_bytes,substring(body FROM ($2::int+1) FOR $3::int) AS body FROM payload
+	)
+	SELECT CASE WHEN $2::bigint+octet_length(body)<payload_bytes THEN row_key||jsonb_build_array($2::bigint+octet_length(body)) ELSE row_key END::text,
+	 body,$2::bigint+octet_length(body)>=payload_bytes FROM chunk`
+	var row featureRow
+	var key []byte
+	err := tx.QueryRowContext(ctx, query, string(cursor), offset, limit).Scan(&key, &row.Body, &row.Complete)
+	if errors.Is(err, sql.ErrNoRows) {
+		return row, errors.New("feature_storage_blocked: source fingerprint mismatch")
+	}
+	row.Cursor = key
+	return row, err
 }
 
 func advanceFeatureFingerprint(previous string, body []byte) string {

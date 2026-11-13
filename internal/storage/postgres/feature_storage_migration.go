@@ -295,7 +295,7 @@ func featureStorageFailureReason(err error) string {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return "feature_storage_deadline"
 	}
-	for _, reason := range []string{"destination payload mismatch", "destination draft mismatch", "draft payload count mismatch", "missing draft envelope", "unsupported draft shape", "draft feature is unavailable", "unsupported payload kind", "source schema or executor fingerprint changed", "retained source fingerprint changed", "source fingerprint mismatch", "payload verification failed", "source row exceeds batch byte bound", "source table has no primary key", "incompatible cutover receipt", "feature catalog verification failed"} {
+	for _, reason := range []string{"destination payload mismatch", "destination draft mismatch", "draft payload count mismatch", "missing draft envelope", "unsupported draft shape", "draft feature is unavailable", "unsupported payload kind", "source schema or executor fingerprint changed", "retained source fingerprint changed", "source fingerprint mismatch", "payload verification failed", "source row exceeds batch byte bound", "source table has no primary key", "invalid checkpoint cursor", "incompatible cutover receipt", "feature catalog verification failed"} {
 		if strings.Contains(err.Error(), "feature_storage_blocked: "+reason) {
 			return "feature_storage_" + strings.ReplaceAll(reason, " ", "_")
 		}

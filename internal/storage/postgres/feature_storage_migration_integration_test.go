@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
 
@@ -53,6 +54,82 @@ func TestFeatureStoragePostgresSingleConnectionPool(t *testing.T) {
 	require.NoError(t, NewMigratorWithDB(db).RunUp(ctx))
 	require.Equal(t, 1, db.Stats().MaxOpenConnections)
 	require.NoError(t, ValidateStartupMigrationState(ctx, db, MigrationsDir()))
+}
+
+func TestFeatureStoragePostgresLargeRetainedRows(t *testing.T) {
+	for _, variant := range []string{"resume", "changed_prefix", "changed_suffix"} {
+		t.Run(variant, func(t *testing.T) {
+			count := 3
+			if variant == "changed_suffix" {
+				count = 210
+			}
+			db, fixture := featureStorageFixture(t, count)
+			invocation := uuid.NewString()
+			require.NoError(t, execPostgresTxMode(context.Background(), db, "system", func(tx *sql.Tx) error {
+				_, err := tx.Exec(`INSERT INTO remember_invocation_diagnostics(team_id,invocation_id,owner_profile_id,provider_exchanges,expires_at)
+				 SELECT $1::uuid,$2::uuid,$3::uuid,jsonb_agg(jsonb_build_object('sequence_no',n,'kind','provider_exchange','component','provider',
+				 'response_body',repeat('🧭',(63*1024*1024)/16),'outcome','captured','capture_state','captured') ORDER BY n),now()+interval '1 day'
+				 FROM generate_series(1,4) n`, fixture.team, invocation, fixture.owner)
+				return err
+			}))
+			historyHash := func() string {
+				t.Helper()
+				var fingerprint string
+				require.NoError(t, execPostgresTxMode(context.Background(), db, "system", func(tx *sql.Tx) error {
+					return tx.QueryRow(`SELECT encode(sha256(convert_to(to_jsonb(history)::text,'UTF8')),'hex')
+					 FROM remember_invocation_diagnostics history WHERE team_id=$1::uuid AND invocation_id=$2::uuid`, fixture.team, invocation).Scan(&fingerprint)
+				}))
+				return fingerprint
+			}
+			before, evidence := historyHash(), featureStorageSnapshot(t, db, "evidence_fragments")
+			if variant == "changed_suffix" {
+				stopFeatureCopy(t, db, false)
+			} else {
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				interrupted := false
+				ctx, progress := ObserveMigration(ctx, func(s MigrationSnapshot) {
+					if s.Phase == "snapshot" && s.WorkUnit == "remember_invocation_diagnostics" && s.State == "batch_committed" && s.DurableBatches == 1 {
+						require.Zero(t, s.DurableRows)
+						interrupted = true
+						cancel()
+					}
+				})
+				defer progress.Close()
+				require.Error(t, NewMigratorWithDB(db).RunUp(ctx))
+				require.True(t, interrupted)
+				var offset, rows int64
+				require.NoError(t, execPostgresTxMode(context.Background(), db, "system", func(tx *sql.Tx) error {
+					return tx.QueryRow(`SELECT (cursor->>2)::bigint,row_count FROM data_migration_checkpoints
+					 WHERE migration_version=$1 AND phase='snapshot' AND work_unit='remember_invocation_diagnostics'`, FeatureStorageDataVersion).Scan(&offset, &rows)
+				}))
+				require.EqualValues(t, featureStorageBatchBytes, offset)
+				require.Zero(t, rows)
+			}
+			if variant != "resume" {
+				require.NoError(t, execPostgresTxMode(context.Background(), db, "migration", func(tx *sql.Tx) error {
+					query := `UPDATE remember_invocation_diagnostics SET request_hash='changed prefix' WHERE team_id=$1::uuid AND invocation_id=$2::uuid`
+					if variant == "changed_suffix" {
+						query = `UPDATE remember_invocation_diagnostics SET provider_exchanges=jsonb_set(provider_exchanges,'{3,response_body}',to_jsonb('changed suffix'::text))
+						 WHERE team_id=$1::uuid AND invocation_id=$2::uuid`
+					}
+					_, err := tx.Exec(query, fixture.team, invocation)
+					return err
+				}))
+				require.ErrorContains(t, NewMigratorWithDB(db).RunUp(context.Background()), "feature_storage_source_fingerprint_mismatch")
+			} else {
+				require.NoError(t, NewMigratorWithDB(db).RunUp(context.Background()))
+				require.Equal(t, before, historyHash())
+				var complete int
+				require.NoError(t, execPostgresTxMode(context.Background(), db, "system", func(tx *sql.Tx) error {
+					return tx.QueryRow(`SELECT count(*) FROM data_migration_checkpoints WHERE migration_version=$1
+					 AND phase IN ('snapshot','verify') AND work_unit='remember_invocation_diagnostics' AND row_count=1 AND complete`, FeatureStorageDataVersion).Scan(&complete)
+				}))
+				require.Equal(t, 2, complete)
+			}
+			require.Equal(t, evidence, featureStorageSnapshot(t, db, "evidence_fragments"))
+		})
+	}
 }
 
 func TestFeatureStoragePostgresOverlappingSingleConnectionStarters(t *testing.T) {
