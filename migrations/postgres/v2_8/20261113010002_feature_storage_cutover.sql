@@ -104,6 +104,14 @@ BEGIN
     LOOP
         EXECUTE format('DROP POLICY feature_storage_inventory_read ON %I',relation.relname);
     END LOOP;
+    FOR relation IN SELECT c.relname FROM pg_class c JOIN pg_trigger t ON t.tgrelid=c.oid
+        WHERE c.relnamespace='public'::regnamespace AND t.tgname='feature_storage_write_gate'
+        AND c.relname=ANY(ARRAY['v2_migration_runs','v2_migration_corpus_items','v2_migration_source_maps',
+            'v2_migration_checkpoints','v2_migration_errors','v2_migration_exclusions',
+            'v2_migration_gate_results','v2_migration_operator_actions'])
+    LOOP
+        EXECUTE format('DROP TRIGGER feature_storage_write_gate ON %I',relation.relname);
+    END LOOP;
 END $inventory_cleanup$;
 
 CREATE POLICY feature_storage_marker_insert ON v2_compatibility_markers FOR INSERT WITH CHECK (

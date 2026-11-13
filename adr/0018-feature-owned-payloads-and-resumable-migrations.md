@@ -86,6 +86,11 @@ adapter representation. The three body columns are dropped with PostgreSQL's
 default RESTRICT dependency behavior, never CASCADE. Unexpected dependencies
 therefore block cutover rather than being silently removed.
 
+Cutover releases this migration's temporary fence on the eight legacy
+`v2_migration_*` control tables after verification, in the completion transaction.
+Their existing read-only RLS and guarded retirement contract remain authoritative;
+runtime and canonical tables retain the storage-layout fence.
+
 ## Risk
 
 - Splitting mixed drafts can lose order or shape. Retain ordinals and envelope

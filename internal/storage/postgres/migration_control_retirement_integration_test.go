@@ -151,7 +151,17 @@ func TestMigrationControlRetirementDropsOnlyApprovedTablesAndPreservesMarker(t *
 	seedMigrationControlRetirementFixture(t, ctx, sqlDB)
 	retainedTeamID, _ := insertMigrationTeamProfile(t, ctx, sqlDB)
 	migrator := NewMigratorWithDB(sqlDB)
+	assertFeatureFences := func(want bool) {
+		for _, table := range migrationControlRetirementTables {
+			var fenced bool
+			require.NoError(t, sqlDB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass($1) AND tgname='feature_storage_write_gate')`, table).Scan(&fenced))
+			require.Equal(t, want, fenced, table)
+		}
+	}
+	require.NoError(t, migrator.PrepareFeatureStorageMigration(ctx))
+	assertFeatureFences(true)
 	require.NoError(t, migrator.RunUp(ctx))
+	assertFeatureFences(false)
 	beforeCounts := migrationControlRetirementTableCounts(t, ctx, sqlDB)
 	for _, table := range migrationControlRetirementTables {
 		want := int64(1)
