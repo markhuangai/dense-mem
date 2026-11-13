@@ -16,6 +16,10 @@ KNOWN_ONTOLOGY_LOOKUP_REPAIR_CURRENT_SHA="269a4d203f7568d06818c96817883db7aa1fe7
 KNOWN_PROGRESS_BASE_SHA="269a4d203f7568d06818c96817883db7aa1fe722207dcb32d2547294ada4b104"
 KNOWN_PROGRESS_CURRENT_SHA="2d9c529f820db4b6d2fe339f56ef4fbd6dc994046a550d1ee8407260d50d76b4"
 
+# One-time derived ontology reset explicitly approved by the maintainer on 2026-11-13.
+KNOWN_ONTOLOGY_RESET_BASE_SHA="2d9c529f820db4b6d2fe339f56ef4fbd6dc994046a550d1ee8407260d50d76b4"
+KNOWN_ONTOLOGY_RESET_CURRENT_SHA="a613ce996c63ccf9469866ec3a2016387897019197e7e1daf29b146e08ff2649"
+
 cd "${ROOT_DIR}"
 git rev-parse --verify "${BASE_REF}^{commit}" >/dev/null 2>&1 || {
   echo "base ref ${BASE_REF} is unavailable; fetch the current upstream base" >&2
@@ -59,7 +63,10 @@ is_approved_migration_repair() {
      "${current_sha}" == "${KNOWN_ONTOLOGY_LOOKUP_REPAIR_CURRENT_SHA}" ]] ||
   [[ "${version}" == "${KNOWN_ONTOLOGY_LOOKUP_REPAIR_VERSION}" &&
      "${base_sha}" == "${KNOWN_PROGRESS_BASE_SHA}" &&
-     "${current_sha}" == "${KNOWN_PROGRESS_CURRENT_SHA}" ]]
+     "${current_sha}" == "${KNOWN_PROGRESS_CURRENT_SHA}" ]] ||
+  [[ "${version}" == "${KNOWN_ONTOLOGY_LOOKUP_REPAIR_VERSION}" &&
+     "${base_sha}" == "${KNOWN_ONTOLOGY_RESET_BASE_SHA}" &&
+     "${current_sha}" == "${KNOWN_ONTOLOGY_RESET_CURRENT_SHA}" ]]
 }
 
 mapfile -t base_paths < <(

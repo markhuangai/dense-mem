@@ -2,9 +2,14 @@ package postgres
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -15,6 +20,28 @@ import (
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	"github.com/stretchr/testify/require"
 )
+
+func TestEvidenceOnlyMigrationInventoryIdentity(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join(MigrationsDir(), "v2_8", evidenceOnlyMigrationSQLName))
+	require.NoError(t, err)
+	groups := regexp.MustCompile(`INSERT INTO evidence_only_inventory SELECT unnest\(ARRAY\[(.*?)\]::text\[\]\),'(remove|retain|mixed|reset)';`).FindAllStringSubmatch(string(body), -1)
+	require.Len(t, groups, 4)
+	names := regexp.MustCompile(`'([^']+)'`)
+	var entries []string
+	seen := map[string]bool{}
+	for _, group := range groups {
+		for _, name := range names.FindAllStringSubmatch(group[1], -1) {
+			require.False(t, seen[name[1]], "duplicate inventory table %s", name[1])
+			seen[name[1]] = true
+			entries = append(entries, name[1]+"\t"+group[2]+"\n")
+		}
+	}
+	sort.Strings(entries)
+	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(entries, ""))))
+	require.Equal(t, EvidenceOnlyMigrationInventorySHA256, digest)
+	require.Contains(t, string(body), "-- Inventory identity: sha256:"+digest)
+	require.Contains(t, string(body), "'inventory_sha256','"+digest+"'")
+}
 
 func progressNotice(t *testing.T, p *MigrationProgress, o MigrationObservation) string {
 	t.Helper()
@@ -88,15 +115,15 @@ func TestMigrationProgressCountsAndLiveness(t *testing.T) {
 	_, p := ObserveMigration(context.Background(), func(s MigrationSnapshot) { observations = append(observations, s) })
 	defer p.Close()
 	n, total := int64(1), int64(10)
-	p.Report("fingerprint_rebind", "ontology_record_revisions", "progress", "rebound", "records", &n, &total)
+	p.Report("ontology_reset", "ontology_catalog_heads", "progress", "affected", "rows", &n, &total)
 	first := p.Snapshot()
 	n = 2
 	require.EqualValues(t, 1, *first.Completed)
-	p.Report("fingerprint_rebind", "ontology_record_revisions", "progress", "rebound", "records", &n, &total)
+	p.Report("ontology_reset", "ontology_catalog_heads", "progress", "affected", "rows", &n, &total)
 	require.Len(t, observations, 1)
 	require.Equal(t, first.LastProgressAt, p.Snapshot().LastProgressAt)
 	p.lastLoop = time.Now().Add(-2 * time.Second)
-	p.Report("fingerprint_rebind", "ontology_record_revisions", "progress", "rebound", "records", &n, &total)
+	p.Report("ontology_reset", "ontology_catalog_heads", "progress", "affected", "rows", &n, &total)
 	require.Len(t, observations, 2)
 	require.True(t, p.Snapshot().LastProgressAt.After(first.LastProgressAt))
 }

@@ -234,7 +234,7 @@ func TestEvidenceOnlyPostgresProgressLiveSQL(t *testing.T) {
 	seedProgressMigration(t, db, 100, 1000)
 	before := progressEvidenceFingerprint(t, db)
 	copyProgressMigration(t, func(s string) string {
-		return strings.Replace(s, "DO $closure$", "SELECT pg_advisory_xact_lock(749,1);\nDO $closure$", 1)
+		return strings.Replace(s, " EXECUTE 'TRUNCATE TABLE '", " PERFORM pg_advisory_xact_lock(749,1);\n EXECUTE 'TRUNCATE TABLE '", 1)
 	})
 	conn, err := db.DB()
 	require.NoError(t, err)
@@ -251,7 +251,7 @@ func TestEvidenceOnlyPostgresProgressLiveSQL(t *testing.T) {
 		waits := 0
 		var last any
 		for _, event := range logs.records(t) {
-			if event["msg"] == "evidence_only_migration_wait" && event["wait_event_type"] == "Lock" && event["phase"] == "ontology_seed" {
+			if event["msg"] == "evidence_only_migration_wait" && event["wait_event_type"] == "Lock" && event["phase"] == "ontology_reset" {
 				if waits > 0 {
 					require.Equal(t, last, event["last_progress_at"])
 				}
@@ -277,22 +277,21 @@ func TestEvidenceOnlyPostgresProgressLiveSQL(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, <-done)
 	require.Equal(t, before, progressEvidenceFingerprint(t, db))
-	var initial, final float64
-	seenUnknown := false
+	resetCompleted := false
 	for _, event := range logs.records(t) {
-		if event["phase"] == "dependency_closure" {
-			if event["state"] == "started" {
-				initial, _ = event["discovered"].(float64)
-				seenUnknown = event["total_kind"] == "unknown"
-			}
+		if event["phase"] == "ontology_reset" {
+			require.Equal(t, "ontology_catalog_heads", event["work_unit"])
+			require.Equal(t, "exact", event["total_kind"])
+			require.Greater(t, event["total"].(float64), float64(200))
 			if event["state"] == "completed" {
-				final, _ = event["discovered"].(float64)
-				require.GreaterOrEqual(t, event["iterations"].(float64), float64(3))
+				resetCompleted = true
+				require.Equal(t, event["total"], event["completed"])
+				require.Zero(t, event["remaining"])
 			}
 		}
+		require.NotContains(t, []string{"dependency_closure", "fingerprint_load", "fingerprint_rebind"}, event["phase"])
 	}
-	require.True(t, seenUnknown)
-	require.Greater(t, final, initial)
+	require.True(t, resetCompleted)
 
 	positions := map[string]int{}
 	for index, event := range logs.records(t) {
@@ -300,14 +299,6 @@ func TestEvidenceOnlyPostgresProgressLiveSQL(t *testing.T) {
 			continue
 		}
 		phase := event["phase"].(string)
-		if phase == "fingerprint_load" {
-			if event["state"] == "completed" {
-				require.EqualValues(t, 100, event["total"])
-			} else {
-				require.Nil(t, event["total"])
-				require.Equal(t, "unknown", event["total_kind"])
-			}
-		}
 		if _, ok := positions[phase]; !ok {
 			positions[phase] = index
 		}
@@ -316,7 +307,7 @@ func TestEvidenceOnlyPostgresProgressLiveSQL(t *testing.T) {
 		require.Equal(t, "transaction_local", event["work_durability"])
 	}
 	previous := -1
-	for _, phase := range []string{"legal_hold_statistics", "guards", "payload_cleanup", "session_cleanup", "ontology_seed", "dependency_closure", "ontology_cleanup", "table_retirement", "guard_restoration", "fingerprint_load", "fingerprint_rebind", "fingerprint_after", "validation", "receipt", "policy_restoration"} {
+	for _, phase := range []string{"legal_hold_statistics", "guards", "payload_cleanup", "session_cleanup", "ontology_reset", "ontology_cleanup", "table_retirement", "guard_restoration", "fingerprint_after", "validation", "receipt", "policy_restoration"} {
 		position, ok := positions[phase]
 		require.True(t, ok, phase)
 		require.Greater(t, position, previous, phase)
@@ -364,7 +355,7 @@ func TestEvidenceOnlyPostgresProgressWaitCancellation(t *testing.T) {
 					if mode == "gap" {
 						injection = `UPDATE evidence_only_progress_state SET sequence=sequence+1;`
 					}
-					return strings.Replace(s, "DO $closure$", injection+"\nDO $closure$", 1)
+					return strings.Replace(s, "DO $ontology_reset$", injection+"\nDO $ontology_reset$", 1)
 				})
 				require.NoError(t, RunUp(context.Background(), db, time.Minute, logs.logger))
 				require.True(t, progressHas(t, logs, "evidence_only_migration_capture_incomplete", ""))
@@ -387,7 +378,7 @@ func TestEvidenceOnlyPostgresProgressWaitCancellation(t *testing.T) {
 			}
 			if mode == "non_lock" {
 				copyProgressMigration(t, func(s string) string {
-					return strings.Replace(s, "DO $closure$", "SELECT pg_sleep(30);\nDO $closure$", 1)
+					return strings.Replace(s, " EXECUTE 'TRUNCATE TABLE '", " PERFORM pg_sleep(30);\n EXECUTE 'TRUNCATE TABLE '", 1)
 				})
 			} else if mode == "advisory" {
 				_, err = blocker.ExecContext(context.Background(), `SELECT pg_advisory_lock(4097083626)`)
@@ -408,7 +399,7 @@ func TestEvidenceOnlyPostgresProgressWaitCancellation(t *testing.T) {
 					}
 					if mode == "non_lock" && event["wait_event_type"] == "Timeout" && event["wait_event"] == "PgSleep" {
 						require.Zero(t, event["blocker_count"])
-						require.Equal(t, "ontology_seed", event["phase"])
+						require.Equal(t, "ontology_reset", event["phase"])
 						return true
 					}
 					if mode != "non_lock" && event["wait_event_type"] == "Lock" {

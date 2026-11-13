@@ -1,9 +1,9 @@
 -- Lock/rewrite impact: stopped-service transaction locks the explicit inventory; five-second acquisition bound, no provider calls.
 -- RLS impact: temporary migration policies are removed before commit; FORCE RLS and runtime immutability remain enabled.
--- Backfill: retire mixed graph payloads and unfinished extraction checkpoints while retaining original Evidence and operation identity.
+-- Backfill: reset derived ontology for normal Evidence rediscovery; retire graph payloads and unfinished extraction checkpoints, retaining Evidence and operation identity.
 -- Backward compatibility: stop incompatible instances and verify a matching restore-tested backup before normal startup.
 -- Rollback: before commit the transaction rolls back; after commit restore that backup, and after new writes recover forward unless separately approved.
--- Inventory identity: sha256:4d4269d72e53f44fa47476c7cf2ed658fa270e65339256c73b2f73faabe494d2
+-- Inventory identity: sha256:b0d41120350071869ff9c3d77c6ddbb562341c41c06422f173b30cb4958df754
 -- +goose Up
 -- +goose StatementBegin
 SET LOCAL lock_timeout = '5s';
@@ -36,7 +36,8 @@ DO $progress$ BEGIN PERFORM pg_temp.evidence_only_progress('migration_context','
 CREATE TEMP TABLE evidence_only_inventory(name text PRIMARY KEY, disposition text NOT NULL, row_count bigint NOT NULL DEFAULT 0) ON COMMIT DROP;
 INSERT INTO evidence_only_inventory SELECT unnest(ARRAY['community_memberships','community_records','community_snapshot_runs','community_sources','community_summary_attempts','community_topic_dependencies','community_topic_discovery','community_topic_versions','community_topic_work','dream_cycle_runs','dream_diagnostic_captures','dream_evidence_target_attempts','dream_evidence_target_evaluations','dream_path_evaluation_run_links','dream_path_evaluations','entity_correction_events','entity_correction_plans','entity_names','entity_records','entity_resolution_events','hypotheses','hypothesis_derivation_sources','hypothesis_evidence_derivation_sources','hypothesis_feedback_events','predicate_definitions','predicate_registration_events','relationship_conflict_ai_assessment_attempts','relationship_conflict_ai_assessment_events','relationship_conflict_cases','relationship_conflict_derived_evidence_tasks','relationship_conflict_events','relationship_conflict_evidence_derivations','relationship_conflict_position_members','relationship_conflict_positions','relationship_conflict_resolution_plans','relationship_conflict_review_runs','relationship_correction_events','relationship_correction_submissions','relationship_cross_references','relationship_evidence_supports','relationship_observations','relationship_records','relationship_support_decision_events','relationship_transition_events','submission_relationship_results','team_predicate_definitions','value_records','verification_events','review_tasks','placement_assessments','placement_items','placement_outcomes','placement_runs']::text[]),'remove';
 INSERT INTO evidence_only_inventory SELECT unnest(ARRAY['evidence_sources','evidence_source_revisions','evidence_exact_aliases','evidence_occurrences','evidence_fragments','evidence_security_events','evidence_security_signals','evidence_quarantines','evidence_lifecycle_operations','evidence_lifecycle_events','evidence_conflict_cases','evidence_conflict_positions','evidence_conflict_events']::text[]),'retain';
-INSERT INTO evidence_only_inventory SELECT unnest(ARRAY['knowledge_ingests','remember_attempts','remember_attempt_events','remember_attempt_diagnostics','remember_failure_artifacts','remember_invocation_diagnostics','semantic_assessments','session_submissions','session_events','session_extraction_checkpoints','session_submission_receipts','session_submission_diagnostics','ontology_record_heads','ontology_record_revisions','ontology_source_dependencies','ontology_revision_dependencies','ontology_publications','ontology_assessments','ontology_draft_heads','ontology_draft_revisions','ontology_maintenance_sources','ontology_maintenance_markers','ontology_maintenance_teams','ontology_maintenance_batches','recall_feedback_events','audit_log','operation_logs','search_documents','search_projection_generations','private_memory_migration_records','private_memory_migration_constraints','app_config']::text[]),'mixed';
+INSERT INTO evidence_only_inventory SELECT unnest(ARRAY['ontology_catalog_heads','ontology_publications','ontology_record_heads','ontology_record_revisions','ontology_source_dependencies','ontology_revision_dependencies','ontology_assessments','ontology_draft_heads','ontology_draft_revisions','ontology_maintenance_sources','ontology_maintenance_markers']::text[]),'reset';
+INSERT INTO evidence_only_inventory SELECT unnest(ARRAY['knowledge_ingests','remember_attempts','remember_attempt_events','remember_attempt_diagnostics','remember_failure_artifacts','remember_invocation_diagnostics','semantic_assessments','session_submissions','session_events','session_extraction_checkpoints','session_submission_receipts','session_submission_diagnostics','ontology_maintenance_teams','ontology_maintenance_batches','recall_feedback_events','audit_log','operation_logs','search_documents','search_projection_generations','private_memory_migration_records','private_memory_migration_constraints','app_config']::text[]),'mixed';
 CREATE TEMP TABLE evidence_only_triggers(table_name text, trigger_name text) ON COMMIT DROP;
 CREATE TEMP TABLE evidence_only_fingerprints(table_name text, fingerprint text, PRIMARY KEY(table_name,fingerprint)) ON COMMIT DROP;
 CREATE TEMP TABLE evidence_only_after(LIKE evidence_only_fingerprints INCLUDING ALL) ON COMMIT DROP;
@@ -84,8 +85,10 @@ BEGIN
  JOIN pg_class child ON child.oid=constraint_row.conrelid
  JOIN pg_class parent ON parent.oid=constraint_row.confrelid
  WHERE constraint_row.contype='f' AND parent.relnamespace='public'::regnamespace AND child.relnamespace='public'::regnamespace
- AND parent.relname IN (SELECT name FROM evidence_only_inventory WHERE disposition='remove')
- AND child.relname NOT IN (SELECT name FROM evidence_only_inventory WHERE disposition='remove');
+ AND ((parent.relname IN (SELECT name FROM evidence_only_inventory WHERE disposition='remove')
+  AND child.relname NOT IN (SELECT name FROM evidence_only_inventory WHERE disposition='remove'))
+ OR (parent.relname IN (SELECT name FROM evidence_only_inventory WHERE disposition='reset')
+  AND child.relname NOT IN (SELECT name FROM evidence_only_inventory WHERE disposition IN ('remove','reset'))));
  IF unknown_dependencies IS NOT NULL THEN RAISE EXCEPTION 'evidence_only_migration_blocked: unhandled retained dependency %',unknown_dependencies; END IF;
  PERFORM pg_temp.evidence_only_progress('dependency_check','constraints','completed','completed','dependencies',NULL,NULL,NULL,NULL);
 END $inventory$;
@@ -249,211 +252,17 @@ END $progress_work$;
 ALTER TABLE session_extraction_checkpoints DROP CONSTRAINT session_extraction_checkpoints_window_index_check;
 ALTER TABLE session_extraction_checkpoints ADD CONSTRAINT session_extraction_checkpoints_window_index_check CHECK(window_index BETWEEN 0 AND 7);
 
--- Delete obsolete semantic ontology rows, then their reverse dependencies, without touching topic definitions or Evidence membership overrides.
-CREATE TEMP TABLE evidence_only_retired_revisions ON COMMIT DROP AS
- SELECT team_id,shared_space_id,space_generation,record_id,version FROM ontology_record_revisions revision
- WHERE kind NOT IN ('topic','assignment','evidence_group','override')
- OR (kind='assignment' AND body->'assignment'->'source'->>'kind'<>'evidence')
- OR EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(body->'group'->'members',body->'override'->'members','[]'::jsonb)) member WHERE member->>'kind'<>'evidence');
-DO $progress_seed$ DECLARE progress_rows bigint; BEGIN
-PERFORM pg_temp.evidence_only_progress('ontology_seed','evidence_only_retired_records','started','discovered','records',NULL,NULL,NULL,NULL);
-
-CREATE TEMP TABLE evidence_only_retired_records ON COMMIT DROP AS
- SELECT head.team_id,head.shared_space_id,head.space_generation,head.record_id FROM ontology_record_heads head
- JOIN evidence_only_retired_revisions revision USING(team_id,shared_space_id,space_generation,record_id,version);
-GET DIAGNOSTICS progress_rows=ROW_COUNT;
-PERFORM pg_temp.evidence_only_progress('ontology_seed','evidence_only_retired_records','completed','discovered','records',progress_rows,NULL,progress_rows,NULL);
-END $progress_seed$;
-CREATE UNIQUE INDEX evidence_only_retired_records_key
- ON evidence_only_retired_records(team_id,shared_space_id,space_generation,record_id);
-CREATE INDEX evidence_only_retired_records_text_key
- ON evidence_only_retired_records(team_id,shared_space_id,space_generation,(record_id::text));
-ANALYZE evidence_only_retired_records;
-ANALYZE evidence_only_retired_revisions;
-DO $closure$
-DECLARE changed bigint; discovered bigint; iterations bigint:=0;
+-- Reset derived organization together with its legacy FK child; RESTRICT refuses unlisted dependencies.
+DO $ontology_reset$
+DECLARE tables text; reset_rows bigint;
 BEGIN
- SELECT evidence_only_progress_state.discovered INTO discovered FROM evidence_only_progress_state;
- PERFORM pg_temp.evidence_only_progress('dependency_closure','evidence_only_retired_records','started','completed','iterations',0,NULL,discovered,0);
-LOOP
- INSERT INTO evidence_only_retired_records SELECT DISTINCT dependency.team_id,dependency.shared_space_id,dependency.space_generation,dependency.record_id
- FROM ontology_record_heads head JOIN ontology_record_revisions dependency USING(team_id,shared_space_id,space_generation,record_id,version)
- JOIN evidence_only_retired_records retired
- ON (dependency.team_id,dependency.shared_space_id,dependency.space_generation)=(retired.team_id,retired.shared_space_id,retired.space_generation)
- AND retired.record_id::text IN (dependency.body->'assignment'->>'definition_id',dependency.body->'override'->>'definition_id',dependency.body->'override'->>'target_id')
- WHERE NOT EXISTS(SELECT 1 FROM evidence_only_retired_records present WHERE (dependency.team_id,dependency.shared_space_id,dependency.space_generation,dependency.record_id)=(present.team_id,present.shared_space_id,present.space_generation,present.record_id));
- GET DIAGNOSTICS changed=ROW_COUNT;
- discovered:=discovered+changed; iterations:=iterations+1;
- PERFORM pg_temp.evidence_only_progress('dependency_closure','evidence_only_retired_records','progress','completed','iterations',iterations,NULL,discovered,iterations);
- EXIT WHEN changed=0;
-END LOOP;
- PERFORM pg_temp.evidence_only_progress('dependency_closure','evidence_only_retired_records','completed','completed','iterations',iterations,iterations,discovered,iterations);
-END $closure$;
-INSERT INTO evidence_only_retired_revisions
- SELECT revision.team_id,revision.shared_space_id,revision.space_generation,revision.record_id,revision.version
- FROM ontology_record_revisions revision JOIN evidence_only_retired_records retired USING(team_id,shared_space_id,space_generation,record_id)
- WHERE NOT EXISTS(SELECT 1 FROM evidence_only_retired_revisions present WHERE
-  (present.team_id,present.shared_space_id,present.space_generation,present.record_id,present.version)=(revision.team_id,revision.shared_space_id,revision.space_generation,revision.record_id,revision.version));
-DO $progress_work$ DECLARE progress_rows bigint; BEGIN
- PERFORM pg_temp.evidence_only_progress('ontology_cleanup','ontology_revision_dependencies','started','affected','rows',NULL,NULL,NULL,NULL);
-
-DELETE FROM ontology_revision_dependencies dependency WHERE EXISTS(SELECT 1 FROM evidence_only_retired_revisions retired WHERE
- (dependency.team_id,dependency.shared_space_id,dependency.space_generation)=(retired.team_id,retired.shared_space_id,retired.space_generation)
- AND ((dependency.record_id,dependency.record_version)=(retired.record_id,retired.version) OR (dependency.dependency_id,dependency.dependency_version)=(retired.record_id,retired.version)));
- GET DIAGNOSTICS progress_rows=ROW_COUNT;
- PERFORM pg_temp.evidence_only_progress('ontology_cleanup','ontology_revision_dependencies','completed','affected','rows',progress_rows,NULL,NULL,NULL);
-END $progress_work$;
-DO $progress_work$ DECLARE progress_rows bigint; BEGIN
- PERFORM pg_temp.evidence_only_progress('ontology_cleanup','ontology_source_dependencies','started','affected','rows',NULL,NULL,NULL,NULL);
-
-DELETE FROM ontology_source_dependencies dependency WHERE source_kind<>'evidence' OR EXISTS(SELECT 1 FROM evidence_only_retired_revisions retired WHERE
- (dependency.team_id,dependency.shared_space_id,dependency.space_generation,dependency.record_id,dependency.record_version)=(retired.team_id,retired.shared_space_id,retired.space_generation,retired.record_id,retired.version));
- GET DIAGNOSTICS progress_rows=ROW_COUNT;
- PERFORM pg_temp.evidence_only_progress('ontology_cleanup','ontology_source_dependencies','completed','affected','rows',progress_rows,NULL,NULL,NULL);
-END $progress_work$;
-DO $progress_work$ DECLARE progress_rows bigint; BEGIN
- PERFORM pg_temp.evidence_only_progress('ontology_cleanup','ontology_record_heads','started','affected','rows',NULL,NULL,NULL,NULL);
-
-DELETE FROM ontology_record_heads head USING evidence_only_retired_records retired WHERE
- (head.team_id,head.shared_space_id,head.space_generation,head.record_id)=(retired.team_id,retired.shared_space_id,retired.space_generation,retired.record_id);
- GET DIAGNOSTICS progress_rows=ROW_COUNT;
- PERFORM pg_temp.evidence_only_progress('ontology_cleanup','ontology_record_heads','completed','affected','rows',progress_rows,NULL,NULL,NULL);
-END $progress_work$;
-DO $progress_work$ DECLARE progress_rows bigint; BEGIN
- PERFORM pg_temp.evidence_only_progress('ontology_cleanup','ontology_record_revisions','started','affected','rows',NULL,NULL,NULL,NULL);
-
-DELETE FROM ontology_record_revisions revision USING evidence_only_retired_revisions retired WHERE
- (revision.team_id,revision.shared_space_id,revision.space_generation,revision.record_id,revision.version)=(retired.team_id,retired.shared_space_id,retired.space_generation,retired.record_id,retired.version);
- GET DIAGNOSTICS progress_rows=ROW_COUNT;
- PERFORM pg_temp.evidence_only_progress('ontology_cleanup','ontology_record_revisions','completed','affected','rows',progress_rows,NULL,NULL,NULL);
-END $progress_work$;
-CREATE FUNCTION pg_temp.evidence_only_record_refs(p_team uuid,p_space uuid,p_generation bigint,refs jsonb) RETURNS jsonb LANGUAGE sql STABLE AS $$
- SELECT COALESCE(jsonb_agg(ref ORDER BY ordinal),'[]'::jsonb)
- FROM jsonb_array_elements(COALESCE(NULLIF(refs,'null'::jsonb),'[]'::jsonb)) WITH ORDINALITY entries(ref,ordinal)
- WHERE EXISTS(SELECT 1 FROM ontology_record_revisions revision
- WHERE (revision.team_id,revision.shared_space_id,revision.space_generation,revision.record_id::text,revision.version::text)=(p_team,p_space,p_generation,ref->>'id',ref->>'version'));
-$$;
-CREATE TEMP TABLE evidence_only_rebind_records ON COMMIT DROP AS
- SELECT revision.team_id,revision.shared_space_id,revision.space_generation,revision.record_id,revision.version,revision.fingerprint AS original_fingerprint
- FROM ontology_record_revisions revision WHERE
- EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(body->'sources','[]'::jsonb)) source WHERE source->>'kind'<>'evidence')
- OR COALESCE(body->'dependencies','[]'::jsonb) IS DISTINCT FROM pg_temp.evidence_only_record_refs(team_id,shared_space_id,space_generation,body->'dependencies');
-DO $progress_work$ DECLARE progress_rows bigint; BEGIN
- PERFORM pg_temp.evidence_only_progress('ontology_cleanup','ontology_record_revisions','started','affected','rows',NULL,NULL,NULL,NULL);
-
-UPDATE ontology_record_revisions revision SET body=jsonb_set(jsonb_set(body,'{sources}',
- COALESCE((SELECT jsonb_agg(source ORDER BY ordinal) FROM jsonb_array_elements(COALESCE(body->'sources','[]'::jsonb)) WITH ORDINALITY entries(source,ordinal) WHERE source->>'kind'='evidence'),'[]'::jsonb)),
- '{dependencies}',pg_temp.evidence_only_record_refs(team_id,shared_space_id,space_generation,body->'dependencies'))
- WHERE EXISTS(SELECT 1 FROM evidence_only_rebind_records changed WHERE
- (revision.team_id,revision.shared_space_id,revision.space_generation,revision.record_id,revision.version)=(changed.team_id,changed.shared_space_id,changed.space_generation,changed.record_id,changed.version));
- GET DIAGNOSTICS progress_rows=ROW_COUNT;
- PERFORM pg_temp.evidence_only_progress('ontology_cleanup','ontology_record_revisions','completed','affected','rows',progress_rows,NULL,NULL,NULL);
-END $progress_work$;
-DO $progress_work$ DECLARE progress_rows bigint; BEGIN
- PERFORM pg_temp.evidence_only_progress('ontology_cleanup','ontology_publications','started','affected','rows',NULL,NULL,NULL,NULL);
-
-UPDATE ontology_publications publication SET result=jsonb_set(result,'{records}',pg_temp.evidence_only_record_refs(team_id,shared_space_id,space_generation,result->'records'))||jsonb_build_object('retired_payload',true);
- GET DIAGNOSTICS progress_rows=ROW_COUNT;
- PERFORM pg_temp.evidence_only_progress('ontology_cleanup','ontology_publications','completed','affected','rows',progress_rows,NULL,NULL,NULL);
-END $progress_work$;
-CREATE FUNCTION pg_temp.evidence_only_draft(p_team uuid,p_space uuid,p_generation bigint,body jsonb) RETURNS jsonb LANGUAGE plpgsql AS $$
-DECLARE kept jsonb; impacted boolean;
-BEGIN
- SELECT COALESCE(jsonb_agg(edit ORDER BY ordinal),'[]'::jsonb) INTO kept
- FROM jsonb_array_elements(COALESCE(body->'draft'->'edits','[]'::jsonb)) WITH ORDINALITY entries(edit,ordinal)
- WHERE COALESCE(edit->>'kind','topic') IN ('topic','assignment','evidence_group','override')
- AND COALESCE(edit->'source'->>'kind','evidence')='evidence'
- AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(edit->'members','[]'::jsonb)) member WHERE member->>'kind'<>'evidence')
- AND NOT EXISTS(SELECT 1 FROM evidence_only_retired_records retired WHERE
-  (retired.team_id,retired.shared_space_id,retired.space_generation)=(p_team,p_space,p_generation)
-  AND retired.record_id::text IN (edit->>'record_id',edit->>'definition_id'));
- impacted:=jsonb_array_length(kept)<>jsonb_array_length(COALESCE(body->'draft'->'edits','[]'::jsonb)) OR EXISTS(
-  SELECT 1 FROM jsonb_array_elements(COALESCE(NULLIF(body->'prepared'->'changes','null'::jsonb),'[]'::jsonb)) change
-  WHERE change->'record'->>'kind' NOT IN ('topic','assignment','evidence_group','override')
-   OR EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(change->'record'->'sources','[]'::jsonb)) source WHERE source->>'kind'<>'evidence')
-   OR COALESCE(change->'record'->'dependencies','[]'::jsonb) IS DISTINCT FROM pg_temp.evidence_only_record_refs(p_team,p_space,p_generation,change->'record'->'dependencies'));
- body:=jsonb_set(body,'{draft,edits}',kept);
- IF body->'draft' ? 'publication' THEN body:=jsonb_set(body,'{draft,publication,records}',pg_temp.evidence_only_record_refs(p_team,p_space,p_generation,body->'draft'->'publication'->'records')); END IF;
- IF impacted THEN
-  body:=body||jsonb_build_object('retired_payload',true,'retirement_reason','factual_graph_removed','original_state',body->'draft'->>'state','prepared','{}'::jsonb);
-  body:=jsonb_set(body,'{draft,state}','"discarded"'::jsonb);
- END IF;
- RETURN body;
-END $$;
-DO $progress_work$ DECLARE progress_rows bigint; BEGIN
- PERFORM pg_temp.evidence_only_progress('ontology_cleanup','ontology_draft_heads','started','affected','rows',NULL,NULL,NULL,NULL);
-
-UPDATE ontology_draft_heads SET body=pg_temp.evidence_only_draft(team_id,shared_space_id,space_generation,body);
- GET DIAGNOSTICS progress_rows=ROW_COUNT;
- PERFORM pg_temp.evidence_only_progress('ontology_cleanup','ontology_draft_heads','completed','affected','rows',progress_rows,NULL,NULL,NULL);
-END $progress_work$;
-DO $progress_work$ DECLARE progress_rows bigint; BEGIN
- PERFORM pg_temp.evidence_only_progress('ontology_cleanup','ontology_draft_heads','started','affected','rows',NULL,NULL,NULL,NULL);
-
-UPDATE ontology_draft_heads SET state=body->'draft'->>'state';
- GET DIAGNOSTICS progress_rows=ROW_COUNT;
- PERFORM pg_temp.evidence_only_progress('ontology_cleanup','ontology_draft_heads','completed','affected','rows',progress_rows,NULL,NULL,NULL);
-END $progress_work$;
-DO $progress_work$ DECLARE progress_rows bigint; BEGIN
- PERFORM pg_temp.evidence_only_progress('ontology_cleanup','ontology_draft_revisions','started','affected','rows',NULL,NULL,NULL,NULL);
-
-UPDATE ontology_draft_revisions SET body=pg_temp.evidence_only_draft(team_id,shared_space_id,space_generation,body);
- GET DIAGNOSTICS progress_rows=ROW_COUNT;
- PERFORM pg_temp.evidence_only_progress('ontology_cleanup','ontology_draft_revisions','completed','affected','rows',progress_rows,NULL,NULL,NULL);
-END $progress_work$;
--- Drain deferred draft checks after both tables are consistent so trigger restoration can acquire its ALTER TABLE lock.
-SET CONSTRAINTS ontology_draft_head_revision_fk IMMEDIATE;
-DO $progress_work$ DECLARE progress_rows bigint; BEGIN
- PERFORM pg_temp.evidence_only_progress('ontology_cleanup','ontology_assessments','started','affected','rows',NULL,NULL,NULL,NULL);
-
-UPDATE ontology_assessments assessment SET body=jsonb_set(jsonb_set(jsonb_set(body,'{sources}',
- COALESCE((SELECT jsonb_agg(source ORDER BY ordinal) FROM jsonb_array_elements(body->'sources') WITH ORDINALITY entries(source,ordinal) WHERE source->>'kind'='evidence'),'[]'::jsonb)),
- '{dependencies}',pg_temp.evidence_only_record_refs(team_id,shared_space_id,space_generation,body->'dependencies')),
- '{result}',((body->'result')-ARRAY['outcomes','publication','ambiguous_comparisons','freshness_rejection']) || jsonb_build_object(
- 'outcomes',COALESCE((SELECT jsonb_agg(jsonb_set(outcome,'{record_ids}',COALESCE((SELECT jsonb_agg(id ORDER BY id_ordinal)
-  FROM jsonb_array_elements(COALESCE(outcome->'record_ids','[]'::jsonb)) WITH ORDINALITY ids(id,id_ordinal)
-  WHERE NOT EXISTS(SELECT 1 FROM evidence_only_retired_records retired
-   WHERE (retired.team_id,retired.shared_space_id,retired.space_generation,retired.record_id::text)=(assessment.team_id,assessment.shared_space_id,assessment.space_generation,id#>>'{}'))),'[]'::jsonb)) ORDER BY ordinal)
-  FROM jsonb_array_elements(body->'result'->'outcomes') WITH ORDINALITY entries(outcome,ordinal) WHERE outcome->'source'->>'kind'='evidence'),'[]'::jsonb),
- 'ambiguous_comparisons',COALESCE((SELECT jsonb_agg(comparison ORDER BY ordinal) FROM jsonb_array_elements(COALESCE(body->'result'->'ambiguous_comparisons','[]'::jsonb)) WITH ORDINALITY entries(comparison,ordinal)
-  WHERE comparison->'left'->>'kind'='evidence' AND comparison->'right'->>'kind'='evidence'),'[]'::jsonb))
- || CASE WHEN body->'result' ? 'publication' THEN jsonb_build_object('publication',jsonb_set(body->'result'->'publication','{records}',pg_temp.evidence_only_record_refs(team_id,shared_space_id,space_generation,body->'result'->'publication'->'records'))) ELSE '{}'::jsonb END
- || CASE WHEN body->'result' ? 'freshness_rejection' AND COALESCE(body->'result'->'freshness_rejection'->'source'->>'kind','evidence')='evidence'
-  AND NOT EXISTS(SELECT 1 FROM evidence_only_retired_records retired WHERE (retired.team_id,retired.shared_space_id,retired.space_generation,retired.record_id::text)=(assessment.team_id,assessment.shared_space_id,assessment.space_generation,body->'result'->'freshness_rejection'->>'record_id'))
-  THEN jsonb_build_object('freshness_rejection',jsonb_set((body->'result'->'freshness_rejection')-ARRAY['expected_context','observed_context'],'{dependencies}',pg_temp.evidence_only_record_refs(team_id,shared_space_id,space_generation,body->'result'->'freshness_rejection'->'dependencies'))) ELSE '{}'::jsonb END);
- GET DIAGNOSTICS progress_rows=ROW_COUNT;
- PERFORM pg_temp.evidence_only_progress('ontology_cleanup','ontology_assessments','completed','affected','rows',progress_rows,NULL,NULL,NULL);
-END $progress_work$;
-DO $progress_work$ DECLARE progress_rows bigint; BEGIN
- PERFORM pg_temp.evidence_only_progress('ontology_cleanup','ontology_assessments','started','affected','rows',NULL,NULL,NULL,NULL);
-
-UPDATE ontology_assessments SET body=body||jsonb_build_object('retired_payload',true,'availability','legacy_organization_payload_retired') WHERE jsonb_array_length(body->'sources')=0;
- GET DIAGNOSTICS progress_rows=ROW_COUNT;
- PERFORM pg_temp.evidence_only_progress('ontology_cleanup','ontology_assessments','completed','affected','rows',progress_rows,NULL,NULL,NULL);
-END $progress_work$;
-DO $progress_work$ DECLARE progress_rows bigint; BEGIN
- PERFORM pg_temp.evidence_only_progress('ontology_cleanup','ontology_maintenance_sources','started','affected','rows',NULL,NULL,NULL,NULL);
-
-
-DELETE FROM ontology_maintenance_sources WHERE source_kind<>'evidence';
- GET DIAGNOSTICS progress_rows=ROW_COUNT;
- PERFORM pg_temp.evidence_only_progress('ontology_cleanup','ontology_maintenance_sources','completed','affected','rows',progress_rows,NULL,NULL,NULL);
-END $progress_work$;
-DO $progress_work$ DECLARE progress_rows bigint; BEGIN
- PERFORM pg_temp.evidence_only_progress('ontology_cleanup','ontology_maintenance_sources','started','affected','rows',NULL,NULL,NULL,NULL);
-
-UPDATE ontology_maintenance_sources SET status=CASE WHEN eligible THEN 'pending' ELSE 'unavailable' END,
- reason='evidence_only_contract',assessment_id=NULL,revision=revision+1,pending_at=clock_timestamp(),updated_at=clock_timestamp();
- GET DIAGNOSTICS progress_rows=ROW_COUNT;
- PERFORM pg_temp.evidence_only_progress('ontology_cleanup','ontology_maintenance_sources','completed','affected','rows',progress_rows,NULL,NULL,NULL);
-END $progress_work$;
-DO $progress_work$ DECLARE progress_rows bigint; BEGIN
- PERFORM pg_temp.evidence_only_progress('ontology_cleanup','ontology_maintenance_markers','started','affected','rows',NULL,NULL,NULL,NULL);
-
-DELETE FROM ontology_maintenance_markers WHERE target_kind IN ('entity','predicate','relationship') OR anchor_kind IN ('entity_records','entity_names','relationship_records','relationship_evidence_supports','relationship_support_decision_events','team_predicate_definitions');
- GET DIAGNOSTICS progress_rows=ROW_COUNT;
- PERFORM pg_temp.evidence_only_progress('ontology_cleanup','ontology_maintenance_markers','completed','affected','rows',progress_rows,NULL,NULL,NULL);
-END $progress_work$;
+ SELECT string_agg(format('public.%I',name),', ' ORDER BY name),sum(row_count)
+ INTO tables,reset_rows FROM evidence_only_inventory
+ WHERE (disposition='reset' OR name='community_topic_work') AND to_regclass('public.'||name) IS NOT NULL;
+ PERFORM pg_temp.evidence_only_progress('ontology_reset','ontology_catalog_heads','started','affected','rows',0,reset_rows,NULL,NULL);
+ EXECUTE 'TRUNCATE TABLE '||tables||' RESTRICT';
+ PERFORM pg_temp.evidence_only_progress('ontology_reset','ontology_catalog_heads','completed','affected','rows',reset_rows,reset_rows,NULL,NULL);
+END $ontology_reset$;
 DO $progress_work$ DECLARE progress_rows bigint; BEGIN
  PERFORM pg_temp.evidence_only_progress('ontology_cleanup','ontology_maintenance_teams','started','affected','rows',NULL,NULL,NULL,NULL);
 
@@ -717,12 +526,15 @@ END $$;
 
 
 DO $progress$ BEGIN PERFORM pg_temp.evidence_only_progress('guard_restoration','functions','completed','completed','dependencies',NULL,NULL,NULL,NULL); END $progress$;
--- EVIDENCE_ONLY_REBIND_FINGERPRINTS
+-- EVIDENCE_ONLY_VERIFY_EVIDENCE
 
 DO $verify$
 DECLARE item record; progress_rows bigint; verified_total bigint:=0;
 BEGIN
- IF current_setting('app.evidence_only_rebound',true) IS DISTINCT FROM 'true' THEN RAISE EXCEPTION 'evidence_only_migration_blocked: canonical metadata fingerprint phase required'; END IF;
+ FOR item IN SELECT name FROM evidence_only_inventory WHERE disposition='reset' LOOP
+  EXECUTE format('SELECT count(*) FROM %I',item.name) INTO progress_rows;
+  IF progress_rows<>0 THEN RAISE EXCEPTION 'evidence_only_migration_failed: ontology reset incomplete'; END IF;
+ END LOOP;
  FOR item IN SELECT * FROM evidence_only_inventory WHERE disposition='retain' LOOP
   PERFORM pg_temp.evidence_only_progress('fingerprint_after',item.name,'started','affected','rows',NULL,item.row_count,NULL,NULL);
   EXECUTE format('INSERT INTO evidence_only_after SELECT %L,encode(sha256(convert_to(to_jsonb(row_value)::text,''UTF8'')),''hex'') FROM %I row_value',item.name,item.name);
@@ -745,11 +557,11 @@ DO $progress_work$ DECLARE progress_rows bigint; BEGIN
  PERFORM pg_temp.evidence_only_progress('receipt','v2_compatibility_markers','started','affected','rows',NULL,NULL,NULL,NULL);
 
 INSERT INTO v2_compatibility_markers(marker_kind,version,status,metadata) VALUES('evidence_only','dense-mem.v2.8.0','compatible',jsonb_build_object(
- 'inventory_sha256','4d4269d72e53f44fa47476c7cf2ed658fa270e65339256c73b2f73faabe494d2', 'retained_counts',(SELECT jsonb_object_agg(name,row_count) FROM evidence_only_inventory WHERE disposition='retain'),
+ 'inventory_sha256','b0d41120350071869ff9c3d77c6ddbb562341c41c06422f173b30cb4958df754', 'retained_counts',(SELECT jsonb_object_agg(name,row_count) FROM evidence_only_inventory WHERE disposition='retain'),
  'removed_counts',(SELECT jsonb_object_agg(name,row_count) FROM evidence_only_inventory WHERE disposition='remove'),
  'retained_fingerprint_sha256',(SELECT jsonb_object_agg(name,hash) FROM (SELECT inventory.name,encode(sha256(convert_to(COALESCE(string_agg(fingerprint,',' ORDER BY fingerprint),''),'UTF8')),'hex') AS hash FROM evidence_only_inventory inventory LEFT JOIN evidence_only_after hashes ON hashes.table_name=inventory.name WHERE disposition='retain' GROUP BY inventory.name) summaries),
  'retained_fingerprints_verified',true,'legacy_operation_keys',(SELECT count(*) FROM knowledge_ingests WHERE idempotency_key<>''),
- 'rebound_ontology_records',(SELECT count(*) FROM evidence_only_rebind_records),
+ 'reset_ontology_counts',(SELECT jsonb_object_agg(name,row_count) FROM evidence_only_inventory WHERE disposition='reset'),
  'resumable_sessions',(SELECT count(*) FROM evidence_only_sessions WHERE resumable),'transaction_outcome','committed'));
  GET DIAGNOSTICS progress_rows=ROW_COUNT;
  PERFORM pg_temp.evidence_only_progress('receipt','v2_compatibility_markers','completed','affected','rows',progress_rows,NULL,NULL,NULL);

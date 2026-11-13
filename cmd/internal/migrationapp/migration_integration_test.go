@@ -139,7 +139,7 @@ func TestEvidenceOnlyPostgresMigrationRollbackLogs(t *testing.T) {
 					require.NoError(t, err)
 					if filepath.Base(file) == "20261110010000_evidence_only_memory.sql" {
 						fault := fmt.Sprintf("ALTER TABLE evidence_fragments DISABLE TRIGGER USER; UPDATE evidence_fragments SET content='controlled corruption' WHERE fragment_id='%s'::uuid;\n", id)
-						body = []byte(strings.Replace(string(body), "-- EVIDENCE_ONLY_REBIND_FINGERPRINTS", fault+"-- EVIDENCE_ONLY_REBIND_FINGERPRINTS", 1))
+						body = []byte(strings.Replace(string(body), "-- EVIDENCE_ONLY_VERIFY_EVIDENCE", fault+"-- EVIDENCE_ONLY_VERIFY_EVIDENCE", 1))
 					}
 					require.NoError(t, os.MkdirAll(filepath.Dir(destination), 0755))
 					require.NoError(t, os.WriteFile(destination, body, 0600))

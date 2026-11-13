@@ -25,7 +25,7 @@ func testProgressCombinedCaptureFailure(t *testing.T) {
 			copyProgressMigration(t, func(s string) string {
 				injection := `DO $fault$ BEGIN RAISE NOTICE 'dense_mem_migration_progress:%:{"body":"Exact progress Evidence. café 🧭 progress-credential-canary"}',current_setting('app.migration_execution_id'); END $fault$;
 SELECT pg_advisory_xact_lock(752,1);`
-				return strings.Replace(s, "DO $closure$", injection+"\nDO $closure$", 1)
+				return strings.Replace(s, "DO $ontology_reset$", injection+"\nDO $ontology_reset$", 1)
 			})
 			migrator, err = postgres.NewMigrator(db)
 			require.NoError(t, err)

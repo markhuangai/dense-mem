@@ -29,7 +29,7 @@ func TestMigrationProgressRealLoggerAndUnknownCounts(t *testing.T) {
 				logInfo(ctx, logger, "evidence_only_migration_progress", progressAttrs(s)...)
 			})
 			defer progress.Close()
-			progress.Report("dependency_closure", "evidence_only_retired_records", "started", "completed", "iterations", nil, nil)
+			progress.Report("ontology_reset", "ontology_catalog_heads", "started", "affected", "rows", nil, nil)
 			progress.Incomplete("notice_sequence_gap")
 			require.True(t, progress.MarkWaitObservationUnavailable())
 			logWarn(ctx, logger, "evidence_only_migration_capture_incomplete", append(progressAttrs(progress.Snapshot()),
