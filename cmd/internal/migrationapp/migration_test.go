@@ -77,7 +77,7 @@ func TestRunReportsHeartbeatAndStopsBeforeReturn(t *testing.T) {
 	}()
 
 	<-started
-	waitForMessage(t, logger, "postgres migrations still running")
+	waitForMessage(t, logger, "evidence_only_migration_heartbeat")
 	close(release)
 	if err := <-result; err != nil {
 		t.Fatalf("runWithInterval() error = %v", err)
@@ -94,27 +94,32 @@ func TestRunReportsHeartbeatAndStopsBeforeReturn(t *testing.T) {
 	if entries[0].message != "running postgres migrations" {
 		t.Fatalf("first message = %q, want start message", entries[0].message)
 	}
+	if entries[0].attrs["direction"] != "up" {
+		t.Fatalf("start direction = %v, want up", entries[0].attrs["direction"])
+	}
+	if entries[0].attrs["timeout_seconds"] != int64(5) {
+		t.Fatalf("start timeout_seconds = %v, want 5", entries[0].attrs["timeout_seconds"])
+	}
 	if entries[len(entries)-1].message != "postgres migrations completed" {
 		t.Fatalf("last message = %q, want completion message", entries[len(entries)-1].message)
 	}
 	for _, entry := range entries {
-		if entry.message != "postgres migrations still running" {
+		if entry.message == "postgres migrations still running" {
+			t.Fatal("unexpected generic heartbeat alongside structured progress")
+		}
+		if entry.message != "evidence_only_migration_heartbeat" {
 			continue
 		}
-		if entry.attrs["direction"] != "up" {
-			t.Fatalf("heartbeat direction = %v, want up", entry.attrs["direction"])
+		if entry.attrs["migration_execution_id"] == nil || entry.attrs["migration_execution_id"] == "" {
+			t.Fatal("structured heartbeat is missing its migration execution ID")
 		}
-		if entry.attrs["timeout_seconds"] != int64(5) {
-			t.Fatalf("heartbeat timeout_seconds = %v, want 5", entry.attrs["timeout_seconds"])
-		}
-		break
 	}
 }
 
 func TestRunCompletesBeforeHeartbeat(t *testing.T) {
 	logger := newRecordingLogger()
 
-	err := runWithInterval(context.Background(), nil, time.Second, "down", logger, 25*time.Millisecond, func(context.Context, *gorm.DB) error {
+	err := runWithInterval(context.Background(), nil, time.Second, "up", logger, 25*time.Millisecond, func(context.Context, *gorm.DB) error {
 		return nil
 	})
 	if err != nil {
@@ -122,7 +127,7 @@ func TestRunCompletesBeforeHeartbeat(t *testing.T) {
 	}
 
 	for _, entry := range logger.entriesSnapshot() {
-		if entry.message == "postgres migrations still running" {
+		if entry.message == "evidence_only_migration_heartbeat" {
 			t.Fatal("unexpected heartbeat for immediate completion")
 		}
 	}
