@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { devNull, tmpdir, userInfo } from "node:os";
 import { createServer } from "node:http";
 import { createRedactor, redactChunks, valueFromEnvFile } from "../../scripts/e2e-redact-diagnostics.mjs";
+import { actionStep, jobScripts, parseWorkflow, runStep, stringifyWorkflow, workflowJob } from "./workflow_helpers.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -1507,26 +1508,54 @@ test("OAuth compatibility harness keeps root logs in the Compose stream", () => 
   assert.doesNotMatch(stack, /docker exec -d "\$harness" \/app\/oauth-compat-harness/);
 });
 
-test("production workflows give each hosted scenario its own stack", () => {
-  assert.match(productionWorkflow, /--matrix all/);
-  assert.match(productionWorkflow, /max-parallel: 8/);
-  assert.match(productionWorkflow, /docker\/setup-docker-action@v5/);
-  assert.match(productionWorkflow, /rootless: true/);
-  assert.match(productionWorkflow, /set-host: true/);
-  assert.match(productionWorkflow, /workflow_dispatch:/);
-  assert.match(productionWorkflow, /parseSuccessfulPolicyStatus/);
-  assert.match(productionWorkflow, /Publish trusted preview/);
-  assert.match(productionWorkflow, /scripts\/e2e-host-controller\.sh precheck/);
-  assert.doesNotMatch(productionWorkflow, /runs-on: rootless-docker|shared-start:|shared-stop:|exclusive-cleanup:/);
-  assert.match(scenarioWorkflow, /runs-on: ubuntu-latest/);
-  assert.match(scenarioWorkflow, /timeout-minutes: \$\{\{ inputs\.timeout_minutes > 30 && 30 \|\| inputs\.timeout_minutes \}\}/);
-  assert.match(scenarioWorkflow, /scripts\/e2e-host-controller\.sh start/);
-  assert.match(scenarioWorkflow, /scripts\/e2e-host-controller\.sh run/);
-  assert.match(scenarioWorkflow, /scripts\/e2e-host-controller\.sh stop/);
-  assert.match(scenarioWorkflow, /if: always\(\) && steps\.stack\.outputs\.project != ''.*/);
-  assert.match(scenarioWorkflow, /stop-commands/);
-  assert.match(scenarioWorkflow, /evidence_telemetry_portal/);
-  assert.doesNotMatch(scenarioWorkflow, /continue-on-error|Preserve scenario result|Print failed scenario diagnostics/);
+function assertHostedScenarioWorkflows(production, reusable) {
+  const authorize = jobScripts(workflowJob(production, "authorize"));
+  assert.match(authorize, /--matrix all/);
+  assert.equal(workflowJob(production, "scenarios").strategy["max-parallel"], 8);
+  for (const id of ["prechecks", "database-prechecks"]) {
+    const docker = actionStep(workflowJob(production, id), "docker/setup-docker-action");
+    assert.equal(String(docker.with.rootless), "true");
+    assert.equal(String(docker.with["set-host"]), "true");
+  }
+  assert.ok(Object.hasOwn(production.on, "workflow_dispatch"));
+  assert.match(authorize, /parseSuccessfulPolicyStatus/);
+  assert.match(authorize, /Publish trusted preview/);
+  runStep(workflowJob(production, "database-prechecks"), "scripts/e2e-host-controller.sh precheck");
+  for (const [id, job] of Object.entries(production.jobs)) {
+    assert.ok(!["shared-start", "shared-stop", "exclusive-cleanup"].includes(id));
+    assert.notEqual(job["runs-on"], "rootless-docker");
+  }
+  const scenario = workflowJob(reusable, "scenario");
+  assert.equal(scenario["runs-on"], "ubuntu-latest");
+  assert.equal(scenario["timeout-minutes"], "${{ inputs.timeout_minutes > 30 && 30 || inputs.timeout_minutes }}");
+  runStep(scenario, "scripts/e2e-host-controller.sh start");
+  runStep(scenario, "scripts/e2e-host-controller.sh run");
+  assert.equal(runStep(scenario, "scripts/e2e-host-controller.sh stop").if, "always() && steps.stack.outputs.project != ''");
+  assert.match(jobScripts(scenario), /stop-commands/);
+  assert.match(JSON.stringify(scenario), /evidence_telemetry_portal/);
+  for (const scope of [scenario, ...scenario.steps]) assert.equal(String(scope["continue-on-error"] ?? false), "false");
+}
+
+test("production workflows give each hosted scenario its own stack across action upgrades", () => {
+  const production = parseWorkflow(productionWorkflow);
+  const reusable = parseWorkflow(scenarioWorkflow);
+  assertHostedScenarioWorkflows(production, reusable);
+  const upgraded = structuredClone(production);
+  for (const job of Object.values(upgraded.jobs)) {
+    for (const step of job.steps ?? []) {
+      step.name = "Renamed scenario setup";
+      if (step.uses) step.uses = step.uses.split("@")[0] + "@v99";
+    }
+  }
+  const reformatted = (workflow) => parseWorkflow(stringifyWorkflow(workflow, { indent: 4, sortKeys: true, forceQuotes: true }));
+  assertHostedScenarioWorkflows(reformatted(upgraded), reformatted(reusable));
+  const weak = structuredClone(production);
+  actionStep(weak.jobs.prechecks, "docker/setup-docker-action").with.rootless = false;
+  assert.throws(() => assertHostedScenarioWorkflows(weak, reusable));
+  const missingCleanup = structuredClone(reusable);
+  const cleanup = runStep(missingCleanup.jobs.scenario, "scripts/e2e-host-controller.sh stop");
+  missingCleanup.jobs.scenario.steps = missingCleanup.jobs.scenario.steps.filter((step) => step !== cleanup);
+  assert.throws(() => assertHostedScenarioWorkflows(production, missingCleanup));
   assert.match(controller, /--timeout 40m --total-timeout 58m/);
 });
 

@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import "./development_e2e.test.mjs";
+import { actionStep, actionSteps, jobScripts, parseWorkflow, readWorkflow, runStep, stringifyWorkflow, workflowJob } from "./workflow_helpers.mjs";
 
 import {
   assertCompatibleRegistry,
@@ -40,36 +41,32 @@ test("ADK memory is an exclusive production scenario with the real intake fixtur
   assert.equal(scenario.timeout_minutes, 60);
 });
 
-function workflowJob(workflow, name) {
-  const marker = new RegExp(`^  ${name.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&")}:\\n`, "m");
-  const match = workflow.match(marker);
-  assert.ok(match, `workflow job ${name} is missing`);
-  const start = match.index + match[0].length;
-  const remainder = workflow.slice(start);
-  const nextJob = remainder.search(/\n  [a-z0-9-]+:\n/);
-  return nextJob === -1 ? remainder : remainder.slice(0, nextJob);
+function assertNodeSetup(job) {
+  const node = actionStep(job, "actions/setup-node");
+  assert.ok(String(node.with?.["node-version"] ?? "").trim(), "Node version must be configured");
+  assert.equal(String(node.with["package-manager-cache"]), "false");
 }
 
-function assertNode24Setup(job) {
-  assert.match(
-    job,
-    /- name: Set up Node\.js\n\s+uses: actions\/setup-node@v7\n\s+with:\n\s+node-version: 24\n\s+package-manager-cache: false/,
-  );
+function assertDockerSetup(job) {
+  const docker = actionStep(job, "docker/setup-docker-action");
+  assert.equal(String(docker.with?.rootless), "true");
+  assert.equal(String(docker.with?.["set-host"]), "true");
+  assert.deepEqual(JSON.parse(docker.with["daemon-config"]), { "exec-opts": ["native.cgroupdriver=cgroupfs"] });
+  runStep(job, "scripts/e2e-ci-bootstrap.sh");
+  assert.ok(!job.steps.some((step) => step.env?.DOCKER_HOST?.includes("steps.docker.outputs.sock")));
 }
 
 function assertPreviewBuildPolicy(workflow) {
   const build = workflowJob(workflow, "build");
-  assert.match(build, /^    runs-on: ubuntu-latest$/m);
-  assert.match(
-    build,
-    /- name: Set up QEMU\n\s+uses: docker\/setup-qemu-action@v4\n\s+with:\n\s+platforms: arm64\n\n\s+- name: Set up Docker Buildx/,
-    "preview build must configure ARM emulation before Buildx",
-  );
-  assert.match(
-    build,
-    /- name: Expose GitHub Actions runtime\n\s+uses: crazy-max\/ghaction-github-runtime@v4\n\n\s+- name: Build production OCI layout/,
-    "preview build must expose the GitHub Actions runtime before Buildx",
-  );
+  assert.equal(build["runs-on"], "ubuntu-latest");
+  const qemu = actionStep(build, "docker/setup-qemu-action");
+  const buildx = actionStep(build, "docker/setup-buildx-action");
+  const runtime = actionStep(build, "crazy-max/ghaction-github-runtime");
+  const command = runStep(build, "docker buildx build");
+  assert.equal(qemu.with.platforms, "arm64");
+  assert.ok(build.steps.indexOf(qemu) < build.steps.indexOf(buildx), "ARM emulation must precede Buildx");
+  assert.ok(build.steps.indexOf(buildx) < build.steps.indexOf(command));
+  assert.ok(build.steps.indexOf(runtime) < build.steps.indexOf(command), "GitHub Actions runtime must precede the build");
   for (const line of [
     "docker buildx build \\",
     "--target preview",
@@ -86,27 +83,28 @@ function assertPreviewBuildPolicy(workflow) {
     '--build-arg "PREVIEW_RUN_ID=${RUN_ID}"',
     '--build-arg "PREVIEW_RUN_ATTEMPT=${RUN_ATTEMPT}"',
   ]) {
-    assert.ok(build.includes(line), `preview build is missing ${line}`);
+    assert.ok(command.run.includes(line), `preview build is missing ${line}`);
   }
 }
 
 function assertWorkflowOrchestration(workflow) {
-  const databasePrechecks = workflowJob(workflow, "database-prechecks");
+  const database = workflowJob(workflow, "database-prechecks");
   const scenarios = workflowJob(workflow, "scenarios");
   const report = workflowJob(workflow, "report");
-  assert.ok(databasePrechecks.includes("shard: [0, 1, 2, 3, 4, 5]"));
-  assert.ok(databasePrechecks.includes("max-parallel: 6"));
-  assert.ok(databasePrechecks.includes("timeout-minutes: 30"));
-  assert.ok(databasePrechecks.includes("runs-on: ubuntu-latest"));
-  assert.ok(scenarios.includes("needs: [authorize, prechecks]"));
-  assert.ok(!scenarios.includes("needs.database-prechecks"));
-  assert.ok(scenarios.includes("max-parallel: 8"));
-  assert.ok(scenarios.includes("matrix: ${{ fromJSON(needs.authorize.outputs.scenario_matrix) }}"));
-  assert.ok(scenarios.includes("source_revision: ${{ needs.authorize.outputs.source_revision }}"));
-  assert.ok(report.includes("needs: [authorize, prechecks, database-prechecks, scenarios, ci-trial]"));
-  assert.ok(report.includes("SCENARIO_RESULT: ${{ needs.scenarios.result }}"));
-  assert.ok(report.includes("if: always()"));
+  assert.deepEqual(database.strategy.matrix.shard, [0, 1, 2, 3, 4, 5]);
+  assert.equal(database.strategy["max-parallel"], 6);
+  assert.equal(database["timeout-minutes"], 30);
+  assert.equal(database["runs-on"], "ubuntu-latest");
+  assert.deepEqual(new Set(scenarios.needs), new Set(["authorize", "prechecks"]));
+  assert.doesNotMatch(JSON.stringify(scenarios), /needs\.database-prechecks/);
+  assert.equal(scenarios.strategy["max-parallel"], 8);
+  assert.equal(scenarios.strategy.matrix, "${{ fromJSON(needs.authorize.outputs.scenario_matrix) }}");
+  assert.equal(scenarios.with.source_revision, "${{ needs.authorize.outputs.source_revision }}");
+  assert.deepEqual(new Set(report.needs), new Set(["authorize", "prechecks", "database-prechecks", "scenarios", "ci-trial"]));
+  assert.equal(runStep(report, "SCENARIO_RESULT").env.SCENARIO_RESULT, "${{ needs.scenarios.result }}");
+  assert.equal(report.if, "always()");
 }
+
 test("production E2E registry is complete and valid", () => {
   assert.deepEqual(validateRegistry(registry), []);
   assert.equal(new Set(registry.scenarios.map(({ name }) => name)).size, registry.scenarios.length);
@@ -176,31 +174,65 @@ test("scenario classification fails closed for invalid registry metadata", () =>
   assert.throws(() => classifyScenario(invalid, invalid.scenarios[0].name), /invalid E2E scenario registry:.*runtime=production/s);
 });
 
-test("preview Buildx policy rejects weakened output settings", async () => {
-  const workflow = await readFile(new URL("../../.github/workflows/pr-test-image.yml", import.meta.url), "utf8");
-  assert.doesNotThrow(() => assertPreviewBuildPolicy(workflow));
-  const withoutQemu = workflow.replace(
-    /\n      - name: Set up QEMU\n        uses: docker\/setup-qemu-action@v4\n        with:\n          platforms: arm64\n/,
-    "",
-  );
-  assert.notEqual(withoutQemu, workflow);
-  assert.throws(() => assertPreviewBuildPolicy(withoutQemu), /ARM emulation/);
-  const withoutRuntime = workflow.replace(
-    /\n      - name: Expose GitHub Actions runtime\n        uses: crazy-max\/ghaction-github-runtime@v4\n/,
-    "",
-  );
-  assert.notEqual(withoutRuntime, workflow);
-  assert.throws(() => assertPreviewBuildPolicy(withoutRuntime), /GitHub Actions runtime/);
-  const mutated = workflow.replace("--provenance=false", "--provenance=true");
-  assert.notEqual(mutated, workflow);
-  assert.throws(() => assertPreviewBuildPolicy(mutated), /preview build is missing --provenance=false/);
+test("preview Buildx policy permits action upgrades but rejects weakened output settings", async () => {
+  const workflow = await readWorkflow("pr-test-image.yml");
+  assertPreviewBuildPolicy(workflow);
+  const upgraded = structuredClone(workflow);
+  for (const step of upgraded.jobs.build.steps) {
+    step.name = "Renamed build step";
+    if (step.uses) step.uses = step.uses.split("@")[0] + "@v99";
+  }
+  assertPreviewBuildPolicy(parseWorkflow(stringifyWorkflow(upgraded, { indent: 4, sortKeys: true, forceQuotes: true })));
+  for (const action of ["docker/setup-qemu-action", "docker/setup-buildx-action", "crazy-max/ghaction-github-runtime"]) {
+    const invalid = structuredClone(workflow);
+    invalid.jobs.build.steps = invalid.jobs.build.steps.filter((step) => !step.uses?.startsWith(action + "@"));
+    assert.throws(() => assertPreviewBuildPolicy(invalid), /missing/);
+  }
+  for (const mutate of [
+    (job) => { job.steps.reverse(); },
+    (job) => { actionStep(job, "docker/setup-qemu-action").with.platforms = "amd64"; },
+    (job) => { const step = runStep(job, "docker buildx build"); step.run = step.run.replace("--provenance=false", "--provenance=true"); },
+  ]) {
+    const invalid = structuredClone(workflow);
+    mutate(invalid.jobs.build);
+    assert.throws(() => assertPreviewBuildPolicy(invalid));
+  }
+});
+
+test("hosted setup permits upgrades but rejects missing configuration and weaker isolation", async () => {
+  const workflow = await readWorkflow("production-image-e2e.yml");
+  const job = workflowJob(workflow, "prechecks");
+  assertNodeSetup(job);
+  assertDockerSetup(job);
+  const upgraded = structuredClone(job);
+  for (const step of upgraded.steps) {
+    step.name = "Renamed setup step";
+    if (step.uses) step.uses = step.uses.split("@")[0] + "@" + "a".repeat(40);
+  }
+  actionStep(upgraded, "actions/setup-node").with["node-version"] = "26";
+  actionStep(upgraded, "actions/setup-node").with["package-manager-cache"] = "false";
+  actionStep(upgraded, "docker/setup-docker-action").with.rootless = "true";
+  const reformatted = parseWorkflow(stringifyWorkflow(upgraded, { indent: 4, sortKeys: true, forceQuotes: true }));
+  assertNodeSetup(reformatted);
+  assertDockerSetup(reformatted);
+  for (const mutate of [
+    (j) => { delete actionStep(j, "actions/setup-node").with["node-version"]; },
+    (j) => { actionStep(j, "actions/setup-node").with["package-manager-cache"] = true; },
+    (j) => { actionStep(j, "docker/setup-docker-action").with.rootless = false; },
+    (j) => { delete actionStep(j, "docker/setup-docker-action").with["set-host"]; },
+    (j) => { actionStep(j, "docker/setup-docker-action").uses = "untrusted/setup-docker-action@v99"; },
+  ]) {
+    const invalid = structuredClone(job);
+    mutate(invalid);
+    assert.throws(() => { assertNodeSetup(invalid); assertDockerSetup(invalid); });
+  }
 });
 
 test("production E2E runs the complete exact-source registry on hosted isolated jobs", async () => {
   const [workflow, reusable, caller, bootstrap] = await Promise.all([
-    readFile(new URL("../../.github/workflows/production-image-e2e.yml", import.meta.url), "utf8"),
-    readFile(new URL("../../.github/workflows/production-e2e-scenario.yml", import.meta.url), "utf8"),
-    readFile(new URL("../../.github/workflows/pr-test-image.yml", import.meta.url), "utf8"),
+    readWorkflow("production-image-e2e.yml"),
+    readWorkflow("production-e2e-scenario.yml"),
+    readWorkflow("pr-test-image.yml"),
     readFile(new URL("../../scripts/e2e-ci-bootstrap.sh", import.meta.url), "utf8"),
   ]);
   assert.equal(matrixFor(registry, "all").include.length, 30);
@@ -210,58 +242,51 @@ test("production E2E runs the complete exact-source registry on hosted isolated 
   const prechecks = workflowJob(workflow, "prechecks");
   const database = workflowJob(workflow, "database-prechecks");
   const scenario = workflowJob(reusable, "scenario");
-  assertNode24Setup(authorize);
+  assertNodeSetup(authorize);
   for (const job of [prechecks, database, scenario]) {
-    assert.ok(job.includes("runs-on: ubuntu-latest"));
-    assertNode24Setup(job);
-    assert.ok(job.includes("docker/setup-docker-action@v5"));
-    assert.ok(job.includes("rootless: true"));
-    assert.ok(job.includes("set-host: true"));
-    assert.match(job, /daemon-config: \|\s*\{"exec-opts":\["native\.cgroupdriver=cgroupfs"\]\}/);
-    assert.ok(job.includes("scripts/e2e-ci-bootstrap.sh"));
-    assert.doesNotMatch(job, /DOCKER_HOST: unix:\/\/\$\{\{ steps\.docker\.outputs\.sock \}\}/);
+    assert.equal(job["runs-on"], "ubuntu-latest");
+    assertNodeSetup(job);
+    assertDockerSetup(job);
   }
-  assert.ok(authorize.includes("--matrix all"));
-  assert.ok(authorize.includes("--validate-compatible"));
-  assert.ok(authorize.includes("source_revision"));
-  assert.ok(authorize.includes("parseSuccessfulPolicyStatus"));
-  assert.ok(authorize.includes("listJobsForWorkflowRun"));
-  assert.ok(authorize.includes("Publish trusted preview"));
-  assert.ok(authorize.includes("manual E2E trials require a repository admin"));
-  assert.ok(workflow.includes("workflow_dispatch:"));
-  assert.ok(workflow.includes("CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}"));
-  assert.ok(caller.includes("source_revision: ${{ needs.resolve.outputs.head_sha }}"));
-  assert.ok(caller.includes("cloudflare_account_id: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}"));
-  assert.ok(caller.includes("CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}"));
+  for (const required of ["--matrix all", "--validate-compatible", "source_revision", "parseSuccessfulPolicyStatus",
+    "listJobsForWorkflowRun", "Publish trusted preview", "manual E2E trials require a repository admin"]) {
+    assert.ok(jobScripts(authorize).includes(required));
+  }
+  assert.ok(Object.hasOwn(workflow.on, "workflow_dispatch"));
+  assert.equal(prechecks.steps.find((step) => step.env?.CLOUDFLARE_API_TOKEN)?.env.CLOUDFLARE_API_TOKEN, "${{ secrets.CLOUDFLARE_API_TOKEN }}");
+  const e2e = workflowJob(caller, "production-e2e");
+  assert.equal(e2e.with.source_revision, "${{ needs.resolve.outputs.head_sha }}");
+  assert.equal(e2e.with.cloudflare_account_id, "${{ vars.CLOUDFLARE_ACCOUNT_ID }}");
+  assert.equal(e2e.secrets.CLOUDFLARE_API_TOKEN, "${{ secrets.CLOUDFLARE_API_TOKEN }}");
   assert.ok(bootstrap.includes("RUNNER_TEMP"));
   assert.ok(bootstrap.includes("::add-mask::"));
-  assert.ok(bootstrap.includes("AI_API_EMBEDDING_MAX_BATCH_ITEMS: \"100\""));
-  assert.ok(scenario.includes("timeout-minutes: ${{ inputs.timeout_minutes > 30 && 30 || inputs.timeout_minutes }}"));
-  assert.ok(scenario.includes("scripts/e2e-host-controller.sh start"));
-  assert.ok(scenario.includes("scripts/e2e-host-controller.sh run"));
-  assert.ok(scenario.includes("scripts/e2e-host-controller.sh stop"));
-  assert.ok(scenario.includes("if: always() && steps.stack.outputs.project != ''"));
-  assert.ok(scenario.includes("::stop-commands::"));
-  assert.doesNotMatch(workflow, /runs-on: rootless-docker|shared-start:|shared-stop:|exclusive-cleanup:/);
-  assert.doesNotMatch(workflow, /secrets:\s*inherit/);
+  assert.ok(bootstrap.includes('AI_API_EMBEDDING_MAX_BATCH_ITEMS: "100"'));
+  assert.equal(scenario["timeout-minutes"], "${{ inputs.timeout_minutes > 30 && 30 || inputs.timeout_minutes }}");
+  runStep(scenario, "scripts/e2e-host-controller.sh start");
+  runStep(scenario, "scripts/e2e-host-controller.sh run");
+  assert.equal(runStep(scenario, "scripts/e2e-host-controller.sh stop").if, "always() && steps.stack.outputs.project != ''");
+  assert.match(jobScripts(scenario), /::stop-commands::/);
+  for (const [id, job] of Object.entries(workflow.jobs)) {
+    assert.ok(!["shared-start", "shared-stop", "exclusive-cleanup"].includes(id));
+    assert.notEqual(job["runs-on"], "rootless-docker");
+    assert.notEqual(job.secrets, "inherit");
+  }
   assert.doesNotThrow(() => assertPreviewBuildPolicy(caller));
 });
 
 test("production orchestration assertions detect a missing precheck dependency", async () => {
-  const workflow = await readFile(new URL("../../.github/workflows/production-image-e2e.yml", import.meta.url), "utf8");
+  const workflow = await readWorkflow("production-image-e2e.yml");
   assert.doesNotThrow(() => assertWorkflowOrchestration(workflow));
-  const mutated = workflow.replace(
-    "needs: [authorize, prechecks]",
-    "needs: [authorize]",
-  );
-  assert.notEqual(mutated, workflow);
+  assertWorkflowOrchestration(parseWorkflow(stringifyWorkflow(workflow, { indent: 4, sortKeys: true })));
+  const mutated = structuredClone(workflow);
+  mutated.jobs.scenarios.needs = ["authorize"];
   assert.throws(() => assertWorkflowOrchestration(mutated));
 });
 
 test("the production aggregate requires every independent phase and manual CI trial", async () => {
-  const workflow = await readFile(new URL("../../.github/workflows/production-image-e2e.yml", import.meta.url), "utf8");
+  const workflow = await readWorkflow("production-image-e2e.yml");
   const report = workflowJob(workflow, "report");
-  const command = report.split("        run: |\n")[1].split("\n").map((line) => line.slice(10)).join("\n");
+  const command = runStep(report, "SCENARIO_RESULT").run;
   const passing = { AUTH_RESULT: "success", PRECHECK_RESULT: "success", DATABASE_PRECHECK_RESULT: "success", SCENARIO_RESULT: "success",
     CI_TRIAL_RESULT: "success", EVENT_NAME: "workflow_dispatch", IMAGE: "fixture-image", SOURCE_REVISION: "a".repeat(40), GITHUB_STEP_SUMMARY: "/dev/null" };
   const execute = (env) => spawnSync("bash", ["-c", command], { encoding: "utf8", env: { ...process.env, ...env } });
@@ -273,25 +298,24 @@ test("the production aggregate requires every independent phase and manual CI tr
   }
   assert.equal(execute({ ...passing, EVENT_NAME: "pull_request_target", CI_TRIAL_RESULT: "skipped" }).status, 0);
   const trial = workflowJob(workflow, "ci-trial");
-  assert.match(trial, /needs: authorize/);
-  assert.match(trial, /if: github.event_name == 'workflow_dispatch'/);
-  assert.match(trial, /uses: \.\/\.github\/workflows\/ci-shared\.yml/);
-  assert.match(trial, /source-revision: \$\{\{ needs.authorize.outputs.source_revision \}\}/);
+  assert.deepEqual([trial.needs].flat(), ["authorize"]);
+  assert.equal(trial.if, "github.event_name == 'workflow_dispatch'");
+  assert.equal(trial.uses, "./.github/workflows/ci-shared.yml");
+  assert.equal(trial.with["source-revision"], "${{ needs.authorize.outputs.source_revision }}");
 });
 
 test("PostgreSQL deadlines include setup and leave cleanup time in every workflow", async () => {
   for (const [file, job] of [["production-image-e2e.yml", "database-prechecks"], ["development-e2e.yml", "postgres"], ["fork-e2e.yml", "database"]]) {
-    const workflow = await readFile(new URL(`../../.github/workflows/${file}`, import.meta.url), "utf8");
+    const workflow = await readWorkflow(file);
     const definition = workflowJob(workflow, job);
-    const deadline = definition.indexOf("- name: Set PostgreSQL execution deadline");
-    assert.ok(deadline >= 0 && deadline < definition.indexOf("uses: actions/checkout"));
-    assert.match(definition, /27 \* 60/);
-    assert.match(definition, /timeout-minutes: 30/);
-    const blocks = definition.split("        run: |\n");
-    const execution = blocks.find((block) => block.includes("scripts/e2e-host-controller.sh precheck"));
-    assert.ok(execution);
+    const deadline = runStep(definition, "27 * 60");
+    for (const checkout of actionSteps(definition, "actions/checkout")) {
+      assert.ok(definition.steps.indexOf(deadline) < definition.steps.indexOf(checkout));
+    }
+    assert.equal(definition["timeout-minutes"], 30);
+    const execution = runStep(definition, "scripts/e2e-host-controller.sh precheck").run;
     assert.match(execution, /timeout --signal=TERM --kill-after=30s "\$\{remaining\}s" scripts\/e2e-host-controller\.sh precheck/);
-    const prefix = execution.split("          timeout --signal=TERM")[0].split("\n").map((line) => line.slice(10)).join("\n");
+    const prefix = execution.slice(0, execution.indexOf("timeout --signal=TERM"));
     const invoke = (seconds) => spawnSync("bash", ["-c", prefix], { env: { ...process.env, POSTGRES_DEADLINE: String(Math.floor(Date.now() / 1000) + seconds) } });
     assert.equal(invoke(60).status, 0, file);
     assert.equal(invoke(-1).status, 124, file);
