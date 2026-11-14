@@ -18,6 +18,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
+	httpmw "github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	settings "github.com/markhuangai/dense-mem/internal/settings"
@@ -122,6 +123,9 @@ func newDirectorySCIMProtocolServer(directory *accessservice.DirectoryIdentitySe
 }
 
 func (h *directorySCIMHandler) oauthToken(c echo.Context) error {
+	if h.security != nil {
+		httpmw.PreserveAuthFailureBody(c)
+	}
 	if err := c.Request().ParseForm(); err != nil {
 		return directoryOAuthError(c, nethttp.StatusBadRequest, "invalid_request")
 	}
@@ -197,9 +201,10 @@ func recordDirectoryOAuthAuthFailure(c echo.Context, securitySvc settings.Securi
 	if securitySvc == nil {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	request := httpmw.CaptureAuthFailureRequest(c, "invalid directory oauth client credentials")
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request().Context()), 5*time.Second)
 	defer cancel()
-	if _, err := securitySvc.RecordAuthFailure(ctx, c.RealIP(), "scim", "AUTH_INVALID"); err != nil {
+	if _, err := securitySvc.RecordAuthFailure(ctx, c.RealIP(), "scim", "AUTH_INVALID", request); err != nil {
 		c.Logger().Error("directory oauth security auth failure record failed")
 	}
 }

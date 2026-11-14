@@ -215,6 +215,12 @@ func (r *SecurityRepositoryImpl) UpsertBan(ctx context.Context, ban *domain.Secu
 				metadata = EXCLUDED.metadata,
 				updated_at = EXCLUDED.updated_at,
 				revoked_at = NULL
+			WHERE EXCLUDED.source = 'manual' OR (
+				(security_ip_bans.revoked_at IS NULL OR security_ip_bans.revoked_at < EXCLUDED.banned_at)
+				AND (security_ip_bans.source = 'auto' OR security_ip_bans.revoked_at IS NOT NULL
+					OR security_ip_bans.expires_at <= EXCLUDED.banned_at)
+				AND (security_ip_bans.last_failed_at IS NULL OR security_ip_bans.last_failed_at <= EXCLUDED.last_failed_at)
+			)
 		`, ban.IP, ban.Reason, ban.Source, ban.FailureCount, ban.BannedAt, ban.ExpiresAt, ban.LastFailedAt, string(metadata), ban.CreatedAt).Error
 	})
 }

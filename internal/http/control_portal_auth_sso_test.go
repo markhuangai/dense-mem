@@ -159,7 +159,7 @@ type controlAuthFailureRecorder struct {
 	calls int
 }
 
-func (r *controlAuthFailureRecorder) RecordAuthFailure(context.Context, string, string, string) (*domain.SecurityIPBan, error) {
+func (r *controlAuthFailureRecorder) RecordAuthFailure(context.Context, string, string, string, *domain.SecurityAuthFailureRequest) (*domain.SecurityIPBan, error) {
 	r.calls++
 	return nil, errors.New("security backend unavailable")
 }

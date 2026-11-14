@@ -149,6 +149,65 @@ test("control panel keeps security settings display-only against compose", async
 
 
 
+test("IP bans retain protected latest requests against compose", async ({ page, request }, testInfo) => {
+  const headers = bearer(controlToken);
+  const rulesResponse = await request.get(`${controlUrl}/control/api/security/settings`, { headers });
+  expect(rulesResponse.ok()).toBe(true);
+  const { data: rules } = await rulesResponse.json();
+  expect(rules.enabled).toBe(true);
+  expect(rules.failure_threshold).toBeGreaterThan(0);
+  expect(rules.failure_threshold).toBeLessThanOrEqual(100);
+  const ip = testInfo.project.name === "mobile" ? "198.51.100.220" : "198.51.100.219";
+  const failedToken = `dm_diagnostic_${Date.now()}_wrong_credential_${"x".repeat(24)}`;
+  const body = JSON.stringify({ password: "ordinary request content", presented: failedToken, configured: controlToken, cookie: "diagnostic-cookie" }, null, 2);
+  const failedHeaders = { Authorization: `Bearer ${failedToken}`, "Content-Type": "application/json", "X-Forwarded-For": ip, "X-Diagnostic": "visible request header", Cookie: "session=diagnostic-cookie" };
+  const clear = () => request.delete(`${controlUrl}/control/api/security/bans/${ip}`, { headers });
+  try {
+    for (let attempt = 0; attempt < rules.failure_threshold; attempt += 1) {
+      const rejected = await request.post(`${userUrl}/mcp`, { headers: failedHeaders, data: body });
+      expect(rejected.status()).toBe(401);
+      expect(await rejected.text()).not.toContain("ordinary request content");
+    }
+    const list = await request.get(`${controlUrl}/control/api/security/bans`, { headers });
+    const { data: bans } = await list.json();
+    const found = bans.find((item: { ip: string }) => item.ip === ip);
+    expect(found).toBeTruthy();
+    const snapshot = found.metadata.last_request;
+    expect(snapshot.message).toBe("invalid api key");
+    expect(snapshot.body_capture.state).toBe("captured");
+    expect(snapshot.credential_prefix).toBe(failedToken.slice(0, 24));
+    expect(snapshot.credential_fingerprint).toMatch(/^[a-f0-9]{64}$/);
+    expect(snapshot.body).toContain("ordinary request content");
+    expect(JSON.stringify(snapshot)).not.toContain(failedToken);
+    expect(JSON.stringify(snapshot)).not.toContain(controlToken);
+    expect(JSON.stringify(snapshot)).not.toContain("diagnostic-cookie");
+    const blocked = await request.post(`${userUrl}/mcp`, { headers: { ...failedHeaders, Authorization: "Bearer different-attempt" }, data: "{}" });
+    expect(blocked.status()).toBe(403);
+    const unauthorized = await request.get(`${controlUrl}/control/api/security/bans`);
+    expect(unauthorized.status()).toBe(401);
+    expect(await unauthorized.text()).not.toContain(snapshot.id);
+    await openControlPanel(page);
+    await navigate(page, "IP bans");
+    await page.getByRole("button", { name: `View request for ${ip}` }).click();
+    await expect(page.getByLabel("Request headers")).toContainText("X-Diagnostic: visible request header");
+    await expect(page.getByLabel("Request body")).toContainText("ordinary request content");
+    await expectPageContained(page);
+    const close = page.getByRole("button", { name: "Close details panel" });
+    if (await close.isVisible()) { await close.click(); await expect(page.locator(".contextual-sheet")).toBeHidden(); }
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await expect.poll(() => page.evaluate(() => scrollY)).toBe(0);
+    await expectNoShellOverlap(page);
+    expect((await clear()).ok()).toBe(true);
+    for (let attempt = 0; attempt < rules.failure_threshold; attempt += 1) {
+      const rejected = await request.post(`${userUrl}/mcp`, { headers: failedHeaders, data: "x".repeat(65537) });
+      expect(rejected.status()).toBe(401);
+    }
+    await page.getByRole("button", { name: "Refresh security" }).click();
+    await page.getByRole("button", { name: `View request for ${ip}` }).click();
+    await expect(page.getByText(/Body unavailable: size_limit/)).toBeVisible();
+  } finally { expect((await clear()).ok()).toBe(true); }
+});
+
 test("Prometheus telemetry remains available without portal dashboards", async ({ page, request }) => {
   test.setTimeout(150_000);
   const sessionResponse = await request.get(`${userUrl}/ui/api/session`, { headers: bearer(seedApiKey) });

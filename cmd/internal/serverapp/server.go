@@ -179,7 +179,11 @@ func RunActiveServer(
 	if err := operationLogService.CheckReadiness(startupCtx); err != nil {
 		return fmt.Errorf("operation log sink readiness failed: %w", err)
 	}
-	securityService := buildSecurityApplication(securityRepo, auditService)
+	diagnosticProtector, err := newRootProtector(cfg)
+	if err != nil {
+		return fmt.Errorf("configure diagnostic protection: %w", err)
+	}
+	securityService := buildSecurityApplication(securityRepo, auditService, diagnosticProtector, logger)
 	usageMetricsService := buildUsageMetricsApplication(usageMetricsRepo, logger)
 	accessApplication := buildAccessApplication(accessApplicationDependencies{
 		TeamRepo:              teamRepo,
@@ -219,10 +223,6 @@ func RunActiveServer(
 		PostgresDB:        pgDB.GetDB(),
 		RLS:               rlsHelper,
 		Logger:            logger,
-	}
-	diagnosticProtector, err := newRootProtector(cfg)
-	if err != nil {
-		return fmt.Errorf("configure diagnostic protection: %w", err)
 	}
 	recallStore.WithTopicDiagnostics(logger, diagnosticProtector)
 	publicationDiagnostics := ontologyPublicationDiagnostics(rootDiagnosticLogger(logger), diagnosticProtector)

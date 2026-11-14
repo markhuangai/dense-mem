@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	settingscontract "github.com/markhuangai/dense-mem/internal/settings/contract"
 )
@@ -20,7 +21,7 @@ var (
 
 type SecurityService interface {
 	CheckBan(ctx context.Context, ip string) (*domain.SecurityIPBan, error)
-	RecordAuthFailure(ctx context.Context, ip, surface, reason string) (*domain.SecurityIPBan, error)
+	RecordAuthFailure(ctx context.Context, ip, surface, reason string, request *domain.SecurityAuthFailureRequest) (*domain.SecurityIPBan, error)
 	GetSecuritySettings(ctx context.Context) (*domain.SecuritySettings, error)
 	UpdateSecuritySettings(ctx context.Context, settings domain.SecuritySettings, actorRole, clientIP, correlationID string) (*domain.SecuritySettings, error)
 	ListSecurityBans(ctx context.Context, includeExpired bool, limit, offset int) ([]domain.SecurityIPBan, int64, error)
@@ -29,9 +30,21 @@ type SecurityService interface {
 }
 
 type SecurityServiceImpl struct {
-	repo  settingscontract.SecurityRepository
-	audit accessservice.AuditService
-	now   func() time.Time
+	repo        settingscontract.SecurityRepository
+	audit       accessservice.AuditService
+	now         func() time.Time
+	diagnostics SecurityDiagnosticsOptions
+}
+
+type SecurityDiagnosticsOptions struct {
+	Protector observability.DiagnosticProtector
+	Logger    observability.LogProvider
+}
+
+func NewSecurityServiceWithDiagnostics(repo settingscontract.SecurityRepository, audit accessservice.AuditService, options SecurityDiagnosticsOptions) *SecurityServiceImpl {
+	service := NewSecurityService(repo, audit)
+	service.diagnostics = options
+	return service
 }
 
 var _ SecurityService = (*SecurityServiceImpl)(nil)
@@ -55,7 +68,8 @@ func (s *SecurityServiceImpl) CheckBan(ctx context.Context, ip string) (*domain.
 	return s.repo.GetActiveBan(ctx, normalized, s.now().UTC())
 }
 
-func (s *SecurityServiceImpl) RecordAuthFailure(ctx context.Context, ip, surface, reason string) (*domain.SecurityIPBan, error) {
+func (s *SecurityServiceImpl) RecordAuthFailure(ctx context.Context, ip, surface, reason string, request *domain.SecurityAuthFailureRequest) (_ *domain.SecurityIPBan, resultErr error) {
+	started := time.Now()
 	normalized, ok := normalizeSecurityIP(ip)
 	if !ok {
 		return nil, nil
@@ -63,6 +77,17 @@ func (s *SecurityServiceImpl) RecordAuthFailure(ctx context.Context, ip, surface
 	if !isAutoBannableSecurityIP(normalized) {
 		return nil, nil
 	}
+	diagnosticBan := &domain.SecurityIPBan{IP: normalized, Reason: normalizeReason(reason), Metadata: map[string]any{}}
+	defer func() {
+		if resultErr == nil {
+			return
+		}
+		if request != nil {
+			diagnosticBan.Metadata["last_request"] = s.protectSecurityRequest(ctx, request)
+		}
+		s.securityDiagnosticLog(ctx, "ERROR", "security.auth_failure.persistence_failed", resultErr, diagnosticBan, started)
+		s.logSecurityRequestPayload(ctx, diagnosticBan)
+	}()
 
 	settings, err := s.repo.GetSettings(ctx)
 	if err != nil {
@@ -71,6 +96,7 @@ func (s *SecurityServiceImpl) RecordAuthFailure(ctx context.Context, ip, surface
 	if settings == nil || !settings.Enabled {
 		return nil, nil
 	}
+	diagnosticBan.Metadata = map[string]any{"failure_threshold": settings.FailureThreshold, "failure_window_seconds": settings.FailureWindowSeconds, "ban_duration_seconds": settings.BanDurationSeconds}
 
 	now := s.now().UTC()
 	active, err := s.repo.GetActiveBan(ctx, normalized, now)
@@ -107,14 +133,34 @@ func (s *SecurityServiceImpl) RecordAuthFailure(ctx context.Context, ip, surface
 			"reason":                 failure.LastReason,
 			"failure_threshold":      settings.FailureThreshold,
 			"failure_window_seconds": settings.FailureWindowSeconds,
+			"ban_duration_seconds":   settings.BanDurationSeconds,
 		},
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
+	if request != nil {
+		request.CapturedAt, request.Reason = failure.LastFailedAt, failure.LastReason
+		ban.Metadata["last_request"] = s.protectSecurityRequest(ctx, request)
+	}
 	if err := s.repo.UpsertBan(ctx, ban); err != nil {
+		diagnosticBan = ban
 		return nil, err
 	}
-	s.appendAudit("SECURITY_AUTO_BAN", "security_ip_ban", normalized, "system", normalized, "", nil, securityBanPayload(ban), ban.Metadata)
+	persisted, err := s.repo.GetActiveBan(ctx, normalized, s.now().UTC())
+	if err != nil {
+		return nil, err
+	}
+	if persisted == nil || !sameSecurityRequest(persisted, request) {
+		return persisted, nil
+	}
+	s.logSecurityRequest(ctx, ban, started)
+	auditMetadata := map[string]any{}
+	for key, value := range ban.Metadata {
+		if key != "last_request" {
+			auditMetadata[key] = value
+		}
+	}
+	s.appendAudit("SECURITY_AUTO_BAN", "security_ip_ban", normalized, "system", normalized, "", nil, securityBanPayload(ban), auditMetadata)
 	return ban, nil
 }
 
