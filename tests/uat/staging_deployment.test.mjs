@@ -196,7 +196,7 @@ services:
 test("real PostgreSQL preserves staging Evidence through fresh and legacy upgrades", { timeout: 600_000 }, async (t) => {
   await execute("go", [
     "test", "-tags=staging_rehearsal", "./cmd/internal/migrationapp",
-    "-run", "^(TestValidateStagingDSN|TestStopStagingServerWithoutImageSelection|TestPrivateMemoryRehearsalFromDeployedSchema|TestStagingMigrationRehearsalFreshDatabase)$",
+    "-run", "^(TestValidateStagingDSN|TestStopStagingServerWithoutImageSelection|TestPrivateMemoryRehearsalFromDeployedSchema|TestStagingMigrationRehearsalFreshDatabase|TestStagingEvidenceFingerprintsNullableLifecycleField)$",
     "-count=1", "-timeout=8m",
   ], {
     cwd: fileURLToPath(new URL("../../", import.meta.url)),
