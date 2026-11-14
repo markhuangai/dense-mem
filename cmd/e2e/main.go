@@ -444,6 +444,9 @@ func runBatch(root string, batch packageBatch, timeout time.Duration) (resultErr
 			continue
 		}
 		if event.Action == "pass" || event.Action == "skip" || event.Action == "fail" {
+			if _, exists := result[event.Test]; exists {
+				return fmt.Errorf("database case %s executed more than once", event.Test)
+			}
 			result[event.Test] = event.Action
 		}
 	}

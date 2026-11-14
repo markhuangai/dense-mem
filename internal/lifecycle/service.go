@@ -52,6 +52,7 @@ func (s *lifecycleService) RetractEvidence(
 	ctx context.Context,
 	req RetractEvidenceRequest,
 ) (*RetractEvidenceResult, error) {
+	requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "validating_input"})
 	if s.port == nil {
 		return nil, errors.New("memory lifecycle: evidence repository is required")
 	}
@@ -63,6 +64,7 @@ func (s *lifecycleService) RetractEvidence(
 	if err != nil {
 		return nil, err
 	}
+	requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "retraction_apply"})
 	result, err := s.port.RetractEvidence(ctx, knowledgecontract.RetractEvidenceInput{
 		TeamID:         actor.TeamID.String(),
 		OwnerProfileID: actor.OwnerID.String(),
@@ -74,6 +76,7 @@ func (s *lifecycleService) RetractEvidence(
 	if err != nil {
 		return nil, translateEvidenceLifecycleError(err)
 	}
+	requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "preparing_result"})
 	return &RetractEvidenceResult{
 		DecisionID:           result.DecisionID,
 		ProcessingState:      result.ProcessingState,

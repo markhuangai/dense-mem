@@ -2,6 +2,7 @@
 import { readdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { rememberWithEmbeddingRetry } from "./remember_retry.mjs";
 
 const root = dirname(fileURLToPath(import.meta.url));
 const casesRoot = join(root, "cases");
@@ -57,24 +58,30 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
-async function liveRPC(method, params) {
-  const payload = await liveRawRPC(method, params);
+async function liveRPC(method, params, { retryEmbedding = true, signal } = {}) {
+  const payload = await liveRawRPC(method, params, signal, { retryEmbedding });
   if (payload.error) throw new Error(`MCP ${method} returned a bounded error: ${payload.error.message || "unknown"}`);
   return payload.result ?? payload;
 }
 
-async function liveRawRPC(method, params, signal) {
+async function liveRawRPC(method, params, signal, { retryEmbedding = false } = {}) {
   const base = required("DENSE_MEM_USER_URL").replace(/\/$/, "");
   const key = required("DENSE_MEM_E2E_API_KEY");
+  const call = async (arguments_) => {
   const response = await fetch(`${base}/mcp`, {
     method: "POST",
     headers: { Authorization: `Bearer ${key}`, Accept: "application/json", "Content-Type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: Date.now(), method, params }),
+    body: JSON.stringify({ jsonrpc: "2.0", id: Date.now(), method, params: arguments_ ? { ...params, arguments: arguments_ } : params }),
     signal,
   });
   const body = await response.text();
   if (!response.ok) throw new Error(`MCP request failed with HTTP ${response.status}`);
   return body ? JSON.parse(body) : {};
+  };
+  if (method === "tools/call" && params.name === "remember") {
+    return rememberWithEmbeddingRetry(params.arguments, call, { signal, retry: retryEmbedding });
+  }
+  return call();
 }
 
 function required(name) {

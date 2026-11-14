@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func testMaintenanceCoalescingMeasurement(t *testing.T) {
+func TestOntologyMaintenanceCoalescingMeasurement(t *testing.T) {
 	discoveryLog(t, "coalescing_protocol", map[string]any{
 		"fixture": "coalescing-markers-v3", "sequential_base": "09d16398005f0a8ba3ca0fe6c31e08c4341eca9f",
 		"source_files_sha256": discoverySourceHashes(t), "shapes": []string{"overlap", "disjoint"},

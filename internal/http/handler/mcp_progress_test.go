@@ -189,7 +189,7 @@ func TestMCPHandlerRememberProgressCapsAndRestoresWriteDeadline(t *testing.T) {
 	}
 }
 
-func TestMCPHandlerRememberProgressIsRequestLocalAndOtherToolsRemainTerminalOnly(t *testing.T) {
+func TestMCPHandlerProgressIsRequestLocalAcrossTools(t *testing.T) {
 	server := newProgressHTTPServer(t, nil, func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
 		count := int(input["count"].(float64))
 		for _, stage := range progressStages[:count] {
@@ -210,9 +210,14 @@ func TestMCPHandlerRememberProgressIsRequestLocalAndOtherToolsRemainTerminalOnly
 		}()
 	}
 	workers.Wait()
-	response := progressHTTPCall(t, server.URL, "2025-11-25", "text/event-stream", "0", "ingest_session", "1")
-	defer response.Body.Close()
-	require.Len(t, decodeProgressFrames(t, response.Body), 1)
+	for _, name := range []string{"ingest_session", "recall_memory", "trace_memory", "retract_evidence", "export_memory_pack", "submit_recall_session_feedback"} {
+		response := progressHTTPCall(t, server.URL, "2025-11-25", "text/event-stream", "9007199254740993", name, "1")
+		frames := decodeProgressFrames(t, response.Body)
+		require.NoError(t, response.Body.Close())
+		require.Len(t, frames, 2, name)
+		require.Equal(t, "9007199254740993", string(frames[0].Params.Token))
+		require.Equal(t, 1, frames[0].Params.Progress)
+	}
 }
 
 type progressLogBuffer struct {
@@ -259,45 +264,58 @@ func TestMCPHandlerRememberProgressUsesProtectedLeveledLogging(t *testing.T) {
 	}
 }
 
-func TestMCPHandlerRememberProgressStalledReaderIsBounded(t *testing.T) {
-	done := make(chan struct{})
-	server := newProgressHTTPServer(t, nil, func(ctx context.Context, _ string, _ map[string]any) (map[string]any, error) {
-		for _, stage := range progressStages {
-			rememberapp.ReportProgress(ctx, stage)
-		}
-		close(done)
-		return map[string]any{"completed": true}, nil
-	})
-	server.Close()
-	serverConn, clientConn := net.Pipe()
-	defer clientConn.Close()
-	listener := &progressPipeListener{connection: serverConn, closed: make(chan struct{})}
-	httpServer := &http.Server{Handler: server.Config.Handler}
-	defer httpServer.Close()
-	serveDone := make(chan struct{})
-	go func() { defer close(serveDone); _ = httpServer.Serve(listener) }()
-	request := progressRequest(t, "http://pipe/mcp", "2026-07-28", "text/event-stream", "0", "remember", "1")
-	require.NoError(t, request.Write(clientConn))
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("an unread progress response blocked required work")
-	}
-	require.NoError(t, clientConn.Close())
-	require.NoError(t, httpServer.Close())
-	select {
-	case <-serveDone:
-	case <-time.After(time.Second):
-		t.Fatal("HTTP serving leaked after the stalled reader disconnected")
-	}
-	var releases []func()
-	for range 3 {
-		release, err := server.limiter.Acquire(t.Context(), server.teamID.String())
-		require.NoError(t, err, "stalled progress must release its stream slot")
-		releases = append(releases, release)
-	}
-	for _, release := range releases {
-		release()
+func TestMCPHandlerToolProgressStalledReaderIsBounded(t *testing.T) {
+	for _, name := range []string{"remember", "ingest_session", "recall_memory", "trace_memory", "retract_evidence", "export_memory_pack", "submit_recall_session_feedback"} {
+		t.Run(name, func(t *testing.T) {
+			done := make(chan struct{})
+			server := newProgressHTTPServer(t, nil, func(ctx context.Context, _ string, _ map[string]any) (map[string]any, error) {
+				for _, stage := range progressStages {
+					rememberapp.ReportProgress(ctx, stage)
+				}
+				close(done)
+				return map[string]any{"completed": true}, nil
+			})
+			server.Close()
+			serverConn, clientConn := net.Pipe()
+			defer clientConn.Close()
+			listener := &progressPipeListener{connection: serverConn, closed: make(chan struct{})}
+			requestFinished := make(chan struct{})
+			httpServer := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				defer close(requestFinished)
+				server.Config.Handler.ServeHTTP(w, r)
+			})}
+			defer httpServer.Close()
+			serveDone := make(chan struct{})
+			go func() { defer close(serveDone); _ = httpServer.Serve(listener) }()
+			request := progressRequest(t, "http://pipe/mcp", "2026-07-28", "text/event-stream", "0", name, "1")
+			require.NoError(t, request.Write(clientConn))
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				t.Fatal("an unread progress response blocked required work")
+			}
+			require.NoError(t, clientConn.Close())
+			require.NoError(t, httpServer.Close())
+			select {
+			case <-serveDone:
+			case <-time.After(time.Second):
+				t.Fatal("HTTP serving leaked after the stalled reader disconnected")
+			}
+			select {
+			case <-requestFinished:
+			case <-time.After(time.Second):
+				t.Fatal("stalled request did not release its handler")
+			}
+			var releases []func()
+			for range 3 {
+				release, err := server.limiter.Acquire(t.Context(), server.teamID.String())
+				require.NoError(t, err, "stalled progress must release its stream slot")
+				releases = append(releases, release)
+			}
+			for _, release := range releases {
+				release()
+			}
+		})
 	}
 }
 
@@ -325,18 +343,24 @@ type progressHTTPServer struct {
 	teamID  uuid.UUID
 }
 
+type progressFeedbackConfig struct{}
+
+func (progressFeedbackConfig) RecallFeedbackRuntimeConfig(context.Context) (domain.RecallFeedbackRuntimeConfig, error) {
+	return domain.RecallFeedbackRuntimeConfig{Enabled: true, RetentionDays: 30}, nil
+}
+
 func newProgressHTTPServer(t *testing.T, logger *observability.Logger, invoke registry.ToolInvoker, wrappers ...func(http.Handler) http.Handler) *progressHTTPServer {
 	t.Helper()
 	reg := registry.New()
-	for _, name := range []string{"remember", "ingest_session"} {
+	for _, name := range []string{"remember", "ingest_session", "recall_memory", "trace_memory", "retract_evidence", "export_memory_pack", "submit_recall_session_feedback"} {
 		require.NoError(t, reg.Register(registry.Tool{Name: name, InputSchema: map[string]any{"type": "object"}, Invoke: invoke,
 			Available: func(context.Context) bool { return true }}))
 	}
 	limiter := inmem.NewInMemoryConcurrencyLimiter(3, time.Hour)
 	lifecycle := sse.NewStreamLifecycle(limiter)
-	h := NewMCPHandlerWithLifecycle(reg, nil, lifecycle)
+	h := NewMCPHandlerWithLifecycleAndRuntimeConfig(reg, nil, lifecycle, progressFeedbackConfig{})
 	if logger != nil {
-		h = NewMCPHandlerWithLifecycle(reg, NewMCPLogger(progressContextLogger{mcpTestLogger{delegate: logger}}), lifecycle)
+		h = NewMCPHandlerWithLifecycleAndRuntimeConfig(reg, NewMCPLogger(progressContextLogger{mcpTestLogger{delegate: logger}}), lifecycle, progressFeedbackConfig{})
 	}
 	e := echo.New()
 	e.POST("/mcp", h.HandlePost)

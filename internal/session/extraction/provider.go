@@ -10,6 +10,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 	session "github.com/markhuangai/dense-mem/internal/session/contract"
 )
 
@@ -81,6 +82,7 @@ func (p *Provider) complete(ctx context.Context, name, prompt string, schema map
 		if tokens > p.limits.MaxInputTokens {
 			return session.ErrBudget
 		}
+		requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "provider_request", Operation: "session_extraction", Attempt: turn, Total: 3})
 		result, err := p.transport.Complete(ctx, modelprovider.StructuredRequest{
 			Model: p.model, Messages: messages, SchemaName: name, Schema: schema,
 			MaxInputTokens: p.limits.MaxInputTokens, MaxOutputTokens: p.limits.MaxOutputTokens,
@@ -95,6 +97,7 @@ func (p *Provider) complete(ctx context.Context, name, prompt string, schema map
 		if err != nil {
 			return err
 		}
+		requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "session_validation"})
 		validationErr := validate([]byte(result.Content))
 		if outputTokens > p.limits.MaxOutputTokens {
 			validationErr = fmt.Errorf("output token budget exceeded")
@@ -108,6 +111,7 @@ func (p *Provider) complete(ctx context.Context, name, prompt string, schema map
 		if turn == 3 {
 			return &modelprovider.MalformedResponseError{Provider: "session", Message: "session response remained invalid after complete regeneration", FailureClass: "malformed_exhausted", Attempts: turn}
 		}
+		requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "session_regeneration", Attempt: turn + 1, Total: 3})
 		diagnostic := []rune(validationErr.Error())
 		if len(diagnostic) > 256 {
 			diagnostic = diagnostic[:256]

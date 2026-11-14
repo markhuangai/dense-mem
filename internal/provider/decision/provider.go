@@ -18,6 +18,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
 const completeAttempts = 2
@@ -128,6 +129,7 @@ func (p *Provider) Decide(ctx context.Context, request modelprovider.DecisionReq
 		if !errors.Is(attemptErr, modelprovider.ErrVerifierMalformedResponse) || attempt == completeAttempts || ctx.Err() != nil {
 			return result, attemptErr
 		}
+		requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "provider_regeneration", Attempt: attempt + 1, Total: completeAttempts})
 		p.log(ctx, slog.LevelWarn, "decision.validation.regenerate", append(attrs, attr("attempt", attempt), attr("action", "regenerate_complete_task"), attr("reason_code", "invalid_complete_response"), attr("error", attemptErr.Error()))...)
 	}
 	return result, p.failure("decision attempts exhausted", "provider_protocol", 0, nil)
@@ -280,6 +282,7 @@ func (p *Provider) call(ctx context.Context, batch batch, common []observability
 		return result, receipt, err
 	}
 	diagnostics.FailurePhase = "request"
+	requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "provider_request", Attempt: attempt, Total: completeAttempts})
 	httpStarted := time.Now()
 	response, err := p.client.Do(request)
 	httpMS := time.Since(httpStarted).Milliseconds()

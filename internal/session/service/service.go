@@ -58,6 +58,7 @@ func (s *Service) Ingest(ctx context.Context, req session.Request) (*session.Res
 	ctx = remember.WithRememberDeadlines(ctx, started)
 	ctx, cancel := context.WithDeadline(ctx, started.Add(remember.RememberTotalBudget))
 	defer cancel()
+	requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "validating_input"})
 	if !s.Available(ctx) {
 		return nil, session.ErrUnauthorized
 	}
@@ -74,9 +75,12 @@ func (s *Service) Ingest(ctx context.Context, req session.Request) (*session.Res
 	}
 	intake := session.Intake{Scope: scope, Request: req, RequestHash: hash, ExtractionVersion: session.ExtractionVersion, Tokenizer: s.deps.Tokenizer}
 	var result *session.Result
+	requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "session_lock"})
 	err = s.deps.Repository.WithSessionLock(ctx, scope, req, func() error {
+		requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "checking_replay"})
 		submission, err := s.deps.Repository.LookupSession(ctx, scope, req.IdempotencyKey)
 		if errors.Is(err, session.ErrNotFound) {
+			requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "session_windows"})
 			windows, windowErr := BuildWindows(req, s.deps.Tokenizer)
 			if windowErr != nil {
 				return windowErr
@@ -94,6 +98,7 @@ func (s *Service) Ingest(ctx context.Context, req session.Request) (*session.Res
 				return session.ErrSecurity
 			}
 			intake.Windows = windows
+			requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "preparing_intake"})
 			submission, err = s.deps.Repository.StageSession(ctx, intake)
 		}
 		if err != nil {
@@ -104,6 +109,7 @@ func (s *Service) Ingest(ctx context.Context, req session.Request) (*session.Res
 		}
 
 		if submission.Result != nil && (submission.Result.RetiredPayload || submission.Result.ProcessingState == "completed" || !retryableResult(submission.Result)) {
+			requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "returning_replay"})
 			result = submission.Result
 			return nil
 		}
@@ -135,6 +141,9 @@ func (s *Service) Ingest(ctx context.Context, req session.Request) (*session.Res
 		s.recordDiagnostics(ctx, submission, req, result, recorder)
 		return err
 	})
+	if err == nil {
+		requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "preparing_result"})
+	}
 	return result, err
 }
 
@@ -160,6 +169,7 @@ func (s *Service) process(ctx context.Context, submission *session.Submission) (
 		result.MemoryOutcome = "failed"
 		result.SearchState = "not_required"
 		result.Errors = []session.Error{classifySessionError(cause)}
+		requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "recording_failure"})
 		persistenceCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), remember.RememberFailurePersistenceBudget)
 		err := s.deps.Repository.RecordSessionFailure(persistenceCtx, submission.Intake.Scope, submission.ID, result)
 		cancel()
@@ -185,6 +195,7 @@ func (s *Service) process(ctx context.Context, submission *session.Submission) (
 		metadata := map[string]any{"target_space": string(domain.MemorySpacePrivate), "contract_version": domain.ContractVersion, "actor": map[string]any{
 			"team_id": actor.TeamID.String(), "owner_id": actor.OwnerID.String(), "correlation_id": correlation.FromContext(ctx), "role": actor.Role, "auth_method": actor.AuthMethod,
 		}, "session_submission_id": submission.ID, "extraction_version": session.ExtractionVersion}
+		requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "preparing_intake"})
 		prepared, err = s.deps.Preparer.PrepareSession(ctx, session.PrepareInput{
 			Scope: submission.Intake.Scope, SubmissionID: submission.ID, RequestHash: submission.Intake.RequestHash,
 			Evidence: evidence, Metadata: metadata,
@@ -198,6 +209,7 @@ func (s *Service) process(ctx context.Context, submission *session.Submission) (
 		result.Events[index].ProcessingState = "completed"
 	}
 	commitCtx, cancel := remember.ContextForPhase(ctx, remember.RememberPhaseCommit)
+	requestctx.ReportProgress(commitCtx, requestctx.ProgressUpdate{Stage: "committing"})
 	committed, err := s.deps.Repository.CommitSession(commitCtx, submission.Intake.Scope, submission.ID, prepared, result)
 	cancel()
 	if err != nil {

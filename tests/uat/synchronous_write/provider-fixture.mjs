@@ -111,12 +111,13 @@ const server = createServer(async (request, response) => {
   let embeddingFaultCall = 0;
   if (route === "embedding") embeddingCalls += 1;
   if (route === "embedding") {
-    const embeddingFaultKey = routeFault || "none";
+    const embeddingFaultKey = routeFault === "embedding-once-timeout" ? JSON.stringify(payload.input) : routeFault || "none";
     embeddingFaultCall = (embeddingCallsByFault.get(embeddingFaultKey) || 0) + 1;
     embeddingCallsByFault.set(embeddingFaultKey, embeddingFaultCall);
   }
-  if (routeFault === "timeout" || routeFault === "assessment-timeout" || routeFault === "embedding-timeout" || routeFault === "embedding-only-timeout" || (routeFault === "embedding-cancel" && embeddingFaultCall === 1) || (routeFault === "embedding-session-cancel" && embeddingFaultCall === 1)) {
+  if ((routeFault === "embedding-once-timeout" && embeddingFaultCall === 1) || routeFault === "timeout" || routeFault === "assessment-timeout" || routeFault === "embedding-timeout" || routeFault === "embedding-only-timeout" || (routeFault === "embedding-cancel" && embeddingFaultCall === 1) || (routeFault === "embedding-session-cancel" && embeddingFaultCall === 1)) {
     await new Promise((resolve) => setTimeout(resolve, timeoutDelayMs));
+    if (response.destroyed) return;
   }
   if (routeFault === "unavailable" || routeFault === "assessment-unavailable" || routeFault === "embedding-unavailable") {
     response.destroy();
@@ -195,7 +196,7 @@ const server = createServer(async (request, response) => {
     const attempt = (assessmentAttempts.get(attemptKey) || 0) + 1;
     assessmentAttempts.set(attemptKey, attempt);
     const repair = isRepairPayload(payload);
-    if (assessmentFault === "malformed" || assessmentFault === "assessment-malformed" || assessmentFault === "repair-exhausted" || (assessmentFault === "repair" && !repair)) {
+    if ((payload.response_format?.json_schema?.name === "session_evidence_excerpts_v2" && assessmentFault === "session-repair" && !repair) || assessmentFault === "malformed" || assessmentFault === "assessment-malformed" || assessmentFault === "repair-exhausted" || (assessmentFault === "repair" && !repair)) {
       sendJSON(response, 200, { choices: [{ message: { content: "not-json" } }] });
       return;
     }
@@ -426,7 +427,8 @@ function isRepairPayload(payload) {
     if (message?.role !== "user" || typeof message.content !== "string") return false;
     try {
       const parsed = JSON.parse(message.content);
-      return Array.isArray(parsed.validation_errors) && typeof parsed.instruction === "string";
+      return typeof parsed.instruction === "string" && (Array.isArray(parsed.validation_errors) ||
+        (payload.response_format?.json_schema?.name === "session_evidence_excerpts_v2" && typeof parsed.validation_errors === "string" && parsed.validation_errors.length > 0));
     } catch {
       return false;
     }

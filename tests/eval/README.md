@@ -93,6 +93,9 @@ complete log hash chain and pinned data before recomputing scores. It starts no
 runtime and calls no models. Missing, expired, interrupted or inconsistent logs
 produce an explicit unavailable outcome.
 
+Native ontology PostgreSQL measurement regressions retain their fixture protocols
+and runner instructions in [their module guide](../../internal/ontology/postgres/README.md).
+
 [baseline.json](baseline.json) retains the latest overall measured result until
 a newer complete campaign and replay are verified. No replacement measurement
 is claimed by merely changing this harness. Historical ignored evidence stays

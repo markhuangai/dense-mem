@@ -165,9 +165,9 @@ jobs:
     needs: authorize
     strategy:
       fail-fast: false
-      max-parallel: 6
+      max-parallel: 7
       matrix:
-        shard: [0, 1, 2, 3, 4, 5]
+        shard: [0, 1, 2, 3, 4, 5, 6]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -221,7 +221,7 @@ jobs:
           remaining="$((POSTGRES_DEADLINE - $(date +%s)))"
           ((remaining > 0)) || exit 124
           timeout --signal=TERM --kill-after=30s "${remaining}s" scripts/e2e-host-controller.sh precheck \
-            "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" "${IMAGE}" "${GITHUB_WORKSPACE}" "shard:${SHARD}/6"
+            "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" "${IMAGE}" "${GITHUB_WORKSPACE}" "shard:${SHARD}/7"
 
   scenarios:
     name: Fork scenario matrix

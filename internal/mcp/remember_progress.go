@@ -8,12 +8,14 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
+	"github.com/markhuangai/dense-mem/internal/tools/registry"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -35,6 +37,7 @@ type sdkProgressMetadata struct {
 
 type sdkRememberProgress struct {
 	server   *Server
+	tool     string
 	session  *sdkmcp.ServerSession
 	http     sdkProgressHTTP
 	metadata sdkProgressMetadata
@@ -48,7 +51,8 @@ type sdkRememberProgress struct {
 
 func (s *Server) withSDKRememberProgress(ctx context.Context, name string, req *sdkmcp.CallToolRequest) (context.Context, func()) {
 	noop := func() {}
-	if name != "remember" {
+	_, registered := s.registry.Get(name)
+	if !registered || !slices.Contains(registry.ContractToolNames(), name) {
 		return ctx, noop
 	}
 	transport, ok := ctx.Value(sdkProgressHTTPContextKey{}).(sdkProgressHTTP)
@@ -67,6 +71,7 @@ func (s *Server) withSDKRememberProgress(ctx context.Context, name string, req *
 		reason = "not_a_request"
 	}
 	sdkLog(ctx, s.logger, slog.LevelDebug, "mcp_progress_eligibility",
+		LogField{Key: "tool", Value: name},
 		LogField{Key: "reason", Value: reason}, LogField{Key: "protocol_version", Value: transport.protocol},
 		LogField{Key: "sse", Value: transport.sse})
 	if reason != "enabled" {
@@ -74,7 +79,7 @@ func (s *Server) withSDKRememberProgress(ctx context.Context, name string, req *
 	}
 	// The SDK decodes metadata numbers through float64; restore the exact wire token before using its accessor.
 	req.Params.Meta["progressToken"] = token
-	progress := &sdkRememberProgress{server: s, session: req.Session, http: transport, metadata: metadata,
+	progress := &sdkRememberProgress{server: s, tool: name, session: req.Session, http: transport, metadata: metadata,
 		token: req.Params.GetProgressToken()}
 	return requestctx.WithProgressObserver(ctx, progress.emitUpdate), func() { progress.mu.Lock(); defer progress.mu.Unlock(); progress.closed = true }
 }
@@ -138,6 +143,48 @@ func progressMessage(stage rememberapp.ProgressStage) string {
 		return "Recording failure result"
 	case "idempotency_wait":
 		return "Waiting for an identical request"
+	case "session_lock":
+		return "Checking session ownership"
+	case "session_windows":
+		return "Preparing extraction windows"
+	case "session_window_wait":
+		return "Waiting for extraction window capacity"
+	case "session_extraction":
+		return "Extracting exact session excerpts"
+	case "session_validation":
+		return "Validating session excerpts"
+	case "session_regeneration":
+		return "Regenerating session excerpts"
+	case "session_checkpoint":
+		return "Saving validated session excerpts"
+	case "recall_policy":
+		return "Preparing Recall policy"
+	case "recall_contract":
+		return "Reading the search contract"
+	case "recall_embedding":
+		return "Preparing query embedding"
+	case "recall_search":
+		return "Searching authorized Evidence"
+	case "recall_hydration":
+		return "Reading authorized Evidence"
+	case "recall_conflicts":
+		return "Reading Evidence conflicts"
+	case "recall_reranking":
+		return "Ranking authorized Evidence"
+	case "recall_topics":
+		return "Selecting related topics"
+	case "recall_snapshot":
+		return "Recording the Recall snapshot"
+	case "trace_read":
+		return "Reading the authorized Evidence trace"
+	case "retraction_apply":
+		return "Applying Evidence retraction"
+	case "feedback_record":
+		return "Recording Recall feedback"
+	case "export_read":
+		return "Reading Evidence for export"
+	case "export_artifact":
+		return "Building the memory pack"
 	default:
 		return ""
 	}
@@ -147,7 +194,12 @@ func (p *sdkRememberProgress) emitUpdate(ctx context.Context, update requestctx.
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	message := progressMessage(rememberapp.ProgressStage(update.Stage))
-	operation := map[string]string{"partition": "partition provider", "assessment": "assessment provider", "duplicate_embedding": "duplicate embedding provider", "embedding": "embedding provider"}[update.Operation]
+	operation := map[string]string{
+		"partition": "partition provider", "assessment": "assessment provider",
+		"duplicate_embedding": "duplicate embedding provider", "embedding": "embedding provider",
+		"session_extraction": "session extraction provider", "recall_embedding": "query embedding provider",
+		"recall_reranking": "Recall ranking provider",
+	}[update.Operation]
 	if operation != "" {
 		switch update.Stage {
 		case "provider_wait":
@@ -158,6 +210,8 @@ func (p *sdkRememberProgress) emitUpdate(ctx context.Context, update requestctx.
 			message = "Calling " + operation
 		case "embedding_batch":
 			message = "Preparing embedding batch"
+		case "provider_regeneration":
+			message = "Regenerating " + operation + " response"
 		}
 	}
 	if message == "" {
@@ -166,7 +220,7 @@ func (p *sdkRememberProgress) emitUpdate(ctx context.Context, update requestctx.
 	if update.Attempt > 0 && update.Total >= update.Attempt && update.Total <= 100 {
 		message += fmt.Sprintf(" (%d/%d)", update.Attempt, update.Total)
 	}
-	if update.Batch > 0 && update.Batches >= update.Batch && update.Batches <= 256 {
+	if update.Batch > 0 && update.Batches >= update.Batch && update.Batches <= 500 {
 		message += fmt.Sprintf(" (%d/%d)", update.Batch, update.Batches)
 	}
 	if p.closed || (p.hasLast && p.last == update) || message == "" || ctx.Err() != nil {
@@ -175,6 +229,7 @@ func (p *sdkRememberProgress) emitUpdate(ctx context.Context, update requestctx.
 	p.last, p.hasLast = update, true
 	p.sequence++
 	attrs := []LogField{
+		{Key: "tool", Value: p.tool},
 		{Key: "request_id", Value: json.RawMessage(p.metadata.requestID)},
 		{Key: "progress_token", Value: p.token}, {Key: "stage", Value: update.Stage},
 		{Key: "operation", Value: update.Operation}, {Key: "attempt", Value: update.Attempt}, {Key: "batch", Value: update.Batch},

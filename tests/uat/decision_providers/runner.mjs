@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
+import { remember as rememberWithRetry, callTool } from "./rpc.mjs";
 
 const userURL = required("DENSE_MEM_USER_URL");
 const controlURL = required("DENSE_MEM_CONTROL_URL");
@@ -13,7 +14,6 @@ const prefix = `Decision (${randomUUID().slice(0, 8)})`;
 let childID = "";
 const childName = `${project.slice(0, 35)}-decision-jev-${randomUUID().slice(0, 8)}`;
 let completed = false;
-let sequence = 0;
 
 try {
   const initial = await control(controlURL);
@@ -151,7 +151,7 @@ async function remember(base, suffix, fault = "") {
   const name = `${prefix} ${suffix}`;
   const request = { target_space: "team_shared", idempotency_key: `decision-${randomUUID()}`, evidence: [{ content: `${name} uses PostgreSQL.`, source_type: "manual" }] };
   if (fault) request.evidence[0].content += ` [fixture-fault:${fault}]`;
-  return { request, result: await rpc(base, "remember", request) };
+  return { request, result: await rememberWithRetry(base, apiKey, request) };
 }
 async function verifyReranking(base, vendor) {
   for (const frontier of ["evidence"]) {
@@ -179,10 +179,7 @@ async function verifyReranking(base, vendor) {
   await fixture("normal");
 }
 async function rpc(base, name, arguments_) {
-  const response = await fetch(`${base}/mcp`, { method: "POST", headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: ++sequence, method: "tools/call", params: { name, arguments: arguments_ } }) });
-  assert(response.ok, `MCP HTTP ${response.status}`);
-  const value = await response.json(); assert(!value.error, "MCP error");
-  return value.result.structuredContent || JSON.parse(value.result.content.find((item) => item.type === "text").text);
+  return callTool(base, apiKey, name, arguments_);
 }
 async function control(base, items) {
   const response = await fetch(`${base}/control/api/config/decisions`, { method: items ? "PATCH" : "GET", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, ...(items ? { body: JSON.stringify({ items }) } : {}) });

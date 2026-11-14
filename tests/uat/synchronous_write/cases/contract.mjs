@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { rememberWithEmbeddingRetry } from "../remember_retry.mjs";
 import { TERMINAL_TOOLS, assertContractInvalidInput, assertTerminalRememberResult } from "../surface.mjs";
 
 export const name = "contract";
@@ -191,6 +192,10 @@ async function createControlCredential(teamID, name) {
 let directRPCID = 0;
 
 async function rawRPCWithKey(apiKey, method, params) {
+  if (method === "tools/call" && params.name === "remember") return rememberWithEmbeddingRetry(params.arguments, (args) => singleRPCWithKey(apiKey, method, { ...params, arguments: args }));
+  return singleRPCWithKey(apiKey, method, params);
+}
+async function singleRPCWithKey(apiKey, method, params) {
   const baseURL = validatedUserURL();
   const response = await fetch(`${baseURL}/mcp`, {
     method: "POST",

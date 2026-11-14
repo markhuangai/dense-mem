@@ -64,6 +64,13 @@
       "run": "^TestRunnerCampaignNativeMappingsFreezeAndRecall$",
       "phase": "precheck",
       "source": "cmd/internal/serverapp/runner_campaign_integration_test.go"
+    },
+    {
+      "id": "server/TestMCPToolProgressPostgres",
+      "package": "./cmd/internal/serverapp",
+      "run": "^TestMCPToolProgressPostgres$",
+      "phase": "precheck",
+      "source": "cmd/internal/serverapp/mcp_tool_progress_integration_test.go"
     }
   ]
 }
