@@ -371,6 +371,8 @@ func TestMCPToolProgressPostgres(t *testing.T) {
 		tx := admin.Begin()
 		require.NoError(t, tx.Error)
 		defer tx.Rollback()
+		var blockerPID int
+		require.NoError(t, tx.Raw(`SELECT pg_backend_pid()`).Scan(&blockerPID).Error)
 		require.NoError(t, tx.Exec(`SELECT fragment_id FROM evidence_fragments WHERE team_id=?::uuid AND fragment_id=?::uuid FOR UPDATE`, actors[a].TeamID, id).Error)
 		args := map[string]any{"evidence_ids": []string{id}, "reason": "progress lock", "idempotency_key": uuid.NewString()}
 		var once sync.Once
@@ -381,7 +383,7 @@ func TestMCPToolProgressPostgres(t *testing.T) {
 			if frame.Params.Message == "Applying Evidence retraction" {
 				require.Eventually(t, func() bool {
 					var waiting int64
-					err := admin.Raw(`SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%evidence_fragments%'`).Scan(&waiting).Error
+					err := admin.Raw(`SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND ? = ANY(pg_blocking_pids(pid))`, blockerPID).Scan(&waiting).Error
 					return err == nil && waiting > 0
 				}, 5*time.Second, 10*time.Millisecond)
 				release()

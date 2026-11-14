@@ -117,7 +117,7 @@ export async function run({ expect, runStep }) {
       const args = argumentsFor("actor-" + index, ["", "repair-exhausted", "embedding-model"][index], index !== 2);
       args.target_space = "private";
       args.idempotency_key = key;
-      const receipt = await progressCall({ apiKey: actor.apiKey, args, token: JSON.stringify("equal-token") });
+      const receipt = await progressCall({ apiKey: actor.apiKey, args, retryEmbedding: index !== 2, token: JSON.stringify("equal-token") });
       assert(receipt.progress.length > 5);
       assert.equal(receipt.progress.at(-1).params.message,index===0?"Preparing result":"Recording failure result");
       assert.equal(receipt.terminal.result.structuredContent.processing_state, index === 0 ? "completed" : "failed");
@@ -159,7 +159,7 @@ export async function run({ expect, runStep }) {
         return original.startsWith("failed|") || original.startsWith("completed|");
       }, "disconnected operation must reach its retained terminal outcome");
       if (version === "2026-07-28") assert.equal(original, "failed|request_cancelled");
-      const recovered = await progressCall({ apiKey: baseKey, args, token: "0", version });
+      const recovered = await progressCall({ apiKey: baseKey, args, token: "0", version, retryEmbedding: false });
       assert.equal(recovered.terminal.result.structuredContent.processing_state, "completed");
       receipts.push(recovered);
       recovered.disconnectedOutcome = original;
