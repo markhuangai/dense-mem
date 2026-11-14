@@ -188,12 +188,9 @@ func (m *mockSecurityService) CheckBan(ctx context.Context, ip string) (*domain.
 }
 
 func (m *mockSecurityService) RecordAuthFailure(ctx context.Context, ip, surface, reason string, request *domain.SecurityAuthFailureRequest) (*domain.SecurityIPBan, error) {
-	m.request = request
-	m.secrets = requestctx.AuthenticationSecretsFromContext(ctx)
+	m.request, m.secrets = request, requestctx.AuthenticationSecretsFromContext(ctx)
 	m.recordAuthFailureCalled = true
-	m.recordAuthFailureIP = ip
-	m.recordAuthFailureSurface = surface
-	m.recordAuthFailureReason = reason
+	m.recordAuthFailureIP, m.recordAuthFailureSurface, m.recordAuthFailureReason = ip, surface, reason
 	return nil, nil
 }
 
