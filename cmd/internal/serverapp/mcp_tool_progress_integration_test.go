@@ -186,7 +186,7 @@ func TestMCPToolProgressPostgres(t *testing.T) {
 		}
 		id := uuid.New()
 		require.NoError(t, accesspostgres.NewCredentialRepository(admin, rls, nil).CreateCredential(t.Context(), &domain.Credential{
-			ID: id, TeamID: team, Name: "tool progress", Role: "member", KeyHash: id.String(), KeyPrefix: strings.ReplaceAll(id.String(), "-", "")[:24], KeySuffix: "test", Scopes: []string{"read", "write"},
+			ID: id, TeamID: team, Name: "tool progress " + id.String(), Role: "member", KeyHash: id.String(), KeyPrefix: strings.ReplaceAll(id.String(), "-", "")[:24], KeySuffix: "test", Scopes: []string{"read", "write"},
 		}))
 		actor, ok := requestctx.ActorFromContext(rememberProcessorActorContext(t, t.Context(), admin, rls, team, id))
 		require.True(t, ok)
