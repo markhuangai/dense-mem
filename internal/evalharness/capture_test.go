@@ -78,9 +78,15 @@ func TestRuntimeFreeReplayRecomputesNumericScoresAndRejectsIncompleteLogs(t *tes
 	}
 	for _, condition := range []string{"off", "on"} {
 		observation.Condition = condition
+		for i := range observation.Hosts {
+			observation.Hosts[i].ElapsedMS = float64((i + 1) * 10)
+			if condition == "on" {
+				observation.Hosts[i].ElapsedMS *= 2
+			}
+		}
 		require.NoError(t, capture.Emit("observation", observation))
 	}
-	finished := completion{ImportedRows: len(corpus), CanonicalHash: "fixed-canonical", NativeMeasurements: []NativeObservation{{CanonicalHash: "fixed-canonical"}, {CanonicalHash: "fixed-canonical"}, {CanonicalHash: "fixed-canonical"}}}
+	finished := completion{ImportedRows: len(corpus), ElapsedMS: 100000, CanonicalHash: "fixed-canonical", NativeMeasurements: []NativeObservation{{CanonicalHash: "fixed-canonical"}, {CanonicalHash: "fixed-canonical"}, {CanonicalHash: "fixed-canonical"}}}
 	require.NoError(t, capture.Emit("finished", finished))
 	events, err := ReplayEvents([]io.Reader{strings.NewReader(log.String())}, manifest.RunID)
 	require.NoError(t, err)
@@ -92,6 +98,10 @@ func TestRuntimeFreeReplayRecomputesNumericScoresAndRejectsIncompleteLogs(t *tes
 	require.NoError(t, err)
 	require.True(t, report.Complete)
 	require.Equal(t, 4, report.CompletedAnswers)
+	for i, expected := range []float64{100, 50, 50, 25} {
+		require.NotNil(t, report.Matrix[i].ThroughputPerSecond)
+		require.Equal(t, expected, *report.Matrix[i].ThroughputPerSecond)
+	}
 	lines := strings.Split(strings.TrimSpace(log.String()), "\n")
 	for _, broken := range []string{strings.Join(lines[:len(lines)-1], "\n"), strings.Join(append(lines, lines[0]), "\n"), strings.Replace(log.String(), `"record":"`, `"record":"A`, 1), ""} {
 		_, err := ReplayEvents([]io.Reader{strings.NewReader(broken)}, manifest.RunID)

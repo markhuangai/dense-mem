@@ -27,6 +27,9 @@ owner, shared space, generation, search contract and canonical fingerprint.
 After the first condition, ontology must converge, pause and drain. The second
 condition uses unchanged Evidence and provenance. Import, ontology global/team,
 and answer concurrency are four; embedding concurrency is two.
+The isolated instance pins its MCP request limit to 200000 per minute, above
+the complete pack's bounded call count, so the shared production default cannot
+throttle the campaign.
 
 Each question gets one initial Recall per condition. Its exact packet is shared
 between independent `single` and `multi_turn` conversations. The latter may
@@ -69,6 +72,12 @@ articles, normalize whitespace, then maximize EM and token-multiset F1 over
 published answers and aliases. Failed and missing cases retain full public
 denominators. Usage distinguishes available, partial and unavailable attempts;
 actual monetary cost remains unavailable when billing cannot be verified.
+Per-axis `host_elapsed_ms` sums recorded host execution time, including failed
+hosts. `successful_answers_per_host_second` divides completed answers by that
+sum and is unavailable when no host timing was recorded. Mean host latency uses
+observed hosts. Each host starts after its shared initial Recall is available;
+that Recall's latency remains in the captured packet. Workers can overlap, and
+whole-campaign `elapsed_ms` separately includes import, ontology and log capture.
 
 Dataset jobs stop model work at 330 minutes and end at 360 minutes. The final
 30 minutes preserve logs, reports and owned cleanup. `fail-fast: false` and an

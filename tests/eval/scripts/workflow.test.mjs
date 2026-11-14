@@ -3,9 +3,25 @@ import fs from "node:fs";
 import test from "node:test";
 import { resolveSetting, configuration, requireRunner, registryMatrix, aggregate, ownedResource } from "../../../.github/scripts/evaluation-policy.mjs";
 import { readWorkflow, workflowJob, runStep } from "../../uat/workflow_helpers.mjs";
+import { serverEnvironment } from "./workflow.mjs";
 
 const registry = JSON.parse(fs.readFileSync(new URL("../datasets.json", import.meta.url)));
 const valid = { DENSE_MEM_EVAL_MODEL: "configured-model", DENSE_MEM_EVAL_CONTEXT_WINDOW_TOKENS: "300000", DENSE_MEM_EVAL_VERIFIER_URL: "https://provider.example/v1", DENSE_MEM_EVAL_EMBED_URL: `https://api.cloudflare.com/client/v4/accounts/${"a".repeat(32)}/ai/v1`, DENSE_MEM_EVAL_API_KEY: "generation-canary", DENSE_MEM_EVAL_EMBED_API_KEY: "embedding-canary", WORKFLOW_EMBEDDING_MODEL: "@cf/baai/bge-m3", WORKFLOW_EMBEDDING_DIMENSIONS: "1024" };
+
+test("isolated server admits the complete bounded campaign without changing concurrency or private routing", () => {
+  const environment = serverEnvironment(configuration(valid), { EVAL_CONTROL_TOKEN: "control-canary", EVAL_DATABASE_PASSWORD: "database-canary", ...valid });
+  const maximumCalls = Math.max(...registry.datasets.map((dataset) => dataset.corpus.rows * 2 + dataset.questions.rows * 2 * 8 + 1));
+  assert.ok(Number(environment.RATE_LIMIT_PER_MINUTE) >= maximumCalls);
+  assert.equal(environment.AI_VERIFIER_MAX_CONCURRENCY, "4");
+  assert.equal(environment.AI_API_EMBEDDING_MAX_CONCURRENCY, "2");
+  assert.equal(environment.AI_VERIFIER_API_KEY, valid.DENSE_MEM_EVAL_API_KEY);
+  assert.equal(environment.AI_API_KEY, valid.DENSE_MEM_EVAL_EMBED_API_KEY);
+  assert.equal(environment.CONTROL_PORTAL_TOKEN, "control-canary");
+  assert.equal(environment.POSTGRES_PASSWORD, "database-canary");
+  const fixture = serverEnvironment({ model: "fixture", context: 300000, verifier: "http://fixture-provider:8787/v1", embedding: "http://fixture-provider:8787/v1" }, {});
+  assert.equal(fixture.AI_VERIFIER_API_URL, "http://fixture-provider:8787/v1");
+  assert.equal(fixture.AI_API_URL, "http://fixture-provider:8787/v1");
+});
 
 test("only absence permits configuration fallback; invalid values never escape errors", () => {
   assert.equal(resolveSetting("model", ["workflow", "variable", "secret"], Boolean), "workflow");

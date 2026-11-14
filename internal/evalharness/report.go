@@ -53,7 +53,8 @@ type AxisSummary struct {
 	InputTokens         int       `json:"reported_input_tokens"`
 	OutputTokens        int       `json:"reported_output_tokens"`
 	TotalTokens         int       `json:"reported_total_tokens"`
-	ThroughputPerSecond float64   `json:"successful_answers_per_second"`
+	HostElapsedMS       float64   `json:"host_elapsed_ms"`
+	ThroughputPerSecond *float64  `json:"successful_answers_per_host_second"`
 	AllSupportRecovery  float64   `json:"all_support_recovery_rate"`
 }
 
@@ -325,7 +326,7 @@ func FinalizeReport(report *Report) error {
 				axis.Mean.EM += score.EM
 				axis.Mean.F1 += score.F1
 				axis.Mean.CitedGoldCoverage += score.CitedGoldCoverage
-				axis.Mean.ElapsedMS += score.ElapsedMS
+				axis.HostElapsedMS += score.ElapsedMS
 				axis.Citations += score.Citations
 				axis.ValidCitations += score.ValidCitations
 				if score.Citations == 0 {
@@ -353,9 +354,12 @@ func FinalizeReport(report *Report) error {
 			axis.Mean.EM /= denominator
 			axis.Mean.F1 /= denominator
 			axis.Mean.CitedGoldCoverage /= denominator
-			axis.Mean.ElapsedMS /= denominator
-			if report.ElapsedMS > 0 {
-				axis.ThroughputPerSecond = float64(axis.Completed) * 1000 / report.ElapsedMS
+			if axis.Observed > 0 {
+				axis.Mean.ElapsedMS = axis.HostElapsedMS / float64(axis.Observed)
+			}
+			if axis.HostElapsedMS > 0 {
+				throughput := float64(axis.Completed) * 1000 / axis.HostElapsedMS
+				axis.ThroughputPerSecond = &throughput
 			}
 			report.Matrix = append(report.Matrix, axis)
 		}

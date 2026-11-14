@@ -116,3 +116,38 @@ func TestFinalizeReportIsIndependentOfConcurrentScoreOrder(t *testing.T) {
 		}
 	}
 }
+
+func TestAxisPerformanceUsesCapturedHostTimeAndObservedLatency(t *testing.T) {
+	report := NewReport(Manifest{}, 3, 2)
+	report.ElapsedMS = 100000
+	report.Scores = []CaseScore{
+		{QuestionID: "one", Condition: "off", Policy: "single", Completed: true, ElapsedMS: 100},
+		{QuestionID: "two", Condition: "off", Policy: "single", Completed: false, ElapsedMS: 300},
+		{QuestionID: "one", Condition: "off", Policy: "multi_turn", Completed: true, ElapsedMS: 1000},
+		{QuestionID: "two", Condition: "off", Policy: "multi_turn", Completed: true, ElapsedMS: 1000},
+		{QuestionID: "one", Condition: "on", Policy: "single", Completed: true, ElapsedMS: 50},
+		{QuestionID: "two", Condition: "on", Policy: "single", Completed: true, ElapsedMS: 50},
+		{QuestionID: "one", Condition: "on", Policy: "multi_turn", Completed: true, ElapsedMS: 500},
+	}
+	for _, campaignTime := range []float64{100000, 1000000} {
+		report.ElapsedMS = campaignTime
+		require.NoError(t, FinalizeReport(&report))
+		for i, expected := range []struct{ elapsed, mean, throughput float64 }{
+			{400, 200, 2.5}, {2000, 1000, 1}, {100, 50, 20}, {500, 500, 2},
+		} {
+			axis := report.Matrix[i]
+			require.Equal(t, expected.elapsed, axis.HostElapsedMS)
+			require.Equal(t, expected.mean, axis.Mean.ElapsedMS)
+			require.NotNil(t, axis.ThroughputPerSecond)
+			require.Equal(t, expected.throughput, *axis.ThroughputPerSecond)
+		}
+		require.Equal(t, 1, report.Matrix[0].Failed)
+		require.Equal(t, 1, report.Matrix[3].Missing)
+	}
+	untimed := NewReport(Manifest{}, 3, 2)
+	untimed.Scores = []CaseScore{{QuestionID: "one", Condition: "off", Policy: "single", Completed: true}}
+	require.NoError(t, FinalizeReport(&untimed))
+	for _, axis := range untimed.Matrix {
+		require.Nil(t, axis.ThroughputPerSecond)
+	}
+}

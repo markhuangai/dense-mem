@@ -42,9 +42,8 @@ export async function replayRegistry(env = process.env) {
   throw new Error("Replay unavailable: pinned registry is unknown");
 }
 
-async function main() {
-  requireRunner();
-  const env = process.env;
+export async function main(env = process.env) {
+  requireRunner(env);
   if (!/^[1-9][0-9]*$/.test(env.EVAL_REPLAY_RUN_ID || "") || !/^[a-z0-9_]+$/.test(env.EVAL_DATASET || "")) throw new Error("Replay requires a retained run and registered dataset");
   const api = async (suffix) => {
     const response = await fetch(`https://api.github.com/repos/${env.GITHUB_REPOSITORY}${suffix}`, { headers: { Authorization: `Bearer ${env.GH_TOKEN}`, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" }, signal: AbortSignal.timeout(120_000) });
