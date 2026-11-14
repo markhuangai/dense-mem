@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"io"
 	"mime"
@@ -120,6 +121,14 @@ func CaptureAuthFailureRequest(c echo.Context, message string) *domain.SecurityA
 			for _, value := range values {
 				if parts := strings.SplitN(value, " ", 2); len(parts) == 2 {
 					secrets = append(secrets, parts[1])
+					if (strings.EqualFold(name, "Authorization") || strings.EqualFold(name, "Proxy-Authorization")) && strings.EqualFold(parts[0], "Basic") {
+						if decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(parts[1])); err == nil {
+							secrets = append(secrets, string(decoded))
+							if username, password, ok := strings.Cut(string(decoded), ":"); ok {
+								secrets = append(secrets, username, password)
+							}
+						}
+					}
 				}
 			}
 			redacted := make([]string, len(values))

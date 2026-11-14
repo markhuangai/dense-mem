@@ -46,11 +46,12 @@ func (r *securitySnapshotRepository) UpsertBan(_ context.Context, ban *domain.Se
 func TestDirectorySCIMOAuthFailureRequestDiagnostics(t *testing.T) {
 	const valid = "valid-client-credential"
 	const presented = "wrong+client/credential"
+	const clientID = "directory-client-identity"
 	hash, err := cryptoutil.HashKey(valid)
 	require.NoError(t, err)
-	for _, mode := range []string{"basic", "form", "query", "success"} {
+	for _, mode := range []string{"basic", "form", "query", "success", "basic_form", "basic_query", "duplicate_form", "form_query", "basic_success"} {
 		t.Run(mode, func(t *testing.T) {
-			directoryRepo := &directorySCIMRepositoryStub{connector: &domain.DirectoryConnector{ID: uuid.New(), Status: domain.DirectoryConnectorObserve, OAuthClientID: "client", OAuthClientSecretHash: hash}, oauthTokens: make(map[string]directorySCIMOAuthToken)}
+			directoryRepo := &directorySCIMRepositoryStub{connector: &domain.DirectoryConnector{ID: uuid.New(), Status: domain.DirectoryConnectorObserve, OAuthClientID: clientID, OAuthClientSecretHash: hash}, oauthTokens: make(map[string]directorySCIMOAuthToken)}
 			directory := accessservice.NewDirectoryIdentityService(directoryRepo, accessservice.DirectoryIdentityConfig{})
 			securityRepo := &securitySnapshotRepository{}
 			var output bytes.Buffer
@@ -59,26 +60,42 @@ func TestDirectorySCIMOAuthFailureRequestDiagnostics(t *testing.T) {
 			h := &directorySCIMHandler{directory: directory, security: security}
 			body := "grant_type=client_credentials&marker=original%2Bwire"
 			path := "/scim/oauth/token"
-			if mode == "form" {
-				body += "&client_id=client&client_secret=" + url.QueryEscape(presented)
+			if mode == "form" || mode == "duplicate_form" || mode == "form_query" || mode == "basic_success" {
+				body += "&client_id=" + url.QueryEscape(clientID) + "&client_secret=" + url.QueryEscape(presented)
+			}
+			if mode == "basic_form" || mode == "duplicate_form" {
+				body += "&client_id=" + url.QueryEscape(clientID) + "&client_secret=" + url.QueryEscape(valid)
 			}
 			if mode == "query" {
-				path += "?client_id=client&client_secret=" + url.QueryEscape(presented)
+				path += "?client_id=" + url.QueryEscape(clientID) + "&client_secret=" + url.QueryEscape(presented)
+			}
+			if mode == "basic_query" || mode == "form_query" {
+				path += "?client_id=" + url.QueryEscape(clientID) + "&client_secret=" + url.QueryEscape(valid)
 			}
 			if mode == "success" {
-				body += "&client_id=client&client_secret=" + url.QueryEscape(valid)
+				body += "&client_id=" + url.QueryEscape(clientID) + "&client_secret=" + url.QueryEscape(valid)
 			}
 			req := httptest.NewRequest(nethttp.MethodPost, path, strings.NewReader(body))
 			req.RemoteAddr = "192.0.2.128:1234"
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-			if mode == "basic" {
-				req.SetBasicAuth("client", presented)
+			if strings.HasPrefix(mode, "basic") {
+				secret := presented
+				if mode == "basic_success" {
+					secret = valid
+				}
+				req.SetBasicAuth(clientID, secret)
 			}
 			ctx := echo.New().NewContext(req, httptest.NewRecorder())
 			require.NoError(t, h.oauthToken(ctx))
-			if mode == "success" {
+			if mode == "success" || mode == "basic_success" {
 				require.Equal(t, nethttp.StatusOK, ctx.Response().Status)
 				require.Equal(t, "original+wire", ctx.Request().PostForm.Get("marker"))
+				if mode == "basic_success" {
+					require.Equal(t, presented, ctx.Request().PostForm.Get("client_secret"))
+					require.Contains(t, observability.AuthenticationSecretsFromContext(ctx.Request().Context()), presented)
+				} else {
+					require.Equal(t, valid, ctx.Request().PostForm.Get("client_secret"))
+				}
 				require.Nil(t, securityRepo.ban)
 				return
 			}
@@ -91,10 +108,12 @@ func TestDirectorySCIMOAuthFailureRequestDiagnostics(t *testing.T) {
 			require.Contains(t, snapshot.Body, "marker=original%2Bwire")
 			require.NotContains(t, string(encoded), presented)
 			require.NotContains(t, string(encoded), url.QueryEscape(presented))
+			require.NotContains(t, string(encoded), valid)
 			require.NotContains(t, output.String(), presented)
 			require.NotContains(t, output.String(), url.QueryEscape(presented))
+			require.NotContains(t, output.String(), valid)
 			require.Contains(t, output.String(), "security.auth_failure.request")
-			if mode == "basic" {
+			if strings.HasPrefix(mode, "basic") {
 				require.Equal(t, "basic", snapshot.AuthScheme)
 			} else {
 				require.Equal(t, "client_secret", snapshot.AuthScheme)

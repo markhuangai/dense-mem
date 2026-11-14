@@ -188,6 +188,9 @@ func directoryOAuthPresentedSecrets(request *nethttp.Request, clientSecret strin
 	}
 	appendSecret(clientSecret)
 	if request != nil {
+		for _, value := range request.Form["client_secret"] {
+			appendSecret(value)
+		}
 		authorization := strings.TrimSpace(request.Header.Get(echo.HeaderAuthorization))
 		if len(authorization) > len("Basic ") && strings.EqualFold(authorization[:len("Basic ")], "Basic ") {
 			appendSecret(authorization[len("Basic "):])

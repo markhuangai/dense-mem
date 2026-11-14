@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"bufio"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,13 +15,14 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/stretchr/testify/require"
 )
 
 func TestAuthFailureRequestCapture(t *testing.T) {
 	for _, test := range []struct{ name, body, contentType, encoding, reason string }{
-		{name: "original JSON", body: "{\n  \"password\": \"ordinary content\"\n}", contentType: "application/json"},
+		{name: "original JSON", body: "{\n  \"password\": \"ordinary content\", \"basic_copy\": \"secondary-basic-canary\", \"proxy_copy\": \"proxy-basic-canary\"\n}", contentType: "application/json"},
 		{name: "malformed JSON", body: "{ bad JSON", contentType: "application/json"},
 		{name: "empty"},
 		{name: "exact limit", body: strings.Repeat("a", domain.SecurityRequestBodyLimit), contentType: "text/plain"},
@@ -33,7 +35,16 @@ func TestAuthFailureRequestCapture(t *testing.T) {
 			e := echo.New()
 			e.POST("/mcp", func(c echo.Context) error {
 				snapshot := CaptureAuthFailureRequest(c, "invalid api key")
-				require.Contains(t, requestctx.AuthenticationSecretsFromContext(c.Request().Context()), "presented-test-key")
+				secrets := requestctx.AuthenticationSecretsFromContext(c.Request().Context())
+				for _, secret := range []string{"presented-test-key", "second-presented-key", "auxiliary-identity", "secondary-basic-canary", "proxy-identity", "proxy-basic-canary"} {
+					require.Contains(t, secrets, secret)
+				}
+				encoded, err := json.Marshal(snapshot)
+				require.NoError(t, err)
+				protected, state := observability.NewCredentialProtector().ProtectDiagnosticBytes(encoded, 1<<20, secrets...)
+				require.Equal(t, observability.CredentialProtectionAvailable, state)
+				require.NotContains(t, string(protected), "secondary-basic-canary")
+				require.NotContains(t, string(protected), "proxy-basic-canary")
 				return c.JSON(http.StatusUnauthorized, snapshot)
 			})
 			server := httptest.NewServer(e)
@@ -42,6 +53,8 @@ func TestAuthFailureRequestCapture(t *testing.T) {
 			require.NoError(t, err)
 			req.Header.Set("Authorization", "Bearer presented-test-key")
 			req.Header.Add("Authorization", "Bearer second-presented-key")
+			req.Header.Add("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("auxiliary-identity:secondary-basic-canary")))
+			req.Header.Set("Proxy-Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("proxy-identity:proxy-basic-canary")))
 			req.Header.Set("Content-Type", test.contentType)
 			req.Header.Set("Content-Encoding", test.encoding)
 			req.Header.Add("X-Repeated", "first")
@@ -54,7 +67,8 @@ func TestAuthFailureRequestCapture(t *testing.T) {
 			require.NoError(t, json.NewDecoder(response.Body).Decode(&snapshot))
 			require.Equal(t, "/mcp?mode=diagnose", snapshot.URL)
 			require.Equal(t, []string{"first", "second"}, snapshot.Headers["X-Repeated"])
-			require.Equal(t, []string{"[REDACTED]", "[REDACTED]"}, snapshot.Headers["Authorization"])
+			require.Equal(t, []string{"[REDACTED]", "[REDACTED]", "[REDACTED]"}, snapshot.Headers["Authorization"])
+			require.Equal(t, []string{"[REDACTED]"}, snapshot.Headers["Proxy-Authorization"])
 			require.NotEmpty(t, snapshot.Headers["Host"])
 			require.Len(t, snapshot.CredentialFingerprint, 64)
 			if test.reason == "" {
