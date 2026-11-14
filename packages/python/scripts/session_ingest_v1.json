@@ -32,7 +32,7 @@
   ],
   "artifacts": "ignored local paths only",
   "generator": "packages/python/scripts/generate_session_ingest_v1.py",
-  "generator_sha256": "c130187c2413710a02a243ccb2a1962c20b1e5fe6aacd31a115073266b4c1833",
+  "generator_sha256": "2722c9bd5dd2a42bc6f425a9620c26431e5a8a989086898ac3295919df9a8057",
   "remember_control_sources": {
     "tests/uat/synchronous_write/cases/remember.mjs": "d23b14f78bf0711b29e35617ebb1116e5025ff139ac4c96934d13fbfb217a62e",
     "internal/tools/registry/contract_relationship_submission_test.go": "afc4b6ca669091348916181800c39bbe453fcf34cbc39bafa46adff836af17de"

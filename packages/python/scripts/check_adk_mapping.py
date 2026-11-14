@@ -16,13 +16,11 @@ def main():
     raw = source.read_bytes()
     cohort = json.loads(raw)
     root = Path(__file__).resolve().parents[3]
-    lock = json.loads(
-        (root / "packages/python/scripts/session_ingest_v1.json").read_text()
-    )
+    lock = json.loads((root / "packages/python/scripts/session_ingest_v1.json").read_text())
     generator = root / "packages/python/scripts/generate_session_ingest_v1.py"
     # The accepted #574 change added Remember targets without changing the 32 quality cases.
     assert hashlib.sha256(generator.read_bytes()).hexdigest() == (
-        "c130187c2413710a02a243ccb2a1962c20b1e5fe6aacd31a115073266b4c1833"
+        "2722c9bd5dd2a42bc6f425a9620c26431e5a8a989086898ac3295919df9a8057"
     )
     assert len(cohort["quality_cases"]) == lock["quality_cases"] == 32
     calls = 0
@@ -33,9 +31,7 @@ def main():
                     id=e["event_id"],
                     author="user",
                     timestamp=1720000000,
-                    content=types.Content(
-                        role="user", parts=[types.Part(text=e["text"])]
-                    ),
+                    content=types.Content(role="user", parts=[types.Part(text=e["text"])]),
                 )
                 for e in batch
             ]
@@ -47,27 +43,21 @@ def main():
                     ),
                     Event(
                         author="user",
-                        content=types.Content(
-                            parts=[types.Part(text="hidden", thought=True)]
-                        ),
+                        content=types.Content(parts=[types.Part(text="hidden", thought=True)]),
                     ),
                     Event(
                         author="user",
                         content=types.Content(
                             parts=[
                                 types.Part(
-                                    inline_data=types.Blob(
-                                        data=b"binary", mime_type="image/png"
-                                    )
+                                    inline_data=types.Blob(data=b"binary", mime_type="image/png")
                                 )
                             ]
                         ),
                     ),
                 ]
             )
-            requests = _session_requests(
-                "session_ingest_v1", "external-user", case["id"], events
-            )
+            requests = _session_requests("session_ingest_v1", "external-user", case["id"], events)
             assert [
                 {"event_id": e["event_id"], "text": e["text"]}
                 for request in requests

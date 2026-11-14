@@ -252,7 +252,7 @@ func corpusRememberInput(item CorpusItem) map[string]any {
 		metadata[k] = v
 	}
 	metadata["source_doc_id"], metadata["source_dataset"], metadata["eval_seed"] = item.SourceDocID, item.SourceDataset, true
-	evidence := map[string]any{"content": item.Content, "source": firstNonEmpty(item.SourceDataset, "public-rag"), "source_key": item.SourceDocID, "source_revision": "1", "source_type": "document", "metadata": metadata}
+	evidence := map[string]any{"content": item.Content, "source": firstNonEmpty(item.SourceDataset, "public-rag"), "source_type": "document", "metadata": metadata}
 	if len(item.Labels) > 0 {
 		evidence["labels"] = item.Labels
 	}
