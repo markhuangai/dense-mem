@@ -8,6 +8,8 @@ const REDACTION = "[REDACTED]";
 
 function publicConfigurationValue(name, value) {
   switch (name) {
+    case "POSTGRES_SSLMODE":
+      return value === "disable";
     case "AI_VERIFIER_MODEL":
     case "AI_REMEMBER_MODEL":
     case "AI_CONFLICT_REVIEW_MODEL":

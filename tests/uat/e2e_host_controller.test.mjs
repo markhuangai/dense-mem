@@ -1492,6 +1492,30 @@ test("diagnostics preserve protected assessment hashes and effective model ident
   }
 });
 
+test("diagnostics preserve Remember capture hashes for the CI SSL mode while protecting credential collisions", async () => {
+  const fixture = await mkdtemp(join(tmpdir(), "dense-mem-remember-capture-diagnostics-"));
+  try {
+    const envFile = join(fixture, ".env");
+    const body = JSON.stringify({ scenario: "synchronous_write_telemetry_disabled", progress: [], terminal: { result: {} } });
+    const record = { payload_chunk: { body, sha256: createHash("sha256").update(body).digest("hex") } };
+    const redact = async (environment) => {
+      await writeFile(envFile, environment + "\n");
+      return (await run("bash", ["-c", 'printf \'%s\\n\' "$1" | node "$2"', "remember-capture", JSON.stringify(record), join(scripts, "e2e-redact-diagnostics.mjs")], {
+        env: { DENSE_MEM_CI_REDACT_ENV_FILE: envFile, DENSE_MEM_CI_REDACT_EXTRA_VALUES: "" },
+      })).stdout;
+    };
+    const retained = JSON.parse(await redact("POSTGRES_SSLMODE=disable")).payload_chunk;
+    assert.equal(retained.body, body);
+    assert.equal(createHash("sha256").update(retained.body).digest("hex"), retained.sha256);
+    const collision = await redact("POSTGRES_SSLMODE=disable\nAI_API_KEY=disable");
+    assert.ok(collision.includes("[REDACTED]"));
+    assert.ok(!collision.includes("disabled"));
+    assert.ok((await redact("POSTGRES_SSLMODE=disabled")).includes("[REDACTED]"));
+  } finally {
+    await rm(fixture, { recursive: true, force: true });
+  }
+});
+
 test("diagnostics complete large output with a delayed reader", { timeout: 15000 }, async () => {
   const values = ["alpha", "alpha-long", "pha-longer", "token:value", "secret-secret"];
   const input = `${"synthetic SQL output ".repeat(100000)}\nsecret-secret Ω\n`;
