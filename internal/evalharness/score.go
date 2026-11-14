@@ -98,13 +98,14 @@ func scoreTrace(caseID string, k int, qrel QRel, trace RecallTrace, scoring scor
 		score.ContextBadRefsAtK = badRefsAtK(qrel.BadRefs, contextRefs, mapping, k)
 	}
 	if len(qrel.RequiredEvidenceRefs) > 0 || len(qrel.BadEvidenceRefs) > 0 {
-		evidenceRefs := scoring.refsForQRel(trace.ContextEvidenceRefs, qrel.RequiredEvidenceRefs, qrel.BadEvidenceRefs)
+		evidenceRefs := trace.ContextEvidenceRefs
 		evidenceAvailable := trace.ContextEvidenceRefs != nil
 		if trace.ContextEvidenceRefs == nil && qrelTargetsOnlyType(qrel.RequiredEvidenceRefs, qrel.BadEvidenceRefs, mapping, "evidence") {
 			evidenceRefs = contextEvidenceRefs(trace.ContextRefs)
 			evidenceAvailable = evidenceRefs != nil
 		}
 		if evidenceAvailable {
+			evidenceRefs = scoring.refsForQRel(evidenceRefs, qrel.RequiredEvidenceRefs, qrel.BadEvidenceRefs)
 			evidenceMetrics := recallquality.ScoreAtK(resultRefs(evidenceRefs), requiredEvidence, badEvidence, k)
 			score.EvidenceScored = true
 			score.EvidenceRelevantAtK = evidenceMetrics.RelevantAtK

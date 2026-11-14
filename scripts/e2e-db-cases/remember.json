@@ -3,6 +3,13 @@
   "capability": "remember",
   "cases": [
     {
+      "id": "postgres/TestRememberPartitionMigrationValidationAllowsConcurrentAccess",
+      "package": "./internal/storage/postgres",
+      "run": "^TestRememberPartitionMigrationValidationAllowsConcurrentAccess$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/remember_partition_migration_integration_test.go"
+    },
+    {
       "id": "remember/TestRememberPartitionPostgres",
       "package": "./cmd/internal/serverapp",
       "run": "^TestRememberPartitionPostgres$",

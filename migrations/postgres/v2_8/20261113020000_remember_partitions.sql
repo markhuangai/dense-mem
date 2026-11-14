@@ -1,5 +1,6 @@
 -- Lock/rewrite impact: new empty provenance tables; the lifecycle ALTER takes a
--- bounded metadata lock and validates a looser constraint without rewriting rows.
+-- bounded metadata lock without scanning historical rows. The next migration
+-- validates the looser CHECK after this transaction releases its exclusive lock.
 -- No historical Evidence or receipt is backfilled. Old writers must stop before
 -- partitioned writes because they do not know the expanded erasure inventory.
 -- Rollback is permitted only before new provenance exists.
@@ -55,7 +56,7 @@ ALTER TABLE evidence_lifecycle_events DROP CONSTRAINT evidence_lifecycle_events_
 ALTER TABLE evidence_lifecycle_events ADD CONSTRAINT evidence_lifecycle_events_replacement_check CHECK(
  (action='supersede' AND ((replacement_fragment_id IS NOT NULL AND replacement_source_item_id IS NULL) OR (replacement_fragment_id IS NULL AND replacement_source_item_id IS NOT NULL)))
  OR (action='retract' AND replacement_fragment_id IS NULL AND replacement_source_item_id IS NULL)
-);
+) NOT VALID;
 
 CREATE FUNCTION dense_mem_validate_remember_reconstruction() RETURNS TRIGGER LANGUAGE plpgsql AS $$
 DECLARE original remember_submitted_items; part RECORD; expected_start INTEGER:=0; expected_index INTEGER:=0;

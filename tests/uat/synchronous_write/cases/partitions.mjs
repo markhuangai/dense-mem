@@ -51,6 +51,24 @@ export async function run({ rpc, rawRPC, runStep }) {
     assert.deepEqual(replay.terminal.result.structuredContent.evidence, result.evidence);
     assert.equal(replay.progress.at(-1).params.message, "Returning saved result");
   });
+  await runStep("unicode-structural-boundaries", async () => {
+    for (const separator of ["\u2028", "\u2029"]) {
+      const first = "Atlas uses PostgreSQL" + separator;
+      const text = first + "Boreal ships Tuesday [fixture-fault:partition-split]";
+      const call = await progressCall({ apiKey, args: argsFor(text), token: "0" });
+      const result = call.terminal.result.structuredContent;
+      assert.equal(result.processing_state, "completed", JSON.stringify(result));
+      assert.equal(result.evidence.length, 2);
+      assert.equal(result.evidence[0].span_end, [...first].length);
+      const slices = [];
+      for (const item of result.evidence) {
+        const traced = (await rpc("tools/call", { name: "trace_memory", arguments: { evidence_id: item.evidence_id, max_fragment_content_runes: 16384 } })).structuredContent;
+        slices.push(traced.evidence.content);
+      }
+      assert.equal(slices[0], first);
+      assert.equal(slices.join(""), text);
+    }
+  });
   await runStep("code-point-admission-bound", async () => {
     const response = await rawRPC("tools/call", { name: "remember", arguments: argsFor(content + "界") });
     assert.equal(response.error?.code, -32602);
@@ -127,6 +145,9 @@ export async function run({ rpc, rawRPC, runStep }) {
       const key = `${row.exchange_id}:${row.direction}`;
       const group = exchanges.get(key) || [];
       group.push(row); exchanges.set(key, group);
+    }
+    for (const correlation of correlations) {
+      assert([...exchanges.values()].some((group) => group[0].correlation_id === correlation), "provider exchange capture is missing for an expected correlation");
     }
     for (const group of exchanges.values()) {
       reconstructDiagnosticBody(group);

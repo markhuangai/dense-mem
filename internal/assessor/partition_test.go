@@ -49,6 +49,48 @@ func TestRememberPartitionReconstructsUnicodeAndWhitespace(t *testing.T) {
 	}
 }
 
+func TestRememberPartitionUnicodeStructuralBoundaries(t *testing.T) {
+	for name, separator := range map[string]string{"line": "\u2028", "paragraph": "\u2029"} {
+		t.Run(name, func(t *testing.T) {
+			first := "Atlas uses PostgreSQL" + separator
+			content := first + "Boreal ships Tuesday"
+			req := PreparePartitionRequest("partition:unicode-structure", []string{content})
+			require.Contains(t, NaturalBoundaryOffsets(content, false), len([]rune(first)))
+			body, err := json.Marshal(partitionResponseForTest(req, true))
+			require.NoError(t, err)
+			spans, err := ValidatePartitionResponse(req, body)
+			require.NoError(t, err)
+			require.Len(t, spans[0], 2)
+			runes := []rune(content)
+			require.Equal(t, first, string(runes[spans[0][0][0]:spans[0][0][1]]))
+			require.Equal(t, content, string(runes[spans[0][0][0]:spans[0][0][1]])+string(runes[spans[0][1][0]:spans[0][1][1]]))
+		})
+	}
+}
+
+func TestRememberPartitionWhitespaceSuffix(t *testing.T) {
+	content := "x" + strings.Repeat("\n", knowledge.MaxRememberItemRunes-2) + "x"
+	contents := make([]string, 20)
+	for i := range contents {
+		contents[i] = content
+	}
+	req := PreparePartitionRequest("partition:whitespace", contents)
+	body, err := json.Marshal(partitionResponseForTest(req, true))
+	require.NoError(t, err)
+	spans, err := ValidatePartitionResponse(req, body)
+	require.NoError(t, err)
+	for _, item := range spans {
+		require.Equal(t, [][2]int{{0, knowledge.MaxRememberItemRunes - 1}, {knowledge.MaxRememberItemRunes - 1, knowledge.MaxRememberItemRunes}}, item)
+	}
+}
+
+func BenchmarkRememberPartitionWhitespaceSuffix(b *testing.B) {
+	content := "x" + strings.Repeat("\n", knowledge.MaxRememberItemRunes-2) + "x"
+	for range b.N {
+		NaturalBoundaryOffsets(content, false)
+	}
+}
+
 func TestRememberPartitionRejectsCompleteResponseViolations(t *testing.T) {
 	req := PreparePartitionRequest("partition:closed", []string{"First. Second.", "Other."})
 	for name, change := range map[string]func(*PartitionResponse){

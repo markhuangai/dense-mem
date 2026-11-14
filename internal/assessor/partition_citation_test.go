@@ -8,6 +8,35 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestRememberPartitionUnspacedCitationAnchors(t *testing.T) {
+	for _, length := range []int{5000, 16384} {
+		content := strings.Repeat("界", length)
+		submitted := PrepareSemanticAssessmentEvidence(SemanticReviewEvidence{EvidenceID: "submitted", Content: content})
+		known := PrepareSemanticAssessmentEvidence(SemanticReviewEvidence{EvidenceID: "known", Content: "contradiction"})
+		start := -1
+		for _, offset := range submitted.BoundaryRefs {
+			if offset > start && offset < length && length-offset <= SemanticAssessmentMaxEvidenceConflictQuoteRunes {
+				start = offset
+			}
+		}
+		require.GreaterOrEqual(t, start, 0, "long unspaced text needs a bounded tail citation")
+		startRef, ok := SemanticAssessmentBoundaryRef(submitted, start)
+		require.True(t, ok)
+		endRef, ok := SemanticAssessmentBoundaryRef(submitted, length)
+		require.True(t, ok)
+		knownStart, _ := SemanticAssessmentBoundaryRef(known, 0)
+		knownEnd, _ := SemanticAssessmentBoundaryRef(known, len([]rune(known.Content)))
+		response := SemanticAssessmentResponse{EvidenceConflictResults: []SemanticAssessmentEvidenceConflictResult{{Positions: []SemanticAssessmentEvidenceConflictPosition{
+			{EvidenceID: "submitted", StartRef: startRef, EndRef: endRef}, {EvidenceID: "known", StartRef: knownStart, EndRef: knownEnd},
+		}}}}
+		require.Empty(t, resolveSemanticAssessmentEvidenceConflictResults(SemanticAssessmentRequest{Evidence: []SemanticReviewEvidence{submitted}, KnownEvidence: []SemanticReviewEvidence{known}}, &response))
+		quote, err := SemanticEvidenceSpan(content, response.EvidenceConflictResults[0].Positions[0].Start, response.EvidenceConflictResults[0].Positions[0].End)
+		require.NoError(t, err)
+		require.Equal(t, string([]rune(content)[start:]), quote)
+		require.Len(t, PreparePartitionRequest("unspaced", []string{content}).Items[0].Refs, 2, "citation anchors cannot become semantic cut points")
+	}
+}
+
 func TestRememberPartitionTailCitationResolvesExactUnicodeSourceOffsets(t *testing.T) {
 	const first = "Independent prelude.\n\n"
 	const quote = "tail quote."

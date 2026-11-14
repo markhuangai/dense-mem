@@ -50,12 +50,14 @@ func NaturalBoundaryOffsets(content string, words bool) []int {
 	boundaries := map[int]bool{0: true, len(runes): true}
 	// Space citation anchors across long passages so annotations leave complete regeneration headroom.
 	wordInterval, lastWord := max(1, len(runes)/1024), 0
+	suffixEnd := 0
 	for i, r := range runes {
-		if r == '\n' || r == '\r' || unicode.IsPunct(r) {
-			end := i + 1
+		if r == '\n' || r == '\r' || r == '\u2028' || r == '\u2029' || unicode.IsPunct(r) {
+			end := max(i+1, suffixEnd)
 			for end < len(runes) && (unicode.IsSpace(runes[end]) || unicode.IsMark(runes[end])) {
 				end++
 			}
+			suffixEnd = end
 			boundaries[end] = true
 			if words {
 				boundaries[i] = true
@@ -69,9 +71,17 @@ func NaturalBoundaryOffsets(content string, words bool) []int {
 		}
 	}
 	result := make([]int, 0, len(boundaries))
+	previous := 0
 	for i := 0; i <= len(runes); i++ {
 		if boundaries[i] {
+			// Citation-only anchors keep long unbroken passages citable without introducing Evidence cut points.
+			if words && i-previous > SemanticAssessmentMaxEvidenceConflictQuoteRunes {
+				for offset := previous + SemanticAssessmentMaxEvidenceConflictQuoteRunes/2; offset < i; offset += SemanticAssessmentMaxEvidenceConflictQuoteRunes / 2 {
+					result = append(result, offset)
+				}
+			}
 			result = append(result, i)
+			previous = i
 		}
 	}
 	return result

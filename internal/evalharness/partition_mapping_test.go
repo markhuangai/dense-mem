@@ -6,6 +6,17 @@ import (
 	"testing"
 )
 
+func TestRememberPartitionFallbackContextEvidenceScoring(t *testing.T) {
+	mapping := newKnowledgeMapping()
+	addSourceMapping(&mapping, Ref{Type: "fragment", ID: "first", SourceDocID: "source"}, true)
+	addSourceMapping(&mapping, Ref{Type: "fragment", ID: "second", SourceDocID: "source"}, false)
+	mapping.Partitions = map[string][]ImportedPartition{"source": {{EvidenceID: "first"}, {EvidenceID: "second"}}}
+	score := ScoreTrace("fallback", 2, QRel{RequiredEvidenceRefs: []Ref{{Type: "evidence", SourceDocID: "source", Grade: 3}}}, RecallTrace{ContextRefs: []Ref{{Type: "evidence", ID: "second"}}}, mapping)
+	require.True(t, score.EvidenceScored)
+	require.Equal(t, 1.0, score.EvidenceRecallAtK)
+	require.Empty(t, score.EvidenceMissingRequired)
+}
+
 func TestRememberPartitionImportRetainsEverySliceAndSourceGroup(t *testing.T) {
 	item := CorpusItem{SourceDocID: "source", Content: "First.\n第二。"}
 	first := "First.\n"
