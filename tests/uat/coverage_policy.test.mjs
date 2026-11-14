@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { devNull, tmpdir } from "node:os";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { actionSteps, readWorkflow, runStep, workflowJob } from "./workflow_helpers.mjs";
 
 const root = new URL("../../", import.meta.url);
 const repositoryRoot = fileURLToPath(root);
@@ -27,7 +28,7 @@ test("coverage reports use complete Go discovery and deduplicated profiles", asy
   const ci = await read("scripts/ci-check.sh");
   const gate = await read("scripts/coverage-gate.mjs");
   const textlintIgnore = await read(".textlintignore");
-  const workflow = await read(".github/workflows/ci-shared.yml");
+  const workflow = await readWorkflow("ci-shared.yml");
 
   assert.match(script, /--transitional/);
   assert.match(script, /--complete/);
@@ -40,22 +41,29 @@ test("coverage reports use complete Go discovery and deduplicated profiles", asy
   assert.match(textlintIgnore, /coverage\.out/);
   assert.match(script, /grep -v '\/cmd\/server\$'/);
   assert.match(script, /--tags evaluation/);
-  assert.match(workflow, /scripts\/coverage-report\.sh --complete/);
-  const coverageJob = workflow.slice(workflow.indexOf("\n  coverage:"), workflow.indexOf("\n  coverage-merge:"));
-  assert.match(coverageJob, /max-parallel: 2/);
-  assert.match(coverageJob, /part: \[core, postgres\]/);
-  assert.match(workflow, /path: coverage\/core/);
+  const coverageJob = workflowJob(workflow, "coverage");
+  runStep(coverageJob, "scripts/coverage-report.sh --complete");
+  assert.equal(coverageJob.strategy["max-parallel"], 2);
+  assert.deepEqual(new Set(coverageJob.strategy.matrix.part), new Set(["core", "postgres"]));
+  const downloads = actionSteps(workflowJob(workflow, "coverage-merge"), "actions/download-artifact");
+  assert.ok(downloads.some((step) => step.with.path === "coverage/core"));
   assert.match(script, /total \* 10/);
   assert.match(ci, /coverage-gate\.mjs/);
   assert.match(gate, /covered \* 10/);
 });
+
+function assertProxyCoverage(packageJSON) {
+  assert.equal(typeof packageJSON.devDependencies?.c8, "string");
+  assert.ok(packageJSON.devDependencies.c8.trim(), "c8 must be declared");
+  assert.match(packageJSON.scripts["test:coverage"], /c8/);
+}
 
 test("browser and proxy coverage keep only bootstrap wrappers outside the inventory", async () => {
   const webPackage = JSON.parse(await read("web/package.json"));
   const webConfig = await read("web/vite.config.ts");
   const proxyPackage = JSON.parse(await read("packages/mcp-proxy/package.json"));
   const proxyIntegration = await read("packages/mcp-proxy/tests/proxy.integration.test.js");
-  const workflow = await read(".github/workflows/ci-shared.yml");
+  const workflow = await readWorkflow("ci-shared.yml");
 
   assert.equal(webPackage.scripts["test:coverage"], "vitest run --coverage");
   assert.match(webConfig, /provider: "v8"/);
@@ -63,11 +71,17 @@ test("browser and proxy coverage keep only bootstrap wrappers outside the invent
   assert.match(webConfig, /src\/App\.test-helpers\.ts/);
   assert.match(webConfig, /src\/main\.tsx/);
   assert.match(webConfig, /src\/user\/main\.tsx/);
-  assert.match(proxyPackage.devDependencies.c8, /^\d+\.\d+\.\d+$/);
-  assert.match(proxyPackage.scripts["test:coverage"], /c8/);
+  assertProxyCoverage(proxyPackage);
+  for (const version of ["13.1.0", "^13.1.0", "~13.1.0", "14.0.0-beta.1"]) {
+    assertProxyCoverage({ ...proxyPackage, devDependencies: { ...proxyPackage.devDependencies, c8: version } });
+  }
+  for (const c8 of [undefined, "", " "]) {
+    assert.throws(() => assertProxyCoverage({ ...proxyPackage, devDependencies: { c8 } }));
+  }
   assert.match(proxyIntegration, /NODE_V8_COVERAGE/);
-  assert.match(workflow, /npm run test:coverage --prefix web/);
-  assert.match(workflow, /npm run test:coverage --prefix packages\/mcp-proxy/);
+  const quality = workflowJob(workflow, "quality");
+  runStep(quality, "npm run test:coverage --prefix web");
+  runStep(quality, "npm run test:coverage --prefix packages/mcp-proxy");
 });
 
 test("Go coverage discovery keeps external tests, testless packages, and working-tree sources", (t) => {

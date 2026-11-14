@@ -197,7 +197,7 @@ the entire bounded recall result in response.custom_metadata["densemem"], includ
 conflicts and degradations on an empty result. Missing author/timestamps remain
 unset. The adapter does not add trace calls or post-filter authorized shared memory.
 
-The extra is pinned to google-adk==2.14.1. Core and extra installed-wheel checks,
+The extra is pinned to google-adk==2.14.1 and requires opentelemetry-api>=1.45.2. Core and extra installed-wheel checks,
 Python 3.11–3.14 and MCP SDK minimum/latest matrices, and google_adk_memory E2E
 are release gates. Package publication and live wiki publication remain separate.
 

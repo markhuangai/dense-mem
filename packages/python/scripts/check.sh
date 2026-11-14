@@ -114,11 +114,15 @@ if [[ "$SDK" == minimum ]]; then "$EXTRA_PYTHON" -m pip install 'mcp==1.30.0'; f
 "$EXTRA_PYTHON" -m pip check
 "$EXTRA_PYTHON" - "$OUTPUT" "$extra" <<'PY'
 import importlib.metadata as md, json, pathlib, sys
+from packaging.requirements import Requirement
 extra = sys.argv[2]
 if extra == 'adk':
     from densemem.adk import DenseMemMemoryService
     from google.adk.memory.base_memory_service import BaseMemoryService
-    assert md.version('google-adk') == '2.14.1'
+    for name in ('google-adk', 'opentelemetry-api'):
+        requirement = next(Requirement(value) for value in md.requires('densemem')
+                           if Requirement(value).name == name)
+        assert requirement.specifier.contains(md.version(name)), (name, md.version(name))
     assert issubclass(DenseMemMemoryService, BaseMemoryService)
     framework = {'adk': md.version('google-adk')}
 else:

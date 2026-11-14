@@ -26,6 +26,7 @@ from google.adk.events import Event
 from google.adk.events.event_actions import EventActions
 from google.adk.sessions import InMemorySessionService, Session
 from google.genai import types
+from packaging.requirements import Requirement
 
 from densemem import (
     DenseMemAuthenticationError,
@@ -73,7 +74,12 @@ def count_events(session_id):
 
 
 async def main():
-    assert importlib.metadata.version("google-adk") == "2.14.1"
+    for name in ("google-adk", "opentelemetry-api"):
+        requirement = next(
+            Requirement(value) for value in importlib.metadata.requires("densemem")
+            if Requirement(value).name == name
+        )
+        assert requirement.specifier.contains(importlib.metadata.version(name))
     keys = {"alice": credential(TEAM), "bob": credential(TEAM)}
     other_team = control("/teams", {"name": "ADK C " + str(uuid4())})["id"]
     keys["carol"] = credential(other_team)
@@ -187,7 +193,7 @@ async def main():
         "status": "ok",
         "scenario": "google_adk_memory",
         "tested_commit": os.environ["DENSE_MEM_E2E_COMMIT_SHA"],
-        "adk": "2.14.1",
+        "adk": importlib.metadata.version("google-adk"),
         "installed_wheel": True,
         "user_text_only": True,
         "private_isolation_actors": 3,

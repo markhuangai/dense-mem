@@ -13,21 +13,5 @@
       "reference": "https://github.com/markhuangai/dense-mem/pull/717"
     }
   ],
-  "python": [
-    {
-      "advisories": [
-        "CVE-2026-114603",
-        "GHSA-xcq7-p3pf-p88h"
-      ],
-      "package": "opentelemetry-api",
-      "version": "1.43.0",
-      "requires": {
-        "package": "google-adk",
-        "version": "2.7.0"
-      },
-      "expires": "2026-11-21",
-      "reason": "google-adk==2.7.0 excludes patched OpenTelemetry 1.45.1; the malformed inbound tracestate header CPU denial of service risk is temporarily accepted.",
-      "reference": "https://github.com/markhuangai/dense-mem/pull/612"
-    }
-  ]
+  "python": []
 }
