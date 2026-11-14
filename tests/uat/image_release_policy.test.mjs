@@ -7,6 +7,7 @@ import { test } from "node:test";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import policy from "../../.github/scripts/image-release-policy.cjs";
+import { actionStep, actionSteps, jobScripts, parseWorkflow, readWorkflow, runStep, stringifyWorkflow, workflowJob } from "./workflow_helpers.mjs";
 
 const {
   compareContainsMain,
@@ -142,81 +143,43 @@ test("automatic preview authorization rejects every authorization boundary", () 
   }
 });
 
-function workflowJob(workflow, name) {
-  const marker = `  ${name}:`;
-  const start = workflow.indexOf(marker);
-  assert.notEqual(start, -1, `workflow job ${name} is missing`);
-
-  const remainder = workflow.slice(start + marker.length);
-  const nextJob = remainder.search(/\n  [a-z0-9-]+:\n/);
-  return nextJob === -1 ? remainder : remainder.slice(0, nextJob);
-}
-
 function assertHostedJob(workflow, name) {
-  assert.match(
-    workflowJob(workflow, name),
-    /^    runs-on: ubuntu-latest$/m,
-    `${name} must use a GitHub-hosted runner`,
-  );
+  assert.equal(workflowJob(workflow, name)["runs-on"], "ubuntu-latest", name + " must use a GitHub-hosted runner");
 }
 
 function assertQemuBeforeBuildx(workflow, name) {
   const job = workflowJob(workflow, name);
-  const qemu = job.indexOf("uses: docker/setup-qemu-action@v4");
-  const buildx = job.indexOf("uses: docker/setup-buildx-action@v4");
-  assert.ok(qemu !== -1 && qemu < buildx, `${name} must configure QEMU before Buildx`);
-  assert.match(job, /setup-qemu-action@v4[\s\S]*platforms: arm64/);
+  const qemu = actionStep(job, "docker/setup-qemu-action");
+  const buildx = actionStep(job, "docker/setup-buildx-action");
+  assert.ok(job.steps.indexOf(qemu) < job.steps.indexOf(buildx), name + " must configure QEMU before Buildx");
+  assert.equal(qemu.with.platforms, "arm64");
 }
 
-test("low-trust preview builds do not export an Actions cache", async () => {
-  const workflow = await readFile(
-    new URL("../../.github/workflows/pr-test-image.yml", import.meta.url),
-    "utf8",
-  );
+function assertPythonMatrix(job, supportedVersions) {
+  const matrix = job.strategy.matrix;
+  assert.ok(supportedVersions.length > 0);
+  assert.deepEqual(new Set(matrix.python.map(String)), new Set(supportedVersions));
+  assert.deepEqual(matrix.sdk, ["latest"]);
+  assert.deepEqual(matrix.exclude ?? [], []);
+  const minimum = matrix.include.filter((row) => row.sdk === "minimum");
+  assert.equal(minimum.length, 1);
+  assert.ok(supportedVersions.includes(String(minimum[0].python)));
+}
 
-  assert.match(workflow, /^\s+pull_request_target:/m);
-  assert.doesNotMatch(workflow, /^\s+cache-to:/m);
-});
-
-test("shared CI partitions slow gates into independent hosted jobs", async () => {
-  const [shared, pullRequest, push] = await Promise.all([
-    readFile(new URL("../../.github/workflows/ci-shared.yml", import.meta.url), "utf8"),
-    readFile(new URL("../../.github/workflows/ci-pr.yml", import.meta.url), "utf8"),
-    readFile(new URL("../../.github/workflows/ci-push.yml", import.meta.url), "utf8"),
-  ]);
-  const jobIds = [...shared.matchAll(/^  ([a-z0-9-]+):$/gm)].map(([, id]) => id);
-  assert.deepEqual(jobIds, ["npm-audit", "postgres-migrations", "quality", "go-tests", "coverage", "coverage-merge", "python", "result"]);
-  const audit = workflowJob(shared, "npm-audit");
-  const migrations = workflowJob(shared, "postgres-migrations");
-  const quality = workflowJob(shared, "quality");
-  const goTests = workflowJob(shared, "go-tests");
-  const coverage = workflowJob(shared, "coverage");
-  const coverageMerge = workflowJob(shared, "coverage-merge");
-  const python = workflowJob(shared, "python");
-  assert.match(shared, /^  COVERAGE_THRESHOLD: "90\.0"$/m);
-  assert.equal((shared.match(/COVERAGE_THRESHOLD: "90\.0"/g) || []).length, 1);
-
-  for (const [name, job] of [
-    ["npm-audit", audit],
-    ["postgres-migrations", migrations],
-    ["quality", quality],
-    ["go-tests", goTests],
-    ["coverage", coverage],
-    ["python", python],
-  ]) {
-    assert.match(job, /^    runs-on: ubuntu-latest$/m, `${name} must use a hosted runner`);
-    assert.doesNotMatch(job, /^    needs:/m, `${name} must not depend on another CI job`);
+function assertSharedCI(shared, supportedVersions) {
+  assert.deepEqual(new Set(Object.keys(shared.jobs)), new Set(["npm-audit", "postgres-migrations", "quality", "go-tests", "coverage", "coverage-merge", "python", "result"]));
+  assert.equal(Number(shared.env.COVERAGE_THRESHOLD), 90);
+  for (const job of Object.values(shared.jobs)) {
+    for (const scope of [job, ...(job.steps ?? [])]) assert.ok(!Object.hasOwn(scope.env ?? {}, "COVERAGE_THRESHOLD"));
   }
-  assert.match(audit, /Run npm vulnerability audits/);
+  for (const name of ["npm-audit", "postgres-migrations", "quality", "go-tests", "coverage", "python"]) {
+    assertHostedJob(shared, name);
+    assert.equal(shared.jobs[name].needs, undefined, name + " must be independent");
+  }
+  const audit = jobScripts(shared.jobs["npm-audit"]);
   assert.doesNotMatch(audit, /npm ci/);
-  for (const option of [
-    "--fetch-retries=4",
-    "--fetch-retry-factor=2",
-    "--fetch-retry-mintimeout=1000",
-    "--fetch-retry-maxtimeout=30000",
-    "--fetch-timeout=30000",
-  ]) {
-    assert.equal((audit.match(new RegExp(option, "g")) || []).length, 1, `${option} must be shared by every audit retry`);
+  for (const option of ["--fetch-retries=4", "--fetch-retry-factor=2", "--fetch-retry-mintimeout=1000", "--fetch-retry-maxtimeout=30000", "--fetch-timeout=30000"]) {
+    assert.equal(audit.split(option).length - 1, 1, option + " must be shared by every audit retry");
   }
   assert.match(audit, /audit_with_retry\(\)/);
   assert.match(audit, /local max_attempts=4/);
@@ -230,61 +193,103 @@ test("shared CI partitions slow gates into independent hosted jobs", async () =>
   const retryBackoff = audit.indexOf("sleep_seconds=$(", transientGuard);
   assert.ok(transientGuard !== -1 && nonTransientReturn > transientGuard && nonTransientReturn < retryBackoff);
   for (const prefix of [".lint", "web", "packages/mcp-proxy"]) {
-    assert.match(audit, new RegExp(`audit_with_retry ${prefix.replace("/", "\\/")}`), `${prefix} audit must be invoked`);
+    assert.equal(audit.split("\n").filter((line) => line.trim() === "audit_with_retry " + prefix).length, 1);
   }
-  assert.equal((audit.match(/^\s+audit_with_retry (?:\.lint|web|packages\/mcp-proxy)$/gm) || []).length, 3);
 
-  for (const step of [
-    "Install lint dependencies",
-    "Install MCP proxy dependencies",
-    "Run repository lint",
-    "Run architecture conformance",
-    "Run MCP proxy tests",
-    "Run image release policy tests",
-    "Run prerelease version tests",
-    "Run Go vulnerability scan policy tests",
-    "Run AI PR review policy tests",
-    "Run evaluation monitor shell test",
+  const quality = shared.jobs.quality;
+  for (const command of [
+    "npm ci --prefix .lint", "npm ci --prefix packages/mcp-proxy", "npm run --prefix .lint lint:lines",
+    "node scripts/check-architecture.mjs", "npm run test:coverage --prefix packages/mcp-proxy",
+    "node --test tests/uat/image_release_policy.test.mjs", "node --test tests/uat/prerelease_version.test.mjs",
+    "node --test tests/uat/go_vulnerability_scan_policy.test.mjs", "node --test tests/uat/ai_pr_review_policy.test.mjs",
+    "bash tests/eval/scripts/run_full_public_rag_eval_until_done_test.sh",
+  ]) runStep(quality, command);
+  for (const command of ["go test -timeout=", "scripts/static-analysis.sh", "scripts/go-vulnerability-scan.sh"]) {
+    runStep(shared.jobs["go-tests"], command);
+  }
+  const merge = shared.jobs["coverage-merge"];
+  runStep(merge, "scripts/coverage-report.sh --merge-complete");
+  assertHostedJob(shared, "coverage-merge");
+  assert.deepEqual([merge.needs].flat(), ["coverage"]);
+  const migrations = shared.jobs["postgres-migrations"];
+  runStep(migrations, 'scripts/check-postgres-migrations.sh "${{ inputs.migration-base-ref }}"');
+  assert.doesNotMatch(jobScripts(migrations), /go test|coverage-report\.sh/);
+  assert.doesNotMatch(jobScripts(quality), /go test|coverage-report\.sh|audit_with_retry|check-postgres-migrations\.sh/);
+  const input = shared.on.workflow_call.inputs["migration-base-ref"];
+  assert.equal(input.required, false);
+  assert.equal(input.type, "string");
+  assert.equal(input.default, "origin/main");
+  const python = shared.jobs.python;
+  const command = runStep(python, "packages/python/scripts/matrix.sh").run;
+  assert.ok(command.includes('"$RUNNER_TEMP/python-matrix"'));
+  assert.ok(command.includes("${{ matrix.python }}"));
+  assert.ok(command.includes("${{ matrix.sdk }}"));
+  assertPythonMatrix(python, supportedVersions);
+}
+
+test("low-trust preview builds do not export an Actions cache", async () => {
+  const workflow = await readWorkflow("pr-test-image.yml");
+  assert.ok(Object.hasOwn(workflow.on, "pull_request_target"));
+  for (const job of Object.values(workflow.jobs)) {
+    for (const step of job.steps ?? []) assert.equal(step.with?.["cache-to"], undefined);
+    assert.doesNotMatch(jobScripts(job), /--cache-to/);
+  }
+});
+
+test("shared CI partitions slow gates independently of YAML layout and setup versions", async () => {
+  const [shared, pullRequest, push] = await Promise.all([
+    readWorkflow("ci-shared.yml"), readWorkflow("ci-pr.yml"), readWorkflow("ci-push.yml"),
+  ]);
+  const { stdout } = await execFileAsync("python3", ["-c",
+    "import json,sys,tomllib; print(json.dumps(tomllib.load(open(sys.argv[1], 'rb'))['project']['classifiers']))",
+    fileURLToPath(new URL("../../packages/python/pyproject.toml", import.meta.url)),
+  ]);
+  const supported = JSON.parse(stdout).filter((value) => /^Programming Language :: Python :: \d+\.\d+$/.test(value))
+    .map((value) => value.split(" :: ").at(-1));
+  assertSharedCI(shared, supported);
+  const upgraded = structuredClone(shared);
+  for (const job of Object.values(upgraded.jobs)) {
+    for (const step of job.steps ?? []) {
+      step.name = "Renamed CI step";
+      if (step.uses) step.uses = step.uses.split("@")[0] + "@v99";
+      if (step.with?.["go-version"]) step.with["go-version"] = "1.27.1";
+      if (step.with?.["node-version"]) step.with["node-version"] = "26";
+    }
+  }
+  assertSharedCI(parseWorkflow(stringifyWorkflow(upgraded, { indent: 4, sortKeys: true, forceQuotes: true })), supported);
+  for (const mutate of [
+    (w) => { delete w.jobs["go-tests"]; },
+    (w) => { w.jobs.quality.steps = w.jobs.quality.steps.filter((step) => !step.run?.includes("node scripts/check-architecture.mjs")); },
+    (w) => { w.jobs.python.strategy.matrix.python.pop(); },
+    (w) => { w.jobs.python.strategy.matrix.python.push("9.99"); },
+    (w) => { w.jobs.python.strategy.matrix.include = []; },
   ]) {
-    assert.equal((quality.match(new RegExp(`^      - name: ${step.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "gm")) || []).length, 1, `${step} must run exactly once`);
+    const invalid = structuredClone(shared);
+    mutate(invalid);
+    assert.throws(() => assertSharedCI(invalid, supported));
   }
-  for (const step of ["Run Go tests", "Run pinned Go static analysis", "Run Go vulnerability scan"]) {
-    assert.equal((goTests.match(new RegExp(`^      - name: ${step}$`, "gm")) || []).length, 1, `${step} must run exactly once`);
+  const future = structuredClone(shared.jobs.python);
+  future.strategy.matrix.python.push("3.15");
+  future.strategy.matrix.include[0].python = "3.15";
+  assertPythonMatrix(future, [...supported, "3.15"]);
+  assert.equal(pullRequest.name, "CI Pull Request");
+  assert.equal(push.name, "CI Push");
+  for (const workflow of [pullRequest, push]) {
+    assert.equal(workflow.jobs.ci.name, "CI");
+    assert.equal(workflow.jobs.ci.uses, "./.github/workflows/ci-shared.yml");
   }
-  assert.equal((coverageMerge.match(/^      - name: Run unit coverage gate$/gm) || []).length, 1);
-  assert.match(coverageMerge, /^    runs-on: ubuntu-latest$/m);
-  assert.match(coverageMerge, /^    needs: coverage$/m);
-  assert.match(migrations, /Validate PostgreSQL migration history/);
-  assert.doesNotMatch(migrations, /go test -tags=integration \.\/internal\/storage\/postgres/);
-  assert.doesNotMatch(migrations, /Run Go tests|Run unit coverage gate/);
-  assert.doesNotMatch(quality, /Run Go tests|Run unit coverage gate/);
-  assert.doesNotMatch(quality, /Run npm vulnerability audits|Run PostgreSQL migration integration suite|Validate PostgreSQL migration history/);
-  assert.match(shared, /^  workflow_call:\n    inputs:/m);
-  assert.match(shared, /^      migration-base-ref:\n        description:/m);
-  assert.match(shared, /^        required: false$/m);
-  assert.match(shared, /^        type: string$/m);
-  assert.match(shared, /^        default: origin\/main$/m);
-  assert.match(python, /matrix\.sh "\$RUNNER_TEMP\/python-matrix" '\$\{\{ matrix\.python \}\}' '\$\{\{ matrix\.sdk \}\}'/);
-  assert.match(python, /python: \['3\.11', '3\.12', '3\.13', '3\.14'\]/);
-  assert.match(python, /python: '3\.12'\n            sdk: minimum/);
-  assert.match(migrations, /scripts\/check-postgres-migrations\.sh "\$\{\{ inputs\.migration-base-ref \}\}"/);
-  assert.match(pullRequest, /^name: CI Pull Request$/m);
-  assert.match(push, /^name: CI Push$/m);
-  assert.match(workflowJob(pullRequest, "ci"), /^    name: CI$/m);
-  assert.match(workflowJob(pullRequest, "ci"), /^    uses: \.\/\.github\/workflows\/ci-shared\.yml$/m);
-  assert.match(push, /  ci:\n    name: CI\n    uses: \.\/\.github\/workflows\/ci-shared\.yml/);
-  assert.match(push, /migration-base-ref: \$\{\{ github\.event\.before \}\}/);
+  assert.equal(push.jobs.ci.with["migration-base-ref"], "${{ github.event.before }}");
 });
 
 test("non-E2E image and release jobs use GitHub-hosted runners", async () => {
   const [preview, prereleaseImage, demoImage, prerelease, release, startPrerelease] =
     await Promise.all([
-      readFile(new URL("../../.github/workflows/pr-test-image.yml", import.meta.url), "utf8"),
-      readFile(new URL("../../.github/workflows/publish-image.yml", import.meta.url), "utf8"),
-      readFile(new URL("../../.github/workflows/publish-demo-image.yml", import.meta.url), "utf8"),
-      readFile(new URL("../../.github/workflows/release-rc.yml", import.meta.url), "utf8"),
-      readFile(new URL("../../.github/workflows/release.yml", import.meta.url), "utf8"),
-      readFile(new URL("../../.github/workflows/start-prerelease.yml", import.meta.url), "utf8"),
+      readWorkflow("pr-test-image.yml"),
+      readWorkflow("publish-image.yml"),
+      readWorkflow("publish-demo-image.yml"),
+      readWorkflow("release-rc.yml"),
+      readWorkflow("release.yml"),
+      readWorkflow("start-prerelease.yml"),
     ]);
 
   for (const name of ["resolve", "build", "publish", "report", "report-e2e", "resolve-failure"]) {
@@ -308,48 +313,45 @@ test("non-E2E image and release jobs use GitHub-hosted runners", async () => {
   assertQemuBeforeBuildx(preview, "build");
   assertQemuBeforeBuildx(prereleaseImage, "publish");
   assertQemuBeforeBuildx(demoImage, "publish-demo");
+  const upgraded = structuredClone(prereleaseImage);
+  for (const step of upgraded.jobs.publish.steps) {
+    step.name = "Renamed image step";
+    if (step.uses) step.uses = step.uses.split("@")[0] + "@v99";
+  }
+  assertQemuBeforeBuildx(parseWorkflow(stringifyWorkflow(upgraded, { indent: 4, sortKeys: true })), "publish");
+  upgraded.jobs.publish.steps.reverse();
+  assert.throws(() => assertQemuBeforeBuildx(upgraded, "publish"));
 });
 
 test("PR preview workflow gates owner/admin and one-shot approval before digest handoff", async () => {
-  const workflow = await readFile(
-    new URL("../../.github/workflows/pr-test-image.yml", import.meta.url),
-    "utf8",
-  );
-  assert.match(workflow, /types: \[opened, synchronize, reopened, labeled\]/);
-  assert.doesNotMatch(workflow, /unlabeled/);
-  assert.match(workflow, /group: pr-test-image-\$\{\{ github\.event\.pull_request\.number \}\}/);
-  assert.match(workflow, /cancel-in-progress: \$\{\{ github\.event\.action == 'synchronize' \}\}/);
-  assert.match(workflow, /authorPermission: process\.env\.AUTHOR_PERMISSION/);
-  assert.match(workflow, /removeLabel/);
-  assert.match(workflow, /Production image E2E/);
-  assert.match(workflow, /digest="\$\(\.github\/scripts\/oci-image\.sh publish-preview/);
-  const publish = workflowJob(workflow, "publish");
-  assert.match(publish, /Revalidate pull request eligibility/);
+  const workflow = await readWorkflow("pr-test-image.yml");
+  assert.deepEqual(new Set(workflow.on.pull_request_target.types), new Set(["opened", "synchronize", "reopened", "labeled"]));
+  assert.equal(workflow.concurrency.group, "pr-test-image-${{ github.event.pull_request.number }}");
+  assert.equal(workflow.concurrency["cancel-in-progress"], "${{ github.event.action == 'synchronize' }}");
+  const scripts = Object.values(workflow.jobs).map(jobScripts).join("\n");
+  assert.match(scripts, /authorPermission: process\.env\.AUTHOR_PERMISSION/);
+  assert.match(scripts, /removeLabel/);
+  assert.match(JSON.stringify(workflow), /Production image E2E/);
+  assert.match(scripts, /digest="\$\(\.github\/scripts\/oci-image\.sh publish-preview/);
+  const publish = jobScripts(workflowJob(workflow, "publish"));
   assert.match(publish, /pull\.state !== "open"/);
   assert.match(publish, /pull\.base\.ref !== "main"/);
   assert.match(publish, /pull\.head\.sha !== process\.env\.EXPECTED_HEAD/);
-  assert.match(workflow, /printf 'image=%s@%s\\n'/);
+  assert.match(scripts, /printf 'image=%s@%s\\n'/);
   const productionE2E = workflowJob(workflow, "production-e2e");
-  assert.match(productionE2E, /image: \$\{\{ needs\.publish\.outputs\.image \}\}/);
-  assert.doesNotMatch(productionE2E, /test_repository|test_revision/);
-  for (const obsolete of [
-    "pull_request_author",
-    "preview_run_id",
-    "preview_run_attempt",
-    "caller_workflow",
-  ]) {
-    assert.doesNotMatch(workflow, new RegExp(obsolete));
+  assert.equal(productionE2E.with.image, "${{ needs.publish.outputs.image }}");
+  assert.equal(productionE2E.with.test_repository, undefined);
+  assert.equal(productionE2E.with.test_revision, undefined);
+  for (const obsolete of ["pull_request_author", "preview_run_id", "preview_run_attempt", "caller_workflow"]) {
+    assert.doesNotMatch(JSON.stringify(workflow), new RegExp(obsolete));
   }
 });
 
 test("preview reporting comments only on successful publication and reports E2E by status", async () => {
-  const workflow = await readFile(
-    new URL("../../.github/workflows/pr-test-image.yml", import.meta.url),
-    "utf8",
-  );
-  const report = workflowJob(workflow, "report");
-  const reportE2E = workflowJob(workflow, "report-e2e");
-  const resolveFailure = workflowJob(workflow, "resolve-failure");
+  const workflow = await readWorkflow("pr-test-image.yml");
+  const report = jobScripts(workflowJob(workflow, "report"));
+  const reportE2E = jobScripts(workflowJob(workflow, "report-e2e"));
+  const resolveFailure = jobScripts(workflowJob(workflow, "resolve-failure"));
   const statusCall = reportE2E.indexOf("github.rest.repos.createCommitStatus");
   const statusGuard = reportE2E.indexOf("if (imagePublished)");
 
@@ -369,9 +371,9 @@ test("preview reporting comments only on successful publication and reports E2E 
   assert.match(resolveFailure, /for \(const contextName of \[/);
   assert.doesNotMatch(reportE2E, /github\.rest\.issues\.createComment/);
   assert.doesNotMatch(resolveFailure, /github\.rest\.issues\.createComment/);
-  assert.equal((workflow.match(/github\.rest\.issues\.createComment/g) || []).length, 1);
+  assert.equal((Object.values(workflow.jobs).map(jobScripts).join("\n").match(/github\.rest\.issues\.createComment/g) || []).length, 1);
   const successStart = report.indexOf("if (succeeded) {");
-  const successEnd = report.indexOf("\n            }\n", successStart);
+  const successEnd = report.indexOf("\n}\n", successStart);
   assert.ok(successStart !== -1 && successEnd > successStart);
   const successBlock = report.slice(successStart, successEnd);
   assert.match(successBlock, /github\.rest\.issues\.createComment/);
@@ -381,22 +383,23 @@ test("preview reporting comments only on successful publication and reports E2E 
 });
 
 test("preview OCI cleanup is fenced to the current run and nonblocking", async () => {
-  const workflow = await readFile(
-    new URL("../../.github/workflows/pr-test-image.yml", import.meta.url),
-    "utf8",
-  );
-  const report = workflowJob(workflow, "report");
+  const workflow = await readWorkflow("pr-test-image.yml");
+  const reportJob = workflowJob(workflow, "report");
+  const report = jobScripts(reportJob);
+  const cleanup = reportJob.steps.filter((step) => step.with?.script?.includes("github.rest.actions.deleteArtifact"));
+  assert.equal(cleanup.length, 1);
 
-  assert.match(report, /^      actions: write$/m);
-  assert.match(report, /- name: Delete OCI handoff artifact[\s\S]*if: always\(\)[\s\S]*continue-on-error: true/);
-  assert.match(report, /^    needs: \[resolve, build, publish\]$/m);
+  assert.equal(reportJob.permissions.actions, "write");
+  assert.equal(cleanup[0].if, "always()");
+  assert.equal(cleanup[0]["continue-on-error"], true);
+  assert.deepEqual(new Set(reportJob.needs), new Set(["resolve", "build", "publish"]));
   assert.doesNotMatch(report, /production-e2e/);
   assert.match(report, /preview-oci-\$\{process\.env\.EXPECTED_HEAD\}-\$\{process\.env\.RUN_ATTEMPT\}/);
   assert.match(report, /listWorkflowRunArtifacts/);
   assert.match(report, /run_id: context\.runId/);
   assert.match(report, /matches = artifacts\.filter\(\(\{ name \}\) => name === artifactName\)/);
   const ambiguityGuard = report.indexOf("if (matches.length !== 1)");
-  const ambiguityEnd = report.indexOf("\n              }\n", ambiguityGuard);
+  const ambiguityEnd = report.indexOf("\n  }\n", ambiguityGuard);
   const deleteCall = report.indexOf("github.rest.actions.deleteArtifact");
   assert.ok(ambiguityGuard !== -1 && ambiguityEnd > ambiguityGuard && ambiguityEnd < deleteCall);
   assert.equal((report.match(/github\.rest\.actions\.deleteArtifact/g) || []).length, 1);
@@ -411,7 +414,7 @@ test("preview OCI cleanup is fenced to the current run and nonblocking", async (
   assert.match(report, /deleteArtifact/);
   assert.match(report, /artifact_id: matches\[0\]\.id/);
   assert.match(report, /OCI handoff artifact cleanup failed/);
-  assert.match(workflow, /retention-days: 1/);
+  assert.equal(Number(actionStep(workflow.jobs.build, "actions/upload-artifact").with["retention-days"]), 1);
 });
 
 test("OCI promotion avoids jq 1.6 reserved variable names", async () => {
@@ -589,173 +592,116 @@ exit 2
 
 test("prerelease publication waits for the staging migration rehearsal", async () => {
   const [releaseWorkflow, rehearsalWorkflow, pushWorkflow] = await Promise.all([
-    readFile(
-      new URL("../../.github/workflows/release-rc.yml", import.meta.url),
-      "utf8",
-    ),
-    readFile(
-      new URL(
-        "../../.github/workflows/staging-migration-rehearsal.yml",
-        import.meta.url,
-      ),
-      "utf8",
-    ),
-    readFile(
-      new URL("../../.github/workflows/ci-push.yml", import.meta.url),
-      "utf8",
-    ),
+    readWorkflow("release-rc.yml"), readWorkflow("staging-migration-rehearsal.yml"), readWorkflow("ci-push.yml"),
   ]);
   const classifier = workflowJob(releaseWorkflow, "classify-release");
-  const rehearsalCall = workflowJob(
-    releaseWorkflow,
-    "staging-migration-rehearsal",
-  );
-  const rehearsal = workflowJob(
-    rehearsalWorkflow,
-    "staging-migration-rehearsal",
-  );
+  const rehearsalCall = workflowJob(releaseWorkflow, "staging-migration-rehearsal");
+  const rehearsal = workflowJob(rehearsalWorkflow, "staging-migration-rehearsal");
   const prepare = workflowJob(releaseWorkflow, "prepare-prerelease");
-
-  assert.doesNotMatch(pushWorkflow, /paths-ignore/);
-  assert.match(classifier, /^    runs-on: ubuntu-latest$/m);
-  assert.match(classifier, /^          fetch-depth: 0$/m);
-  assert.match(classifier, /^          persist-credentials: false$/m);
-  assert.match(
-    classifier,
-    /^          ref: \$\{\{ github\.event\.workflow_run\.head_sha \}\}$/m,
-  );
-  assert.match(
-    classifier,
-    /prerelease-version\.sh should-release "\$\{HEAD_SHA\}"/,
-  );
-  assert.match(
-    rehearsalCall,
-    /^    needs: classify-release$[\s\S]*needs\.classify-release\.outputs\.should_release == 'true'/m,
-  );
-  assert.match(
-    rehearsalCall,
-    /^    uses: \.\/\.github\/workflows\/staging-migration-rehearsal\.yml$/m,
-  );
-  assert.match(
-    rehearsalCall,
-    /^      revision: \$\{\{ github\.event\.workflow_run\.head_sha \}\}$/m,
-  );
-  assert.match(rehearsalCall, /^    secrets: inherit$/m);
-  assert.doesNotMatch(rehearsalCall, /PGVECTOR_STAGE_DSN|sync\.sh|go test/);
-  assert.match(rehearsal, /^    runs-on: \[home-server, bash, non-root\]$/m);
-  assert.match(rehearsal, /^    timeout-minutes: 90$/m);
-  assert.match(rehearsal, /^    environment: staging-migration$/m);
-  assert.match(rehearsal, /persist-credentials: false/);
-  assert.match(
-    rehearsal,
-    /^          DENSE_MEM_STAGE_POSTGRES_DSN: \$\{\{ secrets\.PGVECTOR_STAGE_DSN \}\}$/m,
-  );
-  assert.doesNotMatch(rehearsal, /DENSE_MEM_STAGE_POSTGRES_HOST/);
-  assert.doesNotMatch(rehearsal, /DENSE_MEM_STAGE_POSTGRES_PORT/);
-  assert.match(rehearsal, /"\$\{HOME\}\/dense-mem-stage\/sync\.sh"/);
-  assert.match(rehearsal, /flock --wait 600 9/);
-  assert.match(rehearsal, /timeout --signal=TERM --kill-after=30s 20m/);
-  assert.doesNotMatch(rehearsal, /\b(?:docker|testcontainers)\b/i);
-  assert.match(
-    rehearsal,
-    /go test -tags=staging_rehearsal \.\/cmd\/internal\/migrationapp[\s\S]*-timeout=40m/,
-  );
-  assert.ok(
-    rehearsal.indexOf("timeout --signal=TERM") <
-      rehearsal.indexOf("go test -tags=staging_rehearsal"),
-    "the production copy must finish restoring before migrations run",
-  );
-  assert.match(
-    prepare,
-    /^    needs:\n      - classify-release\n      - staging-migration-rehearsal$/m,
-  );
-  assert.match(prepare, /needs\.classify-release\.outputs\.should_release == 'true'/);
-  assert.match(prepare, /needs\.staging-migration-rehearsal\.result == 'success'/);
-
-  for (const jobName of [
-    "resolve-production-source",
-    "publish-image",
-    "promote-preview-image",
-    "publish-demo-image",
-  ]) {
-    assert.match(
-      workflowJob(releaseWorkflow, jobName),
-      /(?:^    needs: prepare-prerelease$|^      - prepare-prerelease$)/m,
-      `${jobName} must remain downstream of prepare-prerelease`,
-    );
+  assert.equal(pushWorkflow.on.push["paths-ignore"], undefined);
+  assert.equal(classifier["runs-on"], "ubuntu-latest");
+  const checkout = actionStep(classifier, "actions/checkout");
+  assert.equal(Number(checkout.with["fetch-depth"]), 0);
+  assert.equal(String(checkout.with["persist-credentials"]), "false");
+  assert.equal(checkout.with.ref, "${{ github.event.workflow_run.head_sha }}");
+  assert.match(jobScripts(classifier), /prerelease-version\.sh should-release "\$\{HEAD_SHA\}"/);
+  assert.deepEqual([rehearsalCall.needs].flat(), ["classify-release"]);
+  assert.match(rehearsalCall.if, /needs\.classify-release\.outputs\.should_release == 'true'/);
+  assert.equal(rehearsalCall.uses, "./.github/workflows/staging-migration-rehearsal.yml");
+  assert.equal(rehearsalCall.with.revision, "${{ github.event.workflow_run.head_sha }}");
+  assert.equal(rehearsalCall.secrets, "inherit");
+  assert.doesNotMatch(JSON.stringify(rehearsalCall), /PGVECTOR_STAGE_DSN|sync\.sh|go test/);
+  assert.deepEqual(new Set(rehearsal["runs-on"]), new Set(["home-server", "bash", "non-root"]));
+  assert.equal(rehearsal["timeout-minutes"], 90);
+  assert.equal(rehearsal.environment, "staging-migration");
+  assert.equal(String(actionStep(rehearsal, "actions/checkout").with["persist-credentials"]), "false");
+  const execution = runStep(rehearsal, "go test -tags=staging_rehearsal");
+  assert.equal(execution.env.DENSE_MEM_STAGE_POSTGRES_DSN, "${{ secrets.PGVECTOR_STAGE_DSN }}");
+  assert.doesNotMatch(JSON.stringify(rehearsal), /DENSE_MEM_STAGE_POSTGRES_HOST|DENSE_MEM_STAGE_POSTGRES_PORT/);
+  const script = jobScripts(rehearsal);
+  assert.match(script, /"\$\{HOME\}\/dense-mem-stage\/sync\.sh"/);
+  assert.match(script, /flock --wait 600 9/);
+  assert.match(script, /timeout --signal=TERM --kill-after=30s 20m/);
+  assert.doesNotMatch(JSON.stringify(rehearsal), /\b(?:docker|testcontainers)\b/i);
+  assert.match(script, /go test -tags=staging_rehearsal \.\/cmd\/internal\/migrationapp[\s\S]*-timeout=40m/);
+  assert.ok(script.indexOf("timeout --signal=TERM") < script.indexOf("go test -tags=staging_rehearsal"));
+  assert.deepEqual(new Set(prepare.needs), new Set(["classify-release", "staging-migration-rehearsal"]));
+  assert.match(prepare.if, /needs\.classify-release\.outputs\.should_release == 'true'/);
+  assert.match(prepare.if, /needs\.staging-migration-rehearsal\.result == 'success'/);
+  for (const name of ["resolve-production-source", "publish-image", "promote-preview-image", "publish-demo-image"]) {
+    assert.ok([workflowJob(releaseWorkflow, name).needs].flat().includes("prepare-prerelease"));
   }
 });
 
 test("staging migration rehearsal supports manual and reusable execution", async () => {
-  const workflow = await readFile(
-    new URL(
-      "../../.github/workflows/staging-migration-rehearsal.yml",
-      import.meta.url,
-    ),
-    "utf8",
-  );
+  const workflow = await readWorkflow("staging-migration-rehearsal.yml");
   const rehearsal = workflowJob(workflow, "staging-migration-rehearsal");
-
-  assert.match(workflow, /^  workflow_dispatch:$/m);
-  assert.match(workflow, /^  workflow_call:$/m);
-  assert.match(
-    workflow,
-    /^      revision:\n        description: "Commit, branch, or tag to rehearse\."\n        required: true\n        type: string$/m,
-  );
-  assert.doesNotMatch(workflow, /prepare-prerelease|publish-image|contents: write/);
-  assert.match(
-    rehearsal,
-    /^          ref: \$\{\{ inputs\.revision \|\| github\.sha \}\}$/m,
-  );
+  for (const event of ["workflow_dispatch", "workflow_call"]) {
+    assert.ok(Object.hasOwn(workflow.on, event));
+  }
+  assert.equal(workflow.on.workflow_call.inputs.revision.required, true);
+  assert.equal(workflow.on.workflow_call.inputs.revision.type, "string");
+  assert.doesNotMatch(JSON.stringify(workflow), /prepare-prerelease|publish-image/);
+  for (const scope of [workflow, ...Object.values(workflow.jobs)]) {
+    assert.notEqual(scope.permissions?.contents, "write");
+  }
+  assert.equal(actionStep(rehearsal, "actions/checkout").with.ref, "${{ inputs.revision || github.sha }}");
 });
 
-test("staging deployment is owner-gated and manual-only", async () => {
-  const workflow = await readFile(
-    new URL("../../.github/workflows/deploy-stage.yml", import.meta.url),
-    "utf8",
-  );
+function assertStagingPolicy(workflow) {
   const authorize = workflowJob(workflow, "authorize");
   const deploy = workflowJob(workflow, "deploy-staging");
+  assert.deepEqual(Object.keys(workflow.on), ["workflow_dispatch"]);
+  assert.equal(workflow.on.workflow_dispatch.inputs.tag.required, true);
+  assert.equal(workflow.on.workflow_dispatch.inputs.tag.type, "string");
+  assert.equal(authorize["runs-on"], "ubuntu-latest");
+  const script = jobScripts(authorize);
+  assert.match(script, /const actor = "Z-M-Huang"/);
+  assert.match(script, /context\.actor !== actor/);
+  assert.match(script, /process\.env\.TRIGGERING_ACTOR !== actor/);
+  assert.match(script, /refs\/heads\/main/);
+  assert.match(script, /refs\/pull\/\$\{preview\[1\]\}\/head/);
+  assert.match(script, /core\.setOutput\("revision", revision\)/);
+  assert.match(script, /core\.setOutput\("tag", tag\)/);
+  actionSteps(deploy, "actions/checkout");
+  assert.doesNotMatch(JSON.stringify(workflow), /image-release-policy/);
+  assert.deepEqual([deploy.needs].flat(), ["authorize"]);
+  assert.ok(!Object.values(workflow.jobs).some((job) => job.uses === "./.github/workflows/staging-migration-rehearsal.yml"));
+  assert.deepEqual(new Set(deploy["runs-on"]), new Set(["home-server", "bash", "non-root"]));
+  assert.equal(deploy.environment, "staging-migration");
+}
 
-  assert.match(workflow, /^  workflow_dispatch:\n    inputs:/m);
-  assert.match(
-    workflow,
-    /^      tag:\n        description: "Dense-Mem image tag to deploy\."\n        required: true\n        type: string$/m,
-  );
-  assert.doesNotMatch(
-    workflow,
-    /^  (?:pull_request|pull_request_target|push|workflow_call|workflow_run):/m,
-  );
-  assert.match(authorize, /^    runs-on: ubuntu-latest$/m);
-  assert.match(authorize, /const actor = "Z-M-Huang"/);
-  assert.match(authorize, /context\.actor !== actor/);
-  assert.match(authorize, /process\.env\.TRIGGERING_ACTOR !== actor/);
-  assert.match(authorize, /refs\/heads\/main/);
-  assert.match(authorize, /refs\/pull\/\$\{preview\[1\]\}\/head/);
-  assert.match(authorize, /core\.setOutput\("revision", revision\)/);
-  assert.match(authorize, /core\.setOutput\("tag", tag\)/);
-  assert.match(deploy, /actions\/checkout@v7/);
-  assert.doesNotMatch(workflow, /image-release-policy/);
-  assert.match(deploy, /^    needs: authorize$/m);
-  assert.doesNotMatch(workflow, /uses: \.\/\.github\/workflows\/staging-migration-rehearsal\.yml/);
-  assert.match(deploy, /^    runs-on: \[home-server, bash, non-root\]$/m);
-  assert.match(deploy, /^    environment: staging-migration$/m);
+test("staging deployment is owner-gated and manual-only across checkout upgrades", async () => {
+  const workflow = await readWorkflow("deploy-stage.yml");
+  assertStagingPolicy(workflow);
+  const upgraded = structuredClone(workflow);
+  for (const step of upgraded.jobs["deploy-staging"].steps) {
+    step.name = "Renamed deployment step";
+    if (step.uses) step.uses = step.uses.split("@")[0] + "@v99";
+  }
+  assertStagingPolicy(parseWorkflow(stringifyWorkflow(upgraded, { indent: 4, sortKeys: true, forceQuotes: true })));
+  const invalid = structuredClone(workflow);
+  invalid.on.push = { branches: ["main"] };
+  assert.throws(() => assertStagingPolicy(invalid));
 });
 
 test("staging deployment shares source verification and pinned healthy startup", async () => {
   const [workflow, helper, imagePolicy] = await Promise.all([
-    readFile(new URL("../../.github/workflows/deploy-stage.yml", import.meta.url), "utf8"),
+    readWorkflow("deploy-stage.yml"),
     readFile(new URL("../../.github/scripts/deploy-staging-image.sh", import.meta.url), "utf8"),
     readFile(new URL("../../.github/scripts/staging-image.sh", import.meta.url), "utf8"),
   ]);
-  const deploy = workflowJob(workflow, "deploy-staging");
-  assert.match(workflow, /^  packages: read$/m);
-  assert.doesNotMatch(workflow, /^  (?:actions|pull-requests|statuses): read$/m);
-  assert.match(deploy, /^    needs: authorize$/m);
-  assert.match(deploy, /DENSE_MEM_STAGE_POSTGRES_DSN: \$\{\{ secrets\.PGVECTOR_STAGE_DSN \}\}/);
+  const deployJob = workflowJob(workflow, "deploy-staging");
+  const deploy = jobScripts(deployJob);
+  assert.equal(workflow.permissions.packages, "read");
+  for (const scope of [workflow, ...Object.values(workflow.jobs)]) {
+    for (const permission of ["actions", "pull-requests", "statuses"]) assert.equal(scope.permissions?.[permission], undefined);
+  }
+  assert.deepEqual([deployJob.needs].flat(), ["authorize"]);
+  assert.equal(runStep(deployJob, "docker login").env.DENSE_MEM_STAGE_POSTGRES_DSN, "${{ secrets.PGVECTOR_STAGE_DSN }}");
   assert.match(deploy, /git -C \.staging-image-source rev-parse HEAD/);
   assert.match(deploy, /deploy-staging-copy\.sh/);
-  assert.doesNotMatch(workflow, /go test/);
+  assert.doesNotMatch(Object.values(workflow.jobs).map(jobScripts).join("\n"), /go test/);
   assert.match(deploy, /deployment_script="\$\{HOME\}\/dense-mem-stage\/deploy-staging-copy\.sh"/);
   assert.doesNotMatch(deploy, /stop-staging-server\.sh/);
   assert.match(deploy, /Install the host-only staging deployment script before deploying/);
@@ -782,24 +728,27 @@ test("manual staging deployment budget leaves time for image transfer and failur
   const cleanupSeconds = Number(cleanupDeadline[2]);
   assert.ok(cleanupSeconds > cleanupWait, "cleanup must retain the configured container stop wait");
   const job = "deploy-staging";
-  const workflow = await readFile(new URL("../../.github/workflows/deploy-stage.yml", import.meta.url), "utf8");
-  const source = workflowJob(workflow, job);
+  const workflow = await readWorkflow("deploy-stage.yml");
+  const definition = workflowJob(workflow, job);
+  const execution = runStep(definition, "docker login");
+  const source = execution.run;
   const deadline = source.match(/timeout --signal=TERM --kill-after=(\d+)s --verbose (\d+)m bash -euo pipefail <<'DEPLOY'/);
   assert.ok(deadline, `${job} must bound the entire login and deployment operation`);
   const graceSeconds = Number(deadline[1]);
   const operationSeconds = Number(deadline[2]) * 60;
-  const preparation = source.split("      - name: Pull and deploy requested image\n")[0];
-  const preparationLimits = [...preparation.matchAll(/^        timeout-minutes: (\d+)$/gm)];
-  assert.equal(preparationLimits.length, 3, "every checkout and Go setup must be bounded");
-  const preparationSeconds = preparationLimits.reduce((sum, limit) => sum + Number(limit[1]) * 60, 0);
-  const jobSeconds = Number(source.match(/^    timeout-minutes: (\d+)$/m)[1]) * 60;
+  const preparation = definition.steps.slice(0, definition.steps.indexOf(execution));
+  for (const step of [...actionSteps(definition, "actions/checkout"), actionStep(definition, "actions/setup-go")]) {
+    assert.ok(preparation.includes(step), "checkout and Go setup must precede deployment");
+  }
+  for (const step of preparation) assert.ok(Number(step["timeout-minutes"]) > 0, "preparation must be bounded");
+  const preparationSeconds = preparation.reduce((sum, step) => sum + Number(step["timeout-minutes"]) * 60, 0);
+  const jobSeconds = Number(definition["timeout-minutes"]) * 60;
   assert.ok(operationSeconds > lockWait + startupWait, `${job} must retain its configured lock and startup waits`);
   assert.ok(graceSeconds > cleanupSeconds + cleanupGraceSeconds, `${job} must allow bounded candidate cleanup before forced termination`);
   assert.ok(jobSeconds > preparationSeconds + operationSeconds + graceSeconds, `${job} must reserve time outside the bounded deployment operation`);
   assert.ok(source.indexOf(deadline[0]) < source.indexOf("docker login"));
   assert.ok(source.indexOf("docker login") < source.indexOf('exec "${deployment_script}"'));
-  const script = source.split("        run: |\n").at(-1).split("\n").map((line) => line.slice(10)).join("\n");
-  await execFileAsync("bash", ["-n", "-c", script]);
+  await execFileAsync("bash", ["-n", "-c", execution.run]);
 });
 
 test("owner-admin PR pushes run automatically without an approval label", () => {
