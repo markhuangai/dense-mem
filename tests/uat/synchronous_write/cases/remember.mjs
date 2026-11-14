@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { assertTerminalRememberResult } from "../surface.mjs";
+import { rememberWithEmbeddingRetry } from "../remember_retry.mjs";
 
 export const name = "remember";
 
@@ -67,7 +68,7 @@ async function runEvidenceContractCase({ rawRPC, expect }) {
   expect(providerBefore === await providerFixtureRequestCount(expect), "retired fields and invalid Evidence must reject before provider work");
   const boundary = singleItemArguments("evidence-bound", "");
   boundary.evidence[0].content = "x".repeat(999);
-  const accepted = terminalPayload((await rawRPC("tools/call", { name: "remember", arguments: boundary })).result);
+  const accepted = terminalPayload((await rawRPC("tools/call", { name: "remember", arguments: boundary }, undefined, { retryEmbedding: true })).result);
   assertStrictTerminalRemember(accepted, expect);
   expect(accepted.processing_state === "completed", "999-rune Evidence must remain supported");
   return { fault: "evidence-contract", retired_fields_rejected: true, zero_provider_calls_for_invalid: true, bounds: true };
@@ -492,7 +493,7 @@ async function runTerminalDomainCase({ rpc, expect, fault }) {
 
 async function runEmbeddingFaultCase({ rpc, expect, fault }) {
   const args = singleItemArguments(`embedding-${fault}`, `[fixture-fault:${fault}]`);
-  const result = terminalPayload(await rpc("tools/call", { name: "remember", arguments: args }));
+  const result = terminalPayload(await rpc("tools/call", { name: "remember", arguments: args }, { retryEmbedding: false }));
   assertStrictTerminalRemember(result, expect);
   expect(result.processing_state === "failed", `${fault} must fail in the embedding phase`);
   const expectedCode = fault === "embedding-timeout" ? "request_timeout" : "embedding_response_invalid";
@@ -509,7 +510,7 @@ async function runCancellationCase({ rpc, rawRPC, expect }) {
   await assert.rejects(request, (error) => error?.name === "AbortError");
   let retry;
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    retry = terminalPayload(await rpc("tools/call", { name: "remember", arguments: args }));
+    retry = terminalPayload(await rpc("tools/call", { name: "remember", arguments: args }, { retryEmbedding: false }));
     assertStrictTerminalRemember(retry, expect);
     if (retry.processing_state === "completed") break;
     expect(retry.errors[0]?.retryable === true, `a cancelled request returned a non-retryable failure: ${JSON.stringify(retry)}`);
@@ -640,7 +641,7 @@ async function runChangedHashConflictCase({ rawRPC, expect }) {
   const key = `synchronous-write-remember-conflict-${Date.now()}`;
   const firstArgs = singleItemArguments("conflict", "[fixture:conflict-a]");
   firstArgs.idempotency_key = key;
-  const firstResponse = await rawRPC("tools/call", { name: "remember", arguments: firstArgs });
+  const firstResponse = await rawRPC("tools/call", { name: "remember", arguments: firstArgs }, undefined, { retryEmbedding: true });
   const first = terminalPayload(firstResponse.result);
   assertStrictTerminalRemember(first, expect);
   expect(first.processing_state === "completed", "conflict setup must complete");
@@ -662,7 +663,7 @@ async function runChangedHashConflictCase({ rawRPC, expect }) {
     expect(!item.evidence_id && (!item.splits || item.splits.length === 0), "conflict must not return stored Evidence");
   }
   expect(rememberCanonicalCounts(teamID, conflict.submission_id).every((count) => count === 0), "conflict must apply zero canonical writes");
-  const replay = terminalPayload((await rawRPC("tools/call", { name: "remember", arguments: firstArgs })).result);
+  const replay = terminalPayload((await rawRPC("tools/call", { name: "remember", arguments: firstArgs }, undefined, { retryEmbedding: true })).result);
   expect(stableJSON(replay) === stableJSON(first), "original request replay must retain its authoritative result after a conflict");
   expect(stableJSON(rememberCanonicalCounts(teamID, first.submission_id)) === stableJSON(originalCounts), "conflict and original replay must preserve canonical state");
   return { fault: "changed-hash", conflict: true };
@@ -853,6 +854,13 @@ function requiredEnv(name) {
 let knownEvidenceRPCID = 0;
 
 async function rawRPCWithKey(apiKey, method, params) {
+  if (method === "tools/call" && params.name === "remember") {
+    return rememberWithEmbeddingRetry(params.arguments, (args) => singleRPCWithKey(apiKey, method, { ...params, arguments: args }));
+  }
+  return singleRPCWithKey(apiKey, method, params);
+}
+
+async function singleRPCWithKey(apiKey, method, params) {
   const baseURL = requiredEnv("DENSE_MEM_USER_URL").replace(/\/$/, "");
   const response = await fetch(`${baseURL}/mcp`, {
     method: "POST",

@@ -64,6 +64,13 @@
       "run": "^TestPairedEvaluationRealServiceResumeFreezeAndCommonScore$",
       "phase": "precheck",
       "source": "cmd/internal/serverapp/paired_evaluation_integration_test.go"
+    },
+    {
+      "id": "server/TestMCPToolProgressPostgres",
+      "package": "./cmd/internal/serverapp",
+      "run": "^TestMCPToolProgressPostgres$",
+      "phase": "precheck",
+      "source": "cmd/internal/serverapp/mcp_tool_progress_integration_test.go"
     }
   ]
 }

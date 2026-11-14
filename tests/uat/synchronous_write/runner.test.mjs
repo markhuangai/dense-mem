@@ -7,7 +7,7 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { createServer } from "node:http";
 
-import { fixtureChatResponse, fixtureFault } from "./provider-fixture.mjs";
+import { fixtureChatResponse, fixtureFault, server as providerFixtureServer } from "./provider-fixture.mjs";
 import { discoverCases } from "./runner.mjs";
 import { createHash } from "node:crypto";
 import { diagnoseProviderHTTPLog } from "./cases/diagnostics.mjs";
@@ -284,4 +284,32 @@ test("remember PostgreSQL fixtures use the consolidated production runner handof
   assert.match(scenario, /export DENSE_MEM_E2E_COMPOSE_OVERLAY_FILE=/);
   assert.match(scenario, /specs\+=\("tests-compose\/compose-evidence-conflict\.spec\.ts"\)/);
   assert.match(controller, /DENSE_MEM_E2E_COMPOSE_OVERLAY_FILE=\/ci\/helper-compose\.yml/);
+});
+
+
+test("session-repair fixture recognizes the extractor's string validation error and retains exhausted failures", async (t) => {
+  providerFixtureServer.listen(0, "127.0.0.1");
+  await once(providerFixtureServer, "listening");
+  t.after(async () => { providerFixtureServer.closeAllConnections(); await new Promise((resolve) => providerFixtureServer.close(resolve)); });
+  const send = async (request) => {
+    const response = await fetch(`http://127.0.0.1:${providerFixtureServer.address().port}/chat/completions`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(request),
+    });
+    assert.equal(response.status, 200);
+    return (await response.json()).choices[0].message.content;
+  };
+  for (const fault of ["session-repair", "repair-exhausted"]) {
+    const text = `Alice uses PostgreSQL. [fixture-fault:${fault}]`;
+    const request = structuredRequest("session_evidence_excerpts_v2", { request_id: "session-progress", window: {
+      index: 0, core: [{ ref: "segment", event_index: 0, start: 0, end: text.length, text }],
+    }, prior_context: [] });
+    assert.equal(await send(request), "not-json");
+    request.messages.push({ role: "user", content: JSON.stringify({ validation_errors: "invalid JSON", instruction: "Return one complete replacement object for the original immutable request." }) });
+    const corrected = await send(request);
+    if (fault === "repair-exhausted") { assert.equal(corrected, "not-json"); continue; }
+    const result = JSON.parse(corrected);
+    assert.equal(result.request_id, "session-progress");
+    assert.deepEqual(result.coverage, ["segment"]);
+    assert.deepEqual(result.excerpts, [{ event_index: 0, start: 0, end: text.length, content: text }]);
+  }
 });

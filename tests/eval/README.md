@@ -656,9 +656,13 @@ batching latency improvement is inferred.
 
 ## Discovery measurement
 
-`TestOntologyMaintenanceRevalidationDiscoveryMeasurement` runs deterministic HTTP
-providers against real PostgreSQL on dedicated shard 1. It includes
-`discovery-receipts-v1` and `coalescing-markers-v3`; neither calls a live model.
+`TestOntologyMaintenanceCoalescingMeasurement` and
+`TestOntologyMaintenanceRevalidationDiscoveryMeasurement` run deterministic HTTP
+providers against real PostgreSQL on dedicated seven-job shards 0 and 1,
+respectively. They retain `coalescing-markers-v3` and `discovery-receipts-v1`;
+neither calls a live model. Paired samples remain serialized with fresh state.
+Legacy three- and six-job selectors remain supported; the six-job measurement
+selection runs both complete cohorts sequentially during rollout.
 After plan conformance, request the complete exact-source Development route:
 
 ```bash
@@ -667,12 +671,22 @@ gh workflow run development-e2e.yml --repo markhuangai/dense-mem --ref main \
   -f scenarios=ontology_organization,ontology_management
 ```
 
-Retain all six job logs in a new ignored run directory. Decode outer Go test JSON,
+Retain all seven job logs in a new ignored run directory. Decode outer Go test JSON,
 then concatenate `Output` chunks by `(Package, Test)` through each newline before
 parsing `ontology_discovery_*` records; Go splits long output into 1,024-character
 chunks. Verify run ID, exact tested source and image digest against the workflow
-receipt, and source/workload hashes against the tested files. Require all 680
-registered cases exactly once, selected scenarios, aggregate and owned cleanup.
+receipt, and source/workload hashes against the tested files. Require the complete current registry exactly once (621 prechecks at #768
+before intervening additions), selected scenarios, aggregate and owned cleanup.
+
+Before human merge, the trusted main Development workflow still selects six
+jobs. Validate candidate seven-job orchestration using the guarded own-PR/admin
+Production image E2E workflow trial after a trusted preview is available; retain
+that trial separately from the standard final-head status. After merge, `all`
+selects seven jobs in Development, Production and fork validation. Earlier
+six-job fork approval needs a fresh trusted preview for seven-job validation.
+Retain source SHA, immutable image digest, setup/test durations, deadline
+headroom, protocol and raw-log hashes, aggregate results and run-owned cleanup.
+Target five minutes of execution headroom within unchanged 27/30-minute limits.
 
 The receipt protocol requires one `protocol`, 90 `measurement`, 18 `coverage`,
 seven concurrency, three cancellation, one isolation and one lock-cancellation

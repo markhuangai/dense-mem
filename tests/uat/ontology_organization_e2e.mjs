@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { captureRememberFailure } from "./synchronous_write/cases/diagnostics.mjs";
+import { rememberWithEmbeddingRetry } from "./synchronous_write/remember_retry.mjs";
 import { assessmentRecords, captureSemanticAssessmentWindow, reconstructDiagnosticBody } from "./ontology_assessment_diagnostics.mjs";
 
 const userURL = required("DENSE_MEM_USER_URL").replace(/\/$/, "");
@@ -334,6 +335,10 @@ async function browserRecall(params, key) {
 }
 
 async function rpc(name, args, key) {
+  if (name === "remember") return rememberWithEmbeddingRetry(args, (request) => rpcAttempt(name, request, key));
+  return rpcAttempt(name, args, key);
+}
+async function rpcAttempt(name, args, key) {
   const response = await fetch(`${userURL}/mcp`, { method: "POST", headers: { Authorization: `Bearer ${key}`, Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: randomUUID(), method: "tools/call", params: { name, arguments: args } }) });
   assert.equal(response.status, 200);
   const envelope = await response.json();

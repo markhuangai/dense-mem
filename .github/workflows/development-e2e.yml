@@ -14,7 +14,7 @@ on:
         default: ""
         type: string
       postgres_shards:
-        description: "PostgreSQL shards 0,1,2,3,4,5, all, or blank"
+        description: "PostgreSQL shards 0,1,2,3,4,5,6, all, or blank"
         required: false
         default: ""
         type: string
@@ -217,7 +217,7 @@ jobs:
     timeout-minutes: 30
     strategy:
       fail-fast: false
-      max-parallel: 6
+      max-parallel: 7
       matrix: ${{ fromJSON(needs.authorize.outputs.postgres_matrix) }}
     env:
       DENSE_MEM_CI_REPOSITORY: ${{ github.repository }}
@@ -281,7 +281,7 @@ jobs:
           remaining="$((POSTGRES_DEADLINE - $(date +%s)))"
           ((remaining > 0)) || exit 124
           timeout --signal=TERM --kill-after=30s "${remaining}s" scripts/e2e-host-controller.sh precheck \
-            "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" "${IMAGE}" "${GITHUB_WORKSPACE}" "shard:${SHARD}/6"
+            "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" "${IMAGE}" "${GITHUB_WORKSPACE}" "shard:${SHARD}/7"
 
   report:
     name: Aggregate development test results

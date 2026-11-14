@@ -24,7 +24,7 @@ test("fork receipt accepts the full job name declared by the reusable workflow",
   const prefix = caller.match(/receipt_job_prefix: "([^"]+)"/)[1];
   const declared = `${prefix}${fullName}`;
   assert.ok(policy.requiredForkJobs(["full"]).includes(declared));
-  const completed = ["Fork rootless controller precheck", ...[0, 1, 2, 3, 4, 5].map((shard) => `Fork PostgreSQL precheck shard ${shard}`), "Sign fork E2E receipt"]
+  const completed = ["Fork rootless controller precheck", ...[0, 1, 2, 3, 4, 5, 6].map((shard) => `Fork PostgreSQL precheck shard ${shard}`), "Sign fork E2E receipt"]
     .map((name) => ({ name, conclusion: "success" }));
   completed.push({ name: `Contributor E2E / ${declared}`, conclusion: "success", steps: ["Run scenario", "Stop scenario stack"].map((name) => ({ name, conclusion: "success" })) });
   policy.requireCompleteForkJobs(completed, ["full"]);
@@ -40,7 +40,7 @@ test("fork receipt binds approved source, image, preview attempt, workflow revis
   assert.equal(receipt.preview_run_attempt, "2");
   assert.equal(receipt.fork_run_id, "200");
   assert.equal(receipt.trusted_revision, approved.trusted_revision);
-  assert.deepEqual(receipt.postgres_prechecks, Array(6).fill("success"));
+  assert.deepEqual(receipt.postgres_prechecks, Array(7).fill("success"));
   assert.equal(receipt.scenarios.length, scenarios.length);
   assert.ok(receipt.scenarios.every((entry) => entry.result === "success" && entry.cleanup === "success"));
 });
@@ -62,6 +62,12 @@ test("every scenario, PostgreSQL shard, rootless precheck, and signer job is man
     }
   }
   assert.throws(() => policy.requireCompleteForkJobs([...jobs, jobs[0]], scenarios), /ambiguous/);
+  const seventh = jobs.find((job) => job.name.endsWith("Fork PostgreSQL precheck shard 6"));
+  assert(seventh);
+  assert.throws(() => policy.requireCompleteForkJobs([...jobs, seventh], scenarios), /ambiguous/);
+  const legacyReceipt = policy.successReceipt(approved, run, scenarios);
+  legacyReceipt.postgres_prechecks.pop();
+  assert.notEqual(policy.receiptBytes(legacyReceipt), policy.receiptBytes(policy.successReceipt(approved, run, scenarios)));
   assert.notEqual(policy.receiptBytes(policy.successReceipt(approved, run, scenarios.slice(1))), policy.receiptBytes(policy.successReceipt(approved, run, scenarios)));
   assert.throws(() => policy.successReceipt(approved, run, [...scenarios.slice(1), scenarios[1]]), /unique trusted scenario names/);
 });

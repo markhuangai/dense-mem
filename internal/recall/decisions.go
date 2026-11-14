@@ -12,6 +12,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
 type recallDecisionContextKey struct{}
@@ -70,6 +71,8 @@ func (r *Retrieval) rank(ctx context.Context, frontier string, input any, groups
 		return stage, err
 	}
 	ctx = observability.WithAIOperation(ctx, observability.AIOperationRecallReranking, len(groups))
+	ctx = requestctx.WithProgressOperation(ctx, "recall_reranking")
+	requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "recall_reranking"})
 	stage.Result, err = r.decisions.Decide(ctx, request)
 	if ctx.Err() != nil {
 		return stage, ctx.Err()

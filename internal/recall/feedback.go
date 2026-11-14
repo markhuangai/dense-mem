@@ -83,8 +83,10 @@ func SubmitRecallFeedbackBatch(
 	metrics recallcontract.FeedbackMetrics,
 	submissions []domain.RecallFeedbackSubmission,
 ) RecallFeedbackBatchResult {
+	requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "validating_input"})
 	result := RecallFeedbackBatchResult{}
 	for index, submission := range submissions {
+		requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "feedback_record", Batch: index + 1, Batches: len(submissions)})
 		var err error
 		if recorder == nil {
 			err = errors.New("recall feedback recorder unavailable")
@@ -115,6 +117,7 @@ func SubmitRecallFeedbackBatch(
 		result.RecordedCount++
 	}
 	result.Recorded = result.RecordedCount > 0
+	requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "preparing_result"})
 	return result
 }
 
@@ -268,6 +271,7 @@ func (s *RecallFeedbackEventServiceImpl) RecordRecallSnapshot(ctx context.Contex
 		return err
 	}
 	event.SnapshotState = domain.RecallFeedbackSnapshotCaptured
+	requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "recall_snapshot"})
 	return s.repo.RecordSnapshot(ctx, event)
 }
 

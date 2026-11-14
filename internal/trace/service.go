@@ -31,6 +31,7 @@ func NewSemantic(store SemanticTraceStore, loggers ...observability.LogProvider)
 	return service
 }
 func (s *semanticTraceService) Trace(ctx context.Context, _ string, req TraceRequest) (*TraceResult, error) {
+	requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "validating_input"})
 	if s == nil || s.store == nil {
 		return nil, errors.New("trace: Evidence store is required")
 	}
@@ -43,6 +44,7 @@ func (s *semanticTraceService) Trace(ctx context.Context, _ string, req TraceReq
 		return nil, tracecontract.ErrEvidenceIDInvalid
 	}
 	input := tracecontract.NormalizeInput(tracecontract.Input{TeamID: actor.TeamID.String(), EvidenceID: id.String(), IncludeEvidenceContent: req.IncludeEvidenceContent, IncludeTransitions: req.IncludeTransitions, MaxEvents: req.MaxEvents, MaxFragmentContentRunes: req.MaxFragmentContentRunes})
+	requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "trace_read"})
 	result, err := s.store.TraceEvidence(ctx, input)
 	if err == nil && (result == nil || result.Evidence == nil) {
 		err = ErrTraceEvidenceNotFound
@@ -66,5 +68,6 @@ func (s *semanticTraceService) Trace(ctx context.Context, _ string, req TraceReq
 	if err != nil {
 		return nil, err
 	}
+	requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "preparing_result"})
 	return &TraceResult{Semantic: result}, nil
 }

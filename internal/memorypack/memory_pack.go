@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 	tracecontract "github.com/markhuangai/dense-mem/internal/trace/contract"
 	"log/slog"
 	"sort"
@@ -31,6 +32,7 @@ func NewMemoryPackService(deps MemoryPackDependencies) MemoryPackService {
 	return &memoryPackService{deps: deps, now: now}
 }
 func (s *memoryPackService) Export(ctx context.Context, req ExportRequest) (result *ExportResult, err error) {
+	requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "validating_input"})
 	actor, err := memoryPackActor(ctx)
 	if err != nil {
 		return nil, err
@@ -75,10 +77,11 @@ func (s *memoryPackService) Export(ctx context.Context, req ExportRequest) (resu
 	now := s.now().UTC()
 	artifact := MemoryPackArtifact{Format: MemoryPackFormat, PackID: "pack_" + memoryPackShortHash(strings.Join(ids, "\x00")+now.Format(time.RFC3339Nano)), Name: name, Description: description, CreatedAt: now.Format(time.RFC3339Nano), Source: MemoryPackSource{TeamID: actor.TeamID.String(), ExportedBy: actor.OwnerID.String()}, Evidence: []MemoryPackEvidence{}, Omissions: []string{}}
 	exported := map[string]bool{}
-	for _, id := range ids {
+	for index, id := range ids {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
+		requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "export_read", Batch: index + 1, Batches: len(ids)})
 		trace, readErr := s.deps.Semantic.TraceEvidence(ctx, tracecontract.Input{TeamID: actor.TeamID.String(), EvidenceID: id, IncludeEvidenceContent: req.IncludeEvidence, MaxEvents: maxTraceEvents, MaxFragmentContentRunes: maxFragmentContentRunes})
 		if readErr != nil {
 			return nil, readErr
@@ -105,6 +108,7 @@ func (s *memoryPackService) Export(ctx context.Context, req ExportRequest) (resu
 			}
 		}
 	}
+	requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "export_artifact"})
 	artifact = normalizeMemoryPackArtifact(artifact)
 	_, hash, err := canonicalMemoryPackArtifact(artifact)
 	if err != nil {

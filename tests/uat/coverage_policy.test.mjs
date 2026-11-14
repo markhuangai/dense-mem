@@ -58,6 +58,19 @@ function assertProxyCoverage(packageJSON) {
   assert.match(packageJSON.scripts["test:coverage"], /c8/);
 }
 
+test("both complete measurement cohorts stay outside the ordinary coverage batch", async () => {
+  const script = await read("scripts/coverage-report.sh");
+  const skip = script.match(/-skip '([^']+)'/);
+  assert.ok(skip, "ordinary PostgreSQL coverage must declare its exact exclusions");
+  const excluded = new RegExp(skip[1]);
+  for (const name of ["TestOntologyMaintenanceCoalescingMeasurement", "TestOntologyMaintenanceRevalidationDiscoveryMeasurement"]) {
+    assert.equal(excluded.test(name), true);
+    assert.equal(excluded.test(name + "Extra"), false);
+  }
+  assert.equal(excluded.test("TestOntologyMaintenanceRevalidationDiscoveryConcurrency"), false);
+  assert.equal(excluded.test("TestOntologyMaintenanceParallelSchedulerFillsAvailableSlots"), true);
+});
+
 test("browser and proxy coverage keep only bootstrap wrappers outside the inventory", async () => {
   const webPackage = JSON.parse(await read("web/package.json"));
   const webConfig = await read("web/vite.config.ts");

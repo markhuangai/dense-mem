@@ -121,6 +121,7 @@ func TestRunBatchRequiresEveryCaseToPass(t *testing.T) {
 	}{
 		{name: "pass", output: `{"Action":"pass","Test":"TestRequired"}`, want: ""},
 		{name: "skip", output: `{"Action":"skip","Test":"TestRequired"}`, want: "ended with skip"},
+		{name: "duplicate", output: "{\"Action\":\"pass\",\"Test\":\"TestRequired\"}\n{\"Action\":\"pass\",\"Test\":\"TestRequired\"}", want: "executed more than once"},
 		{name: "missing", output: `{"Action":"pass","Test":"TestOther"}`, want: "did not execute"},
 		{name: "command failure", output: `{"Action":"fail","Test":"TestRequired"}`, exitStatus: 1, want: "batch ./internal/knowledge/postgres failed"},
 	}

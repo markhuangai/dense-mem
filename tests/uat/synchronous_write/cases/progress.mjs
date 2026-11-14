@@ -3,10 +3,11 @@ import { randomUUID } from "node:crypto";
 import { captureSemanticAssessmentWindow, reconstructDiagnosticBody } from "../../ontology_assessment_diagnostics.mjs";
 import { createKnownEvidenceTeam, createKnownEvidenceCredential, postgresQuery, rememberCanonicalCounts } from "./remember.mjs";
 import { diagnoseProviderHTTPLog } from "./diagnostics.mjs";
+import { rememberWithEmbeddingRetry } from "../remember_retry.mjs";
 
 export const name = "progress";
-const messages = ["Validating input", "Checking previous result", "Returning saved result", "Preparing intake", "Preparing semantic boundaries", "Partitioning submitted text", "Validating partitions", "Regenerating partitions", "Preparing duplicate-search embeddings", "Checking duplicate Evidence", "Assessing Evidence", "Validating assessment", "Regenerating assessment", "Preparing search state", "Committing", "Preparing result", "Recording failure result", "Waiting for an identical request", "Preparing embedding batch"];
-const providerMessage = /^(Waiting for (partition|assessment|duplicate embedding|embedding) provider capacity|Waiting before retrying (partition|assessment|duplicate embedding|embedding) provider|Calling (partition|assessment|duplicate embedding|embedding) provider)$/;
+const messages = ["Checking session ownership", "Preparing extraction windows", "Waiting for extraction window capacity", "Extracting exact session excerpts", "Validating session excerpts", "Regenerating session excerpts", "Saving validated session excerpts", "Preparing Recall policy", "Reading the search contract", "Preparing query embedding", "Searching authorized Evidence", "Reading authorized Evidence", "Reading Evidence conflicts", "Ranking authorized Evidence", "Selecting related topics", "Recording the Recall snapshot", "Reading the authorized Evidence trace", "Applying Evidence retraction", "Recording Recall feedback", "Reading Evidence for export", "Building the memory pack", "Recording evaluation audit", "Listing authorized evaluation references", "Validating input", "Checking previous result", "Returning saved result", "Preparing intake", "Preparing semantic boundaries", "Partitioning submitted text", "Validating partitions", "Regenerating partitions", "Preparing duplicate-search embeddings", "Checking duplicate Evidence", "Assessing Evidence", "Validating assessment", "Regenerating assessment", "Preparing search state", "Committing", "Preparing result", "Recording failure result", "Waiting for an identical request", "Preparing embedding batch"];
+const providerMessage = /^(Waiting for (partition|assessment|duplicate embedding|embedding|session extraction|query embedding|Recall ranking) provider capacity|Waiting before retrying (partition|assessment|duplicate embedding|embedding|session extraction|query embedding|Recall ranking) provider|Calling (partition|assessment|duplicate embedding|embedding|session extraction|query embedding|Recall ranking) provider)$/;
 const rememberModel = "dense-mem-synchronous-write-e2e-remember";
 
 export async function run({ expect, runStep }) {
@@ -80,7 +81,7 @@ export async function run({ expect, runStep }) {
     ["embedding-count", "embedding_response_invalid", 4],
   ]) {
     await runStep(fault, async () => {
-      const receipt = await progressCall({ apiKey: baseKey, args: argumentsFor(fault, fault), token: JSON.stringify("failed-" + fault) });
+      const receipt = await progressCall({ apiKey: baseKey, args: argumentsFor(fault, fault), retryEmbedding: false, token: JSON.stringify("failed-" + fault) });
       const terminal = receipt.terminal.result;
       assert.equal(terminal.isError, true);
       assert.equal(terminal.structuredContent.processing_state, "failed");
@@ -144,7 +145,7 @@ export async function run({ expect, runStep }) {
       const args = argumentsFor("disconnect", "admission-hold", false);
       const controller = new AbortController();
       try {
-        await assert.rejects(progressCall({ apiKey: baseKey, args, token: "0", version, signal: controller.signal,
+        await assert.rejects(progressCall({ apiKey: baseKey, args, token: "0", version, signal: controller.signal, retryEmbedding: false,
           onProgress: async (frame) => {
             if (frame.params.message !== "Preparing duplicate-search embeddings") return;
             await waitFor(async () => (await health()).held_admission_requests > 0, "disconnect must reach required provider work");
@@ -241,17 +242,23 @@ export async function parseProgressStream(body, onFrame) {
   assert.equal(data, "", "progress stream ended with an incomplete event");
 }
 
-export async function progressCall({ apiKey, args, token, accept = "application/json, text/event-stream", version = "2026-07-28", signal, onProgress }) {
+export async function progressCall(options) {
+  const { name = "remember", args, signal, retryEmbedding = true } = options;
+  if (name === "remember") return rememberWithEmbeddingRetry(args, (request) => progressAttempt({ ...options, args: request }), { signal, retry: retryEmbedding });
+  return progressAttempt(options);
+}
+
+async function progressAttempt({ apiKey, name = "remember", args, token, accept = "application/json, text/event-stream", version = "2026-07-28", signal, onProgress }) {
   const id = randomUUID();
   const correlationID = randomUUID();
-  const params = { name: "remember", arguments: args, _meta: {
+  const params = { name, arguments: args, _meta: {
     "io.modelcontextprotocol/protocolVersion": version, "io.modelcontextprotocol/clientCapabilities": {},
   } };
   let body = JSON.stringify({ jsonrpc: "2.0", id, method: "tools/call", params });
   if (token !== undefined) body = body.replace('"_meta":{', '"_meta":{"progressToken":' + token + ",");
   const response = await fetch(required("DENSE_MEM_USER_URL").replace(/\/$/, "") + "/mcp", {
     method: "POST", headers: { Authorization: "Bearer " + apiKey, Accept: accept, "Content-Type": "application/json",
-      "MCP-Protocol-Version": version, "Mcp-Method": "tools/call", "Mcp-Name": "remember", "X-Correlation-ID": correlationID },
+      "MCP-Protocol-Version": version, "Mcp-Method": "tools/call", "Mcp-Name": name, "X-Correlation-ID": correlationID },
     body, signal,
   });
   const progress = [];
@@ -264,12 +271,12 @@ export async function progressCall({ apiKey, args, token, accept = "application/
       assert.equal(item.params.progress, progress.length + 1);
       assert(!Object.hasOwn(item.params, "total"));
       const baseMessage=item.params.message.replace(/ \(\d+\/\d+\)$/," ").trim();
-      assert(messages.includes(baseMessage)||providerMessage.test(baseMessage),item.params.message);
+      assert(messages.includes(baseMessage)||providerMessage.test(baseMessage)||/^Regenerating (assessment|Recall ranking) provider response$/.test(baseMessage),item.params.message);
       assert.notEqual(progress.at(-1)?.params.message,item.params.message,"identical consecutive updates must be suppressed");
       if (/^-?\d+$/.test(token)) assert(text.includes('"progressToken":' + token + ",") || text.includes('"progressToken":' + token + "}"));
       else assert.equal(item.params.progressToken, JSON.parse(token));
       progress.push(item);
-      assert(progress.length <= 256);
+      assert(progress.length <= 4096);
       if (onProgress) await onProgress(item);
     } else {
       assert(!terminal, "more than one terminal response");

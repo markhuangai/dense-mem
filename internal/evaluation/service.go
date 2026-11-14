@@ -67,6 +67,7 @@ func (s *Service) ListKnowledgeRefs(ctx context.Context, fallbackTeamID, kind st
 	if s.deps.Repository == nil {
 		return nil, ErrToolUnavailable
 	}
+	requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "evaluation_list"})
 	page, err := s.deps.Repository.ListEvaluationRefs(ctx, evaluationcontract.EvaluationListInput{
 		TeamID: teamID,
 		Type:   kind,
@@ -85,6 +86,7 @@ func (s *Service) ListKnowledgeRefs(ctx context.Context, fallbackTeamID, kind st
 		}
 		items = append(items, copied)
 	}
+	requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "preparing_result"})
 	return pageResult(items, page.NextCursor, page.HasMore), nil
 }
 
@@ -132,6 +134,7 @@ func (s *Service) RunRecallCase(ctx context.Context, caseID string, req contract
 	if includeEvidence {
 		out["context_evidence_refs"] = resultRefs(result)
 	}
+	requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "preparing_result"})
 	return out, nil
 }
 
@@ -155,6 +158,7 @@ func (s *Service) audit(ctx context.Context, tool string, pageSize int, contentR
 			actorRole = actor.Role
 		}
 	}
+	requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "evaluation_audit"})
 	return s.deps.Audit.Append(ctx, accessservice.AuditLogEntry{
 		ProfileID:  profileID,
 		Operation:  "EVALUATION_TOOL_CALL",

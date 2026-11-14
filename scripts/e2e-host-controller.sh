@@ -29,7 +29,7 @@ usage() {
     '  e2e-host-controller.sh run RUN_ID ATTEMPT PHASE STACK_SCENARIO SCENARIO IMAGE_REF SOURCE_DIR' \
     '  e2e-host-controller.sh stop PROJECT' \
     '  e2e-host-controller.sh stale-cleanup [MAX_AGE_SECONDS] [RUN_ID ATTEMPT PHASE]' \
-    '  e2e-host-controller.sh precheck RUN_ID ATTEMPT IMAGE_REF SOURCE_DIR [CAPABILITIES|shard:0..2|shard:0..5/6]' >&2
+    '  e2e-host-controller.sh precheck RUN_ID ATTEMPT IMAGE_REF SOURCE_DIR [CAPABILITIES|shard:0..2|shard:0..5/6|shard:0..6/7]' >&2
   exit 2
 }
 
@@ -521,8 +521,24 @@ const path = require("node:path");
 
 const directory = process.argv[2];
 const shardCount = Number(process.argv[3]);
-if (![3, 6].includes(shardCount)) throw new Error("precheck requires three or six shards");
+if (![3, 6, 7].includes(shardCount)) throw new Error("precheck requires three, six, or seven shards");
 const batchSize = 40;
+// Ceilings from run 43576725917 include fresh fixtures; package costs include compilation and batch startup.
+const secondsPerCase = {
+  access: 5, audit: 4, conflict: 7, dream: 5, http: 2, "index-retirement": 4,
+  knowledge: 4, migration: 10, "migration-control-detachment": 4, operations: 6,
+  postgres: 5, privacy: 5, recall: 7, remember: 6, repository: 5, search: 5,
+  server: 10, "session-ingest": 11, settings: 6, trace: 8,
+};
+const packageSetupSeconds = {
+  "./internal/ontology/postgres": 41, "./cmd/internal/serverapp": 75,
+  "./internal/conflict/postgres": 47, "./internal/http": 18, "./internal/http/middleware": 16,
+  "./internal/knowledge/postgres": 4, "./internal/sse": 2, "./internal/storage/postgres": 3,
+  "./internal/storage/redis": 2, "./internal/trace/postgres": 2, "./cmd/internal/demo/postgres": 34,
+  "./cmd/internal/migrationapp": 2, "./internal/privacy/postgres": 2, "./internal/recall/postgres": 2,
+  "./internal/access/postgres": 33, "./internal/operations/postgres": 2, "./internal/service": 1,
+  "./internal/settings": 6,
+};
 const groups = Array.from({ length: shardCount }, () => ({
   load: 0,
   packageCounts: new Map(),
@@ -548,7 +564,8 @@ for (const entry of fs.readdirSync(directory).filter((item) => item.endsWith(".j
   const weight = [...packageCounts.values()].reduce((total, count) => total + Math.ceil(count / batchSize), 0);
   const caseIds = selectedCases.map((item) => item.id);
   // Evidence Recall hydration needs more room than its case count suggests in the bounded six-shard route.
-  const load = shardCount === 6 ? cases * (capability === "recall" ? 2 : 1) : cases;
+  const load = shardCount === 7 ? cases * (secondsPerCase[capability] ?? 11) :
+    shardCount === 6 ? cases * (capability === "recall" ? 2 : 1) : cases;
   records.push({ capability, cases, load, packageCounts, weight, caseIds });
 }
 
@@ -557,8 +574,7 @@ if (records.length === 0) throw new Error("no populated precheck database capabi
 const ontologyIndex = records.findIndex((record) => record.capability === "ontology");
 const isolateOntology = ontologyIndex >= 0 && records.length >= 3;
 const caseSelections = [];
-if (shardCount === 6) {
-  // Keep discovery measurement isolated and balance measured ontology work across the other two selections.
+if (shardCount >= 6) {
   const ontology = records[ontologyIndex];
   const dedicated = [
     "repository/TestOntologyMaintenanceCurrentReceiptCompletion",
@@ -576,12 +592,26 @@ if (shardCount === 6) {
     ].filter((id) => ontology?.caseIds.includes(id)),
   ].sort();
   const measurement = "repository/TestOntologyMaintenanceRevalidationDiscoveryMeasurement";
-  const isolated = [...dedicated, measurement];
-  if (!ontology || isolated.some((id) => !ontology.caseIds.includes(id)) || ontology.caseIds.length <= isolated.length || records.length < 5) {
-    throw new Error("six precheck shards require dedicated ontology cases, discovery measurement, remaining ontology, and four populated capability groups");
+  const coalescing = "repository/TestOntologyMaintenanceCoalescingMeasurement";
+  if (shardCount === 7) {
+    dedicated.push(
+      "repository/TestOntologyOrganizationCompletedReceiptInvalidation",
+      "repository/TestOntologyMaintenanceFinalizationReceiptsAndAccounting",
+      "repository/TestOntologyMaintenanceCohort",
+      "repository/TestOntologyMaintenanceCoalescingPages",
+      "repository/TestOntologyMaintenanceMatchingCohort",
+    );
+    if (!ontology?.caseIds.includes(coalescing)) throw new Error("seven precheck shards require both complete measurement cohorts");
   }
-  caseSelections.push(dedicated.join(","), measurement, ontology.caseIds.filter((id) => !isolated.includes(id)).sort().join(","));
-  groups.splice(0, 3);
+  const measurements = [...(ontology?.caseIds.includes(coalescing) ? [coalescing] : []), measurement];
+  const isolated = [...dedicated, ...measurements];
+  if (!ontology || isolated.some((id) => !ontology.caseIds.includes(id)) || ontology.caseIds.length <= isolated.length || records.length < 5) {
+    throw new Error("six precheck shards require dedicated ontology cases, discovery measurement, remaining ontology, and four populated capability groups; seven also isolates coalescing");
+  }
+  const remaining = ontology.caseIds.filter((id) => !isolated.includes(id)).sort().join(",");
+  if (shardCount === 7) caseSelections.push(coalescing, measurement, dedicated.sort().join(","), remaining);
+  else caseSelections.push(dedicated.join(","), measurements.join(","), remaining);
+  groups.splice(0, caseSelections.length);
 }
 if (isolateOntology) {
   records.splice(ontologyIndex, 1);
@@ -589,13 +619,18 @@ if (isolateOntology) {
 }
 
 records.sort((left, right) =>
-  (shardCount === 6 ? right.load - left.load : right.weight - left.weight) ||
+  (shardCount >= 6 ? right.load - left.load : right.weight - left.weight) ||
   right.cases - left.cases ||
   (left.capability < right.capability ? -1 : left.capability > right.capability ? 1 : 0),
 );
 
 function batchWeight(packageCounts) {
   return [...packageCounts.values()].reduce((total, count) => total + Math.ceil(count / batchSize), 0);
+}
+
+function measuredSetup(packageCounts) {
+  return [...packageCounts].reduce((total, [name, count]) =>
+    total + (packageSetupSeconds[name] ?? 75) + 2 * (Math.ceil(count / batchSize) - 1), 0);
 }
 
 for (const record of records) {
@@ -606,7 +641,7 @@ for (const record of records) {
       projected.set(packageName, (projected.get(packageName) || 0) + count);
     }
     const projectedBatches = batchWeight(projected);
-    const setupLoad = shardCount === 6 ? batchSize * projectedBatches : 0;
+    const setupLoad = shardCount === 7 ? measuredSetup(projected) : shardCount === 6 ? batchSize * projectedBatches : 0;
     const candidate = [groups[index].load + record.load + setupLoad, projectedBatches, index];
     if (!selected || candidate[0] < selected[0] ||
         (candidate[0] === selected[0] && candidate[1] < selected[1]) ||
@@ -622,8 +657,8 @@ for (const record of records) {
   }
 }
 
-if (shardCount === 6 && groups.some((group) => group.capabilities.length === 0)) {
-  throw new Error("six precheck shards require six populated selections");
+if (shardCount >= 6 && groups.some((group) => group.capabilities.length === 0)) {
+  throw new Error(`${shardCount} precheck shards require ${shardCount} populated selections`);
 }
 for (const ids of caseSelections) process.stdout.write(`cases:${ids}\n`);
 if (isolateOntology && shardCount === 3) process.stdout.write("ontology\n");
@@ -640,7 +675,11 @@ precheck() {
   local -a selections=()
   local shard_count=3 shard_index="" bounded=0
   if [[ "$capabilities" == shard:* ]]; then
-    if [[ "$capabilities" =~ ^shard:([0-5])/6$ ]]; then
+    if [[ "$capabilities" =~ ^shard:([0-6])/7$ ]]; then
+      shard_index="${BASH_REMATCH[1]}"
+      shard_count=7
+      bounded=1
+    elif [[ "$capabilities" =~ ^shard:([0-5])/6$ ]]; then
       shard_index="${BASH_REMATCH[1]}"
       shard_count=6
       bounded=1
