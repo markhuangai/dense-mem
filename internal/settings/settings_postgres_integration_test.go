@@ -5,6 +5,7 @@ package settings_test
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -114,9 +115,10 @@ func controlRequest(e http.Handler, method, path, token, body string, remoteIPs 
 
 func uniqueSecurityTestIP() string {
 	id := uuid.New()
-	return fmt.Sprintf("2001:db8:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x",
+	ip := fmt.Sprintf("2001:db8:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x",
 		id[0], id[1], id[2], id[3], id[4], id[5], id[6], id[7], id[8], id[9], id[10], id[11],
 	)
+	return net.ParseIP(ip).String()
 }
 
 func TestSettingsControlPortalPositiveAndDurableAudit(t *testing.T) {
