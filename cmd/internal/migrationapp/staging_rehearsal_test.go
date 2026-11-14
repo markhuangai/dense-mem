@@ -41,6 +41,14 @@ const (
 	stagingPostgresPort = uint16(15433)
 )
 
+var stagingEvidenceTables = []string{
+	"evidence_sources", "evidence_source_revisions", "evidence_exact_aliases",
+	"evidence_occurrences", "evidence_fragments", "evidence_security_events",
+	"evidence_security_signals", "evidence_quarantines", "evidence_lifecycle_operations",
+	"evidence_lifecycle_events", "evidence_conflict_cases", "evidence_conflict_positions",
+	"evidence_conflict_events",
+}
+
 type stagingRehearsalLogger struct {
 	t *testing.T
 }
@@ -128,9 +136,14 @@ func stagingEvidenceFingerprints(t *testing.T, ctx context.Context, db *gorm.DB)
 	t.Helper()
 	result := map[string]string{}
 	err := storagepostgres.NewRLS().WithSystemReadOnlyRepeatableTx(ctx, db, func(tx *gorm.DB) error {
-		for _, table := range []string{"evidence_sources", "evidence_source_revisions", "evidence_exact_aliases", "evidence_occurrences", "evidence_fragments", "evidence_security_events", "evidence_security_signals", "evidence_quarantines", "evidence_lifecycle_operations", "evidence_lifecycle_events", "evidence_conflict_cases", "evidence_conflict_positions", "evidence_conflict_events"} {
+		for _, table := range stagingEvidenceTables {
 			var hash string
-			query := fmt.Sprintf(`SELECT encode(sha256(convert_to(COALESCE(jsonb_agg(to_jsonb(row_value) ORDER BY to_jsonb(row_value)::text)::text,'[]'),'UTF8')),'hex') FROM %s row_value`, table)
+			rowJSON := "to_jsonb(row_value)"
+			if table == "evidence_lifecycle_events" {
+				// The partition migration adds NULL replacement IDs without changing historical events.
+				rowJSON = `CASE WHEN to_jsonb(row_value)->'replacement_source_item_id' = 'null'::jsonb THEN to_jsonb(row_value) - 'replacement_source_item_id' ELSE to_jsonb(row_value) END`
+			}
+			query := fmt.Sprintf(`SELECT encode(sha256(convert_to(COALESCE(jsonb_agg(body ORDER BY body::text)::text,'[]'),'UTF8')),'hex') FROM (SELECT %s AS body FROM %s row_value) retained`, rowJSON, table)
 			if err := tx.Raw(query).Row().Scan(&hash); err != nil {
 				return err
 			}
@@ -140,6 +153,72 @@ func stagingEvidenceFingerprints(t *testing.T, ctx context.Context, db *gorm.DB)
 	})
 	require.NoError(t, err)
 	return result
+}
+
+func TestStagingEvidenceFingerprintsNullableLifecycleField(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
+	defer cancel()
+	db, _ := stagingMigrationTestDatabase(t, ctx)
+	for _, table := range stagingEvidenceTables {
+		require.NoError(t, db.WithContext(ctx).Exec(fmt.Sprintf(
+			`CREATE TABLE %s (id INTEGER PRIMARY KEY, content TEXT, metadata JSONB)`, table)).Error)
+	}
+	empty := stagingEvidenceFingerprints(t, ctx, db)
+	require.Len(t, empty, 13)
+	require.NoError(t, db.WithContext(ctx).Exec(`INSERT INTO evidence_lifecycle_events VALUES
+ (1,'original','{"replacement_source_item_id":null,"nested":{"nullable":null}}'),
+ (2,'second','{"nullable":null}');
+ INSERT INTO evidence_sources VALUES (1,'source','{"replacement_source_item_id":null}')`).Error)
+	before := stagingEvidenceFingerprints(t, ctx, db)
+	require.NoError(t, db.WithContext(ctx).Exec(
+		`ALTER TABLE evidence_lifecycle_events ADD COLUMN replacement_source_item_id UUID`).Error)
+	require.Equal(t, before, stagingEvidenceFingerprints(t, ctx, db), "adding the nullable lifecycle field must preserve historical fingerprints")
+	require.NoError(t, db.WithContext(ctx).Exec(`WITH reordered AS (
+ DELETE FROM evidence_lifecycle_events RETURNING *
+) INSERT INTO evidence_lifecycle_events SELECT * FROM reordered ORDER BY id DESC`).Error)
+	require.Equal(t, before, stagingEvidenceFingerprints(t, ctx, db), "physical row order must not change fingerprints")
+
+	tests := []struct {
+		name, table, query string
+		args               []any
+	}{
+		{"replacement becomes non-null", "evidence_lifecycle_events",
+			`UPDATE evidence_lifecycle_events SET replacement_source_item_id=? WHERE id=1`, []any{uuid.New()}},
+		{"replacement changes", "evidence_lifecycle_events",
+			`UPDATE evidence_lifecycle_events SET replacement_source_item_id=? WHERE id=1`, []any{uuid.New()}},
+		{"replacement becomes null", "evidence_lifecycle_events",
+			`UPDATE evidence_lifecycle_events SET replacement_source_item_id=NULL WHERE id=1`, nil},
+		{"historical content changes", "evidence_lifecycle_events",
+			`UPDATE evidence_lifecycle_events SET content='changed' WHERE id=1`, nil},
+		{"nested replacement field changes", "evidence_lifecycle_events",
+			`UPDATE evidence_lifecycle_events SET metadata=jsonb_set(metadata,'{replacement_source_item_id}','"changed"') WHERE id=1`, nil},
+		{"nested null is removed", "evidence_lifecycle_events",
+			`UPDATE evidence_lifecycle_events SET metadata=metadata#-'{nested,nullable}' WHERE id=1`, nil},
+		{"another nullable field is added", "evidence_lifecycle_events",
+			`ALTER TABLE evidence_lifecycle_events ADD COLUMN historical_nullable TEXT`, nil},
+		{"same field in another table", "evidence_sources",
+			`ALTER TABLE evidence_sources ADD COLUMN replacement_source_item_id UUID`, nil},
+		{"row is inserted", "evidence_lifecycle_events",
+			`INSERT INTO evidence_lifecycle_events(id,content,metadata) VALUES(3,'additional','{}')`, nil},
+		{"row is deleted", "evidence_lifecycle_events",
+			`DELETE FROM evidence_lifecycle_events WHERE id=3`, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			before := stagingEvidenceFingerprints(t, ctx, db)
+			require.NoError(t, db.WithContext(ctx).Exec(tt.query, tt.args...).Error)
+			after := stagingEvidenceFingerprints(t, ctx, db)
+			require.NotEqual(t, before[tt.table], after[tt.table], "data changes must remain visible in the fingerprint")
+			for table, hash := range before {
+				if table != tt.table {
+					require.Equal(t, hash, after[table], table)
+				}
+			}
+		})
+	}
+
+	require.NoError(t, db.WithContext(ctx).Exec(`TRUNCATE evidence_lifecycle_events,evidence_sources`).Error)
+	require.Equal(t, empty, stagingEvidenceFingerprints(t, ctx, db), "empty tables must remain stable across the schema addition")
 }
 
 func assertStagingEvidenceOnlyCatalog(t *testing.T, ctx context.Context, db *gorm.DB) {
