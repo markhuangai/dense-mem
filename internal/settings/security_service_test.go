@@ -245,10 +245,10 @@ func (r *fakeSecurityRepository) RecordFailure(ctx context.Context, ip, surface,
 	}, nil
 }
 
-func (r *fakeSecurityRepository) UpsertBan(ctx context.Context, ban *domain.SecurityIPBan) error {
+func (r *fakeSecurityRepository) UpsertBan(ctx context.Context, ban *domain.SecurityIPBan) (bool, error) {
 	copy := *ban
 	r.bans[ban.IP] = &copy
-	return nil
+	return true, nil
 }
 
 func (r *fakeSecurityRepository) ListBans(ctx context.Context, includeExpired bool, limit, offset int) ([]domain.SecurityIPBan, int64, error) {

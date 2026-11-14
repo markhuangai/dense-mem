@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -121,6 +122,9 @@ func CaptureAuthFailureRequest(c echo.Context, message string) *domain.SecurityA
 			for _, value := range values {
 				if parts := strings.SplitN(value, " ", 2); len(parts) == 2 {
 					secrets = append(secrets, parts[1])
+					if strings.EqualFold(parts[0], "Bearer") {
+						secrets = append(secrets, strings.TrimSpace(parts[1]))
+					}
 					if (strings.EqualFold(name, "Authorization") || strings.EqualFold(name, "Proxy-Authorization")) && strings.EqualFold(parts[0], "Basic") {
 						if decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(parts[1])); err == nil {
 							secrets = append(secrets, string(decoded))
@@ -196,7 +200,7 @@ func captureAuthFailureBody(c echo.Context) (string, domain.SecurityRequestCaptu
 	if err != nil || body.readErr != nil || !complete {
 		return unavailable("incomplete_body")
 	}
-	if !utf8.Valid(body.bytes) {
+	if !utf8.Valid(body.bytes) || bytes.IndexByte(body.bytes, 0) >= 0 {
 		return unavailable("binary_body")
 	}
 	return string(body.bytes), state

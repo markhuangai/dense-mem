@@ -13,8 +13,12 @@ import (
 	"testing"
 	"time"
 
+	auditapp "github.com/markhuangai/dense-mem/internal/audit"
+	auditpostgres "github.com/markhuangai/dense-mem/internal/audit/postgres"
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	settings "github.com/markhuangai/dense-mem/internal/settings"
+	settingscontract "github.com/markhuangai/dense-mem/internal/settings/contract"
 	settingspostgres "github.com/markhuangai/dense-mem/internal/settings/postgres"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"github.com/stretchr/testify/require"
@@ -77,7 +81,32 @@ func assertSecurityBanRequestSnapshots(t *testing.T, db *gorm.DB, service *setti
 	require.NotEmpty(t, auditMetadata)
 	require.NotContains(t, auditMetadata, "request-body-canary")
 	require.NotContains(t, auditMetadata, "last_request")
+	for _, payload := range []string{"before\x00after", `{"value":"\u0000"}`} {
+		require.NoError(t, service.DeleteSecurityBan(context.Background(), ip, "control", "", ""))
+		for range 2 {
+			status, _ := send(http.MethodPatch, "/control/api/config/general", "wrong-token", payload, ip)
+			require.Equal(t, http.StatusUnauthorized, status)
+		}
+		persisted, err := service.CheckBan(context.Background(), ip)
+		require.NoError(t, err)
+		require.NotNil(t, persisted)
+		encoded, err := json.Marshal(persisted.Metadata["last_request"])
+		require.NoError(t, err)
+		var captured domain.SecurityAuthFailureRequest
+		require.NoError(t, json.Unmarshal(encoded, &captured))
+		if strings.IndexByte(payload, 0) >= 0 {
+			require.Empty(t, captured.Body)
+			require.Equal(t, "unavailable", captured.BodyCapture.State)
+			require.Equal(t, "binary_body", captured.BodyCapture.Reason)
+		} else {
+			require.Equal(t, payload, captured.Body)
+			require.Equal(t, "captured", captured.BodyCapture.State)
+		}
+		status, _ := send(http.MethodPatch, "/control/api/config/general", "wrong-token", "{}", ip)
+		require.Equal(t, http.StatusForbidden, status)
+	}
 	assertSecurityBanOrdering(t, db)
+	assertSecurityBanAuditAfterCommittedCancellation(t, db)
 }
 
 func assertSecurityBanOrdering(t *testing.T, db *gorm.DB) {
@@ -93,7 +122,8 @@ func assertSecurityBanOrdering(t *testing.T, db *gorm.DB) {
 		go func(i int) {
 			defer group.Done()
 			at := now.Add(time.Duration(i) * time.Second)
-			errors <- repo.UpsertBan(context.Background(), &domain.SecurityIPBan{IP: ip, Source: domain.SecurityBanSourceAuto, Reason: "AUTH_INVALID", FailureCount: i + 1, BannedAt: at, LastFailedAt: &at, CreatedAt: at, UpdatedAt: at, Metadata: map[string]any{"last_request": domain.SecurityAuthFailureRequest{ID: string(rune('a' + i)), CapturedAt: at, Body: "bounded diagnostic"}}})
+			_, err := repo.UpsertBan(context.Background(), &domain.SecurityIPBan{IP: ip, Source: domain.SecurityBanSourceAuto, Reason: "AUTH_INVALID", FailureCount: i + 1, BannedAt: at, LastFailedAt: &at, CreatedAt: at, UpdatedAt: at, Metadata: map[string]any{"last_request": domain.SecurityAuthFailureRequest{ID: string(rune('a' + i)), CapturedAt: at, Body: "bounded diagnostic"}}})
+			errors <- err
 		}(i)
 	}
 	group.Wait()
@@ -107,14 +137,59 @@ func assertSecurityBanOrdering(t *testing.T, db *gorm.DB) {
 	require.Equal(t, "h", ban.Metadata["last_request"].(map[string]any)["id"])
 	manualAt := time.Now().UTC()
 	manual := &domain.SecurityIPBan{IP: ip, Source: domain.SecurityBanSourceManual, Reason: "manual", BannedAt: manualAt, CreatedAt: manualAt, UpdatedAt: manualAt}
-	require.NoError(t, repo.UpsertBan(context.Background(), manual))
-	require.NoError(t, repo.UpsertBan(context.Background(), ban))
+	applied, err := repo.UpsertBan(context.Background(), manual)
+	require.NoError(t, err)
+	require.True(t, applied)
+	applied, err = repo.UpsertBan(context.Background(), ban)
+	require.NoError(t, err)
+	require.False(t, applied)
 	actual, err := repo.GetActiveBan(context.Background(), ip, time.Now().UTC())
 	require.NoError(t, err)
 	require.Equal(t, domain.SecurityBanSourceManual, actual.Source)
 	require.NoError(t, repo.DeleteBan(context.Background(), ip, manualAt.Add(time.Second)))
-	require.NoError(t, repo.UpsertBan(context.Background(), ban))
+	applied, err = repo.UpsertBan(context.Background(), ban)
+	require.NoError(t, err)
+	require.False(t, applied)
 	actual, err = repo.GetActiveBan(context.Background(), ip, time.Now().UTC())
 	require.NoError(t, err)
 	require.Nil(t, actual)
+}
+
+type cancelAfterBanWriteRepository struct {
+	settingscontract.SecurityRepository
+	cancel context.CancelFunc
+}
+
+func (r *cancelAfterBanWriteRepository) UpsertBan(ctx context.Context, ban *domain.SecurityIPBan) (bool, error) {
+	applied, err := r.SecurityRepository.UpsertBan(ctx, ban)
+	if applied && err == nil {
+		r.cancel()
+	}
+	return applied, err
+}
+
+func assertSecurityBanAuditAfterCommittedCancellation(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rls := storagepostgres.NewRLS()
+	repo := settingspostgres.NewSecurityRepository(db, rls)
+	audit := auditapp.New(auditpostgres.NewStore(db, rls))
+	service := settings.NewSecurityServiceWithDiagnostics(&cancelAfterBanWriteRepository{SecurityRepository: repo, cancel: cancel}, audit, settings.SecurityDiagnosticsOptions{Protector: observability.NewCredentialProtector()})
+	ip := uniqueSecurityTestIP()
+	defer func() { _ = repo.DeleteBan(context.Background(), ip, time.Now().UTC()) }()
+	var ban *domain.SecurityIPBan
+	for range 2 {
+		var err error
+		ban, err = service.RecordAuthFailure(ctx, ip, "mcp", "AUTH_INVALID", nil)
+		require.NoError(t, err)
+	}
+	require.NotNil(t, ban)
+	require.ErrorIs(t, ctx.Err(), context.Canceled)
+	persisted, err := repo.GetActiveBan(context.Background(), ip, time.Now().UTC())
+	require.NoError(t, err)
+	require.NotNil(t, persisted)
+	var count int64
+	require.NoError(t, db.Raw("SELECT count(*) FROM audit_log WHERE operation = 'SECURITY_AUTO_BAN' AND entity_id = $1", ip).Scan(&count).Error)
+	require.Equal(t, int64(1), count)
 }

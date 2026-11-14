@@ -556,10 +556,10 @@ func (r *oauthAuthSecurityRepository) RecordFailure(_ context.Context, ip, surfa
 	}, nil
 }
 
-func (r *oauthAuthSecurityRepository) UpsertBan(_ context.Context, ban *domain.SecurityIPBan) error {
+func (r *oauthAuthSecurityRepository) UpsertBan(_ context.Context, ban *domain.SecurityIPBan) (bool, error) {
 	copy := *ban
 	r.bans[ban.IP] = &copy
-	return nil
+	return true, nil
 }
 
 func (r *oauthAuthSecurityRepository) ListBans(context.Context, bool, int, int) ([]domain.SecurityIPBan, int64, error) {

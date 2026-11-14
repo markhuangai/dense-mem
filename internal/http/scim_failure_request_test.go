@@ -38,9 +38,9 @@ func (r *securitySnapshotRepository) GetActiveBan(context.Context, string, time.
 func (r *securitySnapshotRepository) RecordFailure(_ context.Context, ip, surface, reason string, _ int, at time.Time) (*domain.SecurityIPFailure, error) {
 	return &domain.SecurityIPFailure{IP: ip, FailureCount: 1, LastFailedAt: at, LastReason: reason, LastSurface: surface}, nil
 }
-func (r *securitySnapshotRepository) UpsertBan(_ context.Context, ban *domain.SecurityIPBan) error {
+func (r *securitySnapshotRepository) UpsertBan(_ context.Context, ban *domain.SecurityIPBan) (bool, error) {
 	r.ban = ban
-	return nil
+	return true, nil
 }
 
 func TestDirectorySCIMOAuthFailureRequestDiagnostics(t *testing.T) {

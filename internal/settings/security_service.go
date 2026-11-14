@@ -142,16 +142,13 @@ func (s *SecurityServiceImpl) RecordAuthFailure(ctx context.Context, ip, surface
 		request.CapturedAt, request.Reason = failure.LastFailedAt, failure.LastReason
 		ban.Metadata["last_request"] = s.protectSecurityRequest(ctx, request)
 	}
-	if err := s.repo.UpsertBan(ctx, ban); err != nil {
+	applied, err := s.repo.UpsertBan(ctx, ban)
+	if err != nil {
 		diagnosticBan = ban
 		return nil, err
 	}
-	persisted, err := s.repo.GetActiveBan(ctx, normalized, s.now().UTC())
-	if err != nil {
-		return nil, err
-	}
-	if persisted == nil || !sameSecurityRequest(persisted, request) {
-		return persisted, nil
+	if !applied {
+		return s.repo.GetActiveBan(ctx, normalized, s.now().UTC())
 	}
 	s.logSecurityRequest(ctx, ban, started)
 	auditMetadata := map[string]any{}
@@ -222,7 +219,7 @@ func (s *SecurityServiceImpl) CreateManualSecurityBan(ctx context.Context, ip, r
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
-	if err := s.repo.UpsertBan(ctx, ban); err != nil {
+	if _, err := s.repo.UpsertBan(ctx, ban); err != nil {
 		return nil, err
 	}
 	s.appendAudit("SECURITY_MANUAL_BAN", "security_ip_ban", normalized, actorRole, clientIP, correlationID, nil, securityBanPayload(ban), ban.Metadata)

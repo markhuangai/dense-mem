@@ -54,17 +54,6 @@ func securityRequestSnapshot(ban *domain.SecurityIPBan) *domain.SecurityAuthFail
 	return &request
 }
 
-func sameSecurityRequest(ban *domain.SecurityIPBan, request *domain.SecurityAuthFailureRequest) bool {
-	if ban.Source != domain.SecurityBanSourceAuto {
-		return false
-	}
-	if request == nil {
-		return true
-	}
-	snapshot := securityRequestSnapshot(ban)
-	return snapshot != nil && snapshot.ID == request.ID
-}
-
 func (s *SecurityServiceImpl) securityDiagnosticLog(ctx context.Context, level, event string, err error, ban *domain.SecurityIPBan, started time.Time) {
 	logger := s.diagnostics.Logger
 	if logger == nil {

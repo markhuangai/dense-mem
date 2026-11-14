@@ -212,16 +212,20 @@ test("IP bans retain protected latest requests against compose", async ({ page, 
     await page.evaluate(() => window.scrollTo(0, 0));
     await expect.poll(() => page.evaluate(() => scrollY)).toBe(0);
     await expectNoShellOverlap(page);
-    expect((await clear()).ok()).toBe(true);
-    for (let attempt = 0; attempt < rules.failure_threshold; attempt += 1) {
-      const rejected = await request.post(`${userUrl}/mcp`, { headers: failedHeaders, data: "x".repeat(65537) });
-      expect(rejected.status()).toBe(401);
+    for (const [payload, reason] of [["x".repeat(65537), "size_limit"], ["before\0after", "binary_body"]]) {
+      expect((await clear()).ok()).toBe(true);
+      for (let attempt = 0; attempt < rules.failure_threshold; attempt += 1) {
+        const rejected = await request.post(`${userUrl}/mcp`, { headers: { ...failedHeaders, "Content-Type": "text/plain" }, data: payload });
+        expect(rejected.status()).toBe(401);
+      }
+      const banned = await request.post(`${userUrl}/mcp`, { headers: failedHeaders, data: "{}" });
+      expect(banned.status()).toBe(403);
+      await page.getByRole("button", { name: "Refresh security" }).click();
+      await expect(page.getByRole("button", { name: "Refresh security" })).toBeEnabled();
+      const viewRequest = page.getByRole("button", { name: `View request for ${ip}` });
+      if (await viewRequest.getAttribute("aria-expanded") !== "true") await viewRequest.click();
+      await expect(page.getByText(`Body unavailable: ${reason}`)).toBeVisible();
     }
-    await page.getByRole("button", { name: "Refresh security" }).click();
-    await expect(page.getByRole("button", { name: "Refresh security" })).toBeEnabled();
-    const viewRequest = page.getByRole("button", { name: `View request for ${ip}` });
-    if (await viewRequest.getAttribute("aria-expanded") !== "true") await viewRequest.click();
-    await expect(page.getByText(/Body unavailable: size_limit/)).toBeVisible();
   } finally {
     try { expect((await clear()).ok()).toBe(true); }
     finally { expect((await request.patch(`${controlUrl}/control/api/security/settings`, { headers, data: originalRules })).ok()).toBe(true); }

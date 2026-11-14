@@ -22,13 +22,15 @@ import (
 
 func TestAuthFailureRequestCapture(t *testing.T) {
 	for _, test := range []struct{ name, body, contentType, encoding, reason string }{
-		{name: "original JSON", body: "{\n  \"password\": \"ordinary content\", \"basic_copy\": \"secondary-basic-canary\", \"proxy_copy\": \"proxy-basic-canary\"\n}", contentType: "application/json"},
+		{name: "original JSON", body: "{\n  \"password\": \"ordinary content\", \"basic_copy\": \"secondary-basic-canary\", \"proxy_copy\": \"proxy-basic-canary\", \"bearer_copy\": \"presented-test-key\", \"repeated_copy\": \"second-presented-key\"\n}", contentType: "application/json"},
 		{name: "malformed JSON", body: "{ bad JSON", contentType: "application/json"},
 		{name: "empty"},
 		{name: "exact limit", body: strings.Repeat("a", domain.SecurityRequestBodyLimit), contentType: "text/plain"},
 		{name: "oversized", body: strings.Repeat("a", domain.SecurityRequestBodyLimit+1), contentType: "text/plain", reason: "size_limit"},
 		{name: "binary", body: "binary", contentType: "application/octet-stream", reason: "binary_body"},
 		{name: "invalid UTF8", body: string([]byte{0xff}), contentType: "text/plain", reason: "binary_body"},
+		{name: "literal NUL", body: "before\x00after", contentType: "text/plain", reason: "binary_body"},
+		{name: "escaped NUL", body: `{"value":"\u0000"}`, contentType: "application/json"},
 		{name: "compressed", body: "compressed", contentType: "application/json", encoding: "gzip", reason: "compressed_body"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -43,6 +45,8 @@ func TestAuthFailureRequestCapture(t *testing.T) {
 				require.NoError(t, err)
 				protected, state := observability.NewCredentialProtector().ProtectDiagnosticBytes(encoded, 1<<20, secrets...)
 				require.Equal(t, observability.CredentialProtectionAvailable, state)
+				require.NotContains(t, string(protected), "presented-test-key")
+				require.NotContains(t, string(protected), "second-presented-key")
 				require.NotContains(t, string(protected), "secondary-basic-canary")
 				require.NotContains(t, string(protected), "proxy-basic-canary")
 				return c.JSON(http.StatusUnauthorized, snapshot)
@@ -51,8 +55,8 @@ func TestAuthFailureRequestCapture(t *testing.T) {
 			defer server.Close()
 			req, err := http.NewRequest(http.MethodPost, server.URL+"/mcp?mode=diagnose", strings.NewReader(test.body))
 			require.NoError(t, err)
-			req.Header.Set("Authorization", "Bearer presented-test-key")
-			req.Header.Add("Authorization", "Bearer second-presented-key")
+			req.Header.Set("Authorization", "Bearer   presented-test-key")
+			req.Header.Add("Authorization", "Bearer  second-presented-key")
 			req.Header.Add("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("auxiliary-identity:secondary-basic-canary")))
 			req.Header.Set("Proxy-Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("proxy-identity:proxy-basic-canary")))
 			req.Header.Set("Content-Type", test.contentType)
