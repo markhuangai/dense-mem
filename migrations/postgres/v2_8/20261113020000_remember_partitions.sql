@@ -1,6 +1,7 @@
--- Lock/rewrite impact: new empty provenance tables; the lifecycle ALTER takes a
+-- Lock/rewrite impact: Up creates empty provenance tables; the lifecycle ALTER takes a
 -- bounded metadata lock without scanning historical rows. The next migration
--- validates the looser CHECK after this transaction releases its exclusive lock.
+-- validates the CHECK and FK after this transaction releases its exclusive lock.
+-- Down validates the restored legacy CHECK under its schema lock without rewriting rows.
 -- No historical Evidence or receipt is backfilled. Old writers must stop before
 -- partitioned writes because they do not know the expanded erasure inventory.
 -- Rollback is permitted only before new provenance exists.
@@ -51,7 +52,7 @@ CREATE TABLE remember_item_partitions (
 
 ALTER TABLE evidence_lifecycle_events ADD COLUMN replacement_source_item_id UUID;
 ALTER TABLE evidence_lifecycle_events ADD CONSTRAINT evidence_lifecycle_replacement_item_fk
- FOREIGN KEY(team_id,replacement_source_item_id,owner_profile_id) REFERENCES remember_submitted_items(team_id,source_item_id,owner_profile_id) DEFERRABLE INITIALLY IMMEDIATE;
+ FOREIGN KEY(team_id,replacement_source_item_id,owner_profile_id) REFERENCES remember_submitted_items(team_id,source_item_id,owner_profile_id) DEFERRABLE INITIALLY IMMEDIATE NOT VALID;
 ALTER TABLE evidence_lifecycle_events DROP CONSTRAINT evidence_lifecycle_events_replacement_check;
 ALTER TABLE evidence_lifecycle_events ADD CONSTRAINT evidence_lifecycle_events_replacement_check CHECK(
  (action='supersede' AND ((replacement_fragment_id IS NOT NULL AND replacement_source_item_id IS NULL) OR (replacement_fragment_id IS NULL AND replacement_source_item_id IS NOT NULL)))

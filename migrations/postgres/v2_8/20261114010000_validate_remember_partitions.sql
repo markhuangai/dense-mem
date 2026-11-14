@@ -4,6 +4,7 @@
 -- +goose Up
 SET LOCAL lock_timeout = '30s';
 ALTER TABLE evidence_lifecycle_events VALIDATE CONSTRAINT evidence_lifecycle_events_replacement_check;
+ALTER TABLE evidence_lifecycle_events VALIDATE CONSTRAINT evidence_lifecycle_replacement_item_fk;
 
 -- +goose Down
 -- The preceding migration owns removal and refuses to discard new provenance.
