@@ -1,5 +1,6 @@
 import { navigate, openNavigation, confirmAction, expectPageContained } from "../tests-support/portal";
 import { expect, type APIRequestContext, type Locator, type Page, test } from "@playwright/test";
+import { execFileSync } from "node:child_process";
 import "./portal-state";
 
 const controlUrl = requiredEnv("DENSE_MEM_CONTROL_URL").replace(/\/$/, "");
@@ -169,11 +170,24 @@ test("IP bans retain protected latest requests against compose", async ({ page, 
       expect(rejected.status()).toBe(401);
       expect(await rejected.text()).not.toContain("ordinary request content");
     }
+    const stdout = execFileSync("docker", ["compose", "-p", requiredEnv("DENSE_MEM_E2E_COMPOSE_PROJECT"), "-f", requiredEnv("DENSE_MEM_E2E_COMPOSE_FILE"), "logs", "--no-color", "--no-log-prefix", "server"], { encoding: "utf8", maxBuffer: 256 * 1024 * 1024, timeout: 10_000 });
+    for (const secret of [failedToken, controlToken, "diagnostic-cookie"]) expect(stdout.includes(secret)).toBe(false);
+    const records = stdout.split(/\r?\n/).filter((line) => line.startsWith("{")).map((line) => JSON.parse(line));
+    const outcome = records.findLast((record) => record.msg === "security.auto_ban" && record.client_ip === ip);
+    expect(outcome).toMatchObject({ level: "INFO", message: "invalid api key", reason: "auth failures: AUTH_INVALID", failure_count: rules.failure_threshold, body_capture_state: "captured", header_capture_state: "captured" });
+    expect(outcome.settings).toMatchObject({ failure_threshold: rules.failure_threshold, failure_window_seconds: rules.failure_window_seconds, ban_duration_seconds: rules.ban_duration_seconds });
+    expect(outcome.duration_ms).toBeGreaterThanOrEqual(0);
+    expect(outcome.snapshot_id).toMatch(/^[0-9a-f-]{36}$/);
+    const correlated = records.filter((record) => record.snapshot_id === outcome.snapshot_id);
+    expect(correlated.some((record) => record.payload_chunk)).toBe(false);
+    expect(JSON.stringify(correlated)).not.toContain("ordinary request content");
+    console.log(`security diagnostic proof ${JSON.stringify(outcome)}`);
     const list = await request.get(`${controlUrl}/control/api/security/bans`, { headers });
     const { data: bans } = await list.json();
     const found = bans.find((item: { ip: string }) => item.ip === ip);
     expect(found).toBeTruthy();
     const snapshot = found.metadata.last_request;
+    expect(snapshot.id).toBe(outcome.snapshot_id);
     expect(snapshot.message).toBe("invalid api key");
     expect(snapshot.body_capture.state).toBe("captured");
     expect(snapshot.credential_prefix).toBe(failedToken.slice(0, 24));
@@ -204,7 +218,9 @@ test("IP bans retain protected latest requests against compose", async ({ page, 
       expect(rejected.status()).toBe(401);
     }
     await page.getByRole("button", { name: "Refresh security" }).click();
-    await page.getByRole("button", { name: `View request for ${ip}` }).click();
+    await expect(page.getByRole("button", { name: "Refresh security" })).toBeEnabled();
+    const viewRequest = page.getByRole("button", { name: `View request for ${ip}` });
+    if (await viewRequest.getAttribute("aria-expanded") !== "true") await viewRequest.click();
     await expect(page.getByText(/Body unavailable: size_limit/)).toBeVisible();
   } finally {
     try { expect((await clear()).ok()).toBe(true); }
