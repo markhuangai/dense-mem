@@ -934,18 +934,18 @@
       "source": "internal/ontology/postgres/maintenance_revalidation_recovery_integration_test.go"
     },
     {
-      "id": "repository/TestPairedEvaluationTerminalUnknownUsageAndReceiptIdentity",
+      "id": "repository/TestRunnerCampaignTerminalUnknownUsageAndReceiptIdentity",
       "package": "./internal/ontology/postgres",
-      "run": "^TestPairedEvaluationTerminalUnknownUsageAndReceiptIdentity$",
+      "run": "^TestRunnerCampaignTerminalUnknownUsageAndReceiptIdentity$",
       "phase": "precheck",
-      "source": "internal/ontology/postgres/paired_evaluation_integration_test.go"
+      "source": "internal/ontology/postgres/runner_campaign_integration_test.go"
     },
     {
-      "id": "repository/TestPairedEvaluationCapacityActivationAndPausedAdmission",
+      "id": "repository/TestRunnerCampaignCapacityActivationAndPausedAdmission",
       "package": "./internal/ontology/postgres",
-      "run": "^TestPairedEvaluationCapacityActivationAndPausedAdmission$",
+      "run": "^TestRunnerCampaignCapacityActivationAndPausedAdmission$",
       "phase": "precheck",
-      "source": "internal/ontology/postgres/paired_evaluation_integration_test.go"
+      "source": "internal/ontology/postgres/runner_campaign_integration_test.go"
     },
     {
       "id": "repository/TestOntologyMaintenanceRevalidationDiscoveryMeasurement",

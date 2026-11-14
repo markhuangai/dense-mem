@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -16,14 +15,10 @@ import (
 	"github.com/markhuangai/dense-mem/internal/assessor"
 
 	"github.com/google/uuid"
-	"github.com/markhuangai/dense-mem/internal/config"
-	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/evalharness"
-	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	organization "github.com/markhuangai/dense-mem/internal/ontology"
 	"github.com/markhuangai/dense-mem/internal/ontology/assessment"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
-	assessorprovider "github.com/markhuangai/dense-mem/internal/provider/assessor"
+	evalharness "github.com/markhuangai/dense-mem/internal/testfixture/evaluation"
 	"github.com/stretchr/testify/require"
 )
 
@@ -36,13 +31,13 @@ func testOntologyCohort(t *testing.T, maintenance bool, supplements ...[]evalhar
 func testOntologyCohortWithMatching(t *testing.T, maintenance bool, matching []evalharness.OrganizationMatchingCase, supplements ...[]evalharness.OrganizationFollowupCase) {
 	f := newOrganizationFixture(t)
 	cohort := evalharness.OntologyOrganizationCohort()
-	lockPath := "../../evalharness/testdata/organization_cohort.json"
+	lockPath := "../../testfixture/evaluation/testdata/organization_cohort.json"
 	followups := map[string]evalharness.OrganizationFollowupCase{}
 	var judgments any = cohort
 	matchingCases := map[string]evalharness.OrganizationMatchingCase{}
 	if len(matching) > 0 {
 		cohort, judgments = nil, matching
-		lockPath = "../../../tests/eval/source_locks/ontology_matching_v1.json"
+		lockPath = "../../testfixture/evaluation/testdata/ontology_matching_v1.json"
 		for _, item := range matching {
 			cohort = append(cohort, item.Case)
 			matchingCases[item.Case.ID] = item
@@ -51,7 +46,7 @@ func testOntologyCohortWithMatching(t *testing.T, maintenance bool, matching []e
 	if len(supplements) > 0 {
 		cohort = nil
 		judgments = supplements[0]
-		lockPath = "../../../tests/eval/source_locks/ontology_followups_v1.json"
+		lockPath = "../../testfixture/evaluation/testdata/ontology_followups_v1.json"
 		for _, supplement := range supplements[0] {
 			cohort = append(cohort, supplement.Case)
 			followups[supplement.Case.ID] = supplement
@@ -69,9 +64,9 @@ func testOntologyCohortWithMatching(t *testing.T, maintenance bool, matching []e
 	require.NoError(t, json.Unmarshal(baselineBytes, &lock))
 	require.Equal(t, lock.CohortSHA256, "sha256:"+hex.EncodeToString(digest[:]))
 	if len(followups) > 0 || len(matching) > 0 {
-		generatorPath := "../../evalharness/organization_followup_cohort.go"
+		generatorPath := "../../testfixture/evaluation/organization_followup_cohort.go"
 		if len(matching) > 0 {
-			generatorPath = "../../evalharness/organization_matching_cohort.go"
+			generatorPath = "../../testfixture/evaluation/organization_matching_cohort.go"
 		}
 		generator, err := os.ReadFile(generatorPath)
 		require.NoError(t, err)
@@ -81,29 +76,7 @@ func testOntologyCohortWithMatching(t *testing.T, maintenance bool, matching []e
 	scores := map[string]evalharness.OrganizationScore{}
 	reports := map[string]ontology.OrganizationResult{}
 	measurements := map[string]map[string]any{}
-	live := os.Getenv("DENSE_MEM_ONTOLOGY_LIVE_EVAL") == "1"
-	diagnostic := os.Getenv("DENSE_MEM_ONTOLOGY_DIAGNOSTIC") == "1"
-	directory := os.Getenv("DENSE_MEM_ORGANIZATION_REPORT_DIR")
-	if diagnostic {
-		require.True(t, live, "diagnostics require live-provider mode")
-		require.NotEmpty(t, directory, "diagnostics require an isolated report directory")
-	}
-	if directory != "" {
-		mode := "explicit"
-		if maintenance {
-			mode = "maintenance"
-		}
-		if len(followups) > 0 {
-			mode = "followups"
-		}
-		if len(matching) > 0 {
-			mode = "matching"
-		}
-		directory = filepath.Join(directory, mode)
-		require.NoError(t, os.MkdirAll(directory, 0700))
-	}
 	model := "fixture-model"
-	identity := ""
 	for _, testCase := range cohort {
 		t.Run(testCase.ID, func(t *testing.T) {
 			if maintenance {
@@ -111,14 +84,6 @@ func testOntologyCohortWithMatching(t *testing.T, maintenance bool, matching []e
 			}
 			var maintenanceLog bytes.Buffer
 			logger := slog.New(slog.NewJSONHandler(&maintenanceLog, nil))
-			defer func() {
-				if directory != "" {
-					if maintenance {
-						require.NoError(t, os.WriteFile(filepath.Join(directory, testCase.ID+"-maintenance.jsonl"), maintenanceLog.Bytes(), 0600))
-					}
-					writeOrganizationDiagnostic(t, filepath.Join(directory, testCase.ID+"-result.json"), map[string]any{"case_id": testCase.ID, "diagnostic_only": diagnostic, "ineligible_for_quality_gate": diagnostic, "failed": t.Failed(), "result": reports[testCase.ID], "score": scores[testCase.ID], "cohort_sha256": lock.CohortSHA256, "model": model, "provider_identity": identity})
-				}
-			}()
 			originals := map[string]evalharness.OrganizationSource{}
 			byText := map[string]string{}
 			handles := []ontology.SourceHandle{}
@@ -164,50 +129,22 @@ func testOntologyCohortWithMatching(t *testing.T, maintenance bool, matching []e
 			var maintained *organization.MaintenanceService
 			var callCount func() int32
 			ctx := context.Background()
-			if live {
-				cfg, err := config.Load()
-				require.NoError(t, err)
-				model = cfg.GetAIVerifierModel()
-				limits := assessorprovider.SemanticAssessmentLimitsForConfig(&cfg)
-				transport := assessorprovider.NewOpenAIAssessorWithAssessmentLimits(&cfg, nil, limits)
-				settings := maintenanceSettings(t, f)
-				configured, err := settings.UpdateOntologyMaintenanceSettings(ctx, map[string]string{
-					domain.AppConfigOntologyModel:         model,
-					domain.AppConfigOntologyContextWindow: os.Getenv(domain.AppConfigOntologyContextWindow),
-				}, "control", "", "")
-				require.NoError(t, err)
-				provider := assessment.NewProvider(transport, model, limits, int(configured.Effective.ContextWindowTokens))
-				require.NoError(t, provider.ConfigurationError(), "live ontology evaluation requires explicit ONTOLOGY_MAINTENANCE_CONTEXT_WINDOW_TOKENS")
-				identity = provider.Identity()
-				service = organization.NewService(f.store, provider)
-				if maintenance {
-					maintained = organization.NewMaintenanceService(organization.MaintenanceDependencies{Repository: f.store, Config: settings, DefaultModel: model, Logger: logger, ProviderTimeout: time.Duration(cfg.GetAIVerifierTimeoutSeconds()) * time.Second, Organizer: func(model string, contextWindowTokens int64, accounting assessment.AttemptAccounting) *organization.Service {
-						return organization.NewService(f.store, assessment.NewProviderWithAccounting(transport, model, limits, accounting, int(contextWindowTokens)))
-					}})
-				}
-				if directory != "" {
-					recorder := newOrganizationDiagnosticRecorder(t, directory, testCase.ID, cfg)
-					ctx = modelprovider.WithExchangeRecorder(ctx, recorder)
-					callCount = func() int32 { return int32(recorder.sequence) }
-				}
-			} else {
-				fixture, calls := organizationFixtureService(t, f, func(a, b assessment.Item) bool { return byText[a.Text] == byText[b.Text] }, nil)
-				service = fixture
-				callCount = calls.Load
-				if maintenance {
-					var counters []*atomic.Int32
-					maintained = organization.NewMaintenanceService(organization.MaintenanceDependencies{Repository: f.store, Config: maintenanceSettings(t, f), DefaultModel: model, Logger: logger, ProviderTimeout: time.Minute, Organizer: func(model string, contextWindowTokens int64, accounting assessment.AttemptAccounting) *organization.Service {
-						service, count := organizationFixtureServiceWithAccounting(t, f, func(a, b assessment.Item) bool { return byText[a.Text] == byText[b.Text] }, nil, model, assessor.DefaultSemanticAssessmentLimits(), accounting, int(contextWindowTokens))
-						counters = append(counters, count)
-						return service
-					}})
-					callCount = func() int32 {
-						var total int32
-						for _, count := range counters {
-							total += count.Load()
-						}
-						return total
+			fixture, calls := organizationFixtureService(t, f, func(a, b assessment.Item) bool { return byText[a.Text] == byText[b.Text] }, nil)
+			service = fixture
+			callCount = calls.Load
+			if maintenance {
+				var counters []*atomic.Int32
+				maintained = organization.NewMaintenanceService(organization.MaintenanceDependencies{Repository: f.store, Config: maintenanceSettings(t, f), DefaultModel: model, Logger: logger, ProviderTimeout: time.Minute, Organizer: func(model string, contextWindowTokens int64, accounting assessment.AttemptAccounting) *organization.Service {
+					service, count := organizationFixtureServiceWithAccounting(t, f, func(a, b assessment.Item) bool { return byText[a.Text] == byText[b.Text] }, nil, model, assessor.DefaultSemanticAssessmentLimits(), accounting, int(contextWindowTokens))
+					counters = append(counters, count)
+					return service
+				}})
+				callCount = func() int32 {
+					var total int32
+					for _, count := range counters {
+						total += count.Load()
 					}
+					return total
 				}
 			}
 			input := ontology.OrganizationInput{OperationKey: "cohort-" + testCase.ID, Sources: handles}
@@ -222,9 +159,6 @@ func testOntologyCohortWithMatching(t *testing.T, maintenance bool, matching []e
 					}
 				}
 				status, err := maintained.Status(ctx)
-				if directory != "" {
-					writeOrganizationDiagnostic(t, filepath.Join(directory, testCase.ID+"-maintenance.json"), status)
-				}
 				require.NoError(t, err)
 				require.True(t, status.DiscoveryComplete)
 				require.Zero(t, status.Counts.Pending)
@@ -331,15 +265,5 @@ func testOntologyCohortWithMatching(t *testing.T, maintenance bool, matching []e
 				require.Equal(t, priorCalls, callCount())
 			}
 		})
-	}
-	if directory != "" {
-		require.NoError(t, os.MkdirAll(directory, 0700))
-		report := map[string]any{"schema_version": "dense-mem.ontology.organization_run.v1", "cohort_sha256": lock.CohortSHA256, "live": live, "maintenance_discovery": maintenance, "model": model, "provider_identity": identity, "scores": scores, "results": reports, "measurements": measurements, "failed": t.Failed(), "diagnostic_only": diagnostic, "ineligible_for_quality_gate": diagnostic}
-		if !t.Failed() {
-			report["false_consolidations"], report["source_preservation"], report["distinct_fact_coverage"], report["repeated_slots"] = 0, 1, 1, 0
-		}
-		output, err := json.MarshalIndent(report, "", "  ")
-		require.NoError(t, err)
-		require.NoError(t, os.WriteFile(filepath.Join(directory, "organization-"+uuid.NewString()+".json"), output, 0600))
 	}
 }

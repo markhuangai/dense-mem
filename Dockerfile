@@ -43,15 +43,6 @@ RUN --mount=type=cache,target=/go/pkg/mod,sharing=locked \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     go build -trimpath -ldflags="-s -w -X github.com/markhuangai/dense-mem/internal/operations.BuildVersion=${IMAGE_VERSION}" -o /out/server ./cmd/server
 
-FROM builder-base AS evaluation-builder
-
-RUN --mount=type=cache,target=/go/pkg/mod,sharing=locked \
-    --mount=type=cache,target=/root/.cache/go-build,sharing=locked \
-    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
-    go build -tags=evaluation -trimpath -ldflags="-s -w" -o /out/server ./cmd/server
-
-# ============================================================================
-# Shared runtime stage
 # ============================================================================
 FROM alpine:3.24 AS runtime-base
 
@@ -101,12 +92,6 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=30m --retries=3 \
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
 CMD ["/app/server"]
 
-# The evaluation image is built explicitly with --target evaluation. Its
-# additional MCP tools are absent from the production binary, not runtime-gated.
-FROM runtime-base AS evaluation
-
-LABEL org.opencontainers.image.variant="evaluation"
-COPY --from=evaluation-builder --chown=densemem:densemem /out/server /app/server
 
 # Preview and production contain the same runtime; only preview carries the
 # trusted receipt that authorizes later release-candidate layer reuse.

@@ -2,293 +2,145 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
-	"flag"
 	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
-	"strings"
+	"path/filepath"
 	"syscall"
 	"time"
 
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/markhuangai/dense-mem/internal/evalharness"
+	"github.com/markhuangai/dense-mem/internal/observability"
 )
 
 func main() {
-	paired := registerPairFlags()
-	runtime := registerRuntimeFlags()
-	var opts evalharness.RunOptions
-	var baselineRun string
-	var candidateRun string
-	var captureDir string
-	var metricsURL string
-	var experimentManifest string
-	var hostPolicy string
-	flag.StringVar(&hostPolicy, "host-policy", "one_call", "one_call or iterative")
-	flag.StringVar(&opts.Mode, "mode", "validate", "validate, validate-capture, import, baseline, candidate, compare, generate-recall-accuracy, recall-accuracy-report, token-diagnostics, runtime, evidence-only-launch, evidence-only-host, or evidence-only-answer-score")
-	flag.StringVar(&metricsURL, "metrics-url", "", "direct Prometheus scrape URL (or DENSE_MEM_EVAL_METRICS_URL) for token-diagnostics")
-	flag.StringVar(&experimentManifest, "experiment-manifest", "", "paired-run manifest for recall-accuracy-report")
-	flag.StringVar(&opts.SeedManifestPath, "seed", "", "seed manifest path")
-	flag.StringVar(&opts.SuitePath, "suite", "", "suite JSONL path")
-	flag.StringVar(&opts.OutDir, "out", "", "output run directory")
-	flag.StringVar(&opts.BaseURL, "base-url", "http://127.0.0.1:8080", "Dense-Mem HTTP base URL (or DENSE_MEM_BASE_URL)")
-	flag.StringVar(&opts.APIKey, "api-key", "", "read/write API key (prefer DENSE_MEM_API_KEY)")
-	flag.BoolVar(&opts.ImportSeed, "import-seed", false, "import corpus through remember before running cases")
-	flag.IntVar(&opts.ImportConcurrency, "import-concurrency", importConcurrencyDefault(), fmt.Sprintf("maximum concurrent seed import requests (1-%d; default %d or DENSE_MEM_EVAL_IMPORT_CONCURRENCY; server admission may be lower)", evalharness.MaxImportConcurrency, evalharness.DefaultImportConcurrency))
-	flag.StringVar(&opts.ResumeSourceDocIDsPath, "resume-source-doc-ids", env("DENSE_MEM_EVAL_RESUME_SOURCE_DOC_IDS", ""), "newline-delimited source document IDs with completed Remember attempts")
-	flag.StringVar(&opts.TracesPath, "traces", "", "offline recall_traces.jsonl path to score instead of running live")
-	flag.StringVar(&opts.MappingPath, "mapping", "", "offline knowledge_mapping.json path to use with --traces")
-	flag.IntVar(&opts.MaxPageSize, "max-page-size", 100, "evaluation export max page size")
-	flag.StringVar(&opts.RunID, "run-id", "", "optional stable run id")
-	flag.StringVar(&opts.ReleaseGatePolicyPath, "release-gate-policy", "", "release gate policy JSON path for validate, baseline, or candidate mode")
-	flag.StringVar(&baselineRun, "baseline-run", "", "baseline run directory for compare mode")
-	flag.StringVar(&candidateRun, "candidate-run", "", "candidate run directory for compare mode")
-	flag.StringVar(&captureDir, "capture-dir", "", "existing run directory whose execution measurements validate-capture checks")
-	registerFloatGate("min-recall-at-k", "minimum average recall@k required for scoring modes", &opts.Gates.MinRecallAtK, validateRate)
-	registerFloatGate("min-required-rank1-rate", "minimum share of cases with a required ref ranked first", &opts.Gates.MinRequiredRank1Rate, validateRate)
-	registerFloatGate("max-average-bad-at-k", "maximum average bad refs@k allowed for scoring modes", &opts.Gates.MaxAverageBadAtK, validateNonNegative)
-	registerFloatGate("max-bad-rank1-rate", "maximum share of cases with a bad ref ranked first", &opts.Gates.MaxBadRank1Rate, validateRate)
-	registerIntGate("max-unmapped-source-refs", "maximum number of source qrel refs that may remain unmapped", &opts.Gates.MaxUnmappedSourceRefs)
-	registerFloatGate("min-context-recall-at-k", "minimum average context recall@k required when context refs are present", &opts.Gates.MinContextRecallAtK, validateRate)
-	registerFloatGate("min-context-required-rank1-rate", "minimum share of context-scored cases with a required ref first in context", &opts.Gates.MinContextRequiredRank1Rate, validateRate)
-	registerFloatGate("max-average-context-bad-at-k", "maximum average bad context refs@k allowed when context refs are present", &opts.Gates.MaxAverageContextBadAtK, validateNonNegative)
-	registerFloatGate("max-context-bad-rank1-rate", "maximum share of context-scored cases with a bad ref first in context", &opts.Gates.MaxContextBadRank1Rate, validateRate)
-	registerFloatGate("min-evidence-recall-at-k", "minimum average evidence recall@k required when evidence qrels are present", &opts.Gates.MinEvidenceRecallAtK, validateRate)
-	registerFloatGate("min-evidence-required-rank1-rate", "minimum share of evidence-scored cases with a required evidence ref first", &opts.Gates.MinEvidenceRequiredRank1Rate, validateRate)
-	registerFloatGate("max-average-evidence-bad-at-k", "maximum average bad evidence refs@k allowed when evidence qrels are present", &opts.Gates.MaxAverageEvidenceBadAtK, validateNonNegative)
-	registerFloatGate("max-evidence-bad-rank1-rate", "maximum share of evidence-scored cases with a bad evidence ref first", &opts.Gates.MaxEvidenceBadRank1Rate, validateRate)
-	flag.Parse()
-	if opts.Mode == "evidence-only-launch" {
-		if opts.OutDir == "" {
-			exitf("out is required for campaign launch")
-		}
-		if err := evalharness.StartEvidenceOnlyCampaign(opts.OutDir); err != nil {
-			exitf("campaign launch: %v", err)
-		}
-		return
-	}
-	if opts.Mode == "recall-accuracy-report" {
-		report, err := evalharness.WriteRecallAccuracyReport(experimentManifest)
-		if err != nil {
-			exitf("recall accuracy report: %v", err)
-		}
-		fmt.Printf("seed_id=%s repetitions=%d passed=%t\n", report.SeedID, len(report.Repetitions), report.Passed)
-		if !report.Passed {
-			exitf("recall accuracy report: declared quality gates did not pass")
-		}
-		return
-	}
-	if opts.Mode == "generate-recall-accuracy" {
-		lock, err := evalharness.GenerateRecallAccuracy(opts.OutDir)
-		if err != nil {
-			exitf("generate recall accuracy: %v", err)
-		}
-		fmt.Printf("seed_id=%s cases=%d sources=%d seed_hash=%s\n", lock.SeedID, lock.CaseCount, lock.SourceCount, lock.SeedHash)
-		return
-	}
-	if opts.Mode == "runtime" {
-		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-		defer cancel()
-		if err := evalharness.RunRuntimeCommand(ctx, *runtime, os.Stdout); err != nil {
-			exitf("evaluation runtime: %v", err)
-		}
-		return
-	}
-	resolveStringEnvironment(flag.CommandLine, "base-url", "DENSE_MEM_BASE_URL", &opts.BaseURL)
-	resolveStringEnvironment(flag.CommandLine, "api-key", "DENSE_MEM_API_KEY", &opts.APIKey)
-	resolveStringEnvironment(flag.CommandLine, "metrics-url", "DENSE_MEM_EVAL_METRICS_URL", &metricsURL)
-	if opts.Mode == "paired" {
-		if err := evalharness.RunPairCommand(*paired, os.Stdout); err != nil {
-			if errors.Is(err, context.DeadlineExceeded) {
-				fmt.Fprintf(os.Stderr, "paired evaluation: %v\n", err)
-				os.Exit(124)
-			}
-			if errors.Is(err, evalharness.ErrPairSnapshotWindowChanged) {
-				fmt.Fprintf(os.Stderr, "paired evaluation: %v\n", err)
-				os.Exit(75)
-			}
-			exitf("paired evaluation: %v", err)
-		}
-		return
-	}
-
+	protector := evalharness.NewRunnerCredentialProtector(os.Getenv("DENSE_MEM_EVAL_API_KEY"), os.Getenv("DENSE_MEM_EVAL_EMBED_API_KEY"), os.Getenv("DENSE_MEM_EVAL_VERIFIER_URL"), os.Getenv("DENSE_MEM_EVAL_EMBED_URL"), os.Getenv("AI_VERIFIER_API_URL"), os.Getenv("AI_API_URL"), os.Getenv("EVAL_API_KEY"), os.Getenv("EVAL_CONTROL_TOKEN"), os.Getenv("EVAL_DATABASE_PASSWORD"), os.Getenv("EVAL_DATABASE_URL"))
+	logger := observability.NewWithProtector(slog.LevelDebug, protector)
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	if opts.Mode == "evidence-only-host" || opts.Mode == "evidence-only-answer-score" {
-		if err := runAnswerCampaign(ctx, opts, *paired, hostPolicy); err != nil {
-			exitf("answer campaign: %v", err)
-		}
-		return
+	if err := execute(ctx, os.Args[1:], logger, protector); err != nil {
+		logger.ErrorContext(ctx, "evaluation_failed", err)
+		os.Exit(1)
 	}
-	if opts.Mode == "token-diagnostics" {
-		if err := runTokenDiagnostics(ctx, metricsURL, opts.OutDir, opts.APIKey); err != nil {
-			exitf("%v", err)
-		}
-		fmt.Println("token diagnostics written")
-		return
-	}
-	if opts.Mode == "import" || opts.Mode == "baseline" || opts.Mode == "candidate" || opts.Mode == "compare" || opts.Mode == "validate-capture" {
-		var err error
-		opts.Logger, opts.Protector, err = evaluationDiagnostics(opts.APIKey)
-		if err != nil {
-			exitf("evaluation diagnostics: %v", err)
-		}
-	}
-	if opts.Mode == "validate-capture" {
-		if captureDir == "" {
-			exitf("capture-dir is required for validate-capture")
-		}
-		info, err := os.Stat(captureDir)
-		if err != nil || !info.IsDir() {
-			exitf("capture-dir must name an existing directory")
-		}
-		if err := evalharness.ValidateSavedExecutionCapture(captureDir, opts.Logger); err != nil {
-			exitf("capture measurement validation failed")
-		}
-		fmt.Println("capture measurement validation passed")
-		return
-	}
-	if opts.Mode == "compare" {
-		comparison, err := evalharness.CompareRunDirs(baselineRun, candidateRun, opts.OutDir, opts.Logger)
-		if err != nil {
-			exitf("compare: %v", err)
-		}
-		msg := fmt.Sprintf("comparison written: recall_delta=%.4f mrr_delta=%.4f ndcg_delta=%.4f bad_at_k_delta=%.4f",
-			comparison.RecallDelta, comparison.MRRDelta, comparison.NDCGDelta, comparison.BadAtKDelta)
-		if comparison.ContextRecallDelta != 0 || comparison.ContextMRRDelta != 0 || comparison.ContextNDCGDelta != 0 || comparison.ContextBadAtKDelta != 0 {
-			msg += fmt.Sprintf(" context_recall_delta=%.4f context_mrr_delta=%.4f context_ndcg_delta=%.4f context_bad_at_k_delta=%.4f",
-				comparison.ContextRecallDelta,
-				comparison.ContextMRRDelta,
-				comparison.ContextNDCGDelta,
-				comparison.ContextBadAtKDelta,
-			)
-		}
-		if comparison.EvidenceRecallDelta != 0 || comparison.EvidenceMRRDelta != 0 || comparison.EvidenceNDCGDelta != 0 || comparison.EvidenceBadAtKDelta != 0 {
-			msg += fmt.Sprintf(" evidence_recall_delta=%.4f evidence_mrr_delta=%.4f evidence_ndcg_delta=%.4f evidence_bad_at_k_delta=%.4f",
-				comparison.EvidenceRecallDelta,
-				comparison.EvidenceMRRDelta,
-				comparison.EvidenceNDCGDelta,
-				comparison.EvidenceBadAtKDelta,
-			)
-		}
+}
 
-		fmt.Println(msg)
-		return
+func execute(ctx context.Context, args []string, logger *observability.Logger, protector *observability.CredentialProtector) error {
+	if len(args) != 2 || (args[0] != "validate" && args[0] != "run" && args[0] != "report") {
+		return errors.New("usage: eval-runner validate|run|report EXECUTION_MANIFEST; workflow-internal only")
 	}
-
-	if opts.OutDir == "" {
-		opts.OutDir = "tests/eval/runs/" + time.Now().UTC().Format("20060102T150405Z") + "_" + opts.Mode
-	}
-	summary, err := evalharness.Run(ctx, opts)
+	manifest, err := evalharness.ReadManifest(args[1])
 	if err != nil {
-		exitf("eval run: %v", err)
+		return err
 	}
-	msg := fmt.Sprintf("run_id=%s mode=%s seed_hash=%s cases=%d scored=%d recall_at_k=%.4f mrr=%.4f ndcg_at_k=%.4f bad_at_k=%.4f required_rank1=%.4f bad_rank1=%.4f",
-		summary.RunID,
-		summary.Mode,
-		summary.SeedHash,
-		summary.CaseCount,
-		summary.ScoredCaseCount,
-		summary.AverageRecallAtK,
-		summary.AverageMRR,
-		summary.AverageNDCGAtK,
-		summary.AverageBadAtK,
-		summary.RequiredRank1Rate,
-		summary.BadRank1Rate,
-	)
-	if summary.ContextScoredCaseCount > 0 {
-		msg += fmt.Sprintf(" context_scored=%d context_recall_at_k=%.4f context_mrr=%.4f context_ndcg_at_k=%.4f context_bad_at_k=%.4f context_required_rank1=%.4f context_bad_rank1=%.4f",
-			summary.ContextScoredCaseCount,
-			summary.AverageContextRecallAtK,
-			summary.AverageContextMRR,
-			summary.AverageContextNDCGAtK,
-			summary.AverageContextBadAtK,
-			summary.ContextRequiredRank1Rate,
-			summary.ContextBadRank1Rate,
-		)
+	registryPath := "tests/eval/datasets.json"
+	if manifest.Mode == "fixtures" {
+		registryPath = "tests/eval/fixtures/datasets.json"
 	}
-	if summary.EvidenceScoredCaseCount > 0 {
-		msg += fmt.Sprintf(" evidence_scored=%d evidence_recall_at_k=%.4f evidence_mrr=%.4f evidence_ndcg_at_k=%.4f evidence_bad_at_k=%.4f evidence_required_rank1=%.4f evidence_bad_rank1=%.4f",
-			summary.EvidenceScoredCaseCount,
-			summary.AverageEvidenceRecallAtK,
-			summary.AverageEvidenceMRR,
-			summary.AverageEvidenceNDCGAtK,
-			summary.AverageEvidenceBadAtK,
-			summary.EvidenceRequiredRank1Rate,
-			summary.EvidenceBadRank1Rate,
-		)
-	}
-
-	fmt.Printf("%s out=%s\n", msg, opts.OutDir)
-}
-
-func registerFloatGate(name, usage string, target **float64, validate func(float64) error) {
-	flag.Func(name, usage, func(raw string) error {
-		value, err := strconv.ParseFloat(raw, 64)
+	if manifest.Mode == "replay" {
+		fixtureHash, err := evalharness.FileHash("tests/eval/fixtures/datasets.json")
 		if err != nil {
 			return err
 		}
-		if err := validate(value); err != nil {
-			return err
+		if fixtureHash == manifest.RegistryHash {
+			registryPath = "tests/eval/fixtures/datasets.json"
 		}
-		*target = &value
+	}
+	hash, err := evalharness.FileHash(registryPath)
+	if err != nil {
+		return err
+	}
+	if hash != manifest.RegistryHash {
+		return errors.New("registry digest differs from execution manifest")
+	}
+	registry, err := evalharness.ReadRegistry(registryPath)
+	if err != nil {
+		return err
+	}
+	dataset, err := registry.Dataset(manifest.Dataset)
+	if err != nil {
+		return err
+	}
+	corpus, questions, err := evalharness.LoadDataset(dataset, manifest.DataDir)
+	if err != nil {
+		return err
+	}
+	if args[0] == "validate" {
+		logger.InfoContext(ctx, "evaluation_validated", observability.String("dataset", dataset.ID), observability.Int("corpus_rows", len(corpus)), observability.Int("questions", len(questions)))
+		if os.Getenv("EVAL_SERVER_LOG_FILE") != "" {
+			return logFile(ctx, os.Getenv("EVAL_SERVER_LOG_FILE"), &evalharness.Capture{Logger: logger.ContextSlog(), Protector: protector, RunID: manifest.RunID})
+		}
 		return nil
-	})
-}
-
-func registerIntGate(name, usage string, target **int) {
-	flag.Func(name, usage, func(raw string) error {
-		value, err := strconv.Atoi(raw)
+	}
+	if args[0] == "report" {
+		paths, err := filepath.Glob(filepath.Join(os.Getenv("EVAL_LOGS_DIR"), "*.txt"))
 		if err != nil {
 			return err
 		}
-		if value < 0 {
-			return fmt.Errorf("value must be non-negative")
+		readers := []io.Reader{}
+		for _, path := range paths {
+			file, err := os.Open(path)
+			if err != nil {
+				return err
+			}
+			defer file.Close()
+			readers = append(readers, file)
 		}
-		*target = &value
-		return nil
-	})
-}
-
-func validateRate(value float64) error {
-	if value < 0 || value > 1 {
-		return fmt.Errorf("value must be between 0 and 1")
+		events, err := evalharness.ReplayEvents(readers, manifest.RunID)
+		if err != nil {
+			return err
+		}
+		report, err := evalharness.ReplayReport(events, manifest, corpus, questions)
+		if err != nil {
+			return err
+		}
+		if err = os.MkdirAll(manifest.OutputDir, 0700); err != nil {
+			return err
+		}
+		file, err := os.OpenFile(filepath.Join(manifest.OutputDir, "scores.json"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+		return writeReport(file, report)
+	}
+	if manifest.Mode == "replay" {
+		return errors.New("replay cannot start a runtime or call a provider")
+	}
+	if !manifest.ModelDeadline.After(time.Now()) {
+		return errors.New("model deadline is expired")
+	}
+	for _, name := range []string{"DENSE_MEM_EVAL_API_KEY", "DENSE_MEM_EVAL_VERIFIER_URL", "EVAL_API_KEY", "EVAL_CONTROL_TOKEN", "EVAL_DATABASE_URL", "EVAL_TEAM_ID", "EVAL_CREDENTIAL_ID"} {
+		if os.Getenv(name) == "" {
+			return fmt.Errorf("required runner setting missing: %s", name)
+		}
+	}
+	if err := verifyRuntime(ctx, manifest); err != nil {
+		return err
+	}
+	database, err := sql.Open("pgx", os.Getenv("EVAL_DATABASE_URL"))
+	if err != nil {
+		return errors.New("runner database configuration is invalid")
+	}
+	defer database.Close()
+	database.SetMaxOpenConns(2)
+	capture := &evalharness.Capture{Logger: logger.ContextSlog(), Protector: protector, RunID: manifest.RunID}
+	client := &evalharness.HTTPClient{BaseURL: os.Getenv("EVAL_MCP_URL"), APIKey: os.Getenv("EVAL_API_KEY"), Capture: capture}
+	native := &evalharness.Native{DB: database, Client: client, Scope: evalharness.Scope{TeamID: os.Getenv("EVAL_TEAM_ID"), CredentialID: os.Getenv("EVAL_CREDENTIAL_ID")}, ControlURL: os.Getenv("EVAL_CONTROL_URL"), ControlToken: os.Getenv("EVAL_CONTROL_TOKEN")}
+	native.ServerUsage = map[string]evalharness.UsageTotals{}
+	native.RuntimeLogs = func(ctx context.Context) error { return runtimeLogs(ctx, manifest.RunID, capture, native.ServerUsage) }
+	transport := evalharness.AnswerTransport{URL: os.Getenv("DENSE_MEM_EVAL_VERIFIER_URL"), Key: os.Getenv("DENSE_MEM_EVAL_API_KEY"), Client: &http.Client{Timeout: 5 * time.Minute}, Capture: capture}
+	report, err := evalharness.Run(ctx, manifest, corpus, questions, client, transport, native)
+	if err != nil {
+		return err
+	}
+	if !report.Complete {
+		return errors.New("campaign incomplete; every public denominator is retained")
 	}
 	return nil
-}
-
-func validateNonNegative(value float64) error {
-	if value < 0 {
-		return fmt.Errorf("value must be non-negative")
-	}
-	return nil
-}
-
-func env(key, fallback string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return fallback
-}
-
-func envInt(key string, fallback int) int {
-	value := strings.TrimSpace(os.Getenv(key))
-	if value == "" {
-		return fallback
-	}
-	parsed, err := strconv.Atoi(value)
-	if err != nil {
-		return fallback
-	}
-	return parsed
-}
-
-func importConcurrencyDefault() int {
-	return envInt("DENSE_MEM_EVAL_IMPORT_CONCURRENCY", evalharness.DefaultImportConcurrency)
-}
-
-func exitf(format string, args ...any) {
-	_, _ = fmt.Fprintf(os.Stderr, format+"\n", args...)
-	os.Exit(1)
 }

@@ -16,7 +16,6 @@ type CoreDependencies struct {
 	Metrics              recallcontract.FeedbackMetrics
 	RecallFeedbackConfig RecallFeedbackConfigProvider
 	RecallFeedbackEvents RecallFeedbackEventRecorder
-	EvaluationAudit      EvaluationAuditAppender
 }
 
 type RememberBindings struct {

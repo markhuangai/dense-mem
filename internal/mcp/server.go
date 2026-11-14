@@ -134,11 +134,6 @@ func (s *Server) invokeTool(ctx context.Context, name string, args map[string]an
 	if args == nil {
 		args = map[string]any{}
 	}
-	if registry.IsEvaluationTool(tool.Name) && registry.HasTenantOverrideArgs(args) {
-		s.logToolInputRejected(ctx, tool.Name, "tenant_override_rejected")
-		data := registry.ActionableInvalidInputData(ctx, tool.Name, "tenant_override_rejected", "Evaluation tools cannot select a team or profile.", "Remove team_id and profile_id from the evaluation arguments and submit again.")
-		return nil, &rpcError{Code: errCodeInvalidParams, Message: "evaluation tools do not accept team_id or profile_id", Data: data}
-	}
 	if registry.IsContractTool(tool) {
 		validation := registry.ValidateContractInputIssues(tool, args, s.validationScopes(tool))
 		if len(validation.Issues) > 0 {

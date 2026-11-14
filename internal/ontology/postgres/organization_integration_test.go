@@ -5,7 +5,7 @@ package postgres
 import (
 	"testing"
 
-	"github.com/markhuangai/dense-mem/internal/evalharness"
+	evalharness "github.com/markhuangai/dense-mem/internal/testfixture/evaluation"
 )
 
 func TestOntologyOrganizationAtomicReplayAndIsolation(t *testing.T) {

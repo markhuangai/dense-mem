@@ -1,754 +1,342 @@
 package evalharness
 
 import (
-	"bufio"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
+	"sync"
 	"time"
 
-	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
 )
 
-type RunOptions struct {
-	Mode                   string
-	SeedManifestPath       string
-	SuitePath              string
-	OutDir                 string
-	BaseURL                string
-	APIKey                 string
-	ImportSeed             bool
-	ImportConcurrency      int
-	ResumeSourceDocIDsPath string
-	TracesPath             string
-	MappingPath            string
-	MaxPageSize            int
-	RunID                  string
-	ReleaseGatePolicyPath  string
-	Gates                  GateOptions
-	Logger                 *observability.Logger
-	Protector              *observability.CredentialProtector
+type completion struct {
+	ImportedRows       int                    `json:"imported_rows"`
+	CanonicalHash      string                 `json:"canonical_hash"`
+	ElapsedMS          float64                `json:"elapsed_ms"`
+	Failure            string                 `json:"failure"`
+	NativeMeasurements []NativeObservation    `json:"native_measurements"`
+	ServerUsage        map[string]UsageTotals `json:"server_usage"`
 }
 
-const (
-	DefaultImportConcurrency = 4
-	MaxImportConcurrency     = 30
-)
-
-func normalizeImportConcurrency(value int) (int, error) {
-	if value <= 0 {
-		return DefaultImportConcurrency, nil
+func Run(ctx context.Context, manifest Manifest, corpus []CorpusItem, questions []Question, client *HTTPClient, transport modelprovider.StructuredTransport, native *Native) (report Report, runErr error) {
+	started := time.Now()
+	report = NewReport(manifest, len(corpus), len(questions))
+	if client == nil || client.Capture == nil || native == nil {
+		return report, errors.New("runner dependencies are required")
 	}
-	if value > MaxImportConcurrency {
-		return 0, fmt.Errorf("import concurrency must be between 1 and %d", MaxImportConcurrency)
+	if err := os.MkdirAll(manifest.OutputDir, 0700); err != nil {
+		return report, err
 	}
-	return value, nil
+	if err := client.Capture.Emit("started", manifest); err != nil {
+		return report, err
+	}
+	stage := "startup"
+	defer func() {
+		shutdown, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
+		defer cancel()
+		if err := native.Pause(shutdown); err != nil {
+			runErr = errors.Join(runErr, err)
+		}
+		if native.RuntimeLogs != nil {
+			if err := native.RuntimeLogs(shutdown); err != nil {
+				runErr = errors.Join(runErr, err)
+			}
+		}
+		report.ServerUsage = native.ServerUsage
+		report.ElapsedMS = float64(time.Since(started)) / float64(time.Millisecond)
+		if runErr != nil {
+			report.Failure = stage + " incomplete"
+			_ = client.Capture.Emit("campaign_failed", map[string]any{"stage": stage, "error": client.Capture.ProtectError(runErr)})
+		}
+		terminal := completion{ImportedRows: report.ImportedRows, CanonicalHash: report.Identity.CanonicalHash, ElapsedMS: report.ElapsedMS, Failure: report.Failure, NativeMeasurements: report.NativeMeasurements, ServerUsage: report.ServerUsage}
+		if err := client.Capture.Emit("finished", terminal); err != nil {
+			runErr = errors.Join(runErr, err)
+			report.Failure = "log capture incomplete"
+		} else {
+			report.CaptureComplete = true
+		}
+		if err := FinalizeReport(&report); err != nil {
+			runErr = errors.Join(runErr, err)
+		}
+		if err := writeJSON(filepath.Join(manifest.OutputDir, "scores.json"), report); err != nil {
+			runErr = errors.Join(runErr, err)
+		}
+	}()
+	work, stop := context.WithDeadline(ctx, manifest.ModelDeadline)
+	defer stop()
+	if err := native.ResolveScope(work); err != nil {
+		return report, err
+	}
+	before, err := native.Snapshot(work)
+	if err != nil {
+		return report, err
+	}
+	if before.EvidenceCount != 0 || before.ForeignSources != 0 || before.Ontology.Enabled || !before.Ontology.Paused {
+		return report, errors.New("runner instance must be fresh with ontology disabled and paused")
+	}
+	stage = "import"
+	mapping, err := client.ImportCorpusWithConcurrency(work, corpus, DefaultImportConcurrency)
+	report.ImportedRows = len(mapping.BySourceDocID)
+	if err != nil {
+		return report, err
+	}
+	canonical, err := native.VerifyMappings(work, corpus, mapping)
+	if err != nil {
+		return report, err
+	}
+	for source, parts := range mapping.Partitions {
+		if err = client.Capture.Emit("mapping", map[string]any{"source_id": source, "partitions": parts}); err != nil {
+			return report, err
+		}
+	}
+	for id, evidence := range canonical {
+		if err = client.Capture.Emit("canonical", map[string]any{"evidence_id": id, "evidence": evidence}); err != nil {
+			return report, err
+		}
+	}
+	initial, err := native.Snapshot(work)
+	if err != nil {
+		return report, err
+	}
+	if err = NativeReady(initial, false, true, manifest, native.Scope.TeamID); err != nil {
+		return report, err
+	}
+	report.Identity.CanonicalHash = initial.CanonicalHash
+	report.NativeMeasurements = append(report.NativeMeasurements, initial)
+	stage = "ontology off"
+	scores, err := runCondition(work, manifest, corpus, questions, mapping, canonical, client, transport, "off")
+	report.Scores = append(report.Scores, scores...)
+	if err != nil {
+		return report, err
+	}
+	stage = "ontology convergence"
+	if err = native.EnableOntology(work, manifest); err != nil {
+		return report, err
+	}
+	converged, err := waitNative(work, native, manifest, false)
+	if err != nil {
+		return report, err
+	}
+	if converged.CanonicalHash != initial.CanonicalHash {
+		return report, errors.New("ontology changed canonical Evidence or provenance")
+	}
+	if err = native.Pause(work); err != nil {
+		return report, err
+	}
+	frozen, err := waitNative(work, native, manifest, true)
+	if err != nil {
+		return report, err
+	}
+	if frozen.CanonicalHash != initial.CanonicalHash {
+		return report, errors.New("canonical Evidence changed while draining")
+	}
+	report.NativeMeasurements = append(report.NativeMeasurements, frozen)
+	stage = "ontology on"
+	scores, err = runCondition(work, manifest, corpus, questions, mapping, canonical, client, transport, "on")
+	report.Scores = append(report.Scores, scores...)
+	if err != nil {
+		return report, err
+	}
+	stage = "final verification"
+	final, err := native.Snapshot(work)
+	if err != nil {
+		return report, err
+	}
+	if err = NativeReady(final, true, true, manifest, native.Scope.TeamID); err != nil {
+		return report, err
+	}
+	if final.CanonicalHash != initial.CanonicalHash {
+		return report, errors.New("answer campaign changed canonical Evidence")
+	}
+	report.NativeMeasurements = append(report.NativeMeasurements, final)
+	return report, nil
 }
 
-func Run(ctx context.Context, opts RunOptions) (result Summary, runErr error) {
-	defer func() { runErr = protectExecutionError(ctx, opts, runErr) }()
-	mode := strings.TrimSpace(opts.Mode)
-	if mode == "" {
-		mode = "validate"
-	}
-	if mode != "validate" && mode != "import" && mode != "baseline" && mode != "candidate" {
-		return Summary{}, fmt.Errorf("unsupported mode %q", mode)
-	}
-	if opts.ReleaseGatePolicyPath != "" && mode != "validate" && mode != "baseline" && mode != "candidate" {
-		return Summary{}, fmt.Errorf("release gate policy requires validate, baseline, or candidate mode")
-	}
-	if opts.SeedManifestPath == "" {
-		return Summary{}, fmt.Errorf("seed manifest path is required")
-	}
-	if opts.SuitePath == "" {
-		return Summary{}, fmt.Errorf("suite path is required")
-	}
-	if strings.TrimSpace(opts.ResumeSourceDocIDsPath) != "" && (mode != "import" || !opts.ImportSeed) {
-		return Summary{}, fmt.Errorf("resume source document IDs require import mode with --import-seed")
-	}
-	importConcurrency, err := normalizeImportConcurrency(opts.ImportConcurrency)
-	if err != nil {
-		return Summary{}, err
-	}
-	opts.ImportConcurrency = importConcurrency
-	runID := opts.RunID
-	if runID == "" {
-		runID = newRunID(mode)
-	}
-	manifest, corpus, cases, qrels, suite, seedHash, err := loadRunInputs(opts.SeedManifestPath, opts.SuitePath)
-	if err != nil {
-		return Summary{}, err
-	}
-	if err := validateRunInputs(opts.SeedManifestPath, manifest, corpus, cases, qrels, suite, seedHash); err != nil {
-		return Summary{}, err
-	}
-	inputSummary := Summary{
-		RunID:           runID,
-		Mode:            mode,
-		SeedID:          manifest.SeedID,
-		SeedHash:        seedHash,
-		SuitePath:       opts.SuitePath,
-		CaseCount:       len(suite),
-		ScoredCaseCount: 0,
-		CreatedAt:       time.Now().UTC(),
-	}
-	var releaseGatePolicy *ReleaseGatePolicy
-	var releaseGateInput *ReleaseGateInputResult
-	var releaseGatePolicyHash string
-	if opts.ReleaseGatePolicyPath != "" {
-		policy, err := LoadReleaseGatePolicy(opts.ReleaseGatePolicyPath)
+func waitNative(ctx context.Context, native *Native, manifest Manifest, paused bool) (NativeObservation, error) {
+	for {
+		observation, err := native.Snapshot(ctx)
 		if err != nil {
-			return Summary{}, fmt.Errorf("release gate policy: %w", err)
+			return observation, err
 		}
-		result := EvaluateReleaseGateInput(inputSummary, policy)
-		policyHash, err := canonicalJSONHash(policy)
-		if err != nil {
-			return Summary{}, fmt.Errorf("hash release gate policy: %w", err)
+		if err = native.Client.Capture.Emit("native_observation", observation); err != nil {
+			return observation, err
 		}
-		releaseGatePolicy = &policy
-		releaseGateInput = &result
-		releaseGatePolicyHash = policyHash
-	}
-	importRoute := ""
-	if opts.ImportSeed {
-		importRoute = "remember"
-	}
-	baseURL, _, err := measurementEndpoint(opts.BaseURL)
-	if err != nil {
-		return Summary{}, err
-	}
-	runConfig := RunConfig{
-		RunID:                  runID,
-		Mode:                   mode,
-		SeedManifest:           opts.SeedManifestPath,
-		SeedHash:               seedHash,
-		SuitePath:              opts.SuitePath,
-		ReleaseGatePolicyPath:  opts.ReleaseGatePolicyPath,
-		ReleaseGatePolicyHash:  releaseGatePolicyHash,
-		BaseURL:                baseURL,
-		ToolTransport:          "mcp",
-		ToolContract:           "mcp.tools/call.v1",
-		ImportSeed:             opts.ImportSeed,
-		ImportRoute:            importRoute,
-		ImportConcurrency:      opts.ImportConcurrency,
-		ResumeSourceDocIDsPath: opts.ResumeSourceDocIDsPath,
-		TracesPath:             opts.TracesPath,
-		MappingPath:            opts.MappingPath,
-	}
-	if mode == "import" && opts.TracesPath != "" {
-		return Summary{}, fmt.Errorf("import mode cannot use --traces")
-	}
-	if mode == "import" && !opts.ImportSeed {
-		return Summary{}, fmt.Errorf("import mode requires --import-seed")
-	}
-	var traces []RecallTrace
-	if opts.TracesPath != "" {
-		traces, err = LoadRecallTraces(opts.TracesPath)
-		if err != nil {
-			logCaptureRejection(opts.Logger, filepath.Dir(opts.TracesPath), seedHash, len(suite), err)
-			return Summary{}, err
+		if observation.Ontology.ConfigurationError != "" || observation.ForeignSources != 0 || observation.ForeignWork != 0 || observation.Ontology.Counts.Failed > 0 || observation.Ontology.Counts.Ambiguous > 0 {
+			return observation, errors.New("native convergence failed")
 		}
-		if err := validateMeasurementReplay(opts, manifest, traces, suite, seedHash); err != nil {
-			return Summary{}, err
+		if err = NativeReady(observation, true, paused, manifest, native.Scope.TeamID); err == nil {
+			return observation, nil
+		}
+		select {
+		case <-ctx.Done():
+			return observation, fmt.Errorf("native convergence deadline: %w", ctx.Err())
+		case <-time.After(5 * time.Second):
 		}
 	}
-	if mode == "validate" || (releaseGateInput != nil && !releaseGateInput.Passed) {
-		if opts.OutDir != "" {
-			if err := writeValidationArtifacts(opts.OutDir, manifest, suite, runConfig, inputSummary); err != nil {
-				return Summary{}, err
-			}
-			if releaseGateInput != nil {
-				if err := writeJSONFile(filepath.Join(opts.OutDir, "release_gate_input_result.json"), releaseGateInput); err != nil {
-					return Summary{}, err
-				}
-			}
-		}
-		if releaseGateInput != nil && !releaseGateInput.Passed {
-			return inputSummary, fmt.Errorf("release gate input check failed: %s", strings.Join(releaseGateInput.Failures, "; "))
-		}
-		if mode == "validate" {
-			return inputSummary, nil
-		}
-	}
-	if opts.MappingPath != "" {
-		if err := ValidateExecutionCapture(filepath.Dir(opts.MappingPath), opts.Logger); err != nil {
-			return Summary{}, err
-		}
-	}
-	mapping := newKnowledgeMapping()
-	var journal *executionJournal
-	if opts.TracesPath != "" {
-		if opts.MappingPath != "" {
-			if err := readJSONFile(opts.MappingPath, &mapping); err != nil {
-				return Summary{}, err
-			}
-		}
-	} else {
-		if opts.OutDir != "" {
-			runConfig.MeasurementSchema = MeasurementSchema
-		}
-		journal, err = newExecutionJournal(opts, runConfig, corpus, suite)
-		if err != nil {
-			return Summary{}, err
-		}
-		defer func() { runErr = journal.finish(runErr) }()
-		client := &HTTPClient{
-			BaseURL: opts.BaseURL,
-			APIKey:  opts.APIKey,
-			journal: journal,
-		}
-		mappingLoadedFromPath := false
-		if opts.MappingPath != "" {
-			if err := readJSONFile(opts.MappingPath, &mapping); err != nil {
-				return Summary{}, err
-			}
-			mappingLoadedFromPath = true
-		}
-		skipSourceDocIDs := map[string]struct{}{}
-		if path := strings.TrimSpace(opts.ResumeSourceDocIDsPath); path != "" {
-			checkpoint, err := loadSourceDocIDs(path)
-			if err != nil {
-				return Summary{}, fmt.Errorf("resume source document IDs: %w", err)
-			}
-			existing, err := client.ExportEvidenceMapping(ctx, opts.MaxPageSize)
-			if err != nil {
-				return Summary{}, fmt.Errorf("resume evidence mapping: %w", err)
-			}
-			mergeKnowledgeMapping(&mapping, existing)
-			skipSourceDocIDs = completedMappedSourceDocIDs(checkpoint, existing)
-			for id := range skipSourceDocIDs {
-				_, op, err := journal.start(ctx, "import", id)
-				if err != nil {
-					return Summary{}, err
-				}
-				if err := op.finish(nil, "reused"); err != nil {
-					return Summary{}, err
-				}
-			}
-		}
-
-		if opts.ImportSeed {
-			if mode == "import" {
-				keepSourceDocIDs := sourceDocIDsForQRelMappings(qrels)
-				imported, _, err := client.ImportCorpusFileWithConcurrency(
-					ctx,
-					resolveSeedPath(opts.SeedManifestPath, manifest.CorpusFile),
-					opts.ImportConcurrency,
-					keepSourceDocIDs,
-					skipSourceDocIDs,
-				)
-				if err != nil {
-					return Summary{}, err
-				}
-				mergeKnowledgeMapping(&mapping, imported)
-				exported, err := client.ExportKnowledgeMapping(ctx, opts.MaxPageSize)
-				if err != nil {
-					return Summary{}, err
-				}
-				mergeFilteredKnowledgeMapping(&mapping, exported, keepSourceDocIDs)
-			} else {
-				imported, err := client.ImportCorpusWithConcurrency(ctx, corpus, opts.ImportConcurrency)
-				if err != nil {
-					return Summary{}, err
-				}
-				mergeKnowledgeMapping(&mapping, imported)
-			}
-
-		}
-		if !mappingLoadedFromPath && mode != "import" {
-			exported, err := client.ExportKnowledgeMapping(ctx, opts.MaxPageSize)
-			if err != nil {
-				return Summary{}, err
-			}
-			mergeKnowledgeMapping(&mapping, exported)
-		}
-		if err := validateRequiredQRelMappings(IndexQrels(qrels), suite, mapping); err != nil {
-			return Summary{}, err
-		}
-		if mode == "import" {
-			mappingHash, err := canonicalJSONHash(mapping)
-			if err != nil {
-				return Summary{}, fmt.Errorf("hash import mapping: %w", err)
-			}
-			runConfig.MappingHash = mappingHash
-			summary := Summary{
-				RunID:           runID,
-				Mode:            mode,
-				SeedID:          manifest.SeedID,
-				SeedHash:        seedHash,
-				SuitePath:       opts.SuitePath,
-				CaseCount:       len(suite),
-				ScoredCaseCount: 0,
-				CreatedAt:       time.Now().UTC(),
-			}
-			if opts.OutDir != "" {
-				if err := writeImportArtifacts(opts.OutDir, manifest, suite, runConfig, mapping, summary); err != nil {
-					return Summary{}, err
-				}
-			}
-			return summary, nil
-		}
-		traces, err = runLiveSuite(ctx, client, suite, IndexCases(cases))
-		if err != nil {
-			return Summary{}, err
-		}
-	}
-	mappingHash, err := canonicalJSONHash(mapping)
-	if err != nil {
-		return Summary{}, fmt.Errorf("hash run mapping: %w", err)
-	}
-	runConfig.MappingHash = mappingHash
-
-	scores, summary, err := ScoreTraces(runID, mode, manifest.SeedID, seedHash, opts.SuitePath, suite, IndexCases(cases), IndexQrels(qrels), traces, mapping)
-	if err != nil {
-		if opts.TracesPath != "" {
-			logCaptureRejection(opts.Logger, filepath.Dir(opts.TracesPath), seedHash, len(suite), err)
-		}
-		return Summary{}, err
-	}
-	if opts.OutDir != "" {
-		if err := writeRunArtifacts(opts.OutDir, manifest, suite, runConfig, mapping, traces, scores, summary); err != nil {
-			return Summary{}, err
-		}
-		if opts.TracesPath != "" {
-			if err := copyMeasurementReplay(opts, traces); err != nil {
-				return Summary{}, err
-			}
-		}
-	}
-	// Quality gates do not change whether client execution completed.
-	finishErr := journal.finish(nil)
-	journal = nil
-	if finishErr != nil {
-		return Summary{}, finishErr
-	}
-	if opts.Gates.Any() {
-		gate := EvaluateGates(summary, opts.Gates)
-		if opts.OutDir != "" {
-			if err := writeJSONFile(filepath.Join(opts.OutDir, "gate_result.json"), gate); err != nil {
-				return Summary{}, err
-			}
-		}
-		if !gate.Passed {
-			return summary, fmt.Errorf("gate check failed: %s", strings.Join(gate.Failures, "; "))
-		}
-	}
-	if releaseGatePolicy != nil {
-		releaseGate := EvaluateReleaseGate(summary, *releaseGatePolicy)
-		if opts.OutDir != "" {
-			if err := writeJSONFile(filepath.Join(opts.OutDir, "release_gate_result.json"), releaseGate); err != nil {
-				return Summary{}, err
-			}
-		}
-		if !releaseGate.Passed {
-			return summary, fmt.Errorf("release gate check failed: %s", strings.Join(releaseGate.Failures, "; "))
-		}
-	}
-	return summary, nil
 }
 
-func validateRequiredQRelMappings(qrels map[string]QRel, suite []SuiteCase, mapping KnowledgeMapping) error {
-	mapping = scoringMapping(mapping)
-	for _, suiteCase := range suite {
-		qrel, ok := qrels[suiteCase.CaseID]
-		if !ok {
-			return fmt.Errorf("suite case %q missing from seed qrels", suiteCase.CaseID)
-		}
-		for _, refs := range []struct {
-			label string
-			refs  []Ref
-		}{
-			{"required", qrel.RequiredRefs},
-			{"required evidence", qrel.RequiredEvidenceRefs},
-			{"bad", qrel.BadRefs},
-			{"bad evidence", qrel.BadEvidenceRefs},
-		} {
-			for _, ref := range refs.refs {
-				if strings.TrimSpace(ref.SourceDocID) == "" {
-					continue
-				}
-				ref.Type = scoringRefType(ref.Type)
-				if _, ok := resolveRef(ref, mapping); !ok {
-					return fmt.Errorf("%s qrel ref for case %q is unmapped after import: type=%s source_doc_id=%s", refs.label, suiteCase.CaseID, ref.Type, ref.SourceDocID)
-				}
-			}
-		}
+func runCondition(ctx context.Context, manifest Manifest, corpus []CorpusItem, questions []Question, mapping KnowledgeMapping, canonical map[string]CanonicalEvidence, client *HTTPClient, transport modelprovider.StructuredTransport, condition string) ([]CaseScore, error) {
+	if err := client.Capture.Emit("condition_started", map[string]string{"condition": condition}); err != nil {
+		return nil, err
 	}
-	return nil
-}
-
-func CompareRunDirs(baselineRunDir, candidateRunDir, outDir string, loggers ...*observability.Logger) (Comparison, error) {
-	for _, directory := range []string{baselineRunDir, candidateRunDir} {
-		if err := ValidateExecutionCapture(directory, loggers...); err != nil {
-			return Comparison{}, err
-		}
-	}
-	var baseline Summary
-	if err := readJSONFile(filepath.Join(baselineRunDir, "summary.json"), &baseline); err != nil {
-		return Comparison{}, err
-	}
-	var candidate Summary
-	if err := readJSONFile(filepath.Join(candidateRunDir, "summary.json"), &candidate); err != nil {
-		return Comparison{}, err
-	}
-	comparison, err := CompareSummaries(baseline, candidate)
-	if err != nil {
-		return Comparison{}, err
-	}
-	if outDir == "" {
-		outDir = candidateRunDir
-	}
-	if err := writeJSONFile(filepath.Join(outDir, "comparison.json"), comparison); err != nil {
-		return Comparison{}, err
-	}
-	return comparison, nil
-}
-
-func loadRunInputs(manifestPath, suitePath string) (*SeedManifest, []CorpusItem, []Case, []QRel, []SuiteCase, string, error) {
-	manifest, err := LoadSeedManifest(manifestPath)
-	if err != nil {
-		return nil, nil, nil, nil, nil, "", err
-	}
-	corpus, err := LoadCorpus(manifestPath, manifest)
-	if err != nil {
-		return nil, nil, nil, nil, nil, "", err
-	}
-	cases, err := LoadCases(manifestPath, manifest)
-	if err != nil {
-		return nil, nil, nil, nil, nil, "", err
-	}
-	qrels, err := LoadQrels(manifestPath, manifest)
-	if err != nil {
-		return nil, nil, nil, nil, nil, "", err
-	}
-	suite, err := LoadSuite(suitePath)
-	if err != nil {
-		return nil, nil, nil, nil, nil, "", err
-	}
-	seedHash, err := SeedHash(manifestPath, manifest)
-	if err != nil {
-		return nil, nil, nil, nil, nil, "", err
-	}
-	return manifest, corpus, cases, qrels, suite, seedHash, nil
-}
-
-func validateRunInputs(manifestPath string, manifest *SeedManifest, corpus []CorpusItem, cases []Case, qrels []QRel, suite []SuiteCase, seedHash string) error {
-	if err := validateManifestCounts(manifestPath, manifest, corpus, cases, qrels); err != nil {
-		return err
-	}
-	if err := validateSeedValidationReport(manifestPath, manifest, seedHash); err != nil {
-		return err
-	}
-	if err := validateEvidenceCorpus(manifest, corpus); err != nil {
-		return err
-	}
-
-	caseIndex := IndexCases(cases)
-	qrelIndex := IndexQrels(qrels)
-	if len(qrelIndex) != len(qrels) {
-		return fmt.Errorf("duplicate qrels case_id detected")
-	}
-	for _, suiteCase := range suite {
-		if _, ok := caseIndex[suiteCase.CaseID]; !ok {
-			return fmt.Errorf("suite case %q missing from seed cases", suiteCase.CaseID)
-		}
-		if _, ok := qrelIndex[suiteCase.CaseID]; !ok {
-			return fmt.Errorf("suite case %q missing from seed qrels", suiteCase.CaseID)
-		}
-	}
-	corpusIndex := sourceDocIDIndexForCorpus(corpus)
-
-	for _, qrel := range qrels {
-		if _, ok := caseIndex[qrel.CaseID]; !ok {
-			return fmt.Errorf("qrels case %q missing from seed cases", qrel.CaseID)
-		}
-		if err := validateQRelRefs(qrel.CaseID, "required_refs", qrel.RequiredRefs, corpusIndex); err != nil {
-			return err
-		}
-		if err := validateQRelRefs(qrel.CaseID, "acceptable_refs", qrel.AcceptableRefs, corpusIndex); err != nil {
-			return err
-		}
-		if err := validateQRelRefs(qrel.CaseID, "bad_refs", qrel.BadRefs, corpusIndex); err != nil {
-			return err
-		}
-		if err := validateQRelRefs(qrel.CaseID, "required_evidence_refs", qrel.RequiredEvidenceRefs, corpusIndex); err != nil {
-			return err
-		}
-		if err := validateQRelRefs(qrel.CaseID, "bad_evidence_refs", qrel.BadEvidenceRefs, corpusIndex); err != nil {
-			return err
-		}
-
-	}
-	for _, c := range cases {
-		if hasSlice(c.Slices, "adversarial") && len(qrelIndex[c.CaseID].BadRefs) == 0 {
-			return fmt.Errorf("adversarial case %q has no bad_refs", c.CaseID)
-		}
-	}
-	return nil
-}
-
-type seedValidationReport struct {
-	SchemaVersion string `json:"schema_version"`
-	SeedID        string `json:"seed_id"`
-	Status        string `json:"status"`
-	SeedHash      string `json:"seed_hash"`
-}
-
-func validateSeedValidationReport(manifestPath string, manifest *SeedManifest, seedHash string) error {
-	if manifest == nil {
-		return nil
-	}
-	reportFile := strings.TrimSpace(manifest.ValidationReportFile)
-	if reportFile == "" {
-		if strings.HasPrefix(manifest.SeedID, "public_6axis_") {
-			return fmt.Errorf("seed %q requires validation_report_file", manifest.SeedID)
-		}
-		return nil
-	}
-	var report seedValidationReport
-	if err := readJSONFile(resolveSeedPath(manifestPath, reportFile), &report); err != nil {
-		return fmt.Errorf("read validation report: %w", err)
-	}
-	if report.SchemaVersion != "dense-mem.eval.validation.v1" {
-		return fmt.Errorf("validation report schema_version %q is unsupported", report.SchemaVersion)
-	}
-	if report.SeedID != manifest.SeedID {
-		return fmt.Errorf("validation report seed_id %q does not match manifest seed_id %q", report.SeedID, manifest.SeedID)
-	}
-	if report.Status != "passed" {
-		return fmt.Errorf("validation report status = %q, want passed", report.Status)
-	}
-	if report.SeedHash != seedHash {
-		return fmt.Errorf("validation report seed_hash %q does not match current seed hash %q", report.SeedHash, seedHash)
-	}
-	return nil
-}
-
-func sourceDocIDIndexForCorpus(corpus []CorpusItem) map[string]struct{} {
-	corpusIndex := map[string]struct{}{}
+	bySource := map[string]CorpusItem{}
 	for _, item := range corpus {
-		if strings.TrimSpace(item.SourceDocID) == "" {
-			continue
-		}
-		corpusIndex[item.SourceDocID] = struct{}{}
+		bySource[item.SourceDocID] = item
 	}
-	return corpusIndex
-}
-
-func validateManifestCounts(manifestPath string, manifest *SeedManifest, corpus []CorpusItem, cases []Case, qrels []QRel) error {
-	if manifest == nil || len(manifest.Counts) == 0 {
-		return nil
-	}
-	if err := validateCount(manifest.Counts, "cases", len(cases)); err != nil {
-		return err
-	}
-	if err := validateCount(manifest.Counts, "corpus", len(corpus)); err != nil {
-		return err
-	}
-	if err := validateCount(manifest.Counts, "qrels", len(qrels)); err != nil {
-		return err
-	}
-	if expected, ok := manifest.Counts["docs_per_case"]; ok {
-		if len(cases) == 0 {
-			return fmt.Errorf("manifest count docs_per_case=%d but seed has no cases", expected)
-		}
-		if len(corpus)%len(cases) != 0 {
-			return fmt.Errorf("manifest count docs_per_case=%d mismatch: corpus=%d cases=%d", expected, len(corpus), len(cases))
-		}
-		actual := len(corpus) / len(cases)
-		if actual != expected {
-			return fmt.Errorf("manifest count docs_per_case=%d mismatch: got %d", expected, actual)
-		}
-	}
-	for _, optional := range []struct {
-		countName string
-		fileName  string
-	}{
-		{countName: "answers", fileName: manifest.AnswersFile},
-		{countName: "hard_negatives", fileName: manifest.HardNegativesFile},
-		{countName: "transforms", fileName: manifest.TransformsFile},
-	} {
-		expected, ok := manifest.Counts[optional.countName]
-		if !ok {
-			continue
-		}
-		if strings.TrimSpace(optional.fileName) == "" {
-			return fmt.Errorf("manifest count %s=%d but file is not set", optional.countName, expected)
-		}
-		actual, err := countSeedJSONLRows(manifestPath, optional.fileName)
-		if err != nil {
-			return err
-		}
-		if actual != expected {
-			return fmt.Errorf("manifest count %s=%d mismatch: got %d", optional.countName, expected, actual)
-		}
-	}
-	return nil
-}
-
-func sourceDocIDsForQRelMappings(qrels []QRel) map[string]struct{} {
-	out := map[string]struct{}{}
-	addRefs := func(refs []Ref) {
-		for _, ref := range refs {
-			if sourceDocID := strings.TrimSpace(ref.SourceDocID); sourceDocID != "" {
-				out[sourceDocID] = struct{}{}
+	jobs := make(chan Question)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var scores []CaseScore
+	var first error
+	for range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for question := range jobs {
+				initial := memoryCall(ctx, client, "recall_memory", map[string]any{"query": question.Query, "limit": 10, "topic_limit": 3})
+				if err := validateInitial(initial); err != nil {
+					initial.Error = err.Error()
+				}
+				observation := Observation{QuestionID: question.ID, Condition: condition, Initial: initial, Hosts: []HostResult{}}
+				for _, policy := range []string{"single", "multi_turn"} {
+					observation.Hosts = append(observation.Hosts, RunHost(ctx, client, transport, manifest, HostQuestion{ID: question.ID, Query: question.Query}, initial, policy, condition))
+				}
+				err := client.Capture.Emit("observation", observation)
+				var measured []CaseScore
+				if err == nil {
+					measured, err = ScoreObservation(question, observation, bySource, mapping, canonical)
+				}
+				mu.Lock()
+				scores = append(scores, measured...)
+				if err != nil && first == nil {
+					first = err
+				}
+				mu.Unlock()
 			}
+		}()
+	}
+schedule:
+	for _, question := range questions {
+		select {
+		case jobs <- question:
+		case <-ctx.Done():
+			break schedule
 		}
 	}
-	for _, qrel := range qrels {
-		addRefs(qrel.RequiredRefs)
-		addRefs(qrel.AcceptableRefs)
-		addRefs(qrel.BadRefs)
-		addRefs(qrel.RequiredEvidenceRefs)
-		addRefs(qrel.BadEvidenceRefs)
+	close(jobs)
+	wg.Wait()
+	if first != nil {
+		return scores, first
 	}
-
-	return out
+	return scores, ctx.Err()
 }
 
-func loadSourceDocIDs(path string) (map[string]struct{}, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
+func ReplayReport(events []Event, manifest Manifest, corpus []CorpusItem, questions []Question) (Report, error) {
+	if len(events) < 2 {
+		return Report{}, errors.New("replay unavailable: no complete capture")
 	}
-	defer f.Close()
-
-	out := map[string]struct{}{}
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		if sourceDocID := strings.TrimSpace(scanner.Text()); sourceDocID != "" {
-			out[sourceDocID] = struct{}{}
+	var recorded Manifest
+	if err := decodePayload(events[0], &recorded); err != nil {
+		return Report{}, err
+	}
+	if recorded.SourceRevision != manifest.SourceRevision || recorded.Image != manifest.Image || recorded.RegistryHash != manifest.RegistryHash || recorded.Dataset != manifest.Dataset || recorded.RunID != manifest.RunID || recorded.Model != manifest.Model || recorded.ContextWindowTokens != manifest.ContextWindowTokens || recorded.EmbeddingModel != manifest.EmbeddingModel || recorded.EmbeddingDimensions != manifest.EmbeddingDimensions {
+		return Report{}, errors.New("replay identity differs from pinned campaign")
+	}
+	report := NewReport(recorded, len(corpus), len(questions))
+	mapping := newKnowledgeMapping()
+	canonical := map[string]CanonicalEvidence{}
+	bySource := map[string]CorpusItem{}
+	for _, item := range corpus {
+		bySource[item.SourceDocID] = item
+	}
+	byQuestion := map[string]Question{}
+	for _, q := range questions {
+		byQuestion[q.ID] = q
+	}
+	validated := false
+	for _, event := range events[1 : len(events)-1] {
+		switch event.Kind {
+		case "mapping":
+			if validated {
+				return report, errors.New("replay mappings changed after observation")
+			}
+			var value struct {
+				SourceID   string              `json:"source_id"`
+				Partitions []ImportedPartition `json:"partitions"`
+			}
+			if err := decodePayload(event, &value); err != nil {
+				return report, err
+			}
+			if _, exists := mapping.Partitions[value.SourceID]; exists {
+				return report, errors.New("duplicate replay mapping")
+			}
+			if mapping.Partitions == nil {
+				mapping.Partitions = map[string][]ImportedPartition{}
+			}
+			mapping.Partitions[value.SourceID] = value.Partitions
+		case "canonical":
+			if validated {
+				return report, errors.New("replay canonical Evidence changed after observation")
+			}
+			var value struct {
+				EvidenceID string            `json:"evidence_id"`
+				Evidence   CanonicalEvidence `json:"evidence"`
+			}
+			if err := decodePayload(event, &value); err != nil {
+				return report, err
+			}
+			if _, exists := canonical[value.EvidenceID]; exists {
+				return report, errors.New("duplicate replay canonical identity")
+			}
+			canonical[value.EvidenceID] = value.Evidence
+		case "observation":
+			if !validated {
+				if err := ValidateMappings(corpus, mapping, canonical); err != nil {
+					return report, fmt.Errorf("replay unavailable: %w", err)
+				}
+				validated = true
+			}
+			var observation Observation
+			if err := decodePayload(event, &observation); err != nil {
+				return report, err
+			}
+			question, exists := byQuestion[observation.QuestionID]
+			if !exists {
+				return report, errors.New("replay contains an unknown question")
+			}
+			scores, err := ScoreObservation(question, observation, bySource, mapping, canonical)
+			if err != nil {
+				return report, err
+			}
+			report.Scores = append(report.Scores, scores...)
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		return nil, err
+	var terminal completion
+	if err := json.Unmarshal(events[len(events)-1].Payload, &terminal); err != nil {
+		return report, err
 	}
-	return out, nil
-}
-
-func completedMappedSourceDocIDs(checkpoint map[string]struct{}, mapping KnowledgeMapping) map[string]struct{} {
-	out := map[string]struct{}{}
-	for sourceDocID := range checkpoint {
-		if len(mapping.BySourceDocIDAndType[sourceDocID]["evidence"]) > 0 {
-			out[sourceDocID] = struct{}{}
+	report.ImportedRows, report.ElapsedMS, report.Failure, report.Identity.CanonicalHash, report.NativeMeasurements = terminal.ImportedRows, terminal.ElapsedMS, terminal.Failure, terminal.CanonicalHash, terminal.NativeMeasurements
+	report.ServerUsage = terminal.ServerUsage
+	if terminal.Failure == "" && (len(mapping.Partitions) != len(corpus) || len(terminal.NativeMeasurements) != 3) {
+		return report, errors.New("replay unavailable: required mapping or preservation evidence missing")
+	}
+	if terminal.Failure == "" && !validated {
+		if err := ValidateMappings(corpus, mapping, canonical); err != nil {
+			return report, fmt.Errorf("replay unavailable: %w", err)
 		}
 	}
-	return out
-}
-
-func validateCount(counts map[string]int, name string, actual int) error {
-	expected, ok := counts[name]
-	if !ok {
-		return nil
-	}
-	if actual != expected {
-		return fmt.Errorf("manifest count %s=%d mismatch: got %d", name, expected, actual)
-	}
-	return nil
-}
-
-func validateQRelRefs(caseID, field string, refs []Ref, corpusIndex map[string]struct{}) error {
-	for _, ref := range refs {
-		if strings.TrimSpace(ref.SourceDocID) == "" {
-			continue
-		}
-		if _, ok := corpusIndex[ref.SourceDocID]; !ok {
-			return fmt.Errorf("qrels case %q %s source_doc_id %q missing from corpus", caseID, field, ref.SourceDocID)
+	for _, measurement := range terminal.NativeMeasurements {
+		if measurement.CanonicalHash != terminal.CanonicalHash {
+			return report, errors.New("replay canonical preservation failed")
 		}
 	}
-	return nil
-}
-
-func hasSlice(slices []string, want string) bool {
-	for _, slice := range slices {
-		if strings.EqualFold(strings.TrimSpace(slice), want) {
-			return true
-		}
+	report.CaptureComplete = true
+	if err := FinalizeReport(&report); err != nil {
+		return report, err
 	}
-	return false
-}
-
-func countSeedJSONLRows(manifestPath, rel string) (int, error) {
-	path := resolveSeedPath(manifestPath, rel)
-	f, err := os.Open(path)
-	if err != nil {
-		return 0, err
-	}
-	defer f.Close()
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
-	count := 0
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		count++
-	}
-	if err := scanner.Err(); err != nil {
-		return 0, fmt.Errorf("%s: %w", path, err)
-	}
-	return count, nil
-}
-
-func runLiveSuite(ctx context.Context, client *HTTPClient, suite []SuiteCase, cases map[string]Case) ([]RecallTrace, error) {
-	traces := make([]RecallTrace, 0, len(suite))
-	for _, suiteCase := range suite {
-		tc := cases[suiteCase.CaseID]
-		trace, err := client.RunRecallCase(ctx, tc)
-		if err != nil {
-			return traces, fmt.Errorf("run case %s: %w", suiteCase.CaseID, err)
-		}
-		if err := client.journal.trace(trace); err != nil {
-			return traces, err
-		}
-		traces = append(traces, trace)
-	}
-	return traces, nil
-}
-
-func writeValidationArtifacts(outDir string, manifest *SeedManifest, suite []SuiteCase, runConfig RunConfig, summary Summary) error {
-	if err := os.MkdirAll(outDir, 0o755); err != nil {
-		return err
-	}
-	if err := writeJSONFile(filepath.Join(outDir, "run_config.json"), runConfig); err != nil {
-		return err
-	}
-	if err := writeJSONFile(filepath.Join(outDir, "seed_manifest.json"), manifest); err != nil {
-		return err
-	}
-	if runConfig.MeasurementSchema == "" || runConfig.TracesPath != "" {
-		if err := writeJSONL(filepath.Join(outDir, "suite.jsonl"), suite); err != nil {
-			return err
-		}
-	}
-	return writeJSONFile(filepath.Join(outDir, "summary.json"), summary)
-}
-
-func writeRunArtifacts(outDir string, manifest *SeedManifest, suite []SuiteCase, runConfig RunConfig, mapping KnowledgeMapping, traces []RecallTrace, scores []RetrievalScore, summary Summary) error {
-	if err := writeValidationArtifacts(outDir, manifest, suite, runConfig, summary); err != nil {
-		return err
-	}
-	if err := writeJSONFile(filepath.Join(outDir, "knowledge_mapping.json"), mapping); err != nil {
-		return err
-	}
-	if runConfig.MeasurementSchema == "" || runConfig.TracesPath != "" {
-		if err := writeJSONL(filepath.Join(outDir, "recall_traces.jsonl"), traces); err != nil {
-			return err
-		}
-	}
-	return writeJSONL(filepath.Join(outDir, "retrieval_scores.jsonl"), scores)
-}
-
-func writeImportArtifacts(outDir string, manifest *SeedManifest, suite []SuiteCase, runConfig RunConfig, mapping KnowledgeMapping, summary Summary) error {
-	if err := writeValidationArtifacts(outDir, manifest, suite, runConfig, summary); err != nil {
-		return err
-	}
-	return writeJSONFile(filepath.Join(outDir, "knowledge_mapping.json"), mapping)
-}
-
-func newRunID(mode string) string {
-	return time.Now().UTC().Format("20060102T150405Z") + "_" + mode
+	return report, nil
 }

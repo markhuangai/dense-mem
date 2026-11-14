@@ -1,162 +1,46 @@
 package evalharness
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/google/uuid"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/observability"
 )
 
 type HTTPClient struct {
-	BaseURL      string
-	APIKey       string
-	Client       *http.Client
-	contractMu   sync.Mutex
-	contractMode contractMode
-	journal      *executionJournal
+	BaseURL         string
+	APIKey          string
+	Client          *http.Client
+	Capture         *Capture
+	ExchangeCapture *Capture
+	contractMu      sync.Mutex
+	contractMode    contractMode
 }
 
-type HTTPStatusError struct {
-	Method     string
-	URL        string
-	StatusCode int
-	Body       string
+type HTTPStatusError struct{ StatusCode int }
+
+var errMalformedHTTPJSON = errors.New("invalid HTTP JSON response")
+
+func (e *HTTPStatusError) Error() string {
+	return fmt.Sprintf("HTTP request failed with status %d", e.StatusCode)
 }
 
-// StructuredToolError carries the bounded terminal payload returned by an MCP
-// tool when the protocol succeeds but the tool reports isError=true.
 type StructuredToolError struct {
 	Tool   string
 	Result map[string]any
 }
 
-func (e *HTTPStatusError) Error() string {
-	return fmt.Sprintf("%s %s returned %d: %s", e.Method, e.URL, e.StatusCode, e.Body)
-}
-
 func (e *StructuredToolError) Error() string {
-	if e == nil {
-		return "mcp tool returned a structured error"
-	}
-	if cause := submissionErrorMessage(e.Result); cause != "" {
-		return fmt.Sprintf("mcp tools/call %s returned a structured tool error: %s", e.Tool, cause)
-	}
-	if processing := submissionProcessingState(e.Result); processing != "" {
-		return fmt.Sprintf("mcp tools/call %s returned a structured tool error: processing_state %s", e.Tool, processing)
-	}
-	return fmt.Sprintf("mcp tools/call %s returned a structured tool error", e.Tool)
-}
-
-func (c *HTTPClient) CallTool(ctx context.Context, name string, input any, out any) (err error) {
-	if strings.TrimSpace(c.BaseURL) == "" {
-		return fmt.Errorf("base URL is required")
-	}
-	if strings.TrimSpace(c.APIKey) == "" {
-		return fmt.Errorf("API key is required")
-	}
-	if ctx.Value(operationContextKey{}) == nil && c.journal != nil {
-		var op *measuredOperation
-		ctx, op, err = c.journal.start(ctx, "setup", name)
-		if err != nil {
-			return err
-		}
-		defer func() { err = op.finish(err, "completed") }()
-	}
-	ctx, attempt, err := c.startAttempt(ctx, name)
-	if err != nil {
-		return err
-	}
-	defer func() { err = attempt.finish(err) }()
-	return c.callMCPTool(ctx, name, input, out)
-}
-
-func (c *HTTPClient) callMCPTool(ctx context.Context, name string, input any, out any) error {
-	arguments, ok := input.(map[string]any)
-	if !ok {
-		payload, err := json.Marshal(input)
-		if err != nil {
-			return err
-		}
-		if err := json.Unmarshal(payload, &arguments); err != nil {
-			return fmt.Errorf("mcp tool arguments must be an object: %w", err)
-		}
-	}
-	body := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      time.Now().UnixNano(),
-		"method":  "tools/call",
-		"params": map[string]any{
-			"name":      name,
-			"arguments": arguments,
-		},
-	}
-	var rpc mcpToolResponse
-	if err := c.doJSON(ctx, http.MethodPost, endpoint(c.BaseURL, "/mcp"), c.APIKey, body, &rpc); err != nil {
-		return err
-	}
-	if rpc.Error != nil {
-		return fmt.Errorf("mcp tools/call %s returned %d: %s", name, rpc.Error.Code, rpc.Error.Message)
-	}
-	if rpc.Result.IsError {
-		if len(rpc.Result.StructuredContent) == 0 {
-			return fmt.Errorf("mcp tools/call %s returned isError without structuredContent", name)
-		}
-		encoded, err := json.Marshal(rpc.Result.StructuredContent)
-		if err != nil {
-			return fmt.Errorf("decode mcp tools/call %s structured error: %w", name, err)
-		}
-		if out != nil {
-			resetToolOutput(out)
-			if err := json.Unmarshal(encoded, out); err != nil {
-				return fmt.Errorf("decode mcp tools/call %s structured error: %w", name, err)
-			}
-		}
-		return &StructuredToolError{Tool: name, Result: rpc.Result.StructuredContent}
-	}
-	if out == nil {
-		return nil
-	}
-	for _, content := range rpc.Result.Content {
-		if content.Type != "text" || strings.TrimSpace(content.Text) == "" {
-			continue
-		}
-		resetToolOutput(out)
-		decoder := json.NewDecoder(strings.NewReader(content.Text))
-		decoder.UseNumber()
-		if err := decoder.Decode(out); err != nil {
-			return fmt.Errorf("decode mcp tools/call %s result: %w", name, err)
-		}
-		return nil
-	}
-	return fmt.Errorf("mcp tools/call %s returned no JSON text content", name)
-}
-
-type mcpToolResponse struct {
-	JSONRPC string        `json:"jsonrpc"`
-	Result  mcpToolResult `json:"result"`
-	Error   *mcpToolError `json:"error,omitempty"`
-}
-
-type mcpToolResult struct {
-	Content           []mcpToolContent `json:"content"`
-	StructuredContent map[string]any   `json:"structuredContent,omitempty"`
-	IsError           bool             `json:"isError,omitempty"`
-}
-
-type mcpToolContent struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
+	return "MCP " + e.Tool + ": " + submissionErrorMessage(e.Result)
 }
 
 type mcpToolError struct {
@@ -164,211 +48,197 @@ type mcpToolError struct {
 	Message string `json:"message"`
 }
 
-func resetToolOutput(out any) {
-	if target, ok := out.(*map[string]any); ok && target != nil {
-		*target = nil
+func endpoint(base, path string) string { return strings.TrimRight(base, "/") + path }
+
+func (c *HTTPClient) doJSON(ctx context.Context, method, url, bearer string, input, out any) error {
+	payload, err := json.Marshal(input)
+	if err != nil {
+		return err
 	}
-}
-
-func (c *HTTPClient) ImportCorpus(ctx context.Context, corpus []CorpusItem) (KnowledgeMapping, error) {
-	return c.ImportCorpusWithConcurrency(ctx, corpus, 1)
-}
-
-func (c *HTTPClient) ImportCorpusFileWithConcurrency(ctx context.Context, path string, concurrency int, keepSourceDocIDs, skipSourceDocIDs map[string]struct{}) (KnowledgeMapping, int, error) {
-	if concurrency <= 1 {
-		return c.importCorpusFileSequential(ctx, path, keepSourceDocIDs, skipSourceDocIDs)
-	}
-	return c.importCorpusFileConcurrent(ctx, path, concurrency, keepSourceDocIDs, skipSourceDocIDs)
-}
-
-func (c *HTTPClient) importCorpusFileSequential(ctx context.Context, path string, keepSourceDocIDs, skipSourceDocIDs map[string]struct{}) (KnowledgeMapping, int, error) {
-	mapping := newKnowledgeMapping()
-	count := 0
-	err := scanCorpusFile(path, func(item CorpusItem) error {
-		if shouldSkipCorpusItem(item, skipSourceDocIDs) {
-			count++
-			return nil
+	exchange := uuid.NewString()
+	scope := observability.ExchangeScopeFromContext(ctx)
+	if c.ExchangeCapture != nil {
+		if err := c.ExchangeCapture.Emit("answer_wire_request", map[string]any{"exchange_id": exchange, "operation_id": scope.OperationID, "attempt": scope.Attempt, "body": json.RawMessage(payload)}); err != nil {
+			return err
 		}
-		itemMapping, err := c.importCorpusItem(ctx, item)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(payload))
+	if err != nil {
+		return errors.New("invalid request configuration")
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Bearer "+bearer)
+	if rpc, ok := input.(map[string]any); ok && rpc["jsonrpc"] == "2.0" {
+		req.Header.Set("MCP-Protocol-Version", "2026-07-28")
+		req.Header.Set("Mcp-Method", stringValue(rpc["method"]))
+		if params, ok := rpc["params"].(map[string]any); ok {
+			req.Header.Set("Mcp-Name", stringValue(params["name"]))
+		}
+	}
+	client := c.Client
+	if client == nil {
+		client = &http.Client{Timeout: 5 * time.Minute}
+	}
+	response, err := client.Do(req)
+	if err != nil {
+		if c.ExchangeCapture != nil {
+			if captureErr := c.ExchangeCapture.Emit("answer_wire_unavailable", map[string]any{"exchange_id": exchange, "operation_id": scope.OperationID, "attempt": scope.Attempt, "state": "no_response", "error": c.ExchangeCapture.ProtectError(err)}); captureErr != nil {
+				return captureErr
+			}
+		}
+		return errors.New("HTTP transport failed or cancelled: " + safeContextError(ctx))
+	}
+	defer response.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(response.Body, (16<<20)+1))
+	if c.ExchangeCapture != nil {
+		state := "captured"
+		if err != nil {
+			state = "interrupted"
+		}
+		if captureErr := c.ExchangeCapture.Emit("answer_wire_response", map[string]any{"exchange_id": exchange, "operation_id": scope.OperationID, "attempt": scope.Attempt, "state": state, "status_code": response.StatusCode, "body": string(data)}); captureErr != nil {
+			return captureErr
+		}
+	}
+	if err != nil {
+		return errors.New("HTTP response body interrupted")
+	}
+	if len(data) > 16<<20 {
+		return errors.New("HTTP response exceeds capture bound")
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return &HTTPStatusError{StatusCode: response.StatusCode}
+	}
+	if out == nil {
+		return nil
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(out); err != nil {
+		return errMalformedHTTPJSON
+	}
+	var extra any
+	if decoder.Decode(&extra) != io.EOF {
+		return errMalformedHTTPJSON
+	}
+	return nil
+}
+
+func safeContextError(ctx context.Context) string {
+	if err := ctx.Err(); err != nil {
+		return err.Error()
+	}
+	return "dependency unavailable"
+}
+
+func (c *HTTPClient) CallTool(ctx context.Context, name string, input, out any) error {
+	if c.BaseURL == "" || c.APIKey == "" {
+		return errors.New("MCP configuration missing")
+	}
+	var rpc struct {
+		Error  *mcpToolError `json:"error"`
+		Result struct {
+			IsError           bool           `json:"isError"`
+			StructuredContent map[string]any `json:"structuredContent"`
+			Content           []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"result"`
+	}
+	body := map[string]any{"jsonrpc": "2.0", "id": uuid.NewString(), "method": "tools/call", "params": map[string]any{"name": name, "arguments": input, "_meta": map[string]any{"io.modelcontextprotocol/protocolVersion": "2026-07-28", "io.modelcontextprotocol/clientCapabilities": map[string]any{}}}}
+	err := c.doJSON(ctx, http.MethodPost, endpoint(c.BaseURL, "/mcp"), c.APIKey, body, &rpc)
+	if err != nil {
+		return err
+	}
+	if rpc.Error != nil {
+		return fmt.Errorf("MCP protocol error %d", rpc.Error.Code)
+	}
+	result := rpc.Result.StructuredContent
+	if result == nil {
+		for _, item := range rpc.Result.Content {
+			if item.Type == "text" {
+				decoder := json.NewDecoder(strings.NewReader(item.Text))
+				decoder.UseNumber()
+				if err = decoder.Decode(&result); err != nil {
+					return errors.New("invalid MCP content")
+				}
+				break
+			}
+		}
+	}
+	if result == nil {
+		return errors.New("MCP response has no structured result")
+	}
+	if out != nil {
+		encoded, err := json.Marshal(result)
 		if err != nil {
 			return err
 		}
-		mergeFilteredKnowledgeMapping(&mapping, itemMapping, keepSourceDocIDs)
-		count++
-		return nil
-	})
-	return mapping, count, err
+		if target, ok := out.(*map[string]any); ok {
+			*target = nil
+		}
+		decoder := json.NewDecoder(bytes.NewReader(encoded))
+		decoder.UseNumber()
+		if err = decoder.Decode(out); err != nil {
+			return err
+		}
+	}
+	if rpc.Result.IsError {
+		return &StructuredToolError{Tool: name, Result: result}
+	}
+	return nil
 }
 
-func (c *HTTPClient) importCorpusFileConcurrent(ctx context.Context, path string, concurrency int, keepSourceDocIDs, skipSourceDocIDs map[string]struct{}) (KnowledgeMapping, int, error) {
+func (c *HTTPClient) ImportCorpus(ctx context.Context, items []CorpusItem) (KnowledgeMapping, error) {
+	return c.ImportCorpusWithConcurrency(ctx, items, 1)
+}
+
+func (c *HTTPClient) ImportCorpusWithConcurrency(ctx context.Context, items []CorpusItem, concurrency int) (KnowledgeMapping, error) {
 	mapping := newKnowledgeMapping()
-	scheduleCtx, stopScheduling := context.WithCancel(ctx)
-	defer stopScheduling()
-
-	type importResult struct {
-		mapping KnowledgeMapping
-		skipped bool
-		err     error
+	if concurrency < 1 || concurrency > 10 {
+		return mapping, errors.New("invalid import concurrency")
 	}
-	type importJob struct {
-		item    CorpusItem
-		skipped bool
+	if _, err := c.ensureContract(ctx); err != nil {
+		return mapping, err
 	}
-
-	jobs := make(chan importJob)
-	results := make(chan importResult)
+	work, stop := context.WithCancel(ctx)
+	defer stop()
+	jobs := make(chan CorpusItem)
 	var wg sync.WaitGroup
-	for i := 0; i < concurrency; i++ {
+	var mu sync.Mutex
+	var first error
+	for range concurrency {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for job := range jobs {
-				if job.skipped {
-					select {
-					case results <- importResult{skipped: true}:
-					case <-ctx.Done():
-						return
+			for item := range jobs {
+				itemMapping, err := c.importCorpusItem(work, item)
+				mu.Lock()
+				if err != nil {
+					if first == nil {
+						first = err
 					}
-					continue
+					stop()
+				} else {
+					mergeKnowledgeMapping(&mapping, itemMapping)
 				}
-				itemMapping, err := c.importCorpusItem(ctx, job.item)
-				select {
-				case results <- importResult{mapping: itemMapping, err: err}:
-				case <-ctx.Done():
-					return
-				}
+				mu.Unlock()
 			}
 		}()
 	}
-
-	var scanErr error
-	go func() {
-		defer close(jobs)
-		scanErr = scanCorpusFile(path, func(item CorpusItem) error {
-			select {
-			case jobs <- importJob{item: item, skipped: shouldSkipCorpusItem(item, skipSourceDocIDs)}:
-				return nil
-			case <-scheduleCtx.Done():
-				return scheduleCtx.Err()
-			}
-		})
-		if scanErr != nil {
-			stopScheduling()
+schedule:
+	for _, item := range items {
+		select {
+		case jobs <- item:
+		case <-work.Done():
+			break schedule
 		}
-	}()
-
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
-
-	count := 0
-	var firstErr error
-	for result := range results {
-		if result.skipped {
-			count++
-			continue
-		}
-		if result.err != nil {
-			if firstErr == nil {
-				firstErr = result.err
-				stopScheduling()
-			}
-			continue
-		}
-		mergeFilteredKnowledgeMapping(&mapping, result.mapping, keepSourceDocIDs)
-		count++
 	}
-	if firstErr != nil {
-		return mapping, count, firstErr
-	}
-	if scanErr != nil {
-		return mapping, count, scanErr
-	}
-	if err := ctx.Err(); err != nil {
-		return mapping, count, err
-	}
-	return mapping, count, nil
-}
-
-func shouldSkipCorpusItem(item CorpusItem, skipSourceDocIDs map[string]struct{}) bool {
-	if len(skipSourceDocIDs) == 0 {
-		return false
-	}
-	_, ok := skipSourceDocIDs[strings.TrimSpace(item.SourceDocID)]
-	return ok
-}
-
-func (c *HTTPClient) ImportCorpusWithConcurrency(ctx context.Context, corpus []CorpusItem, concurrency int) (KnowledgeMapping, error) {
-	mapping := newKnowledgeMapping()
-	groups := corpusImportGroups(corpus)
-	if concurrency <= 1 || len(groups) <= 1 {
-		groupMapping, err := c.importCorpusGroup(ctx, corpus)
-		if err != nil {
-			return mapping, err
-		}
-		mergeKnowledgeMapping(&mapping, groupMapping)
-		return mapping, nil
-	}
-	if concurrency > len(groups) {
-		concurrency = len(groups)
-	}
-
-	scheduleCtx, stopScheduling := context.WithCancel(ctx)
-	defer stopScheduling()
-
-	type importResult struct {
-		mapping KnowledgeMapping
-		err     error
-	}
-
-	jobs := make(chan []CorpusItem)
-	results := make(chan importResult)
-	var wg sync.WaitGroup
-	for i := 0; i < concurrency; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for group := range jobs {
-				itemMapping, err := c.importCorpusGroup(ctx, group)
-				select {
-				case results <- importResult{mapping: itemMapping, err: err}:
-				case <-ctx.Done():
-					return
-				}
-			}
-		}()
-	}
-
-	go func() {
-		defer close(jobs)
-		for _, group := range groups {
-			select {
-			case jobs <- group:
-			case <-scheduleCtx.Done():
-				return
-			}
-		}
-	}()
-
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
-
-	var firstErr error
-	for result := range results {
-		if result.err != nil {
-			if firstErr == nil {
-				firstErr = result.err
-				stopScheduling()
-			}
-			continue
-		}
-		mergeKnowledgeMapping(&mapping, result.mapping)
-	}
-	if firstErr != nil {
-		return mapping, firstErr
+	close(jobs)
+	wg.Wait()
+	if first != nil {
+		return mapping, first
 	}
 	if err := ctx.Err(); err != nil {
 		return mapping, err
@@ -376,259 +246,71 @@ func (c *HTTPClient) ImportCorpusWithConcurrency(ctx context.Context, corpus []C
 	return mapping, nil
 }
 
-func scanCorpusFile(path string, fn func(CorpusItem) error) error {
-	f, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
-	lineNo := 0
-	for scanner.Scan() {
-		lineNo++
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		item, err := decodeCorpusItem([]byte(line))
-		if err != nil {
-			return fmt.Errorf("%s:%d: %w", path, lineNo, err)
-		}
-		if strings.TrimSpace(item.SourceDocID) == "" {
-			return fmt.Errorf("%s:%d: missing source_doc_id", path, lineNo)
-		}
-		if strings.TrimSpace(item.Content) == "" {
-			return fmt.Errorf("%s:%d: missing content", path, lineNo)
-		}
-		if err := fn(item); err != nil {
-			return fmt.Errorf("%s:%d: %w", path, lineNo, err)
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("%s: %w", path, err)
-	}
-	return nil
-}
-
-func decodeCorpusItem(line []byte) (CorpusItem, error) {
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(line, &fields); err != nil {
-		return CorpusItem{}, err
-	}
-	for _, field := range []string{"claims", "auto_promote"} {
-		if _, ok := fields[field]; ok {
-			return CorpusItem{}, fmt.Errorf("legacy corpus field %q is not supported; regenerate the seed for remember-only ingestion", field)
-		}
-	}
-	var item CorpusItem
-	if err := json.Unmarshal(line, &item); err != nil {
-		return CorpusItem{}, err
-	}
-	return item, nil
-}
-
-func (c *HTTPClient) importCorpusGroup(ctx context.Context, corpus []CorpusItem) (KnowledgeMapping, error) {
-	mapping := newKnowledgeMapping()
-	for _, item := range corpus {
-		itemMapping, err := c.importCorpusItem(ctx, item)
-		if err != nil {
-			return mapping, err
-		}
-		mergeKnowledgeMapping(&mapping, itemMapping)
-	}
-	return mapping, nil
-}
 func corpusRememberInput(item CorpusItem) map[string]any {
-	evidence := map[string]any{
-		"content":  item.Content,
-		"source":   firstNonEmpty(item.SourceDataset, item.Title, "eval-seed"),
-		"metadata": seedMetadata(item),
+	metadata := map[string]any{}
+	for k, v := range item.Metadata {
+		metadata[k] = v
 	}
+	metadata["source_doc_id"], metadata["source_dataset"], metadata["eval_seed"] = item.SourceDocID, item.SourceDataset, true
+	evidence := map[string]any{"content": item.Content, "source": firstNonEmpty(item.SourceDataset, "public-rag"), "source_key": item.SourceDocID, "source_revision": "1", "source_type": "document", "metadata": metadata}
 	if len(item.Labels) > 0 {
 		evidence["labels"] = item.Labels
 	}
-	input := map[string]any{"target_space": "team_shared", "idempotency_key": "eval:" + item.SourceDocID, "evidence": []map[string]any{evidence}}
-
-	return input
+	return map[string]any{"target_space": "team_shared", "idempotency_key": "eval:" + item.SourceDocID, "evidence": []map[string]any{evidence}}
 }
 
-func (c *HTTPClient) importCorpusItem(ctx context.Context, item CorpusItem) (mapping KnowledgeMapping, err error) {
-	ctx, op, err := c.journal.start(ctx, "import", item.SourceDocID)
-	if err != nil {
-		return newKnowledgeMapping(), err
-	}
-	defer func() { err = op.finish(err, "completed") }()
-	mapping = newKnowledgeMapping()
-	input := corpusRememberInput(item)
-	var out map[string]any
-	if _, err := c.ensureContract(ctx); err != nil {
-		return mapping, fmt.Errorf("import %s: %w", item.SourceDocID, err)
-	}
-	if err := c.callToolWithRetry(ctx, "remember", input, &out); err != nil {
-		return mapping, fmt.Errorf("import %s: %w", item.SourceDocID, err)
-	}
-	submissionID := stringValue(out["submission_id"])
-	if submissionID == "" {
-		return mapping, fmt.Errorf("import %s: remember response missing submission_id", item.SourceDocID)
-	}
-	return c.importTerminalRememberResult(item, out, mapping)
-}
-
-func corpusImportGroups(corpus []CorpusItem) [][]CorpusItem {
-	groups := make([][]CorpusItem, 0, len(corpus))
-	groupIndex := map[string]int{}
-	for _, item := range corpus {
-		key := corpusImportGroupKey(item)
-		index, ok := groupIndex[key]
-		if !ok {
-			index = len(groups)
-			groupIndex[key] = index
-			groups = append(groups, nil)
-		}
-		groups[index] = append(groups[index], item)
-	}
-	return groups
-}
-
-func corpusImportGroupKey(item CorpusItem) string {
-	if item.Metadata != nil {
-		if caseID, ok := item.Metadata["case_id"].(string); ok && strings.TrimSpace(caseID) != "" {
-			return "case:" + strings.TrimSpace(caseID)
-		}
-	}
-	sourceDocID := strings.TrimSpace(item.SourceDocID)
-	if sourceDocID == "" {
-		return "item:" + item.Content
-	}
-	return "item:" + sourceDocID
-}
-
-func (c *HTTPClient) ExportEvidenceMapping(ctx context.Context, limit int) (KnowledgeMapping, error) {
-	return c.exportKnowledgeMapping(ctx, limit, []string{"evidence"})
-}
-
-func (c *HTTPClient) ExportKnowledgeMapping(ctx context.Context, limit int) (KnowledgeMapping, error) {
-	return c.exportKnowledgeMapping(ctx, limit, []string{"evidence"})
-}
-
-func (c *HTTPClient) exportKnowledgeMapping(ctx context.Context, limit int, kinds []string) (KnowledgeMapping, error) {
-	if limit <= 0 {
-		limit = 100
-	}
+func (c *HTTPClient) importCorpusItem(ctx context.Context, item CorpusItem) (KnowledgeMapping, error) {
 	mapping := newKnowledgeMapping()
-	evidenceSourceDocIDs := map[string][]string{}
-	for _, kind := range kinds {
-		cursor := ""
-		for {
-			input := map[string]any{"type": kind, "limit": limit, "metadata_only": false}
-			if cursor != "" {
-				input["cursor"] = cursor
-			}
-			var out struct {
-				Items      []map[string]any `json:"items"`
-				NextCursor string           `json:"next_cursor"`
-				HasMore    bool             `json:"has_more"`
-			}
-			if err := c.CallTool(ctx, "eval_list_knowledge_refs", input, &out); err != nil {
+	input := corpusRememberInput(item)
+	for attempt := 1; attempt <= 2; attempt++ {
+		started := time.Now()
+		var result map[string]any
+		err := c.CallTool(ctx, "remember", input, &result)
+		if err == nil && stringValue(result["submission_id"]) == "" {
+			err = errors.New("remember response missing submission identity")
+		}
+		if err == nil {
+			mapping, err = c.importTerminalRememberResult(item, result, mapping)
+		}
+		event := map[string]any{"source_id": item.SourceDocID, "attempt": attempt, "idempotency_key": input["idempotency_key"], "result": result, "elapsed_ms": float64(time.Since(started)) / float64(time.Millisecond)}
+		if err == nil {
+			event["admitted_input"] = input
+		} else {
+			event["error"] = err.Error()
+		}
+		if captureErr := c.Capture.Emit("import_attempt", event); captureErr != nil {
+			return mapping, captureErr
+		}
+		if err == nil {
+			return mapping, nil
+		}
+		if attempt == 2 || ctx.Err() != nil {
+			return mapping, err
+		}
+		retry, original, retryable, terminal := terminalRememberRetryInput("remember", input, err)
+		if terminal {
+			input = retry
+			if err := c.Capture.Emit("intake_retry", map[string]any{"source_id": item.SourceDocID, "original_attempt_id": original, "original_retryable": retryable, "idempotency_key": input["idempotency_key"]}); err != nil {
 				return mapping, err
 			}
-			for _, item := range out.Items {
-				id := knowledgeItemID(kind, item)
-				if id == "" {
-					continue
-				}
-
-				sourceDocIDs := sourceDocIDsFromKnowledgeItem(kind, item, evidenceSourceDocIDs)
-				for _, sourceDocID := range sourceDocIDs {
-					addSourceMapping(&mapping, Ref{Type: kind, ID: id, SourceDocID: sourceDocID}, kind == "evidence")
-				}
-				switch kind {
-				case "evidence":
-					evidenceSourceDocIDs[id] = sourceDocIDs
-				}
-			}
-			if !out.HasMore || out.NextCursor == "" {
-				break
-			}
-			cursor = out.NextCursor
-		}
-	}
-	return mapping, nil
-}
-
-func (c *HTTPClient) RunRecallCase(ctx context.Context, tc Case) (trace RecallTrace, err error) {
-	ctx, op, err := c.journal.start(ctx, "recall", tc.CaseID)
-	if err != nil {
-		return RecallTrace{}, err
-	}
-	defer func() {
-		if op != nil {
-			op.event.ElapsedMS = elapsedMilliseconds(op.started)
-			trace.ClientElapsedMS, trace.ClientOperationID, trace.MeasurementCaptureID, trace.ClientPhase = op.event.ElapsedMS, op.event.OperationID, op.journal.manifest.CaptureID, op.event.Phase
-		}
-		err = op.finish(err, "completed")
-	}()
-	input := map[string]any{
-		"case_id": tc.CaseID,
-		"query":   tc.Query,
-	}
-	if tc.Limit > 0 {
-		input["limit"] = tc.Limit
-	}
-	if tc.ValidAt != "" {
-		input["valid_at"] = tc.ValidAt
-	}
-	if tc.KnownAt != "" {
-		input["known_at"] = tc.KnownAt
-	}
-
-	var out map[string]any
-	if err := c.callToolWithRetry(ctx, "eval_run_recall_case", input, &out); err != nil {
-		return RecallTrace{}, err
-	}
-	return traceFromToolOutput(tc, out), nil
-}
-
-const maxToolCallAttempts = 2
-
-func (c *HTTPClient) callToolWithRetry(ctx context.Context, name string, input any, out any) error {
-	var lastErr error
-	for attempt := 1; attempt <= maxToolCallAttempts; attempt++ {
-		err := c.CallTool(ctx, name, input, out)
-		if err == nil {
-			return nil
-		}
-		lastErr = err
-		if attempt == maxToolCallAttempts {
-			return err
-		}
-		retryInput, originalID, originalRetryable, terminal := terminalRememberRetryInput(name, input, err)
-		if !isTransientCallToolError(err) && !terminal {
-			return err
-		}
-		if terminal {
-			input = retryInput
-		}
-		delay := time.Duration(attempt) * 750 * time.Millisecond
-		if op, _ := ctx.Value(operationContextKey{}).(*measuredOperation); op != nil {
-			event := op.event
-			event.Event, event.RetryDelayMS, event.Cause = "retry_scheduled", delay.Milliseconds(), err.Error()
-			if terminal {
-				event.IdempotencyKey = stringValue(retryInput["idempotency_key"])
-				event.OriginalAttemptID, event.OriginalRetryable, event.OriginalOutcome = originalID, &originalRetryable, "failed"
-			}
-			if captureErr := op.journal.append(event); captureErr != nil {
-				return errors.Join(err, captureErr)
-			}
+		} else if !isTransientCallToolError(err) {
+			return mapping, err
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(delay):
+			return mapping, ctx.Err()
+		case <-time.After(750 * time.Millisecond):
 		}
 	}
-	return lastErr
+	return mapping, errors.New("intake attempts exhausted")
+}
+
+func isTransientHTTPError(err error) bool {
+	var status *HTTPStatusError
+	if !errors.As(err, &status) {
+		return false
+	}
+	return status.StatusCode == 429 || status.StatusCode >= 500
 }
 
 func terminalRememberRetryInput(name string, input any, cause error) (map[string]any, string, bool, bool) {
@@ -661,275 +343,4 @@ func terminalRememberRetryInput(name string, input any, cause error) (map[string
 	}
 	retry["idempotency_key"] = key
 	return retry, id, retryable, true
-}
-
-func (c *HTTPClient) doJSON(ctx context.Context, method, url, bearer string, input any, out any) (err error) {
-	attempt, _ := ctx.Value(attemptContextKey{}).(*measuredAttempt)
-	if attempt == nil && c.journal != nil {
-		ctx, attempt, err = c.startAttempt(ctx, "tools/list")
-		if err != nil {
-			return err
-		}
-		defer func() { err = attempt.finish(err) }()
-	}
-	var body io.Reader
-	secrets := append(observability.AuthenticationSecretsFromContext(ctx), bearer)
-	if attempt != nil {
-		secrets = append(secrets, attempt.operation.journal.secrets...)
-	}
-	ctx = observability.WithAuthenticationSecrets(ctx, secrets...)
-	if input != nil {
-		payload, err := json.Marshal(input)
-		if err != nil {
-			return err
-		}
-		body = bytes.NewReader(payload)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, url, body)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if bearer != "" {
-		req.Header.Set("Authorization", "Bearer "+bearer)
-	}
-	client := c.Client
-	if client == nil {
-		client = &http.Client{Timeout: 5 * time.Minute}
-	}
-	if attempt != nil {
-		attempt.event.Dispatched = true
-		req.Header.Set("X-Correlation-ID", attempt.event.CorrelationID)
-		j := attempt.operation.journal
-		logger := j.logger.ContextSlog().With("run_id", j.manifest.RunID, "capture_id", j.manifest.CaptureID, "operation_id", attempt.event.OperationID, "attempt_id", attempt.event.AttemptID, "method", attempt.event.Method, "correlation_id", attempt.event.CorrelationID)
-		// Remember payloads use admission-aware server diagnostics so initial security rejection stays content-free.
-		if attempt.event.Method != "remember" {
-			client = observability.DiagnosticHTTPClient(client, logger, j.protector)
-		}
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if attempt != nil {
-		attempt.event.StatusCode = resp.StatusCode
-		if id := resp.Header.Get("X-Correlation-ID"); id != "" {
-			attempt.event.CorrelationID = id
-		}
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		payload, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return &HTTPStatusError{
-			Method:     method,
-			URL:        url,
-			StatusCode: resp.StatusCode,
-			Body:       strings.TrimSpace(string(payload)),
-		}
-	}
-	if out == nil {
-		_, _ = io.Copy(io.Discard, resp.Body)
-		return nil
-	}
-	decoder := json.NewDecoder(resp.Body)
-	decoder.UseNumber()
-	return decoder.Decode(out)
-}
-
-func isTransientHTTPError(err error) bool {
-	var statusErr *HTTPStatusError
-	if !errors.As(err, &statusErr) {
-		return false
-	}
-	switch statusErr.StatusCode {
-	case http.StatusTooManyRequests,
-		http.StatusInternalServerError,
-		http.StatusBadGateway,
-		http.StatusServiceUnavailable,
-		http.StatusGatewayTimeout:
-		return true
-	default:
-		return false
-	}
-}
-
-func seedMetadata(item CorpusItem) map[string]any {
-	out := map[string]any{}
-	for key, value := range item.Metadata {
-		out[key] = value
-	}
-	out["source_doc_id"] = item.SourceDocID
-	out["source_dataset"] = item.SourceDataset
-	out["eval_seed"] = true
-	return out
-}
-
-func sourceDocIDsFromKnowledgeItem(kind string, item map[string]any, evidenceSourceDocIDs map[string][]string) []string {
-	sourceDocID := firstNonEmpty(
-		nestedString(item, "metadata", "source_doc_id"),
-		nestedStringPath(item, "metadata", "legacy_metadata", "source_doc_id"),
-		nestedString(item, "payload", "source_doc_id"),
-	)
-	sourceDocIDs := []string{}
-	if sourceDocID != "" {
-		sourceDocIDs = append(sourceDocIDs, sourceDocID)
-	}
-	return uniqueNonEmpty(sourceDocIDs)
-}
-
-func stringsFromAny(value any) []string {
-	switch raw := value.(type) {
-	case []string:
-		return uniqueNonEmpty(raw)
-	case []any:
-		out := make([]string, 0, len(raw))
-		for _, item := range raw {
-			if value := stringValue(item); value != "" {
-				out = append(out, value)
-			}
-		}
-		return uniqueNonEmpty(out)
-	default:
-		return nil
-	}
-}
-
-func evidenceIDFromSubmission(out map[string]any) string {
-	evidence, _ := out["evidence"].([]any)
-	for _, raw := range evidence {
-		item, _ := raw.(map[string]any)
-		if id := firstNonEmpty(stringValue(item["evidence_id"]), stringValue(item["id"]), stringValue(item["fragment_id"])); id != "" {
-			return id
-		}
-	}
-	return ""
-}
-
-func traceFromToolOutput(tc Case, out map[string]any) RecallTrace {
-	return RecallTrace{
-		CaseID:              tc.CaseID,
-		Query:               firstNonEmpty(stringValue(out["query"]), tc.Query),
-		RankedRefs:          refsFromAny(out["ranked_refs"]),
-		ContextRefs:         refsFromAny(out["context_refs"]),
-		ContextEvidenceRefs: refsFromAny(out["context_evidence_refs"]),
-		LatencyMS:           int64Value(out["latency_ms"]),
-		ContextBlockChars:   intValue(out["context_block_chars"]),
-		Raw:                 out,
-	}
-}
-
-func refsFromAny(value any) []Ref {
-	raw, ok := value.([]any)
-	if !ok {
-		return nil
-	}
-	refs := make([]Ref, 0, len(raw))
-	for _, item := range raw {
-		m, ok := item.(map[string]any)
-		if !ok {
-			continue
-		}
-		truncated, _ := m["equivalents_truncated"].(bool)
-		refs = append(refs, Ref{
-			Type:                  stringValue(m["type"]),
-			ID:                    stringValue(m["id"]),
-			Rank:                  intValue(m["rank"]),
-			EquivalentEvidenceIDs: stringsFromAny(m["equivalent_evidence_ids"]),
-			EquivalentsTruncated:  truncated,
-		})
-	}
-	return refs
-}
-
-func endpoint(base, path string) string {
-	return strings.TrimRight(base, "/") + path
-}
-
-func nestedString(m map[string]any, objectKey, valueKey string) string {
-	nested, _ := nestedValue(m, objectKey, valueKey)
-	return stringValue(nested)
-}
-
-func nestedStringPath(m map[string]any, path ...string) string {
-	if len(path) == 0 {
-		return ""
-	}
-	var current any = m
-	for _, key := range path {
-		nested, ok := current.(map[string]any)
-		if !ok {
-			return ""
-		}
-		current = nested[key]
-	}
-	return stringValue(current)
-}
-
-func nestedValue(m map[string]any, objectKey, valueKey string) (any, bool) {
-	nested, _ := m[objectKey].(map[string]any)
-	if nested == nil {
-		return nil, false
-	}
-	value, ok := nested[valueKey]
-	return value, ok
-}
-
-func stringValue(value any) string {
-	switch v := value.(type) {
-	case string:
-		return strings.TrimSpace(v)
-	case json.Number:
-		return v.String()
-	default:
-		return ""
-	}
-}
-
-func intValue(value any) int {
-	switch v := value.(type) {
-	case int:
-		return v
-	case int64:
-		return int(v)
-	case float64:
-		return int(v)
-	case json.Number:
-		i, _ := v.Int64()
-		return int(i)
-	default:
-		return 0
-	}
-}
-
-func int64Value(value any) int64 {
-	switch v := value.(type) {
-	case int64:
-		return v
-	case int:
-		return int64(v)
-	case float64:
-		return int64(v)
-	case json.Number:
-		i, _ := v.Int64()
-		return i
-	default:
-		return 0
-	}
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value != "" {
-			return value
-		}
-	}
-	return ""
-}
-
-func knowledgeItemID(kind string, item map[string]any) string {
-	if kind != "evidence" {
-		return ""
-	}
-	return firstNonEmpty(stringValue(item["id"]), stringValue(item["evidence_id"]))
 }

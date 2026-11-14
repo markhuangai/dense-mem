@@ -3,71 +3,22 @@
   "capability": "offline-evaluation",
   "source_ownership": [
     {
-      "path": "cmd/internal/serverapp/evaluation_composition_evaluation.go"
+      "path": "cmd/internal/serverapp/runner_campaign_fixture_test.go"
     },
     {
-      "path": "cmd/internal/serverapp/evaluation_composition_production.go"
-    },
-    {
-      "path": "cmd/internal/serverapp/evaluation_composition_evaluation_test.go"
-    },
-    {
-      "path": "cmd/internal/serverapp/evaluation_composition_production_test.go"
-    },
-    {
-      "path": "internal/tools/registry/evaluation_bindings.go"
-    },
-    {
-      "path": "internal/tools/registry/evaluation_bindings_test.go"
-    },
-    {
-      "path": "internal/tools/registry/evaluation_application.go"
-    },
-    {
-      "path": "internal/tools/registry/evaluation_audit_failure_test.go"
-    },
-    {
-      "path": "internal/tools/registry/evaluation_catalog_evaluation.go"
-    },
-    {
-      "path": "internal/tools/registry/evaluation_knowledge_tools_test.go"
-    },
-    {
-      "path": "internal/tools/registry/evaluation_recall_tools.go"
-    },
-    {
-      "path": "internal/tools/registry/evaluation_tools.go"
-    },
-    {
-      "path": "internal/tools/registry/uat_evaluation_dependency_test.go"
-    },
-    {
-      "path": "cmd/internal/serverapp/paired_evaluation_fixture_test.go"
-    },
-    {
-      "path": "cmd/internal/serverapp/paired_evaluation_integration_test.go"
+      "path": "cmd/internal/serverapp/runner_campaign_integration_test.go"
     }
   ],
   "go": {
     "units": [
-      {
-        "id": "github.com/markhuangai/dense-mem/internal/evaluation",
-        "role": "application_api",
-        "visibility": "public"
-      },
-      {
-        "id": "github.com/markhuangai/dense-mem/internal/evaluation/postgres",
-        "role": "postgres_adapter",
-        "visibility": "private"
-      },
       {
         "id": "github.com/markhuangai/dense-mem/cmd/eval-runner",
         "role": "composition",
         "visibility": "public"
       },
       {
-        "id": "github.com/markhuangai/dense-mem/cmd/eval-seedgen",
-        "role": "offline_evaluation",
+        "id": "github.com/markhuangai/dense-mem/cmd/eval-retire",
+        "role": "composition",
         "visibility": "public"
       },
       {
@@ -76,8 +27,13 @@
         "visibility": "public"
       },
       {
-        "id": "github.com/markhuangai/dense-mem/internal/evaluation/contract",
-        "role": "port",
+        "id": "github.com/markhuangai/dense-mem/internal/evalretire",
+        "role": "offline_evaluation",
+        "visibility": "public"
+      },
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/testfixture/evaluation",
+        "role": "offline_evaluation",
         "visibility": "public"
       }
     ]
@@ -85,51 +41,30 @@
   "workers": [
     {
       "path": "cmd/eval-runner/main.go",
-      "function": "main",
+      "function": "execute",
+      "kind": "run",
+      "ordinal": 1,
+      "role": "worker"
+    },
+    {
+      "path": "cmd/eval-runner/logs.go",
+      "function": "runtimeLogs",
       "kind": "run",
       "ordinal": 1,
       "role": "worker"
     },
     {
       "path": "internal/evalharness/client.go",
-      "function": "importCorpusFileConcurrent",
-      "kind": "goroutine",
-      "ordinal": 1,
-      "role": "worker"
-    },
-    {
-      "path": "internal/evalharness/client.go",
-      "function": "importCorpusFileConcurrent",
-      "kind": "goroutine",
-      "ordinal": 2,
-      "role": "worker"
-    },
-    {
-      "path": "internal/evalharness/client.go",
-      "function": "importCorpusFileConcurrent",
-      "kind": "goroutine",
-      "ordinal": 3,
-      "role": "worker"
-    },
-    {
-      "path": "internal/evalharness/client.go",
       "function": "ImportCorpusWithConcurrency",
       "kind": "goroutine",
       "ordinal": 1,
       "role": "worker"
     },
     {
-      "path": "internal/evalharness/client.go",
-      "function": "ImportCorpusWithConcurrency",
+      "path": "internal/evalharness/runner.go",
+      "function": "runCondition",
       "kind": "goroutine",
-      "ordinal": 2,
-      "role": "worker"
-    },
-    {
-      "path": "internal/evalharness/client.go",
-      "function": "ImportCorpusWithConcurrency",
-      "kind": "goroutine",
-      "ordinal": 3,
+      "ordinal": 1,
       "role": "worker"
     }
   ]

@@ -86,7 +86,6 @@ const requiredSourceOwnership = Object.freeze([
   ["internal/tools/registry/tool_bindings.go", "tool-registry-application-api"],
   ["internal/tools/registry/toolset.go", "tool-registry-application-api"],
   ["internal/tools/registry/contract.go", "tool-registry-application-api"],
-  ["internal/tools/registry/evaluation_bindings.go", "offline-evaluation"],
   ["internal/http/control_portal_bindings.go", "http-transport"],
   ["internal/http/router_protected.go", "http-transport"],
   ["internal/http/user_portal.go", "http-transport"],

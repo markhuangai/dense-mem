@@ -167,12 +167,6 @@ func TestToolRegistry_ListReturnsAllRegistered(t *testing.T) {
 
 func TestToolVisibleRuntimeGates(t *testing.T) {
 	ctx := context.Background()
-	if IsEvaluationTool("eval_run_dream_cycle") || IsEvaluationTool("remember") {
-		t.Fatal("IsEvaluationTool returned unexpected result")
-	}
-	if IsEvaluationTool("eval_get_manifest") || IsEvaluationTool("eval_score_retrieval_case") {
-		t.Fatal("removed evaluation tool classified as active")
-	}
 	if ToolVisible(ctx, Tool{Name: ToolSubmitRecallSessionFeedback}, RuntimeToolPolicy{}) {
 		t.Fatal("recall feedback tool should fail closed")
 	}

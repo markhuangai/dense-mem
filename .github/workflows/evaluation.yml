@@ -1,0 +1,187 @@
+name: Runner evaluation
+
+on:
+  workflow_call:
+    inputs:
+      image:
+        required: true
+        type: string
+      source_repository:
+        required: true
+        type: string
+      source_revision:
+        required: true
+        type: string
+      mode:
+        required: true
+        type: string
+      replay_run_id:
+        type: string
+        default: ''
+      model:
+        type: string
+        default: ''
+      context_window_tokens:
+        type: string
+        default: ''
+    secrets:
+      eval-model:
+        required: false
+      eval-context-window:
+        required: false
+      eval-verifier-url:
+        required: false
+      eval-embedding-url:
+        required: false
+      eval-api-key:
+        required: false
+      eval-embedding-api-key:
+        required: false
+
+permissions:
+  actions: read
+  contents: read
+  packages: read
+
+jobs:
+  registry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.registry.outputs.matrix }}
+      registry_mode: ${{ steps.registry.outputs.registry_mode }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: ${{ inputs.source_repository }}
+          ref: ${{ inputs.source_revision }}
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - id: registry
+        env:
+          EVAL_MODE: ${{ inputs.mode }}
+          EVAL_REPLAY_RUN_ID: ${{ inputs.replay_run_id }}
+          EVAL_SOURCE_REVISION: ${{ inputs.source_revision }}
+          EVAL_IMAGE: ${{ inputs.image }}
+          GH_TOKEN: ${{ github.token }}
+        run: node tests/eval/scripts/workflow.mjs matrix
+
+  datasets:
+    name: Evaluate ${{ matrix.dataset }}
+    needs: registry
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.registry.outputs.matrix) }}
+    env:
+      EVAL_MODE: ${{ inputs.mode }}
+      EVAL_REGISTRY_MODE: ${{ needs.registry.outputs.registry_mode }}
+      EVAL_DATASET: ${{ matrix.dataset }}
+      EVAL_IMAGE: ${{ inputs.image }}
+      EVAL_SOURCE_REVISION: ${{ inputs.source_revision }}
+      EVAL_REPLAY_RUN_ID: ${{ inputs.replay_run_id }}
+      WORKFLOW_EMBEDDING_MODEL: '@cf/baai/bge-m3'
+      WORKFLOW_EMBEDDING_DIMENSIONS: '1024'
+      DENSE_MEM_EVAL_MODEL: ${{ inputs.model || vars.DENSE_MEM_EVAL_MODEL || secrets.eval-model }}
+      DENSE_MEM_EVAL_CONTEXT_WINDOW_TOKENS: ${{ inputs.context_window_tokens || vars.DENSE_MEM_EVAL_CONTEXT_WINDOW_TOKENS || secrets.eval-context-window }}
+      DENSE_MEM_EVAL_VERIFIER_URL: ${{ secrets.eval-verifier-url }}
+      DENSE_MEM_EVAL_EMBED_URL: ${{ secrets.eval-embedding-url }}
+      DENSE_MEM_EVAL_API_KEY: ${{ secrets.eval-api-key }}
+      DENSE_MEM_EVAL_EMBED_API_KEY: ${{ secrets.eval-embedding-api-key }}
+    steps:
+      - name: Freeze model deadline
+        run: |
+          printf 'EVAL_MODEL_DEADLINE_EPOCH=%s\n' "$(( $(date +%s) + 330 * 60 ))" >> "${GITHUB_ENV}"
+          printf 'EVAL_RUNNER_BINARY=%s/eval-runner\n' "${RUNNER_TEMP}" >> "${GITHUB_ENV}"
+      - uses: actions/checkout@v7
+        with:
+          repository: ${{ inputs.source_repository }}
+          ref: ${{ inputs.source_revision }}
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Build workflow-internal runner
+        run: go build -trimpath -o "${EVAL_RUNNER_BINARY}" ./cmd/eval-runner
+      - name: Set up isolated Docker
+        if: inputs.mode != 'replay'
+        uses: docker/setup-docker-action@v5
+        with:
+          rootless: true
+          set-host: true
+          daemon-config: |
+            {"exec-opts":["native.cgroupdriver=cgroupfs"]}
+      - name: Authenticate production image pull
+        if: inputs.mode != 'replay'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Run complete dataset campaign
+        if: inputs.mode != 'replay'
+        run: node tests/eval/scripts/workflow.mjs run
+      - name: Replay retained Actions logs
+        if: inputs.mode == 'replay'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node tests/eval/scripts/replay.mjs
+      - name: Preserve protected startup failure logs
+        if: failure() && inputs.mode != 'replay'
+        run: node tests/eval/scripts/workflow.mjs diagnostics
+      - name: Remove this dataset's runtime
+        if: always() && inputs.mode != 'replay'
+        run: node tests/eval/scripts/workflow.mjs cleanup
+      - name: Retain numeric report and reproducibility manifest
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: evaluation-${{ matrix.dataset }}
+          path: ${{ runner.temp }}/dense-mem-eval-${{ github.run_id }}-${{ matrix.dataset }}/public/*.json
+          retention-days: 2
+          if-no-files-found: warn
+
+  aggregate:
+    name: Aggregate every dataset outcome
+    needs: [registry, datasets]
+    if: always() && needs.registry.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: ${{ inputs.source_repository }}
+          ref: ${{ inputs.source_revision }}
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Download available numeric reports
+        id: download
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          pattern: evaluation-*
+          path: ${{ runner.temp }}/evaluation-reports
+      - name: Build complete comparison matrix
+        env:
+          EVAL_MODE: ${{ inputs.mode }}
+          EVAL_REGISTRY_MODE: ${{ needs.registry.outputs.registry_mode }}
+        run: node tests/eval/scripts/workflow.mjs aggregate
+      - name: Retain comparison including missing axes
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: evaluation-comparison
+          path: ${{ runner.temp }}/evaluation-reports/aggregate/comparison.json
+          retention-days: 2
+          if-no-files-found: error
