@@ -189,7 +189,7 @@ func validEvidenceConflictAssessment(t *testing.T) (SemanticAssessmentRequest, S
 	prepared, errs := PrepareSemanticAssessmentRequest(request, DefaultSemanticAssessmentLimits())
 	require.Empty(t, errs)
 	startSubmitted, _ := SemanticAssessmentBoundaryRef(prepared.Evidence[0], 0)
-	endSubmitted, _ := SemanticAssessmentBoundaryRef(prepared.Evidence[0], 8)
+	endSubmitted, _ := SemanticAssessmentBoundaryRef(prepared.Evidence[0], 9)
 	startKnown, _ := SemanticAssessmentBoundaryRef(prepared.KnownEvidence[0], 0)
 	endKnown, _ := SemanticAssessmentBoundaryRef(prepared.KnownEvidence[0], 5)
 	return prepared, SemanticAssessmentResponse{

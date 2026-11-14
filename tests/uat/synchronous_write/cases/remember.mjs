@@ -52,7 +52,7 @@ async function runEvidenceContractCase({ rawRPC, expect }) {
   for (const [label, mutate, path] of [
     ["missing", (args) => { delete args.evidence; }, "/evidence"],
     ["empty", (args) => { args.evidence = []; }, "/evidence"],
-    ["oversized", (args) => { args.evidence[0].content = "x".repeat(1000); }, "/evidence/0/content"],
+    ["oversized", (args) => { args.evidence[0].content = "x".repeat(16385); }, "/evidence/0/content"],
     ...["relationships", "entities", "predicates", "proposal"].map((field) => [field, (args) => { args[field] = []; }, `/${field}`]),
   ]) {
     const args = singleItemArguments(`invalid-${label}`, "");
@@ -108,7 +108,7 @@ async function runBudgetContextCase({ expect }) {
   const actor = await createKnownEvidenceCredential(teamID, `assessor-budget-${Date.now()}`);
   const candidateContents = [];
   for (let index = 0; index < 10; index += 1) {
-    const content = `Large stored candidate ${index} ${"candidate context material ".repeat(28)} [fixture:budget-candidate]`;
+    const content = `Large stored candidate ${index} ${"candidate context material ".repeat(160)} [fixture:budget-candidate]`;
     candidateContents.push(content);
     const seeded = await rememberWithKey(actor.apiKey, {
       target_space: "team_shared",
@@ -925,7 +925,7 @@ export function rememberCanonicalCounts(teamID, submissionID) {
   `).split(/\r?\n/).filter(Boolean).map(Number);
 }
 
-function postgresExec(sql, label) {
+export function postgresExec(sql, label) {
   const composeProject = requiredEnv("DENSE_MEM_E2E_COMPOSE_PROJECT");
   const composeFile = requiredEnv("DENSE_MEM_E2E_COMPOSE_FILE");
   const composeOverlay = requiredEnv("DENSE_MEM_E2E_COMPOSE_OVERLAY_FILE");

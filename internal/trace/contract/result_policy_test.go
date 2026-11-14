@@ -20,7 +20,7 @@ func TestEvidenceOnlyUnitTraceDefaultAndMaximumLimits(t *testing.T) {
 	input := NormalizeInput(Input{})
 	require.Equal(t, 100, input.MaxEvents)
 	require.Equal(t, 2000, input.MaxFragmentContentRunes)
-	input = NormalizeInput(Input{MaxEvents: 1000, MaxFragmentContentRunes: 10000})
+	input = NormalizeInput(Input{MaxEvents: 1000, MaxFragmentContentRunes: 20000})
 	require.Equal(t, 500, input.MaxEvents)
-	require.Equal(t, 8000, input.MaxFragmentContentRunes)
+	require.Equal(t, 16384, input.MaxFragmentContentRunes)
 }

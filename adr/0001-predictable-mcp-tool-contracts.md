@@ -28,10 +28,15 @@ Every supported MCP tool must have a bounded and predictable contract:
 - Required server-owned work finishes in the originating call. The call returns
   a complete terminal result or a typed, bounded, actionable error; it does not
   return success that requires blind status polling to discover the real result.
-- Optional progress notifications may report activity while the originating call
-  remains pending. They are nonterminal, do not acknowledge durable success, and
-  never replace the terminal result or actionable error. Correctness and failure
-  handling must not depend on clients displaying them.
+- Progress-capable clients receive standard MCP progress notifications before
+  every meaningful processing stage and blocking wait, including provider capacity,
+  backoff, and regeneration. Preserve the exact token, monotonic sequence,
+  bounded delivery, request isolation, cancellation, and terminal ordering.
+  Messages contain server-owned descriptions and bounded counts. They remain
+  nonterminal; only the final response acknowledges durable success. Correctness
+  and failure handling do not depend on client display. Terminal-only clients
+  retain the same outcomes. Maintainer-approved #762 implements Remember;
+  #764 owns rollout to the remaining tools.
 - A mutation defines replay behavior. A matching idempotent retry reuses the
   authoritative result, while a different request using the same key conflicts.
 - Provider variability is allowed only inside a closed response schema with
@@ -77,5 +82,5 @@ For every changed MCP behavior, verify the catalog and call schemas, bounded
 success and error results, cancellation, idempotent replay, and removal of
 hidden required work. Model-backed writes also require invalid-response and
 provider-failure cases proving zero partial semantic commit.
-Progress verification also covers request/token isolation, bounded optional
+Progress verification also covers request/token isolation, bounded
 delivery, replay, cancellation, and no notifications after the terminal response.

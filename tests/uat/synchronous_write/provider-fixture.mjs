@@ -262,7 +262,7 @@ function assessmentInput(payload) {
     if (messages[index]?.role !== "user" || typeof messages[index]?.content !== "string") continue;
     try {
       const parsed = JSON.parse(messages[index].content);
-      if (Array.isArray(parsed.evidence) || (Array.isArray(parsed.items) && Array.isArray(parsed.pairs))) return parsed;
+      if (Array.isArray(parsed.evidence) || (Array.isArray(parsed.items) && (Array.isArray(parsed.pairs) || parsed.policy_version))) return parsed;
     } catch {
       // Repair feedback is not an assessment request.
     }
@@ -272,6 +272,18 @@ function assessmentInput(payload) {
 
 function fixtureChatResponse(payload, requestFault = "none", attempt = 1) {
   const schemaName = payload.response_format?.json_schema?.name;
+  if (schemaName === "dense_mem_semantic_partition_response") {
+    const input = structuredInput(payload, (value) => Array.isArray(value.items) && value.policy_version);
+    const result = { request_id: input.request_id, items: input.items.map((item) => {
+      const refs = [...item.boundary_text.matchAll(/⟦([^⟧]+)⟧/g)].map((match) => match[1]);
+      const breakRef = [...item.boundary_text.matchAll(/[\r\n\u2028\u2029]\s*⟦([^⟧]+)⟧/g)].map((match) => match[1]).find((ref) => ref !== refs.at(-1));
+      return { item_id: item.item_id, end_refs: requestFault === "partition-split" && breakRef ? [breakRef, refs.at(-1)] : [refs.at(-1)] };
+    }) };
+    if (requestFault === "partition-missing") result.items = [];
+    if (requestFault === "partition-unknown") result.items[0].end_refs = ["invented"];
+    if (requestFault === "partition-repair" && attempt === 1) result.items[0].end_refs = ["invented"];
+    return result;
+  }
   if (schemaName === "session_evidence_excerpts_v2") return fixtureSessionExtraction(structuredInput(payload, (input) => input.window));
   if (schemaName === "ontology_evidence_organization_v3") return fixtureOntologyOrganization(payload);
   if (schemaName !== "dense_mem_evidence_assessment_response") throw new Error(`unsupported fixture schema ${schemaName}`);
@@ -373,6 +385,11 @@ export function fixtureFault(payload, route) {
   if (route === "embedding") return faultMarker(Array.isArray(payload.input) ? payload.input : [payload.input]);
   if (route !== "assessment") return "";
   const schemaName = payload.response_format?.json_schema?.name;
+  if (schemaName === "dense_mem_semantic_partition_response") {
+    const input = structuredInput(payload, (value) => Array.isArray(value.items) && value.policy_version);
+    const fault = faultMarker(input.items.map((item) => item.boundary_text.replace(/⟦[^⟧]+⟧/g, "")));
+    return fault.startsWith("partition-") ? fault : "";
+  }
   if (schemaName === "session_evidence_excerpts_v2") {
     const input = structuredInput(payload, (value) => value.window);
     return faultMarker([input.window?.before, ...(input.window?.core || []), input.window?.after].filter(Boolean).map((segment) => segment.text));

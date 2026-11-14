@@ -197,7 +197,7 @@ for (const testCase of acceptedCases) {
       throw new Error(`${testCase.name} exact-key replay changed its terminal result`);
     }
   }
-  verifierAfterAccepted = await waitForExactlyOneVerifierRequest(verifierAfterAccepted, teamID);
+  verifierAfterAccepted = await waitForExactlyTwoVerifierRequests(verifierAfterAccepted, teamID);
   assertTerminalEvidenceDisposition(accepted, testCase.name);
   acceptedResults.push({
     name: testCase.name,
@@ -312,19 +312,19 @@ function evidenceRememberInput(payload, idempotencyKey, source, clientComment = 
   };
 }
 
-async function waitForExactlyOneVerifierRequest(before, targetTeamID) {
-  const expected = before + 1;
+async function waitForExactlyTwoVerifierRequests(before, targetTeamID) {
+  const expected = before + 2;
   for (let attempt = 0; attempt < 30; attempt += 1) {
     const value = await prometheusValue("densemem_verifier_requests_total", targetTeamID);
     if (value === expected) {
       return value;
     }
     if (value > expected) {
-      throw new Error("safe remember caused more than one live verifier request");
+      throw new Error("safe remember exceeded its partition and assessment verifier requests");
     }
     await delay(5_000);
   }
-  throw new Error("safe remember did not produce exactly one live verifier request");
+  throw new Error("safe remember did not produce its partition and assessment verifier requests");
 }
 
 async function assertVerifierStable(expected, targetTeamID) {

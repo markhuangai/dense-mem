@@ -68,6 +68,9 @@ func recallContractOutput(res *recall.RecallResult) map[string]any {
 	results := make([]map[string]any, 0, len(res.Results))
 	for _, item := range res.Results {
 		results = append(results, map[string]any{"evidence_id": item.EvidenceID, "equivalent_evidence_ids": append([]string{}, item.EquivalentEvidenceIDs...), "equivalents_truncated": item.EquivalentsTruncated, "context": item.Context, "space_kind": item.SpaceKind})
+		if item.ContextTruncated {
+			results[len(results)-1]["context_truncated"] = true
+		}
 	}
 	if res.RelatedTopics == nil {
 		res.RelatedTopics = []recallcontract.RelatedTopic{}

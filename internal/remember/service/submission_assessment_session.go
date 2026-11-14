@@ -7,6 +7,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
 type submissionAssessmentValidationTurn struct {
@@ -172,6 +173,7 @@ func (s *assessmentEngine) completeRememberSessionTurnsWithValidator(
 		s.completedInputTokens += inputTokens
 		s.completedOutputTokens += outputTokens
 		validationStarted := time.Now()
+		ReportProgress(ctx, ProgressValidatingAssessment)
 		validationErrors := append([]assessor.SemanticValidationError(nil), turn.ValidationErrors...)
 		if len(validationErrors) == 0 {
 			response, validationErrors = assessor.PrepareSemanticAssessmentResponse(request, response, s.limits)
@@ -222,6 +224,7 @@ func (s *assessmentEngine) completeRememberSessionTurnsWithValidator(
 			return assessor.SemanticAssessmentResponse{}, request, &submissionAssessmentConsumedTurnsError{cause: wrapSubmissionAssessmentValidationHistory(err, validationHistory), providerTurns: totalTurns}
 		}
 		s.diagnostics.beginTurn(ctx)
+		requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: string(ProgressRegeneratingAssessment), Attempt: totalTurns + 1, Total: SemanticMaxAssessorTurns})
 		turn, err = s.provider.Repair(ctx, session, assessor.SemanticAssessmentRepairRequest{
 			Request: nextRequest, ValidationErrors: validationErrors,
 		})

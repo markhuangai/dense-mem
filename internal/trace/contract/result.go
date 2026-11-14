@@ -50,43 +50,56 @@ type SessionProvenance struct {
 }
 
 type TraceEvidenceFragment struct {
-	TeamID                   string             `json:"-"`
-	SpaceID                  string             `json:"-"`
-	SpaceGeneration          int64              `json:"-"`
-	OccurrenceOwnerProfileID string             `json:"occurrence_owner_profile_id,omitempty"`
-	ContentOmitted           bool               `json:"content_omitted,omitempty"`
-	Session                  *SessionProvenance `json:"session,omitempty"`
-	FragmentID               string             `json:"evidence_id,omitempty"`
-	OccurrenceID             string             `json:"occurrence_id,omitempty"`
-	IngestID                 string             `json:"ingest_id,omitempty"`
-	OwnerProfileID           string             `json:"owner_profile_id,omitempty"`
-	SourceID                 string             `json:"source_id,omitempty"`
-	SourceRevisionID         string             `json:"source_revision_id,omitempty"`
-	SourceKey                string             `json:"source_key,omitempty"`
-	SourceKind               string             `json:"source_kind,omitempty"`
-	RevisionToken            string             `json:"revision_token,omitempty"`
-	CurrentRevisionID        string             `json:"current_revision_id,omitempty"`
-	EvidenceIndex            int                `json:"evidence_index,omitempty"`
-	Content                  string             `json:"content,omitempty"`
-	ContentHash              string             `json:"content_hash,omitempty"`
-	ContentTruncated         bool               `json:"content_truncated,omitempty"`
-	SourceType               string             `json:"source_type,omitempty"`
-	Authority                string             `json:"authority,omitempty"`
-	SourceRef                string             `json:"source_ref,omitempty"`
-	Labels                   []string           `json:"labels,omitempty"`
-	Metadata                 map[string]any     `json:"metadata,omitempty"`
-	CreatedAt                time.Time          `json:"created_at,omitempty"`
+	Partition                *PartitionProvenance `json:"partition,omitempty"`
+	TeamID                   string               `json:"-"`
+	SpaceID                  string               `json:"-"`
+	SpaceGeneration          int64                `json:"-"`
+	OccurrenceOwnerProfileID string               `json:"occurrence_owner_profile_id,omitempty"`
+	ContentOmitted           bool                 `json:"content_omitted,omitempty"`
+	Session                  *SessionProvenance   `json:"session,omitempty"`
+	FragmentID               string               `json:"evidence_id,omitempty"`
+	OccurrenceID             string               `json:"occurrence_id,omitempty"`
+	IngestID                 string               `json:"ingest_id,omitempty"`
+	OwnerProfileID           string               `json:"owner_profile_id,omitempty"`
+	SourceID                 string               `json:"source_id,omitempty"`
+	SourceRevisionID         string               `json:"source_revision_id,omitempty"`
+	SourceKey                string               `json:"source_key,omitempty"`
+	SourceKind               string               `json:"source_kind,omitempty"`
+	RevisionToken            string               `json:"revision_token,omitempty"`
+	CurrentRevisionID        string               `json:"current_revision_id,omitempty"`
+	EvidenceIndex            int                  `json:"evidence_index,omitempty"`
+	Content                  string               `json:"content,omitempty"`
+	ContentHash              string               `json:"content_hash,omitempty"`
+	ContentTruncated         bool                 `json:"content_truncated,omitempty"`
+	SourceType               string               `json:"source_type,omitempty"`
+	Authority                string               `json:"authority,omitempty"`
+	SourceRef                string               `json:"source_ref,omitempty"`
+	Labels                   []string             `json:"labels,omitempty"`
+	Metadata                 map[string]any       `json:"metadata,omitempty"`
+	CreatedAt                time.Time            `json:"created_at,omitempty"`
 }
 
 type TraceEvidenceLifecycleEvent struct {
-	LifecycleEventID      string    `json:"lifecycle_event_id,omitempty"`
-	LifecycleOperationID  string    `json:"lifecycle_operation_id,omitempty"`
-	TargetFragmentID      string    `json:"target_evidence_id,omitempty"`
-	ReplacementFragmentID string    `json:"replacement_evidence_id,omitempty"`
-	OwnerProfileID        string    `json:"owner_profile_id,omitempty"`
-	Action                string    `json:"action,omitempty"`
-	Reason                string    `json:"reason,omitempty"`
-	CreatedAt             time.Time `json:"created_at,omitempty"`
+	ReplacementEvidenceIDs   []string  `json:"replacement_evidence_ids,omitempty"`
+	ReplacementOccurrenceIDs []string  `json:"replacement_occurrence_ids,omitempty"`
+	LifecycleEventID         string    `json:"lifecycle_event_id,omitempty"`
+	LifecycleOperationID     string    `json:"lifecycle_operation_id,omitempty"`
+	TargetFragmentID         string    `json:"target_evidence_id,omitempty"`
+	ReplacementFragmentID    string    `json:"replacement_evidence_id,omitempty"`
+	OwnerProfileID           string    `json:"owner_profile_id,omitempty"`
+	Action                   string    `json:"action,omitempty"`
+	Reason                   string    `json:"reason,omitempty"`
+	CreatedAt                time.Time `json:"created_at,omitempty"`
+}
+
+type PartitionProvenance struct {
+	SourceItemID        string `json:"source_item_id"`
+	SubmittedIndex      int    `json:"submitted_index"`
+	PartitionIndex      int    `json:"partition_index"`
+	SpanStart           int    `json:"span_start"`
+	SpanEnd             int    `json:"span_end"`
+	OriginalContentHash string `json:"original_content_hash"`
+	PolicyVersion       string `json:"policy_version"`
 }
 
 type TraceSearchDocument struct {

@@ -54,6 +54,15 @@ func (r *Store) TraceEvidence(ctx context.Context, input TraceEvidenceInput) (*E
 			return err
 		}
 		result.Occurrences = tracecontract.BoundEvents(occurrences, &remaining, result, "occurrences")
+		partitionIDs := append([]string{root.FragmentID}, occurrenceIDs...)
+		partitions, err := loadTracePartitions(ctx, tx, input.TeamID, root.SpaceID, partitionIDs)
+		if err != nil {
+			return err
+		}
+		root.Partition = partitions[root.FragmentID]
+		for i := range result.Occurrences {
+			result.Occurrences[i].Partition = partitions[result.Occurrences[i].OccurrenceID]
+		}
 		sources := []string{}
 		if root.SourceID != "" {
 			sources = append(sources, root.SourceID)

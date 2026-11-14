@@ -23,12 +23,18 @@ func rememberPublicResult(input SynchronousRememberCommitInput, evidence []Evide
 	}
 	evidenceResults := make([]map[string]any, 0, len(evidence))
 	for _, item := range evidence {
-		evidenceResults = append(evidenceResults, map[string]any{
+		entry := map[string]any{
 			"disposition": "stored", "evidence_id": item.FragmentID, "evidence_index": item.EvidenceIndex,
 			"content_hash":            item.ContentHash,
 			"superseded_evidence_ids": append([]string{}, item.SupersededEvidenceIDs...),
 			"search_state":            result["search_state"],
-		})
+		}
+		if p := item.Partition; p != nil {
+			entry["evidence_index"], entry["partition_index"] = p.SubmittedIndex, p.Index
+			entry["source_item_id"], entry["span_start"], entry["span_end"] = p.SourceItemID, p.Start, p.End
+			entry["occurrence_id"] = item.OccurrenceID
+		}
+		evidenceResults = append(evidenceResults, entry)
 	}
 	result["evidence"] = evidenceResults
 	return result

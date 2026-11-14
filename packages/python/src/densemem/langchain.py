@@ -143,9 +143,13 @@ def _documents(result: RecallResult, k: int) -> list[Document]:
                 not isinstance(evidence["evidence_id"], str)
                 or not 0 < len(evidence["evidence_id"]) <= 128
                 or not isinstance(evidence["context"], str)
-                or len(evidence["context"]) > 2000
+                or len(evidence["context"]) > 16384
                 or evidence["space_kind"] not in ("private", "team_shared")
                 or type(evidence["equivalents_truncated"]) is not bool
+                or (
+                    "context_truncated" in evidence
+                    and type(evidence["context_truncated"]) is not bool
+                )
                 or not isinstance(evidence["equivalent_evidence_ids"], list)
                 or any(not isinstance(value, str) for value in evidence["equivalent_evidence_ids"])
             ):
@@ -154,7 +158,7 @@ def _documents(result: RecallResult, k: int) -> list[Document]:
             metadata = {
                 key: public_evidence[key]
                 for key in RecallEvidence.__annotations__
-                if key != "context"
+                if key != "context" and key in public_evidence
             }
             documents.append(
                 Document(

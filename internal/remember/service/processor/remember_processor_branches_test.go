@@ -300,7 +300,7 @@ func TestRememberProcessorCoversPipelineFailurePhases(t *testing.T) {
 			rememberFailureLedgerStub: &rememberFailureLedgerStub{},
 			duplicatePlanErr:          errors.New("duplicate plan unavailable"),
 		}
-		_, err := (&rememberSynchronousProcessor{ledger: ledger}).ProcessRemember(context.Background(), input)
+		_, err := (&rememberSynchronousProcessor{ledger: ledger, provider: &processorAssessmentProviderStub{}}).ProcessRemember(context.Background(), input)
 		var processErr *rememberapp.RememberProcessError
 		require.ErrorAs(t, err, &processErr)
 		require.Equal(t, "embedding", ledger.failure.Attempt.FailedPhase)
@@ -312,7 +312,7 @@ func TestRememberProcessorCoversPipelineFailurePhases(t *testing.T) {
 			rememberFailureLedgerStub: &rememberFailureLedgerStub{},
 			resolveErr:                errors.New("duplicate resolution unavailable"),
 		}
-		_, err := (&rememberSynchronousProcessor{ledger: ledger}).ProcessRemember(context.Background(), input)
+		_, err := (&rememberSynchronousProcessor{ledger: ledger, provider: &processorAssessmentProviderStub{}}).ProcessRemember(context.Background(), input)
 		var processErr *rememberapp.RememberProcessError
 		require.ErrorAs(t, err, &processErr)
 		require.Equal(t, "embedding", ledger.failure.Attempt.FailedPhase)
@@ -326,7 +326,7 @@ func TestRememberProcessorCoversPipelineFailurePhases(t *testing.T) {
 				EmbeddingModel: "model", EmbeddingDimensions: 2, EmbeddingContractID: "contract", SearchIndexGenerationID: "generation", IndexGeneration: 1, Documents: []knowledgecontract.SearchDocumentForEmbedding{processorEmbeddingDocument(2)},
 			},
 		}
-		_, err := (&rememberSynchronousProcessor{ledger: ledger}).ProcessRemember(context.Background(), input)
+		_, err := (&rememberSynchronousProcessor{ledger: ledger, provider: &processorAssessmentProviderStub{}}).ProcessRemember(context.Background(), input)
 		var processErr *rememberapp.RememberProcessError
 		require.ErrorAs(t, err, &processErr)
 		require.Equal(t, "embedding", ledger.failure.Attempt.FailedPhase)
@@ -657,10 +657,12 @@ type processorAssessmentSessionStub struct{}
 func (*processorAssessmentSessionStub) SessionID() string { return "processor-assessment" }
 
 type processorAssessmentProviderStub struct {
-	reject      bool
-	invalid     bool
-	assessCalls int
-	repairCalls int
+	partitionCalls int
+	partitionReply func(modelprovider.StructuredRequest) string
+	reject         bool
+	invalid        bool
+	assessCalls    int
+	repairCalls    int
 }
 
 func (p *processorAssessmentProviderStub) Assess(_ context.Context, request assessor.SemanticAssessmentRequest) (assessor.SemanticAssessmentSession, assessor.SemanticAssessmentTurn, error) {
@@ -677,7 +679,7 @@ func (p *processorAssessmentProviderStub) response(request assessor.SemanticAsse
 		result := assessor.SemanticAssessmentEvidenceSecurityResult{EvidenceID: evidence.EvidenceID, Decision: "pass", Signals: []assessor.SemanticAssessmentSecuritySignal{}}
 		if p.reject {
 			startRef, _ := assessor.SemanticAssessmentBoundaryRef(evidence, 0)
-			endRef, _ := assessor.SemanticAssessmentBoundaryRef(evidence, 1)
+			endRef, _ := assessor.SemanticAssessmentBoundaryRef(evidence, len([]rune(evidence.Content)))
 			result.Decision = "reject"
 			result.Signals = []assessor.SemanticAssessmentSecuritySignal{{EvidenceID: evidence.EvidenceID, Kind: "instruction_override", StartRef: startRef, EndRef: endRef}}
 		}

@@ -165,8 +165,19 @@ type SuiteCase struct {
 }
 
 type KnowledgeMapping struct {
-	BySourceDocID        map[string]Ref              `json:"by_source_doc_id"`
-	BySourceDocIDAndType map[string]map[string][]Ref `json:"by_source_doc_id_and_type,omitempty"`
+	Partitions           map[string][]ImportedPartition `json:"partitions,omitempty"`
+	BySourceDocID        map[string]Ref                 `json:"by_source_doc_id"`
+	BySourceDocIDAndType map[string]map[string][]Ref    `json:"by_source_doc_id_and_type,omitempty"`
+}
+
+type ImportedPartition struct {
+	EvidenceID     string `json:"evidence_id"`
+	OccurrenceID   string `json:"occurrence_id"`
+	SourceItemID   string `json:"source_item_id"`
+	PartitionIndex int    `json:"partition_index"`
+	SpanStart      int    `json:"span_start"`
+	SpanEnd        int    `json:"span_end"`
+	ContentHash    string `json:"content_hash"`
 }
 
 type RecallTrace struct {

@@ -51,6 +51,7 @@ func (e *RememberValidationError) Error() string {
 }
 
 type EvidenceInput struct {
+	Partition                     *knowledgecontract.EvidencePartition
 	Content                       string
 	ForceInsert                   bool
 	ContentHash                   string

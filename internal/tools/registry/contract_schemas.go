@@ -78,7 +78,7 @@ func traceMemoryInputSchema() map[string]any {
 		"evidence_id": uuidStringSchema("Authorized Evidence ID."), "include_evidence_content": map[string]any{"type": "boolean"},
 		"include_transitions":        map[string]any{"type": "boolean"},
 		"max_events":                 map[string]any{"type": "integer", "minimum": 1, "maximum": 500, "default": 100},
-		"max_fragment_content_runes": map[string]any{"type": "integer", "minimum": 1, "maximum": 8000, "default": 2000},
+		"max_fragment_content_runes": map[string]any{"type": "integer", "minimum": 1, "maximum": memoryEntryMaxLength, "default": 2000},
 	})
 }
 
@@ -149,6 +149,11 @@ func rememberEvidenceStatusSchema() map[string]any {
 			"evidence_id":             schemaString("Durable evidence ID when stored.", 128),
 			"content_hash":            schemaString("Evidence content hash.", 128),
 			"evidence_index":          map[string]any{"type": "integer", "minimum": 0},
+			"partition_index":         map[string]any{"type": "integer", "minimum": 0, "maximum": 99},
+			"source_item_id":          uuidStringSchema("Immutable original submitted item."),
+			"occurrence_id":           uuidStringSchema("Exact slice occurrence."),
+			"span_start":              map[string]any{"type": "integer", "minimum": 0, "maximum": memoryEntryMaxLength},
+			"span_end":                map[string]any{"type": "integer", "minimum": 1, "maximum": memoryEntryMaxLength},
 			"superseded_evidence_ids": stringArraySchema("Evidence ID superseded by this evidence.", 50, 128),
 			"search_state":            schemaEnum([]string{"current", "not_required"}),
 			"reason":                  schemaString("Bounded reason when not stored.", 256),
@@ -230,7 +235,8 @@ func recallResultSchema() map[string]any {
 			"evidence_id":             schemaString("Evidence ID.", 128),
 			"equivalent_evidence_ids": stringArraySchema("Authorized alternate evidence source ID with equivalent complete content.", 20, 128),
 			"equivalents_truncated":   map[string]any{"type": "boolean"},
-			"context":                 schemaString("Bounded evidence context.", 2000),
+			"context":                 schemaString("Exact Evidence slice.", memoryEntryMaxLength),
+			"context_truncated":       map[string]any{"type": "boolean", "description": "Historical Evidence exceeds the content bound; use Trace for explicit bounded provenance."},
 			"space_kind":              schemaEnum([]string{"team_shared", "private"}),
 		},
 	)

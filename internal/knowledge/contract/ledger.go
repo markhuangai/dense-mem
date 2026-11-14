@@ -22,6 +22,7 @@ type CreateIngestInput struct {
 }
 
 type EvidenceInput struct {
+	Partition                     *EvidencePartition
 	FragmentID                    string
 	Content                       string
 	ForceInsert                   bool
@@ -80,6 +81,7 @@ type EvidenceIngestResult struct {
 }
 
 type EvidenceFragment struct {
+	Partition             *EvidencePartition
 	FragmentID            string
 	SubmittedFragmentID   string
 	OccurrenceID          string

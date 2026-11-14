@@ -420,7 +420,7 @@ func assessmentCandidateGroupKey(evidenceID string, start, end int) string {
 }
 
 func semanticAssessmentEvidence(fragment repository.EvidenceFragment, evidenceID string) assessor.SemanticReviewEvidence {
-	return assessor.SemanticReviewEvidence{
+	result := assessor.SemanticReviewEvidence{
 		EvidenceID:              evidenceID,
 		FragmentID:              fragment.FragmentID,
 		EvidenceIndex:           fragment.EvidenceIndex,
@@ -430,6 +430,11 @@ func semanticAssessmentEvidence(fragment repository.EvidenceFragment, evidenceID
 		SourceRevisionID:        fragment.SourceRevisionID,
 		CurrentSourceRevisionID: fragment.SourceRevisionID,
 	}
+	if fragment.Partition != nil {
+		result.SourceItemID = fragment.Partition.SourceItemID
+		result.PartitionIndex = fragment.Partition.Index
+	}
+	return result
 }
 
 func assessmentValidationStage(stage string) string {

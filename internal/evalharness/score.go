@@ -98,13 +98,14 @@ func scoreTrace(caseID string, k int, qrel QRel, trace RecallTrace, scoring scor
 		score.ContextBadRefsAtK = badRefsAtK(qrel.BadRefs, contextRefs, mapping, k)
 	}
 	if len(qrel.RequiredEvidenceRefs) > 0 || len(qrel.BadEvidenceRefs) > 0 {
-		evidenceRefs := scoring.refsForQRel(trace.ContextEvidenceRefs, qrel.RequiredEvidenceRefs, qrel.BadEvidenceRefs)
+		evidenceRefs := trace.ContextEvidenceRefs
 		evidenceAvailable := trace.ContextEvidenceRefs != nil
 		if trace.ContextEvidenceRefs == nil && qrelTargetsOnlyType(qrel.RequiredEvidenceRefs, qrel.BadEvidenceRefs, mapping, "evidence") {
 			evidenceRefs = contextEvidenceRefs(trace.ContextRefs)
 			evidenceAvailable = evidenceRefs != nil
 		}
 		if evidenceAvailable {
+			evidenceRefs = scoring.refsForQRel(evidenceRefs, qrel.RequiredEvidenceRefs, qrel.BadEvidenceRefs)
 			evidenceMetrics := recallquality.ScoreAtK(resultRefs(evidenceRefs), requiredEvidence, badEvidence, k)
 			score.EvidenceScored = true
 			score.EvidenceRelevantAtK = evidenceMetrics.RelevantAtK
@@ -624,7 +625,42 @@ func (s scoringContext) refsForQRel(refs []Ref, required []Ref, bad []Ref) []Ref
 		}
 		out = append(out, resolved)
 	}
-	return out
+	return s.partitionSourceGroups(out, required, bad)
+}
+
+func (s scoringContext) partitionSourceGroups(refs []Ref, required, bad []Ref) []Ref {
+	representatives := map[string][]string{}
+	for _, judgments := range [][]Ref{required, bad} {
+		for _, judgment := range judgments {
+			if judgment.ID != "" || len(s.mapping.Partitions[judgment.SourceDocID]) == 0 {
+				continue
+			}
+			representative, ok := resolveRef(judgment, s.mapping)
+			if !ok || representative.Type != "evidence" {
+				continue
+			}
+			for _, part := range s.mapping.Partitions[judgment.SourceDocID] {
+				representatives[part.EvidenceID] = append(representatives[part.EvidenceID], representative.ID)
+			}
+		}
+	}
+	seen := map[string]bool{}
+	for index, ref := range refs {
+		if ref.Type != "evidence" {
+			continue
+		}
+		aliases := append([]string(nil), ref.EquivalentEvidenceIDs...)
+		for _, id := range resultRef(ref).IDs() {
+			for _, representative := range representatives[id] {
+				if !seen[representative] && representative != ref.ID && !containsString(aliases, representative) {
+					aliases = append(aliases, representative)
+				}
+				seen[representative] = true
+			}
+		}
+		refs[index].EquivalentEvidenceIDs = aliases
+	}
+	return refs
 }
 
 func (s scoringContext) mapRefToTargetType(ref Ref, targetTypes map[string]struct{}) (Ref, bool) {

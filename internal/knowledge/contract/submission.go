@@ -85,6 +85,7 @@ type EvidenceSecurityResult struct {
 // one final Remember transaction. Provider work happens before this input is
 // committed; no field represents a pre-provider reservation.
 type SynchronousRememberCommitInput struct {
+	SubmittedItems      []RememberSubmittedItem
 	AssessorDiagnostics map[string]any
 	TeamID              string
 	OwnerProfileID      string

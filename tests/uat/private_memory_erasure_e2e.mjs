@@ -887,7 +887,10 @@ function privateMemoryManifestTables() {
       ) AS catalog
   `);
   manifestTables = value ? value.split(",") : [];
-  assert(manifestTables.length === 27, "live Evidence-only private-memory manifest differs from its closed final catalog");
+  assert(manifestTables.length === 29, "live Evidence-only private-memory manifest differs from its closed final catalog");
+  for (const table of ["remember_submitted_items", "remember_item_partitions"]) {
+    assert(manifestTables.includes(table), `partition provenance table ${table} is absent from private-memory erasure`);
+  }
   return manifestTables;
 }
 

@@ -131,7 +131,7 @@ func TestEvidenceOnlyPostgresTraceBudgetsAndMemoryPackCanonicalProvenance(t *tes
 	owner := createLedgerProfile(t, admin, rls, team, "owner A")
 	peer := createLedgerProfile(t, admin, rls, team, "reader B")
 	store := knowledge.NewStore(app, rls)
-	content := strings.Repeat("界🙂", 4000) + "尾"
+	content := strings.Repeat("界🙂", 9000) + "尾"
 	ingest, err := store.CreateIngestForTest(ctx, knowledge.CreateIngestInput{TeamID: team, OwnerProfileID: owner, IdempotencyKey: "retained-long-evidence", RequestHash: "retained-long-evidence", Evidence: []knowledge.EvidenceInput{{Content: content, SourceKey: "document:trace", SourceRevisionToken: "revision-1", SourceRef: "document:trace", SourceRevisionEnvelope: map[string]any{"exact": "Original source envelope"}}}})
 	require.NoError(t, err)
 	id := ingest.Evidence[0].FragmentID
@@ -159,11 +159,11 @@ func TestEvidenceOnlyPostgresTraceBudgetsAndMemoryPackCanonicalProvenance(t *tes
 	require.NoError(t, err)
 	require.NoError(t, registry.ValidateInput(registry.Tool{InputSchema: tool.OutputSchema}, wire))
 	require.Equal(t, []any{}, wire["lifecycle"])
-	for _, maximum := range []int{1, 2000, 8000, 99999} {
+	for _, maximum := range []int{1, 2000, 16384, 99999} {
 		request := traceapp.TraceRequest{EvidenceID: id, MaxFragmentContentRunes: maximum}
 		result, err := service.Trace(actorCtx, "", request)
 		require.NoError(t, err)
-		expected := min(maximum, 8000)
+		expected := min(maximum, 16384)
 		require.Equal(t, string([]rune(content)[:expected]), result.Semantic.Evidence.Content)
 		require.True(t, result.Semantic.Truncated)
 		require.Contains(t, result.Semantic.Omissions, "evidence_content_max_runes")
@@ -229,7 +229,7 @@ func TestEvidenceOnlyPostgresTraceBudgetsAndMemoryPackCanonicalProvenance(t *tes
 		case "memory_pack_evidence_selection":
 			require.Equal(t, []any{id}, record["requested_evidence_ids"])
 			require.Equal(t, float64(100), record["max_events"])
-			require.Equal(t, float64(8000), record["max_content_runes"])
+			require.Equal(t, float64(16384), record["max_content_runes"])
 			if record["outcome"] == "failed" {
 				failed++
 				require.NotEmpty(t, record["reason"])

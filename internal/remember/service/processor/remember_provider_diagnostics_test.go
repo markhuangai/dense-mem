@@ -165,7 +165,7 @@ func embeddingFailureLogAcceptance(t *testing.T, preparingSession bool) {
 			ledger := &rememberPipelineLedgerStub{rememberFailureLedgerStub: &rememberFailureLedgerStub{}, duplicatePlan: &knowledgecontract.RememberDuplicateEmbeddingPlan{
 				Documents: []knowledgecontract.SearchDocumentForEmbedding{document}, EmbeddingModel: "model", EmbeddingDimensions: 2, EmbeddingContractID: "contract", SearchIndexGenerationID: "generation", IndexGeneration: 3,
 			}}
-			processor := NewSynchronousProcessor(ProcessorDependencies{Ledger: ledger, EmbeddingExecutor: semanticwrite.NewProviderExecutor(provider), Logger: logger, DiagnosticProtector: protector})
+			processor := NewSynchronousProcessor(ProcessorDependencies{Ledger: ledger, Assessor: &processorAssessmentProviderStub{}, EmbeddingExecutor: semanticwrite.NewProviderExecutor(provider), Logger: logger, DiagnosticProtector: protector})
 			input := rememberapp.RememberProcessRequest{
 				TeamID: actor.TeamID.String(), OwnerProfileID: actor.OwnerID.String(), IdempotencyKey: "key", RequestHash: "hash", SpaceKind: "team_shared",
 				Evidence: []rememberapp.EvidenceInput{{Content: admitted, ForceInsert: true}}, OriginalRequest: []byte(admitted),

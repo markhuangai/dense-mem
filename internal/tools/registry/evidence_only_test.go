@@ -17,7 +17,7 @@ func TestEvidenceOnlyCatalogValidationIdentifiesEvidencePaths(t *testing.T) {
 	}{
 		{name: "missing", path: "/evidence"},
 		{name: "empty", path: "/evidence", evidence: []any{}},
-		{name: "oversized", path: "/evidence/0/content", evidence: []any{map[string]any{"content": strings.Repeat("x", 1000)}}},
+		{name: "oversized", path: "/evidence/0/content", evidence: []any{map[string]any{"content": strings.Repeat("x", 16385)}}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			input := map[string]any{"target_space": "team_shared", "idempotency_key": "key"}

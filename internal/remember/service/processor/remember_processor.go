@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -108,6 +109,7 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 		input.InvocationStartedAt = time.Now().UTC()
 	}
 	p.logAdmittedRememberRequest(ctx, input)
+	rememberapp.ReportProgress(ctx, rememberapp.ProgressCheckingReplay)
 	locker, hasLocker := p.ledger.(rememberSynchronousIdempotencyLocker)
 	if !hasLocker {
 		return p.processRememberUnlocked(ctx, input)
@@ -227,6 +229,7 @@ func (p *rememberSynchronousProcessor) processRememberUnlocked(
 			return nil, processErr
 		}
 		if attempt.Outcome == "completed" || (attempt.Outcome == "failed" && !attempt.Retryable) {
+			rememberapp.ReportProgress(ctx, rememberapp.ProgressReturningReplay)
 			replay, replayErr := rememberAttemptStatusForRequest(attempt, input)
 			if replayErr != nil {
 				classification := "replay"
@@ -261,7 +264,13 @@ func (p *rememberSynchronousProcessor) processRememberUnlocked(
 		return fail(rememberapp.SecurityRejectionFailure(input.SecuritySignals, input.SecuritySignalsTruncated, "initial_scan"), "assessment")
 	}
 	rememberapp.ReportProgress(ctx, rememberapp.ProgressPreparingIntake)
-	preparedWrite, prepareErr := p.prepareRemember(ctx, input, snapshot, scope, started)
+	partitioned, partitionErr := p.partitionRemember(ctx, input, ingestID)
+	if partitionErr != nil {
+		return fail(partitionErr, "assessment")
+	}
+	partitionSnapshot, _ := rememberAssessmentSnapshot(partitioned, ingestID)
+	partitionSnapshot.MaxEvidenceItems = repository.MaxRememberPartitions
+	preparedWrite, prepareErr := p.prepareRemember(ctx, partitioned, partitionSnapshot, scope, started)
 	if prepareErr != nil {
 		var preparation *rememberPreparationError
 		if errors.As(prepareErr, &preparation) {
@@ -283,6 +292,14 @@ func (p *rememberSynchronousProcessor) processRememberUnlocked(
 	}
 	defer commitCancel()
 	rememberapp.ReportProgress(commitCtx, rememberapp.ProgressCommitting)
+	if root, ok := p.logger.(interface{ ContextSlog() *slog.Logger }); ok {
+		body, captureErr := json.Marshal(commitInput)
+		if captureErr != nil {
+			root.ContextSlog().WarnContext(commitCtx, "remember_commit_capture_unavailable", "attempt_id", ingestID, "reason", "serialization_failed")
+		} else {
+			observability.LogDiagnosticBody(commitCtx, root.ContextSlog(), p.protector, "remember_commit_input", body, modelprovider.MaxProviderDiagnosticBodyBytes, slog.String("attempt_id", ingestID), slog.String("team_id", input.TeamID), slog.String("profile_id", input.OwnerProfileID))
+		}
+	}
 	committed, err := p.ledger.CommitRememberWithEmbeddings(commitCtx, commitInput, inlineEmbeddings)
 	commitMetricErr := err
 	if errors.Is(commitMetricErr, repository.ErrRememberReplay) {
@@ -321,6 +338,7 @@ func (p *rememberSynchronousProcessor) processRememberUnlocked(
 	if committed == nil {
 		return fail(errors.New("remember processor: nil Remember commit result"), "commit")
 	}
+	rememberapp.ReportProgress(ctx, rememberapp.ProgressPreparingResult)
 	result, resultErr := rememberAttemptStatusForRequest(&repository.RememberAttempt{AttemptID: committed.IngestID, Outcome: committed.Outcome, PublicResult: committed.PublicResult}, input)
 	classification := "execution"
 	if recoveryAttempt {
@@ -367,6 +385,7 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 	assessorTurns int,
 	failure error,
 ) (*rememberapp.SubmissionStatusResult, string, error) {
+	rememberapp.ReportProgress(ctx, rememberapp.ProgressRecordingFailure)
 	if failure == nil {
 		failure = errors.New("remember execution failed")
 	}
@@ -804,10 +823,14 @@ func (p *rememberSynchronousProcessor) loadRememberReplay(
 	if err == nil && attempt != nil {
 		replayed, replayErr := rememberAttemptReplay(attempt, input)
 		if replayErr == nil {
+			rememberapp.ReportProgress(ctx, rememberapp.ProgressReturningReplay)
 			return replayed, nil
 		}
 		var processErr *rememberapp.RememberProcessError
 		if errors.As(replayErr, &processErr) && processErr.Status != nil {
+			if !errors.Is(replayErr, rememberapp.ErrRememberConflict) && !errors.Is(replayErr, repository.ErrIdempotencyConflict) {
+				rememberapp.ReportProgress(ctx, rememberapp.ProgressReturningReplay)
+			}
 			return replayed, replayErr
 		}
 		err = replayErr
@@ -844,6 +867,7 @@ func rememberAssessmentSnapshot(
 		exactReuseEligible := len(item.SupersedesEvidenceIDs) == 0 && strings.TrimSpace(item.SourceKey) == "" &&
 			strings.TrimSpace(item.SourceRevisionToken) == "" && strings.TrimSpace(item.ExpectedPreviousRevisionToken) == ""
 		evidence = append(evidence, repository.EvidenceFragment{
+			Partition:  item.Partition,
 			FragmentID: fragmentID, EvidenceIndex: index, Content: item.Content,
 			ContentHash: item.ContentHash, Authority: item.Authority,
 		})
@@ -896,7 +920,8 @@ func rememberEvidenceInputs(items []rememberapp.EvidenceInput) []repository.Evid
 			}
 		}
 		result = append(result, repository.EvidenceInput{
-			Content: item.Content, ForceInsert: item.ForceInsert, ContentHash: item.ContentHash, SourceType: item.SourceType,
+			Partition: item.Partition,
+			Content:   item.Content, ForceInsert: item.ForceInsert, ContentHash: item.ContentHash, SourceType: item.SourceType,
 			Authority: item.Authority, SourceRef: item.SourceRef, SourceKey: item.SourceKey,
 			SourceRevisionToken: item.SourceRevisionToken, ExpectedPreviousRevisionToken: item.ExpectedPreviousRevisionToken,
 			SourceRevisionContentHash: item.SourceRevisionContentHash, SourceRevisionEnvelope: item.SourceRevisionEnvelope,

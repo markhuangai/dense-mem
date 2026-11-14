@@ -16,6 +16,7 @@ import (
 	embeddingcontract "github.com/markhuangai/dense-mem/internal/embedding/contract"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
 // OpenAIEmbeddingProvider implements EmbeddingProviderInterface for OpenAI-compatible APIs.
@@ -128,12 +129,16 @@ func (p *OpenAIEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string
 
 func (p *OpenAIEmbeddingProvider) embedBatch(ctx context.Context, texts []string, embed func(context.Context, []string) ([][]float32, string, error)) ([][]float32, string, error) {
 	if len(texts) <= p.maxBatchItems {
+		if len(texts) > 0 {
+			requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "embedding_batch", Batch: 1, Batches: 1})
+		}
 		return embed(ctx, texts)
 	}
 
 	result := make([][]float32, 0, len(texts))
 	for start := 0; start < len(texts); start += p.maxBatchItems {
 		end := min(start+p.maxBatchItems, len(texts))
+		requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "embedding_batch", Batch: start/p.maxBatchItems + 1, Batches: (len(texts) + p.maxBatchItems - 1) / p.maxBatchItems})
 		chunk, _, chunkErr := embed(ctx, texts[start:end])
 		if chunkErr != nil {
 			return nil, "", chunkErr
@@ -144,12 +149,10 @@ func (p *OpenAIEmbeddingProvider) embedBatch(ctx context.Context, texts []string
 }
 
 func (p *OpenAIEmbeddingProvider) embedChunk(ctx context.Context, texts []string) (vectors [][]float32, model string, err error) {
-	select {
-	case p.sem <- struct{}{}:
-		defer func() { <-p.sem }()
-	case <-ctx.Done():
-		return nil, "", ctx.Err()
+	if err := modelprovider.AcquireConcurrency(ctx, p.sem); err != nil {
+		return nil, "", err
 	}
+	defer modelprovider.ReleaseConcurrency(p.sem)
 
 	url := strings.TrimSuffix(p.baseURL, "/") + "/embeddings"
 

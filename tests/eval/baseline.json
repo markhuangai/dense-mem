@@ -1,14 +1,12 @@
 {
   "schema_version": "dense-mem.eval.overall_baseline.v1",
-  "completed_on": "2026-11-06",
-  "evidence": {
-    "pr": "https://github.com/markhuangai/dense-mem/pull/707",
-    "published_head": "d7e862f36dc8913abe13608d7eb388b5c1e83909",
-    "acceptance": "Maintainer-approved issue-specific gate passed; native completeness remains false.",
-    "role": "Latest overall measured result; enforcement thresholds are defined separately in policies/."
-  },
-  "native_status": "incomplete",
-  "seed_id": "public_6axis_1k_v3",
+  "completed_on": "2026-11-13",
+  "native_status": "complete",
+  "seed_id": "public_6axis_1k_v5",
+  "seed_hash": "sha256:08c037f44bd66c782e9aa97f2c9b096094f5c57cd70d268949b9457f6d3b72f6",
+  "seed_manifest_sha256": "3251526be95067e7464afdddd2cf69cea8533659d5c7a92d144df7e358be7f4a",
+  "suite_sha256": "438a9742576ad5fa9a97c8edaa1e6b0550c740a812dfd3cf051cce68e632b17d",
+  "corpus_sha256": "8b91bc36508cfa1a09dc913c97c1204ef0deeeddbc179d6d448d56f80819fc09",
   "documents_per_arm": 991,
   "scored_cases_per_arm": 204,
   "models": {
@@ -17,50 +15,130 @@
     "embedding": "@cf/baai/bge-m3",
     "embedding_dimensions": 1024
   },
-  "baseline": {
-    "source_revision": "f0a926e4aa3ec7a84e8f7f679f7bf07b13b0028a",
-    "recall_at_k": 0.893545751633987,
-    "mrr": 0.8509589947089946,
-    "ndcg_at_k": 0.83260447545891,
-    "unmapped_source_refs": 0,
-    "elapsed_seconds": 32095.637,
-    "ontology": {
-      "eligible": 3576,
-      "organized": 3337,
-      "ambiguous": 118,
-      "failed": 121,
-      "complete": false
-    },
-    "provider_admissions": 1532,
-    "usage_unavailable_records": 2
-  },
-  "candidate": {
-    "source_revision": "6234b0560379ce610b20973de7b50832e0668516",
-    "recall_at_k": 0.893545751633987,
-    "mrr": 0.8510134609399315,
-    "ndcg_at_k": 0.8327336250026222,
-    "unmapped_source_refs": 0,
-    "elapsed_seconds": 28487.584,
-    "ontology": {
-      "eligible": 3622,
-      "organized": 3383,
-      "ambiguous": 19,
-      "failed": 220,
-      "complete": false
-    },
-    "provider_admissions": 1430,
-    "usage_unavailable_records": 2
-  },
-  "total_elapsed_seconds": 60730.676,
+  "runner_sha256": "c969e63dff75eb3a6ff1ec8a991b7ff3c368d80e14a90b9a3f24250ef3cc2077",
+  "total_elapsed_seconds": 12724.29261302948,
   "token_usage_total": null,
   "embedding_usage_total": null,
   "monetary_cost": null,
   "limitations": [
-    "Both native readiness, ontology and projection completeness flags remain false; the native paired report exits 1.",
-    "This records the compared source revisions, not a fresh run of the published PR head or later commits.",
-    "The public qrels contain no explicit negative judgments; zero public Bad@K is not safety proof.",
-    "Unavailable usage and absent complete cost totals remain unavailable; admissions are not a complete token or cost measurement.",
-    "Provider backing revision is unknown, and observed arm durations do not establish a controlled speedup.",
-    "The comparison predates PR #708 measurement journaling and does not test the later compress dependency update."
-  ]
+    "The prompt correction was motivated by the first comparison on this same frozen cohort; this measures the correction on that cohort rather than independent generalization.",
+    "The measured source and runner identities are recorded explicitly; later baseline metadata and delivery-only changes have separate source validation.",
+    "The frozen 991-document corpus retains its original inputs; 16,384-code-point admission, tail reads and citations are verified by separate real-logic and production-entry regressions.",
+    "The legacy base receipts expose no partition provenance, and its mapping retains only 284 judged source identities; all 991 imports are captured. Candidate mappings retain every source and slice.",
+    "No context-level cases were scored; context recall remains unavailable. The public qrels contain no explicit negative judgments, so zero Bad@K is not safety proof.",
+    "Provider backing revision, complete embedding token usage and monetary cost are unavailable. Reported token counts are partial totals from captured provider usage.",
+    "The arms run concurrently against external providers; observed durations and latency differences are not a controlled performance attribution. Both outcomes of each single supported intake retry are retained."
+  ],
+  "evidence": {
+    "issue": "https://github.com/markhuangai/dense-mem/issues/762",
+    "acceptance": "Measured comparison complete; candidate Recall@K is lower than base. This result records the regression and does not grant a waiver.",
+    "role": "Latest overall measured result; enforcement thresholds are defined separately in policies/.",
+    "measurement_receipt": "https://github.com/markhuangai/dense-mem/issues/762#issuecomment-6867801551",
+    "measurement_receipt_sha256": "9309ee5e33d1fc43cfafd1845b9c12e165fcce97a4781e68694161b2c893377d"
+  },
+  "baseline": {
+    "source_revision": "d5caf1ab1db8cd24405913c6fc5699983554fd03",
+    "image_id": "sha256:4b0aab0399ffd19bbd7ace03bf0473a325c7d53311f285bff2d11f6558613362",
+    "recall_at_k": 0.893545751633987,
+    "mrr": 0.8452400404606286,
+    "ndcg_at_k": 0.830010888710215,
+    "bad_at_k": 0,
+    "unmapped_source_refs": 0,
+    "evidence_scored_cases": 95,
+    "evidence_recall_at_k": 0.7714035087719298,
+    "evidence_mrr": 0.7274101921470343,
+    "evidence_ndcg_at_k": 0.680041070830101,
+    "context_scored_cases": 0,
+    "context_recall_at_k": null,
+    "elapsed_seconds": 2046.880294,
+    "phase_elapsed_seconds": {
+      "import": 1802.613128,
+      "retrieval": 244.267166
+    },
+    "failed_source_imports": 0,
+    "failed_intake_attempts": 4,
+    "recovered_intake_failures": 4,
+    "retained_attempt_failures": {
+      "request_timeout": 4
+    },
+    "provider_exchanges": 2051,
+    "known_reported_prompt_tokens": 48014228,
+    "known_reported_completion_tokens": 131746,
+    "usage_unavailable_records": 1048,
+    "capture_complete": true,
+    "latency_ms": {
+      "import": {
+        "samples": 991,
+        "p50": 6787.412429,
+        "p95": 8218.358601,
+        "max": 37779.583201
+      },
+      "recall": {
+        "samples": 204,
+        "p50": 1066.023546,
+        "p95": 1316.766272,
+        "max": 1603.666393
+      }
+    }
+  },
+  "candidate": {
+    "source_revision": "7ea31636fe877403336abf62de3b48aea25487b7",
+    "image_id": "sha256:88a860fd7016ed935461240d68a67d6e9fd95f892e2a8e50e4759f3c67bda273",
+    "recall_at_k": 0.873937908496732,
+    "mrr": 0.842619825708061,
+    "ndcg_at_k": 0.8196020577454278,
+    "bad_at_k": 0,
+    "unmapped_source_refs": 0,
+    "evidence_scored_cases": 95,
+    "evidence_recall_at_k": 0.7398245614035087,
+    "evidence_mrr": 0.7278362573099415,
+    "evidence_ndcg_at_k": 0.6650700396518006,
+    "context_scored_cases": 0,
+    "context_recall_at_k": null,
+    "elapsed_seconds": 4360.939136,
+    "phase_elapsed_seconds": {
+      "import": 4071.774699,
+      "retrieval": 289.164437
+    },
+    "failed_source_imports": 0,
+    "failed_intake_attempts": 9,
+    "recovered_intake_failures": 9,
+    "retained_attempt_failures": {
+      "provider_unavailable": 3,
+      "request_timeout": 3,
+      "provider_response_invalid": 2,
+      "embedding_unavailable": 1
+    },
+    "provider_exchanges": 3142,
+    "known_reported_prompt_tokens": 28823323,
+    "known_reported_completion_tokens": 395080,
+    "usage_unavailable_records": 1065,
+    "capture_complete": true,
+    "latency_ms": {
+      "import": {
+        "samples": 991,
+        "p50": 11251.128446,
+        "p95": 31879.236234,
+        "max": 178730.790664
+      },
+      "recall": {
+        "samples": 204,
+        "p50": 1032.481572,
+        "p95": 1248.247239,
+        "max": 49302.179782
+      }
+    },
+    "partition_originals": 991,
+    "partition_slices": 1597
+  },
+  "comparison": {
+    "recall_delta": -0.019607843137254943,
+    "mrr_delta": -0.0026202147525675734,
+    "ndcg_delta": -0.010408830964787175,
+    "bad_at_k_delta": 0,
+    "evidence_recall_delta": -0.03157894736842104,
+    "evidence_mrr_delta": 0.00042606516290721874,
+    "evidence_ndcg_delta": -0.014971031178300453,
+    "evidence_bad_at_k_delta": 0
+  }
 }

@@ -23,6 +23,7 @@ type RetractEvidenceInput = knowledgecontract.RetractEvidenceInput
 type EvidenceLifecycleResult = knowledgecontract.EvidenceLifecycleResult
 
 type evidenceLifecycleOperationInput struct {
+	ReplacementSourceItemID string
 	TeamID                  string
 	OwnerProfileID          string
 	ActorProfileID          string
@@ -234,6 +235,9 @@ func applyEvidenceSupersessions(
 		if len(item.SupersedesEvidenceIDs) == 0 {
 			continue
 		}
+		if item.Partition != nil && item.Partition.Index > 0 {
+			continue
+		}
 		operation := evidenceLifecycleOperationInput{
 			TeamID:                  input.TeamID,
 			OwnerProfileID:          input.OwnerProfileID,
@@ -244,6 +248,17 @@ func applyEvidenceSupersessions(
 			ReplacementID:           evidence[index].FragmentID,
 			ReplacementOccurrenceID: evidence[index].OccurrenceID,
 			ReplacementIngestID:     ingestID,
+		}
+		if item.Partition != nil {
+			count := 0
+			for _, candidate := range input.Evidence {
+				if candidate.Partition != nil && candidate.Partition.SourceItemID == item.Partition.SourceItemID {
+					count++
+				}
+			}
+			if count > 1 {
+				operation.ReplacementSourceItemID = item.Partition.SourceItemID
+			}
 		}
 		planned, err := planEvidenceLifecycle(ctx, tx, operation)
 		if err != nil {
@@ -496,18 +511,22 @@ func insertEvidenceLifecycleEvents(
 	if replacementOccurrenceID == "" {
 		replacementOccurrenceID = input.ReplacementID
 	}
+	replacementID := input.ReplacementID
+	if input.ReplacementSourceItemID != "" {
+		replacementID, replacementOccurrenceID = "", ""
+	}
 	for _, evidenceID := range sortedEvidenceIDs(input.EvidenceIDs) {
 		result := tx.WithContext(ctx).Exec(`
 			INSERT INTO evidence_lifecycle_events (
 			    team_id, lifecycle_operation_id, target_fragment_id,
 			    target_occurrence_id, replacement_fragment_id, replacement_occurrence_id,
-			    owner_profile_id, action, space_id
+			    owner_profile_id, action, space_id, replacement_source_item_id
 			) VALUES (
 			    ?::uuid, ?::uuid, ?::uuid, ?::uuid, NULLIF(?, '')::uuid,
-			    NULLIF(?, '')::uuid, ?::uuid, ?, ?::uuid
+			    NULLIF(?, '')::uuid, ?::uuid, ?, ?::uuid, NULLIF(?,'')::uuid
 			)
-		`, input.TeamID, operationID, evidenceID, evidenceID, input.ReplacementID,
-			replacementOccurrenceID, input.OwnerProfileID, input.Action, spaceID)
+		`, input.TeamID, operationID, evidenceID, evidenceID, replacementID,
+			replacementOccurrenceID, input.OwnerProfileID, input.Action, spaceID, input.ReplacementSourceItemID)
 		if result.Error != nil {
 			if isPostgresUniqueConstraint(result.Error, "evidence_lifecycle_events_terminal_target_unique") {
 				return fmt.Errorf("%w: evidence target is already terminal", ErrEvidenceLifecycleConflict)

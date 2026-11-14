@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 
 	"strings"
 	"sync"
@@ -728,6 +729,17 @@ func (*sessionFactsEmbedder) IsAvailable() bool { return true }
 
 func sessionFactsProviderResponse(schema string, raw []byte) (any, error) {
 	switch schema {
+	case assessor.PartitionSchemaName:
+		var input assessor.PartitionRequest
+		if err := json.Unmarshal(raw, &input); err != nil {
+			return nil, err
+		}
+		output := assessor.PartitionResponse{RequestID: input.RequestID, Items: make([]assessor.PartitionResult, len(input.Items))}
+		for i, item := range input.Items {
+			refs := regexp.MustCompile(`⟦([^⟧]+)⟧`).FindAllStringSubmatch(item.BoundaryText, -1)
+			output.Items[i] = assessor.PartitionResult{ItemID: item.ItemID, EndRefs: []string{refs[len(refs)-1][1]}}
+		}
+		return output, nil
 	case "session_evidence_excerpts_v2":
 		var input session.ExtractionRequest
 		if err := json.Unmarshal(raw, &input); err != nil {

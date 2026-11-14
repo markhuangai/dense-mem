@@ -128,7 +128,7 @@ func (f *decisionWorkflowHTTP) ServeHTTP(w http.ResponseWriter, r *http.Request)
 			delete(fields, key)
 		}
 	}
-	if f.onAssessment != nil {
+	if f.onAssessment != nil && request.ResponseFormat.JSONSchema.Name == assessor.SemanticAssessmentSchemaName {
 		f.onAssessment(request.Messages, fields)
 	}
 	body, _ = json.Marshal(fields)
@@ -194,14 +194,15 @@ func TestDecisionRememberPostgresAtomicityReplayIsolationAndSettingsSnapshot(t *
 			unauthorized.Store(true)
 		}
 	}
-	first, err := api.ProcessRemember(ctx, input)
+	rememberCtx := requestctx.WithAllowedSpaces(ctx, []domain.MemorySpaceAccess{{ID: uuid.MustParse(shared), Kind: domain.MemorySpaceTeamShared, Generation: generation}})
+	first, err := api.ProcessRemember(rememberCtx, input)
 	require.NoError(t, err)
 	require.Equal(t, "completed", first.ProcessingState)
 	require.False(t, unauthorized.Load())
 	count := fixture.calls.Load()
 	_, err = controls.UpdateDecisionSettings(ctx, map[string]string{domain.AppConfigDecisionSecurity: "false"}, "control", "", "snapshot-change")
 	require.NoError(t, err)
-	replay, err := api.ProcessRemember(ctx, input)
+	replay, err := api.ProcessRemember(rememberCtx, input)
 	require.NoError(t, err)
 	require.Equal(t, first.SubmissionID, replay.SubmissionID)
 	require.Equal(t, count, fixture.calls.Load(), "replay must retain its original receipt without a provider call")
@@ -221,7 +222,7 @@ func TestDecisionRememberPostgresAtomicityReplayIsolationAndSettingsSnapshot(t *
 	reused := input
 	reused.IdempotencyKey, reused.RequestHash = "decision-paraphrase", "decision-paraphrase"
 	reused.Evidence = rememberapp.RepositoryEvidenceInputs([]rememberapp.RememberEvidenceInput{{Content: "Decision shared evidence stores data in PostgreSQL.", SourceType: "manual"}})
-	second, err := api.ProcessRemember(ctx, reused)
+	second, err := api.ProcessRemember(rememberCtx, reused)
 	require.NoError(t, err)
 	require.Equal(t, first.Evidence[0].EvidenceID, second.Evidence[0].EvidenceID)
 	require.False(t, unauthorized.Load())
@@ -243,7 +244,7 @@ func TestDecisionRememberPostgresAtomicityReplayIsolationAndSettingsSnapshot(t *
 		failedInput := input
 		failedInput.IdempotencyKey, failedInput.RequestHash = fmt.Sprintf("decision-failure-%d", status), fmt.Sprint(status)
 		failedInput.Evidence = rememberapp.RepositoryEvidenceInputs([]rememberapp.RememberEvidenceInput{{Content: fmt.Sprintf("Decision failure %d", status), SourceType: "manual"}, {Content: "Second evidence cannot partially commit.", SourceType: "manual"}})
-		failed, failure := api.ProcessRemember(ctx, failedInput)
+		failed, failure := api.ProcessRemember(rememberCtx, failedInput)
 		require.Error(t, failure)
 		var processingFailure *rememberapp.RememberProcessError
 		require.ErrorAs(t, failure, &processingFailure)
@@ -264,7 +265,7 @@ func TestDecisionRememberPostgresAtomicityReplayIsolationAndSettingsSnapshot(t *
 	stale := reused
 	stale.IdempotencyKey, stale.RequestHash = "decision-stale", "decision-stale"
 	stale.Evidence = rememberapp.RepositoryEvidenceInputs([]rememberapp.RememberEvidenceInput{{Content: "Decision shared evidence uses the PostgreSQL database.", SourceType: "manual"}})
-	staleResult, staleErr := api.ProcessRemember(ctx, stale)
+	staleResult, staleErr := api.ProcessRemember(rememberCtx, stale)
 	require.Error(t, staleErr)
 	var staleFailure *rememberapp.RememberProcessError
 	require.ErrorAs(t, staleErr, &staleFailure)
@@ -327,7 +328,8 @@ func TestDecisionRememberPostgresAtomicityReplayIsolationAndSettingsSnapshot(t *
 				}
 			}
 			defer func() { fixture.onAssessment = nil }()
-			result, processErr := api.ProcessRemember(ctx, repairInput)
+			repairCtx := requestctx.WithAllowedSpaces(ctx, []domain.MemorySpaceAccess{{ID: uuid.MustParse(repairSpace), Kind: domain.MemorySpaceTeamShared, Generation: repairGeneration}})
+			result, processErr := api.ProcessRemember(repairCtx, repairInput)
 			require.Equal(t, decisionCalls+1, fixture.calls.Load(), "repair must reuse the original decision snapshot")
 			if exhausted {
 				var failed *rememberapp.RememberProcessError

@@ -8,6 +8,7 @@ import (
 
 	embeddingcontract "github.com/markhuangai/dense-mem/internal/embedding/contract"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
 // DefaultRetryEmbeddingMaxRetries is the retry count after the first attempt.
@@ -118,10 +119,12 @@ func (p *RetryEmbeddingProvider) Embed(ctx context.Context, text string) ([]floa
 		// Don't sleep after the last attempt
 		if attempt < p.maxRetries {
 			delay := p.retryDelay(attempt, err)
+			requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "provider_retry", Attempt: attempt + 2, Total: p.maxRetries + 1})
 			select {
 			case <-ctx.Done():
 				return nil, "", p.retryContextError(ctx, lastErr)
 			case <-time.After(delay):
+				requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "provider_request", Attempt: attempt + 2, Total: p.maxRetries + 1})
 				continue
 			}
 		}
@@ -162,10 +165,12 @@ func (p *RetryEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string)
 			}
 			delay := p.retryDelay(retries, err)
 			retries++
+			requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "provider_retry", Attempt: retries + 1, Total: p.maxRetries + 1})
 			select {
 			case <-ctx.Done():
 				return nil, "", p.retryContextError(ctx, err)
 			case <-time.After(delay):
+				requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "provider_request", Attempt: retries + 1, Total: p.maxRetries + 1})
 			}
 		}
 	}

@@ -23,7 +23,7 @@ func TestNormalizeInputBounds(t *testing.T) {
 		get           func(Input) int
 	}{
 		{"events", 100, 500, func(in *Input, v int) { in.MaxEvents = v }, func(in Input) int { return in.MaxEvents }},
-		{"content", 2000, 8000, func(in *Input, v int) { in.MaxFragmentContentRunes = v }, func(in Input) int { return in.MaxFragmentContentRunes }},
+		{"content", 2000, 16384, func(in *Input, v int) { in.MaxFragmentContentRunes = v }, func(in Input) int { return in.MaxFragmentContentRunes }},
 	} {
 		for _, bound := range []struct{ value, want int }{
 			{-1, field.fallback}, {0, field.fallback}, {1, 1},

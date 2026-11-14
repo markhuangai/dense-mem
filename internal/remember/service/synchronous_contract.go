@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	repository "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 )
 
 // DiagnosticCapture carries the logical MCP request and finalized result
@@ -129,6 +130,7 @@ func (e *RememberProcessError) Unwrap() error {
 }
 
 type RememberProcessRequest struct {
+	SubmittedItems      []repository.RememberSubmittedItem
 	SpaceKind           domain.MemorySpaceKind
 	InvocationStartedAt time.Time
 	TeamID              string
@@ -170,6 +172,11 @@ type TerminalRememberResult struct {
 }
 
 type TerminalEvidenceResult struct {
+	PartitionIndex        *int     `json:"partition_index,omitempty"`
+	SourceItemID          string   `json:"source_item_id,omitempty"`
+	SpanStart             *int     `json:"span_start,omitempty"`
+	SpanEnd               *int     `json:"span_end,omitempty"`
+	OccurrenceID          string   `json:"occurrence_id,omitempty"`
 	Disposition           string   `json:"disposition"`
 	EvidenceID            string   `json:"evidence_id,omitempty"`
 	ContentHash           string   `json:"content_hash,omitempty"`
@@ -442,17 +449,60 @@ func ValidateTerminalRememberResult(result *TerminalRememberResult, evidenceCoun
 			return errors.New("remember: terminal warning is empty or exceeds maximum length")
 		}
 	}
-	if len(result.Evidence) != evidenceCount {
+	partitioned := len(result.Evidence) > 0 && result.Evidence[0].PartitionIndex != nil
+	if !partitioned && len(result.Evidence) != evidenceCount {
 		return fmt.Errorf("remember: terminal evidence count %d, expected %d", len(result.Evidence), evidenceCount)
+	}
+	if len(result.Evidence) > repository.MaxRememberPartitions {
+		return errors.New("remember: terminal partition count exceeds maximum")
+	}
+	if partitioned && (result.ProcessingState != "completed" || result.Evidence[0].EvidenceIndex != 0) {
+		return errors.New("remember: partition result must cover completed input from index zero")
 	}
 	storedResult := false
 	seenStoredEvidenceIDs := make(map[uuid.UUID]struct{}, len(result.Evidence))
 	seenSupersededEvidenceIDs := make(map[uuid.UUID]struct{})
+	previousInput, previousPartition, previousEnd := 0, -1, 0
+	seenOccurrences := map[string]bool{}
+	sourceItems := map[int]string{}
+	seenSourceItems := map[string]bool{}
 	for index, item := range result.Evidence {
+		if partitioned {
+			if item.PartitionIndex == nil || item.SpanStart == nil || item.SpanEnd == nil || item.EvidenceIndex < previousInput || item.EvidenceIndex > previousInput+1 || item.EvidenceIndex >= evidenceCount || *item.SpanEnd <= *item.SpanStart || *item.SpanEnd > repository.MaxRememberItemRunes {
+				return fmt.Errorf("remember: invalid partition result bounds")
+			}
+			if item.EvidenceIndex != previousInput {
+				previousInput, previousPartition, previousEnd = item.EvidenceIndex, -1, 0
+			}
+			if *item.PartitionIndex != previousPartition+1 || *item.SpanStart != previousEnd || seenOccurrences[item.OccurrenceID] {
+				return fmt.Errorf("remember: invalid partition result order")
+			}
+			if _, err := uuid.Parse(item.SourceItemID); err != nil {
+				return fmt.Errorf("remember: invalid partition source item")
+			}
+			if _, err := uuid.Parse(item.OccurrenceID); err != nil {
+				return fmt.Errorf("remember: invalid partition occurrence")
+			}
+			if source, ok := sourceItems[item.EvidenceIndex]; ok {
+				if source != item.SourceItemID {
+					return errors.New("remember: partition source identity changed within an item")
+				}
+			} else {
+				if seenSourceItems[item.SourceItemID] {
+					return errors.New("remember: partition source identity reused across items")
+				}
+				sourceItems[item.EvidenceIndex], seenSourceItems[item.SourceItemID] = item.SourceItemID, true
+			}
+			seenOccurrences[item.OccurrenceID] = true
+			previousPartition, previousEnd = *item.PartitionIndex, *item.SpanEnd
+		}
+		if !partitioned && (item.PartitionIndex != nil || item.SourceItemID != "" || item.SpanStart != nil || item.SpanEnd != nil || item.OccurrenceID != "") {
+			return errors.New("remember: incomplete partition metadata")
+		}
 		if err := validateNotStoredExplanation(item.Disposition, item.Reason, item.Message, item.Remediation); err != nil {
 			return fmt.Errorf("remember: evidence %d: %w", index, err)
 		}
-		if item.EvidenceIndex != index {
+		if !partitioned && item.EvidenceIndex != index {
 			return fmt.Errorf("remember: terminal evidence index %d is out of order", item.EvidenceIndex)
 		}
 		if item.Disposition != "stored" && item.Disposition != "not_stored" {
@@ -472,7 +522,7 @@ func ValidateTerminalRememberResult(result *TerminalRememberResult, evidenceCoun
 			if err != nil {
 				return fmt.Errorf("remember: stored evidence %d has invalid evidence_id", index)
 			}
-			if _, ok := seenStoredEvidenceIDs[evidenceID]; ok {
+			if _, ok := seenStoredEvidenceIDs[evidenceID]; ok && !partitioned {
 				return fmt.Errorf("remember: stored evidence %d has duplicated evidence_id", index)
 			}
 			if _, ok := seenSupersededEvidenceIDs[evidenceID]; ok {
@@ -515,6 +565,9 @@ func ValidateTerminalRememberResult(result *TerminalRememberResult, evidenceCoun
 		if item.Disposition == "not_stored" && item.SearchState != string(TerminalSearchNotRequired) {
 			return fmt.Errorf("remember: non-stored evidence %d must have not_required search state", index)
 		}
+	}
+	if partitioned && previousInput != evidenceCount-1 {
+		return errors.New("remember: partition result omits submitted items")
 	}
 	seenErrorCodes := make(map[TerminalErrorCode]struct{}, len(result.Errors))
 	for index, item := range result.Errors {

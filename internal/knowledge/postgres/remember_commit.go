@@ -149,7 +149,11 @@ func (r *Store) commitRememberInTx(ctx context.Context, tx *gorm.DB, input Synch
 				}, sources)
 				if err != nil {
 					if errors.Is(err, ErrSourceRevisionConflict) {
-						return &knowledgecontract.RememberSourceRevisionConflictError{EvidenceIndex: index, Cause: err}
+						submittedIndex := index
+						if item.Partition != nil {
+							submittedIndex = item.Partition.SubmittedIndex
+						}
+						return &knowledgecontract.RememberSourceRevisionConflictError{EvidenceIndex: submittedIndex, Cause: err}
 					}
 					return err
 				}
@@ -162,6 +166,10 @@ func (r *Store) commitRememberInTx(ctx context.Context, tx *gorm.DB, input Synch
 		}
 		evidence, err := resolveRememberEvidenceInTx(ctx, tx, input, createInput, contract, sourcesByIndex)
 		if err != nil {
+			return err
+		}
+		stage = "partition_provenance"
+		if err := insertRememberPartitions(ctx, tx, input, evidence); err != nil {
 			return err
 		}
 		for index, item := range createInput.Evidence {

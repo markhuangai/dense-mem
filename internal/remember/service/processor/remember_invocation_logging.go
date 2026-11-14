@@ -165,6 +165,16 @@ func (p *rememberSynchronousProcessor) recordRememberInvocation(
 }
 
 func (p *rememberSynchronousProcessor) logRememberInvocation(ctx context.Context, input rememberapp.RememberProcessRequest, record repository.RememberInvocationDiagnosticInput, classification, phase string, cause error, status *rememberapp.SubmissionStatusResult) {
+	if !input.InitialSecurityRejected {
+		if root, ok := p.logger.(interface{ ContextSlog() *slog.Logger }); ok {
+			body, err := json.Marshal(map[string]any{"outcome": record.Outcome, "phase": phase, "receipt": status, "receipt_available": status != nil})
+			if err != nil {
+				root.ContextSlog().WarnContext(ctx, "remember_terminal_capture_unavailable", "invocation_id", record.InvocationID, "reason", "serialization_failed")
+			} else {
+				observability.LogDiagnosticBody(ctx, root.ContextSlog(), p.protector, "remember_terminal_receipt", body, modelprovider.MaxProviderDiagnosticBodyBytes, slog.String("invocation_id", record.InvocationID), slog.String("team_id", input.TeamID), slog.String("profile_id", input.OwnerProfileID), slog.String("canonical_attempt_id", record.CanonicalAttemptID))
+			}
+		}
+	}
 	if p.logger != nil {
 		attrs := []observability.LogAttr{
 			observability.String("invocation_id", record.InvocationID),
