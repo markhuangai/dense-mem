@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { once } from "node:events";
+import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import test from "node:test";
 import { remember as decisionRemember } from "../decision_providers/rpc.mjs";
 import { rememberReceipt, rememberWithEmbeddingRetry } from "./remember_retry.mjs";
@@ -83,6 +85,9 @@ test("deliberate failures, incomplete or ambiguous receipts and unrelated errors
     (value) => { delete value.result.structuredContent.correlation_id; },
     (value) => { value.result.structuredContent.evidence = []; },
     (value) => { value.result.structuredContent.evidence[0].evidence_id = "partially-stored"; },
+    (value) => { delete value.result.structuredContent.evidence[0].superseded_evidence_ids; },
+    (value) => { value.result.structuredContent.evidence[0].superseded_evidence_ids = null; },
+    (value) => { value.result.structuredContent.evidence[0].superseded_evidence_ids = {}; },
     (value) => { value.result.structuredContent.evidence.push(value.result.structuredContent.evidence[0]); },
     (value) => { value.error = { code: -32603, message: "ambiguous" }; },
     (value) => { value.result.isError = false; },
@@ -105,6 +110,44 @@ test("deliberate failures, incomplete or ambiguous receipts and unrelated errors
   const result = await rememberWithEmbeddingRetry(argumentsFor(), call, { retry: false, onAttempt: () => {} });
   assert.equal(rememberReceipt(result).processing_state, "failed");
   assert.equal(requests.length, 1);
+});
+
+test("progress caller has one owner for retry and retained attempt captures", async (t) => {
+  const success = { ...failedReceipt(), submission_id: "recovered", processing_state: "completed", errors: [] };
+  const { requests, base } = await fixture(t, (attempt) => ({
+    jsonrpc: "2.0", id: JSON.parse(requests.at(-1).body).id,
+    ...envelope(attempt === 1 ? failedReceipt() : success),
+  }));
+  const child = spawn(process.execPath, ["--input-type=module", "-e", `
+    import { progressCall } from ${JSON.stringify(new URL("./cases/progress.mjs", import.meta.url).href)};
+    import { captureRememberAttempt } from ${JSON.stringify(new URL("./remember_retry.mjs", import.meta.url).href)};
+    const attempts = [];
+    await progressCall({ apiKey: "fixed-fixture-credential", args: ${JSON.stringify(argumentsFor())},
+      token: '"recovery"', onAttempt: (attempt) => { captureRememberAttempt(attempt); attempts.push(attempt.attempt); } });
+    process.stdout.write(JSON.stringify(attempts));
+  `], { env: { ...process.env, DENSE_MEM_USER_URL: base } });
+  const closed = once(child, "close");
+  let stdout = "", stderr = "";
+  child.stdout.on("data", (chunk) => { stdout += chunk; });
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  const [code] = await closed;
+  assert.equal(code, 0, stderr);
+  assert.deepEqual(JSON.parse(stdout), [1, 2]);
+  assert.equal(requests.length, 2);
+  const records = stderr.trim().split("\n").map(JSON.parse);
+  const captures = records.filter((record) => record.payload_chunk.index === 0);
+  assert.deepEqual(captures.map((item) => [item.attempt, item.retrying, item.exhausted]), [[1, true, false], [2, false, false]]);
+  assert.equal(captures[0].logical_request_hash, captures[1].logical_request_hash);
+  for (const capture of captures) {
+    assert.equal(capture.event, "e2e_remember_attempt");
+    const chunks = records.filter((record) => record.attempt === capture.attempt);
+    assert.deepEqual(chunks.map((record) => record.payload_chunk.index), Array.from({ length: capture.payload_chunk.count }, (_, index) => index));
+    const body = chunks.map((record) => record.payload_chunk.body).join("");
+    assert.equal(capture.payload_chunk.sha256, createHash("sha256").update(body).digest("hex"));
+    const payload = JSON.parse(body);
+    assert.deepEqual(payload.progress, []);
+    assert.equal(typeof payload.raw, "string");
+  }
 });
 
 test("caller cancellation and thrown transport or assertion errors never resubmit", async (t) => {

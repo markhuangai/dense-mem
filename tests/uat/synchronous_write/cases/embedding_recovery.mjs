@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { rememberWithEmbeddingRetry, rememberReceipt, captureRememberAttempt } from "../remember_retry.mjs";
+import { rememberReceipt, captureRememberAttempt } from "../remember_retry.mjs";
 import { progressCall } from "./progress.mjs";
 import { rememberCanonicalCounts, postgresQuery } from "./remember.mjs";
 
@@ -16,9 +16,8 @@ export async function run({ runStep }) {
       evidence: [{ content: `Retained embedding recovery ${key}. [fixture-fault:${repeated ? "embedding-timeout" : "embedding-once-timeout"}]`, source_type: "manual", force_insert: true }] };
     const frozen = JSON.stringify(args);
     const attempts = [];
-    const execute = () => rememberWithEmbeddingRetry(args,
-      (request) => progressCall({ apiKey, args: request, token: '"embedding-recovery"', retryEmbedding: false }),
-      { onAttempt: (attempt) => {
+    const execute = () => progressCall({ apiKey, args, token: '"embedding-recovery"',
+      onAttempt: (attempt) => {
         captureRememberAttempt(attempt);
         attempts.push(attempt);
         assert.equal(JSON.stringify(args), frozen);

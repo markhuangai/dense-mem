@@ -27,7 +27,8 @@ function retryableEmbeddingTimeout(response, args) {
   for (const item of receipt.evidence) {
     if (!Number.isInteger(item.evidence_index) || item.evidence_index < 0 || item.evidence_index >= args.evidence.length ||
         indices.has(item.evidence_index) || item.disposition !== "not_stored" || item.search_state !== "not_required" || item.evidence_id ||
-        item.superseded_evidence_ids?.length || item.splits?.some((split) => split.evidence_id || split.disposition !== "not_stored")) return false;
+        !Array.isArray(item.superseded_evidence_ids) || item.superseded_evidence_ids.length ||
+        item.splits?.some((split) => split.evidence_id || split.disposition !== "not_stored")) return false;
     indices.add(item.evidence_index);
   }
   return receipt.errors.every((error) => error.code === "request_timeout" && error.retryable === true &&

@@ -243,8 +243,8 @@ export async function parseProgressStream(body, onFrame) {
 }
 
 export async function progressCall(options) {
-  const { name = "remember", args, signal, retryEmbedding = true } = options;
-  if (name === "remember") return rememberWithEmbeddingRetry(args, (request) => progressAttempt({ ...options, args: request }), { signal, retry: retryEmbedding });
+  const { name = "remember", args, signal, retryEmbedding = true, onAttempt } = options;
+  if (name === "remember") return rememberWithEmbeddingRetry(args, (request) => progressAttempt({ ...options, args: request }), { signal, retry: retryEmbedding, onAttempt });
   return progressAttempt(options);
 }
 
