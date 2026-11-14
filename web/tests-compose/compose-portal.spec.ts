@@ -153,16 +153,17 @@ test("IP bans retain protected latest requests against compose", async ({ page, 
   const headers = bearer(controlToken);
   const rulesResponse = await request.get(`${controlUrl}/control/api/security/settings`, { headers });
   expect(rulesResponse.ok()).toBe(true);
-  const { data: rules } = await rulesResponse.json();
-  expect(rules.enabled).toBe(true);
-  expect(rules.failure_threshold).toBeGreaterThan(0);
-  expect(rules.failure_threshold).toBeLessThanOrEqual(100);
+  const { data: original } = await rulesResponse.json();
+  const originalRules = { enabled: original.enabled, failure_threshold: original.failure_threshold, failure_window_seconds: original.failure_window_seconds, ban_duration_seconds: original.ban_duration_seconds };
+  const rules = { ...originalRules, enabled: true, failure_threshold: 2 };
   const ip = testInfo.project.name === "mobile" ? "198.51.100.220" : "198.51.100.219";
   const failedToken = `dm_diagnostic_${Date.now()}_wrong_credential_${"x".repeat(24)}`;
   const body = JSON.stringify({ password: "ordinary request content", presented: failedToken, configured: controlToken, cookie: "diagnostic-cookie" }, null, 2);
   const failedHeaders = { Authorization: `Bearer ${failedToken}`, "Content-Type": "application/json", "X-Forwarded-For": ip, "X-Diagnostic": "visible request header", Cookie: "session=diagnostic-cookie" };
   const clear = () => request.delete(`${controlUrl}/control/api/security/bans/${ip}`, { headers });
   try {
+    const configured = await request.patch(`${controlUrl}/control/api/security/settings`, { headers, data: rules });
+    expect(configured.ok()).toBe(true);
     for (let attempt = 0; attempt < rules.failure_threshold; attempt += 1) {
       const rejected = await request.post(`${userUrl}/mcp`, { headers: failedHeaders, data: body });
       expect(rejected.status()).toBe(401);
@@ -205,7 +206,10 @@ test("IP bans retain protected latest requests against compose", async ({ page, 
     await page.getByRole("button", { name: "Refresh security" }).click();
     await page.getByRole("button", { name: `View request for ${ip}` }).click();
     await expect(page.getByText(/Body unavailable: size_limit/)).toBeVisible();
-  } finally { expect((await clear()).ok()).toBe(true); }
+  } finally {
+    try { expect((await clear()).ok()).toBe(true); }
+    finally { expect((await request.patch(`${controlUrl}/control/api/security/settings`, { headers, data: originalRules })).ok()).toBe(true); }
+  }
 });
 
 test("Prometheus telemetry remains available without portal dashboards", async ({ page, request }) => {
