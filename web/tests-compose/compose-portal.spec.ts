@@ -225,6 +225,7 @@ test("IP bans retain protected latest requests against compose", async ({ page, 
       const viewRequest = page.getByRole("button", { name: `View request for ${ip}` });
       if (await viewRequest.getAttribute("aria-expanded") !== "true") await viewRequest.click();
       await expect(page.getByText(`Body unavailable: ${reason}`)).toBeVisible();
+      if (await close.isVisible()) { await close.click(); await expect(page.locator(".contextual-sheet")).toBeHidden(); }
     }
   } finally {
     try { expect((await clear()).ok()).toBe(true); }
