@@ -275,7 +275,7 @@ async def test_required_degradation_raises_without_success_callback(wire_server,
     "field,value",
     [
         ("context", None),
-        ("context", "x" * 2001),
+        ("context", "x" * 16385),
         ("evidence_id", 12),
         ("space_kind", "foreign"),
         ("equivalent_evidence_ids", "ids"),

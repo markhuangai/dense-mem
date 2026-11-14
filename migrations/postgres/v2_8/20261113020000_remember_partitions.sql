@@ -2,9 +2,12 @@
 -- bounded metadata lock without scanning historical rows. The next migration
 -- validates the CHECK and FK after this transaction releases its exclusive lock.
 -- Down validates the restored legacy CHECK under its schema lock without rewriting rows.
--- No historical Evidence or receipt is backfilled. Old writers must stop before
--- partitioned writes because they do not know the expanded erasure inventory.
--- Rollback is permitted only before new provenance exists.
+-- RLS impact: new provenance tables force team/space/generation-scoped policies;
+-- existing lifecycle ownership policies remain unchanged.
+-- Backfill: none; historical Evidence and receipts retain their existing mappings.
+-- Backward compatibility: old writers must stop before partitioned writes because
+-- they do not know the expanded erasure inventory.
+-- Rollback: permitted only before new provenance exists.
 -- +goose Up
 -- +goose StatementBegin
 SET LOCAL lock_timeout = '30s';

@@ -92,7 +92,7 @@ async function mcpRaw(name, args) {
 function clientControlledBudgetFixture() {
   return {
     target_space: "team_shared", idempotency_key: `${runID}:client-budget`,
-    evidence: Array.from({ length: 20 }, (_, index) => ({ content: `${index} ` + "界".repeat(995), source_type: "manual", source: `${runID}:${index}`, source_group: runID, force_insert: true })),
+    evidence: Array.from({ length: 20 }, (_, index) => ({ content: `${index} ` + "界 ".repeat(2048), source_type: "manual", source: `${runID}:${index}`, source_group: runID, force_insert: true })),
   };
 }
 
