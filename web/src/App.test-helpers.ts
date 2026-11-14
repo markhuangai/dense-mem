@@ -27,7 +27,12 @@ export const securityBan: SecurityBan = {
   banned_at: "2026-05-02T12:00:00Z",
   expires_at: null,
   last_failed_at: "2026-05-02T12:00:00Z",
-  metadata: {},
+  metadata: { last_request: {
+    id: "security-request-fixture", captured_at: "2026-05-02T12:00:00Z", method: "POST", url: "/mcp", route: "/mcp",
+    reason: "AUTH_INVALID", message: "invalid api key", auth_scheme: "bearer", credential_prefix: "dm_example_public_prefix", credential_fingerprint: "a".repeat(64),
+    headers: { Authorization: ["[REDACTED]"], "X-Example": ["first", "second"] }, body: "{\n  \"password\": \"ordinary request content\"\n}",
+    header_capture: { state: "captured", bytes: 100, limit: 16384 }, body_capture: { state: "captured", bytes: 46, limit: 65536 }, url_capture: { state: "captured", bytes: 4, limit: 8192 },
+  } },
   revoked_at: null,
 };
 

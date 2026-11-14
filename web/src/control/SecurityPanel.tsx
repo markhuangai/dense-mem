@@ -5,9 +5,10 @@ import { Label } from "../ui/primitives/label";
 import { Input } from "../ui/primitives/input";
 import { Checkbox } from "../ui/primitives/checkbox";
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "../ui/primitives/table";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, Fragment, useEffect, useState } from "react";
 import { Ban, RefreshCw, Trash2 } from "lucide-react";
-import { ControlApi, SecurityBan, SecuritySettings } from "../api";
+import { ControlApi, SecurityBan, SecuritySettings, SecurityRequestSnapshot } from "../api";
+import { ResponsiveInspector, useCompactWorkspace } from "../ui/inspector";
 import { FieldRow, LoadingState, SectionHeading, SummaryCard } from "../ui/components";
 import { formatDate, readError } from "./utils";
 
@@ -159,11 +160,14 @@ function SecurityBanTable({
   busy: boolean;
   onDelete: (ip: string) => void;
 }) {
+  const { ref, compact } = useCompactWorkspace(760);
+  const [expandedIP, setExpandedIP] = useState("");
   if (bans.length === 0) {
-    return <div className="table-placeholder">No IP bans</div>;
+    return <section ref={ref} aria-label="IP ban requests"><div className="table-placeholder">No IP bans</div></section>;
   }
 
   return (
+    <section ref={ref} aria-label="IP ban requests">
     <div className="table-wrap">
       <Table className="data-table security-table">
         <TableHeader>
@@ -172,6 +176,7 @@ function SecurityBanTable({
             <TableHead>Failed attempts</TableHead>
             <TableHead>Source</TableHead>
             <TableHead>Reason</TableHead>
+            <TableHead>Request</TableHead>
             <TableHead>Last failed</TableHead>
             <TableHead>Expires</TableHead>
             <TableHead className="actions-cell">Clear</TableHead>
@@ -179,11 +184,15 @@ function SecurityBanTable({
         </TableHeader>
         <TableBody>
           {bans.map((ban) => (
-            <TableRow key={ban.ip}>
+            <Fragment key={ban.ip}>
+            <TableRow>
               <TableCell><code>{ban.ip}</code></TableCell>
               <TableCell>{ban.failure_count}</TableCell>
               <TableCell><span className={ban.source === "auto" ? "status-pill warning" : "status-pill neutral"}>{ban.source}</span></TableCell>
               <TableCell>{ban.reason}</TableCell>
+              <TableCell>{ban.source === "manual" ? "Not applicable" : ban.metadata?.last_request ? (
+                <Button variant="ghost" type="button" aria-label={`View request for ${ban.ip}`} aria-expanded={expandedIP === ban.ip} onClick={() => setExpandedIP(expandedIP === ban.ip ? "" : ban.ip)}>View request</Button>
+              ) : "Request details unavailable"}</TableCell>
               <TableCell>{ban.last_failed_at ? formatDate(ban.last_failed_at) : "Never"}</TableCell>
               <TableCell>{ban.expires_at ? formatDate(ban.expires_at) : "Never"}</TableCell>
               <TableCell className="actions-cell">
@@ -199,9 +208,34 @@ function SecurityBanTable({
                 </Button>
               </TableCell>
             </TableRow>
+            {expandedIP === ban.ip && !compact && ban.metadata?.last_request && <TableRow className="log-raw-row"><TableCell colSpan={8}><SecurityRequestDetails request={ban.metadata.last_request} /></TableCell></TableRow>}
+            </Fragment>
           ))}
         </TableBody>
       </Table>
     </div>
+    <ResponsiveInspector compact open={compact && bans.some((ban) => ban.ip === expandedIP)} onOpenChange={(open) => { if (!open) setExpandedIP(""); }} title="Latest failed request">
+      {bans.filter((ban) => ban.ip === expandedIP && ban.metadata?.last_request).map((ban) => <SecurityRequestDetails key={ban.ip} request={ban.metadata!.last_request!} />)}
+    </ResponsiveInspector>
+    </section>
   );
+}
+
+function SecurityRequestDetails({ request }: { request: SecurityRequestSnapshot }) {
+  return <div className="security-request-details">
+    <h3>Latest failed request</h3>
+    <dl>
+      <dt>Request</dt><dd><code>{request.method} {request.url || "URL unavailable"}</code></dd>
+      <dt>Route</dt><dd><code>{request.route || "Unavailable"}</code></dd>
+      <dt>Time</dt><dd>{formatDate(request.captured_at)}</dd>
+      <dt>Reason</dt><dd>{request.reason} {request.message}</dd>
+      <dt>Authentication</dt><dd>{request.auth_scheme || "Unavailable"}</dd>
+      {request.credential_prefix && <><dt>Key prefix</dt><dd><code>{request.credential_prefix}…</code></dd></>}
+      {request.credential_fingerprint && <><dt>Credential fingerprint (SHA-256)</dt><dd><code>{request.credential_fingerprint}</code></dd></>}
+      <dt>Snapshot ID</dt><dd><code>{request.id}</code></dd>
+    </dl>
+    {request.url_capture.state === "unavailable" && <p>URL unavailable: {request.url_capture.reason}</p>}
+    <div className="remember-diagnostic-body"><h4>Headers</h4>{request.header_capture.state === "captured" ? <pre aria-label="Request headers">{Object.entries(request.headers ?? {}).sort(([a], [b]) => a.localeCompare(b)).flatMap(([name, values]) => values.map((value) => `${name}: ${value}`)).join("\n") || "(empty headers)"}</pre> : <p>Headers unavailable: {request.header_capture.reason}</p>}</div>
+    <div className="remember-diagnostic-body"><h4>Body</h4>{request.body_capture.state === "captured" ? <pre aria-label="Request body">{request.body || "(empty body)"}</pre> : <p>Body unavailable: {request.body_capture.reason} (limit {request.body_capture.limit.toLocaleString()} bytes)</p>}</div>
+  </div>;
 }

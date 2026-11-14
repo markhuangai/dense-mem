@@ -5,6 +5,7 @@ package settings_test
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -26,6 +27,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	densehttp "github.com/markhuangai/dense-mem/internal/http"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	settings "github.com/markhuangai/dense-mem/internal/settings"
 	settingspostgres "github.com/markhuangai/dense-mem/internal/settings/postgres"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
@@ -86,7 +88,7 @@ func newSettingsApplications(t *testing.T) (*gorm.DB, *settings.AppConfigService
 	appRepo := settingspostgres.NewAppConfigRepository(db, rls)
 	securityRepo := settingspostgres.NewSecurityRepository(db, rls)
 	audit := auditapp.New(auditpostgres.NewStore(db, rls))
-	return db, settings.NewAppConfigService(appRepo, audit), settings.NewSecurityService(securityRepo, audit), cleanup
+	return db, settings.NewAppConfigService(appRepo, audit), settings.NewSecurityServiceWithDiagnostics(securityRepo, audit, settings.SecurityDiagnosticsOptions{Protector: observability.NewCredentialProtector("settings-token")}), cleanup
 }
 
 func controlRequest(e http.Handler, method, path, token, body string, remoteIPs ...string) *httptest.ResponseRecorder {
@@ -113,9 +115,10 @@ func controlRequest(e http.Handler, method, path, token, body string, remoteIPs 
 
 func uniqueSecurityTestIP() string {
 	id := uuid.New()
-	return fmt.Sprintf("2001:db8:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x",
+	ip := fmt.Sprintf("2001:db8:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x",
 		id[0], id[1], id[2], id[3], id[4], id[5], id[6], id[7], id[8], id[9], id[10], id[11],
 	)
+	return net.ParseIP(ip).String()
 }
 
 func TestSettingsControlPortalPositiveAndDurableAudit(t *testing.T) {
@@ -187,6 +190,7 @@ func TestSecurityBanRoundTripAndDurableAudit(t *testing.T) {
 
 	settingsUpdate := controlRequest(e, http.MethodPatch, "/control/api/security/settings", "settings-token", `{"enabled":true,"failure_threshold":2,"failure_window_seconds":600,"ban_duration_seconds":0}`)
 	require.Equal(t, http.StatusOK, settingsUpdate.Code)
+	t.Run("request snapshots and concurrent ordering", func(t *testing.T) { assertSecurityBanRequestSnapshots(t, db, securityService, e) })
 	firstFailure := controlRequest(e, http.MethodGet, "/control/api/config/general", "wrong-token", "", banIP)
 	require.Equal(t, http.StatusUnauthorized, firstFailure.Code)
 	secondFailure := controlRequest(e, http.MethodGet, "/control/api/config/general", "wrong-token", "", banIP)

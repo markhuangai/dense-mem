@@ -179,17 +179,18 @@ type mockSecurityService struct {
 	recordAuthFailureIP      string
 	recordAuthFailureSurface string
 	recordAuthFailureReason  string
+	request                  *domain.SecurityAuthFailureRequest
+	secrets                  []string
 }
 
 func (m *mockSecurityService) CheckBan(ctx context.Context, ip string) (*domain.SecurityIPBan, error) {
 	return nil, nil
 }
 
-func (m *mockSecurityService) RecordAuthFailure(ctx context.Context, ip, surface, reason string) (*domain.SecurityIPBan, error) {
+func (m *mockSecurityService) RecordAuthFailure(ctx context.Context, ip, surface, reason string, request *domain.SecurityAuthFailureRequest) (*domain.SecurityIPBan, error) {
+	m.request, m.secrets = request, requestctx.AuthenticationSecretsFromContext(ctx)
 	m.recordAuthFailureCalled = true
-	m.recordAuthFailureIP = ip
-	m.recordAuthFailureSurface = surface
-	m.recordAuthFailureReason = reason
+	m.recordAuthFailureIP, m.recordAuthFailureSurface, m.recordAuthFailureReason = ip, surface, reason
 	return nil, nil
 }
 

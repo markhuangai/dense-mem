@@ -175,7 +175,7 @@ func TestAuthMiddleware_SSOSessionFailureIsAuditedAndRecorded(t *testing.T) {
 	assert.Equal(t, "api", mockSecurity.recordAuthFailureSurface)
 	assert.Equal(t, "198.51.100.10", mockSecurity.recordAuthFailureIP)
 	require.NotNil(t, observed)
-	assert.Equal(t, []string{"session-token"}, requestctx.AuthenticationSecretsFromContext(observed))
+	assert.ElementsMatch(t, []string{"session-token", req.Header.Get("Cookie")}, requestctx.AuthenticationSecretsFromContext(observed))
 }
 
 func TestAuthMiddleware_OptionalMissingCredentialsHasNoFailureSideEffects(t *testing.T) {
@@ -352,7 +352,11 @@ func TestAuthMiddlewareOAuthBearerMapsBoundedErrors(t *testing.T) {
 			assert.Equal(t, "oauth", audit.authFailureParams.entityType)
 			assert.Equal(t, test.wantSecurityFailure, security.recordAuthFailureCalled)
 			require.NotNil(t, observed)
-			assert.Equal(t, []string{"header.payload.signature"}, requestctx.AuthenticationSecretsFromContext(observed))
+			wantSecrets := []string{"header.payload.signature"}
+			if test.wantSecurityFailure {
+				wantSecrets = append(wantSecrets, req.Header.Get("Authorization"))
+			}
+			assert.ElementsMatch(t, wantSecrets, requestctx.AuthenticationSecretsFromContext(observed))
 		})
 	}
 }
@@ -552,10 +556,10 @@ func (r *oauthAuthSecurityRepository) RecordFailure(_ context.Context, ip, surfa
 	}, nil
 }
 
-func (r *oauthAuthSecurityRepository) UpsertBan(_ context.Context, ban *domain.SecurityIPBan) error {
+func (r *oauthAuthSecurityRepository) UpsertBan(_ context.Context, ban *domain.SecurityIPBan) (bool, error) {
 	copy := *ban
 	r.bans[ban.IP] = &copy
-	return nil
+	return true, nil
 }
 
 func (r *oauthAuthSecurityRepository) ListBans(context.Context, bool, int, int) ([]domain.SecurityIPBan, int64, error) {

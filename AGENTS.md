@@ -129,7 +129,10 @@
   material. After schema validation and the initial security scan, admitted user
   fields and text may remain exact in bounded operator diagnostics when needed
   to diagnose later rejection or provider failure; initial security rejection
-  remains content-free. Protect configured operational secrets and authentication
+  remains content-free, except that IP-ban diagnostics may retain one protected
+  failed-authentication request with headers up to 16 KiB and a text body up to
+  64 KiB in private operator diagnostics; omissions are explicit and audit/public
+  projections exclude these headers and bodies. Protect configured operational secrets and authentication
   material, including supported serialized forms, through `internal/observability`;
   field names or secret-like text alone do not cause masking. Public HTTP/MCP
   errors, audit projections, and external exports retain separate bounded

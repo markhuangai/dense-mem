@@ -353,18 +353,59 @@ test("team credential list and delete flow", async ({ page }) => {
   await expect(page.getByText("******abc123")).toBeHidden();
 });
 
-test("IP ban list and clear reset flow", async ({ page }) => {
-  await mockApi(page, { teams: [team], keys: [key], bans: [ban] });
+test("IP ban list and clear reset flow", async ({ page }, testInfo) => {
+  await mockApi(page, { teams: [team], keys: [key], bans: [{ ...ban, metadata: { last_request: {
+    id: "request-fixture", captured_at: ban.banned_at, method: "POST", url: "/mcp", route: "/mcp", reason: "AUTH_INVALID", message: "invalid api key", auth_scheme: "bearer", credential_fingerprint: "a".repeat(64),
+    headers: { Authorization: ["[REDACTED]"], "X-Example": ["first", "second"] }, body: '{"password":"ordinary request content"}',
+    header_capture: { state: "captured", bytes: 100, limit: 16384 }, body_capture: { state: "captured", bytes: 39, limit: 65536 }, url_capture: { state: "captured", bytes: 4, limit: 8192 },
+  } } }] });
   await openPortal(page);
 
   await navigate(page, "IP bans");
   await expect(page.getByText("203.0.113.10")).toBeVisible();
   await expect(page.getByRole("row", { name: /203.0.113.10/ })).toContainText("11");
+	await page.getByRole("button", { name: "View request for 203.0.113.10" }).click();
+	await expect(page.getByLabel("Request headers")).toContainText("Authorization: [REDACTED]");
+	await expect(page.getByLabel("Request headers")).toContainText("X-Example: second");
+	await expect(page.getByLabel("Request body")).toHaveText('{"password":"ordinary request content"}');
+	if (testInfo.project.name === "chromium") await expect(page.locator(".security-table .log-raw-row")).toBeVisible();
+	else await expect(page.getByRole("dialog")).toBeVisible();
+	await expectPageContained(page);
+	const close = page.getByRole("button", { name: "Close details panel" });
+	if (await close.isVisible()) {
+	  await expect.poll(() => page.locator(".contextual-sheet").evaluate((element) => { const rect = element.getBoundingClientRect(); return rect.left >= 0 && rect.right <= innerWidth + 1; })).toBe(true);
+	}
+	await expect.poll(() => page.locator(".security-request-details dt").evaluateAll((labels) => labels.every((label) => label.scrollWidth <= label.clientWidth + 1))).toBe(true);
+	await page.screenshot({ path: testInfo.outputPath("ip-ban-request.png"), fullPage: testInfo.project.name === "chromium" });
+	if (await close.isVisible()) { await close.click(); await expect(page.locator(".contextual-sheet")).toBeHidden(); }
+	await page.evaluate(() => window.scrollTo(0, 0));
+	await expect.poll(() => page.evaluate(() => scrollY)).toBe(0);
+	await expectNoShellOverlap(page);
 
   await page.getByRole("button", { name: /Clear IP ban and reset strikes for 203.0.113.10/ }).click();
   await confirmAction(page, "Clear IP ban");
 
   await expect(page.getByText("203.0.113.10")).toBeHidden();
+});
+
+test("IP ban request omission and legacy states", async ({ page }) => {
+  await mockApi(page, { teams: [team], keys: [key], bans: [ban, { ...ban, ip: "203.0.113.11", source: "manual" }, { ...ban, ip: "203.0.113.12", metadata: { last_request: {
+    id: "oversized-fixture", captured_at: ban.banned_at, method: "POST", url: "/mcp", route: "/mcp", reason: "AUTH_INVALID", message: "invalid key", auth_scheme: "bearer", body: "",
+    header_capture: { state: "unavailable", reason: "protection_unavailable", bytes: 0, limit: 16384 }, body_capture: { state: "unavailable", reason: "size_limit", bytes: 65537, limit: 65536 }, url_capture: { state: "captured", bytes: 4, limit: 8192 },
+  } } }] });
+  await openPortal(page);
+  await navigate(page, "IP bans");
+  await expect(page.getByText("Request details unavailable", { exact: true })).toBeVisible();
+  await expect(page.getByText("Not applicable", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "View request for 203.0.113.12" }).click();
+  await expect(page.getByText(/Body unavailable: size_limit/)).toBeVisible();
+  await expect(page.getByText(/Headers unavailable: protection_unavailable/)).toBeVisible();
+  await expectPageContained(page);
+  const close = page.getByRole("button", { name: "Close details panel" });
+  if (await close.isVisible()) { await close.click(); await expect(page.locator(".contextual-sheet")).toBeHidden(); }
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await expect.poll(() => page.evaluate(() => scrollY)).toBe(0);
+  await expectNoShellOverlap(page);
 });
 
 test("team overview keeps request metrics after the Metrics tab is retired", async ({ page }) => {

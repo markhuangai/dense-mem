@@ -11,7 +11,7 @@ import (
 
 type SecurityBanService interface {
 	CheckBan(ctx context.Context, ip string) (*domain.SecurityIPBan, error)
-	RecordAuthFailure(ctx context.Context, ip, surface, reason string) (*domain.SecurityIPBan, error)
+	RecordAuthFailure(ctx context.Context, ip, surface, reason string, request *domain.SecurityAuthFailureRequest) (*domain.SecurityIPBan, error)
 }
 
 func SecurityBanMiddleware(svc SecurityBanService) echo.MiddlewareFunc {

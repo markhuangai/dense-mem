@@ -58,7 +58,9 @@ func TestSecurityRepositoryBanLifecycleSQL(t *testing.T) {
 		ban.IP, ban.Reason, ban.Source, ban.FailureCount, ban.BannedAt, ban.ExpiresAt, ban.LastFailedAt, `{"actor":"control"}`, ban.CreatedAt,
 	).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
-	require.NoError(t, repo.UpsertBan(context.Background(), ban))
+	applied, err := repo.UpsertBan(context.Background(), ban)
+	require.NoError(t, err)
+	require.True(t, applied)
 
 	mock.ExpectBegin()
 	mock.ExpectQuery("SELECT ip, reason, source, failure_count").WithArgs("192.0.2.44", now).WillReturnRows(sqlmock.NewRows([]string{
@@ -238,8 +240,9 @@ func TestSecurityRepositoryRejectsNilBanAndInitializesNilMetadata(t *testing.T) 
 	defer cleanup()
 	repo := NewSecurityRepository(db, nil)
 
-	err := repo.UpsertBan(context.Background(), nil)
+	applied, err := repo.UpsertBan(context.Background(), nil)
 	require.ErrorContains(t, err, "security ban is required")
+	require.False(t, applied)
 
 	now := time.Date(2026, 9, 9, 2, 3, 4, 0, time.UTC)
 	ban := &domain.SecurityIPBan{IP: "192.0.2.44", Reason: "manual", Source: domain.SecurityBanSourceManual, BannedAt: now, CreatedAt: now}
@@ -249,7 +252,9 @@ func TestSecurityRepositoryRejectsNilBanAndInitializesNilMetadata(t *testing.T) 
 	).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
-	require.NoError(t, repo.UpsertBan(context.Background(), ban))
+	applied, err = repo.UpsertBan(context.Background(), ban)
+	require.NoError(t, err)
+	require.True(t, applied)
 	require.Equal(t, map[string]any{}, ban.Metadata)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
@@ -259,8 +264,9 @@ func TestSecurityRepositoryRejectsUnmarshalableBanMetadata(t *testing.T) {
 	defer cleanup()
 	repo := NewSecurityRepository(db, nil)
 
-	err := repo.UpsertBan(context.Background(), &domain.SecurityIPBan{Metadata: map[string]any{"channel": make(chan int)}})
+	applied, err := repo.UpsertBan(context.Background(), &domain.SecurityIPBan{Metadata: map[string]any{"channel": make(chan int)}})
 	require.Error(t, err)
+	require.False(t, applied)
 	require.ErrorContains(t, err, "failed to marshal security ban metadata")
 	require.NoError(t, mock.ExpectationsWereMet())
 }

@@ -1,5 +1,6 @@
 import { navigate, openNavigation, confirmAction, expectPageContained } from "../tests-support/portal";
 import { expect, type APIRequestContext, type Locator, type Page, test } from "@playwright/test";
+import { execFileSync } from "node:child_process";
 import "./portal-state";
 
 const controlUrl = requiredEnv("DENSE_MEM_CONTROL_URL").replace(/\/$/, "");
@@ -148,6 +149,89 @@ test("control panel keeps security settings display-only against compose", async
 
 
 
+
+test("IP bans retain protected latest requests against compose", async ({ page, request }, testInfo) => {
+  const headers = bearer(controlToken);
+  const rulesResponse = await request.get(`${controlUrl}/control/api/security/settings`, { headers });
+  expect(rulesResponse.ok()).toBe(true);
+  const { data: original } = await rulesResponse.json();
+  const originalRules = { enabled: original.enabled, failure_threshold: original.failure_threshold, failure_window_seconds: original.failure_window_seconds, ban_duration_seconds: original.ban_duration_seconds };
+  const rules = { ...originalRules, enabled: true, failure_threshold: 2 };
+  const ip = testInfo.project.name === "mobile" ? "198.51.100.220" : "198.51.100.219";
+  const failedToken = `dm_diagnostic_${Date.now()}_wrong_credential_${"x".repeat(24)}`;
+  const body = JSON.stringify({ password: "ordinary request content", presented: failedToken, configured: controlToken, cookie: "diagnostic-cookie" }, null, 2);
+  const failedHeaders = { Authorization: `Bearer ${failedToken}`, "Content-Type": "application/json", "X-Forwarded-For": ip, "X-Diagnostic": "visible request header", Cookie: "session=diagnostic-cookie" };
+  const clear = () => request.delete(`${controlUrl}/control/api/security/bans/${ip}`, { headers });
+  try {
+    const configured = await request.patch(`${controlUrl}/control/api/security/settings`, { headers, data: rules });
+    expect(configured.ok()).toBe(true);
+    for (let attempt = 0; attempt < rules.failure_threshold; attempt += 1) {
+      const rejected = await request.post(`${userUrl}/mcp`, { headers: failedHeaders, data: body });
+      expect(rejected.status()).toBe(401);
+      expect(await rejected.text()).not.toContain("ordinary request content");
+    }
+    const stdout = execFileSync("docker", ["compose", "-p", requiredEnv("DENSE_MEM_E2E_COMPOSE_PROJECT"), "-f", requiredEnv("DENSE_MEM_E2E_COMPOSE_FILE"), "logs", "--no-color", "--no-log-prefix", "server"], { encoding: "utf8", maxBuffer: 256 * 1024 * 1024, timeout: 10_000 });
+    for (const secret of [failedToken, controlToken, "diagnostic-cookie"]) expect(stdout.includes(secret)).toBe(false);
+    const records = stdout.split(/\r?\n/).filter((line) => line.startsWith("{")).map((line) => JSON.parse(line));
+    const outcome = records.findLast((record) => record.msg === "security.auto_ban" && record.client_ip === ip);
+    expect(outcome).toMatchObject({ level: "INFO", message: "invalid api key", reason: "auth failures: AUTH_INVALID", failure_count: rules.failure_threshold, body_capture_state: "captured", header_capture_state: "captured" });
+    expect(outcome.settings).toMatchObject({ failure_threshold: rules.failure_threshold, failure_window_seconds: rules.failure_window_seconds, ban_duration_seconds: rules.ban_duration_seconds });
+    expect(outcome.duration_ms).toBeGreaterThanOrEqual(0);
+    expect(outcome.snapshot_id).toMatch(/^[0-9a-f-]{36}$/);
+    const correlated = records.filter((record) => record.snapshot_id === outcome.snapshot_id);
+    expect(correlated.some((record) => record.payload_chunk)).toBe(false);
+    expect(JSON.stringify(correlated)).not.toContain("ordinary request content");
+    console.log(`security diagnostic proof ${JSON.stringify(outcome)}`);
+    const list = await request.get(`${controlUrl}/control/api/security/bans`, { headers });
+    const { data: bans } = await list.json();
+    const found = bans.find((item: { ip: string }) => item.ip === ip);
+    expect(found).toBeTruthy();
+    const snapshot = found.metadata.last_request;
+    expect(snapshot.id).toBe(outcome.snapshot_id);
+    expect(snapshot.message).toBe("invalid api key");
+    expect(snapshot.body_capture.state).toBe("captured");
+    expect(snapshot.credential_prefix).toBe(failedToken.slice(0, 24));
+    expect(snapshot.credential_fingerprint).toMatch(/^[a-f0-9]{64}$/);
+    expect(snapshot.body).toContain("ordinary request content");
+    expect(JSON.stringify(snapshot)).not.toContain(failedToken);
+    expect(JSON.stringify(snapshot)).not.toContain(controlToken);
+    expect(JSON.stringify(snapshot)).not.toContain("diagnostic-cookie");
+    const blocked = await request.post(`${userUrl}/mcp`, { headers: { ...failedHeaders, Authorization: "Bearer different-attempt" }, data: "{}" });
+    expect(blocked.status()).toBe(403);
+    const unauthorized = await request.get(`${controlUrl}/control/api/security/bans`);
+    expect(unauthorized.status()).toBe(401);
+    expect(await unauthorized.text()).not.toContain(snapshot.id);
+    await openControlPanel(page);
+    await navigate(page, "IP bans");
+    await page.getByRole("button", { name: `View request for ${ip}` }).click();
+    await expect(page.getByLabel("Request headers")).toContainText("X-Diagnostic: visible request header");
+    await expect(page.getByLabel("Request body")).toContainText("ordinary request content");
+    await expectPageContained(page);
+    const close = page.getByRole("button", { name: "Close details panel" });
+    if (await close.isVisible()) { await close.click(); await expect(page.locator(".contextual-sheet")).toBeHidden(); }
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await expect.poll(() => page.evaluate(() => scrollY)).toBe(0);
+    await expectNoShellOverlap(page);
+    for (const [payload, reason] of [["x".repeat(65537), "size_limit"], ["before\0after", "binary_body"]]) {
+      expect((await clear()).ok()).toBe(true);
+      for (let attempt = 0; attempt < rules.failure_threshold; attempt += 1) {
+        const rejected = await request.post(`${userUrl}/mcp`, { headers: { ...failedHeaders, "Content-Type": "text/plain" }, data: payload });
+        expect(rejected.status()).toBe(401);
+      }
+      const banned = await request.post(`${userUrl}/mcp`, { headers: failedHeaders, data: "{}" });
+      expect(banned.status()).toBe(403);
+      await page.getByRole("button", { name: "Refresh security" }).click();
+      await expect(page.getByRole("button", { name: "Refresh security" })).toBeEnabled();
+      const viewRequest = page.getByRole("button", { name: `View request for ${ip}` });
+      if (await viewRequest.getAttribute("aria-expanded") !== "true") await viewRequest.click();
+      await expect(page.getByText(`Body unavailable: ${reason}`)).toBeVisible();
+      if (await close.isVisible()) { await close.click(); await expect(page.locator(".contextual-sheet")).toBeHidden(); }
+    }
+  } finally {
+    try { expect((await clear()).ok()).toBe(true); }
+    finally { expect((await request.patch(`${controlUrl}/control/api/security/settings`, { headers, data: originalRules })).ok()).toBe(true); }
+  }
+});
 
 test("Prometheus telemetry remains available without portal dashboards", async ({ page, request }) => {
   test.setTimeout(150_000);
