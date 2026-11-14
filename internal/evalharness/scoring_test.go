@@ -1,9 +1,12 @@
 package evalharness
 
 import (
+	"bytes"
+	"encoding/json"
+	"testing"
+
 	"github.com/google/uuid"
 	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
-	"testing"
 
 	"github.com/stretchr/testify/require"
 )
@@ -85,4 +88,31 @@ func TestAnswerNormalizationAndFailureDenominators(t *testing.T) {
 	require.Equal(t, 1, report.Matrix[0].Failed)
 	report.Scores = append(report.Scores, scores[0])
 	require.ErrorContains(t, FinalizeReport(&report), "duplicate")
+}
+
+func TestFinalizeReportIsIndependentOfConcurrentScoreOrder(t *testing.T) {
+	var expected []byte
+	for _, order := range []string{"012", "021", "102", "120", "201", "210"} {
+		report := NewReport(Manifest{}, 3, 3)
+		report.ImportedRows, report.CaptureComplete = 3, true
+		for _, condition := range []string{"off", "on"} {
+			for _, policy := range []string{"single", "multi_turn"} {
+				for _, index := range order {
+					report.Scores = append(report.Scores, CaseScore{
+						QuestionID: string(index), Condition: condition, Policy: policy,
+						Completed: true, F1: []float64{1, 0.1, 0.1}[index-'0'],
+					})
+				}
+			}
+		}
+		require.NoError(t, FinalizeReport(&report))
+		require.True(t, report.Complete)
+		encoded, err := json.Marshal(report)
+		require.NoError(t, err)
+		if expected == nil {
+			expected = encoded
+		} else if !bytes.Equal(expected, encoded) {
+			t.Fatalf("report differs for score order %s; F1 mean is %.17g", order, report.Matrix[0].Mean.F1)
+		}
+	}
 }

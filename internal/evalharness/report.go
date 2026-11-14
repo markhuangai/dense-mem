@@ -296,6 +296,10 @@ func FinalizeReport(report *Report) error {
 		}
 		seen[key] = true
 	}
+	sort.Slice(report.Scores, func(i, j int) bool {
+		a, b := report.Scores[i], report.Scores[j]
+		return a.Condition+":"+a.Policy+":"+a.QuestionID < b.Condition+":"+b.Policy+":"+b.QuestionID
+	})
 	for _, condition := range []string{"off", "on"} {
 		for _, policy := range []string{"single", "multi_turn"} {
 			axis := AxisSummary{Condition: condition, Policy: policy, Expected: questions}
@@ -371,9 +375,5 @@ func FinalizeReport(report *Report) error {
 		report.OntologyDelta[policy] = map[string]float64{"recall_at_1": on.Mean.Recall1 - off.Mean.Recall1, "recall_at_5": on.Mean.Recall5 - off.Mean.Recall5, "recall_at_10": on.Mean.Recall10 - off.Mean.Recall10, "all_support_recovery_rate": on.AllSupportRecovery - off.AllSupportRecovery, "exact_match": on.Mean.EM - off.Mean.EM, "f1": on.Mean.F1 - off.Mean.F1, "supporting_text_coverage": on.Mean.FinalTextCoverage - off.Mean.FinalTextCoverage}
 	}
 	report.Complete = report.Failure == "" && report.CaptureComplete && report.CompletedAnswers == report.ExpectedAnswers && report.ImportedRows == report.CorpusRows
-	sort.Slice(report.Scores, func(i, j int) bool {
-		a, b := report.Scores[i], report.Scores[j]
-		return a.Condition+":"+a.Policy+":"+a.QuestionID < b.Condition+":"+b.Policy+":"+b.QuestionID
-	})
 	return nil
 }
