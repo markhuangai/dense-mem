@@ -91,8 +91,8 @@ function assertWorkflowOrchestration(workflow) {
   const database = workflowJob(workflow, "database-prechecks");
   const scenarios = workflowJob(workflow, "scenarios");
   const report = workflowJob(workflow, "report");
-  assert.deepEqual(database.strategy.matrix.shard, [0, 1, 2, 3, 4, 5]);
-  assert.equal(database.strategy["max-parallel"], 6);
+  assert.deepEqual(database.strategy.matrix.shard, [0, 1, 2, 3, 4, 5, 6]);
+  assert.equal(database.strategy["max-parallel"], 7);
   assert.equal(database["timeout-minutes"], 30);
   assert.equal(database["runs-on"], "ubuntu-latest");
   assert.deepEqual(new Set(scenarios.needs), new Set(["authorize", "prechecks"]));

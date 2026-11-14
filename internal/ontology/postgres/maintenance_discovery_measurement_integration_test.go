@@ -119,7 +119,6 @@ func discoveryMarkerState(t *testing.T, x *discoveryFixture) map[string]any {
 }
 
 func TestOntologyMaintenanceRevalidationDiscoveryMeasurement(t *testing.T) {
-	t.Run("coalescing-markers", testMaintenanceCoalescingMeasurement)
 	workloads := discoveryWorkloads()
 	encoded, err := json.Marshal(workloads)
 	require.NoError(t, err)

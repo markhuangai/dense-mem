@@ -948,6 +948,13 @@
       "source": "internal/ontology/postgres/paired_evaluation_integration_test.go"
     },
     {
+      "id": "repository/TestOntologyMaintenanceCoalescingMeasurement",
+      "package": "./internal/ontology/postgres",
+      "run": "^TestOntologyMaintenanceCoalescingMeasurement$",
+      "phase": "precheck",
+      "source": "internal/ontology/postgres/maintenance_coalescing_measurement_integration_test.go"
+    },
+    {
       "id": "repository/TestOntologyMaintenanceRevalidationDiscoveryMeasurement",
       "package": "./internal/ontology/postgres",
       "run": "^TestOntologyMaintenanceRevalidationDiscoveryMeasurement$",

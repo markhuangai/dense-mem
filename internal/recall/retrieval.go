@@ -13,6 +13,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 	searchcontract "github.com/markhuangai/dense-mem/internal/search/contract"
 )
 
@@ -79,6 +80,7 @@ func (r *Retrieval) RecallEvidence(ctx context.Context, input recallcontract.Rec
 }
 
 func (r *Retrieval) recallEvidence(ctx context.Context, input recallcontract.RecallEvidenceInput, contract *searchcontract.ActiveSearchContract) (*recallcontract.RecallEvidenceResult, error) {
+	requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "recall_search"})
 	batch, err := r.repository.ReadEvidenceCandidates(ctx, input, contract, recallOverfetchLimit(input.Limit))
 	if err != nil {
 		return nil, fmt.Errorf("recall: search evidence: %w", err)
@@ -93,6 +95,7 @@ func (r *Retrieval) recallEvidence(ctx context.Context, input recallcontract.Rec
 	}
 	ids := recallCandidateIDs(candidates)
 	hydrationCtx, hydration := observability.StartReadStage(ctx, observability.ReadOperationEvidenceRecall, observability.ReadStageHydration)
+	requestctx.ReportProgress(hydrationCtx, requestctx.ProgressUpdate{Stage: "recall_hydration"})
 	hydrated := &recallcontract.EvidenceHydration{}
 	if organized, ok := r.repository.(recallcontract.OrganizedSearchRepository); ok && input.OrganizationEnabled {
 		hydrated, err = organized.HydrateOrganizedEvidence(hydrationCtx, input, contract, ids)
@@ -118,6 +121,7 @@ func (r *Retrieval) recallEvidence(ctx context.Context, input recallcontract.Rec
 	}
 	selection.Finish(nil, len(results))
 	conflictsCtx, conflictsStage := observability.StartReadStage(ctx, observability.ReadOperationEvidenceRecall, observability.ReadStageConflicts)
+	requestctx.ReportProgress(conflictsCtx, requestctx.ProgressUpdate{Stage: "recall_conflicts"})
 	conflicts, err := r.repository.LoadRecallConflicts(conflictsCtx, input, conflictSources)
 	count := 0
 	if conflicts != nil {

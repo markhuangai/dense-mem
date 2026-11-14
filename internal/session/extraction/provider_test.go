@@ -9,6 +9,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 	session "github.com/markhuangai/dense-mem/internal/session/contract"
 	"github.com/stretchr/testify/require"
 )
@@ -45,9 +46,12 @@ func TestSessionProviderRegeneratesCompleteUnknownReferenceResponse(t *testing.T
 	require.NoError(t, err)
 	transport := &outboundFixture{bodies: []string{string(invalidJSON), string(validJSON)}}
 	provider := NewProvider(transport, "fixture-model", assessor.DefaultSemanticAssessmentLimits())
-	response, err := provider.Extract(context.Background(), request)
+	var stages []string
+	ctx := requestctx.WithProgressObserver(t.Context(), func(_ context.Context, update requestctx.ProgressUpdate) { stages = append(stages, update.Stage) })
+	response, err := provider.Extract(ctx, request)
 	require.NoError(t, err)
 	require.Equal(t, valid, response)
+	require.Equal(t, []string{"provider_request", "session_validation", "session_regeneration", "provider_request", "session_validation"}, stages)
 	require.Len(t, transport.requests, 2)
 	require.Equal(t, transport.requests[0].Messages[1], transport.requests[1].Messages[1])
 	require.Equal(t, 8192, transport.requests[0].MaxOutputTokens)

@@ -9,6 +9,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	remember "github.com/markhuangai/dense-mem/internal/remember/service"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 	session "github.com/markhuangai/dense-mem/internal/session/contract"
 )
 
@@ -33,8 +34,13 @@ func (s *Service) extractWindows(ctx context.Context, submission *session.Submis
 			defer group.Done()
 			select {
 			case semaphore <- struct{}{}:
-			case <-workerCtx.Done():
-				return
+			default:
+				requestctx.ReportProgress(workerCtx, requestctx.ProgressUpdate{Stage: "session_window_wait"})
+				select {
+				case semaphore <- struct{}{}:
+				case <-workerCtx.Done():
+					return
+				}
 			}
 			defer func() { <-semaphore }()
 			request := session.ExtractionRequest{RequestID: fmt.Sprintf("session:%s:window:%d", submission.ID, window.Index), Window: window, Prior: prior}
@@ -65,16 +71,20 @@ func (s *Service) extractWindows(ctx context.Context, submission *session.Submis
 }
 
 func (s *Service) extractWindow(providerCtx, persistenceCtx context.Context, submission *session.Submission, request session.ExtractionRequest) (session.ExtractionResponse, error) {
+	providerCtx = requestctx.WithProgressOperation(providerCtx, "session_extraction")
 	var response session.ExtractionResponse
 	var err error
 	if cached := submission.Extractions[request.Window.Index]; len(cached) > 0 {
+		requestctx.ReportProgress(providerCtx, requestctx.ProgressUpdate{Stage: "session_validation", Batch: request.Window.Index + 1, Batches: len(submission.Intake.Windows)})
 		response, err = session.DecodeExtraction(cached)
 		if err == nil {
 			err = session.ValidateExtraction(request, response)
 		}
 	} else {
+		requestctx.ReportProgress(providerCtx, requestctx.ProgressUpdate{Stage: "session_extraction", Batch: request.Window.Index + 1, Batches: len(submission.Intake.Windows)})
 		response, err = s.deps.Extractor.Extract(providerCtx, request)
 		if err == nil {
+			requestctx.ReportProgress(providerCtx, requestctx.ProgressUpdate{Stage: "session_validation"})
 			err = session.ValidateExtraction(request, response)
 		}
 		if err == nil {
@@ -82,6 +92,7 @@ func (s *Service) extractWindow(providerCtx, persistenceCtx context.Context, sub
 			if marshalErr != nil {
 				err = marshalErr
 			} else {
+				requestctx.ReportProgress(persistenceCtx, requestctx.ProgressUpdate{Stage: "session_checkpoint", Batch: request.Window.Index + 1, Batches: len(submission.Intake.Windows)})
 				err = s.deps.Repository.SaveSessionExtraction(persistenceCtx, submission.Intake.Scope, submission.ID, request.Window.Index, body)
 			}
 		}

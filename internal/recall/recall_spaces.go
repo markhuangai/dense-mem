@@ -61,6 +61,7 @@ func (s *recallService) recallAcrossSpaces(ctx context.Context, req recallExecut
 		observability.RecordRecall(ctx, s.metrics, float64(time.Since(started).Microseconds())/1000, resultCount, outcome)
 	}()
 	req.RecallRequest = normalizeRecallRequest(req.RecallRequest)
+	requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "recall_contract"})
 	contract, err := s.search.GetActiveSearchContract(ctx)
 	if err != nil {
 		return nil, err
