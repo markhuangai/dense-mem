@@ -19,6 +19,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
 const openAIAnswers = `{"model":"resolved-model","answers":[{"name":"safe","type":"predicate","probability":0.001},{"name":"position","type":"choice","choice":"a","confidence":0.97,"probabilities":[{"value":"a","probability":0.999},{"value":"b","probability":0.001}]},{"name":"relevance","type":"score","score":0.9,"confidence":0.8,"probabilities":[{"value":0,"label":"unrelated","probability":0.1},{"value":1,"label":"direct","probability":0.9}]}],"usage":{"input_tokens":100,"output_tokens":0,"total_tokens":100,"input_tokens_details":{"cached_tokens":20,"cache_write_tokens":10},"output_tokens_details":{"reasoning_tokens":0}}}`
@@ -280,7 +281,12 @@ func TestMalformedTaskRegeneratesCompletely(t *testing.T) {
 			var logs bytes.Buffer
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls.Add(1); _, _ = io.WriteString(w, invalid) }))
 			defer server.Close()
-			result, err := fixtureProvider(t, "openai", server.URL, &logs).Decide(context.Background(), fixtureRequest())
+			var stages []string
+			ctx := requestctx.WithProgressObserver(t.Context(), func(_ context.Context, update requestctx.ProgressUpdate) { stages = append(stages, update.Stage) })
+			result, err := fixtureProvider(t, "openai", server.URL, &logs).Decide(ctx, fixtureRequest())
+			if strings.Join(stages, ",") != "provider_request,provider_regeneration,provider_request" {
+				t.Fatalf("provider progress = %v", stages)
+			}
 			if !errors.Is(err, modelprovider.ErrVerifierMalformedResponse) || calls.Load() != 2 || len(result.Answers) != 0 {
 				t.Fatalf("partial task or wrong regeneration: calls=%d result=%+v err=%v", calls.Load(), result, err)
 			}

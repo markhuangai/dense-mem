@@ -83,6 +83,7 @@ type RecallDegradationResult = recallcontract.RecallDegradationResult
 type RecallSearchStates = recallcontract.RecallSearchStates
 
 func (s *recallService) Recall(ctx context.Context, req RecallRequest) (*RecallResult, error) {
+	requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "validating_input"})
 	if err := validateRecallRequest(req); err != nil {
 		return nil, fmt.Errorf("%w: %v", recallcontract.ErrInvalidInput, err)
 	}
@@ -92,6 +93,7 @@ func (s *recallService) Recall(ctx context.Context, req RecallRequest) (*RecallR
 	if !ok || actor.TeamID == uuid.Nil || actor.OwnerID == uuid.Nil {
 		return nil, ErrRecallAuthContext
 	}
+	requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "recall_policy"})
 	ctx, degradation, err := s.decisionContext(ctx)
 	if err != nil {
 		return nil, err
@@ -109,6 +111,7 @@ func (s *recallService) Recall(ctx context.Context, req RecallRequest) (*RecallR
 			return nil, err
 		}
 		reconcileDecisionSelections(ctx, s.logger, result)
+		requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "preparing_result"})
 	}
 	return result, err
 }
@@ -158,6 +161,7 @@ func (s *recallService) recallWithExecution(ctx context.Context, req recallExecu
 	req.RecallRequest = normalizeRecallRequest(req.RecallRequest)
 	contract := req.recallContract
 	if contract == nil {
+		requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "recall_contract"})
 		contract, err = s.search.GetActiveSearchContract(ctx)
 		if err != nil {
 			return nil, err
@@ -213,6 +217,8 @@ func (s *recallService) queryEmbedding(
 	contract *searchcontract.ActiveSearchContract,
 	query string,
 ) ([]float32, *RecallDegradationResult) {
+	ctx = requestctx.WithProgressOperation(ctx, "recall_embedding")
+	requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "recall_embedding"})
 	if s.provider == nil || !s.provider.IsAvailable() {
 		return nil, &RecallDegradationResult{
 			Frontier: "evidence",

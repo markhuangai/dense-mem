@@ -166,6 +166,7 @@ func (s *recallService) relatedTopics(ctx context.Context, req RecallRequest, re
 			}
 		} else if reader, ok := s.search.(recallcontract.TopicDiscoveryRepository); ok {
 			input.OrganizationEnabled = true
+			requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "recall_topics"})
 			selection, err = reader.RelatedEvidenceTopics(ctx, input, recallResultEvidenceIDs(result.Results), limit)
 		} else {
 			err = ErrTopicUnavailable
