@@ -1,0 +1,206 @@
+package evaluation
+
+import (
+	"fmt"
+	"strings"
+)
+
+func newKnowledgeMapping() KnowledgeMapping {
+	return KnowledgeMapping{
+		BySourceDocID:        map[string]Ref{},
+		BySourceDocIDAndType: map[string]map[string][]Ref{},
+	}
+}
+
+func addSourceMapping(mapping *KnowledgeMapping, ref Ref, defaultForSource bool) {
+	sourceDocID := strings.TrimSpace(ref.SourceDocID)
+	refType := strings.TrimSpace(ref.Type)
+	refID := strings.TrimSpace(ref.ID)
+	if sourceDocID == "" || refType == "" || refID == "" {
+		return
+	}
+	if mapping.BySourceDocID == nil {
+		mapping.BySourceDocID = map[string]Ref{}
+	}
+	if mapping.BySourceDocIDAndType == nil {
+		mapping.BySourceDocIDAndType = map[string]map[string][]Ref{}
+	}
+	ref.SourceDocID = sourceDocID
+	ref.Type = refType
+	ref.ID = refID
+	if mapping.BySourceDocIDAndType[sourceDocID] == nil {
+		mapping.BySourceDocIDAndType[sourceDocID] = map[string][]Ref{}
+	}
+	if !hasMappedRef(mapping.BySourceDocIDAndType[sourceDocID][refType], ref) {
+		mapping.BySourceDocIDAndType[sourceDocID][refType] = append(mapping.BySourceDocIDAndType[sourceDocID][refType], ref)
+	}
+	if defaultForSource || mapping.BySourceDocID[sourceDocID].ID == "" {
+		mapping.BySourceDocID[sourceDocID] = ref
+	}
+}
+
+func hasMappedRef(refs []Ref, want Ref) bool {
+	for _, ref := range refs {
+		if strings.TrimSpace(ref.Type) == strings.TrimSpace(want.Type) &&
+			strings.TrimSpace(ref.ID) == strings.TrimSpace(want.ID) {
+			return true
+		}
+	}
+	return false
+}
+
+func mergeKnowledgeMapping(dst *KnowledgeMapping, src KnowledgeMapping) {
+	for id, parts := range src.Partitions {
+		if dst.Partitions == nil {
+			dst.Partitions = map[string][]ImportedPartition{}
+		}
+		dst.Partitions[id] = append([]ImportedPartition(nil), parts...)
+	}
+	for _, ref := range src.BySourceDocID {
+		addSourceMapping(dst, ref, true)
+	}
+	for sourceDocID, byType := range src.BySourceDocIDAndType {
+		for refType, refs := range byType {
+			for _, ref := range refs {
+				if ref.SourceDocID == "" {
+					ref.SourceDocID = sourceDocID
+				}
+				if ref.Type == "" {
+					ref.Type = refType
+				}
+				addSourceMapping(dst, ref, false)
+			}
+		}
+	}
+
+}
+
+func mergeFilteredKnowledgeMapping(dst *KnowledgeMapping, src KnowledgeMapping, keepSourceDocIDs map[string]struct{}) {
+	if len(keepSourceDocIDs) == 0 {
+		mergeKnowledgeMapping(dst, src)
+		return
+	}
+	for id, parts := range src.Partitions {
+		if dst.Partitions == nil {
+			dst.Partitions = map[string][]ImportedPartition{}
+		}
+		dst.Partitions[id] = append([]ImportedPartition(nil), parts...)
+	}
+	for sourceDocID, ref := range src.BySourceDocID {
+		if _, ok := keepSourceDocIDs[sourceDocID]; ok {
+			addSourceMapping(dst, ref, true)
+		}
+	}
+	for sourceDocID, byType := range src.BySourceDocIDAndType {
+		if _, ok := keepSourceDocIDs[sourceDocID]; !ok {
+			continue
+		}
+		for refType, refs := range byType {
+			for _, ref := range refs {
+				if ref.SourceDocID == "" {
+					ref.SourceDocID = sourceDocID
+				}
+				if ref.Type == "" {
+					ref.Type = refType
+				}
+				addSourceMapping(dst, ref, false)
+			}
+		}
+	}
+
+}
+
+func resolveSourceMapping(mapping KnowledgeMapping, sourceDocID, refType string) (Ref, bool) {
+	sourceDocID = strings.TrimSpace(sourceDocID)
+	refType = strings.TrimSpace(refType)
+	if refType == "source_doc" {
+		refType = ""
+	}
+	if sourceDocID == "" {
+		return Ref{}, false
+	}
+	if refType != "" && mapping.BySourceDocIDAndType != nil {
+		if byType := mapping.BySourceDocIDAndType[sourceDocID]; byType != nil {
+			refs := byType[refType]
+			switch len(refs) {
+			case 0:
+				return Ref{}, false
+			case 1:
+				resolved := refs[0]
+				if strings.TrimSpace(resolved.ID) != "" {
+					return resolved, true
+				}
+			}
+			if len(mapping.Partitions[sourceDocID]) > 0 && (refType == "fragment" || refType == "evidence") {
+				resolved, ok := mapping.BySourceDocID[sourceDocID]
+				if ok && resolved.ID != "" {
+					return resolved, true
+				}
+			}
+			return Ref{}, false
+		}
+	}
+	resolved, ok := mapping.BySourceDocID[sourceDocID]
+	if !ok || strings.TrimSpace(resolved.ID) == "" {
+		return Ref{}, false
+	}
+	if refType != "" && strings.TrimSpace(resolved.Type) != "" && resolved.Type != refType {
+		return Ref{}, false
+	}
+	if resolved.Type == "" {
+		resolved.Type = refType
+	}
+	return resolved, true
+}
+
+func sameRefSet(a, b []Ref) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	remaining := map[string]int{}
+	for _, ref := range a {
+		remaining[mappingRefKey(ref)]++
+	}
+	for _, ref := range b {
+		key := mappingRefKey(ref)
+		if remaining[key] == 0 {
+			return false
+		}
+		remaining[key]--
+	}
+	return true
+}
+
+func mappingRefKey(ref Ref) string {
+	return strings.TrimSpace(ref.Type) + "\x00" + strings.TrimSpace(ref.ID)
+}
+
+func validateRequiredQRelMappings(qrels map[string]QRel, suite []SuiteCase, mapping KnowledgeMapping) error {
+	mapping = scoringMapping(mapping)
+	for _, suiteCase := range suite {
+		qrel, ok := qrels[suiteCase.CaseID]
+		if !ok {
+			return fmt.Errorf("suite case %q missing from seed qrels", suiteCase.CaseID)
+		}
+		for _, refs := range []struct {
+			label string
+			refs  []Ref
+		}{
+			{"required", qrel.RequiredRefs},
+			{"required evidence", qrel.RequiredEvidenceRefs},
+			{"bad", qrel.BadRefs},
+			{"bad evidence", qrel.BadEvidenceRefs},
+		} {
+			for _, ref := range refs.refs {
+				if strings.TrimSpace(ref.SourceDocID) == "" {
+					continue
+				}
+				ref.Type = scoringRefType(ref.Type)
+				if _, ok := resolveRef(ref, mapping); !ok {
+					return fmt.Errorf("%s qrel ref for case %q is unmapped after import: type=%s source_doc_id=%s", refs.label, suiteCase.CaseID, ref.Type, ref.SourceDocID)
+				}
+			}
+		}
+	}
+	return nil
+}

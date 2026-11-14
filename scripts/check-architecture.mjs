@@ -25,7 +25,7 @@ export {
 
 const supportedGoProfiles = Object.freeze({
   production: Object.freeze({ name: "production", tags: "", production: true }),
-  evaluation: Object.freeze({ name: "evaluation", tags: "evaluation", production: false }),
+  evaluation: Object.freeze({ name: "evaluation", tags: "", production: false }),
 });
 const supportedGoProfileNames = Object.freeze(Object.keys(supportedGoProfiles));
 

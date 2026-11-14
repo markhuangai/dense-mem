@@ -9,7 +9,7 @@ usage() {
 usage: scripts/coverage-report.sh --transitional | --complete | --complete-part core|postgres|postgres-support | --merge-complete
 
 --transitional runs the legacy Go inventory. --complete accounts for every
-first-party root-module package, the evaluation profile, focused PostgreSQL
+first-party root-module package, runner packages, focused PostgreSQL
 application coverage, the nested E2E module, and cross-package execution, then
 enforces the strict above-90-percent gate on the deduplicated merged inventory.
 --complete-part core also produces the separately sealed supporting PostgreSQL
@@ -145,23 +145,20 @@ complete_paths() {
 	local support_directory
 	support_directory="$(complete_part_dir postgres-support)"
 	root_profile="${COVERAGE_DIR}/core/go-root-complete.raw"
-	evaluation_profile="${COVERAGE_DIR}/core/go-evaluation-complete.raw"
 	postgres_profile="${COVERAGE_DIR}/postgres/go-postgres-complete.raw"
 	evidence_only_profile="${support_directory}/go-evidence-only-complete.raw"
 	audit_profile="${support_directory}/go-audit-complete.raw"
 	session_profile="${support_directory}/go-session-complete.raw"
 	e2e_profile="${COVERAGE_DIR}/core/go-e2e-complete.raw"
 	root_dedup_profile="${COVERAGE_DIR}/go-root-complete.out"
-	evaluation_dedup_profile="${COVERAGE_DIR}/go-evaluation-complete.out"
 	postgres_dedup_profile="${COVERAGE_DIR}/go-postgres-complete.out"
 	e2e_dedup_profile="${COVERAGE_DIR}/go-e2e-complete.out"
 	merged_profile="${COVERAGE_DIR}/go-complete.out"
 	root_report="${COVERAGE_DIR}/go-root-complete.txt"
-	evaluation_report="${COVERAGE_DIR}/go-evaluation-complete.txt"
 	postgres_report="${COVERAGE_DIR}/go-postgres-complete.txt"
 	e2e_report="${COVERAGE_DIR}/go-e2e-complete.txt"
 	complete_report="${COVERAGE_DIR}/go-complete.txt"
-	core_profiles=("${root_profile}" "${evaluation_profile}" "${e2e_profile}")
+	core_profiles=("${root_profile}" "${e2e_profile}")
 	postgres_profiles=("${postgres_profile}")
 	postgres_support_profiles=("${evidence_only_profile}" "${audit_profile}" "${session_profile}")
 }
@@ -226,26 +223,21 @@ run_complete_part() {
 	directory="$(complete_part_dir "$part")"
 	mkdir -p "${directory}"
 	rm -f -- "${directory}/identity.txt" "${directory}/profiles.sha256"
-	local -a packages evaluation_packages cover_packages evaluation_cover_packages
+	local -a packages cover_packages
 	mapfile -t packages < <(scripts/go-packages.sh --coverage | grep -v '/cmd/server$')
-	mapfile -t evaluation_packages < <(scripts/go-packages.sh --coverage --tags evaluation | grep -v '/cmd/server$')
 	cover_packages=("${packages[@]}")
-	evaluation_cover_packages=("${evaluation_packages[@]}")
 	local coverpkg
 	coverpkg="$(IFS=,; printf '%s' "${cover_packages[*]}")"
-	local evaluation_coverpkg
-	evaluation_coverpkg="$(IFS=,; printf '%s' "${evaluation_cover_packages[*]}")"
 	if [[ "$part" == core ]]; then
 		printf '%s\n' "${packages[@]}"
 		go test "${packages[@]}" -timeout=30m -covermode=atomic -coverpkg="${coverpkg}" -coverprofile="${root_profile}" -count=1
-		go test -tags evaluation "${evaluation_packages[@]}" -timeout=30m -covermode=atomic -coverpkg="${evaluation_coverpkg}" -coverprofile="${evaluation_profile}" -count=1
 		go -C cmd/e2e test ./... -covermode=atomic -coverprofile="${e2e_profile}" -count=1
 		seal_complete_part core "${core_profiles[@]}"
 		run_complete_part postgres-support
 	elif [[ "$part" == postgres ]]; then
 		local ordinary_profile="${directory}/go-postgres-ordinary.raw" parallel_profile="${directory}/go-postgres-parallel.raw"
 		DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test -tags integration ./internal/ontology/postgres ./cmd/internal/serverapp \
-			-run '^(TestOntologyMaintenance(Finalization.*|Parallel.*|Revalidation.*|CurrentReceiptCompletion|DiscoveryCommittedDiagnostics|Cohort|MatchingCohort|RegenerationFailureRetry|ProviderPauseDrain|AccountingFailurePreventsPublication|ContextConfigurationAndManualReuse|BudgetRetirement.*|GlobalAccounting|LeaseInterruptionReturnsPending|ProgressBeyondFormerBudgets|ProviderFailureReleasesCapacity|DirectOrganizationRejectsMissingContext|ControlInterruptionResumesSameWindow|PauseCommandsAndWindows|OperatorHTTPAndScheduler|CommandAuditIsAtomic)|TestOntologyMatching.*|TestOntologyAutomaticRetirementPreservesGroupingOverrides|TestOntologyCurrentReadersDistinguishDependencyAndSourceChanges|TestOntologyGroupingOverridesPreserveAssignmentFreshness|TestOntologyCurrentReadersReportCanonicalFingerprintAndVersionChanges|TestOntologyVocabularyUsesCurrentCandidateWindow|TestOntologyVocabularyWindowPreservesTeamIsolationAndNameReuse|TestOntologyFollowupCohort|TestOntologyMaintenanceBoundedCompletionUsesPersistedOutcomes|TestOntologyMaintenanceEarlierAmbiguityKeepsBoundedRunIncomplete|TestOntologyMaintenanceScheduledRecoveryClearsCurrentReason|TestOntologyMaintenanceCompletedRunDoesNotHideUnrelatedFailures|TestOntologyMaintenanceConcurrentInterruptionPreservesRunWork|TestOntologyMixedSeparationOverrideProtectsEvidenceGroups|TestOntologyManagement.*|TestOntologySemantic.*|TestServerLifecycle.*|TestRunActiveServerCanceledBeforeWorkersDoesNotBuildRuntimeWorker|TestPrivateMemoryCommandsInspectFreshDatabaseWithoutStartingOrMigrating|TestPrivateMemoryPreflightCommandBoundsLegacyReportAndReturnsBlockers|TestPairedEvaluation.*|TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads|TestOntologyCoverageFailureWitnesses)$' \
+			-run '^(TestOntologyMaintenance(Finalization.*|Parallel.*|Revalidation.*|CurrentReceiptCompletion|DiscoveryCommittedDiagnostics|Cohort|MatchingCohort|RegenerationFailureRetry|ProviderPauseDrain|AccountingFailurePreventsPublication|ContextConfigurationAndManualReuse|BudgetRetirement.*|GlobalAccounting|LeaseInterruptionReturnsPending|ProgressBeyondFormerBudgets|ProviderFailureReleasesCapacity|DirectOrganizationRejectsMissingContext|ControlInterruptionResumesSameWindow|PauseCommandsAndWindows|OperatorHTTPAndScheduler|CommandAuditIsAtomic)|TestOntologyMatching.*|TestOntologyAutomaticRetirementPreservesGroupingOverrides|TestOntologyCurrentReadersDistinguishDependencyAndSourceChanges|TestOntologyGroupingOverridesPreserveAssignmentFreshness|TestOntologyCurrentReadersReportCanonicalFingerprintAndVersionChanges|TestOntologyVocabularyUsesCurrentCandidateWindow|TestOntologyVocabularyWindowPreservesTeamIsolationAndNameReuse|TestOntologyFollowupCohort|TestOntologyMaintenanceBoundedCompletionUsesPersistedOutcomes|TestOntologyMaintenanceEarlierAmbiguityKeepsBoundedRunIncomplete|TestOntologyMaintenanceScheduledRecoveryClearsCurrentReason|TestOntologyMaintenanceCompletedRunDoesNotHideUnrelatedFailures|TestOntologyMaintenanceConcurrentInterruptionPreservesRunWork|TestOntologyMixedSeparationOverrideProtectsEvidenceGroups|TestOntologyManagement.*|TestOntologySemantic.*|TestServerLifecycle.*|TestRunActiveServerCanceledBeforeWorkersDoesNotBuildRuntimeWorker|TestPrivateMemoryCommandsInspectFreshDatabaseWithoutStartingOrMigrating|TestPrivateMemoryPreflightCommandBoundsLegacyReportAndReturnsBlockers|TestRunnerCampaign.*|TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads|TestOntologyCoverageFailureWitnesses)$' \
 			-skip '^(TestOntologyMaintenanceCoalescingMeasurement|TestOntologyMaintenanceRevalidationDiscoveryMeasurement|TestOntologyMaintenanceParallel.*)$' \
 			-count=1 -timeout=30m -covermode=atomic -coverpkg="${coverpkg}" -coverprofile="${ordinary_profile}"
 		DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test -tags integration ./internal/ontology/postgres \
@@ -269,12 +261,10 @@ merge_complete() {
 	complete_paths
 	verify_complete_parts
 	merge_profiles "${root_dedup_profile}" "${root_profile}"
-	merge_profiles "${evaluation_dedup_profile}" "${evaluation_profile}"
 	merge_profiles "${postgres_dedup_profile}" "${postgres_profile}" "${evidence_only_profile}" "${audit_profile}" "${session_profile}"
 	merge_profiles "${e2e_dedup_profile}" "${e2e_profile}"
-	merge_profiles "${merged_profile}" "${root_dedup_profile}" "${evaluation_dedup_profile}" "${postgres_dedup_profile}" "${e2e_dedup_profile}"
+	merge_profiles "${merged_profile}" "${root_dedup_profile}" "${postgres_dedup_profile}" "${e2e_dedup_profile}"
 	report_total "${root_dedup_profile}" "${root_report}" "${ROOT_DIR}"
-	report_total "${evaluation_dedup_profile}" "${evaluation_report}" "${ROOT_DIR}"
 	report_total "${postgres_dedup_profile}" "${postgres_report}" "${ROOT_DIR}"
 	report_total "${e2e_dedup_profile}" "${e2e_report}" "${ROOT_DIR}/cmd/e2e"
 
@@ -283,8 +273,6 @@ merge_complete() {
 	{
 		printf 'production profile\n'
 		cat "${root_report}"
-		printf '\nevaluation profile\n'
-		cat "${evaluation_report}"
 		printf '\nPostgreSQL application profile\n'
 		cat "${postgres_report}"
 		printf '\ncmd/e2e module\n'

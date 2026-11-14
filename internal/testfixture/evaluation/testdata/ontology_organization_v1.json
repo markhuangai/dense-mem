@@ -1,0 +1,19 @@
+{
+  "schema_version": "dense-mem.ontology.organization_source_lock.v1",
+  "provenance": "Synthetic manual organization judgments authored for issue #241; no external dataset or factual intake.",
+  "generator": "internal/testfixture/evaluation/organization_cohort.go",
+  "generator_sha256": "sha256:9a2e205c07810dbc5bdbcd3684acfcb8bc3a99bab6b8f4806e0a32d3dc13dfcd",
+  "case_count": 9,
+  "source_count": 19,
+  "judgment_dimensions": [
+    "duplicates",
+    "paraphrases",
+    "partial overlap",
+    "actors",
+    "polarity",
+    "time",
+    "qualifications",
+    "manager separation",
+    "manager grouping"
+  ]
+}

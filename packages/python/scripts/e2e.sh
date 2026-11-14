@@ -54,8 +54,8 @@ cp -a /workspace/packages/python/examples "$OUTPUT/examples"
 export DENSEMEM_E2E_EXAMPLES="$OUTPUT/examples"
 cd "$OUTPUT"
 if [[ "${1:-python_client}" == google_adk_memory ]]; then
-  python3 /workspace/tests/eval/scripts/generate_session_ingest_v1.py --output "$OUTPUT/cohort.json"
-  "$OUTPUT/client/bin/python" /workspace/tests/eval/scripts/check_adk_mapping.py "$OUTPUT/cohort.json" "$OUTPUT/mapping.json"
+  python3 /workspace/packages/python/scripts/generate_session_ingest_v1.py --output "$OUTPUT/cohort.json"
+  "$OUTPUT/client/bin/python" /workspace/packages/python/scripts/check_adk_mapping.py "$OUTPUT/cohort.json" "$OUTPUT/mapping.json"
   export DENSEMEM_ADK_MAPPING_REPORT="$OUTPUT/mapping.json"
   "$OUTPUT/client/bin/python" "$OUTPUT/tests/e2e_adk.py"
 elif [[ "${1:-python_client}" == langchain_retriever ]]; then

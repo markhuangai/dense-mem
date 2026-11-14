@@ -1,2 +1,0 @@
-ir-measures==0.4.3
-pytrec-eval-terrier==0.5.11

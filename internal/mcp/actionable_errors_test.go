@@ -125,24 +125,6 @@ func TestSDKUnavailableAndSerializationFailuresAreActionable(t *testing.T) {
 	}
 }
 
-func TestSDKEvaluationToolFailureIsStructuredActionableError(t *testing.T) {
-	reg := registry.New()
-	require.NoError(t, reg.Register(registry.Tool{
-		Name:        "eval_run_recall_case",
-		InputSchema: map[string]any{"type": "object"},
-		Invoke: func(context.Context, string, map[string]any) (map[string]any, error) {
-			return nil, errors.New("evaluation backend unavailable")
-		},
-	}))
-	server := NewServer(reg, "profile-a", nil)
-	result, err := server.sdkToolHandler("eval_run_recall_case")(context.Background(), nil)
-	require.NoError(t, err)
-	require.True(t, result.IsError)
-	var data map[string]any
-	require.NoError(t, json.Unmarshal([]byte(result.Content[0].(*sdkmcp.TextContent).Text), &data))
-	require.Equal(t, "provider_unavailable", data["code"])
-}
-
 func contractToolByName(t *testing.T, name string) registry.Tool {
 	t.Helper()
 	for _, tool := range registry.ContractTools() {

@@ -19,12 +19,35 @@ on:
     secrets:
       CLOUDFLARE_API_TOKEN:
         required: true
+      CLOUDFLARE_ACCOUNT_ID:
+        required: false
+      DENSE_MEM_EVAL_MODEL:
+        required: false
+      DENSE_MEM_EVAL_CONTEXT_WINDOW_TOKENS:
+        required: false
+      DENSE_MEM_EVAL_VERIFIER_URL:
+        required: false
+      DENSE_MEM_EVAL_EMBED_URL:
+        required: false
+      DENSE_MEM_EVAL_API_KEY:
+        required: false
+      DENSE_MEM_EVAL_EMBED_API_KEY:
+        required: false
   workflow_dispatch:
     inputs:
       pr_number:
         description: Own same-repository PR with a successful trusted preview receipt
         required: true
         type: number
+      evaluation:
+        description: Optional runner-only evaluation; full E2E remains the default
+        type: choice
+        default: none
+        options: [none, fixtures, live, replay]
+      replay_run_id:
+        description: Retained evaluation workflow run for runtime-free replay
+        type: string
+        default: ''
 
 permissions:
   actions: read
@@ -67,6 +90,8 @@ jobs:
           INPUT_REPOSITORY: ${{ inputs.source_repository }}
           INPUT_REVISION: ${{ inputs.source_revision }}
           INPUT_PR_NUMBER: ${{ inputs.pr_number }}
+          INPUT_EVALUATION: ${{ inputs.evaluation }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
         with:
           script: |
             const policy = require("./.ci-policy/.github/scripts/image-release-policy.cjs");
@@ -90,6 +115,13 @@ jobs:
                   pull.head.repo.full_name.toLowerCase() !== fullName.toLowerCase() ||
                   context.ref !== `refs/heads/${pull.head.ref}` || context.sha !== pull.head.sha) {
                 throw new Error("manual trial must target the actor's own current same-repository PR head");
+              }
+              const evaluation = process.env.INPUT_EVALUATION || "none";
+              if (!["none", "fixtures", "live", "replay"].includes(evaluation)) throw new Error("invalid evaluation mode");
+              if (evaluation !== "none") {
+                if (Number(context.runAttempt) !== 1) throw new Error("evaluation job reruns are unsupported");
+                const { data: triggeringPermission } = await github.rest.repos.getCollaboratorPermissionLevel({ owner, repo, username: process.env.TRIGGERING_ACTOR });
+                if (triggeringPermission.permission !== "admin") throw new Error("evaluation requires initiating and triggering admins");
               }
               core.setOutput("migration_base_ref", pull.base.sha);
               const statuses = await github.paginate(github.rest.repos.listCommitStatusesForRef, {
@@ -118,6 +150,14 @@ jobs:
               const comments = await github.paginate(github.rest.issues.listComments, {
                 owner, repo, issue_number: number, per_page: 100,
               });
+              if (evaluation !== "none") {
+                const full = statuses.find((status) => status.context === "Production image E2E");
+                if (!full || full.state !== "success" || full.creator?.login !== "github-actions[bot]" ||
+                    workflowRun.conclusion !== "success" ||
+                    full.target_url !== `${context.serverUrl}/${fullName}/actions/runs/${workflowRun.id}`) {
+                  throw new Error("evaluation requires the successful current-head production-image receipt");
+                }
+              }
               const imageReceipt = policy.selectPreviewReceipt({ comments, pull, status: receipt.status, repository: fullName });
               image = imageReceipt.image;
               sourceRepository = pull.head.repo.full_name;
@@ -173,7 +213,7 @@ jobs:
   ci-trial:
     name: Candidate repository CI
     needs: authorize
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && (inputs.evaluation == '' || inputs.evaluation == 'none')
     permissions:
       contents: read
     uses: ./.github/workflows/ci-shared.yml
@@ -185,6 +225,7 @@ jobs:
   prechecks:
     name: Rootless controller precheck
     needs: authorize
+    if: inputs.evaluation == '' || inputs.evaluation == 'none'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -229,6 +270,7 @@ jobs:
   database-prechecks:
     name: PostgreSQL precheck shard ${{ matrix.shard }}
     needs: authorize
+    if: inputs.evaluation == '' || inputs.evaluation == 'none'
     strategy:
       fail-fast: false
       max-parallel: 7
@@ -301,9 +343,30 @@ jobs:
     secrets:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
+  evaluation:
+    name: Public RAG evaluation
+    needs: authorize
+    if: github.event_name == 'workflow_dispatch' && inputs.evaluation != '' && inputs.evaluation != 'none'
+    uses: ./.github/workflows/evaluation.yml
+    with:
+      image: ${{ needs.authorize.outputs.image }}
+      source_repository: ${{ needs.authorize.outputs.source_repository }}
+      source_revision: ${{ needs.authorize.outputs.source_revision }}
+      mode: ${{ inputs.evaluation }}
+      replay_run_id: ${{ inputs.replay_run_id }}
+      model: dense-mem-testing
+      context_window_tokens: '500000'
+    secrets:
+      eval-model: ${{ secrets.DENSE_MEM_EVAL_MODEL }}
+      eval-context-window: ${{ secrets.DENSE_MEM_EVAL_CONTEXT_WINDOW_TOKENS }}
+      eval-verifier-url: ${{ '' || vars.DENSE_MEM_EVAL_VERIFIER_URL || secrets.DENSE_MEM_EVAL_VERIFIER_URL }}
+      eval-embedding-url: ${{ (vars.CLOUDFLARE_ACCOUNT_ID != '' || secrets.CLOUDFLARE_ACCOUNT_ID != '') && format('https://api.cloudflare.com/client/v4/accounts/{0}/ai/v1', vars.CLOUDFLARE_ACCOUNT_ID || secrets.CLOUDFLARE_ACCOUNT_ID) || vars.DENSE_MEM_EVAL_EMBED_URL || secrets.DENSE_MEM_EVAL_EMBED_URL }}
+      eval-api-key: ${{ secrets.DENSE_MEM_EVAL_API_KEY }}
+      eval-embedding-api-key: ${{ secrets.DENSE_MEM_EVAL_EMBED_API_KEY }}
+
   report:
     name: Aggregate production E2E results
-    needs: [authorize, prechecks, database-prechecks, scenarios, ci-trial]
+    needs: [authorize, prechecks, database-prechecks, scenarios, ci-trial, evaluation]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -317,6 +380,8 @@ jobs:
           SCENARIO_RESULT: ${{ needs.scenarios.result }}
           CI_TRIAL_RESULT: ${{ needs.ci-trial.result }}
           EVENT_NAME: ${{ github.event_name }}
+          EVALUATION_MODE: ${{ inputs.evaluation }}
+          EVALUATION_RESULT: ${{ needs.evaluation.result }}
           IMAGE: ${{ needs.authorize.outputs.image }}
           SOURCE_REVISION: ${{ needs.authorize.outputs.source_revision }}
         run: |
@@ -335,6 +400,10 @@ jobs:
             echo "| Scenario matrix | ${SCENARIO_RESULT} |"
             echo "| Candidate repository CI (manual trials) | ${CI_TRIAL_RESULT} |"
           } >> "${GITHUB_STEP_SUMMARY}"
+          if [[ "${EVALUATION_MODE}" != "" && "${EVALUATION_MODE}" != none ]]; then
+            [[ "${AUTH_RESULT}" == success && "${EVALUATION_RESULT}" == success ]]
+            exit
+          fi
           for result in "${AUTH_RESULT}" "${PRECHECK_RESULT}" "${DATABASE_PRECHECK_RESULT}" "${SCENARIO_RESULT}"; do
             [[ "${result}" == "success" ]] || exit 1
           done

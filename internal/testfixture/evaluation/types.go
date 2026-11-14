@@ -1,0 +1,208 @@
+package evaluation
+
+import "time"
+
+const (
+	SeedSchemaVersion   = "dense-mem.eval.seed.v1"
+	SeedSchemaVersionV2 = "dense-mem.eval.seed.v2"
+)
+
+// SeedManifest preserves the frozen synthetic regression pack serialization.
+type SeedManifest struct {
+	SchemaVersion string         `json:"schema_version"`
+	SeedID        string         `json:"seed_id"`
+	Description   string         `json:"description,omitempty"`
+	CorpusFile    string         `json:"corpus_file"`
+	CasesFile     string         `json:"cases_file"`
+	QrelsFile     string         `json:"qrels_file"`
+	Counts        map[string]int `json:"counts,omitempty"`
+	Sources       []SeedSource   `json:"sources,omitempty"`
+}
+
+type SeedSource struct {
+	Name    string `json:"name"`
+	URL     string `json:"url,omitempty"`
+	License string `json:"license,omitempty"`
+	Notes   string `json:"notes,omitempty"`
+}
+
+type CorpusItem struct {
+	SourceDocID           string         `json:"source_doc_id"`
+	Title                 string         `json:"title,omitempty"`
+	Content               string         `json:"content"`
+	SourceDataset         string         `json:"source_dataset,omitempty"`
+	SourceType            string         `json:"source_type,omitempty"`
+	Authority             string         `json:"authority,omitempty"`
+	SourceQuality         float64        `json:"source_quality,omitempty"`
+	Labels                []string       `json:"labels,omitempty"`
+	Metadata              map[string]any `json:"metadata,omitempty"`
+	RetainedRelationships []any          `json:"relationships,omitempty"`
+}
+
+type Case struct {
+	CaseID           string   `json:"case_id"`
+	Query            string   `json:"query"`
+	TaskType         string   `json:"task_type,omitempty"`
+	Difficulty       string   `json:"difficulty,omitempty"`
+	Slices           []string `json:"slices,omitempty"`
+	ExpectedBehavior string   `json:"expected_behavior,omitempty"`
+	ValidAt          string   `json:"valid_at,omitempty"`
+	KnownAt          string   `json:"known_at,omitempty"`
+	Limit            int      `json:"limit,omitempty"`
+}
+
+type Ref struct {
+	EquivalentEvidenceIDs []string `json:"equivalent_evidence_ids,omitempty"`
+	EquivalentsTruncated  bool     `json:"equivalents_truncated,omitempty"`
+	Type                  string   `json:"type"`
+	ID                    string   `json:"id,omitempty"`
+	SourceDocID           string   `json:"source_doc_id,omitempty"`
+	Rank                  int      `json:"rank,omitempty"`
+	Grade                 float64  `json:"grade,omitempty"`
+	Reason                string   `json:"reason,omitempty"`
+}
+
+type QRel struct {
+	CaseID               string `json:"case_id"`
+	RequiredRefs         []Ref  `json:"required_refs"`
+	AcceptableRefs       []Ref  `json:"acceptable_refs,omitempty"`
+	BadRefs              []Ref  `json:"bad_refs,omitempty"`
+	RequiredEvidenceRefs []Ref  `json:"required_evidence_refs,omitempty"`
+	BadEvidenceRefs      []Ref  `json:"bad_evidence_refs,omitempty"`
+}
+
+type AnswerLabel struct {
+	CaseID             string   `json:"case_id"`
+	ReferenceAnswer    string   `json:"reference_answer,omitempty"`
+	MustInclude        []string `json:"must_include,omitempty"`
+	MustNotInclude     []string `json:"must_not_include,omitempty"`
+	ExpectedBehavior   string   `json:"expected_behavior,omitempty"`
+	GroundednessPolicy string   `json:"groundedness_policy,omitempty"`
+}
+
+type SuiteCase struct {
+	CaseID string   `json:"case_id"`
+	Weight float64  `json:"weight,omitempty"`
+	Slices []string `json:"slices,omitempty"`
+}
+
+type KnowledgeMapping struct {
+	Partitions           map[string][]ImportedPartition `json:"partitions,omitempty"`
+	BySourceDocID        map[string]Ref                 `json:"by_source_doc_id"`
+	BySourceDocIDAndType map[string]map[string][]Ref    `json:"by_source_doc_id_and_type,omitempty"`
+}
+
+type ImportedPartition struct {
+	EvidenceID     string `json:"evidence_id"`
+	OccurrenceID   string `json:"occurrence_id"`
+	SourceItemID   string `json:"source_item_id"`
+	PartitionIndex int    `json:"partition_index"`
+	SpanStart      int    `json:"span_start"`
+	SpanEnd        int    `json:"span_end"`
+	ContentHash    string `json:"content_hash"`
+}
+
+type RecallTrace struct {
+	MeasurementCaptureID string         `json:"measurement_capture_id,omitempty"`
+	ClientOperationID    string         `json:"client_operation_id,omitempty"`
+	ClientElapsedMS      *float64       `json:"client_elapsed_ms,omitempty"`
+	ClientPhase          string         `json:"client_phase,omitempty"`
+	CaseID               string         `json:"case_id"`
+	Query                string         `json:"query"`
+	RankedRefs           []Ref          `json:"ranked_refs"`
+	ContextRefs          []Ref          `json:"context_refs,omitempty"`
+	ContextEvidenceRefs  []Ref          `json:"context_evidence_refs,omitempty"`
+	LatencyMS            int64          `json:"latency_ms,omitempty"`
+	ContextBlockChars    int            `json:"context_block_chars,omitempty"`
+	Raw                  map[string]any `json:"raw,omitempty"`
+}
+
+type RetrievalScore struct {
+	CaseID                    string  `json:"case_id"`
+	K                         int     `json:"k"`
+	RelevantAtK               int     `json:"relevant_at_k"`
+	RelevantTotal             int     `json:"relevant_total"`
+	BadAtK                    int     `json:"bad_at_k"`
+	RecallAtK                 float64 `json:"recall_at_k"`
+	MRR                       float64 `json:"mrr"`
+	NDCGAtK                   float64 `json:"ndcg_at_k"`
+	FirstRequiredRank         int     `json:"first_required_rank,omitempty"`
+	FirstBadRank              int     `json:"first_bad_rank,omitempty"`
+	MissingRequired           []Ref   `json:"missing_required_refs,omitempty"`
+	BadRefsAtK                []Ref   `json:"bad_refs_at_k,omitempty"`
+	ContextScored             bool    `json:"context_scored"`
+	ContextRelevantAtK        int     `json:"context_relevant_at_k"`
+	ContextRelevantTotal      int     `json:"context_relevant_total"`
+	ContextBadAtK             int     `json:"context_bad_at_k"`
+	ContextRecallAtK          float64 `json:"context_recall_at_k"`
+	ContextMRR                float64 `json:"context_mrr"`
+	ContextNDCGAtK            float64 `json:"context_ndcg_at_k"`
+	ContextFirstRequiredRank  int     `json:"context_first_required_rank,omitempty"`
+	ContextFirstBadRank       int     `json:"context_first_bad_rank,omitempty"`
+	ContextMissingRequired    []Ref   `json:"context_missing_required_refs,omitempty"`
+	ContextBadRefsAtK         []Ref   `json:"context_bad_refs_at_k,omitempty"`
+	EvidenceScored            bool    `json:"evidence_scored"`
+	EvidenceRelevantAtK       int     `json:"evidence_relevant_at_k"`
+	EvidenceRelevantTotal     int     `json:"evidence_relevant_total"`
+	EvidenceBadAtK            int     `json:"evidence_bad_at_k"`
+	EvidenceRecallAtK         float64 `json:"evidence_recall_at_k"`
+	EvidenceMRR               float64 `json:"evidence_mrr"`
+	EvidenceNDCGAtK           float64 `json:"evidence_ndcg_at_k"`
+	EvidenceFirstRequiredRank int     `json:"evidence_first_required_rank,omitempty"`
+	EvidenceFirstBadRank      int     `json:"evidence_first_bad_rank,omitempty"`
+	EvidenceMissingRequired   []Ref   `json:"evidence_missing_required_refs,omitempty"`
+	EvidenceBadRefsAtK        []Ref   `json:"evidence_bad_refs_at_k,omitempty"`
+	UnmappedSourceRefs        []Ref   `json:"unmapped_source_refs,omitempty"`
+	LatencyMS                 int64   `json:"latency_ms,omitempty"`
+}
+
+type Summary struct {
+	RunID                     string              `json:"run_id"`
+	Mode                      string              `json:"mode"`
+	SeedID                    string              `json:"seed_id"`
+	SeedHash                  string              `json:"seed_hash"`
+	SuitePath                 string              `json:"suite_path"`
+	CaseCount                 int                 `json:"case_count"`
+	ScoredCaseCount           int                 `json:"scored_case_count"`
+	ContextScoredCaseCount    int                 `json:"context_scored_case_count"`
+	EvidenceScoredCaseCount   int                 `json:"evidence_scored_case_count"`
+	UnmappedSourceRefs        int                 `json:"unmapped_source_refs"`
+	AverageRecallAtK          float64             `json:"average_recall_at_k"`
+	AverageMRR                float64             `json:"average_mrr"`
+	AverageNDCGAtK            float64             `json:"average_ndcg_at_k"`
+	AverageBadAtK             float64             `json:"average_bad_at_k"`
+	RequiredRank1Rate         float64             `json:"required_rank1_rate"`
+	BadRank1Rate              float64             `json:"bad_rank1_rate"`
+	AverageContextRecallAtK   float64             `json:"average_context_recall_at_k"`
+	AverageContextMRR         float64             `json:"average_context_mrr"`
+	AverageContextNDCGAtK     float64             `json:"average_context_ndcg_at_k"`
+	AverageContextBadAtK      float64             `json:"average_context_bad_at_k"`
+	ContextRequiredRank1Rate  float64             `json:"context_required_rank1_rate"`
+	ContextBadRank1Rate       float64             `json:"context_bad_rank1_rate"`
+	AverageEvidenceRecallAtK  float64             `json:"average_evidence_recall_at_k"`
+	AverageEvidenceMRR        float64             `json:"average_evidence_mrr"`
+	AverageEvidenceNDCGAtK    float64             `json:"average_evidence_ndcg_at_k"`
+	AverageEvidenceBadAtK     float64             `json:"average_evidence_bad_at_k"`
+	EvidenceRequiredRank1Rate float64             `json:"evidence_required_rank1_rate"`
+	EvidenceBadRank1Rate      float64             `json:"evidence_bad_rank1_rate"`
+	Slices                    map[string]SliceAvg `json:"slices,omitempty"`
+	CreatedAt                 time.Time           `json:"created_at"`
+}
+
+type SliceAvg struct {
+	CaseCount                int     `json:"case_count"`
+	ContextScoredCaseCount   int     `json:"context_scored_case_count"`
+	EvidenceScoredCaseCount  int     `json:"evidence_scored_case_count"`
+	AverageRecallAtK         float64 `json:"average_recall_at_k"`
+	AverageMRR               float64 `json:"average_mrr"`
+	AverageNDCGAtK           float64 `json:"average_ndcg_at_k"`
+	AverageBadAtK            float64 `json:"average_bad_at_k"`
+	AverageContextRecallAtK  float64 `json:"average_context_recall_at_k"`
+	AverageContextMRR        float64 `json:"average_context_mrr"`
+	AverageContextNDCGAtK    float64 `json:"average_context_ndcg_at_k"`
+	AverageContextBadAtK     float64 `json:"average_context_bad_at_k"`
+	AverageEvidenceRecallAtK float64 `json:"average_evidence_recall_at_k"`
+	AverageEvidenceMRR       float64 `json:"average_evidence_mrr"`
+	AverageEvidenceNDCGAtK   float64 `json:"average_evidence_ndcg_at_k"`
+	AverageEvidenceBadAtK    float64 `json:"average_evidence_bad_at_k"`
+}

@@ -10,8 +10,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -128,67 +126,31 @@ func TestRememberEvaluationImporterAdmission(t *testing.T) {
 		h.assertCompleted(t, 1)
 	})
 
-	t.Run("interruption retains completed mappings and resumes", func(t *testing.T) {
+	t.Run("interruption retains completed mappings and native replay", func(t *testing.T) {
 		h := newImportAdmissionHarness(t, 5)
 		corpus := admissionCorpus(5, 2)
-		path := filepath.Join(t.TempDir(), "corpus.jsonl")
-		var contents strings.Builder
-		for _, item := range corpus {
-			encoded, err := json.Marshal(item)
-			require.NoError(t, err)
-			contents.Write(encoded)
-			contents.WriteByte('\n')
-		}
-		require.NoError(t, os.WriteFile(path, []byte(contents.String()), 0o600))
 		ctx, cancel := context.WithCancel(h.ctx)
 		defer cancel()
 		var completed evalharness.KnowledgeMapping
-		var count int
 		done := make(chan error, 1)
 		go func() {
 			var err error
-			completed, count, err = h.client.ImportCorpusFileWithConcurrency(ctx, path, 1, nil, nil)
+			completed, err = h.client.ImportCorpusWithConcurrency(ctx, corpus, 1)
 			done <- err
 		}()
 		h.waitEntered(t, 1)
 		cancel()
 		require.Error(t, receiveImportResult(t, h.ctx, done))
-		require.Equal(t, 2, count)
 		require.Len(t, completed.BySourceDocID, 2)
 		h.release()
 		h.waitIdle(t)
-		h.assertCompleted(t, 3)
-		var live []struct{ SourceDocID, EvidenceID string }
-		require.NoError(t, h.rls.WithSystemTx(h.ctx, h.admin, func(tx *gorm.DB) error {
-			return tx.Raw(`
-				SELECT fragment.metadata->>'source_doc_id' AS source_doc_id,
-				       fragment.fragment_id::text AS evidence_id
-				FROM evidence_fragments AS fragment
-				JOIN remember_attempts AS attempt
-				  ON attempt.team_id = fragment.team_id AND attempt.attempt_id = fragment.ingest_id
-				WHERE fragment.team_id = ?::uuid AND attempt.outcome = 'completed'
-			`, h.teamID).Scan(&live).Error
-		}))
-		require.Len(t, live, 3)
-		skip := make(map[string]struct{})
-		for _, item := range live {
-			if ref, exists := completed.BySourceDocID[item.SourceDocID]; exists {
-				require.Equal(t, ref.ID, item.EvidenceID)
-			}
-			completed.BySourceDocID[item.SourceDocID] = evalharness.Ref{Type: "fragment", ID: item.EvidenceID, SourceDocID: item.SourceDocID}
-			skip[item.SourceDocID] = struct{}{}
-		}
-		resumed, count, err := h.client.ImportCorpusFileWithConcurrency(h.ctx, path, evalharness.DefaultImportConcurrency, nil, skip)
-		require.NoError(t, err)
-		require.Equal(t, len(corpus), count)
-		require.Len(t, resumed.BySourceDocID, 2)
-		for source, ref := range completed.BySourceDocID {
-			require.NotContains(t, resumed.BySourceDocID, source)
-			resumed.BySourceDocID[source] = ref
-		}
+		h.assertCompleted(t, 2)
 		replayed, err := h.client.ImportCorpusWithConcurrency(h.ctx, corpus, 4)
 		require.NoError(t, err)
-		require.Equal(t, resumed.BySourceDocID, replayed.BySourceDocID)
+		require.Len(t, replayed.BySourceDocID, len(corpus))
+		for source, ref := range completed.BySourceDocID {
+			require.Equal(t, ref, replayed.BySourceDocID[source])
+		}
 		h.assertCompleted(t, len(corpus))
 	})
 }

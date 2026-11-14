@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/markhuangai/dense-mem/internal/evalharness"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
+	evalharness "github.com/markhuangai/dense-mem/internal/testfixture/evaluation"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )

@@ -59,11 +59,11 @@
       "source": "cmd/internal/serverapp/lifecycle_runtime_integration_test.go"
     },
     {
-      "id": "server/TestPairedEvaluationRealServiceResumeFreezeAndCommonScore",
+      "id": "server/TestRunnerCampaignNativeMappingsFreezeAndRecall",
       "package": "./cmd/internal/serverapp",
-      "run": "^TestPairedEvaluationRealServiceResumeFreezeAndCommonScore$",
+      "run": "^TestRunnerCampaignNativeMappingsFreezeAndRecall$",
       "phase": "precheck",
-      "source": "cmd/internal/serverapp/paired_evaluation_integration_test.go"
+      "source": "cmd/internal/serverapp/runner_campaign_integration_test.go"
     },
     {
       "id": "server/TestMCPToolProgressPostgres",

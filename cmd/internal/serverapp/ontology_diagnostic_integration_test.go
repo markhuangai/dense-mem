@@ -82,7 +82,7 @@ func TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads(t *testing.T)
 						http.Error(w, "invalid fixture assessment", 400)
 						return
 					}
-					response := pairedOrganizationResponse(input)
+					response := runnerOrganizationResponse(input)
 					if mode == "unused_exhausted" {
 						if calls.Load() > 1 {
 							var feedback struct {

@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 
 	"sync/atomic"
@@ -196,8 +195,4 @@ func TestOntologyMaintenanceReadMeasurement(t *testing.T) {
 	encoded, err := json.MarshalIndent(report, "", "  ")
 	require.NoError(t, err)
 	t.Logf("ontology_read_measurement %s", encoded)
-	if directory := os.Getenv("DENSE_MEM_ORGANIZATION_REPORT_DIR"); directory != "" {
-		require.NoError(t, os.MkdirAll(directory, 0700))
-		require.NoError(t, os.WriteFile(filepath.Join(directory, "ontology-read-measurement.json"), encoded, 0600))
-	}
 }

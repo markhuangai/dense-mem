@@ -1,0 +1,17 @@
+[
+  {
+    "idx": 0,
+    "title": "Atlas",
+    "text": "Atlas uses PostgreSQL for durable memory."
+  },
+  {
+    "idx": 1,
+    "title": "Coordination",
+    "text": "Atlas uses Redis for coordination."
+  },
+  {
+    "idx": 2,
+    "title": "Distractor",
+    "text": "Orion uses SQLite."
+  }
+]

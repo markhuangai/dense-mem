@@ -4,15 +4,12 @@ package postgres
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/ontology/assessment"
 	"github.com/markhuangai/dense-mem/internal/settings"
 	settingspg "github.com/markhuangai/dense-mem/internal/settings/postgres"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -25,7 +22,7 @@ import (
 )
 
 func TestRecallOntologyManagementLockedCohort(t *testing.T) {
-	data, err := os.ReadFile("../../../tests/eval/source_locks/ontology_management_v1.json")
+	data, err := os.ReadFile("../../testfixture/evaluation/testdata/ontology_management_v1.json")
 	require.NoError(t, err)
 	var lock struct {
 		Cases []struct {
@@ -40,7 +37,6 @@ func TestRecallOntologyManagementLockedCohort(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(data, &lock))
 	require.Len(t, lock.Cases, 3)
-	digest := sha256.Sum256(data)
 	for _, testCase := range lock.Cases {
 		t.Run(testCase.ID, func(t *testing.T) {
 			f := newRecallOntologyFixture(t)
@@ -137,12 +133,5 @@ func TestRecallOntologyManagementLockedCohort(t *testing.T) {
 			drain()
 			check(testCase.RollbackSlots)
 		})
-	}
-	if directory := os.Getenv("DENSE_MEM_ORGANIZATION_REPORT_DIR"); directory != "" {
-		report := map[string]any{"schema_version": "dense-mem.ontology.management_comparison.v1", "issue": 529, "source_lock_sha256": "sha256:" + hex.EncodeToString(digest[:]), "cases": 3, "sources": 6, "source_preservation": 1, "distinct_fact_preservation": 1, "false_consolidations": 0, "bad_at_k": 0, "manager_provider_calls": 0, "verified": !t.Failed()}
-		body, err := json.MarshalIndent(report, "", "  ")
-		require.NoError(t, err)
-		require.NoError(t, os.MkdirAll(directory, 0700))
-		require.NoError(t, os.WriteFile(filepath.Join(directory, "ontology-management-comparison.json"), append(body, '\n'), 0600))
 	}
 }
