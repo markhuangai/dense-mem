@@ -83,7 +83,7 @@ secret inputs. The maintainer provisions this Actions configuration.
 
 Database passwords and control tokens are generated per dataset job. Resolved
 credentials, headers, connection strings and provider URLs never enter console
-logs or reports. Ordinary exchanges appear at DEBUG as readable JSON with
+logs or reports. Retained exchanges appear at DEBUG as readable JSON with
 `run_id`, `sequence`, `kind`, and a nested `payload`. Credential protection runs
 before output. Large events use bounded, readable `payload_chunk` records.
 Actions can additionally mask values configured as Secrets; put public settings
@@ -93,7 +93,16 @@ encryption dependency or artifact key. Reports contain configured model names
 as their provider details.
 
 INFO `eval_progress` records show the stage, total, completed, failed, and
-remaining work. Import uses documents; each question condition uses answers
+remaining work. Import emits an initial status, a status every 60 seconds even
+when no document completes, and a final status on success, failure or cancellation.
+Successful documents, mappings and canonical text are not dumped individually;
+the pinned source hashes identify the unchanged corpus. Failed intake attempts
+and retry outcomes retain their identifiers, results and timings. Runtime log
+collection retains WARN/ERROR output and unstructured failure text, while parsing
+all provider records for usage and completeness without reprinting bulk DEBUG/INFO
+logs. Mapping verification produces one count summary; canonical preservation
+still uses the verified fingerprint.
+Import uses documents; each question condition uses answers
 (1,000 questions × two policies = 2,000 answers). Retries do not increment these
 counts, and failed items are separate from remaining items. For example:
 
@@ -125,8 +134,8 @@ campaign cannot become a complete baseline. There is no automatic campaign
 restart or deadline extension; six-hour feasibility is unproven.
 
 Artifacts retain numeric scores, the comparison matrix, completion counts and
-a small reproducibility identity for two days. Raw exchanges remain only in
-protected Actions logs.
+a small reproducibility identity for two days. Retained question/answer exchanges
+and failure/retry details remain only in protected Actions logs.
 
 Native ontology PostgreSQL measurement regressions retain their fixture protocols
 and runner instructions in [their module guide](../../internal/ontology/postgres/README.md).

@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -16,6 +19,102 @@ import (
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 	"github.com/stretchr/testify/require"
 )
+
+type importStatusTransport func(*http.Request) (*http.Response, error)
+
+func (f importStatusTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
+
+func TestImporterReportsEveryMinuteWhileWaitingAndStopsAfterCompletion(t *testing.T) {
+	for _, cancelled := range []bool{false, true} {
+		t.Run(map[bool]string{false: "success", true: "cancelled"}[cancelled], func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				var logs bytes.Buffer
+				entered, release := make(chan struct{}), make(chan struct{})
+				item := CorpusItem{SourceDocID: "source", Content: "Fixed public corpus text."}
+				transport := importStatusTransport(func(request *http.Request) (*http.Response, error) {
+					var rpc struct{ Method string }
+					require.NoError(t, json.NewDecoder(request.Body).Decode(&rpc))
+					var result map[string]any
+					if rpc.Method == "tools/list" {
+						tools := []mcpToolDefinition{}
+						for _, tool := range registry.ContractTools() {
+							tools = append(tools, mcpToolDefinition{Name: tool.Name, OutputSchema: tool.OutputSchema})
+						}
+						result = map[string]any{"tools": tools}
+					} else {
+						close(entered)
+						select {
+						case <-request.Context().Done():
+							return nil, request.Context().Err()
+						case <-release:
+						}
+						result = map[string]any{"structuredContent": map[string]any{"processing_state": "completed", "submission_id": uuid.NewString(), "evidence": []any{map[string]any{
+							"evidence_index": 0, "partition_index": 0, "source_item_id": uuid.NewString(), "occurrence_id": uuid.NewString(), "evidence_id": uuid.NewString(),
+							"span_start": 0, "span_end": len([]rune(item.Content)), "content_hash": knowledge.EvidenceContentHash(item.Content), "disposition": "stored",
+						}}}}
+					}
+					body, err := json.Marshal(map[string]any{"result": result})
+					require.NoError(t, err)
+					return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(body))}, nil
+				})
+				client := &HTTPClient{BaseURL: "http://synthetic.invalid", APIKey: "synthetic", Client: &http.Client{Transport: transport}, Capture: captureFixture(&logs)}
+				snapshot := func() []byte {
+					client.Capture.mu.Lock()
+					defer client.Capture.mu.Unlock()
+					return bytes.Clone(logs.Bytes())
+				}
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				done := make(chan error, 1)
+				go func() {
+					_, err := client.ImportCorpus(ctx, []CorpusItem{item})
+					done <- err
+				}()
+				select {
+				case <-entered:
+				case err := <-done:
+					t.Fatalf("import returned before Remember: %v", err)
+				}
+				synctest.Wait()
+				time.Sleep(59 * time.Second)
+				synctest.Wait()
+				require.Len(t, capturedProgress(t, snapshot()), 1)
+				time.Sleep(time.Second)
+				synctest.Wait()
+				require.Len(t, capturedProgress(t, snapshot()), 2)
+				time.Sleep(time.Minute)
+				synctest.Wait()
+				require.Len(t, capturedProgress(t, snapshot()), 3)
+				if cancelled {
+					cancel()
+				} else {
+					close(release)
+				}
+				err := <-done
+				if cancelled {
+					require.ErrorContains(t, err, "context canceled")
+				} else {
+					require.NoError(t, err)
+				}
+				time.Sleep(time.Minute)
+				synctest.Wait()
+				updates := capturedProgress(t, logs.Bytes())
+				require.Len(t, updates, 4, "periodic reporting stops before the final update")
+				for _, update := range updates[:3] {
+					require.Equal(t, captureProgress{Stage: "import", Unit: "documents", Total: 1, Remaining: 1}, update)
+				}
+				final := captureProgress{Stage: "import", Unit: "documents", Total: 1, Completed: 1}
+				if cancelled {
+					final.Completed, final.Failed = 0, 1
+				}
+				require.Equal(t, final, updates[3])
+				require.NotContains(t, logs.String(), item.Content)
+			})
+		})
+	}
+}
 
 func TestImporterRetriesOnlyOneVerifiedTerminalFailureAndPreservesInput(t *testing.T) {
 	for _, recover := range []bool{true, false} {
@@ -120,9 +219,12 @@ func TestConcurrentImporterReportsMonotonicDocumentProgress(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, mapping.BySourceDocID, len(items))
 	progress := capturedProgress(t, logs.Bytes())
-	require.Len(t, progress, len(items)+1)
-	for i, update := range progress {
-		require.Equal(t, captureProgress{Stage: "import", Unit: "documents", Total: len(items), Completed: i, Remaining: len(items) - i}, update)
+	require.Equal(t, []captureProgress{
+		{Stage: "import", Unit: "documents", Total: len(items), Remaining: len(items)},
+		{Stage: "import", Unit: "documents", Total: len(items), Completed: len(items)},
+	}, progress)
+	for _, event := range capturedEvents(t, logs.Bytes()) {
+		require.NotEqual(t, "import_attempt", event.Kind, "successful documents do not produce individual logs")
 	}
 }
 

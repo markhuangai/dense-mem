@@ -87,15 +87,8 @@ func Run(ctx context.Context, manifest Manifest, corpus []CorpusItem, questions 
 	if err != nil {
 		return report, err
 	}
-	for source, parts := range mapping.Partitions {
-		if err = client.Capture.Emit("mapping", map[string]any{"source_id": source, "partitions": parts}); err != nil {
-			return report, err
-		}
-	}
-	for id, evidence := range canonical {
-		if err = client.Capture.Emit("canonical", map[string]any{"evidence_id": id, "evidence": evidence}); err != nil {
-			return report, err
-		}
+	if err = client.Capture.Emit("import_verified", map[string]int{"corpus_rows": len(mapping.BySourceDocID), "canonical_evidence": len(canonical)}); err != nil {
+		return report, err
 	}
 	initial, err := native.Snapshot(work)
 	if err != nil {

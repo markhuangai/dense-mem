@@ -109,7 +109,15 @@ func TestRunnerCampaignConditionsAndCapture(t *testing.T) {
 		conditions = append(conditions, axis.Condition)
 	}
 	require.Equal(t, []string{"off", "off", "on", "on"}, conditions)
-
+	kinds := map[string]int{}
+	for _, line := range bytes.Split(bytes.TrimSpace(logs.Bytes()), []byte("\n")) {
+		var event evalharness.Event
+		require.NoError(t, json.Unmarshal(line, &event))
+		kinds[event.Kind]++
+	}
+	require.Equal(t, 1, kinds["import_verified"])
+	require.Zero(t, kinds["mapping"])
+	require.Zero(t, kinds["canonical"])
 }
 
 func TestRunnerCampaignNativeMappingsFreezeAndRecall(t *testing.T) {

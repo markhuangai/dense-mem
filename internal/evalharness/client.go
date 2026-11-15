@@ -212,6 +212,32 @@ func (c *HTTPClient) ImportCorpusWithConcurrency(ctx context.Context, items []Co
 	var mu sync.Mutex
 	var first error
 	failed := 0
+	stopProgress := make(chan struct{})
+	progressDone := make(chan struct{})
+	go func() {
+		defer close(progressDone)
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stopProgress:
+				return
+			case <-ticker.C:
+				mu.Lock()
+				err := c.Capture.emitProgress(captureProgress{Stage: "import", Unit: "documents", Total: len(items), Completed: len(mapping.BySourceDocID), Failed: failed})
+				if err != nil {
+					if first == nil {
+						first = err
+					}
+					stop()
+				}
+				mu.Unlock()
+				if err != nil {
+					return
+				}
+			}
+		}
+	}()
 	for range concurrency {
 		wg.Add(1)
 		go func() {
@@ -228,12 +254,6 @@ func (c *HTTPClient) ImportCorpusWithConcurrency(ctx context.Context, items []Co
 				} else {
 					mergeKnowledgeMapping(&mapping, itemMapping)
 				}
-				if err := c.Capture.emitProgress(captureProgress{Stage: "import", Unit: "documents", Total: len(items), Completed: len(mapping.BySourceDocID), Failed: failed}); err != nil {
-					if first == nil {
-						first = err
-					}
-					stop()
-				}
 				mu.Unlock()
 			}
 		}()
@@ -248,6 +268,11 @@ schedule:
 	}
 	close(jobs)
 	wg.Wait()
+	close(stopProgress)
+	<-progressDone
+	if err := c.Capture.emitProgress(captureProgress{Stage: "import", Unit: "documents", Total: len(items), Completed: len(mapping.BySourceDocID), Failed: failed}); err != nil && first == nil {
+		first = err
+	}
 	if first != nil {
 		return mapping, first
 	}
@@ -283,14 +308,14 @@ func (c *HTTPClient) importCorpusItem(ctx context.Context, item CorpusItem) (Kno
 		if err == nil {
 			mapping, err = c.importTerminalRememberResult(item, result, mapping)
 		}
-		event := map[string]any{"source_id": item.SourceDocID, "attempt": attempt, "idempotency_key": input["idempotency_key"], "result": result, "elapsed_ms": float64(time.Since(started)) / float64(time.Millisecond)}
-		if err == nil {
-			event["admitted_input"] = input
-		} else {
-			event["error"] = err.Error()
-		}
-		if captureErr := c.Capture.Emit("import_attempt", event); captureErr != nil {
-			return mapping, captureErr
+		if err != nil || attempt > 1 {
+			event := map[string]any{"source_id": item.SourceDocID, "attempt": attempt, "idempotency_key": input["idempotency_key"], "result": result, "elapsed_ms": float64(time.Since(started)) / float64(time.Millisecond)}
+			if err != nil {
+				event["error"] = err.Error()
+			}
+			if captureErr := c.Capture.Emit("import_attempt", event); captureErr != nil {
+				return mapping, captureErr
+			}
 		}
 		if err == nil {
 			return mapping, nil

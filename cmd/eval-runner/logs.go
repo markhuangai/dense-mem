@@ -83,10 +83,8 @@ func logReader(reader io.Reader, capture *evalharness.Capture, usage map[string]
 	finished := map[string]bool{}
 	for scanner.Scan() {
 		line := scanner.Text()
-		if err := capture.Emit("runtime_log", map[string]string{"line": line}); err != nil {
-			return err
-		}
 		var record struct {
+			Level          string                             `json:"level"`
 			Message        string                             `json:"msg"`
 			Exchange       string                             `json:"exchange_id"`
 			Direction      string                             `json:"direction"`
@@ -96,7 +94,16 @@ func logReader(reader io.Reader, capture *evalharness.Capture, usage map[string]
 			CaptureState   string                             `json:"capture_state"`
 		}
 		if json.Unmarshal([]byte(line), &record) != nil {
+			if err := capture.Emit("runtime_log", map[string]string{"line": line}); err != nil {
+				return err
+			}
 			continue
+		}
+		switch strings.ToUpper(record.Level) {
+		case "WARN", "ERROR", "FATAL":
+			if err := capture.Emit("runtime_log", map[string]string{"line": line}); err != nil {
+				return err
+			}
 		}
 		if record.CaptureState == "unavailable" || record.CaptureState == "formatting_failed" || record.CaptureState == "interrupted" {
 			return errors.New("required runtime payload capture is incomplete")

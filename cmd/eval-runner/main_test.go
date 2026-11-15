@@ -66,11 +66,18 @@ func TestRuntimeLogCollectorProtectsOutputAndExposesIncompleteCapture(t *testing
 	protector := observability.NewCredentialProtector("secret-canary", "https://provider-canary.example")
 	capture := &evalharness.Capture{Logger: slog.New(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: slog.LevelDebug})), Protector: protector, RunID: "test"}
 	usage := map[string]evalharness.UsageTotals{}
-	require.NoError(t, logReader(strings.NewReader("provider failed secret-canary at https://provider-canary.example\n"), capture, usage))
+	lines := "provider failed secret-canary at https://provider-canary.example\n" +
+		`{"level":"DEBUG","msg":"successful document detail"}` + "\n" +
+		`{"level":"WARN","msg":"provider retry secret-canary"}` + "\n" +
+		`{"level":"ERROR","msg":"provider terminal failure secret-canary"}` + "\n"
+	require.NoError(t, logReader(strings.NewReader(lines), capture, usage))
 	protected := runtimeCapturePayloads(t, output.Bytes())
 	require.NotContains(t, protected, "secret-canary")
 	require.NotContains(t, protected, "https://provider-canary.example")
 	require.Contains(t, protected, "provider failed")
+	require.Contains(t, protected, "provider retry")
+	require.Contains(t, protected, "provider terminal failure")
+	require.NotContains(t, protected, "successful document detail")
 	broken := `{"msg":"ai_exchange_payload","exchange_id":"exchange","direction":"request","payload_chunk":{"state":"captured","count":2,"index":0,"body":"partial","sha256":"hash"}}` + "\n"
 	require.ErrorContains(t, logReader(strings.NewReader(broken), capture, usage), "incomplete")
 }
@@ -82,6 +89,9 @@ func runtimeCapturePayloads(t *testing.T, logs []byte) string {
 	t.Helper()
 	var protected strings.Builder
 	for _, line := range bytes.Split(bytes.TrimSpace(logs), []byte("\n")) {
+		if len(line) == 0 {
+			continue
+		}
 		var record struct {
 			Kind    string                             `json:"kind"`
 			Payload json.RawMessage                    `json:"payload"`
@@ -157,7 +167,7 @@ func TestRuntimeLogCollectorReconstructsProtectedExchangesAndUsage(t *testing.T)
 	protected := runtimeCapturePayloads(t, output.Bytes())
 	require.NotContains(t, protected, runtimeLogKeyCanary)
 	require.NotContains(t, protected, runtimeLogURLCanary)
-	require.Contains(t, protected, "ordinary benchmark text")
+	require.NotContains(t, protected, "ordinary benchmark text", "successful provider payloads are parsed for usage without being printed")
 	require.Contains(t, logs, "ordinary benchmark text")
 	path := filepath.Join(t.TempDir(), "server.log")
 	require.NoError(t, os.WriteFile(path, []byte(logs), 0o600))
