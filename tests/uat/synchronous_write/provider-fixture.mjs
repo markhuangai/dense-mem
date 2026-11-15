@@ -147,6 +147,14 @@ const server = createServer(async (request, response) => {
       sendJSON(response, 200, { model: "fixture-wrong-model", data: [{ index: 0, embedding: [0] }] });
       return;
     }
+    if (["embedding-count", "embedding-dimension", "embedding-non-finite"].includes(routeFault)) {
+      const data = inputs.map((_, index) => ({ index, embedding: Array.from({ length: payload.dimensions }, (_, component) => Number(component === 0)) }));
+      if (routeFault === "embedding-count") data.pop();
+      if (routeFault === "embedding-dimension") data[0].embedding.pop();
+      if (routeFault === "embedding-non-finite") data[0].embedding[0] = "NaN";
+      sendJSON(response, 200, { model: payload.model, data });
+      return;
+    }
     if (holdAdmissionRequests && routeFault === "admission-hold") {
       await new Promise((resolve) => {
         const release = (reason = "control") => {
@@ -174,15 +182,6 @@ const server = createServer(async (request, response) => {
       return;
     }
     const result = upstream.body;
-    if (routeFault === "embedding-count" && Array.isArray(result.data)) {
-      result.data = result.data.slice(0, Math.max(0, inputs.length - 1));
-    }
-    if (routeFault === "embedding-dimension" && Array.isArray(result.data?.[0]?.embedding)) {
-      result.data[0].embedding = result.data[0].embedding.slice(0, -1);
-    }
-    if (routeFault === "embedding-non-finite" && Array.isArray(result.data?.[0]?.embedding)) {
-      result.data[0].embedding[0] = "NaN";
-    }
     if (routeFault === "embedding-no-usage") delete result.usage;
     sendJSON(response, 200, result);
     return;

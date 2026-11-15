@@ -340,13 +340,8 @@ if (scenario === "full") {
   ]]);
 }
 if (scenario === "enterprise_exports") {
-  if (process.env.DENSE_MEM_E2E_EXPORT_PERFORMANCE === "1") {
-    serverEnvironment.set("RATE_LIMIT_PER_MINUTE", "100000");
-    serverEnvironment.set("GOGC", "25");
-    serverEnvironment.set("GOMEMLIMIT", "768MiB");
-  }
   for (const [key, value] of Object.entries({
-    OTLP_ENABLED: process.env.DENSE_MEM_E2E_EXPORT_PERFORMANCE === "1" && process.env.DENSE_MEM_E2E_EXPORT_PERF_STATE === "disabled" ? "false" : "true", OTLP_TRACE_ENDPOINT: "http://enterprise-collector:4318/v1/traces",
+    OTLP_ENABLED: "true", OTLP_TRACE_ENDPOINT: "http://enterprise-collector:4318/v1/traces",
     OTLP_METRIC_ENDPOINT: "http://enterprise-collector:4318/v1/metrics",
     AUDIT_EXPORT_ENABLED: "true", DIAGNOSTIC_BUNDLE_ENABLED: "true",
   })) serverEnvironment.set(key, value);
