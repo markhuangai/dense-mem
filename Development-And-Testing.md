@@ -27,13 +27,7 @@ node scripts/check-architecture.mjs
 node --test tests/uat/architecture_conformance.test.mjs
 ```
 
-The full local gate is:
-
-```bash
-./scripts/ci-check.sh
-```
-
-That script owns the complete Python, browser, proxy, Go, static-analysis, architecture, and coverage checks. Do not maintain a second expanded command inventory here. Run focused checks first and the required broader gate for the change.
+The repository script `./scripts/ci-check.sh` owns the expanded Python, browser, proxy, Go, static-analysis, architecture, and coverage command inventory. During Dense-Mem delivery, run only the assigned focused checks locally; full suites and coverage run through remote PR CI after the review phase. Do not assemble a duplicate full local run.
 
 ## PostgreSQL And Production-Entry Tests
 
@@ -109,3 +103,109 @@ Owner, other-author, and fork validation paths differ. Consult the governing [re
 Deployed migrations are immutable. Add an ordered migration with lock/rewrite analysis, RLS impact, constraints, recovery, and required PostgreSQL tests. The [schema migration rules](PostgreSQL-Cluster-Safe-Schema#migrations-and-proof) identify the exact approved Evidence-only cutover hash transition. Stop incompatible writers before destructive boundaries.
 
 Generated seeds, downloaded data, runtime databases, full runs/comparisons, and protected captures stay ignored. Keep reproducible generators, locks, scoring/validation, and required safe fixtures. Only the latest overall measured result belongs in `tests/eval/baseline.json`; keep limitations and unavailable measurements intact.
+
+## Remote Development Tests
+
+
+Commit and push a worktree branch, then open **Actions → Development E2E → Run
+workflow**. Select `main` for the workflow and enter the branch or full commit
+SHA in `source_ref`. This route requires repository-admin permission and works
+before a pull request exists.
+
+Enter registered scenario names in `scenarios`, separated by commas, or `all`
+for the entire scenario registry. Leave it blank for PostgreSQL-only testing.
+For `postgres_shards`, enter `0` through `6`, a comma-separated subset, or `all`;
+leave it blank for E2E-only testing. Select at least one group. The scenario
+named `full` runs Evidence lifecycle, telemetry, and portal coverage; `all` runs
+every registered scenario. Available names live in
+[scenario registry](https://github.com/markhuangai/dense-mem/blob/main/scripts/e2e-scenarios.json).
+
+```bash
+gh workflow run development-e2e.yml --ref main \
+  -f source_ref=issue/my-change \
+  -f scenarios=conflict,mcp_oauth \
+  -f postgres_shards=all
+```
+
+The workflow resolves one commit, builds one native production image in the
+dedicated `dense-mem-e2e` GHCR package, and gives every selected job the same
+image digest and source SHA. E2E and PostgreSQL groups run independently, with
+bounded scenario parallelism and selected PostgreSQL shards. The backlog
+regression has a dedicated shard; shard selections cover every registered case
+exactly once. Execution jobs are capped at 30 minutes, with bounded test time
+before cleanup. Production validation starts scenarios after the rootless
+controller check while PostgreSQL shards continue independently, and its final
+gate requires every group to pass. The Actions
+summary records the exact SHA, digest, selections, and results. Inspect the
+matching **Clean development E2E images** run as well: it removes eligible owned
+images after completion, including failures and cancellations. GitHub prevents
+deleting a package's final version, so cleanup retains that verified completed
+image and reports its version, digest, and run identity. An hourly sweep recovers
+missed cleanup and preserves active runs or unexpected image ownership.
+
+Start a fresh dispatch for retries. Each privileged job rechecks the acting
+accounts and rejects job reruns, which can reuse cached authorization or an
+image that has already been deleted.
+Successful remote results can satisfy the corresponding focused E2E and real
+PostgreSQL checks for their exact commit. Keep lightweight local checks and
+attach the run URL and summary to the PR. Every PR still requires its current-head
+full production-image E2E gate through the ordinary validation route.
+
+New manual workflows become dispatchable after their workflow files reach the
+default branch. Live rollout must verify E2E-only, PostgreSQL-only, combined,
+failed, and cancelled runs together with GHCR cleanup.
+
+Shared CI runs repository/browser checks, Go tests and analysis, and core and
+PostgreSQL coverage producers independently. Its required merge gate verifies
+that all seven raw Go profiles belong to the same source commit and workflow
+attempt, then applies the unchanged deduplicated coverage threshold above 90%.
+PR validation and post-merge CI use the same shared workflow. Full coverage is a remote CI requirement during delivery; do not duplicate it locally.
+
+Repository admins can benchmark changes to CI/E2E workflows before merge using
+`production-image-e2e.yml` on their own current PR branch with `pr_number`.
+The manual trial requires the trusted preview receipt and runs candidate shared
+CI alongside every database shard and registered scenario. It does not replace
+the normal required PR checks. Record the exact source SHA, image digest,
+workflow attempt, preview-build duration, queue and execution times, and cleanup
+results; accept the latency change only when all execution jobs finish below
+30 minutes and the trial plus preview-build allowance finishes within 60 minutes.
+
+
+## Fork Pull-Request Validation
+
+
+Public fork PRs use contributor-owned Cloudflare credentials for production
+E2E. The upstream repository never forwards its Cloudflare token to a fork.
+
+1. In your public fork, enable Actions and configure the repository variable
+   `CLOUDFLARE_ACCOUNT_ID` and secret `CLOUDFLARE_API_TOKEN`. The token needs
+   Workers AI access. Keep the token out of workflow inputs and PR comments.
+2. Ask a repository administrator to apply `deploy-test-image` to the upstream
+   PR. After the preview finishes, its comment contains the approved source
+   SHA, image digest, preview run ID/attempt, and trusted upstream revision.
+3. In your fork's Actions page, manually run **Contributor fork E2E request**
+   on the branch at that exact PR head. Enter the upstream PR number,
+   `source_sha`, `preview_run_id`, `preview_run_attempt`, and `trusted_revision`
+   from the current preview receipt. The workflow must already be present on
+   your fork's default branch for GitHub to offer manual dispatch.
+4. Keep the PR head unchanged while every registered scenario and required PostgreSQL
+   precheck, rootless-controller checks, and cleanup finish. The upstream
+   verifier waits up to 120 minutes and automatically verifies the signed
+   receipt before reporting `Production image E2E` success.
+
+The trusted upstream workflow signs in a separate job that runs no candidate
+code and receives no Cloudflare secret. Verification binds the signer revision,
+PR head, image digest, both run attempts, and complete results. Missing
+credentials, failed/skipped jobs, forged signatures, stale approvals, and
+timeouts fail validation. If the head or approved upstream workflow changes,
+request a fresh administrator-approved preview and start its matching run.
+Same-repository PRs retain the ordinary production E2E route.
+
+Issue #508's live public-fork acceptance run is deferred by maintainer direction.
+Signed-fixture, receipt-policy, and workflow tests cover the bridge locally and
+in CI; they do not establish that live fork acceptance has completed.
+
+
+## Documentation Changes
+
+The [scripts guide](https://github.com/markhuangai/dense-mem/blob/main/scripts/README.md) identifies executable entry points. Feature PRs update affected directory guides and link a companion PR targeting `wiki`, or explain why no wiki update is needed. [Documentation Maintenance](Documentation-Maintenance#repository-documentation-and-publication) owns branch, publication, and recovery instructions. Wiki PRs do not inherit the product review/CI gates on `main`.

@@ -92,7 +92,7 @@ flowchart LR
 
 A disconnect/cancellation can lose delivery after commit. With MCP SDK 1.30's protocol behavior, closing the client does not prove that server processing stopped. The core never automatically retries, rotates operation keys, or polls a status tool. Preserve the exact request and follow [replay guidance](Write-Pipeline#replay-and-recovery).
 
-## Google ADK 2.7.0
+## Google ADK 2.14.1
 
 ```bash
 python -m pip install '/path/to/densemem-VERSION-py3-none-any.whl[adk]'
@@ -166,4 +166,4 @@ Required failures remain typed errors; malformed mapping produces no partial doc
 
 ## Build And Validation
 
-Framework extras pin `google-adk==2.7.0` and `langchain-core==1.5.4`; missing/incompatible extras fail with actionable imports while the core remains usable. Installed-wheel checks, Python/MCP matrices, real server scenarios, artifact provenance, and shared-release publication are documented in [Development And Testing](Development-And-Testing#python-package-and-frameworks).
+Framework extras pin `google-adk==2.14.1` and `langchain-core==1.5.4`, with `opentelemetry-api>=1.45.2` required by the ADK extra; missing/incompatible extras fail with actionable imports while the core remains usable. Installed-wheel checks, Python/MCP matrices, real server scenarios, artifact provenance, and shared-release publication are documented in [Development And Testing](Development-And-Testing#python-package-and-frameworks).
