@@ -29,6 +29,7 @@ node --test tests/uat/prerelease_version.test.mjs
 node --test tests/uat/go_vulnerability_scan_policy.test.mjs
 node --test tests/uat/ai_pr_review_policy.test.mjs
 node --test tests/uat/pr_validation_policy.test.mjs
+node --test tests/uat/wiki_publication.test.mjs
 bash scripts/test-evaluation.sh
 node --test tests/uat/coverage_policy.test.mjs
 npm run test:coverage --prefix web
