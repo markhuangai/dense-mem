@@ -202,7 +202,7 @@ function assertSharedCI(shared, supportedVersions) {
     "node scripts/check-architecture.mjs", "npm run test:coverage --prefix packages/mcp-proxy",
     "node --test tests/uat/image_release_policy.test.mjs", "node --test tests/uat/prerelease_version.test.mjs",
     "node --test tests/uat/go_vulnerability_scan_policy.test.mjs", "node --test tests/uat/ai_pr_review_policy.test.mjs",
-    "bash tests/eval/scripts/run_full_public_rag_eval_until_done_test.sh",
+    "bash scripts/test-evaluation.sh",
   ]) runStep(quality, command);
   for (const command of ["go test -timeout=", "scripts/static-analysis.sh", "scripts/go-vulnerability-scan.sh"]) {
     runStep(shared.jobs["go-tests"], command);

@@ -11,11 +11,11 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/evalharness"
 	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
+	evalharness "github.com/markhuangai/dense-mem/internal/testfixture/evaluation"
 	"github.com/stretchr/testify/require"
 )
 
@@ -23,7 +23,7 @@ func accuracyFrozenLock(t *testing.T) evalharness.RecallAccuracyLock {
 	t.Helper()
 	actual, err := evalharness.GenerateRecallAccuracy(filepath.Join(t.TempDir(), "cohort"))
 	require.NoError(t, err)
-	data, err := os.ReadFile("../../../tests/eval/source_locks/recall_accuracy_v1.json")
+	data, err := os.ReadFile("../../testfixture/evaluation/testdata/recall_accuracy_v1.json")
 	require.NoError(t, err)
 	var frozen evalharness.RecallAccuracyLock
 	require.NoError(t, json.Unmarshal(data, &frozen))

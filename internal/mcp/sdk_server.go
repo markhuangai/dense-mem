@@ -695,7 +695,7 @@ func (s *Server) invokeSDKTool(name string, ctx context.Context, req *sdkmcp.Cal
 }
 
 func (s *Server) isOperationalTool(name string, tool registry.Tool) bool {
-	return registry.IsContractTool(tool) || registry.IsEvaluationTool(name)
+	return registry.IsContractTool(tool)
 }
 
 func sdkCallToolErrorResult(data any) (*sdkmcp.CallToolResult, error) {

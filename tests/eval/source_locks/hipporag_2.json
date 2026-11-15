@@ -1,0 +1,94 @@
+{
+  "dataset_repository": "osunlp/HippoRAG_2",
+  "revision": "5ec05b38deecc3318bb432c69865959c56058990",
+  "counts": {
+    "corpus_rows": 45895,
+    "questions": 5000
+  },
+  "datasets": [
+    {
+      "id": "hotpotqa",
+      "adapter": "hotpotqa",
+      "corpus": {
+        "path": "hotpotqa_corpus.json",
+        "sha256": "9333647b922382776cd2cb02893b390d77984df85a91bfa8be411284978aca7d",
+        "rows": 9811
+      },
+      "questions": {
+        "path": "hotpotqa.json",
+        "sha256": "3ad9c0bcbf93f41d7004ca6007049c904d2605046b314a2f7ecfb379c64cba6d",
+        "rows": 1000
+      }
+    },
+    {
+      "id": "musique",
+      "adapter": "musique",
+      "corpus": {
+        "path": "musique_corpus.json",
+        "sha256": "73157a03ce3f0b1a5673dd5dc12bb970c24976dbffc688af9eecdd758c97ffcb",
+        "rows": 11656
+      },
+      "questions": {
+        "path": "musique.json",
+        "sha256": "98ed4e21d3076532f6388d42320fb809599c63a0d8dffca8ece5e41922be6b46",
+        "rows": 1000
+      }
+    },
+    {
+      "id": "2wikimultihopqa",
+      "adapter": "2wikimultihopqa",
+      "corpus": {
+        "path": "2wikimultihopqa_corpus.json",
+        "sha256": "9d6e352952aafb18dab22bf8195039461321a44a949df902ae83bce134ad238a",
+        "rows": 6119
+      },
+      "questions": {
+        "path": "2wikimultihopqa.json",
+        "sha256": "895cba294064df0c3302c76847b1fc08d99b5619f7663dfaa3b65cd780f1cac4",
+        "rows": 1000
+      }
+    },
+    {
+      "id": "nq_rear",
+      "adapter": "nq_rear",
+      "corpus": {
+        "path": "nq_rear_corpus.json",
+        "sha256": "c672a7c1813f1a3e1e7a0b1a29784bf7c5cf2d7a2934cb3ffc3b347843b42864",
+        "rows": 9633
+      },
+      "questions": {
+        "path": "nq_rear.json",
+        "sha256": "8acadaeff625790e8e10764d660d9ec46de6ac24eb241ac584c0171deca1d9cd",
+        "rows": 1000
+      }
+    },
+    {
+      "id": "popqa",
+      "adapter": "popqa",
+      "corpus": {
+        "path": "popqa_corpus.json",
+        "sha256": "16ccbb71d84c5c6e6d4073ef9b860a79f8f2c3869ce8f1ade85d3285c440ccd8",
+        "rows": 8676
+      },
+      "questions": {
+        "path": "popqa.json",
+        "sha256": "e0874255f9acff5f2de0a7b8ab9782558db31d9a364fee6c84519510955880b2",
+        "rows": 1000
+      }
+    }
+  ],
+  "provenance": "https://github.com/markhuangai/dense-mem/issues/763",
+  "reference_scorer": {
+    "repository": "OSU-NLP-Group/HippoRAG",
+    "revision": "d5c8329422e0a0b834a15874545cb6a74b4f9b26"
+  },
+  "license": "Pinned README declares no clear common license; consult each upstream dataset. These are complete published curated packs, not complete original datasets.",
+  "passage_representation": "title + newline + text",
+  "joins": {
+    "hotpotqa": "Supporting titles; sentences joined without a separator.",
+    "2wikimultihopqa": "Supporting titles; sentences joined with a single space.",
+    "musique": "Supporting paragraph_text.",
+    "nq_rear": "Supporting contexts.",
+    "popqa": "Supporting paragraphs; published possible_answers, including JSON-encoded aliases."
+  }
+}

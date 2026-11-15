@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "revision": "5ec05b38deecc3318bb432c69865959c56058990",
+  "base_url": "https://huggingface.co/datasets/osunlp/HippoRAG_2/resolve",
+  "license": "Pinned README declares no clear common license; consult each upstream dataset. These are complete published curated packs, not complete original datasets.",
+  "datasets": [
+    {
+      "id": "hotpotqa",
+      "adapter": "hotpotqa",
+      "corpus": {
+        "path": "hotpotqa_corpus.json",
+        "sha256": "1a1632353c0ac55fc0b915ef35e2b8db864f6420b0d8dcb7825ad44362653572",
+        "rows": 3
+      },
+      "questions": {
+        "path": "hotpotqa.json",
+        "sha256": "b39b26abbedabb24120057bd3380e54c2e9d402c43782eba99d7368f2d1ef0fa",
+        "rows": 2
+      }
+    }
+  ]
+}

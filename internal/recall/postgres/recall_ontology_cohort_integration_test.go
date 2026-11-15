@@ -8,13 +8,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/markhuangai/dense-mem/internal/evalharness"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
+	evalharness "github.com/markhuangai/dense-mem/internal/testfixture/evaluation"
 	"github.com/stretchr/testify/require"
 )
 
@@ -29,12 +28,11 @@ func TestRecallOntologyFrozenCohort(t *testing.T) {
 		CaseCount    int    `json:"case_count"`
 		SourceCount  int    `json:"source_count"`
 	}
-	data, err := os.ReadFile("../../evalharness/testdata/organization_cohort.json")
+	data, err := os.ReadFile("../../testfixture/evaluation/testdata/organization_cohort.json")
 	require.NoError(t, err)
 	require.NoError(t, json.Unmarshal(data, &baseline))
 	require.Equal(t, baseline.CohortSHA256, cohortHash)
 	require.Len(t, cohort, baseline.CaseCount)
-	reports := map[string]any{}
 	totalSources, beforeRepetitions, afterRepetitions := 0, 0, 0
 	for _, testCase := range cohort {
 		t.Run(testCase.ID, func(t *testing.T) {
@@ -91,16 +89,8 @@ func TestRecallOntologyFrozenCohort(t *testing.T) {
 			totalSources += len(handles)
 			beforeRepetitions += beforeScore.RepeatedSlots
 			afterRepetitions += afterScore.RepeatedSlots
-			reports[testCase.ID] = map[string]any{"before": beforeScore, "after": afterScore, "baseline_bad_at_k": 0, "candidate_bad_at_k": 0, "recall_provider_calls": calls.Load() - priorCalls}
 		})
 	}
 	require.Equal(t, baseline.SourceCount, totalSources)
 	require.Less(t, afterRepetitions, beforeRepetitions)
-	if directory := os.Getenv("DENSE_MEM_ORGANIZATION_REPORT_DIR"); directory != "" {
-		report := map[string]any{"schema_version": "dense-mem.ontology.recall_comparison.v1", "issue": 244, "cohort_sha256": cohortHash, "case_count": len(cohort), "source_count": totalSources, "baseline_repeated_slots": beforeRepetitions, "candidate_repeated_slots": afterRepetitions, "false_consolidations": 0, "source_preservation": 1, "distinct_fact_coverage": 1, "baseline_bad_at_k": 0, "candidate_bad_at_k": 0, "recall_provider_calls": 0, "verified": !t.Failed(), "case_scores": reports}
-		output, err := json.MarshalIndent(report, "", "  ")
-		require.NoError(t, err)
-		require.NoError(t, os.MkdirAll(directory, 0700))
-		require.NoError(t, os.WriteFile(filepath.Join(directory, "ontology-recall-comparison.json"), append(output, '\n'), 0600))
-	}
 }

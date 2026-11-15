@@ -8,17 +8,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
-var evaluationToolNames = map[string]struct{}{
-	"eval_list_knowledge_refs": {},
-	"eval_run_recall_case":     {},
-}
-
-// IsEvaluationTool reports whether a tool belongs to the evaluation-only surface.
-func IsEvaluationTool(name string) bool {
-	_, ok := evaluationToolNames[name]
-	return ok
-}
-
 // ContractToolRuntimeOptional reports whether a contract tool may be omitted
 // from discovery while its runtime feature is disabled.
 func ContractToolRuntimeOptional(name string) bool {

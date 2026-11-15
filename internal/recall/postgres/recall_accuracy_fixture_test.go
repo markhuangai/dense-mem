@@ -11,10 +11,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/markhuangai/dense-mem/internal/evalharness"
 	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
+	evalharness "github.com/markhuangai/dense-mem/internal/testfixture/evaluation"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )

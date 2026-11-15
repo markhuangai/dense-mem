@@ -144,3 +144,36 @@ test("embedding timing retains real upstream failure status without upstream con
   assert.ok(event.elapsed_ms >= 0);
   assert.doesNotMatch(JSON.stringify(event), /synthetic-upstream-secret|Atlas uses/);
 });
+
+test("invalid embedding faults reach their intended shape without waiting for upstream", async (t) => {
+  const upstreamRequests = await embeddingUpstream(t);
+  const { post } = await fixture(t);
+  for (const { fault, lengths } of [
+    { fault: "embedding-count", lengths: [2] },
+    { fault: "embedding-dimension", lengths: [1, 2] },
+    { fault: "embedding-non-finite", lengths: [2, 2] },
+  ]) {
+    const response = await post("/v1/embeddings", {
+      model: "fixture-model", dimensions: 2, input: [`first [fixture-fault:${fault}]`, "second"],
+    });
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.model, "fixture-model");
+    assert.deepEqual(body.data.map((row) => row.index), lengths.map((_, index) => index));
+    assert.deepEqual(body.data.map((row) => row.embedding.length), lengths);
+    if (fault === "embedding-non-finite") {
+      assert.equal(body.data[0].embedding[0], "NaN");
+      assert.ok(body.data[0].embedding.slice(1).every(Number.isFinite));
+      assert.ok(body.data[1].embedding.every(Number.isFinite));
+      assert.equal(Math.hypot(...body.data[1].embedding), 1);
+    } else {
+      assert.ok(body.data.every((row) => row.embedding.every(Number.isFinite)));
+      assert.ok(body.data.every((row) => Math.hypot(...row.embedding) === 1));
+    }
+    assert.equal(upstreamRequests.length, 0, `${fault} must inject its invalid response independently of upstream latency`);
+  }
+  const response = await post("/v1/embeddings", { model: "fixture-model", dimensions: 2, input: ["ordinary positive case"] });
+  assert.equal(response.status, 200);
+  assert.deepEqual((await response.json()).data[0].embedding, [1, 0]);
+  assert.deepEqual(upstreamRequests, [{ model: "fixture-model", input: ["ordinary positive case"] }]);
+});

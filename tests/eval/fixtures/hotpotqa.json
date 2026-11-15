@@ -1,0 +1,38 @@
+[
+  {
+    "question": "What does Atlas use for durable memory?",
+    "answer": "PostgreSQL",
+    "supporting_facts": [
+      [
+        "Atlas",
+        0
+      ]
+    ],
+    "context": [
+      [
+        "Atlas",
+        [
+          "Atlas uses PostgreSQL for durable memory."
+        ]
+      ]
+    ]
+  },
+  {
+    "question": "What does Atlas use for coordination?",
+    "answer": "Redis",
+    "supporting_facts": [
+      [
+        "Coordination",
+        0
+      ]
+    ],
+    "context": [
+      [
+        "Coordination",
+        [
+          "Atlas uses Redis for coordination."
+        ]
+      ]
+    ]
+  }
+]

@@ -9,10 +9,6 @@ import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 import { assertTerminalRememberResult } from "./synchronous_write/surface.mjs";
 
-if (process.env.DENSE_MEM_E2E_EXPORT_PERFORMANCE === "1") {
-  await (await import("../eval/scripts/enterprise_exports_performance.mjs")).measure();
-  process.exit(0);
-}
 
 const required = (name) => { assert.ok(process.env[name], `${name} is required`); return process.env[name]; };
 const userURL = required("DENSE_MEM_USER_URL").replace(/\/$/, "");

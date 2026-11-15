@@ -40,7 +40,7 @@ test("coverage reports use complete Go discovery and deduplicated profiles", asy
   assert.match(textlintIgnore, /coverage\/\*\*/);
   assert.match(textlintIgnore, /coverage\.out/);
   assert.match(script, /grep -v '\/cmd\/server\$'/);
-  assert.match(script, /--tags evaluation/);
+  assert.doesNotMatch(script, /--tags evaluation/);
   const coverageJob = workflowJob(workflow, "coverage");
   runStep(coverageJob, "scripts/coverage-report.sh --complete");
   assert.equal(coverageJob.strategy["max-parallel"], 2);
@@ -188,8 +188,6 @@ test("complete Go coverage deduplicates profiles and rejects exact thresholds", 
   assert.match(readFixture(join(completeDir, "go-postgres-complete.out")), /example\/evidence-only\.go:1\.1,1\.2 1 1/);
   assert.match(readFixture(join(completeDir, "go-complete.txt")), /complete total: 6\/7 85\.7%/);
 
-  const missing = runCoverage(fakeGo, join(fixture, "missing"), "--complete", { FAKE_SKIP_EVALUATION: "1" });
-  assert.notEqual(missing.status, 0);
   for (const flag of ["FAKE_SKIP_POSTGRES", "FAKE_EMPTY_POSTGRES"]) {
     const missingPostgres = runCoverage(fakeGo, join(fixture, flag), "--complete", { [flag]: "1" });
     assert.notEqual(missingPostgres.status, 0);
@@ -301,7 +299,6 @@ function fakeGoScript() {
     "  esac",
     "done",
     "if [[ -z \"${profile}\" ]]; then exit 0; fi",
-    "if [[ \"${FAKE_SKIP_EVALUATION:-}\" == \"1\" && \"${profile}\" == *go-evaluation-complete.raw ]]; then exit 0; fi",
     "if [[ \"${profile}\" == *go-postgres-ordinary.raw || \"${profile}\" == *go-postgres-parallel.raw ]]; then",
     "  [[ \"${DENSE_MEM_REPOSITORY_TESTCONTAINERS:-}\" == \"1\" ]] || exit 1",
     "  if [[ \"${FAKE_SKIP_POSTGRES:-}\" == \"1\" ]]; then exit 0; fi",
@@ -323,14 +320,11 @@ function fakeGoScript() {
     "  printf 'mode: atomic\\n'",
     "  case \"${profile}\" in",
     "    *go-root-complete.raw|*coverage.out)",
+    "      printf 'example/evaluation.go:1.1,1.2 1 1\\n'",
+    "      printf 'example/evaluation.go:2.1,2.2 1 0\\n'",
     "      printf 'example/root.go:1.1,1.2 1 1\\n'",
     "      printf 'example/root.go:1.1,1.2 1 0\\n'",
     "      printf 'example/root.go:2.1,2.2 1 0\\n'",
-    "      ;;",
-    "    *go-evaluation-complete.raw)",
-    "      printf 'example/root.go:1.1,1.2 1 0\\n'",
-    "      printf 'example/evaluation.go:1.1,1.2 1 1\\n'",
-    "      printf 'example/evaluation.go:2.1,2.2 1 0\\n'",
     "      ;;",
     "    *go-e2e-complete.raw)",
     "      printf 'example/e2e.go:1.1,1.2 1 1\\n'",
@@ -372,8 +366,8 @@ test("real Go coverage parts retain cross-package and testless execution and rej
   writeFixture(fixture, "go.mod", "module example.com/fixture\n\ngo 1.26\n");
   writeFixture(fixture, "internal/example/value.go", "package example\nfunc Choose(value bool) int { if value { return 1 }; return 2 }\n");
   writeFixture(fixture, "internal/example/value_test.go", 'package example\nimport "testing"\nfunc TestCore(t *testing.T) { if Choose(false) != 2 { t.Fatal("wrong branch") } }\n');
-  writeFixture(fixture, "internal/example/evaluation.go", "//go:build evaluation\n\npackage example\nfunc Evaluation() int { return 99 }\n");
-  writeFixture(fixture, "internal/example/evaluation_test.go", '//go:build evaluation\n\npackage example\nimport "testing"\nfunc TestEvaluation(t *testing.T) { if Evaluation() != 99 { t.Fatal("evaluation") } }\n');
+  writeFixture(fixture, "internal/example/evaluation.go", "package example\nfunc Evaluation() int { return 99 }\n");
+  writeFixture(fixture, "internal/example/evaluation_test.go", 'package example\nimport "testing"\nfunc TestEvaluation(t *testing.T) { if Evaluation() != 99 { t.Fatal("evaluation") } }\n');
   writeFixture(fixture, "internal/testless/value.go", "package testless\nfunc Value() int { return 7 }\n");
   writeFixture(fixture, "internal/decisiononly/value.go", "package decisiononly\nfunc Workflow() int { return 11 }\nfunc Settings() int { return 13 }\n");
   writeFixture(fixture, "internal/diagnosticonly/value.go", "package diagnosticonly\nfunc FailureCapture() int { return 17 }\nfunc AssessmentWitness() int { return 19 }\n");
@@ -383,17 +377,20 @@ test("real Go coverage parts retain cross-package and testless execution and rej
     "internal/ontology/postgres": ["TestOntologyMaintenanceCohort", "TestOntologyCoverageFailureWitnesses", "TestOntologyMaintenanceParallelClaimsAndLimits", "TestOntologyMaintenanceParallelSchedulerExecution", "TestOntologyManagementTopicPublication", "TestOntologyManagementTopicDependencies", "TestOntologyManagementTopicRollbackAndPins", "TestOntologyManagementTopicRacesAndIsolation"],
     "internal/storage/postgres": ["TestEvidenceOnlyPostgresUpgrade"],
     "cmd/internal/migrationapp": ["TestEvidenceOnlyPostgresMigrationDiagnostics"],
-    "internal/recall/postgres": ["TestEvidenceOnlyPostgresTopics"],
+    "internal/recall/postgres": ["TestEvidenceOnlyPostgresTopics", "TestRecallAccuracyCohort"],
     "internal/trace/postgres": ["TestEvidenceOnlyPostgresTrace"],
     "internal/privacy/postgres": ["TestEvidenceOnlyPostgresPrivacy"],
     "internal/operations/postgres": ["TestEvidenceOnlyPostgresTelemetry"],
-    "cmd/internal/serverapp": ["TestServerLifecycleCore", "TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads", "TestOntologySemanticPublicationLogOnlyDiagnostics", "TestEvidenceOnlyPostgresIntake"],
+    "cmd/internal/serverapp": ["TestServerLifecycleCore", "TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads", "TestOntologySemanticPublicationLogOnlyDiagnostics", "TestEvidenceOnlyPostgresIntake", "TestRunnerCampaignConditionsAndReplay"],
+    "internal/evalretire": ["TestEvaluationRetirementFixture"],
+    "cmd/eval-runner": ["TestRuntimeLogDockerFixture"],
     "internal/service": ["TestAuditFixture"],
     "internal/knowledge/postgres": ["TestSessionFixture", "TestDecisionWorkflowFixture", "TestEvidenceOnlyPostgresSession"],
     "internal/settings": ["TestDecisionSettingsFixture"],
   };
   for (const [directory, names] of Object.entries(targets)) {
-    writeFixture(fixture, `${directory}/value.go`, '//go:build integration\n\npackage fixture\nimport ("example.com/fixture/internal/example"; "example.com/fixture/internal/testless")\nfunc Value() int { return example.Choose(true) + testless.Value() }\n');
+    const buildTag = ["internal/evalretire", "cmd/eval-runner"].includes(directory) ? "" : "//go:build integration\n\n";
+    writeFixture(fixture, `${directory}/value.go`, buildTag + 'package fixture\nimport ("example.com/fixture/internal/example"; "example.com/fixture/internal/testless")\nfunc Value() int { return example.Choose(true) + testless.Value() }\n');
     const decisionImport = names.some((name) => name.startsWith("TestDecision")) ? '; "example.com/fixture/internal/decisiononly"' : "";
     const diagnosticImport = names.some((name) => name.startsWith("TestOntologyCoverage") || name.startsWith("TestOntologyFailureCapture")) ? '; "example.com/fixture/internal/diagnosticonly"' : "";
     const parallelImport = names.some((name) => name.startsWith("TestOntologyMaintenanceParallel")) ? '; "example.com/fixture/internal/parallelonly"' : "";
@@ -439,6 +436,7 @@ test("real Go coverage parts retain cross-package and testless execution and rej
   assert.deepEqual(readFixture(selectionLog).trim().split("\n").sort(), Object.values(targets).flat().sort());
   assert.match(readFixture(join(outputDir, "postgres/go-postgres-complete.raw")), /fixture\/internal\/testless\/value.go:[^\n]+ [1-9]/m);
   assert.match(readFixture(join(outputDir, "postgres/go-postgres-complete.raw")), /fixture\/internal\/parallelonly\/value.go:[^\n]+ [1-9]/m);
+  assert.match(readFixture(join(outputDir, "postgres/go-postgres-complete.raw")), /fixture\/internal\/evalretire\/value.go:[^\n]+ [1-9]/m);
   for (const line of [2, 3]) assert.match(readFixture(join(outputDir, "postgres/go-postgres-complete.raw")), new RegExp(`fixture/internal/diagnosticonly/value.go:${line}\\.[^\\n]+ [1-9]`, "m"));
   assert.doesNotMatch(readFixture(join(outputDir, "postgres/profiles.sha256")), /go-(audit|session|evidence-only)-complete/);
   for (const line of [2, 3]) assert.match(readFixture(join(outputDir, "core/postgres-support/go-session-complete.raw")), new RegExp(`fixture/internal/decisiononly/value.go:${line}\\.[^\\n]+ [1-9]`, "m"));

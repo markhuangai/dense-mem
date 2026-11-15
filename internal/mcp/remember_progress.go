@@ -52,7 +52,7 @@ type sdkRememberProgress struct {
 func (s *Server) withSDKRememberProgress(ctx context.Context, name string, req *sdkmcp.CallToolRequest) (context.Context, func()) {
 	noop := func() {}
 	_, registered := s.registry.Get(name)
-	if !registered || (!slices.Contains(registry.ContractToolNames(), name) && !registry.IsEvaluationTool(name)) {
+	if !registered || !slices.Contains(registry.ContractToolNames(), name) {
 		return ctx, noop
 	}
 	transport, ok := ctx.Value(sdkProgressHTTPContextKey{}).(sdkProgressHTTP)
@@ -185,10 +185,6 @@ func progressMessage(stage rememberapp.ProgressStage) string {
 		return "Reading Evidence for export"
 	case "export_artifact":
 		return "Building the memory pack"
-	case "evaluation_audit":
-		return "Recording evaluation audit"
-	case "evaluation_list":
-		return "Listing authorized evaluation references"
 	default:
 		return ""
 	}

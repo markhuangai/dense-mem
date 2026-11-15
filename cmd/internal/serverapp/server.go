@@ -295,10 +295,6 @@ func RunActiveServer(
 	memoryPackSvc := applications.MemoryPack
 	recallFeedbackEventService := applications.RecallFeedback
 
-	evaluationBindings, err := buildEvaluationRegistryBindings(pgDB.GetDB(), rlsHelper, auditService)
-	if err != nil {
-		return fmt.Errorf("failed to build evaluation registry bindings: %w", err)
-	}
 	toolRegistry, err := registry.BuildActive(registry.Dependencies{
 		Core: registry.CoreDependencies{
 			Metrics:              discoverabilityMetrics,
@@ -311,7 +307,6 @@ func RunActiveServer(
 		LifecycleBindings:  registry.LifecycleBindings{Service: lifecycleSvc},
 		TraceBindings:      registry.TraceBindings{Service: contextSvc},
 		MemoryPackBindings: registry.MemoryPackBindings{Service: memoryPackSvc},
-		EvaluationBindings: evaluationBindings,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to build active tool registry: %w", err)

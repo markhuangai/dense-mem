@@ -15,7 +15,7 @@ node --test tests/uat/architecture_conformance.test.mjs
 node --test tests/uat/synchronous_write/*.test.mjs
 node --test tests/uat/decision_providers/*.test.mjs
 node --test tests/uat/embedding_upstream.test.mjs
-node --test tests/uat/ontology_organization_cleanup.test.mjs tests/eval/scripts/session_provider_proxy.test.mjs tests/eval/scripts/contextual_intake_v1.test.mjs
+node --test tests/uat/ontology_organization_cleanup.test.mjs
 scripts/static-analysis.sh
 node --test tests/uat/staging_deployment.test.mjs
 node --test tests/uat/image_release_policy.test.mjs tests/uat/preview_receipt.test.mjs tests/uat/fork_e2e_policy.test.mjs tests/uat/fork_e2e_workspace.test.mjs
@@ -29,7 +29,7 @@ node --test tests/uat/prerelease_version.test.mjs
 node --test tests/uat/go_vulnerability_scan_policy.test.mjs
 node --test tests/uat/ai_pr_review_policy.test.mjs
 node --test tests/uat/pr_validation_policy.test.mjs
-bash tests/eval/scripts/run_full_public_rag_eval_until_done_test.sh
+bash scripts/test-evaluation.sh
 node --test tests/uat/coverage_policy.test.mjs
 npm run test:coverage --prefix web
 npm run test:coverage --prefix packages/mcp-proxy

@@ -3,29 +3,9 @@ package registry
 import (
 	"context"
 	"errors"
-	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
-	"testing"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
-
-type evaluationAuditStub struct {
-	entries []accessservice.AuditLogEntry
-}
-
-func (s *evaluationAuditStub) Append(_ context.Context, entry accessservice.AuditLogEntry) error {
-	s.entries = append(s.entries, entry)
-	return nil
-}
-
-func firstEvalItem(t *testing.T, page map[string]any) map[string]any {
-	t.Helper()
-	items, ok := page["items"].([]map[string]any)
-	if !ok || len(items) == 0 {
-		t.Fatalf("page items = %#v", page["items"])
-	}
-	return items[0]
-}
 
 type stubRecallFeedbackConfig struct {
 	enabled bool

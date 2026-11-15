@@ -20,7 +20,6 @@ type Dependencies struct {
 	TraceBindings     TraceBindings
 
 	MemoryPackBindings MemoryPackBindings
-	EvaluationBindings EvaluationBindings
 }
 type RecallFeedbackEventRecorder interface {
 	RecordRecallSnapshot(ctx context.Context, event domain.RecallFeedbackEvent) error
@@ -35,7 +34,7 @@ var ErrToolUnavailable = errors.New("tool not available (dependency missing or n
 // BuildActive wires the PostgreSQL-authoritative production registry.
 func BuildActive(deps Dependencies) (Registry, error) {
 	r := New()
-	tools := append(contractTools(deps), evaluationTools(deps)...)
+	tools := contractTools(deps)
 	for _, t := range tools {
 		if err := r.Register(t); err != nil {
 			return nil, fmt.Errorf("registry: BuildActive: %w", err)

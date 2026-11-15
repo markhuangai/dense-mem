@@ -170,7 +170,7 @@ test("ADK scenario enables private intake and dispatches its installed-wheel har
   assert.match(scenario, /google_adk_memory\) bash "\$\{ROOT_DIR\}\/packages\/python\/scripts\/e2e.sh" google_adk_memory ;;/);
 });
 
-test("Client overlays reserve a bounded request budget", async () => {
+test("Client overlays retain ordinary settings and reserve a bounded request budget", async () => {
   const fixture = await mkdtemp(join(tmpdir(), "dense-mem-adk-overlay-"));
   try {
     const commandStart = stack.indexOf('    node - "$DENSE_MEM_CI_COMPOSE_OVERLAY_FILE"');
@@ -180,14 +180,14 @@ test("Client overlays reserve a bounded request budget", async () => {
     assert.ok(commandStart >= 0 && start > commandStart && end > start);
     const generator = join(fixture, "overlay.cjs");
     await writeFile(generator, stack.slice(start, end));
-    for (const name of ["google_adk_memory", "langchain_retriever", "python_client", "session_ingest", "synchronous_write", "synchronous_write_telemetry_disabled"]) {
+    for (const name of ["google_adk_memory", "langchain_retriever", "python_client", "session_ingest", "synchronous_write", "synchronous_write_telemetry_disabled", "enterprise_exports"]) {
       const destination = join(fixture, `${name}.yml`);
       await run(process.execPath, [
         generator, destination, "synchronous_write", "", "", "fixture-model", "1536",
         name, "adk-overlay-test", "30",
-      ], { env: { DENSE_MEM_CI_HOSTED: "1" } });
+      ], { env: { DENSE_MEM_CI_HOSTED: "1", DENSE_MEM_E2E_EXPORT_PERFORMANCE: "1", DENSE_MEM_E2E_EXPORT_PERF_STATE: "disabled" } });
       const overlay = await readFile(destination, "utf8");
-      if (name === "langchain_retriever") {
+      if (["langchain_retriever", "enterprise_exports"].includes(name)) {
         assert.doesNotMatch(overlay, /SESSION_INGEST_ENABLED/);
       } else {
         assert.match(overlay, /SESSION_INGEST_ENABLED: "true"/);
@@ -201,6 +201,15 @@ test("Client overlays reserve a bounded request budget", async () => {
         assert.match(overlay, /LOG_LEVEL: "debug"/);
       } else {
         assert.doesNotMatch(overlay, /LOG_LEVEL/);
+      }
+      if (name === "enterprise_exports") {
+        assert.match(overlay, /OTLP_ENABLED: "true"/);
+        assert.match(overlay, /OTLP_TRACE_ENDPOINT: "http:\/\/enterprise-collector:4318\/v1\/traces"/);
+        assert.match(overlay, /OTLP_METRIC_ENDPOINT: "http:\/\/enterprise-collector:4318\/v1\/metrics"/);
+        assert.match(overlay, /AUDIT_EXPORT_ENABLED: "true"/);
+        assert.match(overlay, /DIAGNOSTIC_BUNDLE_ENABLED: "true"/);
+        assert.match(overlay, /^  enterprise-collector:/m);
+        assert.doesNotMatch(overlay, /GOGC|GOMEMLIMIT/);
       }
     }
   } finally {
@@ -1803,7 +1812,7 @@ test(`${shardCount} precheck shards preserve every real runner selection exactly
   }
   assert.equal(new Set(actual).size, actual.length);
   assert.deepEqual(actual.sort(), inventory.sort());
-  assert.equal(actual.length, 621);
+  assert.equal(actual.length, 622);
   assert.equal(counts[0], shardCount === 6 ? 11 : 1);
   assert.equal(counts[1], shardCount === 6 ? 2 : 1);
   assert.equal((await run("bash", ["-c", command, "six-shards", root])).stdout, stdout);

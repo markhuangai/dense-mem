@@ -24,14 +24,11 @@ import (
 	"github.com/markhuangai/dense-mem/internal/correlation"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/embedding"
-	"github.com/markhuangai/dense-mem/internal/evaluation"
-	evaluationpostgres "github.com/markhuangai/dense-mem/internal/evaluation/postgres"
 	"github.com/markhuangai/dense-mem/internal/http/handler"
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
 	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
 	recallpostgres "github.com/markhuangai/dense-mem/internal/recall/postgres"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	searchpostgres "github.com/markhuangai/dense-mem/internal/search/postgres"
@@ -346,27 +343,6 @@ func TestMCPToolProgressPostgres(t *testing.T) {
 		content(frames)
 		hasStages(frames, "Waiting for query embedding provider capacity", "Waiting before retrying query embedding provider", "Calling query embedding provider")
 	})
-	t.Run("evaluation application audit listing and delegated Recall", func(t *testing.T) {
-		api := evaluation.New(evaluation.Dependencies{Repository: evaluationpostgres.NewReader(app, rls), Recall: bundle.Recall, Audit: buildAuditApplication(app)})
-		var stages []string
-		ctx := requestctx.WithProgressObserver(requestctx.WithActor(t.Context(), actors[a]), func(_ context.Context, update requestctx.ProgressUpdate) { stages = append(stages, update.Stage) })
-		page, err := api.ListKnowledgeRefs(ctx, "ignored", "evidence", 10, "", "", false)
-		require.NoError(t, err)
-		require.NotEmpty(t, page["items"])
-		require.Equal(t, []string{"evaluation_audit", "evaluation_list", "preparing_result"}, stages)
-		stages = nil
-		result, err := api.RunRecallCase(ctx, "progress", recallcontract.Request{Query: "PostgreSQL progress"}, "", "", true)
-		require.NoError(t, err)
-		require.NotEmpty(t, result["ranked_refs"])
-		require.Equal(t, "evaluation_audit", stages[0])
-		require.Contains(t, stages, "recall_search")
-		require.Equal(t, "preparing_result", stages[len(stages)-1])
-		stages = nil
-		_, err = api.ListKnowledgeRefs(ctx, "ignored", "unsupported", 10, "", "", false)
-		require.Error(t, err)
-		require.Equal(t, []string{"evaluation_audit", "evaluation_list"}, stages)
-	})
-
 	t.Run("native PostgreSQL retraction lock", func(t *testing.T) {
 		tx := admin.Begin()
 		require.NoError(t, tx.Error)

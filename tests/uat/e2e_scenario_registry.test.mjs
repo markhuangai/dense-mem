@@ -100,7 +100,7 @@ function assertWorkflowOrchestration(workflow) {
   assert.equal(scenarios.strategy["max-parallel"], 8);
   assert.equal(scenarios.strategy.matrix, "${{ fromJSON(needs.authorize.outputs.scenario_matrix) }}");
   assert.equal(scenarios.with.source_revision, "${{ needs.authorize.outputs.source_revision }}");
-  assert.deepEqual(new Set(report.needs), new Set(["authorize", "prechecks", "database-prechecks", "scenarios", "ci-trial"]));
+  assert.deepEqual(new Set(report.needs), new Set(["authorize", "prechecks", "database-prechecks", "scenarios", "ci-trial", "evaluation"]));
   assert.equal(runStep(report, "SCENARIO_RESULT").env.SCENARIO_RESULT, "${{ needs.scenarios.result }}");
   assert.equal(report.if, "always()");
 }
@@ -288,7 +288,7 @@ test("the production aggregate requires every independent phase and manual CI tr
   const report = workflowJob(workflow, "report");
   const command = runStep(report, "SCENARIO_RESULT").run;
   const passing = { AUTH_RESULT: "success", PRECHECK_RESULT: "success", DATABASE_PRECHECK_RESULT: "success", SCENARIO_RESULT: "success",
-    CI_TRIAL_RESULT: "success", EVENT_NAME: "workflow_dispatch", IMAGE: "fixture-image", SOURCE_REVISION: "a".repeat(40), GITHUB_STEP_SUMMARY: "/dev/null" };
+    CI_TRIAL_RESULT: "success", EVALUATION_MODE: "none", EVALUATION_RESULT: "skipped", EVENT_NAME: "workflow_dispatch", IMAGE: "fixture-image", SOURCE_REVISION: "a".repeat(40), GITHUB_STEP_SUMMARY: "/dev/null" };
   const execute = (env) => spawnSync("bash", ["-c", command], { encoding: "utf8", env: { ...process.env, ...env } });
   assert.equal(execute(passing).status, 0);
   for (const field of ["AUTH_RESULT", "PRECHECK_RESULT", "DATABASE_PRECHECK_RESULT", "SCENARIO_RESULT", "CI_TRIAL_RESULT"]) {
@@ -297,9 +297,18 @@ test("the production aggregate requires every independent phase and manual CI tr
     }
   }
   assert.equal(execute({ ...passing, EVENT_NAME: "pull_request_target", CI_TRIAL_RESULT: "skipped" }).status, 0);
+  for (const mode of ["fixtures", "live", "replay"]) {
+    const evaluation = { ...passing, EVALUATION_MODE: mode, EVALUATION_RESULT: "success", PRECHECK_RESULT: "skipped", DATABASE_PRECHECK_RESULT: "skipped", SCENARIO_RESULT: "skipped", CI_TRIAL_RESULT: "skipped" };
+    assert.equal(execute(evaluation).status, 0, mode);
+    for (const field of ["AUTH_RESULT", "EVALUATION_RESULT"]) {
+      for (const result of ["failure", "cancelled", "skipped", ""]) {
+        assert.notEqual(execute({ ...evaluation, [field]: result }).status, 0, `${mode} ${field}=${result}`);
+      }
+    }
+  }
   const trial = workflowJob(workflow, "ci-trial");
   assert.deepEqual([trial.needs].flat(), ["authorize"]);
-  assert.equal(trial.if, "github.event_name == 'workflow_dispatch'");
+  assert.equal(trial.if, "github.event_name == 'workflow_dispatch' && (inputs.evaluation == '' || inputs.evaluation == 'none')");
   assert.equal(trial.uses, "./.github/workflows/ci-shared.yml");
   assert.equal(trial.with["source-revision"], "${{ needs.authorize.outputs.source_revision }}");
 });

@@ -1,0 +1,27 @@
+{
+  "schema_version": "dense-mem.ontology.followup_cohort.v1",
+  "issues": [
+    532,
+    533,
+    534,
+    535,
+    539,
+    540,
+    542,
+    543,
+    544
+  ],
+  "generator": "internal/testfixture/evaluation/organization_followup_cohort.go",
+  "generator_sha256": "sha256:5ba07f297783db57061b5482d118e7867f2a7bdb3d856cb5b0b18ad9efa65f84",
+  "cohort_sha256": "sha256:94f92ddd22fa5affbfa9936248cdf6be3c067a0641424406a9445380ce921b23",
+  "case_count": 6,
+  "source_count": 12,
+  "judgment_policy": "Manual fixed positive and adverse judgments. Gold equivalence keys and fact IDs never enter provider input. Preserve the existing organization cohort unchanged.",
+  "acceptance": {
+    "false_consolidations": 0,
+    "source_preservation": 1,
+    "distinct_fact_coverage": 1,
+    "repeated_slots": 0,
+    "fresh_state_live_repetitions": 3
+  }
+}

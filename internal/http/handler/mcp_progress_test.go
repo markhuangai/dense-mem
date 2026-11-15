@@ -352,7 +352,7 @@ func (progressFeedbackConfig) RecallFeedbackRuntimeConfig(context.Context) (doma
 func newProgressHTTPServer(t *testing.T, logger *observability.Logger, invoke registry.ToolInvoker, wrappers ...func(http.Handler) http.Handler) *progressHTTPServer {
 	t.Helper()
 	reg := registry.New()
-	for _, name := range []string{"remember", "ingest_session", "recall_memory", "trace_memory", "retract_evidence", "export_memory_pack", "submit_recall_session_feedback", "eval_list_knowledge_refs", "eval_run_recall_case"} {
+	for _, name := range []string{"remember", "ingest_session", "recall_memory", "trace_memory", "retract_evidence", "export_memory_pack", "submit_recall_session_feedback"} {
 		require.NoError(t, reg.Register(registry.Tool{Name: name, InputSchema: map[string]any{"type": "object"}, Invoke: invoke,
 			Available: func(context.Context) bool { return true }}))
 	}

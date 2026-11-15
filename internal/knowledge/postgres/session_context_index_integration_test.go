@@ -41,7 +41,6 @@ func TestSessionContextIndexBoundsPrivateLookupAcrossUnrelatedHistory(t *testing
 	}
 	store := NewStore(app, rls)
 	completeSessionContextFixture(t, ctx, store, intake.Request)
-	plans := map[string]json.RawMessage{}
 	read := func(actor context.Context, scope session.Scope, req session.Request) *session.Submission {
 		result := &session.Submission{}
 		require.NoError(t, store.withTeamProfileTx(actor, scope.TeamID, scope.OwnerProfileID, func(tx *gorm.DB) error {
@@ -94,7 +93,6 @@ func TestSessionContextIndexBoundsPrivateLookupAcrossUnrelatedHistory(t *testing
 		if name == "dormant" || name == "new" {
 			require.Contains(t, string(encoded), "session_events_session_context_idx")
 		}
-		plans[name] = append(json.RawMessage(nil), encoded...)
 	}
 	next := intake
 	next.Request.IdempotencyKey = "next-admitted-request"
@@ -105,12 +103,6 @@ func TestSessionContextIndexBoundsPrivateLookupAcrossUnrelatedHistory(t *testing
 	admitted, err := store.StageSession(ctx, next)
 	require.NoError(t, err)
 	require.Equal(t, before.Prior, admitted.Prior)
-	if directory := os.Getenv("DENSE_MEM_ORGANIZATION_REPORT_DIR"); directory != "" {
-		require.NoError(t, os.MkdirAll(directory, 0700))
-		data, err := json.MarshalIndent(map[string]any{"unrelated_events": 200000, "force_rls": forceRLS, "superuser": superuser, "bypass_rls": bypass, "plans": plans}, "", "  ")
-		require.NoError(t, err)
-		require.NoError(t, os.WriteFile(filepath.Join(directory, "session-context-plans.json"), append(data, '\n'), 0600))
-	}
 }
 
 func completeSessionContextFixture(t *testing.T, ctx context.Context, store *Store, request session.Request) {
