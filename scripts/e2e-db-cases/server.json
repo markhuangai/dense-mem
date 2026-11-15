@@ -66,6 +66,13 @@
       "source": "cmd/internal/serverapp/runner_campaign_integration_test.go"
     },
     {
+      "id": "server/TestRunnerCampaignConditionsAndReplay",
+      "package": "./cmd/internal/serverapp",
+      "run": "^TestRunnerCampaignConditionsAndReplay$",
+      "phase": "precheck",
+      "source": "cmd/internal/serverapp/runner_campaign_integration_test.go"
+    },
+    {
       "id": "server/TestMCPToolProgressPostgres",
       "package": "./cmd/internal/serverapp",
       "run": "^TestMCPToolProgressPostgres$",

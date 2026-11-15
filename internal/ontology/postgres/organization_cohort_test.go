@@ -125,13 +125,10 @@ func testOntologyCohortWithMatching(t *testing.T, maintenance bool, matching []e
 				require.NoError(t, err)
 			}
 			before := f.canonicalSnapshot(t)
-			var service *organization.Service
 			var maintained *organization.MaintenanceService
-			var callCount func() int32
 			ctx := context.Background()
-			fixture, calls := organizationFixtureService(t, f, func(a, b assessment.Item) bool { return byText[a.Text] == byText[b.Text] }, nil)
-			service = fixture
-			callCount = calls.Load
+			service, calls := organizationFixtureService(t, f, func(a, b assessment.Item) bool { return byText[a.Text] == byText[b.Text] }, nil)
+			callCount := calls.Load
 			if maintenance {
 				var counters []*atomic.Int32
 				maintained = organization.NewMaintenanceService(organization.MaintenanceDependencies{Repository: f.store, Config: maintenanceSettings(t, f), DefaultModel: model, Logger: logger, ProviderTimeout: time.Minute, Organizer: func(model string, contextWindowTokens int64, accounting assessment.AttemptAccounting) *organization.Service {
@@ -183,9 +180,7 @@ func testOntologyCohortWithMatching(t *testing.T, maintenance bool, matching []e
 				measurement = map[string]any{}
 			}
 			measurement["processing_ms"] = time.Since(started).Milliseconds()
-			if callCount != nil {
-				measurement["provider_calls"] = callCount()
-			}
+			measurement["provider_calls"] = callCount()
 			if maintenance {
 				var discovery []map[string]any
 				for _, line := range bytes.Split(bytes.TrimSpace(maintenanceLog.Bytes()), []byte("\n")) {
@@ -245,10 +240,7 @@ func testOntologyCohortWithMatching(t *testing.T, maintenance bool, matching []e
 				}
 			}
 			require.Equal(t, before, f.canonicalSnapshot(t))
-			priorCalls := int32(0)
-			if callCount != nil {
-				priorCalls = callCount()
-			}
+			priorCalls := callCount()
 			input.OperationKey += "-replay"
 			if maintenance {
 				for range 8 {
@@ -261,9 +253,7 @@ func testOntologyCohortWithMatching(t *testing.T, maintenance bool, matching []e
 				require.True(t, replay.Existing)
 				require.Equal(t, result.AssessmentID, replay.AssessmentID)
 			}
-			if callCount != nil {
-				require.Equal(t, priorCalls, callCount())
-			}
+			require.Equal(t, priorCalls, callCount())
 		})
 	}
 }

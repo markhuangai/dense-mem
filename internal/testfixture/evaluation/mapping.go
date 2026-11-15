@@ -49,67 +49,6 @@ func hasMappedRef(refs []Ref, want Ref) bool {
 	return false
 }
 
-func mergeKnowledgeMapping(dst *KnowledgeMapping, src KnowledgeMapping) {
-	for id, parts := range src.Partitions {
-		if dst.Partitions == nil {
-			dst.Partitions = map[string][]ImportedPartition{}
-		}
-		dst.Partitions[id] = append([]ImportedPartition(nil), parts...)
-	}
-	for _, ref := range src.BySourceDocID {
-		addSourceMapping(dst, ref, true)
-	}
-	for sourceDocID, byType := range src.BySourceDocIDAndType {
-		for refType, refs := range byType {
-			for _, ref := range refs {
-				if ref.SourceDocID == "" {
-					ref.SourceDocID = sourceDocID
-				}
-				if ref.Type == "" {
-					ref.Type = refType
-				}
-				addSourceMapping(dst, ref, false)
-			}
-		}
-	}
-
-}
-
-func mergeFilteredKnowledgeMapping(dst *KnowledgeMapping, src KnowledgeMapping, keepSourceDocIDs map[string]struct{}) {
-	if len(keepSourceDocIDs) == 0 {
-		mergeKnowledgeMapping(dst, src)
-		return
-	}
-	for id, parts := range src.Partitions {
-		if dst.Partitions == nil {
-			dst.Partitions = map[string][]ImportedPartition{}
-		}
-		dst.Partitions[id] = append([]ImportedPartition(nil), parts...)
-	}
-	for sourceDocID, ref := range src.BySourceDocID {
-		if _, ok := keepSourceDocIDs[sourceDocID]; ok {
-			addSourceMapping(dst, ref, true)
-		}
-	}
-	for sourceDocID, byType := range src.BySourceDocIDAndType {
-		if _, ok := keepSourceDocIDs[sourceDocID]; !ok {
-			continue
-		}
-		for refType, refs := range byType {
-			for _, ref := range refs {
-				if ref.SourceDocID == "" {
-					ref.SourceDocID = sourceDocID
-				}
-				if ref.Type == "" {
-					ref.Type = refType
-				}
-				addSourceMapping(dst, ref, false)
-			}
-		}
-	}
-
-}
-
 func resolveSourceMapping(mapping KnowledgeMapping, sourceDocID, refType string) (Ref, bool) {
 	sourceDocID = strings.TrimSpace(sourceDocID)
 	refType = strings.TrimSpace(refType)
@@ -151,28 +90,6 @@ func resolveSourceMapping(mapping KnowledgeMapping, sourceDocID, refType string)
 		resolved.Type = refType
 	}
 	return resolved, true
-}
-
-func sameRefSet(a, b []Ref) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	remaining := map[string]int{}
-	for _, ref := range a {
-		remaining[mappingRefKey(ref)]++
-	}
-	for _, ref := range b {
-		key := mappingRefKey(ref)
-		if remaining[key] == 0 {
-			return false
-		}
-		remaining[key]--
-	}
-	return true
-}
-
-func mappingRefKey(ref Ref) string {
-	return strings.TrimSpace(ref.Type) + "\x00" + strings.TrimSpace(ref.ID)
 }
 
 func validateRequiredQRelMappings(qrels map[string]QRel, suite []SuiteCase, mapping KnowledgeMapping) error {

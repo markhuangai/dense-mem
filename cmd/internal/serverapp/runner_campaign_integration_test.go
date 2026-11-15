@@ -3,16 +3,120 @@
 package serverapp
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"log/slog"
+	"net/http"
+	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/evalharness"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
+
+type runnerAnswerTransport func(context.Context, modelprovider.StructuredRequest) (modelprovider.StructuredResult, error)
+
+func (f runnerAnswerTransport) Complete(ctx context.Context, request modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
+	return f(ctx, request)
+}
+
+func TestRunnerCampaignConditionsAndReplay(t *testing.T) {
+	f := newRunnerServiceFixture(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	require.NoError(t, f.native.Control(ctx, http.MethodPatch, "/config/ontology-maintenance", map[string]any{"items": []map[string]string{{"key": domain.AppConfigOntologyEnabled, "value": "false"}}}, nil))
+	manifest := f.manifest
+	manifest.RunID, manifest.Dataset = "native-runner", "synthetic"
+	manifest.SourceRevision = strings.Repeat("a", 40)
+	manifest.Image = "ghcr.io/markhuangai/dense-mem@sha256:" + strings.Repeat("b", 64)
+	manifest.RegistryHash = strings.Repeat("c", 64)
+	manifest.ModelDeadline, manifest.OutputDir = time.Now().Add(time.Minute), t.TempDir()
+	var logs bytes.Buffer
+	f.native.Client.Capture = &evalharness.Capture{RunID: manifest.RunID, Logger: slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})), Protector: evalharness.NewRunnerCredentialProtector(f.native.Client.APIKey, f.native.ControlToken)}
+	corpus := []evalharness.CorpusItem{{SourceDocID: "source-one", Content: "Project Alpha stores durable memory in PostgreSQL."}}
+	questions := []evalharness.Question{{ID: "question-one", Query: "Where does Project Alpha store durable memory?", Answers: []string{"PostgreSQL", "private-gold-answer-canary"}, GoldSources: []string{"source-one"}}}
+	var calls atomic.Int32
+	transport := runnerAnswerTransport(func(_ context.Context, request modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
+		calls.Add(1)
+		for _, message := range request.Messages {
+			if strings.Contains(message.Content, "private-gold-answer-canary") {
+				return modelprovider.StructuredResult{}, errors.New("gold answer leaked into provider input")
+			}
+		}
+		var input struct {
+			Calls []evalharness.MemoryCall `json:"memory_calls"`
+		}
+		if err := json.Unmarshal([]byte(request.Messages[len(request.Messages)-1].Content), &input); err != nil || len(input.Calls) != 1 {
+			return modelprovider.StructuredResult{}, errors.New("answer did not receive one initial memory packet")
+		}
+		results, ok := input.Calls[0].Result["results"].([]any)
+		if !ok || len(results) == 0 {
+			return modelprovider.StructuredResult{}, errors.New("initial Recall delivered no Evidence")
+		}
+		first, ok := results[0].(map[string]any)
+		if !ok {
+			return modelprovider.StructuredResult{}, errors.New("initial Recall has invalid Evidence")
+		}
+		id, _ := first["evidence_id"].(string)
+		body, err := json.Marshal(map[string]any{"action": "answer", "query": "", "topic_id": "", "evidence_id": "", "answer": "PostgreSQL", "citations": []evalharness.Citation{{EvidenceID: id, Quote: "PostgreSQL"}}})
+		return modelprovider.StructuredResult{Content: string(body)}, err
+	})
+	worker := make(chan error, 1)
+	go func() {
+		for ctx.Err() == nil {
+			if _, err := f.maintenance.RunTurn(ctx); err != nil && ctx.Err() == nil {
+				worker <- err
+				return
+			}
+			select {
+			case <-ctx.Done():
+			case <-time.After(10 * time.Millisecond):
+			}
+		}
+		worker <- nil
+	}()
+	defer func() { cancel(); require.NoError(t, <-worker) }()
+	report, err := evalharness.Run(ctx, manifest, corpus, questions, f.native.Client, transport, f.native)
+	require.NoError(t, err)
+	require.True(t, report.Complete)
+	require.Equal(t, 4, report.ExpectedAnswers)
+	require.Equal(t, 4, report.CompletedAnswers)
+	require.Equal(t, int32(4), calls.Load())
+	require.Len(t, report.NativeMeasurements, 3)
+	for _, observation := range report.NativeMeasurements {
+		require.Equal(t, report.Identity.CanonicalHash, observation.CanonicalHash)
+	}
+	events, err := evalharness.ReplayEvents([]io.Reader{bytes.NewReader(logs.Bytes())}, manifest.RunID)
+	require.NoError(t, err)
+	replayed, err := evalharness.ReplayReport(events, manifest, corpus, questions)
+	require.NoError(t, err)
+	require.True(t, replayed.Complete)
+	require.Equal(t, report.Matrix, replayed.Matrix)
+	require.Equal(t, report.Scores, replayed.Scores)
+	conditions := []string{}
+	for _, event := range events {
+		if event.Kind != "observation" {
+			continue
+		}
+		var observation evalharness.Observation
+		require.NoError(t, json.Unmarshal(event.Payload, &observation))
+		conditions = append(conditions, observation.Condition)
+		require.Len(t, observation.Hosts, 2)
+		require.Equal(t, observation.Initial, observation.Hosts[0].Calls[0])
+		require.Equal(t, observation.Initial, observation.Hosts[1].Calls[0])
+	}
+	require.Equal(t, []string{"off", "on"}, conditions)
+}
 
 func TestRunnerCampaignNativeMappingsFreezeAndRecall(t *testing.T) {
 	f := newRunnerServiceFixture(t)

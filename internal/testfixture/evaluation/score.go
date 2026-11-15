@@ -1,52 +1,12 @@
 package evaluation
 
 import (
-	"fmt"
 	"sort"
 	"strings"
 	"time"
 
 	recallquality "github.com/markhuangai/dense-mem/internal/recall/quality"
 )
-
-func ScoreTraces(runID, mode, seedID, seedHash, suitePath string, suite []SuiteCase, cases map[string]Case, qrels map[string]QRel, traces []RecallTrace, mapping KnowledgeMapping) ([]RetrievalScore, Summary, error) {
-	traceByCase := make(map[string]RecallTrace, len(traces))
-	wanted := make(map[string]bool, len(suite))
-	for _, item := range suite {
-		if item.CaseID == "" || wanted[item.CaseID] {
-			return nil, Summary{}, fmt.Errorf("missing or duplicate suite case %q", item.CaseID)
-		}
-		wanted[item.CaseID] = true
-	}
-	for _, trace := range traces {
-		if !wanted[trace.CaseID] {
-			return nil, Summary{}, fmt.Errorf("unexpected recall trace %q", trace.CaseID)
-		}
-		if _, exists := traceByCase[trace.CaseID]; exists {
-			return nil, Summary{}, fmt.Errorf("duplicate recall trace %q", trace.CaseID)
-		}
-		traceByCase[trace.CaseID] = trace
-	}
-	scoring := newScoringContext(mapping)
-	scores := make([]RetrievalScore, 0, len(suite))
-	for _, suiteCase := range suite {
-		qrel, ok := qrels[suiteCase.CaseID]
-		if !ok {
-			return nil, Summary{}, fmt.Errorf("suite case %q missing qrels", suiteCase.CaseID)
-		}
-		trace, ok := traceByCase[suiteCase.CaseID]
-		if !ok {
-			return nil, Summary{}, fmt.Errorf("suite case %q missing recall trace", suiteCase.CaseID)
-		}
-		k := cases[suiteCase.CaseID].Limit
-		if k <= 0 {
-			k = 10
-		}
-		scores = append(scores, scoreTrace(suiteCase.CaseID, k, qrel, trace, scoring))
-	}
-	summary := SummarizeScores(runID, mode, seedID, seedHash, suitePath, suite, cases, scores)
-	return scores, summary, nil
-}
 
 func ScoreTrace(caseID string, k int, qrel QRel, trace RecallTrace, mapping KnowledgeMapping) RetrievalScore {
 	return scoreTrace(caseID, k, qrel, trace, newScoringContext(mapping))

@@ -377,17 +377,19 @@ test("real Go coverage parts retain cross-package and testless execution and rej
     "internal/ontology/postgres": ["TestOntologyMaintenanceCohort", "TestOntologyCoverageFailureWitnesses", "TestOntologyMaintenanceParallelClaimsAndLimits", "TestOntologyMaintenanceParallelSchedulerExecution", "TestOntologyManagementTopicPublication", "TestOntologyManagementTopicDependencies", "TestOntologyManagementTopicRollbackAndPins", "TestOntologyManagementTopicRacesAndIsolation"],
     "internal/storage/postgres": ["TestEvidenceOnlyPostgresUpgrade"],
     "cmd/internal/migrationapp": ["TestEvidenceOnlyPostgresMigrationDiagnostics"],
-    "internal/recall/postgres": ["TestEvidenceOnlyPostgresTopics"],
+    "internal/recall/postgres": ["TestEvidenceOnlyPostgresTopics", "TestRecallAccuracyCohort"],
     "internal/trace/postgres": ["TestEvidenceOnlyPostgresTrace"],
     "internal/privacy/postgres": ["TestEvidenceOnlyPostgresPrivacy"],
     "internal/operations/postgres": ["TestEvidenceOnlyPostgresTelemetry"],
-    "cmd/internal/serverapp": ["TestServerLifecycleCore", "TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads", "TestOntologySemanticPublicationLogOnlyDiagnostics", "TestEvidenceOnlyPostgresIntake"],
+    "cmd/internal/serverapp": ["TestServerLifecycleCore", "TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads", "TestOntologySemanticPublicationLogOnlyDiagnostics", "TestEvidenceOnlyPostgresIntake", "TestRunnerCampaignConditionsAndReplay"],
+    "internal/evalretire": ["TestEvaluationRetirementFixture"],
     "internal/service": ["TestAuditFixture"],
     "internal/knowledge/postgres": ["TestSessionFixture", "TestDecisionWorkflowFixture", "TestEvidenceOnlyPostgresSession"],
     "internal/settings": ["TestDecisionSettingsFixture"],
   };
   for (const [directory, names] of Object.entries(targets)) {
-    writeFixture(fixture, `${directory}/value.go`, '//go:build integration\n\npackage fixture\nimport ("example.com/fixture/internal/example"; "example.com/fixture/internal/testless")\nfunc Value() int { return example.Choose(true) + testless.Value() }\n');
+    const buildTag = directory === "internal/evalretire" ? "" : "//go:build integration\n\n";
+    writeFixture(fixture, `${directory}/value.go`, buildTag + 'package fixture\nimport ("example.com/fixture/internal/example"; "example.com/fixture/internal/testless")\nfunc Value() int { return example.Choose(true) + testless.Value() }\n');
     const decisionImport = names.some((name) => name.startsWith("TestDecision")) ? '; "example.com/fixture/internal/decisiononly"' : "";
     const diagnosticImport = names.some((name) => name.startsWith("TestOntologyCoverage") || name.startsWith("TestOntologyFailureCapture")) ? '; "example.com/fixture/internal/diagnosticonly"' : "";
     const parallelImport = names.some((name) => name.startsWith("TestOntologyMaintenanceParallel")) ? '; "example.com/fixture/internal/parallelonly"' : "";
@@ -433,6 +435,7 @@ test("real Go coverage parts retain cross-package and testless execution and rej
   assert.deepEqual(readFixture(selectionLog).trim().split("\n").sort(), Object.values(targets).flat().sort());
   assert.match(readFixture(join(outputDir, "postgres/go-postgres-complete.raw")), /fixture\/internal\/testless\/value.go:[^\n]+ [1-9]/m);
   assert.match(readFixture(join(outputDir, "postgres/go-postgres-complete.raw")), /fixture\/internal\/parallelonly\/value.go:[^\n]+ [1-9]/m);
+  assert.match(readFixture(join(outputDir, "postgres/go-postgres-complete.raw")), /fixture\/internal\/evalretire\/value.go:[^\n]+ [1-9]/m);
   for (const line of [2, 3]) assert.match(readFixture(join(outputDir, "postgres/go-postgres-complete.raw")), new RegExp(`fixture/internal/diagnosticonly/value.go:${line}\\.[^\\n]+ [1-9]`, "m"));
   assert.doesNotMatch(readFixture(join(outputDir, "postgres/profiles.sha256")), /go-(audit|session|evidence-only)-complete/);
   for (const line of [2, 3]) assert.match(readFixture(join(outputDir, "core/postgres-support/go-session-complete.raw")), new RegExp(`fixture/internal/decisiononly/value.go:${line}\\.[^\\n]+ [1-9]`, "m"));
