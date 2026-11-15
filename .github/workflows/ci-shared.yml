@@ -215,6 +215,9 @@ jobs:
       - name: Run PR validation policy tests
         run: node --test tests/uat/pr_validation_policy.test.mjs
 
+      - name: Run wiki publication regressions
+        run: node --test tests/uat/wiki_publication.test.mjs
+
       - name: Run evaluation code checks
         run: bash scripts/test-evaluation.sh
 
