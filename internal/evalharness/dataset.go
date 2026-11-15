@@ -122,12 +122,15 @@ func LoadDataset(dataset Dataset, directory string) ([]CorpusItem, []Question, e
 	corpus := make([]CorpusItem, 0, len(rows))
 	byText := map[string][]string{}
 	seen := map[string]bool{}
-	for _, row := range rows {
-		var index int
-		if err := json.Unmarshal(row.Index, &index); err != nil {
-			return nil, nil, errors.New("corpus index must be an integer")
+	for position, row := range rows {
+		id := dataset.ID + ":row:" + strconv.Itoa(position)
+		if len(row.Index) != 0 {
+			var index *int
+			if err := json.Unmarshal(row.Index, &index); err != nil || index == nil {
+				return nil, nil, errors.New("corpus index must be an integer when present")
+			}
+			id = dataset.ID + ":" + strconv.Itoa(*index)
 		}
-		id := dataset.ID + ":" + strconv.Itoa(index)
 		content := row.Title + "\n" + row.Text
 		if seen[id] || row.Text == "" || utf8.RuneCountInString(content) > 16384 {
 			return nil, nil, errors.New("invalid corpus row or admission limit")

@@ -27,6 +27,8 @@ against a real production instance and PostgreSQL, using a deterministic local
 provider inside the runner. Both ontology conditions and both answer policies
 produce eight scored answers. It checks the evaluation plumbing without calling
 real model APIs; its scores do not measure retrieval or model quality.
+The fixture mixes rows with and without published indices to check source identity
+and gold mappings against both source formats.
 
 PR validation retains its existing entrypoint: dispatch `production-image-e2e.yml`
 on the current own-PR branch with `pr_number` and `evaluation=fixtures` or `live`.
@@ -46,8 +48,10 @@ upstream licensing and attribution remain a reproducibility limitation. The
 
 Each dataset imports its entire corpus with ontology disabled into an isolated
 ordinary production instance and PostgreSQL database. Terminal receipts verify
-every original source and partition. Native reads verify the authenticated
-owner, shared space, generation, search contract and canonical fingerprint.
+every original source and partition. Rows without a published `idx` use their
+zero-based position as `dataset:row:N`, while integer indices retain `dataset:N`.
+Native reads verify the authenticated owner, shared space, generation, search
+contract and canonical fingerprint.
 After the first condition, ontology must converge, pause and drain. The second
 condition uses unchanged Evidence and provenance. Import, ontology global/team,
 and answer concurrency are four; embedding concurrency is two.
