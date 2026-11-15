@@ -128,3 +128,95 @@ func TestProtectedCaptureSurvivesActionsMaskingOfOrdinarySecretSettings(t *testi
 	require.Equal(t, float64(300000), restored["context_window_tokens"])
 	require.Equal(t, settings["public_text"], restored["public_text"])
 }
+
+func TestReplayReportRejectsChangedOrIncompleteSemanticEvidence(t *testing.T) {
+	q, observation, corpus, mapping, canonical := scoringFixture()
+	manifest := Manifest{RunID: "synthetic-run", Dataset: "synthetic", Model: "fixture", SourceRevision: strings.Repeat("a", 40), RegistryHash: strings.Repeat("b", 64), Image: "immutable-image"}
+	rows := []CorpusItem{}
+	event := func(kind string, payload any) Event {
+		body, err := json.Marshal(payload)
+		require.NoError(t, err)
+		return Event{Kind: kind, Payload: body}
+	}
+	events := []Event{event("started", manifest)}
+	for source, parts := range mapping.Partitions {
+		rows = append(rows, corpus[source])
+		events = append(events, event("mapping", map[string]any{"source_id": source, "partitions": parts}))
+	}
+	canonicalIndex := len(events)
+	for id, evidence := range canonical {
+		events = append(events, event("canonical", map[string]any{"evidence_id": id, "evidence": evidence}))
+	}
+	observationIndex := len(events)
+	for _, condition := range []string{"off", "on"} {
+		observation.Condition = condition
+		events = append(events, event("observation", observation))
+	}
+	finished := completion{ImportedRows: len(rows), CanonicalHash: "fixed", NativeMeasurements: []NativeObservation{{CanonicalHash: "fixed"}, {CanonicalHash: "fixed"}, {CanonicalHash: "fixed"}}}
+	events = append(events, event("finished", finished))
+	for _, item := range []struct {
+		name, kind string
+		index      int
+	}{
+		{"manifest", "started", 0},
+		{"mapping", "mapping", 1},
+		{"canonical", "canonical", canonicalIndex},
+		{"observation", "observation", observationIndex},
+		{"completion", "finished", len(events) - 1},
+	} {
+		t.Run("malformed "+item.name, func(t *testing.T) {
+			changed := append([]Event(nil), events...)
+			changed[item.index] = Event{Kind: item.kind, Payload: json.RawMessage(`{`)}
+			_, err := ReplayReport(changed, manifest, rows, []Question{q})
+			require.Error(t, err)
+		})
+	}
+	for _, item := range []struct {
+		name, failure string
+		index         int
+		late          bool
+	}{
+		{"duplicate mapping", "duplicate replay mapping", 1, false},
+		{"duplicate canonical", "duplicate replay canonical", canonicalIndex, false},
+		{"late mapping", "mappings changed after observation", 1, true},
+		{"late canonical", "canonical Evidence changed after observation", canonicalIndex, true},
+	} {
+		t.Run(item.name, func(t *testing.T) {
+			index := item.index
+			if item.late {
+				index = len(events) - 1
+			}
+			changed := append([]Event(nil), events[:index]...)
+			changed = append(changed, events[item.index])
+			changed = append(changed, events[index:]...)
+			_, err := ReplayReport(changed, manifest, rows, []Question{q})
+			require.ErrorContains(t, err, item.failure)
+		})
+	}
+	changed := append([]Event(nil), events...)
+	observation.QuestionID = "unknown"
+	changed[observationIndex] = event("observation", observation)
+	_, err := ReplayReport(changed, manifest, rows, []Question{q})
+	require.ErrorContains(t, err, "unknown question")
+	_, err = ReplayReport(nil, manifest, rows, []Question{q})
+	require.ErrorContains(t, err, "no complete capture")
+	for _, count := range []int{2, 3} {
+		changed = append([]Event(nil), events...)
+		terminal := finished
+		terminal.NativeMeasurements = append([]NativeObservation(nil), finished.NativeMeasurements[:count]...)
+		if count == 3 {
+			terminal.NativeMeasurements[2].CanonicalHash = "changed"
+		}
+		changed[len(changed)-1] = event("finished", terminal)
+		_, err = ReplayReport(changed, manifest, rows, []Question{q})
+		require.Error(t, err, "preservation evidence must be complete and unchanged")
+	}
+	partial := finished
+	partial.Failure, partial.ImportedRows, partial.NativeMeasurements = "import incomplete", 0, nil
+	report, err := ReplayReport([]Event{events[0], event("finished", partial)}, manifest, rows, []Question{q})
+	require.NoError(t, err)
+	require.False(t, report.Complete)
+	require.Equal(t, 4, report.ExpectedAnswers)
+	require.Zero(t, report.CompletedAnswers)
+	require.Equal(t, "import incomplete", report.Failure)
+}

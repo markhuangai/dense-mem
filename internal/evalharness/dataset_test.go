@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -78,4 +79,87 @@ func TestFixturePackValidatesWholeSourceAndRejectsTampering(t *testing.T) {
 	require.ErrorContains(t, err, "digest")
 	_, err = registry.Dataset("qasper")
 	require.Error(t, err)
+}
+
+func TestDatasetLocksAndAdmissionRejectIncompleteSources(t *testing.T) {
+	original, err := ReadRegistry("../../tests/eval/fixtures/datasets.json")
+	require.NoError(t, err)
+	for name, change := range map[string]func(*Registry){
+		"wrong revision":    func(r *Registry) { r.Revision = "unpinned" },
+		"duplicate dataset": func(r *Registry) { r.Datasets = append(r.Datasets, r.Datasets[0]) },
+		"empty identity":    func(r *Registry) { r.Datasets[0].ID = "" },
+		"wrong adapter":     func(r *Registry) { r.Datasets[0].Adapter = "qasper" },
+		"path traversal":    func(r *Registry) { r.Datasets[0].Corpus.Path = "../corpus.json" },
+		"invalid checksum":  func(r *Registry) { r.Datasets[0].Corpus.SHA256 = strings.Repeat("z", 64) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			body, err := json.Marshal(original)
+			require.NoError(t, err)
+			var changed Registry
+			require.NoError(t, json.Unmarshal(body, &changed))
+			change(&changed)
+			body, err = json.Marshal(changed)
+			require.NoError(t, err)
+			path := filepath.Join(t.TempDir(), "registry.json")
+			require.NoError(t, os.WriteFile(path, body, 0o600))
+			_, err = ReadRegistry(path)
+			require.Error(t, err)
+		})
+	}
+	const corpus = `[{"idx":0,"title":"Title","text":"first."}]`
+	const questions = `[{"question":"Which storage?","answer":"PostgreSQL","supporting_facts":[["Title",0]],"context":[["Title",["first."]]]}]`
+	for _, item := range []struct {
+		name, corpus, questions  string
+		corpusRows, questionRows int
+	}{
+		{"corpus syntax", "[", questions, 1, 1},
+		{"question syntax", corpus, "[", 1, 1},
+		{"corpus denominator", corpus, questions, 2, 1},
+		{"question denominator", corpus, questions, 1, 2},
+		{"fractional identity", strings.Replace(corpus, `"idx":0`, `"idx":0.5`, 1), questions, 1, 1},
+		{"duplicate identity", `[{"idx":0,"title":"Title","text":"first."},{"idx":0,"title":"Title","text":"other."}]`, questions, 2, 1},
+		{"empty source", strings.Replace(corpus, "first.", "", 1), questions, 1, 1},
+		{"admission bound", strings.Replace(corpus, "first.", strings.Repeat("x", 16385), 1), questions, 1, 1},
+		{"missing query", corpus, strings.Replace(questions, "Which storage?", "", 1), 1, 1},
+		{"unsupported mapping", corpus, strings.Replace(questions, `"Title",0`, `"Missing",0`, 1), 1, 1},
+	} {
+		t.Run(item.name, func(t *testing.T) {
+			directory := t.TempDir()
+			dataset := Dataset{ID: "hotpotqa", Adapter: "hotpotqa", Corpus: SourceFile{Path: "corpus.json", Rows: item.corpusRows, SHA256: bytesHash([]byte(item.corpus))}, Questions: SourceFile{Path: "questions.json", Rows: item.questionRows, SHA256: bytesHash([]byte(item.questions))}}
+			require.NoError(t, os.WriteFile(filepath.Join(directory, dataset.Corpus.Path), []byte(item.corpus), 0o600))
+			require.NoError(t, os.WriteFile(filepath.Join(directory, dataset.Questions.Path), []byte(item.questions), 0o600))
+			rows, questions, err := LoadDataset(dataset, directory)
+			require.Error(t, err)
+			require.Nil(t, rows)
+			require.Nil(t, questions)
+		})
+	}
+}
+
+func TestPublicAdaptersRejectMalformedPublishedRecords(t *testing.T) {
+	for _, item := range []struct {
+		name, adapter, field string
+		value                any
+	}{
+		{"query type", "hotpotqa", "question", 1},
+		{"answer type", "hotpotqa", "answer", 1},
+		{"support type", "hotpotqa", "supporting_facts", "wrong"},
+		{"context type", "hotpotqa", "context", "wrong"},
+		{"support shape", "hotpotqa", "supporting_facts", [][]any{{"Title"}}},
+		{"support identity", "hotpotqa", "supporting_facts", [][]any{{1, 0}}},
+		{"context shape", "hotpotqa", "context", [][]any{{"Title"}}},
+		{"context identity", "hotpotqa", "context", [][]any{{1, []string{"first."}}}},
+		{"context text", "hotpotqa", "context", [][]any{{"Title", 1}}},
+		{"alias serialization", "popqa", "possible_answers", "invalid JSON"},
+		{"alias type", "musique", "answer_aliases", 1},
+		{"passage type", "musique", "paragraphs", 1},
+		{"retired adapter", "qasper", "answer", "PostgreSQL"},
+	} {
+		t.Run(item.name, func(t *testing.T) {
+			question := map[string]any{"question": "Which storage?", "answer": "PostgreSQL", "supporting_facts": [][]any{{"Title", 0}}, "context": [][]any{{"Title", []string{"first."}}}}
+			question[item.field] = item.value
+			_, err := adaptQuestion(item.adapter, rawQuestion(t, question), 0, map[string][]string{"Title\nfirst.": {"source"}})
+			require.Error(t, err)
+		})
+	}
 }

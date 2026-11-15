@@ -9,6 +9,57 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestSummaryPreservesMissingRetrievalAndSeparateDeliveryDenominators(t *testing.T) {
+	required := []Ref{{Type: "evidence", ID: "good", Grade: 1}}
+	bad := []Ref{{Type: "evidence", ID: "bad"}}
+	qrel := QRel{RequiredRefs: required, BadRefs: bad, RequiredEvidenceRefs: required, BadEvidenceRefs: bad}
+	suite := []SuiteCase{}
+	cases := map[string]Case{}
+	scores := []RetrievalScore{}
+	for _, id := range []string{"hit", "wrong", "missing"} {
+		suite = append(suite, SuiteCase{CaseID: id, Slices: []string{"all"}})
+		cases[id] = Case{CaseID: id, Slices: []string{"all", id}}
+		trace := RecallTrace{}
+		if id != "missing" {
+			ref := required[0]
+			if id == "wrong" {
+				ref = bad[0]
+			}
+			trace.RankedRefs = []Ref{ref}
+			trace.ContextRefs = []Ref{ref}
+			trace.ContextEvidenceRefs = []Ref{ref}
+			c := cases[id]
+			c.Slices = append(c.Slices, "observed")
+			cases[id] = c
+		}
+		scores = append(scores, ScoreTrace(id, 1, qrel, trace, newKnowledgeMapping()))
+	}
+	summary := SummarizeScores("fixture", "regression", "frozen", "hash", "suite", suite, cases, scores)
+	require.Equal(t, 3, summary.CaseCount)
+	require.Equal(t, 3, summary.ScoredCaseCount)
+	for _, value := range []float64{summary.AverageRecallAtK, summary.AverageMRR, summary.AverageNDCGAtK, summary.AverageBadAtK, summary.RequiredRank1Rate, summary.BadRank1Rate} {
+		require.InDelta(t, 1.0/3, value, 1e-12)
+	}
+	require.Equal(t, 2, summary.ContextScoredCaseCount)
+	require.Equal(t, 2, summary.EvidenceScoredCaseCount)
+	for _, value := range []float64{summary.AverageContextRecallAtK, summary.AverageContextMRR, summary.AverageContextNDCGAtK, summary.AverageContextBadAtK, summary.ContextRequiredRank1Rate, summary.ContextBadRank1Rate, summary.AverageEvidenceRecallAtK, summary.AverageEvidenceMRR, summary.AverageEvidenceNDCGAtK, summary.AverageEvidenceBadAtK, summary.EvidenceRequiredRank1Rate, summary.EvidenceBadRank1Rate} {
+		require.Equal(t, 0.5, value)
+	}
+	require.Equal(t, 3, summary.Slices["all"].CaseCount, "duplicate slice labels do not inflate cases")
+	require.Equal(t, 2, summary.Slices["all"].ContextScoredCaseCount)
+	require.Equal(t, 2, summary.Slices["all"].EvidenceScoredCaseCount)
+	require.Equal(t, 2, summary.Slices["observed"].CaseCount)
+	require.Equal(t, 0.5, summary.Slices["observed"].AverageRecallAtK)
+	require.Equal(t, 1, summary.Slices["missing"].CaseCount)
+	require.Zero(t, summary.Slices["missing"].ContextScoredCaseCount)
+	require.Zero(t, summary.Slices["missing"].EvidenceScoredCaseCount)
+	require.Zero(t, summary.Slices["missing"].AverageRecallAtK)
+	empty := SummarizeScores("fixture", "regression", "frozen", "hash", "suite", suite, cases, nil)
+	require.Equal(t, 3, empty.CaseCount)
+	require.Zero(t, empty.ScoredCaseCount)
+	require.Empty(t, empty.Slices)
+}
+
 func TestGroupedDecoderAndScorerPreserveSourceCoverageAndSlots(t *testing.T) {
 	var output map[string]any
 	require.NoError(t, json.Unmarshal([]byte(`{"ranked_refs":[{"type":"evidence","id":"representative","rank":1,"equivalent_evidence_ids":["alternate","bad-a","bad-b"]},{"type":"evidence","id":"later","rank":2}],"context_evidence_refs":[{"type":"evidence","id":"representative","rank":1,"equivalent_evidence_ids":["alternate","bad-a","bad-b"]},{"type":"evidence","id":"later","rank":2}]}`), &output))

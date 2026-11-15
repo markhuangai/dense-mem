@@ -383,12 +383,13 @@ test("real Go coverage parts retain cross-package and testless execution and rej
     "internal/operations/postgres": ["TestEvidenceOnlyPostgresTelemetry"],
     "cmd/internal/serverapp": ["TestServerLifecycleCore", "TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads", "TestOntologySemanticPublicationLogOnlyDiagnostics", "TestEvidenceOnlyPostgresIntake", "TestRunnerCampaignConditionsAndReplay"],
     "internal/evalretire": ["TestEvaluationRetirementFixture"],
+    "cmd/eval-runner": ["TestRuntimeLogDockerFixture"],
     "internal/service": ["TestAuditFixture"],
     "internal/knowledge/postgres": ["TestSessionFixture", "TestDecisionWorkflowFixture", "TestEvidenceOnlyPostgresSession"],
     "internal/settings": ["TestDecisionSettingsFixture"],
   };
   for (const [directory, names] of Object.entries(targets)) {
-    const buildTag = directory === "internal/evalretire" ? "" : "//go:build integration\n\n";
+    const buildTag = ["internal/evalretire", "cmd/eval-runner"].includes(directory) ? "" : "//go:build integration\n\n";
     writeFixture(fixture, `${directory}/value.go`, buildTag + 'package fixture\nimport ("example.com/fixture/internal/example"; "example.com/fixture/internal/testless")\nfunc Value() int { return example.Choose(true) + testless.Value() }\n');
     const decisionImport = names.some((name) => name.startsWith("TestDecision")) ? '; "example.com/fixture/internal/decisiononly"' : "";
     const diagnosticImport = names.some((name) => name.startsWith("TestOntologyCoverage") || name.startsWith("TestOntologyFailureCapture")) ? '; "example.com/fixture/internal/diagnosticonly"' : "";

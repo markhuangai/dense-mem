@@ -1,13 +1,19 @@
 package evalharness
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/markhuangai/dense-mem/internal/domain"
 	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 	"github.com/stretchr/testify/require"
@@ -107,4 +113,218 @@ func TestProductionCatalogIsUnchangedAndEvaluationCallsAreRetired(t *testing.T) 
 		_, found := reg.Get(name)
 		require.False(t, found)
 	}
+}
+
+func TestMCPResponseDecodingAndWireFailures(t *testing.T) {
+	const key = "mcp-key-canary-9483"
+	for _, item := range []struct {
+		name, body, failure string
+		status              int
+		interrupted         bool
+	}{
+		{"structured", "{\"result\":{\"structuredContent\":{\"number\":9007199254740993}}}", "", 200, false},
+		{"text", "{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"{\\\"number\\\":9007199254740993}\"}]}}", "", 200, false},
+		{"protocol", "{\"error\":{\"code\":-32603,\"message\":\"mcp-key-canary-9483\"}}", "protocol error -32603", 200, false},
+		{"missing result", "{\"result\":{}}", "no structured result", 200, false},
+		{"invalid text", "{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"invalid\"}]}}", "invalid MCP content", 200, false},
+		{"malformed JSON", "{", "invalid HTTP JSON", 200, false},
+		{"trailing JSON", "{}{}", "invalid HTTP JSON", 200, false},
+		{"unavailable", "{\"private\":\"mcp-key-canary-9483\"}", "status 503", 503, false},
+		{"interrupted", "{\"result\":", "body interrupted", 200, true},
+		{"structured rejection", "{\"result\":{\"isError\":true,\"structuredContent\":{\"errors\":[{\"message\":\"intake declined\"}]}}}", "intake declined", 200, false},
+		{"bounded rejection", "{\"result\":{\"isError\":true,\"structuredContent\":{\"errors\":[{\"code\":\"permission_denied\"}]}}}", "permission_denied", 200, false},
+		{"partition rejection", "{\"result\":{\"isError\":true,\"structuredContent\":{\"evidence\":[{\"errors\":[{\"message\":\"partition declined\"}]}]}}}", "partition declined", 200, false},
+		{"partition code", "{\"result\":{\"isError\":true,\"structuredContent\":{\"evidence\":[{\"errors\":[{\"code\":\"partition_invalid\"}]}]}}}", "partition_invalid", 200, false},
+		{"empty rejection", "{\"result\":{\"isError\":true,\"structuredContent\":{}}}", "MCP recall_memory:", 200, false},
+	} {
+		t.Run(item.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				require.Equal(t, "Bearer "+key, r.Header.Get("Authorization"))
+				require.Equal(t, "tools/call", r.Header.Get("Mcp-Method"))
+				require.Equal(t, "recall_memory", r.Header.Get("Mcp-Name"))
+				if item.interrupted {
+					w.Header().Set("Content-Length", "100")
+				}
+				w.WriteHeader(item.status)
+				_, err := w.Write([]byte(item.body))
+				require.NoError(t, err)
+			}))
+			defer server.Close()
+			var logs bytes.Buffer
+			capture := captureFixture(&logs)
+			capture.Protector = NewRunnerCredentialProtector(key)
+			require.NoError(t, capture.Emit("started", map[string]string{"model": "synthetic"}))
+			client := &HTTPClient{BaseURL: server.URL, APIKey: key, Client: server.Client(), ExchangeCapture: capture}
+			out := map[string]any{"stale": "prior question"}
+			err := client.CallTool(context.Background(), "recall_memory", map[string]any{"query": "public question"}, &out)
+			if item.failure != "" {
+				require.ErrorContains(t, err, item.failure)
+				require.NotContains(t, err.Error(), key)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, json.Number("9007199254740993"), out["number"])
+				require.NotContains(t, out, "stale")
+			}
+			require.NoError(t, capture.Emit("finished", map[string]bool{"complete": err == nil}))
+			events, replayErr := ReplayEvents([]io.Reader{strings.NewReader(logs.String())}, capture.RunID)
+			require.NoError(t, replayErr)
+			require.Len(t, events, 2, "wire exchanges are validated without becoming scoring events")
+			var protected strings.Builder
+			for _, line := range bytes.Split(bytes.TrimSpace(logs.Bytes()), []byte("\n")) {
+				var envelope struct{ Record string }
+				require.NoError(t, json.Unmarshal(line, &envelope))
+				body, decodeErr := base64.StdEncoding.DecodeString(envelope.Record)
+				require.NoError(t, decodeErr)
+				var record captureRecord
+				require.NoError(t, json.Unmarshal(body, &record))
+				protected.WriteString(record.Chunk.Body)
+			}
+			require.NotContains(t, protected.String(), key)
+			require.Contains(t, protected.String(), "answer_wire_response")
+		})
+	}
+	t.Run("oversized response", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, err := w.Write(bytes.Repeat([]byte("x"), (16<<20)+1))
+			require.NoError(t, err)
+		}))
+		defer server.Close()
+		require.ErrorContains(t, (&HTTPClient{Client: server.Client()}).doJSON(context.Background(), http.MethodGet, server.URL, "", nil, nil), "exceeds capture bound")
+	})
+	t.Run("transport and empty control response", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+		client := &HTTPClient{Client: server.Client()}
+		require.NoError(t, client.doJSON(context.Background(), http.MethodPost, server.URL, "", nil, nil))
+		server.Close()
+		var logs bytes.Buffer
+		client.ExchangeCapture = captureFixture(&logs)
+		require.ErrorContains(t, client.doJSON(context.Background(), http.MethodPost, server.URL, "", nil, nil), "dependency unavailable")
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		require.ErrorContains(t, client.doJSON(ctx, http.MethodPost, server.URL, "", nil, nil), "context canceled")
+		require.ErrorContains(t, client.doJSON(ctx, http.MethodPost, "://invalid", "", nil, nil), "invalid request configuration")
+	})
+}
+
+func TestImporterReconcilesTransientFailureWithTheSameOperationKey(t *testing.T) {
+	item := CorpusItem{SourceDocID: "source", SourceDataset: "synthetic", Content: "Exact source.", Labels: []string{"public"}}
+	requests := make(chan map[string]any, 2)
+	var attempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var rpc struct {
+			Method string
+			Params struct{ Arguments map[string]any }
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&rpc))
+		if rpc.Method == "tools/list" {
+			tools := []mcpToolDefinition{}
+			for _, tool := range registry.ContractTools() {
+				tools = append(tools, mcpToolDefinition{Name: tool.Name, OutputSchema: tool.OutputSchema})
+			}
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"result": map[string]any{"tools": tools}}))
+			return
+		}
+		requests <- rpc.Params.Arguments
+		if attempts.Add(1) == 1 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		result := map[string]any{"processing_state": "completed", "submission_id": uuid.NewString(), "evidence": []any{map[string]any{
+			"evidence_index": 0, "partition_index": 0, "source_item_id": uuid.NewString(), "occurrence_id": uuid.NewString(), "evidence_id": uuid.NewString(),
+			"span_start": 0, "span_end": len([]rune(item.Content)), "content_hash": knowledge.EvidenceContentHash(item.Content), "disposition": "stored",
+		}}}
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"result": map[string]any{"structuredContent": result}}))
+	}))
+	defer server.Close()
+	var logs bytes.Buffer
+	capture := captureFixture(&logs)
+	client := &HTTPClient{BaseURL: server.URL, APIKey: "synthetic", Client: server.Client(), Capture: capture}
+	mapping, err := client.ImportCorpusWithConcurrency(context.Background(), []CorpusItem{item}, 4)
+	require.NoError(t, err)
+	require.Len(t, mapping.Partitions["source"], 1)
+	require.Equal(t, <-requests, <-requests, "transient recovery preserves exact Evidence, target and operation key")
+	require.EqualValues(t, 2, attempts.Load())
+}
+
+func TestMCPContractDiscoveryRejectsIncompleteAndMixedCatalogs(t *testing.T) {
+	schema := func(version string) map[string]any {
+		return map[string]any{"properties": map[string]any{"contract_version": map[string]any{"enum": []any{version}}}}
+	}
+	for _, item := range []struct {
+		name    string
+		change  func([]mcpToolDefinition, int) []mcpToolDefinition
+		allowed bool
+	}{
+		{"production", nil, true},
+		{"duplicate", func(tools []mcpToolDefinition, index int) []mcpToolDefinition { return append(tools, tools[index]) }, false},
+		{"missing name", func(tools []mcpToolDefinition, index int) []mcpToolDefinition { tools[index].Name = ""; return tools }, false},
+		{"missing remember", func(tools []mcpToolDefinition, index int) []mcpToolDefinition {
+			return append(tools[:index], tools[index+1:]...)
+		}, false},
+		{"missing Recall", func(tools []mcpToolDefinition, _ int) []mcpToolDefinition {
+			for index, tool := range tools {
+				if tool.Name == registry.ToolRecallMemory {
+					return append(tools[:index], tools[index+1:]...)
+				}
+			}
+			return tools
+		}, false},
+		{"missing schema", func(tools []mcpToolDefinition, index int) []mcpToolDefinition {
+			tools[index].OutputSchema = nil
+			return tools
+		}, false},
+		{"retired tool", func(tools []mcpToolDefinition, _ int) []mcpToolDefinition {
+			return append(tools, mcpToolDefinition{Name: "eval_run_recall_case"})
+		}, false},
+		{"unsupported version", func(tools []mcpToolDefinition, index int) []mcpToolDefinition {
+			tools[index].OutputSchema = schema("dense-mem.v0")
+			return tools
+		}, false},
+		{"compatible variants", func(tools []mcpToolDefinition, index int) []mcpToolDefinition {
+			tools[index].OutputSchema = map[string]any{"oneOf": []any{schema(domain.ContractVersion), map[string]any{"type": "null"}}}
+			return tools
+		}, true},
+		{"mixed variants", func(tools []mcpToolDefinition, index int) []mcpToolDefinition {
+			tools[index].OutputSchema = map[string]any{"oneOf": []any{schema(domain.ContractVersion), schema("dense-mem.v0")}}
+			return tools
+		}, false},
+	} {
+		t.Run(item.name, func(t *testing.T) {
+			tools := []mcpToolDefinition{}
+			for _, tool := range registry.ContractTools() {
+				tools = append(tools, mcpToolDefinition{Name: tool.Name, OutputSchema: tool.OutputSchema})
+			}
+			body, err := json.Marshal(tools)
+			require.NoError(t, err)
+			tools = nil
+			require.NoError(t, json.Unmarshal(body, &tools))
+			for index, tool := range tools {
+				if tool.Name == registry.ToolRemember && item.change != nil {
+					tools = item.change(tools, index)
+					break
+				}
+			}
+			var calls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				require.Equal(t, "tools/list", r.Header.Get("Mcp-Method"))
+				require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"result": map[string]any{"tools": tools}}))
+			}))
+			defer server.Close()
+			client := &HTTPClient{BaseURL: server.URL, APIKey: "synthetic", Client: server.Client()}
+			_, err = client.ensureContract(context.Background())
+			if item.allowed {
+				require.NoError(t, err)
+				_, err = client.ensureContract(context.Background())
+				require.NoError(t, err)
+				require.EqualValues(t, 1, calls.Load(), "validated discovery is reused")
+			} else {
+				require.Error(t, err)
+			}
+		})
+	}
+	_, err := (&HTTPClient{}).ensureContract(context.Background())
+	require.ErrorContains(t, err, "base URL")
+	_, err = (&HTTPClient{BaseURL: "http://unused.invalid"}).ensureContract(context.Background())
+	require.ErrorContains(t, err, "API key")
 }

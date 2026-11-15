@@ -64,6 +64,33 @@ func TestScoringSeparatesRankedSourcesDeliveredTextAnswersAndCitations(t *testin
 	require.Zero(t, scores[0].FinalTextCoverage)
 }
 
+func TestScoringRejectsAlteredConversationAndQuestionEvidence(t *testing.T) {
+	for name, change := range map[string]func(*Question, *Observation){
+		"condition":        func(_ *Question, o *Observation) { o.Condition = "unknown" },
+		"question":         func(q *Question, _ *Observation) { q.ID = "different" },
+		"unmapped gold":    func(q *Question, _ *Observation) { q.GoldSources = []string{"unknown"} },
+		"missing gold":     func(q *Question, _ *Observation) { q.GoldSources = nil },
+		"duplicate policy": func(_ *Question, o *Observation) { o.Hosts[1].Policy = o.Hosts[0].Policy },
+		"missing calls":    func(_ *Question, o *Observation) { o.Hosts[0].Calls = nil },
+		"call bound":       func(_ *Question, o *Observation) { o.Hosts[1].Calls = make([]MemoryCall, 9) },
+		"changed initial": func(_ *Question, o *Observation) {
+			o.Hosts[0].Calls = []MemoryCall{{Tool: "recall_memory", Result: map[string]any{"results": []any{}}}}
+		},
+		"missing policy": func(_ *Question, o *Observation) { o.Hosts = o.Hosts[:1] },
+		"unknown usage": func(_ *Question, o *Observation) {
+			o.Hosts[0].Attempts = []ProviderAttempt{{UsageState: "guessed"}}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			q, observation, corpus, mapping, canonical := scoringFixture()
+			change(&q, &observation)
+			scores, err := ScoreObservation(q, observation, corpus, mapping, canonical)
+			require.Error(t, err)
+			require.Nil(t, scores)
+		})
+	}
+}
+
 func TestAnswerNormalizationAndFailureDenominators(t *testing.T) {
 	em, f1 := AnswerScore("The, quick fox!", []string{"quick fox", "wrong"})
 	require.Equal(t, 1.0, em)

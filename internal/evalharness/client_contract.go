@@ -116,42 +116,39 @@ func matchesContractToolSet(names map[string]struct{}, expected []string) bool {
 }
 
 func contractVersionFromSchema(schema map[string]any) string {
+	return preferredContractVersion(contractVersionsFromSchema(schema))
+}
+
+func contractVersionsFromSchema(schema map[string]any) []any {
 	if schema == nil {
-		return ""
+		return nil
 	}
 	if properties, ok := schema["properties"].(map[string]any); ok {
 		if property, ok := properties["contract_version"].(map[string]any); ok {
 			if values, ok := property["enum"].([]any); ok {
-				return preferredContractVersion(values)
+				return values
 			}
 			if values, ok := property["enum"].([]string); ok {
 				converted := make([]any, 0, len(values))
 				for _, value := range values {
 					converted = append(converted, value)
 				}
-				return preferredContractVersion(converted)
+				return converted
 			}
 		}
 	}
 	if variants, ok := schema["oneOf"].([]any); ok {
-		version := ""
+		var versions []any
 		for _, raw := range variants {
 			variant, ok := raw.(map[string]any)
 			if !ok {
 				continue
 			}
-			candidate := contractVersionFromSchema(variant)
-			if candidate == "" {
-				continue
-			}
-			if version != "" && version != candidate {
-				return ""
-			}
-			version = candidate
+			versions = append(versions, contractVersionsFromSchema(variant)...)
 		}
-		return version
+		return versions
 	}
-	return ""
+	return nil
 }
 
 func preferredContractVersion(values []any) string {

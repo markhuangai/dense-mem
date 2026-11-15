@@ -179,6 +179,100 @@ func newRetirementDockerFixture(t *testing.T, stubborn bool) retirementDockerFix
 	return f
 }
 
+func TestEvaluationRetirementEnrollmentRetainsOnlyVerifiedTerminalFixtures(t *testing.T) {
+	f := newRetirementDockerFixture(t, false)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	record := f.command
+	record.Action = "record"
+	require.NoError(t, RunRuntimeCommand(ctx, record, io.Discard))
+	before, err := os.ReadFile(filepath.Join(record.Directory, runtimeReceiptName))
+	require.NoError(t, err)
+	created, err := runtimeDocker(ctx, "container", "create", "--label", runtimeOwnerLabel+"="+f.receipt.ID, f.receipt.Containers[0].ImageID, "true")
+	require.NoError(t, err)
+	id := strings.TrimSpace(string(created))
+	t.Cleanup(func() {
+		cleanup, stop := context.WithTimeout(context.Background(), 20*time.Second)
+		defer stop()
+		present, err := runtimePresent(cleanup, "container", id)
+		require.NoError(t, err)
+		if present {
+			actual, err := inspectRuntimeContainer(cleanup, id)
+			require.NoError(t, err)
+			require.Equal(t, f.receipt.ID, actual.Owner)
+			_, err = runtimeDocker(cleanup, "container", "rm", "--force", id)
+			require.NoError(t, err)
+		}
+	})
+	record.Fixtures = []string{id}
+	require.ErrorContains(t, RunRuntimeCommand(ctx, record, io.Discard), "fixture must be terminal")
+	after, err := os.ReadFile(filepath.Join(record.Directory, runtimeReceiptName))
+	require.NoError(t, err)
+	require.Equal(t, before, after, "failed enrollment cannot partially rewrite ownership")
+	_, err = runtimeDocker(ctx, "container", "start", id)
+	require.NoError(t, err)
+	code, err := runtimeDocker(ctx, "container", "wait", id)
+	require.NoError(t, err)
+	require.Equal(t, "0", strings.TrimSpace(string(code)))
+	require.NoError(t, RunRuntimeCommand(ctx, record, io.Discard))
+	record.Fixtures = nil
+	require.NoError(t, RunRuntimeCommand(ctx, record, io.Discard), "previous explicit fixtures remain enrolled")
+	enrolled, err := readRuntimeReceipt(record.Directory)
+	require.NoError(t, err)
+	found := false
+	for _, container := range enrolled.Containers {
+		if container.ID == id {
+			found = true
+			require.True(t, container.Fixture)
+			require.Equal(t, f.receipt.ID, container.Owner)
+		}
+	}
+	require.True(t, found)
+	_, err = runtimeDocker(ctx, "container", "rm", id)
+	require.NoError(t, err)
+	require.ErrorContains(t, RunRuntimeCommand(ctx, record, io.Discard), "explicit terminal fixture is missing")
+}
+
+func TestEvaluationRetirementEnrollmentRejectsLateUnownedResourcesAtomically(t *testing.T) {
+	f := newRetirementDockerFixture(t, false)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	record := f.command
+	record.Action = "record"
+	for _, kind := range []string{"network", "volume"} {
+		t.Run(kind, func(t *testing.T) {
+			name := "eval763-late-" + uuid.NewString()
+			_, err := runtimeDocker(ctx, kind, "create", "--label", "com.docker.compose.project="+f.receipt.Project, name)
+			require.NoError(t, err)
+			t.Cleanup(func() {
+				cleanup, stop := context.WithTimeout(context.Background(), 20*time.Second)
+				defer stop()
+				if kind == "network" {
+					actual, err := inspectRuntimeNetwork(cleanup, name, f.receipt.Project)
+					require.NoError(t, err)
+					require.Equal(t, f.receipt.Project, actual.Project)
+				} else {
+					actual, err := inspectRuntimeVolume(cleanup, name, f.receipt.Project)
+					require.NoError(t, err)
+					require.Equal(t, f.receipt.Project, actual.Project)
+				}
+				_, err := runtimeDocker(cleanup, kind, "rm", name)
+				require.NoError(t, err)
+			})
+			before, err := os.ReadFile(filepath.Join(record.Directory, runtimeReceiptName))
+			require.NoError(t, err)
+			require.ErrorContains(t, RunRuntimeCommand(ctx, record, io.Discard), "ownership label")
+			after, err := os.ReadFile(filepath.Join(record.Directory, runtimeReceiptName))
+			require.NoError(t, err)
+			require.Equal(t, before, after)
+			actual, err := inspectRuntimeContainer(ctx, f.receipt.Containers[0].ID)
+			require.NoError(t, err)
+			require.True(t, actual.Running)
+		})
+	}
+	require.NoError(t, RunRuntimeCommand(ctx, record, io.Discard))
+}
+
 func TestEvaluationRetirementPreservesSharedResourcesAndArchives(t *testing.T) {
 	f := newRetirementDockerFixture(t, false)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
