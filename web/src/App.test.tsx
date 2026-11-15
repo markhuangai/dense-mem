@@ -211,6 +211,13 @@ describe("App", () => {
 
     expect(await screen.findByText("203.0.113.10")).toBeInTheDocument();
     expect(screen.getByText("11")).toBeInTheDocument();
+	await userEvent.click(screen.getByRole("button", { name: "View request for 203.0.113.10" }));
+	expect(await screen.findByLabelText("Request headers")).toHaveTextContent("Authorization: [REDACTED]");
+	expect(screen.getByLabelText("Request headers")).toHaveTextContent("X-Example: first");
+	expect(screen.getByLabelText("Request headers")).toHaveTextContent("X-Example: second");
+	expect(screen.getByLabelText("Request body").textContent).toBe(securityBan.metadata?.last_request?.body);
+	expect(screen.getByText("a".repeat(64))).toBeInTheDocument();
+	await userEvent.click(screen.getByRole("button", { name: "Close details panel" }));
 
     await userEvent.click(screen.getByRole("button", { name: /clear ip ban and reset strikes for 203.0.113.10/i }));
     await userEvent.click(screen.getByRole("button", { name: "Clear IP ban" }));
@@ -222,6 +229,23 @@ describe("App", () => {
       );
     });
     await waitFor(() => expect(screen.queryByText("203.0.113.10")).not.toBeInTheDocument());
+  });
+
+  it.each(["legacy", "manual", "oversized"])("shows honest IP ban request state: %s", async (state) => {
+    const request = securityBan.metadata!.last_request!;
+    const ban: SecurityBan = { ...securityBan, source: state === "manual" ? "manual" : "auto", metadata: state === "oversized" ? { last_request: { ...request, body: "", body_capture: { state: "unavailable", reason: "size_limit", bytes: 65537, limit: 65536 } } } : {} };
+    mockPortalFetch({ teams: [profileA], keys: [keyA()], bans: [ban] });
+    sessionStorage.setItem("denseMem.controlToken", "secret");
+    render(<App />);
+    await screen.findByRole("button", { name: /Default/ });
+    await userEvent.click(screen.getByRole("link", { name: "IP bans" }));
+    if (state === "oversized") {
+      await userEvent.click(await screen.findByRole("button", { name: "View request for 203.0.113.10" }));
+      expect(await screen.findByText(/Body unavailable: size_limit/)).toBeInTheDocument();
+      expect(screen.queryByLabelText("Request body")).not.toBeInTheDocument();
+    } else {
+      expect(await screen.findByText(state === "manual" ? "Not applicable" : "Request details unavailable")).toBeInTheDocument();
+    }
   });
 
   it("keeps team-overview request summaries without the retired Metrics tab", async () => {

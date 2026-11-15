@@ -22,7 +22,8 @@ type SecurityRepository interface {
 	UpdateSettings(context.Context, domain.SecuritySettings) (*domain.SecuritySettings, error)
 	GetActiveBan(context.Context, string, time.Time) (*domain.SecurityIPBan, error)
 	RecordFailure(context.Context, string, string, string, int, time.Time) (*domain.SecurityIPFailure, error)
-	UpsertBan(context.Context, *domain.SecurityIPBan) error
+	// UpsertBan reports whether the conditional insert or update committed.
+	UpsertBan(context.Context, *domain.SecurityIPBan) (bool, error)
 	ListBans(context.Context, bool, int, int) ([]domain.SecurityIPBan, int64, error)
 	DeleteBan(context.Context, string, time.Time) error
 }

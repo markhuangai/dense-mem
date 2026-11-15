@@ -109,8 +109,33 @@ export type SecurityBan = {
   banned_at: string;
   expires_at: string | null;
   last_failed_at: string | null;
-  metadata: Record<string, unknown> | null;
+  metadata: (Record<string, unknown> & { last_request?: SecurityRequestSnapshot }) | null;
   revoked_at: string | null;
+};
+
+export type SecurityRequestCapture = {
+  state: "captured" | "unavailable";
+  reason?: string;
+  bytes: number;
+  limit: number;
+};
+
+export type SecurityRequestSnapshot = {
+  id: string;
+  captured_at: string;
+  method: string;
+  url: string;
+  route: string;
+  reason: string;
+  message: string;
+  auth_scheme: string;
+  credential_prefix?: string;
+  credential_fingerprint?: string;
+  headers?: Record<string, string[]>;
+  body: string;
+  header_capture: SecurityRequestCapture;
+  body_capture: SecurityRequestCapture;
+  url_capture: SecurityRequestCapture;
 };
 
 export type CreateSecurityBanInput = {

@@ -193,6 +193,9 @@ func AuthMiddlewareWithOptions(repo accessservice.CredentialStore, auditSvc acce
 				return httperr.New(httperr.SERVICE_UNAVAILABLE, "authentication service unavailable")
 			}
 			prefixes := opts.CredentialLookupPrefixes(rawKey)
+			if len(prefixes) > 0 && strings.HasPrefix(rawKey, "dm_") && len(rawKey) > len(prefixes[0])+16 {
+				c.Set(authFailurePrefixKey, prefixes[0])
+			}
 			if len(prefixes) == 0 {
 				logAuthFailure(c, auditSvc, securitySvc, nil, "AUTH_INVALID", "invalid key format")
 				return httperr.New(httperr.AUTH_INVALID, "invalid key format")
@@ -554,8 +557,9 @@ func logOAuthAuthFailure(c echo.Context, auditSvc accessservice.AuditService, se
 
 func logAuthFailureForEntity(c echo.Context, auditSvc accessservice.AuditService, securitySvc SecurityBanService, profileID *string, entityType, reason, message string) {
 	if securitySvc != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		if _, err := securitySvc.RecordAuthFailure(ctx, c.RealIP(), authFailureSurface(c), reason); err != nil {
+		request := CaptureAuthFailureRequest(c, message)
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request().Context()), 5*time.Second)
+		if _, err := securitySvc.RecordAuthFailure(ctx, c.RealIP(), authFailureSurface(c), reason, request); err != nil {
 			c.Logger().Errorf("security auth failure record failed: %v", err)
 		}
 		cancel()

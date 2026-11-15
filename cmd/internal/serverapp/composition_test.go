@@ -242,7 +242,7 @@ func TestCompositionHelpersCoverNilPortsAndTelemetryBranches(t *testing.T) {
 	if buildEvidenceConflictApplication(nil) == nil {
 		t.Fatal("nil adapter composition returned nil service")
 	}
-	if buildConfigurationApplication(nil, nil) == nil || buildSecurityApplication(nil, nil) == nil || buildUsageMetricsApplication(nil, nil) == nil {
+	if buildConfigurationApplication(nil, nil) == nil || buildSecurityApplication(nil, nil, nil, nil) == nil || buildUsageMetricsApplication(nil, nil) == nil {
 		t.Fatal("nil service composition returned nil application")
 	}
 	if buildAuditApplication(nil) == nil || buildOperationLogApplication(nil, nil) == nil || buildActiveApplicationLogger(slog.LevelInfo, nil) == nil {

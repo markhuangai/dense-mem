@@ -3,9 +3,37 @@ package domain
 import "time"
 
 const (
-	SecurityBanSourceAuto   = "auto"
-	SecurityBanSourceManual = "manual"
+	SecurityBanSourceAuto      = "auto"
+	SecurityBanSourceManual    = "manual"
+	SecurityRequestBodyLimit   = 64 << 10
+	SecurityRequestHeaderLimit = 16 << 10
 )
+
+type SecurityRequestCapture struct {
+	State  string `json:"state"`
+	Reason string `json:"reason,omitempty"`
+	Bytes  int64  `json:"bytes"`
+	Limit  int    `json:"limit"`
+}
+
+// SecurityAuthFailureRequest is transient until the security application protects it.
+type SecurityAuthFailureRequest struct {
+	ID                    string                 `json:"id"`
+	CapturedAt            time.Time              `json:"captured_at"`
+	Method                string                 `json:"method"`
+	URL                   string                 `json:"url"`
+	Route                 string                 `json:"route"`
+	Reason                string                 `json:"reason"`
+	Message               string                 `json:"message"`
+	AuthScheme            string                 `json:"auth_scheme"`
+	CredentialPrefix      string                 `json:"credential_prefix,omitempty"`
+	CredentialFingerprint string                 `json:"credential_fingerprint,omitempty"`
+	Headers               map[string][]string    `json:"headers,omitempty"`
+	Body                  string                 `json:"body"`
+	HeaderCapture         SecurityRequestCapture `json:"header_capture"`
+	BodyCapture           SecurityRequestCapture `json:"body_capture"`
+	URLCapture            SecurityRequestCapture `json:"url_capture"`
+}
 
 // SecuritySettings controls app-level auth failure tracking and IP bans.
 type SecuritySettings struct {

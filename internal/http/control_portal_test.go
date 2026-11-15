@@ -366,7 +366,7 @@ func (s *controlSecuritySvc) CheckBan(context.Context, string) (*domain.Security
 	return nil, nil
 }
 
-func (s *controlSecuritySvc) RecordAuthFailure(context.Context, string, string, string) (*domain.SecurityIPBan, error) {
+func (s *controlSecuritySvc) RecordAuthFailure(context.Context, string, string, string, *domain.SecurityAuthFailureRequest) (*domain.SecurityIPBan, error) {
 	s.authFailures++
 	return nil, nil
 }

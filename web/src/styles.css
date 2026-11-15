@@ -375,6 +375,28 @@ legend {
   width: 150px;
 }
 
+.security-request-details {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.security-request-details dl {
+  display: grid;
+  grid-template-columns: minmax(100px, 160px) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.security-request-details dd {
+  min-width: 0;
+  margin: 0;
+}
+
+.security-request-details pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .security-table th:nth-child(2),
 .security-table td:nth-child(2),
 .security-table th:nth-child(3),

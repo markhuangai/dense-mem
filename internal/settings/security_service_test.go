@@ -17,11 +17,11 @@ func TestSecurityServiceRecordAuthFailureCreatesPermanentBan(t *testing.T) {
 	repo.settings.BanDurationSeconds = 0
 	svc := NewSecurityService(repo, nil)
 
-	ban, err := svc.RecordAuthFailure(context.Background(), "192.0.2.10", "mcp", "AUTH_INVALID")
+	ban, err := svc.RecordAuthFailure(context.Background(), "192.0.2.10", "mcp", "AUTH_INVALID", nil)
 	require.NoError(t, err)
 	require.Nil(t, ban)
 
-	ban, err = svc.RecordAuthFailure(context.Background(), "192.0.2.10", "mcp", "AUTH_INVALID")
+	ban, err = svc.RecordAuthFailure(context.Background(), "192.0.2.10", "mcp", "AUTH_INVALID", nil)
 	require.NoError(t, err)
 	require.NotNil(t, ban)
 	require.Equal(t, "192.0.2.10", ban.IP)
@@ -39,7 +39,7 @@ func TestSecurityServiceRecordAuthFailureSkipsPrivateProxyAddress(t *testing.T) 
 	repo.settings.FailureThreshold = 1
 	svc := NewSecurityService(repo, nil)
 
-	ban, err := svc.RecordAuthFailure(context.Background(), "172.30.0.4", "mcp", "AUTH_INVALID")
+	ban, err := svc.RecordAuthFailure(context.Background(), "172.30.0.4", "mcp", "AUTH_INVALID", nil)
 	require.NoError(t, err)
 	require.Nil(t, ban)
 	require.Empty(t, repo.failures)
@@ -180,13 +180,13 @@ func TestSecurityServiceExistingBanAndDisabledRecordingBranches(t *testing.T) {
 	svc := NewSecurityService(repo, nil)
 	svc.now = func() time.Time { return now }
 
-	ban, err := svc.RecordAuthFailure(context.Background(), "8.8.8.8", "api", "AUTH_INVALID")
+	ban, err := svc.RecordAuthFailure(context.Background(), "8.8.8.8", "api", "AUTH_INVALID", nil)
 	require.NoError(t, err)
 	require.NotNil(t, ban)
 	require.Equal(t, "manual", ban.Reason)
 
 	repo.settings.Enabled = false
-	ban, err = svc.RecordAuthFailure(context.Background(), "8.8.4.4", "api", "AUTH_INVALID")
+	ban, err = svc.RecordAuthFailure(context.Background(), "8.8.4.4", "api", "AUTH_INVALID", nil)
 	require.NoError(t, err)
 	require.Nil(t, ban)
 }
@@ -245,10 +245,10 @@ func (r *fakeSecurityRepository) RecordFailure(ctx context.Context, ip, surface,
 	}, nil
 }
 
-func (r *fakeSecurityRepository) UpsertBan(ctx context.Context, ban *domain.SecurityIPBan) error {
+func (r *fakeSecurityRepository) UpsertBan(ctx context.Context, ban *domain.SecurityIPBan) (bool, error) {
 	copy := *ban
 	r.bans[ban.IP] = &copy
-	return nil
+	return true, nil
 }
 
 func (r *fakeSecurityRepository) ListBans(ctx context.Context, includeExpired bool, limit, offset int) ([]domain.SecurityIPBan, int64, error) {

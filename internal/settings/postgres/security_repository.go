@@ -186,19 +186,20 @@ func (r *SecurityRepositoryImpl) RecordFailure(ctx context.Context, ip, surface,
 	return &failure, nil
 }
 
-func (r *SecurityRepositoryImpl) UpsertBan(ctx context.Context, ban *domain.SecurityIPBan) error {
+func (r *SecurityRepositoryImpl) UpsertBan(ctx context.Context, ban *domain.SecurityIPBan) (bool, error) {
 	if ban == nil {
-		return fmt.Errorf("security ban is required")
+		return false, fmt.Errorf("security ban is required")
 	}
 	if ban.Metadata == nil {
 		ban.Metadata = map[string]any{}
 	}
 	metadata, err := json.Marshal(ban.Metadata)
 	if err != nil {
-		return fmt.Errorf("failed to marshal security ban metadata: %w", err)
+		return false, fmt.Errorf("failed to marshal security ban metadata: %w", err)
 	}
-	return r.withSystemTx(ctx, func(tx *gorm.DB) error {
-		return tx.Exec(`
+	applied := false
+	err = r.withSystemTx(ctx, func(tx *gorm.DB) error {
+		result := tx.Exec(`
 			INSERT INTO security_ip_bans (
 				ip, reason, source, failure_count, banned_at, expires_at,
 				last_failed_at, metadata, created_at, updated_at, revoked_at
@@ -215,8 +216,17 @@ func (r *SecurityRepositoryImpl) UpsertBan(ctx context.Context, ban *domain.Secu
 				metadata = EXCLUDED.metadata,
 				updated_at = EXCLUDED.updated_at,
 				revoked_at = NULL
-		`, ban.IP, ban.Reason, ban.Source, ban.FailureCount, ban.BannedAt, ban.ExpiresAt, ban.LastFailedAt, string(metadata), ban.CreatedAt).Error
+			WHERE EXCLUDED.source = 'manual' OR (
+				(security_ip_bans.revoked_at IS NULL OR security_ip_bans.revoked_at < EXCLUDED.banned_at)
+				AND (security_ip_bans.source = 'auto' OR security_ip_bans.revoked_at IS NOT NULL
+					OR security_ip_bans.expires_at <= EXCLUDED.banned_at)
+				AND (security_ip_bans.last_failed_at IS NULL OR security_ip_bans.last_failed_at <= EXCLUDED.last_failed_at)
+			)
+		`, ban.IP, ban.Reason, ban.Source, ban.FailureCount, ban.BannedAt, ban.ExpiresAt, ban.LastFailedAt, string(metadata), ban.CreatedAt)
+		applied = result.RowsAffected > 0
+		return result.Error
 	})
+	return applied && err == nil, err
 }
 
 func (r *SecurityRepositoryImpl) ListBans(ctx context.Context, includeExpired bool, limit, offset int) ([]domain.SecurityIPBan, int64, error) {

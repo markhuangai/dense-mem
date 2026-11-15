@@ -29,7 +29,7 @@ func (s *fakeSecurityBanService) CheckBan(_ context.Context, ip string) (*domain
 	return s.ban, s.err
 }
 
-func (s *fakeSecurityBanService) RecordAuthFailure(context.Context, string, string, string) (*domain.SecurityIPBan, error) {
+func (s *fakeSecurityBanService) RecordAuthFailure(context.Context, string, string, string, *domain.SecurityAuthFailureRequest) (*domain.SecurityIPBan, error) {
 	s.failures++
 	return nil, nil
 }
