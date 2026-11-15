@@ -19,6 +19,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/evalharness"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
+	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -74,7 +75,7 @@ func TestRunnerCampaignConditionsAndReplay(t *testing.T) {
 	worker := make(chan error, 1)
 	go func() {
 		for ctx.Err() == nil {
-			if _, err := f.maintenance.RunTurn(ctx); err != nil && ctx.Err() == nil {
+			if _, err := f.maintenance.RunTurn(ctx); err != nil && ctx.Err() == nil && !errors.Is(err, ontology.ErrMaintenancePaused) {
 				worker <- err
 				return
 			}
