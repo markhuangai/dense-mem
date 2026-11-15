@@ -150,7 +150,7 @@ export async function cleanup(env) {
     if (!listed) continue;
     const actual = JSON.parse(docker(["container", "inspect", name]))[0];
     ownedResource({ Labels: actual.Config.Labels }, paths.runID);
-    if (actual.State.Running) docker(["container", "stop", "--signal=SIGTERM", "--timeout=-1", actual.Id], { timeout: 120_000 });
+    if (actual.State.Running) docker(["container", "stop", "--signal=SIGTERM", "--timeout=60", actual.Id], { timeout: 120_000 });
     docker(["container", "rm", "--volumes", actual.Id]);
   }
   for (const [kind, name] of [["volume", state.volume], ["network", state.network]]) {

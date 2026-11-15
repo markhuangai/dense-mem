@@ -20,6 +20,50 @@ func captureFixture(buffer *bytes.Buffer) *Capture {
 	return &Capture{Logger: observability.NewConsoleWithHandler(slog.NewJSONHandler(buffer, &slog.HandlerOptions{Level: slog.LevelDebug})).ContextSlog(), Protector: observability.NewCredentialProtector(), RunID: "synthetic-run"}
 }
 
+func TestCapturePreservesNestedProviderLogsAndProtectsCredentials(t *testing.T) {
+	const secret = "nested-provider-key-canary-763"
+	const admitted = `{"items":[{"text":"Atlas uses \"quoted\" Evidence."}]}`
+	wire, err := json.Marshal(map[string]any{"messages": []map[string]string{{"role": "user", "content": admitted}}, "api_key": secret, "password": "ordinary public text"})
+	require.NoError(t, err)
+	line, err := json.Marshal(map[string]any{"msg": "ai_exchange_payload", "payload_chunk": map[string]string{"body": string(wire)}})
+	require.NoError(t, err)
+	var output bytes.Buffer
+	capture := captureFixture(&output)
+	capture.Protector = NewRunnerCredentialProtector(secret)
+	require.NoError(t, capture.Emit("runtime_log", map[string]string{"line": string(line)}))
+	var envelope struct{ Record string }
+	require.NoError(t, json.Unmarshal(bytes.TrimSpace(output.Bytes()), &envelope))
+	recordBytes, err := base64.StdEncoding.DecodeString(envelope.Record)
+	require.NoError(t, err)
+	var record captureRecord
+	require.NoError(t, json.Unmarshal(recordBytes, &record))
+	require.Equal(t, capture.RunID, record.RunID)
+	require.Equal(t, "captured", record.Chunk.State)
+	require.Equal(t, 1, record.Chunk.Count)
+	require.Zero(t, record.Chunk.Index)
+	var event Event
+	require.NoError(t, json.Unmarshal([]byte(record.Chunk.Body), &event))
+	require.Equal(t, "runtime_log", event.Kind)
+	var retained struct{ Line string }
+	require.NoError(t, json.Unmarshal(event.Payload, &retained))
+	var provider struct {
+		Chunk struct{ Body string } `json:"payload_chunk"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(retained.Line), &provider))
+	var request struct {
+		Messages []struct{ Content string }
+		APIKey   string `json:"api_key"`
+		Password string
+	}
+	require.NoError(t, json.Unmarshal([]byte(provider.Chunk.Body), &request))
+	require.Len(t, request.Messages, 1)
+	require.Equal(t, admitted, request.Messages[0].Content)
+	require.Equal(t, "ordinary public text", request.Password)
+	require.Equal(t, observability.CredentialProtectionRedacted, request.APIKey)
+	require.NotContains(t, output.String(), secret)
+	require.NotContains(t, string(event.Payload), secret)
+}
+
 func TestActualConsoleCaptureProtectsCredentialsAndPreservesAdmittedText(t *testing.T) {
 	secrets := []string{"provider-key-canary-7d2ac", "https://provider-url-canary.example/v1", "database-password-canary-981", "control-token-canary-762", "postgres://user:password-canary@database/private"}
 	read, write, err := os.Pipe()

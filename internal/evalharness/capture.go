@@ -76,7 +76,17 @@ func (c *Capture) Emit(kind string, payload any) error {
 		c.failed = true
 		return errors.New("DEBUG benchmark console capture is required")
 	}
-	chunks := observability.CaptureDiagnosticBody(context.Background(), c.Protector, body, captureLimit)
+	var protected []byte
+	reason := observability.CredentialProtectionUnsupported
+	if c.Protector != nil {
+		protected, reason = c.Protector.ProtectDiagnosticBytes(body, captureLimit)
+	}
+	if reason != observability.CredentialProtectionAvailable {
+		c.failed = true
+		c.Logger.Error("eval_capture_unavailable", "run_id", c.RunID, "sequence", c.sequence+1, "reason", reason.Code())
+		return errors.New("benchmark payload protection unavailable")
+	}
+	chunks := observability.ChunkProtectedDiagnosticBody(protected, captureLimit)
 	for _, chunk := range chunks {
 		if chunk.State != "captured" {
 			c.failed = true

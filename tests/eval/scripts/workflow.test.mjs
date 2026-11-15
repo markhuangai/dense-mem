@@ -69,6 +69,7 @@ test("runner workflow reserves shutdown time, retains numeric artifacts and aggr
   assert.equal(datasets["runs-on"], "ubuntu-latest"); assert.equal(datasets["timeout-minutes"], 360); assert.equal(datasets.strategy["fail-fast"], false);
   assert.match(datasets.steps.find((step) => step.name === "Freeze model deadline").run, /330 \* 60/);
   assert.ok(datasets.steps.filter((step) => step.uses?.startsWith("actions/upload-artifact@")).every((step) => step.with["retention-days"] === 2));
+  assert.equal(runStep(datasets, "node --test tests/eval/scripts/workflow_docker.test.mjs").if, "inputs.mode == 'fixtures'");
   assert.match(workflowJob(workflow, "aggregate").if, /always/);
   const caller = await readWorkflow("production-image-e2e.yml");
   const secrets = workflowJob(caller, "evaluation").secrets;
