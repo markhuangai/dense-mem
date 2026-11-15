@@ -42,7 +42,7 @@ Configure application settings, then generate private telemetry credentials:
 ```bash
 export TELEMETRY_SCRAPE_TOKEN="$(openssl rand -hex 32)"
 export GRAFANA_ADMIN_PASSWORD="$(openssl rand -hex 32)"
-docker compose \
+docker compose --env-file .env \
   -f examples/docker-compose.base.yml \
   -f examples/docker-compose.telemetry.yml \
   -f examples/docker-compose.grafana.yml \
@@ -58,8 +58,8 @@ observation and troubleshooting workflows.
 ## Startup and operations
 
 ```bash
-docker compose -f examples/docker-compose.base.yml ps
-docker compose -f examples/docker-compose.base.yml logs --no-color server
+docker compose --env-file .env -f examples/docker-compose.base.yml ps
+docker compose --env-file .env -f examples/docker-compose.base.yml logs --no-color server
 curl -fsS http://127.0.0.1:8080/ready
 ```
 

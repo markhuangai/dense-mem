@@ -50,7 +50,10 @@ async function validateWiki(files) {
     walk(parse(bytes.toString("utf8")), (node) => {
       if (node.type === "Header") headings.add(slugger.slug(text(node)));
       if (node.type === "Link" || node.type === "Image") links.push(node.url);
-      if (node.type === "Definition") references.set(node.identifier.toLowerCase(), node.url);
+      if (node.type === "Definition") {
+        const identifier = node.identifier.toLowerCase();
+        if (!references.has(identifier)) references.set(identifier, node.url);
+      }
       if (node.type === "LinkReference" || node.type === "ImageReference") unresolved.push(node.identifier.toLowerCase());
       if (node.type === "Html") {
         for (const match of node.value.matchAll(/\b(?:id|name)=["']([^"']+)["']/g)) headings.add(match[1]);
@@ -69,8 +72,9 @@ async function validateWiki(files) {
       else if (target.startsWith(`${WIKI_URL}/`)) target = target.slice(WIKI_URL.length + 1);
       else if (/^[a-z][a-z0-9+.-]*:|^\/\//i.test(target)) continue;
       const [path, fragment = ""] = target.split("#");
-      const decoded = decodeURIComponent(path).replace(/\?.*$/, "");
-      const page = decoded ? posix.normalize(decoded).replace(/\.md$/, "") + ".md" : name;
+      const rawPath = decodeURIComponent(path).replace(/\?.*$/, "");
+      const decoded = rawPath ? posix.normalize(rawPath) : "";
+      const page = decoded ? decoded.replace(/\.md$/, "") + ".md" : name;
       if (files.has(decoded) && !decoded.endsWith(".md")) continue;
       if (!pages.has(page)) throw new Error(`${name}: missing wiki page or asset ${target}`);
       if (fragment && !pages.get(page).headings.has(decodeURIComponent(fragment))) {

@@ -175,13 +175,23 @@ test("invalid page links and application files fail before any live mutation", a
 
 test("wiki links validate GFM headings, duplicate headings, references, HTML, and assets", async () => {
   const files = new Map(Object.entries({
-    "Home.md": '# Home\n[Guide][guide]\n[guide]: Guide#setup-1\n<a href="Guide#an-explicit-anchor">Guide</a>\n![image](assets/image.png)\n',
+    "Home.md": '# Home\n[Guide][guide]\n\n[guide]: Guide#setup-1\n<a href="Guide#an-explicit-anchor">Guide</a>\n![image](./assets/image.png)\n[Here](#home)\n',
     "_Sidebar.md": "[Home](Home)\n", "Guide.md": '# Guide\n## Setup\n## Setup\n<a id="an-explicit-anchor"></a>\n~~~md\n[ignored](Missing)\n~~~\n',
     "assets/image.png": "image",
   }).map(([name, content]) => [name, Buffer.from(content)]));
   assert.equal(await documentation.validateWiki(files), 3);
   files.set("Home.md", Buffer.from("# Home\n[Guide](Guide#absent)\n"));
   await assert.rejects(documentation.validateWiki(files), /missing wiki heading/);
+  files.set("Home.md", Buffer.from("# Home\n![missing](./assets/missing.png)\n"));
+  await assert.rejects(documentation.validateWiki(files), /missing wiki page or asset/);
+});
+
+test("reference links follow the first definition in both valid and invalid orders", async () => {
+  const files = new Map([["_Sidebar.md", Buffer.from("[Home](Home)\n")], ["Guide.md", Buffer.from("# Guide\n## Setup\n")]]);
+  files.set("Home.md", Buffer.from("# Home\n[Guide][r]\n\n[r]: Guide#absent\n[r]: Guide#setup\n"));
+  await assert.rejects(documentation.validateWiki(files), /missing wiki heading Guide#absent/);
+  files.set("Home.md", Buffer.from("# Home\n[Guide][r]\n\n[r]: Guide#setup\n[r]: Guide#absent\n"));
+  assert.equal(await documentation.validateWiki(files), 3);
 });
 
 test("publication requires trusted main execution and a successful current wiki push", () => {
