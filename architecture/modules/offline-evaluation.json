@@ -61,6 +61,13 @@
       "role": "worker"
     },
     {
+      "path": "internal/evalharness/client.go",
+      "function": "ImportCorpusWithConcurrency",
+      "kind": "goroutine",
+      "ordinal": 2,
+      "role": "worker"
+    },
+    {
       "path": "internal/evalharness/runner.go",
       "function": "runCondition",
       "kind": "goroutine",
