@@ -2,7 +2,9 @@
 
 This wiki holds the approved target architecture and recommended workflows. Describe behavior, boundaries, and outcomes directly. Keep design rationale and decision history in ADRs and issues. Label approved behavior that awaits implementation and verify deployment availability separately.
 
-The reviewed source is [41e27867](https://github.com/markhuangai/dense-mem/commit/41e278673679c1d9634cd63a68d13c74e8a46452), using contract `dense-mem.v2.8.0`.
+The architecture review source is [41e27867](https://github.com/markhuangai/dense-mem/commit/41e278673679c1d9634cd63a68d13c74e8a46452), using contract `dense-mem.v2.8.0`.
+
+The documentation-branch workflow, integration version, and development instructions are checked against application source [1e9b894f](https://github.com/markhuangai/dense-mem/commit/1e9b894f478252f68b222a4d2ab7a20dfd0145da). This targeted update does not establish live deployment or publication status.
 
 ## Implementation Status
 
@@ -13,6 +15,48 @@ The reviewed source is [41e27867](https://github.com/markhuangai/dense-mem/commi
 | Staging deployment | The selected image performs migrations before read-only verification and startup. | Requires the manually installed host helper; live installation and deployment were not inspected in this audit. |
 
 Source implementation does not establish the state of a deployed image or database. [ADR 0001](https://github.com/markhuangai/dense-mem/blob/41e278673679c1d9634cd63a68d13c74e8a46452/adr/0001-predictable-mcp-tool-contracts.md) governs terminal MCP outcomes; [ADR 0017](https://github.com/markhuangai/dense-mem/blob/41e278673679c1d9634cd63a68d13c74e8a46452/adr/0017-evidence-only-memory-without-factual-relationships.md) defines the Evidence-only boundary. Detailed verification receipts remain with the linked changes: [Remember progress](https://github.com/markhuangai/dense-mem/pull/745), [organization reset](https://github.com/markhuangai/dense-mem/pull/757), and [staging deployment](https://github.com/markhuangai/dense-mem/pull/753).
+
+## Repository Documentation And Publication
+
+| Location | Responsibility |
+| --- | --- |
+| English and Simplified Chinese root READMEs on `main` | Short overview, working quickstart, demo, and navigation. |
+| Directory READMEs on `main` | Instructions tied to checked-in examples, scripts, packages, and test fixtures. |
+| The application repository's `wiki` branch | Canonical source for these wiki pages, retaining page names and URLs. |
+| GitHub Wiki | Published mirror of the `wiki` branch's pages/assets. |
+
+Feature PRs target `main`. Documentation PRs target `wiki` and need no product review or product CI. Every documented behavior change links its companion wiki PR, or explains why no wiki update is needed; directory-guide changes accompany the feature PR. Keep one canonical explanation per subject. Existing ADR authority and source-versus-deployment availability remain explicit.
+
+Create documentation branches from `wiki`, using a separate checkout/worktree from the application task. Do not merge application `main` into `wiki`. Preserve existing page filenames and update inbound links when headings change. Keep operational history and completed plans with their issues/ADRs rather than adding them to the README.
+
+### Publish And Recover
+
+A push to `wiki` runs the minimal **Wiki source** request workflow. Its successful same-repository push requests **Publish wiki**, whose implementation is loaded from trusted `main`. The publisher validates page links/anchors, source revision and live history before publishing pages/assets. Branch workflow files are not published as wiki content.
+
+Merge the publisher's implementation PR before its companion wiki PR. Both PRs stay unmerged during implementation delivery; first live publication must be verified after those merges. Until the publisher exists on `main`, a source request alone cannot establish publication.
+
+Publications serialize. Stale requests, invalid documentation, unexplained live changes, and Git/authentication failures stop with visible errors. Each published commit retains the source SHA and prior wiki history. Repeating an unchanged snapshot creates no empty commit. Treat the source branch as authoritative; do not edit GitHub Wiki as a competing source.
+
+| Failure | Corrective action |
+| --- | --- |
+| Invalid page, anchor, or unsupported file | Fix a wiki PR, retaining the intended public URLs. |
+| Stale source | Inspect the latest source request; do not republish the older revision. |
+| Live history diverged | Fetch the live wiki history and merge it into a documentation branch through a wiki PR, preserving both histories; never force-push over it. |
+| Push/authentication failed | Inspect the cause and verified live head before retrying. Missing credentials do not authorize adding secrets or changing repository settings. |
+
+Use the run's ordinary logs to reconstruct stage, run/attempt, source/live revisions, reason, elapsed time and outcome:
+
+```bash
+gh run view "$WIKI_PUBLISH_RUN_ID" --repo markhuangai/dense-mem --log
+```
+
+After correcting the cause, retry the current source through the trusted manual route:
+
+```bash
+gh workflow run publish-wiki.yml --repo markhuangai/dense-mem --ref main
+```
+
+Verify the published commit's `Dense-Mem-Wiki-Source` trailer and rendered pages against the source revision. A successful request job, dry run, or main-PR check does not prove live wiki publication. The publisher uses job-scoped `GITHUB_TOKEN`; its wiki write capability requires the first live verification.
 
 ## Canonical Page Ownership
 

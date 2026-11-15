@@ -1,0 +1,17 @@
+name: Wiki source
+
+on:
+  push:
+    branches: [wiki]
+
+permissions:
+  contents: read
+
+jobs:
+  request:
+    name: Request trusted publication
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Identify source revision
+        run: printf 'Request wiki publication for %s\n' "$GITHUB_SHA"

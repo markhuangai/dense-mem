@@ -15,6 +15,8 @@ flowchart TB
   Topics -. "Discovery and follow-up" .-> Recall
 ```
 
+The repository [README](https://github.com/markhuangai/dense-mem) is the short entry point. This wiki owns detailed explanations; [deployment examples](https://github.com/markhuangai/dense-mem/blob/main/examples/README.md) and [development scripts](https://github.com/markhuangai/dense-mem/blob/main/scripts/README.md) keep file-specific instructions beside their sources.
+
 ## Start Here
 
 | Goal | Read |

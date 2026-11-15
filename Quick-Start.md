@@ -18,12 +18,12 @@ Redis is optional for this one-process setup. [Public HTTPS And Redis](Public-HT
 
 ## 1. Pin Deployment Inputs
 
-Replace `vX.Y.Z` with the selected published release:
+This fresh-install example selects the published stable release `v2.8.0`:
 
 ```bash
 mkdir dense-mem-local
 cd dense-mem-local
-export DENSE_MEM_VERSION="vX.Y.Z"
+export DENSE_MEM_VERSION=v2.8.0
 export DENSE_MEM_IMAGE="ghcr.io/markhuangai/dense-mem:${DENSE_MEM_VERSION}"
 curl -fsSLo docker-compose.yml \
   "https://raw.githubusercontent.com/markhuangai/dense-mem/${DENSE_MEM_VERSION}/examples/docker-compose.base.yml"
@@ -32,7 +32,7 @@ curl -fsSLo .env.example \
 cp .env.example .env
 ```
 
-Retain the image pin for later starts. When testing source before its release, build the matching repository image rather than assuming a published tag contains it.
+Retain the image pin for later starts. The [deployment examples guide](https://github.com/markhuangai/dense-mem/blob/main/examples/README.md) identifies the Compose variants and overlays. When testing source before its release, build the matching repository image rather than assuming a published tag contains it.
 
 ## 2. Configure And Start
 
