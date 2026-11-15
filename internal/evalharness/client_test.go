@@ -27,8 +27,16 @@ func (f importStatusTransport) RoundTrip(request *http.Request) (*http.Response,
 }
 
 func TestImporterReportsEveryMinuteWhileWaitingAndStopsAfterCompletion(t *testing.T) {
-	for _, cancelled := range []bool{false, true} {
-		t.Run(map[bool]string{false: "success", true: "cancelled"}[cancelled], func(t *testing.T) {
+	for _, scenario := range []struct {
+		name, blockedMethod string
+		cancelled           bool
+	}{
+		{"intake success", "tools/call", false},
+		{"intake cancelled", "tools/call", true},
+		{"catalog success", "tools/list", false},
+		{"catalog cancelled", "tools/list", true},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				var logs bytes.Buffer
 				entered, release := make(chan struct{}), make(chan struct{})
@@ -36,6 +44,14 @@ func TestImporterReportsEveryMinuteWhileWaitingAndStopsAfterCompletion(t *testin
 				transport := importStatusTransport(func(request *http.Request) (*http.Response, error) {
 					var rpc struct{ Method string }
 					require.NoError(t, json.NewDecoder(request.Body).Decode(&rpc))
+					if rpc.Method == scenario.blockedMethod {
+						close(entered)
+						select {
+						case <-request.Context().Done():
+							return nil, request.Context().Err()
+						case <-release:
+						}
+					}
 					var result map[string]any
 					if rpc.Method == "tools/list" {
 						tools := []mcpToolDefinition{}
@@ -44,12 +60,6 @@ func TestImporterReportsEveryMinuteWhileWaitingAndStopsAfterCompletion(t *testin
 						}
 						result = map[string]any{"tools": tools}
 					} else {
-						close(entered)
-						select {
-						case <-request.Context().Done():
-							return nil, request.Context().Err()
-						case <-release:
-						}
 						result = map[string]any{"structuredContent": map[string]any{"processing_state": "completed", "submission_id": uuid.NewString(), "evidence": []any{map[string]any{
 							"evidence_index": 0, "partition_index": 0, "source_item_id": uuid.NewString(), "occurrence_id": uuid.NewString(), "evidence_id": uuid.NewString(),
 							"span_start": 0, "span_end": len([]rune(item.Content)), "content_hash": knowledge.EvidenceContentHash(item.Content), "disposition": "stored",
@@ -75,7 +85,7 @@ func TestImporterReportsEveryMinuteWhileWaitingAndStopsAfterCompletion(t *testin
 				select {
 				case <-entered:
 				case err := <-done:
-					t.Fatalf("import returned before Remember: %v", err)
+					t.Fatalf("import returned before the blocked request: %v", err)
 				}
 				synctest.Wait()
 				time.Sleep(59 * time.Second)
@@ -87,13 +97,13 @@ func TestImporterReportsEveryMinuteWhileWaitingAndStopsAfterCompletion(t *testin
 				time.Sleep(time.Minute)
 				synctest.Wait()
 				require.Len(t, capturedProgress(t, snapshot()), 3)
-				if cancelled {
+				if scenario.cancelled {
 					cancel()
 				} else {
 					close(release)
 				}
 				err := <-done
-				if cancelled {
+				if scenario.cancelled {
 					require.ErrorContains(t, err, "context canceled")
 				} else {
 					require.NoError(t, err)
@@ -106,12 +116,40 @@ func TestImporterReportsEveryMinuteWhileWaitingAndStopsAfterCompletion(t *testin
 					require.Equal(t, captureProgress{Stage: "import", Unit: "documents", Total: 1, Remaining: 1}, update)
 				}
 				final := captureProgress{Stage: "import", Unit: "documents", Total: 1, Completed: 1}
-				if cancelled {
+				if scenario.cancelled {
 					final.Completed, final.Failed = 0, 1
+					if scenario.blockedMethod == "tools/list" {
+						final.Failed, final.Remaining = 0, 1
+					}
 				}
 				require.Equal(t, final, updates[3])
 				require.NotContains(t, logs.String(), item.Content)
 			})
+		})
+	}
+}
+
+func TestImporterReportsFinalCountsWhenCatalogDiscoveryFails(t *testing.T) {
+	for _, cancelled := range []bool{false, true} {
+		t.Run(map[bool]string{false: "unavailable", true: "cancelled"}[cancelled], func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusServiceUnavailable)
+			}))
+			defer server.Close()
+			var logs bytes.Buffer
+			client := &HTTPClient{BaseURL: server.URL, APIKey: "synthetic", Client: server.Client(), Capture: captureFixture(&logs)}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if cancelled {
+				cancel()
+			}
+			mapping, err := client.ImportCorpus(ctx, []CorpusItem{{SourceDocID: "source", Content: "Exact public corpus."}})
+			require.Error(t, err)
+			require.Empty(t, mapping.BySourceDocID)
+			progress := capturedProgress(t, logs.Bytes())
+			require.Len(t, progress, 2)
+			require.Equal(t, captureProgress{Stage: "import", Unit: "documents", Total: 1, Remaining: 1}, progress[0])
+			require.Equal(t, progress[0], progress[1])
 		})
 	}
 }

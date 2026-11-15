@@ -199,10 +199,8 @@ func (c *HTTPClient) ImportCorpusWithConcurrency(ctx context.Context, items []Co
 	if concurrency < 1 || concurrency > 10 {
 		return mapping, errors.New("invalid import concurrency")
 	}
-	if err := c.Capture.emitProgress(captureProgress{Stage: "import", Unit: "documents", Total: len(items)}); err != nil {
-		return mapping, err
-	}
-	if _, err := c.ensureContract(ctx); err != nil {
+	initialProgress := captureProgress{Stage: "import", Unit: "documents", Total: len(items)}
+	if err := c.Capture.emitProgress(initialProgress); err != nil {
 		return mapping, err
 	}
 	work, stop := context.WithCancel(ctx)
@@ -238,6 +236,15 @@ func (c *HTTPClient) ImportCorpusWithConcurrency(ctx context.Context, items []Co
 			}
 		}
 	}()
+	finishProgress := func() error {
+		close(stopProgress)
+		<-progressDone
+		return c.Capture.emitProgress(captureProgress{Stage: "import", Unit: "documents", Total: len(items), Completed: len(mapping.BySourceDocID), Failed: failed})
+	}
+	if _, err := c.ensureContract(work); err != nil {
+		progressErr := finishProgress()
+		return mapping, errors.Join(err, first, progressErr)
+	}
 	for range concurrency {
 		wg.Add(1)
 		go func() {
@@ -268,11 +275,8 @@ schedule:
 	}
 	close(jobs)
 	wg.Wait()
-	close(stopProgress)
-	<-progressDone
-	if err := c.Capture.emitProgress(captureProgress{Stage: "import", Unit: "documents", Total: len(items), Completed: len(mapping.BySourceDocID), Failed: failed}); err != nil && first == nil {
-		first = err
-	}
+	progressErr := finishProgress()
+	first = errors.Join(first, progressErr)
 	if first != nil {
 		return mapping, first
 	}
