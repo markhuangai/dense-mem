@@ -76,8 +76,8 @@ jobs:
       EVAL_DATASET: ${{ matrix.dataset }}
       EVAL_IMAGE: ${{ inputs.image }}
       EVAL_SOURCE_REVISION: ${{ inputs.source_revision }}
-      WORKFLOW_EMBEDDING_MODEL: '@cf/baai/bge-m3'
-      WORKFLOW_EMBEDDING_DIMENSIONS: '1024'
+      WORKFLOW_EMBEDDING_MODEL: 'text-embedding-3-small'
+      WORKFLOW_EMBEDDING_DIMENSIONS: '1536'
       DENSE_MEM_EVAL_MODEL: ${{ inputs.model || vars.DENSE_MEM_EVAL_MODEL || secrets.eval-model }}
       DENSE_MEM_EVAL_CONTEXT_WINDOW_TOKENS: ${{ inputs.context_window_tokens || vars.DENSE_MEM_EVAL_CONTEXT_WINDOW_TOKENS || secrets.eval-context-window }}
       DENSE_MEM_EVAL_VERIFIER_URL: ${{ secrets.eval-verifier-url }}

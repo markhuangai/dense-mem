@@ -355,7 +355,7 @@ jobs:
       eval-model: ${{ secrets.DENSE_MEM_EVAL_MODEL }}
       eval-context-window: ${{ secrets.DENSE_MEM_EVAL_CONTEXT_WINDOW_TOKENS }}
       eval-verifier-url: ${{ '' || vars.DENSE_MEM_EVAL_VERIFIER_URL || secrets.DENSE_MEM_EVAL_VERIFIER_URL }}
-      eval-embedding-url: ${{ (vars.CLOUDFLARE_ACCOUNT_ID != '' || secrets.CLOUDFLARE_ACCOUNT_ID != '') && format('https://api.cloudflare.com/client/v4/accounts/{0}/ai/v1', vars.CLOUDFLARE_ACCOUNT_ID || secrets.CLOUDFLARE_ACCOUNT_ID) || vars.DENSE_MEM_EVAL_EMBED_URL || secrets.DENSE_MEM_EVAL_EMBED_URL }}
+      eval-embedding-url: ${{ 'https://api.openai.com/v1' || vars.DENSE_MEM_EVAL_EMBED_URL || secrets.DENSE_MEM_EVAL_EMBED_URL }}
       eval-api-key: ${{ secrets.DENSE_MEM_EVAL_API_KEY }}
       eval-embedding-api-key: ${{ secrets.DENSE_MEM_EVAL_EMBED_API_KEY }}
 

@@ -8,7 +8,7 @@ import { readWorkflow, workflowJob, runStep } from "../../uat/workflow_helpers.m
 import { serverEnvironment, main } from "./workflow.mjs";
 
 const registry = JSON.parse(fs.readFileSync(new URL("../datasets.json", import.meta.url)));
-const valid = { DENSE_MEM_EVAL_MODEL: "configured-model", DENSE_MEM_EVAL_CONTEXT_WINDOW_TOKENS: "300000", DENSE_MEM_EVAL_VERIFIER_URL: "https://provider.example/v1", DENSE_MEM_EVAL_EMBED_URL: `https://api.cloudflare.com/client/v4/accounts/${"a".repeat(32)}/ai/v1`, DENSE_MEM_EVAL_API_KEY: "generation-canary", DENSE_MEM_EVAL_EMBED_API_KEY: "embedding-canary", WORKFLOW_EMBEDDING_MODEL: "@cf/baai/bge-m3", WORKFLOW_EMBEDDING_DIMENSIONS: "1024" };
+const valid = { DENSE_MEM_EVAL_MODEL: "configured-model", DENSE_MEM_EVAL_CONTEXT_WINDOW_TOKENS: "300000", DENSE_MEM_EVAL_VERIFIER_URL: "https://provider.example/v1", DENSE_MEM_EVAL_EMBED_URL: "https://api.openai.com/v1", DENSE_MEM_EVAL_API_KEY: "generation-canary", DENSE_MEM_EVAL_EMBED_API_KEY: "embedding-canary", WORKFLOW_EMBEDDING_MODEL: "text-embedding-3-small", WORKFLOW_EMBEDDING_DIMENSIONS: "1536" };
 
 const repository = "markhuangai/dense-mem";
 const taggedImage = `ghcr.io/${repository}:candidate`;
@@ -109,6 +109,9 @@ test("isolated server admits the complete bounded campaign without changing conc
   const maximumCalls = Math.max(...registry.datasets.map((dataset) => dataset.corpus.rows * 2 + dataset.questions.rows * 2 * 8 + 1));
   assert.ok(Number(environment.RATE_LIMIT_PER_MINUTE) >= maximumCalls);
   assert.equal(environment.AI_VERIFIER_MAX_CONCURRENCY, "4");
+  assert.equal(environment.AI_API_URL, "https://api.openai.com/v1");
+  assert.equal(environment.AI_API_EMBEDDING_MODEL, "text-embedding-3-small");
+  assert.equal(environment.AI_API_EMBEDDING_DIMENSIONS, "1536");
   assert.equal(environment.AI_API_EMBEDDING_MAX_CONCURRENCY, "2");
   assert.equal(environment.AI_VERIFIER_API_KEY, valid.DENSE_MEM_EVAL_API_KEY);
   assert.equal(environment.AI_API_KEY, valid.DENSE_MEM_EVAL_EMBED_API_KEY);
@@ -117,6 +120,24 @@ test("isolated server admits the complete bounded campaign without changing conc
   const fixture = serverEnvironment({ model: "fixture", context: 300000, verifier: "http://fixture-provider:8787/v1", embedding: "http://fixture-provider:8787/v1" }, {});
   assert.equal(fixture.AI_VERIFIER_API_URL, "http://fixture-provider:8787/v1");
   assert.equal(fixture.AI_API_URL, "http://fixture-provider:8787/v1");
+  assert.equal(fixture.AI_API_EMBEDDING_MODEL, "text-embedding-3-small");
+  assert.equal(fixture.AI_API_EMBEDDING_DIMENSIONS, "1536");
+});
+
+test("evaluation accepts only the pinned OpenAI embedding endpoint, model and dimensions", () => {
+  assert.equal(configuration(valid).embedding, "https://api.openai.com/v1");
+  assert.equal(configuration({ ...valid, DENSE_MEM_EVAL_EMBED_URL: "https://api.openai.com/v1/" }).embedding, "https://api.openai.com/v1/");
+  for (const url of [
+    `https://api.cloudflare.com/client/v4/accounts/${"a".repeat(32)}/ai/v1`,
+    "https://api.openai.com.attacker.example/v1", "http://api.openai.com/v1",
+    "https://credential-canary@api.openai.com/v1", "https://api.openai.com/v1?key=credential-canary",
+    "https://api.openai.com/v1/embeddings",
+  ]) assert.throws(() => configuration({ ...valid, DENSE_MEM_EVAL_EMBED_URL: url }), { message: "Invalid Actions setting: DENSE_MEM_EVAL_EMBED_URL" });
+  for (const change of [
+    { WORKFLOW_EMBEDDING_MODEL: "@cf/baai/bge-m3" },
+    { WORKFLOW_EMBEDDING_DIMENSIONS: "1024" },
+    { WORKFLOW_EMBEDDING_DIMENSIONS: "1536.0" },
+  ]) assert.throws(() => configuration({ ...valid, ...change }), /Workflow embedding pins are invalid/);
 });
 
 test("only absence permits configuration fallback; invalid values never escape errors", () => {
@@ -162,6 +183,8 @@ test("execution and cleanup fail closed outside the owning hosted run", () => {
 test("runner workflow reserves shutdown time, retains numeric artifacts and aggregates failures", async () => {
   const workflow = await readWorkflow("evaluation.yml");
   const datasets = workflowJob(workflow, "datasets");
+  assert.equal(datasets.env.WORKFLOW_EMBEDDING_MODEL, "text-embedding-3-small");
+  assert.equal(datasets.env.WORKFLOW_EMBEDDING_DIMENSIONS, "1536");
   assert.equal(datasets["runs-on"], "ubuntu-latest"); assert.equal(datasets["timeout-minutes"], 360); assert.equal(datasets.strategy["fail-fast"], false);
   assert.match(datasets.steps.find((step) => step.name === "Freeze model deadline").run, /330 \* 60/);
   assert.ok(datasets.steps.filter((step) => step.uses?.startsWith("actions/upload-artifact@")).every((step) => step.with["retention-days"] === 2));
@@ -175,6 +198,7 @@ test("runner workflow reserves shutdown time, retains numeric artifacts and aggr
   assert.match(datasets.env.DENSE_MEM_EVAL_MODEL, /inputs\.model \|\| vars\.DENSE_MEM_EVAL_MODEL \|\| secrets\.eval-model/);
   assert.match(datasets.env.DENSE_MEM_EVAL_CONTEXT_WINDOW_TOKENS, /inputs\.context_window_tokens \|\| vars\.DENSE_MEM_EVAL_CONTEXT_WINDOW_TOKENS \|\| secrets\.eval-context-window/);
   assert.match(secrets["eval-verifier-url"], /'' \|\| vars\.[A-Z_]+ \|\| secrets\.[A-Z_]+/);
+  assert.equal(secrets["eval-embedding-url"], "${{ 'https://api.openai.com/v1' || vars.DENSE_MEM_EVAL_EMBED_URL || secrets.DENSE_MEM_EVAL_EMBED_URL }}");
   assert.equal(secrets["eval-api-key"], "${{ secrets.DENSE_MEM_EVAL_API_KEY }}");
   assert.equal(secrets["eval-embedding-api-key"], "${{ secrets.DENSE_MEM_EVAL_EMBED_API_KEY }}");
   const resolve = workflowJob(caller, "authorize").steps.find((step) => step.id === "resolve").with.script;

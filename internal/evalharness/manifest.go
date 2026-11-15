@@ -36,7 +36,7 @@ func ReadManifest(path string) (Manifest, error) {
 	if manifest.RunID != manifest.WorkflowRunID+"-"+manifest.Dataset {
 		return manifest, errors.New("manifest does not belong to this dataset job")
 	}
-	if !modelPattern.MatchString(manifest.Model) || strings.Contains(manifest.Model, "://") || manifest.EmbeddingModel != "@cf/baai/bge-m3" || manifest.EmbeddingDimensions != 1024 || manifest.ContextWindowTokens < 16384 {
+	if !modelPattern.MatchString(manifest.Model) || strings.Contains(manifest.Model, "://") || manifest.EmbeddingModel != "text-embedding-3-small" || manifest.EmbeddingDimensions != 1536 || manifest.ContextWindowTokens < 16384 {
 		return manifest, errors.New("explicit verified model and context settings are required")
 	}
 	if manifest.DataDir == "" || manifest.OutputDir == "" || len(manifest.RegistryHash) != 64 {

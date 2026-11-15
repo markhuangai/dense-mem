@@ -69,11 +69,12 @@ then an explicit missing-setting failure. Invalid supplied settings fail.
 The workflow pins `DENSE_MEM_EVAL_MODEL` to `dense-mem-testing` and
 `DENSE_MEM_EVAL_CONTEXT_WINDOW_TOKENS` to the maintainer-specified `500000`.
 `DENSE_MEM_EVAL_VERIFIER_URL` uses the same precedence with an empty workflow pin.
-Embedding pins are `@cf/baai/bge-m3`, 1024 dimensions, and the workflow's
-Cloudflare endpoint construction using `CLOUDFLARE_ACCOUNT_ID`. If that
-construction is absent, `DENSE_MEM_EVAL_EMBED_URL` follows the same fallback.
+Embedding pins are OpenAI's `text-embedding-3-small`, 1536 dimensions, and
+`https://api.openai.com/v1`. The workflow URL pin takes precedence over
+repository `DENSE_MEM_EVAL_EMBED_URL` Variables and Secrets.
 `DENSE_MEM_EVAL_API_KEY` and `DENSE_MEM_EVAL_EMBED_API_KEY` are dedicated
-Secrets-only credentials. Provider URLs and keys cross the reusable workflow as
+Secrets-only credentials; the latter must contain the OpenAI embedding API key.
+Provider URLs and keys cross the reusable workflow as
 secret inputs. The maintainer provisions this Actions configuration.
 
 Database passwords and control tokens are generated per dataset job. Resolved

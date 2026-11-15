@@ -98,7 +98,7 @@ func TestActualConsoleCaptureProtectsCredentialsAndPreservesAdmittedText(t *test
 		require.NotContains(t, record.Chunk.Body, secret)
 	}
 	require.NotContains(t, record.Chunk.Body, base64.StdEncoding.EncodeToString([]byte(secrets[0])))
-	report := NewReport(Manifest{Model: "selected-model", EmbeddingModel: "@cf/baai/bge-m3"}, 3, 2)
+	report := NewReport(Manifest{Model: "selected-model", EmbeddingModel: "text-embedding-3-small"}, 3, 2)
 	data, err := json.Marshal(report)
 	require.NoError(t, err)
 	for _, secret := range secrets {
@@ -106,6 +106,7 @@ func TestActualConsoleCaptureProtectsCredentialsAndPreservesAdmittedText(t *test
 	}
 	require.NotContains(t, string(data), "provider_url")
 	require.Contains(t, string(data), "selected-model")
+	require.Contains(t, string(data), "text-embedding-3-small")
 }
 
 func TestProtectedCaptureSurvivesActionsMaskingOfOrdinarySecretSettings(t *testing.T) {

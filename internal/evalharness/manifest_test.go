@@ -14,7 +14,7 @@ func TestReadManifestValidatesExecutionPins(t *testing.T) {
 	t.Setenv("RUNNER_ENVIRONMENT", "github-hosted")
 	t.Setenv("GITHUB_RUN_ID", "42")
 	t.Setenv("GITHUB_RUN_ATTEMPT", "1")
-	valid := Manifest{Version: 1, RunID: "42-hotpotqa", WorkflowRunID: "42", SourceRevision: strings.Repeat("a", 40), Image: "ghcr.io/markhuangai/dense-mem@sha256:" + strings.Repeat("b", 64), RegistryHash: strings.Repeat("c", 64), Dataset: "hotpotqa", Mode: "live", Model: "dense-mem-testing", EmbeddingModel: "@cf/baai/bge-m3", EmbeddingDimensions: 1024, ContextWindowTokens: 500000, ModelDeadline: time.Now().UTC().Add(time.Hour).Truncate(time.Second), DataDir: "data", OutputDir: "public"}
+	valid := Manifest{Version: 1, RunID: "42-hotpotqa", WorkflowRunID: "42", SourceRevision: strings.Repeat("a", 40), Image: "ghcr.io/markhuangai/dense-mem@sha256:" + strings.Repeat("b", 64), RegistryHash: strings.Repeat("c", 64), Dataset: "hotpotqa", Mode: "live", Model: "dense-mem-testing", EmbeddingModel: "text-embedding-3-small", EmbeddingDimensions: 1536, ContextWindowTokens: 500000, ModelDeadline: time.Now().UTC().Add(time.Hour).Truncate(time.Second), DataDir: "data", OutputDir: "public"}
 	file := filepath.Join(t.TempDir(), "manifest.json")
 	for _, mode := range []string{"live", "fixtures"} {
 		t.Run(mode, func(t *testing.T) {
@@ -41,7 +41,9 @@ func TestReadManifestValidatesExecutionPins(t *testing.T) {
 		{"model", "model and context", func(m *Manifest) { m.Model = "" }},
 		{"provider URL as model", "model and context", func(m *Manifest) { m.Model = "https://provider.example/v1" }},
 		{"embedding model", "model and context", func(m *Manifest) { m.EmbeddingModel = "another-model" }},
+		{"retired embedding model", "model and context", func(m *Manifest) { m.EmbeddingModel = "@cf/baai/bge-m3" }},
 		{"embedding dimensions", "model and context", func(m *Manifest) { m.EmbeddingDimensions = 512 }},
+		{"retired embedding dimensions", "model and context", func(m *Manifest) { m.EmbeddingDimensions = 1024 }},
 		{"context", "model and context", func(m *Manifest) { m.ContextWindowTokens = 16383 }},
 		{"data directory", "data and output", func(m *Manifest) { m.DataDir = "" }},
 		{"output directory", "data and output", func(m *Manifest) { m.OutputDir = "" }},

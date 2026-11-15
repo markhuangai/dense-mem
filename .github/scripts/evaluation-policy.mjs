@@ -46,9 +46,9 @@ export function configuration(env) {
   const context = resolveSetting("DENSE_MEM_EVAL_CONTEXT_WINDOW_TOKENS", [env.DENSE_MEM_EVAL_CONTEXT_WINDOW_TOKENS], (v) => /^[1-9][0-9]*$/.test(v) && Number.isSafeInteger(Number(v)) && Number(v) >= 16384);
   const httpsURL = (v) => { try { const url = new URL(v); return url.protocol === "https:" && !url.username && !url.password && !url.search && !url.hash; } catch { return false; } };
   const verifier = resolveSetting("DENSE_MEM_EVAL_VERIFIER_URL", [env.DENSE_MEM_EVAL_VERIFIER_URL], httpsURL);
-  const embedding = resolveSetting("DENSE_MEM_EVAL_EMBED_URL", [env.DENSE_MEM_EVAL_EMBED_URL], (v) => httpsURL(v) && /^https:\/\/api\.cloudflare\.com\/client\/v4\/accounts\/[a-f0-9]{32}\/ai\/v1\/?$/.test(v));
+  const embedding = resolveSetting("DENSE_MEM_EVAL_EMBED_URL", [env.DENSE_MEM_EVAL_EMBED_URL], (v) => httpsURL(v) && /^https:\/\/api\.openai\.com\/v1\/?$/.test(v));
   for (const key of ["DENSE_MEM_EVAL_API_KEY", "DENSE_MEM_EVAL_EMBED_API_KEY"]) resolveSetting(key, [env[key]], (v) => v.length > 0 && !/[\r\n]/.test(v));
-  if (env.WORKFLOW_EMBEDDING_MODEL !== "@cf/baai/bge-m3" || env.WORKFLOW_EMBEDDING_DIMENSIONS !== "1024") throw new Error("Workflow embedding pins are invalid");
+  if (env.WORKFLOW_EMBEDDING_MODEL !== "text-embedding-3-small" || env.WORKFLOW_EMBEDDING_DIMENSIONS !== "1536") throw new Error("Workflow embedding pins are invalid");
   return { model, context: Number(context), verifier, embedding };
 }
 

@@ -9,7 +9,7 @@ const server = createServer(async (request, response) => {
     let body;
     if (request.url.endsWith("/embeddings")) {
       const rows = Array.isArray(input.input) ? input.input : [input.input];
-      body = { data: rows.map((_, index) => ({ index, embedding: [1, ...Array(1023).fill(0)] })), usage: { prompt_tokens: rows.length, total_tokens: rows.length } };
+      body = { data: rows.map((_, index) => ({ index, embedding: [1, ...Array(1535).fill(0)] })), usage: { prompt_tokens: rows.length, total_tokens: rows.length } };
     } else if (input.response_format?.json_schema?.name === "public_rag_answer_v1") {
       const context = [...input.messages].reverse().map((message) => { try { return JSON.parse(message.content); } catch { return null; } }).find((value) => value?.memory_calls);
       const hits = context.memory_calls[0].result.results;
