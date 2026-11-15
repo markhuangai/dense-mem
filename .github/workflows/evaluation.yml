@@ -15,9 +15,6 @@ on:
       mode:
         required: true
         type: string
-      replay_run_id:
-        type: string
-        default: ''
       model:
         type: string
         default: ''
@@ -49,7 +46,6 @@ jobs:
     timeout-minutes: 10
     outputs:
       matrix: ${{ steps.registry.outputs.matrix }}
-      registry_mode: ${{ steps.registry.outputs.registry_mode }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -63,10 +59,8 @@ jobs:
       - id: registry
         env:
           EVAL_MODE: ${{ inputs.mode }}
-          EVAL_REPLAY_RUN_ID: ${{ inputs.replay_run_id }}
           EVAL_SOURCE_REVISION: ${{ inputs.source_revision }}
           EVAL_IMAGE: ${{ inputs.image }}
-          GH_TOKEN: ${{ github.token }}
         run: node tests/eval/scripts/workflow.mjs matrix
 
   datasets:
@@ -79,11 +73,9 @@ jobs:
       matrix: ${{ fromJSON(needs.registry.outputs.matrix) }}
     env:
       EVAL_MODE: ${{ inputs.mode }}
-      EVAL_REGISTRY_MODE: ${{ needs.registry.outputs.registry_mode }}
       EVAL_DATASET: ${{ matrix.dataset }}
       EVAL_IMAGE: ${{ inputs.image }}
       EVAL_SOURCE_REVISION: ${{ inputs.source_revision }}
-      EVAL_REPLAY_RUN_ID: ${{ inputs.replay_run_id }}
       WORKFLOW_EMBEDDING_MODEL: '@cf/baai/bge-m3'
       WORKFLOW_EMBEDDING_DIMENSIONS: '1024'
       DENSE_MEM_EVAL_MODEL: ${{ inputs.model || vars.DENSE_MEM_EVAL_MODEL || secrets.eval-model }}
@@ -112,7 +104,6 @@ jobs:
       - name: Build workflow-internal runner
         run: go build -trimpath -o "${EVAL_RUNNER_BINARY}" ./cmd/eval-runner
       - name: Set up isolated Docker
-        if: inputs.mode != 'replay'
         uses: docker/setup-docker-action@v5
         with:
           rootless: true
@@ -120,7 +111,6 @@ jobs:
           daemon-config: |
             {"exec-opts":["native.cgroupdriver=cgroupfs"]}
       - name: Authenticate production image pull
-        if: inputs.mode != 'replay'
         uses: docker/login-action@v4
         with:
           registry: ghcr.io
@@ -130,18 +120,12 @@ jobs:
         if: inputs.mode == 'fixtures'
         run: node --test tests/eval/scripts/workflow_docker.test.mjs
       - name: Run complete dataset campaign
-        if: inputs.mode != 'replay'
         run: node tests/eval/scripts/workflow.mjs run
-      - name: Replay retained Actions logs
-        if: inputs.mode == 'replay'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: node tests/eval/scripts/replay.mjs
       - name: Preserve protected startup failure logs
-        if: failure() && inputs.mode != 'replay'
+        if: failure()
         run: node tests/eval/scripts/workflow.mjs diagnostics
       - name: Remove this dataset's runtime
-        if: always() && inputs.mode != 'replay'
+        if: always()
         run: node tests/eval/scripts/workflow.mjs cleanup
       - name: Retain numeric report and reproducibility manifest
         if: always()
@@ -178,7 +162,6 @@ jobs:
       - name: Build complete comparison matrix
         env:
           EVAL_MODE: ${{ inputs.mode }}
-          EVAL_REGISTRY_MODE: ${{ needs.registry.outputs.registry_mode }}
         run: node tests/eval/scripts/workflow.mjs aggregate
       - name: Retain comparison including missing axes
         if: always()

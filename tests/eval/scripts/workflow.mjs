@@ -5,7 +5,6 @@ import { spawn, spawnSync } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { requireRunner, configuration, registryMatrix, sha256, aggregate, ownedResource } from "../../../.github/scripts/evaluation-policy.mjs";
-import { replayRegistry } from "./replay.mjs";
 
 const label = "io.dense-mem.eval.run";
 const secret = () => randomBytes(32).toString("base64url");
@@ -170,9 +169,10 @@ export async function cleanup(env) {
 
 export async function main(mode, env = process.env) {
   requireRunner(env);
+  if (!["live", "fixtures"].includes(env.EVAL_MODE)) throw new Error("Invalid evaluation mode");
   if (mode === "matrix") {
-    const resolved = env.EVAL_MODE === "replay" ? await replayRegistry(env) : { mode: env.EVAL_MODE, matrix: registryMatrix(read(env.EVAL_MODE === "fixtures" ? "tests/eval/fixtures/datasets.json" : "tests/eval/datasets.json")) };
-    fs.appendFileSync(env.GITHUB_OUTPUT, `matrix=${JSON.stringify(resolved.matrix)}\nregistry_mode=${resolved.mode}\n`); return;
+    const matrix = registryMatrix(read(env.EVAL_MODE === "fixtures" ? "tests/eval/fixtures/datasets.json" : "tests/eval/datasets.json"));
+    fs.appendFileSync(env.GITHUB_OUTPUT, `matrix=${JSON.stringify(matrix)}\n`); return;
   }
   if (mode === "cleanup") return cleanup(env);
   if (mode === "diagnostics") {
@@ -190,7 +190,7 @@ export async function main(mode, env = process.env) {
     if (printed.status !== 0) throw new Error("Startup log protection failed"); return;
   }
   if (mode === "aggregate") {
-    const registry = read((env.EVAL_REGISTRY_MODE || env.EVAL_MODE) === "fixtures" ? "tests/eval/fixtures/datasets.json" : "tests/eval/datasets.json");
+    const registry = read(env.EVAL_MODE === "fixtures" ? "tests/eval/fixtures/datasets.json" : "tests/eval/datasets.json");
     const root = path.join(env.RUNNER_TEMP, "evaluation-reports");
     const reports = fs.existsSync(root) ? fs.readdirSync(root, { recursive: true }).filter((file) => path.basename(file) === "scores.json").map((file) => read(path.join(root, file))) : [];
     const report = aggregate(registry, reports);

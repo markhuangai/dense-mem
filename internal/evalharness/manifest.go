@@ -30,10 +30,10 @@ func ReadManifest(path string) (Manifest, error) {
 	if manifest.Version != 1 || manifest.RunID == "" || manifest.WorkflowRunID != os.Getenv("GITHUB_RUN_ID") || !revisionPattern.MatchString(manifest.SourceRevision) || !imagePattern.MatchString(manifest.Image) {
 		return manifest, errors.New("execution manifest identity is invalid")
 	}
-	if manifest.Mode != "live" && manifest.Mode != "fixtures" && manifest.Mode != "replay" {
+	if manifest.Mode != "live" && manifest.Mode != "fixtures" {
 		return manifest, errors.New("invalid runner campaign mode")
 	}
-	if manifest.Mode != "replay" && manifest.RunID != manifest.WorkflowRunID+"-"+manifest.Dataset {
+	if manifest.RunID != manifest.WorkflowRunID+"-"+manifest.Dataset {
 		return manifest, errors.New("manifest does not belong to this dataset job")
 	}
 	if !modelPattern.MatchString(manifest.Model) || strings.Contains(manifest.Model, "://") || manifest.EmbeddingModel != "@cf/baai/bge-m3" || manifest.EmbeddingDimensions != 1024 || manifest.ContextWindowTokens < 16384 {
@@ -42,7 +42,7 @@ func ReadManifest(path string) (Manifest, error) {
 	if manifest.DataDir == "" || manifest.OutputDir == "" || len(manifest.RegistryHash) != 64 {
 		return manifest, errors.New("manifest data and output identity missing")
 	}
-	if manifest.Mode != "replay" && (manifest.ModelDeadline.IsZero() || manifest.ModelDeadline.After(time.Now().Add(330*time.Minute))) {
+	if manifest.ModelDeadline.IsZero() || manifest.ModelDeadline.After(time.Now().Add(330*time.Minute)) {
 		return manifest, errors.New("model deadline is missing or exceeds 330 minutes")
 	}
 	return manifest, nil

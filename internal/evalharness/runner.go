@@ -2,7 +2,6 @@ package evalharness
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -233,110 +232,4 @@ schedule:
 		return scores, first
 	}
 	return scores, ctx.Err()
-}
-
-func ReplayReport(events []Event, manifest Manifest, corpus []CorpusItem, questions []Question) (Report, error) {
-	if len(events) < 2 {
-		return Report{}, errors.New("replay unavailable: no complete capture")
-	}
-	var recorded Manifest
-	if err := decodePayload(events[0], &recorded); err != nil {
-		return Report{}, err
-	}
-	if recorded.SourceRevision != manifest.SourceRevision || recorded.Image != manifest.Image || recorded.RegistryHash != manifest.RegistryHash || recorded.Dataset != manifest.Dataset || recorded.RunID != manifest.RunID || recorded.Model != manifest.Model || recorded.ContextWindowTokens != manifest.ContextWindowTokens || recorded.EmbeddingModel != manifest.EmbeddingModel || recorded.EmbeddingDimensions != manifest.EmbeddingDimensions {
-		return Report{}, errors.New("replay identity differs from pinned campaign")
-	}
-	report := NewReport(recorded, len(corpus), len(questions))
-	mapping := newKnowledgeMapping()
-	canonical := map[string]CanonicalEvidence{}
-	bySource := map[string]CorpusItem{}
-	for _, item := range corpus {
-		bySource[item.SourceDocID] = item
-	}
-	byQuestion := map[string]Question{}
-	for _, q := range questions {
-		byQuestion[q.ID] = q
-	}
-	validated := false
-	for _, event := range events[1 : len(events)-1] {
-		switch event.Kind {
-		case "mapping":
-			if validated {
-				return report, errors.New("replay mappings changed after observation")
-			}
-			var value struct {
-				SourceID   string              `json:"source_id"`
-				Partitions []ImportedPartition `json:"partitions"`
-			}
-			if err := decodePayload(event, &value); err != nil {
-				return report, err
-			}
-			if _, exists := mapping.Partitions[value.SourceID]; exists {
-				return report, errors.New("duplicate replay mapping")
-			}
-			if mapping.Partitions == nil {
-				mapping.Partitions = map[string][]ImportedPartition{}
-			}
-			mapping.Partitions[value.SourceID] = value.Partitions
-		case "canonical":
-			if validated {
-				return report, errors.New("replay canonical Evidence changed after observation")
-			}
-			var value struct {
-				EvidenceID string            `json:"evidence_id"`
-				Evidence   CanonicalEvidence `json:"evidence"`
-			}
-			if err := decodePayload(event, &value); err != nil {
-				return report, err
-			}
-			if _, exists := canonical[value.EvidenceID]; exists {
-				return report, errors.New("duplicate replay canonical identity")
-			}
-			canonical[value.EvidenceID] = value.Evidence
-		case "observation":
-			if !validated {
-				if err := ValidateMappings(corpus, mapping, canonical); err != nil {
-					return report, fmt.Errorf("replay unavailable: %w", err)
-				}
-				validated = true
-			}
-			var observation Observation
-			if err := decodePayload(event, &observation); err != nil {
-				return report, err
-			}
-			question, exists := byQuestion[observation.QuestionID]
-			if !exists {
-				return report, errors.New("replay contains an unknown question")
-			}
-			scores, err := ScoreObservation(question, observation, bySource, mapping, canonical)
-			if err != nil {
-				return report, err
-			}
-			report.Scores = append(report.Scores, scores...)
-		}
-	}
-	var terminal completion
-	if err := json.Unmarshal(events[len(events)-1].Payload, &terminal); err != nil {
-		return report, err
-	}
-	report.ImportedRows, report.ElapsedMS, report.Failure, report.Identity.CanonicalHash, report.NativeMeasurements = terminal.ImportedRows, terminal.ElapsedMS, terminal.Failure, terminal.CanonicalHash, terminal.NativeMeasurements
-	report.ServerUsage = terminal.ServerUsage
-	if terminal.Failure == "" && (len(mapping.Partitions) != len(corpus) || len(terminal.NativeMeasurements) != 3) {
-		return report, errors.New("replay unavailable: required mapping or preservation evidence missing")
-	}
-	if terminal.Failure == "" && !validated {
-		if err := ValidateMappings(corpus, mapping, canonical); err != nil {
-			return report, fmt.Errorf("replay unavailable: %w", err)
-		}
-	}
-	for _, measurement := range terminal.NativeMeasurements {
-		if measurement.CanonicalHash != terminal.CanonicalHash {
-			return report, errors.New("replay canonical preservation failed")
-		}
-	}
-	report.CaptureComplete = true
-	if err := FinalizeReport(&report); err != nil {
-		return report, err
-	}
-	return report, nil
 }

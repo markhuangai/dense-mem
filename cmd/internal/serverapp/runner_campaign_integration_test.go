@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -31,7 +30,7 @@ func (f runnerAnswerTransport) Complete(ctx context.Context, request modelprovid
 	return f(ctx, request)
 }
 
-func TestRunnerCampaignConditionsAndReplay(t *testing.T) {
+func TestRunnerCampaignConditionsAndCapture(t *testing.T) {
 	f := newRunnerServiceFixture(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
@@ -47,8 +46,12 @@ func TestRunnerCampaignConditionsAndReplay(t *testing.T) {
 	corpus := []evalharness.CorpusItem{{SourceDocID: "source-one", Content: "Project Alpha stores durable memory in PostgreSQL."}}
 	questions := []evalharness.Question{{ID: "question-one", Query: "Where does Project Alpha store durable memory?", Answers: []string{"PostgreSQL", "private-gold-answer-canary"}, GoldSources: []string{"source-one"}}}
 	var calls atomic.Int32
+	var initialPackets [4]evalharness.MemoryCall
 	transport := runnerAnswerTransport(func(_ context.Context, request modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
-		calls.Add(1)
+		position := calls.Add(1) - 1
+		if position >= int32(len(initialPackets)) {
+			return modelprovider.StructuredResult{}, errors.New("unexpected extra answer call")
+		}
 		for _, message := range request.Messages {
 			if strings.Contains(message.Content, "private-gold-answer-canary") {
 				return modelprovider.StructuredResult{}, errors.New("gold answer leaked into provider input")
@@ -60,6 +63,7 @@ func TestRunnerCampaignConditionsAndReplay(t *testing.T) {
 		if err := json.Unmarshal([]byte(request.Messages[len(request.Messages)-1].Content), &input); err != nil || len(input.Calls) != 1 {
 			return modelprovider.StructuredResult{}, errors.New("answer did not receive one initial memory packet")
 		}
+		initialPackets[position] = input.Calls[0]
 		results, ok := input.Calls[0].Result["results"].([]any)
 		if !ok || len(results) == 0 {
 			return modelprovider.StructuredResult{}, errors.New("initial Recall delivered no Evidence")
@@ -97,26 +101,15 @@ func TestRunnerCampaignConditionsAndReplay(t *testing.T) {
 	for _, observation := range report.NativeMeasurements {
 		require.Equal(t, report.Identity.CanonicalHash, observation.CanonicalHash)
 	}
-	events, err := evalharness.ReplayEvents([]io.Reader{bytes.NewReader(logs.Bytes())}, manifest.RunID)
-	require.NoError(t, err)
-	replayed, err := evalharness.ReplayReport(events, manifest, corpus, questions)
-	require.NoError(t, err)
-	require.True(t, replayed.Complete)
-	require.Equal(t, report.Matrix, replayed.Matrix)
-	require.Equal(t, report.Scores, replayed.Scores)
+	require.True(t, report.CaptureComplete)
+	require.Equal(t, initialPackets[0], initialPackets[1])
+	require.Equal(t, initialPackets[2], initialPackets[3])
 	conditions := []string{}
-	for _, event := range events {
-		if event.Kind != "observation" {
-			continue
-		}
-		var observation evalharness.Observation
-		require.NoError(t, json.Unmarshal(event.Payload, &observation))
-		conditions = append(conditions, observation.Condition)
-		require.Len(t, observation.Hosts, 2)
-		require.Equal(t, observation.Initial, observation.Hosts[0].Calls[0])
-		require.Equal(t, observation.Initial, observation.Hosts[1].Calls[0])
+	for _, axis := range report.Matrix {
+		conditions = append(conditions, axis.Condition)
 	}
-	require.Equal(t, []string{"off", "on"}, conditions)
+	require.Equal(t, []string{"off", "off", "on", "on"}, conditions)
+
 }
 
 func TestRunnerCampaignNativeMappingsFreezeAndRecall(t *testing.T) {

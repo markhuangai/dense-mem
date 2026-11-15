@@ -5,12 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -128,9 +126,9 @@ func TestRunnerStartupFailureStillDrainsAndCapturesCompleteDenominators(t *testi
 	body, err := os.ReadFile(filepath.Join(manifest.OutputDir, "scores.json"))
 	require.NoError(t, err)
 	require.NotContains(t, string(body), key)
-	events, err := ReplayEvents([]io.Reader{strings.NewReader(logs.String())}, manifest.RunID)
-	require.NoError(t, err)
-	require.Len(t, events, 2)
+	events := capturedEvents(t, logs.Bytes())
+	require.Equal(t, "started", events[0].Kind)
+	require.Equal(t, "finished", events[len(events)-1].Kind)
 	for _, event := range events {
 		require.NotContains(t, string(event.Payload), key)
 	}

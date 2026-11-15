@@ -43,11 +43,7 @@ on:
         description: Optional runner-only evaluation; full E2E remains the default
         type: choice
         default: none
-        options: [none, fixtures, live, replay]
-      replay_run_id:
-        description: Retained evaluation workflow run for runtime-free replay
-        type: string
-        default: ''
+        options: [none, fixtures, live]
 
 permissions:
   actions: read
@@ -117,7 +113,7 @@ jobs:
                 throw new Error("manual trial must target the actor's own current same-repository PR head");
               }
               const evaluation = process.env.INPUT_EVALUATION || "none";
-              if (!["none", "fixtures", "live", "replay"].includes(evaluation)) throw new Error("invalid evaluation mode");
+              if (!["none", "fixtures", "live"].includes(evaluation)) throw new Error("invalid evaluation mode");
               if (evaluation !== "none") {
                 if (Number(context.runAttempt) !== 1) throw new Error("evaluation job reruns are unsupported");
                 const { data: triggeringPermission } = await github.rest.repos.getCollaboratorPermissionLevel({ owner, repo, username: process.env.TRIGGERING_ACTOR });
@@ -353,7 +349,6 @@ jobs:
       source_repository: ${{ needs.authorize.outputs.source_repository }}
       source_revision: ${{ needs.authorize.outputs.source_revision }}
       mode: ${{ inputs.evaluation }}
-      replay_run_id: ${{ inputs.replay_run_id }}
       model: dense-mem-testing
       context_window_tokens: '500000'
     secrets:

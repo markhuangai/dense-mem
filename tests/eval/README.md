@@ -1,7 +1,7 @@
 # Runner evaluation
 
-Evaluation campaigns, benchmarks and measurement replay run on GitHub-hosted
-runners. Missing runner capacity or Actions configuration blocks execution.
+Evaluation campaigns and benchmarks run on GitHub-hosted runners. Missing
+runner capacity or Actions configuration blocks execution.
 The CLI is workflow-internal and has no local provisioning or resume interface.
 Synthetic unit and adapter checks use `bash scripts/test-evaluation.sh`.
 
@@ -28,18 +28,10 @@ provider inside the runner. Both ontology conditions and both answer policies
 produce eight scored answers. It checks the evaluation plumbing without calling
 real model APIs; its scores do not measure retrieval or model quality.
 
-Use `mode=replay` to verify that a previous run's retained exchanges reproduce
-its reported scores, without starting a runtime or calling providers again. It
-requires `replay_run_id` and the original digest-pinned image. Replay selects the
-original run's runner revision, so advancing `main` does not change its source.
-It cannot measure a new image or model; use `live` for that. The original numeric
-artifacts and Actions logs must remain available, including the two-day artifact
-retention window.
-
 PR validation retains its existing entrypoint: dispatch `production-image-e2e.yml`
-on the current own-PR branch with `pr_number` and `evaluation=fixtures`, `live`,
-or `replay`. That route requires the exact PR head's successful trusted
-production-image receipt and full production E2E. Its `evaluation=none` default
+on the current own-PR branch with `pr_number` and `evaluation=fixtures` or `live`.
+That route requires the exact PR head's successful trusted production-image
+receipt and full production E2E. Its `evaluation=none` default
 runs ordinary production E2E. The manual image route has no PR or preview-receipt
 requirement.
 
@@ -88,8 +80,8 @@ Database passwords and control tokens are generated per dataset job. Resolved
 credentials, headers, connection strings and provider URLs never enter console
 logs or reports. Existing credential protection and reconstructable payload
 chunks retain ordinary exchanges at DEBUG in Actions logs.
-The protected chunk records use base64 serialization for exact replay through
-Actions log masking.
+The protected chunk records use base64 serialization to preserve exact protected
+payloads through Actions log masking.
 Initial security rejection stays content-free. There are no additional diagnostic model calls,
 encryption dependency or artifact key. Reports contain configured model names
 as their provider details.
@@ -119,17 +111,13 @@ restart or deadline extension; six-hour feasibility is unproven.
 
 Artifacts retain numeric scores, the comparison matrix, completion counts and
 a small reproducibility identity for two days. Raw exchanges remain only in
-protected Actions logs. For `evaluation=replay`, also pass `replay_run_id`.
-Replay verifies the original run, artifact digest, source/image identity,
-complete log hash chain and pinned data before recomputing scores. It starts no
-runtime and calls no models. Missing, expired, interrupted or inconsistent logs
-produce an explicit unavailable outcome.
+protected Actions logs.
 
 Native ontology PostgreSQL measurement regressions retain their fixture protocols
 and runner instructions in [their module guide](../../internal/ontology/postgres/README.md).
 
 [baseline.json](baseline.json) retains the latest overall measured result until
-a newer complete campaign and replay are verified. No replacement measurement
+a newer complete campaign is verified. No replacement measurement
 is claimed by merely changing this harness. Historical ignored evidence stays
 preserved. Guarded historical retirement is documented in
 [evaluation-retirement.md](../../architecture/evaluation-retirement.md).

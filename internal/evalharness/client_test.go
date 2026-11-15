@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -166,9 +165,6 @@ func TestMCPResponseDecodingAndWireFailures(t *testing.T) {
 				require.NotContains(t, out, "stale")
 			}
 			require.NoError(t, capture.Emit("finished", map[string]bool{"complete": err == nil}))
-			events, replayErr := ReplayEvents([]io.Reader{strings.NewReader(logs.String())}, capture.RunID)
-			require.NoError(t, replayErr)
-			require.Len(t, events, 2, "wire exchanges are validated without becoming scoring events")
 			var protected strings.Builder
 			for _, line := range bytes.Split(bytes.TrimSpace(logs.Bytes()), []byte("\n")) {
 				var envelope struct{ Record string }

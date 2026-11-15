@@ -108,55 +108,6 @@ func TestActualConsoleCaptureProtectsCredentialsAndPreservesAdmittedText(t *test
 	require.Contains(t, string(data), "selected-model")
 }
 
-func TestRuntimeFreeReplayRecomputesNumericScoresAndRejectsIncompleteLogs(t *testing.T) {
-	q, observation, corpus, mapping, canonical := scoringFixture()
-	manifest := Manifest{RunID: "synthetic-run", Dataset: "synthetic", Model: "fixture", SourceRevision: strings.Repeat("a", 40), RegistryHash: strings.Repeat("b", 64), Image: "immutable-image"}
-	var log bytes.Buffer
-	capture := captureFixture(&log)
-	require.NoError(t, capture.Emit("started", manifest))
-	for source, parts := range mapping.Partitions {
-		require.NoError(t, capture.Emit("mapping", map[string]any{"source_id": source, "partitions": parts}))
-	}
-	for id, evidence := range canonical {
-		require.NoError(t, capture.Emit("canonical", map[string]any{"evidence_id": id, "evidence": evidence}))
-	}
-	for _, condition := range []string{"off", "on"} {
-		observation.Condition = condition
-		for i := range observation.Hosts {
-			observation.Hosts[i].ElapsedMS = float64((i + 1) * 10)
-			if condition == "on" {
-				observation.Hosts[i].ElapsedMS *= 2
-			}
-		}
-		require.NoError(t, capture.Emit("observation", observation))
-	}
-	finished := completion{ImportedRows: len(corpus), ElapsedMS: 100000, CanonicalHash: "fixed-canonical", NativeMeasurements: []NativeObservation{{CanonicalHash: "fixed-canonical"}, {CanonicalHash: "fixed-canonical"}, {CanonicalHash: "fixed-canonical"}}}
-	require.NoError(t, capture.Emit("finished", finished))
-	events, err := ReplayEvents([]io.Reader{strings.NewReader(log.String())}, manifest.RunID)
-	require.NoError(t, err)
-	rows := []CorpusItem{}
-	for _, item := range corpus {
-		rows = append(rows, item)
-	}
-	report, err := ReplayReport(events, manifest, rows, []Question{q})
-	require.NoError(t, err)
-	require.True(t, report.Complete)
-	require.Equal(t, 4, report.CompletedAnswers)
-	for i, expected := range []float64{100, 50, 50, 25} {
-		require.NotNil(t, report.Matrix[i].ThroughputPerSecond)
-		require.Equal(t, expected, *report.Matrix[i].ThroughputPerSecond)
-	}
-	lines := strings.Split(strings.TrimSpace(log.String()), "\n")
-	for _, broken := range []string{strings.Join(lines[:len(lines)-1], "\n"), strings.Join(append(lines, lines[0]), "\n"), strings.Replace(log.String(), `"record":"`, `"record":"A`, 1), ""} {
-		_, err := ReplayEvents([]io.Reader{strings.NewReader(broken)}, manifest.RunID)
-		require.Error(t, err)
-	}
-	wrong := manifest
-	wrong.SourceRevision = strings.Repeat("c", 40)
-	_, err = ReplayReport(events, wrong, rows, []Question{q})
-	require.ErrorContains(t, err, "identity")
-}
-
 func TestProtectedCaptureSurvivesActionsMaskingOfOrdinarySecretSettings(t *testing.T) {
 	var output bytes.Buffer
 	capture := captureFixture(&output)
@@ -164,8 +115,7 @@ func TestProtectedCaptureSurvivesActionsMaskingOfOrdinarySecretSettings(t *testi
 	require.NoError(t, capture.Emit("started", settings))
 	require.NoError(t, capture.Emit("finished", map[string]any{"complete": true}))
 	masked := strings.NewReplacer("gpt-6-luna", "***", "300000", "***").Replace(output.String())
-	events, err := ReplayEvents([]io.Reader{strings.NewReader(masked)}, capture.RunID)
-	require.NoError(t, err)
+	events := capturedEvents(t, []byte(masked))
 	var restored map[string]any
 	require.NoError(t, json.Unmarshal(events[0].Payload, &restored))
 	require.Equal(t, "gpt-6-luna", restored["model"])
@@ -173,94 +123,29 @@ func TestProtectedCaptureSurvivesActionsMaskingOfOrdinarySecretSettings(t *testi
 	require.Equal(t, settings["public_text"], restored["public_text"])
 }
 
-func TestReplayReportRejectsChangedOrIncompleteSemanticEvidence(t *testing.T) {
-	q, observation, corpus, mapping, canonical := scoringFixture()
-	manifest := Manifest{RunID: "synthetic-run", Dataset: "synthetic", Model: "fixture", SourceRevision: strings.Repeat("a", 40), RegistryHash: strings.Repeat("b", 64), Image: "immutable-image"}
-	rows := []CorpusItem{}
-	event := func(kind string, payload any) Event {
-		body, err := json.Marshal(payload)
-		require.NoError(t, err)
-		return Event{Kind: kind, Payload: body}
-	}
-	events := []Event{event("started", manifest)}
-	for source, parts := range mapping.Partitions {
-		rows = append(rows, corpus[source])
-		events = append(events, event("mapping", map[string]any{"source_id": source, "partitions": parts}))
-	}
-	canonicalIndex := len(events)
-	for id, evidence := range canonical {
-		events = append(events, event("canonical", map[string]any{"evidence_id": id, "evidence": evidence}))
-	}
-	observationIndex := len(events)
-	for _, condition := range []string{"off", "on"} {
-		observation.Condition = condition
-		events = append(events, event("observation", observation))
-	}
-	finished := completion{ImportedRows: len(rows), CanonicalHash: "fixed", NativeMeasurements: []NativeObservation{{CanonicalHash: "fixed"}, {CanonicalHash: "fixed"}, {CanonicalHash: "fixed"}}}
-	events = append(events, event("finished", finished))
-	for _, item := range []struct {
-		name, kind string
-		index      int
-	}{
-		{"manifest", "started", 0},
-		{"mapping", "mapping", 1},
-		{"canonical", "canonical", canonicalIndex},
-		{"observation", "observation", observationIndex},
-		{"completion", "finished", len(events) - 1},
-	} {
-		t.Run("malformed "+item.name, func(t *testing.T) {
-			changed := append([]Event(nil), events...)
-			changed[item.index] = Event{Kind: item.kind, Payload: json.RawMessage(`{`)}
-			_, err := ReplayReport(changed, manifest, rows, []Question{q})
-			require.Error(t, err)
-		})
-	}
-	for _, item := range []struct {
-		name, failure string
-		index         int
-		late          bool
-	}{
-		{"duplicate mapping", "duplicate replay mapping", 1, false},
-		{"duplicate canonical", "duplicate replay canonical", canonicalIndex, false},
-		{"late mapping", "mappings changed after observation", 1, true},
-		{"late canonical", "canonical Evidence changed after observation", canonicalIndex, true},
-	} {
-		t.Run(item.name, func(t *testing.T) {
-			index := item.index
-			if item.late {
-				index = len(events) - 1
-			}
-			changed := append([]Event(nil), events[:index]...)
-			changed = append(changed, events[item.index])
-			changed = append(changed, events[index:]...)
-			_, err := ReplayReport(changed, manifest, rows, []Question{q})
-			require.ErrorContains(t, err, item.failure)
-		})
-	}
-	changed := append([]Event(nil), events...)
-	observation.QuestionID = "unknown"
-	changed[observationIndex] = event("observation", observation)
-	_, err := ReplayReport(changed, manifest, rows, []Question{q})
-	require.ErrorContains(t, err, "unknown question")
-	_, err = ReplayReport(nil, manifest, rows, []Question{q})
-	require.ErrorContains(t, err, "no complete capture")
-	for _, count := range []int{2, 3} {
-		changed = append([]Event(nil), events...)
-		terminal := finished
-		terminal.NativeMeasurements = append([]NativeObservation(nil), finished.NativeMeasurements[:count]...)
-		if count == 3 {
-			terminal.NativeMeasurements[2].CanonicalHash = "changed"
+func capturedEvents(t *testing.T, logs []byte) []Event {
+	t.Helper()
+	var events []Event
+	var payload strings.Builder
+	for _, line := range bytes.Split(bytes.TrimSpace(logs), []byte("\n")) {
+		var envelope struct{ Record string }
+		require.NoError(t, json.Unmarshal(line, &envelope))
+		if envelope.Record == "" {
+			continue
 		}
-		changed[len(changed)-1] = event("finished", terminal)
-		_, err = ReplayReport(changed, manifest, rows, []Question{q})
-		require.Error(t, err, "preservation evidence must be complete and unchanged")
+		body, err := base64.StdEncoding.DecodeString(envelope.Record)
+		require.NoError(t, err)
+		var record captureRecord
+		require.NoError(t, json.Unmarshal(body, &record))
+		if record.Chunk.Index == 0 {
+			payload.Reset()
+		}
+		payload.WriteString(record.Chunk.Body)
+		if record.Chunk.Index == record.Chunk.Count-1 {
+			var event Event
+			require.NoError(t, json.Unmarshal([]byte(payload.String()), &event))
+			events = append(events, event)
+		}
 	}
-	partial := finished
-	partial.Failure, partial.ImportedRows, partial.NativeMeasurements = "import incomplete", 0, nil
-	report, err := ReplayReport([]Event{events[0], event("finished", partial)}, manifest, rows, []Question{q})
-	require.NoError(t, err)
-	require.False(t, report.Complete)
-	require.Equal(t, 4, report.ExpectedAnswers)
-	require.Zero(t, report.CompletedAnswers)
-	require.Equal(t, "import incomplete", report.Failure)
+	return events
 }

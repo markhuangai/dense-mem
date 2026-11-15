@@ -17,7 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCLIValidatesPinnedFixturesAndReportsSyntheticFailure(t *testing.T) {
+func TestCLIValidatesPinnedFixturesAndRejectsIncompleteSetup(t *testing.T) {
 	root, err := filepath.Abs("../..")
 	require.NoError(t, err)
 	t.Chdir(root)
@@ -49,42 +49,13 @@ func TestCLIValidatesPinnedFixturesAndReportsSyntheticFailure(t *testing.T) {
 	manifest.RegistryHash = strings.Repeat("d", 64)
 	writeManifest()
 	require.ErrorContains(t, execute(context.Background(), []string{"validate", path}, logger, protector), "registry digest differs")
-	manifest.RegistryHash = registryHash
-	var captureOutput bytes.Buffer
-	capture := &evalharness.Capture{RunID: manifest.RunID, Logger: slog.New(slog.NewJSONHandler(&captureOutput, &slog.HandlerOptions{Level: slog.LevelDebug})), Protector: protector}
-	require.NoError(t, capture.Emit("started", manifest))
-	require.NoError(t, capture.Emit("finished", map[string]any{"imported_rows": 0, "canonical_hash": "", "elapsed_ms": 1, "failure": "startup incomplete", "native_measurements": []any{}, "server_usage": map[string]any{}}))
-	logsDir := t.TempDir()
-	t.Setenv("EVAL_LOGS_DIR", logsDir)
-	require.NoError(t, os.WriteFile(filepath.Join(logsDir, "synthetic.txt"), captureOutput.Bytes(), 0o600))
-	manifest.Mode, manifest.WorkflowRunID = "replay", "456"
-	t.Setenv("GITHUB_RUN_ID", "456")
-	writeManifest()
-	require.ErrorContains(t, execute(context.Background(), []string{"run", path}, logger, protector), "replay cannot start a runtime")
-	require.NoError(t, execute(context.Background(), []string{"report", path}, logger, protector))
-	body, err := os.ReadFile(filepath.Join(manifest.OutputDir, "scores.json"))
-	require.NoError(t, err)
-	var report evalharness.Report
-	require.NoError(t, json.Unmarshal(body, &report))
-	require.False(t, report.Complete)
-	require.True(t, report.CaptureComplete)
-	require.Equal(t, 8, report.ExpectedAnswers)
-	require.Zero(t, report.CompletedAnswers)
-	require.Equal(t, "123", report.Identity.WorkflowRunID)
-	require.Equal(t, "dense-mem-testing", report.Identity.Model)
-	require.NotContains(t, string(body), "provider-canary")
-	require.NotContains(t, string(body), "synthetic-cli-key")
-	require.ErrorIs(t, execute(context.Background(), []string{"report", path}, logger, protector), os.ErrExist)
-	require.NoError(t, os.Remove(filepath.Join(manifest.OutputDir, "scores.json")))
-	require.NoError(t, os.Remove(filepath.Join(logsDir, "synthetic.txt")))
-	require.Error(t, execute(context.Background(), []string{"report", path}, logger, protector))
-	require.NoFileExists(t, filepath.Join(manifest.OutputDir, "scores.json"))
+
 }
 
 func TestCLIRejectsRetiredInterfacesAndLocalCampaigns(t *testing.T) {
 	logger := observability.NewConsoleWithHandler(slog.NewJSONHandler(&bytes.Buffer{}, nil))
 	protector := observability.NewCredentialProtector()
-	for _, mode := range []string{"paired", "import", "baseline", "candidate", "resume", "token-diagnostics", "runtime"} {
+	for _, mode := range []string{"paired", "import", "baseline", "candidate", "resume", "token-diagnostics", "runtime", "report", "replay"} {
 		require.ErrorContains(t, execute(context.Background(), []string{mode, "manifest"}, logger, protector), "workflow-internal")
 	}
 	t.Setenv("GITHUB_ACTIONS", "")

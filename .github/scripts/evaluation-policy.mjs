@@ -1,17 +1,13 @@
 import { createHash } from "node:crypto";
 import imagePolicy from "./image-release-policy.cjs";
 
-export function manualEvaluationRequest({ image, mode = "live", replayRunID = "", repository, ref, runAttempt, actorPermission, triggeringPermission }) {
+export function manualEvaluationRequest({ image, mode = "live", repository, ref, runAttempt, actorPermission, triggeringPermission }) {
   if (ref !== "refs/heads/main" || Number(runAttempt) !== 1) throw new Error("Manual evaluation requires a fresh workflow dispatch from main");
   if (actorPermission !== "admin" || triggeringPermission !== "admin") throw new Error("Manual evaluation requires initiating and triggering repository admins");
   const decision = imagePolicy.validateProductionImageReference(image, repository);
   if (!decision.valid) throw new Error(decision.reason);
-  if (!["fixtures", "live", "replay"].includes(mode)) throw new Error("Invalid evaluation mode");
-  if (mode === "replay") {
-    if (!/^[1-9][0-9]*$/.test(replayRunID)) throw new Error("Replay requires a retained evaluation run ID");
-    if (!imagePolicy.validatePinnedProductionImageReference(image, repository).valid) throw new Error("Replay requires the original image pinned by digest");
-  } else if (replayRunID !== "") throw new Error("A replay run ID is only valid in replay mode");
-  return { image, mode, replayRunID };
+  if (!["fixtures", "live"].includes(mode)) throw new Error("Invalid evaluation mode");
+  return { image, mode };
 }
 
 export function resolveEvaluationImage(reference, repository, inspected) {
@@ -30,12 +26,6 @@ export function resolveEvaluationImage(reference, repository, inspected) {
   });
   if (matches.length !== 1) throw new Error("Evaluation image digest is missing, ambiguous or differs from the requested image");
   return { image: matches[0], revision: labels["org.opencontainers.image.revision"] };
-}
-
-export function validReplaySource(original, sourceRevision) {
-  return [".github/workflows/production-image-e2e.yml", ".github/workflows/run-evaluation.yml"].includes(original.path) &&
-    original.event === "workflow_dispatch" && original.run_attempt === 1 && original.status === "completed" &&
-    /^[0-9a-f]{40}$/.test(original.head_sha || "") && original.head_sha === sourceRevision;
 }
 
 export function requireRunner(env = process.env) {

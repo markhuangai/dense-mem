@@ -66,9 +66,9 @@
       "source": "cmd/internal/serverapp/runner_campaign_integration_test.go"
     },
     {
-      "id": "server/TestRunnerCampaignConditionsAndReplay",
+      "id": "server/TestRunnerCampaignConditionsAndCapture",
       "package": "./cmd/internal/serverapp",
-      "run": "^TestRunnerCampaignConditionsAndReplay$",
+      "run": "^TestRunnerCampaignConditionsAndCapture$",
       "phase": "precheck",
       "source": "cmd/internal/serverapp/runner_campaign_integration_test.go"
     },

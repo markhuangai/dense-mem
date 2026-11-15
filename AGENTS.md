@@ -170,7 +170,7 @@
   evaluation/comparison result unless the linked issue records an explicit
   maintainer-approved waiver and replacement verification before
   implementation.
-- Evaluation campaigns, benchmarks, and measurement replay execute only on
+- Evaluation campaigns and benchmarks execute only on
   GitHub-hosted runners. Missing runner capability blocks execution; no local
   fallback is supported. Selective synthetic code/unit checks remain local.
 - Generated evaluation seeds, suites, downloaded datasets, imports, runtime

@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
-import { resolveSetting, configuration, requireRunner, registryMatrix, aggregate, ownedResource, manualEvaluationRequest, resolveEvaluationImage, validReplaySource } from "../../../.github/scripts/evaluation-policy.mjs";
+import { resolveSetting, configuration, requireRunner, registryMatrix, aggregate, ownedResource, manualEvaluationRequest, resolveEvaluationImage } from "../../../.github/scripts/evaluation-policy.mjs";
 import { readWorkflow, workflowJob, runStep } from "../../uat/workflow_helpers.mjs";
-import { serverEnvironment } from "./workflow.mjs";
+import { serverEnvironment, main } from "./workflow.mjs";
 
 const registry = JSON.parse(fs.readFileSync(new URL("../datasets.json", import.meta.url)));
 const valid = { DENSE_MEM_EVAL_MODEL: "configured-model", DENSE_MEM_EVAL_CONTEXT_WINDOW_TOKENS: "300000", DENSE_MEM_EVAL_VERIFIER_URL: "https://provider.example/v1", DENSE_MEM_EVAL_EMBED_URL: `https://api.cloudflare.com/client/v4/accounts/${"a".repeat(32)}/ai/v1`, DENSE_MEM_EVAL_API_KEY: "generation-canary", DENSE_MEM_EVAL_EMBED_API_KEY: "embedding-canary", WORKFLOW_EMBEDDING_MODEL: "@cf/baai/bge-m3", WORKFLOW_EMBEDDING_DIMENSIONS: "1024" };
@@ -16,16 +18,13 @@ const manualRequest = { image: taggedImage, repository, ref: "refs/heads/main", 
 const inspectedImage = { Os: "linux", Architecture: "amd64", RepoDigests: [pinnedImage], Config: { Labels: { "org.opencontainers.image.variant": "production", "org.opencontainers.image.source": `https://github.com/${repository}`, "org.opencontainers.image.revision": revision } } };
 
 test("manual evaluation needs only an image and defaults to the full benchmark", () => {
-  assert.deepEqual(manualEvaluationRequest(manualRequest), { image: taggedImage, mode: "live", replayRunID: "" });
+  assert.deepEqual(manualEvaluationRequest(manualRequest), { image: taggedImage, mode: "live" });
   assert.equal(manualEvaluationRequest({ ...manualRequest, mode: "fixtures" }).mode, "fixtures");
-  assert.equal(manualEvaluationRequest({ ...manualRequest, image: pinnedImage, mode: "replay", replayRunID: "42" }).mode, "replay");
   for (const change of [
     { ref: "refs/heads/untrusted" }, { ref: "refs/tags/main" }, { runAttempt: 2 },
     { actorPermission: "write" }, { triggeringPermission: "maintain" },
     { image: "ghcr.io/other/project:latest" }, { image: `${taggedImage}\ncommand` },
-    { mode: "none" }, { mode: "unknown" }, { replayRunID: "42" },
-    { image: pinnedImage, mode: "replay" }, { mode: "replay", replayRunID: "42" },
-    { image: pinnedImage, mode: "replay", replayRunID: "0" },
+    { mode: "none" }, { mode: "unknown" }, { mode: "replay" },
   ]) assert.throws(() => manualEvaluationRequest({ ...manualRequest, ...change }));
 });
 
@@ -45,32 +44,21 @@ test("image resolution freezes a production digest and rejects changed or unrela
   assert.throws(() => resolveEvaluationImage(`ghcr.io/${repository}@sha256:${"c".repeat(64)}`, repository, inspectedImage), /digest/);
 });
 
-test("both evaluation entrypoints retain the original completed source for replay", () => {
-  const original = { path: ".github/workflows/run-evaluation.yml", event: "workflow_dispatch", run_attempt: 1, status: "completed", head_sha: revision };
-  assert.equal(validReplaySource(original, revision), true);
-  assert.equal(validReplaySource({ ...original, path: ".github/workflows/production-image-e2e.yml" }, revision), true);
-  assert.equal(validReplaySource(original, "c".repeat(40)), false);
-  for (const change of [{ path: ".github/workflows/other.yml" }, { event: "push" }, { run_attempt: 2 }, { status: "in_progress" }, { head_sha: "main" }]) {
-    assert.equal(validReplaySource({ ...original, ...change }, revision), false);
-  }
-});
-
 test("manual workflow accepts an image without PR inputs and keeps credentials in the reusable job", async () => {
   const workflow = await readWorkflow("run-evaluation.yml");
   assert.deepEqual(Object.keys(workflow.on), ["workflow_dispatch"]);
   const inputs = workflow.on.workflow_dispatch.inputs;
   assert.equal(inputs.image.required, true); assert.equal(inputs.pr_number, undefined);
-  assert.equal(inputs.mode.default, "live"); assert.deepEqual(inputs.mode.options, ["live", "fixtures", "replay"]);
+  assert.equal(inputs.mode.default, "live"); assert.deepEqual(inputs.mode.options, ["live", "fixtures"]);
   const authorize = workflowJob(workflow, "authorize");
   const request = authorize.steps.find((step) => step.id === "request");
   assert.match(request.with.script, /manualEvaluationRequest/);
   assert.match(request.with.script, /actorPermission: await permission\(context.actor\)/);
   assert.match(request.with.script, /triggeringPermission: await permission\(process.env.TRIGGERING_ACTOR\)/);
-  assert.match(request.with.script, /validReplaySource\(original, original.head_sha\)/);
-  assert.match(request.with.script, /sourceRevision = original.head_sha/);
+  assert.match(request.with.script, /core.setOutput\("source_revision", context.sha\)/);
   for (const step of authorize.steps) {
     assert.doesNotMatch(JSON.stringify(step.env || {}), /secrets\./);
-    if (step.uses?.startsWith("docker/login-action@") || step.id === "image") assert.equal(step.if, "inputs.mode != 'replay'");
+    if (step.uses?.startsWith("docker/login-action@") || step.id === "image") assert.equal(step.if, undefined);
   }
   const resolve = runStep(authorize, "docker pull");
   assert.match(resolve.run, /resolveEvaluationImage/); assert.match(resolve.run, /"\$\{REQUESTED_IMAGE\}"/);
@@ -84,13 +72,13 @@ test("manual workflow accepts an image without PR inputs and keeps credentials i
   assert.deepEqual(evaluation.secrets, existing.secrets);
 });
 
-test("manual authorization executes without PR lookups and pins replay to the original runner", async (t) => {
+test("manual authorization executes both modes without PR or historical-run lookups", async (t) => {
   const workflow = await readWorkflow("run-evaluation.yml");
   const script = workflowJob(workflow, "authorize").steps.find((step) => step.id === "request").with.script;
   const execute = new (Object.getPrototypeOf(async () => {}).constructor)("github", "context", "core", script);
-  for (const mode of ["live", "replay"]) {
+  for (const mode of ["live", "fixtures"]) {
     await t.test(mode, async (t) => {
-      const settings = { GITHUB_WORKSPACE: process.cwd(), INPUT_IMAGE: mode === "replay" ? pinnedImage : taggedImage, INPUT_MODE: mode, INPUT_REPLAY_RUN_ID: mode === "replay" ? "42" : "", TRIGGERING_ACTOR: "initiator" };
+      const settings = { GITHUB_WORKSPACE: process.cwd(), INPUT_IMAGE: taggedImage, INPUT_MODE: mode, TRIGGERING_ACTOR: "initiator" };
       const previous = Object.fromEntries(Object.keys(settings).map((key) => [key, process.env[key]]));
       Object.assign(process.env, settings);
       t.after(() => {
@@ -99,20 +87,14 @@ test("manual authorization executes without PR lookups and pins replay to the or
           else process.env[key] = value;
         }
       });
-      const permissions = []; const outputs = {}; const runs = [];
+      const permissions = []; const outputs = {};
       const github = { rest: {
         repos: { getCollaboratorPermissionLevel: async ({ username }) => { permissions.push(username); return { data: { permission: "admin" } }; } },
-        actions: { getWorkflowRun: async ({ run_id }) => {
-          runs.push(run_id);
-          return { data: { path: ".github/workflows/run-evaluation.yml", head_sha: revision, event: "workflow_dispatch", run_attempt: 1, status: "completed" } };
-        } },
       } };
       const context = { repo: { owner: "markhuangai", repo: "dense-mem" }, actor: "initiator", ref: "refs/heads/main", runAttempt: 1, sha: "c".repeat(40) };
       await execute(github, context, { setOutput: (key, value) => { outputs[key] = value; } });
       assert.deepEqual(permissions, ["initiator", "initiator"]);
-      assert.deepEqual(runs, mode === "replay" ? ["42"] : []);
-      assert.equal(outputs.source_revision, mode === "replay" ? revision : context.sha);
-      assert.equal(outputs.image, mode === "replay" ? pinnedImage : undefined);
+      assert.equal(outputs.source_revision, context.sha);
       for (const change of [{ ref: "refs/heads/feature" }, { runAttempt: 2 }]) {
         await assert.rejects(execute(github, { ...context, ...change }, { setOutput: () => assert.fail("Rejected requests must not publish outputs") }), /fresh workflow/);
       }
@@ -200,8 +182,16 @@ test("runner workflow reserves shutdown time, retains numeric artifacts and aggr
   const ci = await readWorkflow("ci-shared.yml"); runStep(workflowJob(ci, "quality"), "bash scripts/test-evaluation.sh");
 });
 
-test("replay's executable path contains no provisioning or model transport", () => {
-  const replay = fs.readFileSync(new URL("replay.mjs", import.meta.url), "utf8");
-  assert.doesNotMatch(replay, /docker|chat\/completions|embeddings|\["run"/);
-  assert.match(replay, /\["report", manifestPath\]/); assert.match(replay, /artifact.digest/); assert.match(replay, /\/logs/);
+test("registry selection accepts only full benchmarks and synthetic system fixtures", async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "evaluation-matrix-test-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const output = path.join(directory, "output");
+  const env = { GITHUB_ACTIONS: "true", RUNNER_ENVIRONMENT: "github-hosted", GITHUB_RUN_ID: "42", GITHUB_RUN_ATTEMPT: "1", GITHUB_OUTPUT: output };
+  for (const [mode, count] of [["live", 5], ["fixtures", 1]]) {
+    fs.writeFileSync(output, "");
+    await main("matrix", { ...env, EVAL_MODE: mode });
+    const matrix = JSON.parse(fs.readFileSync(output, "utf8").trim().slice("matrix=".length));
+    assert.equal(matrix.dataset.length, count);
+  }
+  for (const mode of ["replay", "none", "unknown", ""]) await assert.rejects(main("matrix", { ...env, EVAL_MODE: mode }), /Invalid evaluation mode/);
 });

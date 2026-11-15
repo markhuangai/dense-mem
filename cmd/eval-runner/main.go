@@ -5,12 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 	"time"
 
@@ -31,8 +29,8 @@ func main() {
 }
 
 func execute(ctx context.Context, args []string, logger *observability.Logger, protector *observability.CredentialProtector) error {
-	if len(args) != 2 || (args[0] != "validate" && args[0] != "run" && args[0] != "report") {
-		return errors.New("usage: eval-runner validate|run|report EXECUTION_MANIFEST; workflow-internal only")
+	if len(args) != 2 || (args[0] != "validate" && args[0] != "run") {
+		return errors.New("usage: eval-runner validate|run EXECUTION_MANIFEST; workflow-internal only")
 	}
 	manifest, err := evalharness.ReadManifest(args[1])
 	if err != nil {
@@ -41,15 +39,6 @@ func execute(ctx context.Context, args []string, logger *observability.Logger, p
 	registryPath := "tests/eval/datasets.json"
 	if manifest.Mode == "fixtures" {
 		registryPath = "tests/eval/fixtures/datasets.json"
-	}
-	if manifest.Mode == "replay" {
-		fixtureHash, err := evalharness.FileHash("tests/eval/fixtures/datasets.json")
-		if err != nil {
-			return err
-		}
-		if fixtureHash == manifest.RegistryHash {
-			registryPath = "tests/eval/fixtures/datasets.json"
-		}
 	}
 	hash, err := evalharness.FileHash(registryPath)
 	if err != nil {
@@ -76,41 +65,6 @@ func execute(ctx context.Context, args []string, logger *observability.Logger, p
 			return logFile(ctx, os.Getenv("EVAL_SERVER_LOG_FILE"), &evalharness.Capture{Logger: logger.ContextSlog(), Protector: protector, RunID: manifest.RunID})
 		}
 		return nil
-	}
-	if args[0] == "report" {
-		paths, err := filepath.Glob(filepath.Join(os.Getenv("EVAL_LOGS_DIR"), "*.txt"))
-		if err != nil {
-			return err
-		}
-		readers := []io.Reader{}
-		for _, path := range paths {
-			file, err := os.Open(path)
-			if err != nil {
-				return err
-			}
-			defer file.Close()
-			readers = append(readers, file)
-		}
-		events, err := evalharness.ReplayEvents(readers, manifest.RunID)
-		if err != nil {
-			return err
-		}
-		report, err := evalharness.ReplayReport(events, manifest, corpus, questions)
-		if err != nil {
-			return err
-		}
-		if err = os.MkdirAll(manifest.OutputDir, 0700); err != nil {
-			return err
-		}
-		file, err := os.OpenFile(filepath.Join(manifest.OutputDir, "scores.json"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-		if err != nil {
-			return err
-		}
-		defer file.Close()
-		return writeReport(file, report)
-	}
-	if manifest.Mode == "replay" {
-		return errors.New("replay cannot start a runtime or call a provider")
 	}
 	if !manifest.ModelDeadline.After(time.Now()) {
 		return errors.New("model deadline is expired")

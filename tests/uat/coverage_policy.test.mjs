@@ -381,7 +381,7 @@ test("real Go coverage parts retain cross-package and testless execution and rej
     "internal/trace/postgres": ["TestEvidenceOnlyPostgresTrace"],
     "internal/privacy/postgres": ["TestEvidenceOnlyPostgresPrivacy"],
     "internal/operations/postgres": ["TestEvidenceOnlyPostgresTelemetry"],
-    "cmd/internal/serverapp": ["TestServerLifecycleCore", "TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads", "TestOntologySemanticPublicationLogOnlyDiagnostics", "TestEvidenceOnlyPostgresIntake", "TestRunnerCampaignConditionsAndReplay"],
+    "cmd/internal/serverapp": ["TestServerLifecycleCore", "TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads", "TestOntologySemanticPublicationLogOnlyDiagnostics", "TestEvidenceOnlyPostgresIntake", "TestRunnerCampaignConditionsAndCapture"],
     "internal/evalretire": ["TestEvaluationRetirementFixture"],
     "cmd/eval-runner": ["TestRuntimeLogDockerFixture"],
     "internal/service": ["TestAuditFixture"],
