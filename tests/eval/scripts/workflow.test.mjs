@@ -1,12 +1,126 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
-import { resolveSetting, configuration, requireRunner, registryMatrix, aggregate, ownedResource } from "../../../.github/scripts/evaluation-policy.mjs";
+import { resolveSetting, configuration, requireRunner, registryMatrix, aggregate, ownedResource, manualEvaluationRequest, resolveEvaluationImage, validReplaySource } from "../../../.github/scripts/evaluation-policy.mjs";
 import { readWorkflow, workflowJob, runStep } from "../../uat/workflow_helpers.mjs";
 import { serverEnvironment } from "./workflow.mjs";
 
 const registry = JSON.parse(fs.readFileSync(new URL("../datasets.json", import.meta.url)));
 const valid = { DENSE_MEM_EVAL_MODEL: "configured-model", DENSE_MEM_EVAL_CONTEXT_WINDOW_TOKENS: "300000", DENSE_MEM_EVAL_VERIFIER_URL: "https://provider.example/v1", DENSE_MEM_EVAL_EMBED_URL: `https://api.cloudflare.com/client/v4/accounts/${"a".repeat(32)}/ai/v1`, DENSE_MEM_EVAL_API_KEY: "generation-canary", DENSE_MEM_EVAL_EMBED_API_KEY: "embedding-canary", WORKFLOW_EMBEDDING_MODEL: "@cf/baai/bge-m3", WORKFLOW_EMBEDDING_DIMENSIONS: "1024" };
+
+const repository = "markhuangai/dense-mem";
+const taggedImage = `ghcr.io/${repository}:candidate`;
+const pinnedImage = `ghcr.io/${repository}@sha256:${"a".repeat(64)}`;
+const revision = "b".repeat(40);
+const manualRequest = { image: taggedImage, repository, ref: "refs/heads/main", runAttempt: 1, actorPermission: "admin", triggeringPermission: "admin" };
+const inspectedImage = { Os: "linux", Architecture: "amd64", RepoDigests: [pinnedImage], Config: { Labels: { "org.opencontainers.image.variant": "production", "org.opencontainers.image.source": `https://github.com/${repository}`, "org.opencontainers.image.revision": revision } } };
+
+test("manual evaluation needs only an image and defaults to the full benchmark", () => {
+  assert.deepEqual(manualEvaluationRequest(manualRequest), { image: taggedImage, mode: "live", replayRunID: "" });
+  assert.equal(manualEvaluationRequest({ ...manualRequest, mode: "fixtures" }).mode, "fixtures");
+  assert.equal(manualEvaluationRequest({ ...manualRequest, image: pinnedImage, mode: "replay", replayRunID: "42" }).mode, "replay");
+  for (const change of [
+    { ref: "refs/heads/untrusted" }, { ref: "refs/tags/main" }, { runAttempt: 2 },
+    { actorPermission: "write" }, { triggeringPermission: "maintain" },
+    { image: "ghcr.io/other/project:latest" }, { image: `${taggedImage}\ncommand` },
+    { mode: "none" }, { mode: "unknown" }, { replayRunID: "42" },
+    { image: pinnedImage, mode: "replay" }, { mode: "replay", replayRunID: "42" },
+    { image: pinnedImage, mode: "replay", replayRunID: "0" },
+  ]) assert.throws(() => manualEvaluationRequest({ ...manualRequest, ...change }));
+});
+
+test("image resolution freezes a production digest and rejects changed or unrelated metadata", () => {
+  for (const reference of [taggedImage, pinnedImage, `${taggedImage}@${pinnedImage.split("@")[1]}`]) {
+    assert.deepEqual(resolveEvaluationImage(reference, repository, inspectedImage), { image: pinnedImage, revision });
+  }
+  for (const change of [
+    { Os: "windows" }, { Architecture: "arm64" }, { Config: {} },
+    { RepoDigests: [] }, { RepoDigests: ["ghcr.io/other/project@sha256:" + "a".repeat(64)] },
+    { RepoDigests: [pinnedImage, `ghcr.io/${repository}@sha256:${"c".repeat(64)}`] },
+  ]) assert.throws(() => resolveEvaluationImage(taggedImage, repository, { ...inspectedImage, ...change }));
+  for (const [key, value] of [["variant", "development"], ["source", "https://github.com/other/project"], ["revision", "main"]]) {
+    const labels = { ...inspectedImage.Config.Labels, [`org.opencontainers.image.${key}`]: value };
+    assert.throws(() => resolveEvaluationImage(taggedImage, repository, { ...inspectedImage, Config: { Labels: labels } }));
+  }
+  assert.throws(() => resolveEvaluationImage(`ghcr.io/${repository}@sha256:${"c".repeat(64)}`, repository, inspectedImage), /digest/);
+});
+
+test("both evaluation entrypoints retain the original completed source for replay", () => {
+  const original = { path: ".github/workflows/run-evaluation.yml", event: "workflow_dispatch", run_attempt: 1, status: "completed", head_sha: revision };
+  assert.equal(validReplaySource(original, revision), true);
+  assert.equal(validReplaySource({ ...original, path: ".github/workflows/production-image-e2e.yml" }, revision), true);
+  assert.equal(validReplaySource(original, "c".repeat(40)), false);
+  for (const change of [{ path: ".github/workflows/other.yml" }, { event: "push" }, { run_attempt: 2 }, { status: "in_progress" }, { head_sha: "main" }]) {
+    assert.equal(validReplaySource({ ...original, ...change }, revision), false);
+  }
+});
+
+test("manual workflow accepts an image without PR inputs and keeps credentials in the reusable job", async () => {
+  const workflow = await readWorkflow("run-evaluation.yml");
+  assert.deepEqual(Object.keys(workflow.on), ["workflow_dispatch"]);
+  const inputs = workflow.on.workflow_dispatch.inputs;
+  assert.equal(inputs.image.required, true); assert.equal(inputs.pr_number, undefined);
+  assert.equal(inputs.mode.default, "live"); assert.deepEqual(inputs.mode.options, ["live", "fixtures", "replay"]);
+  const authorize = workflowJob(workflow, "authorize");
+  const request = authorize.steps.find((step) => step.id === "request");
+  assert.match(request.with.script, /manualEvaluationRequest/);
+  assert.match(request.with.script, /actorPermission: await permission\(context.actor\)/);
+  assert.match(request.with.script, /triggeringPermission: await permission\(process.env.TRIGGERING_ACTOR\)/);
+  assert.match(request.with.script, /validReplaySource\(original, original.head_sha\)/);
+  assert.match(request.with.script, /sourceRevision = original.head_sha/);
+  for (const step of authorize.steps) {
+    assert.doesNotMatch(JSON.stringify(step.env || {}), /secrets\./);
+    if (step.uses?.startsWith("docker/login-action@") || step.id === "image") assert.equal(step.if, "inputs.mode != 'replay'");
+  }
+  const resolve = runStep(authorize, "docker pull");
+  assert.match(resolve.run, /resolveEvaluationImage/); assert.match(resolve.run, /"\$\{REQUESTED_IMAGE\}"/);
+  assert.doesNotMatch(resolve.run, /\$\{\{ inputs\./);
+  const evaluation = workflowJob(workflow, "evaluation");
+  assert.equal(evaluation.uses, "./.github/workflows/evaluation.yml");
+  assert.equal(evaluation.with.image, "${{ needs.authorize.outputs.image }}");
+  assert.equal(evaluation.with.source_revision, "${{ needs.authorize.outputs.source_revision }}");
+  assert.equal(evaluation.with.model, "dense-mem-testing"); assert.equal(evaluation.with.context_window_tokens, "500000");
+  const existing = workflowJob(await readWorkflow("production-image-e2e.yml"), "evaluation");
+  assert.deepEqual(evaluation.secrets, existing.secrets);
+});
+
+test("manual authorization executes without PR lookups and pins replay to the original runner", async (t) => {
+  const workflow = await readWorkflow("run-evaluation.yml");
+  const script = workflowJob(workflow, "authorize").steps.find((step) => step.id === "request").with.script;
+  const execute = new (Object.getPrototypeOf(async () => {}).constructor)("github", "context", "core", script);
+  for (const mode of ["live", "replay"]) {
+    await t.test(mode, async (t) => {
+      const settings = { GITHUB_WORKSPACE: process.cwd(), INPUT_IMAGE: mode === "replay" ? pinnedImage : taggedImage, INPUT_MODE: mode, INPUT_REPLAY_RUN_ID: mode === "replay" ? "42" : "", TRIGGERING_ACTOR: "initiator" };
+      const previous = Object.fromEntries(Object.keys(settings).map((key) => [key, process.env[key]]));
+      Object.assign(process.env, settings);
+      t.after(() => {
+        for (const [key, value] of Object.entries(previous)) {
+          if (value === undefined) delete process.env[key];
+          else process.env[key] = value;
+        }
+      });
+      const permissions = []; const outputs = {}; const runs = [];
+      const github = { rest: {
+        repos: { getCollaboratorPermissionLevel: async ({ username }) => { permissions.push(username); return { data: { permission: "admin" } }; } },
+        actions: { getWorkflowRun: async ({ run_id }) => {
+          runs.push(run_id);
+          return { data: { path: ".github/workflows/run-evaluation.yml", head_sha: revision, event: "workflow_dispatch", run_attempt: 1, status: "completed" } };
+        } },
+      } };
+      const context = { repo: { owner: "markhuangai", repo: "dense-mem" }, actor: "initiator", ref: "refs/heads/main", runAttempt: 1, sha: "c".repeat(40) };
+      await execute(github, context, { setOutput: (key, value) => { outputs[key] = value; } });
+      assert.deepEqual(permissions, ["initiator", "initiator"]);
+      assert.deepEqual(runs, mode === "replay" ? ["42"] : []);
+      assert.equal(outputs.source_revision, mode === "replay" ? revision : context.sha);
+      assert.equal(outputs.image, mode === "replay" ? pinnedImage : undefined);
+      for (const change of [{ ref: "refs/heads/feature" }, { runAttempt: 2 }]) {
+        await assert.rejects(execute(github, { ...context, ...change }, { setOutput: () => assert.fail("Rejected requests must not publish outputs") }), /fresh workflow/);
+      }
+      github.rest.repos.getCollaboratorPermissionLevel = async () => ({ data: { permission: "write" } });
+      await assert.rejects(execute(github, context, { setOutput: () => assert.fail("Unauthorized request published outputs") }), /admins/);
+    });
+  }
+});
 
 test("isolated server admits the complete bounded campaign without changing concurrency or private routing", () => {
   const environment = serverEnvironment(configuration(valid), { EVAL_CONTROL_TOKEN: "control-canary", EVAL_DATABASE_PASSWORD: "database-canary", ...valid });

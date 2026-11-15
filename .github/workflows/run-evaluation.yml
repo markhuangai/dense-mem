@@ -1,0 +1,114 @@
+name: Run evaluation
+
+on:
+  workflow_dispatch:
+    inputs:
+      image:
+        description: Dense-Mem production image tag or digest from ghcr.io/markhuangai/dense-mem
+        required: true
+        type: string
+      mode:
+        description: Full benchmark, smoke fixture, or retained-log replay
+        type: choice
+        default: live
+        options: [live, fixtures, replay]
+      replay_run_id:
+        description: Original evaluation run ID, required only for replay with its pinned image
+        type: string
+        default: ''
+
+permissions:
+  actions: read
+  contents: read
+  packages: read
+
+jobs:
+  authorize:
+    name: Authorize and pin evaluation image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      image: ${{ steps.image.outputs.image || steps.request.outputs.image }}
+      source_revision: ${{ steps.request.outputs.source_revision }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - name: Validate manual request
+        id: request
+        uses: actions/github-script@v9
+        env:
+          INPUT_IMAGE: ${{ inputs.image }}
+          INPUT_MODE: ${{ inputs.mode }}
+          INPUT_REPLAY_RUN_ID: ${{ inputs.replay_run_id }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+        with:
+          script: |
+            const { manualEvaluationRequest, validReplaySource } = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/evaluation-policy.mjs`);
+            const { owner, repo } = context.repo;
+            const permission = async (username) => (await github.rest.repos.getCollaboratorPermissionLevel({ owner, repo, username })).data.permission;
+            const request = manualEvaluationRequest({
+              image: process.env.INPUT_IMAGE, mode: process.env.INPUT_MODE,
+              replayRunID: process.env.INPUT_REPLAY_RUN_ID,
+              repository: `${owner}/${repo}`, ref: context.ref, runAttempt: context.runAttempt,
+              actorPermission: await permission(context.actor),
+              triggeringPermission: await permission(process.env.TRIGGERING_ACTOR),
+            });
+            let sourceRevision = context.sha;
+            if (request.mode === "replay") {
+              const { data: original } = await github.rest.actions.getWorkflowRun({ owner, repo, run_id: request.replayRunID });
+              if (!validReplaySource(original, original.head_sha)) throw new Error("Replay source run is unavailable or unsupported");
+              sourceRevision = original.head_sha;
+              core.setOutput("image", request.image);
+            }
+            core.setOutput("source_revision", sourceRevision);
+      - uses: actions/setup-node@v7
+        if: inputs.mode != 'replay'
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - uses: docker/login-action@v4
+        if: inputs.mode != 'replay'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Resolve immutable production image
+        id: image
+        if: inputs.mode != 'replay'
+        env:
+          REQUESTED_IMAGE: ${{ inputs.image }}
+        run: |
+          set -euo pipefail
+          docker pull --quiet --platform linux/amd64 "${REQUESTED_IMAGE}" > /dev/null
+          docker image inspect "${REQUESTED_IMAGE}" > "${RUNNER_TEMP}/evaluation-image.json"
+          node --input-type=module <<'NODE'
+          import fs from "node:fs";
+          import { resolveEvaluationImage } from "./.github/scripts/evaluation-policy.mjs";
+          const inspected = JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/evaluation-image.json`))[0];
+          const resolved = resolveEvaluationImage(process.env.REQUESTED_IMAGE, process.env.GITHUB_REPOSITORY, inspected);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `image=${resolved.image}\n`);
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `Image: \`${resolved.image}\`\n\nImage source: \`${resolved.revision}\`\n`);
+          NODE
+
+  evaluation:
+    name: Public RAG evaluation
+    needs: authorize
+    uses: ./.github/workflows/evaluation.yml
+    with:
+      image: ${{ needs.authorize.outputs.image }}
+      source_repository: ${{ github.repository }}
+      source_revision: ${{ needs.authorize.outputs.source_revision }}
+      mode: ${{ inputs.mode }}
+      replay_run_id: ${{ inputs.replay_run_id }}
+      model: dense-mem-testing
+      context_window_tokens: '500000'
+    secrets:
+      eval-model: ${{ secrets.DENSE_MEM_EVAL_MODEL }}
+      eval-context-window: ${{ secrets.DENSE_MEM_EVAL_CONTEXT_WINDOW_TOKENS }}
+      eval-verifier-url: ${{ '' || vars.DENSE_MEM_EVAL_VERIFIER_URL || secrets.DENSE_MEM_EVAL_VERIFIER_URL }}
+      eval-embedding-url: ${{ (vars.CLOUDFLARE_ACCOUNT_ID != '' || secrets.CLOUDFLARE_ACCOUNT_ID != '') && format('https://api.cloudflare.com/client/v4/accounts/{0}/ai/v1', vars.CLOUDFLARE_ACCOUNT_ID || secrets.CLOUDFLARE_ACCOUNT_ID) || vars.DENSE_MEM_EVAL_EMBED_URL || secrets.DENSE_MEM_EVAL_EMBED_URL }}
+      eval-api-key: ${{ secrets.DENSE_MEM_EVAL_API_KEY }}
+      eval-embedding-api-key: ${{ secrets.DENSE_MEM_EVAL_EMBED_API_KEY }}

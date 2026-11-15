@@ -5,11 +5,43 @@ runners. Missing runner capacity or Actions configuration blocks execution.
 The CLI is workflow-internal and has no local provisioning or resume interface.
 Synthetic unit and adapter checks use `bash scripts/test-evaluation.sh`.
 
-Dispatch `production-image-e2e.yml` on the current own-PR branch with `pr_number`
-and `evaluation=fixtures`, `live`, or `replay`. Both actors must be repository
-admins, and job reruns are rejected. The exact PR head must already have a
-successful trusted production-image receipt and full production E2E. The
-default dispatch remains the full production E2E route.
+To evaluate a published image without a PR, open **Actions → Run evaluation →
+Run workflow**, select `main`, and enter a Dense-Mem production image tag or
+digest. The default `mode=live` runs the complete benchmark. For example:
+
+```bash
+gh workflow run run-evaluation.yml --repo markhuangai/dense-mem --ref main \
+  -f image=ghcr.io/markhuangai/dense-mem:YOUR_TAG
+```
+
+The image must come from `ghcr.io/markhuangai/dense-mem` and carry Dense-Mem
+production source metadata. A tag is resolved once to its immutable digest before
+any provider credentials reach dataset jobs. The run summary records the digest
+and image source revision; numeric reports record that digest and the exact runner
+source revision. Initiating and triggering actors must be repository admins;
+dispatches from other branches and job reruns are rejected.
+
+Use `mode=fixtures` after changing evaluation workflows, adapters, capture,
+scoring, or cleanup. It imports three small documents and asks two questions
+against a real production instance and PostgreSQL, using a deterministic local
+provider inside the runner. Both ontology conditions and both answer policies
+produce eight scored answers. It checks the evaluation plumbing without calling
+real model APIs; its scores do not measure retrieval or model quality.
+
+Use `mode=replay` to verify that a previous run's retained exchanges reproduce
+its reported scores, without starting a runtime or calling providers again. It
+requires `replay_run_id` and the original digest-pinned image. Replay selects the
+original run's runner revision, so advancing `main` does not change its source.
+It cannot measure a new image or model; use `live` for that. The original numeric
+artifacts and Actions logs must remain available, including the two-day artifact
+retention window.
+
+PR validation retains its existing entrypoint: dispatch `production-image-e2e.yml`
+on the current own-PR branch with `pr_number` and `evaluation=fixtures`, `live`,
+or `replay`. That route requires the exact PR head's successful trusted
+production-image receipt and full production E2E. Its `evaluation=none` default
+runs ordinary production E2E. The manual image route has no PR or preview-receipt
+requirement.
 
 The registry generates the matrix. `live` uses all five complete published packs
 in [datasets.json](datasets.json), locked to HippoRAG_2 revision

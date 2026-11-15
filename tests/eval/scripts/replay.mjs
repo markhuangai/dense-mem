@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
-import { requireRunner, sha256, registryMatrix } from "../../../.github/scripts/evaluation-policy.mjs";
+import { requireRunner, sha256, registryMatrix, validReplaySource } from "../../../.github/scripts/evaluation-policy.mjs";
 
 function numericArchive(bytes, env) {
   const directory = fs.mkdtempSync(path.join(env.RUNNER_TEMP, "evaluation-replay-registry-"));
@@ -26,7 +26,7 @@ export async function replayRegistry(env = process.env) {
     return response;
   };
   const original = await (await api(`/actions/runs/${env.EVAL_REPLAY_RUN_ID}`)).json();
-  if (original.path !== ".github/workflows/production-image-e2e.yml" || original.event !== "workflow_dispatch" || original.head_sha !== env.EVAL_SOURCE_REVISION || original.run_attempt !== 1 || original.status !== "completed") throw new Error("Replay unavailable: source run identity differs");
+  if (!validReplaySource(original, env.EVAL_SOURCE_REVISION)) throw new Error("Replay unavailable: source run identity differs");
   const artifacts = [];
   for (let page = 1;; page++) { const batch = (await (await api(`/actions/runs/${original.id}/artifacts?per_page=100&page=${page}`)).json()).artifacts; artifacts.push(...batch); if (batch.length < 100) break; }
   const artifact = artifacts.find((row) => /^evaluation-(hotpotqa|musique|2wikimultihopqa|nq_rear|popqa)$/.test(row.name) && !row.expired);
@@ -51,7 +51,7 @@ export async function main(env = process.env) {
     return response;
   };
   const original = await (await api(`/actions/runs/${env.EVAL_REPLAY_RUN_ID}`)).json();
-  if (original.path !== ".github/workflows/production-image-e2e.yml" || original.event !== "workflow_dispatch" || original.head_sha !== env.EVAL_SOURCE_REVISION || original.run_attempt !== 1 || original.status !== "completed") throw new Error("Replay source identity differs from this approved PR head");
+  if (!validReplaySource(original, env.EVAL_SOURCE_REVISION)) throw new Error("Replay source identity differs from the pinned runner revision");
   const artifacts = [];
   for (let page = 1;; page++) { const batch = (await (await api(`/actions/runs/${original.id}/artifacts?per_page=100&page=${page}`)).json()).artifacts; artifacts.push(...batch); if (batch.length < 100) break; }
   const matches = artifacts.filter((artifact) => artifact.name === `evaluation-${env.EVAL_DATASET}` && !artifact.expired);

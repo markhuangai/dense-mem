@@ -96,6 +96,17 @@ test("replay adapter hands retained logs to report mode and verifies the returne
   assert.ok(value.requests.every((route) => route.startsWith("/actions/")));
 });
 
+test("manual image evaluations replay their retained registry and logs without a PR", async (t) => {
+  const value = fixture(t, { run: { path: ".github/workflows/run-evaluation.yml" } });
+  const registered = await replayRegistry(value.env);
+  assert.equal(registered.mode, "fixtures");
+  await main(value.env);
+  const receipt = JSON.parse(fs.readFileSync(value.receipt));
+  assert.equal(receipt.manifest.source_revision, source);
+  assert.equal(receipt.manifest.image, image);
+  assert.ok(value.requests.every((route) => route.startsWith("/actions/")));
+});
+
 test("replay adapter rejects wrong retained inputs and stale report output", async (t) => {
   for (const [name, options, message] of [
     ["source run", { run: { head_sha: "c".repeat(40) } }, /source identity/],
