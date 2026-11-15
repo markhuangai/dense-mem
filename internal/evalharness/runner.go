@@ -182,6 +182,11 @@ func runCondition(ctx context.Context, manifest Manifest, corpus []CorpusItem, q
 	if err := client.Capture.Emit("condition_started", map[string]string{"condition": condition}); err != nil {
 		return nil, err
 	}
+	policies := []string{"single", "multi_turn"}
+	progress := captureProgress{Stage: "questions", Condition: condition, Unit: "answers", Total: len(questions) * len(policies)}
+	if err := client.Capture.emitProgress(progress); err != nil {
+		return nil, err
+	}
 	bySource := map[string]CorpusItem{}
 	for _, item := range corpus {
 		bySource[item.SourceDocID] = item
@@ -201,7 +206,7 @@ func runCondition(ctx context.Context, manifest Manifest, corpus []CorpusItem, q
 					initial.Error = err.Error()
 				}
 				observation := Observation{QuestionID: question.ID, Condition: condition, Initial: initial, Hosts: []HostResult{}}
-				for _, policy := range []string{"single", "multi_turn"} {
+				for _, policy := range policies {
 					observation.Hosts = append(observation.Hosts, RunHost(ctx, client, transport, manifest, HostQuestion{ID: question.ID, Query: question.Query}, initial, policy, condition))
 				}
 				err := client.Capture.Emit("observation", observation)
@@ -211,6 +216,17 @@ func runCondition(ctx context.Context, manifest Manifest, corpus []CorpusItem, q
 				}
 				mu.Lock()
 				scores = append(scores, measured...)
+				completed := 0
+				for _, score := range measured {
+					if score.Completed {
+						completed++
+					}
+				}
+				progress.Completed += completed
+				progress.Failed += len(policies) - completed
+				if progressErr := client.Capture.emitProgress(progress); err == nil {
+					err = progressErr
+				}
 				if err != nil && first == nil {
 					first = err
 				}

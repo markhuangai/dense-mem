@@ -83,13 +83,23 @@ secret inputs. The maintainer provisions this Actions configuration.
 
 Database passwords and control tokens are generated per dataset job. Resolved
 credentials, headers, connection strings and provider URLs never enter console
-logs or reports. Existing credential protection and reconstructable payload
-chunks retain ordinary exchanges at DEBUG in Actions logs.
-The protected chunk records use base64 serialization to preserve exact protected
-payloads through Actions log masking.
+logs or reports. Ordinary exchanges appear at DEBUG as readable JSON with
+`run_id`, `sequence`, `kind`, and a nested `payload`. Credential protection runs
+before output. Large events use bounded, readable `payload_chunk` records.
+Actions can additionally mask values configured as Secrets; put public settings
+in the workflow or repository Variables.
 Initial security rejection stays content-free. There are no additional diagnostic model calls,
 encryption dependency or artifact key. Reports contain configured model names
 as their provider details.
+
+INFO `eval_progress` records show the stage, total, completed, failed, and
+remaining work. Import uses documents; each question condition uses answers
+(1,000 questions × two policies = 2,000 answers). Retries do not increment these
+counts, and failed items are separate from remaining items. For example:
+
+```json
+{"msg":"eval_progress","run_id":"run-musique","sequence":337,"kind":"progress","payload":{"stage":"import","unit":"documents","total":11656,"completed":330,"failed":0,"remaining":11326}}
+```
 
 Initial retrieval R@1/5/10 counts each original canonical source at most once
 within the original Evidence slots. Partitions do not create extra source

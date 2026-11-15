@@ -199,6 +199,9 @@ func (c *HTTPClient) ImportCorpusWithConcurrency(ctx context.Context, items []Co
 	if concurrency < 1 || concurrency > 10 {
 		return mapping, errors.New("invalid import concurrency")
 	}
+	if err := c.Capture.emitProgress(captureProgress{Stage: "import", Unit: "documents", Total: len(items)}); err != nil {
+		return mapping, err
+	}
 	if _, err := c.ensureContract(ctx); err != nil {
 		return mapping, err
 	}
@@ -208,6 +211,7 @@ func (c *HTTPClient) ImportCorpusWithConcurrency(ctx context.Context, items []Co
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var first error
+	failed := 0
 	for range concurrency {
 		wg.Add(1)
 		go func() {
@@ -216,12 +220,19 @@ func (c *HTTPClient) ImportCorpusWithConcurrency(ctx context.Context, items []Co
 				itemMapping, err := c.importCorpusItem(work, item)
 				mu.Lock()
 				if err != nil {
+					failed++
 					if first == nil {
 						first = err
 					}
 					stop()
 				} else {
 					mergeKnowledgeMapping(&mapping, itemMapping)
+				}
+				if err := c.Capture.emitProgress(captureProgress{Stage: "import", Unit: "documents", Total: len(items), Completed: len(mapping.BySourceDocID), Failed: failed}); err != nil {
+					if first == nil {
+						first = err
+					}
+					stop()
 				}
 				mu.Unlock()
 			}

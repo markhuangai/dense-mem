@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"log/slog"
 	"os"
@@ -83,15 +82,19 @@ func runtimeCapturePayloads(t *testing.T, logs []byte) string {
 	t.Helper()
 	var protected strings.Builder
 	for _, line := range bytes.Split(bytes.TrimSpace(logs), []byte("\n")) {
-		var envelope struct{ Record string }
-		require.NoError(t, json.Unmarshal(line, &envelope))
-		body, err := base64.StdEncoding.DecodeString(envelope.Record)
-		require.NoError(t, err)
 		var record struct {
-			Chunk observability.DiagnosticBodyChunk `json:"payload_chunk"`
+			Kind    string                             `json:"kind"`
+			Payload json.RawMessage                    `json:"payload"`
+			Chunk   *observability.DiagnosticBodyChunk `json:"payload_chunk"`
 		}
-		require.NoError(t, json.Unmarshal(body, &record))
-		protected.WriteString(record.Chunk.Body)
+		require.NoError(t, json.Unmarshal(line, &record))
+		if record.Chunk != nil {
+			protected.WriteString(record.Chunk.Body)
+		} else {
+			body, err := json.Marshal(evalharness.Event{Kind: record.Kind, Payload: record.Payload})
+			require.NoError(t, err)
+			protected.Write(body)
+		}
 	}
 	return protected.String()
 }

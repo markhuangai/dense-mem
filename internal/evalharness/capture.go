@@ -14,6 +14,7 @@ import (
 )
 
 const captureLimit = 16 << 20
+const captureInlineLimit = observability.MaxOperationMetadataBytes / 2
 
 type Capture struct {
 	Logger    *slog.Logger
@@ -29,10 +30,22 @@ type Event struct {
 	Payload json.RawMessage `json:"payload"`
 }
 
-type captureRecord struct {
-	RunID    string                            `json:"run_id"`
-	Sequence int                               `json:"sequence"`
-	Chunk    observability.DiagnosticBodyChunk `json:"payload_chunk"`
+type captureProgress struct {
+	Stage     string `json:"stage"`
+	Condition string `json:"condition,omitempty"`
+	Unit      string `json:"unit"`
+	Total     int    `json:"total"`
+	Completed int    `json:"completed"`
+	Failed    int    `json:"failed"`
+	Remaining int    `json:"remaining"`
+}
+
+func (c *Capture) emitProgress(progress captureProgress) error {
+	if progress.Total < 0 || progress.Completed < 0 || progress.Failed < 0 || progress.Completed > progress.Total || progress.Failed > progress.Total-progress.Completed {
+		return errors.New("invalid evaluation progress counts")
+	}
+	progress.Remaining = progress.Total - progress.Completed - progress.Failed
+	return c.Emit("progress", progress)
 }
 
 func NewRunnerCredentialProtector(configured ...string) *observability.CredentialProtector {
@@ -79,7 +92,15 @@ func (c *Capture) Emit(kind string, payload any) error {
 		c.Logger.Error("eval_capture_unavailable", "run_id", c.RunID, "sequence", c.sequence+1, "reason", reason.Code())
 		return errors.New("benchmark payload protection unavailable")
 	}
-	chunks := observability.ChunkProtectedDiagnosticBody(protected, captureLimit)
+	var event Event
+	if err := json.Unmarshal(protected, &event); err != nil {
+		c.failed = true
+		return errors.New("protected benchmark event is invalid")
+	}
+	var chunks []observability.DiagnosticBodyChunk
+	if len(protected) > captureInlineLimit {
+		chunks = observability.ChunkProtectedDiagnosticBody(protected, captureLimit)
+	}
 	for _, chunk := range chunks {
 		if chunk.State != "captured" {
 			c.failed = true
@@ -88,14 +109,17 @@ func (c *Capture) Emit(kind string, payload any) error {
 		}
 	}
 	c.sequence++
+	level, message := slog.LevelDebug, "eval_capture"
+	if event.Kind == "progress" {
+		level, message = slog.LevelInfo, "eval_progress"
+	}
+	fields := []any{"run_id", c.RunID, "sequence", c.sequence, "kind", event.Kind}
+	if len(chunks) == 0 {
+		c.Logger.Log(context.Background(), level, message, append(fields, "payload", json.RawMessage(event.Payload))...)
+		return nil
+	}
 	for _, chunk := range chunks {
-		record, err := json.Marshal(captureRecord{RunID: c.RunID, Sequence: c.sequence, Chunk: chunk})
-		if err != nil {
-			c.failed = true
-			return err
-		}
-		// Encode only after credential protection so Actions masking preserves the protected payload.
-		c.Logger.Debug("eval_capture", "record", base64.StdEncoding.EncodeToString(record))
+		c.Logger.Log(context.Background(), level, message, append(fields, "payload_chunk", chunk)...)
 	}
 	return nil
 }

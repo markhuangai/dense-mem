@@ -3,7 +3,6 @@ package evalharness
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -101,16 +100,10 @@ func TestAnswerWireCaptureProtectsFailedResponseAndPreservesExactBody(t *testing
 	_, err := (AnswerTransport{URL: upstream.URL, Key: key, Client: upstream.Client(), Capture: capture}).Complete(context.Background(), modelprovider.StructuredRequest{Model: "fixture"})
 	require.Error(t, err)
 	var protected strings.Builder
-	for _, line := range bytes.Split(bytes.TrimSpace(output.Bytes()), []byte("\n")) {
-		var envelope struct {
-			Record string `json:"record"`
-		}
-		require.NoError(t, json.Unmarshal(line, &envelope))
-		body, err := base64.StdEncoding.DecodeString(envelope.Record)
+	for _, event := range capturedEvents(t, output.Bytes()) {
+		body, err := json.Marshal(event)
 		require.NoError(t, err)
-		var record captureRecord
-		require.NoError(t, json.Unmarshal(body, &record))
-		protected.WriteString(record.Chunk.Body)
+		protected.Write(body)
 	}
 	require.Contains(t, protected.String(), "public failure detail")
 	require.NotContains(t, protected.String(), key)

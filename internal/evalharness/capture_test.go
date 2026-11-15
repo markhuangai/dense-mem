@@ -3,7 +3,9 @@ package evalharness
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -20,6 +22,47 @@ func captureFixture(buffer *bytes.Buffer) *Capture {
 	return &Capture{Logger: observability.NewConsoleWithHandler(slog.NewJSONHandler(buffer, &slog.HandlerOptions{Level: slog.LevelDebug})).ContextSlog(), Protector: observability.NewCredentialProtector(), RunID: "synthetic-run"}
 }
 
+func TestCaptureEmitsReadableJSON(t *testing.T) {
+	var output bytes.Buffer
+	capture := captureFixture(&output)
+	require.NoError(t, capture.Emit("import_attempt", map[string]any{"content": "Exact public Evidence.", "elapsed_ms": 123}))
+	var record struct {
+		RunID    string `json:"run_id"`
+		Sequence int    `json:"sequence"`
+		Kind     string `json:"kind"`
+		Payload  struct {
+			Content   string `json:"content"`
+			ElapsedMS int    `json:"elapsed_ms"`
+		} `json:"payload"`
+	}
+	require.NoError(t, json.Unmarshal(output.Bytes(), &record))
+	require.Equal(t, capture.RunID, record.RunID)
+	require.Equal(t, 1, record.Sequence)
+	require.Equal(t, "import_attempt", record.Kind)
+	require.Equal(t, "Exact public Evidence.", record.Payload.Content)
+	require.Equal(t, 123, record.Payload.ElapsedMS)
+	require.NotContains(t, output.String(), `"record":`)
+}
+
+func TestProgressIsReadableAtInfoAndRejectsInvalidCounts(t *testing.T) {
+	var output bytes.Buffer
+	capture := captureFixture(&output)
+	require.NoError(t, capture.emitProgress(captureProgress{Stage: "import", Unit: "documents", Total: 10, Completed: 6, Failed: 1}))
+	var line struct {
+		Level   string          `json:"level"`
+		Message string          `json:"msg"`
+		Payload captureProgress `json:"payload"`
+	}
+	require.NoError(t, json.Unmarshal(output.Bytes(), &line))
+	require.Equal(t, "INFO", line.Level)
+	require.Equal(t, "eval_progress", line.Message)
+	require.Equal(t, 3, line.Payload.Remaining)
+	for _, invalid := range []captureProgress{{Total: -1}, {Total: 1, Completed: -1}, {Total: 1, Failed: -1}, {Total: 1, Completed: 2}, {Total: 1, Completed: 1, Failed: 1}} {
+		require.Error(t, capture.emitProgress(invalid))
+	}
+	require.Len(t, capturedProgress(t, output.Bytes()), 1)
+}
+
 func TestCapturePreservesNestedProviderLogsAndProtectsCredentials(t *testing.T) {
 	const secret = "nested-provider-key-canary-763"
 	const admitted = `{"items":[{"text":"Atlas uses \"quoted\" Evidence."}]}`
@@ -31,18 +74,9 @@ func TestCapturePreservesNestedProviderLogsAndProtectsCredentials(t *testing.T) 
 	capture := captureFixture(&output)
 	capture.Protector = NewRunnerCredentialProtector(secret)
 	require.NoError(t, capture.Emit("runtime_log", map[string]string{"line": string(line)}))
-	var envelope struct{ Record string }
-	require.NoError(t, json.Unmarshal(bytes.TrimSpace(output.Bytes()), &envelope))
-	recordBytes, err := base64.StdEncoding.DecodeString(envelope.Record)
-	require.NoError(t, err)
-	var record captureRecord
-	require.NoError(t, json.Unmarshal(recordBytes, &record))
-	require.Equal(t, capture.RunID, record.RunID)
-	require.Equal(t, "captured", record.Chunk.State)
-	require.Equal(t, 1, record.Chunk.Count)
-	require.Zero(t, record.Chunk.Index)
-	var event Event
-	require.NoError(t, json.Unmarshal([]byte(record.Chunk.Body), &event))
+	events := capturedEvents(t, output.Bytes())
+	require.Len(t, events, 1)
+	event := events[0]
 	require.Equal(t, "runtime_log", event.Kind)
 	var retained struct{ Line string }
 	require.NoError(t, json.Unmarshal(event.Payload, &retained))
@@ -85,19 +119,13 @@ func TestActualConsoleCaptureProtectsCredentialsAndPreservesAdmittedText(t *test
 		require.NotContains(t, string(body), secret)
 	}
 	require.NotContains(t, string(body), base64.StdEncoding.EncodeToString([]byte(secrets[0])))
-	var envelope struct {
-		Record string `json:"record"`
-	}
-	require.NoError(t, json.Unmarshal(bytes.Split(body, []byte("\n"))[0], &envelope))
-	recordBytes, err := base64.StdEncoding.DecodeString(envelope.Record)
-	require.NoError(t, err)
-	var record captureRecord
-	require.NoError(t, json.Unmarshal(recordBytes, &record))
-	require.Contains(t, record.Chunk.Body, "ordinary public text")
+	events := capturedEvents(t, body)
+	require.Len(t, events, 1)
+	require.Contains(t, string(events[0].Payload), "ordinary public text")
 	for _, secret := range secrets {
-		require.NotContains(t, record.Chunk.Body, secret)
+		require.NotContains(t, string(events[0].Payload), secret)
 	}
-	require.NotContains(t, record.Chunk.Body, base64.StdEncoding.EncodeToString([]byte(secrets[0])))
+	require.NotContains(t, string(events[0].Payload), base64.StdEncoding.EncodeToString([]byte(secrets[0])))
 	report := NewReport(Manifest{Model: "selected-model", EmbeddingModel: "text-embedding-3-small"}, 3, 2)
 	data, err := json.Marshal(report)
 	require.NoError(t, err)
@@ -109,44 +137,91 @@ func TestActualConsoleCaptureProtectsCredentialsAndPreservesAdmittedText(t *test
 	require.Contains(t, string(data), "text-embedding-3-small")
 }
 
-func TestProtectedCaptureSurvivesActionsMaskingOfOrdinarySecretSettings(t *testing.T) {
+func TestRawCapturePreservesPublicSettings(t *testing.T) {
 	var output bytes.Buffer
 	capture := captureFixture(&output)
-	settings := map[string]any{"model": "gpt-6-luna", "context_window_tokens": 300000, "public_text": "Exact public fixture text."}
+	settings := map[string]any{"model": "selected-model", "context_window_tokens": 500000, "public_text": "Exact public fixture text."}
 	require.NoError(t, capture.Emit("started", settings))
 	require.NoError(t, capture.Emit("finished", map[string]any{"complete": true}))
-	masked := strings.NewReplacer("gpt-6-luna", "***", "300000", "***").Replace(output.String())
-	events := capturedEvents(t, []byte(masked))
+	events := capturedEvents(t, output.Bytes())
 	var restored map[string]any
 	require.NoError(t, json.Unmarshal(events[0].Payload, &restored))
-	require.Equal(t, "gpt-6-luna", restored["model"])
-	require.Equal(t, float64(300000), restored["context_window_tokens"])
+	require.Equal(t, "selected-model", restored["model"])
+	require.Equal(t, float64(500000), restored["context_window_tokens"])
 	require.Equal(t, settings["public_text"], restored["public_text"])
+}
+
+func TestRawCaptureChunksLargeEventsWithoutLosingPublicText(t *testing.T) {
+	var output bytes.Buffer
+	capture := captureFixture(&output)
+	const secret = "chunk-boundary-secret-canary"
+	capture.Protector = NewRunnerCredentialProtector(secret)
+	text := strings.Repeat("Exact quoted \"Evidence\" 第二。 ", 1000)
+	require.NoError(t, capture.Emit("runtime_log", map[string]string{"public_text": text, "operational": secret}))
+	lines := bytes.Split(bytes.TrimSpace(output.Bytes()), []byte("\n"))
+	require.Greater(t, len(lines), 1)
+	for _, line := range lines {
+		require.Less(t, len(line), observability.MaxOperationMetadataBytes)
+		require.NotContains(t, string(line), `"record":`)
+		require.NotContains(t, string(line), secret)
+	}
+	events := capturedEvents(t, output.Bytes())
+	require.Len(t, events, 1)
+	var value map[string]string
+	require.NoError(t, json.Unmarshal(events[0].Payload, &value))
+	require.Equal(t, text, value["public_text"])
+	require.Equal(t, observability.CredentialProtectionRedacted, value["operational"])
 }
 
 func capturedEvents(t *testing.T, logs []byte) []Event {
 	t.Helper()
 	var events []Event
 	var payload strings.Builder
+	pending := false
 	for _, line := range bytes.Split(bytes.TrimSpace(logs), []byte("\n")) {
-		var envelope struct{ Record string }
+		var envelope struct {
+			Kind    string                             `json:"kind"`
+			Payload json.RawMessage                    `json:"payload"`
+			Chunk   *observability.DiagnosticBodyChunk `json:"payload_chunk"`
+		}
 		require.NoError(t, json.Unmarshal(line, &envelope))
-		if envelope.Record == "" {
+		if envelope.Kind == "" {
 			continue
 		}
-		body, err := base64.StdEncoding.DecodeString(envelope.Record)
-		require.NoError(t, err)
-		var record captureRecord
-		require.NoError(t, json.Unmarshal(body, &record))
-		if record.Chunk.Index == 0 {
-			payload.Reset()
+		if envelope.Chunk == nil {
+			require.NotEmpty(t, envelope.Payload)
+			events = append(events, Event{Kind: envelope.Kind, Payload: envelope.Payload})
+			continue
 		}
-		payload.WriteString(record.Chunk.Body)
-		if record.Chunk.Index == record.Chunk.Count-1 {
+		require.Equal(t, "captured", envelope.Chunk.State)
+		if envelope.Chunk.Index == 0 {
+			payload.Reset()
+			pending = true
+		}
+		payload.WriteString(envelope.Chunk.Body)
+		if envelope.Chunk.Index == envelope.Chunk.Count-1 {
+			sum := sha256.Sum256([]byte(payload.String()))
+			require.Equal(t, envelope.Chunk.SHA256, hex.EncodeToString(sum[:]))
 			var event Event
 			require.NoError(t, json.Unmarshal([]byte(payload.String()), &event))
+			require.Equal(t, envelope.Kind, event.Kind)
 			events = append(events, event)
+			pending = false
 		}
 	}
+	require.False(t, pending, "capture ended inside a chunked event")
 	return events
+}
+
+func capturedProgress(t *testing.T, logs []byte) []captureProgress {
+	t.Helper()
+	var updates []captureProgress
+	for _, event := range capturedEvents(t, logs) {
+		if event.Kind == "progress" {
+			var update captureProgress
+			require.NoError(t, json.Unmarshal(event.Payload, &update))
+			updates = append(updates, update)
+		}
+	}
+	return updates
 }

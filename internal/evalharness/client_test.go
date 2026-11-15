@@ -3,7 +3,6 @@ package evalharness
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -50,14 +49,20 @@ func TestImporterRetriesOnlyOneVerifiedTerminalFailureAndPreservesInput(t *testi
 				require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"result": map[string]any{"isError": failed, "structuredContent": out}}))
 			}))
 			defer server.Close()
-			client := &HTTPClient{BaseURL: server.URL, APIKey: "synthetic", Client: server.Client()}
+			var logs bytes.Buffer
+			client := &HTTPClient{BaseURL: server.URL, APIKey: "synthetic", Client: server.Client(), Capture: captureFixture(&logs)}
 			mapping, err := client.ImportCorpus(context.Background(), []CorpusItem{item})
+			progress := capturedProgress(t, logs.Bytes())
+			require.Len(t, progress, 2, "retry attempts count one terminal document")
+			require.Equal(t, captureProgress{Stage: "import", Unit: "documents", Total: 1, Remaining: 1}, progress[0])
 			if recover {
 				require.NoError(t, err)
 				require.Len(t, mapping.Partitions["source"], 1)
+				require.Equal(t, captureProgress{Stage: "import", Unit: "documents", Total: 1, Completed: 1}, progress[1])
 			} else {
 				require.Error(t, err)
 				require.Empty(t, mapping.BySourceDocID)
+				require.Equal(t, captureProgress{Stage: "import", Unit: "documents", Total: 1, Failed: 1}, progress[1])
 			}
 			require.Len(t, inputs, 2)
 			require.Equal(t, "eval:source", inputs[0]["idempotency_key"])
@@ -70,6 +75,54 @@ func TestImporterRetriesOnlyOneVerifiedTerminalFailureAndPreservesInput(t *testi
 			delete(inputs[1], "idempotency_key")
 			require.Equal(t, inputs[0], inputs[1])
 		})
+	}
+}
+
+func TestConcurrentImporterReportsMonotonicDocumentProgress(t *testing.T) {
+	items := []CorpusItem{{SourceDocID: "first", Content: "First."}, {SourceDocID: "second", Content: "Second."}, {SourceDocID: "third", Content: "Third."}, {SourceDocID: "last", Content: "Last."}}
+	lastStarted := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var rpc struct {
+			Method string
+			Params struct{ Arguments map[string]any }
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&rpc))
+		if rpc.Method == "tools/list" {
+			tools := []mcpToolDefinition{}
+			for _, tool := range registry.ContractTools() {
+				tools = append(tools, mcpToolDefinition{Name: tool.Name, OutputSchema: tool.OutputSchema})
+			}
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"result": map[string]any{"tools": tools}}))
+			return
+		}
+		evidence := rpc.Params.Arguments["evidence"].([]any)[0].(map[string]any)
+		source := evidence["metadata"].(map[string]any)["source_doc_id"]
+		if source == "first" {
+			select {
+			case <-lastStarted:
+			case <-r.Context().Done():
+				return
+			}
+		} else if source == "last" {
+			close(lastStarted)
+		}
+		content := evidence["content"].(string)
+		out := map[string]any{"processing_state": "completed", "submission_id": uuid.NewString(), "evidence": []any{map[string]any{
+			"evidence_index": 0, "partition_index": 0, "source_item_id": uuid.NewString(), "occurrence_id": uuid.NewString(), "evidence_id": uuid.NewString(),
+			"span_start": 0, "span_end": len([]rune(content)), "content_hash": knowledge.EvidenceContentHash(content), "disposition": "stored",
+		}}}
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"result": map[string]any{"structuredContent": out}}))
+	}))
+	defer server.Close()
+	var logs bytes.Buffer
+	client := &HTTPClient{BaseURL: server.URL, APIKey: "synthetic", Client: server.Client(), Capture: captureFixture(&logs)}
+	mapping, err := client.ImportCorpusWithConcurrency(context.Background(), items, 4)
+	require.NoError(t, err)
+	require.Len(t, mapping.BySourceDocID, len(items))
+	progress := capturedProgress(t, logs.Bytes())
+	require.Len(t, progress, len(items)+1)
+	for i, update := range progress {
+		require.Equal(t, captureProgress{Stage: "import", Unit: "documents", Total: len(items), Completed: i, Remaining: len(items) - i}, update)
 	}
 }
 
@@ -166,14 +219,10 @@ func TestMCPResponseDecodingAndWireFailures(t *testing.T) {
 			}
 			require.NoError(t, capture.Emit("finished", map[string]bool{"complete": err == nil}))
 			var protected strings.Builder
-			for _, line := range bytes.Split(bytes.TrimSpace(logs.Bytes()), []byte("\n")) {
-				var envelope struct{ Record string }
-				require.NoError(t, json.Unmarshal(line, &envelope))
-				body, decodeErr := base64.StdEncoding.DecodeString(envelope.Record)
-				require.NoError(t, decodeErr)
-				var record captureRecord
-				require.NoError(t, json.Unmarshal(body, &record))
-				protected.WriteString(record.Chunk.Body)
+			for _, event := range capturedEvents(t, logs.Bytes()) {
+				body, err := json.Marshal(event)
+				require.NoError(t, err)
+				protected.Write(body)
 			}
 			require.NotContains(t, protected.String(), key)
 			require.Contains(t, protected.String(), "answer_wire_response")
