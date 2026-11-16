@@ -40,7 +40,7 @@ function privateEnvironment(state, env) {
 export function serverEnvironment(configured, environment) {
   return {
     LOG_LEVEL: "debug", HTTP_ADDR: ":8080", CONTROL_HTTP_ADDR: ":8090", CONTROL_PORTAL_TOKEN: environment.EVAL_CONTROL_TOKEN,
-    POSTGRES_USER: "densemem", POSTGRES_DB: "densemem", POSTGRES_PASSWORD: environment.EVAL_DATABASE_PASSWORD, POSTGRES_HOST: "postgres", POSTGRES_PORT: "5432", POSTGRES_SSLMODE: "disable", POSTGRES_MAX_OPEN_CONNS: "25", POSTGRES_MAX_IDLE_CONNS: "10",
+    POSTGRES_USER: "densemem", POSTGRES_DB: "densemem", POSTGRES_PASSWORD: environment.EVAL_DATABASE_PASSWORD, POSTGRES_HOST: "postgres", POSTGRES_PORT: "5432", POSTGRES_SSLMODE: "disable", POSTGRES_MAX_OPEN_CONNS: String(Math.max(25, configured.importWorkers + 5)), POSTGRES_MAX_IDLE_CONNS: "10", POSTGRES_ADVISORY_LOCK_CONCURRENCY: String(configured.importWorkers),
     RATE_LIMIT_PER_MINUTE: "200000",
     AI_API_URL: configured.embedding, AI_API_KEY: environment.DENSE_MEM_EVAL_EMBED_API_KEY, AI_API_EMBEDDING_MODEL: "text-embedding-3-small", AI_API_EMBEDDING_DIMENSIONS: "1536", AI_API_EMBEDDING_MAX_CONCURRENCY: "2", AI_API_EMBEDDING_MAX_BATCH_ITEMS: "100",
     AI_VERIFIER_API_URL: configured.verifier, AI_VERIFIER_API_KEY: environment.DENSE_MEM_EVAL_API_KEY, AI_VERIFIER_MODEL: configured.model, AI_REMEMBER_MODEL: configured.model, AI_VERIFIER_DISABLE_TEMPERATURE: "true", AI_VERIFIER_MAX_CONCURRENCY: String(Math.max(4, configured.importWorkers)), AI_VERIFIER_MAX_INPUT_TOKENS: String(configured.context - 8192), AI_VERIFIER_MAX_OUTPUT_TOKENS: "8192", AI_VERIFIER_MAX_CANDIDATE_CONTEXT_TOKENS: String(Math.min(50000, Math.floor((configured.context - 8192) / 2))), AI_VERIFIER_TIMEOUT_SECONDS: "300",
@@ -108,7 +108,7 @@ async function setup(env) {
   docker(["volume", "create", "--label", `${label}=${paths.runID}`, state.volume]);
   const pgEnv = path.join(paths.directory, "postgres.env");
   fs.writeFileSync(pgEnv, `POSTGRES_USER=densemem\nPOSTGRES_DB=densemem\nPOSTGRES_PASSWORD=${password}\n`, { mode: 0o600 });
-  docker(["run", "--detach", "--name", `${prefix}-postgres`, "--label", `${label}=${paths.runID}`, "--network", state.network, "--network-alias", "postgres", "--publish", "127.0.0.1::5432", "--env-file", pgEnv, "--mount", `type=volume,source=${state.volume},target=/var/lib/postgresql`, "pgvector/pgvector:0.8.2-pg18-trixie"]);
+  docker(["run", "--detach", "--name", `${prefix}-postgres`, "--label", `${label}=${paths.runID}`, "--network", state.network, "--network-alias", "postgres", "--publish", "127.0.0.1::5432", "--env-file", pgEnv, "--mount", `type=volume,source=${state.volume},target=/var/lib/postgresql`, "pgvector/pgvector:0.8.2-pg18-trixie", "postgres", "-c", `max_connections=${Math.max(100, configured.importWorkers + 20)}`]);
   let serverVerifier = configured.verifier; let serverEmbedding = configured.embedding;
   if (fixture) {
     docker(["run", "--detach", "--name", `${prefix}-provider`, "--label", `${label}=${paths.runID}`, "--network", state.network, "--network-alias", "fixture-provider", "--publish", "127.0.0.1::8787", "--mount", `type=bind,source=${env.GITHUB_WORKSPACE},target=/workspace,readonly`, "--workdir", "/workspace", "node:24-bookworm-slim", "node", "tests/eval/scripts/fixture-provider.mjs"]);

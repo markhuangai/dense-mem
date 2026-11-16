@@ -130,6 +130,8 @@ test("import worker settings are explicit, bounded and shared with the server ge
     const configured = configuration({ ...valid, DENSE_MEM_EVAL_IMPORT_WORKERS: String(workers) });
     assert.equal(configured.importWorkers, workers);
     assert.equal(serverEnvironment(configured, {}).AI_VERIFIER_MAX_CONCURRENCY, String(Math.max(4, workers)));
+    assert.equal(serverEnvironment(configured, {}).POSTGRES_ADVISORY_LOCK_CONCURRENCY, String(workers));
+    assert.equal(serverEnvironment(configured, {}).POSTGRES_MAX_OPEN_CONNS, String(Math.max(25, workers + 5)));
   }
   for (const value of [undefined, "", "0", "-1", "101", "1.5", "20.0", " 20", "20\n", "invalid-canary"]) {
     assert.throws(() => resolveImportWorkers(value), (error) => /DENSE_MEM_EVAL_IMPORT_WORKERS/.test(error.message) && !error.message.includes("invalid-canary"));

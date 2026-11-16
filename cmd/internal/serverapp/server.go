@@ -29,6 +29,7 @@ import (
 	recallpostgres "github.com/markhuangai/dense-mem/internal/recall/postgres"
 	settingspostgres "github.com/markhuangai/dense-mem/internal/settings/postgres"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
+	"github.com/markhuangai/dense-mem/internal/storage/postgres/lockadmission"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 )
 
@@ -78,6 +79,11 @@ func RunActiveServer(
 	}
 	if !VerifierConfigured(&cfg) {
 		return errors.New("active authority requires configured verifier provider")
+	}
+	if cfg.PostgresAdvisoryLockConcurrency != 0 {
+		if err := lockadmission.Configure(pgDB.GetDB(), cfg.PostgresAdvisoryLockConcurrency); err != nil {
+			return fmt.Errorf("configure PostgreSQL lock admission: %w", err)
+		}
 	}
 	backend, err := buildBackendBundle(startupCtx, cfg)
 	if err != nil {

@@ -65,6 +65,11 @@ answer concurrency are four; embedding concurrency is two. Import concurrency
 uses `import_workers`, and the server generation limit is raised to match it
 (with a minimum of four for the other phases). The default five-dataset live run
 can issue up to 100 generation requests concurrently.
+The instance also sets `POSTGRES_ADVISORY_LOCK_CONCURRENCY` to the import count
+and reserves additional application/query and PostgreSQL connections. This is a
+startup-only per-pool override; ordinary deployments retain the four-slot
+advisory admission default when it is unset. Invalid capacity and conflicting
+reinitialization fail explicitly, without bypassing locks or changing RLS.
 The isolated instance pins its MCP request limit to 200000 per minute, above
 the complete pack's bounded call count, so the shared production default cannot
 throttle the campaign.

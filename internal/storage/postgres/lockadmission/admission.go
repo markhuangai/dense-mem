@@ -21,6 +21,26 @@ type state struct {
 
 var admissions sync.Map // map[*sql.DB]*state
 
+// Configure fixes a pool's capacity before first use; existing gates cannot be resized.
+func Configure(db *gorm.DB, limit int) error {
+	if db == nil {
+		return errors.New("advisory lock admission: database is required")
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		return err
+	}
+	poolLimit := sqlDB.Stats().MaxOpenConnections
+	if limit < 1 || poolLimit < 2 || limit >= poolLimit {
+		return errors.New("advisory lock admission: capacity must be positive and leave a query connection in a bounded pool")
+	}
+	value, loaded := admissions.LoadOrStore(sqlDB, &state{slots: make(chan struct{}, limit)})
+	if loaded && cap(value.(*state).slots) != limit {
+		return errors.New("advisory lock admission: pool capacity is already initialized")
+	}
+	return nil
+}
+
 func Acquire(ctx context.Context, db *gorm.DB, preferredLimit int) (func(), error) {
 	if db == nil {
 		return nil, errors.New("advisory lock admission: database is required")

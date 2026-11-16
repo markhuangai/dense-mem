@@ -31,33 +31,67 @@ import (
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
+	"github.com/markhuangai/dense-mem/internal/storage/postgres/lockadmission"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
 
 func TestRememberEvaluationImporterAdmission(t *testing.T) {
-	t.Run("default completes concurrent imports and replays", func(t *testing.T) {
-		h := newImportAdmissionHarness(t, 5)
-		corpus := admissionCorpus(8, 0)
-		done := make(chan error, 1)
-		var imported evalharness.KnowledgeMapping
-		go func() {
-			var err error
-			imported, err = h.client.ImportCorpusWithConcurrency(h.ctx, corpus, evalharness.DefaultImportConcurrency)
-			done <- err
-		}()
-		h.waitEntered(t, 4)
-		h.release()
-		require.NoError(t, receiveImportResult(t, h.ctx, done))
-		require.Len(t, imported.BySourceDocID, len(corpus))
-		require.EqualValues(t, 4, h.provider.peak.Load())
-		require.Zero(t, h.busyCount.Load())
-		replayed, err := h.client.ImportCorpusWithConcurrency(h.ctx, corpus, 4)
+	for _, scenario := range []struct {
+		name          string
+		pool, workers int
+	}{
+		{"default completes concurrent imports and replays", 5, 4},
+		{"configured twenty completes concurrent imports and replays", 25, 20},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			h := newImportAdmissionHarness(t, scenario.pool)
+			if scenario.workers != 4 {
+				require.NoError(t, lockadmission.Configure(h.app, scenario.workers))
+			}
+			corpus := admissionCorpus(scenario.workers*2, 0)
+			done := make(chan error, 1)
+			var imported evalharness.KnowledgeMapping
+			go func() {
+				var err error
+				imported, err = h.client.ImportCorpusWithConcurrency(h.ctx, corpus, scenario.workers)
+				done <- err
+			}()
+			h.waitEntered(t, scenario.workers)
+			h.release()
+			require.NoError(t, receiveImportResult(t, h.ctx, done))
+			require.Len(t, imported.BySourceDocID, len(corpus))
+			require.EqualValues(t, scenario.workers, h.provider.peak.Load())
+			require.Zero(t, h.busyCount.Load())
+			replayed, err := h.client.ImportCorpusWithConcurrency(h.ctx, corpus, scenario.workers)
+			require.NoError(t, err)
+			require.Equal(t, imported, replayed)
+			require.EqualValues(t, len(corpus), h.provider.calls.Load())
+			h.assertCompleted(t, len(corpus))
+		})
+	}
+
+	t.Run("pool admission configuration rejects invalid capacity and conflicting initialization", func(t *testing.T) {
+		h := newImportAdmissionHarness(t, 25)
+		require.Error(t, lockadmission.Configure(nil, 20))
+		for _, limit := range []int{-1, 0, 25, 26} {
+			require.Error(t, lockadmission.Configure(h.app, limit))
+		}
+		sqlDB, err := h.app.DB()
 		require.NoError(t, err)
-		require.Equal(t, imported, replayed)
-		require.EqualValues(t, len(corpus), h.provider.calls.Load())
-		h.assertCompleted(t, len(corpus))
+		sqlDB.SetMaxOpenConns(0)
+		require.Error(t, lockadmission.Configure(h.app, 20))
+		sqlDB.SetMaxOpenConns(25)
+		require.NoError(t, lockadmission.Configure(h.app, 20))
+		require.NoError(t, lockadmission.Configure(h.app, 20))
+		require.ErrorContains(t, lockadmission.Configure(h.app, 4), "already initialized")
+		h.release()
+		corpus := admissionCorpus(1, 0)
+		imported, err := h.client.ImportCorpus(h.ctx, corpus)
+		require.NoError(t, err)
+		require.Len(t, imported.BySourceDocID, 1)
+		h.assertCompleted(t, 1)
 	})
 
 	for _, test := range []struct {
@@ -66,7 +100,7 @@ func TestRememberEvaluationImporterAdmission(t *testing.T) {
 		workers        int
 	}{
 		{"former default exceeds admission", 5, 4, 10},
-		{"small pool admits fewer than default", 2, 1, evalharness.DefaultImportConcurrency},
+		{"small pool admits fewer than default", 2, 1, 4},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			h := newImportAdmissionHarness(t, test.pool)
