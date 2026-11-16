@@ -28,6 +28,12 @@ export function resolveEvaluationImage(reference, repository, inspected) {
   return { image: matches[0], revision: labels["org.opencontainers.image.revision"] };
 }
 
+export function requireEvaluationImportSupport(inspected) {
+  if (inspected.Config?.Labels?.["io.dense-mem.postgres-advisory-lock-concurrency"] !== "configurable") {
+    throw new Error("Evaluation requires a newer production image with configurable import admission");
+  }
+}
+
 export function requireRunner(env = process.env) {
   if (env.GITHUB_ACTIONS !== "true" || env.RUNNER_ENVIRONMENT !== "github-hosted" || !env.GITHUB_RUN_ID || env.GITHUB_RUN_ATTEMPT !== "1") {
     throw new Error("Evaluation requires a fresh GitHub-hosted workflow run. Local execution and job reruns are unsupported.");

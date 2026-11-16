@@ -37,12 +37,13 @@ receipt and full production E2E. Its `evaluation=none` default
 runs ordinary production E2E. The manual image route has no PR or preview-receipt
 requirement.
 
-Set the optional `import_workers` workflow input to control concurrent corpus
-imports per dataset, for example `-f import_workers=20`. Blank uses the workflow
-default of 20; explicit values must be integers from 1 through 100. Both manual
-entrypoints use this input. The effective count is recorded in the execution
-manifest and numeric report; dataset reports with different counts cannot be
-combined.
+The workflow pins corpus imports to 20 workers per dataset. There is no worker
+count input. Reports and execution manifests record the count, and dataset
+reports with different counts cannot be combined.
+Images must carry the production
+`io.dense-mem.postgres-advisory-lock-concurrency=configurable` marker. Both
+entrypoints check it before starting instances or calling providers; images
+built before this support require a newer build.
 
 The registry generates the matrix. `live` uses all five complete published packs
 in [datasets.json](datasets.json), locked to HippoRAG_2 revision
@@ -62,8 +63,7 @@ contract and canonical fingerprint.
 After the first condition, ontology must converge, pause and drain. The second
 condition uses unchanged Evidence and provenance. Ontology global/team and
 answer concurrency are four; embedding concurrency is two. Import concurrency
-uses `import_workers`, and the server generation limit is raised to match it
-(with a minimum of four for the other phases). The default five-dataset live run
+and the server generation limit are 20 per dataset. The five-dataset live run
 can issue up to 100 generation requests concurrently.
 The instance also sets `POSTGRES_ADVISORY_LOCK_CONCURRENCY` to the import count
 and reserves additional application/query and PostgreSQL connections. This is a

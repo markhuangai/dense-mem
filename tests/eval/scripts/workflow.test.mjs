@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { resolveSetting, resolveImportWorkers, configuration, requireRunner, registryMatrix, aggregate, ownedResource, manualEvaluationRequest, resolveEvaluationImage } from "../../../.github/scripts/evaluation-policy.mjs";
+import { resolveSetting, resolveImportWorkers, requireEvaluationImportSupport, configuration, requireRunner, registryMatrix, aggregate, ownedResource, manualEvaluationRequest, resolveEvaluationImage } from "../../../.github/scripts/evaluation-policy.mjs";
 import { readWorkflow, workflowJob, runStep } from "../../uat/workflow_helpers.mjs";
 import { serverEnvironment, main } from "./workflow.mjs";
 
@@ -16,6 +16,15 @@ const pinnedImage = `ghcr.io/${repository}@sha256:${"a".repeat(64)}`;
 const revision = "b".repeat(40);
 const manualRequest = { image: taggedImage, repository, ref: "refs/heads/main", runAttempt: 1, actorPermission: "admin", triggeringPermission: "admin" };
 const inspectedImage = { Os: "linux", Architecture: "amd64", RepoDigests: [pinnedImage], Config: { Labels: { "org.opencontainers.image.variant": "production", "org.opencontainers.image.source": `https://github.com/${repository}`, "org.opencontainers.image.revision": revision } } };
+
+test("evaluation requires an image supporting twenty concurrent imports", () => {
+  for (const marker of [undefined, "", "unknown", "configurable"]) {
+    const inspected = structuredClone(inspectedImage);
+    if (marker !== undefined) inspected.Config.Labels["io.dense-mem.postgres-advisory-lock-concurrency"] = marker;
+    if (marker === "configurable") assert.doesNotThrow(() => requireEvaluationImportSupport(inspected));
+    else assert.throws(() => requireEvaluationImportSupport(inspected), /newer.*image/i);
+  }
+});
 
 test("manual evaluation needs only an image and defaults to the full benchmark", () => {
   assert.deepEqual(manualEvaluationRequest(manualRequest), { image: taggedImage, mode: "live" });
@@ -206,11 +215,12 @@ test("runner workflow reserves shutdown time, retains numeric artifacts and aggr
   const datasets = workflowJob(workflow, "datasets");
   assert.equal(datasets.env.WORKFLOW_EMBEDDING_MODEL, "text-embedding-3-small");
   assert.equal(datasets.env.WORKFLOW_EMBEDDING_DIMENSIONS, "1536");
-  assert.equal(datasets.env.DENSE_MEM_EVAL_IMPORT_WORKERS, "${{ inputs.import_workers || '20' }}");
+  assert.equal(datasets.env.DENSE_MEM_EVAL_IMPORT_WORKERS, "20");
+  assert.equal(Object.hasOwn(workflow.on.workflow_call.inputs, "import_workers"), false);
   for (const entrypoint of ["run-evaluation.yml", "production-image-e2e.yml"]) {
     const caller = await readWorkflow(entrypoint);
-    assert.equal(caller.on.workflow_dispatch.inputs.import_workers.type, "string");
-    assert.equal(workflowJob(caller, "evaluation").with.import_workers, "${{ inputs.import_workers }}");
+    assert.equal(Object.hasOwn(caller.on.workflow_dispatch.inputs, "import_workers"), false);
+    assert.equal(Object.hasOwn(workflowJob(caller, "evaluation").with, "import_workers"), false);
   }
   assert.equal(datasets["runs-on"], "ubuntu-latest"); assert.equal(datasets["timeout-minutes"], 360); assert.equal(datasets.strategy["fail-fast"], false);
   assert.match(datasets.steps.find((step) => step.name === "Freeze model deadline").run, /330 \* 60/);

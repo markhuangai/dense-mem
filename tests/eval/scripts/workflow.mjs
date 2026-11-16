@@ -4,7 +4,7 @@ import { randomBytes } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
-import { requireRunner, configuration, resolveImportWorkers, registryMatrix, sha256, aggregate, ownedResource } from "../../../.github/scripts/evaluation-policy.mjs";
+import { requireRunner, configuration, resolveImportWorkers, requireEvaluationImportSupport, registryMatrix, sha256, aggregate, ownedResource } from "../../../.github/scripts/evaluation-policy.mjs";
 
 const label = "io.dense-mem.eval.run";
 const secret = () => randomBytes(32).toString("base64url");
@@ -79,6 +79,8 @@ async function setup(env) {
   const fixture = env.EVAL_MODE === "fixtures";
   const configured = fixture ? { model: "fixture", context: 300_000, verifier: "", embedding: "", importWorkers: resolveImportWorkers(env.DENSE_MEM_EVAL_IMPORT_WORKERS) } : configuration(env);
   if (!/^[0-9a-f]{40}$/.test(env.EVAL_SOURCE_REVISION || "") || !/^ghcr\.io\/markhuangai\/dense-mem(?::[A-Za-z0-9._-]+)?@sha256:[0-9a-f]{64}$/.test(env.EVAL_IMAGE || "")) throw new Error("Immutable runner source and image are required");
+  docker(["pull", "--quiet", env.EVAL_IMAGE]);
+  requireEvaluationImportSupport(JSON.parse(docker(["image", "inspect", env.EVAL_IMAGE]))[0]);
   fs.mkdirSync(paths.directory, { mode: 0o700 });
   const registryPath = fixture ? "tests/eval/fixtures/datasets.json" : "tests/eval/datasets.json";
   const registryBytes = fs.readFileSync(registryPath);
