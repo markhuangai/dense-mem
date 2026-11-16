@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -25,7 +26,7 @@ func TestCLIValidatesPinnedFixturesAndRejectsIncompleteSetup(t *testing.T) {
 	}
 	registryHash, err := evalharness.FileHash("tests/eval/fixtures/datasets.json")
 	require.NoError(t, err)
-	manifest := evalharness.Manifest{Version: 1, RunID: "123-hotpotqa", WorkflowRunID: "123", SourceRevision: strings.Repeat("a", 40), Image: "ghcr.io/markhuangai/dense-mem@sha256:" + strings.Repeat("b", 64), RegistryHash: registryHash, Dataset: "hotpotqa", Mode: "fixtures", Model: "dense-mem-testing", ContextWindowTokens: 500000, EmbeddingModel: "text-embedding-3-small", EmbeddingDimensions: 1536, ModelDeadline: time.Now().Add(time.Minute), DataDir: filepath.Join(root, "tests/eval/fixtures"), OutputDir: filepath.Join(t.TempDir(), "public")}
+	manifest := evalharness.Manifest{Version: 1, RunID: "123-hotpotqa", WorkflowRunID: "123", SourceRevision: strings.Repeat("a", 40), Image: "ghcr.io/markhuangai/dense-mem@sha256:" + strings.Repeat("b", 64), RegistryHash: registryHash, Dataset: "hotpotqa", Mode: "fixtures", Model: "dense-mem-testing", ContextWindowTokens: 500000, EmbeddingModel: "text-embedding-3-small", EmbeddingDimensions: 1536, ImportWorkers: 20, ModelDeadline: time.Now().Add(time.Minute), DataDir: filepath.Join(root, "tests/eval/fixtures"), OutputDir: filepath.Join(t.TempDir(), "public")}
 	path := filepath.Join(t.TempDir(), "manifest.json")
 	writeManifest := func() {
 		body, err := json.Marshal(manifest)
@@ -70,7 +71,7 @@ func TestRuntimeLogCollectorProtectsOutputAndExposesIncompleteCapture(t *testing
 		`{"level":"DEBUG","msg":"successful document detail"}` + "\n" +
 		`{"level":"WARN","msg":"provider retry secret-canary"}` + "\n" +
 		`{"level":"ERROR","msg":"provider terminal failure secret-canary"}` + "\n"
-	require.NoError(t, logReader(strings.NewReader(lines), capture, usage))
+	require.NoError(t, logReader(context.Background(), strings.NewReader(lines), capture, usage))
 	protected := runtimeCapturePayloads(t, output.Bytes())
 	require.NotContains(t, protected, "secret-canary")
 	require.NotContains(t, protected, "https://provider-canary.example")
@@ -79,7 +80,33 @@ func TestRuntimeLogCollectorProtectsOutputAndExposesIncompleteCapture(t *testing
 	require.Contains(t, protected, "provider terminal failure")
 	require.NotContains(t, protected, "successful document detail")
 	broken := `{"msg":"ai_exchange_payload","exchange_id":"exchange","direction":"request","payload_chunk":{"state":"captured","count":2,"index":0,"body":"partial","sha256":"hash"}}` + "\n"
-	require.ErrorContains(t, logReader(strings.NewReader(broken), capture, usage), "incomplete")
+	require.ErrorContains(t, logReader(context.Background(), strings.NewReader(broken), capture, usage), "incomplete")
+}
+
+type cancellingLogWriter struct {
+	bytes.Buffer
+	cancel context.CancelFunc
+}
+
+func (w *cancellingLogWriter) Write(data []byte) (int, error) {
+	n, err := w.Buffer.Write(data)
+	w.cancel()
+	return n, err
+}
+
+func TestRuntimeLogCollectorHonorsCancellationBetweenRecords(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	output := &cancellingLogWriter{cancel: cancel}
+	capture := &evalharness.Capture{Logger: slog.New(slog.NewJSONHandler(output, &slog.HandlerOptions{Level: slog.LevelDebug})), Protector: evalharness.NewRunnerCredentialProtector(), RunID: "cancelled"}
+	err := logReader(ctx, strings.NewReader("first failure\nsecond failure\n"), capture, map[string]evalharness.UsageTotals{})
+	require.ErrorIs(t, err, context.Canceled)
+	require.Contains(t, output.String(), "first failure")
+	require.NotContains(t, output.String(), "second failure")
+	reader, writer := io.Pipe()
+	defer reader.Close()
+	defer writer.Close()
+	require.ErrorIs(t, logReader(ctx, reader, capture, map[string]evalharness.UsageTotals{}), context.Canceled)
 }
 
 const runtimeLogKeyCanary = "provider-log-key-canary-1739"
@@ -147,7 +174,7 @@ func TestRuntimeLogCollectorReconstructsProtectedExchangesAndUsage(t *testing.T)
 	var output bytes.Buffer
 	capture := &evalharness.Capture{RunID: "collector", Logger: slog.New(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: slog.LevelDebug})), Protector: evalharness.NewRunnerCredentialProtector(runtimeLogKeyCanary, runtimeLogURLCanary)}
 	usage := map[string]evalharness.UsageTotals{}
-	require.NoError(t, logReader(strings.NewReader(logs), capture, usage))
+	require.NoError(t, logReader(context.Background(), strings.NewReader(logs), capture, usage))
 	require.Len(t, usage, 5)
 	require.EqualValues(t, 1, usage["intake_partition"].Available)
 	require.EqualValues(t, 5, usage["intake_partition"].Total)
@@ -201,7 +228,7 @@ func TestRuntimeLogCollectorRejectsCorruptionAndIncompleteExchanges(t *testing.T
 			body, err := json.Marshal(first)
 			require.NoError(t, err)
 			broken := append([]string{string(body)}, lines[1:]...)
-			require.Error(t, logReader(strings.NewReader(strings.Join(broken, "\n")), nil, map[string]evalharness.UsageTotals{}))
+			require.Error(t, logReader(context.Background(), strings.NewReader(strings.Join(broken, "\n")), nil, map[string]evalharness.UsageTotals{}))
 		})
 	}
 	for _, item := range []struct {
@@ -214,7 +241,7 @@ func TestRuntimeLogCollectorRejectsCorruptionAndIncompleteExchanges(t *testing.T
 		{"unbounded line", []string{strings.Repeat("x", (1<<20)+1)}},
 	} {
 		t.Run(item.name, func(t *testing.T) {
-			require.Error(t, logReader(strings.NewReader(strings.Join(item.logs, "\n")), nil, map[string]evalharness.UsageTotals{}))
+			require.Error(t, logReader(context.Background(), strings.NewReader(strings.Join(item.logs, "\n")), nil, map[string]evalharness.UsageTotals{}))
 		})
 	}
 }

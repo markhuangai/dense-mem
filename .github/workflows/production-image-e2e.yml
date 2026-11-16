@@ -44,6 +44,10 @@ on:
         type: choice
         default: none
         options: [none, fixtures, live]
+      import_workers:
+        description: Concurrent corpus imports per dataset, 1-100; blank uses 20
+        type: string
+        default: ''
 
 permissions:
   actions: read
@@ -349,6 +353,7 @@ jobs:
       source_repository: ${{ needs.authorize.outputs.source_repository }}
       source_revision: ${{ needs.authorize.outputs.source_revision }}
       mode: ${{ inputs.evaluation }}
+      import_workers: ${{ inputs.import_workers }}
       model: dense-mem-testing
       context_window_tokens: '500000'
     secrets:

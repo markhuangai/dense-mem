@@ -37,6 +37,13 @@ receipt and full production E2E. Its `evaluation=none` default
 runs ordinary production E2E. The manual image route has no PR or preview-receipt
 requirement.
 
+Set the optional `import_workers` workflow input to control concurrent corpus
+imports per dataset, for example `-f import_workers=20`. Blank uses the workflow
+default of 20; explicit values must be integers from 1 through 100. Both manual
+entrypoints use this input. The effective count is recorded in the execution
+manifest and numeric report; dataset reports with different counts cannot be
+combined.
+
 The registry generates the matrix. `live` uses all five complete published packs
 in [datasets.json](datasets.json), locked to HippoRAG_2 revision
 `5ec05b38deecc3318bb432c69865959c56058990`: 45,895 corpus rows and 5,000 questions.
@@ -53,8 +60,11 @@ zero-based position as `dataset:row:N`, while integer indices retain `dataset:N`
 Native reads verify the authenticated owner, shared space, generation, search
 contract and canonical fingerprint.
 After the first condition, ontology must converge, pause and drain. The second
-condition uses unchanged Evidence and provenance. Import, ontology global/team,
-and answer concurrency are four; embedding concurrency is two.
+condition uses unchanged Evidence and provenance. Ontology global/team and
+answer concurrency are four; embedding concurrency is two. Import concurrency
+uses `import_workers`, and the server generation limit is raised to match it
+(with a minimum of four for the other phases). The default five-dataset live run
+can issue up to 100 generation requests concurrently.
 The isolated instance pins its MCP request limit to 200000 per minute, above
 the complete pack's bounded call count, so the shared production default cannot
 throttle the campaign.
@@ -102,6 +112,8 @@ collection retains WARN/ERROR output and unstructured failure text, while parsin
 all provider records for usage and completeness without reprinting bulk DEBUG/INFO
 logs. Mapping verification produces one count summary; canonical preservation
 still uses the verified fingerprint.
+Runtime log parsing checks the shutdown deadline between records. Interrupted
+collection fails explicitly and leaves report capture marked incomplete.
 Import uses documents; each question condition uses answers
 (1,000 questions × two policies = 2,000 answers). Retries do not increment these
 counts, and failed items are separate from remaining items. For example:

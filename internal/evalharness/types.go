@@ -2,7 +2,7 @@ package evalharness
 
 import "time"
 
-const DefaultImportConcurrency = 4
+const maxImportWorkers = 100
 
 type CorpusItem struct {
 	SourceDocID   string         `json:"source_doc_id"`
@@ -61,6 +61,7 @@ type Manifest struct {
 	EmbeddingModel      string    `json:"embedding_model"`
 	EmbeddingDimensions int       `json:"embedding_dimensions"`
 	ContextWindowTokens int       `json:"context_window_tokens"`
+	ImportWorkers       int       `json:"import_workers"`
 	ModelDeadline       time.Time `json:"model_deadline"`
 	DataDir             string    `json:"data_dir"`
 	OutputDir           string    `json:"output_dir"`

@@ -111,7 +111,7 @@ func TestRunnerStartupFailureStillDrainsAndCapturesCompleteDenominators(t *testi
 			collected = true
 			return errors.New("capture unavailable " + key)
 		}}
-	manifest := Manifest{RunID: capture.RunID, OutputDir: t.TempDir(), ModelDeadline: time.Now().Add(time.Minute)}
+	manifest := Manifest{RunID: capture.RunID, ImportWorkers: 20, OutputDir: t.TempDir(), ModelDeadline: time.Now().Add(time.Minute)}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	report, err := Run(ctx, manifest, []CorpusItem{{SourceDocID: "source", Content: "Public text."}}, []Question{{ID: "question", Query: "Public question?"}}, client, nil, native)
@@ -120,7 +120,7 @@ func TestRunnerStartupFailureStillDrainsAndCapturesCompleteDenominators(t *testi
 	require.True(t, collected)
 	require.EqualValues(t, 1, pauses.Load())
 	require.False(t, report.Complete)
-	require.True(t, report.CaptureComplete)
+	require.False(t, report.CaptureComplete)
 	require.Equal(t, 4, report.ExpectedAnswers)
 	require.Zero(t, report.CompletedAnswers)
 	require.Equal(t, "startup incomplete", report.Failure)

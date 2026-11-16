@@ -216,8 +216,14 @@ func TestImporterRetriesOnlyOneVerifiedTerminalFailureAndPreservesInput(t *testi
 }
 
 func TestConcurrentImporterReportsMonotonicDocumentProgress(t *testing.T) {
-	items := []CorpusItem{{SourceDocID: "first", Content: "First."}, {SourceDocID: "second", Content: "Second."}, {SourceDocID: "third", Content: "Third."}, {SourceDocID: "last", Content: "Last."}}
-	lastStarted := make(chan struct{})
+	const workers = 20
+	items := make([]CorpusItem, workers+1)
+	for i := range items {
+		items[i] = CorpusItem{SourceDocID: uuid.NewString(), Content: "Exact public text."}
+	}
+	started := make(chan struct{}, len(items))
+	release := make(chan struct{})
+	var active, peak atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var rpc struct {
 			Method string
@@ -233,15 +239,15 @@ func TestConcurrentImporterReportsMonotonicDocumentProgress(t *testing.T) {
 			return
 		}
 		evidence := rpc.Params.Arguments["evidence"].([]any)[0].(map[string]any)
-		source := evidence["metadata"].(map[string]any)["source_doc_id"]
-		if source == "first" {
-			select {
-			case <-lastStarted:
-			case <-r.Context().Done():
-				return
-			}
-		} else if source == "last" {
-			close(lastStarted)
+		current := active.Add(1)
+		defer active.Add(-1)
+		for previous := peak.Load(); current > previous && !peak.CompareAndSwap(previous, current); previous = peak.Load() {
+		}
+		started <- struct{}{}
+		select {
+		case <-release:
+		case <-r.Context().Done():
+			return
 		}
 		content := evidence["content"].(string)
 		out := map[string]any{"processing_state": "completed", "submission_id": uuid.NewString(), "evidence": []any{map[string]any{
@@ -251,10 +257,32 @@ func TestConcurrentImporterReportsMonotonicDocumentProgress(t *testing.T) {
 		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"result": map[string]any{"structuredContent": out}}))
 	}))
 	defer server.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	var logs bytes.Buffer
 	client := &HTTPClient{BaseURL: server.URL, APIKey: "synthetic", Client: server.Client(), Capture: captureFixture(&logs)}
-	mapping, err := client.ImportCorpusWithConcurrency(context.Background(), items, 4)
+	var mapping KnowledgeMapping
+	done := make(chan error, 1)
+	go func() {
+		var err error
+		mapping, err = client.ImportCorpusWithConcurrency(ctx, items, workers)
+		done <- err
+	}()
+	for range workers {
+		select {
+		case <-started:
+		case err := <-done:
+			require.NoError(t, err)
+			t.Fatal("import returned before all workers reached the server")
+		case <-ctx.Done():
+			t.Fatal("configured workers did not reach the server concurrently")
+		}
+	}
+	require.EqualValues(t, workers, active.Load())
+	close(release)
+	err := <-done
 	require.NoError(t, err)
+	require.EqualValues(t, workers, peak.Load())
 	require.Len(t, mapping.BySourceDocID, len(items))
 	progress := capturedProgress(t, logs.Bytes())
 	require.Equal(t, []captureProgress{

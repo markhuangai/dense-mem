@@ -39,6 +39,9 @@ func ReadManifest(path string) (Manifest, error) {
 	if !modelPattern.MatchString(manifest.Model) || strings.Contains(manifest.Model, "://") || manifest.EmbeddingModel != "text-embedding-3-small" || manifest.EmbeddingDimensions != 1536 || manifest.ContextWindowTokens < 16384 {
 		return manifest, errors.New("explicit verified model and context settings are required")
 	}
+	if err := validateImportWorkers(manifest.ImportWorkers); err != nil {
+		return manifest, err
+	}
 	if manifest.DataDir == "" || manifest.OutputDir == "" || len(manifest.RegistryHash) != 64 {
 		return manifest, errors.New("manifest data and output identity missing")
 	}
@@ -46,4 +49,11 @@ func ReadManifest(path string) (Manifest, error) {
 		return manifest, errors.New("model deadline is missing or exceeds 330 minutes")
 	}
 	return manifest, nil
+}
+
+func validateImportWorkers(workers int) error {
+	if workers < 1 || workers > maxImportWorkers {
+		return errors.New("import workers must be between 1 and 100")
+	}
+	return nil
 }

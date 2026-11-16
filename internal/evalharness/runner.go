@@ -35,6 +35,7 @@ func Run(ctx context.Context, manifest Manifest, corpus []CorpusItem, questions 
 	}
 	stage := "startup"
 	defer func() {
+		logsComplete := true
 		shutdown, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
 		defer cancel()
 		if err := native.Pause(shutdown); err != nil {
@@ -42,6 +43,7 @@ func Run(ctx context.Context, manifest Manifest, corpus []CorpusItem, questions 
 		}
 		if native.RuntimeLogs != nil {
 			if err := native.RuntimeLogs(shutdown); err != nil {
+				logsComplete = false
 				runErr = errors.Join(runErr, err)
 			}
 		}
@@ -56,7 +58,7 @@ func Run(ctx context.Context, manifest Manifest, corpus []CorpusItem, questions 
 			runErr = errors.Join(runErr, err)
 			report.Failure = "log capture incomplete"
 		} else {
-			report.CaptureComplete = true
+			report.CaptureComplete = logsComplete
 		}
 		if err := FinalizeReport(&report); err != nil {
 			runErr = errors.Join(runErr, err)
@@ -78,7 +80,7 @@ func Run(ctx context.Context, manifest Manifest, corpus []CorpusItem, questions 
 		return report, errors.New("runner instance must be fresh with ontology disabled and paused")
 	}
 	stage = "import"
-	mapping, err := client.ImportCorpusWithConcurrency(work, corpus, DefaultImportConcurrency)
+	mapping, err := client.ImportCorpusWithConcurrency(work, corpus, manifest.ImportWorkers)
 	report.ImportedRows = len(mapping.BySourceDocID)
 	if err != nil {
 		return report, err

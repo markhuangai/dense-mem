@@ -4,7 +4,7 @@ import { randomBytes } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
-import { requireRunner, configuration, registryMatrix, sha256, aggregate, ownedResource } from "../../../.github/scripts/evaluation-policy.mjs";
+import { requireRunner, configuration, resolveImportWorkers, registryMatrix, sha256, aggregate, ownedResource } from "../../../.github/scripts/evaluation-policy.mjs";
 
 const label = "io.dense-mem.eval.run";
 const secret = () => randomBytes(32).toString("base64url");
@@ -43,7 +43,7 @@ export function serverEnvironment(configured, environment) {
     POSTGRES_USER: "densemem", POSTGRES_DB: "densemem", POSTGRES_PASSWORD: environment.EVAL_DATABASE_PASSWORD, POSTGRES_HOST: "postgres", POSTGRES_PORT: "5432", POSTGRES_SSLMODE: "disable", POSTGRES_MAX_OPEN_CONNS: "25", POSTGRES_MAX_IDLE_CONNS: "10",
     RATE_LIMIT_PER_MINUTE: "200000",
     AI_API_URL: configured.embedding, AI_API_KEY: environment.DENSE_MEM_EVAL_EMBED_API_KEY, AI_API_EMBEDDING_MODEL: "text-embedding-3-small", AI_API_EMBEDDING_DIMENSIONS: "1536", AI_API_EMBEDDING_MAX_CONCURRENCY: "2", AI_API_EMBEDDING_MAX_BATCH_ITEMS: "100",
-    AI_VERIFIER_API_URL: configured.verifier, AI_VERIFIER_API_KEY: environment.DENSE_MEM_EVAL_API_KEY, AI_VERIFIER_MODEL: configured.model, AI_REMEMBER_MODEL: configured.model, AI_VERIFIER_DISABLE_TEMPERATURE: "true", AI_VERIFIER_MAX_CONCURRENCY: "4", AI_VERIFIER_MAX_INPUT_TOKENS: String(configured.context - 8192), AI_VERIFIER_MAX_OUTPUT_TOKENS: "8192", AI_VERIFIER_MAX_CANDIDATE_CONTEXT_TOKENS: String(Math.min(50000, Math.floor((configured.context - 8192) / 2))), AI_VERIFIER_TIMEOUT_SECONDS: "300",
+    AI_VERIFIER_API_URL: configured.verifier, AI_VERIFIER_API_KEY: environment.DENSE_MEM_EVAL_API_KEY, AI_VERIFIER_MODEL: configured.model, AI_REMEMBER_MODEL: configured.model, AI_VERIFIER_DISABLE_TEMPERATURE: "true", AI_VERIFIER_MAX_CONCURRENCY: String(Math.max(4, configured.importWorkers)), AI_VERIFIER_MAX_INPUT_TOKENS: String(configured.context - 8192), AI_VERIFIER_MAX_OUTPUT_TOKENS: "8192", AI_VERIFIER_MAX_CANDIDATE_CONTEXT_TOKENS: String(Math.min(50000, Math.floor((configured.context - 8192) / 2))), AI_VERIFIER_TIMEOUT_SECONDS: "300",
     REDIS_ADDR: "", DISTRIBUTED_COORDINATION_REQUIRED: "false", TELEMETRY_ENABLED: "false", OTLP_ENABLED: "false",
   };
 }
@@ -77,7 +77,7 @@ function port(container, internal) {
 async function setup(env) {
   const paths = location(env);
   const fixture = env.EVAL_MODE === "fixtures";
-  const configured = fixture ? { model: "fixture", context: 300_000, verifier: "", embedding: "" } : configuration(env);
+  const configured = fixture ? { model: "fixture", context: 300_000, verifier: "", embedding: "", importWorkers: resolveImportWorkers(env.DENSE_MEM_EVAL_IMPORT_WORKERS) } : configuration(env);
   if (!/^[0-9a-f]{40}$/.test(env.EVAL_SOURCE_REVISION || "") || !/^ghcr\.io\/markhuangai\/dense-mem(?::[A-Za-z0-9._-]+)?@sha256:[0-9a-f]{64}$/.test(env.EVAL_IMAGE || "")) throw new Error("Immutable runner source and image are required");
   fs.mkdirSync(paths.directory, { mode: 0o700 });
   const registryPath = fixture ? "tests/eval/fixtures/datasets.json" : "tests/eval/datasets.json";
@@ -91,7 +91,7 @@ async function setup(env) {
   fs.mkdirSync(outputDir, { mode: 0o700 });
   const deadline = new Date(Number(env.EVAL_MODEL_DEADLINE_EPOCH) * 1000);
   if (!Number.isFinite(deadline.getTime()) || deadline <= new Date() || deadline > Date.now() + 330 * 60_000) throw new Error("Runner model deadline is invalid");
-  const manifest = { version: 1, run_id: paths.runID, workflow_run_id: env.GITHUB_RUN_ID, source_revision: env.EVAL_SOURCE_REVISION, image: env.EVAL_IMAGE, registry_sha256: sha256(registryBytes), dataset: paths.dataset, mode: fixture ? "fixtures" : "live", model: configured.model, embedding_model: "text-embedding-3-small", embedding_dimensions: 1536, context_window_tokens: configured.context, model_deadline: deadline.toISOString(), data_dir: dataDir, output_dir: outputDir };
+  const manifest = { version: 1, run_id: paths.runID, workflow_run_id: env.GITHUB_RUN_ID, source_revision: env.EVAL_SOURCE_REVISION, image: env.EVAL_IMAGE, registry_sha256: sha256(registryBytes), dataset: paths.dataset, mode: fixture ? "fixtures" : "live", model: configured.model, embedding_model: "text-embedding-3-small", embedding_dimensions: 1536, context_window_tokens: configured.context, import_workers: configured.importWorkers, model_deadline: deadline.toISOString(), data_dir: dataDir, output_dir: outputDir };
   save(paths.manifestFile, manifest);
   const prefix = `densemem-eval-${paths.runID}`;
   const state = { runID: paths.runID, source: env.EVAL_SOURCE_REVISION, image: env.EVAL_IMAGE, network: `${prefix}-network`, volume: `${prefix}-postgres`, containers: [`${prefix}-server`, `${prefix}-postgres`, ...(fixture ? [`${prefix}-provider`] : [])], environment: {} };

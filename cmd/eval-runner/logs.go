@@ -41,7 +41,7 @@ func runtimeLogs(ctx context.Context, runID string, capture *evalharness.Capture
 	if _, err = file.Seek(0, io.SeekStart); err != nil {
 		return err
 	}
-	if err := logReader(file, capture, usage); err != nil {
+	if err := logReader(ctx, file, capture, usage); err != nil {
 		return err
 	}
 	if len(usage) == 0 {
@@ -56,10 +56,10 @@ func logFile(ctx context.Context, path string, capture *evalharness.Capture) err
 		return err
 	}
 	defer file.Close()
-	return logReader(file, capture, map[string]evalharness.UsageTotals{})
+	return logReader(ctx, file, capture, map[string]evalharness.UsageTotals{})
 }
 
-func logReader(reader io.Reader, capture *evalharness.Capture, usage map[string]evalharness.UsageTotals) error {
+func logReader(ctx context.Context, reader io.Reader, capture *evalharness.Capture, usage map[string]evalharness.UsageTotals) error {
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 64<<10), 1<<20)
 	type captured struct {
@@ -81,7 +81,13 @@ func logReader(reader io.Reader, capture *evalharness.Capture, usage map[string]
 	}
 	exchanges := map[string]*exchange{}
 	finished := map[string]bool{}
-	for scanner.Scan() {
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if !scanner.Scan() {
+			break
+		}
 		line := scanner.Text()
 		var record struct {
 			Level          string                             `json:"level"`
@@ -203,6 +209,9 @@ func logReader(reader io.Reader, capture *evalharness.Capture, usage map[string]
 	}
 	if err := scanner.Err(); err != nil {
 		return errors.New("runtime log line exceeded capture bounds or read failed")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	for _, group := range groups {
 		if len(group.Seen) != group.Count {

@@ -70,6 +70,7 @@ type Reproducibility struct {
 	EmbeddingModel      string `json:"embedding_model"`
 	EmbeddingDimensions int    `json:"embedding_dimensions"`
 	ContextWindowTokens int    `json:"context_window_tokens"`
+	ImportWorkers       int    `json:"import_workers"`
 	CanonicalHash       string `json:"canonical_sha256"`
 	ScoringPolicy       string `json:"scoring_policy"`
 }
@@ -279,7 +280,7 @@ func ScoreObservation(question Question, observation Observation, corpus map[str
 }
 
 func NewReport(manifest Manifest, corpusCount, questionCount int) Report {
-	return Report{Identity: Reproducibility{Version: 1, RunID: manifest.RunID, WorkflowRunID: manifest.WorkflowRunID, SourceRevision: manifest.SourceRevision, Image: manifest.Image, RegistryHash: manifest.RegistryHash, Dataset: manifest.Dataset, Model: manifest.Model, EmbeddingModel: manifest.EmbeddingModel, EmbeddingDimensions: manifest.EmbeddingDimensions, ContextWindowTokens: manifest.ContextWindowTokens, ScoringPolicy: "public-rag-em-f1-canonical-sources-v1"}, ExpectedAnswers: questionCount * 4, CorpusRows: corpusCount, Scores: []CaseScore{}, NativeMeasurements: []NativeObservation{}, Limitations: []string{"Complete published curated packs; original upstream datasets are larger.", "Pinned dataset README supplies no clear common license; upstream attribution and licensing remain dataset-specific.", "Reported token totals include only available measurements; unavailable and partial measurements remain explicit.", "Actual gateway billing is unavailable; no monetary cost is inferred.", "Retrieval uses original canonical source IDs at the first 1/5/10 Evidence slots; partitions and equivalent IDs add no extra source credit."}}
+	return Report{Identity: Reproducibility{Version: 1, RunID: manifest.RunID, WorkflowRunID: manifest.WorkflowRunID, SourceRevision: manifest.SourceRevision, Image: manifest.Image, RegistryHash: manifest.RegistryHash, Dataset: manifest.Dataset, Model: manifest.Model, EmbeddingModel: manifest.EmbeddingModel, EmbeddingDimensions: manifest.EmbeddingDimensions, ContextWindowTokens: manifest.ContextWindowTokens, ImportWorkers: manifest.ImportWorkers, ScoringPolicy: "public-rag-em-f1-canonical-sources-v1"}, ExpectedAnswers: questionCount * 4, CorpusRows: corpusCount, Scores: []CaseScore{}, NativeMeasurements: []NativeObservation{}, Limitations: []string{"Complete published curated packs; original upstream datasets are larger.", "Pinned dataset README supplies no clear common license; upstream attribution and licensing remain dataset-specific.", "Reported token totals include only available measurements; unavailable and partial measurements remain explicit.", "Actual gateway billing is unavailable; no monetary cost is inferred.", "Retrieval uses original canonical source IDs at the first 1/5/10 Evidence slots; partitions and equivalent IDs add no extra source credit."}}
 }
 
 func FinalizeReport(report *Report) error {

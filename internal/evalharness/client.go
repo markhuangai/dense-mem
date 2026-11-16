@@ -196,8 +196,8 @@ func (c *HTTPClient) ImportCorpus(ctx context.Context, items []CorpusItem) (Know
 
 func (c *HTTPClient) ImportCorpusWithConcurrency(ctx context.Context, items []CorpusItem, concurrency int) (KnowledgeMapping, error) {
 	mapping := newKnowledgeMapping()
-	if concurrency < 1 || concurrency > 10 {
-		return mapping, errors.New("invalid import concurrency")
+	if err := validateImportWorkers(concurrency); err != nil {
+		return mapping, err
 	}
 	initialProgress := captureProgress{Stage: "import", Unit: "documents", Total: len(items)}
 	if err := c.Capture.emitProgress(initialProgress); err != nil {

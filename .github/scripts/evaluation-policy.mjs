@@ -41,7 +41,12 @@ export function resolveSetting(name, candidates, validate) {
   return value;
 }
 
+export function resolveImportWorkers(value) {
+  return Number(resolveSetting("DENSE_MEM_EVAL_IMPORT_WORKERS", [value], (v) => /^[1-9][0-9]*$/.test(v) && Number(v) <= 100));
+}
+
 export function configuration(env) {
+  const importWorkers = resolveImportWorkers(env.DENSE_MEM_EVAL_IMPORT_WORKERS);
   const model = resolveSetting("DENSE_MEM_EVAL_MODEL", [env.DENSE_MEM_EVAL_MODEL], (v) => /^[A-Za-z0-9@][A-Za-z0-9_./:-]{0,127}$/.test(v) && !v.includes("://"));
   const context = resolveSetting("DENSE_MEM_EVAL_CONTEXT_WINDOW_TOKENS", [env.DENSE_MEM_EVAL_CONTEXT_WINDOW_TOKENS], (v) => /^[1-9][0-9]*$/.test(v) && Number.isSafeInteger(Number(v)) && Number(v) >= 16384);
   const httpsURL = (v) => { try { const url = new URL(v); return url.protocol === "https:" && !url.username && !url.password && !url.search && !url.hash; } catch { return false; } };
@@ -49,7 +54,7 @@ export function configuration(env) {
   const embedding = resolveSetting("DENSE_MEM_EVAL_EMBED_URL", [env.DENSE_MEM_EVAL_EMBED_URL], (v) => httpsURL(v) && /^https:\/\/api\.openai\.com\/v1\/?$/.test(v));
   for (const key of ["DENSE_MEM_EVAL_API_KEY", "DENSE_MEM_EVAL_EMBED_API_KEY"]) resolveSetting(key, [env[key]], (v) => v.length > 0 && !/[\r\n]/.test(v));
   if (env.WORKFLOW_EMBEDDING_MODEL !== "text-embedding-3-small" || env.WORKFLOW_EMBEDDING_DIMENSIONS !== "1536") throw new Error("Workflow embedding pins are invalid");
-  return { model, context: Number(context), verifier, embedding };
+  return { model, context: Number(context), verifier, embedding, importWorkers };
 }
 
 export const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
@@ -76,7 +81,7 @@ export function aggregate(registry, reports) {
     if (report.expected_answers !== dataset.questions.rows * 4 || report.corpus_rows !== dataset.corpus.rows) throw new Error("Report denominator differs from source registry");
     return { dataset: dataset.id, expected: report.expected_answers, completed: report.completed_answers, complete: report.complete === true && report.capture_complete === true, matrix: report.comparison_matrix, ontology_delta: report.ontology_delta, identity: report.identity, failure: report.failure || "" };
   });
-  const identities = new Set(rows.filter((row) => row.identity).map((row) => JSON.stringify([row.identity.source_revision, row.identity.image, row.identity.registry_sha256, row.identity.model, row.identity.embedding_model, row.identity.embedding_dimensions, row.identity.context_window_tokens, row.identity.workflow_run_id])));
+  const identities = new Set(rows.filter((row) => row.identity).map((row) => JSON.stringify([row.identity.source_revision, row.identity.image, row.identity.registry_sha256, row.identity.model, row.identity.embedding_model, row.identity.embedding_dimensions, row.identity.context_window_tokens, row.identity.import_workers, row.identity.workflow_run_id])));
   if (identities.size > 1) throw new Error("Dataset jobs used different campaign identities");
   return { complete: rows.every((row) => row.complete), expected_answers: expected, completed_answers: rows.reduce((sum, row) => sum + row.completed, 0), datasets: rows };
 }

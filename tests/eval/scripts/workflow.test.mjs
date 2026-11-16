@@ -3,12 +3,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { resolveSetting, configuration, requireRunner, registryMatrix, aggregate, ownedResource, manualEvaluationRequest, resolveEvaluationImage } from "../../../.github/scripts/evaluation-policy.mjs";
+import { resolveSetting, resolveImportWorkers, configuration, requireRunner, registryMatrix, aggregate, ownedResource, manualEvaluationRequest, resolveEvaluationImage } from "../../../.github/scripts/evaluation-policy.mjs";
 import { readWorkflow, workflowJob, runStep } from "../../uat/workflow_helpers.mjs";
 import { serverEnvironment, main } from "./workflow.mjs";
 
 const registry = JSON.parse(fs.readFileSync(new URL("../datasets.json", import.meta.url)));
-const valid = { DENSE_MEM_EVAL_MODEL: "configured-model", DENSE_MEM_EVAL_CONTEXT_WINDOW_TOKENS: "300000", DENSE_MEM_EVAL_VERIFIER_URL: "https://provider.example/v1", DENSE_MEM_EVAL_EMBED_URL: "https://api.openai.com/v1", DENSE_MEM_EVAL_API_KEY: "generation-canary", DENSE_MEM_EVAL_EMBED_API_KEY: "embedding-canary", WORKFLOW_EMBEDDING_MODEL: "text-embedding-3-small", WORKFLOW_EMBEDDING_DIMENSIONS: "1536" };
+const valid = { DENSE_MEM_EVAL_MODEL: "configured-model", DENSE_MEM_EVAL_CONTEXT_WINDOW_TOKENS: "300000", DENSE_MEM_EVAL_IMPORT_WORKERS: "20", DENSE_MEM_EVAL_VERIFIER_URL: "https://provider.example/v1", DENSE_MEM_EVAL_EMBED_URL: "https://api.openai.com/v1", DENSE_MEM_EVAL_API_KEY: "generation-canary", DENSE_MEM_EVAL_EMBED_API_KEY: "embedding-canary", WORKFLOW_EMBEDDING_MODEL: "text-embedding-3-small", WORKFLOW_EMBEDDING_DIMENSIONS: "1536" };
 
 const repository = "markhuangai/dense-mem";
 const taggedImage = `ghcr.io/${repository}:candidate`;
@@ -104,11 +104,11 @@ test("manual authorization executes both modes without PR or historical-run look
   }
 });
 
-test("isolated server admits the complete bounded campaign without changing concurrency or private routing", () => {
+test("isolated server admits configured import workers while preserving other limits and private routing", () => {
   const environment = serverEnvironment(configuration(valid), { EVAL_CONTROL_TOKEN: "control-canary", EVAL_DATABASE_PASSWORD: "database-canary", ...valid });
   const maximumCalls = Math.max(...registry.datasets.map((dataset) => dataset.corpus.rows * 2 + dataset.questions.rows * 2 * 8 + 1));
   assert.ok(Number(environment.RATE_LIMIT_PER_MINUTE) >= maximumCalls);
-  assert.equal(environment.AI_VERIFIER_MAX_CONCURRENCY, "4");
+  assert.equal(environment.AI_VERIFIER_MAX_CONCURRENCY, "20");
   assert.equal(environment.AI_API_URL, "https://api.openai.com/v1");
   assert.equal(environment.AI_API_EMBEDDING_MODEL, "text-embedding-3-small");
   assert.equal(environment.AI_API_EMBEDDING_DIMENSIONS, "1536");
@@ -117,11 +117,30 @@ test("isolated server admits the complete bounded campaign without changing conc
   assert.equal(environment.AI_API_KEY, valid.DENSE_MEM_EVAL_EMBED_API_KEY);
   assert.equal(environment.CONTROL_PORTAL_TOKEN, "control-canary");
   assert.equal(environment.POSTGRES_PASSWORD, "database-canary");
-  const fixture = serverEnvironment({ model: "fixture", context: 300000, verifier: "http://fixture-provider:8787/v1", embedding: "http://fixture-provider:8787/v1" }, {});
+  const fixture = serverEnvironment({ model: "fixture", context: 300000, importWorkers: 20, verifier: "http://fixture-provider:8787/v1", embedding: "http://fixture-provider:8787/v1" }, {});
   assert.equal(fixture.AI_VERIFIER_API_URL, "http://fixture-provider:8787/v1");
   assert.equal(fixture.AI_API_URL, "http://fixture-provider:8787/v1");
   assert.equal(fixture.AI_API_EMBEDDING_MODEL, "text-embedding-3-small");
   assert.equal(fixture.AI_API_EMBEDDING_DIMENSIONS, "1536");
+});
+
+test("import worker settings are explicit, bounded and shared with the server generation limit", () => {
+  for (const workers of [1, 4, 20, 100]) {
+    assert.equal(resolveImportWorkers(String(workers)), workers);
+    const configured = configuration({ ...valid, DENSE_MEM_EVAL_IMPORT_WORKERS: String(workers) });
+    assert.equal(configured.importWorkers, workers);
+    assert.equal(serverEnvironment(configured, {}).AI_VERIFIER_MAX_CONCURRENCY, String(Math.max(4, workers)));
+  }
+  for (const value of [undefined, "", "0", "-1", "101", "1.5", "20.0", " 20", "20\n", "invalid-canary"]) {
+    assert.throws(() => resolveImportWorkers(value), (error) => /DENSE_MEM_EVAL_IMPORT_WORKERS/.test(error.message) && !error.message.includes("invalid-canary"));
+  }
+});
+
+test("aggregation refuses dataset reports with different import worker counts", () => {
+  const reports = registry.datasets.map((dataset) => ({ identity: { dataset: dataset.id, import_workers: 20 }, expected_answers: dataset.questions.rows * 4, corpus_rows: dataset.corpus.rows, completed_answers: 0 }));
+  assert.doesNotThrow(() => aggregate(registry, reports));
+  reports[1].identity.import_workers = 4;
+  assert.throws(() => aggregate(registry, reports), /different campaign identities/);
 });
 
 test("evaluation accepts only the pinned OpenAI embedding endpoint, model and dimensions", () => {
@@ -185,6 +204,12 @@ test("runner workflow reserves shutdown time, retains numeric artifacts and aggr
   const datasets = workflowJob(workflow, "datasets");
   assert.equal(datasets.env.WORKFLOW_EMBEDDING_MODEL, "text-embedding-3-small");
   assert.equal(datasets.env.WORKFLOW_EMBEDDING_DIMENSIONS, "1536");
+  assert.equal(datasets.env.DENSE_MEM_EVAL_IMPORT_WORKERS, "${{ inputs.import_workers || '20' }}");
+  for (const entrypoint of ["run-evaluation.yml", "production-image-e2e.yml"]) {
+    const caller = await readWorkflow(entrypoint);
+    assert.equal(caller.on.workflow_dispatch.inputs.import_workers.type, "string");
+    assert.equal(workflowJob(caller, "evaluation").with.import_workers, "${{ inputs.import_workers }}");
+  }
   assert.equal(datasets["runs-on"], "ubuntu-latest"); assert.equal(datasets["timeout-minutes"], 360); assert.equal(datasets.strategy["fail-fast"], false);
   assert.match(datasets.steps.find((step) => step.name === "Freeze model deadline").run, /330 \* 60/);
   assert.ok(datasets.steps.filter((step) => step.uses?.startsWith("actions/upload-artifact@")).every((step) => step.with["retention-days"] === 2));
