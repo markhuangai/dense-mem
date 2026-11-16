@@ -17,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 	accesspostgres "github.com/markhuangai/dense-mem/internal/access/postgres"
 	"github.com/markhuangai/dense-mem/internal/crypto"
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -135,11 +136,13 @@ func TestRunnerSeedLogicalRestoreMigrationAndCredentialIdentity(t *testing.T) {
 	runPostgres(append(append([]string{}, command...), "--data-only", "--schema=public", "--table=memory_spaces", "/tmp/seed.dump")...)
 	runPostgres(append(append([]string{}, command...), "--section=data", "--section=post-data", "--use-list=/tmp/seed-restore.list", "/tmp/seed.dump")...)
 	config.Database = target
-	restored, err := gorm.Open(gormpostgres.Open(config.ConnString()), &gorm.Config{})
-	require.NoError(t, err)
-	restoredDB, err := restored.DB()
-	require.NoError(t, err)
+	restoredDB := stdlib.OpenDB(*config)
 	t.Cleanup(func() { require.NoError(t, restoredDB.Close()) })
+	restored, err := gorm.Open(gormpostgres.New(gormpostgres.Config{Conn: restoredDB}), &gorm.Config{})
+	require.NoError(t, err)
+	var restoredDatabase string
+	require.NoError(t, restoredDB.QueryRowContext(ctx, "SELECT current_database()").Scan(&restoredDatabase))
+	require.Equal(t, target, restoredDatabase)
 	require.NoError(t, restoredDB.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM goose_db_version WHERE version_id=$1 AND is_applied)", newest).Scan(&applied))
 	require.False(t, applied, "the restored seed must require the supported startup migration")
 	require.NoError(t, storagepostgres.NewMigratorWithDB(restoredDB).RunUp(ctx))
