@@ -23,9 +23,6 @@ func bootstrapCredential(ctx context.Context, manifest evalharness.Manifest) err
 	if manifest.Dataset != "bootstrap" || os.Getenv("EVAL_API_KEY") == "" {
 		return errors.New("bootstrap requires its owned empty runtime and a configured team key")
 	}
-	if err := verifyRuntime(ctx, manifest); err != nil {
-		return err
-	}
 	team, err := uuid.Parse(os.Getenv("EVAL_TEAM_ID"))
 	if err != nil || team == uuid.Nil {
 		return errors.New("invalid bootstrap team")

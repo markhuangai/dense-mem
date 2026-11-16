@@ -4,14 +4,17 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net/url"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	accesspostgres "github.com/markhuangai/dense-mem/internal/access/postgres"
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/evalharness"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres/testfixture"
 	"github.com/stretchr/testify/require"
@@ -54,10 +57,29 @@ func TestBootstrapSeedIdentityAndCredentialRejection(t *testing.T) {
 	rls := storagepostgres.NewRLS()
 	require.NoError(t, accesspostgres.NewTeamRepository(db, rls).Create(ctx, &domain.Team{ID: team, Name: "seed-bootstrap"}))
 	const key = "dm_seed_bootstrap_fixed_key_canary_782"
-	first, err := bootstrapIdentity(ctx, pool, team, "", key)
-	require.NoError(t, err)
-	second, err := bootstrapIdentity(ctx, pool, team, first.CredentialID, key)
-	require.NoError(t, err)
+	manifest := evalharness.Manifest{Dataset: "bootstrap", SeedDir: t.TempDir()}
+	for name, value := range map[string]string{"EVAL_TEAM_ID": team.String(), "EVAL_DATABASE_URL": dsn, "EVAL_API_KEY": key, "EVAL_CREDENTIAL_ID": ""} {
+		t.Setenv(name, value)
+	}
+	readScope := func() evalharness.Scope {
+		t.Helper()
+		file := filepath.Join(manifest.SeedDir, "scope.json")
+		body, err := os.ReadFile(file)
+		require.NoError(t, err)
+		require.NotContains(t, string(body), key)
+		require.NotContains(t, string(body), password)
+		info, err := os.Stat(file)
+		require.NoError(t, err)
+		require.Equal(t, os.FileMode(0600), info.Mode().Perm())
+		var scope evalharness.Scope
+		require.NoError(t, json.Unmarshal(body, &scope))
+		return scope
+	}
+	require.NoError(t, bootstrapCredential(ctx, manifest))
+	first := readScope()
+	t.Setenv("EVAL_CREDENTIAL_ID", first.CredentialID)
+	require.NoError(t, bootstrapCredential(ctx, manifest))
+	second := readScope()
 	require.Equal(t, first, second, "team, credential, owner, space and generation remain fixed")
 	repository := accesspostgres.NewCredentialRepository(db, rls, nil)
 	before, err := repository.GetByIDForTeam(ctx, team, uuid.MustParse(first.CredentialID))
@@ -70,8 +92,11 @@ func TestBootstrapSeedIdentityAndCredentialRejection(t *testing.T) {
 		{team, uuid.NewString(), key},
 		{uuid.New(), first.CredentialID, key},
 	} {
-		_, err = bootstrapIdentity(ctx, pool, invalid.team, invalid.credential, invalid.key)
-		require.ErrorContains(t, err, "does not match")
+		t.Setenv("EVAL_TEAM_ID", invalid.team.String())
+		t.Setenv("EVAL_CREDENTIAL_ID", invalid.credential)
+		t.Setenv("EVAL_API_KEY", invalid.key)
+		require.ErrorContains(t, bootstrapCredential(ctx, manifest), "does not match")
+		require.Equal(t, first, readScope(), "rejection cannot replace the preserved scope file")
 	}
 	after, err := repository.GetByIDForTeam(ctx, team, uuid.MustParse(first.CredentialID))
 	require.NoError(t, err)

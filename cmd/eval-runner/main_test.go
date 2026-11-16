@@ -50,6 +50,33 @@ func TestCLIValidatesPinnedFixturesAndRejectsIncompleteSetup(t *testing.T) {
 	writeManifest()
 	require.ErrorContains(t, execute(context.Background(), []string{"validate", path}, logger, protector), "registry digest differs")
 
+	manifest.RegistryHash = registryHash
+	manifest.Operation, manifest.Dataset, manifest.RunID = "bootstrap", "bootstrap", "123-bootstrap"
+	manifest.ImportWorkers, manifest.BaseRelease = 20, "v2.8.1-rc.5"
+	manifest.SeedDir = t.TempDir()
+	writeManifest()
+	t.Setenv("EVAL_API_KEY", "synthetic-cli-bootstrap-key")
+	t.Setenv("EVAL_TEAM_ID", "invalid-bootstrap-team")
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	require.ErrorContains(t, execute(cancelled, []string{"bootstrap", path}, logger, protector), "runner container identity cannot be verified")
+	require.NoFileExists(t, filepath.Join(manifest.SeedDir, "scope.json"))
+}
+
+func TestBootstrapRejectsIncompleteSetupBeforeWritingScope(t *testing.T) {
+	manifest := evalharness.Manifest{Dataset: "hotpotqa", SeedDir: t.TempDir()}
+	t.Setenv("EVAL_API_KEY", "synthetic-cli-bootstrap-key")
+	require.ErrorContains(t, bootstrapCredential(context.Background(), manifest), "bootstrap requires")
+	manifest.Dataset = "bootstrap"
+	t.Setenv("EVAL_API_KEY", "")
+	require.ErrorContains(t, bootstrapCredential(context.Background(), manifest), "configured team key")
+	t.Setenv("EVAL_API_KEY", "synthetic-cli-bootstrap-key")
+	t.Setenv("EVAL_TEAM_ID", "invalid-bootstrap-team")
+	require.ErrorContains(t, bootstrapCredential(context.Background(), manifest), "invalid bootstrap team")
+	t.Setenv("EVAL_TEAM_ID", "239f6b35-a934-4f3a-a075-da6836f5debc")
+	t.Setenv("EVAL_DATABASE_URL", "invalid-bootstrap-dsn")
+	require.Error(t, bootstrapCredential(context.Background(), manifest))
+	require.NoFileExists(t, filepath.Join(manifest.SeedDir, "scope.json"))
 }
 
 func TestCLIRejectsRetiredInterfacesAndLocalCampaigns(t *testing.T) {

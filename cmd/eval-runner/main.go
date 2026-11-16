@@ -40,6 +40,9 @@ func execute(ctx context.Context, args []string, logger *observability.Logger, p
 		return errors.New("command differs from the workflow manifest operation")
 	}
 	if args[0] == "bootstrap" {
+		if err := verifyRuntime(ctx, manifest); err != nil {
+			return err
+		}
 		return bootstrapCredential(ctx, manifest)
 	}
 	registryPath := "tests/eval/datasets.json"
