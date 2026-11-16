@@ -1,5 +1,13 @@
 {
   "version": 1,
   "capability": "evaluation",
-  "cases": []
+  "cases": [
+    {
+      "id": "evaluation/TestBootstrapSeedIdentityAndCredentialRejection",
+      "package": "./cmd/eval-runner",
+      "run": "^TestBootstrapSeedIdentityAndCredentialRejection$",
+      "phase": "precheck",
+      "source": "cmd/eval-runner/bootstrap_integration_test.go"
+    }
+  ]
 }

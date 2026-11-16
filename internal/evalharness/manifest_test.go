@@ -14,7 +14,7 @@ func TestReadManifestValidatesExecutionPins(t *testing.T) {
 	t.Setenv("RUNNER_ENVIRONMENT", "github-hosted")
 	t.Setenv("GITHUB_RUN_ID", "42")
 	t.Setenv("GITHUB_RUN_ATTEMPT", "1")
-	valid := Manifest{Version: 1, RunID: "42-hotpotqa", WorkflowRunID: "42", SourceRevision: strings.Repeat("a", 40), Image: "ghcr.io/markhuangai/dense-mem@sha256:" + strings.Repeat("b", 64), RegistryHash: strings.Repeat("c", 64), Dataset: "hotpotqa", Mode: "live", Model: "dense-mem-testing", EmbeddingModel: "text-embedding-3-small", EmbeddingDimensions: 1536, ContextWindowTokens: 500000, ImportWorkers: 20, ModelDeadline: time.Now().UTC().Add(time.Hour).Truncate(time.Second), DataDir: "data", OutputDir: "public"}
+	valid := Manifest{Version: 1, RunID: "42-hotpotqa", WorkflowRunID: "42", SourceRevision: strings.Repeat("a", 40), Image: "ghcr.io/markhuangai/dense-mem@sha256:" + strings.Repeat("b", 64), RegistryHash: strings.Repeat("c", 64), Dataset: "hotpotqa", Mode: "live", Operation: "prepare", SeedDir: "seed", BaseRelease: "v2.8.1-rc.5", Model: "dense-mem-testing", EmbeddingModel: "text-embedding-3-small", EmbeddingDimensions: 1536, ContextWindowTokens: 500000, ImportWorkers: 20, ModelDeadline: time.Now().UTC().Add(time.Hour).Truncate(time.Second), DataDir: "data", OutputDir: "public"}
 	file := filepath.Join(t.TempDir(), "manifest.json")
 	for _, mode := range []string{"live", "fixtures"} {
 		t.Run(mode, func(t *testing.T) {

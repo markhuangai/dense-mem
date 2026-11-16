@@ -39,8 +39,21 @@ func ReadManifest(path string) (Manifest, error) {
 	if !modelPattern.MatchString(manifest.Model) || strings.Contains(manifest.Model, "://") || manifest.EmbeddingModel != "text-embedding-3-small" || manifest.EmbeddingDimensions != 1536 || manifest.ContextWindowTokens < 16384 {
 		return manifest, errors.New("explicit verified model and context settings are required")
 	}
-	if err := validateImportWorkers(manifest.ImportWorkers); err != nil {
-		return manifest, err
+	if manifest.Operation != "prepare" && manifest.Operation != "run" && manifest.Operation != "bootstrap" && manifest.Operation != "verify-seed" {
+		return manifest, errors.New("invalid workflow-internal operation")
+	}
+	if manifest.Operation == "prepare" || manifest.Operation == "bootstrap" {
+		if err := validateImportWorkers(manifest.ImportWorkers); err != nil {
+			return manifest, err
+		}
+		if !releasePattern.MatchString(manifest.BaseRelease) {
+			return manifest, errors.New("seed preparation base release is invalid")
+		}
+	} else if manifest.ImportWorkers != 0 {
+		return manifest, errors.New("scored evaluation has no import workers")
+	}
+	if manifest.SeedDir == "" || (manifest.Operation == "run" && manifest.Mode == "live" && !seedImagePattern.MatchString(manifest.SeedImage)) {
+		return manifest, errors.New("immutable seed identity and directory are required")
 	}
 	if manifest.DataDir == "" || manifest.OutputDir == "" || len(manifest.RegistryHash) != 64 {
 		return manifest, errors.New("manifest data and output identity missing")

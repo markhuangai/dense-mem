@@ -33,6 +33,10 @@ on:
         required: false
       DENSE_MEM_EVAL_EMBED_API_KEY:
         required: false
+      DENSE_MEM_EVAL_TEAM_API_KEY:
+        required: false
+      DENSE_MEM_EVAL_DATABASE_PASSWORD:
+        required: false
   workflow_dispatch:
     inputs:
       pr_number:
@@ -44,6 +48,10 @@ on:
         type: choice
         default: none
         options: [none, fixtures, live]
+      seed_version:
+        description: Public evaluation seed suffix (latest or UTCtimestamp-release)
+        type: string
+        default: latest
 
 permissions:
   actions: read
@@ -349,6 +357,7 @@ jobs:
       source_repository: ${{ needs.authorize.outputs.source_repository }}
       source_revision: ${{ needs.authorize.outputs.source_revision }}
       mode: ${{ inputs.evaluation }}
+      seed_version: ${{ inputs.seed_version || 'latest' }}
       model: dense-mem-testing
       context_window_tokens: '500000'
     secrets:
@@ -358,6 +367,8 @@ jobs:
       eval-embedding-url: ${{ 'https://api.openai.com/v1' || vars.DENSE_MEM_EVAL_EMBED_URL || secrets.DENSE_MEM_EVAL_EMBED_URL }}
       eval-api-key: ${{ secrets.DENSE_MEM_EVAL_API_KEY }}
       eval-embedding-api-key: ${{ secrets.DENSE_MEM_EVAL_EMBED_API_KEY }}
+      eval-team-api-key: ${{ secrets.DENSE_MEM_EVAL_TEAM_API_KEY }}
+      eval-database-password: ${{ secrets.DENSE_MEM_EVAL_DATABASE_PASSWORD }}
 
   report:
     name: Aggregate production E2E results

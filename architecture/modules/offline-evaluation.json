@@ -7,6 +7,9 @@
     },
     {
       "path": "cmd/internal/serverapp/runner_campaign_integration_test.go"
+    },
+    {
+      "path": "cmd/internal/serverapp/runner_seed_integration_test.go"
     }
   ],
   "go": {

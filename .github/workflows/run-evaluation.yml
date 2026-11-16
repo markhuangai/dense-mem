@@ -12,6 +12,10 @@ on:
         type: choice
         default: live
         options: [live, fixtures]
+      seed_version:
+        description: Public seed suffix (latest or UTCtimestamp-release)
+        type: string
+        default: latest
 
 permissions:
   actions: read
@@ -86,6 +90,7 @@ jobs:
       source_repository: ${{ github.repository }}
       source_revision: ${{ needs.authorize.outputs.source_revision }}
       mode: ${{ inputs.mode }}
+      seed_version: ${{ inputs.seed_version }}
       model: dense-mem-testing
       context_window_tokens: '500000'
     secrets:
@@ -95,3 +100,5 @@ jobs:
       eval-embedding-url: ${{ 'https://api.openai.com/v1' || vars.DENSE_MEM_EVAL_EMBED_URL || secrets.DENSE_MEM_EVAL_EMBED_URL }}
       eval-api-key: ${{ secrets.DENSE_MEM_EVAL_API_KEY }}
       eval-embedding-api-key: ${{ secrets.DENSE_MEM_EVAL_EMBED_API_KEY }}
+      eval-team-api-key: ${{ secrets.DENSE_MEM_EVAL_TEAM_API_KEY }}
+      eval-database-password: ${{ secrets.DENSE_MEM_EVAL_DATABASE_PASSWORD }}

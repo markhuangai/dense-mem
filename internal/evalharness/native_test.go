@@ -123,7 +123,7 @@ func TestRunnerStartupFailureStillDrainsAndCapturesCompleteDenominators(t *testi
 	require.False(t, report.CaptureComplete)
 	require.Equal(t, 4, report.ExpectedAnswers)
 	require.Zero(t, report.CompletedAnswers)
-	require.Equal(t, "startup incomplete", report.Failure)
+	require.Equal(t, "seed verification incomplete", report.Failure)
 	body, err := os.ReadFile(filepath.Join(manifest.OutputDir, "scores.json"))
 	require.NoError(t, err)
 	require.NotContains(t, string(body), key)

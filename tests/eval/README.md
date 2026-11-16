@@ -1,168 +1,187 @@
-# Runner evaluation
+# Runner evaluation and public dataset seeds
 
-Evaluation campaigns and benchmarks run on GitHub-hosted runners. Missing
-runner capacity or Actions configuration blocks execution.
-The CLI is workflow-internal and has no local provisioning or resume interface.
-Synthetic unit and adapter checks use `bash scripts/test-evaluation.sh`.
+All seed preparation, evaluation campaigns and benchmarks run on GitHub-hosted
+runners. Missing runner capacity or Actions configuration blocks execution.
+Selective synthetic unit and policy checks use `bash scripts/test-evaluation.sh`.
+There is no local campaign, replay, partial-import checkpoint or resume interface.
 
-To evaluate a published image without a PR, open **Actions → Run evaluation →
-Run workflow**, select `main`, and enter a Dense-Mem production image tag or
-digest. The default `mode=live` runs the complete benchmark. For example:
+## Build public dataset seeds
+
+Use **Actions → Build evaluation seeds → Run workflow**. Its only inputs are:
+
+| Input | Default | Meaning |
+| --- | --- | --- |
+| `dataset` | `all` | All five complete public packs, or one named pack to rebuild |
+| `workers` | `20` | Concurrent Remember requests for the current dataset, from 1–100 |
+
+```bash
+gh workflow run build-evaluation-seeds.yml --repo markhuangai/dense-mem --ref main \
+  -f dataset=all -f workers=20
+```
+
+Before the implementation reaches main, select PR #777's approved branch. Both
+initiating and triggering actors must be repository admins. A PR dispatch must
+use the actor's own current, open, non-draft same-repository PR head and its
+successful trusted production-image E2E receipt. Main dispatches use its published
+release image. Job reruns are rejected; a failed dataset requires a new dispatch.
+
+The workflow creates or verifies a shared empty bootstrap database, then builds
+one dataset at a time. The first failure stops remaining datasets. Completed
+images remain available. Rebuild a failed dataset explicitly, for example:
+
+```bash
+gh workflow run build-evaluation-seeds.yml --repo markhuangai/dense-mem --ref main \
+  -f dataset=hotpotqa -f workers=30
+```
+
+Each dataset restores the bootstrap, imports its complete corpus with ontology
+disabled and paused, verifies the source/partition mapping and search state, and
+exports a compressed PostgreSQL logical dump. A fresh restore must verify before
+publication. The backup preserves migrations, Evidence, embeddings, provenance,
+ownership and required receipts. Operation-log and Remember diagnostic payload
+rows are excluded, while their table definitions remain.
+
+The public registry package is `ghcr.io/markhuangai/dense-mem-eval-postgres`:
+
+```text
+hotpotqa-20261116T150001234Z-v2.8.1-rc.5
+hotpotqa-latest
+```
+
+Dated tags are immutable. Their release suffix is the release associated with
+current main, including release candidates; during PR testing it names that base
+release. The timestamp prevents same-day rebuild collisions. Each successful
+build updates only its dataset's latest alias. The bootstrap uses the same
+package with a `bootstrap-` prefix. These are data-only images containing a dump,
+metadata, mappings and source notices; PostgreSQL runs in the ordinary
+`pgvector/pgvector:0.8.2-pg18-trixie` image. No raw PGDATA directory is baked in.
+
+Provision two additional Actions Secrets before preparation:
+
+- `DENSE_MEM_EVAL_TEAM_API_KEY`: one fixed, sufficiently random evaluation key.
+- `DENSE_MEM_EVAL_DATABASE_PASSWORD`: one fixed PostgreSQL password.
+
+The bootstrap's team, credential, owner and space IDs remain identical across
+isolated dataset databases. The credential hash is preserved; plaintext keys and
+database login passwords do not enter the images. A mismatched team key fails
+without replacing the credential. Control tokens are generated at startup.
+The maintainer configures the package's public visibility. Synthetic test images
+are never published as dataset seeds.
+
+## Run an evaluation
+
+Use **Actions → Run evaluation → Run workflow**, select `main`, and enter a
+Dense-Mem production image tag or digest. `mode=live` uses the complete public
+benchmark. `seed_version=latest` resolves each dataset's current seed once; a UTC
+timestamp/release suffix selects a complete historical build instead.
 
 ```bash
 gh workflow run run-evaluation.yml --repo markhuangai/dense-mem --ref main \
-  -f image=ghcr.io/markhuangai/dense-mem:YOUR_TAG
+  -f image=ghcr.io/markhuangai/dense-mem:YOUR_TAG -f seed_version=latest
 ```
 
-The image must come from `ghcr.io/markhuangai/dense-mem` and carry Dense-Mem
-production source metadata. A tag is resolved once to its immutable digest before
-any provider credentials reach dataset jobs. The run summary records the digest
-and image source revision; numeric reports record that digest and the exact runner
-source revision. Initiating and triggering actors must be repository admins;
-dispatches from other branches and job reruns are rejected.
+The application must be a Linux amd64 production image from this repository with
+verified source metadata. Its immutable digest and all five immutable seed
+digests are resolved before provider-backed jobs. Missing or incompatible seeds
+fail explicitly. There is no ingestion fallback or import-worker input.
 
-Use `mode=fixtures` after changing evaluation workflows, adapters, capture,
-scoring, or cleanup. It imports three small documents and asks two questions
-against a real production instance and PostgreSQL, using a deterministic local
-provider inside the runner. Both ontology conditions and both answer policies
-produce eight scored answers. It checks the evaluation plumbing without calling
-real model APIs; its scores do not measure retrieval or model quality.
-The fixture mixes rows with and without published indices to check source identity
-and gold mappings against both source formats.
+Each dataset gets fresh PostgreSQL storage. Restore the seed first, then start
+Dense-Mem so normal startup applies pending migrations. Check source locks,
+counts, authenticated scope, partition mappings, canonical fingerprint, embedding
+contract, search convergence and the ontology-off state before scoring:
 
-PR validation retains its existing entrypoint: dispatch `production-image-e2e.yml`
-on the current own-PR branch with `pr_number` and `evaluation=fixtures` or `live`.
-That route requires the exact PR head's successful trusted production-image
-receipt and full production E2E. Its `evaluation=none` default
-runs ordinary production E2E. The manual image route has no PR or preview-receipt
-requirement.
+```text
+restore → migrate and verify → score with ontology off
+  → enable ontology and converge → pause and drain → score with ontology on
+```
 
-The workflow pins corpus imports to 10 workers per dataset. There is no worker
-count input. Reports and execution manifests record the count, and dataset
-reports with different counts cannot be combined.
-Images must carry the production
-`io.dense-mem.postgres-advisory-lock-concurrency=configurable` marker. Both
-entrypoints check it before starting instances or calling providers; images
-built before this support require a newer build.
+Canonical Evidence and provenance must remain unchanged. A newer compatible
+application can reuse an older seed; incompatible schema, search or canonical
+state requires a deliberate seed rebuild. Logical restores rebuild indexes;
+reports record restore and migration/readiness timings rather than assuming a
+speed advantage over physical snapshots.
 
-The registry generates the matrix. `live` uses all five complete published packs
-in [datasets.json](datasets.json), locked to HippoRAG_2 revision
+The own-PR route remains `production-image-e2e.yml` dispatched on the current
+own-PR branch with `pr_number` and `evaluation=live`. It requires the current
+head's successful full production-image receipt. `evaluation=none` runs ordinary
+production E2E. Both routes accept `seed_version`.
+
+`mode=fixtures` is the existing evaluation system dry run. Internal automated
+fixtures prepare three synthetic documents with a deterministic provider,
+export and restore them, then produce eight scored answers across two ontology
+conditions and two answer policies. It makes no external model calls and
+publishes no seed image. The public seed-building workflow has no mode input.
+
+## Sources, scoring and measurements
+
+[datasets.json](datasets.json) pins the complete HippoRAG_2 packs at revision
 `5ec05b38deecc3318bb432c69865959c56058990`: 45,895 corpus rows and 5,000 questions.
-Downloads and runtime data stay in the runner's private temporary directory.
-QASPER, custom question subsets, old seed packs and competitor applications are
-excluded. The pinned README declares no clear common license; dataset-specific
-upstream licensing and attribution remain a reproducibility limitation. The
-[source lock](source_locks/hipporag_2.json) records provenance and published joins.
+The [source lock](source_locks/hipporag_2.json) retains hashes, joins and upstream
+attribution/licensing limitations. QASPER and custom question subsets are
+excluded. Downloaded sources, databases and runtime files stay in runner-private
+temporary directories.
 
-Each dataset imports its entire corpus with ontology disabled into an isolated
-ordinary production instance and PostgreSQL database. Terminal receipts verify
-every original source and partition. Rows without a published `idx` use their
-zero-based position as `dataset:row:N`, while integer indices retain `dataset:N`.
-Native reads verify the authenticated owner, shared space, generation, search
-contract and canonical fingerprint.
-After the first condition, ontology must converge, pause and drain. The second
-condition uses unchanged Evidence and provenance. Ontology global/team and
-answer concurrency are four; embedding concurrency is two. Import concurrency
-and the server generation limit are 10 per dataset. The five-dataset live run
-can issue up to 50 generation requests concurrently.
-The instance also sets `POSTGRES_ADVISORY_LOCK_CONCURRENCY` to the import count
-and reserves additional application/query and PostgreSQL connections. This is a
-startup-only per-pool override; ordinary deployments retain the four-slot
-advisory admission default when it is unset. Invalid capacity and conflicting
-reinitialization fail explicitly, without bypassing locks or changing RLS.
-The isolated instance pins its MCP request limit to 200000 per minute, above
-the complete pack's bounded call count, so the shared production default cannot
-throttle the campaign.
+Every question gets one initial Recall per condition, shared unchanged between
+independent single-call and multi-turn conversations. Multi-turn permits Recall,
+returned-topic follow-ups and authorized Trace, with eight total memory calls
+including the initial Recall. Gold references stay outside provider inputs.
+Answer regeneration is bounded to three complete attempts per turn. Each intake
+has at most two supported attempts; retries retain identities and outcomes.
 
-Each question gets one initial Recall per condition. Its exact packet is shared
-between independent `single` and `multi_turn` conversations. The latter may
-Recall, follow returned topics, or Trace explicitly returned Evidence, with eight
-memory calls including the initial call. Gold passages and answers are available
-only to adapters and deterministic scoring. Complete-response regeneration is
-bounded to three attempts per turn; intake has at most two attempts, preserving
-the original outcome and supported retry identity. There is no model-based judge.
+Deterministic scoring keeps answer/alias EM/F1, exact citation validity,
+retrieval R@1/5/10, all-support recovery and delivered supporting text coverage
+separate. Original sources receive credit once; partitions and undelivered
+equivalent IDs cannot inflate retrieval. Failed and missing answers retain the
+complete 20,000-answer denominator. No model-based judge is used.
 
-Generation uses only `DENSE_MEM_EVAL_MODEL`. Ordinary settings resolve in the
-calling workflow as workflow value, repository Variable, repository Secret,
-then an explicit missing-setting failure. Invalid supplied settings fail.
-The workflow pins `DENSE_MEM_EVAL_MODEL` to `dense-mem-testing` and
-`DENSE_MEM_EVAL_CONTEXT_WINDOW_TOKENS` to the maintainer-specified `500000`.
-`DENSE_MEM_EVAL_VERIFIER_URL` uses the same precedence with an empty workflow pin.
-Embedding pins are OpenAI's `text-embedding-3-small`, 1536 dimensions, and
-`https://api.openai.com/v1`. The workflow URL pin takes precedence over
-repository `DENSE_MEM_EVAL_EMBED_URL` Variables and Secrets.
-`DENSE_MEM_EVAL_API_KEY` and `DENSE_MEM_EVAL_EMBED_API_KEY` are dedicated
-Secrets-only credentials; the latter must contain the OpenAI embedding API key.
-Provider URLs and keys cross the reusable workflow as
-secret inputs. The maintainer provisions this Actions configuration.
+Generation is pinned to `dense-mem-testing` with the maintainer-specified
+500000-token context. Embeddings use OpenAI `text-embedding-3-small`, 1536
+dimensions, and `https://api.openai.com/v1`. Use the existing dedicated Secrets
+`DENSE_MEM_EVAL_API_KEY`, `DENSE_MEM_EVAL_EMBED_API_KEY`, and
+`DENSE_MEM_EVAL_VERIFIER_URL`. Ordinary settings resolve workflow value, repository
+Variable, repository Secret, then explicit error; invalid supplied values fail.
+There is no backing-model setting. Ontology and answer concurrency are four;
+embedding concurrency is two. Seed preparation alone uses its requested workers.
 
-Database passwords and control tokens are generated per dataset job. Resolved
-credentials, headers, connection strings and provider URLs never enter console
-logs or reports. Retained exchanges appear at DEBUG as readable JSON with
-`run_id`, `sequence`, `kind`, and a nested `payload`. Credential protection runs
-before output. Large events use bounded, readable `payload_chunk` records.
-Actions can additionally mask values configured as Secrets; put public settings
-in the workflow or repository Variables.
-Initial security rejection stays content-free. There are no additional diagnostic model calls,
-encryption dependency or artifact key. Reports contain configured model names
-as their provider details.
+Preparation emits initial, sixty-second and final document counts. Benchmark
+exchanges remain readable, credential-protected JSON in Actions logs. Initial
+security rejection is content-free. Required failures and unavailable usage remain
+explicit. Reports show model names without provider URLs or credentials.
 
-INFO `eval_progress` records show the stage, total, completed, failed, and
-remaining work. Import emits an initial status, a status every 60 seconds even
-when no document completes, and a final status on success, failure or cancellation.
-Successful documents, mappings and canonical text are not dumped individually;
-the pinned source hashes identify the unchanged corpus. Failed intake attempts
-and retry outcomes retain their identifiers, results and timings. Runtime log
-collection retains WARN/ERROR output and unstructured failure text, while parsing
-all provider records for usage and completeness without reprinting bulk DEBUG/INFO
-logs. Mapping verification produces one count summary; canonical preservation
-still uses the verified fingerprint.
-Runtime log parsing checks the shutdown deadline between records. Interrupted
-collection fails explicitly and leaves report capture marked incomplete.
-Import uses documents; each question condition uses answers
-(1,000 questions × two policies = 2,000 answers). Retries do not increment these
-counts, and failed items are separate from remaining items. For example:
+Reports separate seed identity, restored rows, restore, migration/readiness,
+scoring and ontology timings. Current-run usage excludes historical seed
+preparation. Host latency and throughput retain their existing definitions;
+unavailable billing remains unavailable rather than an inferred monetary cost.
 
-```json
-{"msg":"eval_progress","run_id":"run-musique","sequence":337,"kind":"progress","payload":{"stage":"import","unit":"documents","total":11656,"completed":330,"failed":0,"remaining":11326}}
-```
+Model work stops after 330 minutes; dataset jobs end after 360 minutes. Seed jobs
+run serially and stop on failure. Scoring jobs use `fail-fast: false` and aggregate
+every failed, timed-out or missing axis. There is no automatic rebuild, campaign
+restart or deadline extension. Numeric artifacts retain two days; published seed
+versions remain in the registry.
 
-Initial retrieval R@1/5/10 counts each original canonical source at most once
-within the original Evidence slots. Partitions do not create extra source
-credit, and undelivered equivalent IDs receive no credit. All-support recovery,
-delivered supporting text coverage, answer EM/F1, exact citation validity and
-cited gold-source coverage remain separate. Answer normalization follows the
-pinned upstream scorer: lowercase, remove ASCII punctuation and English
-articles, normalize whitespace, then maximize EM and token-multiset F1 over
-published answers and aliases. Failed and missing cases retain full public
-denominators. Usage distinguishes available, partial and unavailable attempts;
-actual monetary cost remains unavailable when billing cannot be verified.
-Per-axis `host_elapsed_ms` sums recorded host execution time, including failed
-hosts. `successful_answers_per_host_second` divides completed answers by that
-sum and is unavailable when no host timing was recorded. Mean host latency uses
-observed hosts. Each host starts after its shared initial Recall is available;
-that Recall's latency remains in the captured packet. Workers can overlap, and
-whole-campaign `elapsed_ms` separately includes import, ontology and log capture.
+Replace [baseline.json](baseline.json) only after a newer complete overall
+measurement. Preserve historical evidence. Maintenance-only retirement remains
+documented in [evaluation-retirement.md](../../architecture/evaluation-retirement.md).
 
-Dataset jobs stop model work at 330 minutes and end at 360 minutes. The final
-30 minutes preserve logs, reports and owned cleanup. `fail-fast: false` and an
-always-running aggregate expose failed, timed-out and missing axes. A partial
-campaign cannot become a complete baseline. There is no automatic campaign
-restart or deadline extension; six-hour feasibility is unproven.
+## Delivery and acceptance
 
-Artifacts retain numeric scores, the comparison matrix, completion counts and
-a small reproducibility identity for two days. Retained question/answer exchanges
-and failure/retry details remain only in protected Actions logs.
+The workflow-registration prerequisite must be human-merged before dispatching
+the implementation from its PR branch. Require independent plan-audit
+conformance before tests, then selective local formatting and synthetic checks.
+Run Development E2E on the exact pushed SHA with PostgreSQL shards `all` and
+`synchronous_write`, `mcp_boundaries`, `google_adk_memory`, `enterprise_exports`,
+`ontology_organization`, `space_aware_recall`, and `operation_logging`. Its
+observation budget is ninety minutes, including owned-image cleanup.
 
-Native ontology PostgreSQL measurement regressions retain their fixture protocols
-and runner instructions in [their module guide](../../internal/ontology/postgres/README.md).
+Require current-head review completion followed by passing full Repository CI,
+CodeQL analysis, CodeQL and Production image E2E. Run the internal fixture
+round-trip, including actual exporter, credential-exclusion and protected-failure
+regressions, remotely before publishing any public dataset seed.
 
-[baseline.json](baseline.json) retains the latest overall measured result until
-a newer complete campaign is verified. No replacement measurement
-is claimed by merely changing this harness. Historical ignored evidence stays
-preserved. Guarded historical retirement is documented in
-[evaluation-retirement.md](../../architecture/evaluation-retirement.md).
-
-Three temporary test-only bridges remain for trusted `main` CI. They delegate
-to the replacement policy tests and have no runtime/provider behavior. A small
-follow-up PR removes them after the replacement PR is human-merged.
+After the maintainer provisions the shared Secrets and public package visibility,
+dispatch one full public seed build with twenty workers and serial datasets.
+Observe it for up to thirty-one hours. After all five seeds exist, run one full
+live evaluation before human merge, with a seven-hour observation budget. A
+failed seed build or campaign requires investigation and a new explicit dispatch;
+paid work never restarts automatically. Keep the existing measured baseline
+until a complete replacement campaign succeeds.

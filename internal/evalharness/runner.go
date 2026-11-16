@@ -13,7 +13,7 @@ import (
 )
 
 type completion struct {
-	ImportedRows       int                    `json:"imported_rows"`
+	ImportedRows       int                    `json:"restored_rows"`
 	CanonicalHash      string                 `json:"canonical_hash"`
 	ElapsedMS          float64                `json:"elapsed_ms"`
 	Failure            string                 `json:"failure"`
@@ -69,45 +69,34 @@ func Run(ctx context.Context, manifest Manifest, corpus []CorpusItem, questions 
 	}()
 	work, stop := context.WithDeadline(ctx, manifest.ModelDeadline)
 	defer stop()
-	if err := native.ResolveScope(work); err != nil {
-		return report, err
-	}
-	before, err := native.Snapshot(work)
+	stage = "seed verification"
+	seed, mapping, canonical, initial, err := VerifySeed(work, manifest, corpus, client, native)
 	if err != nil {
 		return report, err
 	}
-	if before.EvidenceCount != 0 || before.ForeignSources != 0 || before.Ontology.Enabled || !before.Ontology.Paused {
-		return report, errors.New("runner instance must be fresh with ontology disabled and paused")
-	}
-	stage = "import"
-	mapping, err := client.ImportCorpusWithConcurrency(work, corpus, manifest.ImportWorkers)
 	report.ImportedRows = len(mapping.BySourceDocID)
-	if err != nil {
-		return report, err
+	report.Identity.SeedImage = manifest.SeedImage
+	report.Identity.SeedRelease = seed.BaseRelease
+	report.Identity.SeedPreparationWorkers = seed.ImportWorkers
+	report.Timings = manifest.Timings
+	if report.Timings == nil {
+		report.Timings = map[string]float64{}
 	}
-	canonical, err := native.VerifyMappings(work, corpus, mapping)
-	if err != nil {
-		return report, err
-	}
-	if err = client.Capture.Emit("import_verified", map[string]int{"corpus_rows": len(mapping.BySourceDocID), "canonical_evidence": len(canonical)}); err != nil {
-		return report, err
-	}
-	initial, err := native.Snapshot(work)
-	if err != nil {
-		return report, err
-	}
-	if err = NativeReady(initial, false, true, manifest, native.Scope.TeamID); err != nil {
+	if err = client.Capture.Emit("seed_verified", map[string]any{"seed_image": manifest.SeedImage, "corpus_rows": len(mapping.BySourceDocID), "canonical_evidence": len(canonical)}); err != nil {
 		return report, err
 	}
 	report.Identity.CanonicalHash = initial.CanonicalHash
 	report.NativeMeasurements = append(report.NativeMeasurements, initial)
 	stage = "ontology off"
+	conditionStarted := time.Now()
 	scores, err := runCondition(work, manifest, corpus, questions, mapping, canonical, client, transport, "off")
+	report.Timings["ontology_off_scoring"] = float64(time.Since(conditionStarted)) / float64(time.Millisecond)
 	report.Scores = append(report.Scores, scores...)
 	if err != nil {
 		return report, err
 	}
 	stage = "ontology convergence"
+	conditionStarted = time.Now()
 	if err = native.EnableOntology(work, manifest); err != nil {
 		return report, err
 	}
@@ -129,8 +118,11 @@ func Run(ctx context.Context, manifest Manifest, corpus []CorpusItem, questions 
 		return report, errors.New("canonical Evidence changed while draining")
 	}
 	report.NativeMeasurements = append(report.NativeMeasurements, frozen)
+	report.Timings["ontology_convergence_and_drain"] = float64(time.Since(conditionStarted)) / float64(time.Millisecond)
 	stage = "ontology on"
+	conditionStarted = time.Now()
 	scores, err = runCondition(work, manifest, corpus, questions, mapping, canonical, client, transport, "on")
+	report.Timings["ontology_on_scoring"] = float64(time.Since(conditionStarted)) / float64(time.Millisecond)
 	report.Scores = append(report.Scores, scores...)
 	if err != nil {
 		return report, err

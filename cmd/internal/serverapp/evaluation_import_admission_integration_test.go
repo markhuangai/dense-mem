@@ -43,7 +43,7 @@ func TestRememberEvaluationImporterAdmission(t *testing.T) {
 		pool, workers int
 	}{
 		{"default completes concurrent imports and replays", 5, 4},
-		{"configured ten completes concurrent imports and replays", 25, 10},
+		{"configured twenty completes concurrent imports and replays", 25, 20},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			h := newImportAdmissionHarness(t, scenario.pool)

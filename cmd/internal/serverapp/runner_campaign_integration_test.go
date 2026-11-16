@@ -91,7 +91,14 @@ func TestRunnerCampaignConditionsAndCapture(t *testing.T) {
 		worker <- nil
 	}()
 	defer func() { cancel(); require.NoError(t, <-worker) }()
+	manifest.SeedDir, manifest.BaseRelease = t.TempDir(), "v2.8.1-rc.5"
+	seed, err := evalharness.Prepare(ctx, manifest, corpus, f.native.Client, f.native)
+	require.NoError(t, err)
+	runnerSealSyntheticSeed(t, manifest.SeedDir, seed)
+	manifest.ImportWorkers = 0
+	providerCalls := f.provider.calls
 	report, err := evalharness.Run(ctx, manifest, corpus, questions, f.native.Client, transport, f.native)
+	require.Equal(t, providerCalls, f.provider.calls, "scoring never imports the corpus again")
 	require.NoError(t, err)
 	require.True(t, report.Complete)
 	require.Equal(t, 4, report.ExpectedAnswers)
@@ -115,7 +122,7 @@ func TestRunnerCampaignConditionsAndCapture(t *testing.T) {
 		require.NoError(t, json.Unmarshal(line, &event))
 		kinds[event.Kind]++
 	}
-	require.Equal(t, 1, kinds["import_verified"])
+	require.Equal(t, 1, kinds["seed_verified"])
 	require.Zero(t, kinds["mapping"])
 	require.Zero(t, kinds["canonical"])
 }

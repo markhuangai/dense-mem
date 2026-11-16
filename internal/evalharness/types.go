@@ -49,22 +49,27 @@ type HostQuestion struct {
 }
 
 type Manifest struct {
-	Version             int       `json:"version"`
-	RunID               string    `json:"run_id"`
-	WorkflowRunID       string    `json:"workflow_run_id"`
-	SourceRevision      string    `json:"source_revision"`
-	Image               string    `json:"image"`
-	RegistryHash        string    `json:"registry_sha256"`
-	Dataset             string    `json:"dataset"`
-	Mode                string    `json:"mode"`
-	Model               string    `json:"model"`
-	EmbeddingModel      string    `json:"embedding_model"`
-	EmbeddingDimensions int       `json:"embedding_dimensions"`
-	ContextWindowTokens int       `json:"context_window_tokens"`
-	ImportWorkers       int       `json:"import_workers"`
-	ModelDeadline       time.Time `json:"model_deadline"`
-	DataDir             string    `json:"data_dir"`
-	OutputDir           string    `json:"output_dir"`
+	Version             int                `json:"version"`
+	RunID               string             `json:"run_id"`
+	WorkflowRunID       string             `json:"workflow_run_id"`
+	SourceRevision      string             `json:"source_revision"`
+	Image               string             `json:"image"`
+	RegistryHash        string             `json:"registry_sha256"`
+	Dataset             string             `json:"dataset"`
+	Mode                string             `json:"mode"`
+	Model               string             `json:"model"`
+	EmbeddingModel      string             `json:"embedding_model"`
+	EmbeddingDimensions int                `json:"embedding_dimensions"`
+	ContextWindowTokens int                `json:"context_window_tokens"`
+	ImportWorkers       int                `json:"import_workers"`
+	Operation           string             `json:"operation,omitempty"`
+	SeedImage           string             `json:"seed_image,omitempty"`
+	SeedDir             string             `json:"seed_dir,omitempty"`
+	BaseRelease         string             `json:"base_release,omitempty"`
+	Timings             map[string]float64 `json:"timings_ms,omitempty"`
+	ModelDeadline       time.Time          `json:"model_deadline"`
+	DataDir             string             `json:"data_dir"`
+	OutputDir           string             `json:"output_dir"`
 }
 
 type Citation struct {

@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { resolveSetting, resolveImportWorkers, requireEvaluationImportSupport, configuration, requireRunner, registryMatrix, aggregate, ownedResource, manualEvaluationRequest, resolveEvaluationImage } from "../../../.github/scripts/evaluation-policy.mjs";
 import { readWorkflow, workflowJob, runStep } from "../../uat/workflow_helpers.mjs";
-import { serverEnvironment, main } from "./workflow.mjs";
+import { serverEnvironment, startupTimings, main } from "./workflow.mjs";
 
 const registry = JSON.parse(fs.readFileSync(new URL("../datasets.json", import.meta.url)));
 const valid = { DENSE_MEM_EVAL_MODEL: "configured-model", DENSE_MEM_EVAL_CONTEXT_WINDOW_TOKENS: "300000", DENSE_MEM_EVAL_IMPORT_WORKERS: "10", DENSE_MEM_EVAL_VERIFIER_URL: "https://provider.example/v1", DENSE_MEM_EVAL_EMBED_URL: "https://api.openai.com/v1", DENSE_MEM_EVAL_API_KEY: "generation-canary", DENSE_MEM_EVAL_EMBED_API_KEY: "embedding-canary", WORKFLOW_EMBEDDING_MODEL: "text-embedding-3-small", WORKFLOW_EMBEDDING_DIMENSIONS: "1536" };
@@ -16,6 +16,14 @@ const pinnedImage = `ghcr.io/${repository}@sha256:${"a".repeat(64)}`;
 const revision = "b".repeat(40);
 const manualRequest = { image: taggedImage, repository, ref: "refs/heads/main", runAttempt: 1, actorPermission: "admin", triggeringPermission: "admin" };
 const inspectedImage = { Os: "linux", Architecture: "amd64", RepoDigests: [pinnedImage], Config: { Labels: { "org.opencontainers.image.variant": "production", "org.opencontainers.image.source": `https://github.com/${repository}`, "org.opencontainers.image.revision": revision } } };
+
+test("startup measurements separate migration from subsequent readiness and reject unavailable boundaries", () => {
+  const start = Date.parse("2026-11-16T16:00:00Z");
+  const logs = ["non-JSON startup output", { time: new Date(start).toISOString(), msg: "running postgres migrations" }, { time: new Date(start + 1200).toISOString(), msg: "postgres migrations completed" }].map((event) => typeof event === "string" ? event : JSON.stringify(event)).join("\n");
+  assert.deepEqual(startupTimings(logs, start + 2000), { migration: 1200, readiness: 800 });
+  for (const invalid of ["", logs.split("\n").slice(0, -1).join("\n"), logs.replace("16:00:01.200", "15:59:59.000")]) assert.throws(() => startupTimings(invalid, start + 2000), /unavailable/);
+  assert.throws(() => startupTimings(logs, start + 1000), /unavailable/);
+});
 
 test("evaluation requires an image supporting configurable import admission", () => {
   for (const marker of [undefined, "", "unknown", "configurable"]) {
@@ -114,7 +122,7 @@ test("manual authorization executes both modes without PR or historical-run look
 });
 
 test("isolated server admits configured import workers while preserving other limits and private routing", () => {
-  const environment = serverEnvironment(configuration(valid), { EVAL_CONTROL_TOKEN: "control-canary", EVAL_DATABASE_PASSWORD: "database-canary", ...valid });
+  const environment = serverEnvironment({ ...configuration(valid), importWorkers: 10 }, { EVAL_CONTROL_TOKEN: "control-canary", EVAL_DATABASE_PASSWORD: "database-canary", ...valid });
   const maximumCalls = Math.max(...registry.datasets.map((dataset) => dataset.corpus.rows * 2 + dataset.questions.rows * 2 * 8 + 1));
   assert.ok(Number(environment.RATE_LIMIT_PER_MINUTE) >= maximumCalls);
   assert.equal(environment.AI_VERIFIER_MAX_CONCURRENCY, "10");
@@ -136,7 +144,7 @@ test("isolated server admits configured import workers while preserving other li
 test("import worker settings are explicit, bounded and shared with the server generation limit", () => {
   for (const workers of [1, 4, 10, 20, 100]) {
     assert.equal(resolveImportWorkers(String(workers)), workers);
-    const configured = configuration({ ...valid, DENSE_MEM_EVAL_IMPORT_WORKERS: String(workers) });
+    const configured = { ...configuration(valid), importWorkers: resolveImportWorkers(String(workers)) };
     assert.equal(configured.importWorkers, workers);
     assert.equal(serverEnvironment(configured, {}).AI_VERIFIER_MAX_CONCURRENCY, String(Math.max(4, workers)));
     assert.equal(serverEnvironment(configured, {}).POSTGRES_ADVISORY_LOCK_CONCURRENCY, String(workers));
@@ -147,11 +155,11 @@ test("import worker settings are explicit, bounded and shared with the server ge
   }
 });
 
-test("aggregation refuses dataset reports with different import worker counts", () => {
+test("aggregation accepts frozen seeds prepared with different worker counts", () => {
   const reports = registry.datasets.map((dataset) => ({ identity: { dataset: dataset.id, import_workers: 10 }, expected_answers: dataset.questions.rows * 4, corpus_rows: dataset.corpus.rows, completed_answers: 0 }));
   assert.doesNotThrow(() => aggregate(registry, reports));
   reports[1].identity.import_workers = 4;
-  assert.throws(() => aggregate(registry, reports), /different campaign identities/);
+  assert.doesNotThrow(() => aggregate(registry, reports));
 });
 
 test("evaluation accepts only the pinned OpenAI embedding endpoint, model and dimensions", () => {
@@ -215,7 +223,7 @@ test("runner workflow reserves shutdown time, retains numeric artifacts and aggr
   const datasets = workflowJob(workflow, "datasets");
   assert.equal(datasets.env.WORKFLOW_EMBEDDING_MODEL, "text-embedding-3-small");
   assert.equal(datasets.env.WORKFLOW_EMBEDDING_DIMENSIONS, "1536");
-  assert.equal(datasets.env.DENSE_MEM_EVAL_IMPORT_WORKERS, "10");
+  assert.equal(datasets.env.DENSE_MEM_EVAL_IMPORT_WORKERS, undefined);
   assert.equal(Object.hasOwn(workflow.on.workflow_call.inputs, "import_workers"), false);
   for (const entrypoint of ["run-evaluation.yml", "production-image-e2e.yml"]) {
     const caller = await readWorkflow(entrypoint);

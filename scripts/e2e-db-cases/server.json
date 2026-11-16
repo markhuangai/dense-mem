@@ -78,6 +78,13 @@
       "run": "^TestMCPToolProgressPostgres$",
       "phase": "precheck",
       "source": "cmd/internal/serverapp/mcp_tool_progress_integration_test.go"
+    },
+    {
+      "id": "server/TestRunnerSeedLogicalRestoreMigrationAndCredentialIdentity",
+      "package": "./cmd/internal/serverapp",
+      "run": "^TestRunnerSeedLogicalRestoreMigrationAndCredentialIdentity$",
+      "phase": "precheck",
+      "source": "cmd/internal/serverapp/runner_seed_integration_test.go"
     }
   ]
 }
