@@ -103,11 +103,34 @@ export async function verifySeedFiles(directory, dataset, registryHash, corpusRo
   return metadata;
 }
 
+export function remainingSeedRestoreEntries(toc) {
+  let spaces = 0;
+  const remaining = toc.split("\n").map((line) => {
+    if (!/^\d+;\s+\d+\s+\d+\s+TABLE DATA public memory_spaces(?:\s|$)/.test(line)) return line;
+    spaces++;
+    return `;${line}`;
+  });
+  if (spaces !== 1) throw new Error("Seed archive must contain exactly one memory_spaces data entry");
+  return remaining.join("\n");
+}
+
 export function restoreSeed(docker, postgres, directory) {
+  let phase = "archive inspection";
   try {
-    docker(["cp", path.join(directory, "database.dump"), `${postgres}:/tmp/evaluation-seed.dump`]);
-    docker(["exec", postgres, "pg_restore", "--username=densemem", "--dbname=densemem", "--no-owner", "--no-privileges", "--clean", "--if-exists", "--exit-on-error", "--jobs=2", "/tmp/evaluation-seed.dump"], { timeout: 20 * 60_000 });
-  } catch (error) { preservePostgresFailure(directory, "restore", error); throw error; }
+    const dump = "/tmp/evaluation-seed.dump";
+    docker(["cp", path.join(directory, "database.dump"), `${postgres}:${dump}`]);
+    const remaining = remainingSeedRestoreEntries(docker(["exec", postgres, "pg_restore", "--list", dump]));
+    const list = path.join(directory, "restore.list");
+    fs.writeFileSync(list, remaining, { mode: 0o600 });
+    docker(["cp", list, `${postgres}:/tmp/evaluation-seed-restore.list`]);
+    const command = ["exec", postgres, "pg_restore", "--username=densemem", "--dbname=densemem", "--no-owner", "--no-privileges", "--exit-on-error", "--jobs=2"];
+    phase = "schema restore";
+    docker([...command, "--section=pre-data", "--clean", "--if-exists", dump], { timeout: 20 * 60_000 });
+    phase = "memory space restore";
+    docker([...command, "--data-only", "--schema=public", "--table=memory_spaces", dump], { timeout: 20 * 60_000 });
+    phase = "remaining data and index restore";
+    docker([...command, "--section=data", "--section=post-data", "--use-list=/tmp/evaluation-seed-restore.list", dump], { timeout: 20 * 60_000 });
+  } catch (error) { preservePostgresFailure(directory, phase, error); throw error; }
 }
 
 export function dumpSeed(docker, postgres, directory) {

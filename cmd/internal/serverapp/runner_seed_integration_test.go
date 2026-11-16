@@ -84,13 +84,14 @@ func TestRunnerSeedLogicalRestoreMigrationAndCredentialIdentity(t *testing.T) {
 		defer cancel()
 		require.Empty(t, capture.ProtectError(client.Terminate(cleanup)))
 	})
-	runPostgres := func(arguments ...string) {
+	runPostgres := func(arguments ...string) string {
 		exitCode, output, err := client.Exec(ctx, arguments, tcexec.Multiplexed())
 		require.Empty(t, capture.ProtectError(err))
 		details, err := io.ReadAll(io.LimitReader(output, (1<<20)+1))
 		require.Empty(t, capture.ProtectError(err))
 		require.LessOrEqual(t, len(details), 1<<20, "PostgreSQL command diagnostics exceeded capture bounds")
 		require.Zero(t, exitCode, capture.ProtectError(fmt.Errorf("%s: %s", arguments[0], details)))
+		return string(details)
 	}
 	runPostgres("pg_dump", "--file=/tmp/seed.dump", "--format=custom", "--no-owner", "--no-privileges", "--exclude-table-data=public.operation_logs", "--exclude-table-data=public.remember_attempt_diagnostics", "--exclude-table-data=public.remember_invocation_diagnostics", "--exclude-table-data=public.remember_failure_artifacts")
 	dump, err := client.CopyFileFromContainer(ctx, "/tmp/seed.dump")
@@ -119,7 +120,20 @@ func TestRunnerSeedLogicalRestoreMigrationAndCredentialIdentity(t *testing.T) {
 		_, dropErr := f.native.DB.Exec(`DROP DATABASE "` + target + `" WITH (FORCE)`)
 		require.NoError(t, dropErr)
 	})
-	runPostgres("pg_restore", "--dbname", target, "--no-owner", "--no-privileges", "--clean", "--if-exists", "--exit-on-error", "--jobs=2", "/tmp/seed.dump")
+	entries := strings.Split(runPostgres("pg_restore", "--list", "/tmp/seed.dump"), "\n")
+	spaces := 0
+	for index, entry := range entries {
+		if strings.Contains(entry, " TABLE DATA public memory_spaces ") {
+			entries[index] = ";" + entry
+			spaces++
+		}
+	}
+	require.Equal(t, 1, spaces)
+	require.NoError(t, client.CopyToContainer(ctx, []byte(strings.Join(entries, "\n")), "/tmp/seed-restore.list", 0600))
+	command := []string{"pg_restore", "--dbname", target, "--no-owner", "--no-privileges", "--exit-on-error", "--jobs=2"}
+	runPostgres(append(append([]string{}, command...), "--section=pre-data", "--clean", "--if-exists", "/tmp/seed.dump")...)
+	runPostgres(append(append([]string{}, command...), "--data-only", "--schema=public", "--table=memory_spaces", "/tmp/seed.dump")...)
+	runPostgres(append(append([]string{}, command...), "--section=data", "--section=post-data", "--use-list=/tmp/seed-restore.list", "/tmp/seed.dump")...)
 	config.Database = target
 	restored, err := gorm.Open(gormpostgres.Open(config.ConnString()), &gorm.Config{})
 	require.NoError(t, err)

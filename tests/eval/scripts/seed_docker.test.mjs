@@ -31,20 +31,33 @@ test("production seed exporter preserves data, excludes payloads and protects re
   fs.writeFileSync(pgEnv, `POSTGRES_USER=densemem\nPOSTGRES_DB=densemem\nPOSTGRES_PASSWORD=${canary}\n`, { mode: 0o600 });
   docker(["run", "--detach", "--name", container, "--label", `${label}=${paths.runID}`, "--env-file", pgEnv, postgresImage]);
   const deadline = Date.now() + 60_000;
-  while (spawnSync("docker", ["exec", container, "pg_isready", "-U", "densemem"], { stdio: "ignore" }).status !== 0) {
+  while (spawnSync("docker", ["exec", container, "pg_isready", "--host=127.0.0.1", "-U", "densemem"], { stdio: "ignore" }).status !== 0) {
     assert.ok(Date.now() < deadline, "seed exporter PostgreSQL readiness timed out");
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
   const sql = (statement) => docker(["exec", "--interactive", container, "psql", "--username=densemem", "--dbname=densemem", "--no-psqlrc", "--set=ON_ERROR_STOP=1", "--tuples-only", "--no-align"], { input: statement });
+  const resetDatabase = () => docker(["exec", "--interactive", container, "psql", "--username=densemem", "--dbname=postgres", "--no-psqlrc", "--set=ON_ERROR_STOP=1"], { input: "DROP DATABASE densemem WITH (FORCE); CREATE DATABASE densemem;" });
+  const team = randomUUID(), space = randomUUID();
   sql(`CREATE TABLE retained_evidence (id integer PRIMARY KEY, content text NOT NULL);
     INSERT INTO retained_evidence VALUES (1, 'exact public Evidence');
+    CREATE FUNCTION seed_copy_delay() RETURNS boolean LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(0.3); RETURN true; END $$;
+    CREATE TABLE memory_spaces (id uuid PRIMARY KEY, team_id uuid NOT NULL, kind text NOT NULL, CHECK(seed_copy_delay()));
+    INSERT INTO memory_spaces VALUES ('${space}', '${team}', 'team_shared');
+    CREATE FUNCTION dense_mem_team_shared_space(team uuid) RETURNS uuid LANGUAGE plpgsql STABLE AS $$
+      DECLARE result uuid; BEGIN SELECT id INTO result FROM memory_spaces WHERE team_id=team AND kind='team_shared';
+      IF result IS NULL THEN RAISE EXCEPTION 'team shared memory space is not initialized'; END IF; RETURN result; END $$;
+    CREATE TABLE ontology_maintenance_markers (team_id uuid NOT NULL, space_id uuid NOT NULL, CHECK(space_id=dense_mem_team_shared_space(team_id)));
+    INSERT INTO ontology_maintenance_markers VALUES ('${team}', '${space}');
     ${excludedSeedData.map((table) => `CREATE TABLE ${table} (payload text); INSERT INTO ${table} VALUES ('${canary}');`).join("\n")}`);
   fs.writeFileSync(path.join(seedDir, "seed.json"), JSON.stringify({ fixture: "seed exporter" }));
   fs.writeFileSync(path.join(seedDir, "mapping.json"), "{}\n");
   dumpSeed(docker, container, seedDir);
   sql("UPDATE retained_evidence SET content='changed after export';");
+  resetDatabase();
   restoreSeed(docker, container, seedDir);
   assert.equal(sql("SELECT content FROM retained_evidence WHERE id=1;"), "exact public Evidence");
+  assert.equal(sql("SELECT count(*) FROM ontology_maintenance_markers;"), "1");
+  assert.equal(sql("SELECT count(*) FROM memory_spaces;"), "1");
   for (const table of excludedSeedData) assert.equal(sql(`SELECT count(*) FROM ${table};`), "0", `${table} retains its schema without payload rows`);
   await verifySeedCredentialExclusions(docker, container, seedDir, [canary]);
 
@@ -62,10 +75,12 @@ test("production seed exporter preserves data, excludes payloads and protects re
   const encoded = `serialized credential/${randomUUID()}`;
   sql(`INSERT INTO retained_evidence VALUES (2, '${raw}'), (3, '${Buffer.from(encoded).toString("base64")}');`);
   dumpSeed(docker, container, contaminated);
+  resetDatabase();
   restoreSeed(docker, container, contaminated);
   for (const secret of [raw, encoded]) await assert.rejects(verifySeedCredentialExclusions(docker, container, contaminated, [secret]), /protected runtime configuration/);
   assert.equal(fs.existsSync(path.join(contaminated, "verification.sql")), false);
 
+  resetDatabase();
   sql(`CREATE FUNCTION reject_seed_restore() RETURNS event_trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'restore rejected ${canary}'; END $$;
     CREATE EVENT TRIGGER reject_seed_restore ON ddl_command_start WHEN TAG IN ('CREATE TABLE') EXECUTE FUNCTION reject_seed_restore();`);
   assert.throws(() => restoreSeed(docker, container, seedDir), /Docker operation exec failed/);

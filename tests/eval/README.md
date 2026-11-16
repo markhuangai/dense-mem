@@ -95,6 +95,10 @@ restore → migrate and verify → score with ontology off
   → enable ontology and converge → pause and drain → score with ontology on
 ```
 
+Logical restore creates the schema, loads memory spaces before rows whose checks
+resolve shared-space identity, then restores remaining data and indexes with two
+workers. The archive retains every required table, index, constraint and policy.
+
 Canonical Evidence and provenance must remain unchanged. A newer compatible
 application can reuse an older seed; incompatible schema, search or canonical
 state requires a deliberate seed rebuild. Logical restores rebuild indexes;

@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { seedBuildRequest, seedReference, seedBuildVersion, seedMetadata, verifySeedFiles, sealSeed, hashFile, authorizeSeedBuild } from "../../../.github/scripts/evaluation-seeds.mjs";
+import { seedBuildRequest, seedReference, seedBuildVersion, seedMetadata, verifySeedFiles, sealSeed, hashFile, authorizeSeedBuild, remainingSeedRestoreEntries } from "../../../.github/scripts/evaluation-seeds.mjs";
 import { readWorkflow, workflowJob } from "../../uat/workflow_helpers.mjs";
 
 const registry = JSON.parse(fs.readFileSync(new URL("../datasets.json", import.meta.url)));
@@ -77,4 +77,12 @@ test("live evaluation pins every seed before allocating provider-backed jobs", a
   assert.equal(datasets.needs, "registry");
   assert.match(datasets.env.EVAL_SEED_IMAGE, /needs\.registry\.outputs\.seed_images/);
   assert.equal(datasets.env.DENSE_MEM_EVAL_IMPORT_WORKERS, undefined);
+});
+
+test("staged seed restore consumes space rows once and preserves all other data and post-data entries", () => {
+  const entries = ["; Archive created by pg_dump", "42; 0 123 TABLE DATA public teams densemem", "43; 0 124 TABLE DATA public memory_spaces densemem", "44; 0 125 TABLE DATA public ontology_maintenance_markers densemem", "45; 1259 126 INDEX public memory_spaces_team_shared_unique densemem", "46; 2606 127 FK CONSTRAINT public memory_spaces team_fk densemem", ""];
+  const remaining = remainingSeedRestoreEntries(entries.join("\n")).split("\n");
+  assert.equal(remaining[2], `;${entries[2]}`);
+  assert.deepEqual(remaining.filter((_, index) => index !== 2), entries.filter((_, index) => index !== 2));
+  for (const invalid of ["", entries.filter((_, index) => index !== 2).join("\n"), [...entries, entries[2]].join("\n")]) assert.throws(() => remainingSeedRestoreEntries(invalid), /exactly one memory_spaces/);
 });
