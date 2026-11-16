@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -24,7 +23,12 @@ import (
 	"github.com/markhuangai/dense-mem/internal/evalharness"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
+	containerapi "github.com/moby/moby/api/types/container"
 	"github.com/stretchr/testify/require"
+	"github.com/testcontainers/testcontainers-go"
+	tcexec "github.com/testcontainers/testcontainers-go/exec"
+	tcnetwork "github.com/testcontainers/testcontainers-go/network"
+	"github.com/testcontainers/testcontainers-go/wait"
 	gormpostgres "gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
@@ -61,24 +65,44 @@ func TestRunnerSeedLogicalRestoreMigrationAndCredentialIdentity(t *testing.T) {
 	require.NoError(t, err)
 	config, err := pgx.ParseConfig(f.admin.Dialector.(*gormpostgres.Dialector).Config.DSN)
 	require.NoError(t, err)
-	dir := t.TempDir()
-	writeEnv := func(database string) string {
-		file := filepath.Join(dir, database+".env")
-		body := fmt.Sprintf("PGHOST=%s\nPGPORT=%d\nPGDATABASE=%s\nPGUSER=%s\nPGPASSWORD=%s\n", config.Host, config.Port, database, config.User, config.Password)
-		require.NoError(t, os.WriteFile(file, []byte(body), 0600))
-		return file
+	capture := f.native.Client.Capture
+	capture.Protector = evalharness.NewRunnerCredentialProtector(key, config.Password)
+	options := []testcontainers.ContainerCustomizer{
+		testcontainers.WithEntrypoint("sleep"), testcontainers.WithCmd("300"),
+		testcontainers.WithEnv(map[string]string{"PGHOST": config.Host, "PGPORT": fmt.Sprint(config.Port), "PGDATABASE": config.Database, "PGUSER": config.User, "PGPASSWORD": config.Password}),
+		testcontainers.WithWaitStrategy(wait.ForExec([]string{"true"}).WithStartupTimeout(time.Minute)),
 	}
-	network := os.Getenv("DENSE_MEM_CI_PRECHECK_NETWORK")
-	if network == "" {
-		network = "host"
+	if network := os.Getenv("DENSE_MEM_CI_PRECHECK_NETWORK"); network != "" {
+		options = append(options, tcnetwork.WithNetworkName(nil, network))
+	} else {
+		options = append(options, testcontainers.WithHostConfigModifier(func(host *containerapi.HostConfig) { host.NetworkMode = "host" }))
 	}
+	client, err := testcontainers.Run(ctx, evalharness.PostgresImage, options...)
+	require.Empty(t, capture.ProtectError(err))
+	t.Cleanup(func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		require.Empty(t, capture.ProtectError(client.Terminate(cleanup)))
+	})
+	runPostgres := func(arguments ...string) {
+		exitCode, output, err := client.Exec(ctx, arguments, tcexec.Multiplexed())
+		require.Empty(t, capture.ProtectError(err))
+		details, err := io.ReadAll(io.LimitReader(output, (1<<20)+1))
+		require.Empty(t, capture.ProtectError(err))
+		require.LessOrEqual(t, len(details), 1<<20, "PostgreSQL command diagnostics exceeded capture bounds")
+		require.Zero(t, exitCode, capture.ProtectError(fmt.Errorf("%s: %s", arguments[0], details)))
+	}
+	runPostgres("pg_dump", "--file=/tmp/seed.dump", "--format=custom", "--no-owner", "--no-privileges", "--exclude-table-data=public.operation_logs", "--exclude-table-data=public.remember_attempt_diagnostics", "--exclude-table-data=public.remember_invocation_diagnostics", "--exclude-table-data=public.remember_failure_artifacts")
+	dump, err := client.CopyFileFromContainer(ctx, "/tmp/seed.dump")
+	require.NoError(t, err)
 	dumpPath := filepath.Join(manifest.SeedDir, "database.dump")
 	file, err := os.OpenFile(dumpPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	require.NoError(t, err)
-	command := exec.CommandContext(ctx, "docker", "run", "--rm", "--network", network, "--env-file", writeEnv(config.Database), evalharness.PostgresImage, "pg_dump", "--format=custom", "--no-owner", "--no-privileges", "--exclude-table-data=public.operation_logs", "--exclude-table-data=public.remember_attempt_diagnostics", "--exclude-table-data=public.remember_invocation_diagnostics", "--exclude-table-data=public.remember_failure_artifacts")
-	command.Stdout = file
-	require.NoError(t, command.Run())
-	require.NoError(t, file.Close())
+	_, err = io.Copy(file, dump)
+	readCloseErr, writeCloseErr := dump.Close(), file.Close()
+	require.NoError(t, err)
+	require.NoError(t, readCloseErr)
+	require.NoError(t, writeCloseErr)
 	seed.DumpHash, err = evalharness.FileHash(dumpPath)
 	require.NoError(t, err)
 	info, err := os.Stat(dumpPath)
@@ -91,22 +115,19 @@ func TestRunnerSeedLogicalRestoreMigrationAndCredentialIdentity(t *testing.T) {
 	require.NoError(t, f.native.DB.PingContext(ctx))
 	_, err = f.native.DB.ExecContext(ctx, `CREATE DATABASE "`+target+`" TEMPLATE template0`)
 	require.NoError(t, err)
-	clientName := "seed-restore-" + uuid.NewString()
-	create := exec.CommandContext(ctx, "docker", "create", "--name", clientName, "--network", network, "--env-file", writeEnv(target), evalharness.PostgresImage, "pg_restore", "--dbname", target, "--no-owner", "--no-privileges", "--clean", "--if-exists", "--exit-on-error", "--jobs=2", "/tmp/seed.dump")
-	require.NoError(t, create.Run())
 	t.Cleanup(func() {
-		require.NoError(t, exec.Command("docker", "container", "rm", clientName).Run())
 		_, dropErr := f.native.DB.Exec(`DROP DATABASE "` + target + `" WITH (FORCE)`)
 		require.NoError(t, dropErr)
 	})
-	require.NoError(t, exec.CommandContext(ctx, "docker", "cp", dumpPath, clientName+":/tmp/seed.dump").Run())
-	require.NoError(t, exec.CommandContext(ctx, "docker", "start", "--attach", clientName).Run())
+	runPostgres("pg_restore", "--dbname", target, "--no-owner", "--no-privileges", "--clean", "--if-exists", "--exit-on-error", "--jobs=2", "/tmp/seed.dump")
 	config.Database = target
 	restored, err := gorm.Open(gormpostgres.Open(config.ConnString()), &gorm.Config{})
 	require.NoError(t, err)
 	restoredDB, err := restored.DB()
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restoredDB.Close()) })
+	require.NoError(t, restoredDB.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM goose_db_version WHERE version_id=$1 AND is_applied)", newest).Scan(&applied))
+	require.False(t, applied, "the restored seed must require the supported startup migration")
 	require.NoError(t, storagepostgres.NewMigratorWithDB(restoredDB).RunUp(ctx))
 	for _, table := range []string{"operation_logs", "remember_attempt_diagnostics", "remember_invocation_diagnostics", "remember_failure_artifacts"} {
 		var count int
