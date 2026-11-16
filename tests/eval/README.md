@@ -37,7 +37,7 @@ receipt and full production E2E. Its `evaluation=none` default
 runs ordinary production E2E. The manual image route has no PR or preview-receipt
 requirement.
 
-The workflow pins corpus imports to 20 workers per dataset. There is no worker
+The workflow pins corpus imports to 10 workers per dataset. There is no worker
 count input. Reports and execution manifests record the count, and dataset
 reports with different counts cannot be combined.
 Images must carry the production
@@ -63,8 +63,8 @@ contract and canonical fingerprint.
 After the first condition, ontology must converge, pause and drain. The second
 condition uses unchanged Evidence and provenance. Ontology global/team and
 answer concurrency are four; embedding concurrency is two. Import concurrency
-and the server generation limit are 20 per dataset. The five-dataset live run
-can issue up to 100 generation requests concurrently.
+and the server generation limit are 10 per dataset. The five-dataset live run
+can issue up to 50 generation requests concurrently.
 The instance also sets `POSTGRES_ADVISORY_LOCK_CONCURRENCY` to the import count
 and reserves additional application/query and PostgreSQL connections. This is a
 startup-only per-pool override; ordinary deployments retain the four-slot

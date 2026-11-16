@@ -77,7 +77,7 @@ jobs:
       EVAL_IMAGE: ${{ inputs.image }}
       EVAL_SOURCE_REVISION: ${{ inputs.source_revision }}
       WORKFLOW_EMBEDDING_MODEL: 'text-embedding-3-small'
-      DENSE_MEM_EVAL_IMPORT_WORKERS: '20'
+      DENSE_MEM_EVAL_IMPORT_WORKERS: '10'
       WORKFLOW_EMBEDDING_DIMENSIONS: '1536'
       DENSE_MEM_EVAL_MODEL: ${{ inputs.model || vars.DENSE_MEM_EVAL_MODEL || secrets.eval-model }}
       DENSE_MEM_EVAL_CONTEXT_WINDOW_TOKENS: ${{ inputs.context_window_tokens || vars.DENSE_MEM_EVAL_CONTEXT_WINDOW_TOKENS || secrets.eval-context-window }}
