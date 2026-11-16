@@ -30,8 +30,13 @@ try {
     team.credential = await control(`/teams/${team.id}/credentials`, { name: "concurrency acceptance", scopes: ["read", "write"], rate_limit: 300 });
   }
   const overrides = [{ team_id: teams[0].id, max_concurrency: 2 }];
+  // Keep the first frozen window away from a schedule boundary during the shared browser checks.
+  const fixtureStartTime = new Intl.DateTimeFormat("en-GB", {
+    timeZone: original.effective.timezone, hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+  }).format(new Date());
   await control("/config/ontology-maintenance", { items: [
     { key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "true" }, { key: "ONTOLOGY_MAINTENANCE_CONTEXT_WINDOW_TOKENS", value: "300000" },
+    { key: "ONTOLOGY_MAINTENANCE_START_TIME_LOCAL", value: fixtureStartTime },
     { key: "ONTOLOGY_MAINTENANCE_MAX_CONCURRENCY", value: "3" },
     { key: "ONTOLOGY_MAINTENANCE_TEAM_MAX_CONCURRENCY", value: "1" },
     { key: "ONTOLOGY_MAINTENANCE_TEAM_OVERRIDES_JSON", value: JSON.stringify(overrides) },
@@ -47,6 +52,9 @@ try {
     return next.active_ontology_requests === 3 ? next : null;
   }, 90000, "three model requests did not overlap under the configured caps");
   assert.equal(health.max_active_ontology_requests, 3);
+  const fixtureWindow = (await control("/ontology/status")).window;
+  assert.equal(fixtureWindow.policy.start_time_local, fixtureStartTime);
+  assert(Date.parse(fixtureWindow.ends_at) - Date.now() > 60 * 60 * 1000, "fixture window must outlast the shared browser checks");
   const running = JSON.parse(query(`SELECT COALESCE(jsonb_agg(jsonb_build_object('team',team_id,'sources',sources)),'[]') FROM ontology_maintenance_batches WHERE status='running' AND lease_until>clock_timestamp()`));
   assert.equal(running.filter((batch) => batch.team === teams[0].id).length, 2, "one team must have two simultaneous provider batches");
   assert.equal(running.filter((batch) => batch.team === teams[1].id).length, 1, "the inherited serial cap must retain another team's slot");
