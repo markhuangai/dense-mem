@@ -8,8 +8,8 @@
   "devDependencies": {
     "@textlint/markdown-to-ast": "15.8.0",
     "github-slugger": "2.0.0",
-    "glob": "14.0.4",
-    "js-yaml": "4.3.2",
+    "glob": "14.0.6",
+    "js-yaml": "5.5.0",
     "textlint": "^15.8.0",
     "textlint-rule-max-number-of-lines": "^1.0.3",
     "typescript": "7.0.2"
