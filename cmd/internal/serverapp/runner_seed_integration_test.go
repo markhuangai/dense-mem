@@ -54,7 +54,7 @@ func TestRunnerSeedLogicalRestoreMigrationAndCredentialIdentity(t *testing.T) {
 	require.EqualValues(t, 20261114010000, newest, "the fixture rolls back only the verified no-op constraint-validation migration")
 	require.NoError(t, migrator.RunDown(ctx))
 	var applied bool
-	require.NoError(t, f.native.DB.QueryRowContext(ctx, "SELECT is_applied FROM goose_db_version WHERE version_id=$1 ORDER BY id DESC LIMIT 1", newest).Scan(&applied))
+	require.NoError(t, f.native.DB.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM goose_db_version WHERE version_id=$1 AND is_applied)", newest).Scan(&applied))
 	require.False(t, applied)
 	seed.SchemaVersion = 20261113020000
 	_, err = f.native.DB.ExecContext(ctx, "INSERT INTO operation_logs(severity,severity_rank,message) VALUES ('DEBUG',10,$1)", "seed-provider-credential-canary-782")
