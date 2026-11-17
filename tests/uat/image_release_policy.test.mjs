@@ -178,23 +178,7 @@ function assertSharedCI(shared, supportedVersions) {
   }
   const audit = jobScripts(shared.jobs["npm-audit"]);
   assert.doesNotMatch(audit, /npm ci/);
-  for (const option of ["--fetch-retries=4", "--fetch-retry-factor=2", "--fetch-retry-mintimeout=1000", "--fetch-retry-maxtimeout=30000", "--fetch-timeout=30000"]) {
-    assert.equal(audit.split(option).length - 1, 1, option + " must be shared by every audit retry");
-  }
-  assert.match(audit, /audit_with_retry\(\)/);
-  assert.match(audit, /local max_attempts=4/);
-  assert.match(audit, /while \(\( attempt <= max_attempts \)\)/);
-  assert.match(audit, /npm \(warn\|error\) \(audit \)\?5\[0-9\]\{2\}/);
-  assert.match(audit, /npm \(warn\|error\) audit network timeout/);
-  assert.match(audit, /E5\[0-9\]\{2\}\|ECONNRESET\|ETIMEDOUT\|EAI_AGAIN\|ENETUNREACH\|ECONNREFUSED/);
-  assert.match(audit, /status=\$\?/);
-  const transientGuard = audit.indexOf("if ! grep -Eq");
-  const nonTransientReturn = audit.indexOf('return "${status}"', transientGuard);
-  const retryBackoff = audit.indexOf("sleep_seconds=$(", transientGuard);
-  assert.ok(transientGuard !== -1 && nonTransientReturn > transientGuard && nonTransientReturn < retryBackoff);
-  for (const prefix of [".lint", "web", "packages/mcp-proxy"]) {
-    assert.equal(audit.split("\n").filter((line) => line.trim() === "audit_with_retry " + prefix).length, 1);
-  }
+  assert.equal(audit.trim(), "node scripts/npm-vulnerability-scan.mjs");
 
   const quality = shared.jobs.quality;
   for (const command of [
@@ -202,6 +186,7 @@ function assertSharedCI(shared, supportedVersions) {
     "node scripts/check-architecture.mjs", "npm run test:coverage --prefix packages/mcp-proxy",
     "node --test tests/uat/image_release_policy.test.mjs", "node --test tests/uat/prerelease_version.test.mjs",
     "node --test tests/uat/go_vulnerability_scan_policy.test.mjs", "node --test tests/uat/ai_pr_review_policy.test.mjs",
+    "node --test tests/uat/npm_vulnerability_scan_policy.test.mjs",
     "bash scripts/test-evaluation.sh",
   ]) runStep(quality, command);
   for (const command of ["go test -timeout=", "scripts/static-analysis.sh", "scripts/go-vulnerability-scan.sh"]) {
@@ -214,7 +199,7 @@ function assertSharedCI(shared, supportedVersions) {
   const migrations = shared.jobs["postgres-migrations"];
   runStep(migrations, 'scripts/check-postgres-migrations.sh "${{ inputs.migration-base-ref }}"');
   assert.doesNotMatch(jobScripts(migrations), /go test|coverage-report\.sh/);
-  assert.doesNotMatch(jobScripts(quality), /go test|coverage-report\.sh|audit_with_retry|check-postgres-migrations\.sh/);
+  assert.doesNotMatch(jobScripts(quality), /go test|coverage-report\.sh|audit_with_retry|npm-vulnerability-scan\.mjs|check-postgres-migrations\.sh/);
   const input = shared.on.workflow_call.inputs["migration-base-ref"];
   assert.equal(input.required, false);
   assert.equal(input.type, "string");
