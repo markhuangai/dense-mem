@@ -189,28 +189,38 @@ test("seed authorization verifies the publisher attempt separately from successf
   await assert.rejects(watched.finish(), /validation failed/);
   t.mock.timers.reset();
   latest.conclusion = "success";
-  t.mock.timers.enable({ apis: ["setInterval"] });
-  const publication = await startSeedValidation(env, github);
   const originalRequest = github.request;
-  let entered, release;
-  const checkingRun = new Promise((resolve) => { entered = resolve; });
-  const heldRun = new Promise((resolve) => { release = resolve; });
-  let hold = true;
-  github.request = async (route, query) => {
-    if (route.endsWith("/actions/runs/100") && hold) { hold = false; entered(); await heldRun; }
-    return originalRequest(route, query);
-  };
-  t.mock.timers.tick(60_000);
-  await checkingRun;
-  const publishing = publication.beforePublication();
-  pull.head.sha = "d".repeat(40);
-  release();
-  await assert.rejects(publishing, /PR head or ownership/);
-  assert.equal(publication.signal.aborted, true);
-  await assert.rejects(publication.finish(), /PR head or ownership/);
-  github.request = originalRequest;
-  pull.head.sha = revision;
-  t.mock.timers.reset();
+  for (const first of ["poll", "publication"]) {
+    t.mock.timers.enable({ apis: ["setInterval"] });
+    const publication = await startSeedValidation(env, github);
+    let entered, release;
+    const checkingRun = new Promise((resolve) => { entered = resolve; });
+    const heldRun = new Promise((resolve) => { release = resolve; });
+    let hold = true;
+    github.request = async (route, query) => {
+      if (route.endsWith("/actions/runs/100") && hold) { hold = false; entered(); await heldRun; }
+      return originalRequest(route, query);
+    };
+    let publishing;
+    if (first === "poll") t.mock.timers.tick(60_000);
+    else publishing = publication.beforePublication();
+    await checkingRun;
+    if (first === "poll") publishing = publication.beforePublication();
+    pull.head.sha = "d".repeat(40);
+    if (first === "publication") t.mock.timers.tick(60_000);
+    for (let turn = 0; turn < 20; turn++) await Promise.resolve();
+    const aborted = publication.signal.aborted;
+    release();
+    const failure = await publishing.then(() => null, (error) => error);
+    if (first === "poll" || aborted) assert.match(failure?.message || "", /PR head or ownership/, "a recorded validation failure must prevent publication");
+    else assert.equal(failure, null);
+    await assert.rejects(publication.beforePublication(), /PR head or ownership/);
+    assert.equal(publication.signal.aborted, true);
+    await assert.rejects(publication.finish(), /PR head or ownership/);
+    github.request = originalRequest;
+    pull.head.sha = revision;
+    t.mock.timers.reset();
+  }
 
   const automaticRun = { id: 200, run_attempt: 1, head_sha: revision, event: "pull_request_target", path: ".github/workflows/ci-pr.yml", status: "completed", conclusion: "success" };
   const automaticJobs = [{ name: "CI / Go verification", conclusion: "success" }];
