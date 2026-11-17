@@ -112,20 +112,41 @@ func TestBootstrapSeedIdentityAndCredentialRejection(t *testing.T) {
 	require.Equal(t, 1, count)
 	t.Run("resource monitoring emits initial periodic and final protected samples and joins", func(t *testing.T) {
 		var output bytes.Buffer
-		logger := observability.NewConsoleWithHandler(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: slog.LevelDebug}))
+		periodic := make(chan struct{}, 1)
+		logger := observability.NewConsoleWithHandler(slog.NewJSONHandler(&output, &slog.HandlerOptions{
+			Level: slog.LevelDebug,
+			ReplaceAttr: func(_ []string, attr slog.Attr) slog.Attr {
+				if attr.Key == "payload" {
+					data, err := json.Marshal(attr.Value.Any())
+					var payload struct {
+						Phase string `json:"phase"`
+					}
+					if err == nil && json.Unmarshal(data, &payload) == nil && payload.Phase == "periodic" {
+						select {
+						case periodic <- struct{}{}:
+						default:
+						}
+					}
+				}
+				return attr
+			},
+		}))
 		capture := &evalharness.Capture{Logger: logger.ContextSlog(), Protector: evalharness.NewRunnerCredentialProtector(key, password, dsn), RunID: "resource-fixture"}
 		monitorCtx, stop := context.WithCancel(ctx)
 		defer stop()
 		resourceManifest := evalharness.Manifest{RunID: resourceRunID, SeedDir: manifest.SeedDir}
 		finish := startResourceMonitor(monitorCtx, stop, pool, resourceManifest, capture)
-		timer := time.NewTimer(62 * time.Second)
+		timer := time.NewTimer(90 * time.Second)
 		defer timer.Stop()
+		observed := false
 		select {
+		case <-periodic:
+			observed = true
 		case <-timer.C:
 		case <-ctx.Done():
-			t.Fatal("resource monitor fixture expired")
 		}
 		require.NoError(t, finish())
+		require.True(t, observed, "resource monitor must emit a periodic event before its bounded deadline")
 		var phases []string
 		for _, line := range bytes.Split(bytes.TrimSpace(output.Bytes()), []byte("\n")) {
 			var event struct {

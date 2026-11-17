@@ -64,7 +64,9 @@ export async function authorizeSeedBuild(github, context, triggeringActor) {
   if (!jobs.some((job) => job.name === "Publish trusted preview" && job.conclusion === "success")) throw new Error("Seed building requires successful trusted preview publication");
   const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: pull.number, per_page: 100 });
   const preview = imagePolicy.selectPreviewReceipt({ comments, pull, status: receipt.status, repository }).image;
-  image ||= preview;
+  const pinned = imagePolicy.validatePinnedProductionImageReference(preview, repository);
+  if (!pinned.valid) throw new Error(pinned.reason);
+  image ||= `${pinned.repository}@${preview.split("@")[1]}`;
   validation = { ...validation, pull_number: pull.number, actor: pull.user.login, run_id: run.id, publisher_attempt: published.run_attempt, validation_attempt: run.run_attempt };
   await seedValidationState(github, validation);
   return { image, source_revision: context.sha, source_repository: repository, base_release: baseRelease, seed_version: seedBuildVersion(baseRelease), validation: JSON.stringify({ ...validation, image }) };

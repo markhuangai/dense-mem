@@ -30,8 +30,9 @@ export async function startSeedValidation(env, github = seedValidationClient(env
   if (proof.source_revision !== env.EVAL_SOURCE_REVISION || (!proof.main_revision && proof.image !== env.EVAL_IMAGE)) throw new Error("Seed runtime differs from validation identity");
   const controller = new AbortController();
   let failure, pendingCheck;
+  const verify = () => seedValidationState(github, proof).catch((error) => { failure = error; controller.abort(); throw error; });
   const check = () => {
-    pendingCheck ||= seedValidationState(github, proof).catch((error) => { failure = error; controller.abort(); throw error; }).finally(() => { pendingCheck = undefined; });
+    pendingCheck ||= verify().finally(() => { pendingCheck = undefined; });
     return pendingCheck;
   };
   await check();
@@ -42,8 +43,9 @@ export async function startSeedValidation(env, github = seedValidationClient(env
     signal: controller.signal,
     beforePublication: async () => {
       for (;;) {
+        await pendingCheck;
         if (failure) throw failure;
-        if (await check() === "success") return;
+        if (await verify() === "success") return;
         if (Date.now() >= Number(env.EVAL_MODEL_DEADLINE_EPOCH) * 1000) throw new Error("Seed publication validation did not complete before the deadline");
         process.stdout.write('Waiting for successful current-head CI/E2E before seed publication.\n');
         await delay(60_000, undefined, { signal: controller.signal });

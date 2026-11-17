@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -191,6 +192,26 @@ func TestRememberEvaluationImporterAdmission(t *testing.T) {
 		}
 		h.assertCompleted(t, len(corpus))
 	})
+	t.Run("shared database preserves unique fixture credential prefixes", func(t *testing.T) {
+		if os.Getenv("DENSE_MEM_REPOSITORY_TESTCONTAINERS") != "1" {
+			t.Skip("registered disposable PostgreSQL execution required")
+		}
+		withLifecyclePostgres(t, func(t *testing.T) {
+			t.Setenv("DATABASE_URL", os.Getenv("POSTGRES_DSN"))
+			t.Setenv("DENSE_MEM_ALLOW_DESTRUCTIVE_POSTGRES_TESTS", "1")
+			for index := range 2 {
+				t.Run(fmt.Sprintf("team_%d", index), func(t *testing.T) {
+					h := newImportAdmissionHarness(t, 5)
+					h.release()
+					mapping, err := h.client.ImportCorpus(h.ctx, admissionCorpus(1, 1))
+					require.NoError(t, err)
+					require.Len(t, mapping.BySourceDocID, 1)
+					h.assertCompleted(t, 1)
+				})
+			}
+		})
+	})
+
 }
 
 type importAdmissionAssessor struct {
@@ -278,16 +299,18 @@ func newImportAdmissionService(t *testing.T, pool int, authenticated bool) *impo
 	}))
 	credentials := accesspostgres.NewCredentialRepository(admin, rls, nil)
 	key, hash := "admission-fixture", ownerID.String()
+	prefix, suffix := strings.ReplaceAll(ownerID.String(), "-", "")[:24], "owner"
 	if authenticated {
 		var err error
 		key, err = crypto.GenerateRawKey()
 		require.NoError(t, err)
 		hash, err = crypto.HashKey(key)
 		require.NoError(t, err)
+		prefix, suffix = crypto.GetKeyPrefix(key), crypto.GetKeySuffix(key)
 	}
 	require.NoError(t, credentials.CreateCredential(ctx, &domain.Credential{
 		ID: ownerID, TeamID: teamID, Name: "import admission owner", Role: "member", Scopes: []string{"read", "write"},
-		KeyHash: hash, KeyPrefix: crypto.GetKeyPrefix(key), KeySuffix: crypto.GetKeySuffix(key),
+		KeyHash: hash, KeyPrefix: prefix, KeySuffix: suffix,
 	}))
 	credential, err := credentials.GetByIDForTeam(ctx, teamID, ownerID)
 	require.NoError(t, err)
@@ -382,8 +405,7 @@ func TestRememberEvaluationAuthenticatedSustainedImport(t *testing.T) {
 			h := newImportAdmissionService(t, pool, true)
 			require.NoError(t, lockadmission.Configure(h.app, 20))
 			h.release()
-			unauthorized := *h.client
-			unauthorized.APIKey += "wrong"
+			unauthorized := &evalharness.HTTPClient{BaseURL: h.client.BaseURL, APIKey: h.client.APIKey + "wrong", Client: h.client.Client}
 			_, err := unauthorized.ImportCorpus(h.ctx, admissionCorpus(1, 1))
 			require.Error(t, err)
 			require.Zero(t, h.provider.calls.Load())

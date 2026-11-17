@@ -9,6 +9,7 @@ import { seedBuildRequest, seedReference, seedBuildVersion, seedMetadata, verify
 import { location } from "./workflow.mjs";
 import { seedValidationState } from "../../../.github/scripts/seed-validation.mjs";
 import { startSeedValidation } from "./seed-workflow.mjs";
+import { resolveEvaluationImage } from "../../../.github/scripts/evaluation-policy.mjs";
 import { readWorkflow, workflowJob } from "../../uat/workflow_helpers.mjs";
 
 const registry = JSON.parse(fs.readFileSync(new URL("../datasets.json", import.meta.url)));
@@ -114,8 +115,9 @@ test("seed authorization verifies the publisher attempt separately from successf
   const repository = "markhuangai/dense-mem", revision = "b".repeat(40), main = "c".repeat(40);
   const target = `https://github.com/${repository}/actions/runs/100`;
   const image = `ghcr.io/${repository}:test-42@sha256:${"a".repeat(64)}`;
-  const pull = { number: 42, draft: false, user: { login: "owner" }, head: { sha: revision, repo: { full_name: repository } } };
-  const context = { repo: { owner: "markhuangai", repo: "dense-mem" }, runAttempt: 1, ref: "refs/heads/feature", sha: revision, actor: "owner", serverUrl: "https://github.com" };
+  const canonical = `ghcr.io/${repository}@sha256:${"a".repeat(64)}`;
+  const pull = { number: 42, draft: false, user: { login: "Z-M-Huang" }, head: { sha: revision, repo: { full_name: repository } } };
+  const context = { repo: { owner: "markhuangai", repo: "dense-mem" }, runAttempt: 1, ref: "refs/heads/feature", sha: revision, actor: "Z-M-Huang", serverUrl: "https://github.com" };
   const statuses = [{ id: 2, context: "PR test image policy", state: "success", creator: { login: "github-actions[bot]" }, description: "Published test-42 (run 100, attempt 1).", target_url: target }, { id: 3, context: "Production image E2E", state: "success", creator: { login: "github-actions[bot]" }, target_url: target }, { id: 4, context: "Repository CI", state: "success", creator: { login: "github-actions[bot]" }, target_url: target }];
   const latest = { id: 100, run_attempt: 2, event: "pull_request_target", path: ".github/workflows/pr-test-image.yml", display_title: "PR test image: PR #42", status: "completed", conclusion: "success" };
   const published = { ...latest, run_attempt: 1, conclusion: "failure" };
@@ -137,15 +139,15 @@ test("seed authorization verifies the publisher attempt separately from successf
     pulls: { list: async () => [pull] }, issues: { listComments: async () => comments },
     actions: { getWorkflowRun: async () => ({ data: latest }), getWorkflowRunAttempt: async ({ run_id, attempt_number }) => { assert.equal(run_id, 100); assert.equal(attempt_number, 1); return { data: published }; }, listJobsForWorkflowRunAttempt: async ({ run_id, attempt_number }) => { assert.equal(run_id, 100); assert.equal(attempt_number, 1); return jobs; } },
   } };
-  assert.equal((await authorizeSeedBuild(github, context, "owner")).image, image);
-  const authorized = await authorizeSeedBuild(github, context, "owner");
+  assert.equal((await authorizeSeedBuild(github, context, "Z-M-Huang")).image, canonical);
+  const authorized = await authorizeSeedBuild(github, context, "Z-M-Huang");
   const proof = JSON.parse(authorized.validation);
   assert.equal(await seedValidationState(github, proof), "success");
   latest.status = "in_progress"; latest.conclusion = null;
   statuses[1].state = statuses[2].state = "pending";
-  assert.equal((await authorizeSeedBuild(github, context, "owner")).image, image);
+  assert.equal((await authorizeSeedBuild(github, context, "Z-M-Huang")).image, canonical);
   assert.equal(await seedValidationState(github, proof), "pending");
-  const env = { EVAL_VALIDATION: authorized.validation, EVAL_SOURCE_REVISION: revision, EVAL_IMAGE: image, EVAL_MODEL_DEADLINE_EPOCH: String(Math.floor(Date.now()/1000)+60) };
+  const env = { EVAL_VALIDATION: authorized.validation, EVAL_SOURCE_REVISION: revision, EVAL_IMAGE: resolveEvaluationImage(image, repository, { Os: "linux", Architecture: "amd64", RepoDigests: [canonical], Config: { Labels: { "org.opencontainers.image.variant": "production", "org.opencontainers.image.source": `https://github.com/${repository}`, "org.opencontainers.image.revision": revision } } }).image, EVAL_MODEL_DEADLINE_EPOCH: String(Math.floor(Date.now()/1000)+60) };
   const monitor = await startSeedValidation(env, github);
   latest.status = "completed"; latest.conclusion = "success";
   statuses[1].state = statuses[2].state = "success";
@@ -155,20 +157,20 @@ test("seed authorization verifies the publisher attempt separately from successf
   assert.equal(monitor.signal.aborted, true);
   await assert.rejects(monitor.finish(), /validation failed/);
   latest.conclusion = "success";
-  await assert.rejects(startSeedValidation({ ...env, EVAL_IMAGE: image.replace("a".repeat(64), "f".repeat(64)) }, github), /differs from validation identity/);
+  await assert.rejects(startSeedValidation({ ...env, EVAL_IMAGE: canonical.replace("a".repeat(64), "f".repeat(64)) }, github), /differs from validation identity/);
   for (const change of [{ conclusion: "failure" }, { run_attempt: 0 }, { event: "push" }]) {
     const original = { ...latest }; Object.assign(latest, change);
-    await assert.rejects(authorizeSeedBuild(github, context, "owner"), /validation failed|publisher workflow receipt/);
+    await assert.rejects(authorizeSeedBuild(github, context, "Z-M-Huang"), /validation failed|publisher workflow receipt/);
     Object.assign(latest, original);
   }
   published.run_attempt = 2;
-  await assert.rejects(authorizeSeedBuild(github, context, "owner"), /publisher workflow receipt/);
+  await assert.rejects(authorizeSeedBuild(github, context, "Z-M-Huang"), /publisher workflow receipt/);
   published.run_attempt = 1;
   jobs[0].conclusion = "failure";
-  await assert.rejects(authorizeSeedBuild(github, context, "owner"), /trusted preview publication/);
+  await assert.rejects(authorizeSeedBuild(github, context, "Z-M-Huang"), /trusted preview publication/);
   jobs[0].conclusion = "success";
   statuses[1].state = "failure";
-  await assert.rejects(authorizeSeedBuild(github, context, "owner"), /status is missing, stale or failed/);
+  await assert.rejects(authorizeSeedBuild(github, context, "Z-M-Huang"), /status is missing, stale or failed/);
   statuses[1].state = "success";
   for (const mutate of [() => { pull.head.sha = "d".repeat(40); }, () => { latest.run_attempt = 3; }, () => { jobs.push({ conclusion: "timed_out" }); }, () => { checks[0].conclusion = "failure"; }, () => { statuses.push({ ...statuses[1], id: 20, state: "failure" }); }]) {
     const oldPull = pull.head.sha, oldAttempt = latest.run_attempt;
@@ -187,8 +189,65 @@ test("seed authorization verifies the publisher attempt separately from successf
   await assert.rejects(watched.finish(), /validation failed/);
   t.mock.timers.reset();
   latest.conclusion = "success";
+  t.mock.timers.enable({ apis: ["setInterval"] });
+  const publication = await startSeedValidation(env, github);
+  const originalRequest = github.request;
+  let entered, release;
+  const checkingRun = new Promise((resolve) => { entered = resolve; });
+  const heldRun = new Promise((resolve) => { release = resolve; });
+  let hold = true;
+  github.request = async (route, query) => {
+    if (route.endsWith("/actions/runs/100") && hold) { hold = false; entered(); await heldRun; }
+    return originalRequest(route, query);
+  };
+  t.mock.timers.tick(60_000);
+  await checkingRun;
+  const publishing = publication.beforePublication();
+  pull.head.sha = "d".repeat(40);
+  release();
+  await assert.rejects(publishing, /PR head or ownership/);
+  assert.equal(publication.signal.aborted, true);
+  await assert.rejects(publication.finish(), /PR head or ownership/);
+  github.request = originalRequest;
+  pull.head.sha = revision;
+  t.mock.timers.reset();
+
+  const automaticRun = { id: 200, run_attempt: 1, head_sha: revision, event: "pull_request_target", path: ".github/workflows/ci-pr.yml", status: "completed", conclusion: "success" };
+  const automaticJobs = [{ name: "CI / Go verification", conclusion: "success" }];
+  github.request = async (route, query) => {
+    if (route.endsWith("/actions/runs/200")) return { data: automaticRun };
+    if (route.endsWith("/actions/runs/200/attempts/1/jobs")) return { data: { jobs: automaticJobs } };
+    if (route.includes("/workflows/ci-pr.yml/runs")) return { data: { workflow_runs: [automaticRun] } };
+    return originalRequest(route, query);
+  };
+  pull.user.login = "other-admin";
+  statuses[2].target_url = `https://github.com/${repository}/actions/runs/200`;
+  const automatic = await authorizeSeedBuild(github, { ...context, actor: "other-admin" }, "other-admin");
+  const automaticProof = JSON.parse(automatic.validation);
+  assert.equal(await seedValidationState(github, automaticProof), "success");
+  automaticRun.status = "in_progress"; automaticRun.conclusion = null;
+  statuses[2].target_url = target; statuses[2].state = "pending";
+  assert.equal(await seedValidationState(github, automaticProof), "pending", "pending preview placeholders must follow the actual automatic CI producer");
+  automaticJobs[0].conclusion = "failure";
+  await assert.rejects(seedValidationState(github, automaticProof), /validation job failed/);
+  automaticRun.status = "completed"; automaticRun.conclusion = "success"; automaticJobs[0].conclusion = "success";
+  statuses[2].state = "success"; statuses[2].target_url = `https://github.com/${repository}/actions/runs/200`;
+  for (const change of [{ head_sha: "d".repeat(40) }, { event: "push" }, { path: ".github/workflows/other.yml" }]) {
+    const previous = { ...automaticRun }; Object.assign(automaticRun, change);
+    await assert.rejects(seedValidationState(github, automaticProof), /workflow or source revision/);
+    Object.assign(automaticRun, previous);
+  }
+  statuses[2].creator.login = "untrusted";
+  await assert.rejects(seedValidationState(github, automaticProof), /status is missing/);
+  statuses[2].creator.login = "github-actions[bot]";
+  statuses[2].target_url = "https://github.com/foreign/repository/actions/runs/200";
+  await assert.rejects(seedValidationState(github, automaticProof), /status source is invalid/);
+  statuses[2].target_url = target;
+  await assert.rejects(seedValidationState(github, automaticProof), /wrong workflow producer/);
+  pull.user.login = "Z-M-Huang";
+  github.request = originalRequest;
   const merged = { ...pull, state: "closed", merged: true, merged_at: "2026-11-17T12:00:00Z", merge_commit_sha: main, base: { ref: "main" } };
-  const mainCI = { head_sha: main, event: "push", status: "completed", conclusion: "success" };
+  const mainCI = { id: 300, run_attempt: 1, head_sha: main, event: "push", status: "completed", conclusion: "success" };
   let mainHead = main;
   const mainGithub = { ...github, request: async (route, query) => {
     if (route.endsWith("/branches/main")) return { data: { commit: { sha: mainHead } } };
@@ -196,7 +255,7 @@ test("seed authorization verifies the publisher attempt separately from successf
     if (route.endsWith("/pulls/42")) return { data: merged };
     return github.request(route, query);
   }, rest: { ...github.rest, repos: { ...github.rest.repos, listPullRequestsAssociatedWithCommit: async () => [merged] }, pulls: { ...github.rest.pulls, get: async () => ({ data: merged }) } } };
-  const mainResult = await authorizeSeedBuild(mainGithub, { ...context, ref: "refs/heads/main", sha: main }, "owner");
+  const mainResult = await authorizeSeedBuild(mainGithub, { ...context, ref: "refs/heads/main", sha: main }, "Z-M-Huang");
   assert.equal(mainResult.image, "ghcr.io/markhuangai/dense-mem:v2.8.1-rc.5");
   const mainProof = JSON.parse(mainResult.validation);
   assert.equal(mainProof.validation_revision, revision);
@@ -204,7 +263,7 @@ test("seed authorization verifies the publisher attempt separately from successf
   mainCI.status = "in_progress"; mainCI.conclusion = null;
   assert.equal(await seedValidationState(mainGithub, mainProof), "pending");
   mainCI.conclusion = "failure";
-  await assert.rejects(seedValidationState(mainGithub, mainProof), /main CI/);
+  await assert.rejects(seedValidationState(mainGithub, mainProof), /validation failed/);
   mainCI.status = "completed"; mainCI.conclusion = "success";
   mainHead = "d".repeat(40);
   await assert.rejects(seedValidationState(mainGithub, mainProof), /no longer matches main/);
@@ -213,7 +272,7 @@ test("seed authorization verifies the publisher attempt separately from successf
   await assert.rejects(seedValidationState(mainGithub, mainProof), /PR head or ownership/);
   merged.merge_commit_sha = main;
   comments[0].body = imagePolicy.formatPreviewReceipt({ ...receipt, source_sha: "d".repeat(40) }, target);
-  await assert.rejects(authorizeSeedBuild(github, context, "owner"), /preview receipt is missing/);
+  await assert.rejects(authorizeSeedBuild(github, context, "Z-M-Huang"), /preview receipt is missing/);
 });
 
 test("seed checks bind public source counts, scope and real file checksums", async (t) => {
