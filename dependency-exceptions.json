@@ -13,5 +13,18 @@
       "reference": "https://github.com/markhuangai/dense-mem/pull/717"
     }
   ],
-  "python": []
+  "python": [],
+  "npm": [
+    {
+      "advisories": ["GHSA-fc5q-39xc-vjpf"],
+      "package": "picomatch",
+      "version": "4.0.7",
+      "lockfile": "web/package-lock.json",
+      "development_only": true,
+      "expires": "2026-11-20",
+      "prerequisites": "Web build/test tooling only; no application imports or untrusted glob inputs. The production image contains static web assets and the Go server, without Node modules.",
+      "reason": "The latest published picomatch release is affected and no patched version exists. The maintainer approved this exact development-only exception and a human CI-policy bootstrap merge until the exclusive UTC expiry.",
+      "reference": "https://github.com/markhuangai/dense-mem/issues/786"
+    }
+  ]
 }
