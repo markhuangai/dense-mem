@@ -19,13 +19,27 @@ test("production seed exporter preserves data, excludes payloads and protects re
   const canary = `seed-password-${randomUUID()}`;
   const label = "io.dense-mem.eval.run";
   fs.mkdirSync(seedDir, { recursive: true, mode: 0o700 });
+  const diagnostic = path.join(seedDir, "postgres-failure.log");
+  fs.writeFileSync(paths.stateFile, JSON.stringify({ runID: paths.runID, environment: { EVAL_DATABASE_PASSWORD: canary } }), { mode: 0o600 });
+  fs.writeFileSync(paths.manifestFile, JSON.stringify({ version: 1, run_id: paths.runID, workflow_run_id: env.GITHUB_RUN_ID, source_revision: "b".repeat(40), image: `ghcr.io/markhuangai/dense-mem@sha256:${"a".repeat(64)}`, registry_sha256: sha256(fs.readFileSync("tests/eval/fixtures/datasets.json")), dataset, mode: "fixtures", operation: "run", model: "fixture", embedding_model: "text-embedding-3-small", embedding_dimensions: 1536, context_window_tokens: 300000, seed_dir: seedDir, data_dir: seedDir, output_dir: path.join(paths.directory, "public"), model_deadline: new Date(Date.now() + 60_000).toISOString() }), { mode: 0o600 });
+  const protectedDiagnostics = () => {
+    const result = spawnSync(process.execPath, ["tests/eval/scripts/workflow.mjs", "diagnostics"], { encoding: "utf8", env, timeout: 30_000 });
+    assert.equal(result.status, 0, "actual workflow diagnostics must protect PostgreSQL failures without a running server");
+    const output = result.stdout + result.stderr;
+    for (const value of [canary, Buffer.from(canary).toString("base64"), Buffer.from(canary).toString("hex")]) assert.equal(output.includes(value), false);
+    return output;
+  };
   t.after(() => {
-    if (docker(["container", "ls", "--all", "--filter", `name=^${container}$`, "--quiet"])) {
-      const actual = JSON.parse(docker(["container", "inspect", container]))[0];
-      assert.equal(actual.Config.Labels[label], paths.runID);
-      docker(["container", "rm", "--force", "--volumes", actual.Id]);
+    try {
+      if (fs.existsSync(diagnostic)) process.stdout.write(protectedDiagnostics());
+    } finally {
+      if (docker(["container", "ls", "--all", "--filter", `name=^${container}$`, "--quiet"])) {
+        const actual = JSON.parse(docker(["container", "inspect", container]))[0];
+        assert.equal(actual.Config.Labels[label], paths.runID);
+        docker(["container", "rm", "--force", "--volumes", actual.Id]);
+      }
+      fs.rmSync(paths.directory, { recursive: true });
     }
-    fs.rmSync(paths.directory, { recursive: true });
   });
   const pgEnv = path.join(paths.directory, "postgres.env");
   fs.writeFileSync(pgEnv, `POSTGRES_USER=densemem\nPOSTGRES_DB=densemem\nPOSTGRES_PASSWORD=${canary}\n`, { mode: 0o600 });
@@ -43,7 +57,7 @@ test("production seed exporter preserves data, excludes payloads and protects re
     CREATE FUNCTION seed_copy_delay() RETURNS boolean LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(0.3); RETURN true; END $$;
     CREATE TABLE memory_spaces (id uuid PRIMARY KEY, team_id uuid NOT NULL, kind text NOT NULL, CHECK(seed_copy_delay()));
     INSERT INTO memory_spaces VALUES ('${space}', '${team}', 'team_shared');
-    CREATE FUNCTION dense_mem_team_shared_space(team uuid) RETURNS uuid LANGUAGE plpgsql STABLE AS $$
+    CREATE FUNCTION dense_mem_team_shared_space(team uuid) RETURNS uuid LANGUAGE plpgsql STABLE SET search_path = public AS $$
       DECLARE result uuid; BEGIN SELECT id INTO result FROM memory_spaces WHERE team_id=team AND kind='team_shared';
       IF result IS NULL THEN RAISE EXCEPTION 'team shared memory space is not initialized'; END IF; RETURN result; END $$;
     CREATE TABLE ontology_maintenance_markers (team_id uuid NOT NULL, space_id uuid NOT NULL, CHECK(space_id=dense_mem_team_shared_space(team_id)));
@@ -84,17 +98,10 @@ test("production seed exporter preserves data, excludes payloads and protects re
   sql(`CREATE FUNCTION reject_seed_restore() RETURNS event_trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'restore rejected ${canary}'; END $$;
     CREATE EVENT TRIGGER reject_seed_restore ON ddl_command_start WHEN TAG IN ('CREATE TABLE') EXECUTE FUNCTION reject_seed_restore();`);
   assert.throws(() => restoreSeed(docker, container, seedDir), /Docker operation exec failed/);
-  const diagnostic = path.join(seedDir, "postgres-failure.log");
   assert.match(fs.readFileSync(diagnostic, "utf8"), /restore rejected/);
   assert.ok(fs.readFileSync(diagnostic, "utf8").includes(canary));
   assert.equal(fs.statSync(diagnostic).mode & 0o777, 0o600);
-  fs.writeFileSync(paths.stateFile, JSON.stringify({ runID: paths.runID, environment: { EVAL_DATABASE_PASSWORD: canary } }), { mode: 0o600 });
-  fs.writeFileSync(paths.manifestFile, JSON.stringify({ version: 1, run_id: paths.runID, workflow_run_id: env.GITHUB_RUN_ID, source_revision: "b".repeat(40), image: `ghcr.io/markhuangai/dense-mem@sha256:${"a".repeat(64)}`, registry_sha256: sha256(fs.readFileSync("tests/eval/fixtures/datasets.json")), dataset, mode: "fixtures", operation: "run", model: "fixture", embedding_model: "text-embedding-3-small", embedding_dimensions: 1536, context_window_tokens: 300000, seed_dir: seedDir, data_dir: seedDir, output_dir: path.join(paths.directory, "public"), model_deadline: new Date(Date.now() + 60_000).toISOString() }), { mode: 0o600 });
-  const result = spawnSync(process.execPath, ["tests/eval/scripts/workflow.mjs", "diagnostics"], { encoding: "utf8", env, timeout: 30_000 });
-  assert.equal(result.status, 0, "actual workflow diagnostics must protect PostgreSQL failures without a running server");
-  const output = result.stdout + result.stderr;
-  assert.match(output, /restore rejected/);
-  for (const value of [canary, Buffer.from(canary).toString("base64"), Buffer.from(canary).toString("hex")]) assert.equal(output.includes(value), false);
+  assert.match(protectedDiagnostics(), /restore rejected/);
 
   const broken = path.join(paths.directory, "broken");
   fs.mkdirSync(broken, { mode: 0o700 });
