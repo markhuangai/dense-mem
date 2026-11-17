@@ -6,7 +6,7 @@ import test from "node:test";
 import imagePolicy from "../../../.github/scripts/image-release-policy.cjs";
 import { resolveSetting, resolveImportWorkers, requireEvaluationImportSupport, configuration, requireRunner, registryMatrix, aggregate, ownedResource, manualEvaluationRequest, resolveEvaluationImage } from "../../../.github/scripts/evaluation-policy.mjs";
 import { readWorkflow, workflowJob, runStep } from "../../uat/workflow_helpers.mjs";
-import { serverEnvironment, startupTimings, main } from "./workflow.mjs";
+import { serverEnvironment, databaseCapacity, startupTimings, main } from "./workflow.mjs";
 
 const registry = JSON.parse(fs.readFileSync(new URL("../datasets.json", import.meta.url)));
 const valid = { DENSE_MEM_EVAL_MODEL: "configured-model", DENSE_MEM_EVAL_CONTEXT_WINDOW_TOKENS: "300000", DENSE_MEM_EVAL_IMPORT_WORKERS: "10", DENSE_MEM_EVAL_VERIFIER_URL: "https://provider.example/v1", DENSE_MEM_EVAL_EMBED_URL: "https://api.openai.com/v1", DENSE_MEM_EVAL_API_KEY: "generation-canary", DENSE_MEM_EVAL_EMBED_API_KEY: "embedding-canary", WORKFLOW_EMBEDDING_MODEL: "text-embedding-3-small", WORKFLOW_EMBEDDING_DIMENSIONS: "1536" };
@@ -189,8 +189,13 @@ test("import worker settings are explicit, bounded and shared with the server ge
     assert.equal(configured.importWorkers, workers);
     assert.equal(serverEnvironment(configured, {}).AI_VERIFIER_MAX_CONCURRENCY, String(Math.max(4, workers)));
     assert.equal(serverEnvironment(configured, {}).POSTGRES_ADVISORY_LOCK_CONCURRENCY, String(workers));
-    assert.equal(serverEnvironment(configured, {}).POSTGRES_MAX_OPEN_CONNS, String(Math.max(25, workers + 5)));
+    const capacity = databaseCapacity(workers);
+    assert.equal(serverEnvironment(configured, {}).POSTGRES_MAX_OPEN_CONNS, String(capacity.application));
+    assert.ok(capacity.application - workers >= workers + 10, "each held advisory connection leaves room for a foreground transaction and background activity");
+    assert.ok(capacity.postgres >= capacity.application + 2 + 2 + 10, "operation logs, observer and administrative headroom must fit");
   }
+  assert.equal(databaseCapacity(20).application, 50);
+  assert.equal(databaseCapacity().application, 25);
   for (const value of [undefined, "", "0", "-1", "101", "1.5", "20.0", " 20", "20\n", "invalid-canary"]) {
     assert.throws(() => resolveImportWorkers(value), (error) => /DENSE_MEM_EVAL_IMPORT_WORKERS/.test(error.message) && !error.message.includes("invalid-canary"));
   }

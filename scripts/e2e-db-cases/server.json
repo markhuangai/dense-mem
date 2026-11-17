@@ -3,6 +3,13 @@
   "capability": "server",
   "cases": [
     {
+      "id": "server/TestRememberEvaluationAuthenticatedSustainedImport",
+      "package": "./cmd/internal/serverapp",
+      "run": "^TestRememberEvaluationAuthenticatedSustainedImport$",
+      "phase": "precheck",
+      "source": "cmd/internal/serverapp/evaluation_import_admission_integration_test.go"
+    },
+    {
       "id": "server/TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads",
       "package": "./cmd/internal/serverapp",
       "run": "^TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads$",

@@ -61,12 +61,18 @@ export function privateEnvironment(state, env) {
 export function serverEnvironment(configured, environment) {
   return {
     LOG_LEVEL: "debug", HTTP_ADDR: ":8080", CONTROL_HTTP_ADDR: ":8090", CONTROL_PORTAL_TOKEN: environment.EVAL_CONTROL_TOKEN,
-    POSTGRES_USER: "densemem", POSTGRES_DB: "densemem", POSTGRES_PASSWORD: environment.EVAL_DATABASE_PASSWORD, POSTGRES_HOST: "postgres", POSTGRES_PORT: "5432", POSTGRES_SSLMODE: "disable", POSTGRES_MAX_OPEN_CONNS: String(Math.max(25, (configured.importWorkers || 0) + 5)), POSTGRES_MAX_IDLE_CONNS: "10", ...(configured.importWorkers ? { POSTGRES_ADVISORY_LOCK_CONCURRENCY: String(configured.importWorkers) } : {}),
+    POSTGRES_USER: "densemem", POSTGRES_DB: "densemem", POSTGRES_PASSWORD: environment.EVAL_DATABASE_PASSWORD, POSTGRES_HOST: "postgres", POSTGRES_PORT: "5432", POSTGRES_SSLMODE: "disable", POSTGRES_MAX_OPEN_CONNS: String(databaseCapacity(configured.importWorkers).application), POSTGRES_MAX_IDLE_CONNS: "10", ...(configured.importWorkers ? { POSTGRES_ADVISORY_LOCK_CONCURRENCY: String(configured.importWorkers) } : {}),
     RATE_LIMIT_PER_MINUTE: "200000",
     AI_API_URL: configured.embedding, AI_API_KEY: environment.DENSE_MEM_EVAL_EMBED_API_KEY, AI_API_EMBEDDING_MODEL: "text-embedding-3-small", AI_API_EMBEDDING_DIMENSIONS: "1536", AI_API_EMBEDDING_MAX_CONCURRENCY: "2", AI_API_EMBEDDING_MAX_BATCH_ITEMS: "100",
     AI_VERIFIER_API_URL: configured.verifier, AI_VERIFIER_API_KEY: environment.DENSE_MEM_EVAL_API_KEY, AI_VERIFIER_MODEL: configured.model, AI_REMEMBER_MODEL: configured.model, AI_VERIFIER_DISABLE_TEMPERATURE: "true", AI_VERIFIER_MAX_CONCURRENCY: String(Math.max(4, configured.importWorkers || 0)), AI_VERIFIER_MAX_INPUT_TOKENS: String(configured.context - 8192), AI_VERIFIER_MAX_OUTPUT_TOKENS: "8192", AI_VERIFIER_MAX_CANDIDATE_CONTEXT_TOKENS: String(Math.min(50000, Math.floor((configured.context - 8192) / 2))), AI_VERIFIER_TIMEOUT_SECONDS: "300",
     REDIS_ADDR: "", DISTRIBUTED_COORDINATION_REQUIRED: "false", TELEMETRY_ENABLED: "false", OTLP_ENABLED: "false",
   };
+}
+
+export function databaseCapacity(workers = 0) {
+  const application = Math.max(25, 2 * workers + 10);
+  // Separate operation-log and observer pools use two connections each; reserve ten for administration.
+  return { application, postgres: Math.max(100, application + 14) };
 }
 
 export async function downloadSources(registry, dataset, directory) {
@@ -152,7 +158,7 @@ export async function setup(env, options = {}) {
   docker(["volume", "create", "--label", `${label}=${paths.runID}`, state.volume]);
   const pgEnv = path.join(paths.directory, "postgres.env");
   fs.writeFileSync(pgEnv, `POSTGRES_USER=densemem\nPOSTGRES_DB=densemem\nPOSTGRES_PASSWORD=${password}\n`, { mode: 0o600 });
-  docker(["run", "--detach", "--name", `${prefix}-postgres`, "--label", `${label}=${paths.runID}`, "--network", state.network, "--network-alias", "postgres", "--publish", "127.0.0.1::5432", "--env-file", pgEnv, "--mount", `type=volume,source=${state.volume},target=/var/lib/postgresql`, "pgvector/pgvector:0.8.2-pg18-trixie", "postgres", "-c", `max_connections=${Math.max(100, configured.importWorkers + 20)}`]);
+  docker(["run", "--detach", "--name", `${prefix}-postgres`, "--label", `${label}=${paths.runID}`, "--network", state.network, "--network-alias", "postgres", "--publish", "127.0.0.1::5432", "--env-file", pgEnv, "--mount", `type=volume,source=${state.volume},target=/var/lib/postgresql`, "pgvector/pgvector:0.8.2-pg18-trixie", "postgres", "-c", `max_connections=${databaseCapacity(configured.importWorkers).postgres}`]);
   const pgDeadline = Date.now() + 120_000;
   while (spawnSync("docker", ["exec", `${prefix}-postgres`, "pg_isready", "-U", "densemem"], { stdio: "ignore" }).status !== 0) { if (Date.now() >= pgDeadline) throw new Error("Runner PostgreSQL readiness timed out"); await delay(1000); }
   if (seed) {
@@ -277,9 +283,10 @@ export async function main(mode, env = process.env) {
   await runBinary("run", runtime, env);
 }
 
-export async function runBinary(operation, { paths, state }, env = process.env) {
+export async function runBinary(operation, { paths, state }, env = process.env, signal) {
+  signal?.throwIfAborted();
   const child = spawn(env.EVAL_RUNNER_BINARY, [operation, paths.manifestFile], { stdio: "inherit", env: privateEnvironment(state, env) });
-  const cutoff = setTimeout(() => {
+  const stop = () => {
     child.kill("SIGTERM");
     try {
       const name = `densemem-eval-${paths.runID}-server`;
@@ -287,11 +294,14 @@ export async function runBinary(operation, { paths, state }, env = process.env) 
       ownedResource({ Labels: actual.Config.Labels }, paths.runID);
       docker(["container", "stop", "--signal=SIGTERM", "--timeout=-1", actual.Id], { timeout: 120_000 });
     } catch { process.stderr.write("Runner deadline shutdown failed; owned cleanup remains required.\n"); process.exitCode = 1; }
-  }, Math.max(1, Number(env.EVAL_MODEL_DEADLINE_EPOCH) * 1000 - Date.now()));
+  };
+  signal?.addEventListener("abort", stop, { once: true });
+  const cutoff = setTimeout(stop, Math.max(1, Number(env.EVAL_MODEL_DEADLINE_EPOCH) * 1000 - Date.now()));
   try {
     const code = await new Promise((resolve, reject) => { child.once("error", reject); child.once("exit", resolve); });
     if (code !== 0) throw new Error("Runner binary operation failed; inspect protected logs");
-  } finally { clearTimeout(cutoff); }
+    signal?.throwIfAborted();
+  } finally { clearTimeout(cutoff); signal?.removeEventListener("abort", stop); }
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {

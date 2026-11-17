@@ -262,6 +262,9 @@ func insertEvidenceFragment(ctx context.Context, tx *gorm.DB, input CreateIngest
 	}
 	defer rows.Close()
 	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return EvidenceFragment{}, err
+		}
 		return EvidenceFragment{}, sql.ErrNoRows
 	}
 	fragment := EvidenceFragment{FragmentID: item.FragmentID, SubmittedFragmentID: item.FragmentID, EvidenceIndex: index, Content: item.Content, ContentHash: item.ContentHash, SourceID: sourceID, SourceRevisionID: sourceRevisionID, CanonicalOwnerID: input.OwnerProfileID, OccurrenceOwnerID: input.OwnerProfileID}

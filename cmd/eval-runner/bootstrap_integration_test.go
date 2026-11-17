@@ -3,8 +3,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
+	"log/slog"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -15,6 +18,7 @@ import (
 	accesspostgres "github.com/markhuangai/dense-mem/internal/access/postgres"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/evalharness"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres/testfixture"
 	"github.com/stretchr/testify/require"
@@ -35,6 +39,8 @@ func TestBootstrapSeedIdentityAndCredentialRejection(t *testing.T) {
 	const password = "synthetic-bootstrap-database-password-782"
 	alias := "seed-auth-" + uuid.NewString()
 	options := []testcontainers.ContainerCustomizer{postgres.WithDatabase("densemem"), postgres.WithUsername("densemem"), postgres.WithPassword(password), testcontainers.WithWaitStrategy(wait.ForLog("database system is ready to accept connections").WithOccurrence(2).WithStartupTimeout(time.Minute))}
+	resourceRunID := "resource-" + uuid.NewString()
+	options = append(options, testcontainers.WithName("densemem-eval-"+resourceRunID+"-postgres"), testcontainers.WithLabels(map[string]string{"io.dense-mem.eval.run": resourceRunID}))
 	network := os.Getenv("DENSE_MEM_CI_PRECHECK_NETWORK")
 	if network != "" {
 		options = append(options, tcnetwork.WithNetworkName([]string{alias}, network))
@@ -104,4 +110,61 @@ func TestBootstrapSeedIdentityAndCredentialRejection(t *testing.T) {
 	var count int
 	require.NoError(t, pool.QueryRowContext(ctx, "SELECT count(*) FROM credentials").Scan(&count))
 	require.Equal(t, 1, count)
+	t.Run("resource monitoring emits initial periodic and final protected samples and joins", func(t *testing.T) {
+		var output bytes.Buffer
+		logger := observability.NewConsoleWithHandler(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: slog.LevelDebug}))
+		capture := &evalharness.Capture{Logger: logger.ContextSlog(), Protector: evalharness.NewRunnerCredentialProtector(key, password, dsn), RunID: "resource-fixture"}
+		monitorCtx, stop := context.WithCancel(ctx)
+		defer stop()
+		resourceManifest := evalharness.Manifest{RunID: resourceRunID, SeedDir: manifest.SeedDir}
+		finish := startResourceMonitor(monitorCtx, stop, pool, resourceManifest, capture)
+		timer := time.NewTimer(62 * time.Second)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			t.Fatal("resource monitor fixture expired")
+		}
+		require.NoError(t, finish())
+		var phases []string
+		for _, line := range bytes.Split(bytes.TrimSpace(output.Bytes()), []byte("\n")) {
+			var event struct {
+				Message string           `json:"msg"`
+				Payload resourceSnapshot `json:"payload"`
+			}
+			require.NoError(t, json.Unmarshal(line, &event))
+			require.Equal(t, "eval_resources", event.Message)
+			require.NotNil(t, event.Payload.PGConnections)
+			require.Equal(t, "not_exposed_by_production_runtime", event.Payload.Unavailable["application_pool_waits"])
+			require.Equal(t, "ownership_unverified", event.Payload.Unavailable["server"])
+			if event.Payload.Phase == "periodic" {
+				require.NotNil(t, event.Payload.HostCPUPercent)
+				require.GreaterOrEqual(t, event.Payload.IntervalMS, int64(60_000))
+			}
+			phases = append(phases, event.Payload.Phase)
+		}
+		require.Equal(t, []string{"initial", "periodic", "final"}, phases)
+		for _, secret := range []string{key, password, dsn} {
+			require.NotContains(t, output.String(), secret)
+		}
+		output.Reset()
+		stoppedCtx, cancelMonitor := context.WithCancel(ctx)
+		cancelMonitor()
+		finish = startResourceMonitor(stoppedCtx, cancelMonitor, pool, resourceManifest, capture)
+		require.NoError(t, finish())
+		require.Contains(t, output.String(), `"phase":"final"`)
+		brokenCtx, cancelBroken := context.WithCancel(ctx)
+		defer cancelBroken()
+		finish = startResourceMonitor(brokenCtx, cancelBroken, pool, resourceManifest, &evalharness.Capture{})
+		require.Error(t, finish())
+		require.ErrorIs(t, brokenCtx.Err(), context.Canceled)
+		closed, err := sql.Open("pgx", dsn)
+		require.NoError(t, err)
+		require.NoError(t, closed.Close())
+		sampler := resourceSampler{}
+		unavailable := sampler.sample(ctx, closed, "not-owned", filepath.Join(t.TempDir(), "missing"), "final")
+		require.Nil(t, unavailable.PGConnections)
+		require.Equal(t, "query_unavailable", unavailable.Unavailable["postgres_activity"])
+		require.Equal(t, "counters_unavailable", unavailable.Unavailable["disk"])
+	})
 }

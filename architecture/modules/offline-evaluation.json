@@ -43,6 +43,13 @@
   },
   "workers": [
     {
+      "path": "cmd/eval-runner/resources.go",
+      "function": "startResourceMonitor",
+      "kind": "goroutine",
+      "ordinal": 1,
+      "role": "worker"
+    },
+    {
       "path": "cmd/eval-runner/main.go",
       "function": "execute",
       "kind": "run",

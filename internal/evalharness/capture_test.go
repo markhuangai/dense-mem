@@ -13,6 +13,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/stretchr/testify/require"
@@ -47,16 +48,23 @@ func TestCaptureEmitsReadableJSON(t *testing.T) {
 func TestProgressIsReadableAtInfoAndRejectsInvalidCounts(t *testing.T) {
 	var output bytes.Buffer
 	capture := captureFixture(&output)
+	capture.importStart = time.Now().Add(-2 * time.Minute)
 	require.NoError(t, capture.emitProgress(captureProgress{Stage: "import", Unit: "documents", Total: 10, Completed: 6, Failed: 1}))
 	var line struct {
-		Level   string          `json:"level"`
-		Message string          `json:"msg"`
-		Payload captureProgress `json:"payload"`
+		Level   string `json:"level"`
+		Message string `json:"msg"`
+		Payload struct {
+			captureProgress
+			ElapsedMS          int64   `json:"elapsed_ms"`
+			DocumentsPerMinute float64 `json:"documents_per_minute"`
+		} `json:"payload"`
 	}
 	require.NoError(t, json.Unmarshal(output.Bytes(), &line))
 	require.Equal(t, "INFO", line.Level)
 	require.Equal(t, "eval_progress", line.Message)
 	require.Equal(t, 3, line.Payload.Remaining)
+	require.InDelta(t, 3, line.Payload.DocumentsPerMinute, 0.01)
+	require.GreaterOrEqual(t, line.Payload.ElapsedMS, int64(120000))
 	for _, invalid := range []captureProgress{{Total: -1}, {Total: 1, Completed: -1}, {Total: 1, Failed: -1}, {Total: 1, Completed: 2}, {Total: 1, Completed: 1, Failed: 1}} {
 		require.Error(t, capture.emitProgress(invalid))
 	}

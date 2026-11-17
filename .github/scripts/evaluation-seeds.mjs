@@ -3,6 +3,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { ownedResource, registryMatrix, resolveImportWorkers } from "./evaluation-policy.mjs";
 import imagePolicy from "./image-release-policy.cjs";
+import { seedValidationState } from "./seed-validation.mjs";
 
 export const seedRepository = "ghcr.io/markhuangai/dense-mem-eval-postgres";
 export const postgresImage = "pgvector/pgvector:0.8.2-pg18-trixie";
@@ -29,36 +30,44 @@ export async function authorizeSeedBuild(github, context, triggeringActor) {
   }
   const main = (await github.rest.repos.getBranch({ owner, repo, branch: "main" })).data.commit.sha;
   const releases = await github.paginate(github.rest.repos.listReleases, { owner, repo, per_page: 100 });
-  let baseRelease;
+  let baseRelease, releaseRevision;
   for (const candidate of releases.filter((item) => !item.draft && release.test(item.tag_name))) {
     let object = (await github.rest.git.getRef({ owner, repo, ref: `tags/${candidate.tag_name}` })).data.object;
     while (object.type === "tag") object = (await github.rest.git.getTag({ owner, repo, tag_sha: object.sha })).data.object;
     const comparison = await github.request("GET /repos/{owner}/{repo}/compare/{basehead}", { owner, repo, basehead: `${object.sha}...${main}` });
-    if (["identical", "ahead"].includes(comparison.data.status)) { baseRelease = candidate.tag_name; break; }
+    if (["identical", "ahead"].includes(comparison.data.status)) { baseRelease = candidate.tag_name; releaseRevision = object.sha; break; }
   }
   if (!baseRelease) throw new Error("Current main has no reachable published release");
-  let image;
+  let image, pull;
+  let validation = { source_revision: context.sha };
   if (context.ref === "refs/heads/main") {
     if (context.sha !== main) throw new Error("Seed workflow source no longer matches current main");
     image = `ghcr.io/${repository}:${baseRelease}`;
+    const associated = await github.paginate(github.rest.repos.listPullRequestsAssociatedWithCommit, { owner, repo, commit_sha: releaseRevision, per_page: 100 });
+    const selected = imagePolicy.selectMergedPull(associated, releaseRevision);
+    if (!selected.pull) throw new Error("Seed release has no unique tested merged PR");
+    pull = (await github.rest.pulls.get({ owner, repo, pull_number: selected.pull.number })).data;
+    validation = { ...validation, main_revision: main, release_revision: releaseRevision, validation_revision: pull.head.sha };
   } else {
     const pulls = await github.paginate(github.rest.pulls.list, { owner, repo, state: "open", base: "main", head: `${owner}:${context.ref.slice(11)}`, per_page: 100 });
     const matches = pulls.filter((pull) => !pull.draft && pull.head.sha === context.sha && pull.head.repo?.full_name === repository && pull.user.login.toLowerCase() === context.actor.toLowerCase());
     if (matches.length !== 1) throw new Error("Seed branch must be the actor's own current open same-repository PR head");
-    const pull = matches[0];
-    const statuses = await github.paginate(github.rest.repos.listCommitStatusesForRef, { owner, repo, ref: pull.head.sha, per_page: 100 });
-    const receipt = imagePolicy.parseSuccessfulPolicyStatus({ statuses, pullNumber: pull.number, serverUrl: context.serverUrl, repository });
-    if (!receipt.status) throw new Error("Seed building requires a successful trusted preview receipt");
-    const run = (await github.rest.actions.getWorkflowRun({ owner, repo, run_id: Number(receipt.status.runId) })).data;
-    const published = (await github.rest.actions.getWorkflowRunAttempt({ owner, repo, run_id: Number(receipt.status.runId), attempt_number: Number(receipt.status.runAttempt) })).data;
-    const full = statuses.find((status) => status.context === "Production image E2E");
-    if (published.id !== run.id || published.run_attempt !== Number(receipt.status.runAttempt) || run.run_attempt < published.run_attempt || run.event !== "pull_request_target" || run.path !== ".github/workflows/pr-test-image.yml" || run.conclusion !== "success" || full?.state !== "success" || full.creator?.login !== "github-actions[bot]" || full.target_url !== `${context.serverUrl}/${repository}/actions/runs/${run.id}`) throw new Error("Seed building requires the current-head full production-image E2E receipt");
-    const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRunAttempt, { owner, repo, run_id: published.id, attempt_number: published.run_attempt, per_page: 100 });
-    if (!jobs.some((job) => job.name === "Publish trusted preview" && job.conclusion === "success")) throw new Error("Seed building requires successful trusted preview publication");
-    const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: pull.number, per_page: 100 });
-    image = imagePolicy.selectPreviewReceipt({ comments, pull, status: receipt.status, repository }).image;
+    pull = matches[0];
   }
-  return { image, source_revision: context.sha, source_repository: repository, base_release: baseRelease, seed_version: seedBuildVersion(baseRelease) };
+  const statuses = await github.paginate(github.rest.repos.listCommitStatusesForRef, { owner, repo, ref: pull.head.sha, per_page: 100 });
+  const receipt = imagePolicy.parseSuccessfulPolicyStatus({ statuses, pullNumber: pull.number, serverUrl: context.serverUrl, repository });
+  if (!receipt.status) throw new Error("Seed building requires a successful trusted preview receipt");
+  const run = (await github.rest.actions.getWorkflowRun({ owner, repo, run_id: Number(receipt.status.runId) })).data;
+  const published = (await github.rest.actions.getWorkflowRunAttempt({ owner, repo, run_id: Number(receipt.status.runId), attempt_number: Number(receipt.status.runAttempt) })).data;
+  if (published.id !== run.id || published.run_attempt !== Number(receipt.status.runAttempt) || run.run_attempt < published.run_attempt || run.event !== "pull_request_target" || run.path !== ".github/workflows/pr-test-image.yml") throw new Error("Seed building requires a valid trusted publisher workflow receipt");
+  const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRunAttempt, { owner, repo, run_id: published.id, attempt_number: published.run_attempt, per_page: 100 });
+  if (!jobs.some((job) => job.name === "Publish trusted preview" && job.conclusion === "success")) throw new Error("Seed building requires successful trusted preview publication");
+  const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: pull.number, per_page: 100 });
+  const preview = imagePolicy.selectPreviewReceipt({ comments, pull, status: receipt.status, repository }).image;
+  image ||= preview;
+  validation = { ...validation, pull_number: pull.number, actor: pull.user.login, run_id: run.id, publisher_attempt: published.run_attempt, validation_attempt: run.run_attempt };
+  await seedValidationState(github, validation);
+  return { image, source_revision: context.sha, source_repository: repository, base_release: baseRelease, seed_version: seedBuildVersion(baseRelease), validation: JSON.stringify({ ...validation, image }) };
 }
 
 export function seedReference(dataset, selected = "latest") {
@@ -201,7 +210,8 @@ export async function resolveSeedImage(reference, env = process.env) {
   return `${seedRepository}@${hash}`;
 }
 
-export async function publishSeed(docker, directory, dataset, selected, env = process.env) {
+export async function publishSeed(docker, directory, dataset, selected, env, beforePublication) {
+  if (typeof beforePublication !== "function") throw new Error("Seed publication requires a fresh validation gate");
   const tagged = seedReference(dataset, selected);
   if (await resolveSeedImage(tagged, env)) throw new Error("Dated seed image already exists and cannot be overwritten");
   const files = ["database.dump", "seed.json", "NOTICE.md", ...(dataset === "bootstrap" ? [] : ["mapping.json"])];
@@ -210,10 +220,12 @@ export async function publishSeed(docker, directory, dataset, selected, env = pr
   for (const file of files) fs.copyFileSync(path.join(directory, file), path.join(context, file));
   fs.writeFileSync(path.join(context, "Dockerfile"), `FROM scratch\nLABEL org.opencontainers.image.source="https://github.com/markhuangai/dense-mem"\nCOPY ${files.join(" ")} /seed/\n`);
   docker(["build", "--network=none", "--platform=linux/amd64", "--tag", tagged, context], { timeout: 20 * 60_000 });
+  await beforePublication();
   docker(["push", "--quiet", tagged], { timeout: 20 * 60_000 });
   const pinned = await resolveSeedImage(tagged, env);
   if (!pinned) throw new Error("Published seed has no immutable registry digest");
   docker(["tag", tagged, seedReference(dataset)]);
+  await beforePublication();
   docker(["push", "--quiet", seedReference(dataset)], { timeout: 20 * 60_000 });
   if (await resolveSeedImage(seedReference(dataset), env) !== pinned) throw new Error("Seed latest alias differs from the verified dated image");
   return pinned;

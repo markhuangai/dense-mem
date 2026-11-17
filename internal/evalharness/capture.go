@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/markhuangai/dense-mem/internal/jsonstrict"
 	"github.com/markhuangai/dense-mem/internal/observability"
@@ -19,12 +20,13 @@ const captureLimit = 16 << 20
 const captureInlineLimit = observability.MaxOperationMetadataBytes / 2
 
 type Capture struct {
-	Logger    *slog.Logger
-	Protector *observability.CredentialProtector
-	RunID     string
-	mu        sync.Mutex
-	sequence  int
-	failed    bool
+	Logger      *slog.Logger
+	Protector   *observability.CredentialProtector
+	RunID       string
+	mu          sync.Mutex
+	sequence    int
+	failed      bool
+	importStart time.Time
 }
 
 type Event struct {
@@ -74,6 +76,21 @@ func (c *Capture) Emit(kind string, payload any) error {
 	if c.failed {
 		return errors.New("benchmark log capture is incomplete")
 	}
+	if progress, ok := payload.(captureProgress); ok && progress.Stage == "import" {
+		if c.importStart.IsZero() {
+			c.importStart = time.Now()
+		}
+		elapsed := time.Since(c.importStart)
+		rate := float64(0)
+		if elapsed > 0 {
+			rate = float64(progress.Completed) / elapsed.Minutes()
+		}
+		payload = struct {
+			captureProgress
+			ElapsedMS          int64   `json:"elapsed_ms"`
+			DocumentsPerMinute float64 `json:"documents_per_minute"`
+		}{progress, elapsed.Milliseconds(), rate}
+	}
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return err
@@ -116,6 +133,8 @@ func (c *Capture) Emit(kind string, payload any) error {
 	level, message := slog.LevelDebug, "eval_capture"
 	if event.Kind == "progress" {
 		level, message = slog.LevelInfo, "eval_progress"
+	} else if event.Kind == "resources" {
+		level, message = slog.LevelInfo, "eval_resources"
 	}
 	fields := []any{"run_id", c.RunID, "sequence", c.sequence, "kind", event.Kind}
 	if len(chunks) == 0 {

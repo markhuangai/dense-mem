@@ -22,8 +22,16 @@ gh workflow run build-evaluation-seeds.yml --repo markhuangai/dense-mem --ref ma
 Before the implementation reaches main, select PR #777's approved branch. Both
 initiating and triggering actors must be repository admins. A PR dispatch must
 use the actor's own current, open, non-draft same-repository PR head and its
-successful trusted production-image E2E receipt. Main dispatches use its published
-release image. Job reruns are rejected; a failed dataset requires a new dispatch.
+successful immutable trusted image receipt after current-head reviews and CodeQL.
+Full CI/E2E and seed ingestion may run concurrently on separate hosted runners.
+The seed workflow first runs synthetic exporter, protection and cleanup tests,
+without provider calls or seed publication. It checks validation every minute
+during ingestion; failed/cancelled validation, a changed head or attempt, or
+unavailable validation stops model work. Every public push, including bootstrap
+and latest tags, requires fresh successful CI/E2E. Main dispatches use its
+published release image, that release's verified merged-PR validation, and
+successful current-main CI. Job reruns
+are rejected; a failed dataset requires a new dispatch.
 
 The workflow creates or verifies a shared empty bootstrap database, then builds
 one dataset at a time. The first failure stops remaining datasets. Completed
@@ -40,6 +48,24 @@ exports a compressed PostgreSQL logical dump. A fresh restore must verify before
 publication. The backup preserves migrations, Evidence, embeddings, provenance,
 ownership and required receipts. Operation-log and Remember diagnostic payload
 rows are excluded, while their table definitions remain.
+
+At twenty workers the application pool has fifty connections: twenty may be
+held by request advisory locks while foreground queries and background activity
+use the remainder. PostgreSQL also reserves connections for the separate logging
+and observer pools and administration. Capacity is not a throughput guarantee.
+Target at least forty completed documents/minute and aim for sixty for deadline
+margin; confirm this over sustained live ingestion, including provider latency.
+
+Import progress and resource logs appear initially, every sixty seconds and at
+completion. Progress includes completed/failed/remaining documents and the
+average documents/minute. Resource records share the run identity and timestamp
+with progress: interval-averaged host CPU and I/O wait, available memory, disk
+free, sampled container CPU/memory, and PostgreSQL active connections/lock waits.
+Container CPU is a sampled per-core percentage and can exceed 100%. Missing
+measurements have explicit unavailable reasons. Application pool wait counters
+are measured by the authenticated sustained PostgreSQL regression; the production
+runtime does not expose them. Resource sampling does not print environment
+variables, SQL text, provider URLs or credentials.
 
 The public registry package is `ghcr.io/markhuangai/dense-mem-eval-postgres`:
 
@@ -177,10 +203,15 @@ Run Development E2E on the exact pushed SHA with PostgreSQL shards `all` and
 `ontology_organization`, `space_aware_recall`, and `operation_logging`. Its
 observation budget is ninety minutes, including owned-image cleanup.
 
-Require current-head review completion followed by passing full Repository CI,
-CodeQL analysis, CodeQL and Production image E2E. Run the internal fixture
-round-trip, including actual exporter, credential-exclusion and protected-failure
-regressions, remotely before publishing any public dataset seed.
+Require current-head review completion and successful CodeQL analysis and CodeQL
+before requesting the trusted image and full validation. Once the immutable
+image is published, seed ingestion may overlap full CI/E2E. The builder's
+synthetic round-trip must pass before paid work; all four final checks (Repository
+CI, CodeQL analysis, CodeQL and Production image E2E) must pass before publication.
+Run the internal fixture campaign remotely and retain its complete output and
+owned cleanup evidence. Development PostgreSQL tests compare twenty authenticated
+workers at the former 25-connection and candidate 50-connection capacities over
+at least a minute, with real credential activity, pool waits and commit timings.
 
 After the maintainer provisions the shared Secrets and public package visibility,
 dispatch one full public seed build with twenty workers and serial datasets.

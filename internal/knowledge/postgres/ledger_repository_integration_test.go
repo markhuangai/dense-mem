@@ -4,14 +4,69 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
+
+func TestEvidenceInsertPreservesDriverFailures(t *testing.T) {
+	admin, _, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	team := createLedgerTeam(t, admin, rls, "insert-driver-failures")
+	owner := createLedgerProfile(t, admin, rls, team, "insert-owner")
+	for _, mode := range []string{"database_cancel", "deadline", "empty_result"} {
+		t.Run(mode, func(t *testing.T) {
+			name := "seed_insert_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+			body := "RAISE EXCEPTION 'seed insert cancelled' USING ERRCODE='57014';"
+			if mode == "deadline" {
+				body = "PERFORM pg_sleep(5); RETURN NEW;"
+			}
+			if mode == "empty_result" {
+				body = "RETURN NULL;"
+			}
+			require.NoError(t, admin.Exec(fmt.Sprintf(`CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.team_id='%s'::uuid THEN %s END IF; RETURN NEW; END $$; CREATE TRIGGER %s BEFORE INSERT ON evidence_fragments FOR EACH ROW EXECUTE FUNCTION %s()`, name, team, body, name, name)).Error)
+			defer func() {
+				require.NoError(t, admin.Exec(fmt.Sprintf("DROP TRIGGER %s ON evidence_fragments; DROP FUNCTION %s()", name, name)).Error)
+			}()
+			err := rls.WithSystemTx(ctx, admin, func(tx *gorm.DB) error {
+				id := uuid.NewString()
+				input := CreateIngestInput{TeamID: team, OwnerProfileID: owner, IngestID: id, IdempotencyKey: id, RequestHash: sha256Hex(id), Status: "completed"}
+				if _, _, err := insertKnowledgeIngest(ctx, tx, input); err != nil {
+					return err
+				}
+				insertCtx := ctx
+				if mode == "deadline" {
+					var cancel context.CancelFunc
+					insertCtx, cancel = context.WithTimeout(ctx, 100*time.Millisecond)
+					defer cancel()
+				}
+				_, err := insertEvidenceFragment(insertCtx, tx, input, id, 0, EvidenceInput{Content: "public seed Evidence", ContentHash: sha256Hex("public seed Evidence"), SourceType: "manual", Authority: "primary"}, nil)
+				return err
+			})
+			require.Error(t, err)
+			switch mode {
+			case "database_cancel":
+				var databaseError *pgconn.PgError
+				require.ErrorAs(t, err, &databaseError)
+				require.Equal(t, "57014", databaseError.Code)
+			case "deadline":
+				require.ErrorIs(t, err, context.DeadlineExceeded)
+			case "empty_result":
+				require.ErrorIs(t, err, sql.ErrNoRows)
+			}
+		})
+	}
+}
 
 func TestLedgerSourceRevisionCompareAndSet(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)

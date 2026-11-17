@@ -104,7 +104,11 @@ func execute(ctx context.Context, args []string, logger *observability.Logger, p
 	native.ServerUsage = map[string]evalharness.UsageTotals{}
 	native.RuntimeLogs = func(ctx context.Context) error { return runtimeLogs(ctx, manifest.RunID, capture, native.ServerUsage) }
 	if args[0] == "prepare" {
-		_, prepareErr := evalharness.Prepare(ctx, manifest, corpus, client, native)
+		prepareCtx, stop := context.WithCancel(ctx)
+		defer stop()
+		finishResources := startResourceMonitor(prepareCtx, stop, database, manifest, capture)
+		_, prepareErr := evalharness.Prepare(prepareCtx, manifest, corpus, client, native)
+		prepareErr = errors.Join(prepareErr, finishResources())
 		shutdown, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
 		defer cancel()
 		return errors.Join(prepareErr, native.RuntimeLogs(shutdown))
