@@ -240,7 +240,7 @@ export async function main(mode, env = process.env) {
     if (!fs.existsSync(paths.stateFile) || fs.existsSync(path.join(paths.directory, "public/scores.json"))) return;
     const state = read(paths.stateFile);
     if (state.runID !== paths.runID) throw new Error("Startup log ownership mismatch");
-    const files = fs.readdirSync(paths.directory, { recursive: true }).filter((file) => path.basename(file) === "postgres-failure.log").map((file) => path.join(paths.directory, file));
+    const files = fs.readdirSync(paths.directory, { recursive: true }).filter((file) => ["postgres-failure.log", "seed-failure.log"].includes(path.basename(file))).map((file) => path.join(paths.directory, file));
     const name = `densemem-eval-${paths.runID}-server`;
     if (docker(["container", "ls", "--all", "--filter", `name=^${name}$`, "--quiet"])) {
       const actual = JSON.parse(docker(["container", "inspect", name]))[0]; ownedResource({ Labels: actual.Config.Labels }, paths.runID);

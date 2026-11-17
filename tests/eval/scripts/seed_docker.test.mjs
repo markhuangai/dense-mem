@@ -103,6 +103,9 @@ test("production seed exporter preserves data, excludes payloads and protects re
   assert.equal(fs.statSync(diagnostic).mode & 0o777, 0o600);
   assert.match(protectedDiagnostics(), /restore rejected/);
 
+  fs.writeFileSync(path.join(paths.directory, "seed-failure.log"), JSON.stringify({ message: `seed publication rejected ${canary}`, diagnostic: `${Buffer.from(canary).toString("base64")} ${Buffer.from(canary).toString("hex")}` }, null, 2) + "\n", { mode: 0o600 });
+  assert.match(protectedDiagnostics(), /seed publication rejected/);
+
   const broken = path.join(paths.directory, "broken");
   fs.mkdirSync(broken, { mode: 0o700 });
   fs.writeFileSync(path.join(broken, "seed.json"), "{}\n");

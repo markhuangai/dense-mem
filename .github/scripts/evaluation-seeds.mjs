@@ -182,7 +182,7 @@ export async function verifySeedCredentialExclusions(docker, postgres, directory
 
 async function registryManifest(reference, method = "HEAD", env = process.env) {
   const selected = reference.slice(seedRepository.length + 1);
-  const headers = { Accept: "application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json" };
+  const headers = { Accept: "application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json" };
   const tokenHeaders = {};
   if (env.GITHUB_TOKEN) tokenHeaders.Authorization = `Basic ${Buffer.from(`${env.GITHUB_ACTOR}:${env.GITHUB_TOKEN}`).toString("base64")}`;
   const authorization = await fetch("https://ghcr.io/token?service=ghcr.io&scope=repository:markhuangai/dense-mem-eval-postgres:pull", { headers: tokenHeaders, signal: AbortSignal.timeout(30_000) });

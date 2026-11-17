@@ -80,5 +80,16 @@ export async function main(operation, env = process.env) {
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
-  main(process.argv[2]).catch(() => { process.stderr.write("Seed workflow failed; inspect protected runner logs. No automatic rebuild was requested.\n"); process.exitCode = 1; });
+  main(process.argv[2]).catch((error) => {
+    process.exitCode = 1;
+    try {
+      requireRunner(process.env);
+      const paths = location(process.env);
+      if (fs.existsSync(paths.stateFile)) {
+        if (read(paths.stateFile).runID !== paths.runID) throw new Error("Seed failure log ownership mismatch");
+        save(path.join(paths.directory, "seed-failure.log"), { message: error.message, diagnostic: error.diagnostic });
+      }
+    } catch { process.stderr.write("Seed failure evidence could not be retained.\n"); }
+    process.stderr.write("Seed workflow failed; inspect protected runner logs. No automatic rebuild was requested.\n");
+  });
 }

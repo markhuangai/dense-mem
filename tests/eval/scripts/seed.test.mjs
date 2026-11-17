@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import test from "node:test";
 import imagePolicy from "../../../.github/scripts/image-release-policy.cjs";
-import { seedBuildRequest, seedReference, seedBuildVersion, seedMetadata, verifySeedFiles, sealSeed, hashFile, authorizeSeedBuild, remainingSeedRestoreEntries } from "../../../.github/scripts/evaluation-seeds.mjs";
+import { seedBuildRequest, seedReference, seedBuildVersion, seedMetadata, verifySeedFiles, sealSeed, hashFile, authorizeSeedBuild, remainingSeedRestoreEntries, resolveSeedImage } from "../../../.github/scripts/evaluation-seeds.mjs";
+import { location } from "./workflow.mjs";
 import { readWorkflow, workflowJob } from "../../uat/workflow_helpers.mjs";
 
 const registry = JSON.parse(fs.readFileSync(new URL("../datasets.json", import.meta.url)));
@@ -24,6 +26,49 @@ test("seed tags use UTC timestamps and main release names without a separate ver
   assert.equal(seedReference("musique"), "ghcr.io/markhuangai/dense-mem-eval-postgres:musique-latest");
   for (const value of ["v1", "main", "v2.8.1-rc.5\n", "pr777"]) assert.throws(() => seedBuildVersion(value));
   for (const value of ["latest\n", "other:tag", "https://example.test", "20261116-v1"]) assert.throws(() => seedReference("hotpotqa", value));
+});
+
+test("seed registry resolves image manifests and published indexes without treating indexes as missing", async (t) => {
+  const reference = seedReference("bootstrap", seedBuildVersion("v2.8.1-rc.5", new Date("2026-11-17T04:26:41.183Z")));
+  let mediaType, status = 200, hash = `sha256:${"a".repeat(64)}`;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    if (new URL(url).pathname === "/token") return Response.json({ token: "registry-test-token" });
+    assert.equal(options.method, "HEAD");
+    if (!options.headers.Accept.split(/,\s*/).includes(mediaType)) return new Response(null, { status: 404 });
+    return new Response(null, { status, headers: { "Content-Type": mediaType, "Docker-Content-Digest": hash } });
+  });
+  for (mediaType of ["application/vnd.oci.image.index.v1+json", "application/vnd.docker.distribution.manifest.list.v2+json", "application/vnd.oci.image.manifest.v1+json", "application/vnd.docker.distribution.manifest.v2+json"]) {
+    assert.equal(await resolveSeedImage(reference, {}), `ghcr.io/markhuangai/dense-mem-eval-postgres@${hash}`);
+  }
+  status = 404;
+  assert.equal(await resolveSeedImage(reference, {}), null);
+  status = 403;
+  await assert.rejects(resolveSeedImage(reference, {}), /could not be resolved/);
+  status = 200; hash = "invalid";
+  await assert.rejects(resolveSeedImage(reference, {}), /could not be resolved/);
+});
+
+test("seed CLI retains its failure privately only after an owned runtime exists", (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "seed-cli-failure-"));
+  t.after(() => fs.rmSync(directory, { recursive: true }));
+  const env = { ...process.env, GITHUB_ACTIONS: "true", RUNNER_ENVIRONMENT: "github-hosted", GITHUB_RUN_ID: "42", GITHUB_RUN_ATTEMPT: "1", RUNNER_TEMP: directory, EVAL_MODE: "live", EVAL_DATASET: "bootstrap" };
+  const paths = location(env), diagnostic = path.join(paths.directory, "seed-failure.log");
+  const run = () => {
+    const result = spawnSync(process.execPath, ["tests/eval/scripts/seed-workflow.mjs", "unsupported"], { env, encoding: "utf8", timeout: 10_000 });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /inspect protected runner logs/);
+    assert.doesNotMatch(result.stdout + result.stderr, /Unsupported seed workflow operation/);
+  };
+  run();
+  assert.equal(fs.existsSync(diagnostic), false);
+  fs.mkdirSync(paths.directory, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(paths.stateFile, JSON.stringify({ runID: "foreign" }));
+  run();
+  assert.equal(fs.existsSync(diagnostic), false);
+  fs.writeFileSync(paths.stateFile, JSON.stringify({ runID: paths.runID }));
+  run();
+  assert.deepEqual(JSON.parse(fs.readFileSync(diagnostic)), { message: "Unsupported seed workflow operation" });
+  assert.equal(fs.statSync(diagnostic).mode & 0o777, 0o600);
 });
 
 test("seed workflow has only public dataset and worker inputs, serial failure-stopping jobs and owned cleanup", async () => {
