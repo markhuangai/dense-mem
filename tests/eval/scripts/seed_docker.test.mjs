@@ -106,8 +106,9 @@ test("production seed exporter preserves data, excludes payloads and protects re
   const broken = path.join(paths.directory, "broken");
   fs.mkdirSync(broken, { mode: 0o700 });
   fs.writeFileSync(path.join(broken, "seed.json"), "{}\n");
-  docker(["exec", container, "sh", "-c", "printf broken > /tmp/evaluation-seed.dump"]);
+  fs.writeFileSync(path.join(broken, "database.dump"), "broken", { mode: 0o600 });
+  docker(["cp", path.join(broken, "database.dump"), `${container}:/tmp/evaluation-seed.dump`]);
   await assert.rejects(verifySeedCredentialExclusions(docker, container, broken, [canary]), /Docker operation exec failed/);
-  assert.match(fs.readFileSync(path.join(broken, "postgres-failure.log"), "utf8"), /PostgreSQL verification failed/);
+  assert.match(fs.readFileSync(path.join(broken, "postgres-failure.log"), "utf8"), /PostgreSQL verification failed[\s\S]*input file does not appear to be a valid archive/);
   assert.equal(fs.existsSync(path.join(broken, "verification.sql")), false);
 });
