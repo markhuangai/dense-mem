@@ -50,8 +50,11 @@ export async function authorizeSeedBuild(github, context, triggeringActor) {
     const receipt = imagePolicy.parseSuccessfulPolicyStatus({ statuses, pullNumber: pull.number, serverUrl: context.serverUrl, repository });
     if (!receipt.status) throw new Error("Seed building requires a successful trusted preview receipt");
     const run = (await github.rest.actions.getWorkflowRun({ owner, repo, run_id: Number(receipt.status.runId) })).data;
+    const published = (await github.rest.actions.getWorkflowRunAttempt({ owner, repo, run_id: Number(receipt.status.runId), attempt_number: Number(receipt.status.runAttempt) })).data;
     const full = statuses.find((status) => status.context === "Production image E2E");
-    if (run.run_attempt !== Number(receipt.status.runAttempt) || run.event !== "pull_request_target" || run.path !== ".github/workflows/pr-test-image.yml" || run.conclusion !== "success" || full?.state !== "success" || full.creator?.login !== "github-actions[bot]" || full.target_url !== `${context.serverUrl}/${repository}/actions/runs/${run.id}`) throw new Error("Seed building requires the current-head full production-image E2E receipt");
+    if (published.id !== run.id || published.run_attempt !== Number(receipt.status.runAttempt) || run.run_attempt < published.run_attempt || run.event !== "pull_request_target" || run.path !== ".github/workflows/pr-test-image.yml" || run.conclusion !== "success" || full?.state !== "success" || full.creator?.login !== "github-actions[bot]" || full.target_url !== `${context.serverUrl}/${repository}/actions/runs/${run.id}`) throw new Error("Seed building requires the current-head full production-image E2E receipt");
+    const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRunAttempt, { owner, repo, run_id: published.id, attempt_number: published.run_attempt, per_page: 100 });
+    if (!jobs.some((job) => job.name === "Publish trusted preview" && job.conclusion === "success")) throw new Error("Seed building requires successful trusted preview publication");
     const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: pull.number, per_page: 100 });
     image = imagePolicy.selectPreviewReceipt({ comments, pull, status: receipt.status, repository }).image;
   }

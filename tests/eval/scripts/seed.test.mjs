@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import imagePolicy from "../../../.github/scripts/image-release-policy.cjs";
 import { seedBuildRequest, seedReference, seedBuildVersion, seedMetadata, verifySeedFiles, sealSeed, hashFile, authorizeSeedBuild, remainingSeedRestoreEntries } from "../../../.github/scripts/evaluation-seeds.mjs";
 import { readWorkflow, workflowJob } from "../../uat/workflow_helpers.mjs";
 
@@ -53,6 +54,43 @@ test("seed authorization rejects reruns, foreign repositories and non-admin acto
   await assert.rejects(authorizeSeedBuild(github, context, "admin"), /repository admins/);
   await assert.rejects(authorizeSeedBuild(github, { ...context, runAttempt: 2 }, "admin"), /fresh/);
   await assert.rejects(authorizeSeedBuild(github, { ...context, repo: { owner: "foreign", repo: "dense-mem" } }, "admin"), /same-repository/);
+});
+
+test("seed authorization verifies the publisher attempt separately from successful validation retries", async () => {
+  const repository = "markhuangai/dense-mem", revision = "b".repeat(40), main = "c".repeat(40);
+  const target = `https://github.com/${repository}/actions/runs/100`;
+  const image = `ghcr.io/${repository}:test-42@sha256:${"a".repeat(64)}`;
+  const pull = { number: 42, draft: false, user: { login: "owner" }, head: { sha: revision, repo: { full_name: repository } } };
+  const context = { repo: { owner: "markhuangai", repo: "dense-mem" }, runAttempt: 1, ref: "refs/heads/feature", sha: revision, actor: "owner", serverUrl: "https://github.com" };
+  const statuses = [{ id: 2, context: "PR test image policy", state: "success", description: "Published test-42 (run 100, attempt 1).", target_url: target }, { id: 3, context: "Production image E2E", state: "success", creator: { login: "github-actions[bot]" }, target_url: target }];
+  const latest = { id: 100, run_attempt: 2, event: "pull_request_target", path: ".github/workflows/pr-test-image.yml", conclusion: "success" };
+  const published = { ...latest, run_attempt: 1, conclusion: "failure" };
+  const jobs = [{ name: "Publish trusted preview", conclusion: "success" }];
+  const receipt = { version: 1, pr_number: 42, source_sha: revision, image, run_id: "100", run_attempt: "1", trusted_revision: main };
+  const comments = [{ user: { login: "github-actions[bot]" }, body: imagePolicy.formatPreviewReceipt(receipt, target) }];
+  const github = { paginate: (method, args) => method(args), request: async () => ({ data: { status: "identical" } }), rest: {
+    repos: { getCollaboratorPermissionLevel: async () => ({ data: { permission: "admin" } }), getBranch: async () => ({ data: { commit: { sha: main } } }), listReleases: async () => [{ tag_name: "v2.8.1-rc.5", draft: false }], listCommitStatusesForRef: async () => statuses },
+    git: { getRef: async () => ({ data: { object: { type: "commit", sha: main } } }) },
+    pulls: { list: async () => [pull] }, issues: { listComments: async () => comments },
+    actions: { getWorkflowRun: async () => ({ data: latest }), getWorkflowRunAttempt: async ({ run_id, attempt_number }) => { assert.equal(run_id, 100); assert.equal(attempt_number, 1); return { data: published }; }, listJobsForWorkflowRunAttempt: async ({ run_id, attempt_number }) => { assert.equal(run_id, 100); assert.equal(attempt_number, 1); return jobs; } },
+  } };
+  assert.equal((await authorizeSeedBuild(github, context, "owner")).image, image);
+  for (const change of [{ conclusion: "failure" }, { conclusion: null }, { run_attempt: 0 }, { event: "push" }]) {
+    const original = { ...latest }; Object.assign(latest, change);
+    await assert.rejects(authorizeSeedBuild(github, context, "owner"), /full production-image E2E receipt/);
+    Object.assign(latest, original);
+  }
+  published.run_attempt = 2;
+  await assert.rejects(authorizeSeedBuild(github, context, "owner"), /full production-image E2E receipt/);
+  published.run_attempt = 1;
+  jobs[0].conclusion = "failure";
+  await assert.rejects(authorizeSeedBuild(github, context, "owner"), /trusted preview publication/);
+  jobs[0].conclusion = "success";
+  statuses[1].state = "failure";
+  await assert.rejects(authorizeSeedBuild(github, context, "owner"), /full production-image E2E receipt/);
+  statuses[1].state = "success";
+  comments[0].body = imagePolicy.formatPreviewReceipt({ ...receipt, source_sha: "d".repeat(40) }, target);
+  await assert.rejects(authorizeSeedBuild(github, context, "owner"), /preview receipt is missing/);
 });
 
 test("seed checks bind public source counts, scope and real file checksums", async (t) => {

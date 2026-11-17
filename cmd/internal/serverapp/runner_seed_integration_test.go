@@ -168,6 +168,22 @@ func TestRunnerSeedLogicalRestoreMigrationAndCredentialIdentity(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, beforeCalls, f.provider.calls, "restoring and verifying a seed performs no Remember provider work")
 	require.Equal(t, seed.Scope, native.Scope)
+	require.NoError(t, storagepostgres.NewRLS().WithSystemTx(ctx, restored, func(tx *gorm.DB) error {
+		result := tx.Exec(`UPDATE search_documents SET document_text=document_text || ' incompatible restored seed' WHERE team_id=? AND search_state='current'`, native.Scope.TeamID)
+		require.Positive(t, result.RowsAffected)
+		return result.Error
+	}))
+	incompatibleSearch, err := native.SearchFingerprint(ctx)
+	require.NoError(t, err)
+	require.NotEqual(t, seed.SearchHash, incompatibleSearch)
+	_, _, _, observation, err := evalharness.VerifySeed(ctx, manifest, corpus, f.native.Client, &native)
+	require.ErrorContains(t, err, "restored search state changed; rebuild the seed")
+	require.NoError(t, evalharness.NativeReady(observation, false, true, manifest, native.Scope.TeamID))
+	require.Equal(t, seed.CanonicalHash, observation.CanonicalHash)
+	require.Equal(t, beforeCalls, f.provider.calls, "an incompatible seed must not trigger Remember provider work")
+	afterRejection, err := native.SearchFingerprint(ctx)
+	require.NoError(t, err)
+	require.Equal(t, incompatibleSearch, afterRejection, "verification must reject incompatible search data without repairing it")
 	seed.Dataset = "wrong-dataset"
 	body, err = json.Marshal(seed)
 	require.NoError(t, err)

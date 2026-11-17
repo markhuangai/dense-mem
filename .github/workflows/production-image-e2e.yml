@@ -138,15 +138,19 @@ jobs:
               const { data: workflowRun } = await github.rest.actions.getWorkflowRun({
                 owner, repo, run_id: Number(receipt.status.runId),
               });
+              const { data: publishedRun } = await github.rest.actions.getWorkflowRunAttempt({
+                owner, repo, run_id: Number(receipt.status.runId), attempt_number: Number(receipt.status.runAttempt),
+              });
               if (workflowRun.id !== Number(receipt.status.runId) ||
-                  workflowRun.run_attempt !== Number(receipt.status.runAttempt) ||
+                  publishedRun.id !== workflowRun.id || publishedRun.run_attempt !== Number(receipt.status.runAttempt) ||
+                  workflowRun.run_attempt < publishedRun.run_attempt ||
                   workflowRun.event !== "pull_request_target" ||
                   workflowRun.path !== ".github/workflows/pr-test-image.yml" ||
                   workflowRun.display_title !== `PR test image: PR #${pull.number}`) {
                 throw new Error("the trusted preview workflow receipt is invalid");
               }
-              const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
-                owner, repo, run_id: workflowRun.id, filter: "latest", per_page: 100,
+              const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRunAttempt, {
+                owner, repo, run_id: publishedRun.id, attempt_number: publishedRun.run_attempt, per_page: 100,
               });
               if (!jobs.some((job) => job.name === "Publish trusted preview" && job.conclusion === "success")) {
                 throw new Error("the trusted preview publish job did not pass");

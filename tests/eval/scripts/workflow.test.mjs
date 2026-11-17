@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import imagePolicy from "../../../.github/scripts/image-release-policy.cjs";
 import { resolveSetting, resolveImportWorkers, requireEvaluationImportSupport, configuration, requireRunner, registryMatrix, aggregate, ownedResource, manualEvaluationRequest, resolveEvaluationImage } from "../../../.github/scripts/evaluation-policy.mjs";
 import { readWorkflow, workflowJob, runStep } from "../../uat/workflow_helpers.mjs";
 import { serverEnvironment, startupTimings, main } from "./workflow.mjs";
@@ -119,6 +120,46 @@ test("manual authorization executes both modes without PR or historical-run look
       await assert.rejects(execute(github, context, { setOutput: () => assert.fail("Unauthorized request published outputs") }), /admins/);
     });
   }
+});
+
+test("own-PR evaluation executes authorization against the publishing attempt after validation retries", async () => {
+  const workflow = await readWorkflow("production-image-e2e.yml");
+  const script = workflowJob(workflow, "authorize").steps.find((step) => step.id === "resolve").with.script;
+  const execute = new (Object.getPrototypeOf(async () => {}).constructor)("github", "context", "core", "require", "process", script);
+  const target = `https://github.com/${repository}/actions/runs/100`;
+  const pull = { number: 42, state: "open", draft: false, user: { login: "owner" }, base: { ref: "main", sha: "c".repeat(40) }, head: { ref: "feature", sha: revision, repo: { full_name: repository } } };
+  const context = { repo: { owner: "markhuangai", repo: "dense-mem" }, actor: "owner", serverUrl: "https://github.com", eventName: "workflow_dispatch", ref: "refs/heads/feature", sha: revision, runAttempt: 1 };
+  const statuses = [{ id: 2, context: "PR test image policy", state: "success", description: "Published test-42 (run 100, attempt 1).", target_url: target }, { id: 3, context: "Production image E2E", state: "success", creator: { login: "github-actions[bot]" }, target_url: target }];
+  const latest = { id: 100, run_attempt: 2, event: "pull_request_target", path: ".github/workflows/pr-test-image.yml", display_title: "PR test image: PR #42", conclusion: "success" };
+  const published = { ...latest, run_attempt: 1, conclusion: "failure" };
+  const jobs = [{ name: "Publish trusted preview", conclusion: "success" }];
+  const receipt = { version: 1, pr_number: 42, source_sha: revision, image: pinnedImage, run_id: "100", run_attempt: "1", trusted_revision: "c".repeat(40) };
+  const comments = [{ user: { login: "github-actions[bot]" }, body: imagePolicy.formatPreviewReceipt(receipt, target) }];
+  const github = { paginate: (method, args) => method(args), rest: {
+    repos: { getCollaboratorPermissionLevel: async () => ({ data: { permission: "admin" } }), listCommitStatusesForRef: async () => statuses }, pulls: { get: async () => ({ data: pull }) }, issues: { listComments: async () => comments },
+    actions: { getWorkflowRun: async () => ({ data: latest }), getWorkflowRunAttempt: async ({ run_id, attempt_number }) => { assert.equal(run_id, 100); assert.equal(attempt_number, 1); return { data: published }; }, listJobsForWorkflowRunAttempt: async ({ run_id, attempt_number }) => { assert.equal(run_id, 100); assert.equal(attempt_number, 1); return jobs; } },
+  } };
+  const outputs = {}, env = { INPUT_PR_NUMBER: "42", INPUT_EVALUATION: "fixtures", TRIGGERING_ACTOR: "owner" };
+  const run = () => execute(github, context, { setOutput: (key, value) => { outputs[key] = value; } }, (file) => { assert.equal(file, "./.ci-policy/.github/scripts/image-release-policy.cjs"); return imagePolicy; }, { env });
+  for (const mode of ["fixtures", "live"]) { env.INPUT_EVALUATION = mode; await run(); assert.equal(outputs.image, pinnedImage); }
+  latest.run_attempt = 1; latest.conclusion = "success"; await run();
+  latest.run_attempt = 2;
+  for (const change of [{ conclusion: "failure" }, { conclusion: null }]) {
+    const original = { ...latest }; Object.assign(latest, change);
+    await assert.rejects(run(), /current-head production-image receipt/); Object.assign(latest, original);
+  }
+  for (const change of [{ run_attempt: 0 }, { path: ".github/workflows/other.yml" }, { display_title: "PR test image: PR #43" }]) {
+    const original = { ...latest }; Object.assign(latest, change);
+    await assert.rejects(run(), /workflow receipt is invalid/); Object.assign(latest, original);
+  }
+  published.run_attempt = 2;
+  await assert.rejects(run(), /workflow receipt is invalid/); published.run_attempt = 1;
+  jobs[0].conclusion = "failure";
+  await assert.rejects(run(), /publish job did not pass/); jobs[0].conclusion = "success";
+  comments[0].body = imagePolicy.formatPreviewReceipt({ ...receipt, run_attempt: "2" }, target);
+  await assert.rejects(run(), /preview receipt is missing/); comments[0].body = imagePolicy.formatPreviewReceipt(receipt, target);
+  env.INPUT_EVALUATION = "none"; latest.conclusion = "failure";
+  await run(); assert.equal(outputs.image, pinnedImage);
 });
 
 test("isolated server admits configured import workers while preserving other limits and private routing", () => {
