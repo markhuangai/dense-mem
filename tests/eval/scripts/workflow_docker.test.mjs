@@ -51,7 +51,7 @@ function scope(t, foreign = false) {
   const state = { runID, containers: [container], network, volume, environment: { EVAL_API_KEY: randomUUID() } };
   fs.writeFileSync(path.join(directory, "runtime.json"), JSON.stringify(state), { mode: 0o600 });
   for (const file of ["server.env", "postgres.env"]) fs.writeFileSync(path.join(directory, file), "private fixture configuration", { mode: 0o600 });
-  return { env: { ...process.env, EVAL_DATASET: dataset }, directory, container, network, volume };
+  return { env: { ...process.env, EVAL_MODE: "fixtures", EVAL_DATASET: dataset }, directory, container, network, volume };
 }
 
 test("owned cleanup bounds an unresponsive instance and removes only its runtime", { timeout: 180_000 }, async (t) => {
