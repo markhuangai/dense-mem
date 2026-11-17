@@ -3,10 +3,12 @@ package evalharness
 import (
 	"context"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"log/slog"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/markhuangai/dense-mem/internal/jsonstrict"
@@ -57,6 +59,8 @@ func NewRunnerCredentialProtector(configured ...string) *observability.Credentia
 		for _, encoding := range []*base64.Encoding{base64.StdEncoding, base64.RawStdEncoding, base64.URLEncoding, base64.RawURLEncoding} {
 			values = append(values, encoding.EncodeToString([]byte(value)))
 		}
+		encoded := hex.EncodeToString([]byte(value))
+		values = append(values, encoded, strings.ToUpper(encoded))
 	}
 	return observability.NewCredentialProtector(values...)
 }

@@ -100,6 +100,10 @@ func TestCapturePreservesNestedProviderLogsAndProtectsCredentials(t *testing.T) 
 
 func TestActualConsoleCaptureProtectsCredentialsAndPreservesAdmittedText(t *testing.T) {
 	secrets := []string{"provider-key-canary-7d2ac", "https://provider-url-canary.example/v1", "database-password-canary-981", "control-token-canary-762", "postgres://user:password-canary@database/private"}
+	var encoded []string
+	for _, secret := range secrets {
+		encoded = append(encoded, url.QueryEscape(secret), base64.StdEncoding.EncodeToString([]byte(secret)), hex.EncodeToString([]byte(secret)), strings.ToUpper(hex.EncodeToString([]byte(secret))))
+	}
 	read, write, err := os.Pipe()
 	require.NoError(t, err)
 	original := os.Stdout
@@ -107,7 +111,7 @@ func TestActualConsoleCaptureProtectsCredentialsAndPreservesAdmittedText(t *test
 	protector := NewRunnerCredentialProtector(secrets...)
 	logger := observability.NewWithProtector(slog.LevelDebug, protector)
 	capture := &Capture{Logger: logger.ContextSlog(), Protector: protector, RunID: "console-protection"}
-	emitErr := capture.Emit("started", map[string]any{"admitted": "public benchmark text; password is a normal field name", "password": "ordinary public text", "operational": secrets, "encoded": []string{url.QueryEscape(secrets[0]), base64.StdEncoding.EncodeToString([]byte(secrets[0]))}})
+	emitErr := capture.Emit("started", map[string]any{"admitted": "public benchmark text; password is a normal field name", "password": "ordinary public text", "public_hex": "deadbeef", "operational": secrets, "encoded": encoded})
 	logger.ErrorContext(context.Background(), "dependency_failed", &HTTPStatusError{StatusCode: 503})
 	require.NoError(t, write.Close())
 	os.Stdout = original
@@ -118,14 +122,19 @@ func TestActualConsoleCaptureProtectsCredentialsAndPreservesAdmittedText(t *test
 	for _, secret := range secrets {
 		require.NotContains(t, string(body), secret)
 	}
-	require.NotContains(t, string(body), base64.StdEncoding.EncodeToString([]byte(secrets[0])))
+	for _, value := range encoded {
+		require.NotContains(t, string(body), value)
+	}
 	events := capturedEvents(t, body)
 	require.Len(t, events, 1)
 	require.Contains(t, string(events[0].Payload), "ordinary public text")
+	require.Contains(t, string(events[0].Payload), "deadbeef")
 	for _, secret := range secrets {
 		require.NotContains(t, string(events[0].Payload), secret)
 	}
-	require.NotContains(t, string(events[0].Payload), base64.StdEncoding.EncodeToString([]byte(secrets[0])))
+	for _, value := range encoded {
+		require.NotContains(t, string(events[0].Payload), value)
+	}
 	report := NewReport(Manifest{Model: "selected-model", EmbeddingModel: "text-embedding-3-small"}, 3, 2)
 	data, err := json.Marshal(report)
 	require.NoError(t, err)
@@ -135,6 +144,17 @@ func TestActualConsoleCaptureProtectsCredentialsAndPreservesAdmittedText(t *test
 	require.NotContains(t, string(data), "provider_url")
 	require.Contains(t, string(data), "selected-model")
 	require.Contains(t, string(data), "text-embedding-3-small")
+}
+
+func TestRunnerCaptureRejectsOversizedEncodedCredentials(t *testing.T) {
+	secret := strings.Repeat("k", observability.MaxCredentialSecretBytes/2+1)
+	var output bytes.Buffer
+	capture := captureFixture(&output)
+	capture.Protector = NewRunnerCredentialProtector(secret)
+	require.ErrorContains(t, capture.Emit("runtime_log", map[string]string{"line": secret}), "protection unavailable")
+	require.Contains(t, output.String(), "secret_too_long")
+	require.NotContains(t, output.String(), secret)
+	require.NotContains(t, output.String(), hex.EncodeToString([]byte(secret)))
 }
 
 func TestRawCapturePreservesPublicSettings(t *testing.T) {

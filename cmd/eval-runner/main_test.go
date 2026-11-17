@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -91,20 +93,29 @@ func TestCLIRejectsRetiredInterfacesAndLocalCampaigns(t *testing.T) {
 
 func TestRuntimeLogCollectorProtectsOutputAndExposesIncompleteCapture(t *testing.T) {
 	var output bytes.Buffer
-	protector := observability.NewCredentialProtector("secret-canary", "https://provider-canary.example")
+	protector := evalharness.NewRunnerCredentialProtector("secret-canary", "https://provider-canary.example")
 	capture := &evalharness.Capture{Logger: slog.New(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: slog.LevelDebug})), Protector: protector, RunID: "test"}
 	usage := map[string]evalharness.UsageTotals{}
 	lines := "provider failed secret-canary at https://provider-canary.example\n" +
 		`{"level":"DEBUG","msg":"successful document detail"}` + "\n" +
 		`{"level":"WARN","msg":"provider retry secret-canary"}` + "\n" +
 		`{"level":"ERROR","msg":"provider terminal failure secret-canary"}` + "\n"
+	encoded := []string{base64.StdEncoding.EncodeToString([]byte("secret-canary")), hex.EncodeToString([]byte("secret-canary")), strings.ToUpper(hex.EncodeToString([]byte("secret-canary")))}
+	failure, err := json.MarshalIndent(map[string]string{"message": "seed publication rejected secret-canary", "diagnostic": strings.Join(encoded, " ")}, "", "  ")
+	require.NoError(t, err)
+	lines += string(failure) + "\n"
 	require.NoError(t, logReader(context.Background(), strings.NewReader(lines), capture, usage))
 	protected := runtimeCapturePayloads(t, output.Bytes())
 	require.NotContains(t, protected, "secret-canary")
 	require.NotContains(t, protected, "https://provider-canary.example")
+	for _, value := range encoded {
+		require.NotContains(t, protected, value)
+		require.NotContains(t, output.String(), value)
+	}
 	require.Contains(t, protected, "provider failed")
 	require.Contains(t, protected, "provider retry")
 	require.Contains(t, protected, "provider terminal failure")
+	require.Contains(t, protected, "seed publication rejected")
 	require.NotContains(t, protected, "successful document detail")
 	broken := `{"msg":"ai_exchange_payload","exchange_id":"exchange","direction":"request","payload_chunk":{"state":"captured","count":2,"index":0,"body":"partial","sha256":"hash"}}` + "\n"
 	require.ErrorContains(t, logReader(context.Background(), strings.NewReader(broken), capture, usage), "incomplete")

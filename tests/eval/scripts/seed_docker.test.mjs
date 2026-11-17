@@ -26,7 +26,7 @@ test("production seed exporter preserves data, excludes payloads and protects re
     const result = spawnSync(process.execPath, ["tests/eval/scripts/workflow.mjs", "diagnostics"], { encoding: "utf8", env, timeout: 30_000 });
     assert.equal(result.status, 0, "actual workflow diagnostics must protect PostgreSQL failures without a running server");
     const output = result.stdout + result.stderr;
-    for (const value of [canary, Buffer.from(canary).toString("base64"), Buffer.from(canary).toString("hex")]) assert.equal(output.includes(value), false);
+    for (const [format, value] of [["raw", canary], ["base64", Buffer.from(canary).toString("base64")], ["hex", Buffer.from(canary).toString("hex")], ["uppercase hex", Buffer.from(canary).toString("hex").toUpperCase()]]) assert.equal(output.includes(value), false, `${format} credential remained in protected output`);
     return output;
   };
   t.after(() => {
@@ -103,7 +103,7 @@ test("production seed exporter preserves data, excludes payloads and protects re
   assert.equal(fs.statSync(diagnostic).mode & 0o777, 0o600);
   assert.match(protectedDiagnostics(), /restore rejected/);
 
-  fs.writeFileSync(path.join(paths.directory, "seed-failure.log"), JSON.stringify({ message: `seed publication rejected ${canary}`, diagnostic: `${Buffer.from(canary).toString("base64")} ${Buffer.from(canary).toString("hex")}` }, null, 2) + "\n", { mode: 0o600 });
+  fs.writeFileSync(path.join(paths.directory, "seed-failure.log"), JSON.stringify({ message: `seed publication rejected ${canary}`, diagnostic: `${Buffer.from(canary).toString("base64")} ${Buffer.from(canary).toString("hex")} ${Buffer.from(canary).toString("hex").toUpperCase()}` }, null, 2) + "\n", { mode: 0o600 });
   assert.match(protectedDiagnostics(), /seed publication rejected/);
 
   const broken = path.join(paths.directory, "broken");
