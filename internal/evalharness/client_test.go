@@ -513,11 +513,13 @@ func TestImporterQueuesConfirmedGatewayTimeoutsWithTheSameRequest(t *testing.T) 
 		attempts          int
 		requeued          bool
 		direct, foreign   bool
+		interrupted       bool
 		cancelWhileQueued bool
 	}{
 		{name: "assessment 524 recovers on final allowed attempt", status: 524, failures: 5, attempts: 6, requeued: true},
 		{name: "assessment 504 exhausts five retries", status: 504, failures: 6, attempts: 6, requeued: true},
 		{name: "direct 504 recovers", status: 504, failures: 1, attempts: 2, requeued: true, direct: true},
+		{name: "direct 504 with interrupted body recovers", status: 504, failures: 1, attempts: 2, requeued: true, direct: true, interrupted: true},
 		{name: "final 502 supersedes earlier timeout", status: 502, failures: 6, attempts: 2},
 		{name: "foreign diagnostics cannot extend retries", status: 524, failures: 6, attempts: 2, foreign: true},
 		{name: "cancellation leaves the timeout queued", status: 524, failures: 1, attempts: 1, requeued: true, cancelWhileQueued: true},
@@ -574,7 +576,14 @@ func TestImporterQueuesConfirmedGatewayTimeoutsWithTheSameRequest(t *testing.T) 
 				result := map[string]any{}
 				failed := slow && slowCalls <= scenario.failures
 				if failed && scenario.direct {
+					if scenario.interrupted {
+						w.Header().Set("Content-Length", "100")
+					}
 					w.WriteHeader(scenario.status)
+					if scenario.interrupted {
+						_, writeErr := w.Write([]byte(canary))
+						require.NoError(t, writeErr)
+					}
 					return
 				}
 				if failed {
@@ -632,6 +641,10 @@ func TestImporterQueuesConfirmedGatewayTimeoutsWithTheSameRequest(t *testing.T) 
 			}
 			if scenario.foreign {
 				require.Contains(t, logs.String(), `"provider_status":"unavailable"`)
+			}
+			if scenario.interrupted {
+				require.Contains(t, logs.String(), "HTTP response body interrupted")
+				require.Contains(t, logs.String(), "runtime_transport_failure")
 			}
 			for _, private := range []string{canary, "team-canary", "control-canary"} {
 				require.NotContains(t, logs.String(), private)

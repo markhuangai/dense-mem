@@ -109,6 +109,9 @@ func (c *HTTPClient) doJSON(ctx context.Context, method, url, bearer string, inp
 				return captureErr
 			}
 		}
+		if isGatewayTimeoutStatus(response.StatusCode) {
+			return fmt.Errorf("HTTP response body interrupted: %w", &HTTPStatusError{StatusCode: response.StatusCode})
+		}
 		return errors.New("HTTP response body interrupted")
 	}
 	if len(data) > 16<<20 {
@@ -387,7 +390,7 @@ func (c *HTTPClient) importCorpusItem(ctx context.Context, job *corpusImportJob,
 		if ctx.Err() != nil {
 			return mapping, false, err
 		}
-		if status == http.StatusGatewayTimeout || status == 524 {
+		if isGatewayTimeoutStatus(status) {
 			if job.attempt > maxGatewayRetries {
 				return mapping, false, err
 			}
@@ -416,6 +419,10 @@ func (c *HTTPClient) importCorpusItem(ctx context.Context, job *corpusImportJob,
 		}
 		job.attempt++
 	}
+}
+
+func isGatewayTimeoutStatus(status int) bool {
+	return status == http.StatusGatewayTimeout || status == 524
 }
 
 func isTransientHTTPError(err error) bool {
