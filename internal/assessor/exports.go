@@ -21,7 +21,7 @@ func ValidateSemanticAssessmentEvidenceSecurityResults(
 	results []SemanticAssessmentEvidenceSecurityResult,
 	evidenceByID map[string]SemanticReviewEvidence,
 ) []SemanticValidationError {
-	return validateSemanticAssessmentEvidenceSecurityResults(results, evidenceByID)
+	return validateSemanticAssessmentEvidenceSecurityResults(results, evidenceByID, true)
 }
 
 // ResolveSemanticAssessmentRange converts a provider boundary range into

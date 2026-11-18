@@ -73,6 +73,19 @@ func TestPartitionSecurityRequiresCompleteReviewBeforeUsingCuts(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, spans, len(req.Items))
 
+	items := response.Items
+	response.RequestID = "another-request"
+	_, err = validate()
+	require.ErrorContains(t, err, "request_id must match")
+	response.RequestID = req.RequestID
+	response.Items = nil
+	_, err = validate()
+	require.ErrorContains(t, err, "items must be an array")
+	response.Items = []PartitionResult{}
+	_, err = validate()
+	require.ErrorContains(t, err, "requires 2 items, got 0")
+	response.Items = items
+
 	end := response.Items[1].EndRefs[0]
 	start := response.Items[0].EndRefs[0]
 	response.SecurityResults[1].Decision = "reject"
@@ -111,6 +124,56 @@ func TestPartitionSecurityRequiresCompleteReviewBeforeUsingCuts(t *testing.T) {
 	require.ErrorAs(t, err, &rejection)
 	require.Nil(t, spans)
 	require.Equal(t, len([]rune(req.Items[1].Content)), rejection.Results[1].Signals[0].End)
+}
+
+func TestPartitionSecurityRequiresMoreThanAPassiveCommentMarker(t *testing.T) {
+	for _, test := range []struct {
+		name, content string
+		shouldReject  bool
+	}{
+		{"passive comment", "Landforms: Aurum; Boreal. <!-- editorial note -->", false},
+		{"truncated comment", "Landforms: Aurum; Boreal. <!-- editorial note", false},
+		{"active markup", "Landforms: Aurum; Boreal. <script>", true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			req := PreparePartitionRequest("partition:markup", []string{test.content})
+			req.ReviewSecurity = true
+			partition := partitionResponseForTest(req, false)
+			item := req.Items[0]
+			signal := SemanticAssessmentSecuritySignal{Kind: "hidden_control_markup", EndRef: partition.Items[0].EndRefs[0]}
+			for ref, offset := range item.Refs {
+				if offset == 0 {
+					signal.StartRef = ref
+				}
+			}
+			response := PartitionSecurityResponse{
+				PartitionResponse: PartitionResponse{RequestID: req.RequestID, Items: []PartitionResult{}},
+				SecurityResults: []SemanticAssessmentEvidenceSecurityResult{{
+					EvidenceID: item.ItemID, Decision: "reject", Signals: []SemanticAssessmentSecuritySignal{signal},
+				}},
+			}
+			body, err := json.Marshal(response)
+			require.NoError(t, err)
+			spans, err := ValidatePartitionResponse(req, body)
+			require.Nil(t, spans)
+			var rejection *PartitionSecurityRejection
+			if test.shouldReject {
+				require.ErrorAs(t, err, &rejection)
+				return
+			}
+			require.ErrorContains(t, err, "hidden_control_markup requires a hidden control or active markup")
+			require.NotErrorAs(t, err, &rejection)
+
+			response.PartitionResponse = partition
+			response.SecurityResults[0].Decision = "pass"
+			response.SecurityResults[0].Signals = []SemanticAssessmentSecuritySignal{}
+			body, err = json.Marshal(response)
+			require.NoError(t, err)
+			spans, err = ValidatePartitionResponse(req, body)
+			require.NoError(t, err)
+			require.Equal(t, [][][2]int{{{0, len([]rune(test.content))}}}, spans)
+		})
+	}
 }
 
 func TestRememberPartitionUnicodeStructuralBoundaries(t *testing.T) {

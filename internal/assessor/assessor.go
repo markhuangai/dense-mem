@@ -215,7 +215,7 @@ func PrepareSemanticAssessmentResponse(
 	}
 	errSubmittedEvidence := semanticEvidenceByID(req.Evidence)
 	errs = append(errs, resolveSemanticAssessmentEvidenceSecurityResults(errSubmittedEvidence, response.EvidenceSecurityResults)...)
-	errs = append(errs, validateSemanticAssessmentEvidenceSecurityResults(response.EvidenceSecurityResults, errSubmittedEvidence)...)
+	errs = append(errs, validateSemanticAssessmentEvidenceSecurityResults(response.EvidenceSecurityResults, errSubmittedEvidence, true)...)
 	errs = append(errs, validateSemanticAssessmentEvidenceEquivalenceResults(req, response.EvidenceEquivalenceResults)...)
 	errs = append(errs, resolveSemanticAssessmentEvidenceConflictResults(req, &response)...)
 	if len(errs) > 0 {
@@ -342,6 +342,7 @@ func resolveSemanticAssessmentEvidenceSecurityResults(
 func validateSemanticAssessmentEvidenceSecurityResults(
 	results []SemanticAssessmentEvidenceSecurityResult,
 	evidenceByID map[string]SemanticReviewEvidence,
+	allowCommentMarker bool,
 ) []SemanticValidationError {
 	seen := make(map[string]struct{}, len(results))
 	var errs []SemanticValidationError
@@ -378,7 +379,7 @@ func validateSemanticAssessmentEvidenceSecurityResults(
 			quote, err := semanticExactSpanQuote(evidence.Content, signal.Start, signal.End, "")
 			if err != nil {
 				errs = append(errs, semanticErr(signalField+".span", err.Error()))
-			} else if !semanticSecuritySignalSpanMatchesKind(signal.Kind, quote) {
+			} else if !semanticSecuritySignalSpanMatchesKind(signal.Kind, quote, allowCommentMarker) {
 				errs = append(errs, semanticErr(signalField+".span", "hidden_control_markup requires a hidden control or active markup"))
 			}
 			key := fmt.Sprintf("%s:%s:%d:%d", result.EvidenceID, signal.Kind, signal.Start, signal.End)
