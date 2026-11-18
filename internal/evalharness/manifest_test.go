@@ -14,18 +14,12 @@ func TestReadManifestValidatesExecutionPins(t *testing.T) {
 	t.Setenv("RUNNER_ENVIRONMENT", "github-hosted")
 	t.Setenv("GITHUB_RUN_ID", "42")
 	t.Setenv("GITHUB_RUN_ATTEMPT", "1")
-	valid := Manifest{Version: 1, RunID: "42-hotpotqa", WorkflowRunID: "42", SourceRevision: strings.Repeat("a", 40), Image: "ghcr.io/markhuangai/dense-mem@sha256:" + strings.Repeat("b", 64), RegistryHash: strings.Repeat("c", 64), Dataset: "hotpotqa", Mode: "live", Operation: "prepare", SeedDir: "seed", BaseRelease: "v2.8.1-rc.5", Model: "dense-mem-testing", EmbeddingModel: "text-embedding-3-small", EmbeddingDimensions: 1536, ContextWindowTokens: 500000, ImportWorkers: 20, ModelDeadline: time.Now().UTC().Add(time.Hour).Truncate(time.Second), DataDir: "data", OutputDir: "public"}
+	valid := Manifest{Version: 1, RunID: "42-hotpotqa", WorkflowRunID: "42", SourceRevision: strings.Repeat("a", 40), Image: "ghcr.io/markhuangai/dense-mem@sha256:" + strings.Repeat("b", 64), RegistryHash: strings.Repeat("c", 64), Dataset: "hotpotqa", Mode: "fixtures", Operation: "prepare", SeedDir: "seed", BaseRelease: "v2.8.1-rc.5", Model: "dense-mem-testing", EmbeddingModel: "text-embedding-3-small", EmbeddingDimensions: 1536, ContextWindowTokens: 500000, ImportWorkers: 20, ModelDeadline: time.Now().UTC().Add(time.Hour).Truncate(time.Second), DataDir: "data", OutputDir: "public"}
 	file := filepath.Join(t.TempDir(), "manifest.json")
-	for _, mode := range []string{"live", "fixtures"} {
-		t.Run(mode, func(t *testing.T) {
-			manifest := valid
-			manifest.Mode = mode
-			require.NoError(t, writeJSON(file, manifest))
-			actual, err := ReadManifest(file)
-			require.NoError(t, err)
-			require.Equal(t, manifest, actual)
-		})
-	}
+	require.NoError(t, writeJSON(file, valid))
+	actual, err := ReadManifest(file)
+	require.NoError(t, err)
+	require.Equal(t, valid, actual)
 	for _, tc := range []struct {
 		name, message string
 		change        func(*Manifest)
@@ -35,6 +29,7 @@ func TestReadManifestValidatesExecutionPins(t *testing.T) {
 		{"workflow run", "identity", func(m *Manifest) { m.WorkflowRunID = "43" }},
 		{"source revision", "identity", func(m *Manifest) { m.SourceRevision = strings.Repeat("z", 40) }},
 		{"image digest", "identity", func(m *Manifest) { m.Image = "ghcr.io/markhuangai/dense-mem:latest" }},
+		{"public hosted preparation", "operation", func(m *Manifest) { m.Mode = "live" }},
 		{"mode", "mode", func(m *Manifest) { m.Mode = "local" }},
 		{"retired replay mode", "mode", func(m *Manifest) { m.Mode = "replay" }},
 		{"dataset ownership", "dataset job", func(m *Manifest) { m.Dataset = "musique" }},
@@ -67,8 +62,52 @@ func TestReadManifestValidatesExecutionPins(t *testing.T) {
 	} {
 		t.Run(tc.key, func(t *testing.T) {
 			t.Setenv(tc.key, tc.value)
+			require.NoError(t, writeJSON(file, valid))
 			_, err := ReadManifest(file)
 			require.ErrorContains(t, err, "fresh GitHub-hosted")
+		})
+	}
+}
+
+func TestReadManifestPermitsOnlyPublicSeedOperationsLocally(t *testing.T) {
+	buildID := "local-" + strings.Repeat("a", 32)
+	t.Setenv("GITHUB_ACTIONS", "")
+	t.Setenv("EVAL_LOCAL_SEED_ID", buildID)
+	base := Manifest{Version: 1, RunID: buildID + "-hotpotqa", SeedBuildID: buildID, SourceRevision: strings.Repeat("a", 40), Image: "ghcr.io/markhuangai/dense-mem@sha256:" + strings.Repeat("b", 64), RegistryHash: strings.Repeat("c", 64), Dataset: "hotpotqa", Mode: "live", SeedDir: "seed", BaseRelease: "v2.8.1-rc.5", Model: "dense-mem-testing", EmbeddingModel: "text-embedding-3-small", EmbeddingDimensions: 1536, ContextWindowTokens: 500000, ModelDeadline: time.Now().UTC().Add(time.Hour), DataDir: "data", OutputDir: "public"}
+	for _, tc := range []struct {
+		operation string
+		workers   int
+	}{
+		{"bootstrap", 20}, {"prepare", 40}, {"verify-seed", 0},
+	} {
+		t.Run(tc.operation, func(t *testing.T) {
+			manifest := base
+			manifest.Operation, manifest.ImportWorkers = tc.operation, tc.workers
+			file := filepath.Join(t.TempDir(), "manifest.json")
+			require.NoError(t, writeJSON(file, manifest))
+			actual, err := ReadManifest(file)
+			require.NoError(t, err)
+			require.Equal(t, manifest, actual)
+		})
+	}
+
+	for _, tc := range []struct {
+		name   string
+		change func(*Manifest)
+	}{
+		{"scoring", func(m *Manifest) { m.Operation = "run" }},
+		{"fixtures", func(m *Manifest) { m.Mode = "fixtures" }},
+		{"hosted identity", func(m *Manifest) { m.WorkflowRunID = "42" }},
+		{"different local build", func(m *Manifest) { m.SeedBuildID = "local-" + strings.Repeat("f", 32) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			manifest := base
+			manifest.Operation, manifest.ImportWorkers = "prepare", 20
+			tc.change(&manifest)
+			file := filepath.Join(t.TempDir(), "manifest.json")
+			require.NoError(t, writeJSON(file, manifest))
+			_, err := ReadManifest(file)
+			require.ErrorContains(t, err, "local execution permits only public seed preparation and restore verification")
 		})
 	}
 }

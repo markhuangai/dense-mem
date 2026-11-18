@@ -238,6 +238,18 @@ test("only absence permits configuration fallback; invalid values never escape e
   assert.throws(() => configuration({ ...valid, DENSE_MEM_EVAL_VERIFIER_URL: "https://credential-canary@provider.example/v1" }), (error) => !error.message.includes("credential-canary"));
 });
 
+test("local seed preparation accepts an HTTP verifier and retains credential and embedding validation", () => {
+  const verifier = "http://verifier.example.test/v1";
+  const env = { ...valid, DENSE_MEM_EVAL_VERIFIER_URL: verifier };
+  const local = { allowHTTPVerifier: true };
+  assert.equal(configuration(env, local).verifier, verifier);
+  assert.throws(() => configuration(env), /DENSE_MEM_EVAL_VERIFIER_URL/);
+  for (const value of ["http://credential-canary@verifier.example.test/v1", verifier + "?key=credential-canary", verifier + "#credential-canary", "ftp://verifier.example.test/v1"]) {
+    assert.throws(() => configuration({ ...env, DENSE_MEM_EVAL_VERIFIER_URL: value }, local), { message: "Invalid Actions setting: DENSE_MEM_EVAL_VERIFIER_URL" });
+  }
+  assert.throws(() => configuration({ ...env, DENSE_MEM_EVAL_EMBED_URL: "http://api.openai.com/v1" }, local), /DENSE_MEM_EVAL_EMBED_URL/);
+});
+
 test("registry additions and removals change the matrix and all public denominators", () => {
   assert.equal(registry.datasets.reduce((sum, d) => sum + d.corpus.rows, 0), 45895);
   assert.equal(registry.datasets.reduce((sum, d) => sum + d.questions.rows, 0), 5000);

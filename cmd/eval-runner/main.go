@@ -30,7 +30,12 @@ func main() {
 
 func execute(ctx context.Context, args []string, logger *observability.Logger, protector *observability.CredentialProtector) error {
 	if len(args) != 2 || (args[0] != "validate" && args[0] != "prepare" && args[0] != "run" && args[0] != "bootstrap" && args[0] != "verify-seed") {
-		return errors.New("usage: eval-runner validate|bootstrap|prepare|verify-seed|run EXECUTION_MANIFEST; workflow-internal only")
+		return errors.New("usage: eval-runner validate|bootstrap|prepare|verify-seed|run EXECUTION_MANIFEST; workflow-internal only except local seed preparation")
+	}
+	if args[0] == "run" {
+		if err := evalharness.RequireRunner(); err != nil {
+			return err
+		}
 	}
 	manifest, err := evalharness.ReadManifest(args[1])
 	if err != nil {

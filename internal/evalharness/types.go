@@ -52,6 +52,7 @@ type Manifest struct {
 	Version             int                `json:"version"`
 	RunID               string             `json:"run_id"`
 	WorkflowRunID       string             `json:"workflow_run_id"`
+	SeedBuildID         string             `json:"seed_build_id,omitempty"`
 	SourceRevision      string             `json:"source_revision"`
 	Image               string             `json:"image"`
 	RegistryHash        string             `json:"registry_sha256"`

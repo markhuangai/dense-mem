@@ -11,6 +11,7 @@ import (
 var revisionPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 var imagePattern = regexp.MustCompile(`^ghcr\.io/markhuangai/dense-mem(?::[A-Za-z0-9._-]+)?@sha256:[0-9a-f]{64}$`)
 var modelPattern = regexp.MustCompile(`^[A-Za-z0-9@][A-Za-z0-9_./:-]{0,127}$`)
+var seedBuildPattern = regexp.MustCompile(`^local-[a-f0-9]{32}$`)
 
 func RequireRunner() error {
 	if os.Getenv("GITHUB_ACTIONS") != "true" || os.Getenv("RUNNER_ENVIRONMENT") != "github-hosted" || os.Getenv("GITHUB_RUN_ID") == "" || os.Getenv("GITHUB_RUN_ATTEMPT") != "1" {
@@ -21,19 +22,27 @@ func RequireRunner() error {
 
 func ReadManifest(path string) (Manifest, error) {
 	var manifest Manifest
-	if err := RequireRunner(); err != nil {
-		return manifest, err
-	}
 	if err := readJSON(path, &manifest); err != nil {
 		return manifest, err
 	}
-	if manifest.Version != 1 || manifest.RunID == "" || manifest.WorkflowRunID != os.Getenv("GITHUB_RUN_ID") || !revisionPattern.MatchString(manifest.SourceRevision) || !imagePattern.MatchString(manifest.Image) {
+	if manifest.SeedBuildID == "" {
+		if err := RequireRunner(); err != nil {
+			return manifest, err
+		}
+		if manifest.WorkflowRunID != os.Getenv("GITHUB_RUN_ID") || (manifest.Mode == "live" && manifest.Operation != "run") {
+			return manifest, errors.New("hosted execution manifest identity or operation is invalid")
+		}
+	} else if os.Getenv("GITHUB_ACTIONS") == "true" || manifest.WorkflowRunID != "" || manifest.Mode != "live" || !seedBuildPattern.MatchString(manifest.SeedBuildID) || manifest.SeedBuildID != os.Getenv("EVAL_LOCAL_SEED_ID") ||
+		(manifest.Operation != "bootstrap" && manifest.Operation != "prepare" && manifest.Operation != "verify-seed") {
+		return manifest, errors.New("local execution permits only public seed preparation and restore verification")
+	}
+	if manifest.Version != 1 || manifest.RunID == "" || !revisionPattern.MatchString(manifest.SourceRevision) || !imagePattern.MatchString(manifest.Image) {
 		return manifest, errors.New("execution manifest identity is invalid")
 	}
 	if manifest.Mode != "live" && manifest.Mode != "fixtures" {
 		return manifest, errors.New("invalid runner campaign mode")
 	}
-	if manifest.RunID != manifest.WorkflowRunID+"-"+manifest.Dataset {
+	if manifest.RunID != manifest.ExecutionID()+"-"+manifest.Dataset {
 		return manifest, errors.New("manifest does not belong to this dataset job")
 	}
 	if !modelPattern.MatchString(manifest.Model) || strings.Contains(manifest.Model, "://") || manifest.EmbeddingModel != "text-embedding-3-small" || manifest.EmbeddingDimensions != 1536 || manifest.ContextWindowTokens < 16384 {
@@ -62,6 +71,13 @@ func ReadManifest(path string) (Manifest, error) {
 		return manifest, errors.New("model deadline is missing or exceeds 330 minutes")
 	}
 	return manifest, nil
+}
+
+func (m Manifest) ExecutionID() string {
+	if m.SeedBuildID != "" {
+		return m.SeedBuildID
+	}
+	return m.WorkflowRunID
 }
 
 func validateImportWorkers(workers int) error {

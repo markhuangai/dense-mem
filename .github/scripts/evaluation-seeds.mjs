@@ -3,7 +3,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { ownedResource, registryMatrix, resolveImportWorkers } from "./evaluation-policy.mjs";
 import imagePolicy from "./image-release-policy.cjs";
-import { seedValidationState } from "./seed-validation.mjs";
+import { seedGitHubPages, seedValidationState } from "./seed-validation.mjs";
 
 export const seedRepository = "ghcr.io/markhuangai/dense-mem-eval-postgres";
 export const postgresImage = "pgvector/pgvector:0.8.2-pg18-trixie";
@@ -20,56 +20,58 @@ export function seedBuildRequest(registry, dataset, workers) {
   return { dataset: dataset === "all" ? allowed : [dataset], workers: resolveImportWorkers(String(workers)) };
 }
 
-export async function authorizeSeedBuild(github, context, triggeringActor) {
-  const { owner, repo } = context.repo;
-  const repository = `${owner}/${repo}`;
-  if (repository !== "markhuangai/dense-mem" || Number(context.runAttempt) !== 1 || !context.ref.startsWith("refs/heads/")) throw new Error("Seed building requires a fresh same-repository branch dispatch");
-  for (const username of [context.actor, triggeringActor]) {
-    const response = await github.rest.repos.getCollaboratorPermissionLevel({ owner, repo, username });
-    if (response.data.permission !== "admin") throw new Error("Seed building requires initiating and triggering repository admins");
+export async function resolveSeedBuildSource(github, pullNumber, checkoutRevision) {
+  if ((pullNumber !== undefined && (!Number.isSafeInteger(pullNumber) || pullNumber < 1)) || !/^[0-9a-f]{40}$/.test(checkoutRevision)) throw new Error("Seed source requires an exact checkout revision and a valid PR number when supplied");
+  const repository = "markhuangai/dense-mem", base = `/repos/${repository}`;
+  const get = async (endpoint) => (await github.request(`GET ${base}/${endpoint}`)).data;
+  const { data: actor } = await github.request("GET /user");
+  if ((await get(`collaborators/${encodeURIComponent(actor.login)}/permission`)).permission !== "admin") throw new Error("Seed building requires a repository admin");
+  const main = (await get("branches/main")).commit.sha;
+  const released = pullNumber === undefined;
+  let pull, baseRelease, releaseRevision;
+  if (released) {
+    if (checkoutRevision !== main) throw new Error("Seed checkout without --pr must match current main");
+  } else {
+    pull = await get(`pulls/${pullNumber}`);
+    if (pull.state !== "open" || pull.draft || pull.base.ref !== "main" || pull.head.sha !== checkoutRevision || pull.head.repo?.full_name !== repository || pull.user.login.toLowerCase() !== actor.login.toLowerCase()) throw new Error("Seed checkout must match the actor's own current open same-repository PR head");
   }
-  const main = (await github.rest.repos.getBranch({ owner, repo, branch: "main" })).data.commit.sha;
-  const releases = await github.paginate(github.rest.repos.listReleases, { owner, repo, per_page: 100 });
-  let baseRelease, releaseRevision;
-  for (const candidate of releases.filter((item) => !item.draft && release.test(item.tag_name))) {
-    let object = (await github.rest.git.getRef({ owner, repo, ref: `tags/${candidate.tag_name}` })).data.object;
-    while (object.type === "tag") object = (await github.rest.git.getTag({ owner, repo, tag_sha: object.sha })).data.object;
-    const comparison = await github.request("GET /repos/{owner}/{repo}/compare/{basehead}", { owner, repo, basehead: `${object.sha}...${main}` });
-    if (["identical", "ahead"].includes(comparison.data.status)) { baseRelease = candidate.tag_name; releaseRevision = object.sha; break; }
+  for (const candidate of (await seedGitHubPages(github, `${base}/releases`)).filter((item) => !item.draft && release.test(item.tag_name))) {
+    let object = (await get(`git/ref/tags/${candidate.tag_name}`)).object;
+    while (object.type === "tag") object = (await get(`git/tags/${object.sha}`)).object;
+    const comparison = await get(`compare/${object.sha}...${main}`);
+    if (["identical", "ahead"].includes(comparison.status)) {
+      baseRelease = candidate.tag_name;
+      releaseRevision = object.sha;
+      break;
+    }
   }
   if (!baseRelease) throw new Error("Current main has no reachable published release");
-  let image, pull;
-  let validation = { source_revision: context.sha };
-  if (context.ref === "refs/heads/main") {
-    if (context.sha !== main) throw new Error("Seed workflow source no longer matches current main");
-    image = `ghcr.io/${repository}:${baseRelease}`;
-    const associated = await github.paginate(github.rest.repos.listPullRequestsAssociatedWithCommit, { owner, repo, commit_sha: releaseRevision, per_page: 100 });
+  if (released) {
+    const associated = await seedGitHubPages(github, `${base}/commits/${releaseRevision}/pulls`);
     const selected = imagePolicy.selectMergedPull(associated, releaseRevision);
     if (!selected.pull) throw new Error("Seed release has no unique tested merged PR");
-    pull = (await github.rest.pulls.get({ owner, repo, pull_number: selected.pull.number })).data;
-    validation = { ...validation, main_revision: main, release_revision: releaseRevision, validation_revision: pull.head.sha };
-  } else {
-    const pulls = await github.paginate(github.rest.pulls.list, { owner, repo, state: "open", base: "main", head: `${owner}:${context.ref.slice(11)}`, per_page: 100 });
-    const matches = pulls.filter((pull) => !pull.draft && pull.head.sha === context.sha && pull.head.repo?.full_name === repository && pull.user.login.toLowerCase() === context.actor.toLowerCase());
-    if (matches.length !== 1) throw new Error("Seed branch must be the actor's own current open same-repository PR head");
-    pull = matches[0];
+    pull = await get(`pulls/${selected.pull.number}`);
   }
-  const statuses = await github.paginate(github.rest.repos.listCommitStatusesForRef, { owner, repo, ref: pull.head.sha, per_page: 100 });
-  const receipt = imagePolicy.parseSuccessfulPolicyStatus({ statuses, pullNumber: pull.number, serverUrl: context.serverUrl, repository });
+  const sourceRevision = pull.head.sha;
+  const statuses = await seedGitHubPages(github, `${base}/commits/${sourceRevision}/statuses`);
+  const receipt = imagePolicy.parseSuccessfulPolicyStatus({ statuses, pullNumber: pull.number, serverUrl: "https://github.com", repository });
   if (!receipt.status) throw new Error("Seed building requires a successful trusted preview receipt");
-  const run = (await github.rest.actions.getWorkflowRun({ owner, repo, run_id: Number(receipt.status.runId) })).data;
-  const published = (await github.rest.actions.getWorkflowRunAttempt({ owner, repo, run_id: Number(receipt.status.runId), attempt_number: Number(receipt.status.runAttempt) })).data;
-  if (published.id !== run.id || published.run_attempt !== Number(receipt.status.runAttempt) || run.run_attempt < published.run_attempt || run.event !== "pull_request_target" || run.path !== ".github/workflows/pr-test-image.yml") throw new Error("Seed building requires a valid trusted publisher workflow receipt");
-  const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRunAttempt, { owner, repo, run_id: published.id, attempt_number: published.run_attempt, per_page: 100 });
+  const run = await get(`actions/runs/${receipt.status.runId}`);
+  const published = await get(`actions/runs/${receipt.status.runId}/attempts/${receipt.status.runAttempt}`);
+  if (run.head_sha !== sourceRevision || published.head_sha !== sourceRevision || published.id !== run.id || published.run_attempt !== Number(receipt.status.runAttempt) || run.run_attempt < published.run_attempt || run.event !== "pull_request_target" || run.path !== ".github/workflows/pr-test-image.yml") throw new Error("Seed building requires a valid trusted publisher workflow receipt");
+  const jobs = await seedGitHubPages(github, `${base}/actions/runs/${run.id}/attempts/${published.run_attempt}/jobs`, "jobs");
   if (!jobs.some((job) => job.name === "Publish trusted preview" && job.conclusion === "success")) throw new Error("Seed building requires successful trusted preview publication");
-  const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: pull.number, per_page: 100 });
-  const preview = imagePolicy.selectPreviewReceipt({ comments, pull, status: receipt.status, repository }).image;
-  const pinned = imagePolicy.validatePinnedProductionImageReference(preview, repository);
-  if (!pinned.valid) throw new Error(pinned.reason);
-  image ||= `${pinned.repository}@${preview.split("@")[1]}`;
-  validation = { ...validation, pull_number: pull.number, actor: pull.user.login, run_id: run.id, publisher_attempt: published.run_attempt, validation_attempt: run.run_attempt };
-  await seedValidationState(github, validation);
-  return { image, source_revision: context.sha, source_repository: repository, base_release: baseRelease, seed_version: seedBuildVersion(baseRelease), validation: JSON.stringify({ ...validation, image }) };
+  const comments = await seedGitHubPages(github, `${base}/issues/${pull.number}/comments`);
+  const preview = imagePolicy.selectPreviewReceipt({ comments, pull, status: receipt.status, repository });
+  if (!released && (preview.trusted_revision !== main || pull.base.sha !== main)) throw new Error("Seed PR image must be validated against current main");
+  const validation = { source_revision: sourceRevision, pull_number: pull.number, actor: pull.user.login, run_id: run.id, publisher_attempt: published.run_attempt, validation_attempt: run.run_attempt, ...(released ? { main_revision: main, release_revision: releaseRevision } : {}) };
+  await requireSeedBuildValidation(github, validation);
+  const image = released ? `ghcr.io/${repository}:${baseRelease}` : `ghcr.io/${repository}@${preview.image.split("@")[1]}`;
+  return { image, sourceRevision: released ? releaseRevision : sourceRevision, checkoutRevision, baseRelease, validation };
+}
+
+export async function requireSeedBuildValidation(github, validation) {
+  if (await seedValidationState(github, validation) !== "success") throw new Error("Seed building requires passing current-head CI/E2E");
 }
 
 export function seedReference(dataset, selected = "latest") {

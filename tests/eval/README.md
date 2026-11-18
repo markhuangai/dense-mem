@@ -1,46 +1,38 @@
 # Runner evaluation and public dataset seeds
 
-All seed preparation, evaluation campaigns and benchmarks run on GitHub-hosted
-runners. Missing runner capacity or Actions configuration blocks execution.
-Selective synthetic unit and policy checks use `bash scripts/test-evaluation.sh`.
-There is no local campaign, replay, partial-import checkpoint or resume interface.
+Build public dataset seeds with local Docker. Evaluation campaigns and benchmarks
+run on GitHub-hosted runners. Selective synthetic unit and policy checks use
+`bash scripts/test-evaluation.sh`.
 
 ## Build public dataset seeds
 
-Use **Actions → Build evaluation seeds → Run workflow**. Its only inputs are:
+Use the [seed-building skill](../../.agents/skills/dense-mem-build-seeds/SKILL.md)
+or run the builder from a clean tracked checkout on a Linux amd64 machine with a
+local Docker daemon, Node.js 24, Git and an authenticated GitHub CLI. The builder
+compiles its Go helper in Docker from the checked-out commit.
 
-| Input | Default | Meaning |
+| Argument | Default | Meaning |
 | --- | --- | --- |
-| `dataset` | `all` | All five complete public packs, or one named pack to rebuild |
-| `workers` | `20` | Concurrent Remember requests for the current dataset, from 1–100 |
+| `--pr` | Current main release | Use the trusted image for your own open, non-draft same-repository PR |
+| `--dataset` | `all` | All five complete public packs, or one named pack |
+| `--workers` | `20` | Concurrent Remember requests per dataset, from 1–100 |
+
+For a PR, check out the exact head and wait for the trusted production image,
+Repository CI, CodeQL analysis, CodeQL and Production image E2E. On current
+main, omit `--pr` to use its published release after main CI and the release's
+merged-PR checks pass. The builder requires repository-admin access and checks
+the source and validation again before public pushes.
 
 ```bash
-gh workflow run build-evaluation-seeds.yml --repo markhuangai/dense-mem --ref main \
-  -f dataset=all -f workers=20
+node --env-file=eval.env tests/eval/scripts/local-seeds.mjs --pr 777
 ```
 
-Before the implementation reaches main, select PR #777's approved branch. Both
-initiating and triggering actors must be repository admins. A PR dispatch must
-use the actor's own current, open, non-draft same-repository PR head and its
-successful immutable trusted image receipt after current-head reviews and CodeQL.
-Full CI/E2E and seed ingestion may run concurrently on separate hosted runners.
-The seed workflow first runs synthetic exporter, protection and cleanup tests,
-without provider calls or seed publication. It checks validation every minute
-during ingestion; failed/cancelled validation, a changed head or attempt, or
-unavailable validation stops model work. Every public push, including bootstrap
-and latest tags, requires fresh successful CI/E2E. Main dispatches use its
-published release image, that release's verified merged-PR validation, and
-successful current-main CI. Job reruns
-are rejected; a failed dataset requires a new dispatch.
-
-The workflow creates or verifies a shared empty bootstrap database, then builds
-one dataset at a time. The first failure stops remaining datasets. Completed
-images remain available. Rebuild a failed dataset explicitly, for example:
-
-```bash
-gh workflow run build-evaluation-seeds.yml --repo markhuangai/dense-mem --ref main \
-  -f dataset=hotpotqa -f workers=30
-```
+The builder uses the shared empty bootstrap and processes one dataset at a time.
+The first failure stops the build. Completed images remain available. Restart a
+failed dataset explicitly with `--dataset <name>` and, if needed, a different
+`--workers` value. Build receipts and private failure evidence are under
+`tmp/eval-seeds/`. The builder removes its owned containers, network and
+PostgreSQL volume after each dataset.
 
 Each dataset restores the bootstrap, imports its complete corpus with ontology
 disabled and paused, verifies the source/partition mapping and search state, and
@@ -82,17 +74,23 @@ package with a `bootstrap-` prefix. These are data-only images containing a dump
 metadata, mappings and source notices; PostgreSQL runs in the ordinary
 `pgvector/pgvector:0.8.2-pg18-trixie` image. No raw PGDATA directory is baked in.
 
-Provision two additional Actions Secrets before preparation:
+Supply the following dedicated settings through the environment or a private,
+ignored `eval.env` file with mode `0600`. Configure the corresponding Secrets
+for hosted scoring separately.
 
-- `DENSE_MEM_EVAL_TEAM_API_KEY`: one fixed, sufficiently random evaluation key.
-- `DENSE_MEM_EVAL_DATABASE_PASSWORD`: one fixed PostgreSQL password.
+- `DENSE_MEM_EVAL_API_KEY` and `DENSE_MEM_EVAL_VERIFIER_URL` for generation
+- `DENSE_MEM_EVAL_EMBED_API_KEY` for OpenAI embeddings
+- `DENSE_MEM_EVAL_TEAM_API_KEY` for the shared evaluation team credential
+- `DENSE_MEM_EVAL_DATABASE_PASSWORD` for the isolated PostgreSQL instances
 
-The bootstrap's team, credential, owner and space IDs remain identical across
-isolated dataset databases. The credential hash is preserved; plaintext keys and
-database login passwords do not enter the images. A mismatched team key fails
-without replacing the credential. Control tokens are generated at startup.
-The maintainer configures the package's public visibility. Synthetic test images
-are never published as dataset seeds.
+The local verifier may use HTTP or HTTPS and must be reachable from Docker.
+Log Docker into `ghcr.io` with `write:packages` access to the public seed package.
+Use `--password-stdin` and retrieve the registry token from your secret manager.
+
+The bootstrap preserves the evaluation team, credential, owner and space IDs
+across isolated dataset databases. It stores the credential hash. Plaintext
+keys and database login passwords stay outside the images. A mismatched team
+key fails before ingestion. Each runtime generates its own control token.
 
 ## Run an evaluation
 
@@ -140,7 +138,7 @@ production E2E. Both routes accept `seed_version`.
 fixtures prepare three synthetic documents with a deterministic provider,
 export and restore them, then produce eight scored answers across two ontology
 conditions and two answer policies. It makes no external model calls and
-publishes no seed image. The public seed-building workflow has no mode input.
+publishes no seed image.
 
 ## Sources, scoring and measurements
 
@@ -148,8 +146,8 @@ publishes no seed image. The public seed-building workflow has no mode input.
 `5ec05b38deecc3318bb432c69865959c56058990`: 45,895 corpus rows and 5,000 questions.
 The [source lock](source_locks/hipporag_2.json) retains hashes, joins and upstream
 attribution/licensing limitations. QASPER and custom question subsets are
-excluded. Downloaded sources, databases and runtime files stay in runner-private
-temporary directories.
+excluded. Downloaded sources, databases and runtime files stay in private
+temporary directories on the build host or runner.
 
 Every question gets one initial Recall per condition, shared unchanged between
 independent single-call and multi-turn conversations. Multi-turn permits Recall,
@@ -173,8 +171,7 @@ Variable, repository Secret, then explicit error; invalid supplied values fail.
 There is no backing-model setting. Ontology and answer concurrency are four;
 embedding concurrency is two. Seed preparation alone uses its requested workers.
 
-Preparation emits initial, sixty-second and final document counts. Benchmark
-exchanges remain readable, credential-protected JSON in Actions logs. Look for
+Benchmark exchanges are emitted as credential-protected JSON in Actions logs. Look for
 `runtime_transport_failure` for the underlying connection error and its request
 and exchange IDs. Incomplete capture still fails validation. Initial security
 rejection is content-free. Reports show model names without provider URLs or
@@ -185,8 +182,8 @@ scoring and ontology timings. Current-run usage excludes historical seed
 preparation. Host latency and throughput retain their existing definitions;
 unavailable billing remains unavailable rather than an inferred monetary cost.
 
-Model work stops after 330 minutes; dataset jobs end after 360 minutes. Seed jobs
-run serially and stop on failure. Scoring jobs use `fail-fast: false` and aggregate
+Model work stops after 330 minutes per dataset. Hosted dataset jobs end after
+360 minutes. Scoring jobs use `fail-fast: false` and aggregate
 every failed, timed-out or missing axis. There is no automatic rebuild, campaign
 restart or deadline extension. Numeric artifacts retain two days; published seed
 versions remain in the registry.
@@ -197,28 +194,21 @@ documented in [evaluation-retirement.md](../../architecture/evaluation-retiremen
 
 ## Delivery and acceptance
 
-The workflow-registration prerequisite must be human-merged before dispatching
-the implementation from its PR branch. Require independent plan-audit
-conformance before tests, then selective local formatting and synthetic checks.
+Require independent plan-audit conformance before tests, then selective local
+formatting and synthetic checks.
 Run Development E2E on the exact pushed SHA with PostgreSQL shards `all` and
 `synchronous_write`, `mcp_boundaries`, `google_adk_memory`, `enterprise_exports`,
 `ontology_organization`, `space_aware_recall`, and `operation_logging`. Its
 observation budget is ninety minutes, including owned-image cleanup.
 
-Require current-head review completion and successful CodeQL analysis and CodeQL
-before requesting the trusted image and full validation. Once the immutable
-image is published, seed ingestion may overlap full CI/E2E. The builder's
-synthetic round-trip must pass before paid work; all four final checks (Repository
-CI, CodeQL analysis, CodeQL and Production image E2E) must pass before publication.
-Run the internal fixture campaign remotely and retain its complete output and
-owned cleanup evidence. Development PostgreSQL tests compare twenty authenticated
-workers at the former 25-connection and candidate 50-connection capacities over
-at least a minute, with real credential activity, pool waits and commit timings.
+Require current-head reviews and CodeQL before requesting the trusted image
+and full validation. Before a paid seed build, verify Repository CI, CodeQL
+analysis, CodeQL and Production image E2E on the exact PR head. Run the internal
+fixture campaign remotely to verify export, protected errors, restore, scoring
+and owned cleanup. The registered PostgreSQL tests exercise sustained intake at
+twenty workers, including credential activity, pool waits and commit timing.
 
-After the maintainer provisions the shared Secrets and public package visibility,
-dispatch one full public seed build with twenty workers and serial datasets.
-Observe it for up to thirty-one hours. After all five seeds exist, run one full
-live evaluation before human merge, with a seven-hour observation budget. A
-failed seed build or campaign requires investigation and a new explicit dispatch;
-paid work never restarts automatically. Keep the existing measured baseline
-until a complete replacement campaign succeeds.
+Build and publish all five public seeds. Run a full live evaluation with the
+published seed digests before human merge. Observe the live campaign for up to
+seven hours. Keep the existing measured baseline until a complete replacement
+campaign succeeds.

@@ -83,7 +83,7 @@ jobs:
           EVAL_MODE: live
           EVAL_SEED_VERSION: ${{ inputs.seed_version }}
           GITHUB_TOKEN: ${{ github.token }}
-        run: node tests/eval/scripts/seed-workflow.mjs pin
+        run: node tests/eval/scripts/workflow.mjs pin-seeds
 
   datasets:
     name: Evaluate ${{ matrix.dataset }}
