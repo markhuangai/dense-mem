@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -55,6 +56,12 @@ func (c *Capture) emitProgress(progress captureProgress) error {
 func NewRunnerCredentialProtector(configured ...string) *observability.CredentialProtector {
 	values := append([]string(nil), configured...)
 	for _, value := range configured {
+		if endpoint, err := url.Parse(value); err == nil && (endpoint.Scheme == "http" || endpoint.Scheme == "https") && endpoint.Hostname() != "" {
+			// DNS and TLS errors can contain the host alone.
+			values = append(values, endpoint.Hostname())
+		}
+	}
+	for _, value := range values {
 		if value == "" {
 			continue
 		}

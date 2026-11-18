@@ -174,9 +174,11 @@ There is no backing-model setting. Ontology and answer concurrency are four;
 embedding concurrency is two. Seed preparation alone uses its requested workers.
 
 Preparation emits initial, sixty-second and final document counts. Benchmark
-exchanges remain readable, credential-protected JSON in Actions logs. Initial
-security rejection is content-free. Required failures and unavailable usage remain
-explicit. Reports show model names without provider URLs or credentials.
+exchanges remain readable, credential-protected JSON in Actions logs. Look for
+`runtime_transport_failure` for the underlying connection error and its request
+and exchange IDs. Incomplete capture still fails validation. Initial security
+rejection is content-free. Reports show model names without provider URLs or
+credentials.
 
 Reports separate seed identity, restored rows, restore, migration/readiness,
 scoring and ontology timings. Current-run usage excludes historical seed

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -86,6 +87,8 @@ func (c *HTTPClient) doJSON(ctx context.Context, method, url, bearer string, inp
 			if captureErr := c.ExchangeCapture.Emit("answer_wire_unavailable", map[string]any{"exchange_id": exchange, "operation_id": scope.OperationID, "attempt": scope.Attempt, "state": "no_response", "error": c.ExchangeCapture.ProtectError(err)}); captureErr != nil {
 				return captureErr
 			}
+		} else if captureErr := c.logServiceTransportFailure(req, exchange, "request", 0, err); captureErr != nil {
+			return captureErr
 		}
 		return errors.New("HTTP transport failed or cancelled: " + safeContextError(ctx))
 	}
@@ -101,6 +104,11 @@ func (c *HTTPClient) doJSON(ctx context.Context, method, url, bearer string, inp
 		}
 	}
 	if err != nil {
+		if c.ExchangeCapture == nil {
+			if captureErr := c.logServiceTransportFailure(req, exchange, "response_body", response.StatusCode, err); captureErr != nil {
+				return captureErr
+			}
+		}
 		return errors.New("HTTP response body interrupted")
 	}
 	if len(data) > 16<<20 {
@@ -122,6 +130,20 @@ func (c *HTTPClient) doJSON(ctx context.Context, method, url, bearer string, inp
 		return errMalformedHTTPJSON
 	}
 	return nil
+}
+
+func (c *HTTPClient) logServiceTransportFailure(req *http.Request, exchange, stage string, status int, cause error) error {
+	if c.Capture == nil {
+		return nil
+	}
+	var requestErr *url.Error
+	if errors.As(cause, &requestErr) {
+		cause = requestErr.Err
+	}
+	return c.Capture.Emit("runtime_transport_failure", map[string]any{
+		"link": "runner_to_dense_mem", "exchange_id": exchange, "stage": stage, "status_code": status,
+		"mcp_method": req.Header.Get("Mcp-Method"), "mcp_tool": req.Header.Get("Mcp-Name"), "error": c.Capture.ProtectError(cause),
+	})
 }
 
 func safeContextError(ctx context.Context) string {

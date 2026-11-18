@@ -8,14 +8,18 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/markhuangai/dense-mem/internal/correlation"
 	"github.com/markhuangai/dense-mem/internal/evalharness"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/stretchr/testify/require"
 )
 
@@ -149,6 +153,61 @@ func TestRuntimeLogCollectorHonorsCancellationBetweenRecords(t *testing.T) {
 
 const runtimeLogKeyCanary = "provider-log-key-canary-1739"
 const runtimeLogURLCanary = "https://provider-log-canary.example/v1"
+
+func TestRuntimeLogCollectorReportsProtectedTransportFailure(t *testing.T) {
+	const host = "provider-log-canary.example"
+	const correlationID = "synthetic-correlation"
+	const invocationID = "synthetic-invocation"
+	const admittedText = "ordinary benchmark request"
+	encodedKey := strings.ToUpper(hex.EncodeToString([]byte(runtimeLogKeyCanary)))
+	failure := &net.DNSError{Err: "no such host " + runtimeLogKeyCanary + " " + encodedKey, Name: host}
+	transport := &http.Transport{DialContext: func(context.Context, string, string) (net.Conn, error) { return nil, failure }}
+	var logs bytes.Buffer
+	logger := observability.NewConsoleWithHandler(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	client := observability.DiagnosticHTTPClient(&http.Client{Transport: transport}, logger.ContextSlog(), observability.NewCredentialProtector(runtimeLogKeyCanary))
+	ctx := requestctx.WithRememberInvocationIDSink(correlation.WithID(context.Background(), correlationID))
+	requestctx.SetRememberInvocationID(ctx, invocationID)
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, runtimeLogURLCanary+"/chat/completions", strings.NewReader(`{"messages":"`+admittedText+`"}`))
+	require.NoError(t, err)
+	request.Header.Set("Authorization", "Bearer "+runtimeLogKeyCanary)
+	_, err = client.Do(request)
+	require.ErrorIs(t, err, failure)
+	require.Contains(t, logs.String(), host, "the server-side error can contain the bare endpoint")
+
+	for _, incomplete := range []bool{false, true} {
+		name, prefix := "complete", ""
+		if incomplete {
+			name = "missing earlier exchange"
+			prefix = `{"level":"DEBUG","msg":"earlier capture","capture_state":"unavailable"}` + "\n"
+		}
+		t.Run(name, func(t *testing.T) {
+			var output bytes.Buffer
+			capture := &evalharness.Capture{RunID: "collector", Logger: slog.New(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: slog.LevelDebug})), Protector: evalharness.NewRunnerCredentialProtector(runtimeLogKeyCanary, runtimeLogURLCanary)}
+			usage := map[string]evalharness.UsageTotals{}
+			err := logReader(ctx, io.MultiReader(strings.NewReader(prefix), bytes.NewReader(logs.Bytes())), capture, usage)
+			if incomplete {
+				require.ErrorContains(t, err, "capture is incomplete")
+				require.Empty(t, usage)
+			} else {
+				require.NoError(t, err)
+				require.EqualValues(t, 1, usage["other"].Unavailable)
+			}
+			var event struct {
+				Kind    string            `json:"kind"`
+				Payload map[string]string `json:"payload"`
+			}
+			require.NoError(t, json.Unmarshal(output.Bytes(), &event))
+			require.Equal(t, "runtime_transport_failure", event.Kind)
+			require.NotEmpty(t, event.Payload["exchange_id"])
+			require.Equal(t, correlationID, event.Payload["correlation_id"])
+			require.Equal(t, invocationID, event.Payload["invocation_id"])
+			require.Contains(t, event.Payload["error"], "no such host")
+			for _, forbidden := range []string{runtimeLogKeyCanary, encodedKey, runtimeLogURLCanary, host, admittedText, "Authorization"} {
+				require.NotContains(t, output.String(), forbidden)
+			}
+		})
+	}
+}
 
 func runtimeCapturePayloads(t *testing.T, logs []byte) string {
 	t.Helper()

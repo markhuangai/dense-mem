@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/iotest"
 	"testing/synctest"
 	"time"
 
@@ -332,6 +334,51 @@ func TestProductionCatalogIsUnchangedAndEvaluationCallsAreRetired(t *testing.T) 
 	for _, name := range []string{"eval_list_knowledge_refs", "eval_run_recall_case"} {
 		_, found := reg.Get(name)
 		require.False(t, found)
+	}
+}
+
+func TestMCPClientLogsProtectedTransportFailure(t *testing.T) {
+	const endpoint = "http://internal-mcp.invalid"
+	const key = "mcp-diagnostics-canary-9483"
+	const admittedText = "ordinary request is not dumped"
+	failure := errors.New("connection reset by peer for " + key)
+	for _, stage := range []string{"request", "response_body", "protection unavailable"} {
+		t.Run(stage, func(t *testing.T) {
+			var logs bytes.Buffer
+			capture := captureFixture(&logs)
+			if stage == "protection unavailable" {
+				capture.Protector = nil
+			} else {
+				capture.Protector = NewRunnerCredentialProtector(key)
+			}
+			transport := importStatusTransport(func(*http.Request) (*http.Response, error) {
+				if stage == "response_body" {
+					return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(iotest.ErrReader(failure))}, nil
+				}
+				return nil, failure
+			})
+			client := &HTTPClient{BaseURL: endpoint, APIKey: key, Client: &http.Client{Transport: transport}, Capture: capture}
+			err := client.CallTool(context.Background(), "remember", map[string]string{"content": admittedText}, nil)
+			require.Error(t, err)
+			for _, forbidden := range []string{key, endpoint, admittedText} {
+				require.NotContains(t, logs.String(), forbidden)
+				require.NotContains(t, err.Error(), forbidden)
+			}
+			if stage == "protection unavailable" {
+				require.ErrorContains(t, err, "payload protection unavailable")
+				return
+			}
+			require.NotContains(t, err.Error(), "connection reset by peer")
+			events := capturedEvents(t, logs.Bytes())
+			require.Len(t, events, 1)
+			require.Equal(t, "runtime_transport_failure", events[0].Kind)
+			var payload map[string]any
+			require.NoError(t, json.Unmarshal(events[0].Payload, &payload))
+			require.Equal(t, "runner_to_dense_mem", payload["link"])
+			require.Equal(t, stage, payload["stage"])
+			require.Equal(t, "remember", payload["mcp_tool"])
+			require.Contains(t, payload["error"], "connection reset by peer")
+		})
 	}
 }
 
