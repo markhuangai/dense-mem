@@ -65,14 +65,14 @@
     },
     {
       "path": "internal/evalharness/client.go",
-      "function": "ImportCorpusWithConcurrency",
+      "function": "importCorpus",
       "kind": "goroutine",
       "ordinal": 1,
       "role": "worker"
     },
     {
       "path": "internal/evalharness/client.go",
-      "function": "ImportCorpusWithConcurrency",
+      "function": "importCorpus",
       "kind": "goroutine",
       "ordinal": 2,
       "role": "worker"

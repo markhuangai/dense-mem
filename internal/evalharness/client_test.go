@@ -573,7 +573,6 @@ func TestImporterQueuesConfirmedGatewayTimeoutsWithTheSameRequest(t *testing.T) 
 				} else if scenario.cancelWhileQueued {
 					cancel()
 				}
-				result := map[string]any{}
 				failed := slow && slowCalls <= scenario.failures
 				if failed && scenario.direct {
 					if scenario.interrupted {
@@ -586,6 +585,7 @@ func TestImporterQueuesConfirmedGatewayTimeoutsWithTheSameRequest(t *testing.T) 
 					}
 					return
 				}
+				var result map[string]any
 				if failed {
 					lastAttempt, lastCorrelation = uuid.NewString(), uuid.NewString()
 					result = map[string]any{
