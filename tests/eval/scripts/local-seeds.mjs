@@ -67,7 +67,7 @@ async function withOwnedRuntime(env, action) {
       const paths = location(env);
       if (fs.existsSync(paths.stateFile) && read(paths.stateFile).runID === paths.runID) {
         save(path.join(paths.directory, "seed-failure.log"), { message: error.message, diagnostic: error.diagnostic });
-        diagnostics(env);
+        await diagnostics(env);
       }
     } catch { process.stderr.write("Protected failure capture is incomplete; private evidence was retained where available.\n"); }
     throw error;

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
-import { spawn, spawnSync } from "node:child_process";
+import { execFile, spawn, spawnSync } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { extractSeed, verifySeedFiles, restoreSeed, dumpSeed, sealSeed, verifySeedCredentialExclusions, seedReference, resolveSeedImage, postgresImage } from "../../../.github/scripts/evaluation-seeds.mjs";
@@ -21,6 +21,30 @@ export function docker(args, options = {}) {
     throw error;
   }
   return (result.stdout || "").trim();
+}
+
+function runCommand(file, args, { input, forwardOutput, ...options } = {}) {
+  return new Promise((resolve, reject) => {
+    let inputFailure;
+    const child = execFile(file, args, { encoding: "utf8", maxBuffer: 64 << 20, ...options }, (error, stdout, stderr) => {
+      if (forwardOutput) {
+        if (stdout) process.stdout.write(stdout);
+        if (stderr) process.stderr.write(stderr);
+      }
+      if (error || inputFailure) reject(error || inputFailure);
+      else resolve({ stdout, stderr });
+    });
+    child.stdin.on("error", (error) => {
+      inputFailure = error;
+      child.kill();
+    });
+    child.stdin.end(input);
+  });
+}
+
+async function dockerAsync(args, options) {
+  const output = await runCommand("docker", args, options);
+  return output.stdout.trim();
 }
 
 export function startupTimings(logs, readyAt) {
@@ -92,9 +116,11 @@ export async function downloadSources(registry, dataset, directory, signal) {
   }
 }
 
-export async function control(state, method, endpoint, body) {
+export async function control(state, method, endpoint, body, signal) {
+  const timeout = AbortSignal.timeout(30_000);
   const response = await fetch(`${state.environment.EVAL_CONTROL_URL}/control/api${endpoint}`, {
-    method, headers: { Authorization: `Bearer ${state.environment.EVAL_CONTROL_TOKEN}`, "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(30_000),
+    method, headers: { Authorization: `Bearer ${state.environment.EVAL_CONTROL_TOKEN}`, "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined,
+    signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
   });
   if (!response.ok) throw new Error(`Control operation failed with HTTP ${response.status}`);
   return (await response.json()).data;
@@ -252,24 +278,46 @@ export async function cleanup(env) {
   process.stdout.write(`Evaluation runtime ${paths.runID} removed; borrowed images retained.\n`);
 }
 
-export function diagnostics(env) {
+export function intakeFailureRecords(logs, correlationID) {
+  return logs.split("\n").filter((line) => {
+    try {
+      const entry = JSON.parse(line);
+      return entry?.correlation_id === correlationID && ["WARN", "ERROR", "FATAL"].includes(entry.level) &&
+        !Object.hasOwn(entry, "payload_chunk");
+    } catch {
+      return false;
+    }
+  }).slice(-40).join("\n");
+}
+
+export async function diagnostics(env, { correlationID, apiKey, signal } = {}) {
   const paths = location(env);
   if (!fs.existsSync(paths.stateFile) || fs.existsSync(path.join(paths.directory, "public/scores.json"))) return;
   const state = read(paths.stateFile);
   if (state.runID !== paths.runID) throw new Error("Startup log ownership mismatch");
-  const files = fs.readdirSync(paths.directory, { recursive: true }).filter((file) => ["postgres-failure.log", "seed-failure.log"].includes(path.basename(file))).map((file) => path.join(paths.directory, file));
+  if (correlationID && !/^[a-f0-9-]{36}$/i.test(correlationID)) throw new Error("Invalid intake diagnostic correlation");
+  const options = correlationID ? { signal, timeout: 10_000 } : {};
+  const files = correlationID ? [] : fs.readdirSync(paths.directory, { recursive: true }).filter((file) => ["postgres-failure.log", "seed-failure.log"].includes(path.basename(file))).map((file) => path.join(paths.directory, file));
   const name = `densemem-eval-${paths.runID}-server`;
-  if (docker(["container", "ls", "--all", "--filter", `name=^${name}$`, "--quiet"])) {
-    const actual = JSON.parse(docker(["container", "inspect", name]))[0]; ownedResource({ Labels: actual.Config.Labels }, paths.runID);
-    const args = env.EVAL_MODE === "intake" ? ["logs", "--tail", "200", name] : ["logs", name];
-    const result = spawnSync("docker", args, { encoding: "utf8", maxBuffer: 64 << 20 });
-    if (result.status !== 0) throw new Error("Startup log collection failed");
-    const file = path.join(paths.directory, "server.log"); fs.writeFileSync(file, result.stdout + result.stderr, { mode: 0o600 }); files.push(file);
+  if (await dockerAsync(["container", "ls", "--all", "--filter", `name=^${name}$`, "--quiet"], options)) {
+    const actual = JSON.parse(await dockerAsync(["container", "inspect", name], options))[0];
+    ownedResource({ Labels: actual.Config.Labels }, paths.runID);
+    const args = env.EVAL_MODE === "intake" ? ["logs", "--tail", correlationID ? "1500" : "200", name] : ["logs", name];
+    const result = await runCommand("docker", args, options);
+    const output = result.stdout + result.stderr;
+    const records = correlationID ? intakeFailureRecords(output, correlationID) : output;
+    if (records) {
+      const file = path.join(paths.directory, correlationID ? `failure-${correlationID}.log` : "server.log");
+      fs.writeFileSync(file, records, { mode: 0o600 });
+      files.push(file);
+    }
   }
   for (const file of files) {
-    const printed = spawnSync(env.EVAL_RUNNER_BINARY, ["validate", paths.manifestFile], { stdio: "inherit", env: { ...privateEnvironment(state, env), EVAL_SERVER_LOG_FILE: file } });
-    if (printed.status !== 0) throw new Error("Startup log protection failed");
+    const environment = { ...privateEnvironment(state, env), EVAL_SERVER_LOG_FILE: file };
+    if (apiKey) environment.EVAL_API_KEY = apiKey;
+    await runCommand(env.EVAL_RUNNER_BINARY, ["validate", paths.manifestFile], { ...options, env: environment, forwardOutput: true });
   }
+  return files.length !== 0;
 }
 
 export async function main(mode, env = process.env) {
@@ -306,7 +354,7 @@ export async function main(mode, env = process.env) {
     if (!report.complete) process.exitCode = 1; return;
   }
   if (mode !== "run") throw new Error("Unsupported workflow operation");
-  if (env.EVAL_MODE === "intake") return compareIntake(env, location(env), { setup, cleanup, diagnostics, docker, downloadSources });
+  if (env.EVAL_MODE === "intake") return compareIntake(env, location(env), { setup, cleanup, control, mask, diagnostics, docker: dockerAsync, downloadSources });
   let runtime;
   if (env.EVAL_MODE === "fixtures") {
     const prepared = await setup({ ...env, DENSE_MEM_EVAL_IMPORT_WORKERS: "4" }, { operation: "prepare" });

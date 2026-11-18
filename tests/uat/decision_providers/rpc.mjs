@@ -8,14 +8,16 @@ export async function remember(base, apiKey, args) {
   return payload(response);
 }
 
-export async function callTool(base, apiKey, name, args, signal) {
-  const response = await envelope(base, apiKey, name, args, signal);
+export async function callTool(base, apiKey, name, args, options) {
+  const response = await envelope(base, apiKey, name, args, options);
   return { receipt: payload(response), isError: response.result.isError === true };
 }
 
-async function envelope(base, apiKey, name, args, signal) {
+async function envelope(base, apiKey, name, args, { signal, correlationID } = {}) {
+  const headers = { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "Content-Type": "application/json" };
+  if (correlationID) headers["X-Correlation-ID"] = correlationID;
   const response = await fetch(`${base}/mcp`, { method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify({ jsonrpc: "2.0", id: ++sequence, method: "tools/call", params: { name, arguments: args } }), signal });
   assert(response.ok, `MCP HTTP ${response.status}`);
   return response.json();

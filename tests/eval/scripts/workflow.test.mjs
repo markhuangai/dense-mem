@@ -6,8 +6,8 @@ import test from "node:test";
 import imagePolicy from "../../../.github/scripts/image-release-policy.cjs";
 import { resolveSetting, resolveImportWorkers, requireEvaluationImportSupport, configuration, requireRunner, registryMatrix, aggregate, ownedResource, manualEvaluationRequest, resolveEvaluationImage, sha256 } from "../../../.github/scripts/evaluation-policy.mjs";
 import { readWorkflow, workflowJob, runStep } from "../../uat/workflow_helpers.mjs";
-import { serverEnvironment, databaseCapacity, startupTimings, main } from "./workflow.mjs";
-import { intakeReceiptOutcome } from "./intake-comparison.mjs";
+import { serverEnvironment, databaseCapacity, startupTimings, main, intakeFailureRecords } from "./workflow.mjs";
+import { intakeReceiptOutcome, measureIntakeCases } from "./intake-comparison.mjs";
 
 const registry = JSON.parse(fs.readFileSync(new URL("../datasets.json", import.meta.url)));
 const valid = { DENSE_MEM_EVAL_MODEL: "configured-model", DENSE_MEM_EVAL_CONTEXT_WINDOW_TOKENS: "300000", DENSE_MEM_EVAL_IMPORT_WORKERS: "10", DENSE_MEM_EVAL_VERIFIER_URL: "https://provider.example/v1", DENSE_MEM_EVAL_EMBED_URL: "https://api.openai.com/v1", DENSE_MEM_EVAL_API_KEY: "generation-canary", DENSE_MEM_EVAL_EMBED_API_KEY: "embedding-canary", WORKFLOW_EMBEDDING_MODEL: "text-embedding-3-small", WORKFLOW_EMBEDDING_DIMENSIONS: "1536" };
@@ -192,6 +192,61 @@ test("intake comparison requires terminal status and complete exact Unicode part
   assert.equal(intakeReceiptOutcome({ isError: true, receipt: rejected }, content), "initial_scan");
   assert.notEqual(intakeReceiptOutcome({ isError: false, receipt: rejected }, content), "initial_scan");
   assert.notEqual(intakeReceiptOutcome({ isError: true, receipt: { ...rejected, processing_state: "completed" } }, content), "initial_scan");
+});
+
+test("intake work stays at four concurrent cases and retains all results in source order", async () => {
+  const cases = Array.from({ length: 9 }, (_, index) => ({ index }));
+  const release = new Map();
+  let results;
+  const work = measureIntakeCases(cases, new AbortController().signal, (item, index, _signal, publishCase) => new Promise((resolve) => {
+    release.set(index, () => { publishCase(item); resolve(); });
+  }), (update) => { results = update; });
+  assert.deepEqual([...release.keys()], [0, 1, 2, 3]);
+  release.get(3)();
+  await Promise.resolve();
+  assert.deepEqual([...release.keys()], [0, 1, 2, 3, 4]);
+  for (const index of [0, 4, 1, 2, 8, 7, 6, 5]) {
+    release.get(index)();
+    await Promise.resolve();
+  }
+  await work;
+  assert.deepEqual(results, cases);
+});
+
+test("intake work stops starting cases at the deadline and publishes the in-flight outcomes", async () => {
+  const controller = new AbortController();
+  const started = [];
+  let results;
+  const work = measureIntakeCases([0, 1, 2, 3, 4], controller.signal, (item, _index, signal, publishCase) => new Promise((resolve) => {
+    started.push(item);
+    signal.addEventListener("abort", () => { publishCase({ item, actual: "deadline_expired" }); resolve(); }, { once: true });
+  }), (update) => { results = update; });
+  controller.abort(new Error("deadline"));
+  await assert.rejects(work, /deadline/);
+  assert.deepEqual(started, [0, 1, 2, 3]);
+  assert.deepEqual(results, started.map((item) => ({ item, actual: "deadline_expired" })));
+});
+
+test("intake work publishes a case outcome while its optional failure capture is pending", async () => {
+  let finishCapture, results;
+  const failure = { case: "fixture-case", actual: "provider_response_invalid", protected_failure_log: "unavailable" };
+  const work = measureIntakeCases([failure], new AbortController().signal, async (item, _index, _signal, publishCase) => {
+    publishCase(item);
+    await new Promise((resolve) => { finishCapture = resolve; });
+    publishCase({ ...item, protected_failure_log: "captured" });
+  }, (update) => { results = update; });
+  assert.deepEqual(results, [failure]);
+  finishCapture();
+  await work;
+  assert.deepEqual(results, [{ ...failure, protected_failure_log: "captured" }]);
+});
+
+test("intake failure capture selects bounded warnings for a single correlation without payloads", () => {
+  const target = { correlation_id: "case-id", level: "WARN", msg: "invalid complete response" };
+  const lines = [target, { ...target, correlation_id: "other-case" }, { ...target, level: "INFO" },
+    { ...target, payload_chunk: { body: "unrelated-provider-payload" } }];
+  assert.equal(intakeFailureRecords(lines.map((entry) => JSON.stringify(entry)).join("\n"), "case-id"), JSON.stringify(target));
+  assert.equal(intakeFailureRecords(Array(70).fill(JSON.stringify(target)).join("\n"), "case-id").split("\n").length, 40);
 });
 
 test("isolated server admits configured import workers while preserving other limits and private routing", () => {

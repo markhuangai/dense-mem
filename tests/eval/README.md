@@ -146,7 +146,9 @@ must have a successful production-image receipt.
 The runner compares the 28 previously rejected rows and the security controls
 on the pinned baseline and candidate images. It checks full partition coverage
 and exact stored text and retains case outcomes and source identities for two days.
-The comparison uses disposable databases and stops model work after 20 minutes.
+Each case uses its own disposable team. The runner processes up to four cases at
+a time and stops model work after 20 minutes. Unexpected outcomes retain bounded
+error fields and the request's protected failure logs when available.
 
 ## Sources, scoring and measurements
 
