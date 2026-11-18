@@ -8,6 +8,7 @@ const baseline = {
   revision: "46d2c974b4720cb9783bda31ef4f78420518f3aa",
   image: "ghcr.io/markhuangai/dense-mem@sha256:4c93a73b2e9e3b6fcbc119528652c81e59a6ad25c6269695a3eb940dcf9da8d7",
 };
+const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
 
 const pinnedRows = {
   hotpotqa: ["1338", "3430", "9465", "9797", "9798"],
@@ -53,27 +54,42 @@ async function lockedCases(registry, directory, downloadSources, signal) {
 }
 
 function exactEvidence(docker, runtime, receipt, content) {
-  if (!/^[a-f0-9-]{36}$/.test(receipt.submission_id)) return false;
+  if (!uuid.test(receipt.submission_id)) return false;
   const output = docker(["exec", "-i", `densemem-eval-${runtime.paths.runID}-postgres`,
     "psql", "-U", "densemem", "-d", "densemem", "-At", "-v", "ON_ERROR_STOP=1", "-v", `ingest=${receipt.submission_id}`,
   ], { input: "SELECT encode(convert_to(content, 'UTF8'), 'hex') FROM remember_submitted_items WHERE ingest_id = :'ingest'::uuid AND submitted_index = 0;\n" });
   return output === Buffer.from(content).toString("hex");
 }
 
-function outcome(receipt, docker, runtime, content) {
-  if (receipt.processing_state === "completed" && receipt.search_state === "current") {
-    const rejected = receipt.evidence?.some((item) => item.disposition === "not_stored");
-    return !rejected && exactEvidence(docker, runtime, receipt, content) ? "accepted" : "evidence_mismatch";
+export function intakeReceiptOutcome({ receipt, isError }, content) {
+  if (!isError && receipt.processing_state === "completed" && receipt.search_state === "current" && !receipt.errors?.length) {
+    const partitions = receipt.evidence;
+    if (!Array.isArray(partitions) || partitions.length === 0) return "evidence_mismatch";
+    const runes = Array.from(content);
+    const sourceItem = partitions[0]?.source_item_id;
+    const occurrences = new Set();
+    let start = 0;
+    for (const [index, part] of partitions.entries()) {
+      if (part?.disposition !== "stored" || part.evidence_index !== 0 || part.partition_index !== index ||
+          part.span_start !== start || !Number.isInteger(part.span_end) || part.span_end <= start || part.span_end > runes.length ||
+          part.source_item_id !== sourceItem || ![sourceItem, part.evidence_id, part.occurrence_id].every((id) => uuid.test(id)) ||
+          occurrences.has(part.occurrence_id) || part.content_hash !== "sha256:" + sha256(runes.slice(start, part.span_end).join(""))) {
+        return "evidence_mismatch";
+      }
+      occurrences.add(part.occurrence_id);
+      start = part.span_end;
+    }
+    return start === runes.length ? "accepted" : "evidence_mismatch";
   }
   const error = receipt.errors?.[0];
-  if (error?.code === "submission_policy_rejected") {
+  if (isError && receipt.processing_state === "failed" && error?.code === "submission_policy_rejected") {
     if (error.details?.component === "remember.initial_scan") return "initial_scan";
     if (error.details?.component === "remember.intake_review") return "intake_review";
   }
   return /^[a-z0-9_]{1,64}$/.test(error?.code || "") ? error.code : "missing_terminal_result";
 }
 
-export async function compareIntake(env, paths, { setup, cleanup, docker, downloadSources }) {
+export async function compareIntake(env, paths, { setup, cleanup, diagnostics, docker, downloadSources }) {
   requireRunner(env);
   const { model } = configuration(env);
   const remaining = Number(env.EVAL_MODEL_DEADLINE_EPOCH) * 1000 - Date.now();
@@ -97,8 +113,9 @@ export async function compareIntake(env, paths, { setup, cleanup, docker, downlo
   for (const arm of ["baseline", "candidate"]) {
     const measurements = report[arm];
     const runtimeEnv = arm === "baseline" ? { ...env, EVAL_SOURCE_REVISION: baseline.revision, EVAL_IMAGE: baseline.image } : env;
+    let runtime;
     try {
-      const runtime = await setup(runtimeEnv, { operation: "intake", signal });
+      runtime = await setup(runtimeEnv, { operation: "intake", signal });
       measurements.revision = runtime.manifest.source_revision;
       measurements.image = runtime.manifest.image;
       save();
@@ -106,17 +123,26 @@ export async function compareIntake(env, paths, { setup, cleanup, docker, downlo
         signal.throwIfAborted();
         let actual;
         try {
-          const receipt = await callTool(runtime.state.environment.EVAL_MCP_URL, runtime.state.environment.EVAL_API_KEY, "remember", {
+          const result = await callTool(runtime.state.environment.EVAL_MCP_URL, runtime.state.environment.EVAL_API_KEY, "remember", {
             target_space: "team_shared", idempotency_key: `intake:${arm}:${index}`,
             evidence: [{ content: item.content, source_type: "document", source: item.source }],
           }, signal);
-          actual = outcome(receipt, docker, runtime, item.content);
+          actual = intakeReceiptOutcome(result, item.content);
+          if (actual === "accepted" && !exactEvidence(docker, runtime, result.receipt, item.content)) actual = "evidence_mismatch";
         } catch {
           actual = signal.aborted ? "deadline_expired" : "request_unavailable";
         }
         measurements.results.push({ case: item.id, content_sha256: sha256(item.content), expected: item[arm], actual });
         save();
       }
+    } catch (error) {
+      if (!runtime) {
+        measurements.failure = "runtime_setup_failed";
+        save();
+        process.stderr.write(`Intake comparison ${arm} runtime setup failed.\n`);
+        try { diagnostics(runtimeEnv); } catch { process.stderr.write("Protected intake startup log capture failed.\n"); }
+      }
+      throw error;
     } finally {
       await cleanup(runtimeEnv);
     }

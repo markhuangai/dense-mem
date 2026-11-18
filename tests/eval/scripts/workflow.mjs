@@ -261,7 +261,8 @@ export function diagnostics(env) {
   const name = `densemem-eval-${paths.runID}-server`;
   if (docker(["container", "ls", "--all", "--filter", `name=^${name}$`, "--quiet"])) {
     const actual = JSON.parse(docker(["container", "inspect", name]))[0]; ownedResource({ Labels: actual.Config.Labels }, paths.runID);
-    const result = spawnSync("docker", ["logs", name], { encoding: "utf8", maxBuffer: 64 << 20 });
+    const args = env.EVAL_MODE === "intake" ? ["logs", "--tail", "200", name] : ["logs", name];
+    const result = spawnSync("docker", args, { encoding: "utf8", maxBuffer: 64 << 20 });
     if (result.status !== 0) throw new Error("Startup log collection failed");
     const file = path.join(paths.directory, "server.log"); fs.writeFileSync(file, result.stdout + result.stderr, { mode: 0o600 }); files.push(file);
   }
@@ -305,7 +306,7 @@ export async function main(mode, env = process.env) {
     if (!report.complete) process.exitCode = 1; return;
   }
   if (mode !== "run") throw new Error("Unsupported workflow operation");
-  if (env.EVAL_MODE === "intake") return compareIntake(env, location(env), { setup, cleanup, docker, downloadSources });
+  if (env.EVAL_MODE === "intake") return compareIntake(env, location(env), { setup, cleanup, diagnostics, docker, downloadSources });
   let runtime;
   if (env.EVAL_MODE === "fixtures") {
     const prepared = await setup({ ...env, DENSE_MEM_EVAL_IMPORT_WORKERS: "4" }, { operation: "prepare" });

@@ -34,24 +34,7 @@ func (p *rememberSynchronousProcessor) partitionRemember(ctx context.Context, in
 		contents[i] = item.Content
 	}
 	req := assessor.PreparePartitionRequest("partition:"+attemptID, contents)
-	routing, err := remember.RouteRememberIntakeSecurity(requestctx.WithProgressOperation(ctx, "intake_security"), p.decisions, settings, req, p.logger)
-	if err != nil {
-		return input, nil, err
-	}
-	review := &remember.RememberIntakeSecurity{DecisionSnapshot: settings}
-	if routing != nil {
-		review.DecisionStages = routing.Stages
-	}
-	req.ReviewSecurity = routing == nil || routing.Security == nil
-	schema := assessor.PartitionResponseSchema(req.ReviewSecurity)
-	prompt := assessor.PartitionPrompt
-	if req.ReviewSecurity {
-		prompt = assessor.PartitionSecurityPrompt + prompt
-	}
-	encoded, err := json.Marshal(req)
-	if err != nil {
-		return input, nil, err
-	}
+	req.ReviewSecurity = p.decisions == nil || settings == nil || !settings.Effective.SecurityReview
 	limits := p.limits
 	defaults := assessor.DefaultSemanticAssessmentLimits()
 	if limits.Tokenizer == "" {
@@ -64,31 +47,79 @@ func (p *rememberSynchronousProcessor) partitionRemember(ctx context.Context, in
 		limits.MaxOutputTokens = defaults.MaxOutputTokens
 	}
 	outputLimit := min(limits.MaxOutputTokens, 8192)
-	messages := []modelprovider.Message{{Role: "system", Content: prompt}, {Role: "user", Content: string(encoded)}}
-	if root, ok := p.logger.(interface{ ContextSlog() *slog.Logger }); ok {
-		observability.LogDiagnosticBody(ctx, root.ContextSlog(), p.protector, "remember_partition_manifest", encoded, modelprovider.MaxProviderDiagnosticBodyBytes, slog.String("attempt_id", attemptID), slog.String("policy_version", knowledge.RememberPartitionPolicyVersion))
+	conversation := modelprovider.StructuredRequest{
+		Model: p.provider.ModelName(), SchemaName: assessor.PartitionSchemaName,
+		MaxInputTokens: limits.MaxInputTokens, MaxOutputTokens: outputLimit,
 	}
-	started := time.Now()
-	for turn := 1; turn <= assessor.SemanticAssessmentMaxProviderTurns; turn++ {
-		converted := make([]assessor.SemanticAssessmentProviderMessage, len(messages))
-		for i, m := range messages {
+	prepare := func() error {
+		prompt := assessor.PartitionPrompt
+		if req.ReviewSecurity {
+			prompt = assessor.PartitionSecurityPrompt + prompt
+		}
+		encoded, err := json.Marshal(req)
+		if err != nil {
+			return err
+		}
+		conversation.Schema = assessor.PartitionResponseSchema(req.ReviewSecurity)
+		conversation.Messages = []modelprovider.Message{{Role: "system", Content: prompt}, {Role: "user", Content: string(encoded)}}
+		return nil
+	}
+	countTokens := func(turn int) (int, error) {
+		converted := make([]assessor.SemanticAssessmentProviderMessage, len(conversation.Messages))
+		for i, m := range conversation.Messages {
 			converted[i] = assessor.SemanticAssessmentProviderMessage{Role: m.Role, Content: m.Content}
 		}
-		tokens, countErr := assessor.CountSemanticAssessmentProviderRequestTokens(p.provider.ModelName(), assessor.PartitionSchemaName, schema, limits.ProviderTemperatureDisabled, converted, limits.Tokenizer)
+		tokens, countErr := assessor.CountSemanticAssessmentProviderRequestTokens(conversation.Model, conversation.SchemaName, conversation.Schema, limits.ProviderTemperatureDisabled, converted, limits.Tokenizer)
 		if countErr != nil {
-			return input, nil, fmt.Errorf("%w: partition request sizing failed: %w", remember.ErrRememberInputBudgetExceeded, countErr)
+			return 0, fmt.Errorf("%w: partition request sizing failed: %w", remember.ErrRememberInputBudgetExceeded, countErr)
 		}
 		// Reserve every remaining complete response and bounded correction instruction before dispatch.
 		inputLimit := limits.MaxInputTokens - (assessor.SemanticAssessmentMaxProviderTurns-turn)*(outputLimit+4096)
 		if tokens > inputLimit {
-			return input, nil, fmt.Errorf("%w: partition conversation requires %d tokens, limit %d", remember.ErrRememberInputBudgetExceeded, tokens, inputLimit)
+			return 0, fmt.Errorf("%w: partition conversation requires %d tokens, limit %d", remember.ErrRememberInputBudgetExceeded, tokens, inputLimit)
 		}
+		return tokens, nil
+	}
+	if err := prepare(); err != nil {
+		return input, nil, err
+	}
+	tokens, err := countTokens(1)
+	if err != nil {
+		return input, nil, err
+	}
+	routing, err := remember.RouteRememberIntakeSecurity(requestctx.WithProgressOperation(ctx, "intake_security"), p.decisions, settings, req, p.logger)
+	if err != nil {
+		return input, nil, err
+	}
+	review := &remember.RememberIntakeSecurity{DecisionSnapshot: settings}
+	if routing != nil {
+		review.DecisionStages = routing.Stages
+	}
+	if !req.ReviewSecurity && (routing == nil || routing.Security == nil) {
+		req.ReviewSecurity = true
+		if err := prepare(); err != nil {
+			return input, nil, err
+		}
+		tokens, err = countTokens(1)
+		if err != nil {
+			return input, nil, err
+		}
+	}
+	if root, ok := p.logger.(interface{ ContextSlog() *slog.Logger }); ok {
+		observability.LogDiagnosticBody(ctx, root.ContextSlog(), p.protector, "remember_partition_manifest", []byte(conversation.Messages[1].Content), modelprovider.MaxProviderDiagnosticBodyBytes, slog.String("attempt_id", attemptID), slog.String("policy_version", knowledge.RememberPartitionPolicyVersion))
+	}
+	started := time.Now()
+	for turn := 1; turn <= assessor.SemanticAssessmentMaxProviderTurns; turn++ {
 		stage := remember.ProgressPartitioning
 		if turn > 1 {
 			stage = remember.ProgressRegeneratingPartitions
+			tokens, err = countTokens(turn)
+			if err != nil {
+				return input, nil, err
+			}
 		}
 		requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: string(stage), Attempt: turn, Total: assessor.SemanticAssessmentMaxProviderTurns})
-		result, callErr := transport.Complete(ctx, modelprovider.StructuredRequest{Model: p.provider.ModelName(), Messages: messages, SchemaName: assessor.PartitionSchemaName, Schema: schema, MaxInputTokens: limits.MaxInputTokens, MaxOutputTokens: outputLimit})
+		result, callErr := transport.Complete(ctx, conversation)
 		if callErr != nil {
 			return input, nil, fmt.Errorf("%w: partition provider failed: %w", remember.ErrRememberProviderUnavailable, callErr)
 		}
@@ -140,10 +171,10 @@ func (p *rememberSynchronousProcessor) partitionRemember(ctx context.Context, in
 		if turn < assessor.SemanticAssessmentMaxProviderTurns {
 			// Oversized output is explicitly omitted, never truncated into a misleading partial response.
 			if responseTokens <= outputLimit && len(result.Content) <= modelprovider.MaxProviderDiagnosticBodyBytes {
-				messages = append(messages, modelprovider.Message{Role: "assistant", Content: result.Content})
+				conversation.Messages = append(conversation.Messages, modelprovider.Message{Role: "assistant", Content: result.Content})
 			}
 			feedback, _ := json.Marshal(map[string]any{"validation_error": validationErr.Error(), "instruction": "Return a complete replacement for the unchanged original request."})
-			messages = append(messages, modelprovider.Message{Role: "user", Content: string(feedback)})
+			conversation.Messages = append(conversation.Messages, modelprovider.Message{Role: "user", Content: string(feedback)})
 		}
 	}
 	return input, nil, fmt.Errorf("%w: partition response remained invalid after three complete attempts", remember.ErrRememberProviderResponseInvalid)

@@ -2,11 +2,12 @@ package assessor
 
 import (
 	"encoding/json"
-	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
-	"github.com/stretchr/testify/require"
 	"sort"
 	"strings"
 	"testing"
+
+	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
+	"github.com/stretchr/testify/require"
 )
 
 func partitionResponseForTest(req PartitionRequest, all bool) PartitionResponse {
@@ -88,8 +89,27 @@ func TestPartitionSecurityRequiresCompleteReviewBeforeUsingCuts(t *testing.T) {
 		}
 	}
 	spans, err = validate()
+	require.ErrorContains(t, err, "empty items array")
+	require.NotErrorAs(t, err, &rejection)
+	require.Nil(t, spans)
+
+	response.Items = []PartitionResult{}
+	validSignal := response.SecurityResults[1].Signals[0]
+	for _, invalid := range []SemanticAssessmentSecuritySignal{
+		{Kind: validSignal.Kind + " ", StartRef: validSignal.StartRef, EndRef: validSignal.EndRef},
+		{Kind: validSignal.Kind, StartRef: " " + validSignal.StartRef, EndRef: validSignal.EndRef},
+		{Kind: validSignal.Kind, StartRef: validSignal.StartRef, EndRef: validSignal.EndRef + strings.Repeat(" ", 128)},
+	} {
+		response.SecurityResults[1].Signals[0] = invalid
+		spans, err = validate()
+		require.Error(t, err)
+		require.NotErrorAs(t, err, &rejection)
+		require.Nil(t, spans)
+	}
+	response.SecurityResults[1].Signals[0] = validSignal
+	spans, err = validate()
 	require.ErrorAs(t, err, &rejection)
-	require.Nil(t, spans, "validated rejection must discard even otherwise valid cuts")
+	require.Nil(t, spans)
 	require.Equal(t, len([]rune(req.Items[1].Content)), rejection.Results[1].Signals[0].End)
 }
 

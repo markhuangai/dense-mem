@@ -191,7 +191,7 @@ func hiddenControlRune(value rune) bool {
 
 func submissionMatchIsObfuscated(view, normalized securityView, location []int, decoded bool) bool {
 	if !decoded {
-		return !securityMatchHasNoHiddenControls(view, normalized, location)
+		return !securityMatchIsUnobfuscated(view, normalized, location, true)
 	}
 	start := utf8.RuneCountInString(normalized.text[:location[0]])
 	end := utf8.RuneCountInString(normalized.text[:location[1]])

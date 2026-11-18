@@ -2,6 +2,7 @@ package modelprovider
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -9,6 +10,8 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
+
+var ErrDecisionInputBudgetExceeded = errors.New("decision input budget exceeded")
 
 type DecisionKind string
 

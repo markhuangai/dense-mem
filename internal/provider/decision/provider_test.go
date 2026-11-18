@@ -132,6 +132,15 @@ func TestPackingPreservesGroupsAndExactSerializedLimits(t *testing.T) {
 				if len(seen) != 16 {
 					t.Fatal("packing omitted questions")
 				}
+				if bound == "request" {
+					p.config.MaxInputTokens = 1
+				} else {
+					p.config.MaxQuestionInputTokens = 1
+				}
+				_, err = p.pack(t.Context(), groups)
+				if !errors.Is(err, modelprovider.ErrDecisionInputBudgetExceeded) {
+					t.Fatalf("single group over %s limit must return an input-budget error: %v", bound, err)
+				}
 			})
 		}
 	}

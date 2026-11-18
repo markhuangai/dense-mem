@@ -39,7 +39,11 @@ func ReadManifest(path string) (Manifest, error) {
 	if manifest.Version != 1 || manifest.RunID == "" || !revisionPattern.MatchString(manifest.SourceRevision) || !imagePattern.MatchString(manifest.Image) {
 		return manifest, errors.New("execution manifest identity is invalid")
 	}
-	if manifest.Mode != "live" && manifest.Mode != "fixtures" {
+	intake := manifest.Mode == "intake"
+	if intake && (manifest.Dataset != "intake" || manifest.Operation != "intake" || manifest.SeedImage != "") {
+		return manifest, errors.New("invalid intake comparison manifest")
+	}
+	if manifest.Mode != "live" && manifest.Mode != "fixtures" && !intake {
 		return manifest, errors.New("invalid runner campaign mode")
 	}
 	if manifest.RunID != manifest.ExecutionID()+"-"+manifest.Dataset {
@@ -48,7 +52,7 @@ func ReadManifest(path string) (Manifest, error) {
 	if !modelPattern.MatchString(manifest.Model) || strings.Contains(manifest.Model, "://") || manifest.EmbeddingModel != "text-embedding-3-small" || manifest.EmbeddingDimensions != 1536 || manifest.ContextWindowTokens < 16384 {
 		return manifest, errors.New("explicit verified model and context settings are required")
 	}
-	if manifest.Operation != "prepare" && manifest.Operation != "run" && manifest.Operation != "bootstrap" && manifest.Operation != "verify-seed" {
+	if manifest.Operation != "prepare" && manifest.Operation != "run" && manifest.Operation != "bootstrap" && manifest.Operation != "verify-seed" && !intake {
 		return manifest, errors.New("invalid workflow-internal operation")
 	}
 	if manifest.Operation == "prepare" || manifest.Operation == "bootstrap" {
@@ -67,8 +71,12 @@ func ReadManifest(path string) (Manifest, error) {
 	if manifest.DataDir == "" || manifest.OutputDir == "" || len(manifest.RegistryHash) != 64 {
 		return manifest, errors.New("manifest data and output identity missing")
 	}
-	if manifest.ModelDeadline.IsZero() || manifest.ModelDeadline.After(time.Now().Add(330*time.Minute)) {
-		return manifest, errors.New("model deadline is missing or exceeds 330 minutes")
+	maximum := 330 * time.Minute
+	if intake {
+		maximum = 20 * time.Minute
+	}
+	if manifest.ModelDeadline.IsZero() || manifest.ModelDeadline.After(time.Now().Add(maximum)) {
+		return manifest, errors.New("model deadline is missing or exceeds the campaign limit")
 	}
 	return manifest, nil
 }

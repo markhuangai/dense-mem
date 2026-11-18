@@ -178,7 +178,7 @@ func (p *Provider) encodeBatch(ctx context.Context, groups []modelprovider.Decis
 		return batch{}, err
 	}
 	if tokens > p.config.MaxInputTokens {
-		return batch{}, fmt.Errorf("estimated request tokens %d exceed %d", tokens, p.config.MaxInputTokens)
+		return batch{}, fmt.Errorf("%w: estimated request tokens %d exceed %d", modelprovider.ErrDecisionInputBudgetExceeded, tokens, p.config.MaxInputTokens)
 	}
 	for _, group := range groups {
 		for _, question := range group.Questions {
@@ -202,7 +202,7 @@ func (p *Provider) encodeBatch(ctx context.Context, groups []modelprovider.Decis
 				return batch{}, countErr
 			}
 			if count > p.config.MaxQuestionInputTokens {
-				return batch{}, fmt.Errorf("estimated shared state plus question tokens %d exceed %d", count, p.config.MaxQuestionInputTokens)
+				return batch{}, fmt.Errorf("%w: estimated shared state plus question tokens %d exceed %d", modelprovider.ErrDecisionInputBudgetExceeded, count, p.config.MaxQuestionInputTokens)
 			}
 		}
 	}

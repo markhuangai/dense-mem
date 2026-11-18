@@ -4,9 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import imagePolicy from "../../../.github/scripts/image-release-policy.cjs";
-import { resolveSetting, resolveImportWorkers, requireEvaluationImportSupport, configuration, requireRunner, registryMatrix, aggregate, ownedResource, manualEvaluationRequest, resolveEvaluationImage } from "../../../.github/scripts/evaluation-policy.mjs";
+import { resolveSetting, resolveImportWorkers, requireEvaluationImportSupport, configuration, requireRunner, registryMatrix, aggregate, ownedResource, manualEvaluationRequest, resolveEvaluationImage, sha256 } from "../../../.github/scripts/evaluation-policy.mjs";
 import { readWorkflow, workflowJob, runStep } from "../../uat/workflow_helpers.mjs";
 import { serverEnvironment, databaseCapacity, startupTimings, main } from "./workflow.mjs";
+import { intakeReceiptOutcome } from "./intake-comparison.mjs";
 
 const registry = JSON.parse(fs.readFileSync(new URL("../datasets.json", import.meta.url)));
 const valid = { DENSE_MEM_EVAL_MODEL: "configured-model", DENSE_MEM_EVAL_CONTEXT_WINDOW_TOKENS: "300000", DENSE_MEM_EVAL_IMPORT_WORKERS: "10", DENSE_MEM_EVAL_VERIFIER_URL: "https://provider.example/v1", DENSE_MEM_EVAL_EMBED_URL: "https://api.openai.com/v1", DENSE_MEM_EVAL_API_KEY: "generation-canary", DENSE_MEM_EVAL_EMBED_API_KEY: "embedding-canary", WORKFLOW_EMBEDDING_MODEL: "text-embedding-3-small", WORKFLOW_EMBEDDING_DIMENSIONS: "1536" };
@@ -139,8 +140,12 @@ test("own-PR evaluation executes authorization against the publishing attempt af
     repos: { getCollaboratorPermissionLevel: async () => ({ data: { permission: "admin" } }), listCommitStatusesForRef: async () => statuses }, pulls: { get: async () => ({ data: pull }) }, issues: { listComments: async () => comments },
     actions: { getWorkflowRun: async () => ({ data: latest }), getWorkflowRunAttempt: async ({ run_id, attempt_number }) => { assert.equal(run_id, 100); assert.equal(attempt_number, 1); return { data: published }; }, listJobsForWorkflowRunAttempt: async ({ run_id, attempt_number }) => { assert.equal(run_id, 100); assert.equal(attempt_number, 1); return jobs; } },
   } };
-  const outputs = {}, env = { INPUT_PR_NUMBER: "42", INPUT_EVALUATION: "fixtures", TRIGGERING_ACTOR: "owner" };
-  const run = () => execute(github, context, { setOutput: (key, value) => { outputs[key] = value; } }, (file) => { assert.equal(file, "./.ci-policy/.github/scripts/image-release-policy.cjs"); return imagePolicy; }, { env });
+  let outputs;
+  const env = { INPUT_PR_NUMBER: "42", INPUT_EVALUATION: "fixtures", TRIGGERING_ACTOR: "owner" };
+  const run = () => {
+    outputs = {};
+    return execute(github, context, { setOutput: (key, value) => { outputs[key] = value; } }, (file) => { assert.equal(file, "./.ci-policy/.github/scripts/image-release-policy.cjs"); return imagePolicy; }, { env });
+  };
   for (const mode of ["fixtures", "live", "intake"]) { env.INPUT_EVALUATION = mode; await run(); assert.equal(outputs.image, pinnedImage); }
   latest.run_attempt = 1; latest.conclusion = "success"; await run();
   latest.run_attempt = 2;
@@ -160,6 +165,33 @@ test("own-PR evaluation executes authorization against the publishing attempt af
   await assert.rejects(run(), /preview receipt is missing/); comments[0].body = imagePolicy.formatPreviewReceipt(receipt, target);
   env.INPUT_EVALUATION = "none"; latest.conclusion = "failure";
   await run(); assert.equal(outputs.image, pinnedImage);
+});
+
+test("intake comparison requires terminal status and complete exact Unicode partition coverage", () => {
+  const pieces = ["Ａ😀. ", "第二句。"];
+  const content = pieces.join("");
+  const sourceID = "d0cd0251-452e-482b-a323-256ecea94a38";
+  const secondID = "40c59bc6-ebd7-4827-ab99-edb944979b72";
+  const boundary = Array.from(pieces[0]).length;
+  const result = { isError: false, receipt: { processing_state: "completed", search_state: "current",
+    evidence: pieces.map((piece, index) => ({
+      disposition: "stored", evidence_index: 0, partition_index: index, span_start: index ? boundary : 0,
+      span_end: index ? Array.from(content).length : boundary, source_item_id: sourceID,
+      evidence_id: index ? secondID : sourceID, occurrence_id: index ? secondID : sourceID, content_hash: "sha256:" + sha256(piece),
+    })),
+  } };
+  assert.equal(intakeReceiptOutcome(result, content), "accepted");
+  for (const evidence of [[], result.receipt.evidence.slice(0, 1),
+    [result.receipt.evidence[0], { ...result.receipt.evidence[1], span_start: boundary + 1 }],
+    [result.receipt.evidence[0], { ...result.receipt.evidence[1], content_hash: "wrong" }],
+  ]) {
+    assert.equal(intakeReceiptOutcome({ ...result, receipt: { ...result.receipt, evidence } }, content), "evidence_mismatch");
+  }
+  assert.notEqual(intakeReceiptOutcome({ ...result, isError: true }, content), "accepted");
+  const rejected = { processing_state: "failed", errors: [{ code: "submission_policy_rejected", details: { component: "remember.initial_scan" } }] };
+  assert.equal(intakeReceiptOutcome({ isError: true, receipt: rejected }, content), "initial_scan");
+  assert.notEqual(intakeReceiptOutcome({ isError: false, receipt: rejected }, content), "initial_scan");
+  assert.notEqual(intakeReceiptOutcome({ isError: true, receipt: { ...rejected, processing_state: "completed" } }, content), "initial_scan");
 });
 
 test("isolated server admits configured import workers while preserving other limits and private routing", () => {

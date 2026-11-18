@@ -24,26 +24,28 @@ if (verifierBeforeRejects !== 0) {
   throw new Error("fresh security intake stack already recorded verifier requests");
 }
 
-let reviewRejections = 0;
-for (const testCase of rejectedCases) {
+const initialRejections = rejectedCases.filter((testCase) => structuralRejections.has(testCase.name));
+const reviewRejections = rejectedCases.filter((testCase) => !structuralRejections.has(testCase.name));
+for (const testCase of initialRejections) {
+  await verifyRejection(testCase, "remember.initial_scan");
+  const audit = await waitForAuditRecord(apiKey, testCase.correlationID);
+  assertSafeAuditRecord(audit, testCase, teamID);
+}
+await assertVerifierStable(verifierBeforeRejects, teamID);
+for (const testCase of reviewRejections) await verifyRejection(testCase, "remember.intake_review");
+
+async function verifyRejection(testCase, component) {
   const response = await mcpRaw(apiKey, "remember", evidenceRememberInput(
     testCase.content,
     `${runID}:${testCase.name}`,
     `security-intake:${runID}:${testCase.name}`,
     testCase.clientComment,
   ), testCase.correlationID);
-  const initial = structuralRejections.has(testCase.name);
-  assertRejectedResponse(response, testCase, initial ? "remember.initial_scan" : "remember.intake_review");
+  assertRejectedResponse(response, testCase, component);
   assertNoCorrelatedIngest(testCase.correlationID);
-  if (initial) {
-    const audit = await waitForAuditRecord(apiKey, testCase.correlationID);
-    assertSafeAuditRecord(audit, testCase, teamID);
-  } else {
-    reviewRejections++;
-  }
 }
 
-const verifierAfterRejects = await waitForVerifierRequests(verifierBeforeRejects + reviewRejections, verifierBeforeRejects + reviewRejections * 3, teamID);
+const verifierAfterRejects = await waitForVerifierRequests(verifierBeforeRejects + reviewRejections.length, verifierBeforeRejects + reviewRejections.length * 3, teamID);
 await assertVerifierStable(verifierAfterRejects, teamID);
 let verifierAfterAccepted = verifierAfterRejects;
 const acceptedResults = [];
@@ -252,7 +254,7 @@ function assertSafeAuditRecord(entry, testCase, expectedTeamID) {
   }
   const serialized = JSON.stringify(entry);
   const forbiddenValues = [testCase.content, ...(testCase.auditForbiddenValues ?? [])];
-  if (forbiddenValues.some((value) => serialized.includes(value))) {
+  if (forbiddenValues.some((value) => serialized.includes(JSON.stringify(value).slice(1, -1)))) {
     throw new Error("security rejection audit record retained rejected evidence");
   }
   for (const signal of metadata.signals) {

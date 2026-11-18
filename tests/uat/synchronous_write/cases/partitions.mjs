@@ -100,7 +100,7 @@ export async function run({ rpc, rawRPC, runStep }) {
     await runStep(`intake-review-${fault}`, async () => {
       const provider = `${process.env.DENSE_MEM_E2E_PROVIDER_URL}/health`;
       const before = await (await fetch(provider)).json();
-      const call = await progressCall({ apiKey, args: argsFor(`Review input. [fixture-fault:${fault}]`), token: randomUUID() });
+      const call = await progressCall({ apiKey, args: argsFor(`Review input. [fixture-fault:${fault}]`), token: JSON.stringify(randomUUID()) });
       const result = call.terminal.result.structuredContent;
       assert.equal(result.processing_state, "failed");
       assert.equal(result.errors[0].code, code);

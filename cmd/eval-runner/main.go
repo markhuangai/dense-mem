@@ -44,6 +44,9 @@ func execute(ctx context.Context, args []string, logger *observability.Logger, p
 	if args[0] != "validate" && args[0] != manifest.Operation {
 		return errors.New("command differs from the workflow manifest operation")
 	}
+	if manifest.Mode == "intake" && os.Getenv("EVAL_SERVER_LOG_FILE") == "" {
+		return errors.New("intake comparison validates protected startup logs only")
+	}
 	if args[0] == "bootstrap" {
 		if err := verifyRuntime(ctx, manifest); err != nil {
 			return err

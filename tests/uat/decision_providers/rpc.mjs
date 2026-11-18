@@ -9,7 +9,8 @@ export async function remember(base, apiKey, args) {
 }
 
 export async function callTool(base, apiKey, name, args, signal) {
-  return payload(await envelope(base, apiKey, name, args, signal));
+  const response = await envelope(base, apiKey, name, args, signal);
+  return { receipt: payload(response), isError: response.result.isError === true };
 }
 
 async function envelope(base, apiKey, name, args, signal) {

@@ -4,11 +4,14 @@ import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 import { forwardEmbedding } from "../embedding_upstream.mjs";
 import { handleDecisionFixture } from "../decision_providers/protocol.mjs";
-import { securityIntakeCases } from "../security_intake_cases.mjs";
+import { contextualBatchRejections, securityIntakeCases } from "../security_intake_cases.mjs";
 
 const { rejectedCases, structuralRejections } = securityIntakeCases("fixture");
-const contextualRejections = new Set(rejectedCases.filter((testCase) => !structuralRejections.has(testCase.name))
-  .map((testCase) => `Project uses Store. ${testCase.content}`));
+const contextualRejections = new Set([
+  ...Object.values(contextualBatchRejections),
+  ...rejectedCases.filter((testCase) => !structuralRejections.has(testCase.name))
+    .map((testCase) => `Project uses Store. ${testCase.content}`),
+]);
 
 const port = Number(process.env.PORT || 8787);
 const fault = (process.env.DENSE_MEM_E2E_PROVIDER_FAULT || "none").trim();
@@ -293,8 +296,11 @@ function fixtureChatResponse(payload, requestFault = "none", attempt = 1) {
         }
         return { evidence_id: item.item_id, decision: "pass", signals: [] };
       });
-      if (result.evidence_security_results.some((item) => item.decision === "reject")) result.items = [];
       if (requestFault === "partition-security-invalid") result.evidence_security_results = [];
+      if (result.evidence_security_results.some((item) => item.decision === "reject")) {
+        result.items = [];
+        return result;
+      }
     }
     if (requestFault === "partition-missing") result.items = [];
     if (requestFault === "partition-unknown") result.items[0].end_refs = ["invented"];

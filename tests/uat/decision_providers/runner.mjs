@@ -196,7 +196,7 @@ async function verifyReranking(base, vendor) {
   await fixture("normal");
 }
 async function rpc(base, name, arguments_) {
-  return callTool(base, apiKey, name, arguments_);
+  return (await callTool(base, apiKey, name, arguments_)).receipt;
 }
 async function control(base, items) {
   const response = await fetch(`${base}/control/api/config/decisions`, { method: items ? "PATCH" : "GET", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, ...(items ? { body: JSON.stringify({ items }) } : {}) });

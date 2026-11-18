@@ -67,6 +67,24 @@ func TestCLIValidatesPinnedFixturesAndRejectsIncompleteSetup(t *testing.T) {
 	cancel()
 	require.ErrorContains(t, execute(cancelled, []string{"bootstrap", path}, logger, protector), "runner container identity cannot be verified")
 	require.NoFileExists(t, filepath.Join(manifest.SeedDir, "scope.json"))
+
+	manifest.Mode, manifest.Operation, manifest.Dataset, manifest.RunID = "intake", "intake", "intake", "123-intake"
+	manifest.ImportWorkers = 0
+	manifest.RegistryHash, err = evalharness.FileHash("tests/eval/datasets.json")
+	require.NoError(t, err)
+	writeManifest()
+	require.ErrorContains(t, execute(t.Context(), []string{"run", path}, logger, protector), "differs from the workflow manifest")
+	require.ErrorContains(t, execute(t.Context(), []string{"validate", path}, logger, protector), "protected startup logs only")
+	logPath := filepath.Join(t.TempDir(), "server.log")
+	require.NoError(t, os.WriteFile(logPath, []byte("startup failure at https://provider-canary.example with synthetic-cli-key\n"), 0o600))
+	t.Setenv("EVAL_SERVER_LOG_FILE", logPath)
+	console.Reset()
+	require.NoError(t, execute(t.Context(), []string{"validate", path}, logger, protector))
+	require.Contains(t, console.String(), "startup failure")
+	require.NotContains(t, console.String(), "synthetic-cli-key")
+	require.NotContains(t, console.String(), "provider-canary")
+	t.Setenv("RUNNER_ENVIRONMENT", "self-hosted")
+	require.ErrorContains(t, execute(t.Context(), []string{"validate", path}, logger, protector), "GitHub-hosted")
 }
 
 func TestBootstrapRejectsIncompleteSetupBeforeWritingScope(t *testing.T) {

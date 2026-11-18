@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
@@ -71,6 +72,9 @@ func routeSubmissionDecisionTasks(ctx context.Context, provider modelprovider.De
 		var err error
 		result, err = provider.Decide(ctx, decisionRequest)
 		if err != nil {
+			if !allowDeduplication && errors.Is(err, modelprovider.ErrDecisionInputBudgetExceeded) {
+				return nil, fmt.Errorf("%w: %w", ErrRememberInputBudgetExceeded, err)
+			}
 			return nil, fmt.Errorf("%w: typed assessment failed: %w", ErrRememberProviderUnavailable, err)
 		}
 		if err = ctx.Err(); err != nil {

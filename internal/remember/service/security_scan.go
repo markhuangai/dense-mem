@@ -569,8 +569,14 @@ func confirmedEncodedCandidate(encoded string) bool {
 		return true
 	}
 	decoded, ok := decodeBase64(encoded)
-	return ok && (hasBinaryMagic(decoded) || printablePercentage(decoded) >= 85 ||
+	return ok && (hasBinaryMagic(decoded) || printablePercentage(decoded) >= 85 || readableUTF8(decoded) ||
 		len(dangerousSubmissionSignals(identitySecurityView(string(decoded)), true, false)) > 0)
+}
+
+func readableUTF8(content []byte) bool {
+	return utf8.Valid(content) && strings.IndexFunc(string(content), func(r rune) bool {
+		return !unicode.IsPrint(r) && r != '\r' && r != '\n' && r != '\t'
+	}) < 0
 }
 
 func opaqueIdentifierCandidate(value string) bool {
@@ -808,19 +814,19 @@ func looksLikeTechnicalEvidenceToken(value string) bool {
 	return hasDigit || hasUpper && hasLower
 }
 
-func securityMatchHasNoHiddenControls(view, normalized securityView, location []int) bool {
+func securityMatchIsUnobfuscated(view, normalized securityView, location []int, checkCompatibility bool) bool {
 	start := utf8.RuneCountInString(normalized.text[:location[0]])
 	end := utf8.RuneCountInString(normalized.text[:location[1]])
 	if start >= len(normalized.spans) || end <= start || end > len(normalized.spans) {
 		return false
 	}
-	runes := []rune(view.text)
-	for _, value := range runes[normalized.spans[start].start:normalized.spans[end-1].end] {
+	original := []rune(view.text)[normalized.spans[start].start:normalized.spans[end-1].end]
+	for _, value := range original {
 		if hiddenControlRune(value) || unicode.Is(unicode.Mn, value) {
 			return false
 		}
 	}
-	return true
+	return !checkCompatibility || norm.NFKC.IsNormalString(string(original))
 }
 
 func dangerousSubmissionSignals(view securityView, decoded, reviewContext bool) []SubmissionSecuritySignal {
@@ -852,8 +858,7 @@ func dangerousSubmissionSignals(view securityView, decoded, reviewContext bool) 
 					continue
 				}
 			}
-			if !decoded && securityMatchHasNoHiddenControls(view, normalized, location) &&
-				instruction &&
+			if instruction && !decoded && securityMatchIsUnobfuscated(view, normalized, location, false) &&
 				submissionInstructionIsData(normalized.text, location, pattern.rule) {
 				continue
 			}

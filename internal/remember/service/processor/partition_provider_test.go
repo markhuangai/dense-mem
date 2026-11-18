@@ -57,6 +57,15 @@ func TestRememberPartitionRejectsInsufficientRegenerationHeadroomBeforeProvider(
 	_, _, err := p.partitionRemember(t.Context(), remember.RememberProcessRequest{Evidence: []remember.EvidenceInput{{Content: "Exact meaning."}}}, "attempt", nil)
 	require.ErrorIs(t, err, remember.ErrRememberInputBudgetExceeded)
 	require.Zero(t, provider.partitionCalls)
+
+	p.decisions = intakeDecisionStub(func(context.Context, modelprovider.DecisionRequest) (modelprovider.DecisionResult, error) {
+		t.Fatal("insufficient partition headroom must stop before Decision API work")
+		return modelprovider.DecisionResult{}, nil
+	})
+	settings := &domain.DecisionRuntimeConfig{Provider: domain.DecisionProviderStatus{Configured: true}, Effective: domain.DecisionTasks{SecurityReview: true}}
+	_, _, err = p.partitionRemember(t.Context(), remember.RememberProcessRequest{Evidence: []remember.EvidenceInput{{Content: "Exact meaning."}}}, "attempt", settings)
+	require.ErrorIs(t, err, remember.ErrRememberInputBudgetExceeded)
+	require.Zero(t, provider.partitionCalls)
 }
 
 type intakeDecisionStub func(context.Context, modelprovider.DecisionRequest) (modelprovider.DecisionResult, error)
@@ -70,11 +79,13 @@ func TestRememberPartitionUsesWholeDocumentDecisionBeforeGeneration(t *testing.T
 		name        string
 		probability float64
 		decisionErr error
+		wantErr     error
 		combined    bool
 	}{
 		{name: "clear", probability: 0.01},
 		{name: "uncertain", probability: 0.02, combined: true},
-		{name: "unavailable", decisionErr: errors.New("decision provider unavailable")},
+		{name: "unavailable", decisionErr: errors.New("decision provider unavailable"), wantErr: remember.ErrRememberProviderUnavailable},
+		{name: "whole item exceeds decision context", decisionErr: modelprovider.ErrDecisionInputBudgetExceeded, wantErr: remember.ErrRememberInputBudgetExceeded},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			const content = "The entire first paragraph. The qualifier in the second paragraph."
@@ -109,7 +120,7 @@ func TestRememberPartitionUsesWholeDocumentDecisionBeforeGeneration(t *testing.T
 			partitioned, review, err := p.partitionRemember(t.Context(), input, "attempt", settings)
 			require.Equal(t, 1, calls)
 			if testCase.decisionErr != nil {
-				require.ErrorIs(t, err, remember.ErrRememberProviderUnavailable)
+				require.ErrorIs(t, err, testCase.wantErr)
 				require.Nil(t, review)
 				require.Zero(t, generation.partitionCalls)
 				return
