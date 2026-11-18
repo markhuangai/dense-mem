@@ -1,6 +1,6 @@
 # Memory Write Pipeline
 
-Remember stages exact input and intent, performs required provider work, then commits accepted memory and its terminal receipt atomically. A successful call does not leave required assessment or embedding work for a background worker.
+Remember performs required provider work, then commits the exact original input, accepted Evidence, search state, and terminal receipt atomically. The intake order below depends on the deployed image. [PR #777](https://github.com/markhuangai/dense-mem/pull/777)
 
 ## End-To-End Flow
 
@@ -11,13 +11,14 @@ flowchart TB
   Admit --> Replay{"Operation identity"}
   Replay -->|"Matching terminal result"| Receipt["Return retained result"]
   Replay -->|"Changed / retired request"| Error["Actionable error"]
-  Replay -->|"New or eligible retry"| Stage[("Durable exact intake")]
-  Stage --> Context["Authorized duplicate/conflict context"]
-  Context --> Assessment["Validate complete assessment"]
+  Replay -->|"New or eligible retry"| Intake["Review original Evidence and validate partitions"]
+  Intake --> Context["Authorized duplicate/conflict context"]
+  Context --> Assessment["Validate equivalence and conflicts"]
   Assessment --> Search["Prepare required search state<br/>Reuse or generate embeddings"]
   Search --> Commit[("Fenced atomic commit")]
   Commit --> Done["Terminal Evidence receipt"]
-  Assessment -->|"Required failure"| Failed["No new semantic memory<br/>Retain intake and diagnostics"]
+  Intake -->|"Required failure"| Failed["Record bounded failure outcome"]
+  Assessment -->|"Required failure"| Failed
   Search -->|"Required failure"| Failed
   Commit -->|"Rollback"| Failed
 ```
@@ -29,7 +30,7 @@ Authentication and the security boundary are defined in [Request Lifecycle And S
 | Stage | Behavior |
 | --- | --- |
 | Admission | Reject invalid or retired fields before provider work; initial security rejection retains content-free bounded metadata. |
-| Durable staging | Retain exact input, provenance, intended destination, operation identity, and recovery state. Staging is not accepted searchable memory. |
+| Partitioning | Validate server-enumerated boundary IDs and preserve exact text, order, and original spans. |
 | Exact duplicate resolution | Reuse only within the authorized owner/space and applicable lifecycle fences. |
 | Semantic duplicate assessment | Use a bounded authorized candidate set; optional typed decisions can resolve sufficiently certain tasks. |
 | Occurrence preservation | Retain exact submitted text and provenance even when canonical Evidence is reused. |
@@ -38,11 +39,11 @@ Duplicate candidate embeddings can precede assessment. Required final embeddings
 
 ## Complete Assessment
 
-The assessor receives exact submitted Evidence and bounded authorized equivalence/conflict context. Stored context is read-only; it never becomes newly submitted Evidence. Providers cannot choose the authenticated owner or destination, commit state, or invent allowed references.
+With Decision API Security Review enabled, the Decision API reviews every original item before partitioning. If every hazard probability is at most 1%, generation only proposes partitions. If any valid score exceeds 1%, generation reviews the Evidence and proposes partitions in one call. With Security Review disabled, generation handles both directly. A rejection stops the operation before embedding work.
 
-Validate complete security, equivalence, and Evidence-conflict results. Missing, duplicate, unknown, or out-of-allowlist results invalidate the whole response. Regenerate the complete response within the existing bound of three provider turns; never splice valid pieces from invalid responses.
+After partitioning, Dense-Mem looks up authorized candidates. If enabled, the typed deduplication decision can resolve eligible equivalence tasks. Generation assesses remaining equivalence tasks and Evidence conflicts. Stored context is read-only. Authenticated owners, destinations, and allowed references are decided by the server.
 
-Optional typed decision providers resolve only supported tasks under server-owned probability and validation policy. An uncertain valid decision can route to generation; required transport, malformed-response, refusal, or generative failures remain visible.
+Missing, duplicate, unknown, or out-of-allowlist results invalidate the complete response. Invalid structured generation responses can receive up to three turns including the first call. Required provider failures return a typed error.
 
 ## Atomic Commit And Deadlines
 
@@ -59,8 +60,9 @@ sequenceDiagram
   opt Progress requested over SSE
     App-->>Host: Preparing intake (nonterminal)
   end
-  App->>PG: Stage exact intake and processing intent
-  App->>AI: Bounded provider work outside semantic transaction
+  App->>AI: Review original items, then partition
+  App->>PG: Read authorized candidate context
+  App->>AI: Resolve remaining equivalence, conflicts and search vectors
   AI-->>App: Assessment proposals / vectors / required failure
   Note over App: Validate complete responses<br/>and apply server policy
   alt Required processing fails
@@ -82,7 +84,7 @@ sequenceDiagram
   end
 ```
 
-Notifications follow reached preparation, duplicate checking, assessment, search preparation and commit boundaries. Duplicate-candidate embedding can precede assessment; cached or empty embedding work adds no provider call. Regeneration does not repeat the assessment notification. Notifications add no model calls and never imply accepted memory. Notify before entering the semantic transaction; no network notification delivery belongs inside it. A retained-result replay returns directly without simulated processing.
+Notifications follow reached preparation, duplicate checking, assessment, search preparation and commit boundaries. Duplicate-candidate embedding can precede equivalence and conflict assessment. Cached or empty embedding work adds no provider call. Regeneration does not repeat the assessment notification. Notifications add no model calls and never imply accepted memory. Notify before entering the semantic transaction; no network notification delivery belongs inside it. A retained-result replay returns directly without simulated processing.
 
 Optional notification writes follow the [bounded delivery rules](Request-Lifecycle-And-Security#progress-notification-boundary). Required processing still owns its terminal outcome; a broken response stream can make receipt delivery unknown.
 
@@ -97,7 +99,7 @@ Background search reconciliation repairs derived state after later changes. It d
 | Retryable failure or unknown delivery | Resend the unchanged complete request and retained key. |
 | Same key, changed target/content/provenance | Conflict; do not mutate the saved request to force replay. |
 | Retired operation contract | Inspect retained outcome and follow non-retryable `retired_contract` guidance before an intentional new operation. |
-| Required provider/embedding/commit failure | No new accepted semantic memory; durable intake can remain for recovery. |
+| Required provider/embedding/commit failure | Review the returned failure and follow its retry guidance. Accepted Evidence is published only by a successful commit. |
 | Client timeout/disconnect | Receipt delivery can be unknown even if a commit occurred. |
 
 A lost response is not proof of rollback. The Python client does not automatically retry or generate replacement operation keys. See [Framework Integrations](Framework-Integrations#failures-and-unknown-outcomes).
