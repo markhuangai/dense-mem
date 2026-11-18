@@ -137,7 +137,7 @@ func Prepare(ctx context.Context, manifest Manifest, corpus []CorpusItem, client
 	if before.EvidenceCount != 0 || before.ForeignSources != 0 || before.Ontology.Enabled || !before.Ontology.Paused {
 		return seed, errors.New("seed preparation requires an empty bootstrap with ontology disabled and paused")
 	}
-	mapping, err := client.ImportCorpusWithConcurrency(work, corpus, manifest.ImportWorkers)
+	mapping, err := client.importCorpus(work, corpus, manifest.ImportWorkers, native)
 	if err != nil {
 		return seed, err
 	}

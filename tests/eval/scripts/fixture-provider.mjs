@@ -1,11 +1,23 @@
 import { createServer } from "node:http";
 import { fixtureChatResponse } from "../../uat/synchronous_write/provider-fixture.mjs";
 
+let partitionTimeoutsRemaining = 2;
+
 const server = createServer(async (request, response) => {
   try {
     let text = "";
     for await (const chunk of request) { text += chunk; if (text.length > (16 << 20)) throw new Error("request limit"); }
     const input = text ? JSON.parse(text) : {};
+    if (partitionTimeoutsRemaining && input.response_format?.json_schema?.name === "dense_mem_semantic_partition_response") {
+      const partition = JSON.parse(input.messages.at(-1).content);
+      const content = partition.items[0]?.boundary_text.replace(/⟦[^⟧]+⟧/g, "");
+      if (content === "Atlas\nAtlas uses PostgreSQL for durable memory.") {
+        partitionTimeoutsRemaining--;
+        response.writeHead(524, { "content-type": "application/json" });
+        response.end('{"error":"fixture gateway timeout"}');
+        return;
+      }
+    }
     let body;
     if (request.url.endsWith("/embeddings")) {
       const rows = Array.isArray(input.input) ? input.input : [input.input];

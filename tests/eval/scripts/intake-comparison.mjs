@@ -11,6 +11,7 @@ const baseline = {
 };
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
 const caseConcurrency = 4;
+const maxGatewayRetries = 5;
 
 const pinnedRows = {
   hotpotqa: ["1338", "3430", "9465", "9797", "9798"],
@@ -94,16 +95,21 @@ export function intakeReceiptOutcome({ receipt, isError }, content) {
 export async function measureIntakeCases(cases, signal, measure, publish) {
   const stop = new AbortController();
   const workSignal = AbortSignal.any([signal, stop.signal]);
+  const queue = cases.map((item, index) => ({ item, index, attempt: 1, history: [] }));
   const results = [];
   let next = 0;
   const worker = async () => {
     try {
-      while (!workSignal.aborted && next < cases.length) {
-        const index = next++;
-        await measure(cases[index], index, workSignal, (result) => {
-          results[index] = result;
+      while (!workSignal.aborted && next < queue.length) {
+        const job = queue[next++];
+        const retry = await measure(job, workSignal, (result) => {
+          results[job.index] = result;
           publish(results.filter(Boolean));
         });
+        if (retry && job.attempt <= maxGatewayRetries && !workSignal.aborted) {
+          job.attempt++;
+          queue.push(job);
+        }
       }
     } catch (error) {
       stop.abort(error);
@@ -111,6 +117,103 @@ export async function measureIntakeCases(cases, signal, measure, publish) {
   };
   await Promise.all(Array.from({ length: Math.min(caseConcurrency, cases.length) }, worker));
   workSignal.throwIfAborted();
+}
+
+async function rememberProviderHTTPStatus(control, state, teamID, { receipt, isError }, signal) {
+  const failure = receipt?.errors?.[0];
+  if (!isError || receipt?.processing_state !== "failed" || failure?.retryable !== true || failure.next_action !== "retry_same_request") return undefined;
+  let phase, components;
+  if (failure.code === "provider_unavailable" && failure.reason_code === "provider_server_failure" && failure.details?.component === "remember.assessment") {
+    phase = "assessment";
+    components = ["assessor", "decision"];
+  } else if (failure.code === "embedding_unavailable" && failure.reason_code === "embedding_server_failure" && failure.details?.component === "remember.embedding") {
+    phase = "embedding";
+    components = ["embedding"];
+  } else return undefined;
+  if (signal.aborted || !uuid.test(receipt.submission_id)) return 0;
+  try {
+    const detail = await control(state, "GET", `/teams/${teamID}/remember-attempts/${receipt.submission_id}`, null, signal);
+    if (detail?.team_id !== teamID || detail.attempt_id !== receipt.submission_id || detail.correlation_id !== receipt.correlation_id ||
+        detail.outcome !== "failed" || detail.failed_phase !== phase || detail.error_code !== failure.code || detail.retryable !== true) return 0;
+    const exchanges = detail.diagnostics?.provider_exchanges;
+    const last = Array.isArray(exchanges) ? exchanges.at(-1) : null;
+    if (components.includes(last?.component) && Number.isInteger(last.status_code) && last.status_code >= 100 && last.status_code <= 599) return last.status_code;
+  } catch {
+    return 0;
+  }
+  return 0;
+}
+
+export async function measureIntakeCase({ arm, runtime, runtimeEnv, control, mask, diagnostics, docker }, job, signal, publishCase) {
+  const { item, index } = job;
+  const correlationID = randomUUID();
+  const expected = item[arm];
+  const outcome = {};
+  let stage = "scope_setup", toolResult, status;
+  try {
+    if (!job.scope) {
+      const team = await control(runtime.state, "POST", "/teams", { name: `intake-case-${index}` }, signal);
+      if (!uuid.test(team?.id)) throw new Error("Invalid disposable team identity");
+      const credential = await control(runtime.state, "POST", `/teams/${team.id}/credentials`, {
+        name: "intake comparison", role: "manager", scopes: ["read", "write"],
+      }, signal);
+      const apiKey = credential?.api_key;
+      if (typeof apiKey !== "string") throw new Error("Invalid disposable credential");
+      mask(apiKey, runtimeEnv);
+      job.scope = { teamID: team.id, apiKey };
+      job.input = {
+        target_space: "team_shared", idempotency_key: `intake:${arm}:${index}`,
+        evidence: [{ content: item.content, source_type: "document", source: item.source }],
+      };
+    }
+    const { teamID, apiKey } = job.scope;
+    stage = "remember";
+    toolResult = await callTool(runtime.state.environment.EVAL_MCP_URL, apiKey, "remember", job.input, { signal, correlationID });
+    outcome.actual = intakeReceiptOutcome(toolResult, item.content);
+    status = await rememberProviderHTTPStatus(control, runtime.state, teamID, toolResult, signal);
+    if (status) outcome.provider_http_status = status;
+    else if (status === 0) outcome.provider_status = "unavailable";
+    if (outcome.actual === "accepted") {
+      stage = "stored_evidence";
+      if (!await exactEvidence(docker, runtime, teamID, toolResult.receipt, item.content, signal)) outcome.actual = "evidence_mismatch";
+    }
+  } catch (error) {
+    outcome.actual = signal.aborted ? "deadline_expired" : "request_unavailable";
+    const http = /^(?:Control operation failed with HTTP|MCP HTTP) ([1-5][0-9]{2})$/.exec(error?.message || "");
+    if (http) {
+      outcome.http_status = Number(http[1]);
+      if (stage === "remember") status = outcome.http_status;
+    }
+  }
+  const mismatch = outcome.actual !== expected;
+  if (mismatch) {
+    outcome.failure_stage = stage;
+    outcome.correlation_id = correlationID;
+    const failure = toolResult?.receipt?.errors?.[0];
+    if (typeof failure?.reason_code === "string" && /^[a-z0-9_]{1,64}$/.test(failure.reason_code)) outcome.reason_code = failure.reason_code;
+    const component = failure?.details?.component;
+    if (typeof component === "string" && /^remember\.[a-z_]{1,40}$/.test(component)) outcome.component = component;
+    outcome.protected_failure_log = "unavailable";
+  }
+  const result = { case: item.id, content_sha256: sha256(item.content), expected };
+  const publish = () => {
+    if (mismatch || job.history.length) {
+      job.history[job.attempt - 1] = { ...outcome, attempt: job.attempt, correlation_id: correlationID };
+    }
+    publishCase({ ...result, ...outcome, ...(job.history.length ? { attempts: [...job.history] } : {}) });
+  };
+  publish();
+  if (mismatch && stage !== "scope_setup" && !signal.aborted) {
+    try {
+      if (await diagnostics(runtimeEnv, { correlationID, apiKey: job.scope.apiKey, signal })) {
+        outcome.protected_failure_log = "captured";
+        publish();
+      }
+    } catch {
+      process.stderr.write("Protected intake case log capture failed.\n");
+    }
+  }
+  return status === 504 || status === 524;
 }
 
 export async function compareIntake(env, paths, { setup, cleanup, control, mask, diagnostics, docker, downloadSources }) {
@@ -143,54 +246,8 @@ export async function compareIntake(env, paths, { setup, cleanup, control, mask,
       measurements.revision = runtime.manifest.source_revision;
       measurements.image = runtime.manifest.image;
       save();
-      await measureIntakeCases(cases, signal, async (item, index, workSignal, publishCase) => {
-        const correlationID = randomUUID();
-        const result = { case: item.id, content_sha256: sha256(item.content), expected: item[arm] };
-        let stage = "scope_setup";
-        let apiKey, toolResult;
-        try {
-          const team = await control(runtime.state, "POST", "/teams", { name: `intake-case-${index}` }, workSignal);
-          if (!uuid.test(team?.id)) throw new Error("Invalid disposable team identity");
-          const credential = await control(runtime.state, "POST", `/teams/${team.id}/credentials`, {
-            name: "intake comparison", role: "manager", scopes: ["read", "write"],
-          }, workSignal);
-          apiKey = credential?.api_key;
-          if (typeof apiKey !== "string") throw new Error("Invalid disposable credential");
-          mask(apiKey, runtimeEnv);
-          stage = "remember";
-          toolResult = await callTool(runtime.state.environment.EVAL_MCP_URL, apiKey, "remember", {
-            target_space: "team_shared", idempotency_key: `intake:${arm}:${index}`,
-            evidence: [{ content: item.content, source_type: "document", source: item.source }],
-          }, { signal: workSignal, correlationID });
-          result.actual = intakeReceiptOutcome(toolResult, item.content);
-          if (result.actual === "accepted") {
-            stage = "stored_evidence";
-            if (!await exactEvidence(docker, runtime, team.id, toolResult.receipt, item.content, workSignal)) result.actual = "evidence_mismatch";
-          }
-        } catch (error) {
-          result.actual = workSignal.aborted ? "deadline_expired" : "request_unavailable";
-          const http = /^(?:Control operation failed with HTTP|MCP HTTP) ([1-5][0-9]{2})$/.exec(error?.message || "");
-          if (http) result.http_status = Number(http[1]);
-        }
-        if (result.actual !== result.expected) {
-          result.failure_stage = stage;
-          result.correlation_id = correlationID;
-          const failure = toolResult?.receipt?.errors?.[0];
-          if (/^[a-z0-9_]{1,64}$/.test(failure?.reason_code || "")) result.reason_code = failure.reason_code;
-          if (/^remember\.[a-z_]{1,40}$/.test(failure?.details?.component || "")) result.component = failure.details.component;
-          result.protected_failure_log = "unavailable";
-        }
-        publishCase(result);
-        if (result.actual !== result.expected && stage !== "scope_setup" && !workSignal.aborted) {
-          try {
-            if (await diagnostics(runtimeEnv, { correlationID, apiKey, signal: workSignal })) {
-              publishCase({ ...result, protected_failure_log: "captured" });
-            }
-          } catch {
-            process.stderr.write("Protected intake case log capture failed.\n");
-          }
-        }
-      }, (results) => {
+      const measure = measureIntakeCase.bind(null, { arm, runtime, runtimeEnv, control, mask, diagnostics, docker });
+      await measureIntakeCases(cases, signal, measure, (results) => {
         measurements.results = results;
         save();
       });

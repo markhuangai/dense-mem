@@ -217,6 +217,18 @@ func (c *HTTPClient) ImportCorpus(ctx context.Context, items []CorpusItem) (Know
 }
 
 func (c *HTTPClient) ImportCorpusWithConcurrency(ctx context.Context, items []CorpusItem, concurrency int) (KnowledgeMapping, error) {
+	return c.importCorpus(ctx, items, concurrency, nil)
+}
+
+const maxGatewayRetries = 5
+
+type corpusImportJob struct {
+	item    CorpusItem
+	input   map[string]any
+	attempt int
+}
+
+func (c *HTTPClient) importCorpus(ctx context.Context, items []CorpusItem, concurrency int, native *Native) (KnowledgeMapping, error) {
 	mapping := newKnowledgeMapping()
 	if err := validateImportWorkers(concurrency); err != nil {
 		return mapping, err
@@ -227,7 +239,10 @@ func (c *HTTPClient) ImportCorpusWithConcurrency(ctx context.Context, items []Co
 	}
 	work, stop := context.WithCancel(ctx)
 	defer stop()
-	jobs := make(chan CorpusItem)
+	jobs := make([]corpusImportJob, len(items))
+	for index, item := range items {
+		jobs[index] = corpusImportJob{item: item, attempt: 1}
+	}
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var first error
@@ -271,31 +286,34 @@ func (c *HTTPClient) ImportCorpusWithConcurrency(ctx context.Context, items []Co
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for item := range jobs {
-				itemMapping, err := c.importCorpusItem(work, item)
+			for {
 				mu.Lock()
-				if err != nil {
+				if len(jobs) == 0 || work.Err() != nil {
+					mu.Unlock()
+					return
+				}
+				job := jobs[0]
+				jobs[0] = corpusImportJob{}
+				jobs = jobs[1:]
+				mu.Unlock()
+				itemMapping, requeue, err := c.importCorpusItem(work, &job, native)
+				mu.Lock()
+				switch {
+				case requeue:
+					jobs = append(jobs, job)
+				case err != nil:
 					failed++
 					if first == nil {
 						first = err
 					}
 					stop()
-				} else {
+				default:
 					mergeKnowledgeMapping(&mapping, itemMapping)
 				}
 				mu.Unlock()
 			}
 		}()
 	}
-schedule:
-	for _, item := range items {
-		select {
-		case jobs <- item:
-		case <-work.Done():
-			break schedule
-		}
-	}
-	close(jobs)
 	wg.Wait()
 	progressErr := finishProgress()
 	first = errors.Join(first, progressErr)
@@ -321,50 +339,83 @@ func corpusRememberInput(item CorpusItem) map[string]any {
 	return map[string]any{"target_space": "team_shared", "idempotency_key": "eval:" + item.SourceDocID, "evidence": []map[string]any{evidence}}
 }
 
-func (c *HTTPClient) importCorpusItem(ctx context.Context, item CorpusItem) (KnowledgeMapping, error) {
+func (c *HTTPClient) importCorpusItem(ctx context.Context, job *corpusImportJob, native *Native) (KnowledgeMapping, bool, error) {
 	mapping := newKnowledgeMapping()
-	input := corpusRememberInput(item)
-	for attempt := 1; attempt <= 2; attempt++ {
+	item := job.item
+	if job.input == nil {
+		job.input = corpusRememberInput(item)
+	}
+	for {
 		started := time.Now()
 		var result map[string]any
-		err := c.CallTool(ctx, "remember", input, &result)
+		err := c.CallTool(ctx, "remember", job.input, &result)
+		elapsed := time.Since(started)
 		if err == nil && stringValue(result["submission_id"]) == "" {
 			err = errors.New("remember response missing submission identity")
 		}
 		if err == nil {
 			mapping, err = c.importTerminalRememberResult(item, result, mapping)
 		}
-		if err != nil || attempt > 1 {
-			event := map[string]any{"source_id": item.SourceDocID, "attempt": attempt, "idempotency_key": input["idempotency_key"], "result": result, "elapsed_ms": float64(time.Since(started)) / float64(time.Millisecond)}
+		var status int
+		if err != nil || job.attempt > 1 {
+			event := map[string]any{"source_id": item.SourceDocID, "attempt": job.attempt, "idempotency_key": job.input["idempotency_key"], "result": result, "elapsed_ms": float64(elapsed) / float64(time.Millisecond)}
 			if err != nil {
 				event["error"] = err.Error()
+				var httpErr *HTTPStatusError
+				var toolErr *StructuredToolError
+				switch {
+				case errors.As(err, &httpErr):
+					status = httpErr.StatusCode
+					event["http_status"] = status
+				case native != nil && ctx.Err() == nil && errors.As(err, &toolErr):
+					var checked bool
+					status, checked = native.rememberProviderHTTPStatus(ctx, toolErr.Result)
+					if status != 0 {
+						event["provider_http_status"] = status
+					} else if checked {
+						event["provider_status"] = "unavailable"
+					}
+				}
 			}
 			if captureErr := c.Capture.Emit("import_attempt", event); captureErr != nil {
-				return mapping, captureErr
+				return mapping, false, captureErr
 			}
 		}
 		if err == nil {
-			return mapping, nil
+			return mapping, false, nil
 		}
-		if attempt == 2 || ctx.Err() != nil {
-			return mapping, err
+		if ctx.Err() != nil {
+			return mapping, false, err
 		}
-		retry, original, retryable, terminal := terminalRememberRetryInput("remember", input, err)
+		if status == http.StatusGatewayTimeout || status == 524 {
+			if job.attempt > maxGatewayRetries {
+				return mapping, false, err
+			}
+			job.attempt++
+			if err := c.Capture.Emit("intake_retry", map[string]any{"source_id": item.SourceDocID, "attempt": job.attempt, "idempotency_key": job.input["idempotency_key"], "gateway_http_status": status}); err != nil {
+				return mapping, false, err
+			}
+			return mapping, true, nil
+		}
+		if job.attempt != 1 {
+			return mapping, false, err
+		}
+		retry, original, retryable, terminal := terminalRememberRetryInput("remember", job.input, err)
 		if terminal {
-			input = retry
-			if err := c.Capture.Emit("intake_retry", map[string]any{"source_id": item.SourceDocID, "original_attempt_id": original, "original_retryable": retryable, "idempotency_key": input["idempotency_key"]}); err != nil {
-				return mapping, err
+			job.input = retry
+			if err := c.Capture.Emit("intake_retry", map[string]any{"source_id": item.SourceDocID, "original_attempt_id": original, "original_retryable": retryable, "idempotency_key": job.input["idempotency_key"]}); err != nil {
+				return mapping, false, err
 			}
 		} else if !isTransientCallToolError(err) {
-			return mapping, err
+			return mapping, false, err
 		}
 		select {
 		case <-ctx.Done():
-			return mapping, ctx.Err()
+			return mapping, false, ctx.Err()
 		case <-time.After(750 * time.Millisecond):
 		}
+		job.attempt++
 	}
-	return mapping, errors.New("intake attempts exhausted")
 }
 
 func isTransientHTTPError(err error) bool {

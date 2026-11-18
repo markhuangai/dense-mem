@@ -134,11 +134,11 @@ own-PR branch with `pr_number` and `evaluation=live`. It requires the current
 head's successful full production-image receipt. `evaluation=none` runs ordinary
 production E2E. Both routes accept `seed_version`.
 
-`mode=fixtures` is the existing evaluation system dry run. Internal automated
-fixtures prepare three synthetic documents with a deterministic provider,
-export and restore them, then produce eight scored answers across two ontology
-conditions and two answer policies. It makes no external model calls and
-publishes no seed image.
+`mode=fixtures` is the evaluation system dry run. It prepares three synthetic
+documents through a deterministic provider, including one document that gets
+two HTTP 524 responses before succeeding. It exports and restores the corpus,
+then produces eight scored answers across two ontology conditions and two
+answer policies. It makes no external model calls and publishes no seed image.
 
 To check Remember intake, a repository admin starts a fresh dispatch on the
 current head of their own same-repository PR with `evaluation=intake`. The head
@@ -163,8 +163,13 @@ Every question gets one initial Recall per condition, shared unchanged between
 independent single-call and multi-turn conversations. Multi-turn permits Recall,
 returned-topic follow-ups and authorized Trace, with eight total memory calls
 including the initial Recall. Gold references stay outside provider inputs.
-Answer regeneration is bounded to three complete attempts per turn. Each intake
-has at most two supported attempts; retries retain identities and outcomes.
+Answer regeneration is bounded to three complete attempts per turn. During seed
+preparation and the intake comparison, a confirmed HTTP 504 or 524 puts the
+item at the back of the queue. It can run up to six times total, including the
+initial attempt, with the same authenticated scope, content and idempotency key.
+The existing deadline still applies. Other seed import failures retain their
+existing one-retry limit when eligible. Attempt logs preserve the status and
+outcome, and exhausted retries leave the run incomplete.
 
 Deterministic scoring keeps answer/alias EM/F1, exact citation validity,
 retrieval R@1/5/10, all-support recovery and delivered supporting text coverage

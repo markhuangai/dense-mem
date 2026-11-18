@@ -506,6 +506,140 @@ func TestImporterReconcilesTransientFailureWithTheSameOperationKey(t *testing.T)
 	require.EqualValues(t, 2, attempts.Load())
 }
 
+func TestImporterQueuesConfirmedGatewayTimeoutsWithTheSameRequest(t *testing.T) {
+	for _, scenario := range []struct {
+		name              string
+		status, failures  int
+		attempts          int
+		requeued          bool
+		direct, foreign   bool
+		cancelWhileQueued bool
+	}{
+		{name: "assessment 524 recovers on final allowed attempt", status: 524, failures: 5, attempts: 6, requeued: true},
+		{name: "assessment 504 exhausts five retries", status: 504, failures: 6, attempts: 6, requeued: true},
+		{name: "direct 504 recovers", status: 504, failures: 1, attempts: 2, requeued: true, direct: true},
+		{name: "final 502 supersedes earlier timeout", status: 502, failures: 6, attempts: 2},
+		{name: "foreign diagnostics cannot extend retries", status: 524, failures: 6, attempts: 2, foreign: true},
+		{name: "cancellation leaves the timeout queued", status: 524, failures: 1, attempts: 1, requeued: true, cancelWhileQueued: true},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			teamID := uuid.NewString()
+			diagnosticTeamID := teamID
+			if scenario.foreign {
+				diagnosticTeamID = uuid.NewString()
+			}
+			const canary = "private-response-canary"
+			corpus := []CorpusItem{{SourceDocID: "slow", Content: "Keep this exact."}, {SourceDocID: "ready", Content: "Ready to store."}}
+			var requests []map[string]any
+			var lastAttempt, lastCorrelation string
+			var slowCalls, lookups int
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodGet {
+					lookups++
+					require.Equal(t, "/control/api/teams/"+teamID+"/remember-attempts/"+lastAttempt, r.URL.Path)
+					require.Equal(t, "Bearer control-canary", r.Header.Get("Authorization"))
+					require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{
+						"team_id": diagnosticTeamID, "attempt_id": lastAttempt, "correlation_id": lastCorrelation,
+						"outcome": "failed", "failed_phase": "assessment", "error_code": "provider_unavailable", "retryable": true,
+						"diagnostics": map[string]any{"provider_exchanges": []map[string]any{
+							{"component": "assessor", "status_code": 524},
+							{"component": "assessor", "status_code": scenario.status, "response_body": canary},
+						}},
+					}}))
+					return
+				}
+				require.Equal(t, "Bearer team-canary", r.Header.Get("Authorization"))
+				var rpc struct {
+					Method string
+					Params struct{ Arguments map[string]any }
+				}
+				require.NoError(t, json.NewDecoder(r.Body).Decode(&rpc))
+				if rpc.Method == "tools/list" {
+					tools := []mcpToolDefinition{}
+					for _, tool := range registry.ContractTools() {
+						tools = append(tools, mcpToolDefinition{Name: tool.Name, OutputSchema: tool.OutputSchema})
+					}
+					require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"result": map[string]any{"tools": tools}}))
+					return
+				}
+				requests = append(requests, rpc.Params.Arguments)
+				slow := rpc.Params.Arguments["idempotency_key"] == "eval:slow"
+				if slow {
+					slowCalls++
+				} else if scenario.cancelWhileQueued {
+					cancel()
+				}
+				result := map[string]any{}
+				failed := slow && slowCalls <= scenario.failures
+				if failed && scenario.direct {
+					w.WriteHeader(scenario.status)
+					return
+				}
+				if failed {
+					lastAttempt, lastCorrelation = uuid.NewString(), uuid.NewString()
+					result = map[string]any{
+						"processing_state": "failed", "submission_id": lastAttempt, "correlation_id": lastCorrelation,
+						"errors": []map[string]any{{"code": "provider_unavailable", "message": "provider returned a server error",
+							"retryable": true, "next_action": "retry_same_request", "reason_code": "provider_server_failure",
+							"details": map[string]any{"component": "remember.assessment"}}},
+					}
+				} else {
+					content := corpus[1].Content
+					if slow {
+						content = corpus[0].Content
+					}
+					result = map[string]any{"processing_state": "completed", "submission_id": uuid.NewString(), "evidence": []map[string]any{{
+						"evidence_index": 0, "partition_index": 0, "source_item_id": uuid.NewString(), "occurrence_id": uuid.NewString(), "evidence_id": uuid.NewString(),
+						"span_start": 0, "span_end": len([]rune(content)), "content_hash": knowledge.EvidenceContentHash(content), "disposition": "stored",
+					}}}
+				}
+				require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"result": map[string]any{"isError": failed, "structuredContent": result}}))
+			}))
+			defer server.Close()
+			var logs bytes.Buffer
+			client := &HTTPClient{BaseURL: server.URL, APIKey: "team-canary", Client: server.Client(), Capture: captureFixture(&logs)}
+			native := &Native{Client: client, Scope: Scope{TeamID: teamID}, ControlURL: server.URL, ControlToken: "control-canary"}
+			mapping, err := client.importCorpus(ctx, corpus, 1, native)
+			server.Close()
+
+			if scenario.attempts > scenario.failures {
+				require.NoError(t, err)
+				require.Len(t, mapping.BySourceDocID, 2)
+			} else {
+				require.Error(t, err)
+				require.NotContains(t, mapping.BySourceDocID, "slow")
+			}
+			require.Equal(t, scenario.attempts, slowCalls)
+			if scenario.requeued {
+				require.Len(t, requests, scenario.attempts+1)
+				require.Equal(t, "eval:ready", requests[1]["idempotency_key"])
+				require.Contains(t, logs.String(), `"gateway_http_status":`)
+			} else {
+				require.Len(t, requests, scenario.attempts)
+				require.NotContains(t, logs.String(), `"gateway_http_status":`)
+			}
+			for index, request := range requests {
+				if !scenario.requeued || index != 1 {
+					require.Equal(t, requests[0], request, "retries preserve the complete Remember request")
+				}
+			}
+			if scenario.direct {
+				require.Zero(t, lookups)
+			} else {
+				require.Equal(t, min(scenario.attempts, scenario.failures), lookups)
+			}
+			if scenario.foreign {
+				require.Contains(t, logs.String(), `"provider_status":"unavailable"`)
+			}
+			for _, private := range []string{canary, "team-canary", "control-canary"} {
+				require.NotContains(t, logs.String(), private)
+			}
+		})
+	}
+}
+
 func TestMCPContractDiscoveryRejectsIncompleteAndMixedCatalogs(t *testing.T) {
 	schema := func(version string) map[string]any {
 		return map[string]any{"properties": map[string]any{"contract_version": map[string]any{"enum": []any{version}}}}

@@ -161,6 +161,66 @@ func (n *Native) Control(ctx context.Context, method, path string, input, out an
 	return nil
 }
 
+func (n *Native) rememberProviderHTTPStatus(ctx context.Context, receipt map[string]any) (status int, checked bool) {
+	if submissionProcessingState(receipt) != "failed" {
+		return 0, false
+	}
+	items, _ := receipt["errors"].([]any)
+	if len(items) == 0 {
+		return 0, false
+	}
+	failure, _ := items[0].(map[string]any)
+	if failure["retryable"] != true || failure["next_action"] != "retry_same_request" {
+		return 0, false
+	}
+	details, _ := failure["details"].(map[string]any)
+	code := stringValue(failure["code"])
+	var phase string
+	switch {
+	case code == "provider_unavailable" && failure["reason_code"] == "provider_server_failure" && details["component"] == "remember.assessment":
+		phase = "assessment"
+	case code == "embedding_unavailable" && failure["reason_code"] == "embedding_server_failure" && details["component"] == "remember.embedding":
+		phase = "embedding"
+	default:
+		return 0, false
+	}
+	id, err := uuid.Parse(stringValue(receipt["submission_id"]))
+	if err != nil || id == uuid.Nil {
+		return 0, true
+	}
+	var detail struct {
+		TeamID        string `json:"team_id"`
+		AttemptID     string `json:"attempt_id"`
+		CorrelationID string `json:"correlation_id"`
+		Outcome       string `json:"outcome"`
+		FailedPhase   string `json:"failed_phase"`
+		ErrorCode     string `json:"error_code"`
+		Retryable     bool   `json:"retryable"`
+		Diagnostics   struct {
+			ProviderExchanges []struct {
+				Component  string `json:"component"`
+				StatusCode int    `json:"status_code"`
+			} `json:"provider_exchanges"`
+		} `json:"diagnostics"`
+	}
+	lookup, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	err = n.Control(lookup, http.MethodGet, "/teams/"+n.Scope.TeamID+"/remember-attempts/"+id.String(), nil, &detail)
+	exchanges := detail.Diagnostics.ProviderExchanges
+	if err != nil || detail.TeamID != n.Scope.TeamID || detail.AttemptID != id.String() ||
+		detail.CorrelationID != stringValue(receipt["correlation_id"]) || detail.Outcome != "failed" ||
+		detail.FailedPhase != phase || detail.ErrorCode != code || !detail.Retryable || len(exchanges) == 0 {
+		return 0, true
+	}
+	// Earlier exchanges can fail and recover within one Remember attempt.
+	last := exchanges[len(exchanges)-1]
+	if (phase == "assessment" && last.Component != "assessor" && last.Component != "decision") ||
+		(phase == "embedding" && last.Component != "embedding") || last.StatusCode < 100 || last.StatusCode > 599 {
+		return 0, true
+	}
+	return last.StatusCode, true
+}
+
 func (n *Native) Snapshot(ctx context.Context) (NativeObservation, error) {
 	var observation NativeObservation
 	tx, err := n.systemTx(ctx)
