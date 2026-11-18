@@ -49,7 +49,9 @@ try {
     const { result } = await remember(userURL, fault, fault);
     const calls = (await getJSON(`${fixtureURL}/health`)).chat_requests.slice(start).filter((request) => request.fault === fault);
     assert(calls.every((request) => !request.generated_fields.includes("evidence_security_results") && !request.generated_fields.includes("evidence_equivalence_results")), "repairs must retain routed schemas");
-    assert.equal((await fixture()).exchanges.length, beforeDecisions + 1, "repairs must reuse the decision snapshot");
+    const decisions = (await fixture()).exchanges.slice(beforeDecisions);
+    assert.equal(decisions.filter((exchange) => exchange.names.some((name) => name.startsWith("security_"))).length, 1, "repairs must reuse the intake security decision");
+    assert(decisions.length <= 2, "repairs must reuse the deduplication decision");
     if (fault === "routed-field-repair") {
       assert.equal(result.processing_state, "completed", "field-specific feedback must enable a complete repair");
       assert.equal(calls.length, 2);
@@ -63,8 +65,23 @@ try {
   await fixture("regenerate");
   assert.equal((await remember(userURL, "Regenerate")).result.processing_state, "completed");
   await fixture("uncertain");
+  const beforeUncertain = (await getJSON(`${fixtureURL}/health`)).chat_requests.length;
   assert.equal((await remember(userURL, "Uncertain")).result.processing_state, "completed");
-  assert((await getJSON(`${fixtureURL}/health`)).chat_requests.at(-1).generated_fields.includes("evidence_security_results"));
+  const uncertainCalls = (await getJSON(`${fixtureURL}/health`)).chat_requests.slice(beforeUncertain);
+  assert.deepEqual(uncertainCalls.map((call) => call.schema_name), ["dense_mem_semantic_partition_response", "dense_mem_evidence_assessment_response"]);
+  assert(uncertainCalls[0].generated_fields.includes("evidence_security_results"), "uncertainty requires whole-document generation review");
+  assert(!uncertainCalls[1].generated_fields.includes("evidence_security_results"), "assessment must reuse the validated intake review");
+  for (const [fault, code] of [["security", "submission_policy_rejected"], ["partition-security-invalid", "provider_response_invalid"], ["partition-security-timeout", "provider_unavailable"]]) {
+    const before = await getJSON(`${fixtureURL}/health`);
+    const failed = (await remember(userURL, fault, fault)).result;
+    assert.equal(failed.processing_state, "failed");
+    assert.equal(failed.errors[0].code, code);
+    assert(failed.evidence.every((item) => item.disposition === "not_stored"));
+    const after = await getJSON(`${fixtureURL}/health`);
+    assert.equal(after.embedding_calls, before.embedding_calls, "uncertain intake must complete review before using embeddings");
+    const calls = after.chat_requests.slice(before.chat_requests.length);
+    assert(calls.length > 0 && calls.every((entry) => entry.schema_name === "dense_mem_semantic_partition_response" && entry.generated_fields.includes("evidence_security_results")));
+  }
   for (const mode of ["malformed", "refusal", "401", "429", "529"]) {
     await fixture(mode);
     const failed = (await remember(userURL, `Failure${mode}`)).result;

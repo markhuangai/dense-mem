@@ -40,6 +40,7 @@ var (
 	pemEnvelope        = regexp.MustCompile(`(?i)-----begin[[:space:]]+[^\r\n-]{1,96}-----`)
 	markupPattern      = regexp.MustCompile(`(?is)<!--|<\s*(?:script|iframe|object|embed|meta|svg)\b|\bon[a-z]{3,32}\s*=`)
 	controlRolePattern = regexp.MustCompile(`(?im)(?:^|[\r\n])[[:space:]]*(?:system|developer)[[:space:]]*:|<\|[[:space:]]*(?:system|developer)[[:space:]]*\|>|<<[[:space:]]*(?:sys|system|developer)[[:space:]]*>>`)
+	commentRolePattern = regexp.MustCompile(`^[[:space:]]*(?:system|developer)[[:space:]]*:`)
 
 	secretExtractionPattern    = regexp.MustCompile(`(?is)\b(?:reveal|show|send|dump|print|exfiltrate|return)\b.{0,100}?\b(?:system[[:space:]_-]*prompt|hidden[[:space:]_-]*instructions?|environment[[:space:]_-]*variables?|env|api[[:space:]_-]*keys?|credentials?|secrets?|cookies?|tokens?|passwords?|passcodes?|private[[:space:]_-]*keys?|authorization[[:space:]_-]*headers?)\b|\b(?:please[[:space:]_-]+)?output\b[[:space:]_-]+(?:(?:all|the|your|any|raw|secret|hidden|system|environment|api|access|auth|session|credential|cookie|token)[[:space:]_-]+)*(?:system[[:space:]_-]*prompt|hidden[[:space:]_-]*instructions?|environment[[:space:]_-]*variables?|env|api[[:space:]_-]*keys?|credentials?|secrets?|cookies?|tokens?|passwords?|passcodes?|private[[:space:]_-]*keys?|authorization[[:space:]_-]*headers?)\b`)
 	toolExfiltrationPattern    = regexp.MustCompile(`(?is)\b(?:use[[:space:]_-]*(?:your[[:space:]_-]*)?tools?|curl|wget|fetch|post|send|upload|exfiltrate|transmit|make[[:space:]_-]*(?:an[[:space:]_-]*)?(?:http[[:space:]_-]*|network[[:space:]_-]*)?request|call[[:space:]_-]*(?:an[[:space:]_-]*)?api)\b.{0,180}?(?:https?://|webhook|endpoint|external|environment[[:space:]_-]*variables?|env|api[[:space:]_-]*keys?|credentials?|secrets?|cookies?|tokens?)`)
@@ -109,6 +110,7 @@ type submissionSecurityInput struct {
 	source        string
 	evidenceIndex int
 	path          string
+	reviewContext bool
 }
 
 const (
@@ -137,15 +139,19 @@ func buildOverridePattern() string {
 // before it is staged, hashed, or sent to a provider. It never decodes more
 // than one representation layer and never returns submitted content.
 func ScanSubmissionEvidence(content string) (SubmissionSecurityScan, error) {
+	return scanSubmissionEvidence(content, false)
+}
+
+func scanSubmissionEvidence(content string, reviewContext bool) (SubmissionSecurityScan, error) {
 	signals := make([]SubmissionSecuritySignal, 0, submissionSecurityMaxSignals)
 	identity := identitySecurityView(content)
-	signals = append(signals, encodedEvidenceSignals(identity)...)
-	signals = append(signals, dangerousSubmissionSignals(identity, false)...)
+	signals = append(signals, encodedEvidenceSignals(identity, reviewContext)...)
+	signals = append(signals, dangerousSubmissionSignals(identity, false, reviewContext)...)
 
 	decoded := oneLayerSubmissionDecode(content)
 	if decoded.text != content {
-		signals = append(signals, encodedEvidenceSignals(decoded)...)
-		signals = append(signals, dangerousSubmissionSignals(decoded, true)...)
+		signals = append(signals, encodedEvidenceSignals(decoded, reviewContext)...)
+		signals = append(signals, dangerousSubmissionSignals(decoded, true, reviewContext)...)
 	}
 
 	signals, truncated := normalizeSubmissionSecuritySignals(signals)
@@ -176,7 +182,7 @@ func ScanSubmissionBatch(contents []string) (SubmissionSecurityBatchScan, error)
 func scanRememberEvidence(evidence []RememberEvidenceInput) (SubmissionSecurityBatchScan, error) {
 	inputs := make([]submissionSecurityInput, 0, 2*len(evidence))
 	for index, item := range evidence {
-		inputs = append(inputs, submissionSecurityInput{content: item.Content, source: submissionSecuritySourceEvidence, evidenceIndex: index})
+		inputs = append(inputs, submissionSecurityInput{content: item.Content, source: submissionSecuritySourceEvidence, evidenceIndex: index, reviewContext: true})
 		if item.Source != "" {
 			inputs = append(inputs, submissionSecurityInput{content: item.Source, source: "provenance", evidenceIndex: index, path: fmt.Sprintf("/evidence/%d/source", index)})
 		}
@@ -188,7 +194,7 @@ func scanSubmissionInputs(inputs []submissionSecurityInput) (SubmissionSecurityB
 	result := SubmissionSecurityBatchScan{Items: make([]SubmissionSecurityScan, len(inputs))}
 	var rejection error
 	for index, input := range inputs {
-		scan, err := ScanSubmissionEvidence(input.content)
+		scan, err := scanSubmissionEvidence(input.content, input.reviewContext)
 		result.Items[index] = scan
 		if input.source == submissionSecuritySourceEvidence {
 			result.EvidenceCount++
@@ -421,7 +427,7 @@ func htmlEntityEnd(runes []rune, start int) int {
 	return start
 }
 
-func encodedEvidenceSignals(view securityView) []SubmissionSecuritySignal {
+func encodedEvidenceSignals(view securityView, reviewContext bool) []SubmissionSecuritySignal {
 	if view.text == "" {
 		return nil
 	}
@@ -440,9 +446,13 @@ func encodedEvidenceSignals(view securityView) []SubmissionSecuritySignal {
 	}
 
 	candidateCount := 0
+	rejectCandidate := encodedCandidateRejected
+	if reviewContext {
+		rejectCandidate = confirmedEncodedCandidate
+	}
 	for _, location := range base64TokenPattern.FindAllStringIndex(view.text, -1) {
 		candidate := view.text[location[0]:location[1]]
-		if commonIdentifierCandidate(candidate) {
+		if commonIdentifierCandidate(candidate) || reviewContext && strings.Trim(candidate, "0123456789") == "" {
 			continue
 		}
 		if looksLikeNaturalEvidenceToken(candidate) || readableTechnicalIdentifierCandidate(candidate) {
@@ -461,13 +471,13 @@ func encodedEvidenceSignals(view securityView) []SubmissionSecuritySignal {
 			}
 			continue
 		}
-		if encodedCandidateRejected(candidate) {
+		if rejectCandidate(candidate) {
 			if signal, ok := signalForLocation(view, location, "obfuscated_instruction", "base64_candidate", "critical", true); ok {
 				signals = append(signals, signal)
 			}
 		}
 	}
-	if location := foldedBase64Location(view.text); location != nil {
+	if location := foldedBase64Location(view.text, rejectCandidate); location != nil {
 		if signal, ok := signalForLocation(view, location, "obfuscated_instruction", "folded_base64", "critical", true); ok {
 			signals = append(signals, signal)
 		}
@@ -522,7 +532,7 @@ func encodedCandidateRejected(encoded string) bool {
 			// Opaque provider identifiers can share the Base64URL alphabet with
 			// encoded instructions. Inspect the bounded decoded content before
 			// allowing the identifier exemption.
-			if len(encodedEvidenceSignals(identitySecurityView(string(decoded)))) > 0 || len(dangerousSubmissionSignals(identitySecurityView(string(decoded)), true)) > 0 {
+			if len(encodedEvidenceSignals(identitySecurityView(string(decoded)), false)) > 0 || len(dangerousSubmissionSignals(identitySecurityView(string(decoded)), true, false)) > 0 {
 				return true
 			}
 		}
@@ -536,7 +546,7 @@ func encodedCandidateRejected(encoded string) bool {
 		return false
 	}
 	if strings.ContainsAny(encoded, "=+/_-") || hasBinaryMagic(decoded) ||
-		len(dangerousSubmissionSignals(identitySecurityView(string(decoded)), true)) > 0 {
+		len(dangerousSubmissionSignals(identitySecurityView(string(decoded)), true, false)) > 0 {
 		return true
 	}
 	if printablePercentage(decoded) >= 85 {
@@ -546,6 +556,21 @@ func encodedCandidateRejected(encoded string) bool {
 	// order references and provider IDs often have the same alphabet. Require
 	// a meaningful printable decode before applying the entropy signal.
 	return len(encoded) >= 24 && shannonEntropy(encoded) >= 3.8 && printablePercentage(decoded) >= 60
+}
+
+func confirmedEncodedCandidate(encoded string) bool {
+	if opaqueIdentifierCandidate(encoded) {
+		return encodedCandidateRejected(encoded)
+	}
+	if !isBase64EncodedShape(encoded) {
+		return false
+	}
+	if base64DecodedByteLength(encoded) > submissionSecurityMaxDecodedBytes {
+		return true
+	}
+	decoded, ok := decodeBase64(encoded)
+	return ok && (hasBinaryMagic(decoded) || printablePercentage(decoded) >= 85 ||
+		len(dangerousSubmissionSignals(identitySecurityView(string(decoded)), true, false)) > 0)
 }
 
 func opaqueIdentifierCandidate(value string) bool {
@@ -594,7 +619,7 @@ func decodeBase64(encoded string) ([]byte, bool) {
 	return nil, false
 }
 
-func foldedBase64Location(content string) []int {
+func foldedBase64Location(content string, rejectCandidate func(string) bool) []int {
 	matches := base64PartPattern.FindAllStringIndex(content, -1)
 	if len(matches) < 2 {
 		return nil
@@ -611,7 +636,7 @@ func foldedBase64Location(content string) []int {
 		parts = parts[:0]
 		location := []int{start, end}
 		start, end = -1, -1
-		if encodedCandidateRejected(joined) {
+		if rejectCandidate(joined) {
 			return location
 		}
 		return nil
@@ -798,7 +823,7 @@ func securityMatchHasNoHiddenControls(view, normalized securityView, location []
 	return true
 }
 
-func dangerousSubmissionSignals(view securityView, decoded bool) []SubmissionSecuritySignal {
+func dangerousSubmissionSignals(view securityView, decoded, reviewContext bool) []SubmissionSecuritySignal {
 	if view.text == "" {
 		return nil
 	}
@@ -817,8 +842,18 @@ func dangerousSubmissionSignals(view securityView, decoded bool) []SubmissionSec
 		{toolExfiltrationPattern, "tool_exfiltration", "tool_exfiltration", "critical"},
 	} {
 		for _, location := range pattern.pattern.FindAllStringIndex(normalized.text, -1) {
+			instruction := pattern.rule == "instruction_override" || pattern.rule == "prompt_secret_extraction" || pattern.rule == "tool_exfiltration"
+			if reviewContext {
+				if pattern.rule == "control_markup" && normalized.text[location[0]:location[1]] == "<!--" &&
+					!commentRolePattern.MatchString(normalized.text[location[1]:]) {
+					continue
+				}
+				if instruction && !submissionMatchIsObfuscated(view, normalized, location, decoded) {
+					continue
+				}
+			}
 			if !decoded && securityMatchHasNoHiddenControls(view, normalized, location) &&
-				(pattern.rule == "instruction_override" || pattern.rule == "prompt_secret_extraction" || pattern.rule == "tool_exfiltration") &&
+				instruction &&
 				submissionInstructionIsData(normalized.text, location, pattern.rule) {
 				continue
 			}

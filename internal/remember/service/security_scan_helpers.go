@@ -157,7 +157,7 @@ func readableTechnicalIdentifierCandidate(value string) bool {
 	for _, candidate := range append(parts, value) {
 		if decoded, ok := decodeBase64(candidate); ok && (hasBinaryMagic(decoded) ||
 			(len(decoded) >= 3 || !readableEvidenceAcronym(candidate)) && printablePercentage(decoded) >= 60 ||
-			len(dangerousSubmissionSignals(identitySecurityView(string(decoded)), true)) > 0) {
+			len(dangerousSubmissionSignals(identitySecurityView(string(decoded)), true, false)) > 0) {
 			return false
 		}
 	}
@@ -187,6 +187,22 @@ func hiddenControlRune(value rune) bool {
 	return value == '\u200b' || value == '\u200c' || value == '\u200d' || value == '\u200e' || value == '\u200f' ||
 		value == '\u2060' || value >= '\u202a' && value <= '\u202e' || value >= '\u2066' && value <= '\u2069' ||
 		unicode.IsControl(value) && value != '\n' && value != '\r' && value != '\t'
+}
+
+func submissionMatchIsObfuscated(view, normalized securityView, location []int, decoded bool) bool {
+	if !decoded {
+		return !securityMatchHasNoHiddenControls(view, normalized, location)
+	}
+	start := utf8.RuneCountInString(normalized.text[:location[0]])
+	end := utf8.RuneCountInString(normalized.text[:location[1]])
+	previousEnd := normalized.spans[start].start
+	for _, span := range normalized.spans[start:end] {
+		if span.end-span.start > 1 || span.start > previousEnd {
+			return true
+		}
+		previousEnd = span.end
+	}
+	return false
 }
 
 func ruleID(decoded bool, base string) string {

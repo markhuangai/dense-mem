@@ -25,6 +25,50 @@ func decisionRoutingFixture() (assessor.SemanticAssessmentRequest, *domain.Decis
 	return assessor.SemanticAssessmentRequest{RequestID: "request", Evidence: []assessor.SemanticReviewEvidence{{EvidenceID: "submitted", Content: "The active team limit is 4; the next-window limit is 8."}}, EvidenceEquivalenceCandidates: []assessor.SemanticAssessmentEvidenceEquivalenceCandidateGroup{{EvidenceID: "submitted", Candidates: []assessor.SemanticAssessmentEvidenceEquivalenceCandidate{{EvidenceID: "a", Content: "The active team limit is 4; the next-window limit is 8.", BoundaryText: "do-not-send-expanded-boundaries"}, {EvidenceID: "b", Content: "The active team limit is 8; the next-window limit is 4."}}}}}, &domain.DecisionRuntimeConfig{Revision: "frozen-settings", Provider: domain.DecisionProviderStatus{Configured: true, Provider: "openai", Model: "gpt-6-luna"}, Effective: domain.DecisionTasks{SecurityReview: true, Deduplication: true}}
 }
 
+func TestRememberIntakeSecurityAndDeduplicationUseDifferentInputs(t *testing.T) {
+	request, settings := decisionRoutingFixture()
+	const whole = "The active team limit is 4. The change to 8 applies next week."
+	partition := assessor.PreparePartitionRequest("whole-document-review", []string{whole})
+	calls := 0
+	provider := decisionFunction(func(_ context.Context, req modelprovider.DecisionRequest) (modelprovider.DecisionResult, error) {
+		calls++
+		require.Len(t, req.Groups, 1)
+		group := req.Groups[0]
+		input := group.Input.(map[string]any)
+		prefix := "security_"
+		if calls == 1 {
+			require.Equal(t, whole, input["submitted_content"])
+			require.Len(t, group.Questions, len(assessor.SemanticSecurityHazards()))
+		} else {
+			require.Equal(t, request.Evidence[0].Content, input["submitted_content"])
+			require.Len(t, group.Questions, 2)
+			prefix = "dedup_"
+		}
+		answers := make(map[string]modelprovider.DecisionAnswer, len(group.Questions))
+		for _, question := range group.Questions {
+			require.True(t, strings.HasPrefix(question.Name, prefix), question.Name)
+			probability := 0.01
+			answers[question.Name] = modelprovider.DecisionAnswer{Type: modelprovider.DecisionPredicate, Probability: &probability}
+		}
+		return modelprovider.DecisionResult{Answers: answers}, nil
+	})
+
+	reviewed, err := RouteRememberIntakeSecurity(t.Context(), provider, settings, partition, nil)
+	require.NoError(t, err)
+	require.Len(t, reviewed.Security, 1)
+	require.Nil(t, reviewed.Equivalence)
+	require.Equal(t, partition.Items[0].ItemID, reviewed.Security[0].EvidenceID)
+	request.DecisionRouting = &assessor.SemanticAssessmentRouting{
+		Stages:   reviewed.Stages,
+		Security: []assessor.SemanticAssessmentEvidenceSecurityResult{{EvidenceID: request.Evidence[0].EvidenceID, Decision: "pass", Signals: []assessor.SemanticAssessmentSecuritySignal{}}},
+	}
+	final, err := routeSubmissionDecisions(t.Context(), provider, settings, request, nil)
+	require.NoError(t, err)
+	require.Equal(t, 2, calls)
+	require.Equal(t, "new", final.Equivalence[0].Action)
+	require.Len(t, final.Stages, 2)
+}
+
 func TestTypedSubmissionPolicyProbabilityGates(t *testing.T) {
 	for _, test := range []struct {
 		name                  string

@@ -140,6 +140,13 @@ export and restore them, then produce eight scored answers across two ontology
 conditions and two answer policies. It makes no external model calls and
 publishes no seed image.
 
+For the Remember intake change, dispatch the own-PR workflow with
+`evaluation=intake` after its current-head production-image receipt passes.
+The runner compares the 28 previously rejected rows and the security controls
+on the pinned baseline and candidate images. It checks exact stored text for
+successful writes and retains case outcomes and source identities for two days.
+The comparison uses disposable databases and stops model work after 20 minutes.
+
 ## Sources, scoring and measurements
 
 [datasets.json](datasets.json) pins the complete HippoRAG_2 packs at revision

@@ -735,9 +735,15 @@ func sessionFactsProviderResponse(schema string, raw []byte) (any, error) {
 			return nil, err
 		}
 		output := assessor.PartitionResponse{RequestID: input.RequestID, Items: make([]assessor.PartitionResult, len(input.Items))}
+		review := assessor.PartitionSecurityResponse{}
 		for i, item := range input.Items {
 			refs := regexp.MustCompile(`⟦([^⟧]+)⟧`).FindAllStringSubmatch(item.BoundaryText, -1)
 			output.Items[i] = assessor.PartitionResult{ItemID: item.ItemID, EndRefs: []string{refs[len(refs)-1][1]}}
+			review.SecurityResults = append(review.SecurityResults, assessor.SemanticAssessmentEvidenceSecurityResult{EvidenceID: item.ItemID, Decision: "pass", Signals: []assessor.SemanticAssessmentSecuritySignal{}})
+		}
+		if input.ReviewSecurity {
+			review.PartitionResponse = output
+			return review, nil
 		}
 		return output, nil
 	case "session_evidence_excerpts_v2":

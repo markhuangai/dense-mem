@@ -6,6 +6,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { extractSeed, verifySeedFiles, restoreSeed, dumpSeed, sealSeed, verifySeedCredentialExclusions, seedReference, resolveSeedImage, postgresImage } from "../../../.github/scripts/evaluation-seeds.mjs";
 import { requireRunner, configuration, resolveImportWorkers, requireEvaluationImportSupport, registryMatrix, sha256, aggregate, ownedResource } from "../../../.github/scripts/evaluation-policy.mjs";
+import { compareIntake } from "./intake-comparison.mjs";
 
 const label = "io.dense-mem.eval.run";
 const secret = () => randomBytes(32).toString("base64url");
@@ -111,17 +112,22 @@ export async function setup(env, options = {}) {
   const fixture = env.EVAL_MODE === "fixtures";
   const operation = options.operation || "run";
   const preparing = operation === "prepare" || operation === "bootstrap";
+  const intake = env.EVAL_MODE === "intake" && operation === "intake" && paths.dataset === "intake";
   const { signal } = options;
   signal?.throwIfAborted();
   if (paths.seedBuildID && (env.EVAL_MODE !== "live" || (!preparing && operation !== "verify-seed"))) throw new Error("Local runtime permits only public seed preparation and restore verification");
   if (!paths.seedBuildID) {
     requireRunner(env);
-    if (operation !== "run" && !(fixture && operation === "prepare")) throw new Error("Hosted runtime permits only scoring and synthetic fixture preparation");
+    if (operation !== "run" && !(fixture && operation === "prepare") && !intake) throw new Error("Hosted runtime permits only scoring and synthetic fixture preparation, plus the pinned intake comparison");
   }
   const configured = fixture ? { model: "fixture", context: 300_000, verifier: "", embedding: "" } : configuration(env, { allowHTTPVerifier: Boolean(paths.seedBuildID) });
   configured.importWorkers = preparing ? resolveImportWorkers(env.DENSE_MEM_EVAL_IMPORT_WORKERS) : 0;
   if (!/^[0-9a-f]{40}$/.test(env.EVAL_SOURCE_REVISION || "") || !/^ghcr\.io\/markhuangai\/dense-mem(?::[A-Za-z0-9._-]+)?@sha256:[0-9a-f]{64}$/.test(env.EVAL_IMAGE || "")) throw new Error("Immutable runner source and image are required");
   docker(["pull", "--quiet", env.EVAL_IMAGE]);
+  if (intake) {
+    const image = JSON.parse(docker(["image", "inspect", env.EVAL_IMAGE]))[0];
+    if (image.Config.Labels["org.opencontainers.image.revision"] !== env.EVAL_SOURCE_REVISION) throw new Error("Immutable intake comparison image source differs");
+  }
   if (preparing && !fixture) requireEvaluationImportSupport(JSON.parse(docker(["image", "inspect", env.EVAL_IMAGE]))[0]);
   fs.mkdirSync(paths.directory, { recursive: true, mode: 0o700 });
   const registryPath = fixture ? "tests/eval/fixtures/datasets.json" : "tests/eval/datasets.json";
@@ -129,7 +135,7 @@ export async function setup(env, options = {}) {
   const registry = JSON.parse(registryBytes);
   registryMatrix(registry);
   const dataset = registry.datasets.find((row) => row.id === paths.dataset);
-  if (!dataset && operation !== "bootstrap") throw new Error("Dataset is not registered");
+  if (!dataset && operation !== "bootstrap" && !intake) throw new Error("Dataset is not registered");
   const dataDir = path.join(paths.directory, "data");
   const outputDir = path.join(paths.directory, "public");
   const seedDir = options.seedDirectory || path.join(paths.directory, "seed");
@@ -137,12 +143,12 @@ export async function setup(env, options = {}) {
   fs.mkdirSync(seedDir, { mode: 0o700, recursive: true });
   const deadline = new Date(Number(env.EVAL_MODEL_DEADLINE_EPOCH) * 1000);
   if (!Number.isFinite(deadline.getTime()) || deadline <= new Date() || deadline > Date.now() + 330 * 60_000) throw new Error("Runner model deadline is invalid");
-  const manifest = { version: 1, run_id: paths.runID, workflow_run_id: paths.seedBuildID ? "" : env.GITHUB_RUN_ID, seed_build_id: paths.seedBuildID, source_revision: env.EVAL_SOURCE_REVISION, image: env.EVAL_IMAGE, registry_sha256: sha256(registryBytes), dataset: paths.dataset, mode: fixture ? "fixtures" : "live", operation, model: configured.model, embedding_model: "text-embedding-3-small", embedding_dimensions: 1536, context_window_tokens: configured.context, import_workers: configured.importWorkers, base_release: env.EVAL_BASE_RELEASE || (fixture ? "v0.0.0" : ""), seed_image: options.seedImage ?? env.EVAL_SEED_IMAGE ?? "", seed_dir: seedDir, model_deadline: deadline.toISOString(), data_dir: dataDir, output_dir: outputDir, timings_ms: {} };
+  const manifest = { version: 1, run_id: paths.runID, workflow_run_id: paths.seedBuildID ? "" : env.GITHUB_RUN_ID, seed_build_id: paths.seedBuildID, source_revision: env.EVAL_SOURCE_REVISION, image: env.EVAL_IMAGE, registry_sha256: sha256(registryBytes), dataset: paths.dataset, mode: env.EVAL_MODE, operation, model: configured.model, embedding_model: "text-embedding-3-small", embedding_dimensions: 1536, context_window_tokens: configured.context, import_workers: configured.importWorkers, base_release: env.EVAL_BASE_RELEASE || (fixture ? "v0.0.0" : ""), seed_image: options.seedImage ?? env.EVAL_SEED_IMAGE ?? "", seed_dir: seedDir, model_deadline: deadline.toISOString(), data_dir: dataDir, output_dir: outputDir, timings_ms: {} };
   save(paths.manifestFile, manifest);
   const prefix = `densemem-eval-${paths.runID}`;
   const state = { runID: paths.runID, source: env.EVAL_SOURCE_REVISION, image: env.EVAL_IMAGE, network: `${prefix}-network`, volume: `${prefix}-postgres`, containers: [`${prefix}-server`, `${prefix}-postgres`, `${prefix}-seed`, ...(fixture ? [`${prefix}-provider`] : [])], environment: {} };
-  const password = fixture ? secret() : env.DENSE_MEM_EVAL_DATABASE_PASSWORD;
-  const apiKey = options.apiKey || (fixture ? secret() : env.DENSE_MEM_EVAL_TEAM_API_KEY);
+  const password = fixture || intake ? secret() : env.DENSE_MEM_EVAL_DATABASE_PASSWORD;
+  const apiKey = options.apiKey || (fixture || intake ? secret() : env.DENSE_MEM_EVAL_TEAM_API_KEY);
   const controlToken = secret();
   for (const value of [password, apiKey, controlToken]) mask(value, env);
   state.environment = { EVAL_DATABASE_PASSWORD: password, EVAL_CONTROL_TOKEN: controlToken, EVAL_API_KEY: apiKey, EVAL_SERVER_CONTAINER: `${prefix}-server`, DENSE_MEM_EVAL_API_KEY: fixture ? secret() : env.DENSE_MEM_EVAL_API_KEY, DENSE_MEM_EVAL_EMBED_API_KEY: fixture ? secret() : env.DENSE_MEM_EVAL_EMBED_API_KEY };
@@ -156,8 +162,8 @@ export async function setup(env, options = {}) {
     manifest.timings_ms.seed_pull = Date.now() - started;
   }
   if (manifest.seed_image || options.seedDirectory) seed = await verifySeedFiles(inputSeedDir, preparing ? "bootstrap" : paths.dataset, manifest.registry_sha256, preparing ? 0 : dataset.corpus.rows);
-  if (!preparing && !seed) throw new Error("Runner evaluation requires a verified seed");
-  if (operation !== "bootstrap") {
+  if (!preparing && !seed && !intake) throw new Error("Runner evaluation requires a verified seed");
+  if (operation !== "bootstrap" && !intake) {
     if (fixture) { fs.mkdirSync(dataDir, { mode: 0o700, recursive: true }); for (const source of [dataset.corpus, dataset.questions]) fs.copyFileSync(path.join("tests/eval/fixtures", source.path), path.join(dataDir, source.path)); }
     else await downloadSources(registry, dataset, dataDir, signal);
     save(paths.manifestFile, manifest);
@@ -209,7 +215,7 @@ export async function setup(env, options = {}) {
       Object.assign(state.environment, { EVAL_CREDENTIAL_ID: credential.credential.id, EVAL_API_KEY: credential.api_key });
     }
   }
-  if (operation === "bootstrap" || (preparing && !seed)) {
+  if (operation === "bootstrap" || intake || (preparing && !seed)) {
     const values = { ONTOLOGY_MAINTENANCE_ENABLED: "false", ONTOLOGY_MAINTENANCE_MODEL: configured.model, ONTOLOGY_MAINTENANCE_MAX_CONCURRENCY: "4", ONTOLOGY_MAINTENANCE_TEAM_MAX_CONCURRENCY: "4", ONTOLOGY_MAINTENANCE_CONTEXT_WINDOW_TOKENS: String(configured.context) };
     await control(state, "PATCH", "/config/ontology-maintenance", { items: Object.entries(values).map(([key, value]) => ({ key, value })) });
     await control(state, "POST", "/ontology/pause", { operation_key: `pause-${paths.runID}` });
@@ -267,9 +273,9 @@ export function diagnostics(env) {
 
 export async function main(mode, env = process.env) {
   requireRunner(env);
-  if (!["live", "fixtures"].includes(env.EVAL_MODE)) throw new Error("Invalid evaluation mode");
+  if (!["live", "fixtures", "intake"].includes(env.EVAL_MODE)) throw new Error("Invalid evaluation mode");
   if (mode === "matrix") {
-    const matrix = registryMatrix(read(env.EVAL_MODE === "fixtures" ? "tests/eval/fixtures/datasets.json" : "tests/eval/datasets.json"));
+    const matrix = env.EVAL_MODE === "intake" ? { dataset: ["intake"] } : registryMatrix(read(env.EVAL_MODE === "fixtures" ? "tests/eval/fixtures/datasets.json" : "tests/eval/datasets.json"));
     fs.appendFileSync(env.GITHUB_OUTPUT, `matrix=${JSON.stringify(matrix)}\n`); return;
   }
   if (mode === "pin-seeds" && env.EVAL_MODE === "live") {
@@ -299,6 +305,7 @@ export async function main(mode, env = process.env) {
     if (!report.complete) process.exitCode = 1; return;
   }
   if (mode !== "run") throw new Error("Unsupported workflow operation");
+  if (env.EVAL_MODE === "intake") return compareIntake(env, location(env), { setup, cleanup, docker, downloadSources });
   let runtime;
   if (env.EVAL_MODE === "fixtures") {
     const prepared = await setup({ ...env, DENSE_MEM_EVAL_IMPORT_WORKERS: "4" }, { operation: "prepare" });

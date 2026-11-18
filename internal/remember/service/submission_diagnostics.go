@@ -222,6 +222,24 @@ func SecurityRejectionFailure(signals []SubmissionSecurityBatchSignal, truncated
 	}}
 }
 
+func IntakeSecurityRejectionFailure(request assessor.PartitionRequest, rejected *assessor.PartitionSecurityRejection) error {
+	indices := make(map[string]int, len(request.Items))
+	for i, item := range request.Items {
+		indices[item.ItemID] = i
+	}
+	var signals []SubmissionSecurityBatchSignal
+	for _, result := range rejected.Results {
+		for _, signal := range result.Signals {
+			if len(signals) >= submissionSecurityMaxBatchSignals {
+				return SecurityRejectionFailure(signals, true, "intake_review")
+			}
+			signals = append(signals, SubmissionSecurityBatchSignal{EvidenceIndex: indices[result.EvidenceID], Source: SecuritySourceEvidence,
+				SubmissionSecuritySignal: SubmissionSecuritySignal{Kind: signal.Kind, Start: signal.Start, End: signal.End}})
+		}
+	}
+	return SecurityRejectionFailure(signals, false, "intake_review")
+}
+
 func AssessmentSecurityRejectionFailure(prepared *SynchronousAssessmentResult) error {
 	if prepared == nil {
 		return ErrRememberProviderResponseInvalid

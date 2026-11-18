@@ -437,6 +437,7 @@ start_stack_helpers() {
     [[ -n "$provider" ]] || fail "deterministic provider helper was not created"
     docker exec "$provider" mkdir -p /e2e/synchronous_write >/dev/null
     docker cp "${source_dir}/tests/uat/embedding_upstream.mjs" "${provider}:/e2e/embedding_upstream.mjs" >/dev/null
+    docker cp "${source_dir}/tests/uat/security_intake_cases.mjs" "${provider}:/e2e/security_intake_cases.mjs" >/dev/null
     docker cp "${source_dir}/tests/uat/synchronous_write/provider-fixture.mjs" "${provider}:/e2e/synchronous_write/provider-fixture.mjs" >/dev/null
     docker exec "$provider" mkdir -p /e2e/decision_providers >/dev/null
     docker cp "${source_dir}/tests/uat/decision_providers/protocol.mjs" "${provider}:/e2e/decision_providers/protocol.mjs" >/dev/null

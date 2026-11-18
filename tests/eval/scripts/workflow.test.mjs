@@ -141,7 +141,7 @@ test("own-PR evaluation executes authorization against the publishing attempt af
   } };
   const outputs = {}, env = { INPUT_PR_NUMBER: "42", INPUT_EVALUATION: "fixtures", TRIGGERING_ACTOR: "owner" };
   const run = () => execute(github, context, { setOutput: (key, value) => { outputs[key] = value; } }, (file) => { assert.equal(file, "./.ci-policy/.github/scripts/image-release-policy.cjs"); return imagePolicy; }, { env });
-  for (const mode of ["fixtures", "live"]) { env.INPUT_EVALUATION = mode; await run(); assert.equal(outputs.image, pinnedImage); }
+  for (const mode of ["fixtures", "live", "intake"]) { env.INPUT_EVALUATION = mode; await run(); assert.equal(outputs.image, pinnedImage); }
   latest.run_attempt = 1; latest.conclusion = "success"; await run();
   latest.run_attempt = 2;
   for (const change of [{ conclusion: "failure" }, { conclusion: null }]) {
@@ -288,12 +288,15 @@ test("runner workflow reserves shutdown time, retains numeric artifacts and aggr
     assert.equal(Object.hasOwn(caller.on.workflow_dispatch.inputs, "import_workers"), false);
     assert.equal(Object.hasOwn(workflowJob(caller, "evaluation").with, "import_workers"), false);
   }
-  assert.equal(datasets["runs-on"], "ubuntu-latest"); assert.equal(datasets["timeout-minutes"], 360); assert.equal(datasets.strategy["fail-fast"], false);
-  assert.match(datasets.steps.find((step) => step.name === "Freeze model deadline").run, /330 \* 60/);
+  assert.equal(datasets["runs-on"], "ubuntu-latest"); assert.match(datasets["timeout-minutes"], /inputs\.mode == 'intake' && 30 \|\| 360/); assert.equal(datasets.strategy["fail-fast"], false);
+  const deadline = datasets.steps.find((step) => step.name === "Freeze model deadline").run;
+  assert.match(deadline, /minutes=330/); assert.match(deadline, /if \[\[ "\$EVAL_MODE" == intake \]\]; then minutes=20/);
   assert.ok(datasets.steps.filter((step) => step.uses?.startsWith("actions/upload-artifact@")).every((step) => step.with["retention-days"] === 2));
   assert.equal(runStep(datasets, "node --test tests/eval/scripts/workflow_docker.test.mjs").if, "inputs.mode == 'fixtures'");
   assert.match(workflowJob(workflow, "aggregate").if, /always/);
   const caller = await readWorkflow("production-image-e2e.yml");
+  assert.deepEqual(caller.on.workflow_dispatch.inputs.evaluation.options, ["none", "fixtures", "intake", "live"]);
+  assert.doesNotMatch((await readWorkflow("run-evaluation.yml")).on.workflow_dispatch.inputs.mode.options.join(" "), /intake/);
   const secrets = workflowJob(caller, "evaluation").secrets;
   const inputs = workflowJob(caller, "evaluation").with;
   assert.equal(inputs.model, "dense-mem-testing");
