@@ -4,10 +4,13 @@ import imagePolicy from "./image-release-policy.cjs";
 export function manualEvaluationRequest({ image, mode = "live", repository, ref, runAttempt, actorPermission, triggeringPermission }) {
   if (ref !== "refs/heads/main" || Number(runAttempt) !== 1) throw new Error("Manual evaluation requires a fresh workflow dispatch from main");
   if (actorPermission !== "admin" || triggeringPermission !== "admin") throw new Error("Manual evaluation requires initiating and triggering repository admins");
-  const decision = imagePolicy.validateProductionImageReference(image, repository);
+  const reference = typeof image === "string" && typeof repository === "string" && !image.includes("/")
+    ? `ghcr.io/${repository.toLowerCase()}:${image}`
+    : image;
+  const decision = imagePolicy.validateProductionImageReference(reference, repository);
   if (!decision.valid) throw new Error(decision.reason);
   if (!["fixtures", "live"].includes(mode)) throw new Error("Invalid evaluation mode");
-  return { image, mode };
+  return { image: reference, mode };
 }
 
 export function resolveEvaluationImage(reference, repository, inspected) {
@@ -84,6 +87,24 @@ export function registryMatrix(registry) {
     }
   }
   return { dataset: [...ids] };
+}
+
+export function evaluationDatasets(registry, selection = "") {
+  const { dataset: registered } = registryMatrix(registry);
+  if (selection === "") return registry.datasets;
+  let flags;
+  try {
+    flags = JSON.parse(selection);
+  } catch {
+    throw new Error("Dataset selection must be a JSON object of public dataset flags");
+  }
+  if (!flags || typeof flags !== "object" || Array.isArray(flags) ||
+      Object.entries(flags).some(([id, enabled]) => !registered.includes(id) || typeof enabled !== "boolean")) {
+    throw new Error("Dataset selection must name registered public datasets with boolean flags");
+  }
+  const selected = registry.datasets.filter(({ id }) => flags[id] === true);
+  if (selected.length === 0) throw new Error("Dataset selection requires at least one public seed");
+  return selected;
 }
 
 export function aggregate(registry, reports) {

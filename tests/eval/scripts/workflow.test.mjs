@@ -44,6 +44,12 @@ test("evaluation requires an image supporting configurable import admission", ()
 test("manual evaluation needs only an image and defaults to the full benchmark", () => {
   assert.deepEqual(manualEvaluationRequest(manualRequest), { image: taggedImage, mode: "live" });
   assert.equal(manualEvaluationRequest({ ...manualRequest, mode: "fixtures" }).mode, "fixtures");
+  for (const tag of ["test-777", "v2.8.1-rc.6", "v2.8.1"]) {
+    const image = `ghcr.io/${repository}:${tag}`;
+    assert.equal(manualEvaluationRequest({ ...manualRequest, image: tag }).image, image);
+    assert.equal(manualEvaluationRequest({ ...manualRequest, image }).image, image);
+  }
+  assert.equal(manualEvaluationRequest({ ...manualRequest, image: pinnedImage }).image, pinnedImage);
   for (const change of [
     { ref: "refs/heads/untrusted" }, { ref: "refs/tags/main" }, { runAttempt: 2 },
     { actorPermission: "write" }, { triggeringPermission: "maintain" },
@@ -85,6 +91,7 @@ test("manual workflow accepts an image without PR inputs and keeps credentials i
     if (step.uses?.startsWith("docker/login-action@") || step.id === "image") assert.equal(step.if, undefined);
   }
   const resolve = runStep(authorize, "docker pull");
+  assert.equal(resolve.env.REQUESTED_IMAGE, "${{ steps.request.outputs.image }}");
   assert.match(resolve.run, /resolveEvaluationImage/); assert.match(resolve.run, /"\$\{REQUESTED_IMAGE\}"/);
   assert.doesNotMatch(resolve.run, /\$\{\{ inputs\./);
   const evaluation = workflowJob(workflow, "evaluation");
@@ -102,7 +109,7 @@ test("manual authorization executes both modes without PR or historical-run look
   const execute = new (Object.getPrototypeOf(async () => {}).constructor)("github", "context", "core", script);
   for (const mode of ["live", "fixtures"]) {
     await t.test(mode, async (t) => {
-      const settings = { GITHUB_WORKSPACE: process.cwd(), INPUT_IMAGE: taggedImage, INPUT_MODE: mode, TRIGGERING_ACTOR: "initiator" };
+      const settings = { GITHUB_WORKSPACE: process.cwd(), INPUT_IMAGE: "candidate", INPUT_MODE: mode, TRIGGERING_ACTOR: "initiator" };
       const previous = Object.fromEntries(Object.keys(settings).map((key) => [key, process.env[key]]));
       Object.assign(process.env, settings);
       t.after(() => {
@@ -119,6 +126,7 @@ test("manual authorization executes both modes without PR or historical-run look
       await execute(github, context, { setOutput: (key, value) => { outputs[key] = value; } });
       assert.deepEqual(permissions, ["initiator", "initiator"]);
       assert.equal(outputs.source_revision, context.sha);
+      assert.equal(outputs.image, taggedImage);
       for (const change of [{ ref: "refs/heads/feature" }, { runAttempt: 2 }]) {
         await assert.rejects(execute(github, { ...context, ...change }, { setOutput: () => assert.fail("Rejected requests must not publish outputs") }), /fresh workflow/);
       }
@@ -298,9 +306,20 @@ test("runner workflow reserves shutdown time, retains numeric artifacts and aggr
   assert.equal(Object.hasOwn(workflow.on.workflow_call.inputs, "import_workers"), false);
   for (const entrypoint of ["run-evaluation.yml", "production-image-e2e.yml"]) {
     const caller = await readWorkflow(entrypoint);
-    assert.equal(Object.hasOwn(caller.on.workflow_dispatch.inputs, "import_workers"), false);
-    assert.equal(Object.hasOwn(workflowJob(caller, "evaluation").with, "import_workers"), false);
+    const inputs = caller.on.workflow_dispatch.inputs;
+    const call = workflowJob(caller, "evaluation").with;
+    assert.equal(Object.hasOwn(inputs, "import_workers"), false);
+    assert.equal(Object.hasOwn(call, "import_workers"), false);
+    const chosen = {};
+    for (const { id } of registry.datasets) {
+      assert.equal(inputs[`run_${id}`]?.type, "boolean");
+      assert.equal(inputs[`run_${id}`].default, true);
+      chosen[id] = id === "hotpotqa";
+    }
+    const selection = call.dataset_selection.replace(/\$\{\{ inputs\.run_([a-z0-9_]+) \}\}/g, (_, id) => JSON.stringify(chosen[id]));
+    assert.deepEqual(JSON.parse(selection), chosen);
   }
+  assert.equal(workflow.env.EVAL_DATASET_SELECTION, "${{ inputs.dataset_selection }}");
   assert.equal(datasets["runs-on"], "ubuntu-latest"); assert.equal(datasets["timeout-minutes"], 360); assert.equal(datasets.strategy["fail-fast"], false);
   const deadline = datasets.steps.find((step) => step.name === "Freeze model deadline").run;
   assert.match(deadline, /minutes=330/);
@@ -325,16 +344,58 @@ test("runner workflow reserves shutdown time, retains numeric artifacts and aggr
   const ci = await readWorkflow("ci-shared.yml"); runStep(workflowJob(ci, "quality"), "bash scripts/test-evaluation.sh");
 });
 
-test("registry selection accepts only full benchmarks and synthetic system fixtures", async (t) => {
+const hostedTest = { GITHUB_ACTIONS: "true", RUNNER_ENVIRONMENT: "github-hosted", GITHUB_RUN_ID: "42", GITHUB_RUN_ATTEMPT: "1" };
+
+test("the matrix supports selected public datasets and requires at least one", async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "evaluation-matrix-test-"));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   const output = path.join(directory, "output");
-  const env = { GITHUB_ACTIONS: "true", RUNNER_ENVIRONMENT: "github-hosted", GITHUB_RUN_ID: "42", GITHUB_RUN_ATTEMPT: "1", GITHUB_OUTPUT: output };
-  for (const [mode, count] of [["live", 5], ["fixtures", 1]]) {
+  const env = { ...hostedTest, GITHUB_OUTPUT: output };
+  const liveSelection = { hotpotqa: true, musique: false, "2wikimultihopqa": true, nq_rear: false, popqa: false };
+  for (const [mode, selection, expected] of [
+    ["live", undefined, registry.datasets.map(({ id }) => id)],
+    ["live", JSON.stringify(liveSelection), ["hotpotqa", "2wikimultihopqa"]],
+    ["fixtures", '{"hotpotqa":false}', ["hotpotqa"]],
+  ]) {
     fs.writeFileSync(output, "");
-    await main("matrix", { ...env, EVAL_MODE: mode });
+    await main("matrix", { ...env, EVAL_MODE: mode, EVAL_DATASET_SELECTION: selection });
     const matrix = JSON.parse(fs.readFileSync(output, "utf8").trim().slice("matrix=".length));
-    assert.equal(matrix.dataset.length, count);
+    assert.deepEqual(matrix.dataset, expected);
+  }
+  fs.writeFileSync(output, "");
+  for (const selection of ['{"hotpotqa":false}', '{"hotpotqa":"true"}', '{"qasper":true}', "null", "not-json"]) {
+    await assert.rejects(main("matrix", { ...env, EVAL_MODE: "live", EVAL_DATASET_SELECTION: selection }), /Dataset selection/);
+    assert.equal(fs.readFileSync(output, "utf8"), "");
   }
   for (const mode of ["replay", "none", "unknown", ""]) await assert.rejects(main("matrix", { ...env, EVAL_MODE: mode }), /Invalid evaluation mode/);
+});
+
+test("pinning reports a missing selected seed without looking up unselected tags", async (t) => {
+  const manifests = [];
+  t.mock.method(globalThis, "fetch", async (url) => {
+    const pathname = new URL(url).pathname;
+    if (pathname === "/token") return Response.json({ token: "fixture" });
+    manifests.push(pathname);
+    return new Response(null, { status: 404 });
+  });
+  await assert.rejects(main("pin-seeds", { ...hostedTest, EVAL_MODE: "live", EVAL_DATASET_SELECTION: '{"hotpotqa":false,"popqa":true}' }), /Public seed is unavailable for popqa/);
+  assert.deepEqual(manifests, ["/v2/markhuangai/dense-mem-eval-postgres/manifests/popqa-latest"]);
+});
+
+test("a complete single-dataset report keeps its actual denominator and scope", async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "evaluation-aggregate-test-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const reports = path.join(directory, "evaluation-reports", "evaluation-hotpotqa");
+  fs.mkdirSync(reports, { recursive: true });
+  fs.writeFileSync(path.join(reports, "scores.json"), JSON.stringify({
+    identity: { dataset: "hotpotqa" }, corpus_rows: registry.datasets[0].corpus.rows,
+    expected_answers: 4000, completed_answers: 4000, complete: true, capture_complete: true,
+  }));
+  await main("aggregate", { ...hostedTest, EVAL_MODE: "live", EVAL_DATASET_SELECTION: '{"hotpotqa":true}', RUNNER_TEMP: directory, GITHUB_STEP_SUMMARY: path.join(directory, "summary") });
+  const result = JSON.parse(fs.readFileSync(path.join(directory, "evaluation-reports", "aggregate", "comparison.json")));
+  assert.equal(result.complete, true);
+  assert.equal(result.full_public_campaign, false);
+  assert.equal(result.expected_answers, 4000);
+  assert.equal(result.completed_answers, 4000);
+  assert.deepEqual(result.datasets.map(({ dataset }) => dataset), ["hotpotqa"]);
 });

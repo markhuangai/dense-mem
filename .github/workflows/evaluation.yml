@@ -18,6 +18,9 @@ on:
       seed_version:
         type: string
         default: latest
+      dataset_selection:
+        type: string
+        default: ''
       model:
         type: string
         default: ''
@@ -46,6 +49,9 @@ permissions:
   actions: read
   contents: read
   packages: read
+
+env:
+  EVAL_DATASET_SELECTION: ${{ inputs.dataset_selection }}
 
 jobs:
   registry:
@@ -76,7 +82,7 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
-      - name: Pin every public seed before model work
+      - name: Pin selected public seeds before model work
         id: seeds
         if: inputs.mode == 'live'
         env:
@@ -163,7 +169,7 @@ jobs:
           if-no-files-found: warn
 
   aggregate:
-    name: Aggregate every dataset outcome
+    name: Aggregate selected dataset outcomes
     needs: [registry, datasets]
     if: always() && needs.registry.result == 'success'
     runs-on: ubuntu-latest

@@ -127,19 +127,24 @@ connections. Each Dense-Mem runtime generates its own control token.
 ## Run an evaluation
 
 Use **Actions → Run evaluation → Run workflow**, select `main`, and enter a
-Dense-Mem production image tag or digest. `mode=live` uses the complete public
-benchmark. `seed_version=latest` resolves each dataset's current seed once; a UTC
-timestamp/release suffix selects a complete historical build instead.
+Dense-Mem production image tag such as `test-777`, `v2.8.1-rc.6`, or `v2.8.1`.
+You can also enter a full GHCR tag or digest reference. In `mode=live`, the five
+public datasets are checked by default. Uncheck any you want to omit and leave
+at least one checked. `seed_version=latest` resolves each selected dataset's
+current seed once. Use a UTC timestamp/release suffix to select historical
+seeds for the checked datasets.
 
 ```bash
 gh workflow run run-evaluation.yml --repo markhuangai/dense-mem --ref main \
-  -f image=ghcr.io/markhuangai/dense-mem:YOUR_TAG -f seed_version=latest
+  -f image=test-777 -f run_musique=false -f run_2wikimultihopqa=false \
+  -f run_nq_rear=false -f run_popqa=false
 ```
 
 The application must be a Linux amd64 production image from this repository with
-verified source metadata. Its immutable digest and all five immutable seed
-digests are resolved before provider-backed jobs. Missing or incompatible seeds
-fail explicitly. There is no ingestion fallback or import-worker input.
+verified source metadata. The workflow pins the application and each selected
+seed to a digest before provider-backed jobs. Missing or incompatible selected
+seeds fail explicitly. Use a complete report with `full_public_campaign=true`
+to replace the overall baseline.
 
 Each dataset starts its pinned PostgreSQL image in fresh writable storage.
 Dense-Mem then starts and applies pending migrations. Check source locks, counts,
@@ -163,8 +168,9 @@ migration and readiness times separately.
 
 The own-PR route remains `production-image-e2e.yml` dispatched on the current
 own-PR branch with `pr_number` and `evaluation=live`. It requires the current
-head's successful full production-image receipt. `evaluation=none` runs ordinary
-production E2E. Both routes accept `seed_version`.
+head's successful full production-image receipt and uses that image. Both live
+routes accept the dataset checkboxes and `seed_version`. `evaluation=none` runs
+ordinary production E2E.
 
 `mode=fixtures` is the evaluation system dry run. It prepares three synthetic
 documents through a deterministic provider, including one document that gets

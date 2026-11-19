@@ -6,7 +6,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { buildBootableSeed, extractSeed, verifySeedFiles, restoreSeed, dumpSeed, sealSeed, verifySeedCredentialExclusions, seedReference, resolveSeedImage, postgresImage } from "../../../.github/scripts/evaluation-seeds.mjs";
-import { requireRunner, configuration, resolveImportWorkers, requireEvaluationImportSupport, registryMatrix, sha256, aggregate, ownedResource } from "../../../.github/scripts/evaluation-policy.mjs";
+import { requireRunner, configuration, resolveImportWorkers, requireEvaluationImportSupport, registryMatrix, evaluationDatasets, sha256, aggregate, ownedResource } from "../../../.github/scripts/evaluation-policy.mjs";
 
 const label = "io.dense-mem.eval.run";
 const secret = () => randomBytes(32).toString("base64url");
@@ -349,22 +349,26 @@ export async function diagnostics(env) {
 export async function main(mode, env = process.env) {
   requireRunner(env);
   if (!["live", "fixtures"].includes(env.EVAL_MODE)) throw new Error("Invalid evaluation mode");
+  const live = env.EVAL_MODE === "live";
+  const registryPath = live ? "tests/eval/datasets.json" : "tests/eval/fixtures/datasets.json";
+  const selection = live ? env.EVAL_DATASET_SELECTION : undefined;
   if (mode === "matrix") {
-    const matrix = registryMatrix(read(env.EVAL_MODE === "fixtures" ? "tests/eval/fixtures/datasets.json" : "tests/eval/datasets.json"));
+    const matrix = { dataset: evaluationDatasets(read(registryPath), selection).map(({ id }) => id) };
     fs.appendFileSync(env.GITHUB_OUTPUT, `matrix=${JSON.stringify(matrix)}\n`); return;
   }
-  if (mode === "pin-seeds" && env.EVAL_MODE === "live") {
-    const bytes = fs.readFileSync("tests/eval/datasets.json");
+  if (mode === "pin-seeds" && live) {
+    const bytes = fs.readFileSync(registryPath);
     const registry = JSON.parse(bytes);
+    const registryHash = sha256(bytes);
     const images = {};
-    for (const dataset of registryMatrix(registry).dataset) {
-      const image = await resolveSeedImage(seedReference(dataset, env.EVAL_SEED_VERSION || "latest"), env);
-      if (!image) throw new Error(`Public seed is unavailable for ${dataset}`);
-      const directory = path.join(env.RUNNER_TEMP, `seed-pin-${env.GITHUB_RUN_ID}-${dataset}`);
+    for (const { id, corpus } of evaluationDatasets(registry, selection)) {
+      const image = await resolveSeedImage(seedReference(id, env.EVAL_SEED_VERSION || "latest"), env);
+      if (!image) throw new Error(`Public seed is unavailable for ${id}`);
+      const directory = path.join(env.RUNNER_TEMP, `seed-pin-${env.GITHUB_RUN_ID}-${id}`);
       const bootable = { bootable: true };
-      extractSeed(docker, image, directory, `seed-pin-${env.GITHUB_RUN_ID}-${dataset}`, `${env.GITHUB_RUN_ID}-${dataset}`, bootable);
-      await verifySeedFiles(directory, dataset, sha256(bytes), registry.datasets.find((row) => row.id === dataset).corpus.rows, bootable);
-      images[dataset] = image;
+      extractSeed(docker, image, directory, `seed-pin-${env.GITHUB_RUN_ID}-${id}`, `${env.GITHUB_RUN_ID}-${id}`, bootable);
+      await verifySeedFiles(directory, id, registryHash, corpus.rows, bootable);
+      images[id] = image;
     }
     fs.appendFileSync(env.GITHUB_OUTPUT, `images=${JSON.stringify(images)}\n`);
     return;
@@ -372,12 +376,14 @@ export async function main(mode, env = process.env) {
   if (mode === "cleanup") return cleanup(env);
   if (mode === "diagnostics") return diagnostics(env);
   if (mode === "aggregate") {
-    const registry = read(env.EVAL_MODE === "fixtures" ? "tests/eval/fixtures/datasets.json" : "tests/eval/datasets.json");
+    const registry = read(registryPath);
+    const datasets = evaluationDatasets(registry, selection);
     const root = path.join(env.RUNNER_TEMP, "evaluation-reports");
     const reports = fs.existsSync(root) ? fs.readdirSync(root, { recursive: true }).filter((file) => path.basename(file) === "scores.json").map((file) => read(path.join(root, file))) : [];
-    const report = aggregate(registry, reports);
+    const report = { ...aggregate({ ...registry, datasets }, reports), full_public_campaign: live && datasets.length === registry.datasets.length };
     fs.mkdirSync(path.join(root, "aggregate"), { recursive: true }); save(path.join(root, "aggregate/comparison.json"), report);
-    fs.appendFileSync(env.GITHUB_STEP_SUMMARY, `Evaluation: ${report.completed_answers}/${report.expected_answers} answers complete. Overall complete: ${report.complete}.\n`);
+    const label = live ? datasets.map(({ id }) => id).join(", ") : "Synthetic fixtures";
+    fs.appendFileSync(env.GITHUB_STEP_SUMMARY, `**${label}** completed ${report.completed_answers}/${report.expected_answers} answers. The run ${report.complete ? "passed" : "is incomplete"}.\n`);
     if (!report.complete) process.exitCode = 1; return;
   }
   if (mode !== "run") throw new Error("Unsupported workflow operation");
@@ -419,7 +425,7 @@ export async function runBinary(operation, { paths, state }, env = process.env, 
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
   main(process.argv[2]).catch((error) => {
-    const message = /^(Missing required Actions setting:|Invalid Actions setting:|Public source|Runner |Immutable |Dataset |Source validation|Production instance)/.test(error.message) ? error.message : "Evaluation workflow operation failed; inspect protected run logs.";
+    const message = /^(Missing required Actions setting:|Invalid Actions setting:|Public (?:source|seed)|Runner |Immutable |Dataset |Source validation|Production instance)/.test(error.message) ? error.message : "Evaluation workflow operation failed; inspect protected run logs.";
     process.stderr.write(`${message}\n`); process.exitCode = 1;
   });
 }
