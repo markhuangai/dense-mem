@@ -116,23 +116,56 @@ export async function withOwnedRuntime(env, action, { resumable = false } = {}) 
   }
 }
 
-async function bootstrap(env, version, signal, beforePublication, pinned) {
+const verifiedExportFile = (paths) => path.join(paths.directory, "verified-export.json");
+
+export async function verifiedSeedExport(paths, build, prepare) {
+  const verified = verifiedExportFile(paths);
+  const { dataset } = paths;
+  if (fs.existsSync(verified)) {
+    const saved = read(verified);
+    if (!/^seed-export-[A-Za-z0-9]{6}$/.test(saved.directory) || saved.version !== build.version) throw new Error("Seed build verified export receipt is invalid");
+    const directory = path.join(paths.directory, saved.directory);
+    const seed = await verifySeedFiles(directory, dataset, build.registry_sha256, dataset === "bootstrap" ? 0 : build.rows[dataset]);
+    if (await hashFile(path.join(directory, "seed.json")) !== saved.metadata_sha256) throw new Error("Seed build verified export metadata changed");
+    return { directory, seed, previousLatest: saved.previous_latest, reused: true };
+  }
+  fs.mkdirSync(paths.directory, { recursive: true, mode: 0o700 });
+  const directory = fs.mkdtempSync(path.join(paths.directory, "seed-export-"));
+  const seed = await prepare(directory);
+  const previousLatest = dataset === "bootstrap" ? null : await resolveSeedImage(seedReference(dataset), {});
+  save(verified, { directory: path.basename(directory), version: build.version, metadata_sha256: await hashFile(path.join(directory, "seed.json")), previous_latest: previousLatest });
+  return { directory, seed, previousLatest, reused: false };
+}
+
+async function bootstrap(env, build, signal, beforePublication) {
   return withOwnedRuntime(env, async () => {
     await cleanup(env);
-    const existing = pinned || await resolveSeedImage(seedReference("bootstrap"), {});
+    const paths = location(env);
+    const existing = build.bootstrap_image || (!fs.existsSync(verifiedExportFile(paths)) && await resolveSeedImage(seedReference("bootstrap"), {}));
     signal.throwIfAborted();
-    const runtime = await setup(env, { operation: "bootstrap", seedImage: existing || "", signal });
-    await runBinary("bootstrap", runtime, env, signal);
-    if (existing) return existing;
-    const scope = read(path.join(runtime.seedDir, "scope.json"));
-    const container = `densemem-eval-${runtime.paths.runID}-postgres`;
-    const schema = Number(docker(["exec", container, "psql", "--username=densemem", "--dbname=densemem", "--tuples-only", "--no-align", "--command", "SELECT COALESCE(max(version_id),0) FROM (SELECT DISTINCT ON (version_id) version_id,is_applied FROM goose_db_version ORDER BY version_id,id DESC) latest WHERE is_applied"]));
-    save(path.join(runtime.seedDir, "seed.json"), { version: 1, dataset: "bootstrap", registry_sha256: runtime.manifest.registry_sha256, base_release: runtime.manifest.base_release, source_revision: env.EVAL_SOURCE_REVISION, scope, corpus_rows: 0, canonical_sha256: "", search_sha256: "", mapping_sha256: "", dump_sha256: "", dump_bytes: 0, schema_version: schema, postgres_image: postgresImage, model: runtime.manifest.model, context_window_tokens: runtime.manifest.context_window_tokens, embedding_model: "text-embedding-3-small", embedding_dimensions: 1536, import_workers: runtime.manifest.import_workers, elapsed_ms: 0 });
-    dumpSeed(docker, container, runtime.seedDir);
-    await sealSeed(runtime.seedDir);
-    await roundTrip(runtime, env, "bootstrap", signal);
-    fs.writeFileSync(path.join(runtime.seedDir, "NOTICE.md"), notice());
-    return publishSeed(docker, runtime.seedDir, "bootstrap", version, {}, beforePublication);
+    if (existing) {
+      const runtime = await setup(env, { operation: "bootstrap", seedImage: existing, signal });
+      await runBinary("bootstrap", runtime, env, signal);
+      return existing;
+    }
+    const { directory, previousLatest, reused } = await verifiedSeedExport(paths, build, async (exportDirectory) => {
+      const runtime = await setup(env, { operation: "bootstrap", seedImage: "", signal, exportDirectory });
+      await runBinary("bootstrap", runtime, env, signal);
+      const scope = read(path.join(runtime.seedDir, "scope.json"));
+      const container = `densemem-eval-${runtime.paths.runID}-postgres`;
+      const schema = Number(docker(["exec", container, "psql", "--username=densemem", "--dbname=densemem", "--tuples-only", "--no-align", "--command", "SELECT COALESCE(max(version_id),0) FROM (SELECT DISTINCT ON (version_id) version_id,is_applied FROM goose_db_version ORDER BY version_id,id DESC) latest WHERE is_applied"]));
+      save(path.join(runtime.seedDir, "seed.json"), { version: 1, dataset: "bootstrap", registry_sha256: runtime.manifest.registry_sha256, base_release: runtime.manifest.base_release, source_revision: env.EVAL_SOURCE_REVISION, scope, corpus_rows: 0, canonical_sha256: "", search_sha256: "", mapping_sha256: "", dump_sha256: "", dump_bytes: 0, schema_version: schema, postgres_image: postgresImage, model: runtime.manifest.model, context_window_tokens: runtime.manifest.context_window_tokens, embedding_model: "text-embedding-3-small", embedding_dimensions: 1536, import_workers: runtime.manifest.import_workers, elapsed_ms: 0 });
+      dumpSeed(docker, container, runtime.seedDir);
+      const seed = await sealSeed(runtime.seedDir);
+      await roundTrip(runtime, env, "bootstrap", signal);
+      fs.writeFileSync(path.join(runtime.seedDir, "NOTICE.md"), notice());
+      return seed;
+    });
+    if (reused) {
+      const runtime = await setup(env, { operation: "bootstrap", seedImage: "", seedDirectory: directory, signal });
+      await runBinary("bootstrap", runtime, env, signal);
+    }
+    return publishSeed(docker, directory, "bootstrap", build.version, {}, beforePublication, { runID: paths.runID, previousLatest });
   });
 }
 
@@ -151,7 +184,6 @@ async function buildDataset(env, build, signal, beforePublication, skipAISecurit
   const version = build.version;
   const dataset = paths.dataset;
   const finished = path.join(paths.directory, "public/seed-build.json");
-  const verified = path.join(paths.directory, "verified-export.json");
   if (fs.existsSync(finished)) {
     const receipt = read(finished);
     const published = await resolveSeedImage(seedReference(dataset, version), {});
@@ -165,21 +197,10 @@ async function buildDataset(env, build, signal, beforePublication, skipAISecurit
   return withOwnedRuntime(env, async () => {
     const checkpoint = fs.existsSync(paths.checkpointFile);
     await cleanup(env, { retainVolume: checkpoint });
-    let directory, seed, previousLatest;
-    if (fs.existsSync(verified)) {
-      const saved = read(verified);
-      if (!/^seed-export-[A-Za-z0-9]{6}$/.test(saved.directory) || saved.version !== version) throw new Error("Seed build verified export receipt is invalid");
-      directory = path.join(paths.directory, saved.directory);
-      seed = await verifySeedFiles(directory, dataset, build.registry_sha256, build.rows[dataset]);
-      if (await hashFile(path.join(directory, "seed.json")) !== saved.metadata_sha256) throw new Error("Seed build verified export metadata changed");
-      previousLatest = saved.previous_latest;
-    } else {
-      fs.mkdirSync(paths.directory, { recursive: true, mode: 0o700 });
-      directory = fs.mkdtempSync(path.join(paths.directory, "seed-export-"));
-      ({ seed } = await prepareSeedExport(env, signal, { skipAISecurityReview, resumable: true, exportDirectory: directory, dataDirectory: path.join(paths.directory, "data") }));
-      previousLatest = await resolveSeedImage(seedReference(dataset), {});
-      save(verified, { directory: path.basename(directory), version, metadata_sha256: await hashFile(path.join(directory, "seed.json")), previous_latest: previousLatest });
-    }
+    const { directory, seed, previousLatest } = await verifiedSeedExport(paths, build, async (exportDirectory) => {
+      const prepared = await prepareSeedExport(env, signal, { skipAISecurityReview, resumable: true, exportDirectory, dataDirectory: path.join(paths.directory, "data") });
+      return prepared.seed;
+    });
     if (seed.source_revision !== build.source_revision || seed.base_release !== env.EVAL_BASE_RELEASE || seed.import_workers !== build.workers ||
         (seed.ai_security_review === "skipped") !== skipAISecurityReview) throw new Error("Seed build verified export differs from the pinned build settings");
     const image = await publishSeed(docker, directory, dataset, version, {}, beforePublication, { runID: paths.runID, previousLatest });
@@ -270,7 +291,7 @@ async function runSeedBuild({ id, directory, request, registryHash, rows, saved,
   const datasetEnv = (dataset, seedImage = "") => ({ ...env, EVAL_DATASET: dataset, EVAL_SEED_IMAGE: seedImage, EVAL_MODEL_DEADLINE_EPOCH: String(Math.floor(Date.now() / 1000) + 330 * 60) });
   try {
     await beforePublication();
-    const bootstrapImage = await bootstrap(datasetEnv("bootstrap"), version, controller.signal, beforePublication, build.bootstrap_image);
+    const bootstrapImage = await bootstrap(datasetEnv("bootstrap"), build, controller.signal, beforePublication);
     build.bootstrap_image = bootstrapImage;
     save(receipt, build);
     const receipts = [];

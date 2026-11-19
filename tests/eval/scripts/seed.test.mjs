@@ -7,7 +7,7 @@ import test from "node:test";
 import imagePolicy from "../../../.github/scripts/image-release-policy.cjs";
 import { seedBuildRequest, seedReference, seedBuildVersion, seedMetadata, verifySeedFiles, sealSeed, hashFile, resolveSeedBuildSource, requireSeedBuildValidation, remainingSeedRestoreEntries, resolveSeedImage, publishSeed } from "../../../.github/scripts/evaluation-seeds.mjs";
 import { location, setup } from "./workflow.mjs";
-import { localSeedRequest, lockSeedBuild, savedSeedRequest } from "./local-seeds.mjs";
+import { localSeedRequest, lockSeedBuild, savedSeedRequest, verifiedSeedExport } from "./local-seeds.mjs";
 import { readWorkflow, workflowJob } from "../../uat/workflow_helpers.mjs";
 
 const registry = JSON.parse(fs.readFileSync(new URL("../datasets.json", import.meta.url)));
@@ -137,20 +137,22 @@ test("resume restores the original seed build settings and locks its local direc
 
 test("seed publication resume checks the dated image bytes before updating latest", async (t) => {
   const version = seedBuildVersion("v2.8.1-rc.5");
-  const dated = seedReference("hotpotqa", version);
-  const latest = seedReference("hotpotqa");
-  const repository = latest.slice(0, latest.lastIndexOf(":"));
+  const repository = seedReference("bootstrap").split(":")[0];
   const pinned = `${repository}@sha256:${"a".repeat(64)}`;
-  const previousLatest = `${repository}@sha256:${"b".repeat(64)}`;
-  const files = ["database.dump", "seed.json", "mapping.json", "NOTICE.md"];
-  const runID = `local-${"a".repeat(32)}-hotpotqa`;
+  const previous = `${repository}@sha256:${"b".repeat(64)}`;
   for (const scenario of [
-    { name: "dated push succeeded and latest still points to the prior image", alias: previousLatest, push: true },
+    { name: "dated push succeeded and latest still points to the prior image", alias: previous, push: true },
     { name: "both pushes already succeeded", alias: pinned, push: false },
-    { name: "dated data conflict", alias: previousLatest, changed: true, error: /differs from the verified local export/ },
+    { name: "dated data conflict", alias: previous, changed: true, error: /differs from the verified local export/ },
     { name: "a newer alias appeared", alias: `${repository}@sha256:${"c".repeat(64)}`, error: /alias changed/ },
+    { name: "first bootstrap dated tag exists before its alias", dataset: "bootstrap", alias: null, push: true },
   ]) {
     await t.test(scenario.name, async (t) => {
+      const dataset = scenario.dataset ?? "hotpotqa", bootstrap = dataset === "bootstrap";
+      const dated = seedReference(dataset, version), latest = seedReference(dataset);
+      const previousLatest = bootstrap ? null : previous;
+      const files = ["database.dump", "seed.json", "NOTICE.md", ...(bootstrap ? [] : ["mapping.json"])];
+      const runID = `local-${"a".repeat(32)}-${dataset}`;
       const directory = fs.mkdtempSync(path.join(os.tmpdir(), "seed-publish-resume-"));
       t.after(() => fs.rmSync(directory, { recursive: true }));
       for (const file of files) fs.writeFileSync(path.join(directory, file), "{}");
@@ -160,7 +162,7 @@ test("seed publication resume checks the dated image bytes before updating lates
         const route = new URL(url).pathname;
         if (route === "/token") return Response.json({ token: "registry-test-token" });
         const image = route.endsWith(dated.split(":").at(-1)) ? pinned : currentAlias;
-        return new Response(null, { headers: { "Docker-Content-Digest": image.split("@")[1] } });
+        return image ? new Response(null, { headers: { "Docker-Content-Digest": image.split("@")[1] } }) : new Response(null, { status: 404 });
       });
       const docker = (args) => {
         switch (args[0]) {
@@ -176,12 +178,42 @@ test("seed publication resume checks the dated image bytes before updating lates
           default: assert.fail(`unexpected Docker operation ${args[0]}`);
         }
       };
-      const result = publishSeed(docker, directory, "hotpotqa", version, {}, async () => { gated = true; }, { runID, previousLatest });
+      const result = publishSeed(docker, directory, dataset, version, {}, async () => { gated = true; }, { runID, previousLatest });
       if (scenario.error) await assert.rejects(result, scenario.error);
       else assert.equal(await result, pinned);
       assert.deepEqual(mutations, scenario.push ? [["tag", pinned, latest], ["push", "--quiet", latest]] : []);
     });
   }
+});
+
+test("bootstrap export resume reuses only a verified, intact dump", async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "bootstrap-export-resume-"));
+  t.after(() => fs.rmSync(directory, { recursive: true }));
+  const paths = { directory, dataset: "bootstrap" };
+  const build = { version: seedBuildVersion("v2.8.1-rc.5"), registry_sha256: registryHash };
+  let failedExport;
+  await assert.rejects(verifiedSeedExport(paths, build, async (exportDirectory) => {
+    failedExport = exportDirectory;
+    fs.writeFileSync(path.join(exportDirectory, "database.dump"), "incomplete export", { flag: "wx" });
+    throw new Error("restore verification did not complete");
+  }), /restore verification did not complete/);
+  const prepared = await verifiedSeedExport(paths, build, async (exportDirectory) => {
+    assert.notEqual(exportDirectory, failedExport);
+    fs.writeFileSync(path.join(exportDirectory, "database.dump"), "verified synthetic bootstrap", { flag: "wx" });
+    fs.writeFileSync(path.join(exportDirectory, "seed.json"), JSON.stringify({
+      version: 1, dataset: "bootstrap", registry_sha256: registryHash, base_release: "v2.8.1-rc.5",
+      source_revision: "a".repeat(40), postgres_image: "pgvector/pgvector:0.8.2-pg18-trixie", embedding_model: "text-embedding-3-small",
+      embedding_dimensions: 1536, schema_version: 20261114010000, corpus_rows: 0,
+      scope: { team_id: "11111111-1111-4111-8111-111111111111", credential_id: "22222222-2222-4222-8222-222222222222",
+        owner_id: "22222222-2222-4222-8222-222222222222", space_id: "33333333-3333-4333-8333-333333333333", generation: 1 },
+    }));
+    return sealSeed(exportDirectory);
+  });
+  const prepareAgain = () => assert.fail("verified bootstrap must be reused");
+  assert.equal(prepared.previousLatest, null);
+  assert.deepEqual(await verifiedSeedExport(paths, build, prepareAgain), { ...prepared, reused: true });
+  fs.appendFileSync(path.join(prepared.directory, "database.dump"), "changed");
+  await assert.rejects(verifiedSeedExport(paths, build, prepareAgain), /checksum or size/);
 });
 
 test("public seed preparation and scored runs have separate runtime entry points", async () => {

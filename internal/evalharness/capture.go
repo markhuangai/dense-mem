@@ -21,13 +21,14 @@ const captureLimit = 16 << 20
 const captureInlineLimit = observability.MaxOperationMetadataBytes / 2
 
 type Capture struct {
-	Logger      *slog.Logger
-	Protector   *observability.CredentialProtector
-	RunID       string
-	mu          sync.Mutex
-	sequence    int
-	failed      bool
-	importStart time.Time
+	Logger               *slog.Logger
+	Protector            *observability.CredentialProtector
+	RunID                string
+	mu                   sync.Mutex
+	sequence             int
+	failed               bool
+	importStart          time.Time
+	importStartCompleted int
 }
 
 type Event struct {
@@ -95,11 +96,12 @@ func (c *Capture) Emit(kind string, payload any) error {
 	if progress, ok := payload.(captureProgress); ok && progress.Stage == "import" {
 		if c.importStart.IsZero() {
 			c.importStart = time.Now()
+			c.importStartCompleted = progress.Completed
 		}
 		elapsed := time.Since(c.importStart)
 		rate := float64(0)
 		if elapsed > 0 {
-			rate = float64(progress.Completed) / elapsed.Minutes()
+			rate = float64(max(0, progress.Completed-c.importStartCompleted)) / elapsed.Minutes()
 		}
 		payload = struct {
 			captureProgress

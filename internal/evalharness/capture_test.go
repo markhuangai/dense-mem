@@ -13,6 +13,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/observability"
@@ -69,6 +70,32 @@ func TestProgressIsReadableAtInfoAndRejectsInvalidCounts(t *testing.T) {
 		require.Error(t, capture.emitProgress(invalid))
 	}
 	require.Len(t, capturedProgress(t, output.Bytes()), 1)
+}
+
+func TestResumedImportRateCountsOnlyNewDocuments(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var output bytes.Buffer
+		capture := captureFixture(&output)
+		progress := captureProgress{Stage: "import", Unit: "documents", Total: 10, Completed: 8}
+		require.NoError(t, capture.emitProgress(progress))
+		time.Sleep(time.Minute)
+		require.NoError(t, capture.emitProgress(progress))
+		time.Sleep(time.Minute)
+		progress.Completed = 10
+		require.NoError(t, capture.emitProgress(progress))
+		events := capturedEvents(t, output.Bytes())
+		require.Len(t, events, 3)
+		for i, expected := range []struct{ completed, remaining, rate int }{{8, 2, 0}, {8, 2, 0}, {10, 0, 1}} {
+			var payload struct {
+				captureProgress
+				Rate float64 `json:"documents_per_minute"`
+			}
+			require.NoError(t, json.Unmarshal(events[i].Payload, &payload))
+			require.Equal(t, expected.completed, payload.Completed)
+			require.Equal(t, expected.remaining, payload.Remaining)
+			require.Equal(t, float64(expected.rate), payload.Rate)
+		}
+	})
 }
 
 func TestCapturePreservesNestedProviderLogsAndProtectsCredentials(t *testing.T) {

@@ -77,8 +77,9 @@ the dataset deadline interrupt the wait.
 
 Import progress and resource logs appear initially, every sixty seconds and at
 completion. Progress includes completed/failed/remaining documents and the
-average documents/minute. Resource records share the run identity and timestamp
-with progress: interval-averaged host CPU and I/O wait, available memory, disk
+average documents/minute for rows imported in the current invocation. Resource
+records share the run identity and timestamp with progress: interval-averaged
+host CPU and I/O wait, available memory, disk
 free, sampled container CPU/memory, and PostgreSQL active connections/lock waits.
 Container CPU is a sampled per-core percentage and can exceed 100%. Missing
 measurements have explicit unavailable reasons. Application pool wait counters
