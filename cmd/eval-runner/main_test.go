@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/correlation"
 	"github.com/markhuangai/dense-mem/internal/evalharness"
 	"github.com/markhuangai/dense-mem/internal/observability"
@@ -85,6 +86,50 @@ func TestCLIValidatesPinnedFixturesAndRejectsIncompleteSetup(t *testing.T) {
 	require.NotContains(t, console.String(), "provider-canary")
 	t.Setenv("RUNNER_ENVIRONMENT", "self-hosted")
 	require.ErrorContains(t, execute(t.Context(), []string{"validate", path}, logger, protector), "GitHub-hosted")
+
+	require.ErrorContains(t, execute(t.Context(), []string{"freeze-intake-proof", t.TempDir()}, logger, protector), "requires local Docker")
+	t.Setenv("GITHUB_ACTIONS", "")
+	require.ErrorIs(t, execute(t.Context(), []string{"freeze-intake-proof", t.TempDir()}, logger, protector), os.ErrNotExist)
+
+	localCheckout := t.TempDir()
+	registryFile := filepath.Join(localCheckout, "tests/eval/datasets.json")
+	require.NoError(t, os.MkdirAll(filepath.Dir(registryFile), 0700))
+	fixtureRegistry, err := os.ReadFile("tests/eval/fixtures/datasets.json")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(registryFile, fixtureRegistry, 0600))
+	t.Chdir(localCheckout)
+	t.Setenv("EVAL_SERVER_LOG_FILE", "")
+	manifest.SeedBuildID = "local-" + strings.Repeat("a", 32)
+	t.Setenv("EVAL_LOCAL_SEED_ID", manifest.SeedBuildID)
+	manifest.RunID, manifest.WorkflowRunID = manifest.SeedBuildID+"-hotpotqa", ""
+	manifest.Mode, manifest.Operation, manifest.ImportWorkers = "live", "prepare", 1
+	manifest.SeedImage = "ghcr.io/markhuangai/dense-mem-eval-postgres@sha256:" + strings.Repeat("c", 64)
+	manifest.SkipAISecurityReview = true
+	writeManifest()
+	admissionPath := filepath.Join(filepath.Dir(path), "seed-admission.json")
+	scopePath := filepath.Join(filepath.Dir(path), "seed-admission-scope.json")
+	require.ErrorIs(t, execute(t.Context(), []string{"validate", path}, logger, protector), os.ErrNotExist)
+	require.NoFileExists(t, admissionPath)
+	scope := evalharness.Scope{TeamID: uuid.NewString(), CredentialID: uuid.NewString(), OwnerID: uuid.NewString(), SpaceID: uuid.NewString()}
+	body, err := json.Marshal(scope)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(scopePath, body, 0600))
+	require.ErrorContains(t, execute(t.Context(), []string{"validate", path}, logger, protector), "incomplete public seed admission manifest")
+	require.NoFileExists(t, admissionPath)
+	scope.Generation = 1
+	body, err = json.Marshal(scope)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(scopePath, body, 0600))
+	require.NoError(t, execute(t.Context(), []string{"validate", path}, logger, protector))
+	admission, err := os.ReadFile(admissionPath)
+	require.NoError(t, err)
+	require.Contains(t, string(admission), scope.CredentialID)
+	require.Contains(t, string(admission), "eval:hotpotqa:row:0")
+
+	manifest.IntakeProof, manifest.Image = true, "sha256:"+strings.Repeat("e", 64)
+	manifest.DataDir = filepath.Join(root, "tests/eval/fixtures")
+	writeManifest()
+	require.ErrorIs(t, execute(t.Context(), []string{"validate", path}, logger, protector), os.ErrNotExist)
 }
 
 func TestBootstrapRejectsIncompleteSetupBeforeWritingScope(t *testing.T) {

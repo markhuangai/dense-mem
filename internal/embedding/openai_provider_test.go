@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -619,11 +620,37 @@ func TestOpenAIProvider_ClassifiesTruncatedResponseAsTransientNetworkFailure(t *
 		AIAPIURL: "http://embedding.test", AIAPIKey: "key", AIEmbeddingModel: "m", AIEmbeddingDimensions: 2,
 	}, client)
 
-	_, _, err := p.Embed(context.Background(), "truncated")
+	recorder := &embeddingExchangeRecorder{}
+	ctx := modelprovider.WithExchangeRecorder(t.Context(), recorder)
+	_, _, err := p.Embed(ctx, "truncated")
+	require.NotEmpty(t, recorder.exchanges)
+	for _, exchange := range recorder.exchanges {
+		require.Equal(t, modelprovider.NetworkInterruptedResponse, exchange.Outcome)
+		require.Equal(t, "interrupted", exchange.CaptureState)
+		require.Equal(t, http.StatusOK, exchange.StatusCode)
+	}
 	require.Error(t, err)
 	metadata := embeddingcontract.ClassifyFailure(err)
 	assert.Equal(t, "transient", metadata.Class)
 	assert.Equal(t, "provider_network_error", metadata.Code)
+}
+
+func TestOpenAIProviderRecordsConnectionResetWithoutResponse(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, syscall.ECONNRESET
+	})}
+	provider := NewOpenAIEmbeddingProvider(&config.Config{
+		AIAPIURL: "http://embedding.test", AIAPIKey: "key", AIEmbeddingModel: "m", AIEmbeddingDimensions: 2,
+	}, client)
+	recorder := &embeddingExchangeRecorder{}
+	_, _, err := provider.Embed(modelprovider.WithExchangeRecorder(t.Context(), recorder), "seed document")
+	require.Error(t, err)
+	require.NotEmpty(t, recorder.exchanges)
+	for _, exchange := range recorder.exchanges {
+		require.Equal(t, modelprovider.NetworkConnectionReset, exchange.Outcome)
+		require.Equal(t, "no_response", exchange.CaptureState)
+		require.Zero(t, exchange.StatusCode)
+	}
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)

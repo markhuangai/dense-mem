@@ -9,6 +9,8 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -146,6 +148,41 @@ func TestRunnerCampaignNativeMappingsFreezeAndRecall(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, mapping, replayed)
 	require.Equal(t, calls, f.provider.calls)
+
+	ordinary := f.manifest
+	ordinary.ImportWorkers, ordinary.OutputDir = 1, t.TempDir()
+	f.provider.failures = 2
+	withFailure := append([]evalharness.CorpusItem{{SourceDocID: "failed", Content: "The ordinary proof records this unavailable document."}}, corpus...)
+	require.NoError(t, evalharness.ObserveOrdinaryIntake(ctx, ordinary, withFailure, client, f.native))
+	type ordinaryOutcome struct {
+		SourceID string `json:"source_id"`
+		Outcome  string `json:"outcome"`
+		Attempts int    `json:"attempts"`
+	}
+	var report struct {
+		Expected int
+		Accepted int
+		Outcomes []ordinaryOutcome
+	}
+	reportPath := filepath.Join(ordinary.OutputDir, "ordinary-intake.json")
+	body, err := os.ReadFile(reportPath)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(body, &report))
+	require.Equal(t, 4, report.Expected)
+	require.Equal(t, 3, report.Accepted)
+	require.Equal(t, []ordinaryOutcome{
+		{SourceID: "failed", Outcome: "provider_unavailable", Attempts: 2},
+		{SourceID: "one", Outcome: "accepted", Attempts: 1},
+		{SourceID: "two", Outcome: "accepted", Attempts: 1},
+		{SourceID: "unjudged", Outcome: "accepted", Attempts: 1},
+	}, report.Outcomes)
+	require.Equal(t, calls+2, f.provider.calls, "accepted rows were replayed")
+
+	unwritable := ordinary
+	unwritable.OutputDir = filepath.Join(t.TempDir(), "missing")
+	require.ErrorIs(t, evalharness.ObserveOrdinaryIntake(ctx, unwritable, corpus, client, f.native), os.ErrNotExist)
+	ordinary.ImportWorkers = 0
+	require.ErrorContains(t, evalharness.ObserveOrdinaryIntake(ctx, ordinary, corpus, client, f.native), "import workers")
 	for _, change := range []func(*evalharness.Native){func(n *evalharness.Native) { n.Scope.OwnerID = uuid.NewString() }, func(n *evalharness.Native) { n.Scope.Generation++ }} {
 		wrong := *f.native
 		change(&wrong)
