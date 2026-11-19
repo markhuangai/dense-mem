@@ -53,6 +53,15 @@ func (c *Capture) emitProgress(progress captureProgress) error {
 	return c.Emit("progress", progress)
 }
 
+func (c *Capture) incomplete() bool {
+	if c == nil {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.failed
+}
+
 func NewRunnerCredentialProtector(configured ...string) *observability.CredentialProtector {
 	values := append([]string(nil), configured...)
 	for _, value := range configured {

@@ -47,6 +47,16 @@ func TestSeedValidationBindsSourcesCredentialsAndEmbeddingContract(t *testing.T)
 	require.NoError(t, seed.Validate(manifest, seed.Scope, 3), "a frozen ingestion seed can evaluate a different answer model")
 }
 
+func TestSeedValidationRequiresSkipProvenanceForIntakeProof(t *testing.T) {
+	seed, manifest := validSeedFixture(t)
+	seed.IntakeProof, manifest.IntakeProof = true, true
+	require.ErrorContains(t, seed.Validate(manifest, seed.Scope, 3), "AI security review provenance")
+	seed.AISecurityReview = "skipped"
+	require.NoError(t, seed.Validate(manifest, seed.Scope, 3))
+	seed.AISecurityReview = "unknown"
+	require.ErrorContains(t, seed.Validate(manifest, seed.Scope, 3), "AI security review provenance")
+}
+
 func TestSeedAdmissionManifestIsReadableByTheContainerUser(t *testing.T) {
 	directory := t.TempDir()
 	scopePath, manifestPath := filepath.Join(directory, "scope.json"), filepath.Join(directory, "seed-admission.json")

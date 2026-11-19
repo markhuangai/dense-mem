@@ -138,7 +138,8 @@ func TestRunnerSeedLogicalRestoreMigrationAndCredentialIdentity(t *testing.T) {
 	seed.DumpBytes = info.Size()
 	body, err := json.Marshal(seed)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(manifest.SeedDir, "seed.json"), body, 0600))
+	seedPath := filepath.Join(manifest.SeedDir, "seed.json")
+	require.NoError(t, os.WriteFile(seedPath, body, 0600))
 	target := "seed_restore_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	require.NoError(t, f.native.DB.PingContext(ctx))
 	_, err = f.native.DB.ExecContext(ctx, `CREATE DATABASE "`+target+`" TEMPLATE template0`)
@@ -194,6 +195,14 @@ func TestRunnerSeedLogicalRestoreMigrationAndCredentialIdentity(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, beforeCalls, f.provider.calls, "restoring and verifying a seed performs no Remember provider work")
 	require.Equal(t, seed.Scope, native.Scope)
+	claimedSkip := seed
+	claimedSkip.AISecurityReview = "skipped"
+	claimedBody, err := json.Marshal(claimedSkip)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(seedPath, claimedBody, 0600))
+	_, _, _, _, err = evalharness.VerifySeed(ctx, manifest, corpus, f.native.Client, &native)
+	require.ErrorContains(t, err, "seed assessment provenance differs")
+	require.NoError(t, os.WriteFile(seedPath, body, 0600))
 	require.NoError(t, storagepostgres.NewRLS().WithSystemTx(ctx, restored, func(tx *gorm.DB) error {
 		result := tx.Exec(`UPDATE search_documents SET document_text=document_text || ' incompatible restored seed' WHERE team_id=? AND search_state='current'`, native.Scope.TeamID)
 		require.Positive(t, result.RowsAffected)
@@ -213,14 +222,14 @@ func TestRunnerSeedLogicalRestoreMigrationAndCredentialIdentity(t *testing.T) {
 	seed.Dataset = "wrong-dataset"
 	body, err = json.Marshal(seed)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(manifest.SeedDir, "seed.json"), body, 0600))
+	require.NoError(t, os.WriteFile(seedPath, body, 0600))
 	_, _, _, _, err = evalharness.VerifySeed(ctx, manifest, corpus, f.native.Client, &native)
 	require.ErrorContains(t, err, "dataset")
 	seed.Dataset = manifest.Dataset
 	seed.Scope.OwnerID = uuid.NewString()
 	body, err = json.Marshal(seed)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(manifest.SeedDir, "seed.json"), body, 0600))
+	require.NoError(t, os.WriteFile(seedPath, body, 0600))
 	_, _, _, _, err = evalharness.VerifySeed(ctx, manifest, corpus, f.native.Client, &native)
 	require.ErrorContains(t, err, "scope differs")
 }

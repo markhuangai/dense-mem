@@ -30,6 +30,10 @@ func TestReadManifestValidatesExecutionPins(t *testing.T) {
 		{"source revision", "identity", func(m *Manifest) { m.SourceRevision = strings.Repeat("z", 40) }},
 		{"image digest", "identity", func(m *Manifest) { m.Image = "ghcr.io/markhuangai/dense-mem:latest" }},
 		{"public hosted preparation", "operation", func(m *Manifest) { m.Mode = "live" }},
+		{"hosted AI review skip", "skipping AI security review", func(m *Manifest) {
+			m.SkipAISecurityReview = true
+			m.SeedImage = "ghcr.io/markhuangai/dense-mem-eval-postgres@sha256:" + strings.Repeat("d", 64)
+		}},
 		{"mode", "mode", func(m *Manifest) { m.Mode = "local" }},
 		{"retired replay mode", "mode", func(m *Manifest) { m.Mode = "replay" }},
 		{"dataset ownership", "dataset job", func(m *Manifest) { m.Dataset = "musique" }},
@@ -108,6 +112,31 @@ func TestReadManifestPermitsOnlyPublicSeedOperationsLocally(t *testing.T) {
 			require.NoError(t, writeJSON(file, manifest))
 			_, err := ReadManifest(file)
 			require.ErrorContains(t, err, "local execution permits only public seed preparation and restore verification")
+		})
+	}
+
+	prepare := base
+	prepare.Operation, prepare.ImportWorkers, prepare.SkipAISecurityReview = "prepare", 20, true
+	prepare.SeedImage = "ghcr.io/markhuangai/dense-mem-eval-postgres@sha256:" + strings.Repeat("d", 64)
+	file := filepath.Join(t.TempDir(), "manifest.json")
+	require.NoError(t, writeJSON(file, prepare))
+	actual, err := ReadManifest(file)
+	require.NoError(t, err)
+	require.Equal(t, prepare, actual)
+	for _, tc := range []struct {
+		name   string
+		change func(*Manifest)
+	}{
+		{"bootstrap", func(m *Manifest) { m.Operation = "bootstrap" }},
+		{"restore verification", func(m *Manifest) { m.Operation, m.ImportWorkers = "verify-seed", 0 }},
+		{"unpinned bootstrap", func(m *Manifest) { m.SeedImage = "ghcr.io/markhuangai/dense-mem-eval-postgres:bootstrap-latest" }},
+	} {
+		t.Run("AI review skip during "+tc.name, func(t *testing.T) {
+			manifest := prepare
+			tc.change(&manifest)
+			require.NoError(t, writeJSON(file, manifest))
+			_, err := ReadManifest(file)
+			require.ErrorContains(t, err, "skipping AI security review requires preparation from a public seed bootstrap")
 		})
 	}
 }

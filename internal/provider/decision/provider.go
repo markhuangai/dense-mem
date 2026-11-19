@@ -228,13 +228,14 @@ func (p *Provider) call(ctx context.Context, batch batch, common []observability
 	exchange := modelprovider.ProviderExchange{Component: "decision", Model: p.config.Model, RequestBody: batch.body, RequestContentType: "application/json", StartedAt: started, CaptureState: "captured"}
 	defer func() {
 		exchange.CompletedAt = time.Now()
-		exchange.Outcome = "ok"
 		level := slog.LevelInfo
 		if err != nil {
-			if exchange.Outcome == "" || exchange.Outcome == "ok" {
+			if exchange.Outcome == "" {
 				exchange.Outcome = "error"
 			}
 			level = slog.LevelError
+		} else {
+			exchange.Outcome = "ok"
 		}
 		if exchange.StatusCode == http.StatusOK {
 			if receipt.Usage == nil {

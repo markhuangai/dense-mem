@@ -324,10 +324,10 @@ func (c *HTTPClient) importCorpusWithOutcomes(ctx context.Context, items []Corpu
 					jobs = append(jobs, job)
 				case err != nil:
 					failed++
-					if outcome == nil && first == nil {
+					if first == nil && (outcome == nil || c.Capture.incomplete()) {
 						first = err
+						stop()
 					}
-					stop()
 				default:
 					mergeKnowledgeMapping(&mapping, itemMapping)
 				}

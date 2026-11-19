@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -214,6 +215,77 @@ func TestImporterRetriesOnlyOneVerifiedTerminalFailureAndPreservesInput(t *testi
 			delete(inputs[0], "idempotency_key")
 			delete(inputs[1], "idempotency_key")
 			require.Equal(t, inputs[0], inputs[1])
+		})
+	}
+}
+
+func TestImportOutcomesContinueAfterRejectedRow(t *testing.T) {
+	items := []CorpusItem{{SourceDocID: "rejected", Content: "First public document."}, {SourceDocID: "accepted", Content: "Second public document."}}
+	for _, test := range []struct {
+		name                    string
+		observe, captureFailure bool
+		wantRequests            int
+	}{
+		{name: "seed import stops", wantRequests: 1},
+		{name: "ordinary proof observes both", observe: true, wantRequests: 2},
+		{name: "ordinary proof stops on lost capture", observe: true, captureFailure: true, wantRequests: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			requests := make(chan string, len(items))
+			level := new(slog.LevelVar)
+			level.Set(slog.LevelDebug)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var rpc struct {
+					Params struct{ Arguments map[string]any }
+				}
+				if err := json.NewDecoder(r.Body).Decode(&rpc); err != nil {
+					t.Error(err)
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				key, _ := rpc.Params.Arguments["idempotency_key"].(string)
+				requests <- key
+				failed := key == "eval:rejected"
+				var result map[string]any
+				if failed {
+					if test.captureFailure {
+						level.Set(slog.LevelInfo)
+					}
+					result = map[string]any{"errors": []any{map[string]any{"code": "submission_policy_rejected", "message": "Remember rejected this input."}}}
+				} else {
+					content := items[1].Content
+					result = map[string]any{"processing_state": "completed", "submission_id": uuid.NewString(), "evidence": []any{map[string]any{
+						"evidence_index": 0, "partition_index": 0, "source_item_id": uuid.NewString(), "occurrence_id": uuid.NewString(), "evidence_id": uuid.NewString(),
+						"span_start": 0, "span_end": len([]rune(content)), "content_hash": knowledge.EvidenceContentHash(content), "disposition": "stored",
+					}}}
+				}
+				if err := json.NewEncoder(w).Encode(map[string]any{"result": map[string]any{"isError": failed, "structuredContent": result}}); err != nil {
+					t.Error(err)
+				}
+			}))
+			defer server.Close()
+			client := &HTTPClient{BaseURL: server.URL, APIKey: "synthetic", Client: server.Client(), contractMode: contractModeEvidenceOnly}
+			if test.captureFailure {
+				client.Capture = &Capture{Logger: slog.New(slog.NewJSONHandler(io.Discard, &slog.HandlerOptions{Level: level})), Protector: NewRunnerCredentialProtector("synthetic")}
+			}
+			var observe func(corpusImportJob, error)
+			outcomes := map[string]error{}
+			if test.observe {
+				observe = func(job corpusImportJob, err error) { outcomes[job.item.SourceDocID] = err }
+			}
+			mapping, err := client.importCorpusWithOutcomes(t.Context(), items, 1, nil, observe)
+			require.Len(t, requests, test.wantRequests)
+			if test.wantRequests == 2 {
+				require.NoError(t, err)
+				require.Len(t, outcomes, 2)
+				require.ErrorContains(t, outcomes["rejected"], "Remember rejected this input.")
+				require.NoError(t, outcomes["accepted"])
+				require.NotContains(t, mapping.BySourceDocID, "rejected")
+				require.Contains(t, mapping.BySourceDocID, "accepted")
+			} else {
+				require.Error(t, err)
+				require.Empty(t, mapping.BySourceDocID)
+			}
 		})
 	}
 }
@@ -517,6 +589,7 @@ func TestImporterQueuesConfirmedNetworkFailuresWithTheSameRequest(t *testing.T) 
 		interrupted       bool
 		cancelWhileQueued bool
 		networkFailure    string
+		providerComponent string
 	}{
 		{name: "assessment 524 recovers on final allowed attempt", status: 524, failures: 5, attempts: 6, requeued: true},
 		{name: "assessment 504 exhausts five retries", status: 504, failures: 6, attempts: 6, requeued: true},
@@ -524,8 +597,8 @@ func TestImporterQueuesConfirmedNetworkFailuresWithTheSameRequest(t *testing.T) 
 		{name: "direct 504 with interrupted body recovers", status: 504, failures: 1, attempts: 2, requeued: true, direct: true, interrupted: true},
 		{name: "assessment 502 uses the network retry budget", status: 502, failures: 5, attempts: 6, requeued: true},
 		{name: "direct 503 uses the network retry budget", status: 503, failures: 1, attempts: 2, requeued: true, direct: true},
-		{name: "provider reset uses the network retry budget", networkFailure: modelprovider.NetworkConnectionReset, failures: 5, attempts: 6, requeued: true},
-		{name: "provider interrupted response uses the network retry budget", status: 200, networkFailure: modelprovider.NetworkInterruptedResponse, failures: 2, attempts: 3, requeued: true},
+		{name: "Decision connection reset uses the network retry budget", providerComponent: "decision", networkFailure: modelprovider.NetworkConnectionReset, failures: 5, attempts: 6, requeued: true},
+		{name: "Decision interrupted response uses the network retry budget", providerComponent: "decision", status: 200, networkFailure: modelprovider.NetworkInterruptedResponse, failures: 2, attempts: 3, requeued: true},
 		{name: "final 500 supersedes earlier timeout", status: 500, failures: 6, attempts: 2},
 		{name: "foreign diagnostics cannot extend retries", status: 524, failures: 6, attempts: 2, foreign: true},
 		{name: "cancellation leaves the timeout queued", status: 524, failures: 1, attempts: 1, requeued: true, cancelWhileQueued: true},
@@ -538,6 +611,7 @@ func TestImporterQueuesConfirmedNetworkFailuresWithTheSameRequest(t *testing.T) 
 			if scenario.foreign {
 				diagnosticTeamID = uuid.NewString()
 			}
+			component := firstNonEmpty(scenario.providerComponent, "assessor")
 			const canary = "private-response-canary"
 			corpus := []CorpusItem{{SourceDocID: "slow", Content: "Keep this exact."}, {SourceDocID: "ready", Content: "Ready to store."}}
 			var requests []map[string]any
@@ -553,7 +627,7 @@ func TestImporterQueuesConfirmedNetworkFailuresWithTheSameRequest(t *testing.T) 
 						"outcome": "failed", "failed_phase": "assessment", "error_code": "provider_unavailable", "retryable": true,
 						"diagnostics": map[string]any{"provider_exchanges": []map[string]any{
 							{"component": "assessor", "status_code": 524},
-							{"component": "assessor", "status_code": scenario.status, "outcome": scenario.networkFailure, "response_body": canary},
+							{"component": component, "status_code": scenario.status, "outcome": scenario.networkFailure, "response_body": canary},
 						}},
 					}}))
 					return
