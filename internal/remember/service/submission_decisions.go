@@ -73,7 +73,14 @@ func routeSubmissionDecisionTasks(ctx context.Context, provider modelprovider.De
 		result, err = provider.Decide(ctx, decisionRequest)
 		if err != nil {
 			if !allowDeduplication && errors.Is(err, modelprovider.ErrDecisionInputBudgetExceeded) {
-				return nil, fmt.Errorf("%w: %w", ErrRememberInputBudgetExceeded, err)
+				details := map[string]any{"component": "remember.intake_review", "client_controlled": true}
+				var budget *modelprovider.DecisionInputBudgetError
+				if errors.As(err, &budget) {
+					details["unit"], details["observed"], details["limit"] = "tokens", budget.Observed, budget.Limit
+				}
+				return nil, &submissionDiagnosticFailure{
+					cause: fmt.Errorf("%w: %w", ErrRememberInputBudgetExceeded, err), reason: "decision_input_budget_exceeded", details: details,
+				}
 			}
 			return nil, fmt.Errorf("%w: typed assessment failed: %w", ErrRememberProviderUnavailable, err)
 		}

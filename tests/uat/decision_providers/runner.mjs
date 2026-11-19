@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
+import { progressCall } from "../synchronous_write/cases/progress.mjs";
 import { remember as rememberWithRetry, callTool } from "./rpc.mjs";
 
 const userURL = required("DENSE_MEM_USER_URL");
@@ -13,6 +14,7 @@ const fixtureURL = "http://synchronous-write-provider:8787";
 const prefix = `Decision (${randomUUID().slice(0, 8)})`;
 let childID = "";
 const childName = `${project.slice(0, 35)}-decision-jev-${randomUUID().slice(0, 8)}`;
+const typeSafeQuestionBudget = 2048;
 let completed = false;
 
 try {
@@ -63,7 +65,17 @@ try {
     }
   }
   await fixture("regenerate");
-  assert.equal((await remember(userURL, "Regenerate")).result.processing_state, "completed");
+  const regenerated = await progressCall({
+    apiKey, token: JSON.stringify(randomUUID()),
+    args: { target_space: "team_shared", idempotency_key: `decision-${randomUUID()}`, evidence: [{ content: `${prefix} Regenerate uses PostgreSQL.`, source_type: "manual" }] },
+  });
+  assert.equal(regenerated.terminal.result.structuredContent.processing_state, "completed");
+  const progress = regenerated.progress.map((frame) => frame.params.message);
+  const decisionCall = progress.findIndex((stage) => stage.startsWith("Calling intake security provider"));
+  const regeneration = progress.findIndex((stage) => stage.startsWith("Regenerating intake security provider response"));
+  const partitioning = progress.findIndex((stage) => stage.startsWith("Partitioning submitted text"));
+  assert(decisionCall >= 0 && regeneration > decisionCall && partitioning > regeneration,
+    "the initial request and regeneration must reach the client before partitioning");
   await fixture("uncertain");
   const beforeUncertain = (await getJSON(`${fixtureURL}/health`)).chat_requests.length;
   assert.equal((await remember(userURL, "Uncertain")).result.processing_state, "completed");
@@ -110,10 +122,27 @@ try {
   assert.equal(typesafe.effective.provider.provider, "typesafe");
   assert.equal(typesafe.effective.preferences.security_review, false, "saved off survives provider change and process startup");
   await control(typesafeControl, [{ key: "DECISION_SECURITY_REVIEW_ENABLED", value: "true" }]);
-  const jev = await remember(`http://${childName}:8080`, "TypeSafe");
+  const typesafeUser = `http://${childName}:8080`;
+  const jev = await remember(typesafeUser, "TypeSafe");
   assert.equal(jev.result.processing_state, "completed");
-  await rpc(`http://${childName}:8080`, "recall_memory", { query: `${prefix} TypeSafe`, limit: 2 });
-  await verifyReranking(`http://${childName}:8080`, "typesafe");
+  const beforeBudget = (await fixture()).exchanges.length;
+  const oversized = await callTool(typesafeUser, apiKey, "remember", {
+    target_space: "team_shared", idempotency_key: `decision-${randomUUID()}`,
+    evidence: [{ content: "These notes list one two three four five six seven eight nine ten. ".repeat(220), source_type: "manual" }],
+  });
+  assert.equal(oversized.isError, true);
+  const budget = oversized.receipt.errors[0];
+  assert.equal(budget.code, "input_budget_exceeded");
+  assert.equal(budget.reason_code, "decision_input_budget_exceeded");
+  assert.equal(budget.next_action, "resubmit_remember");
+  assert.equal(budget.details.client_controlled, true);
+  assert.equal(budget.details.unit, "tokens");
+  assert.equal(budget.details.limit, typeSafeQuestionBudget);
+  assert(budget.details.observed > budget.details.limit);
+  assert.equal((await fixture()).exchanges.length, beforeBudget, "preflight rejects the request before Decision API dispatch");
+  assert(oversized.receipt.evidence.every((item) => item.disposition === "not_stored"));
+  await rpc(typesafeUser, "recall_memory", { query: `${prefix} TypeSafe`, limit: 2 });
+  await verifyReranking(typesafeUser, "typesafe");
   const exchanges = (await fixture()).exchanges;
   assert(exchanges.some((item) => item.vendor === "openai"));
   assert(exchanges.some((item) => item.vendor === "typesafe"));
@@ -154,6 +183,7 @@ function createTypeSafeInstance() {
   const environment = new Map(source.Config.Env.map((entry) => { const index = entry.indexOf("="); return [entry.slice(0,index),entry.slice(index+1)]; }));
   environment.set("AI_DECISION_PROVIDER", "typesafe");
   environment.set("AI_DECISION_MODEL", "jev-1.14.0");
+  environment.set("AI_DECISION_MAX_QUESTION_INPUT_TOKENS", String(typeSafeQuestionBudget));
   assert(environment.get("POSTGRES_HOST") || environment.get("POSTGRES_DSN"), "private database configuration is required");
   assert(environment.get("CONTROL_PORTAL_TOKEN"), "private control configuration is required");
   assert(environment.get("AI_API_EMBEDDING_MODEL") && environment.get("AI_API_EMBEDDING_DIMENSIONS"), "embedding configuration is required");

@@ -141,6 +141,10 @@ func TestPackingPreservesGroupsAndExactSerializedLimits(t *testing.T) {
 				if !errors.Is(err, modelprovider.ErrDecisionInputBudgetExceeded) {
 					t.Fatalf("single group over %s limit must return an input-budget error: %v", bound, err)
 				}
+				var measured *modelprovider.DecisionInputBudgetError
+				if !errors.As(err, &measured) || measured.Limit != 1 || measured.Observed <= measured.Limit {
+					t.Fatalf("single group over %s limit must retain the measured token counts: %v", bound, err)
+				}
 			})
 		}
 	}

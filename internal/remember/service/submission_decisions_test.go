@@ -69,6 +69,29 @@ func TestRememberIntakeSecurityAndDeduplicationUseDifferentInputs(t *testing.T) 
 	require.Len(t, final.Stages, 2)
 }
 
+func TestRememberIntakeDecisionBudgetUsesMeasuredClientGuidance(t *testing.T) {
+	_, settings := decisionRoutingFixture()
+	partition := assessor.PreparePartitionRequest("whole-document-review", []string{"The PostgreSQL notes describe the current storage layout."})
+	budget := &modelprovider.DecisionInputBudgetError{Scope: "request", Observed: 1540, Limit: 1024}
+	provider := decisionFunction(func(context.Context, modelprovider.DecisionRequest) (modelprovider.DecisionResult, error) {
+		return modelprovider.DecisionResult{}, &modelprovider.ProviderError{FailureClass: modelprovider.ProviderFailureClassRequestInvalid, Cause: budget}
+	})
+
+	_, err := RouteRememberIntakeSecurity(t.Context(), provider, settings, partition, nil)
+	require.ErrorIs(t, err, ErrRememberInputBudgetExceeded)
+	require.ErrorIs(t, err, modelprovider.ErrDecisionInputBudgetExceeded)
+	reason, details := RememberFailureDetails(err, "assessment")
+	require.Equal(t, "decision_input_budget_exceeded", reason)
+	require.Equal(t, map[string]any{
+		"component": "remember.intake_review", "client_controlled": true, "unit": "tokens",
+		"observed": 1540, "limit": 1024,
+	}, details)
+	status := TerminalStatusErrorWithDetails(TerminalErrorInputBudgetExceeded, reason, details)
+	require.Equal(t, string(TerminalNextActionResubmitRemember), status.NextAction)
+	require.Contains(t, status.Message, "observed 1540 tokens, allowed 1024")
+	require.NoError(t, ValidateTerminalStatusError(status))
+}
+
 func TestTypedSubmissionPolicyProbabilityGates(t *testing.T) {
 	for _, test := range []struct {
 		name                  string

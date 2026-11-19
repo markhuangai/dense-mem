@@ -13,6 +13,18 @@ import (
 
 var ErrDecisionInputBudgetExceeded = errors.New("decision input budget exceeded")
 
+type DecisionInputBudgetError struct {
+	Scope    string
+	Observed int
+	Limit    int
+}
+
+func (e *DecisionInputBudgetError) Error() string {
+	return fmt.Sprintf("%s: estimated %s tokens %d exceed %d", ErrDecisionInputBudgetExceeded, e.Scope, e.Observed, e.Limit)
+}
+
+func (e *DecisionInputBudgetError) Unwrap() error { return ErrDecisionInputBudgetExceeded }
+
 type DecisionKind string
 
 const (

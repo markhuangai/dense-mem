@@ -49,6 +49,59 @@ test("seed registry resolves image manifests and published indexes without treat
   await assert.rejects(resolveSeedImage(reference, {}), /could not be resolved/);
 });
 
+test("seed publication protects dated tags and verifies each push and alias digest", async (t) => {
+  const selected = seedBuildVersion("v2.8.1-rc.5", new Date("2026-11-17T04:26:41.183Z"));
+  const dated = seedReference("hotpotqa", selected);
+  const latest = seedReference("hotpotqa");
+  const digest = `sha256:${"a".repeat(64)}`;
+  const collision = ["resolve:dated"];
+  const validationAfterBuild = [...collision, "build", "validate"];
+  const validationBeforeAlias = [...validationAfterBuild, "push:dated", "resolve:dated", "tag:latest", "validate"];
+  const published = [...validationBeforeAlias, "push:latest", "resolve:latest"];
+  for (const scenario of [
+    { name: "existing dated tag", existing: true, error: /already exists/, expected: collision },
+    { name: "validation changes during build", rejectGate: 1, error: /stale validation/, expected: validationAfterBuild },
+    { name: "validation changes after dated publication", rejectGate: 2, error: /stale validation/, expected: validationBeforeAlias },
+    { name: "alias digest differs", aliasDigest: `sha256:${"b".repeat(64)}`, error: /latest alias differs/, expected: published },
+    { name: "both tags resolve to the verified digest", expected: published },
+  ]) {
+    await t.test(scenario.name, async (t) => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "seed-publish-"));
+      t.after(() => fs.rmSync(directory, { recursive: true }));
+      for (const file of ["database.dump", "seed.json", "mapping.json", "NOTICE.md"]) fs.writeFileSync(path.join(directory, file), "{}");
+      const events = [];
+      const manifests = new Map(scenario.existing ? [[dated, digest]] : []);
+      const label = (ref) => ref === dated ? "dated" : "latest";
+      t.mock.method(globalThis, "fetch", async (url, options) => {
+        const route = new URL(url).pathname;
+        if (route === "/token") return Response.json({ token: "registry-test-token" });
+        assert.equal(options.method, "HEAD");
+        const ref = [dated, latest].find((item) => route.endsWith("/manifests/" + item.split(":").at(-1)));
+        assert(ref, "only the tested dataset tags may be resolved");
+        events.push("resolve:" + label(ref));
+        const hash = manifests.get(ref);
+        return hash ? new Response(null, { headers: { "Docker-Content-Digest": hash } }) : new Response(null, { status: 404 });
+      });
+      const docker = (args) => {
+        if (args[0] === "build") { events.push("build"); return; }
+        const ref = args.at(-1);
+        assert([dated, latest].includes(ref));
+        events.push(args[0] + ":" + label(ref));
+        if (args[0] === "push") manifests.set(ref, ref === latest ? (scenario.aliasDigest || digest) : digest);
+      };
+      let gateCalls = 0;
+      const validate = async () => {
+        events.push("validate");
+        if (++gateCalls === scenario.rejectGate) throw new Error("stale validation");
+      };
+      const result = publishSeed(docker, directory, "hotpotqa", selected, {}, validate);
+      if (scenario.error) await assert.rejects(result, scenario.error);
+      else assert.equal(await result, dated.split(":")[0] + "@" + digest);
+      assert.deepEqual(events, scenario.expected);
+    });
+  }
+});
+
 test("local seed arguments default to every dataset with twenty workers", () => {
   const all = registry.datasets.map(({ id }) => id);
   assert.deepEqual(localSeedRequest([], registry), { pr: undefined, dataset: all, workers: 20, skipAISecurityReview: false });
