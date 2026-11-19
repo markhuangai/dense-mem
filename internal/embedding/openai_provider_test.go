@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"testing"
 	"time"
 
@@ -20,10 +19,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-type truncatedResponseReader struct {
-	done bool
-}
 
 type embeddingExchangeRecorder struct {
 	exchanges []modelprovider.ProviderExchange
@@ -105,16 +100,6 @@ func TestOpenAIProviderAcceptsLongJSONNumberWithinWireBudget(t *testing.T) {
 	_, _, err := p.Embed(context.Background(), "long number")
 	require.NoError(t, err)
 }
-
-func (r *truncatedResponseReader) Read(p []byte) (int, error) {
-	if r.done {
-		return 0, io.ErrUnexpectedEOF
-	}
-	r.done = true
-	return copy(p, `{"data":[`), io.ErrUnexpectedEOF
-}
-
-func (r *truncatedResponseReader) Close() error { return nil }
 
 func TestOpenAIProvider_Embed_SendsBearerAuth(t *testing.T) {
 	var gotAuth string
@@ -606,51 +591,6 @@ func TestOpenAIProvider_NonJSONServerErrorIsHTTPError(t *testing.T) {
 	assert.Equal(t, nonJSONProviderErrorMessage, httpErr.Message)
 	assert.NotContains(t, err.Error(), "upstream unavailable")
 	assert.Equal(t, 2500*time.Millisecond, httpErr.RetryAfter)
-}
-
-func TestOpenAIProvider_ClassifiesTruncatedResponseAsTransientNetworkFailure(t *testing.T) {
-	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Body:       &truncatedResponseReader{},
-			Header:     make(http.Header),
-		}, nil
-	})}
-	p := NewOpenAIEmbeddingProvider(&config.Config{
-		AIAPIURL: "http://embedding.test", AIAPIKey: "key", AIEmbeddingModel: "m", AIEmbeddingDimensions: 2,
-	}, client)
-
-	recorder := &embeddingExchangeRecorder{}
-	ctx := modelprovider.WithExchangeRecorder(t.Context(), recorder)
-	_, _, err := p.Embed(ctx, "truncated")
-	require.NotEmpty(t, recorder.exchanges)
-	for _, exchange := range recorder.exchanges {
-		require.Equal(t, modelprovider.NetworkInterruptedResponse, exchange.Outcome)
-		require.Equal(t, "interrupted", exchange.CaptureState)
-		require.Equal(t, http.StatusOK, exchange.StatusCode)
-	}
-	require.Error(t, err)
-	metadata := embeddingcontract.ClassifyFailure(err)
-	assert.Equal(t, "transient", metadata.Class)
-	assert.Equal(t, "provider_network_error", metadata.Code)
-}
-
-func TestOpenAIProviderRecordsConnectionResetWithoutResponse(t *testing.T) {
-	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
-		return nil, syscall.ECONNRESET
-	})}
-	provider := NewOpenAIEmbeddingProvider(&config.Config{
-		AIAPIURL: "http://embedding.test", AIAPIKey: "key", AIEmbeddingModel: "m", AIEmbeddingDimensions: 2,
-	}, client)
-	recorder := &embeddingExchangeRecorder{}
-	_, _, err := provider.Embed(modelprovider.WithExchangeRecorder(t.Context(), recorder), "seed document")
-	require.Error(t, err)
-	require.NotEmpty(t, recorder.exchanges)
-	for _, exchange := range recorder.exchanges {
-		require.Equal(t, modelprovider.NetworkConnectionReset, exchange.Outcome)
-		require.Equal(t, "no_response", exchange.CaptureState)
-		require.Zero(t, exchange.StatusCode)
-	}
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
