@@ -23,8 +23,13 @@ try {
   assert.deepEqual(initial.effective.effective, { deduplication: true, security_review: true, conflict_review: true, recall_reranking: true });
   assert(initial.items.every((item) => item.source === "default"));
   assert(!JSON.stringify(initial).includes("dense-mem-e2e-decision-key"));
+  const beforeNormal = (await getJSON(`${fixtureURL}/health`)).chat_requests.length;
   const stored = await remember(userURL, "Normal");
   assert.equal(stored.result.processing_state, "completed");
+  const normalCalls = (await getJSON(`${fixtureURL}/health`)).chat_requests.slice(beforeNormal);
+  const normalPartitions = normalCalls.filter((call) => call.schema_name === "dense_mem_semantic_partition_response");
+  assert(normalPartitions.length > 0 && normalPartitions.every((call) => !call.generated_fields.includes("evidence_security_results")),
+    "a clear Decision verdict must omit security fields from partitioning");
   const consoleLogs = spawnSync("docker", ["compose", "-p", project, "-f", compose, "logs", "--no-color", "server"], { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
   assert.equal(consoleLogs.status, 0, "decision console log collection must succeed");
   const consoleText = `${consoleLogs.stdout}\n${consoleLogs.stderr}`;
@@ -38,7 +43,7 @@ try {
   for (const direction of ["request", "response"]) {
     assert(consoleRecords.some((record) => record.msg === "decision.exchange.payload" && record.level === "DEBUG" && record.direction === direction && record.payload_chunk?.state === "captured"), `decision ${direction} payloads must reach console DEBUG logs`);
   }
-  const generated = (await getJSON(`${fixtureURL}/health`)).chat_requests.at(-1).generated_fields;
+  const generated = normalCalls.findLast((call) => call.schema_name === "dense_mem_evidence_assessment_response").generated_fields;
   assert(!generated.includes("evidence_security_results"));
   assert(!generated.includes("evidence_equivalence_results"));
   const count = (await fixture()).exchanges.length;
