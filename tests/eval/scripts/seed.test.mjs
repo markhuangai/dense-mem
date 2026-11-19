@@ -5,7 +5,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 import imagePolicy from "../../../.github/scripts/image-release-policy.cjs";
-import { seedBuildRequest, seedReference, seedBuildVersion, seedMetadata, verifySeedFiles, sealSeed, hashFile, resolveSeedBuildSource, requireSeedBuildValidation, remainingSeedRestoreEntries, resolveSeedImage } from "../../../.github/scripts/evaluation-seeds.mjs";
+import { seedBuildRequest, seedReference, seedBuildVersion, seedMetadata, verifySeedFiles, sealSeed, hashFile, resolveSeedBuildSource, requireSeedBuildValidation, remainingSeedRestoreEntries, resolveSeedImage, publishSeed } from "../../../.github/scripts/evaluation-seeds.mjs";
 import { location, setup } from "./workflow.mjs";
 import { localSeedRequest } from "./local-seeds.mjs";
 import { readWorkflow, workflowJob } from "../../uat/workflow_helpers.mjs";
@@ -51,9 +51,9 @@ test("seed registry resolves image manifests and published indexes without treat
 
 test("local seed arguments default to every dataset with twenty workers", () => {
   const all = registry.datasets.map(({ id }) => id);
-  assert.deepEqual(localSeedRequest([], registry), { pr: undefined, dataset: all, workers: 20 });
-  assert.deepEqual(localSeedRequest(["--pr", "777"], registry), { pr: 777, dataset: all, workers: 20 });
-  assert.deepEqual(localSeedRequest(["--pr", "777", "--dataset", "hotpotqa", "--workers", "40"], registry), { pr: 777, dataset: ["hotpotqa"], workers: 40 });
+  assert.deepEqual(localSeedRequest([], registry), { pr: undefined, dataset: all, workers: 20, skipAISecurityReview: false });
+  assert.deepEqual(localSeedRequest(["--pr", "777"], registry), { pr: 777, dataset: all, workers: 20, skipAISecurityReview: false });
+  assert.deepEqual(localSeedRequest(["--pr", "777", "--dataset", "hotpotqa", "--workers", "40", "--skip-ai-security-check"], registry), { pr: 777, dataset: ["hotpotqa"], workers: 40, skipAISecurityReview: true });
   for (const args of [["--pr", "0"], ["--pr", "1.5"], ["--pr", "9007199254740992"], ["--workers", "0"], ["--workers", "101"], ["--dataset", "fixtures"], ["--mode", "live"]]) {
     assert.throws(() => localSeedRequest(args, registry));
   }
@@ -178,6 +178,12 @@ test("seed checks bind public source counts, scope and real file checksums", asy
   fs.writeFileSync(path.join(directory, "seed.json"), JSON.stringify(metadata));
   const sealed = await sealSeed(directory);
   assert.deepEqual(await verifySeedFiles(directory, "hotpotqa", registryHash, 9811), sealed);
+  const proof = { ...sealed, intake_proof: true, ai_security_review: "skipped", corpus_rows: 20 };
+  fs.writeFileSync(path.join(directory, "seed.json"), JSON.stringify(proof));
+  assert.deepEqual(await verifySeedFiles(directory, "hotpotqa", registryHash, 20, { intakeProof: true }), proof);
+  await assert.rejects(verifySeedFiles(directory, "hotpotqa", registryHash, 20), /export kind/);
+  await assert.rejects(publishSeed(() => assert.fail("Docker spent work on a private proof"), directory, "hotpotqa", "latest", {}, async () => {}), /proof exports cannot be published/);
+  fs.writeFileSync(path.join(directory, "seed.json"), JSON.stringify(sealed));
   for (const changed of [{ ...sealed, dataset: "musique" }, { ...sealed, corpus_rows: 9810 }, { ...sealed, embedding_dimensions: 1024 }, { ...sealed, dump_sha256: "" }]) assert.throws(() => seedMetadata(changed, "hotpotqa", registryHash, 9811));
   fs.appendFileSync(path.join(directory, "database.dump"), "corruption");
   await assert.rejects(verifySeedFiles(directory, "hotpotqa", registryHash, 9811), /checksum or size/);

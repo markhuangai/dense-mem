@@ -1,16 +1,12 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
-import { once } from "node:events";
 import fs from "node:fs";
-import { createServer } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import imagePolicy from "../../../.github/scripts/image-release-policy.cjs";
 import { resolveSetting, resolveImportWorkers, requireEvaluationImportSupport, configuration, requireRunner, registryMatrix, aggregate, ownedResource, manualEvaluationRequest, resolveEvaluationImage, sha256 } from "../../../.github/scripts/evaluation-policy.mjs";
 import { readWorkflow, workflowJob, runStep } from "../../uat/workflow_helpers.mjs";
-import { serverEnvironment, databaseCapacity, startupTimings, control, main, intakeFailureRecords } from "./workflow.mjs";
-import { intakeReceiptOutcome, measureIntakeCase, measureIntakeCases } from "./intake-comparison.mjs";
+import { serverEnvironment, databaseCapacity, startupTimings, control, main } from "./workflow.mjs";
 
 const registry = JSON.parse(fs.readFileSync(new URL("../datasets.json", import.meta.url)));
 const valid = { DENSE_MEM_EVAL_MODEL: "configured-model", DENSE_MEM_EVAL_CONTEXT_WINDOW_TOKENS: "300000", DENSE_MEM_EVAL_IMPORT_WORKERS: "10", DENSE_MEM_EVAL_VERIFIER_URL: "https://provider.example/v1", DENSE_MEM_EVAL_EMBED_URL: "https://api.openai.com/v1", DENSE_MEM_EVAL_API_KEY: "generation-canary", DENSE_MEM_EVAL_EMBED_API_KEY: "embedding-canary", WORKFLOW_EMBEDDING_MODEL: "text-embedding-3-small", WORKFLOW_EMBEDDING_DIMENSIONS: "1536" };
@@ -37,6 +33,12 @@ test("evaluation requires an image supporting configurable import admission", ()
     if (marker === "configurable") assert.doesNotThrow(() => requireEvaluationImportSupport(inspected));
     else assert.throws(() => requireEvaluationImportSupport(inspected), /newer.*image/i);
   }
+  const inspected = structuredClone(inspectedImage);
+  const labels = inspected.Config.Labels;
+  labels["io.dense-mem.postgres-advisory-lock-concurrency"] = "configurable";
+  assert.throws(() => requireEvaluationImportSupport(inspected, { skipAISecurityReview: true }), /locked public seed admission/);
+  labels["io.dense-mem.public-seed-admission"] = "locked-requests-v1";
+  assert.doesNotThrow(() => requireEvaluationImportSupport(inspected, { skipAISecurityReview: true }));
 });
 
 test("manual evaluation needs only an image and defaults to the full benchmark", () => {
@@ -149,7 +151,10 @@ test("own-PR evaluation executes authorization against the publishing attempt af
     outputs = {};
     return execute(github, context, { setOutput: (key, value) => { outputs[key] = value; } }, (file) => { assert.equal(file, "./.ci-policy/.github/scripts/image-release-policy.cjs"); return imagePolicy; }, { env });
   };
-  for (const mode of ["fixtures", "live", "intake"]) { env.INPUT_EVALUATION = mode; await run(); assert.equal(outputs.image, pinnedImage); }
+  for (const mode of ["fixtures", "live"]) { env.INPUT_EVALUATION = mode; await run(); assert.equal(outputs.image, pinnedImage); }
+  env.INPUT_EVALUATION = "intake";
+  await assert.rejects(run(), /invalid evaluation mode/);
+  env.INPUT_EVALUATION = "live";
   latest.run_attempt = 1; latest.conclusion = "success"; await run();
   latest.run_attempt = 2;
   for (const change of [{ conclusion: "failure" }, { conclusion: null }]) {
@@ -168,200 +173,6 @@ test("own-PR evaluation executes authorization against the publishing attempt af
   await assert.rejects(run(), /preview receipt is missing/); comments[0].body = imagePolicy.formatPreviewReceipt(receipt, target);
   env.INPUT_EVALUATION = "none"; latest.conclusion = "failure";
   await run(); assert.equal(outputs.image, pinnedImage);
-});
-
-test("intake comparison requires terminal status and complete exact Unicode partition coverage", () => {
-  const pieces = ["Ａ😀. ", "第二句。"];
-  const content = pieces.join("");
-  const sourceID = "d0cd0251-452e-482b-a323-256ecea94a38";
-  const secondID = "40c59bc6-ebd7-4827-ab99-edb944979b72";
-  const boundary = Array.from(pieces[0]).length;
-  const result = { isError: false, receipt: { processing_state: "completed", search_state: "current",
-    evidence: pieces.map((piece, index) => ({
-      disposition: "stored", evidence_index: 0, partition_index: index, span_start: index ? boundary : 0,
-      span_end: index ? Array.from(content).length : boundary, source_item_id: sourceID,
-      evidence_id: index ? secondID : sourceID, occurrence_id: index ? secondID : sourceID, content_hash: "sha256:" + sha256(piece),
-    })),
-  } };
-  assert.equal(intakeReceiptOutcome(result, content), "accepted");
-  for (const evidence of [[], result.receipt.evidence.slice(0, 1),
-    [result.receipt.evidence[0], { ...result.receipt.evidence[1], span_start: boundary + 1 }],
-    [result.receipt.evidence[0], { ...result.receipt.evidence[1], content_hash: "wrong" }],
-  ]) {
-    assert.equal(intakeReceiptOutcome({ ...result, receipt: { ...result.receipt, evidence } }, content), "evidence_mismatch");
-  }
-  assert.notEqual(intakeReceiptOutcome({ ...result, isError: true }, content), "accepted");
-  const rejected = { processing_state: "failed", errors: [{ code: "submission_policy_rejected", details: { component: "remember.initial_scan" } }] };
-  assert.equal(intakeReceiptOutcome({ isError: true, receipt: rejected }, content), "initial_scan");
-  assert.notEqual(intakeReceiptOutcome({ isError: false, receipt: rejected }, content), "initial_scan");
-  assert.notEqual(intakeReceiptOutcome({ isError: true, receipt: { ...rejected, processing_state: "completed" } }, content), "initial_scan");
-});
-
-test("intake work stays at four concurrent cases and retains all results in source order", async () => {
-  const cases = Array.from({ length: 9 }, (_, index) => ({ index }));
-  const release = new Map();
-  let results;
-  const work = measureIntakeCases(cases, new AbortController().signal, ({ item, index }, _signal, publishCase) => new Promise((resolve) => {
-    release.set(index, () => { publishCase(item); resolve(); });
-  }), (update) => { results = update; });
-  assert.deepEqual([...release.keys()], [0, 1, 2, 3]);
-  release.get(3)();
-  await Promise.resolve();
-  assert.deepEqual([...release.keys()], [0, 1, 2, 3, 4]);
-  for (const index of [0, 4, 1, 2, 8, 7, 6, 5]) {
-    release.get(index)();
-    await Promise.resolve();
-  }
-  await work;
-  assert.deepEqual(results, cases);
-});
-
-test("intake work stops starting cases at the deadline and publishes the in-flight outcomes", async () => {
-  const controller = new AbortController();
-  const started = [];
-  let results;
-  const work = measureIntakeCases([0, 1, 2, 3, 4], controller.signal, ({ item }, signal, publishCase) => new Promise((resolve) => {
-    started.push(item);
-    signal.addEventListener("abort", () => { publishCase({ item, actual: "deadline_expired" }); resolve(); }, { once: true });
-  }), (update) => { results = update; });
-  controller.abort(new Error("deadline"));
-  await assert.rejects(work, /deadline/);
-  assert.deepEqual(started, [0, 1, 2, 3]);
-  assert.deepEqual(results, started.map((item) => ({ item, actual: "deadline_expired" })));
-});
-
-test("intake work publishes a case outcome while its optional failure capture is pending", async () => {
-  let finishCapture, results;
-  const failure = { case: "fixture-case", actual: "provider_response_invalid", protected_failure_log: "unavailable" };
-  const work = measureIntakeCases([failure], new AbortController().signal, async ({ item }, _signal, publishCase) => {
-    publishCase(item);
-    await new Promise((resolve) => { finishCapture = resolve; });
-    publishCase({ ...item, protected_failure_log: "captured" });
-  }, (update) => { results = update; });
-  assert.deepEqual(results, [failure]);
-  finishCapture();
-  await work;
-  assert.deepEqual(results, [{ ...failure, protected_failure_log: "captured" }]);
-});
-
-test("intake timeout retries wait behind cases already queued and honor cancellation", async () => {
-  for (const cancelQueued of [false, true]) {
-    const controller = new AbortController();
-    const starts = [];
-    const cases = [0, 1, 2, 3, 4, 5, 6];
-    const work = measureIntakeCases(cases, controller.signal, async ({ item, attempt }, signal) => {
-      starts.push([item, attempt]);
-      if (item === 0 && attempt === 1) return true;
-      if (item === 6 && cancelQueued) controller.abort(new Error("deadline"));
-      signal.throwIfAborted();
-      return false;
-    }, () => {});
-    if (cancelQueued) await assert.rejects(work, /deadline/);
-    else await work;
-    const firstAttempts = cases.map((item) => [item, 1]);
-    assert.deepEqual(starts, cancelQueued ? firstAttempts : [...firstAttempts, [0, 2]]);
-  }
-});
-
-test("intake comparison reuses its team and exact request only within the gateway retry budget", async (t) => {
-  for (const scenario of [
-    { name: "assessment 524 recovers", status: 524, failures: 5, attempts: 6 },
-    { name: "assessment 504 exhausts", status: 504, failures: 6, attempts: 6 },
-    { name: "direct 504 recovers", status: 504, failures: 1, attempts: 2, direct: true },
-    { name: "ordinary 502 stays terminal", status: 502, failures: 6, attempts: 1 },
-    { name: "foreign 524 stays terminal", status: 524, failures: 6, attempts: 1, foreign: true },
-    { name: "security verdict stays terminal", status: 524, failures: 6, attempts: 1, rejected: true },
-  ]) {
-    await t.test(scenario.name, async (t) => {
-      const item = { id: "fixture", content: "Atlas stores exact text.", source: "fixture", candidate: "accepted" };
-      const teamID = randomUUID();
-      const readbacks = new Map();
-      const requests = [];
-      const setupPaths = [];
-      const captured = [];
-      let lookups = 0;
-      const server = createServer(async (request, response) => {
-        const correlation = request.headers["x-correlation-id"];
-        const attemptID = randomUUID();
-        const send = (value) => response.end(JSON.stringify(value));
-        if (request.method === "GET") {
-          lookups++;
-          return send({ data: readbacks.get(request.url) });
-        }
-        const body = [];
-        for await (const chunk of request) body.push(chunk);
-        if (request.url !== "/mcp") {
-          setupPaths.push(request.url);
-          return send({ data: request.url.endsWith("/credentials") ? { api_key: "intake-key-canary" } : { id: teamID } });
-        }
-        requests.push({ args: JSON.parse(Buffer.concat(body)).params.arguments, authorization: request.headers.authorization, correlation });
-        if (requests.length <= scenario.failures) {
-          if (scenario.direct) {
-            response.statusCode = scenario.status;
-            return response.end();
-          }
-          const [code, reason, component] = scenario.rejected
-            ? ["submission_policy_rejected", "security_rejection", "remember.intake_review"]
-            : ["provider_unavailable", "provider_server_failure", "remember.assessment"];
-          const retryable = !scenario.rejected;
-          readbacks.set(`/control/api/teams/${teamID}/remember-attempts/${attemptID}`, {
-            team_id: scenario.foreign ? randomUUID() : teamID, attempt_id: attemptID, correlation_id: correlation,
-            outcome: "failed", failed_phase: "assessment", error_code: code, retryable,
-            diagnostics: { provider_exchanges: [
-              { component: "assessor", status_code: 524 },
-              { component: "assessor", status_code: scenario.status, response_body: "private-response-canary" },
-            ] },
-          });
-          return send({ result: { isError: true, structuredContent: {
-            processing_state: "failed", submission_id: attemptID, correlation_id: correlation,
-            errors: [{ code, reason_code: reason, retryable, next_action: retryable ? "retry_same_request" : "resubmit_remember", details: { component } }],
-          } } });
-        }
-        return send({ result: { structuredContent: {
-          processing_state: "completed", search_state: "current", submission_id: attemptID,
-          evidence: [{ disposition: "stored", evidence_index: 0, partition_index: 0, span_start: 0, span_end: item.content.length,
-            source_item_id: randomUUID(), occurrence_id: randomUUID(), evidence_id: randomUUID(), content_hash: "sha256:" + sha256(item.content) }],
-        } } });
-      });
-      await once(server.listen(0, "127.0.0.1"), "listening");
-      t.after(() => new Promise((resolve) => server.close(resolve)));
-      const url = `http://127.0.0.1:${server.address().port}`;
-      const measure = measureIntakeCase.bind(null, {
-        arm: "candidate", runtime: { paths: { runID: "fixture" }, state: { environment: {
-          EVAL_MCP_URL: url, EVAL_CONTROL_URL: url, EVAL_CONTROL_TOKEN: "control-token-canary",
-        } } }, control, mask: () => {},
-        diagnostics: async (_, { correlationID }) => { captured.push(correlationID); return true; },
-        docker: async () => Buffer.from(item.content).toString("hex"),
-      });
-      let results;
-      await measureIntakeCases([item], AbortSignal.timeout(5_000), measure, (update) => { results = update; });
-      assert.deepEqual(setupPaths, ["/control/api/teams", `/control/api/teams/${teamID}/credentials`]);
-      assert.equal(requests.length, scenario.attempts);
-      assert.equal(lookups, scenario.direct || scenario.rejected ? 0 : Math.min(scenario.failures, scenario.attempts));
-      const [result] = results;
-      const passed = scenario.attempts > scenario.failures;
-      assert.equal(result.actual, passed ? "accepted" : scenario.rejected ? "intake_review" : "provider_unavailable");
-      assert.deepEqual(result.attempts.map((attempt) => attempt.attempt), requests.map((_, index) => index + 1));
-      assert.deepEqual(result.attempts.map((attempt) => attempt.correlation_id), requests.map((request) => request.correlation));
-      assert.equal(new Set(requests.map((request) => request.correlation)).size, scenario.attempts);
-      assert.deepEqual(captured, requests.slice(0, Math.min(scenario.failures, scenario.attempts)).map((request) => request.correlation));
-      for (const request of requests) {
-        assert.deepEqual(request.args, requests[0].args);
-        assert.equal(request.authorization, "Bearer intake-key-canary");
-      }
-      if (scenario.foreign) assert.equal(result.provider_status, "unavailable");
-      else if (!scenario.rejected) assert.equal(result.attempts[0][scenario.direct ? "http_status" : "provider_http_status"], scenario.status);
-      assert.doesNotMatch(JSON.stringify(results), /intake-key-canary|control-token-canary|private-response-canary|127\.0\.0\.1/);
-    });
-  }
-});
-
-test("intake failure capture selects bounded warnings for a single correlation without payloads", () => {
-  const target = { correlation_id: "case-id", level: "WARN", msg: "invalid complete response" };
-  const lines = [target, { ...target, correlation_id: "other-case" }, { ...target, level: "INFO" },
-    { ...target, payload_chunk: { body: "unrelated-provider-payload" } }];
-  assert.equal(intakeFailureRecords(lines.map((entry) => JSON.stringify(entry)).join("\n"), "case-id"), JSON.stringify(target));
-  assert.equal(intakeFailureRecords(Array(70).fill(JSON.stringify(target)).join("\n"), "case-id").split("\n").length, 40);
 });
 
 test("isolated server admits configured import workers while preserving other limits and private routing", () => {
@@ -490,14 +301,14 @@ test("runner workflow reserves shutdown time, retains numeric artifacts and aggr
     assert.equal(Object.hasOwn(caller.on.workflow_dispatch.inputs, "import_workers"), false);
     assert.equal(Object.hasOwn(workflowJob(caller, "evaluation").with, "import_workers"), false);
   }
-  assert.equal(datasets["runs-on"], "ubuntu-latest"); assert.match(datasets["timeout-minutes"], /inputs\.mode == 'intake' && 30 \|\| 360/); assert.equal(datasets.strategy["fail-fast"], false);
+  assert.equal(datasets["runs-on"], "ubuntu-latest"); assert.equal(datasets["timeout-minutes"], 360); assert.equal(datasets.strategy["fail-fast"], false);
   const deadline = datasets.steps.find((step) => step.name === "Freeze model deadline").run;
-  assert.match(deadline, /minutes=330/); assert.match(deadline, /if \[\[ "\$EVAL_MODE" == intake \]\]; then minutes=20/);
+  assert.match(deadline, /minutes=330/);
   assert.ok(datasets.steps.filter((step) => step.uses?.startsWith("actions/upload-artifact@")).every((step) => step.with["retention-days"] === 2));
   assert.equal(runStep(datasets, "node --test tests/eval/scripts/workflow_docker.test.mjs").if, "inputs.mode == 'fixtures'");
   assert.match(workflowJob(workflow, "aggregate").if, /always/);
   const caller = await readWorkflow("production-image-e2e.yml");
-  assert.deepEqual(caller.on.workflow_dispatch.inputs.evaluation.options, ["none", "fixtures", "intake", "live"]);
+  assert.deepEqual(caller.on.workflow_dispatch.inputs.evaluation.options, ["none", "fixtures", "live"]);
   assert.doesNotMatch((await readWorkflow("run-evaluation.yml")).on.workflow_dispatch.inputs.mode.options.join(" "), /intake/);
   const secrets = workflowJob(caller, "evaluation").secrets;
   const inputs = workflowJob(caller, "evaluation").with;

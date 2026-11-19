@@ -86,10 +86,10 @@ jobs:
         run: node tests/eval/scripts/workflow.mjs pin-seeds
 
   datasets:
-    name: ${{ inputs.mode == 'intake' && 'Compare whole-document intake' || format('Evaluate {0}', matrix.dataset) }}
+    name: ${{ format('Evaluate {0}', matrix.dataset) }}
     needs: registry
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ inputs.mode == 'intake' && 30 || 360 }}
+    timeout-minutes: 360
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.registry.outputs.matrix) }}
@@ -113,7 +113,6 @@ jobs:
       - name: Freeze model deadline
         run: |
           minutes=330
-          if [[ "$EVAL_MODE" == intake ]]; then minutes=20; fi
           printf 'EVAL_MODEL_DEADLINE_EPOCH=%s\n' "$(( $(date +%s) + minutes * 60 ))" >> "${GITHUB_ENV}"
           printf 'EVAL_RUNNER_BINARY=%s/eval-runner\n' "${RUNNER_TEMP}" >> "${GITHUB_ENV}"
       - uses: actions/checkout@v7
@@ -149,7 +148,7 @@ jobs:
       - name: Run complete dataset campaign
         run: node tests/eval/scripts/workflow.mjs run
       - name: Preserve protected startup failure logs
-        if: failure() && inputs.mode != 'intake'
+        if: failure()
         run: node tests/eval/scripts/workflow.mjs diagnostics
       - name: Remove this dataset's runtime
         if: always()
@@ -166,7 +165,7 @@ jobs:
   aggregate:
     name: Aggregate every dataset outcome
     needs: [registry, datasets]
-    if: always() && needs.registry.result == 'success' && inputs.mode != 'intake'
+    if: always() && needs.registry.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

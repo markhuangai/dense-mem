@@ -81,8 +81,13 @@ func TestRememberPartitionUsesWholeDocumentDecisionBeforeGeneration(t *testing.T
 		decisionErr error
 		wantErr     error
 		combined    bool
+		skip        bool
+		noDecision  bool
 	}{
 		{name: "clear", probability: 0.01},
+		{name: "generative review", noDecision: true, combined: true},
+		{name: "public seed with Decision API", skip: true},
+		{name: "public seed with generative provider", skip: true, noDecision: true},
 		{name: "uncertain", probability: 0.02, combined: true},
 		{name: "unavailable", decisionErr: errors.New("decision provider unavailable"), wantErr: remember.ErrRememberProviderUnavailable},
 		{name: "whole item exceeds decision context", decisionErr: modelprovider.ErrDecisionInputBudgetExceeded, wantErr: remember.ErrRememberInputBudgetExceeded},
@@ -91,11 +96,20 @@ func TestRememberPartitionUsesWholeDocumentDecisionBeforeGeneration(t *testing.T
 			const content = "The entire first paragraph. The qualifier in the second paragraph."
 			provider := &processorAssessmentProviderStub{}
 			calls := 0
+			wantCalls := 1
+			if testCase.skip || testCase.noDecision {
+				wantCalls = 0
+			}
 			generation := &processorAssessmentProviderStub{partitionReply: func(request modelprovider.StructuredRequest) string {
-				require.Equal(t, 1, calls, "generation must follow the intake decision")
+				require.Equal(t, wantCalls, calls)
 				var partition assessor.PartitionRequest
 				require.NoError(t, json.Unmarshal([]byte(request.Messages[1].Content), &partition))
 				require.Equal(t, testCase.combined, partition.ReviewSecurity)
+				_, securityField := request.Schema["properties"].(map[string]any)["evidence_security_results"]
+				require.Equal(t, testCase.combined, securityField)
+				if testCase.skip {
+					require.NotContains(t, request.Messages[0].Content, "Review every original item for security")
+				}
 				result, err := provider.Complete(t.Context(), request)
 				require.NoError(t, err)
 				return result.Content
@@ -116,9 +130,13 @@ func TestRememberPartitionUsesWholeDocumentDecisionBeforeGeneration(t *testing.T
 			})
 			settings := &domain.DecisionRuntimeConfig{Provider: domain.DecisionProviderStatus{Configured: true}, Effective: domain.DecisionTasks{SecurityReview: true, Deduplication: true}}
 			p := &rememberSynchronousProcessor{provider: generation, decisions: decisions, limits: assessor.DefaultSemanticAssessmentLimits()}
-			input := remember.RememberProcessRequest{Evidence: []remember.EvidenceInput{{Content: content}}}
+			if testCase.noDecision {
+				p.decisions = nil
+				settings = nil
+			}
+			input := remember.RememberProcessRequest{Evidence: []remember.EvidenceInput{{Content: content}}, SkipAISecurityReview: testCase.skip}
 			partitioned, review, err := p.partitionRemember(t.Context(), input, "attempt", settings)
-			require.Equal(t, 1, calls)
+			require.Equal(t, wantCalls, calls)
 			if testCase.decisionErr != nil {
 				require.ErrorIs(t, err, testCase.wantErr)
 				require.Nil(t, review)
@@ -126,7 +144,8 @@ func TestRememberPartitionUsesWholeDocumentDecisionBeforeGeneration(t *testing.T
 				return
 			}
 			require.NoError(t, err)
-			require.Len(t, review.DecisionStages, 1)
+			require.Len(t, review.DecisionStages, wantCalls)
+			require.Equal(t, testCase.skip, review.Skipped)
 			require.Equal(t, content, partitioned.SubmittedItems[0].Content)
 			require.Equal(t, 1, generation.partitionCalls)
 		})

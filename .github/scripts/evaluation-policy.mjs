@@ -28,9 +28,12 @@ export function resolveEvaluationImage(reference, repository, inspected) {
   return { image: matches[0], revision: labels["org.opencontainers.image.revision"] };
 }
 
-export function requireEvaluationImportSupport(inspected) {
+export function requireEvaluationImportSupport(inspected, { skipAISecurityReview = false } = {}) {
   if (inspected.Config?.Labels?.["io.dense-mem.postgres-advisory-lock-concurrency"] !== "configurable") {
     throw new Error("Evaluation requires a newer production image with configurable import admission");
+  }
+  if (skipAISecurityReview && inspected.Config?.Labels?.["io.dense-mem.public-seed-admission"] !== "locked-requests-v1") {
+    throw new Error("Evaluation requires a production image supporting locked public seed admission");
   }
 }
 

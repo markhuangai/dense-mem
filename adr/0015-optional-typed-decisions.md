@@ -44,6 +44,13 @@ remain failures. Invalid responses trigger bounded complete regeneration with no
 answer splicing or partial semantic commit. Vendor confidence never replaces a
 probability gate or the existing generative confidence policy.
 
+The maintainer approved an explicit exception for local public dataset seed
+preparation in #782. The initial structural scan still runs. The authenticated
+bootstrap credential, its shared space, and each exact Remember request must
+match a read-only admission manifest built from pinned source files before
+contextual AI review is skipped. Assessment and seed provenance record the
+skip. Restored evaluation instances use ordinary intake policy.
+
 Recall scores authorized, hydrated shortlists of at most 50 evidence and 20
 Relationships per space after database reads, with a fixed relevance rubric,
 stable original-order score ties, existing temporal/grouping/fusion rules, and

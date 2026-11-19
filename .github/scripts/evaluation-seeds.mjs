@@ -102,7 +102,11 @@ export async function hashFile(file) {
 export function extractSeed(docker, image, directory, container, runID) {
   if (!new RegExp(`^${seedRepository.replaceAll(".", "\\.")}@sha256:[0-9a-f]{64}$`).test(image)) throw new Error("Immutable seed image is required");
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
-  docker(["pull", "--quiet", image]);
+  try {
+    docker(["image", "inspect", "--format", "{{.Id}}", image]);
+  } catch {
+    docker(["pull", "--quiet", image]);
+  }
   docker(["create", "--name", container, "--label", `io.dense-mem.eval.run=${runID}`, image, "/unused"]);
   try { docker(["cp", `${container}:/seed/.`, directory]); }
   finally {
@@ -112,8 +116,9 @@ export function extractSeed(docker, image, directory, container, runID) {
   }
 }
 
-export async function verifySeedFiles(directory, dataset, registryHash, corpusRows) {
+export async function verifySeedFiles(directory, dataset, registryHash, corpusRows, { intakeProof = false } = {}) {
   const metadata = seedMetadata(read(path.join(directory, "seed.json")), dataset, registryHash, corpusRows);
+  if ((metadata.intake_proof ?? false) !== intakeProof || (intakeProof && metadata.ai_security_review !== "skipped")) throw new Error("Seed export kind or admission policy differs from the requested operation");
   if (await hashFile(path.join(directory, "database.dump")) !== metadata.dump_sha256 || fs.statSync(path.join(directory, "database.dump")).size !== metadata.dump_bytes) throw new Error("Seed dump checksum or size differs");
   if (dataset !== "bootstrap" && await hashFile(path.join(directory, "mapping.json")) !== metadata.mapping_sha256) throw new Error("Seed mapping checksum differs");
   return metadata;
@@ -215,6 +220,7 @@ export async function resolveSeedImage(reference, env = process.env) {
 }
 
 export async function publishSeed(docker, directory, dataset, selected, env, beforePublication) {
+  if (read(path.join(directory, "seed.json")).intake_proof) throw new Error("Intake proof exports cannot be published");
   if (typeof beforePublication !== "function") throw new Error("Seed publication requires a fresh validation gate");
   const tagged = seedReference(dataset, selected);
   if (await resolveSeedImage(tagged, env)) throw new Error("Dated seed image already exists and cannot be overwritten");

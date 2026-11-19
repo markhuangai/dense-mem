@@ -21,13 +21,14 @@ func TestRememberHTTPRoutedRawValidationRepair(t *testing.T) {
 	for _, route := range []struct {
 		name                  string
 		security, equivalence bool
-	}{{"unrouted", false, false}, {"security", true, false}, {"equivalence", false, true}, {"both", true, true}} {
+		skipAIReview          bool
+	}{{"unrouted", false, false, false}, {"security", true, false, false}, {"equivalence", false, true, false}, {"both", true, true, false}, {"public seed", true, false, true}} {
 		for _, exhausted := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/exhausted=%t", route.name, exhausted), func(t *testing.T) {
 				request, _ := semanticAssessmentPreparedTestRequest(t)
 				valid := semanticAssessmentTestResponse()
 				if route.security || route.equivalence {
-					request.DecisionRouting = &assessor.SemanticAssessmentRouting{}
+					request.DecisionRouting = &assessor.SemanticAssessmentRouting{SkipAISecurityReview: route.skipAIReview}
 					if route.security {
 						request.DecisionRouting.Security = valid.EvidenceSecurityResults
 					}
@@ -41,6 +42,10 @@ func TestRememberHTTPRoutedRawValidationRepair(t *testing.T) {
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					var wire openAIVerifierRequest
 					require.NoError(t, json.NewDecoder(r.Body).Decode(&wire))
+					if route.skipAIReview {
+						require.NotContains(t, wire.Messages[0].Content, "evidence_security_results")
+						require.NotContains(t, string(mustMarshalJSON(t, wire.ResponseFormat)), "evidence_security_results")
+					}
 					requests = append(requests, wire)
 					if len(requests) > 1 {
 						var feedback semanticAssessmentSessionRepair
@@ -48,6 +53,9 @@ func TestRememberHTTPRoutedRawValidationRepair(t *testing.T) {
 						require.NoError(t, json.Unmarshal([]byte(last), &feedback))
 						require.Equal(t, []assessor.SemanticValidationError{{Field: "request_id", Message: "is required"}}, feedback.ValidationErrors)
 						require.NotContains(t, last, "private-code-canary")
+						if route.skipAIReview {
+							require.NotContains(t, feedback.Instruction, "security result")
+						}
 						require.Equal(t, requests[0].Messages, wire.Messages[:2])
 						require.Equal(t, requests[0].ResponseFormat, wire.ResponseFormat)
 					}

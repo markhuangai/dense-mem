@@ -1,12 +1,36 @@
 package modelprovider
 
 import (
+	"context"
 	"errors"
+	"io"
+	"net"
+	"net/url"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 )
+
+func TestTransientNetworkFailureUsesTypedCauses(t *testing.T) {
+	for _, test := range []struct {
+		err  error
+		want string
+	}{
+		{&net.DNSError{IsTemporary: true}, NetworkTemporaryDNS},
+		{&net.DNSError{IsNotFound: true}, ""},
+		{&url.Error{Err: syscall.ECONNRESET}, NetworkConnectionReset},
+		{io.ErrUnexpectedEOF, NetworkInterruptedResponse},
+		{context.DeadlineExceeded, NetworkTimeout},
+		{context.Canceled, ""},
+		{errors.New("message mentions temporary DNS"), ""},
+	} {
+		kind := TransientNetworkFailure(test.err)
+		assert.Equal(t, test.want, kind)
+		assert.Equal(t, test.want != "", IsTransientNetworkFailure(kind))
+	}
+}
 
 func TestTypedProviderErrorsExposeStableSentinels(t *testing.T) {
 	cause := errors.New("transport")

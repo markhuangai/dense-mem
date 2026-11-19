@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 )
 
@@ -161,32 +162,32 @@ func (n *Native) Control(ctx context.Context, method, path string, input, out an
 	return nil
 }
 
-func (n *Native) rememberProviderHTTPStatus(ctx context.Context, receipt map[string]any) (status int, checked bool) {
+func (n *Native) rememberProviderTransportFailure(ctx context.Context, receipt map[string]any) (status int, networkFailure string, checked bool) {
 	if submissionProcessingState(receipt) != "failed" {
-		return 0, false
+		return 0, "", false
 	}
 	items, _ := receipt["errors"].([]any)
 	if len(items) == 0 {
-		return 0, false
+		return 0, "", false
 	}
 	failure, _ := items[0].(map[string]any)
 	if failure["retryable"] != true || failure["next_action"] != "retry_same_request" {
-		return 0, false
+		return 0, "", false
 	}
 	details, _ := failure["details"].(map[string]any)
 	code := stringValue(failure["code"])
 	var phase string
 	switch {
-	case code == "provider_unavailable" && failure["reason_code"] == "provider_server_failure" && details["component"] == "remember.assessment":
+	case (code == "provider_unavailable" || code == "request_timeout") && details["component"] == "remember.assessment":
 		phase = "assessment"
-	case code == "embedding_unavailable" && failure["reason_code"] == "embedding_server_failure" && details["component"] == "remember.embedding":
+	case (code == "embedding_unavailable" || code == "request_timeout") && details["component"] == "remember.embedding":
 		phase = "embedding"
 	default:
-		return 0, false
+		return 0, "", false
 	}
 	id, err := uuid.Parse(stringValue(receipt["submission_id"]))
 	if err != nil || id == uuid.Nil {
-		return 0, true
+		return 0, "", true
 	}
 	var detail struct {
 		TeamID        string `json:"team_id"`
@@ -200,6 +201,7 @@ func (n *Native) rememberProviderHTTPStatus(ctx context.Context, receipt map[str
 			ProviderExchanges []struct {
 				Component  string `json:"component"`
 				StatusCode int    `json:"status_code"`
+				Outcome    string `json:"outcome"`
 			} `json:"provider_exchanges"`
 		} `json:"diagnostics"`
 	}
@@ -210,15 +212,21 @@ func (n *Native) rememberProviderHTTPStatus(ctx context.Context, receipt map[str
 	if err != nil || detail.TeamID != n.Scope.TeamID || detail.AttemptID != id.String() ||
 		detail.CorrelationID != stringValue(receipt["correlation_id"]) || detail.Outcome != "failed" ||
 		detail.FailedPhase != phase || detail.ErrorCode != code || !detail.Retryable || len(exchanges) == 0 {
-		return 0, true
+		return 0, "", true
 	}
 	// Earlier exchanges can fail and recover within one Remember attempt.
 	last := exchanges[len(exchanges)-1]
 	if (phase == "assessment" && last.Component != "assessor" && last.Component != "decision") ||
-		(phase == "embedding" && last.Component != "embedding") || last.StatusCode < 100 || last.StatusCode > 599 {
-		return 0, true
+		(phase == "embedding" && last.Component != "embedding") {
+		return 0, "", true
 	}
-	return last.StatusCode, true
+	if modelprovider.IsTransientNetworkFailure(last.Outcome) {
+		networkFailure = last.Outcome
+	}
+	if last.StatusCode != 0 && (last.StatusCode < 100 || last.StatusCode > 599) {
+		return 0, "", true
+	}
+	return last.StatusCode, networkFailure, true
 }
 
 func (n *Native) Snapshot(ctx context.Context) (NativeObservation, error) {

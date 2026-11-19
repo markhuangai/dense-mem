@@ -21,6 +21,7 @@ import (
 )
 
 type applicationCompositionDependencies struct {
+	PublicSeedAdmission    *rememberapp.PublicSeedAdmission
 	Knowledge              *knowledgepostgres.Store
 	RememberPersistence    remembercontract.Persistence
 	TraceStore             traceapp.SemanticTraceStore
@@ -58,6 +59,7 @@ type applicationBundle struct {
 func buildApplicationBundle(deps applicationCompositionDependencies) applicationBundle {
 	embeddingExecutor := semanticwrite.NewProviderExecutor(deps.EmbeddingProvider)
 	rememberService := buildRememberApplication(rememberApplicationDependencies{
+		PublicSeedAdmission: deps.PublicSeedAdmission,
 		Persistence:         deps.RememberPersistence,
 		Assessor:            deps.Assessor,
 		Decisions:           deps.Decisions,

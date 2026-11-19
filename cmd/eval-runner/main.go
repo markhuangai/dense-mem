@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -29,6 +30,12 @@ func main() {
 }
 
 func execute(ctx context.Context, args []string, logger *observability.Logger, protector *observability.CredentialProtector) error {
+	if len(args) == 2 && args[0] == "freeze-intake-proof" {
+		if os.Getenv("GITHUB_ACTIONS") == "true" {
+			return errors.New("intake proof preparation requires local Docker")
+		}
+		return evalharness.FreezeIntakeProofInputs("tests/eval/datasets.json", args[1])
+	}
 	if len(args) != 2 || (args[0] != "validate" && args[0] != "prepare" && args[0] != "run" && args[0] != "bootstrap" && args[0] != "verify-seed") {
 		return errors.New("usage: eval-runner validate|bootstrap|prepare|verify-seed|run EXECUTION_MANIFEST; workflow-internal only except local seed preparation")
 	}
@@ -43,9 +50,6 @@ func execute(ctx context.Context, args []string, logger *observability.Logger, p
 	}
 	if args[0] != "validate" && args[0] != manifest.Operation {
 		return errors.New("command differs from the workflow manifest operation")
-	}
-	if manifest.Mode == "intake" && os.Getenv("EVAL_SERVER_LOG_FILE") == "" {
-		return errors.New("intake comparison validates protected startup logs only")
 	}
 	if args[0] == "bootstrap" {
 		if err := verifyRuntime(ctx, manifest); err != nil {
@@ -79,7 +83,19 @@ func execute(ctx context.Context, args []string, logger *observability.Logger, p
 	if err != nil {
 		return err
 	}
+	if manifest.IntakeProof {
+		corpus, err = evalharness.ReadIntakeProofCorpus(manifest, registry.Revision, dataset, corpus)
+		if err != nil {
+			return err
+		}
+	}
 	if args[0] == "validate" {
+		if manifest.SkipAISecurityReview {
+			directory := filepath.Dir(args[1])
+			if err := evalharness.WriteSeedAdmission(filepath.Join(directory, "seed-admission.json"), filepath.Join(directory, "seed-admission-scope.json"), corpus); err != nil {
+				return err
+			}
+		}
 		logger.InfoContext(ctx, "evaluation_validated", observability.String("dataset", dataset.ID), observability.Int("corpus_rows", len(corpus)), observability.Int("questions", len(questions)))
 		if os.Getenv("EVAL_SERVER_LOG_FILE") != "" {
 			return logFile(ctx, os.Getenv("EVAL_SERVER_LOG_FILE"), &evalharness.Capture{Logger: logger.ContextSlog(), Protector: protector, RunID: manifest.RunID})
@@ -115,7 +131,12 @@ func execute(ctx context.Context, args []string, logger *observability.Logger, p
 		prepareCtx, stop := context.WithCancel(ctx)
 		defer stop()
 		finishResources := startResourceMonitor(prepareCtx, stop, database, manifest, capture)
-		_, prepareErr := evalharness.Prepare(prepareCtx, manifest, corpus, client, native)
+		var prepareErr error
+		if manifest.IntakeProof && !manifest.SkipAISecurityReview {
+			prepareErr = evalharness.ObserveOrdinaryIntake(prepareCtx, manifest, corpus, client, native)
+		} else {
+			_, prepareErr = evalharness.Prepare(prepareCtx, manifest, corpus, client, native)
+		}
 		prepareErr = errors.Join(prepareErr, finishResources())
 		shutdown, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
 		defer cancel()

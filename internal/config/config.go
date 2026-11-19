@@ -121,6 +121,7 @@ func AIVerifierMaxConcurrency(cfg ConfigProvider) int {
 type Config struct {
 	Decision                        DecisionProviderConfig
 	SessionIngestEnabled            bool
+	DangerouslySkipAISecurityCheck  bool
 	PostgresDSN                     string `json:"-"`
 	PostgresMaxOpenConns            int
 	PostgresAdvisoryLockConcurrency int
@@ -503,6 +504,10 @@ func loadWithPostgresDSN(postgresDSN string) (Config, error) {
 		return cfg, err
 	}
 	cfg.SessionIngestEnabled, err = parseBoolOrDefault("SESSION_INGEST_ENABLED", false)
+	if err != nil {
+		return cfg, err
+	}
+	cfg.DangerouslySkipAISecurityCheck, err = parseBoolOrDefault("DANGEROUSLY_SKIP_AI_SECURITY_CHECK", false)
 	if err != nil {
 		return cfg, err
 	}

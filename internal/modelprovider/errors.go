@@ -1,10 +1,51 @@
 package modelprovider
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net"
+	"syscall"
 	"time"
 )
+
+const (
+	NetworkConnectionReset     = "connection_reset"
+	NetworkTemporaryDNS        = "temporary_dns"
+	NetworkInterruptedResponse = "interrupted_response"
+	NetworkTimeout             = "network_timeout"
+)
+
+// TransientNetworkFailure returns a bounded classification from the observed transport error.
+func TransientNetworkFailure(err error) string {
+	if err == nil || errors.Is(err, context.Canceled) {
+		return ""
+	}
+	var dns *net.DNSError
+	var timeout net.Error
+	switch {
+	case errors.As(err, &dns) && (dns.IsTemporary || dns.IsTimeout):
+		return NetworkTemporaryDNS
+	case errors.Is(err, context.DeadlineExceeded) || errors.As(err, &timeout) && timeout.Timeout():
+		return NetworkTimeout
+	case errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNABORTED) || errors.Is(err, syscall.EPIPE):
+		return NetworkConnectionReset
+	case errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF):
+		return NetworkInterruptedResponse
+	default:
+		return ""
+	}
+}
+
+func IsTransientNetworkFailure(outcome string) bool {
+	switch outcome {
+	case NetworkConnectionReset, NetworkTemporaryDNS, NetworkInterruptedResponse, NetworkTimeout:
+		return true
+	default:
+		return false
+	}
+}
 
 const (
 	ProviderFailureClassTimeout             = "timeout"

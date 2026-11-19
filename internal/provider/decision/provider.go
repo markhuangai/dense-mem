@@ -231,7 +231,9 @@ func (p *Provider) call(ctx context.Context, batch batch, common []observability
 		exchange.Outcome = "ok"
 		level := slog.LevelInfo
 		if err != nil {
-			exchange.Outcome = "error"
+			if exchange.Outcome == "" || exchange.Outcome == "ok" {
+				exchange.Outcome = "error"
+			}
 			level = slog.LevelError
 		}
 		if exchange.StatusCode == http.StatusOK {
@@ -288,6 +290,9 @@ func (p *Provider) call(ctx context.Context, batch batch, common []observability
 	httpMS := time.Since(httpStarted).Milliseconds()
 	diagnostics.HTTPMS = &httpMS
 	if err != nil {
+		if kind := modelprovider.TransientNetworkFailure(err); kind != "" {
+			exchange.Outcome, exchange.CaptureState = kind, "no_response"
+		}
 		if ctx.Err() != nil {
 			return result, receipt, ctx.Err()
 		}
@@ -305,6 +310,9 @@ func (p *Provider) call(ctx context.Context, batch batch, common []observability
 	}
 	exchange.ResponseBody = body
 	if readErr != nil {
+		if kind := modelprovider.TransientNetworkFailure(readErr); kind != "" {
+			exchange.Outcome, exchange.CaptureState = kind, "interrupted"
+		}
 		if ctx.Err() != nil {
 			return result, receipt, ctx.Err()
 		}

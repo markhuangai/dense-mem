@@ -34,7 +34,7 @@ func (p *rememberSynchronousProcessor) partitionRemember(ctx context.Context, in
 		contents[i] = item.Content
 	}
 	req := assessor.PreparePartitionRequest("partition:"+attemptID, contents)
-	req.ReviewSecurity = p.decisions == nil || settings == nil || !settings.Effective.SecurityReview
+	req.ReviewSecurity = !input.SkipAISecurityReview && (p.decisions == nil || settings == nil || !settings.Effective.SecurityReview)
 	limits := p.limits
 	defaults := assessor.DefaultSemanticAssessmentLimits()
 	if limits.Tokenizer == "" {
@@ -87,22 +87,24 @@ func (p *rememberSynchronousProcessor) partitionRemember(ctx context.Context, in
 	if err != nil {
 		return input, nil, err
 	}
-	routing, err := remember.RouteRememberIntakeSecurity(requestctx.WithProgressOperation(ctx, "intake_security"), p.decisions, settings, req, p.logger)
-	if err != nil {
-		return input, nil, err
-	}
-	review := &remember.RememberIntakeSecurity{DecisionSnapshot: settings}
-	if routing != nil {
-		review.DecisionStages = routing.Stages
-	}
-	if !req.ReviewSecurity && (routing == nil || routing.Security == nil) {
-		req.ReviewSecurity = true
-		if err := prepare(); err != nil {
-			return input, nil, err
-		}
-		tokens, err = countTokens(1)
+	review := &remember.RememberIntakeSecurity{DecisionSnapshot: settings, Skipped: input.SkipAISecurityReview}
+	if !input.SkipAISecurityReview {
+		routing, err := remember.RouteRememberIntakeSecurity(requestctx.WithProgressOperation(ctx, "intake_security"), p.decisions, settings, req, p.logger)
 		if err != nil {
 			return input, nil, err
+		}
+		if routing != nil {
+			review.DecisionStages = routing.Stages
+		}
+		if !req.ReviewSecurity && (routing == nil || routing.Security == nil) {
+			req.ReviewSecurity = true
+			if err := prepare(); err != nil {
+				return input, nil, err
+			}
+			tokens, err = countTokens(1)
+			if err != nil {
+				return input, nil, err
+			}
 		}
 	}
 	if root, ok := p.logger.(interface{ ContextSlog() *slog.Logger }); ok {

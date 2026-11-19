@@ -98,7 +98,8 @@ CMD ["/app/server"]
 FROM runtime-base AS production-base
 
 LABEL org.opencontainers.image.variant="production" \
-      io.dense-mem.postgres-advisory-lock-concurrency="configurable"
+      io.dense-mem.postgres-advisory-lock-concurrency="configurable" \
+      io.dense-mem.public-seed-admission="locked-requests-v1"
 COPY --from=production-builder --chown=densemem:densemem /out/server /app/server
 
 FROM production-base AS preview

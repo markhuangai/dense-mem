@@ -47,7 +47,7 @@ on:
         description: Optional runner-only evaluation; full E2E remains the default
         type: choice
         default: none
-        options: [none, fixtures, intake, live]
+        options: [none, fixtures, live]
       seed_version:
         description: Public evaluation seed suffix (latest or UTCtimestamp-release)
         type: string
@@ -121,7 +121,7 @@ jobs:
                 throw new Error("manual trial must target the actor's own current same-repository PR head");
               }
               const evaluation = process.env.INPUT_EVALUATION || "none";
-              if (!["none", "fixtures", "intake", "live"].includes(evaluation)) throw new Error("invalid evaluation mode");
+              if (!["none", "fixtures", "live"].includes(evaluation)) throw new Error("invalid evaluation mode");
               if (evaluation !== "none") {
                 if (Number(context.runAttempt) !== 1) throw new Error("evaluation job reruns are unsupported");
                 const { data: triggeringPermission } = await github.rest.repos.getCollaboratorPermissionLevel({ owner, repo, username: process.env.TRIGGERING_ACTOR });

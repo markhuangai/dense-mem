@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 	"github.com/stretchr/testify/require"
 )
@@ -397,7 +398,7 @@ func TestMCPResponseDecodingAndWireFailures(t *testing.T) {
 		{"malformed JSON", "{", "invalid HTTP JSON", 200, false},
 		{"trailing JSON", "{}{}", "invalid HTTP JSON", 200, false},
 		{"unavailable", "{\"private\":\"mcp-key-canary-9483\"}", "status 503", 503, false},
-		{"interrupted", "{\"result\":", "body interrupted", 200, true},
+		{"interrupted", "{\"result\":", "interrupted_response", 200, true},
 		{"structured rejection", "{\"result\":{\"isError\":true,\"structuredContent\":{\"errors\":[{\"message\":\"intake declined\"}]}}}", "intake declined", 200, false},
 		{"bounded rejection", "{\"result\":{\"isError\":true,\"structuredContent\":{\"errors\":[{\"code\":\"permission_denied\"}]}}}", "permission_denied", 200, false},
 		{"partition rejection", "{\"result\":{\"isError\":true,\"structuredContent\":{\"evidence\":[{\"errors\":[{\"message\":\"partition declined\"}]}]}}}", "partition declined", 200, false},
@@ -506,7 +507,7 @@ func TestImporterReconcilesTransientFailureWithTheSameOperationKey(t *testing.T)
 	require.EqualValues(t, 2, attempts.Load())
 }
 
-func TestImporterQueuesConfirmedGatewayTimeoutsWithTheSameRequest(t *testing.T) {
+func TestImporterQueuesConfirmedNetworkFailuresWithTheSameRequest(t *testing.T) {
 	for _, scenario := range []struct {
 		name              string
 		status, failures  int
@@ -515,12 +516,17 @@ func TestImporterQueuesConfirmedGatewayTimeoutsWithTheSameRequest(t *testing.T) 
 		direct, foreign   bool
 		interrupted       bool
 		cancelWhileQueued bool
+		networkFailure    string
 	}{
 		{name: "assessment 524 recovers on final allowed attempt", status: 524, failures: 5, attempts: 6, requeued: true},
 		{name: "assessment 504 exhausts five retries", status: 504, failures: 6, attempts: 6, requeued: true},
 		{name: "direct 504 recovers", status: 504, failures: 1, attempts: 2, requeued: true, direct: true},
 		{name: "direct 504 with interrupted body recovers", status: 504, failures: 1, attempts: 2, requeued: true, direct: true, interrupted: true},
-		{name: "final 502 supersedes earlier timeout", status: 502, failures: 6, attempts: 2},
+		{name: "assessment 502 uses the network retry budget", status: 502, failures: 5, attempts: 6, requeued: true},
+		{name: "direct 503 uses the network retry budget", status: 503, failures: 1, attempts: 2, requeued: true, direct: true},
+		{name: "provider reset uses the network retry budget", networkFailure: modelprovider.NetworkConnectionReset, failures: 5, attempts: 6, requeued: true},
+		{name: "provider interrupted response uses the network retry budget", status: 200, networkFailure: modelprovider.NetworkInterruptedResponse, failures: 2, attempts: 3, requeued: true},
+		{name: "final 500 supersedes earlier timeout", status: 500, failures: 6, attempts: 2},
 		{name: "foreign diagnostics cannot extend retries", status: 524, failures: 6, attempts: 2, foreign: true},
 		{name: "cancellation leaves the timeout queued", status: 524, failures: 1, attempts: 1, requeued: true, cancelWhileQueued: true},
 	} {
@@ -547,7 +553,7 @@ func TestImporterQueuesConfirmedGatewayTimeoutsWithTheSameRequest(t *testing.T) 
 						"outcome": "failed", "failed_phase": "assessment", "error_code": "provider_unavailable", "retryable": true,
 						"diagnostics": map[string]any{"provider_exchanges": []map[string]any{
 							{"component": "assessor", "status_code": 524},
-							{"component": "assessor", "status_code": scenario.status, "response_body": canary},
+							{"component": "assessor", "status_code": scenario.status, "outcome": scenario.networkFailure, "response_body": canary},
 						}},
 					}}))
 					return
@@ -624,7 +630,11 @@ func TestImporterQueuesConfirmedGatewayTimeoutsWithTheSameRequest(t *testing.T) 
 			if scenario.requeued {
 				require.Len(t, requests, scenario.attempts+1)
 				require.Equal(t, "eval:ready", requests[1]["idempotency_key"])
-				require.Contains(t, logs.String(), `"gateway_http_status":`)
+				if scenario.networkFailure != "" {
+					require.Contains(t, logs.String(), `"network_failure":"`+scenario.networkFailure+`"`)
+				} else {
+					require.Contains(t, logs.String(), `"gateway_http_status":`)
+				}
 			} else {
 				require.Len(t, requests, scenario.attempts)
 				require.NotContains(t, logs.String(), `"gateway_http_status":`)

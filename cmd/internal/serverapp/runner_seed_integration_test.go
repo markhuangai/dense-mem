@@ -50,9 +50,35 @@ func TestRunnerSeedLogicalRestoreMigrationAndCredentialIdentity(t *testing.T) {
 	manifest.SeedDir, manifest.ModelDeadline = t.TempDir(), time.Now().Add(time.Minute)
 	manifest.RunID = "seed-roundtrip"
 	f.native.Client.Capture = runnerSeedCapture(t)
+	f.provider.failures = 0
 	corpus := []evalharness.CorpusItem{{SourceDocID: "seed-document", Content: "Project Alpha stores durable memory in PostgreSQL."}}
+	originalClient := f.native.Client.Client
+	transport := originalClient.Transport
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
+	discarded := false
+	f.native.Client.Client = &http.Client{Transport: seedRoundTripper(func(req *http.Request) (*http.Response, error) {
+		response, err := transport.RoundTrip(req)
+		if err != nil || discarded || req.Header.Get("Mcp-Name") != "remember" || response.StatusCode != http.StatusOK {
+			return response, err
+		}
+		_, err = io.Copy(io.Discard, response.Body)
+		closeErr := response.Body.Close()
+		if err != nil {
+			return nil, err
+		}
+		if closeErr != nil {
+			return nil, closeErr
+		}
+		discarded = true
+		return nil, io.ErrUnexpectedEOF
+	})}
 	seed, err := evalharness.Prepare(ctx, manifest, corpus, f.native.Client, f.native)
 	require.NoError(t, err)
+	f.native.Client.Client = originalClient
+	require.True(t, discarded, "the test loses the completed Remember response before the importer reads it")
+	require.Equal(t, 1, f.provider.calls, "the identical retry replays the committed row")
 	migrator := storagepostgres.NewMigratorWithDB(f.native.DB)
 	var newest int64
 	require.NoError(t, f.native.DB.QueryRowContext(ctx, "SELECT version_id FROM goose_db_version ORDER BY id DESC LIMIT 1").Scan(&newest))
@@ -198,6 +224,10 @@ func TestRunnerSeedLogicalRestoreMigrationAndCredentialIdentity(t *testing.T) {
 	_, _, _, _, err = evalharness.VerifySeed(ctx, manifest, corpus, f.native.Client, &native)
 	require.ErrorContains(t, err, "scope differs")
 }
+
+type seedRoundTripper func(*http.Request) (*http.Response, error)
+
+func (f seedRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
 
 func runnerSeedCapture(t *testing.T) *evalharness.Capture {
 	t.Helper()

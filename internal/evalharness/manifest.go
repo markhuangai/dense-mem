@@ -12,6 +12,7 @@ var revisionPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 var imagePattern = regexp.MustCompile(`^ghcr\.io/markhuangai/dense-mem(?::[A-Za-z0-9._-]+)?@sha256:[0-9a-f]{64}$`)
 var modelPattern = regexp.MustCompile(`^[A-Za-z0-9@][A-Za-z0-9_./:-]{0,127}$`)
 var seedBuildPattern = regexp.MustCompile(`^local-[a-f0-9]{32}$`)
+var localImagePattern = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
 
 func RequireRunner() error {
 	if os.Getenv("GITHUB_ACTIONS") != "true" || os.Getenv("RUNNER_ENVIRONMENT") != "github-hosted" || os.Getenv("GITHUB_RUN_ID") == "" || os.Getenv("GITHUB_RUN_ATTEMPT") != "1" {
@@ -36,14 +37,17 @@ func ReadManifest(path string) (Manifest, error) {
 		(manifest.Operation != "bootstrap" && manifest.Operation != "prepare" && manifest.Operation != "verify-seed") {
 		return manifest, errors.New("local execution permits only public seed preparation and restore verification")
 	}
-	if manifest.Version != 1 || manifest.RunID == "" || !revisionPattern.MatchString(manifest.SourceRevision) || !imagePattern.MatchString(manifest.Image) {
+	imageValid := imagePattern.MatchString(manifest.Image)
+	if manifest.IntakeProof {
+		imageValid = manifest.SeedBuildID != "" && localImagePattern.MatchString(manifest.Image) && (manifest.Operation == "prepare" || manifest.Operation == "verify-seed")
+	}
+	if manifest.SkipAISecurityReview && (manifest.SeedBuildID == "" || manifest.Operation != "prepare" || !seedImagePattern.MatchString(manifest.SeedImage)) {
+		return manifest, errors.New("skipping AI security review requires preparation from a public seed bootstrap")
+	}
+	if manifest.Version != 1 || manifest.RunID == "" || !revisionPattern.MatchString(manifest.SourceRevision) || !imageValid {
 		return manifest, errors.New("execution manifest identity is invalid")
 	}
-	intake := manifest.Mode == "intake"
-	if intake && (manifest.Dataset != "intake" || manifest.Operation != "intake" || manifest.SeedImage != "") {
-		return manifest, errors.New("invalid intake comparison manifest")
-	}
-	if manifest.Mode != "live" && manifest.Mode != "fixtures" && !intake {
+	if manifest.Mode != "live" && manifest.Mode != "fixtures" {
 		return manifest, errors.New("invalid runner campaign mode")
 	}
 	if manifest.RunID != manifest.ExecutionID()+"-"+manifest.Dataset {
@@ -52,7 +56,7 @@ func ReadManifest(path string) (Manifest, error) {
 	if !modelPattern.MatchString(manifest.Model) || strings.Contains(manifest.Model, "://") || manifest.EmbeddingModel != "text-embedding-3-small" || manifest.EmbeddingDimensions != 1536 || manifest.ContextWindowTokens < 16384 {
 		return manifest, errors.New("explicit verified model and context settings are required")
 	}
-	if manifest.Operation != "prepare" && manifest.Operation != "run" && manifest.Operation != "bootstrap" && manifest.Operation != "verify-seed" && !intake {
+	if manifest.Operation != "prepare" && manifest.Operation != "run" && manifest.Operation != "bootstrap" && manifest.Operation != "verify-seed" {
 		return manifest, errors.New("invalid workflow-internal operation")
 	}
 	if manifest.Operation == "prepare" || manifest.Operation == "bootstrap" {
@@ -72,9 +76,6 @@ func ReadManifest(path string) (Manifest, error) {
 		return manifest, errors.New("manifest data and output identity missing")
 	}
 	maximum := 330 * time.Minute
-	if intake {
-		maximum = 20 * time.Minute
-	}
 	if manifest.ModelDeadline.IsZero() || manifest.ModelDeadline.After(time.Now().Add(maximum)) {
 		return manifest, errors.New("model deadline is missing or exceeds the campaign limit")
 	}

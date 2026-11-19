@@ -43,7 +43,9 @@ type semanticAssessmentSessionRepair struct {
 	RefreshedCandidateContext *assessorCandidateContext `json:"refreshed_candidate_context,omitempty"`
 }
 
-const semanticAssessmentSessionRepairInstruction = `Return one complete replacement JSON object matching the required Evidence assessment schema. Repair every validation error against unchanged original Evidence. Return exactly one security result per submitted Evidence ID and one equivalence result per candidate group. Reuse only allowlisted candidates. Return complete opposing Evidence conflict spans using only supplied boundary refs. Do not search other memory or invent Evidence. Never return a patch or explanation.` + "\n\n" + assessor.SemanticAssessmentContextPolicy
+const semanticAssessmentSessionRepairIntro = `Return one complete replacement JSON object matching the required Evidence assessment schema. Repair every validation error against unchanged original Evidence. `
+const semanticAssessmentSessionRepairTasks = `one equivalence result per candidate group. Reuse only allowlisted candidates. Return complete opposing Evidence conflict spans using only supplied boundary refs. Do not search other memory or invent Evidence. Never return a patch or explanation.`
+const semanticAssessmentSessionRepairInstruction = semanticAssessmentSessionRepairIntro + "Return exactly one security result per submitted Evidence ID and " + semanticAssessmentSessionRepairTasks + "\n\n" + assessor.SemanticAssessmentContextPolicy
 
 const semanticAssessmentRepairHistoryPlaceholder = `The previous assessor response was omitted from repair history because its serialized form exceeded the configured input budget. Use the original request and validation_errors to return one complete replacement object.`
 
@@ -74,7 +76,7 @@ func (v *OpenAIAssessor) Assess(ctx context.Context, req assessor.SemanticAssess
 		id:       strconv.FormatUint(atomic.AddUint64(&openAISemanticAssessmentSessionSequence, 1), 10),
 		prepared: prepared,
 		messages: []openAIVerifierMessage{
-			{Role: "system", Content: assessor.SemanticAssessmentSystemPrompt + assessor.SemanticAssessmentGenerationInstruction(prepared)},
+			{Role: "system", Content: assessor.SemanticAssessmentPromptForGeneration(prepared)},
 			{Role: "user", Content: string(userJSON)},
 		},
 	}
@@ -130,9 +132,13 @@ func (v *OpenAIAssessor) Repair(ctx context.Context, sessionRef assessor.Semanti
 			FailureClass: ProviderFailureClassRequestInvalid,
 		}
 	}
+	instruction := semanticAssessmentSessionRepairInstruction
+	if prepared.DecisionRouting != nil && prepared.DecisionRouting.SkipAISecurityReview {
+		instruction = semanticAssessmentSessionRepairIntro + "Return exactly " + semanticAssessmentSessionRepairTasks + "\n\n" + assessor.SemanticAssessmentConflictContext
+	}
 	correctionJSON, err := json.Marshal(semanticAssessmentSessionRepair{
 		ValidationErrors: assessor.BoundSemanticAssessmentCorrectionErrors(repair.ValidationErrors),
-		Instruction:      semanticAssessmentSessionRepairInstruction + assessor.SemanticAssessmentGenerationInstruction(prepared),
+		Instruction:      instruction + assessor.SemanticAssessmentGenerationInstruction(prepared),
 	})
 	if err != nil {
 		return assessor.SemanticAssessmentTurn{}, &ProviderError{

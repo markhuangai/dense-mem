@@ -13,6 +13,7 @@ docker-compose.yml
 .env
 .env.local
 .env.*.local
+eval.env
 
 # Local build outputs
 bin/

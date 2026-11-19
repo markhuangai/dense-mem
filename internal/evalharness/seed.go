@@ -19,6 +19,8 @@ var digestPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 var releasePattern = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(?:-rc\.[0-9]+)?$`)
 
 type SeedMetadata struct {
+	IntakeProof         bool    `json:"intake_proof,omitempty"`
+	AISecurityReview    string  `json:"ai_security_review,omitempty"`
 	Version             int     `json:"version"`
 	Dataset             string  `json:"dataset"`
 	RegistryHash        string  `json:"registry_sha256"`
@@ -42,7 +44,7 @@ type SeedMetadata struct {
 }
 
 func (s SeedMetadata) Validate(manifest Manifest, scope Scope, corpusRows int) error {
-	if s.Version != 1 || s.Dataset != manifest.Dataset || s.RegistryHash != manifest.RegistryHash || s.CorpusRows != corpusRows || corpusRows < 1 || s.Scope != scope {
+	if s.Version != 1 || s.IntakeProof != manifest.IntakeProof || s.Dataset != manifest.Dataset || s.RegistryHash != manifest.RegistryHash || s.CorpusRows != corpusRows || corpusRows < 1 || s.Scope != scope {
 		return errors.New("seed dataset, source registry, denominator or authenticated scope differs")
 	}
 	if !digestPattern.MatchString(s.CanonicalHash) || !digestPattern.MatchString(s.SearchHash) || !digestPattern.MatchString(s.MappingHash) || !digestPattern.MatchString(s.DumpHash) || s.DumpBytes <= 0 || s.SchemaVersion <= 0 || !releasePattern.MatchString(s.BaseRelease) || !revisionPattern.MatchString(s.SourceRevision) {
@@ -56,6 +58,9 @@ func (s SeedMetadata) Validate(manifest Manifest, scope Scope, corpusRows int) e
 	}
 	if s.Scope.Generation < 1 || s.PostgresImage != PostgresImage || s.EmbeddingModel != manifest.EmbeddingModel || s.EmbeddingDimensions != manifest.EmbeddingDimensions || !modelPattern.MatchString(s.Model) || strings.Contains(s.Model, "://") || s.ContextWindowTokens < 16384 {
 		return errors.New("seed runtime or embedding contract is incompatible")
+	}
+	if s.AISecurityReview != "" && s.AISecurityReview != "skipped" || s.IntakeProof && s.AISecurityReview != "skipped" {
+		return errors.New("seed AI security review provenance is invalid")
 	}
 	return validateImportWorkers(s.ImportWorkers)
 }
@@ -105,6 +110,11 @@ func VerifySeed(ctx context.Context, manifest Manifest, corpus []CorpusItem, cli
 	if err != nil {
 		return seed, mapping, nil, observation, err
 	}
+	if seed.AISecurityReview == "skipped" {
+		if err := native.verifySkippedAIReview(ctx, len(corpus)); err != nil {
+			return seed, mapping, nil, observation, err
+		}
+	}
 	observation, err = native.Snapshot(ctx)
 	if err == nil {
 		err = NativeReady(observation, false, true, manifest, native.Scope.TeamID)
@@ -124,7 +134,10 @@ func VerifySeed(ctx context.Context, manifest Manifest, corpus []CorpusItem, cli
 
 func Prepare(ctx context.Context, manifest Manifest, corpus []CorpusItem, client *HTTPClient, native *Native) (SeedMetadata, error) {
 	started := time.Now()
-	seed := SeedMetadata{Version: 1, Dataset: manifest.Dataset, RegistryHash: manifest.RegistryHash, BaseRelease: manifest.BaseRelease, SourceRevision: manifest.SourceRevision, CorpusRows: len(corpus), PostgresImage: PostgresImage, Model: manifest.Model, ContextWindowTokens: manifest.ContextWindowTokens, EmbeddingModel: manifest.EmbeddingModel, EmbeddingDimensions: manifest.EmbeddingDimensions, ImportWorkers: manifest.ImportWorkers}
+	seed := SeedMetadata{Version: 1, Dataset: manifest.Dataset, RegistryHash: manifest.RegistryHash, BaseRelease: manifest.BaseRelease, SourceRevision: manifest.SourceRevision, CorpusRows: len(corpus), PostgresImage: PostgresImage, Model: manifest.Model, ContextWindowTokens: manifest.ContextWindowTokens, EmbeddingModel: manifest.EmbeddingModel, EmbeddingDimensions: manifest.EmbeddingDimensions, ImportWorkers: manifest.ImportWorkers, IntakeProof: manifest.IntakeProof}
+	if manifest.SkipAISecurityReview {
+		seed.AISecurityReview = "skipped"
+	}
 	work, cancel := context.WithDeadline(ctx, manifest.ModelDeadline)
 	defer cancel()
 	if err := native.ResolveScope(work); err != nil {
@@ -143,6 +156,11 @@ func Prepare(ctx context.Context, manifest Manifest, corpus []CorpusItem, client
 	}
 	if _, err = native.VerifyMappings(work, corpus, mapping); err != nil {
 		return seed, err
+	}
+	if seed.AISecurityReview == "skipped" {
+		if err := native.verifySkippedAIReview(work, len(corpus)); err != nil {
+			return seed, err
+		}
 	}
 	ready, err := native.Snapshot(work)
 	if err != nil {
@@ -190,4 +208,24 @@ func (n *Native) SearchFingerprint(ctx context.Context) (string, error) {
 	var hash string
 	err = tx.QueryRowContext(ctx, `SELECT encode(sha256(convert_to(COALESCE(string_agg(h,',' ORDER BY h),''),'UTF8')),'hex') FROM (SELECT encode(sha256(convert_to(to_jsonb(r)::text,'UTF8')),'hex') h FROM search_documents r WHERE team_id=$1::uuid) AS seed_documents`, n.Scope.TeamID).Scan(&hash)
 	return hash, err
+}
+
+func (n *Native) verifySkippedAIReview(ctx context.Context, expected int) error {
+	tx, err := n.systemTx(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var total, skipped int
+	err = tx.QueryRowContext(ctx, `SELECT count(*), count(*) FILTER (WHERE s.response_history->-1->'normalized_response'->>'ai_security_review'='skipped')
+FROM remember_attempts a JOIN semantic_assessments s ON s.team_id=a.team_id AND s.attempt_id=a.attempt_id
+WHERE a.team_id=$1::uuid AND a.owner_profile_id=$2::uuid AND a.space_id=$3::uuid AND a.space_generation=$4 AND a.outcome='completed'`,
+		n.Scope.TeamID, n.Scope.OwnerID, n.Scope.SpaceID, n.Scope.Generation).Scan(&total, &skipped)
+	if err != nil {
+		return err
+	}
+	if total != expected || skipped != expected {
+		return errors.New("seed assessment provenance differs from the selected AI security review policy")
+	}
+	return nil
 }

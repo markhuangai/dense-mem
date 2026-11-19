@@ -47,6 +47,17 @@ func TestSeedValidationBindsSourcesCredentialsAndEmbeddingContract(t *testing.T)
 	require.NoError(t, seed.Validate(manifest, seed.Scope, 3), "a frozen ingestion seed can evaluate a different answer model")
 }
 
+func TestSeedAdmissionManifestIsReadableByTheContainerUser(t *testing.T) {
+	directory := t.TempDir()
+	scopePath, manifestPath := filepath.Join(directory, "scope.json"), filepath.Join(directory, "seed-admission.json")
+	seed, _ := validSeedFixture(t)
+	require.NoError(t, writeJSON(scopePath, seed.Scope))
+	require.NoError(t, WriteSeedAdmission(manifestPath, scopePath, []CorpusItem{{SourceDocID: "hotpotqa:1", SourceDataset: "hotpotqa", Content: "Exact corpus text."}}))
+	info, err := os.Stat(manifestPath)
+	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0444), info.Mode().Perm())
+}
+
 func TestSeedFilesRejectCorruptedDumpMappingAndSize(t *testing.T) {
 	seed, _ := validSeedFixture(t)
 	dir := t.TempDir()

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -32,6 +33,49 @@ func (s *synchronousRememberProcessorStub) ProcessRemember(_ context.Context, re
 type rememberSecurityAuditorStub struct {
 	inputs []SecurityRejectionAuditInput
 	err    error
+}
+
+func TestRememberPublicSeedAdmissionBindsExactRequestAndScope(t *testing.T) {
+	teamID, ownerID, credentialID := uuid.New(), uuid.New(), uuid.New()
+	ctx := rememberServiceTestContext(teamID, ownerID, credentialID)
+	actor, ok := requestctx.ActorFromContext(ctx)
+	require.True(t, ok)
+	request := validRememberServiceRequest()
+	allowedKey := request.IdempotencyKey
+	structurallyRejected := request
+	structurallyRejected.IdempotencyKey = "seed-invalid-structure"
+	structurallyRejected.Evidence = []RememberEvidenceInput{{Content: "data:text/plain;base64,U2FmZXR5IGNoZWNr"}}
+	manifest := PublicSeedAdmissionManifest{
+		TeamID: teamID, OwnerID: ownerID, CredentialID: credentialID, SpaceID: actor.AllowedSpaces[0].ID, Generation: 1,
+		Requests: map[string]string{allowedKey: mustCanonicalRequestHash(t, request), structurallyRejected.IdempotencyKey: mustCanonicalRequestHash(t, structurallyRejected)},
+	}
+	body, err := json.Marshal(manifest)
+	require.NoError(t, err)
+	policy, err := ReadPublicSeedAdmission(strings.NewReader(string(body)))
+	require.NoError(t, err)
+	processor := &synchronousRememberProcessorStub{result: &SubmissionStatusResult{SubmissionID: uuid.NewString()}}
+	auditor := &rememberSecurityAuditorStub{}
+	service := NewService(Dependencies{Synchronous: processor, PublicSeedAdmission: policy, Auditor: auditor})
+	_, err = service.Remember(ctx, request)
+	require.NoError(t, err)
+	require.True(t, processor.request.SkipAISecurityReview)
+	for _, original := range []RememberRequest{
+		{TargetSpace: request.TargetSpace, IdempotencyKey: "another-key", Evidence: request.Evidence},
+		{TargetSpace: request.TargetSpace, IdempotencyKey: allowedKey, Evidence: []RememberEvidenceInput{{Content: "Altered corpus text.", Metadata: map[string]any{"eval_seed": true}}}},
+	} {
+		_, err := service.Remember(ctx, original)
+		require.ErrorIs(t, err, domain.ErrMemoryWriteDenied)
+	}
+	otherKey := uuid.New()
+	actor.CredentialID = &otherKey
+	_, err = service.Remember(requestctx.WithActor(ctx, actor), request)
+	require.ErrorIs(t, err, domain.ErrMemoryWriteDenied)
+	require.Equal(t, 1, processor.calls)
+	_, err = service.Remember(ctx, structurallyRejected)
+	require.NoError(t, err)
+	require.False(t, processor.request.SkipAISecurityReview)
+	require.True(t, processor.request.InitialSecurityRejected)
+	require.Len(t, auditor.inputs, 1)
 }
 
 func (s *rememberSecurityAuditorStub) RecordSecurityRejection(_ context.Context, input SecurityRejectionAuditInput) error {

@@ -70,10 +70,11 @@ type SynchronousAssessmentInput struct {
 	IntakeSecurity *RememberIntakeSecurity
 }
 
-// RememberIntakeSecurity accompanies partitions of a fully reviewed submission.
+// RememberIntakeSecurity records the intake security disposition before partitioning.
 type RememberIntakeSecurity struct {
 	DecisionSnapshot *domain.DecisionRuntimeConfig
 	DecisionStages   []modelprovider.DecisionStage
+	Skipped          bool
 }
 
 // SynchronousAssessmentResult contains the validated whole response and its
@@ -239,8 +240,9 @@ func AssessSynchronousRemember(
 	}
 	if input.IntakeSecurity != nil {
 		request.DecisionRouting = &assessor.SemanticAssessmentRouting{
-			Security: make([]assessor.SemanticAssessmentEvidenceSecurityResult, len(request.Evidence)),
-			Stages:   append([]modelprovider.DecisionStage(nil), input.IntakeSecurity.DecisionStages...),
+			Security:             make([]assessor.SemanticAssessmentEvidenceSecurityResult, len(request.Evidence)),
+			Stages:               append([]modelprovider.DecisionStage(nil), input.IntakeSecurity.DecisionStages...),
+			SkipAISecurityReview: input.IntakeSecurity.Skipped,
 		}
 		for i, item := range request.Evidence {
 			request.DecisionRouting.Security[i] = assessor.SemanticAssessmentEvidenceSecurityResult{
@@ -301,6 +303,9 @@ func AssessSynchronousRemember(
 			mapped = &submissionAssessmentConsumedTurnsError{cause: mapped, providerTurns: providerTurns}
 		}
 		return nil, mapped
+	}
+	if input.IntakeSecurity != nil && input.IntakeSecurity.Skipped {
+		response.AISecurityReview = "skipped"
 	}
 	encoded, err := json.Marshal(response)
 	if err != nil {

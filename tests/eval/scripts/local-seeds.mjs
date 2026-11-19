@@ -14,10 +14,10 @@ const notice = () => `# Public evaluation seed\n\nSource: osunlp/HippoRAG_2 at 5
 const localSettings = ["DENSE_MEM_EVAL_API_KEY", "DENSE_MEM_EVAL_EMBED_API_KEY", "DENSE_MEM_EVAL_VERIFIER_URL", "DENSE_MEM_EVAL_TEAM_API_KEY", "DENSE_MEM_EVAL_DATABASE_PASSWORD"];
 
 export function localSeedRequest(args, registry) {
-  const { values } = parseArgs({ args, options: { pr: { type: "string" }, dataset: { type: "string", default: "all" }, workers: { type: "string", default: "20" } } });
+  const { values } = parseArgs({ args, options: { pr: { type: "string" }, dataset: { type: "string", default: "all" }, workers: { type: "string", default: "20" }, "skip-ai-security-check": { type: "boolean", default: false } } });
   const pr = values.pr === undefined ? undefined : Number(values.pr);
   if (pr !== undefined && (!/^[1-9][0-9]*$/.test(values.pr) || !Number.isSafeInteger(pr))) throw new Error("Seed build --pr must be a valid pull request number");
-  return { pr, ...seedBuildRequest(registry, values.dataset, values.workers) };
+  return { pr, ...seedBuildRequest(registry, values.dataset, values.workers), skipAISecurityReview: values["skip-ai-security-check"] };
 }
 
 function command(binary, args) {
@@ -47,17 +47,17 @@ function protectedValues(state) {
   return ["EVAL_DATABASE_PASSWORD", "EVAL_API_KEY", "EVAL_CONTROL_TOKEN", "DENSE_MEM_EVAL_API_KEY", "DENSE_MEM_EVAL_EMBED_API_KEY", "DENSE_MEM_EVAL_VERIFIER_URL", "DENSE_MEM_EVAL_EMBED_URL"].map((name) => state.environment[name]).filter(Boolean);
 }
 
-async function roundTrip(runtime, env, operation, signal) {
+async function roundTrip(runtime, env, operation, signal, { intakeProof, dataDirectory } = {}) {
   const key = runtime.state.environment.EVAL_API_KEY;
   const secrets = protectedValues(runtime.state);
   await cleanup(env);
   signal.throwIfAborted();
-  const restored = await setup(env, { operation, seedDirectory: runtime.seedDir, seedImage: "", apiKey: key, signal });
+  const restored = await setup(env, { operation, seedDirectory: runtime.seedDir, seedImage: "", apiKey: key, signal, intakeProof, dataDirectory });
   await verifySeedCredentialExclusions(docker, `densemem-eval-${restored.paths.runID}-postgres`, runtime.seedDir, secrets);
   await runBinary(operation, restored, env, signal);
 }
 
-async function withOwnedRuntime(env, action) {
+export async function withOwnedRuntime(env, action) {
   let failed = false;
   try {
     return await action();
@@ -100,30 +100,40 @@ async function bootstrap(env, version, signal, beforePublication) {
   });
 }
 
-async function buildDataset(env, version, signal, beforePublication) {
+export async function prepareSeedExport(env, signal, options) {
+  const runtime = await setup(env, { ...options, operation: "prepare", signal });
+  await runBinary("prepare", runtime, env, signal);
+  dumpSeed(docker, `densemem-eval-${runtime.paths.runID}-postgres`, runtime.seedDir);
+  const seed = await sealSeed(runtime.seedDir);
+  fs.writeFileSync(path.join(runtime.seedDir, "NOTICE.md"), notice());
+  await roundTrip(runtime, env, "verify-seed", signal, options);
+  return { runtime, seed };
+}
+
+async function buildDataset(env, version, signal, beforePublication, skipAISecurityReview) {
   return withOwnedRuntime(env, async () => {
-    const runtime = await setup(env, { operation: "prepare", signal });
-    await runBinary("prepare", runtime, env, signal);
-    dumpSeed(docker, `densemem-eval-${runtime.paths.runID}-postgres`, runtime.seedDir);
-    const seed = await sealSeed(runtime.seedDir);
-    fs.writeFileSync(path.join(runtime.seedDir, "NOTICE.md"), notice());
-    await roundTrip(runtime, env, "verify-seed", signal);
+    const { runtime, seed } = await prepareSeedExport(env, signal, { skipAISecurityReview });
     const image = await publishSeed(docker, runtime.seedDir, env.EVAL_DATASET, version, {}, beforePublication);
-    const receipt = { dataset: env.EVAL_DATASET, image, version, corpus_rows: seed.corpus_rows, canonical_sha256: seed.canonical_sha256, workers: seed.import_workers, dump_bytes: seed.dump_bytes, preparation_ms: seed.elapsed_ms, base_release: seed.base_release, source_revision: seed.source_revision };
+    const receipt = { dataset: env.EVAL_DATASET, image, version, corpus_rows: seed.corpus_rows, canonical_sha256: seed.canonical_sha256, workers: seed.import_workers, dump_bytes: seed.dump_bytes, preparation_ms: seed.elapsed_ms, base_release: seed.base_release, source_revision: seed.source_revision, ai_security_review: seed.ai_security_review || "ordinary" };
     save(path.join(runtime.paths.directory, "public/seed-build.json"), receipt);
     process.stdout.write(`${JSON.stringify({ event: "seed_published", ...receipt })}\n`);
     return receipt;
   });
 }
 
-export async function main(args, settings = process.env) {
+export function localSeedEnvironment(settings, workers) {
   if (settings.GITHUB_ACTIONS === "true" || process.platform !== "linux" || process.arch !== "x64") throw new Error("Public seed creation requires a local Linux amd64 Docker host");
-  const request = localSeedRequest(args, read("tests/eval/datasets.json"));
   const missing = localSettings.filter((name) => !settings[name]);
   if (missing.length) throw new Error(`Missing local seed settings: ${missing.join(", ")}`);
   if (localSettings.some((name) => /[\r\n]/.test(settings[name]))) throw new Error("Invalid private runtime configuration");
-  const env = { ...settings, EVAL_MODE: "live", DENSE_MEM_EVAL_MODEL: "dense-mem-testing", DENSE_MEM_EVAL_CONTEXT_WINDOW_TOKENS: "500000", DENSE_MEM_EVAL_EMBED_URL: "https://api.openai.com/v1", WORKFLOW_EMBEDDING_MODEL: "text-embedding-3-small", WORKFLOW_EMBEDDING_DIMENSIONS: "1536", DENSE_MEM_EVAL_IMPORT_WORKERS: String(request.workers) };
+  const env = { ...settings, EVAL_MODE: "live", DENSE_MEM_EVAL_MODEL: "dense-mem-testing", DENSE_MEM_EVAL_CONTEXT_WINDOW_TOKENS: "500000", DENSE_MEM_EVAL_EMBED_URL: "https://api.openai.com/v1", WORKFLOW_EMBEDDING_MODEL: "text-embedding-3-small", WORKFLOW_EMBEDDING_DIMENSIONS: "1536", DENSE_MEM_EVAL_IMPORT_WORKERS: String(workers) };
   configuration(env, { allowHTTPVerifier: true });
+  return env;
+}
+
+export async function main(args, settings = process.env) {
+  const request = localSeedRequest(args, read("tests/eval/datasets.json"));
+  const env = localSeedEnvironment(settings, request.workers);
   if (command("git", ["status", "--porcelain", "--untracked-files=no"])) throw new Error("Seed building requires a clean tracked checkout of the tested PR head");
   const source = await resolveSeedBuildSource(github, request.pr, command("git", ["rev-parse", "HEAD"]));
   const { data: pkg } = await github.request("GET /users/markhuangai/packages/container/dense-mem-eval-postgres");
@@ -135,7 +145,7 @@ export async function main(args, settings = process.env) {
   }
   docker(["pull", "--quiet", "--platform=linux/amd64", source.image]);
   const inspected = JSON.parse(docker(["image", "inspect", source.image]))[0];
-  requireEvaluationImportSupport(inspected);
+  requireEvaluationImportSupport(inspected, { skipAISecurityReview: request.skipAISecurityReview });
   const image = resolveEvaluationImage(source.image, "markhuangai/dense-mem", inspected);
   if (image.revision !== source.sourceRevision) throw new Error("Local seed runtime differs from the validated source revision");
   const version = seedBuildVersion(source.baseRelease);
@@ -167,7 +177,7 @@ export async function main(args, settings = process.env) {
     const receipts = [];
     for (const dataset of request.dataset) {
       await beforePublication();
-      receipts.push(await buildDataset(datasetEnv(dataset, bootstrapImage), version, controller.signal, beforePublication));
+      receipts.push(await buildDataset(datasetEnv(dataset, bootstrapImage), version, controller.signal, beforePublication, request.skipAISecurityReview));
     }
     return receipts;
   } finally {
@@ -179,7 +189,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
   main(process.argv.slice(2)).catch((error) => {
     process.exitCode = 1;
     const message = error.message;
-    if (/^(Public seed creation requires|Missing local seed settings:|Seed build --pr|Seed building requires|Seed checkout |Seed PR image must be|Seed validation |Seed main CI |Seed publication requires|Invalid public seed dataset|Invalid Actions setting: DENSE_MEM_EVAL_|Invalid private runtime configuration|Local seed runtime differs|Could not build the seed helper)/.test(message)) process.stderr.write(`${message}\n`);
+    if (/^(Public seed creation requires|Missing local seed settings:|Seed build --pr|Seed building requires|Seed checkout |Seed PR image must be|Seed validation |Seed main CI |Seed publication requires|Invalid public seed dataset|Invalid Actions setting: DENSE_MEM_EVAL_|Invalid private runtime configuration|Local seed runtime differs|Evaluation requires a production image supporting locked public seed admission|Could not build the seed helper)/.test(message)) process.stderr.write(`${message}\n`);
     else process.stderr.write("Local seed build failed; inspect protected output or private evidence. No automatic rebuild was requested.\n");
   });
 }

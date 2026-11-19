@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 )
 
@@ -28,6 +29,10 @@ type HTTPClient struct {
 }
 
 type HTTPStatusError struct{ StatusCode int }
+
+type httpNetworkError struct{ kind string }
+
+func (e *httpNetworkError) Error() string { return "HTTP transport failed: " + e.kind }
 
 var errMalformedHTTPJSON = errors.New("invalid HTTP JSON response")
 
@@ -90,6 +95,9 @@ func (c *HTTPClient) doJSON(ctx context.Context, method, url, bearer string, inp
 		} else if captureErr := c.logServiceTransportFailure(req, exchange, "request", 0, err); captureErr != nil {
 			return captureErr
 		}
+		if kind := modelprovider.TransientNetworkFailure(err); kind != "" {
+			return &httpNetworkError{kind: kind}
+		}
 		return errors.New("HTTP transport failed or cancelled: " + safeContextError(ctx))
 	}
 	defer response.Body.Close()
@@ -109,8 +117,11 @@ func (c *HTTPClient) doJSON(ctx context.Context, method, url, bearer string, inp
 				return captureErr
 			}
 		}
-		if isGatewayTimeoutStatus(response.StatusCode) {
+		if response.StatusCode < 200 || response.StatusCode >= 300 {
 			return fmt.Errorf("HTTP response body interrupted: %w", &HTTPStatusError{StatusCode: response.StatusCode})
+		}
+		if kind := modelprovider.TransientNetworkFailure(err); kind != "" {
+			return &httpNetworkError{kind: kind}
 		}
 		return errors.New("HTTP response body interrupted")
 	}
@@ -223,7 +234,7 @@ func (c *HTTPClient) ImportCorpusWithConcurrency(ctx context.Context, items []Co
 	return c.importCorpus(ctx, items, concurrency, nil)
 }
 
-const maxGatewayRetries = 5
+const maxNetworkRetries = 5
 
 type corpusImportJob struct {
 	item    CorpusItem
@@ -232,6 +243,10 @@ type corpusImportJob struct {
 }
 
 func (c *HTTPClient) importCorpus(ctx context.Context, items []CorpusItem, concurrency int, native *Native) (KnowledgeMapping, error) {
+	return c.importCorpusWithOutcomes(ctx, items, concurrency, native, nil)
+}
+
+func (c *HTTPClient) importCorpusWithOutcomes(ctx context.Context, items []CorpusItem, concurrency int, native *Native, outcome func(corpusImportJob, error)) (KnowledgeMapping, error) {
 	mapping := newKnowledgeMapping()
 	if err := validateImportWorkers(concurrency); err != nil {
 		return mapping, err
@@ -301,12 +316,15 @@ func (c *HTTPClient) importCorpus(ctx context.Context, items []CorpusItem, concu
 				mu.Unlock()
 				itemMapping, requeue, err := c.importCorpusItem(work, &job, native)
 				mu.Lock()
+				if !requeue && outcome != nil {
+					outcome(job, err)
+				}
 				switch {
 				case requeue:
 					jobs = append(jobs, job)
 				case err != nil:
 					failed++
-					if first == nil {
+					if outcome == nil && first == nil {
 						first = err
 					}
 					stop()
@@ -360,23 +378,31 @@ func (c *HTTPClient) importCorpusItem(ctx context.Context, job *corpusImportJob,
 			mapping, err = c.importTerminalRememberResult(item, result, mapping)
 		}
 		var status int
+		var networkFailure string
 		if err != nil || job.attempt > 1 {
 			event := map[string]any{"source_id": item.SourceDocID, "attempt": job.attempt, "idempotency_key": job.input["idempotency_key"], "result": result, "elapsed_ms": float64(elapsed) / float64(time.Millisecond)}
 			if err != nil {
 				event["error"] = err.Error()
 				var httpErr *HTTPStatusError
+				var networkErr *httpNetworkError
 				var toolErr *StructuredToolError
 				switch {
 				case errors.As(err, &httpErr):
 					status = httpErr.StatusCode
 					event["http_status"] = status
+				case errors.As(err, &networkErr):
+					networkFailure = networkErr.kind
+					event["network_failure"] = networkFailure
 				case native != nil && ctx.Err() == nil && errors.As(err, &toolErr):
 					var checked bool
-					status, checked = native.rememberProviderHTTPStatus(ctx, toolErr.Result)
+					status, networkFailure, checked = native.rememberProviderTransportFailure(ctx, toolErr.Result)
 					if status != 0 {
 						event["provider_http_status"] = status
 					} else if checked {
 						event["provider_status"] = "unavailable"
+					}
+					if networkFailure != "" {
+						event["provider_network_failure"] = networkFailure
 					}
 				}
 			}
@@ -390,14 +416,21 @@ func (c *HTTPClient) importCorpusItem(ctx context.Context, job *corpusImportJob,
 		if ctx.Err() != nil {
 			return mapping, false, err
 		}
-		if isGatewayTimeoutStatus(status) {
-			if job.attempt > maxGatewayRetries {
+		if isRetryableGatewayStatus(status) || (status < 300 && networkFailure != "") {
+			if job.attempt > maxNetworkRetries {
+				return mapping, false, err
+			}
+			event := map[string]any{"source_id": item.SourceDocID, "attempt": job.attempt + 1, "idempotency_key": job.input["idempotency_key"]}
+			if isRetryableGatewayStatus(status) {
+				event["gateway_http_status"] = status
+			}
+			if networkFailure != "" {
+				event["network_failure"] = networkFailure
+			}
+			if err := c.Capture.Emit("intake_retry", event); err != nil {
 				return mapping, false, err
 			}
 			job.attempt++
-			if err := c.Capture.Emit("intake_retry", map[string]any{"source_id": item.SourceDocID, "attempt": job.attempt, "idempotency_key": job.input["idempotency_key"], "gateway_http_status": status}); err != nil {
-				return mapping, false, err
-			}
 			return mapping, true, nil
 		}
 		if job.attempt != 1 {
@@ -421,8 +454,8 @@ func (c *HTTPClient) importCorpusItem(ctx context.Context, job *corpusImportJob,
 	}
 }
 
-func isGatewayTimeoutStatus(status int) bool {
-	return status == http.StatusGatewayTimeout || status == 524
+func isRetryableGatewayStatus(status int) bool {
+	return status == http.StatusBadGateway || status == http.StatusServiceUnavailable || status == http.StatusGatewayTimeout || status == 524
 }
 
 func isTransientHTTPError(err error) bool {

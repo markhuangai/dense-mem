@@ -6,7 +6,6 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { extractSeed, verifySeedFiles, restoreSeed, dumpSeed, sealSeed, verifySeedCredentialExclusions, seedReference, resolveSeedImage, postgresImage } from "../../../.github/scripts/evaluation-seeds.mjs";
 import { requireRunner, configuration, resolveImportWorkers, requireEvaluationImportSupport, registryMatrix, sha256, aggregate, ownedResource } from "../../../.github/scripts/evaluation-policy.mjs";
-import { compareIntake } from "./intake-comparison.mjs";
 
 const label = "io.dense-mem.eval.run";
 const secret = () => randomBytes(32).toString("base64url");
@@ -138,43 +137,42 @@ export async function setup(env, options = {}) {
   const fixture = env.EVAL_MODE === "fixtures";
   const operation = options.operation || "run";
   const preparing = operation === "prepare" || operation === "bootstrap";
-  const intake = env.EVAL_MODE === "intake" && operation === "intake" && paths.dataset === "intake";
-  const { signal } = options;
+  const { signal, intakeProof = false, skipAISecurityReview = false } = options;
+  const seedImage = options.seedImage ?? env.EVAL_SEED_IMAGE ?? "";
   signal?.throwIfAborted();
   if (paths.seedBuildID && (env.EVAL_MODE !== "live" || (!preparing && operation !== "verify-seed"))) throw new Error("Local runtime permits only public seed preparation and restore verification");
   if (!paths.seedBuildID) {
     requireRunner(env);
-    if (operation !== "run" && !(fixture && operation === "prepare") && !intake) throw new Error("Hosted runtime permits only scoring and synthetic fixture preparation, plus the pinned intake comparison");
+    if (operation !== "run" && !(fixture && operation === "prepare")) throw new Error("Hosted runtime permits only scoring and synthetic fixture preparation");
   }
+  if (intakeProof && (!paths.seedBuildID || !options.dataDirectory || (operation !== "prepare" && operation !== "verify-seed"))) throw new Error("Intake proof requires a local seed runtime and frozen public inputs");
+  if (skipAISecurityReview && (!paths.seedBuildID || operation !== "prepare" || !seedImage)) throw new Error("AI security review can only be skipped during local preparation from a public bootstrap");
   const configured = fixture ? { model: "fixture", context: 300_000, verifier: "", embedding: "" } : configuration(env, { allowHTTPVerifier: Boolean(paths.seedBuildID) });
   configured.importWorkers = preparing ? resolveImportWorkers(env.DENSE_MEM_EVAL_IMPORT_WORKERS) : 0;
-  if (!/^[0-9a-f]{40}$/.test(env.EVAL_SOURCE_REVISION || "") || !/^ghcr\.io\/markhuangai\/dense-mem(?::[A-Za-z0-9._-]+)?@sha256:[0-9a-f]{64}$/.test(env.EVAL_IMAGE || "")) throw new Error("Immutable runner source and image are required");
-  docker(["pull", "--quiet", env.EVAL_IMAGE]);
-  if (intake) {
-    const image = JSON.parse(docker(["image", "inspect", env.EVAL_IMAGE]))[0];
-    if (image.Config.Labels["org.opencontainers.image.revision"] !== env.EVAL_SOURCE_REVISION) throw new Error("Immutable intake comparison image source differs");
-  }
-  if (preparing && !fixture) requireEvaluationImportSupport(JSON.parse(docker(["image", "inspect", env.EVAL_IMAGE]))[0]);
+  const imagePattern = intakeProof ? /^sha256:[a-f0-9]{64}$/ : /^ghcr\.io\/markhuangai\/dense-mem(?::[A-Za-z0-9._-]+)?@sha256:[a-f0-9]{64}$/;
+  if (!/^[a-f0-9]{40}$/.test(env.EVAL_SOURCE_REVISION || "") || !imagePattern.test(env.EVAL_IMAGE || "")) throw new Error("Immutable runner source and image are required");
+  if (!intakeProof && !paths.seedBuildID) docker(["pull", "--quiet", env.EVAL_IMAGE]);
+  if (preparing && !fixture) requireEvaluationImportSupport(JSON.parse(docker(["image", "inspect", env.EVAL_IMAGE]))[0], { skipAISecurityReview });
   fs.mkdirSync(paths.directory, { recursive: true, mode: 0o700 });
   const registryPath = fixture ? "tests/eval/fixtures/datasets.json" : "tests/eval/datasets.json";
   const registryBytes = fs.readFileSync(registryPath);
   const registry = JSON.parse(registryBytes);
   registryMatrix(registry);
   const dataset = registry.datasets.find((row) => row.id === paths.dataset);
-  if (!dataset && operation !== "bootstrap" && !intake) throw new Error("Dataset is not registered");
-  const dataDir = path.join(paths.directory, "data");
+  if (!dataset && operation !== "bootstrap") throw new Error("Dataset is not registered");
+  const dataDir = intakeProof ? options.dataDirectory : path.join(paths.directory, "data");
   const outputDir = path.join(paths.directory, "public");
   const seedDir = options.seedDirectory || path.join(paths.directory, "seed");
   fs.mkdirSync(outputDir, { mode: 0o700, recursive: true });
   fs.mkdirSync(seedDir, { mode: 0o700, recursive: true });
   const deadline = new Date(Number(env.EVAL_MODEL_DEADLINE_EPOCH) * 1000);
   if (!Number.isFinite(deadline.getTime()) || deadline <= new Date() || deadline > Date.now() + 330 * 60_000) throw new Error("Runner model deadline is invalid");
-  const manifest = { version: 1, run_id: paths.runID, workflow_run_id: paths.seedBuildID ? "" : env.GITHUB_RUN_ID, seed_build_id: paths.seedBuildID, source_revision: env.EVAL_SOURCE_REVISION, image: env.EVAL_IMAGE, registry_sha256: sha256(registryBytes), dataset: paths.dataset, mode: env.EVAL_MODE, operation, model: configured.model, embedding_model: "text-embedding-3-small", embedding_dimensions: 1536, context_window_tokens: configured.context, import_workers: configured.importWorkers, base_release: env.EVAL_BASE_RELEASE || (fixture ? "v0.0.0" : ""), seed_image: options.seedImage ?? env.EVAL_SEED_IMAGE ?? "", seed_dir: seedDir, model_deadline: deadline.toISOString(), data_dir: dataDir, output_dir: outputDir, timings_ms: {} };
+  const manifest = { version: 1, run_id: paths.runID, workflow_run_id: paths.seedBuildID ? "" : env.GITHUB_RUN_ID, seed_build_id: paths.seedBuildID, source_revision: env.EVAL_SOURCE_REVISION, image: env.EVAL_IMAGE, registry_sha256: sha256(registryBytes), dataset: paths.dataset, mode: env.EVAL_MODE, operation, model: configured.model, embedding_model: "text-embedding-3-small", embedding_dimensions: 1536, context_window_tokens: configured.context, import_workers: configured.importWorkers, base_release: env.EVAL_BASE_RELEASE || (fixture ? "v0.0.0" : ""), seed_image: seedImage, seed_dir: seedDir, model_deadline: deadline.toISOString(), data_dir: dataDir, output_dir: outputDir, timings_ms: {}, intake_proof: intakeProof, skip_ai_security_review: skipAISecurityReview };
   save(paths.manifestFile, manifest);
   const prefix = `densemem-eval-${paths.runID}`;
   const state = { runID: paths.runID, source: env.EVAL_SOURCE_REVISION, image: env.EVAL_IMAGE, network: `${prefix}-network`, volume: `${prefix}-postgres`, containers: [`${prefix}-server`, `${prefix}-postgres`, `${prefix}-seed`, ...(fixture ? [`${prefix}-provider`] : [])], environment: {} };
-  const password = fixture || intake ? secret() : env.DENSE_MEM_EVAL_DATABASE_PASSWORD;
-  const apiKey = options.apiKey || (fixture || intake ? secret() : env.DENSE_MEM_EVAL_TEAM_API_KEY);
+  const password = fixture ? secret() : env.DENSE_MEM_EVAL_DATABASE_PASSWORD;
+  const apiKey = options.apiKey || (fixture ? secret() : env.DENSE_MEM_EVAL_TEAM_API_KEY);
   const controlToken = secret();
   for (const value of [password, apiKey, controlToken]) mask(value, env);
   state.environment = { EVAL_DATABASE_PASSWORD: password, EVAL_CONTROL_TOKEN: controlToken, EVAL_API_KEY: apiKey, EVAL_SERVER_CONTAINER: `${prefix}-server`, DENSE_MEM_EVAL_API_KEY: fixture ? secret() : env.DENSE_MEM_EVAL_API_KEY, DENSE_MEM_EVAL_EMBED_API_KEY: fixture ? secret() : env.DENSE_MEM_EVAL_EMBED_API_KEY };
@@ -187,9 +185,14 @@ export async function setup(env, options = {}) {
     extractSeed(docker, manifest.seed_image, inputSeedDir, `${prefix}-seed`, paths.runID);
     manifest.timings_ms.seed_pull = Date.now() - started;
   }
-  if (manifest.seed_image || options.seedDirectory) seed = await verifySeedFiles(inputSeedDir, preparing ? "bootstrap" : paths.dataset, manifest.registry_sha256, preparing ? 0 : dataset.corpus.rows);
-  if (!preparing && !seed && !intake) throw new Error("Runner evaluation requires a verified seed");
-  if (operation !== "bootstrap" && !intake) {
+  if (manifest.seed_image || options.seedDirectory) {
+    const proofExport = intakeProof && !preparing;
+    seed = await verifySeedFiles(inputSeedDir, preparing ? "bootstrap" : paths.dataset, manifest.registry_sha256, preparing ? 0 : proofExport ? 20 : dataset.corpus.rows, { intakeProof: proofExport });
+  }
+  if ((!preparing || intakeProof || skipAISecurityReview) && !seed) throw new Error("Runner evaluation requires a verified seed");
+  if (intakeProof) manifest.base_release = seed.base_release;
+  if (skipAISecurityReview) save(path.join(paths.directory, "seed-admission-scope.json"), seed.scope);
+  if (operation !== "bootstrap") {
     if (fixture) { fs.mkdirSync(dataDir, { mode: 0o700, recursive: true }); for (const source of [dataset.corpus, dataset.questions]) fs.copyFileSync(path.join("tests/eval/fixtures", source.path), path.join(dataDir, source.path)); }
     else await downloadSources(registry, dataset, dataDir, signal);
     save(paths.manifestFile, manifest);
@@ -216,13 +219,18 @@ export async function setup(env, options = {}) {
     configured.verifier = configured.embedding = `http://127.0.0.1:${port(`${prefix}-provider`, 8787)}/v1`;
   }
   const serverEnv = serverEnvironment({ ...configured, verifier: serverVerifier, embedding: serverEmbedding }, state.environment);
+  const admissionMount = [];
+  if (skipAISecurityReview) {
+    serverEnv.DANGEROUSLY_SKIP_AI_SECURITY_CHECK = "true";
+    admissionMount.push("--mount", "type=bind,source=" + path.join(paths.directory, "seed-admission.json") + ",target=/run/dense-mem-seed-admission.json,readonly");
+  }
   for (const value of [serverVerifier, serverEmbedding, configured.verifier, configured.embedding]) mask(value, env);
   const serverFile = path.join(paths.directory, "server.env");
   fs.writeFileSync(serverFile, Object.entries(serverEnv).map(([key, value]) => `${key}=${value}`).join("\n") + "\n", { mode: 0o600 });
   Object.assign(state.environment, { DENSE_MEM_EVAL_VERIFIER_URL: configured.verifier, DENSE_MEM_EVAL_EMBED_URL: configured.embedding, AI_VERIFIER_API_URL: serverVerifier, AI_API_URL: serverEmbedding });
   save(paths.stateFile, state);
   signal?.throwIfAborted();
-  docker(["run", "--detach", "--name", `${prefix}-server`, "--label", `${label}=${paths.runID}`, "--network", state.network, "--publish", "127.0.0.1::8080", "--publish", "127.0.0.1::8090", "--env-file", serverFile, env.EVAL_IMAGE]);
+  docker(["run", "--detach", "--name", `${prefix}-server`, "--label", `${label}=${paths.runID}`, "--network", state.network, "--publish", "127.0.0.1::8080", "--publish", "127.0.0.1::8090", "--env-file", serverFile, ...admissionMount, env.EVAL_IMAGE]);
   Object.assign(state.environment, { EVAL_MCP_URL: `http://127.0.0.1:${port(`${prefix}-server`, 8080)}`, EVAL_CONTROL_URL: `http://127.0.0.1:${port(`${prefix}-server`, 8090)}`, EVAL_DATABASE_URL: `postgres://densemem:${encodeURIComponent(password)}@127.0.0.1:${port(`${prefix}-postgres`, 5432)}/densemem?sslmode=disable` });
   mask(state.environment.EVAL_DATABASE_URL, env); save(paths.stateFile, state);
   const startupDeadline = Date.now() + 300_000;
@@ -241,7 +249,7 @@ export async function setup(env, options = {}) {
       Object.assign(state.environment, { EVAL_CREDENTIAL_ID: credential.credential.id, EVAL_API_KEY: credential.api_key });
     }
   }
-  if (operation === "bootstrap" || intake || (preparing && !seed)) {
+  if (operation === "bootstrap" || (preparing && !seed)) {
     const values = { ONTOLOGY_MAINTENANCE_ENABLED: "false", ONTOLOGY_MAINTENANCE_MODEL: configured.model, ONTOLOGY_MAINTENANCE_MAX_CONCURRENCY: "4", ONTOLOGY_MAINTENANCE_TEAM_MAX_CONCURRENCY: "4", ONTOLOGY_MAINTENANCE_CONTEXT_WINDOW_TOKENS: String(configured.context) };
     await control(state, "PATCH", "/config/ontology-maintenance", { items: Object.entries(values).map(([key, value]) => ({ key, value })) });
     await control(state, "POST", "/ontology/pause", { operation_key: `pause-${paths.runID}` });
@@ -278,53 +286,33 @@ export async function cleanup(env) {
   process.stdout.write(`Evaluation runtime ${paths.runID} removed; borrowed images retained.\n`);
 }
 
-export function intakeFailureRecords(logs, correlationID) {
-  return logs.split("\n").filter((line) => {
-    try {
-      const entry = JSON.parse(line);
-      return entry?.correlation_id === correlationID && ["WARN", "ERROR", "FATAL"].includes(entry.level) &&
-        !Object.hasOwn(entry, "payload_chunk");
-    } catch {
-      return false;
-    }
-  }).slice(-40).join("\n");
-}
-
-export async function diagnostics(env, { correlationID, apiKey, signal } = {}) {
+export async function diagnostics(env) {
   const paths = location(env);
   if (!fs.existsSync(paths.stateFile) || fs.existsSync(path.join(paths.directory, "public/scores.json"))) return;
   const state = read(paths.stateFile);
   if (state.runID !== paths.runID) throw new Error("Startup log ownership mismatch");
-  if (correlationID && !/^[a-f0-9-]{36}$/i.test(correlationID)) throw new Error("Invalid intake diagnostic correlation");
-  const options = correlationID ? { signal, timeout: 10_000 } : {};
-  const files = correlationID ? [] : fs.readdirSync(paths.directory, { recursive: true }).filter((file) => ["postgres-failure.log", "seed-failure.log"].includes(path.basename(file))).map((file) => path.join(paths.directory, file));
-  const name = `densemem-eval-${paths.runID}-server`;
-  if (await dockerAsync(["container", "ls", "--all", "--filter", `name=^${name}$`, "--quiet"], options)) {
-    const actual = JSON.parse(await dockerAsync(["container", "inspect", name], options))[0];
+  const files = fs.readdirSync(paths.directory, { recursive: true }).filter((file) => ["postgres-failure.log", "seed-failure.log"].includes(path.basename(file))).map((file) => path.join(paths.directory, file));
+  const name = "densemem-eval-" + paths.runID + "-server";
+  if (await dockerAsync(["container", "ls", "--all", "--filter", "name=^" + name + "$", "--quiet"])) {
+    const actual = JSON.parse(await dockerAsync(["container", "inspect", name]))[0];
     ownedResource({ Labels: actual.Config.Labels }, paths.runID);
-    const args = env.EVAL_MODE === "intake" ? ["logs", "--tail", correlationID ? "1500" : "200", name] : ["logs", name];
-    const result = await runCommand("docker", args, options);
-    const output = result.stdout + result.stderr;
-    const records = correlationID ? intakeFailureRecords(output, correlationID) : output;
-    if (records) {
-      const file = path.join(paths.directory, correlationID ? `failure-${correlationID}.log` : "server.log");
-      fs.writeFileSync(file, records, { mode: 0o600 });
-      files.push(file);
-    }
+    const result = await runCommand("docker", ["logs", name]);
+    const file = path.join(paths.directory, "server.log");
+    fs.writeFileSync(file, result.stdout + result.stderr, { mode: 0o600 });
+    files.push(file);
   }
   for (const file of files) {
     const environment = { ...privateEnvironment(state, env), EVAL_SERVER_LOG_FILE: file };
-    if (apiKey) environment.EVAL_API_KEY = apiKey;
-    await runCommand(env.EVAL_RUNNER_BINARY, ["validate", paths.manifestFile], { ...options, env: environment, forwardOutput: true });
+    await runCommand(env.EVAL_RUNNER_BINARY, ["validate", paths.manifestFile], { env: environment, forwardOutput: true });
   }
   return files.length !== 0;
 }
 
 export async function main(mode, env = process.env) {
   requireRunner(env);
-  if (!["live", "fixtures", "intake"].includes(env.EVAL_MODE)) throw new Error("Invalid evaluation mode");
+  if (!["live", "fixtures"].includes(env.EVAL_MODE)) throw new Error("Invalid evaluation mode");
   if (mode === "matrix") {
-    const matrix = env.EVAL_MODE === "intake" ? { dataset: ["intake"] } : registryMatrix(read(env.EVAL_MODE === "fixtures" ? "tests/eval/fixtures/datasets.json" : "tests/eval/datasets.json"));
+    const matrix = registryMatrix(read(env.EVAL_MODE === "fixtures" ? "tests/eval/fixtures/datasets.json" : "tests/eval/datasets.json"));
     fs.appendFileSync(env.GITHUB_OUTPUT, `matrix=${JSON.stringify(matrix)}\n`); return;
   }
   if (mode === "pin-seeds" && env.EVAL_MODE === "live") {
@@ -354,7 +342,6 @@ export async function main(mode, env = process.env) {
     if (!report.complete) process.exitCode = 1; return;
   }
   if (mode !== "run") throw new Error("Unsupported workflow operation");
-  if (env.EVAL_MODE === "intake") return compareIntake(env, location(env), { setup, cleanup, control, mask, diagnostics, docker: dockerAsync, downloadSources });
   let runtime;
   if (env.EVAL_MODE === "fixtures") {
     const prepared = await setup({ ...env, DENSE_MEM_EVAL_IMPORT_WORKERS: "4" }, { operation: "prepare" });

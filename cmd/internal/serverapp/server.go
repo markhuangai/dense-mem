@@ -80,6 +80,10 @@ func RunActiveServer(
 	if !VerifierConfigured(&cfg) {
 		return errors.New("active authority requires configured verifier provider")
 	}
+	seedAdmission, err := loadPublicSeedAdmission(cfg.DangerouslySkipAISecurityCheck)
+	if err != nil {
+		return err
+	}
 	if cfg.PostgresAdvisoryLockConcurrency != 0 {
 		if err := lockadmission.Configure(pgDB.GetDB(), cfg.PostgresAdvisoryLockConcurrency); err != nil {
 			return fmt.Errorf("configure PostgreSQL lock admission: %w", err)
@@ -272,6 +276,7 @@ func RunActiveServer(
 	sessionAssessor.SetMetrics(discoverabilityMetrics)
 	ontologyMaintenance := buildOntologyMaintenance(ontologyStore, appConfigService, assessorProvider, assessmentLimits, sessionModels.remember, time.Duration(cfg.GetAIVerifierTimeoutSeconds())*time.Second, auditService, rootSlogLogger(logger), ontologyDiagnosticCapture(operationLogService, diagnosticProtector, rootDiagnosticLogger(logger)))
 	applications := buildApplicationBundle(applicationCompositionDependencies{
+		PublicSeedAdmission:  seedAdmission,
 		Knowledge:            knowledgeStore,
 		RememberPersistence:  knowledgeStore,
 		TraceStore:           traceStore,

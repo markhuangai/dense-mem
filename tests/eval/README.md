@@ -16,6 +16,7 @@ compiles its Go helper in Docker from the checked-out commit.
 | `--pr` | Current main release | Use the trusted image for your own open, non-draft same-repository PR |
 | `--dataset` | `all` | All five complete public packs, or one named pack |
 | `--workers` | `20` | Concurrent Remember requests per dataset, from 1–100 |
+| `--skip-ai-security-check` | Off | Skip contextual AI review for the pinned public rows in this build |
 
 For a PR, check out the exact head and wait for the trusted production image,
 Repository CI, CodeQL analysis, CodeQL and Production image E2E. On current
@@ -40,6 +41,13 @@ exports a compressed PostgreSQL logical dump. A fresh restore must verify before
 publication. The backup preserves migrations, Evidence, embeddings, provenance,
 ownership and required receipts. Operation-log and Remember diagnostic payload
 rows are excluded, while their table definitions remain.
+
+The optional switch sets `DANGEROUSLY_SKIP_AI_SECURITY_CHECK` for the local
+import instance. Remember requires the original request hash and operation key
+in a read-only manifest bound to the authenticated bootstrap identity and
+shared space. The initial structural scan still applies. The seed and each
+assessment record `ai_security_review=skipped`. Restore starts the application
+with ordinary AI review enabled.
 
 At twenty workers the application pool has fifty connections: twenty may be
 held by request advisory locks while foreground queries and background activity
@@ -140,15 +148,25 @@ two HTTP 524 responses before succeeding. It exports and restores the corpus,
 then produces eight scored answers across two ontology conditions and two
 answer policies. It makes no external model calls and publishes no seed image.
 
-To check Remember intake, a repository admin starts a fresh dispatch on the
-current head of their own same-repository PR with `evaluation=intake`. The head
-must have a successful production-image receipt.
-The runner compares the 28 previously rejected rows and the security controls
-on the pinned baseline and candidate images. It checks full partition coverage
-and exact stored text and retains case outcomes and source identities for two days.
-Each case uses its own disposable team. The runner processes up to four cases at
-a time and stops model work after 20 minutes. Unexpected outcomes retain bounded
-error fields and the request's protected failure logs when available.
+## Prove seed intake before a push
+
+Build the Linux amd64 `production` target from the working tree using a build
+context that contains only intended source files. Set `IMAGE_REVISION` to the
+checkout commit and label the image `io.dense-mem.eval.source-sha256` with the
+build context fingerprint. Build `./cmd/eval-runner` from the same source tree.
+
+```bash
+node --env-file=eval.env tests/eval/scripts/local-intake-proof.mjs \
+  --image <local-image-id> --runner <eval-runner-binary>
+```
+
+The proof freezes 20 public rows per pack, including the 28 previously rejected
+rows, and verifies their source locks. Both runs use fresh databases from the
+same pinned bootstrap and use four workers. The comparison records all 100
+ordinary outcomes. Passing requires 100 seed-mode imports and 100 verified
+after fresh restores, including exact text, partition receipts, current search
+state, and matching fingerprints. Private proof receipts and exports live
+under `tmp/eval-seeds/`.
 
 ## Sources, scoring and measurements
 
@@ -164,9 +182,10 @@ independent single-call and multi-turn conversations. Multi-turn permits Recall,
 returned-topic follow-ups and authorized Trace, with eight total memory calls
 including the initial Recall. Gold references stay outside provider inputs.
 Answer regeneration is bounded to three complete attempts per turn. During seed
-preparation and the intake comparison, a confirmed HTTP 504 or 524 puts the
-item at the back of the queue. It can run up to six times total, including the
-initial attempt, with the same authenticated scope, content and idempotency key.
+preparation, a confirmed HTTP 502, 503, 504 or 524, temporary DNS failure,
+connection reset, interrupted response or request-level network timeout puts
+the row at the back of the queue. It can run up to six times total, including
+the initial attempt, with the same authenticated scope, content and idempotency key.
 The existing deadline still applies. Other seed import failures retain their
 existing one-retry limit when eligible. Attempt logs preserve the status and
 outcome, and exhausted retries leave the run incomplete.

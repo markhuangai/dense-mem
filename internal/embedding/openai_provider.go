@@ -193,7 +193,7 @@ func (p *OpenAIEmbeddingProvider) embedChunk(ctx context.Context, texts []string
 		observability.RecordEmbeddingProviderAttempt(ctx, p.metrics, p.model, time.Since(attemptStart).Seconds(), outcome)
 	}()
 	if err != nil {
-		recordEmbeddingExchange(ctx, p.model, bodyBytes, nil, "", 0, "no_response", nil)
+		recordEmbeddingExchange(ctx, p.model, bodyBytes, nil, "", 0, "no_response", nil, err)
 		return nil, "", &embeddingcontract.ProviderError{
 			Provider: "openai",
 			Message:  "request failed",
@@ -204,7 +204,7 @@ func (p *OpenAIEmbeddingProvider) embedChunk(ctx context.Context, texts []string
 
 	rawBody, err := io.ReadAll(io.LimitReader(resp.Body, openAIEmbeddingMaxResponseBytes+1))
 	if err != nil {
-		recordEmbeddingExchange(ctx, p.model, bodyBytes, rawBody, resp.Header.Get("Content-Type"), resp.StatusCode, "response_read_failed", nil)
+		recordEmbeddingExchange(ctx, p.model, bodyBytes, rawBody, resp.Header.Get("Content-Type"), resp.StatusCode, "response_read_failed", nil, err)
 		return nil, "", &embeddingcontract.ProviderError{
 			Provider:     "openai",
 			Message:      "failed to read response",
@@ -214,12 +214,12 @@ func (p *OpenAIEmbeddingProvider) embedChunk(ctx context.Context, texts []string
 		}
 	}
 	if len(rawBody) > openAIEmbeddingMaxResponseBytes {
-		recordEmbeddingExchange(ctx, p.model, bodyBytes, rawBody, resp.Header.Get("Content-Type"), resp.StatusCode, "response_too_large", nil)
+		recordEmbeddingExchange(ctx, p.model, bodyBytes, rawBody, resp.Header.Get("Content-Type"), resp.StatusCode, "response_too_large", nil, nil)
 		return nil, "", &embeddingcontract.ProviderError{Provider: "openai", Message: "provider response exceeds transport limit", FailureCode: "provider_response_invalid", FailureClass: "provider_action_required"}
 	}
 	var respBody openAIEmbeddingResponse
 	if err := json.Unmarshal(rawBody, &respBody); err != nil {
-		recordEmbeddingExchange(ctx, p.model, bodyBytes, rawBody, resp.Header.Get("Content-Type"), resp.StatusCode, "captured", nil)
+		recordEmbeddingExchange(ctx, p.model, bodyBytes, rawBody, resp.Header.Get("Content-Type"), resp.StatusCode, "captured", nil, nil)
 		if resp.StatusCode != http.StatusOK {
 			return nil, "", &embeddingcontract.ProviderHTTPError{
 				Status:     resp.StatusCode,
@@ -242,7 +242,7 @@ func (p *OpenAIEmbeddingProvider) embedChunk(ctx context.Context, texts []string
 	for index, item := range respBody.Data {
 		dimensions[index] = len(item.Embedding)
 	}
-	recordEmbeddingExchange(ctx, p.model, bodyBytes, rawBody, resp.Header.Get("Content-Type"), resp.StatusCode, "captured", dimensions)
+	recordEmbeddingExchange(ctx, p.model, bodyBytes, rawBody, resp.Header.Get("Content-Type"), resp.StatusCode, "captured", dimensions, nil)
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, "", &embeddingcontract.ProviderHTTPError{
@@ -301,7 +301,7 @@ func (p *OpenAIEmbeddingProvider) embedChunk(ctx context.Context, texts []string
 	return result, p.model, nil
 }
 
-func recordEmbeddingExchange(ctx context.Context, model string, requestBody, responseBody []byte, responseContentType string, statusCode int, outcome string, embeddingDimensions []int) {
+func recordEmbeddingExchange(ctx context.Context, model string, requestBody, responseBody []byte, responseContentType string, statusCode int, outcome string, embeddingDimensions []int, transportErr error) {
 	recorder := modelprovider.ExchangeRecorderFromContext(ctx)
 	if recorder == nil {
 		return
@@ -309,6 +309,14 @@ func recordEmbeddingExchange(ctx context.Context, model string, requestBody, res
 	captureState := ""
 	if len(requestBody) > modelprovider.MaxProviderDiagnosticBodyBytes || len(responseBody) > modelprovider.MaxProviderDiagnosticBodyBytes {
 		captureState = "truncated"
+	}
+	if failure := modelprovider.TransientNetworkFailure(transportErr); failure != "" {
+		if outcome == "no_response" {
+			captureState = "no_response"
+		} else if captureState == "" {
+			captureState = "interrupted"
+		}
+		outcome = failure
 	}
 	now := time.Now()
 	exchange := modelprovider.ProviderExchange{
