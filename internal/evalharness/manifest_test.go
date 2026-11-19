@@ -139,4 +139,27 @@ func TestReadManifestPermitsOnlyPublicSeedOperationsLocally(t *testing.T) {
 			require.ErrorContains(t, err, "skipping AI security review requires preparation from a public seed bootstrap")
 		})
 	}
+
+	prepare.ResumeScope, prepare.SkipAISecurityReview = &Scope{}, false
+	require.NoError(t, writeJSON(file, prepare))
+	actual, err = ReadManifest(file)
+	require.NoError(t, err)
+	require.Equal(t, prepare, actual)
+	for _, tc := range []struct {
+		name   string
+		change func(*Manifest)
+	}{
+		{"bootstrap", func(m *Manifest) { m.Operation = "bootstrap" }},
+		{"restore verification", func(m *Manifest) { m.Operation, m.ImportWorkers = "verify-seed", 0 }},
+		{"intake proof", func(m *Manifest) { m.IntakeProof, m.Image = true, "sha256:"+strings.Repeat("a", 64) }},
+		{"unpinned bootstrap", func(m *Manifest) { m.SeedImage = "" }},
+	} {
+		t.Run("resume during "+tc.name, func(t *testing.T) {
+			m := prepare
+			tc.change(&m)
+			require.NoError(t, writeJSON(file, m))
+			_, err := ReadManifest(file)
+			require.ErrorContains(t, err, "resuming requires a local public seed build")
+		})
+	}
 }

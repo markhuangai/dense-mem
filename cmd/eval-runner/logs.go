@@ -16,7 +16,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/observability"
 )
 
-func runtimeLogs(ctx context.Context, runID string, capture *evalharness.Capture, usage map[string]evalharness.UsageTotals) error {
+func runtimeLogs(ctx context.Context, runID string, capture *evalharness.Capture, usage map[string]evalharness.UsageTotals, requireUsage bool) error {
 	container := os.Getenv("EVAL_SERVER_CONTAINER")
 	if container != "densemem-eval-"+runID+"-server" {
 		return errors.New("server log collection identity mismatch")
@@ -44,7 +44,7 @@ func runtimeLogs(ctx context.Context, runID string, capture *evalharness.Capture
 	if err := logReader(ctx, file, capture, usage); err != nil {
 		return err
 	}
-	if len(usage) == 0 {
+	if requireUsage && len(usage) == 0 {
 		return errors.New("required runtime provider exchanges are missing")
 	}
 	return nil

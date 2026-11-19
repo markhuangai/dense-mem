@@ -79,6 +79,28 @@ func TestRunnerSeedLogicalRestoreMigrationAndCredentialIdentity(t *testing.T) {
 	f.native.Client.Client = originalClient
 	require.True(t, discarded, "the test loses the completed Remember response before the importer reads it")
 	require.Equal(t, 1, f.provider.calls, "the identical retry replays the committed row")
+	wrongScope := seed.Scope
+	wrongScope.SpaceID = uuid.NewString()
+	manifest.ResumeScope = &wrongScope
+	_, err = evalharness.Prepare(ctx, manifest, corpus, f.native.Client, f.native)
+	require.ErrorContains(t, err, "checkpoint database scope differs")
+	require.Equal(t, 1, f.provider.calls, "a different scope must not dispatch provider work")
+	pinnedScope := seed.Scope
+	manifest.ResumeScope = &pinnedScope
+	changed := append([]evalharness.CorpusItem(nil), corpus...)
+	changed[0].Metadata = map[string]any{"altered": true}
+	_, err = evalharness.Prepare(ctx, manifest, changed, f.native.Client, f.native)
+	require.ErrorContains(t, err, "checkpoint receipt differs from the original Remember request")
+	require.Equal(t, 1, f.provider.calls, "a changed request must not dispatch provider work")
+	corpus = append(corpus, evalharness.CorpusItem{SourceDocID: "unfinished-document", Content: "The library opens on Sunday."})
+	seed, err = evalharness.Prepare(ctx, manifest, corpus, f.native.Client, f.native)
+	require.NoError(t, err)
+	require.Equal(t, 2, f.provider.calls, "resume imports only the uncommitted row")
+	require.Equal(t, 2, seed.CorpusRows)
+	_, err = evalharness.Prepare(ctx, manifest, corpus, f.native.Client, f.native)
+	require.NoError(t, err)
+	require.Equal(t, 2, f.provider.calls, "a completed checkpoint can export without Remember calls")
+	manifest.ResumeScope = nil
 	migrator := storagepostgres.NewMigratorWithDB(f.native.DB)
 	var newest int64
 	require.NoError(t, f.native.DB.QueryRowContext(ctx, "SELECT version_id FROM goose_db_version ORDER BY id DESC LIMIT 1").Scan(&newest))

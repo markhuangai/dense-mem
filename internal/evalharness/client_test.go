@@ -273,7 +273,7 @@ func TestImportOutcomesContinueAfterRejectedRow(t *testing.T) {
 			if test.observe {
 				observe = func(job corpusImportJob, err error) { outcomes[job.item.SourceDocID] = err }
 			}
-			mapping, err := client.importCorpusWithOutcomes(t.Context(), items, 1, nil, observe)
+			mapping, err := client.importCorpusWithOutcomes(t.Context(), items, 1, corpusImportOptions{outcome: observe})
 			require.Len(t, requests, test.wantRequests)
 			if test.wantRequests == 2 {
 				require.NoError(t, err)
@@ -580,6 +580,7 @@ func TestImporterReconcilesTransientFailureWithTheSameOperationKey(t *testing.T)
 }
 
 func TestImporterQueuesConfirmedNetworkFailuresWithTheSameRequest(t *testing.T) {
+	const cooldown = 10 * time.Millisecond
 	for _, scenario := range []struct {
 		name              string
 		status, failures  int
@@ -590,9 +591,13 @@ func TestImporterQueuesConfirmedNetworkFailuresWithTheSameRequest(t *testing.T) 
 		cancelWhileQueued bool
 		networkFailure    string
 		providerComponent string
+		seedRateLimit     bool
 	}{
 		{name: "assessment 524 recovers on final allowed attempt", status: 524, failures: 5, attempts: 6, requeued: true},
 		{name: "assessment 504 exhausts five retries", status: 504, failures: 6, attempts: 6, requeued: true},
+		{name: "seed assessment 429 recovers on final allowed attempt", status: 429, failures: 5, attempts: 6, requeued: true, seedRateLimit: true},
+		{name: "seed 429 exhausts five retries", status: 429, failures: 6, attempts: 6, requeued: true, direct: true, seedRateLimit: true},
+		{name: "ordinary assessment 429 keeps its existing retry budget", status: 429, failures: 6, attempts: 2},
 		{name: "direct 504 recovers", status: 504, failures: 1, attempts: 2, requeued: true, direct: true},
 		{name: "direct 504 with interrupted body recovers", status: 504, failures: 1, attempts: 2, requeued: true, direct: true, interrupted: true},
 		{name: "assessment 502 uses the network retry budget", status: 502, failures: 5, attempts: 6, requeued: true},
@@ -690,7 +695,12 @@ func TestImporterQueuesConfirmedNetworkFailuresWithTheSameRequest(t *testing.T) 
 			var logs bytes.Buffer
 			client := &HTTPClient{BaseURL: server.URL, APIKey: "team-canary", Client: server.Client(), Capture: captureFixture(&logs)}
 			native := &Native{Client: client, Scope: Scope{TeamID: teamID}, ControlURL: server.URL, ControlToken: "control-canary"}
-			mapping, err := client.importCorpus(ctx, corpus, 1, native)
+			options := corpusImportOptions{native: native}
+			if scenario.seedRateLimit {
+				options.rateLimit = &importRateLimit{cooldown: cooldown}
+			}
+			started := time.Now()
+			mapping, err := client.importCorpusWithOutcomes(ctx, corpus, 1, options)
 			server.Close()
 
 			if scenario.attempts > scenario.failures {
@@ -701,6 +711,10 @@ func TestImporterQueuesConfirmedNetworkFailuresWithTheSameRequest(t *testing.T) 
 				require.NotContains(t, mapping.BySourceDocID, "slow")
 			}
 			require.Equal(t, scenario.attempts, slowCalls)
+			if scenario.seedRateLimit {
+				require.GreaterOrEqual(t, time.Since(started), 5*cooldown)
+				require.Contains(t, logs.String(), `"backoff_ms":10`)
+			}
 			if scenario.requeued {
 				require.Len(t, requests, scenario.attempts+1)
 				require.Equal(t, "eval:ready", requests[1]["idempotency_key"])
@@ -735,6 +749,32 @@ func TestImporterQueuesConfirmedNetworkFailuresWithTheSameRequest(t *testing.T) 
 			}
 		})
 	}
+}
+
+func TestSeedImportCooldownPausesEveryWorkerAndHonorsDeadline(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		rateLimit := &importRateLimit{cooldown: seedRateLimitCooldown}
+		rateLimit.pause()
+		results := make(chan error, 2)
+		for range 2 {
+			go func() { results <- rateLimit.wait(t.Context()) }()
+		}
+		time.Sleep(30 * time.Second)
+		rateLimit.pause()
+		time.Sleep(59 * time.Second)
+		synctest.Wait()
+		require.Empty(t, results)
+		time.Sleep(time.Second)
+		require.NoError(t, <-results)
+		require.NoError(t, <-results)
+
+		rateLimit.pause()
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancel()
+		started := time.Now()
+		require.ErrorIs(t, rateLimit.wait(ctx), context.DeadlineExceeded)
+		require.Equal(t, 5*time.Second, time.Since(started))
+	})
 }
 
 func TestMCPContractDiscoveryRejectsIncompleteAndMixedCatalogs(t *testing.T) {

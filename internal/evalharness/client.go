@@ -235,6 +235,45 @@ func (c *HTTPClient) ImportCorpusWithConcurrency(ctx context.Context, items []Co
 }
 
 const maxNetworkRetries = 5
+const seedRateLimitCooldown = time.Minute
+
+type importRateLimit struct {
+	mu       sync.Mutex
+	cooldown time.Duration
+	until    time.Time
+}
+
+func (r *importRateLimit) pause() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.until = time.Now().Add(r.cooldown)
+}
+
+func (r *importRateLimit) wait(ctx context.Context) error {
+	for r != nil {
+		r.mu.Lock()
+		delay := time.Until(r.until)
+		r.mu.Unlock()
+		if delay <= 0 {
+			break
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return ctx.Err()
+}
+
+type corpusImportOptions struct {
+	native    *Native
+	recovered KnowledgeMapping
+	outcome   func(corpusImportJob, error)
+	rateLimit *importRateLimit
+}
 
 type corpusImportJob struct {
 	item    CorpusItem
@@ -243,23 +282,29 @@ type corpusImportJob struct {
 }
 
 func (c *HTTPClient) importCorpus(ctx context.Context, items []CorpusItem, concurrency int, native *Native) (KnowledgeMapping, error) {
-	return c.importCorpusWithOutcomes(ctx, items, concurrency, native, nil)
+	return c.importCorpusWithOutcomes(ctx, items, concurrency, corpusImportOptions{native: native})
 }
 
-func (c *HTTPClient) importCorpusWithOutcomes(ctx context.Context, items []CorpusItem, concurrency int, native *Native, outcome func(corpusImportJob, error)) (KnowledgeMapping, error) {
-	mapping := newKnowledgeMapping()
+func (c *HTTPClient) importCorpusWithOutcomes(ctx context.Context, items []CorpusItem, concurrency int, options corpusImportOptions) (KnowledgeMapping, error) {
+	mapping := options.recovered
+	if mapping.BySourceDocID == nil {
+		mapping = newKnowledgeMapping()
+	}
+	outcome := options.outcome
 	if err := validateImportWorkers(concurrency); err != nil {
 		return mapping, err
 	}
-	initialProgress := captureProgress{Stage: "import", Unit: "documents", Total: len(items)}
+	initialProgress := captureProgress{Stage: "import", Unit: "documents", Total: len(items), Completed: len(mapping.BySourceDocID)}
 	if err := c.Capture.emitProgress(initialProgress); err != nil {
 		return mapping, err
 	}
 	work, stop := context.WithCancel(ctx)
 	defer stop()
-	jobs := make([]corpusImportJob, len(items))
-	for index, item := range items {
-		jobs[index] = corpusImportJob{item: item, attempt: 1}
+	jobs := make([]corpusImportJob, 0, len(items))
+	for _, item := range items {
+		if _, completed := mapping.BySourceDocID[item.SourceDocID]; !completed {
+			jobs = append(jobs, corpusImportJob{item: item, attempt: 1})
+		}
 	}
 	var wg sync.WaitGroup
 	var mu sync.Mutex
@@ -314,7 +359,7 @@ func (c *HTTPClient) importCorpusWithOutcomes(ctx context.Context, items []Corpu
 				jobs[0] = corpusImportJob{}
 				jobs = jobs[1:]
 				mu.Unlock()
-				itemMapping, requeue, err := c.importCorpusItem(work, &job, native)
+				itemMapping, requeue, err := c.importCorpusItem(work, &job, options.native, options.rateLimit)
 				mu.Lock()
 				if !requeue && outcome != nil {
 					outcome(job, err)
@@ -360,13 +405,16 @@ func corpusRememberInput(item CorpusItem) map[string]any {
 	return map[string]any{"target_space": "team_shared", "idempotency_key": "eval:" + item.SourceDocID, "evidence": []map[string]any{evidence}}
 }
 
-func (c *HTTPClient) importCorpusItem(ctx context.Context, job *corpusImportJob, native *Native) (KnowledgeMapping, bool, error) {
+func (c *HTTPClient) importCorpusItem(ctx context.Context, job *corpusImportJob, native *Native, rateLimit *importRateLimit) (KnowledgeMapping, bool, error) {
 	mapping := newKnowledgeMapping()
 	item := job.item
 	if job.input == nil {
 		job.input = corpusRememberInput(item)
 	}
 	for {
+		if err := rateLimit.wait(ctx); err != nil {
+			return mapping, false, err
+		}
 		started := time.Now()
 		var result map[string]any
 		err := c.CallTool(ctx, "remember", job.input, &result)
@@ -379,6 +427,7 @@ func (c *HTTPClient) importCorpusItem(ctx context.Context, job *corpusImportJob,
 		}
 		var status int
 		var networkFailure string
+		rateLimited := false
 		if err != nil || job.attempt > 1 {
 			event := map[string]any{"source_id": item.SourceDocID, "attempt": job.attempt, "idempotency_key": job.input["idempotency_key"], "result": result, "elapsed_ms": float64(elapsed) / float64(time.Millisecond)}
 			if err != nil {
@@ -406,6 +455,10 @@ func (c *HTTPClient) importCorpusItem(ctx context.Context, job *corpusImportJob,
 					}
 				}
 			}
+			rateLimited = rateLimit != nil && status == http.StatusTooManyRequests
+			if rateLimited {
+				rateLimit.pause()
+			}
 			if captureErr := c.Capture.Emit("import_attempt", event); captureErr != nil {
 				return mapping, false, captureErr
 			}
@@ -416,13 +469,16 @@ func (c *HTTPClient) importCorpusItem(ctx context.Context, job *corpusImportJob,
 		if ctx.Err() != nil {
 			return mapping, false, err
 		}
-		if isRetryableGatewayStatus(status) || (status < 300 && networkFailure != "") {
+		if rateLimited || isRetryableGatewayStatus(status) || (status < 300 && networkFailure != "") {
 			if job.attempt > maxNetworkRetries {
 				return mapping, false, err
 			}
 			event := map[string]any{"source_id": item.SourceDocID, "attempt": job.attempt + 1, "idempotency_key": job.input["idempotency_key"]}
-			if isRetryableGatewayStatus(status) {
+			if rateLimited || isRetryableGatewayStatus(status) {
 				event["gateway_http_status"] = status
+			}
+			if rateLimited {
+				event["backoff_ms"] = rateLimit.cooldown.Milliseconds()
 			}
 			if networkFailure != "" {
 				event["network_failure"] = networkFailure

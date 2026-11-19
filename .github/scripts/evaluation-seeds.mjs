@@ -219,24 +219,44 @@ export async function resolveSeedImage(reference, env = process.env) {
   return `${seedRepository}@${hash}`;
 }
 
-export async function publishSeed(docker, directory, dataset, selected, env, beforePublication) {
+export async function publishSeed(docker, directory, dataset, selected, env, beforePublication, resume) {
   if (read(path.join(directory, "seed.json")).intake_proof) throw new Error("Intake proof exports cannot be published");
   if (typeof beforePublication !== "function") throw new Error("Seed publication requires a fresh validation gate");
   const tagged = seedReference(dataset, selected);
-  if (await resolveSeedImage(tagged, env)) throw new Error("Dated seed image already exists and cannot be overwritten");
+  const alias = seedReference(dataset);
   const files = ["database.dump", "seed.json", "NOTICE.md", ...(dataset === "bootstrap" ? [] : ["mapping.json"])];
-  const context = path.join(directory, "image");
-  fs.mkdirSync(context, { mode: 0o700 });
-  for (const file of files) fs.copyFileSync(path.join(directory, file), path.join(context, file));
-  fs.writeFileSync(path.join(context, "Dockerfile"), `FROM scratch\nLABEL org.opencontainers.image.source="https://github.com/markhuangai/dense-mem"\nCOPY ${files.join(" ")} /seed/\n`);
-  docker(["build", "--network=none", "--platform=linux/amd64", "--tag", tagged, context], { timeout: 20 * 60_000 });
+  let pinned = await resolveSeedImage(tagged, env);
+  let aliasSource = tagged;
+  if (pinned) {
+    if (!resume || !/^local-[a-f0-9]{32}-[a-z0-9_]+$/.test(resume.runID)) throw new Error("Dated seed image already exists and cannot be overwritten");
+    const existing = fs.mkdtempSync(path.join(directory, "published-"));
+    try {
+      extractSeed(docker, pinned, existing, `densemem-eval-${resume.runID}-seed`, resume.runID);
+      for (const file of files) {
+        if (await hashFile(path.join(existing, file)) !== await hashFile(path.join(directory, file))) throw new Error("Dated seed image differs from the verified local export");
+      }
+    } finally { fs.rmSync(existing, { recursive: true, force: true }); }
+    aliasSource = pinned;
+  } else {
+    const context = fs.mkdtempSync(path.join(directory, "image-"));
+    try {
+      for (const file of files) fs.copyFileSync(path.join(directory, file), path.join(context, file));
+      fs.writeFileSync(path.join(context, "Dockerfile"), `FROM scratch\nLABEL org.opencontainers.image.source="https://github.com/markhuangai/dense-mem"\nCOPY ${files.join(" ")} /seed/\n`);
+      docker(["build", "--network=none", "--platform=linux/amd64", "--tag", tagged, context], { timeout: 20 * 60_000 });
+    } finally { fs.rmSync(context, { recursive: true, force: true }); }
+    await beforePublication();
+    docker(["push", "--quiet", tagged], { timeout: 20 * 60_000 });
+    pinned = await resolveSeedImage(tagged, env);
+    if (!pinned) throw new Error("Published seed has no immutable registry digest");
+  }
+  if (resume) {
+    const latest = await resolveSeedImage(alias, env);
+    if (latest === pinned) return pinned;
+    if (latest !== resume.previousLatest) throw new Error("Seed latest alias changed after the local export was verified");
+  }
+  docker(["tag", aliasSource, alias]);
   await beforePublication();
-  docker(["push", "--quiet", tagged], { timeout: 20 * 60_000 });
-  const pinned = await resolveSeedImage(tagged, env);
-  if (!pinned) throw new Error("Published seed has no immutable registry digest");
-  docker(["tag", tagged, seedReference(dataset)]);
-  await beforePublication();
-  docker(["push", "--quiet", seedReference(dataset)], { timeout: 20 * 60_000 });
-  if (await resolveSeedImage(seedReference(dataset), env) !== pinned) throw new Error("Seed latest alias differs from the verified dated image");
+  docker(["push", "--quiet", alias], { timeout: 20 * 60_000 });
+  if (await resolveSeedImage(alias, env) !== pinned) throw new Error("Seed latest alias differs from the verified dated image");
   return pinned;
 }

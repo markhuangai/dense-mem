@@ -8,7 +8,7 @@ run on GitHub-hosted runners. Selective synthetic unit and policy checks use
 
 Use the [seed-building skill](../../.agents/skills/dense-mem-build-seeds/SKILL.md)
 or run the builder from a clean tracked checkout on a Linux amd64 machine with a
-local Docker daemon, Node.js 24, Git and an authenticated GitHub CLI. The builder
+local Docker daemon, Node.js 24, Git, `flock` and an authenticated GitHub CLI. The builder
 compiles its Go helper in Docker from the checked-out commit.
 
 | Argument | Default | Meaning |
@@ -17,6 +17,7 @@ compiles its Go helper in Docker from the checked-out commit.
 | `--dataset` | `all` | All five complete public packs, or one named pack |
 | `--workers` | `20` | Concurrent Remember requests per dataset, from 1–100 |
 | `--skip-ai-security-check` | Off | Skip contextual AI review for the pinned public rows in this build |
+| `--resume <build-id>` | New build | Continue a saved local build with its original settings and dated tags |
 
 For a PR, check out the exact head and wait for the trusted production image,
 Repository CI, CodeQL analysis, CodeQL and Production image E2E. On current
@@ -29,11 +30,23 @@ node --env-file=eval.env tests/eval/scripts/local-seeds.mjs --pr 777
 ```
 
 The builder uses the shared empty bootstrap and processes one dataset at a time.
-The first failure stops the build. Completed images remain available. Restart a
-failed dataset explicitly with `--dataset <name>` and, if needed, a different
-`--workers` value. Build receipts and private failure evidence are under
-`tmp/eval-seeds/`. The builder removes its owned containers, network and
-PostgreSQL volume after each dataset.
+When an import stops, the builder keeps its PostgreSQL volume on the local
+Docker daemon. It removes the other owned runtime resources during cleanup and
+keeps the private build receipt under `tmp/eval-seeds/`. Resume using the printed
+`local-…` build ID and the same tested checkout and evaluation credentials.
+
+```bash
+node --env-file=eval.env tests/eval/scripts/local-seeds.mjs --resume "$build_id"
+```
+
+Set `build_id` to the ID printed by the builder. Resume uses the saved dataset
+selection, workers, admission setting, bootstrap digest and dated tags. The
+builder checks the retained database against the pinned requests, imports
+unfinished rows, and reuses completed publications. It removes the checkpoint
+volume after successful publication. Earlier builds whose volumes were
+removed need a fresh import. After resume, the preparation time in the seed
+receipt measures the successful invocation. Earlier import times remain in
+that build's logs.
 
 Each dataset restores the bootstrap, imports its complete corpus with ontology
 disabled and paused, verifies the source/partition mapping and search state, and
@@ -55,6 +68,12 @@ use the remainder. PostgreSQL also reserves connections for the separate logging
 and observer pools and administration. Capacity is not a throughput guarantee.
 Target at least forty completed documents/minute and aim for sixty for deadline
 margin; confirm this over sustained live ingestion, including provider latency.
+
+A confirmed HTTP 429 pauses new Remember requests from all seed import
+workers for 60 seconds. Responses from requests already in flight can extend
+the pause. The importer requeues the same request and idempotency key, with up
+to five retries shared with the retryable network failures. Cancellation and
+the dataset deadline interrupt the wait.
 
 Import progress and resource logs appear initially, every sixty seconds and at
 completion. Progress includes completed/failed/remaining documents and the

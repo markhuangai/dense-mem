@@ -6,7 +6,6 @@ import (
 	_ "embed"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"reflect"
 	"strconv"
@@ -323,86 +322,101 @@ func (n *Native) VerifyMappings(ctx context.Context, corpus []CorpusItem, mappin
 	if len(mapping.BySourceDocID) != len(corpus) || len(mapping.Partitions) != len(corpus) {
 		return nil, errors.New("import mapping count is incomplete")
 	}
+	stored, canonical, err := n.readSeedMappings(ctx, corpus, false)
+	if err != nil {
+		return nil, err
+	}
+	if len(stored.Partitions) != len(corpus) {
+		return nil, errors.New("native completed import denominator is incomplete")
+	}
+	if !reflect.DeepEqual(stored.Partitions, mapping.Partitions) {
+		return nil, errors.New("native partition receipt mismatch")
+	}
+	return canonical, nil
+}
+
+func (n *Native) readSeedMappings(ctx context.Context, corpus []CorpusItem, verifyRequest bool) (KnowledgeMapping, map[string]CanonicalEvidence, error) {
+	mapping := newKnowledgeMapping()
 	wanted := map[string]CorpusItem{}
 	for _, item := range corpus {
+		if _, duplicate := wanted[item.SourceDocID]; duplicate || item.SourceDocID == "" {
+			return mapping, nil, errors.New("source identity is empty or duplicated")
+		}
 		wanted[item.SourceDocID] = item
 	}
 	tx, err := n.systemTx(ctx)
 	if err != nil {
-		return nil, err
+		return mapping, nil, err
 	}
 	defer tx.Rollback()
-	rows, err := tx.QueryContext(ctx, `SELECT regexp_replace(substring(a.idempotency_key FROM 6),':resubmit1$',''),s.content,a.public_result FROM remember_attempts a JOIN remember_submitted_items s ON s.team_id=a.team_id AND s.ingest_id=a.attempt_id WHERE a.team_id=$1::uuid AND a.owner_profile_id=$2::uuid AND a.space_id=$3::uuid AND a.space_generation=$4 AND a.outcome='completed' ORDER BY a.idempotency_key`, n.Scope.TeamID, n.Scope.OwnerID, n.Scope.SpaceID, n.Scope.Generation)
+	rows, err := tx.QueryContext(ctx, `SELECT a.idempotency_key,a.request_hash,s.content,a.public_result
+FROM remember_attempts a LEFT JOIN remember_submitted_items s ON s.team_id=a.team_id AND s.ingest_id=a.attempt_id
+WHERE a.team_id=$1::uuid AND a.owner_profile_id=$2::uuid AND a.space_id=$3::uuid AND a.space_generation=$4
+AND a.outcome='completed' ORDER BY a.idempotency_key`, n.Scope.TeamID, n.Scope.OwnerID, n.Scope.SpaceID, n.Scope.Generation)
 	if err != nil {
-		return nil, err
+		return mapping, nil, err
 	}
-	seen := map[string]bool{}
+	defer rows.Close()
+	completed := make([]CorpusItem, 0, len(corpus))
 	for rows.Next() {
-		var source, content string
+		var key, hash string
+		var content sql.NullString
 		var raw []byte
-		if err = rows.Scan(&source, &content, &raw); err != nil {
-			rows.Close()
-			return nil, err
+		if err = rows.Scan(&key, &hash, &content, &raw); err != nil {
+			return mapping, nil, err
 		}
-		if seen[source] || wanted[source].Content != content {
-			rows.Close()
-			return nil, errors.New("native import source identity mismatch")
+		source, prefix := strings.CutPrefix(key, "eval:")
+		item, exists := wanted[source]
+		if !exists {
+			source = strings.TrimSuffix(source, ":resubmit1")
+			item, exists = wanted[source]
 		}
-		seen[source] = true
+		if _, duplicate := mapping.BySourceDocID[source]; !prefix || !exists || duplicate || !content.Valid || item.Content != content.String {
+			return mapping, nil, errors.New("native import source identity mismatch")
+		}
+		if verifyRequest {
+			baseKey, expectedHash, err := seedRememberIdentity(item)
+			if err != nil {
+				return mapping, nil, err
+			}
+			if hash != expectedHash || (key != baseKey && key != baseKey+":resubmit1") {
+				return mapping, nil, errors.New("checkpoint receipt differs from the original Remember request")
+			}
+		}
 		var result map[string]any
 		decoder := json.NewDecoder(strings.NewReader(string(raw)))
 		decoder.UseNumber()
 		if err = decoder.Decode(&result); err != nil {
-			rows.Close()
-			return nil, err
+			return mapping, nil, err
 		}
-		actual, err := n.Client.importTerminalRememberResult(wanted[source], result, newKnowledgeMapping())
+		mapping, err = n.Client.importTerminalRememberResult(item, result, mapping)
 		if err != nil {
-			rows.Close()
-			return nil, err
+			return mapping, nil, err
 		}
-		if !reflect.DeepEqual(actual.Partitions[source], mapping.Partitions[source]) {
-			rows.Close()
-			return nil, errors.New("native partition receipt mismatch")
-		}
+		completed = append(completed, item)
 	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return nil, err
-	}
-	if len(seen) != len(wanted) {
-		return nil, errors.New("native completed import denominator is incomplete")
+	if err = rows.Err(); err != nil {
+		return mapping, nil, err
 	}
 	canonical := map[string]CanonicalEvidence{}
 	rows, err = tx.QueryContext(ctx, `SELECT fragment_id::text,content,metadata->>'source_doc_id' FROM evidence_fragments WHERE team_id=$1::uuid AND space_id=$2::uuid AND space_generation=$3`, n.Scope.TeamID, n.Scope.SpaceID, n.Scope.Generation)
 	if err != nil {
-		return nil, err
+		return mapping, nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var id, content, source string
 		if err = rows.Scan(&id, &content, &source); err != nil {
-			return nil, err
+			return mapping, nil, err
 		}
 		item, ok := wanted[source]
 		if !ok || !strings.Contains(item.Content, content) {
-			return nil, fmt.Errorf("canonical Evidence has no exact published source")
+			return mapping, nil, errors.New("canonical Evidence has no exact published source")
 		}
 		canonical[id] = CanonicalEvidence{SourceID: source, Content: content}
 	}
 	if err = rows.Err(); err != nil {
-		return nil, err
+		return mapping, nil, err
 	}
-	for source, partitions := range mapping.Partitions {
-		for _, part := range partitions {
-			if _, ok := canonical[part.EvidenceID]; !ok {
-				return nil, fmt.Errorf("source %s maps to missing canonical Evidence", source)
-			}
-		}
-	}
-	if err := ValidateMappings(corpus, mapping, canonical); err != nil {
-		return nil, err
-	}
-	return canonical, nil
+	return mapping, canonical, ValidateMappings(completed, mapping, canonical)
 }

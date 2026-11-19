@@ -4,13 +4,23 @@ import { randomBytes } from "node:crypto";
 import { execFile, spawn, spawnSync } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import { extractSeed, verifySeedFiles, restoreSeed, dumpSeed, sealSeed, verifySeedCredentialExclusions, seedReference, resolveSeedImage, postgresImage } from "../../../.github/scripts/evaluation-seeds.mjs";
 import { requireRunner, configuration, resolveImportWorkers, requireEvaluationImportSupport, registryMatrix, sha256, aggregate, ownedResource } from "../../../.github/scripts/evaluation-policy.mjs";
 
 const label = "io.dense-mem.eval.run";
 const secret = () => randomBytes(32).toString("base64url");
 const read = (file) => JSON.parse(fs.readFileSync(file, "utf8"));
-const save = (file, value) => fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+export function saveRuntimeJSON(file, value) {
+  const temporary = `${file}.${randomBytes(8).toString("hex")}.tmp`;
+  try {
+    fs.writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600, flag: "wx", flush: true });
+    fs.renameSync(temporary, file);
+    const directory = fs.openSync(path.dirname(file), "r");
+    try { fs.fsyncSync(directory); } finally { fs.closeSync(directory); }
+  } finally { fs.rmSync(temporary, { force: true }); }
+}
+const save = saveRuntimeJSON;
 
 export function docker(args, options = {}) {
   const result = spawnSync("docker", args, { encoding: "utf8", timeout: 300_000, maxBuffer: 64 << 20, ...options });
@@ -74,7 +84,8 @@ export function location(env) {
   if (seedBuildID && (env.GITHUB_ACTIONS === "true" || !/^local-[a-f0-9]{32}$/.test(seedBuildID) || !path.isAbsolute(env.EVAL_LOCAL_SEED_ROOT || ""))) throw new Error("Invalid local seed runtime identity");
   const runID = `${seedBuildID || env.GITHUB_RUN_ID}-${dataset}`;
   const directory = path.join(seedBuildID ? env.EVAL_LOCAL_SEED_ROOT : env.RUNNER_TEMP, `dense-mem-eval-${runID}`);
-  return { dataset, runID, directory, seedBuildID, stateFile: path.join(directory, "runtime.json"), manifestFile: path.join(directory, "manifest.json") };
+  return { dataset, runID, directory, seedBuildID, stateFile: path.join(directory, "runtime.json"), manifestFile: path.join(directory, "manifest.json"),
+    checkpointFile: path.join(directory, "import-checkpoint.json") };
 }
 
 export function privateEnvironment(state, env) {
@@ -137,7 +148,7 @@ export async function setup(env, options = {}) {
   const fixture = env.EVAL_MODE === "fixtures";
   const operation = options.operation || "run";
   const preparing = operation === "prepare" || operation === "bootstrap";
-  const { signal, intakeProof = false, skipAISecurityReview = false } = options;
+  const { signal, intakeProof = false, skipAISecurityReview = false, resumable = false } = options;
   const seedImage = options.seedImage ?? env.EVAL_SEED_IMAGE ?? "";
   signal?.throwIfAborted();
   if (paths.seedBuildID && (env.EVAL_MODE !== "live" || (!preparing && operation !== "verify-seed"))) throw new Error("Local runtime permits only public seed preparation and restore verification");
@@ -147,6 +158,8 @@ export async function setup(env, options = {}) {
   }
   if (intakeProof && (!paths.seedBuildID || !options.dataDirectory || (operation !== "prepare" && operation !== "verify-seed"))) throw new Error("Intake proof requires a local seed runtime and frozen public inputs");
   if (skipAISecurityReview && (!paths.seedBuildID || operation !== "prepare" || !seedImage)) throw new Error("AI security review can only be skipped during local preparation from a public bootstrap");
+  if (resumable && (!paths.seedBuildID || operation !== "prepare" || intakeProof || !seedImage)) throw new Error("Only local public seed preparation supports checkpoints");
+  const checkpoint = resumable && fs.existsSync(paths.checkpointFile) ? read(paths.checkpointFile) : null;
   const configured = fixture ? { model: "fixture", context: 300_000, verifier: "", embedding: "" } : configuration(env, { allowHTTPVerifier: Boolean(paths.seedBuildID) });
   configured.importWorkers = preparing ? resolveImportWorkers(env.DENSE_MEM_EVAL_IMPORT_WORKERS) : 0;
   const imagePattern = intakeProof ? /^sha256:[a-f0-9]{64}$/ : /^ghcr\.io\/markhuangai\/dense-mem(?::[A-Za-z0-9._-]+)?@sha256:[a-f0-9]{64}$/;
@@ -160,14 +173,15 @@ export async function setup(env, options = {}) {
   registryMatrix(registry);
   const dataset = registry.datasets.find((row) => row.id === paths.dataset);
   if (!dataset && operation !== "bootstrap") throw new Error("Dataset is not registered");
-  const dataDir = intakeProof ? options.dataDirectory : path.join(paths.directory, "data");
+  const dataDir = options.dataDirectory || path.join(paths.directory, "data");
   const outputDir = path.join(paths.directory, "public");
-  const seedDir = options.seedDirectory || path.join(paths.directory, "seed");
+  const seedDir = options.seedDirectory || options.exportDirectory || path.join(paths.directory, "seed");
   fs.mkdirSync(outputDir, { mode: 0o700, recursive: true });
   fs.mkdirSync(seedDir, { mode: 0o700, recursive: true });
   const deadline = new Date(Number(env.EVAL_MODEL_DEADLINE_EPOCH) * 1000);
   if (!Number.isFinite(deadline.getTime()) || deadline <= new Date() || deadline > Date.now() + 330 * 60_000) throw new Error("Runner model deadline is invalid");
   const manifest = { version: 1, run_id: paths.runID, workflow_run_id: paths.seedBuildID ? "" : env.GITHUB_RUN_ID, seed_build_id: paths.seedBuildID, source_revision: env.EVAL_SOURCE_REVISION, image: env.EVAL_IMAGE, registry_sha256: sha256(registryBytes), dataset: paths.dataset, mode: env.EVAL_MODE, operation, model: configured.model, embedding_model: "text-embedding-3-small", embedding_dimensions: 1536, context_window_tokens: configured.context, import_workers: configured.importWorkers, base_release: env.EVAL_BASE_RELEASE || (fixture ? "v0.0.0" : ""), seed_image: seedImage, seed_dir: seedDir, model_deadline: deadline.toISOString(), data_dir: dataDir, output_dir: outputDir, timings_ms: {}, intake_proof: intakeProof, skip_ai_security_review: skipAISecurityReview };
+  if (checkpoint) manifest.resume_scope = checkpoint.scope;
   save(paths.manifestFile, manifest);
   const prefix = `densemem-eval-${paths.runID}`;
   const state = { runID: paths.runID, source: env.EVAL_SOURCE_REVISION, image: env.EVAL_IMAGE, network: `${prefix}-network`, volume: `${prefix}-postgres`, containers: [`${prefix}-server`, `${prefix}-postgres`, `${prefix}-seed`, ...(fixture ? [`${prefix}-provider`] : [])], environment: {} };
@@ -190,6 +204,9 @@ export async function setup(env, options = {}) {
     seed = await verifySeedFiles(inputSeedDir, preparing ? "bootstrap" : paths.dataset, manifest.registry_sha256, preparing ? 0 : proofExport ? 20 : dataset.corpus.rows, { intakeProof: proofExport });
   }
   if ((!preparing || intakeProof || skipAISecurityReview) && !seed) throw new Error("Runner evaluation requires a verified seed");
+  const checkpointIdentity = { version: 1, run_id: paths.runID, volume: state.volume, source_revision: manifest.source_revision, image: manifest.image, registry_sha256: manifest.registry_sha256,
+    bootstrap_image: seedImage, scope: seed?.scope, skip_ai_security_review: skipAISecurityReview };
+  if (checkpoint && !isDeepStrictEqual(checkpoint, checkpointIdentity)) throw new Error("Seed checkpoint identity differs from the pinned build and bootstrap");
   if (intakeProof) manifest.base_release = seed.base_release;
   if (skipAISecurityReview) save(path.join(paths.directory, "seed-admission-scope.json"), seed.scope);
   if (operation !== "bootstrap") {
@@ -200,18 +217,19 @@ export async function setup(env, options = {}) {
     if (validation.status !== 0) throw new Error("Source validation failed before runtime allocation");
   }
   signal?.throwIfAborted();
+  if (checkpoint) ownedResource(JSON.parse(docker(["volume", "inspect", state.volume]))[0], paths.runID);
   docker(["network", "create", "--label", `${label}=${paths.runID}`, state.network]);
-  docker(["volume", "create", "--label", `${label}=${paths.runID}`, state.volume]);
+  if (!checkpoint) docker(["volume", "create", "--label", `${label}=${paths.runID}`, state.volume]);
   const pgEnv = path.join(paths.directory, "postgres.env");
   fs.writeFileSync(pgEnv, `POSTGRES_USER=densemem\nPOSTGRES_DB=densemem\nPOSTGRES_PASSWORD=${password}\n`, { mode: 0o600 });
   docker(["run", "--detach", "--name", `${prefix}-postgres`, "--label", `${label}=${paths.runID}`, "--network", state.network, "--network-alias", "postgres", "--publish", "127.0.0.1::5432", "--env-file", pgEnv, "--mount", `type=volume,source=${state.volume},target=/var/lib/postgresql`, postgresImage, "postgres", "-c", `max_connections=${databaseCapacity(configured.importWorkers).postgres}`]);
   const pgDeadline = Date.now() + 120_000;
   while (spawnSync("docker", ["exec", `${prefix}-postgres`, "pg_isready", "--host=127.0.0.1", "-U", "densemem"], { stdio: "ignore", timeout: 5000 }).status !== 0) { if (Date.now() >= pgDeadline) throw new Error("Runner PostgreSQL readiness timed out"); await delay(1000, undefined, { signal }); }
-  if (seed) {
+  if (seed && !checkpoint) {
     const started = Date.now(); restoreSeed(docker, `${prefix}-postgres`, inputSeedDir); manifest.timings_ms.restore = Date.now() - started;
     await verifySeedCredentialExclusions(docker, `${prefix}-postgres`, inputSeedDir, [password, controlToken, apiKey, state.environment.DENSE_MEM_EVAL_API_KEY, state.environment.DENSE_MEM_EVAL_EMBED_API_KEY]);
-    Object.assign(state.environment, { EVAL_TEAM_ID: seed.scope.team_id, EVAL_CREDENTIAL_ID: seed.scope.credential_id });
   }
+  if (seed) Object.assign(state.environment, { EVAL_TEAM_ID: seed.scope.team_id, EVAL_CREDENTIAL_ID: seed.scope.credential_id });
   let serverVerifier = configured.verifier; let serverEmbedding = configured.embedding;
   if (fixture) {
     docker(["run", "--detach", "--name", `${prefix}-provider`, "--label", `${label}=${paths.runID}`, "--network", state.network, "--network-alias", "fixture-provider", "--publish", "127.0.0.1::8787", "--mount", `type=bind,source=${env.GITHUB_WORKSPACE},target=/workspace,readonly`, "--workdir", "/workspace", "node:24-bookworm-slim", "node", "tests/eval/scripts/fixture-provider.mjs"]);
@@ -255,14 +273,21 @@ export async function setup(env, options = {}) {
     await control(state, "POST", "/ontology/pause", { operation_key: `pause-${paths.runID}` });
   }
   save(paths.stateFile, state); save(paths.manifestFile, manifest);
+  if (resumable && !checkpoint) save(paths.checkpointFile, checkpointIdentity);
   return { paths, state, manifest, seedDir };
 }
 
-export async function cleanup(env) {
+export async function cleanup(env, { retainVolume = false } = {}) {
   const paths = location(env);
+  if (retainVolume && (!paths.seedBuildID || !fs.existsSync(paths.checkpointFile))) throw new Error("Retaining a volume requires its local seed checkpoint");
   if (!fs.existsSync(paths.stateFile)) { process.stdout.write("No evaluation runtime was allocated.\n"); return; }
   const state = read(paths.stateFile);
   if (state.runID !== paths.runID) throw new Error("Runtime cleanup receipt does not belong to this job");
+  if (retainVolume) {
+    const checkpoint = read(paths.checkpointFile);
+    if (checkpoint.run_id !== paths.runID || checkpoint.volume !== state.volume || state.volume !== `densemem-eval-${paths.runID}-postgres`) throw new Error("Checkpoint volume ownership differs from this dataset job");
+    ownedResource(JSON.parse(docker(["volume", "inspect", state.volume]))[0], paths.runID);
+  }
   for (const name of state.containers) {
     const listed = docker(["container", "ls", "--all", "--filter", `name=^${name}$`, "--format", "{{.ID}}"]);
     if (!listed) continue;
@@ -272,6 +297,7 @@ export async function cleanup(env) {
     docker(["container", "rm", "--volumes", actual.Id]);
   }
   for (const [kind, name] of [["volume", state.volume], ["network", state.network]]) {
+    if (kind === "volume" && retainVolume) continue;
     if (!docker([kind, "ls", "--filter", `label=${label}=${paths.runID}`, "--format", "{{.Name}}"]).split("\n").includes(name)) {
       if (docker([kind, "ls", "--format", "{{.Name}}"]).split("\n").includes(name)) throw new Error("Recorded cleanup resource changed ownership");
       continue;
@@ -280,10 +306,14 @@ export async function cleanup(env) {
     docker([kind, "rm", name]);
   }
   if (docker(["container", "ls", "--all", "--filter", `label=${label}=${paths.runID}`, "--quiet"])) throw new Error("Owned runtime cleanup is incomplete");
-  for (const kind of ["volume", "network"]) if (docker([kind, "ls", "--filter", `label=${label}=${paths.runID}`, "--quiet"])) throw new Error("Owned storage or network cleanup is incomplete");
+  for (const kind of ["volume", "network"]) {
+    const owned = docker([kind, "ls", "--filter", `label=${label}=${paths.runID}`, "--format", "{{.Name}}"]).split("\n").filter(Boolean);
+    if (owned.some((name) => kind !== "volume" || !retainVolume || name !== state.volume)) throw new Error("Owned storage or network cleanup is incomplete");
+  }
   for (const file of ["server.env", "postgres.env"]) { const target = path.join(paths.directory, file); if (fs.existsSync(target)) fs.unlinkSync(target); }
   delete state.environment; save(paths.stateFile, state);
-  process.stdout.write(`Evaluation runtime ${paths.runID} removed; borrowed images retained.\n`);
+  const storage = retainVolume ? "PostgreSQL checkpoint retained" : "borrowed images retained";
+  process.stdout.write(`Evaluation runtime ${paths.runID} removed; ${storage}.\n`);
 }
 
 export async function diagnostics(env) {

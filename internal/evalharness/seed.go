@@ -143,14 +143,39 @@ func Prepare(ctx context.Context, manifest Manifest, corpus []CorpusItem, client
 	if err := native.ResolveScope(work); err != nil {
 		return seed, err
 	}
+	if manifest.ResumeScope != nil && *manifest.ResumeScope != native.Scope {
+		return seed, errors.New("checkpoint database scope differs from the pinned bootstrap")
+	}
 	before, err := native.Snapshot(work)
 	if err != nil {
 		return seed, err
 	}
-	if before.EvidenceCount != 0 || before.ForeignSources != 0 || before.Ontology.Enabled || !before.Ontology.Paused {
+	if (before.EvidenceCount != 0 && manifest.ResumeScope == nil) || before.ForeignSources != 0 || before.Ontology.Enabled || !before.Ontology.Paused {
 		return seed, errors.New("seed preparation requires an empty bootstrap with ontology disabled and paused")
 	}
-	mapping, err := client.importCorpus(work, corpus, manifest.ImportWorkers, native)
+	options := corpusImportOptions{native: native}
+	if manifest.SeedBuildID != "" && !manifest.IntakeProof {
+		options.rateLimit = &importRateLimit{cooldown: seedRateLimitCooldown}
+	}
+	if manifest.ResumeScope != nil {
+		recovered, canonical, err := native.readSeedMappings(work, corpus, true)
+		if err != nil {
+			return seed, err
+		}
+		if len(canonical) != before.EvidenceCount {
+			return seed, errors.New("checkpoint contains Evidence outside its recorded shared space")
+		}
+		if err = NativeReady(before, false, true, manifest, native.Scope.TeamID); err != nil {
+			return seed, err
+		}
+		if seed.AISecurityReview == "skipped" {
+			if err := native.verifySkippedAIReview(work, len(recovered.Partitions)); err != nil {
+				return seed, err
+			}
+		}
+		options.recovered = recovered
+	}
+	mapping, err := client.importCorpusWithOutcomes(work, corpus, manifest.ImportWorkers, options)
 	if err != nil {
 		return seed, err
 	}

@@ -44,6 +44,9 @@ func ReadManifest(path string) (Manifest, error) {
 	if manifest.SkipAISecurityReview && (manifest.SeedBuildID == "" || manifest.Operation != "prepare" || !seedImagePattern.MatchString(manifest.SeedImage)) {
 		return manifest, errors.New("skipping AI security review requires preparation from a public seed bootstrap")
 	}
+	if manifest.ResumeScope != nil && (manifest.SeedBuildID == "" || manifest.Operation != "prepare" || manifest.IntakeProof || !seedImagePattern.MatchString(manifest.SeedImage)) {
+		return manifest, errors.New("resuming requires a local public seed build and its pinned bootstrap")
+	}
 	if manifest.Version != 1 || manifest.RunID == "" || !revisionPattern.MatchString(manifest.SourceRevision) || !imageValid {
 		return manifest, errors.New("execution manifest identity is invalid")
 	}

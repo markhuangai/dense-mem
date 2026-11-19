@@ -54,6 +54,7 @@ type Manifest struct {
 	WorkflowRunID        string             `json:"workflow_run_id"`
 	SeedBuildID          string             `json:"seed_build_id,omitempty"`
 	IntakeProof          bool               `json:"intake_proof,omitempty"`
+	ResumeScope          *Scope             `json:"resume_scope,omitempty"`
 	SkipAISecurityReview bool               `json:"skip_ai_security_review,omitempty"`
 	SourceRevision       string             `json:"source_revision"`
 	Image                string             `json:"image"`

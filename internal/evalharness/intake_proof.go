@@ -146,20 +146,12 @@ func WriteSeedAdmission(output, scopePath string, corpus []CorpusItem) error {
 		*identity.id = id
 	}
 	for _, item := range corpus {
-		wire, err := json.Marshal(corpusRememberInput(item))
+		key, hash, err := seedRememberIdentity(item)
 		if err != nil {
 			return err
 		}
-		var request remember.RememberRequest
-		if err := json.Unmarshal(wire, &request); err != nil {
-			return err
-		}
-		hash, err := remember.CanonicalRequestHash(request)
-		if err != nil {
-			return err
-		}
-		manifest.Requests[request.IdempotencyKey] = hash
-		retryKey := request.IdempotencyKey + ":resubmit1"
+		manifest.Requests[key] = hash
+		retryKey := key + ":resubmit1"
 		if len(retryKey) <= 128 {
 			manifest.Requests[retryKey] = hash
 		}
@@ -171,11 +163,33 @@ func WriteSeedAdmission(output, scopePath string, corpus []CorpusItem) error {
 	if _, err := remember.ReadPublicSeedAdmission(bytes.NewReader(encoded)); err != nil {
 		return err
 	}
-	if err := os.WriteFile(output, encoded, 0o400); err != nil {
+	temporary, err := os.CreateTemp(filepath.Dir(output), ".seed-admission-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(temporary.Name())
+	_, writeErr := temporary.Write(encoded)
+	if err := errors.Join(writeErr, temporary.Close()); err != nil {
 		return err
 	}
 	// A non-root container user must be able to read the bind mount under a restrictive umask.
-	return os.Chmod(output, 0o444)
+	if err := os.Chmod(temporary.Name(), 0o444); err != nil {
+		return err
+	}
+	return os.Rename(temporary.Name(), output)
+}
+
+func seedRememberIdentity(item CorpusItem) (key, hash string, err error) {
+	wire, err := json.Marshal(corpusRememberInput(item))
+	if err != nil {
+		return "", "", err
+	}
+	var request remember.RememberRequest
+	if err := json.Unmarshal(wire, &request); err != nil {
+		return "", "", err
+	}
+	hash, err = remember.CanonicalRequestHash(request)
+	return request.IdempotencyKey, hash, err
 }
 
 type ordinaryIntakeOutcome struct {
@@ -213,7 +227,7 @@ func ObserveOrdinaryIntake(ctx context.Context, manifest Manifest, corpus []Corp
 		}
 		outcomes[outcome.SourceID] = outcome
 	}
-	mapping, runErr := client.importCorpusWithOutcomes(ctx, corpus, manifest.ImportWorkers, native, observe)
+	mapping, runErr := client.importCorpusWithOutcomes(ctx, corpus, manifest.ImportWorkers, corpusImportOptions{native: native, outcome: observe})
 	ordered := make([]ordinaryIntakeOutcome, 0, len(outcomes))
 	accepted := make([]CorpusItem, 0, len(mapping.BySourceDocID))
 	for _, row := range corpus {

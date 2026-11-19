@@ -57,15 +57,26 @@ func TestSeedValidationRequiresSkipProvenanceForIntakeProof(t *testing.T) {
 	require.ErrorContains(t, seed.Validate(manifest, seed.Scope, 3), "AI security review provenance")
 }
 
-func TestSeedAdmissionManifestIsReadableByTheContainerUser(t *testing.T) {
+func TestSeedAdmissionManifestReplacesReadOnlyFileOnResume(t *testing.T) {
 	directory := t.TempDir()
 	scopePath, manifestPath := filepath.Join(directory, "scope.json"), filepath.Join(directory, "seed-admission.json")
 	seed, _ := validSeedFixture(t)
 	require.NoError(t, writeJSON(scopePath, seed.Scope))
-	require.NoError(t, WriteSeedAdmission(manifestPath, scopePath, []CorpusItem{{SourceDocID: "hotpotqa:1", SourceDataset: "hotpotqa", Content: "Exact corpus text."}}))
+	corpus := []CorpusItem{{SourceDocID: "hotpotqa:1", SourceDataset: "hotpotqa", Content: "Exact corpus text."}}
+	require.NoError(t, WriteSeedAdmission(manifestPath, scopePath, corpus))
 	info, err := os.Stat(manifestPath)
 	require.NoError(t, err)
 	require.Equal(t, os.FileMode(0444), info.Mode().Perm())
+	original, err := os.ReadFile(manifestPath)
+	require.NoError(t, err)
+	require.NoError(t, WriteSeedAdmission(manifestPath, scopePath, corpus))
+	replaced, err := os.Stat(manifestPath)
+	require.NoError(t, err)
+	require.False(t, os.SameFile(info, replaced), "resume must replace the read-only file atomically")
+	require.Equal(t, os.FileMode(0444), replaced.Mode().Perm())
+	actual, err := os.ReadFile(manifestPath)
+	require.NoError(t, err)
+	require.Equal(t, original, actual)
 }
 
 func TestSeedFilesRejectCorruptedDumpMappingAndSize(t *testing.T) {

@@ -7,7 +7,7 @@ import test from "node:test";
 import imagePolicy from "../../../.github/scripts/image-release-policy.cjs";
 import { seedBuildRequest, seedReference, seedBuildVersion, seedMetadata, verifySeedFiles, sealSeed, hashFile, resolveSeedBuildSource, requireSeedBuildValidation, remainingSeedRestoreEntries, resolveSeedImage, publishSeed } from "../../../.github/scripts/evaluation-seeds.mjs";
 import { location, setup } from "./workflow.mjs";
-import { localSeedRequest } from "./local-seeds.mjs";
+import { localSeedRequest, lockSeedBuild, savedSeedRequest } from "./local-seeds.mjs";
 import { readWorkflow, workflowJob } from "../../uat/workflow_helpers.mjs";
 
 const registry = JSON.parse(fs.readFileSync(new URL("../datasets.json", import.meta.url)));
@@ -109,6 +109,78 @@ test("local seed arguments default to every dataset with twenty workers", () => 
   assert.deepEqual(localSeedRequest(["--pr", "777", "--dataset", "hotpotqa", "--workers", "40", "--skip-ai-security-check"], registry), { pr: 777, dataset: ["hotpotqa"], workers: 40, skipAISecurityReview: true });
   for (const args of [["--pr", "0"], ["--pr", "1.5"], ["--pr", "9007199254740992"], ["--workers", "0"], ["--workers", "101"], ["--dataset", "fixtures"], ["--mode", "live"]]) {
     assert.throws(() => localSeedRequest(args, registry));
+  }
+});
+
+test("resume restores the original seed build settings and locks its local directory", (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "seed-build-lock-"));
+  t.after(() => fs.rmSync(directory, { recursive: true }));
+  const id = `local-${"a".repeat(32)}`;
+  const registryHash = "b".repeat(64);
+  const version = seedBuildVersion("v2.8.1-rc.5");
+  const receipt = { resume_version: 1, build_id: id, registry_sha256: registryHash, pr: 777, version: version,
+    workers: 20, datasets: ["hotpotqa"], skip_ai_security_review: true };
+  assert.deepEqual(localSeedRequest(["--resume", id], registry), { resume: id });
+  for (const args of [["--resume", "../seed"], ["--resume", id, "--workers", "5"], ["--resume", id, "--dataset", "musique"]]) {
+    assert.throws(() => localSeedRequest(args, registry), /saved local build ID/);
+  }
+  assert.deepEqual(savedSeedRequest(receipt, id, registry, registryHash), {
+    pr: 777, dataset: ["hotpotqa"], workers: 20, skipAISecurityReview: true,
+  });
+  assert.throws(() => savedSeedRequest(receipt, id, registry, "c".repeat(64)), /incompatible/);
+  assert.throws(() => savedSeedRequest({ ...receipt, datasets: ["hotpotqa", "musique"] }, id, registry, registryHash), /selection is invalid/);
+  const unlock = lockSeedBuild(directory);
+  try { assert.throws(() => lockSeedBuild(directory), /already running/); }
+  finally { unlock(); }
+  lockSeedBuild(directory)();
+});
+
+test("seed publication resume checks the dated image bytes before updating latest", async (t) => {
+  const version = seedBuildVersion("v2.8.1-rc.5");
+  const dated = seedReference("hotpotqa", version);
+  const latest = seedReference("hotpotqa");
+  const repository = latest.slice(0, latest.lastIndexOf(":"));
+  const pinned = `${repository}@sha256:${"a".repeat(64)}`;
+  const previousLatest = `${repository}@sha256:${"b".repeat(64)}`;
+  const files = ["database.dump", "seed.json", "mapping.json", "NOTICE.md"];
+  const runID = `local-${"a".repeat(32)}-hotpotqa`;
+  for (const scenario of [
+    { name: "dated push succeeded and latest still points to the prior image", alias: previousLatest, push: true },
+    { name: "both pushes already succeeded", alias: pinned, push: false },
+    { name: "dated data conflict", alias: previousLatest, changed: true, error: /differs from the verified local export/ },
+    { name: "a newer alias appeared", alias: `${repository}@sha256:${"c".repeat(64)}`, error: /alias changed/ },
+  ]) {
+    await t.test(scenario.name, async (t) => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "seed-publish-resume-"));
+      t.after(() => fs.rmSync(directory, { recursive: true }));
+      for (const file of files) fs.writeFileSync(path.join(directory, file), "{}");
+      let currentAlias = scenario.alias, gated = false;
+      const mutations = [];
+      t.mock.method(globalThis, "fetch", async (url) => {
+        const route = new URL(url).pathname;
+        if (route === "/token") return Response.json({ token: "registry-test-token" });
+        const image = route.endsWith(dated.split(":").at(-1)) ? pinned : currentAlias;
+        return new Response(null, { headers: { "Docker-Content-Digest": image.split("@")[1] } });
+      });
+      const docker = (args) => {
+        switch (args[0]) {
+          case "image": return "present";
+          case "create": assert.ok(args.includes(pinned)); return;
+          case "container": return JSON.stringify([{ Id: "owned", Config: { Labels: { "io.dense-mem.eval.run": runID } } }]);
+          case "cp":
+            for (const file of files) fs.copyFileSync(path.join(directory, file), path.join(args.at(-1), file));
+            if (scenario.changed) fs.writeFileSync(path.join(args.at(-1), "mapping.json"), "different");
+            return;
+          case "tag": mutations.push(args); return;
+          case "push": assert(gated); mutations.push(args); currentAlias = pinned; return;
+          default: assert.fail(`unexpected Docker operation ${args[0]}`);
+        }
+      };
+      const result = publishSeed(docker, directory, "hotpotqa", version, {}, async () => { gated = true; }, { runID, previousLatest });
+      if (scenario.error) await assert.rejects(result, scenario.error);
+      else assert.equal(await result, pinned);
+      assert.deepEqual(mutations, scenario.push ? [["tag", pinned, latest], ["push", "--quiet", latest]] : []);
+    });
   }
 });
 
