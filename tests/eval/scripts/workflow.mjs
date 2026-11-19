@@ -5,7 +5,7 @@ import { execFile, spawn, spawnSync } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
-import { extractSeed, verifySeedFiles, restoreSeed, dumpSeed, sealSeed, verifySeedCredentialExclusions, seedReference, resolveSeedImage, postgresImage } from "../../../.github/scripts/evaluation-seeds.mjs";
+import { buildBootableSeed, extractSeed, verifySeedFiles, restoreSeed, dumpSeed, sealSeed, verifySeedCredentialExclusions, seedReference, resolveSeedImage, postgresImage } from "../../../.github/scripts/evaluation-seeds.mjs";
 import { requireRunner, configuration, resolveImportWorkers, requireEvaluationImportSupport, registryMatrix, sha256, aggregate, ownedResource } from "../../../.github/scripts/evaluation-policy.mjs";
 
 const label = "io.dense-mem.eval.run";
@@ -95,6 +95,10 @@ export function privateEnvironment(state, env) {
   return environment;
 }
 
+export function seedSecrets(state) {
+  return ["EVAL_DATABASE_PASSWORD", "EVAL_API_KEY", "EVAL_CONTROL_TOKEN", "DENSE_MEM_EVAL_API_KEY", "DENSE_MEM_EVAL_EMBED_API_KEY", "DENSE_MEM_EVAL_VERIFIER_URL", "DENSE_MEM_EVAL_EMBED_URL"].map((name) => state.environment[name]).filter(Boolean);
+}
+
 export function serverEnvironment(configured, environment) {
   return {
     LOG_LEVEL: "debug", HTTP_ADDR: ":8080", CONTROL_HTTP_ADDR: ":8090", CONTROL_PORTAL_TOKEN: environment.EVAL_CONTROL_TOKEN,
@@ -150,6 +154,8 @@ export async function setup(env, options = {}) {
   const preparing = operation === "prepare" || operation === "bootstrap";
   const { signal, intakeProof = false, skipAISecurityReview = false, resumable = false } = options;
   const seedImage = options.seedImage ?? env.EVAL_SEED_IMAGE ?? "";
+  const bootable = !preparing && !intakeProof;
+  const seedOptions = { intakeProof: intakeProof && !preparing, bootable, allowLocal: fixture || operation === "verify-seed" };
   signal?.throwIfAborted();
   if (paths.seedBuildID && (env.EVAL_MODE !== "live" || (!preparing && operation !== "verify-seed"))) throw new Error("Local runtime permits only public seed preparation and restore verification");
   if (!paths.seedBuildID) {
@@ -159,6 +165,7 @@ export async function setup(env, options = {}) {
   if (intakeProof && (!paths.seedBuildID || !options.dataDirectory || (operation !== "prepare" && operation !== "verify-seed"))) throw new Error("Intake proof requires a local seed runtime and frozen public inputs");
   if (skipAISecurityReview && (!paths.seedBuildID || operation !== "prepare" || !seedImage)) throw new Error("AI security review can only be skipped during local preparation from a public bootstrap");
   if (resumable && (!paths.seedBuildID || operation !== "prepare" || intakeProof || !seedImage)) throw new Error("Only local public seed preparation supports checkpoints");
+  if (bootable && !seedImage) throw new Error("Evaluation requires a bootable PostgreSQL seed image");
   const checkpoint = resumable && fs.existsSync(paths.checkpointFile) ? read(paths.checkpointFile) : null;
   const configured = fixture ? { model: "fixture", context: 300_000, verifier: "", embedding: "" } : configuration(env, { allowHTTPVerifier: Boolean(paths.seedBuildID) });
   configured.importWorkers = preparing ? resolveImportWorkers(env.DENSE_MEM_EVAL_IMPORT_WORKERS) : 0;
@@ -196,12 +203,11 @@ export async function setup(env, options = {}) {
   const inputSeedDir = preparing && !options.seedDirectory ? path.join(paths.directory, "bootstrap") : seedDir;
   if (manifest.seed_image) {
     const started = Date.now();
-    extractSeed(docker, manifest.seed_image, inputSeedDir, `${prefix}-seed`, paths.runID);
+    extractSeed(docker, manifest.seed_image, inputSeedDir, `${prefix}-seed`, paths.runID, seedOptions);
     manifest.timings_ms.seed_pull = Date.now() - started;
   }
   if (manifest.seed_image || options.seedDirectory) {
-    const proofExport = intakeProof && !preparing;
-    seed = await verifySeedFiles(inputSeedDir, preparing ? "bootstrap" : paths.dataset, manifest.registry_sha256, preparing ? 0 : proofExport ? 20 : dataset.corpus.rows, { intakeProof: proofExport });
+    seed = await verifySeedFiles(inputSeedDir, preparing ? "bootstrap" : paths.dataset, manifest.registry_sha256, preparing ? 0 : seedOptions.intakeProof ? 20 : dataset.corpus.rows, seedOptions);
   }
   if ((!preparing || intakeProof || skipAISecurityReview) && !seed) throw new Error("Runner evaluation requires a verified seed");
   const checkpointIdentity = { version: 1, run_id: paths.runID, volume: state.volume, source_revision: manifest.source_revision, image: manifest.image, registry_sha256: manifest.registry_sha256,
@@ -222,10 +228,12 @@ export async function setup(env, options = {}) {
   if (!checkpoint) docker(["volume", "create", "--label", `${label}=${paths.runID}`, state.volume]);
   const pgEnv = path.join(paths.directory, "postgres.env");
   fs.writeFileSync(pgEnv, `POSTGRES_USER=densemem\nPOSTGRES_DB=densemem\nPOSTGRES_PASSWORD=${password}\n`, { mode: 0o600 });
-  docker(["run", "--detach", "--name", `${prefix}-postgres`, "--label", `${label}=${paths.runID}`, "--network", state.network, "--network-alias", "postgres", "--publish", "127.0.0.1::5432", "--env-file", pgEnv, "--mount", `type=volume,source=${state.volume},target=/var/lib/postgresql`, postgresImage, "postgres", "-c", `max_connections=${databaseCapacity(configured.importWorkers).postgres}`]);
+  const pgStarted = Date.now();
+  docker(["run", "--detach", "--name", `${prefix}-postgres`, "--label", `${label}=${paths.runID}`, "--network", state.network, "--network-alias", "postgres", "--publish", "127.0.0.1::5432", "--env-file", pgEnv, "--mount", `type=volume,source=${state.volume},target=/var/lib/postgresql`, bootable ? seedImage : postgresImage, "postgres", "-c", `max_connections=${databaseCapacity(configured.importWorkers).postgres}`]);
   const pgDeadline = Date.now() + 120_000;
   while (spawnSync("docker", ["exec", `${prefix}-postgres`, "pg_isready", "--host=127.0.0.1", "-U", "densemem"], { stdio: "ignore", timeout: 5000 }).status !== 0) { if (Date.now() >= pgDeadline) throw new Error("Runner PostgreSQL readiness timed out"); await delay(1000, undefined, { signal }); }
-  if (seed && !checkpoint) {
+  manifest.timings_ms.postgres_startup = Date.now() - pgStarted;
+  if (seed && !bootable && !checkpoint) {
     const started = Date.now(); restoreSeed(docker, `${prefix}-postgres`, inputSeedDir); manifest.timings_ms.restore = Date.now() - started;
     await verifySeedCredentialExclusions(docker, `${prefix}-postgres`, inputSeedDir, [password, controlToken, apiKey, state.environment.DENSE_MEM_EVAL_API_KEY, state.environment.DENSE_MEM_EVAL_EMBED_API_KEY]);
   }
@@ -353,8 +361,9 @@ export async function main(mode, env = process.env) {
       const image = await resolveSeedImage(seedReference(dataset, env.EVAL_SEED_VERSION || "latest"), env);
       if (!image) throw new Error(`Public seed is unavailable for ${dataset}`);
       const directory = path.join(env.RUNNER_TEMP, `seed-pin-${env.GITHUB_RUN_ID}-${dataset}`);
-      extractSeed(docker, image, directory, `seed-pin-${env.GITHUB_RUN_ID}-${dataset}`, `${env.GITHUB_RUN_ID}-${dataset}`);
-      await verifySeedFiles(directory, dataset, sha256(bytes), registry.datasets.find((row) => row.id === dataset).corpus.rows);
+      const bootable = { bootable: true };
+      extractSeed(docker, image, directory, `seed-pin-${env.GITHUB_RUN_ID}-${dataset}`, `${env.GITHUB_RUN_ID}-${dataset}`, bootable);
+      await verifySeedFiles(directory, dataset, sha256(bytes), registry.datasets.find((row) => row.id === dataset).corpus.rows, bootable);
       images[dataset] = image;
     }
     fs.appendFileSync(env.GITHUB_OUTPUT, `images=${JSON.stringify(images)}\n`);
@@ -378,9 +387,11 @@ export async function main(mode, env = process.env) {
     await runBinary("prepare", prepared, env);
     dumpSeed(docker, `densemem-eval-${prepared.paths.runID}-postgres`, prepared.seedDir);
     await sealSeed(prepared.seedDir);
+    fs.writeFileSync(path.join(prepared.seedDir, "NOTICE.md"), "# Synthetic evaluation seed\n");
+    const seedImage = await buildBootableSeed(docker, `densemem-eval-${prepared.paths.runID}-postgres`, prepared.seedDir, seedSecrets(prepared.state));
     const apiKey = prepared.state.environment.EVAL_API_KEY;
     await cleanup(env);
-    runtime = await setup(env, { seedDirectory: prepared.seedDir, apiKey });
+    runtime = await setup(env, { seedImage, apiKey });
   } else runtime = await setup(env);
   await runBinary("run", runtime, env);
 }

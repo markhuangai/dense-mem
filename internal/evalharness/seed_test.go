@@ -107,6 +107,17 @@ func TestSeedFilesRejectCorruptedDumpMappingAndSize(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "database.dump"), []byte("corrupted dump"), 0600))
 	_, _, err = ReadSeed(dir)
 	require.ErrorContains(t, err, "digest")
+
+	seed.Version = bootableSeedVersion
+	require.NoError(t, os.Remove(filepath.Join(dir, "database.dump")))
+	require.NoError(t, writeJSON(filepath.Join(dir, "seed.json"), seed))
+	actual, restored, err = ReadSeed(dir)
+	require.NoError(t, err)
+	require.Equal(t, seed, actual)
+	require.Equal(t, mapping, restored)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "mapping.json"), []byte("{}"), 0600))
+	_, _, err = ReadSeed(dir)
+	require.ErrorContains(t, err, "mapping digest")
 }
 
 func TestEvaluationManifestRejectsImportCapacityAndUnpinnedSeeds(t *testing.T) {

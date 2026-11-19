@@ -1,12 +1,17 @@
 import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import { ownedResource, registryMatrix, resolveImportWorkers } from "./evaluation-policy.mjs";
 import imagePolicy from "./image-release-policy.cjs";
 import { seedGitHubPages, seedValidationState } from "./seed-validation.mjs";
 
 export const seedRepository = "ghcr.io/markhuangai/dense-mem-eval-postgres";
 export const postgresImage = "pgvector/pgvector:0.8.2-pg18-trixie";
+const bootableSeedVersion = 2;
+const postgresVolume = "/var/lib/postgresql";
+const archiveInPostgres = "/tmp/evaluation-seed.dump";
+const localImageID = /^sha256:[a-f0-9]{64}$/;
 export const excludedSeedData = ["operation_logs", "remember_attempt_diagnostics", "remember_invocation_diagnostics", "remember_failure_artifacts"];
 const digest = /^[0-9a-f]{64}$/;
 const release = /^v\d+\.\d+\.\d+(?:-rc\.\d+)?$/;
@@ -84,8 +89,9 @@ export function seedBuildVersion(baseRelease, now = new Date()) {
   return now.toISOString().replace(/[-:.]/g, "") + "-" + baseRelease;
 }
 
-export function seedMetadata(metadata, dataset, registryHash, corpusRows) {
-  if (metadata.version !== 1 || metadata.dataset !== dataset || metadata.registry_sha256 !== registryHash || metadata.corpus_rows !== corpusRows || !release.test(metadata.base_release) || !/^[0-9a-f]{40}$/.test(metadata.source_revision || "") || metadata.postgres_image !== postgresImage || metadata.embedding_model !== "text-embedding-3-small" || metadata.embedding_dimensions !== 1536 || !digest.test(metadata.dump_sha256 || "") || !Number.isSafeInteger(metadata.dump_bytes) || metadata.dump_bytes < 1 || !Number.isSafeInteger(metadata.schema_version) || metadata.schema_version < 1) throw new Error("Seed metadata is incompatible with the public dataset or runtime");
+export function seedMetadata(metadata, dataset, registryHash, corpusRows, { bootable = false } = {}) {
+  if (metadata.version !== (bootable ? bootableSeedVersion : 1)) throw new Error(bootable ? "Evaluation requires a bootable PostgreSQL seed image; rebuild this dataset seed" : "Incompatible logical seed export version");
+  if (metadata.dataset !== dataset || metadata.registry_sha256 !== registryHash || metadata.corpus_rows !== corpusRows || !release.test(metadata.base_release) || !/^[0-9a-f]{40}$/.test(metadata.source_revision || "") || metadata.postgres_image !== postgresImage || metadata.embedding_model !== "text-embedding-3-small" || metadata.embedding_dimensions !== 1536 || !digest.test(metadata.dump_sha256 || "") || !Number.isSafeInteger(metadata.dump_bytes) || metadata.dump_bytes < 1 || !Number.isSafeInteger(metadata.schema_version) || metadata.schema_version < 1) throw new Error("Seed metadata is incompatible with the public dataset or runtime");
   const scope = metadata.scope;
   for (const key of ["team_id", "credential_id", "owner_id", "space_id"]) if (!/^[0-9a-f-]{36}$/.test(scope?.[key] || "")) throw new Error("Seed scope is incomplete");
   if (!Number.isSafeInteger(scope.generation) || scope.generation < 1) throw new Error("Seed generation is invalid");
@@ -99,27 +105,40 @@ export async function hashFile(file) {
   return hash.digest("hex");
 }
 
-export function extractSeed(docker, image, directory, container, runID) {
-  if (!new RegExp(`^${seedRepository.replaceAll(".", "\\.")}@sha256:[0-9a-f]{64}$`).test(image)) throw new Error("Immutable seed image is required");
-  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+function loadSeedImage(docker, image, { bootable = false, allowLocal = false } = {}) {
+  const local = allowLocal && localImageID.test(image);
+  if (!local && !new RegExp(`^${seedRepository.replaceAll(".", "\\.")}@sha256:[0-9a-f]{64}$`).test(image)) throw new Error("Immutable seed image is required");
+  const inspect = () => JSON.parse(docker(["image", "inspect", image]))[0];
+  let info;
   try {
-    docker(["image", "inspect", "--format", "{{.Id}}", image]);
-  } catch {
-    docker(["pull", "--quiet", image]);
+    info = inspect();
+  } catch (error) {
+    if (local) throw error;
+    docker(["pull", "--quiet", "--platform=linux/amd64", image]);
+    info = inspect();
   }
-  docker(["create", "--name", container, "--label", `io.dense-mem.eval.run=${runID}`, image, "/unused"]);
+  if (bootable && (info.Os !== "linux" || info.Architecture !== "amd64" || info.Config?.Labels?.["io.dense-mem.eval.seed-format"] !== "postgres-v2")) {
+    throw new Error("Evaluation requires a Linux amd64 bootable PostgreSQL seed image; rebuild this dataset seed");
+  }
+  return info.Id;
+}
+
+export function extractSeed(docker, image, directory, container, runID, options) {
+  loadSeedImage(docker, image, options);
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  docker(["create", "--name", container, "--label", `io.dense-mem.eval.run=${runID}`, "--mount", `type=volume,destination=${postgresVolume},volume-nocopy`, image, "/unused"]);
   try { docker(["cp", `${container}:/seed/.`, directory]); }
   finally {
     const actual = JSON.parse(docker(["container", "inspect", container]))[0];
     ownedResource({ Labels: actual.Config.Labels }, runID);
-    docker(["container", "rm", actual.Id]);
+    docker(["container", "rm", "--volumes", actual.Id]);
   }
 }
 
-export async function verifySeedFiles(directory, dataset, registryHash, corpusRows, { intakeProof = false } = {}) {
-  const metadata = seedMetadata(read(path.join(directory, "seed.json")), dataset, registryHash, corpusRows);
+export async function verifySeedFiles(directory, dataset, registryHash, corpusRows, { intakeProof = false, bootable = false } = {}) {
+  const metadata = seedMetadata(read(path.join(directory, "seed.json")), dataset, registryHash, corpusRows, { bootable });
   if ((metadata.intake_proof ?? false) !== intakeProof || (intakeProof && metadata.ai_security_review !== "skipped")) throw new Error("Seed export kind or admission policy differs from the requested operation");
-  if (await hashFile(path.join(directory, "database.dump")) !== metadata.dump_sha256 || fs.statSync(path.join(directory, "database.dump")).size !== metadata.dump_bytes) throw new Error("Seed dump checksum or size differs");
+  if (!bootable && (await hashFile(path.join(directory, "database.dump")) !== metadata.dump_sha256 || fs.statSync(path.join(directory, "database.dump")).size !== metadata.dump_bytes)) throw new Error("Seed dump checksum or size differs");
   if (dataset !== "bootstrap" && await hashFile(path.join(directory, "mapping.json")) !== metadata.mapping_sha256) throw new Error("Seed mapping checksum differs");
   return metadata;
 }
@@ -135,22 +154,29 @@ export function remainingSeedRestoreEntries(toc) {
   return remaining.join("\n");
 }
 
+const restoreCommand = ["pg_restore", "--username=densemem", "--dbname=densemem", "--no-owner", "--no-privileges", "--exit-on-error", "--jobs=2"];
+
+function restoreSteps(list, archive) {
+  return [
+    ["schema restore", ["--section=pre-data", "--clean", "--if-exists", archive]],
+    ["memory space restore", ["--data-only", "--schema=public", "--table=memory_spaces", archive]],
+    ["remaining data and index restore", ["--section=data", "--section=post-data", `--use-list=${list}`, archive]],
+  ];
+}
+
 export function restoreSeed(docker, postgres, directory) {
   let phase = "archive inspection";
   try {
-    const dump = "/tmp/evaluation-seed.dump";
-    docker(["cp", path.join(directory, "database.dump"), `${postgres}:${dump}`]);
-    const remaining = remainingSeedRestoreEntries(docker(["exec", postgres, "pg_restore", "--list", dump]));
+    docker(["cp", path.join(directory, "database.dump"), `${postgres}:${archiveInPostgres}`]);
+    const remaining = remainingSeedRestoreEntries(docker(["exec", postgres, "pg_restore", "--list", archiveInPostgres]));
     const list = path.join(directory, "restore.list");
     fs.writeFileSync(list, remaining, { mode: 0o600 });
-    docker(["cp", list, `${postgres}:/tmp/evaluation-seed-restore.list`]);
-    const command = ["exec", postgres, "pg_restore", "--username=densemem", "--dbname=densemem", "--no-owner", "--no-privileges", "--exit-on-error", "--jobs=2"];
-    phase = "schema restore";
-    docker([...command, "--section=pre-data", "--clean", "--if-exists", dump], { timeout: 20 * 60_000 });
-    phase = "memory space restore";
-    docker([...command, "--data-only", "--schema=public", "--table=memory_spaces", dump], { timeout: 20 * 60_000 });
-    phase = "remaining data and index restore";
-    docker([...command, "--section=data", "--section=post-data", "--use-list=/tmp/evaluation-seed-restore.list", dump], { timeout: 20 * 60_000 });
+    const remoteList = "/tmp/evaluation-seed-restore.list";
+    docker(["cp", list, `${postgres}:${remoteList}`]);
+    for (const [step, args] of restoreSteps(remoteList, archiveInPostgres)) {
+      phase = step;
+      docker(["exec", postgres, ...restoreCommand, ...args], { timeout: 20 * 60_000 });
+    }
   } catch (error) { preservePostgresFailure(directory, phase, error); throw error; }
 }
 
@@ -178,7 +204,10 @@ export async function verifySeedCredentialExclusions(docker, postgres, directory
   const sqlFile = path.join(directory, "verification.sql");
   const fd = fs.openSync(sqlFile, "wx", 0o600);
   try {
-    try { docker(["exec", postgres, "pg_restore", "--file=-", "/tmp/evaluation-seed.dump"], { stdio: ["ignore", fd, "pipe"], timeout: 20 * 60_000 }); }
+    try {
+      docker(["cp", path.join(directory, "database.dump"), `${postgres}:${archiveInPostgres}`]);
+      docker(["exec", postgres, "pg_restore", "--file=-", archiveInPostgres], { stdio: ["ignore", fd, "pipe"], timeout: 20 * 60_000 });
+    }
     catch (error) { preservePostgresFailure(directory, "verification", error); throw error; }
     finally { fs.closeSync(fd); }
     const patterns = [...new Set(secrets.filter(Boolean).flatMap((value) => {
@@ -196,6 +225,31 @@ export async function verifySeedCredentialExclusions(docker, postgres, directory
       }
     }
   } finally { fs.unlinkSync(sqlFile); }
+}
+
+export async function buildBootableSeed(docker, postgres, directory, secrets) {
+  const { dataset, registry_sha256: registryHash, corpus_rows: corpusRows } = read(path.join(directory, "seed.json"));
+  if (dataset === "bootstrap") throw new Error("Bootstrap seeds use a logical archive");
+  const seed = await verifySeedFiles(directory, dataset, registryHash, corpusRows);
+  await verifySeedCredentialExclusions(docker, postgres, directory, secrets);
+  const context = fs.mkdtempSync(path.join(directory, "image-"));
+  try {
+    const restoreList = remainingSeedRestoreEntries(docker(["exec", postgres, "pg_restore", "--list", archiveInPostgres]));
+    fs.writeFileSync(path.join(context, "restore.list"), restoreList);
+    const commands = restoreSteps("/tmp/restore.list", "/tmp/database.dump").map(([, args]) => [...restoreCommand, ...args].join(" "));
+    fs.writeFileSync(path.join(context, "seed-restore.sh"), commands.join("\n") + "\n");
+    for (const file of ["database.dump", "mapping.json", "NOTICE.md"]) fs.copyFileSync(path.join(directory, file), path.join(context, file));
+    for (const file of ["seed-postgres.Dockerfile", "seed-postgres-entrypoint.sh"]) {
+      fs.copyFileSync(fileURLToPath(new URL(`../../tests/eval/scripts/${file}`, import.meta.url)), path.join(context, file));
+    }
+    save(path.join(context, "seed.json"), { ...seed, version: bootableSeedVersion });
+    const image = docker(["build", "--quiet", "--network=none", "--platform=linux/amd64", "--file", path.join(context, "seed-postgres.Dockerfile"), context], { timeout: 20 * 60_000 });
+    if (!localImageID.test(image)) throw new Error("Bootable seed build did not return an immutable Docker image ID");
+    return image;
+  } catch (error) {
+    preservePostgresFailure(directory, "bootable image build", error);
+    throw error;
+  } finally { fs.rmSync(context, { recursive: true, force: true }); }
 }
 
 async function registryManifest(reference, method = "HEAD", env = process.env) {
@@ -224,31 +278,41 @@ export async function publishSeed(docker, directory, dataset, selected, env, bef
   if (typeof beforePublication !== "function") throw new Error("Seed publication requires a fresh validation gate");
   const tagged = seedReference(dataset, selected);
   const alias = seedReference(dataset);
-  const files = ["database.dump", "seed.json", "NOTICE.md", ...(dataset === "bootstrap" ? [] : ["mapping.json"])];
+  const bootable = dataset !== "bootstrap";
+  if (bootable && !localImageID.test(resume?.bootableImage || "")) throw new Error("Seed publication requires a verified bootable image");
+  const files = ["database.dump", "seed.json", "NOTICE.md"];
   let pinned = await resolveSeedImage(tagged, env);
   let aliasSource = tagged;
   if (pinned) {
     if (!resume || !/^local-[a-f0-9]{32}-[a-z0-9_]+$/.test(resume.runID)) throw new Error("Dated seed image already exists and cannot be overwritten");
-    const existing = fs.mkdtempSync(path.join(directory, "published-"));
-    try {
-      extractSeed(docker, pinned, existing, `densemem-eval-${resume.runID}-seed`, resume.runID);
-      for (const file of files) {
-        if (await hashFile(path.join(existing, file)) !== await hashFile(path.join(directory, file))) throw new Error("Dated seed image differs from the verified local export");
-      }
-    } finally { fs.rmSync(existing, { recursive: true, force: true }); }
+    if (!bootable) {
+      const existing = fs.mkdtempSync(path.join(directory, "published-"));
+      try {
+        extractSeed(docker, pinned, existing, `densemem-eval-${resume.runID}-seed`, resume.runID);
+        for (const file of files) {
+          if (await hashFile(path.join(existing, file)) !== await hashFile(path.join(directory, file))) throw new Error("Dated seed image differs from the verified local export");
+        }
+      } finally { fs.rmSync(existing, { recursive: true, force: true }); }
+    }
     aliasSource = pinned;
   } else {
-    const context = fs.mkdtempSync(path.join(directory, "image-"));
-    try {
-      for (const file of files) fs.copyFileSync(path.join(directory, file), path.join(context, file));
-      fs.writeFileSync(path.join(context, "Dockerfile"), `FROM scratch\nLABEL org.opencontainers.image.source="https://github.com/markhuangai/dense-mem"\nCOPY ${files.join(" ")} /seed/\n`);
-      docker(["build", "--network=none", "--platform=linux/amd64", "--tag", tagged, context], { timeout: 20 * 60_000 });
-    } finally { fs.rmSync(context, { recursive: true, force: true }); }
+    if (bootable) {
+      loadSeedImage(docker, resume.bootableImage, { bootable, allowLocal: true });
+      docker(["tag", resume.bootableImage, tagged]);
+    } else {
+      const context = fs.mkdtempSync(path.join(directory, "image-"));
+      try {
+        for (const file of files) fs.copyFileSync(path.join(directory, file), path.join(context, file));
+        fs.writeFileSync(path.join(context, "Dockerfile"), `FROM scratch\nLABEL org.opencontainers.image.source="https://github.com/markhuangai/dense-mem"\nCOPY ${files.join(" ")} /seed/\n`);
+        docker(["build", "--network=none", "--platform=linux/amd64", "--tag", tagged, context], { timeout: 20 * 60_000 });
+      } finally { fs.rmSync(context, { recursive: true, force: true }); }
+    }
     await beforePublication();
     docker(["push", "--quiet", tagged], { timeout: 20 * 60_000 });
     pinned = await resolveSeedImage(tagged, env);
     if (!pinned) throw new Error("Published seed has no immutable registry digest");
   }
+  if (bootable && loadSeedImage(docker, pinned, { bootable }) !== resume.bootableImage) throw new Error("Dated seed image differs from the verified local image");
   if (resume) {
     const latest = await resolveSeedImage(alias, env);
     if (latest === pinned) return pinned;

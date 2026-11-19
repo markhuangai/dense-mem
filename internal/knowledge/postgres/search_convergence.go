@@ -191,12 +191,6 @@ func (r *Store) canonicalSearchConvergence(ctx context.Context, contract *knowle
 	teams := map[string]struct{}{}
 	now := time.Now().UTC()
 	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
-		type observedDocument struct {
-			item          knowledgecontract.SearchDocumentForEmbedding
-			vectorCurrent bool
-			updatedAt     time.Time
-		}
-		documents := make([]observedDocument, 0)
 		rows, err := tx.WithContext(ctx).Raw(`
 			SELECT document.team_id::text, document.search_document_id::text,
 			       document.owner_profile_id::text, document.source_kind,
@@ -209,12 +203,20 @@ func (r *Store) canonicalSearchConvergence(ctx context.Context, contract *knowle
 			       document.document_text, document.document_hash,
 			       document.embedding IS NOT NULL
 			         AND vector_dims(document.embedding) = document.embedding_dimensions,
-			       document.updated_at
+			       document.updated_at, canonical.content,
+			       COALESCE(canonical.space_id::text, ''), COALESCE(canonical.space_generation, 0)
 			FROM search_documents AS document
 			JOIN teams AS team
 			  ON team.id = document.team_id
 			 AND team.status = 'active'
 			 AND team.deleted_at IS NULL
+			LEFT JOIN LATERAL (
+			    SELECT fragment.content, fragment.space_id, fragment.space_generation
+			    `+canonicalSearchEvidenceQuery+`
+			      AND fragment.team_id = document.team_id
+			      AND fragment.owner_profile_id = document.owner_profile_id
+			      AND fragment.fragment_id = document.source_id
+			) AS canonical ON document.source_kind = 'evidence'
 			WHERE document.embedding_contract_id = ?::uuid
 			  AND document.embedding_dimensions = ?
 		`, contract.EmbeddingContractID, contract.EmbeddingDimensions).Rows()
@@ -226,6 +228,9 @@ func (r *Store) canonicalSearchConvergence(ctx context.Context, contract *knowle
 			var item knowledgecontract.SearchDocumentForEmbedding
 			var vectorCurrent bool
 			var updatedAt time.Time
+			var canonicalContent sql.NullString
+			var canonicalSpace string
+			var canonicalGeneration int64
 			if err := rows.Scan(
 				&item.TeamID, &item.SearchDocumentID, &item.OwnerProfileID,
 				&item.SourceKind, &item.SourceID, &item.SourceVersion,
@@ -233,32 +238,11 @@ func (r *Store) canonicalSearchConvergence(ctx context.Context, contract *knowle
 				&item.DocumentVersion, &item.EmbeddingContractID,
 				&item.EmbeddingDimensions, &item.SearchState, &item.SpaceID,
 				&item.SpaceGeneration, &item.DocumentText, &item.DocumentHash,
-				&vectorCurrent, &updatedAt,
+				&vectorCurrent, &updatedAt, &canonicalContent, &canonicalSpace, &canonicalGeneration,
 			); err != nil {
 				return err
 			}
-			documents = append(documents, observedDocument{
-				item: item, vectorCurrent: vectorCurrent, updatedAt: updatedAt,
-			})
-		}
-		if err := rows.Err(); err != nil {
-			return err
-		}
-		if err := rows.Close(); err != nil {
-			return err
-		}
-		for _, observed := range documents {
-			item := observed.item
-			vectorCurrent := observed.vectorCurrent
-			updatedAt := observed.updatedAt
-			expected, known, err := canonicalSearchDocument(ctx, tx, item)
-			if err != nil {
-				return err
-			}
-			if !known {
-				expected = &item
-			}
-			if known && expected == nil {
+			if item.SourceKind == "evidence" && !canonicalContent.Valid {
 				if item.SearchState == string(domain.SearchProjectionNotRequired) {
 					continue
 				}
@@ -271,7 +255,11 @@ func (r *Store) canonicalSearchConvergence(ctx context.Context, contract *knowle
 				continue
 			}
 			result.ExpectedDocuments++
-			canonicalMatch := searchDocumentMatchesCanonical(item, *expected)
+			canonicalMatch := true
+			if item.SourceKind == "evidence" {
+				expected := canonicalEvidenceSearchDocument(item, canonicalContent.String, canonicalSpace, canonicalGeneration)
+				canonicalMatch = searchDocumentMatchesCanonical(item, expected)
+			}
 			if canonicalMatch && item.SearchState == string(domain.SearchProjectionCurrent) && vectorCurrent {
 				result.CurrentDocuments++
 				continue
@@ -291,6 +279,12 @@ func (r *Store) canonicalSearchConvergence(ctx context.Context, contract *knowle
 			if age := now.Sub(updatedAt); age > result.OldestDriftAge {
 				result.OldestDriftAge = age
 			}
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		if err := rows.Close(); err != nil {
+			return err
 		}
 		if err := addMissingCanonicalSearchStats(ctx, tx, contract, result, classes, teams, now); err != nil {
 			return err
@@ -322,40 +316,7 @@ func addMissingCanonicalSearchStats(
 		WITH canonical_sources AS (
 			SELECT fragment.team_id, fragment.fragment_id AS source_id,
 			       'evidence'::text AS source_kind, fragment.created_at
-			FROM evidence_fragments AS fragment
-			JOIN teams AS team
-			  ON team.id = fragment.team_id
-			 AND team.status = 'active'
-			 AND team.deleted_at IS NULL
-			JOIN knowledge_ingests AS ingest
-			  ON ingest.team_id = fragment.team_id
-			 AND ingest.ingest_id = fragment.ingest_id
-			 AND ingest.owner_profile_id = fragment.owner_profile_id
-			LEFT JOIN evidence_sources AS source
-			  ON source.team_id = fragment.team_id
-			 AND source.source_id = fragment.source_id
-			WHERE NOT EXISTS (
-			          SELECT 1
-			          FROM evidence_quarantines AS quarantine
-			          WHERE quarantine.team_id = fragment.team_id
-			            AND quarantine.fragment_id = fragment.fragment_id
-			            AND quarantine.status = 'active'
-			      )
-			  AND NOT EXISTS (
-			          SELECT 1
-			          FROM evidence_lifecycle_events AS lifecycle
-			          WHERE lifecycle.team_id = fragment.team_id
-			            AND lifecycle.target_fragment_id = fragment.fragment_id
-			      )
-			  AND NOT EXISTS (
-			          SELECT 1
-			          FROM evidence_exact_aliases AS alias
-			          WHERE alias.team_id = fragment.team_id
-			            AND alias.alias_fragment_id = fragment.fragment_id
-			      )
-			  AND fragment.space_generation = dense_mem_active_space_generation(fragment.team_id, fragment.space_id)
-			  AND (fragment.source_id IS NULL OR source.current_revision_id = fragment.source_revision_id)
-			  AND COALESCE(fragment.metadata->>'conflict_resolution_deletion_only', '') <> 'true'
+				`+canonicalSearchEvidenceQuery+`
 		)
 		SELECT source.team_id::text, count(*),
 		       COALESCE(EXTRACT(EPOCH FROM (clock_timestamp() - min(source.created_at))), 0)

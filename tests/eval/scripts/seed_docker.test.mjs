@@ -5,7 +5,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { requireRunner, sha256 } from "../../../.github/scripts/evaluation-policy.mjs";
-import { dumpSeed, restoreSeed, verifySeedCredentialExclusions, excludedSeedData, postgresImage } from "../../../.github/scripts/evaluation-seeds.mjs";
+import { buildBootableSeed, dumpSeed, extractSeed, hashFile, restoreSeed, sealSeed, verifySeedFiles, verifySeedCredentialExclusions, excludedSeedData, postgresImage } from "../../../.github/scripts/evaluation-seeds.mjs";
 import { docker, location } from "./workflow.mjs";
 
 requireRunner(process.env);
@@ -52,8 +52,10 @@ test("production seed exporter preserves data, excludes payloads and protects re
   const sql = (statement) => docker(["exec", "--interactive", container, "psql", "--username=densemem", "--dbname=densemem", "--no-psqlrc", "--set=ON_ERROR_STOP=1", "--tuples-only", "--no-align"], { input: statement });
   const resetDatabase = () => docker(["exec", "--interactive", container, "psql", "--username=densemem", "--dbname=postgres", "--no-psqlrc", "--set=ON_ERROR_STOP=1"], { input: "DROP DATABASE densemem WITH (FORCE); CREATE DATABASE densemem;" });
   const team = randomUUID(), space = randomUUID();
-  sql(`CREATE TABLE retained_evidence (id integer PRIMARY KEY, content text NOT NULL);
-    INSERT INTO retained_evidence VALUES (1, 'exact public Evidence');
+  sql(`CREATE EXTENSION vector;
+    CREATE TABLE retained_evidence (id integer PRIMARY KEY, content text NOT NULL, embedding vector(3));
+    INSERT INTO retained_evidence VALUES (1, 'exact public Evidence', '[1,2,3]');
+    CREATE INDEX retained_evidence_vector ON retained_evidence USING hnsw (embedding vector_l2_ops);
     CREATE FUNCTION seed_copy_delay() RETURNS boolean LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(0.3); RETURN true; END $$;
     CREATE TABLE memory_spaces (id uuid PRIMARY KEY, team_id uuid NOT NULL, kind text NOT NULL, CHECK(seed_copy_delay()));
     INSERT INTO memory_spaces VALUES ('${space}', '${team}', 'team_shared');
@@ -63,9 +65,18 @@ test("production seed exporter preserves data, excludes payloads and protects re
     CREATE TABLE ontology_maintenance_markers (team_id uuid NOT NULL, space_id uuid NOT NULL, CHECK(space_id=dense_mem_team_shared_space(team_id)));
     INSERT INTO ontology_maintenance_markers VALUES ('${team}', '${space}');
     ${excludedSeedData.map((table) => `CREATE TABLE ${table} (payload text); INSERT INTO ${table} VALUES ('${canary}');`).join("\n")}`);
-  fs.writeFileSync(path.join(seedDir, "seed.json"), JSON.stringify({ fixture: "seed exporter" }));
   fs.writeFileSync(path.join(seedDir, "mapping.json"), "{}\n");
+  fs.writeFileSync(path.join(seedDir, "NOTICE.md"), "# Synthetic PostgreSQL seed\n");
+  const registryHash = sha256(fs.readFileSync("tests/eval/fixtures/datasets.json"));
+  fs.writeFileSync(path.join(seedDir, "seed.json"), JSON.stringify({
+    version: 1, dataset, registry_sha256: registryHash, corpus_rows: 1,
+    base_release: "v0.0.0", source_revision: "a".repeat(40), postgres_image: postgresImage, schema_version: 1,
+    embedding_model: "text-embedding-3-small", embedding_dimensions: 1536,
+    canonical_sha256: "b".repeat(64), search_sha256: "c".repeat(64), mapping_sha256: await hashFile(path.join(seedDir, "mapping.json")),
+    scope: { team_id: team, credential_id: team, owner_id: team, space_id: space, generation: 1 },
+  }));
   dumpSeed(docker, container, seedDir);
+  await sealSeed(seedDir);
   sql("UPDATE retained_evidence SET content='changed after export';");
   resetDatabase();
   restoreSeed(docker, container, seedDir);
@@ -74,6 +85,37 @@ test("production seed exporter preserves data, excludes payloads and protects re
   assert.equal(sql("SELECT count(*) FROM memory_spaces;"), "1");
   for (const table of excludedSeedData) assert.equal(sql(`SELECT count(*) FROM ${table};`), "0", `${table} retains its schema without payload rows`);
   await verifySeedCredentialExclusions(docker, container, seedDir, [canary]);
+
+  const bootCanary = `seed-boot-password-${randomUUID()}`;
+  const image = await buildBootableSeed(docker, container, seedDir, [canary, bootCanary]);
+  const packaged = path.join(paths.directory, "packaged");
+  extractSeed(docker, image, packaged, `densemem-eval-${paths.runID}-seed`, paths.runID, { bootable: true, allowLocal: true });
+  await verifySeedFiles(packaged, dataset, registryHash, 1, { bootable: true });
+  assert.equal(fs.existsSync(path.join(packaged, "database.dump")), false);
+  const missingPassword = spawnSync("docker", ["run", "--rm", "--network=none", "-e", "POSTGRES_USER=densemem", "-e", "POSTGRES_DB=densemem", image], { encoding: "utf8", timeout: 10_000 });
+  assert.equal(missingPassword.status, 1);
+  assert.match(missingPassword.stderr, /Invalid seeded PostgreSQL/);
+
+  const bootEnv = path.join(paths.directory, "seeded-postgres.env");
+  fs.writeFileSync(bootEnv, `POSTGRES_USER=densemem\nPOSTGRES_DB=densemem\nPOSTGRES_PASSWORD=${bootCanary}\n`, { mode: 0o600 });
+  const boot = docker(["run", "--detach", "--rm", "--network=none", "--env-file", bootEnv, image]);
+  t.after(() => docker(["stop", "--timeout", "10", boot]));
+  const bootDeadline = Date.now() + 60_000;
+  while (spawnSync("docker", ["exec", boot, "pg_isready", "--host=127.0.0.1", "-U", "densemem"], { stdio: "ignore" }).status !== 0) {
+    assert.ok(Date.now() < bootDeadline, "Preloaded PostgreSQL readiness timed out");
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  const bootSQL = (statement) => docker(["exec", "--interactive", boot, "sh", "-ec", 'export PGPASSWORD="$POSTGRES_PASSWORD"; exec psql -XAt -v ON_ERROR_STOP=1 -h 127.0.0.1 -U densemem -d densemem'], { input: statement });
+  assert.equal(bootSQL("SELECT content FROM retained_evidence WHERE id=1 AND embedding='[1,2,3]'::vector"), "exact public Evidence");
+  assert.equal(bootSQL("SELECT count(*) FROM pg_indexes WHERE indexname='retained_evidence_vector'"), "1");
+  assert.equal(bootSQL("SELECT count(*) FROM ontology_maintenance_markers"), "1");
+  for (const table of excludedSeedData) assert.equal(bootSQL(`SELECT count(*) FROM ${table}`), "0");
+  const wrongPassword = spawnSync("docker", ["exec", boot, "sh", "-ec", 'PGPASSWORD=wrong psql -XAt -h 127.0.0.1 -U densemem -d densemem -c "select 1"'], { encoding: "utf8", timeout: 5000 });
+  assert.equal(wrongPassword.status, 2);
+  assert.match(wrongPassword.stderr, /password authentication failed/);
+  const bootLogs = docker(["logs", boot]);
+  assert.match(bootLogs, /Skipping initialization/);
+  assert.ok(!bootLogs.includes(canary) && !bootLogs.includes(bootCanary));
 
   for (const file of ["seed.json", "mapping.json"]) {
     const target = path.join(seedDir, file);

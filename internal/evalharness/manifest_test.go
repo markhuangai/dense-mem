@@ -87,6 +87,9 @@ func TestReadManifestPermitsOnlyPublicSeedOperationsLocally(t *testing.T) {
 		t.Run(tc.operation, func(t *testing.T) {
 			manifest := base
 			manifest.Operation, manifest.ImportWorkers = tc.operation, tc.workers
+			if tc.operation == "verify-seed" {
+				manifest.SeedImage = "sha256:" + strings.Repeat("d", 64)
+			}
 			file := filepath.Join(t.TempDir(), "manifest.json")
 			require.NoError(t, writeJSON(file, manifest))
 			actual, err := ReadManifest(file)

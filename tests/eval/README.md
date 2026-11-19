@@ -50,10 +50,12 @@ that build's logs.
 
 Each dataset restores the bootstrap, imports its complete corpus with ontology
 disabled and paused, verifies the source/partition mapping and search state, and
-exports a compressed PostgreSQL logical dump. A fresh restore must verify before
-publication. The backup preserves migrations, Evidence, embeddings, provenance,
-ownership and required receipts. Operation-log and Remember diagnostic payload
-rows are excluded, while their table definitions remain.
+exports a private PostgreSQL archive. The image build restores it once into a
+clean cluster and bakes the stopped data directory, including indexes, into a
+bootable image. Before publication the builder starts that image in fresh
+storage and verifies startup, source mappings, canonical and search fingerprints,
+and search convergence. Operation-log and Remember diagnostic tables retain
+their schemas with empty payloads.
 
 The optional switch sets `DANGEROUSLY_SKIP_AI_SECURITY_CHECK` for the local
 import instance. Remember requires the original request hash and operation key
@@ -97,10 +99,10 @@ hotpotqa-latest
 Dated tags are immutable. Their release suffix is the release associated with
 current main, including release candidates; during PR testing it names that base
 release. The timestamp prevents same-day rebuild collisions. Each successful
-build updates only its dataset's latest alias. The bootstrap uses the same
-package with a `bootstrap-` prefix. These are data-only images containing a dump,
-metadata, mappings and source notices; PostgreSQL runs in the ordinary
-`pgvector/pgvector:0.8.2-pg18-trixie` image. No raw PGDATA directory is baked in.
+build updates only its dataset's latest alias. Dataset images contain a
+PostgreSQL 18/pgvector cluster on the pinned base, metadata, mappings and source
+notices. The private archive is a build input. The shared bootstrap uses a
+logical archive under the same package with a `bootstrap-` prefix.
 
 Supply the following dedicated settings through the environment or a private,
 ignored `eval.env` file with mode `0600`. Configure the corresponding Secrets
@@ -118,7 +120,9 @@ Use `--password-stdin` and retrieve the registry token from your secret manager.
 The bootstrap preserves the evaluation team, credential, owner and space IDs
 across isolated dataset databases. It stores the credential hash. Plaintext
 keys and database login passwords stay outside the images. A mismatched team
-key fails before ingestion. Each runtime generates its own control token.
+key fails before ingestion. The seeded PostgreSQL entrypoint applies the
+configured database password through a local socket before accepting TCP
+connections. Each Dense-Mem runtime generates its own control token.
 
 ## Run an evaluation
 
@@ -137,25 +141,25 @@ verified source metadata. Its immutable digest and all five immutable seed
 digests are resolved before provider-backed jobs. Missing or incompatible seeds
 fail explicitly. There is no ingestion fallback or import-worker input.
 
-Each dataset gets fresh PostgreSQL storage. Restore the seed first, then start
-Dense-Mem so normal startup applies pending migrations. Check source locks,
-counts, authenticated scope, partition mappings, canonical fingerprint, embedding
-contract, search convergence and the ontology-off state before scoring:
+Each dataset starts its pinned PostgreSQL image in fresh writable storage.
+Dense-Mem then starts and applies pending migrations. Check source locks, counts,
+authenticated scope, partition mappings, canonical fingerprint, embedding
+contract, search convergence and the ontology-off state before scoring.
 
 ```text
-restore → migrate and verify → score with ontology off
+boot seeded PostgreSQL → migrate and verify → score with ontology off
   → enable ontology and converge → pause and drain → score with ontology on
 ```
 
-Logical restore creates the schema, loads memory spaces before rows whose checks
-resolve shared-space identity, then restores remaining data and indexes with two
-workers. The archive retains every required table, index, constraint and policy.
+The seed image build creates the schema, loads memory spaces before rows whose
+checks resolve shared-space identity, then restores remaining data and indexes
+with two workers. Each evaluation starts from the same seeded contents.
 
 Canonical Evidence and provenance must remain unchanged. A newer compatible
 application can reuse an older seed; incompatible schema, search or canonical
-state requires a deliberate seed rebuild. Logical restores rebuild indexes;
-reports record restore and migration/readiness timings rather than assuming a
-speed advantage over physical snapshots.
+state requires a deliberate seed rebuild. Older logical dataset images also
+require a rebuild. Reports record seed pull, PostgreSQL startup, and Dense-Mem
+migration and readiness times separately.
 
 The own-PR route remains `production-image-e2e.yml` dispatched on the current
 own-PR branch with `pr_number` and `evaluation=live`. It requires the current
@@ -164,7 +168,7 @@ production E2E. Both routes accept `seed_version`.
 
 `mode=fixtures` is the evaluation system dry run. It prepares three synthetic
 documents through a deterministic provider, including one document that gets
-two HTTP 524 responses before succeeding. It exports and restores the corpus,
+two HTTP 524 responses before succeeding. It builds and boots a seeded image,
 then produces eight scored answers across two ontology conditions and two
 answer policies. It makes no external model calls and publishes no seed image.
 
@@ -231,7 +235,7 @@ and exchange IDs. Incomplete capture still fails validation. Initial security
 rejection is content-free. Reports show model names without provider URLs or
 credentials.
 
-Reports separate seed identity, restored rows, restore, migration/readiness,
+Reports separate seed identity, seeded rows, pull, PostgreSQL startup, migration/readiness,
 scoring and ontology timings. Current-run usage excludes historical seed
 preparation. Host latency and throughput retain their existing definitions;
 unavailable billing remains unavailable rather than an inferred monetary cost.
@@ -258,7 +262,7 @@ observation budget is ninety minutes, including owned-image cleanup.
 Require current-head reviews and CodeQL before requesting the trusted image
 and full validation. Before a paid seed build, verify Repository CI, CodeQL
 analysis, CodeQL and Production image E2E on the exact PR head. Run the internal
-fixture campaign remotely to verify export, protected errors, restore, scoring
+fixture campaign remotely to verify export, protected errors, seeded startup, scoring
 and owned cleanup. The registered PostgreSQL tests exercise sustained intake at
 twenty workers, including credential activity, pool waits and commit timing.
 

@@ -13,6 +13,7 @@ import (
 )
 
 const PostgresImage = "pgvector/pgvector:0.8.2-pg18-trixie"
+const bootableSeedVersion = 2
 
 var seedImagePattern = regexp.MustCompile(`^ghcr\.io/markhuangai/dense-mem-eval-postgres@sha256:[0-9a-f]{64}$`)
 var digestPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
@@ -44,7 +45,14 @@ type SeedMetadata struct {
 }
 
 func (s SeedMetadata) Validate(manifest Manifest, scope Scope, corpusRows int) error {
-	if s.Version != 1 || s.IntakeProof != manifest.IntakeProof || s.Dataset != manifest.Dataset || s.RegistryHash != manifest.RegistryHash || s.CorpusRows != corpusRows || corpusRows < 1 || s.Scope != scope {
+	version := 1
+	if manifest.PostgresRuntimeImage() != PostgresImage {
+		version = bootableSeedVersion
+	}
+	if s.Version != version {
+		return errors.New("seed metadata format differs from the PostgreSQL runtime")
+	}
+	if s.IntakeProof != manifest.IntakeProof || s.Dataset != manifest.Dataset || s.RegistryHash != manifest.RegistryHash || s.CorpusRows != corpusRows || corpusRows < 1 || s.Scope != scope {
 		return errors.New("seed dataset, source registry, denominator or authenticated scope differs")
 	}
 	if !digestPattern.MatchString(s.CanonicalHash) || !digestPattern.MatchString(s.SearchHash) || !digestPattern.MatchString(s.MappingHash) || !digestPattern.MatchString(s.DumpHash) || s.DumpBytes <= 0 || s.SchemaVersion <= 0 || !releasePattern.MatchString(s.BaseRelease) || !revisionPattern.MatchString(s.SourceRevision) {
@@ -71,21 +79,33 @@ func ReadSeed(dir string) (SeedMetadata, KnowledgeMapping, error) {
 	if err := readJSON(filepath.Join(dir, "seed.json"), &seed); err != nil {
 		return seed, mapping, err
 	}
-	for _, file := range []struct{ Name, Hash string }{{"mapping.json", seed.MappingHash}, {"database.dump", seed.DumpHash}} {
-		hash, err := FileHash(filepath.Join(dir, file.Name))
-		if err != nil {
-			return seed, mapping, err
-		}
-		if !digestPattern.MatchString(file.Hash) || hash != file.Hash {
-			return seed, mapping, errors.New("seed file digest differs")
-		}
-	}
-	info, err := os.Stat(filepath.Join(dir, "database.dump"))
+	hash, err := FileHash(filepath.Join(dir, "mapping.json"))
 	if err != nil {
 		return seed, mapping, err
 	}
-	if info.Size() != seed.DumpBytes {
-		return seed, mapping, errors.New("seed dump size differs")
+	if !digestPattern.MatchString(seed.MappingHash) || hash != seed.MappingHash {
+		return seed, mapping, errors.New("seed mapping digest differs")
+	}
+	switch seed.Version {
+	case 1:
+		dump := filepath.Join(dir, "database.dump")
+		hash, err := FileHash(dump)
+		if err != nil {
+			return seed, mapping, err
+		}
+		if !digestPattern.MatchString(seed.DumpHash) || hash != seed.DumpHash {
+			return seed, mapping, errors.New("seed dump digest differs")
+		}
+		info, err := os.Stat(dump)
+		if err != nil {
+			return seed, mapping, err
+		}
+		if info.Size() != seed.DumpBytes {
+			return seed, mapping, errors.New("seed dump size differs")
+		}
+	case bootableSeedVersion:
+	default:
+		return seed, mapping, errors.New("unknown seed metadata version")
 	}
 	err = readJSON(filepath.Join(dir, "mapping.json"), &mapping)
 	return seed, mapping, err

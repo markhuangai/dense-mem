@@ -75,6 +75,12 @@ func ReadManifest(path string) (Manifest, error) {
 	if manifest.SeedDir == "" || (manifest.Operation == "run" && manifest.Mode == "live" && !seedImagePattern.MatchString(manifest.SeedImage)) {
 		return manifest, errors.New("immutable seed identity and directory are required")
 	}
+	if manifest.Operation == "verify-seed" && !manifest.IntakeProof && !localImagePattern.MatchString(manifest.SeedImage) {
+		return manifest, errors.New("seed boot verification requires an immutable local PostgreSQL image")
+	}
+	if manifest.Operation == "run" && manifest.Mode == "fixtures" && manifest.SeedImage != "" && !localImagePattern.MatchString(manifest.SeedImage) {
+		return manifest, errors.New("fixture seed must use an immutable local PostgreSQL image")
+	}
 	if manifest.DataDir == "" || manifest.OutputDir == "" || len(manifest.RegistryHash) != 64 {
 		return manifest, errors.New("manifest data and output identity missing")
 	}
@@ -83,6 +89,13 @@ func ReadManifest(path string) (Manifest, error) {
 		return manifest, errors.New("model deadline is missing or exceeds the campaign limit")
 	}
 	return manifest, nil
+}
+
+func (m Manifest) PostgresRuntimeImage() string {
+	if (m.Operation == "run" || m.Operation == "verify-seed") && m.SeedImage != "" {
+		return m.SeedImage
+	}
+	return PostgresImage
 }
 
 func (m Manifest) ExecutionID() string {

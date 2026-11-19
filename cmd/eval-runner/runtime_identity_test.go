@@ -27,6 +27,11 @@ func TestRuntimeEndpointsMustBelongToThisJobsProductionContainers(t *testing.T) 
 			settings[key] = original
 		})
 	}
+	manifest.Operation, manifest.SeedImage = "run", "pinned-postgres-seed"
+	require.ErrorContains(t, validateRuntime(manifest, get, server, postgres), "images")
+	postgres = decode(manifest.SeedImage)
+	require.NoError(t, validateRuntime(manifest, get, server, postgres))
+	require.ErrorContains(t, validateRuntime(manifest, get, server, decode("another-dataset-seed")), "images")
 	server.Config.Labels["io.dense-mem.eval.run"] = "another-job"
 	require.ErrorContains(t, validateRuntime(manifest, get, server, postgres), "ownership")
 	server = decode("wrong-image")

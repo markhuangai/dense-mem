@@ -51,8 +51,8 @@ test("seed registry resolves image manifests and published indexes without treat
 
 test("seed publication protects dated tags and verifies each push and alias digest", async (t) => {
   const selected = seedBuildVersion("v2.8.1-rc.5", new Date("2026-11-17T04:26:41.183Z"));
-  const dated = seedReference("hotpotqa", selected);
-  const latest = seedReference("hotpotqa");
+  const dated = seedReference("bootstrap", selected);
+  const latest = seedReference("bootstrap");
   const digest = `sha256:${"a".repeat(64)}`;
   const collision = ["resolve:dated"];
   const validationAfterBuild = [...collision, "build", "validate"];
@@ -94,7 +94,7 @@ test("seed publication protects dated tags and verifies each push and alias dige
         events.push("validate");
         if (++gateCalls === scenario.rejectGate) throw new Error("stale validation");
       };
-      const result = publishSeed(docker, directory, "hotpotqa", selected, {}, validate);
+      const result = publishSeed(docker, directory, "bootstrap", selected, {}, validate);
       if (scenario.error) await assert.rejects(result, scenario.error);
       else assert.equal(await result, dated.split(":")[0] + "@" + digest);
       assert.deepEqual(events, scenario.expected);
@@ -135,15 +135,16 @@ test("resume restores the original seed build settings and locks its local direc
   lockSeedBuild(directory)();
 });
 
-test("seed publication resume checks the dated image bytes before updating latest", async (t) => {
+test("seed publication resume checks the verified image identity before updating latest", async (t) => {
   const version = seedBuildVersion("v2.8.1-rc.5");
   const repository = seedReference("bootstrap").split(":")[0];
   const pinned = `${repository}@sha256:${"a".repeat(64)}`;
   const previous = `${repository}@sha256:${"b".repeat(64)}`;
+  const bootableImage = `sha256:${"d".repeat(64)}`;
   for (const scenario of [
     { name: "dated push succeeded and latest still points to the prior image", alias: previous, push: true },
     { name: "both pushes already succeeded", alias: pinned, push: false },
-    { name: "dated data conflict", alias: previous, changed: true, error: /differs from the verified local export/ },
+    { name: "dated image conflict", alias: previous, changed: true, error: /differs from the verified local image/ },
     { name: "a newer alias appeared", alias: `${repository}@sha256:${"c".repeat(64)}`, error: /alias changed/ },
     { name: "first bootstrap dated tag exists before its alias", dataset: "bootstrap", alias: null, push: true },
   ]) {
@@ -166,19 +167,20 @@ test("seed publication resume checks the dated image bytes before updating lates
       });
       const docker = (args) => {
         switch (args[0]) {
-          case "image": return "present";
+          case "image":
+            assert.equal(args.at(-1), pinned);
+            return JSON.stringify([{ Id: scenario.changed ? `sha256:${"e".repeat(64)}` : bootableImage, Os: "linux", Architecture: "amd64", Config: { Labels: { "io.dense-mem.eval.seed-format": "postgres-v2" } } }]);
           case "create": assert.ok(args.includes(pinned)); return;
           case "container": return JSON.stringify([{ Id: "owned", Config: { Labels: { "io.dense-mem.eval.run": runID } } }]);
           case "cp":
             for (const file of files) fs.copyFileSync(path.join(directory, file), path.join(args.at(-1), file));
-            if (scenario.changed) fs.writeFileSync(path.join(args.at(-1), "mapping.json"), "different");
             return;
           case "tag": mutations.push(args); return;
           case "push": assert(gated); mutations.push(args); currentAlias = pinned; return;
           default: assert.fail(`unexpected Docker operation ${args[0]}`);
         }
       };
-      const result = publishSeed(docker, directory, dataset, version, {}, async () => { gated = true; }, { runID, previousLatest });
+      const result = publishSeed(docker, directory, dataset, version, {}, async () => { gated = true; }, { runID, previousLatest, bootableImage });
       if (scenario.error) await assert.rejects(result, scenario.error);
       else assert.equal(await result, pinned);
       assert.deepEqual(mutations, scenario.push ? [["tag", pinned, latest], ["push", "--quiet", latest]] : []);
@@ -207,7 +209,7 @@ test("bootstrap export resume reuses only a verified, intact dump", async (t) =>
       scope: { team_id: "11111111-1111-4111-8111-111111111111", credential_id: "22222222-2222-4222-8222-222222222222",
         owner_id: "22222222-2222-4222-8222-222222222222", space_id: "33333333-3333-4333-8333-333333333333", generation: 1 },
     }));
-    return sealSeed(exportDirectory);
+    return { seed: await sealSeed(exportDirectory) };
   });
   const prepareAgain = () => assert.fail("verified bootstrap must be reused");
   assert.equal(prepared.previousLatest, null);
@@ -344,6 +346,13 @@ test("seed checks bind public source counts, scope and real file checksums", asy
   for (const changed of [{ ...sealed, dataset: "musique" }, { ...sealed, corpus_rows: 9810 }, { ...sealed, embedding_dimensions: 1024 }, { ...sealed, dump_sha256: "" }]) assert.throws(() => seedMetadata(changed, "hotpotqa", registryHash, 9811));
   fs.appendFileSync(path.join(directory, "database.dump"), "corruption");
   await assert.rejects(verifySeedFiles(directory, "hotpotqa", registryHash, 9811), /checksum or size/);
+  await assert.rejects(verifySeedFiles(directory, "hotpotqa", registryHash, 9811, { bootable: true }), /requires a bootable PostgreSQL seed/);
+  fs.unlinkSync(path.join(directory, "database.dump"));
+  const bootable = { ...sealed, version: 2 };
+  fs.writeFileSync(path.join(directory, "seed.json"), JSON.stringify(bootable));
+  assert.deepEqual(await verifySeedFiles(directory, "hotpotqa", registryHash, 9811, { bootable: true }), bootable);
+  fs.appendFileSync(path.join(directory, "mapping.json"), "corrupted mapping");
+  await assert.rejects(verifySeedFiles(directory, "hotpotqa", registryHash, 9811, { bootable: true }), /mapping checksum/);
 });
 
 test("live evaluation pins every seed before allocating provider-backed jobs", async () => {
