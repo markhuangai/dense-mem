@@ -58,6 +58,20 @@
     },
     {
       "path": "cmd/eval-runner/logs.go",
+      "function": "stopRuntime",
+      "kind": "run",
+      "ordinal": 1,
+      "role": "worker"
+    },
+    {
+      "path": "cmd/eval-runner/logs.go",
+      "function": "stopRuntime",
+      "kind": "run",
+      "ordinal": 2,
+      "role": "worker"
+    },
+    {
+      "path": "cmd/eval-runner/logs.go",
       "function": "runtimeLogs",
       "kind": "run",
       "ordinal": 1,
