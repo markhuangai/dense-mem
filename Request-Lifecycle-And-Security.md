@@ -124,9 +124,9 @@ Scope full-text, vector, source, and topic-membership reads before IDs leave the
 
 ## Write-Time Security
 
-Strict input validation and the initial deterministic scan precede provider work. The scan examines submitted text and provenance for supported instruction overrides, active markup, hidden controls, credential extraction, and exfiltration attacks while preserving admitted exact text.
+Strict input validation and the initial deterministic scan precede provider work. Remember blocks structural hazards in Evidence and sends ambiguous text, such as quoted instructions, inert comments, and technical identifiers, to contextual review. The scan still checks provenance. Session intake retains its pre-staging scan.
 
-Ordinary identifiers, punctuation, and harmless encoded notation do not reject merely for looking unusual. Initial security rejection retains content-free bounded rule/span/correlation metadata. Passing admission still requires complete assessor security review. Models cannot override deterministic rejection or choose durable state.
+Initial security rejection retains only bounded rule, span, and correlation metadata. Contextual review evaluates the original Evidence in full, and the server validates every result before using partitions. The initial rejection remains final, and durable memory decisions stay with the server.
 
 [Memory Write Pipeline](Write-Pipeline) owns subsequent orchestration; [Technical Reference](Technical-Reference#errors-and-client-actions) owns public error fields and client actions.
 
