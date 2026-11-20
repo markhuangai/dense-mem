@@ -9,8 +9,8 @@
       "module": "github.com/labstack/echo/v4",
       "version": "v4.16.3",
       "expires": "2026-11-23",
-      "reason": "Echo v4 has no Go vulnerability database fix for these advisories; PR #717 retargeted PR #707's approved exception to v4.16.3.",
-      "reference": "https://github.com/markhuangai/dense-mem/pull/717"
+      "reason": "The Go vulnerability database lists no Echo v4 fix for these advisories. PR #717 retargeted the exception from PR #707 to v4.16.3. The maintainer renewed that scope through the new exclusive UTC expiry in PR #793.",
+      "reference": "https://github.com/markhuangai/dense-mem/pull/793"
     }
   ],
   "python": [],
