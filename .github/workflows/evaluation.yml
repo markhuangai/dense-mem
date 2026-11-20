@@ -130,7 +130,7 @@ jobs:
         with:
           node-version: 24
           package-manager-cache: false
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - name: Build workflow-internal runner
