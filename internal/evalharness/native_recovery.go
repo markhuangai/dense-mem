@@ -116,6 +116,8 @@ func (r *ontologyRecovery) advance(ctx context.Context, n *Native, manifest Mani
 			return false, errors.New("native ontology retry did not complete")
 		}
 		r.retry = ontology.MaintenanceRun{}
+		// Completion can commit between the status, failure, and receipt reads.
+		return true, nil
 	}
 	status := observation.Ontology
 	if !status.DiscoveryComplete || status.Counts.Pending != 0 || nativeDrained(observation) != nil {

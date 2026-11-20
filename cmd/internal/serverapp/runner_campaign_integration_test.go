@@ -118,26 +118,55 @@ func testRunnerCampaignConditionsAndCapture(t *testing.T, scenario string) {
 		body, err := json.Marshal(map[string]any{"action": "answer", "query": "", "topic_id": "", "evidence_id": "", "answer": "PostgreSQL", "citations": []evalharness.Citation{{EvidenceID: id, Quote: "PostgreSQL"}}})
 		return modelprovider.StructuredResult{Content: string(body)}, err
 	})
-	worker := make(chan error, 1)
-	go func() {
-		for ctx.Err() == nil {
-			if _, err := f.maintenance.RunTurn(ctx); err != nil && ctx.Err() == nil && !errors.Is(err, ontology.ErrMaintenancePaused) {
-				expected := (scenario == "stale source" && errors.Is(err, ontology.ErrSourceStale)) ||
-					((scenario == "rate limited" || scenario == "mixed failure") && errors.Is(err, modelprovider.ErrVerifierRateLimit)) ||
-					(scenario == "mixed failure" && errors.Is(err, modelprovider.ErrVerifierProvider))
-				if !expected {
+	runTurn := func(ctx context.Context) (bool, error) {
+		progress, err := f.maintenance.RunTurn(ctx)
+		switch {
+		case errors.Is(err, ontology.ErrMaintenancePaused):
+			return false, nil
+		case scenario == "stale source" && errors.Is(err, ontology.ErrSourceStale),
+			(scenario == "rate limited" || scenario == "mixed failure") && errors.Is(err, modelprovider.ErrVerifierRateLimit),
+			scenario == "mixed failure" && errors.Is(err, modelprovider.ErrVerifierProvider):
+			return true, nil
+		default:
+			return progress, err
+		}
+	}
+	if scenario == "rate limited" {
+		underlying := f.native.Client.Client.Transport
+		f.native.Client.Client.Transport = seedRoundTripper(func(req *http.Request) (*http.Response, error) {
+			response, err := underlying.RoundTrip(req)
+			if err != nil || req.URL.Path != "/control/api/search/convergence" {
+				return response, err
+			}
+			// Advance real maintenance after Snapshot has read ontology status and before it returns.
+			for {
+				progress, err := runTurn(req.Context())
+				if err != nil {
+					_ = response.Body.Close()
+					return nil, err
+				}
+				if !progress {
+					return response, nil
+				}
+			}
+		})
+	} else {
+		worker := make(chan error, 1)
+		go func() {
+			for ctx.Err() == nil {
+				if _, err := runTurn(ctx); err != nil && ctx.Err() == nil {
 					worker <- err
 					return
 				}
+				select {
+				case <-ctx.Done():
+				case <-time.After(10 * time.Millisecond):
+				}
 			}
-			select {
-			case <-ctx.Done():
-			case <-time.After(10 * time.Millisecond):
-			}
-		}
-		worker <- nil
-	}()
-	defer func() { cancel(); require.NoError(t, <-worker) }()
+			worker <- nil
+		}()
+		defer func() { cancel(); require.NoError(t, <-worker) }()
+	}
 	manifest.SeedDir, manifest.BaseRelease = t.TempDir(), "v2.8.1-rc.5"
 	seed, err := evalharness.Prepare(ctx, manifest, corpus, f.native.Client, f.native)
 	require.NoError(t, err)
@@ -182,10 +211,23 @@ func testRunnerCampaignConditionsAndCapture(t *testing.T, scenario string) {
 	}
 	require.Equal(t, []string{"off", "off", "on", "on"}, conditions)
 	kinds := map[string]int{}
+	staleRetryObservation := false
 	for _, line := range bytes.Split(bytes.TrimSpace(logs.Bytes()), []byte("\n")) {
 		var event evalharness.Event
 		require.NoError(t, json.Unmarshal(line, &event))
 		kinds[event.Kind]++
+		if scenario == "rate limited" && event.Kind == "native_observation" {
+			var observation evalharness.NativeObservation
+			require.NoError(t, json.Unmarshal(event.Payload, &observation))
+			status := observation.Ontology
+			if run := status.LatestRun; run != nil && run.Kind == "retry" && run.Status == "pending" &&
+				status.DiscoveryComplete && status.ActiveWork == 0 && status.Counts.Pending == 0 && status.Counts.Failed == 1 {
+				staleRetryObservation = true
+			}
+		}
+	}
+	if scenario == "rate limited" {
+		require.True(t, staleRetryObservation, "snapshot must still show the failure when the pending retry completes")
 	}
 	require.Equal(t, 1, kinds["seed_verified"])
 	require.Zero(t, kinds["mapping"])
