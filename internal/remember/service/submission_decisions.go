@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
@@ -14,15 +15,32 @@ const decisionPositiveProbability = 0.99
 const decisionNegativeProbability = 0.01
 
 func routeSubmissionDecisions(ctx context.Context, provider modelprovider.DecisionProvider, snapshot *domain.DecisionRuntimeConfig, request assessor.SemanticAssessmentRequest, logger observability.LogProvider) (*assessor.SemanticAssessmentRouting, error) {
+	return routeSubmissionDecisionTasks(ctx, provider, snapshot, request, logger, true)
+}
+
+func RouteRememberIntakeSecurity(ctx context.Context, provider modelprovider.DecisionProvider, snapshot *domain.DecisionRuntimeConfig, partition assessor.PartitionRequest, logger observability.LogProvider) (*assessor.SemanticAssessmentRouting, error) {
+	request := assessor.SemanticAssessmentRequest{RequestID: partition.RequestID}
+	for _, item := range partition.Items {
+		request.Evidence = append(request.Evidence, assessor.SemanticReviewEvidence{EvidenceID: item.ItemID, Content: item.Content})
+	}
+	return routeSubmissionDecisionTasks(ctx, provider, snapshot, request, logger, false)
+}
+
+func routeSubmissionDecisionTasks(ctx context.Context, provider modelprovider.DecisionProvider, snapshot *domain.DecisionRuntimeConfig, request assessor.SemanticAssessmentRequest, logger observability.LogProvider, allowDeduplication bool) (*assessor.SemanticAssessmentRouting, error) {
+	routing := request.DecisionRouting
 	if provider == nil {
-		return nil, nil
+		return routing, nil
 	}
 	if snapshot == nil || !snapshot.Provider.Configured {
 		return nil, fmt.Errorf("%w: decision settings snapshot is unavailable", ErrRememberProviderUnavailable)
 	}
-	security, dedup := snapshot.Effective.SecurityReview, snapshot.Effective.Deduplication
+	security := snapshot.Effective.SecurityReview && (routing == nil || routing.Security == nil)
+	dedup := allowDeduplication && snapshot.Effective.Deduplication
 	if !security && !dedup {
-		return nil, nil
+		return routing, nil
+	}
+	if routing == nil {
+		routing = &assessor.SemanticAssessmentRouting{}
 	}
 	decisionRequest := modelprovider.DecisionRequest{Workload: "remember_assessment", OperationID: request.RequestID, SettingsVersion: snapshot.Revision}
 	byEvidence := make(map[string]assessor.SemanticAssessmentEvidenceEquivalenceCandidateGroup, len(request.EvidenceEquivalenceCandidates))
@@ -49,12 +67,21 @@ func routeSubmissionDecisions(ctx context.Context, provider modelprovider.Decisi
 			decisionRequest.Groups = append(decisionRequest.Groups, group)
 		}
 	}
-	routing := &assessor.SemanticAssessmentRouting{}
 	result := modelprovider.DecisionResult{Answers: map[string]modelprovider.DecisionAnswer{}}
 	if len(decisionRequest.Groups) > 0 {
 		var err error
 		result, err = provider.Decide(ctx, decisionRequest)
 		if err != nil {
+			if !allowDeduplication && errors.Is(err, modelprovider.ErrDecisionInputBudgetExceeded) {
+				details := map[string]any{"component": "remember.intake_review", "client_controlled": true}
+				var budget *modelprovider.DecisionInputBudgetError
+				if errors.As(err, &budget) {
+					details["unit"], details["observed"], details["limit"] = "tokens", budget.Observed, budget.Limit
+				}
+				return nil, &submissionDiagnosticFailure{
+					cause: fmt.Errorf("%w: %w", ErrRememberInputBudgetExceeded, err), reason: "decision_input_budget_exceeded", details: details,
+				}
+			}
 			return nil, fmt.Errorf("%w: typed assessment failed: %w", ErrRememberProviderUnavailable, err)
 		}
 		if err = ctx.Err(); err != nil {

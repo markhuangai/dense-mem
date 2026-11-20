@@ -15,7 +15,10 @@ on:
       mode:
         required: true
         type: string
-      replay_run_id:
+      seed_version:
+        type: string
+        default: latest
+      dataset_selection:
         type: string
         default: ''
       model:
@@ -37,11 +40,18 @@ on:
         required: false
       eval-embedding-api-key:
         required: false
+      eval-team-api-key:
+        required: false
+      eval-database-password:
+        required: false
 
 permissions:
   actions: read
   contents: read
   packages: read
+
+env:
+  EVAL_DATASET_SELECTION: ${{ inputs.dataset_selection }}
 
 jobs:
   registry:
@@ -49,7 +59,7 @@ jobs:
     timeout-minutes: 10
     outputs:
       matrix: ${{ steps.registry.outputs.matrix }}
-      registry_mode: ${{ steps.registry.outputs.registry_mode }}
+      seed_images: ${{ steps.seeds.outputs.images }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -63,14 +73,26 @@ jobs:
       - id: registry
         env:
           EVAL_MODE: ${{ inputs.mode }}
-          EVAL_REPLAY_RUN_ID: ${{ inputs.replay_run_id }}
           EVAL_SOURCE_REVISION: ${{ inputs.source_revision }}
           EVAL_IMAGE: ${{ inputs.image }}
-          GH_TOKEN: ${{ github.token }}
         run: node tests/eval/scripts/workflow.mjs matrix
+      - uses: docker/login-action@v4
+        if: inputs.mode == 'live'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Pin selected public seeds before model work
+        id: seeds
+        if: inputs.mode == 'live'
+        env:
+          EVAL_MODE: live
+          EVAL_SEED_VERSION: ${{ inputs.seed_version }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node tests/eval/scripts/workflow.mjs pin-seeds
 
   datasets:
-    name: Evaluate ${{ matrix.dataset }}
+    name: ${{ format('Evaluate {0}', matrix.dataset) }}
     needs: registry
     runs-on: ubuntu-latest
     timeout-minutes: 360
@@ -79,23 +101,25 @@ jobs:
       matrix: ${{ fromJSON(needs.registry.outputs.matrix) }}
     env:
       EVAL_MODE: ${{ inputs.mode }}
-      EVAL_REGISTRY_MODE: ${{ needs.registry.outputs.registry_mode }}
       EVAL_DATASET: ${{ matrix.dataset }}
       EVAL_IMAGE: ${{ inputs.image }}
       EVAL_SOURCE_REVISION: ${{ inputs.source_revision }}
-      EVAL_REPLAY_RUN_ID: ${{ inputs.replay_run_id }}
-      WORKFLOW_EMBEDDING_MODEL: '@cf/baai/bge-m3'
-      WORKFLOW_EMBEDDING_DIMENSIONS: '1024'
+      WORKFLOW_EMBEDDING_MODEL: 'text-embedding-3-small'
+      EVAL_SEED_IMAGE: ${{ inputs.mode == 'live' && fromJSON(needs.registry.outputs.seed_images)[matrix.dataset] || '' }}
+      WORKFLOW_EMBEDDING_DIMENSIONS: '1536'
       DENSE_MEM_EVAL_MODEL: ${{ inputs.model || vars.DENSE_MEM_EVAL_MODEL || secrets.eval-model }}
       DENSE_MEM_EVAL_CONTEXT_WINDOW_TOKENS: ${{ inputs.context_window_tokens || vars.DENSE_MEM_EVAL_CONTEXT_WINDOW_TOKENS || secrets.eval-context-window }}
       DENSE_MEM_EVAL_VERIFIER_URL: ${{ secrets.eval-verifier-url }}
       DENSE_MEM_EVAL_EMBED_URL: ${{ secrets.eval-embedding-url }}
       DENSE_MEM_EVAL_API_KEY: ${{ secrets.eval-api-key }}
       DENSE_MEM_EVAL_EMBED_API_KEY: ${{ secrets.eval-embedding-api-key }}
+      DENSE_MEM_EVAL_TEAM_API_KEY: ${{ secrets.eval-team-api-key }}
+      DENSE_MEM_EVAL_DATABASE_PASSWORD: ${{ secrets.eval-database-password }}
     steps:
       - name: Freeze model deadline
         run: |
-          printf 'EVAL_MODEL_DEADLINE_EPOCH=%s\n' "$(( $(date +%s) + 330 * 60 ))" >> "${GITHUB_ENV}"
+          minutes=330
+          printf 'EVAL_MODEL_DEADLINE_EPOCH=%s\n' "$(( $(date +%s) + minutes * 60 ))" >> "${GITHUB_ENV}"
           printf 'EVAL_RUNNER_BINARY=%s/eval-runner\n' "${RUNNER_TEMP}" >> "${GITHUB_ENV}"
       - uses: actions/checkout@v7
         with:
@@ -112,7 +136,6 @@ jobs:
       - name: Build workflow-internal runner
         run: go build -trimpath -o "${EVAL_RUNNER_BINARY}" ./cmd/eval-runner
       - name: Set up isolated Docker
-        if: inputs.mode != 'replay'
         uses: docker/setup-docker-action@v5
         with:
           rootless: true
@@ -120,28 +143,21 @@ jobs:
           daemon-config: |
             {"exec-opts":["native.cgroupdriver=cgroupfs"]}
       - name: Authenticate production image pull
-        if: inputs.mode != 'replay'
         uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
-      - name: Verify bounded cleanup and runtime ownership
+      - name: Verify seed exports, protected failures and owned cleanup
         if: inputs.mode == 'fixtures'
-        run: node --test tests/eval/scripts/workflow_docker.test.mjs
+        run: node --test tests/eval/scripts/workflow_docker.test.mjs tests/eval/scripts/seed_docker.test.mjs
       - name: Run complete dataset campaign
-        if: inputs.mode != 'replay'
         run: node tests/eval/scripts/workflow.mjs run
-      - name: Replay retained Actions logs
-        if: inputs.mode == 'replay'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: node tests/eval/scripts/replay.mjs
       - name: Preserve protected startup failure logs
-        if: failure() && inputs.mode != 'replay'
+        if: failure()
         run: node tests/eval/scripts/workflow.mjs diagnostics
       - name: Remove this dataset's runtime
-        if: always() && inputs.mode != 'replay'
+        if: always()
         run: node tests/eval/scripts/workflow.mjs cleanup
       - name: Retain numeric report and reproducibility manifest
         if: always()
@@ -153,7 +169,7 @@ jobs:
           if-no-files-found: warn
 
   aggregate:
-    name: Aggregate every dataset outcome
+    name: Aggregate selected dataset outcomes
     needs: [registry, datasets]
     if: always() && needs.registry.result == 'success'
     runs-on: ubuntu-latest
@@ -178,7 +194,6 @@ jobs:
       - name: Build complete comparison matrix
         env:
           EVAL_MODE: ${{ inputs.mode }}
-          EVAL_REGISTRY_MODE: ${{ needs.registry.outputs.registry_mode }}
         run: node tests/eval/scripts/workflow.mjs aggregate
       - name: Retain comparison including missing axes
         if: always()

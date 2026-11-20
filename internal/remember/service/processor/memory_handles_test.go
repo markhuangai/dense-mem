@@ -44,7 +44,7 @@ func TestEvidenceOnlyUnitRememberRejectsUnavailableHistoricalHandleBeforeProvide
 		ledger := &rememberEvidenceHandleLedger{err: resolutionError}
 		processor := rememberSynchronousProcessor{ledger: ledger}
 		input := remember.RememberProcessRequest{Evidence: []remember.EvidenceInput{{Content: "Exact replacement Evidence.", SupersedesEvidenceIDs: []string{uuid.NewString()}}}}
-		_, err := processor.prepareRemember(t.Context(), input, remember.RememberAssessmentSnapshot{}, remember.RememberAssessmentScope{}, time.Now())
+		_, err := processor.prepareRemember(t.Context(), input, remember.RememberAssessmentSnapshot{}, remember.RememberAssessmentScope{}, time.Now(), nil)
 		require.Error(t, err)
 		var preparation *rememberPreparationError
 		require.ErrorAs(t, err, &preparation)

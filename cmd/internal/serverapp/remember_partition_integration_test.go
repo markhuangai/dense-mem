@@ -4,7 +4,6 @@ package serverapp
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -39,24 +38,15 @@ type partitionPostgresAssessor struct {
 
 func (p *partitionPostgresAssessor) Complete(_ context.Context, request modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
 	p.calls.Add(1)
-	var input assessor.PartitionRequest
-	if err := json.Unmarshal([]byte(request.Messages[1].Content), &input); err != nil {
-		return modelprovider.StructuredResult{}, err
-	}
-	response := assessor.PartitionResponse{RequestID: input.RequestID, Items: make([]assessor.PartitionResult, len(input.Items))}
-	for i, item := range input.Items {
-		refs := regexp.MustCompile(`⟦([^⟧]+)⟧`).FindAllStringSubmatch(item.BoundaryText, -1)
-		ends := []string{refs[len(refs)-1][1]}
+	return partitionFixtureCompleteWithCuts(request, func(item assessor.PartitionItem) []string {
 		if newline := strings.Index(item.BoundaryText, "\n"); newline >= 0 {
 			next := regexp.MustCompile(`⟦([^⟧]+)⟧`).FindStringSubmatch(item.BoundaryText[newline:])
-			if len(next) > 1 && next[1] != ends[0] {
-				ends = append([]string{next[1]}, ends...)
+			if len(next) > 1 {
+				return []string{next[1]}
 			}
 		}
-		response.Items[i] = assessor.PartitionResult{ItemID: item.ItemID, EndRefs: ends}
-	}
-	body, err := json.Marshal(response)
-	return modelprovider.StructuredResult{Content: string(body)}, err
+		return []string{}
+	})
 }
 
 func (p *partitionPostgresAssessor) Assess(ctx context.Context, r assessor.SemanticAssessmentRequest) (assessor.SemanticAssessmentSession, assessor.SemanticAssessmentTurn, error) {

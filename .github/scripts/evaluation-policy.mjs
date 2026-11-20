@@ -1,4 +1,44 @@
 import { createHash } from "node:crypto";
+import imagePolicy from "./image-release-policy.cjs";
+
+export function manualEvaluationRequest({ image, mode = "live", repository, ref, runAttempt, actorPermission, triggeringPermission }) {
+  if (ref !== "refs/heads/main" || Number(runAttempt) !== 1) throw new Error("Manual evaluation requires a fresh workflow dispatch from main");
+  if (actorPermission !== "admin" || triggeringPermission !== "admin") throw new Error("Manual evaluation requires initiating and triggering repository admins");
+  const reference = typeof image === "string" && typeof repository === "string" && !image.includes("/")
+    ? `ghcr.io/${repository.toLowerCase()}:${image}`
+    : image;
+  const decision = imagePolicy.validateProductionImageReference(reference, repository);
+  if (!decision.valid) throw new Error(decision.reason);
+  if (!["fixtures", "live"].includes(mode)) throw new Error("Invalid evaluation mode");
+  return { image: reference, mode };
+}
+
+export function resolveEvaluationImage(reference, repository, inspected) {
+  const decision = imagePolicy.validateProductionImageReference(reference, repository);
+  if (!decision.valid) throw new Error(decision.reason);
+  const labels = inspected.Config?.Labels || {};
+  if (inspected.Os !== "linux" || inspected.Architecture !== "amd64" ||
+      labels["org.opencontainers.image.variant"] !== "production" ||
+      labels["org.opencontainers.image.source"] !== `https://github.com/${repository}` ||
+      !/^[0-9a-f]{40}$/.test(labels["org.opencontainers.image.revision"] || "")) throw new Error("Evaluation requires a Linux amd64 Dense-Mem production image with source metadata");
+  const requestedDigest = reference.includes("@") ? reference.split("@")[1] : undefined;
+  const matches = [...new Set(inspected.RepoDigests || [])].filter((candidate) => {
+    return candidate.startsWith(`${decision.repository}@`) &&
+      imagePolicy.validatePinnedProductionImageReference(candidate, repository).valid &&
+      (!requestedDigest || candidate.split("@")[1] === requestedDigest);
+  });
+  if (matches.length !== 1) throw new Error("Evaluation image digest is missing, ambiguous or differs from the requested image");
+  return { image: matches[0], revision: labels["org.opencontainers.image.revision"] };
+}
+
+export function requireEvaluationImportSupport(inspected, { skipAISecurityReview = false } = {}) {
+  if (inspected.Config?.Labels?.["io.dense-mem.postgres-advisory-lock-concurrency"] !== "configurable") {
+    throw new Error("Evaluation requires a newer production image with configurable import admission");
+  }
+  if (skipAISecurityReview && inspected.Config?.Labels?.["io.dense-mem.public-seed-admission"] !== "locked-requests-v1") {
+    throw new Error("Evaluation requires a production image supporting locked public seed admission");
+  }
+}
 
 export function requireRunner(env = process.env) {
   if (env.GITHUB_ACTIONS !== "true" || env.RUNNER_ENVIRONMENT !== "github-hosted" || !env.GITHUB_RUN_ID || env.GITHUB_RUN_ATTEMPT !== "1") {
@@ -13,14 +53,24 @@ export function resolveSetting(name, candidates, validate) {
   return value;
 }
 
-export function configuration(env) {
+export function resolveImportWorkers(value) {
+  return Number(resolveSetting("DENSE_MEM_EVAL_IMPORT_WORKERS", [value], (v) => /^[1-9][0-9]*$/.test(v) && Number(v) <= 100));
+}
+
+export function configuration(env, { allowHTTPVerifier = false } = {}) {
   const model = resolveSetting("DENSE_MEM_EVAL_MODEL", [env.DENSE_MEM_EVAL_MODEL], (v) => /^[A-Za-z0-9@][A-Za-z0-9_./:-]{0,127}$/.test(v) && !v.includes("://"));
   const context = resolveSetting("DENSE_MEM_EVAL_CONTEXT_WINDOW_TOKENS", [env.DENSE_MEM_EVAL_CONTEXT_WINDOW_TOKENS], (v) => /^[1-9][0-9]*$/.test(v) && Number.isSafeInteger(Number(v)) && Number(v) >= 16384);
-  const httpsURL = (v) => { try { const url = new URL(v); return url.protocol === "https:" && !url.username && !url.password && !url.search && !url.hash; } catch { return false; } };
-  const verifier = resolveSetting("DENSE_MEM_EVAL_VERIFIER_URL", [env.DENSE_MEM_EVAL_VERIFIER_URL], httpsURL);
-  const embedding = resolveSetting("DENSE_MEM_EVAL_EMBED_URL", [env.DENSE_MEM_EVAL_EMBED_URL], (v) => httpsURL(v) && /^https:\/\/api\.cloudflare\.com\/client\/v4\/accounts\/[a-f0-9]{32}\/ai\/v1\/?$/.test(v));
+  const providerURL = (value, allowHTTP = false) => {
+    try {
+      const url = new URL(value);
+      const schemeAllowed = url.protocol === "https:" || (allowHTTP && url.protocol === "http:");
+      return schemeAllowed && !url.username && !url.password && !url.search && !url.hash;
+    } catch { return false; }
+  };
+  const verifier = resolveSetting("DENSE_MEM_EVAL_VERIFIER_URL", [env.DENSE_MEM_EVAL_VERIFIER_URL], (value) => providerURL(value, allowHTTPVerifier));
+  const embedding = resolveSetting("DENSE_MEM_EVAL_EMBED_URL", [env.DENSE_MEM_EVAL_EMBED_URL], (value) => providerURL(value) && /^https:\/\/api\.openai\.com\/v1\/?$/.test(value));
   for (const key of ["DENSE_MEM_EVAL_API_KEY", "DENSE_MEM_EVAL_EMBED_API_KEY"]) resolveSetting(key, [env[key]], (v) => v.length > 0 && !/[\r\n]/.test(v));
-  if (env.WORKFLOW_EMBEDDING_MODEL !== "@cf/baai/bge-m3" || env.WORKFLOW_EMBEDDING_DIMENSIONS !== "1024") throw new Error("Workflow embedding pins are invalid");
+  if (env.WORKFLOW_EMBEDDING_MODEL !== "text-embedding-3-small" || env.WORKFLOW_EMBEDDING_DIMENSIONS !== "1536") throw new Error("Workflow embedding pins are invalid");
   return { model, context: Number(context), verifier, embedding };
 }
 
@@ -37,6 +87,24 @@ export function registryMatrix(registry) {
     }
   }
   return { dataset: [...ids] };
+}
+
+export function evaluationDatasets(registry, selection = "") {
+  const { dataset: registered } = registryMatrix(registry);
+  if (selection === "") return registry.datasets;
+  let flags;
+  try {
+    flags = JSON.parse(selection);
+  } catch {
+    throw new Error("Dataset selection must be a JSON object of public dataset flags");
+  }
+  if (!flags || typeof flags !== "object" || Array.isArray(flags) ||
+      Object.entries(flags).some(([id, enabled]) => !registered.includes(id) || typeof enabled !== "boolean")) {
+    throw new Error("Dataset selection must name registered public datasets with boolean flags");
+  }
+  const selected = registry.datasets.filter(({ id }) => flags[id] === true);
+  if (selected.length === 0) throw new Error("Dataset selection requires at least one public seed");
+  return selected;
 }
 
 export function aggregate(registry, reports) {

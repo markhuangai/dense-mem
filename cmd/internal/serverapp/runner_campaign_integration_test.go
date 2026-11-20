@@ -7,9 +7,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -31,7 +32,7 @@ func (f runnerAnswerTransport) Complete(ctx context.Context, request modelprovid
 	return f(ctx, request)
 }
 
-func TestRunnerCampaignConditionsAndReplay(t *testing.T) {
+func TestRunnerCampaignConditionsAndCapture(t *testing.T) {
 	f := newRunnerServiceFixture(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
@@ -47,8 +48,12 @@ func TestRunnerCampaignConditionsAndReplay(t *testing.T) {
 	corpus := []evalharness.CorpusItem{{SourceDocID: "source-one", Content: "Project Alpha stores durable memory in PostgreSQL."}}
 	questions := []evalharness.Question{{ID: "question-one", Query: "Where does Project Alpha store durable memory?", Answers: []string{"PostgreSQL", "private-gold-answer-canary"}, GoldSources: []string{"source-one"}}}
 	var calls atomic.Int32
+	var initialPackets [4]evalharness.MemoryCall
 	transport := runnerAnswerTransport(func(_ context.Context, request modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
-		calls.Add(1)
+		position := calls.Add(1) - 1
+		if position >= int32(len(initialPackets)) {
+			return modelprovider.StructuredResult{}, errors.New("unexpected extra answer call")
+		}
 		for _, message := range request.Messages {
 			if strings.Contains(message.Content, "private-gold-answer-canary") {
 				return modelprovider.StructuredResult{}, errors.New("gold answer leaked into provider input")
@@ -60,6 +65,7 @@ func TestRunnerCampaignConditionsAndReplay(t *testing.T) {
 		if err := json.Unmarshal([]byte(request.Messages[len(request.Messages)-1].Content), &input); err != nil || len(input.Calls) != 1 {
 			return modelprovider.StructuredResult{}, errors.New("answer did not receive one initial memory packet")
 		}
+		initialPackets[position] = input.Calls[0]
 		results, ok := input.Calls[0].Result["results"].([]any)
 		if !ok || len(results) == 0 {
 			return modelprovider.StructuredResult{}, errors.New("initial Recall delivered no Evidence")
@@ -87,7 +93,14 @@ func TestRunnerCampaignConditionsAndReplay(t *testing.T) {
 		worker <- nil
 	}()
 	defer func() { cancel(); require.NoError(t, <-worker) }()
+	manifest.SeedDir, manifest.BaseRelease = t.TempDir(), "v2.8.1-rc.5"
+	seed, err := evalharness.Prepare(ctx, manifest, corpus, f.native.Client, f.native)
+	require.NoError(t, err)
+	runnerSealSyntheticSeed(t, manifest.SeedDir, seed)
+	manifest.ImportWorkers = 0
+	providerCalls := f.provider.calls
 	report, err := evalharness.Run(ctx, manifest, corpus, questions, f.native.Client, transport, f.native)
+	require.Equal(t, providerCalls, f.provider.calls, "scoring never imports the corpus again")
 	require.NoError(t, err)
 	require.True(t, report.Complete)
 	require.Equal(t, 4, report.ExpectedAnswers)
@@ -97,26 +110,23 @@ func TestRunnerCampaignConditionsAndReplay(t *testing.T) {
 	for _, observation := range report.NativeMeasurements {
 		require.Equal(t, report.Identity.CanonicalHash, observation.CanonicalHash)
 	}
-	events, err := evalharness.ReplayEvents([]io.Reader{bytes.NewReader(logs.Bytes())}, manifest.RunID)
-	require.NoError(t, err)
-	replayed, err := evalharness.ReplayReport(events, manifest, corpus, questions)
-	require.NoError(t, err)
-	require.True(t, replayed.Complete)
-	require.Equal(t, report.Matrix, replayed.Matrix)
-	require.Equal(t, report.Scores, replayed.Scores)
+	require.True(t, report.CaptureComplete)
+	require.Equal(t, initialPackets[0], initialPackets[1])
+	require.Equal(t, initialPackets[2], initialPackets[3])
 	conditions := []string{}
-	for _, event := range events {
-		if event.Kind != "observation" {
-			continue
-		}
-		var observation evalharness.Observation
-		require.NoError(t, json.Unmarshal(event.Payload, &observation))
-		conditions = append(conditions, observation.Condition)
-		require.Len(t, observation.Hosts, 2)
-		require.Equal(t, observation.Initial, observation.Hosts[0].Calls[0])
-		require.Equal(t, observation.Initial, observation.Hosts[1].Calls[0])
+	for _, axis := range report.Matrix {
+		conditions = append(conditions, axis.Condition)
 	}
-	require.Equal(t, []string{"off", "on"}, conditions)
+	require.Equal(t, []string{"off", "off", "on", "on"}, conditions)
+	kinds := map[string]int{}
+	for _, line := range bytes.Split(bytes.TrimSpace(logs.Bytes()), []byte("\n")) {
+		var event evalharness.Event
+		require.NoError(t, json.Unmarshal(line, &event))
+		kinds[event.Kind]++
+	}
+	require.Equal(t, 1, kinds["seed_verified"])
+	require.Zero(t, kinds["mapping"])
+	require.Zero(t, kinds["canonical"])
 }
 
 func TestRunnerCampaignNativeMappingsFreezeAndRecall(t *testing.T) {
@@ -138,6 +148,41 @@ func TestRunnerCampaignNativeMappingsFreezeAndRecall(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, mapping, replayed)
 	require.Equal(t, calls, f.provider.calls)
+
+	ordinary := f.manifest
+	ordinary.ImportWorkers, ordinary.OutputDir = 1, t.TempDir()
+	f.provider.failures = 2
+	withFailure := append([]evalharness.CorpusItem{{SourceDocID: "failed", Content: "The ordinary proof records this unavailable document."}}, corpus...)
+	require.NoError(t, evalharness.ObserveOrdinaryIntake(ctx, ordinary, withFailure, client, f.native))
+	type ordinaryOutcome struct {
+		SourceID string `json:"source_id"`
+		Outcome  string `json:"outcome"`
+		Attempts int    `json:"attempts"`
+	}
+	var report struct {
+		Expected int
+		Accepted int
+		Outcomes []ordinaryOutcome
+	}
+	reportPath := filepath.Join(ordinary.OutputDir, "ordinary-intake.json")
+	body, err := os.ReadFile(reportPath)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(body, &report))
+	require.Equal(t, 4, report.Expected)
+	require.Equal(t, 3, report.Accepted)
+	require.Equal(t, []ordinaryOutcome{
+		{SourceID: "failed", Outcome: "provider_unavailable", Attempts: 2},
+		{SourceID: "one", Outcome: "accepted", Attempts: 1},
+		{SourceID: "two", Outcome: "accepted", Attempts: 1},
+		{SourceID: "unjudged", Outcome: "accepted", Attempts: 1},
+	}, report.Outcomes)
+	require.Equal(t, calls+2, f.provider.calls, "accepted rows were replayed")
+
+	unwritable := ordinary
+	unwritable.OutputDir = filepath.Join(t.TempDir(), "missing")
+	require.ErrorIs(t, evalharness.ObserveOrdinaryIntake(ctx, unwritable, corpus, client, f.native), os.ErrNotExist)
+	ordinary.ImportWorkers = 0
+	require.ErrorContains(t, evalharness.ObserveOrdinaryIntake(ctx, ordinary, corpus, client, f.native), "import workers")
 	for _, change := range []func(*evalharness.Native){func(n *evalharness.Native) { n.Scope.OwnerID = uuid.NewString() }, func(n *evalharness.Native) { n.Scope.Generation++ }} {
 		wrong := *f.native
 		change(&wrong)

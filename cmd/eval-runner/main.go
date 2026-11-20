@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -31,25 +30,36 @@ func main() {
 }
 
 func execute(ctx context.Context, args []string, logger *observability.Logger, protector *observability.CredentialProtector) error {
-	if len(args) != 2 || (args[0] != "validate" && args[0] != "run" && args[0] != "report") {
-		return errors.New("usage: eval-runner validate|run|report EXECUTION_MANIFEST; workflow-internal only")
+	if len(args) == 2 && args[0] == "freeze-intake-proof" {
+		if os.Getenv("GITHUB_ACTIONS") == "true" {
+			return errors.New("intake proof preparation requires local Docker")
+		}
+		return evalharness.FreezeIntakeProofInputs("tests/eval/datasets.json", args[1])
+	}
+	if len(args) != 2 || (args[0] != "validate" && args[0] != "prepare" && args[0] != "run" && args[0] != "bootstrap" && args[0] != "verify-seed") {
+		return errors.New("usage: eval-runner validate|bootstrap|prepare|verify-seed|run EXECUTION_MANIFEST; workflow-internal only except local seed preparation")
+	}
+	if args[0] == "run" {
+		if err := evalharness.RequireRunner(); err != nil {
+			return err
+		}
 	}
 	manifest, err := evalharness.ReadManifest(args[1])
 	if err != nil {
 		return err
 	}
+	if args[0] != "validate" && args[0] != manifest.Operation {
+		return errors.New("command differs from the workflow manifest operation")
+	}
+	if args[0] == "bootstrap" {
+		if err := verifyRuntime(ctx, manifest); err != nil {
+			return err
+		}
+		return bootstrapCredential(ctx, manifest)
+	}
 	registryPath := "tests/eval/datasets.json"
 	if manifest.Mode == "fixtures" {
 		registryPath = "tests/eval/fixtures/datasets.json"
-	}
-	if manifest.Mode == "replay" {
-		fixtureHash, err := evalharness.FileHash("tests/eval/fixtures/datasets.json")
-		if err != nil {
-			return err
-		}
-		if fixtureHash == manifest.RegistryHash {
-			registryPath = "tests/eval/fixtures/datasets.json"
-		}
 	}
 	hash, err := evalharness.FileHash(registryPath)
 	if err != nil {
@@ -57,6 +67,9 @@ func execute(ctx context.Context, args []string, logger *observability.Logger, p
 	}
 	if hash != manifest.RegistryHash {
 		return errors.New("registry digest differs from execution manifest")
+	}
+	if args[0] == "validate" && os.Getenv("EVAL_SERVER_LOG_FILE") != "" {
+		return logFile(ctx, os.Getenv("EVAL_SERVER_LOG_FILE"), &evalharness.Capture{Logger: logger.ContextSlog(), Protector: protector, RunID: manifest.RunID})
 	}
 	registry, err := evalharness.ReadRegistry(registryPath)
 	if err != nil {
@@ -70,47 +83,24 @@ func execute(ctx context.Context, args []string, logger *observability.Logger, p
 	if err != nil {
 		return err
 	}
+	if manifest.IntakeProof {
+		corpus, err = evalharness.ReadIntakeProofCorpus(manifest, registry.Revision, dataset, corpus)
+		if err != nil {
+			return err
+		}
+	}
 	if args[0] == "validate" {
+		if manifest.SkipAISecurityReview {
+			directory := filepath.Dir(args[1])
+			if err := evalharness.WriteSeedAdmission(filepath.Join(directory, "seed-admission.json"), filepath.Join(directory, "seed-admission-scope.json"), corpus); err != nil {
+				return err
+			}
+		}
 		logger.InfoContext(ctx, "evaluation_validated", observability.String("dataset", dataset.ID), observability.Int("corpus_rows", len(corpus)), observability.Int("questions", len(questions)))
 		if os.Getenv("EVAL_SERVER_LOG_FILE") != "" {
 			return logFile(ctx, os.Getenv("EVAL_SERVER_LOG_FILE"), &evalharness.Capture{Logger: logger.ContextSlog(), Protector: protector, RunID: manifest.RunID})
 		}
 		return nil
-	}
-	if args[0] == "report" {
-		paths, err := filepath.Glob(filepath.Join(os.Getenv("EVAL_LOGS_DIR"), "*.txt"))
-		if err != nil {
-			return err
-		}
-		readers := []io.Reader{}
-		for _, path := range paths {
-			file, err := os.Open(path)
-			if err != nil {
-				return err
-			}
-			defer file.Close()
-			readers = append(readers, file)
-		}
-		events, err := evalharness.ReplayEvents(readers, manifest.RunID)
-		if err != nil {
-			return err
-		}
-		report, err := evalharness.ReplayReport(events, manifest, corpus, questions)
-		if err != nil {
-			return err
-		}
-		if err = os.MkdirAll(manifest.OutputDir, 0700); err != nil {
-			return err
-		}
-		file, err := os.OpenFile(filepath.Join(manifest.OutputDir, "scores.json"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-		if err != nil {
-			return err
-		}
-		defer file.Close()
-		return writeReport(file, report)
-	}
-	if manifest.Mode == "replay" {
-		return errors.New("replay cannot start a runtime or call a provider")
 	}
 	if !manifest.ModelDeadline.After(time.Now()) {
 		return errors.New("model deadline is expired")
@@ -130,10 +120,34 @@ func execute(ctx context.Context, args []string, logger *observability.Logger, p
 	defer database.Close()
 	database.SetMaxOpenConns(2)
 	capture := &evalharness.Capture{Logger: logger.ContextSlog(), Protector: protector, RunID: manifest.RunID}
+	if manifest.Operation != "run" {
+		capture.RunID += "-" + manifest.Operation
+	}
 	client := &evalharness.HTTPClient{BaseURL: os.Getenv("EVAL_MCP_URL"), APIKey: os.Getenv("EVAL_API_KEY"), Capture: capture}
 	native := &evalharness.Native{DB: database, Client: client, Scope: evalharness.Scope{TeamID: os.Getenv("EVAL_TEAM_ID"), CredentialID: os.Getenv("EVAL_CREDENTIAL_ID")}, ControlURL: os.Getenv("EVAL_CONTROL_URL"), ControlToken: os.Getenv("EVAL_CONTROL_TOKEN")}
 	native.ServerUsage = map[string]evalharness.UsageTotals{}
-	native.RuntimeLogs = func(ctx context.Context) error { return runtimeLogs(ctx, manifest.RunID, capture, native.ServerUsage) }
+	native.RuntimeLogs = func(ctx context.Context) error {
+		return runtimeLogs(ctx, manifest.RunID, capture, native.ServerUsage, manifest.ResumeScope == nil)
+	}
+	if args[0] == "prepare" {
+		prepareCtx, stop := context.WithCancel(ctx)
+		defer stop()
+		finishResources := startResourceMonitor(prepareCtx, stop, database, manifest, capture)
+		var prepareErr error
+		if manifest.IntakeProof && !manifest.SkipAISecurityReview {
+			prepareErr = evalharness.ObserveOrdinaryIntake(prepareCtx, manifest, corpus, client, native)
+		} else {
+			_, prepareErr = evalharness.Prepare(prepareCtx, manifest, corpus, client, native)
+		}
+		prepareErr = errors.Join(prepareErr, finishResources())
+		shutdown, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
+		defer cancel()
+		return errors.Join(prepareErr, native.RuntimeLogs(shutdown))
+	}
+	if args[0] == "verify-seed" {
+		_, _, _, _, err := evalharness.VerifySeed(ctx, manifest, corpus, client, native)
+		return err
+	}
 	transport := evalharness.AnswerTransport{URL: os.Getenv("DENSE_MEM_EVAL_VERIFIER_URL"), Key: os.Getenv("DENSE_MEM_EVAL_API_KEY"), Client: &http.Client{Timeout: 5 * time.Minute}, Capture: capture}
 	report, err := evalharness.Run(ctx, manifest, corpus, questions, client, transport, native)
 	if err != nil {

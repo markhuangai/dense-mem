@@ -14,17 +14,7 @@ import (
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 )
 
-// canonicalSearchDocument renders the current canonical source for one stored
-// search document. The boolean reports whether the source kind is governed by
-// the canonical semantic projection; a known source that no longer exists or
-// is no longer searchable returns a nil expected document.
-func canonicalSearchDocument(ctx context.Context, tx *gorm.DB, document knowledgecontract.SearchDocumentForEmbedding) (*knowledgecontract.SearchDocumentForEmbedding, bool, error) {
-	switch document.SourceKind {
-	case "evidence":
-		var content, spaceID string
-		var spaceGeneration int64
-		err := tx.WithContext(ctx).Raw(`
-			SELECT fragment.content, fragment.space_id::text, COALESCE(fragment.space_generation, 0)
+const canonicalSearchEvidenceQuery = `
 			FROM evidence_fragments AS fragment
 			JOIN teams AS team
 			  ON team.id = fragment.team_id
@@ -37,10 +27,7 @@ func canonicalSearchDocument(ctx context.Context, tx *gorm.DB, document knowledg
 			LEFT JOIN evidence_sources AS source
 			  ON source.team_id = fragment.team_id
 			 AND source.source_id = fragment.source_id
-			WHERE fragment.team_id = ?::uuid
-			  AND fragment.owner_profile_id = ?::uuid
-			  AND fragment.fragment_id = ?::uuid
-			  AND fragment.space_generation = dense_mem_active_space_generation(fragment.team_id, fragment.space_id)
+			WHERE fragment.space_generation = dense_mem_active_space_generation(fragment.team_id, fragment.space_id)
 			  AND (fragment.source_id IS NULL OR source.current_revision_id = fragment.source_revision_id)
 			  AND NOT EXISTS (
 			      SELECT 1 FROM evidence_quarantines AS quarantine
@@ -58,26 +45,46 @@ func canonicalSearchDocument(ctx context.Context, tx *gorm.DB, document knowledg
 			      WHERE alias.team_id = fragment.team_id
 			        AND alias.alias_fragment_id = fragment.fragment_id
 			  )
-			  AND COALESCE(fragment.metadata->>'conflict_resolution_deletion_only', '') <> 'true'
-		`, document.TeamID, document.OwnerProfileID, document.SourceID).Row().Scan(&content, &spaceID, &spaceGeneration)
+			  AND COALESCE(fragment.metadata->>'conflict_resolution_deletion_only', '') <> 'true'`
+
+// canonicalSearchDocument renders the current canonical source for one stored
+// search document. The boolean reports whether the source kind is governed by
+// the canonical semantic projection; a known source that no longer exists or
+// is no longer searchable returns a nil expected document.
+func canonicalSearchDocument(ctx context.Context, tx *gorm.DB, document knowledgecontract.SearchDocumentForEmbedding) (*knowledgecontract.SearchDocumentForEmbedding, bool, error) {
+	switch document.SourceKind {
+	case "evidence":
+		var content, spaceID string
+		var spaceGeneration int64
+		err := tx.WithContext(ctx).Raw(`
+			SELECT fragment.content, fragment.space_id::text, COALESCE(fragment.space_generation, 0)
+			`+canonicalSearchEvidenceQuery+`
+			  AND fragment.team_id = ?::uuid
+			  AND fragment.owner_profile_id = ?::uuid
+			  AND fragment.fragment_id = ?::uuid
+			`, document.TeamID, document.OwnerProfileID, document.SourceID).Row().Scan(&content, &spaceID, &spaceGeneration)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, true, nil
 		}
 		if err != nil {
 			return nil, true, err
 		}
-		expected := document
-		expected.SourceVersion = 1
-		expected.ProjectionFormat = defaultProjectionFormat("evidence")
-		expected.ProjectionGenerationID = ""
-		expected.DocumentText = strings.TrimSpace(content)
-		expected.DocumentHash = searchDocumentHash(expected.DocumentText)
-		expected.SpaceID = strings.TrimSpace(spaceID)
-		expected.SpaceGeneration = spaceGeneration
+		expected := canonicalEvidenceSearchDocument(document, content, spaceID, spaceGeneration)
 		return &expected, true, nil
 	default:
 		return nil, false, nil
 	}
+}
+
+func canonicalEvidenceSearchDocument(document knowledgecontract.SearchDocumentForEmbedding, content, spaceID string, spaceGeneration int64) knowledgecontract.SearchDocumentForEmbedding {
+	document.SourceVersion = 1
+	document.ProjectionFormat = defaultProjectionFormat("evidence")
+	document.ProjectionGenerationID = ""
+	document.DocumentText = strings.TrimSpace(content)
+	document.DocumentHash = searchDocumentHash(document.DocumentText)
+	document.SpaceID = strings.TrimSpace(spaceID)
+	document.SpaceGeneration = spaceGeneration
+	return document
 }
 
 func searchDocumentMatchesCanonical(document, expected knowledgecontract.SearchDocumentForEmbedding) bool {

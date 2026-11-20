@@ -4,6 +4,14 @@ import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 import { forwardEmbedding } from "../embedding_upstream.mjs";
 import { handleDecisionFixture } from "../decision_providers/protocol.mjs";
+import { contextualBatchRejections, securityIntakeCases } from "../security_intake_cases.mjs";
+
+const { rejectedCases, structuralRejections } = securityIntakeCases("fixture");
+const contextualRejections = new Set([
+  ...Object.values(contextualBatchRejections),
+  ...rejectedCases.filter((testCase) => !structuralRejections.has(testCase.name))
+    .map((testCase) => `Project uses Store. ${testCase.content}`),
+]);
 
 const port = Number(process.env.PORT || 8787);
 const fault = (process.env.DENSE_MEM_E2E_PROVIDER_FAULT || "none").trim();
@@ -115,7 +123,7 @@ const server = createServer(async (request, response) => {
     embeddingFaultCall = (embeddingCallsByFault.get(embeddingFaultKey) || 0) + 1;
     embeddingCallsByFault.set(embeddingFaultKey, embeddingFaultCall);
   }
-  if ((routeFault === "embedding-once-timeout" && embeddingFaultCall === 1) || routeFault === "timeout" || routeFault === "assessment-timeout" || routeFault === "embedding-timeout" || routeFault === "embedding-only-timeout" || (routeFault === "embedding-cancel" && embeddingFaultCall === 1) || (routeFault === "embedding-session-cancel" && embeddingFaultCall === 1)) {
+  if ((routeFault === "embedding-once-timeout" && embeddingFaultCall === 1) || routeFault === "timeout" || routeFault === "assessment-timeout" || routeFault === "partition-security-timeout" || routeFault === "embedding-timeout" || routeFault === "embedding-only-timeout" || (routeFault === "embedding-cancel" && embeddingFaultCall === 1) || (routeFault === "embedding-session-cancel" && embeddingFaultCall === 1)) {
     await new Promise((resolve) => setTimeout(resolve, timeoutDelayMs));
     if (response.destroyed) return;
   }
@@ -275,13 +283,27 @@ function fixtureChatResponse(payload, requestFault = "none", attempt = 1) {
   if (schemaName === "dense_mem_semantic_partition_response") {
     const input = structuredInput(payload, (value) => Array.isArray(value.items) && value.policy_version);
     const result = { request_id: input.request_id, items: input.items.map((item) => {
-      const refs = [...item.boundary_text.matchAll(/⟦([^⟧]+)⟧/g)].map((match) => match[1]);
-      const breakRef = [...item.boundary_text.matchAll(/[\r\n\u2028\u2029]\s*⟦([^⟧]+)⟧/g)].map((match) => match[1]).find((ref) => ref !== refs.at(-1));
-      return { item_id: item.item_id, end_refs: requestFault === "partition-split" && breakRef ? [breakRef, refs.at(-1)] : [refs.at(-1)] };
+      const breakRef = item.boundary_text.match(/[\r\n\u2028\u2029]\s*⟦([^⟧]+)⟧/)?.[1];
+      return { item_id: item.item_id, cut_refs: requestFault === "partition-split" && breakRef ? [breakRef] : [] };
     }) };
+    if (input.review_security) {
+      result.evidence_security_results = input.items.map((item) => {
+        const content = item.boundary_text.replace(/⟦[^⟧]+⟧/g, "");
+        if (contextualRejections.has(content) || (requestFault === "security" && faultMarker([content]) === "security")) {
+          const { start_ref, end_ref } = item;
+          return { evidence_id: item.item_id, decision: "reject", signals: [{ kind: "instruction_override", start_ref, end_ref }] };
+        }
+        return { evidence_id: item.item_id, decision: "pass", signals: [] };
+      });
+      if (requestFault === "partition-security-invalid") result.evidence_security_results = [];
+      if (result.evidence_security_results.some((item) => item.decision === "reject")) {
+        result.items = [];
+        return result;
+      }
+    }
     if (requestFault === "partition-missing") result.items = [];
-    if (requestFault === "partition-unknown") result.items[0].end_refs = ["invented"];
-    if (requestFault === "partition-repair" && attempt === 1) result.items[0].end_refs = ["invented"];
+    if (requestFault === "partition-unknown") result.items[0].cut_refs = ["invented"];
+    if (requestFault === "partition-repair" && attempt === 1) result.items[0].cut_refs = ["invented"];
     return result;
   }
   if (schemaName === "session_evidence_excerpts_v2") return fixtureSessionExtraction(structuredInput(payload, (input) => input.window));
@@ -293,7 +315,14 @@ function fixtureChatResponse(payload, requestFault = "none", attempt = 1) {
     const actionable = repair.validation_errors?.some((error) => error.field === "request_id" && error.message === "is required");
     if (requestFault === "routed-field-exhausted" || !actionable) delete assessment.request_id;
   }
-  if (requestFault === "assessment-invalid") assessment.evidence_security_results[0].evidence_id = "provider-forged-ref";
+  if (requestFault === "assessment-invalid") {
+    const properties = payload.response_format?.json_schema?.schema?.properties;
+    if (!properties || Object.hasOwn(properties, "evidence_security_results")) {
+      assessment.evidence_security_results[0].evidence_id = "provider-forged-ref";
+    } else {
+      assessment.request_id = "provider-forged-ref";
+    }
+  }
   if (requestFault === "assessment-duplicate") assessment.evidence_security_results.push(structuredClone(assessment.evidence_security_results[0]));
   if (requestFault === "assessment-missing") assessment.evidence_security_results = [];
   if (requestFault === "assessment-unknown") assessment.retired_field = [];
@@ -388,7 +417,7 @@ export function fixtureFault(payload, route) {
   if (schemaName === "dense_mem_semantic_partition_response") {
     const input = structuredInput(payload, (value) => Array.isArray(value.items) && value.policy_version);
     const fault = faultMarker(input.items.map((item) => item.boundary_text.replace(/⟦[^⟧]+⟧/g, "")));
-    return fault.startsWith("partition-") ? fault : "";
+    return fault.startsWith("partition-") || (fault === "security" && input.review_security) ? fault : "";
   }
   if (schemaName === "session_evidence_excerpts_v2") {
     const input = structuredInput(payload, (value) => value.window);

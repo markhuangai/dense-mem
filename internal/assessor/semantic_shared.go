@@ -7,7 +7,7 @@ import (
 	"unicode"
 )
 
-var semanticHiddenControlMarkupPattern = regexp.MustCompile(`(?is)<!--|<\s*(?:script|iframe|object|embed|meta|svg)\b|\bon[a-z]{3,32}\s*=`)
+var semanticHiddenControlMarkupPattern = regexp.MustCompile(`(?is)<\s*(?:script|iframe|object|embed|meta|svg)\b|\bon[a-z]{3,32}\s*=`)
 
 // SemanticReviewEvidence is the immutable evidence envelope shared by the
 // active proposal and assessor contracts.
@@ -57,11 +57,11 @@ func (e SemanticValidationError) Error() string {
 	return e.Field + ": " + e.Message
 }
 
-func semanticSecuritySignalSpanMatchesKind(kind, quote string) bool {
+func semanticSecuritySignalSpanMatchesKind(kind, quote string, allowCommentMarker bool) bool {
 	if strings.TrimSpace(kind) != "hidden_control_markup" {
 		return true
 	}
-	if semanticHiddenControlMarkupPattern.MatchString(quote) {
+	if (allowCommentMarker && strings.Contains(quote, "<!--")) || semanticHiddenControlMarkupPattern.MatchString(quote) {
 		return true
 	}
 	for _, value := range quote {

@@ -193,7 +193,7 @@ func (p *rememberSynchronousProcessor) logRememberInvocation(ctx context.Context
 		if status != nil && len(status.Errors) > 0 && status.Errors[0].ReasonCode == "security_rejection" {
 			details := status.Errors[0].Details
 			component, _ := details["component"].(string)
-			if component != "remember.initial_scan" && component != "remember.assessment" {
+			if component != "remember.initial_scan" && component != "remember.intake_review" && component != "remember.assessment" {
 				component = "unknown"
 			}
 			clientControlled, _ := details["client_controlled"].(bool)

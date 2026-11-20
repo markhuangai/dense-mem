@@ -58,7 +58,8 @@ type Service interface {
 type RememberService = Service
 
 type Dependencies struct {
-	Synchronous SynchronousProcessor
+	Synchronous         SynchronousProcessor
+	PublicSeedAdmission *PublicSeedAdmission
 	// Auditor is required for security-rejected submissions. A nil auditor
 	// fails closed as ErrRememberPersistence instead of staging the input.
 	Auditor SecurityRejectionAuditor
@@ -67,10 +68,11 @@ type Dependencies struct {
 }
 
 type service struct {
-	synchronous SynchronousProcessor
-	auditor     SecurityRejectionAuditor
-	metrics     observability.DiscoverabilityMetrics
-	logger      observability.LogProvider
+	synchronous         SynchronousProcessor
+	publicSeedAdmission *PublicSeedAdmission
+	auditor             SecurityRejectionAuditor
+	metrics             observability.DiscoverabilityMetrics
+	logger              observability.LogProvider
 }
 
 func NewService(deps Dependencies) *service {
@@ -79,7 +81,7 @@ func NewService(deps Dependencies) *service {
 		metrics = observability.NoopDiscoverabilityMetrics()
 	}
 	synchronous := deps.Synchronous
-	return &service{synchronous: synchronous, auditor: deps.Auditor, metrics: metrics, logger: deps.Logger}
+	return &service{synchronous: synchronous, publicSeedAdmission: deps.PublicSeedAdmission, auditor: deps.Auditor, metrics: metrics, logger: deps.Logger}
 }
 
 type RememberRequest struct {
@@ -207,6 +209,11 @@ func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberR
 	if err != nil {
 		return nil, err
 	}
+	key := strings.TrimSpace(req.IdempotencyKey)
+	skipAIReview := scanErr == nil && s.publicSeedAdmission != nil
+	if skipAIReview && !s.publicSeedAdmission.allows(actor, space, key, requestHash) {
+		return nil, domain.ErrMemoryWriteDenied
+	}
 	correlationID := correlation.FromContext(ctx)
 	actorMetadata := map[string]any{
 		"team_id":        actor.TeamID.String(),
@@ -232,7 +239,7 @@ func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberR
 		SpaceKind:           space.Kind,
 		InvocationStartedAt: started,
 		TeamID:              actor.TeamID.String(), OwnerProfileID: actor.OwnerID.String(), SpaceID: rememberSpaceID(space),
-		SpaceGeneration: space.Generation, IdempotencyKey: strings.TrimSpace(req.IdempotencyKey), RequestHash: requestHash,
+		SpaceGeneration: space.Generation, IdempotencyKey: key, RequestHash: requestHash, SkipAISecurityReview: skipAIReview,
 		SourceSummary: sourceSummary(req.Evidence), Metadata: metadata,
 		Evidence:        repositoryEvidenceInputs(req.Evidence),
 		OriginalRequest: originalRequest,

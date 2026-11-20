@@ -3,21 +3,160 @@ package evalharness
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/iotest"
+	"testing/synctest"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 	"github.com/stretchr/testify/require"
 )
+
+type importStatusTransport func(*http.Request) (*http.Response, error)
+
+func (f importStatusTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
+
+func TestImporterReportsEveryMinuteWhileWaitingAndStopsAfterCompletion(t *testing.T) {
+	for _, scenario := range []struct {
+		name, blockedMethod string
+		cancelled           bool
+	}{
+		{"intake success", "tools/call", false},
+		{"intake cancelled", "tools/call", true},
+		{"catalog success", "tools/list", false},
+		{"catalog cancelled", "tools/list", true},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				var logs bytes.Buffer
+				entered, release := make(chan struct{}), make(chan struct{})
+				item := CorpusItem{SourceDocID: "source", Content: "Fixed public corpus text."}
+				transport := importStatusTransport(func(request *http.Request) (*http.Response, error) {
+					var rpc struct{ Method string }
+					require.NoError(t, json.NewDecoder(request.Body).Decode(&rpc))
+					if rpc.Method == scenario.blockedMethod {
+						close(entered)
+						select {
+						case <-request.Context().Done():
+							return nil, request.Context().Err()
+						case <-release:
+						}
+					}
+					var result map[string]any
+					if rpc.Method == "tools/list" {
+						tools := []mcpToolDefinition{}
+						for _, tool := range registry.ContractTools() {
+							tools = append(tools, mcpToolDefinition{Name: tool.Name, OutputSchema: tool.OutputSchema})
+						}
+						result = map[string]any{"tools": tools}
+					} else {
+						result = map[string]any{"structuredContent": map[string]any{"processing_state": "completed", "submission_id": uuid.NewString(), "evidence": []any{map[string]any{
+							"evidence_index": 0, "partition_index": 0, "source_item_id": uuid.NewString(), "occurrence_id": uuid.NewString(), "evidence_id": uuid.NewString(),
+							"span_start": 0, "span_end": len([]rune(item.Content)), "content_hash": knowledge.EvidenceContentHash(item.Content), "disposition": "stored",
+						}}}}
+					}
+					body, err := json.Marshal(map[string]any{"result": result})
+					require.NoError(t, err)
+					return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(body))}, nil
+				})
+				client := &HTTPClient{BaseURL: "http://synthetic.invalid", APIKey: "synthetic", Client: &http.Client{Transport: transport}, Capture: captureFixture(&logs)}
+				snapshot := func() []byte {
+					client.Capture.mu.Lock()
+					defer client.Capture.mu.Unlock()
+					return bytes.Clone(logs.Bytes())
+				}
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				done := make(chan error, 1)
+				go func() {
+					_, err := client.ImportCorpus(ctx, []CorpusItem{item})
+					done <- err
+				}()
+				select {
+				case <-entered:
+				case err := <-done:
+					t.Fatalf("import returned before the blocked request: %v", err)
+				}
+				synctest.Wait()
+				time.Sleep(59 * time.Second)
+				synctest.Wait()
+				require.Len(t, capturedProgress(t, snapshot()), 1)
+				time.Sleep(time.Second)
+				synctest.Wait()
+				require.Len(t, capturedProgress(t, snapshot()), 2)
+				time.Sleep(time.Minute)
+				synctest.Wait()
+				require.Len(t, capturedProgress(t, snapshot()), 3)
+				if scenario.cancelled {
+					cancel()
+				} else {
+					close(release)
+				}
+				err := <-done
+				if scenario.cancelled {
+					require.ErrorContains(t, err, "context canceled")
+				} else {
+					require.NoError(t, err)
+				}
+				time.Sleep(time.Minute)
+				synctest.Wait()
+				updates := capturedProgress(t, logs.Bytes())
+				require.Len(t, updates, 4, "periodic reporting stops before the final update")
+				for _, update := range updates[:3] {
+					require.Equal(t, captureProgress{Stage: "import", Unit: "documents", Total: 1, Remaining: 1}, update)
+				}
+				final := captureProgress{Stage: "import", Unit: "documents", Total: 1, Completed: 1}
+				if scenario.cancelled {
+					final.Completed, final.Failed = 0, 1
+					if scenario.blockedMethod == "tools/list" {
+						final.Failed, final.Remaining = 0, 1
+					}
+				}
+				require.Equal(t, final, updates[3])
+				require.NotContains(t, logs.String(), item.Content)
+			})
+		})
+	}
+}
+
+func TestImporterReportsFinalCountsWhenCatalogDiscoveryFails(t *testing.T) {
+	for _, cancelled := range []bool{false, true} {
+		t.Run(map[bool]string{false: "unavailable", true: "cancelled"}[cancelled], func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusServiceUnavailable)
+			}))
+			defer server.Close()
+			var logs bytes.Buffer
+			client := &HTTPClient{BaseURL: server.URL, APIKey: "synthetic", Client: server.Client(), Capture: captureFixture(&logs)}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if cancelled {
+				cancel()
+			}
+			mapping, err := client.ImportCorpus(ctx, []CorpusItem{{SourceDocID: "source", Content: "Exact public corpus."}})
+			require.Error(t, err)
+			require.Empty(t, mapping.BySourceDocID)
+			progress := capturedProgress(t, logs.Bytes())
+			require.Len(t, progress, 2)
+			require.Equal(t, captureProgress{Stage: "import", Unit: "documents", Total: 1, Remaining: 1}, progress[0])
+			require.Equal(t, progress[0], progress[1])
+		})
+	}
+}
 
 func TestImporterRetriesOnlyOneVerifiedTerminalFailureAndPreservesInput(t *testing.T) {
 	for _, recover := range []bool{true, false} {
@@ -51,14 +190,20 @@ func TestImporterRetriesOnlyOneVerifiedTerminalFailureAndPreservesInput(t *testi
 				require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"result": map[string]any{"isError": failed, "structuredContent": out}}))
 			}))
 			defer server.Close()
-			client := &HTTPClient{BaseURL: server.URL, APIKey: "synthetic", Client: server.Client()}
+			var logs bytes.Buffer
+			client := &HTTPClient{BaseURL: server.URL, APIKey: "synthetic", Client: server.Client(), Capture: captureFixture(&logs)}
 			mapping, err := client.ImportCorpus(context.Background(), []CorpusItem{item})
+			progress := capturedProgress(t, logs.Bytes())
+			require.Len(t, progress, 2, "retry attempts count one terminal document")
+			require.Equal(t, captureProgress{Stage: "import", Unit: "documents", Total: 1, Remaining: 1}, progress[0])
 			if recover {
 				require.NoError(t, err)
 				require.Len(t, mapping.Partitions["source"], 1)
+				require.Equal(t, captureProgress{Stage: "import", Unit: "documents", Total: 1, Completed: 1}, progress[1])
 			} else {
 				require.Error(t, err)
 				require.Empty(t, mapping.BySourceDocID)
+				require.Equal(t, captureProgress{Stage: "import", Unit: "documents", Total: 1, Failed: 1}, progress[1])
 			}
 			require.Len(t, inputs, 2)
 			require.Equal(t, "eval:source", inputs[0]["idempotency_key"])
@@ -71,6 +216,156 @@ func TestImporterRetriesOnlyOneVerifiedTerminalFailureAndPreservesInput(t *testi
 			delete(inputs[1], "idempotency_key")
 			require.Equal(t, inputs[0], inputs[1])
 		})
+	}
+}
+
+func TestImportOutcomesContinueAfterRejectedRow(t *testing.T) {
+	items := []CorpusItem{{SourceDocID: "rejected", Content: "First public document."}, {SourceDocID: "accepted", Content: "Second public document."}}
+	for _, test := range []struct {
+		name                    string
+		observe, captureFailure bool
+		wantRequests            int
+	}{
+		{name: "seed import stops", wantRequests: 1},
+		{name: "ordinary proof observes both", observe: true, wantRequests: 2},
+		{name: "ordinary proof stops on lost capture", observe: true, captureFailure: true, wantRequests: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			requests := make(chan string, len(items))
+			level := new(slog.LevelVar)
+			level.Set(slog.LevelDebug)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var rpc struct {
+					Params struct{ Arguments map[string]any }
+				}
+				if err := json.NewDecoder(r.Body).Decode(&rpc); err != nil {
+					t.Error(err)
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				key, _ := rpc.Params.Arguments["idempotency_key"].(string)
+				requests <- key
+				failed := key == "eval:rejected"
+				var result map[string]any
+				if failed {
+					if test.captureFailure {
+						level.Set(slog.LevelInfo)
+					}
+					result = map[string]any{"errors": []any{map[string]any{"code": "submission_policy_rejected", "message": "Remember rejected this input."}}}
+				} else {
+					content := items[1].Content
+					result = map[string]any{"processing_state": "completed", "submission_id": uuid.NewString(), "evidence": []any{map[string]any{
+						"evidence_index": 0, "partition_index": 0, "source_item_id": uuid.NewString(), "occurrence_id": uuid.NewString(), "evidence_id": uuid.NewString(),
+						"span_start": 0, "span_end": len([]rune(content)), "content_hash": knowledge.EvidenceContentHash(content), "disposition": "stored",
+					}}}
+				}
+				if err := json.NewEncoder(w).Encode(map[string]any{"result": map[string]any{"isError": failed, "structuredContent": result}}); err != nil {
+					t.Error(err)
+				}
+			}))
+			defer server.Close()
+			client := &HTTPClient{BaseURL: server.URL, APIKey: "synthetic", Client: server.Client(), contractMode: contractModeEvidenceOnly}
+			if test.captureFailure {
+				client.Capture = &Capture{Logger: slog.New(slog.NewJSONHandler(io.Discard, &slog.HandlerOptions{Level: level})), Protector: NewRunnerCredentialProtector("synthetic")}
+			}
+			var observe func(corpusImportJob, error)
+			outcomes := map[string]error{}
+			if test.observe {
+				observe = func(job corpusImportJob, err error) { outcomes[job.item.SourceDocID] = err }
+			}
+			mapping, err := client.importCorpusWithOutcomes(t.Context(), items, 1, corpusImportOptions{outcome: observe})
+			require.Len(t, requests, test.wantRequests)
+			if test.wantRequests == 2 {
+				require.NoError(t, err)
+				require.Len(t, outcomes, 2)
+				require.ErrorContains(t, outcomes["rejected"], "Remember rejected this input.")
+				require.NoError(t, outcomes["accepted"])
+				require.NotContains(t, mapping.BySourceDocID, "rejected")
+				require.Contains(t, mapping.BySourceDocID, "accepted")
+			} else {
+				require.Error(t, err)
+				require.Empty(t, mapping.BySourceDocID)
+			}
+		})
+	}
+}
+
+func TestConcurrentImporterReportsMonotonicDocumentProgress(t *testing.T) {
+	const workers = 20
+	items := make([]CorpusItem, workers+1)
+	for i := range items {
+		items[i] = CorpusItem{SourceDocID: uuid.NewString(), Content: "Exact public text."}
+	}
+	started := make(chan struct{}, len(items))
+	release := make(chan struct{})
+	var active, peak atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var rpc struct {
+			Method string
+			Params struct{ Arguments map[string]any }
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&rpc))
+		if rpc.Method == "tools/list" {
+			tools := []mcpToolDefinition{}
+			for _, tool := range registry.ContractTools() {
+				tools = append(tools, mcpToolDefinition{Name: tool.Name, OutputSchema: tool.OutputSchema})
+			}
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"result": map[string]any{"tools": tools}}))
+			return
+		}
+		evidence := rpc.Params.Arguments["evidence"].([]any)[0].(map[string]any)
+		current := active.Add(1)
+		defer active.Add(-1)
+		for previous := peak.Load(); current > previous && !peak.CompareAndSwap(previous, current); previous = peak.Load() {
+		}
+		started <- struct{}{}
+		select {
+		case <-release:
+		case <-r.Context().Done():
+			return
+		}
+		content := evidence["content"].(string)
+		out := map[string]any{"processing_state": "completed", "submission_id": uuid.NewString(), "evidence": []any{map[string]any{
+			"evidence_index": 0, "partition_index": 0, "source_item_id": uuid.NewString(), "occurrence_id": uuid.NewString(), "evidence_id": uuid.NewString(),
+			"span_start": 0, "span_end": len([]rune(content)), "content_hash": knowledge.EvidenceContentHash(content), "disposition": "stored",
+		}}}
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"result": map[string]any{"structuredContent": out}}))
+	}))
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var logs bytes.Buffer
+	client := &HTTPClient{BaseURL: server.URL, APIKey: "synthetic", Client: server.Client(), Capture: captureFixture(&logs)}
+	var mapping KnowledgeMapping
+	done := make(chan error, 1)
+	go func() {
+		var err error
+		mapping, err = client.ImportCorpusWithConcurrency(ctx, items, workers)
+		done <- err
+	}()
+	for range workers {
+		select {
+		case <-started:
+		case err := <-done:
+			require.NoError(t, err)
+			t.Fatal("import returned before all workers reached the server")
+		case <-ctx.Done():
+			t.Fatal("configured workers did not reach the server concurrently")
+		}
+	}
+	require.EqualValues(t, workers, active.Load())
+	close(release)
+	err := <-done
+	require.NoError(t, err)
+	require.EqualValues(t, workers, peak.Load())
+	require.Len(t, mapping.BySourceDocID, len(items))
+	progress := capturedProgress(t, logs.Bytes())
+	require.Equal(t, []captureProgress{
+		{Stage: "import", Unit: "documents", Total: len(items), Remaining: len(items)},
+		{Stage: "import", Unit: "documents", Total: len(items), Completed: len(items)},
+	}, progress)
+	for _, event := range capturedEvents(t, logs.Bytes()) {
+		require.NotEqual(t, "import_attempt", event.Kind, "successful documents do not produce individual logs")
 	}
 }
 
@@ -115,6 +410,51 @@ func TestProductionCatalogIsUnchangedAndEvaluationCallsAreRetired(t *testing.T) 
 	}
 }
 
+func TestMCPClientLogsProtectedTransportFailure(t *testing.T) {
+	const endpoint = "http://internal-mcp.invalid"
+	const key = "mcp-diagnostics-canary-9483"
+	const admittedText = "ordinary request is not dumped"
+	failure := errors.New("connection reset by peer for " + key)
+	for _, stage := range []string{"request", "response_body", "protection unavailable"} {
+		t.Run(stage, func(t *testing.T) {
+			var logs bytes.Buffer
+			capture := captureFixture(&logs)
+			if stage == "protection unavailable" {
+				capture.Protector = nil
+			} else {
+				capture.Protector = NewRunnerCredentialProtector(key)
+			}
+			transport := importStatusTransport(func(*http.Request) (*http.Response, error) {
+				if stage == "response_body" {
+					return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(iotest.ErrReader(failure))}, nil
+				}
+				return nil, failure
+			})
+			client := &HTTPClient{BaseURL: endpoint, APIKey: key, Client: &http.Client{Transport: transport}, Capture: capture}
+			err := client.CallTool(context.Background(), "remember", map[string]string{"content": admittedText}, nil)
+			require.Error(t, err)
+			for _, forbidden := range []string{key, endpoint, admittedText} {
+				require.NotContains(t, logs.String(), forbidden)
+				require.NotContains(t, err.Error(), forbidden)
+			}
+			if stage == "protection unavailable" {
+				require.ErrorContains(t, err, "payload protection unavailable")
+				return
+			}
+			require.NotContains(t, err.Error(), "connection reset by peer")
+			events := capturedEvents(t, logs.Bytes())
+			require.Len(t, events, 1)
+			require.Equal(t, "runtime_transport_failure", events[0].Kind)
+			var payload map[string]any
+			require.NoError(t, json.Unmarshal(events[0].Payload, &payload))
+			require.Equal(t, "runner_to_dense_mem", payload["link"])
+			require.Equal(t, stage, payload["stage"])
+			require.Equal(t, "remember", payload["mcp_tool"])
+			require.Contains(t, payload["error"], "connection reset by peer")
+		})
+	}
+}
+
 func TestMCPResponseDecodingAndWireFailures(t *testing.T) {
 	const key = "mcp-key-canary-9483"
 	for _, item := range []struct {
@@ -130,7 +470,7 @@ func TestMCPResponseDecodingAndWireFailures(t *testing.T) {
 		{"malformed JSON", "{", "invalid HTTP JSON", 200, false},
 		{"trailing JSON", "{}{}", "invalid HTTP JSON", 200, false},
 		{"unavailable", "{\"private\":\"mcp-key-canary-9483\"}", "status 503", 503, false},
-		{"interrupted", "{\"result\":", "body interrupted", 200, true},
+		{"interrupted", "{\"result\":", "interrupted_response", 200, true},
 		{"structured rejection", "{\"result\":{\"isError\":true,\"structuredContent\":{\"errors\":[{\"message\":\"intake declined\"}]}}}", "intake declined", 200, false},
 		{"bounded rejection", "{\"result\":{\"isError\":true,\"structuredContent\":{\"errors\":[{\"code\":\"permission_denied\"}]}}}", "permission_denied", 200, false},
 		{"partition rejection", "{\"result\":{\"isError\":true,\"structuredContent\":{\"evidence\":[{\"errors\":[{\"message\":\"partition declined\"}]}]}}}", "partition declined", 200, false},
@@ -166,18 +506,11 @@ func TestMCPResponseDecodingAndWireFailures(t *testing.T) {
 				require.NotContains(t, out, "stale")
 			}
 			require.NoError(t, capture.Emit("finished", map[string]bool{"complete": err == nil}))
-			events, replayErr := ReplayEvents([]io.Reader{strings.NewReader(logs.String())}, capture.RunID)
-			require.NoError(t, replayErr)
-			require.Len(t, events, 2, "wire exchanges are validated without becoming scoring events")
 			var protected strings.Builder
-			for _, line := range bytes.Split(bytes.TrimSpace(logs.Bytes()), []byte("\n")) {
-				var envelope struct{ Record string }
-				require.NoError(t, json.Unmarshal(line, &envelope))
-				body, decodeErr := base64.StdEncoding.DecodeString(envelope.Record)
-				require.NoError(t, decodeErr)
-				var record captureRecord
-				require.NoError(t, json.Unmarshal(body, &record))
-				protected.WriteString(record.Chunk.Body)
+			for _, event := range capturedEvents(t, logs.Bytes()) {
+				body, err := json.Marshal(event)
+				require.NoError(t, err)
+				protected.Write(body)
 			}
 			require.NotContains(t, protected.String(), key)
 			require.Contains(t, protected.String(), "answer_wire_response")
@@ -244,6 +577,204 @@ func TestImporterReconcilesTransientFailureWithTheSameOperationKey(t *testing.T)
 	require.Len(t, mapping.Partitions["source"], 1)
 	require.Equal(t, <-requests, <-requests, "transient recovery preserves exact Evidence, target and operation key")
 	require.EqualValues(t, 2, attempts.Load())
+}
+
+func TestImporterQueuesConfirmedNetworkFailuresWithTheSameRequest(t *testing.T) {
+	const cooldown = 10 * time.Millisecond
+	for _, scenario := range []struct {
+		name              string
+		status, failures  int
+		attempts          int
+		requeued          bool
+		direct, foreign   bool
+		interrupted       bool
+		cancelWhileQueued bool
+		networkFailure    string
+		providerComponent string
+		seedRateLimit     bool
+	}{
+		{name: "assessment 524 recovers on final allowed attempt", status: 524, failures: 5, attempts: 6, requeued: true},
+		{name: "assessment 504 exhausts five retries", status: 504, failures: 6, attempts: 6, requeued: true},
+		{name: "seed assessment 429 recovers on final allowed attempt", status: 429, failures: 5, attempts: 6, requeued: true, seedRateLimit: true},
+		{name: "seed 429 exhausts five retries", status: 429, failures: 6, attempts: 6, requeued: true, direct: true, seedRateLimit: true},
+		{name: "ordinary assessment 429 keeps its existing retry budget", status: 429, failures: 6, attempts: 2},
+		{name: "direct 504 recovers", status: 504, failures: 1, attempts: 2, requeued: true, direct: true},
+		{name: "direct 504 with interrupted body recovers", status: 504, failures: 1, attempts: 2, requeued: true, direct: true, interrupted: true},
+		{name: "assessment 502 uses the network retry budget", status: 502, failures: 5, attempts: 6, requeued: true},
+		{name: "direct 503 uses the network retry budget", status: 503, failures: 1, attempts: 2, requeued: true, direct: true},
+		{name: "Decision connection reset uses the network retry budget", providerComponent: "decision", networkFailure: modelprovider.NetworkConnectionReset, failures: 5, attempts: 6, requeued: true},
+		{name: "Decision interrupted response uses the network retry budget", providerComponent: "decision", status: 200, networkFailure: modelprovider.NetworkInterruptedResponse, failures: 2, attempts: 3, requeued: true},
+		{name: "final 500 supersedes earlier timeout", status: 500, failures: 6, attempts: 2},
+		{name: "foreign diagnostics cannot extend retries", status: 524, failures: 6, attempts: 2, foreign: true},
+		{name: "cancellation leaves the timeout queued", status: 524, failures: 1, attempts: 1, requeued: true, cancelWhileQueued: true},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			teamID := uuid.NewString()
+			diagnosticTeamID := teamID
+			if scenario.foreign {
+				diagnosticTeamID = uuid.NewString()
+			}
+			component := firstNonEmpty(scenario.providerComponent, "assessor")
+			const canary = "private-response-canary"
+			corpus := []CorpusItem{{SourceDocID: "slow", Content: "Keep this exact."}, {SourceDocID: "ready", Content: "Ready to store."}}
+			var requests []map[string]any
+			var lastAttempt, lastCorrelation string
+			var slowCalls, lookups int
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodGet {
+					lookups++
+					require.Equal(t, "/control/api/teams/"+teamID+"/remember-attempts/"+lastAttempt, r.URL.Path)
+					require.Equal(t, "Bearer control-canary", r.Header.Get("Authorization"))
+					require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{
+						"team_id": diagnosticTeamID, "attempt_id": lastAttempt, "correlation_id": lastCorrelation,
+						"outcome": "failed", "failed_phase": "assessment", "error_code": "provider_unavailable", "retryable": true,
+						"diagnostics": map[string]any{"provider_exchanges": []map[string]any{
+							{"component": "assessor", "status_code": 524},
+							{"component": component, "status_code": scenario.status, "outcome": scenario.networkFailure, "response_body": canary},
+						}},
+					}}))
+					return
+				}
+				require.Equal(t, "Bearer team-canary", r.Header.Get("Authorization"))
+				var rpc struct {
+					Method string
+					Params struct{ Arguments map[string]any }
+				}
+				require.NoError(t, json.NewDecoder(r.Body).Decode(&rpc))
+				if rpc.Method == "tools/list" {
+					tools := []mcpToolDefinition{}
+					for _, tool := range registry.ContractTools() {
+						tools = append(tools, mcpToolDefinition{Name: tool.Name, OutputSchema: tool.OutputSchema})
+					}
+					require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"result": map[string]any{"tools": tools}}))
+					return
+				}
+				requests = append(requests, rpc.Params.Arguments)
+				slow := rpc.Params.Arguments["idempotency_key"] == "eval:slow"
+				if slow {
+					slowCalls++
+				} else if scenario.cancelWhileQueued {
+					cancel()
+				}
+				failed := slow && slowCalls <= scenario.failures
+				if failed && scenario.direct {
+					if scenario.interrupted {
+						w.Header().Set("Content-Length", "100")
+					}
+					w.WriteHeader(scenario.status)
+					if scenario.interrupted {
+						_, writeErr := w.Write([]byte(canary))
+						require.NoError(t, writeErr)
+					}
+					return
+				}
+				var result map[string]any
+				if failed {
+					lastAttempt, lastCorrelation = uuid.NewString(), uuid.NewString()
+					result = map[string]any{
+						"processing_state": "failed", "submission_id": lastAttempt, "correlation_id": lastCorrelation,
+						"errors": []map[string]any{{"code": "provider_unavailable", "message": "provider returned a server error",
+							"retryable": true, "next_action": "retry_same_request", "reason_code": "provider_server_failure",
+							"details": map[string]any{"component": "remember.assessment"}}},
+					}
+				} else {
+					content := corpus[1].Content
+					if slow {
+						content = corpus[0].Content
+					}
+					result = map[string]any{"processing_state": "completed", "submission_id": uuid.NewString(), "evidence": []map[string]any{{
+						"evidence_index": 0, "partition_index": 0, "source_item_id": uuid.NewString(), "occurrence_id": uuid.NewString(), "evidence_id": uuid.NewString(),
+						"span_start": 0, "span_end": len([]rune(content)), "content_hash": knowledge.EvidenceContentHash(content), "disposition": "stored",
+					}}}
+				}
+				require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"result": map[string]any{"isError": failed, "structuredContent": result}}))
+			}))
+			defer server.Close()
+			var logs bytes.Buffer
+			client := &HTTPClient{BaseURL: server.URL, APIKey: "team-canary", Client: server.Client(), Capture: captureFixture(&logs)}
+			native := &Native{Client: client, Scope: Scope{TeamID: teamID}, ControlURL: server.URL, ControlToken: "control-canary"}
+			options := corpusImportOptions{native: native}
+			if scenario.seedRateLimit {
+				options.rateLimit = &importRateLimit{cooldown: cooldown}
+			}
+			started := time.Now()
+			mapping, err := client.importCorpusWithOutcomes(ctx, corpus, 1, options)
+			server.Close()
+
+			if scenario.attempts > scenario.failures {
+				require.NoError(t, err)
+				require.Len(t, mapping.BySourceDocID, 2)
+			} else {
+				require.Error(t, err)
+				require.NotContains(t, mapping.BySourceDocID, "slow")
+			}
+			require.Equal(t, scenario.attempts, slowCalls)
+			if scenario.seedRateLimit {
+				require.GreaterOrEqual(t, time.Since(started), 5*cooldown)
+				require.Contains(t, logs.String(), `"backoff_ms":10`)
+			}
+			if scenario.requeued {
+				require.Len(t, requests, scenario.attempts+1)
+				require.Equal(t, "eval:ready", requests[1]["idempotency_key"])
+				if scenario.networkFailure != "" {
+					require.Contains(t, logs.String(), `"network_failure":"`+scenario.networkFailure+`"`)
+				} else {
+					require.Contains(t, logs.String(), `"gateway_http_status":`)
+				}
+			} else {
+				require.Len(t, requests, scenario.attempts)
+				require.NotContains(t, logs.String(), `"gateway_http_status":`)
+			}
+			for index, request := range requests {
+				if !scenario.requeued || index != 1 {
+					require.Equal(t, requests[0], request, "retries preserve the complete Remember request")
+				}
+			}
+			if scenario.direct {
+				require.Zero(t, lookups)
+			} else {
+				require.Equal(t, min(scenario.attempts, scenario.failures), lookups)
+			}
+			if scenario.foreign {
+				require.Contains(t, logs.String(), `"provider_status":"unavailable"`)
+			}
+			if scenario.interrupted {
+				require.Contains(t, logs.String(), "HTTP response body interrupted")
+				require.Contains(t, logs.String(), "runtime_transport_failure")
+			}
+			for _, private := range []string{canary, "team-canary", "control-canary"} {
+				require.NotContains(t, logs.String(), private)
+			}
+		})
+	}
+}
+
+func TestSeedImportCooldownPausesEveryWorkerAndHonorsDeadline(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		rateLimit := &importRateLimit{cooldown: seedRateLimitCooldown}
+		rateLimit.pause()
+		results := make(chan error, 2)
+		for range 2 {
+			go func() { results <- rateLimit.wait(t.Context()) }()
+		}
+		time.Sleep(30 * time.Second)
+		rateLimit.pause()
+		time.Sleep(59 * time.Second)
+		synctest.Wait()
+		require.Empty(t, results)
+		time.Sleep(time.Second)
+		require.NoError(t, <-results)
+		require.NoError(t, <-results)
+
+		rateLimit.pause()
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancel()
+		started := time.Now()
+		require.ErrorIs(t, rateLimit.wait(ctx), context.DeadlineExceeded)
+		require.Equal(t, 5*time.Second, time.Since(started))
+	})
 }
 
 func TestMCPContractDiscoveryRejectsIncompleteAndMixedCatalogs(t *testing.T) {

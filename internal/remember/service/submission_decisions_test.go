@@ -25,6 +25,73 @@ func decisionRoutingFixture() (assessor.SemanticAssessmentRequest, *domain.Decis
 	return assessor.SemanticAssessmentRequest{RequestID: "request", Evidence: []assessor.SemanticReviewEvidence{{EvidenceID: "submitted", Content: "The active team limit is 4; the next-window limit is 8."}}, EvidenceEquivalenceCandidates: []assessor.SemanticAssessmentEvidenceEquivalenceCandidateGroup{{EvidenceID: "submitted", Candidates: []assessor.SemanticAssessmentEvidenceEquivalenceCandidate{{EvidenceID: "a", Content: "The active team limit is 4; the next-window limit is 8.", BoundaryText: "do-not-send-expanded-boundaries"}, {EvidenceID: "b", Content: "The active team limit is 8; the next-window limit is 4."}}}}}, &domain.DecisionRuntimeConfig{Revision: "frozen-settings", Provider: domain.DecisionProviderStatus{Configured: true, Provider: "openai", Model: "gpt-6-luna"}, Effective: domain.DecisionTasks{SecurityReview: true, Deduplication: true}}
 }
 
+func TestRememberIntakeSecurityAndDeduplicationUseDifferentInputs(t *testing.T) {
+	request, settings := decisionRoutingFixture()
+	const whole = "The active team limit is 4. The change to 8 applies next week."
+	partition := assessor.PreparePartitionRequest("whole-document-review", []string{whole}, false)
+	calls := 0
+	provider := decisionFunction(func(_ context.Context, req modelprovider.DecisionRequest) (modelprovider.DecisionResult, error) {
+		calls++
+		require.Len(t, req.Groups, 1)
+		group := req.Groups[0]
+		input := group.Input.(map[string]any)
+		prefix := "security_"
+		if calls == 1 {
+			require.Equal(t, whole, input["submitted_content"])
+			require.Len(t, group.Questions, len(assessor.SemanticSecurityHazards()))
+		} else {
+			require.Equal(t, request.Evidence[0].Content, input["submitted_content"])
+			require.Len(t, group.Questions, 2)
+			prefix = "dedup_"
+		}
+		answers := make(map[string]modelprovider.DecisionAnswer, len(group.Questions))
+		for _, question := range group.Questions {
+			require.True(t, strings.HasPrefix(question.Name, prefix), question.Name)
+			probability := 0.01
+			answers[question.Name] = modelprovider.DecisionAnswer{Type: modelprovider.DecisionPredicate, Probability: &probability}
+		}
+		return modelprovider.DecisionResult{Answers: answers}, nil
+	})
+
+	reviewed, err := RouteRememberIntakeSecurity(t.Context(), provider, settings, partition, nil)
+	require.NoError(t, err)
+	require.Len(t, reviewed.Security, 1)
+	require.Nil(t, reviewed.Equivalence)
+	require.Equal(t, partition.Items[0].ItemID, reviewed.Security[0].EvidenceID)
+	request.DecisionRouting = &assessor.SemanticAssessmentRouting{
+		Stages:   reviewed.Stages,
+		Security: []assessor.SemanticAssessmentEvidenceSecurityResult{{EvidenceID: request.Evidence[0].EvidenceID, Decision: "pass", Signals: []assessor.SemanticAssessmentSecuritySignal{}}},
+	}
+	final, err := routeSubmissionDecisions(t.Context(), provider, settings, request, nil)
+	require.NoError(t, err)
+	require.Equal(t, 2, calls)
+	require.Equal(t, "new", final.Equivalence[0].Action)
+	require.Len(t, final.Stages, 2)
+}
+
+func TestRememberIntakeDecisionBudgetUsesMeasuredClientGuidance(t *testing.T) {
+	_, settings := decisionRoutingFixture()
+	partition := assessor.PreparePartitionRequest("whole-document-review", []string{"The PostgreSQL notes describe the current storage layout."}, false)
+	budget := &modelprovider.DecisionInputBudgetError{Scope: "request", Observed: 1540, Limit: 1024}
+	provider := decisionFunction(func(context.Context, modelprovider.DecisionRequest) (modelprovider.DecisionResult, error) {
+		return modelprovider.DecisionResult{}, &modelprovider.ProviderError{FailureClass: modelprovider.ProviderFailureClassRequestInvalid, Cause: budget}
+	})
+
+	_, err := RouteRememberIntakeSecurity(t.Context(), provider, settings, partition, nil)
+	require.ErrorIs(t, err, ErrRememberInputBudgetExceeded)
+	require.ErrorIs(t, err, modelprovider.ErrDecisionInputBudgetExceeded)
+	reason, details := RememberFailureDetails(err, "assessment")
+	require.Equal(t, "decision_input_budget_exceeded", reason)
+	require.Equal(t, map[string]any{
+		"component": "remember.intake_review", "client_controlled": true, "unit": "tokens",
+		"observed": 1540, "limit": 1024,
+	}, details)
+	status := TerminalStatusErrorWithDetails(TerminalErrorInputBudgetExceeded, reason, details)
+	require.Equal(t, string(TerminalNextActionResubmitRemember), status.NextAction)
+	require.Contains(t, status.Message, "observed 1540 tokens, allowed 1024")
+	require.NoError(t, ValidateTerminalStatusError(status))
+}
+
 func TestTypedSubmissionPolicyProbabilityGates(t *testing.T) {
 	for _, test := range []struct {
 		name                  string

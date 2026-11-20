@@ -7,6 +7,9 @@
     },
     {
       "path": "cmd/internal/serverapp/runner_campaign_integration_test.go"
+    },
+    {
+      "path": "cmd/internal/serverapp/runner_seed_integration_test.go"
     }
   ],
   "go": {
@@ -40,6 +43,13 @@
   },
   "workers": [
     {
+      "path": "cmd/eval-runner/resources.go",
+      "function": "startResourceMonitor",
+      "kind": "goroutine",
+      "ordinal": 1,
+      "role": "worker"
+    },
+    {
       "path": "cmd/eval-runner/main.go",
       "function": "execute",
       "kind": "run",
@@ -55,9 +65,16 @@
     },
     {
       "path": "internal/evalharness/client.go",
-      "function": "ImportCorpusWithConcurrency",
+      "function": "importCorpusWithOutcomes",
       "kind": "goroutine",
       "ordinal": 1,
+      "role": "worker"
+    },
+    {
+      "path": "internal/evalharness/client.go",
+      "function": "importCorpusWithOutcomes",
+      "kind": "goroutine",
+      "ordinal": 2,
       "role": "worker"
     },
     {

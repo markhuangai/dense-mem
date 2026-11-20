@@ -64,9 +64,8 @@ Never place credentials in inputs, PR comments, or committed files.
 
 ## Evaluation and migrations
 
-- [Evaluation guide](../tests/eval/README.md): deterministic comparisons,
-  provenance, source locks, scoring, and ignored artifacts. Campaigns and
-  benchmarks run only on GitHub-hosted runners.
+- The [evaluation guide](../tests/eval/README.md) covers building public
+  PostgreSQL seeds with local Docker and scoring them on GitHub-hosted runners.
 - [new-postgres-migration.sh](new-postgres-migration.sh): ordered migration
   creation. Read the applicable migration-family guide before changing storage.
 - [check-postgres-migrations.sh](check-postgres-migrations.sh): deployed-migration

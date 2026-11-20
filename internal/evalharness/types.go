@@ -2,7 +2,7 @@ package evalharness
 
 import "time"
 
-const DefaultImportConcurrency = 4
+const maxImportWorkers = 100
 
 type CorpusItem struct {
 	SourceDocID   string         `json:"source_doc_id"`
@@ -49,21 +49,31 @@ type HostQuestion struct {
 }
 
 type Manifest struct {
-	Version             int       `json:"version"`
-	RunID               string    `json:"run_id"`
-	WorkflowRunID       string    `json:"workflow_run_id"`
-	SourceRevision      string    `json:"source_revision"`
-	Image               string    `json:"image"`
-	RegistryHash        string    `json:"registry_sha256"`
-	Dataset             string    `json:"dataset"`
-	Mode                string    `json:"mode"`
-	Model               string    `json:"model"`
-	EmbeddingModel      string    `json:"embedding_model"`
-	EmbeddingDimensions int       `json:"embedding_dimensions"`
-	ContextWindowTokens int       `json:"context_window_tokens"`
-	ModelDeadline       time.Time `json:"model_deadline"`
-	DataDir             string    `json:"data_dir"`
-	OutputDir           string    `json:"output_dir"`
+	Version              int                `json:"version"`
+	RunID                string             `json:"run_id"`
+	WorkflowRunID        string             `json:"workflow_run_id"`
+	SeedBuildID          string             `json:"seed_build_id,omitempty"`
+	IntakeProof          bool               `json:"intake_proof,omitempty"`
+	ResumeScope          *Scope             `json:"resume_scope,omitempty"`
+	SkipAISecurityReview bool               `json:"skip_ai_security_review,omitempty"`
+	SourceRevision       string             `json:"source_revision"`
+	Image                string             `json:"image"`
+	RegistryHash         string             `json:"registry_sha256"`
+	Dataset              string             `json:"dataset"`
+	Mode                 string             `json:"mode"`
+	Model                string             `json:"model"`
+	EmbeddingModel       string             `json:"embedding_model"`
+	EmbeddingDimensions  int                `json:"embedding_dimensions"`
+	ContextWindowTokens  int                `json:"context_window_tokens"`
+	ImportWorkers        int                `json:"import_workers"`
+	Operation            string             `json:"operation,omitempty"`
+	SeedImage            string             `json:"seed_image,omitempty"`
+	SeedDir              string             `json:"seed_dir,omitempty"`
+	BaseRelease          string             `json:"base_release,omitempty"`
+	Timings              map[string]float64 `json:"timings_ms,omitempty"`
+	ModelDeadline        time.Time          `json:"model_deadline"`
+	DataDir              string             `json:"data_dir"`
+	OutputDir            string             `json:"output_dir"`
 }
 
 type Citation struct {

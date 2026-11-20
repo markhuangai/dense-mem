@@ -8,8 +8,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -20,6 +23,7 @@ import (
 	"github.com/labstack/echo/v4"
 	accesspostgres "github.com/markhuangai/dense-mem/internal/access/postgres"
 	"github.com/markhuangai/dense-mem/internal/assessor"
+	"github.com/markhuangai/dense-mem/internal/crypto"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/evalharness"
 	"github.com/markhuangai/dense-mem/internal/http/handler"
@@ -29,35 +33,70 @@ import (
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 	rememberprocessor "github.com/markhuangai/dense-mem/internal/remember/service/processor"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
+	"github.com/markhuangai/dense-mem/internal/storage/postgres/lockadmission"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
 
 func TestRememberEvaluationImporterAdmission(t *testing.T) {
-	t.Run("default completes concurrent imports and replays", func(t *testing.T) {
-		h := newImportAdmissionHarness(t, 5)
-		corpus := admissionCorpus(8, 0)
-		done := make(chan error, 1)
-		var imported evalharness.KnowledgeMapping
-		go func() {
-			var err error
-			imported, err = h.client.ImportCorpusWithConcurrency(h.ctx, corpus, evalharness.DefaultImportConcurrency)
-			done <- err
-		}()
-		h.waitEntered(t, 4)
-		h.release()
-		require.NoError(t, receiveImportResult(t, h.ctx, done))
-		require.Len(t, imported.BySourceDocID, len(corpus))
-		require.EqualValues(t, 4, h.provider.peak.Load())
-		require.Zero(t, h.busyCount.Load())
-		replayed, err := h.client.ImportCorpusWithConcurrency(h.ctx, corpus, 4)
+	for _, scenario := range []struct {
+		name          string
+		pool, workers int
+	}{
+		{"default completes concurrent imports and replays", 5, 4},
+		{"configured twenty completes concurrent imports and replays", 50, 20},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			h := newImportAdmissionHarness(t, scenario.pool)
+			if scenario.workers != 4 {
+				require.NoError(t, lockadmission.Configure(h.app, scenario.workers))
+			}
+			corpus := admissionCorpus(scenario.workers*2, 0)
+			done := make(chan error, 1)
+			var imported evalharness.KnowledgeMapping
+			go func() {
+				var err error
+				imported, err = h.client.ImportCorpusWithConcurrency(h.ctx, corpus, scenario.workers)
+				done <- err
+			}()
+			h.waitEntered(t, scenario.workers)
+			h.release()
+			require.NoError(t, receiveImportResult(t, h.ctx, done))
+			require.Len(t, imported.BySourceDocID, len(corpus))
+			require.EqualValues(t, scenario.workers, h.provider.peak.Load())
+			require.Zero(t, h.busyCount.Load())
+			replayed, err := h.client.ImportCorpusWithConcurrency(h.ctx, corpus, scenario.workers)
+			require.NoError(t, err)
+			require.Equal(t, imported, replayed)
+			require.EqualValues(t, len(corpus), h.provider.calls.Load())
+			h.assertCompleted(t, len(corpus))
+		})
+	}
+
+	t.Run("pool admission configuration rejects invalid capacity and conflicting initialization", func(t *testing.T) {
+		h := newImportAdmissionHarness(t, 25)
+		require.Error(t, lockadmission.Configure(nil, 20))
+		for _, limit := range []int{-1, 0, 25, 26} {
+			require.Error(t, lockadmission.Configure(h.app, limit))
+		}
+		sqlDB, err := h.app.DB()
 		require.NoError(t, err)
-		require.Equal(t, imported, replayed)
-		require.EqualValues(t, len(corpus), h.provider.calls.Load())
-		h.assertCompleted(t, len(corpus))
+		sqlDB.SetMaxOpenConns(0)
+		require.Error(t, lockadmission.Configure(h.app, 20))
+		sqlDB.SetMaxOpenConns(25)
+		require.NoError(t, lockadmission.Configure(h.app, 20))
+		require.NoError(t, lockadmission.Configure(h.app, 20))
+		require.ErrorContains(t, lockadmission.Configure(h.app, 4), "already initialized")
+		h.release()
+		corpus := admissionCorpus(1, 0)
+		imported, err := h.client.ImportCorpus(h.ctx, corpus)
+		require.NoError(t, err)
+		require.Len(t, imported.BySourceDocID, 1)
+		h.assertCompleted(t, 1)
 	})
 
 	for _, test := range []struct {
@@ -66,7 +105,7 @@ func TestRememberEvaluationImporterAdmission(t *testing.T) {
 		workers        int
 	}{
 		{"former default exceeds admission", 5, 4, 10},
-		{"small pool admits fewer than default", 2, 1, evalharness.DefaultImportConcurrency},
+		{"small pool admits fewer than default", 2, 1, 4},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			h := newImportAdmissionHarness(t, test.pool)
@@ -153,6 +192,26 @@ func TestRememberEvaluationImporterAdmission(t *testing.T) {
 		}
 		h.assertCompleted(t, len(corpus))
 	})
+	t.Run("shared database preserves unique fixture credential prefixes", func(t *testing.T) {
+		if os.Getenv("DENSE_MEM_REPOSITORY_TESTCONTAINERS") != "1" {
+			t.Skip("registered disposable PostgreSQL execution required")
+		}
+		withLifecyclePostgres(t, func(t *testing.T) {
+			t.Setenv("DATABASE_URL", os.Getenv("POSTGRES_DSN"))
+			t.Setenv("DENSE_MEM_ALLOW_DESTRUCTIVE_POSTGRES_TESTS", "1")
+			for index := range 2 {
+				t.Run(fmt.Sprintf("team_%d", index), func(t *testing.T) {
+					h := newImportAdmissionHarness(t, 5)
+					h.release()
+					mapping, err := h.client.ImportCorpus(h.ctx, admissionCorpus(1, 1))
+					require.NoError(t, err)
+					require.Len(t, mapping.BySourceDocID, 1)
+					h.assertCompleted(t, 1)
+				})
+			}
+		})
+	})
+
 }
 
 type importAdmissionAssessor struct {
@@ -162,6 +221,7 @@ type importAdmissionAssessor struct {
 	calls     atomic.Int32
 	active    atomic.Int32
 	peak      atomic.Int32
+	delay     time.Duration
 }
 
 func (p *importAdmissionAssessor) Assess(ctx context.Context, request assessor.SemanticAssessmentRequest) (assessor.SemanticAssessmentSession, assessor.SemanticAssessmentTurn, error) {
@@ -179,6 +239,15 @@ func (p *importAdmissionAssessor) Assess(ctx context.Context, request assessor.S
 		case <-p.gate:
 		case <-ctx.Done():
 			p.cancelled <- struct{}{}
+			return nil, assessor.SemanticAssessmentTurn{}, ctx.Err()
+		}
+	}
+	if p.delay > 0 {
+		timer := time.NewTimer(p.delay)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
 			return nil, assessor.SemanticAssessmentTurn{}, ctx.Err()
 		}
 	}
@@ -205,22 +274,43 @@ type importAdmissionHarness struct {
 	busyCount      atomic.Int32
 	activeRequests atomic.Int32
 	release        func()
+	credentialID   uuid.UUID
+	activity       *accessservice.CredentialActivityWriter
+	logs           *bytes.Buffer
 }
 
 func newImportAdmissionHarness(t *testing.T, pool int) *importAdmissionHarness {
+	return newImportAdmissionService(t, pool, false)
+}
+
+func newImportAdmissionService(t *testing.T, pool int, authenticated bool) *importAdmissionHarness {
 	t.Helper()
 	admin, app, rls, cleanup := setupRememberProcessorIntegrationDB(t)
 	t.Cleanup(cleanup)
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	duration := time.Minute
+	if authenticated {
+		duration = 4 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), duration)
 	t.Cleanup(cancel)
 	teamID, ownerID := uuid.New(), uuid.New()
 	require.NoError(t, rls.WithSystemTx(ctx, admin, func(tx *gorm.DB) error {
 		return tx.Exec("INSERT INTO teams (id, name, description, metadata, config) VALUES (?::uuid, ?, '', '{}'::jsonb, '{}'::jsonb)", teamID, "import admission "+teamID.String()).Error
 	}))
 	credentials := accesspostgres.NewCredentialRepository(admin, rls, nil)
+	key, hash := "admission-fixture", ownerID.String()
+	prefix, suffix := strings.ReplaceAll(ownerID.String(), "-", "")[:24], "owner"
+	if authenticated {
+		var err error
+		key, err = crypto.GenerateRawKey()
+		require.NoError(t, err)
+		hash, err = crypto.HashKey(key)
+		require.NoError(t, err)
+		prefix, suffix = crypto.GetKeyPrefix(key), crypto.GetKeySuffix(key)
+	}
 	require.NoError(t, credentials.CreateCredential(ctx, &domain.Credential{
 		ID: ownerID, TeamID: teamID, Name: "import admission owner", Role: "member", Scopes: []string{"read", "write"},
-		KeyHash: ownerID.String(), KeyPrefix: strings.ReplaceAll(ownerID.String(), "-", "")[:24], KeySuffix: "owner",
+		KeyHash: hash, KeyPrefix: prefix, KeySuffix: suffix,
 	}))
 	credential, err := credentials.GetByIDForTeam(ctx, teamID, ownerID)
 	require.NoError(t, err)
@@ -234,6 +324,9 @@ func newImportAdmissionHarness(t *testing.T, pool int) *importAdmissionHarness {
 		ctx: ctx, admin: admin, app: app, rls: rls, teamID: teamID, busy: make(chan map[string]any, 64),
 		provider: &importAdmissionAssessor{gate: gate, entered: make(chan struct{}, 64), cancelled: make(chan struct{}, 64)},
 	}
+	h.credentialID = credential.ID
+	h.logs = &bytes.Buffer{}
+	logger := observability.NewConsoleWithHandler(slog.NewJSONHandler(h.logs, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	h.release = sync.OnceFunc(func() { close(gate) })
 	t.Cleanup(h.release)
 	store := knowledgepostgres.NewStore(app, rls)
@@ -241,21 +334,40 @@ func newImportAdmissionHarness(t *testing.T, pool int) *importAdmissionHarness {
 		Ledger: store, Assessor: h.provider,
 		EmbeddingExecutor: semanticwrite.NewProviderExecutor(rememberProcessorIntegrationSearchEmbedder{model: model, dimensions: dimensions}),
 		Limits:            assessor.DefaultSemanticAssessmentLimits(), Metrics: observability.NoopDiscoverabilityMetrics(),
+		Logger: logger, CommitFailureStage: knowledgepostgres.RememberCommitFailureStage,
 	})
 	reg, err := registry.BuildActive(registry.Dependencies{RememberBindings: registry.RememberBindings{
 		Service: rememberapp.NewService(rememberapp.Dependencies{Synchronous: processor}),
 	}})
 	require.NoError(t, err)
 	e := echo.New()
+	if authenticated {
+		credentials := accesspostgres.NewCredentialRepository(app, rls, nil)
+		auth := buildAccessAuthenticationApplication(credentials, credentials, 4, logger)
+		h.activity = auth.ActivityWriter
+		h.activity.Start(ctx)
+		t.Cleanup(func() {
+			shutdown, stop := context.WithTimeout(context.Background(), 10*time.Second)
+			defer stop()
+			require.NoError(t, h.activity.Shutdown(shutdown))
+		})
+		e.Use(middleware.AuthMiddlewareWithOptions(credentials, nil, nil, middleware.AuthOptions{CredentialVerifier: auth.CredentialVerifier, CredentialLookupPrefixes: crypto.GetLookupPrefixes}))
+		e.Use(middleware.TeamResolutionMiddleware(accessservice.NewTeamService(accesspostgres.NewTeamRepository(app, rls), nil, nil)))
+		e.Use(middleware.AuthorizeTeam(middleware.NewTeamAuthorizationService(nil)))
+		e.Use(middleware.LastUsedMiddleware(h.activity))
+	}
 	mcp := handler.NewMCPHandler(reg, nil)
 	e.POST("/mcp", mcp.HandlePost)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h.activeRequests.Add(1)
 		defer h.activeRequests.Add(-1)
-		actor := requestctx.Actor{TeamID: teamID, OwnerID: credential.OwnerID, IdentityID: credential.ActorIdentityID, MembershipID: credential.MembershipID, CredentialID: &credential.ID, AuthMethod: "api_key", Role: credential.Role, Grants: credential.Scopes, AllowedSpaces: credential.MemorySpaces()}
-		requestCtx := requestctx.WithActor(r.Context(), actor)
-		requestCtx = middleware.SetPrincipalForTest(requestCtx, &middleware.Principal{TeamID: teamID, OwnerID: actor.OwnerID, Grants: actor.Grants, AllowedSpaces: actor.AllowedSpaces})
-		requestCtx = middleware.SetResolvedTeamIDForTest(requestCtx, teamID)
+		requestCtx := r.Context()
+		if !authenticated {
+			actor := requestctx.Actor{TeamID: teamID, OwnerID: credential.OwnerID, IdentityID: credential.ActorIdentityID, MembershipID: credential.MembershipID, CredentialID: &credential.ID, AuthMethod: "api_key", Role: credential.Role, Grants: credential.Scopes, AllowedSpaces: credential.MemorySpaces()}
+			requestCtx = requestctx.WithActor(requestCtx, actor)
+			requestCtx = middleware.SetPrincipalForTest(requestCtx, &middleware.Principal{TeamID: teamID, OwnerID: actor.OwnerID, Grants: actor.Grants, AllowedSpaces: actor.AllowedSpaces})
+			requestCtx = middleware.SetResolvedTeamIDForTest(requestCtx, teamID)
+		}
 		recorder := httptest.NewRecorder()
 		e.ServeHTTP(recorder, r.WithContext(requestCtx))
 		var response struct {
@@ -283,8 +395,74 @@ func newImportAdmissionHarness(t *testing.T, pool int) *importAdmissionHarness {
 		_, _ = w.Write(recorder.Body.Bytes())
 	}))
 	t.Cleanup(func() { cancel(); h.release(); server.Close() })
-	h.client = &evalharness.HTTPClient{BaseURL: server.URL, APIKey: "admission-fixture", Client: server.Client()}
+	h.client = &evalharness.HTTPClient{BaseURL: server.URL, APIKey: key, Client: server.Client()}
 	return h
+}
+
+func TestRememberEvaluationAuthenticatedSustainedImport(t *testing.T) {
+	for _, pool := range []int{25, 50} {
+		t.Run(fmt.Sprintf("application_pool_%d", pool), func(t *testing.T) {
+			h := newImportAdmissionService(t, pool, true)
+			require.NoError(t, lockadmission.Configure(h.app, 20))
+			h.release()
+			unauthorized := &evalharness.HTTPClient{BaseURL: h.client.BaseURL, APIKey: h.client.APIKey + "wrong", Client: h.client.Client}
+			_, err := unauthorized.ImportCorpus(h.ctx, admissionCorpus(1, 1))
+			require.Error(t, err)
+			require.Zero(t, h.provider.calls.Load())
+			h.assertCompleted(t, 0)
+			h.provider.delay = 8 * time.Second
+			database, err := h.app.DB()
+			require.NoError(t, err)
+			before := database.Stats()
+			started := time.Now()
+			corpus := admissionCorpus(180, 180)
+			mapping, importErr := h.client.ImportCorpusWithConcurrency(h.ctx, corpus, 20)
+			elapsed := time.Since(started)
+			h.waitIdle(t)
+			shutdown, stop := context.WithTimeout(context.Background(), 10*time.Second)
+			defer stop()
+			require.NoError(t, h.activity.Shutdown(shutdown))
+			after := database.Stats()
+			var lastUsed *time.Time
+			require.NoError(t, h.rls.WithSystemTx(h.ctx, h.admin, func(tx *gorm.DB) error {
+				return tx.Raw("SELECT last_used_at FROM credentials WHERE id=?::uuid", h.credentialID).Row().Scan(&lastUsed)
+			}))
+			require.NotNil(t, lastUsed, "real authenticated requests must flush credential activity")
+			require.True(t, lastUsed.After(started), "activity must continue during ingestion")
+			var commits []int64
+			var commitFailures int
+			for _, line := range strings.Split(h.logs.String(), "\n") {
+				var event struct {
+					Message  string `json:"msg"`
+					Phase    string `json:"phase"`
+					Outcome  string `json:"outcome"`
+					Duration int64  `json:"duration_ms"`
+				}
+				if json.Unmarshal([]byte(line), &event) == nil && event.Message == "remember_phase_completed" && event.Phase == "commit" {
+					commits = append(commits, event.Duration)
+					if event.Outcome != "ok" {
+						commitFailures++
+					}
+				}
+			}
+			sort.Slice(commits, func(i, j int) bool { return commits[i] < commits[j] })
+			var p95 int64
+			if len(commits) > 0 {
+				p95 = commits[(len(commits)-1)*95/100]
+			}
+			t.Logf("authenticated_import pool=%d workers=20 completed=%d total=%d elapsed_ms=%d documents_per_minute=%.2f pool_wait_count=%d pool_wait_ms=%d commit_samples=%d commit_p95_ms=%d commit_failures=%d complete=%t", pool, len(mapping.BySourceDocID), len(corpus), elapsed.Milliseconds(), float64(len(mapping.BySourceDocID))/elapsed.Minutes(), after.WaitCount-before.WaitCount, (after.WaitDuration - before.WaitDuration).Milliseconds(), len(commits), p95, commitFailures, importErr == nil)
+			if pool == 50 {
+				require.NoError(t, importErr)
+				require.Len(t, mapping.BySourceDocID, len(corpus))
+				require.GreaterOrEqual(t, elapsed, time.Minute, "fixture must sustain multiple credential activity flushes")
+				require.Len(t, commits, len(corpus))
+				require.Zero(t, commitFailures)
+				require.True(t, lastUsed.After(started.Add(time.Minute)), "credential activity must flush throughout sustained ingestion")
+				require.EqualValues(t, 20, h.provider.peak.Load())
+				h.assertCompleted(t, len(corpus))
+			}
+		})
+	}
 }
 
 func (h *importAdmissionHarness) waitEntered(t *testing.T, count int) {

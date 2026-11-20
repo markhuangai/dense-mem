@@ -130,16 +130,17 @@ func (e *RememberProcessError) Unwrap() error {
 }
 
 type RememberProcessRequest struct {
-	SubmittedItems      []repository.RememberSubmittedItem
-	SpaceKind           domain.MemorySpaceKind
-	InvocationStartedAt time.Time
-	TeamID              string
-	OwnerProfileID      string
-	SpaceID             string
-	SpaceGeneration     int64
-	IdempotencyKey      string
-	RequestHash         string
-	SourceSummary       string
+	SubmittedItems       []repository.RememberSubmittedItem
+	SpaceKind            domain.MemorySpaceKind
+	InvocationStartedAt  time.Time
+	TeamID               string
+	OwnerProfileID       string
+	SpaceID              string
+	SpaceGeneration      int64
+	IdempotencyKey       string
+	RequestHash          string
+	SourceSummary        string
+	SkipAISecurityReview bool
 
 	Metadata                 map[string]any
 	Evidence                 []EvidenceInput

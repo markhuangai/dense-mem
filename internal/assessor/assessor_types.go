@@ -19,6 +19,7 @@ type SemanticAssessmentRequest struct {
 }
 
 type SemanticAssessmentResponse struct {
+	AISecurityReview           string                                        `json:"ai_security_review,omitempty"`
 	DecisionStages             []modelprovider.DecisionStage                 `json:"decision_stages,omitempty"`
 	RequestID                  string                                        `json:"request_id"`
 	EvidenceSecurityResults    []SemanticAssessmentEvidenceSecurityResult    `json:"evidence_security_results"`

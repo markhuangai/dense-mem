@@ -1,6 +1,9 @@
 package serverapp
 
 import (
+	"fmt"
+	"os"
+
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
@@ -12,6 +15,7 @@ import (
 )
 
 type rememberApplicationDependencies struct {
+	PublicSeedAdmission *rememberapp.PublicSeedAdmission
 	Persistence         remembercontract.Persistence
 	Assessor            assessor.Provider
 	Decisions           modelprovider.DecisionProvider
@@ -33,11 +37,24 @@ func buildRememberApplication(deps rememberApplicationDependencies) rememberapp.
 		CommitFailureStage: knowledgepostgres.RememberCommitFailureStage,
 	})
 	return rememberapp.NewService(rememberapp.Dependencies{
-		Synchronous: processor,
-		Auditor:     newRememberSecurityRejectionAuditAdapter(deps.Audit),
-		Metrics:     deps.Metrics,
-		Logger:      deps.Logger,
+		Synchronous:         processor,
+		PublicSeedAdmission: deps.PublicSeedAdmission,
+		Auditor:             newRememberSecurityRejectionAuditAdapter(deps.Audit),
+		Metrics:             deps.Metrics,
+		Logger:              deps.Logger,
 	})
+}
+
+func loadPublicSeedAdmission(enabled bool) (*rememberapp.PublicSeedAdmission, error) {
+	if !enabled {
+		return nil, nil
+	}
+	file, err := os.Open(rememberapp.PublicSeedAdmissionPath)
+	if err != nil {
+		return nil, fmt.Errorf("open public seed admission manifest: %w", err)
+	}
+	defer file.Close()
+	return rememberapp.ReadPublicSeedAdmission(file)
 }
 
 func buildRememberAttemptDiagnostics(repo remembercontract.DiagnosticsRepository) *rememberapp.RememberAttemptDiagnosticsService {

@@ -121,8 +121,10 @@ func AIVerifierMaxConcurrency(cfg ConfigProvider) int {
 type Config struct {
 	Decision                        DecisionProviderConfig
 	SessionIngestEnabled            bool
+	DangerouslySkipAISecurityCheck  bool
 	PostgresDSN                     string `json:"-"`
 	PostgresMaxOpenConns            int
+	PostgresAdvisoryLockConcurrency int
 	PostgresMaxIdleConns            int
 	PostgresConnMaxLifetimeSeconds  int
 	PostgresMigrationTimeoutSeconds int
@@ -475,6 +477,7 @@ func loadWithPostgresDSN(postgresDSN string) (Config, error) {
 	if err := applyIntEnvSpecs(&cfg, []intEnvSpec{
 		{"REDIS_DB", 0, func(c *Config, value int) { c.RedisDB = value }},
 		{"POSTGRES_MAX_OPEN_CONNS", 25, func(c *Config, value int) { c.PostgresMaxOpenConns = value }},
+		{"POSTGRES_ADVISORY_LOCK_CONCURRENCY", 0, func(c *Config, value int) { c.PostgresAdvisoryLockConcurrency = value }},
 		{"POSTGRES_MAX_IDLE_CONNS", 10, func(c *Config, value int) { c.PostgresMaxIdleConns = value }},
 		{"POSTGRES_CONN_MAX_LIFETIME_SECONDS", 1800, func(c *Config, value int) { c.PostgresConnMaxLifetimeSeconds = value }},
 		{"POSTGRES_MIGRATION_TIMEOUT_SECONDS", DefaultPostgresMigrationTimeoutSeconds, func(c *Config, value int) { c.PostgresMigrationTimeoutSeconds = value }},
@@ -501,6 +504,10 @@ func loadWithPostgresDSN(postgresDSN string) (Config, error) {
 		return cfg, err
 	}
 	cfg.SessionIngestEnabled, err = parseBoolOrDefault("SESSION_INGEST_ENABLED", false)
+	if err != nil {
+		return cfg, err
+	}
+	cfg.DangerouslySkipAISecurityCheck, err = parseBoolOrDefault("DANGEROUSLY_SKIP_AI_SECURITY_CHECK", false)
 	if err != nil {
 		return cfg, err
 	}
@@ -628,6 +635,11 @@ func loadWithPostgresDSN(postgresDSN string) (Config, error) {
 				Field:   field.name,
 				Message: fmt.Sprintf("must be greater than 0, got %d", field.value),
 			}
+		}
+	}
+	if cfg.PostgresAdvisoryLockConcurrency != 0 || os.Getenv("POSTGRES_ADVISORY_LOCK_CONCURRENCY") != "" {
+		if cfg.PostgresAdvisoryLockConcurrency < 1 || cfg.PostgresAdvisoryLockConcurrency >= cfg.PostgresMaxOpenConns {
+			return cfg, &ValidationError{Field: "POSTGRES_ADVISORY_LOCK_CONCURRENCY", Message: "must be positive and leave at least one PostgreSQL query connection"}
 		}
 	}
 	if cfg.AIEmbeddingMaxBatchItems > domain.MaxEmbeddingBatchDocuments {

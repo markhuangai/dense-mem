@@ -30,7 +30,7 @@ func TestEvidenceSecurityCoverageDiagnosticCodes(t *testing.T) {
 		{"duplicate", []SemanticAssessmentEvidenceSecurityResult{{EvidenceID: "submitted", Decision: "pass"}, {EvidenceID: "submitted", Decision: "pass"}}, "evidence_id_duplicate"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			issues := validateSemanticAssessmentEvidenceSecurityResults(test.results, evidence)
+			issues := validateSemanticAssessmentEvidenceSecurityResults(test.results, evidence, true)
 			codes := make([]string, len(issues))
 			for i, issue := range issues {
 				codes[i] = issue.Code
@@ -38,7 +38,7 @@ func TestEvidenceSecurityCoverageDiagnosticCodes(t *testing.T) {
 			require.Contains(t, codes, test.code)
 		})
 	}
-	require.Empty(t, validateSemanticAssessmentEvidenceSecurityResults([]SemanticAssessmentEvidenceSecurityResult{{EvidenceID: "submitted", Decision: "pass"}}, evidence))
+	require.Empty(t, validateSemanticAssessmentEvidenceSecurityResults([]SemanticAssessmentEvidenceSecurityResult{{EvidenceID: "submitted", Decision: "pass"}}, evidence, true))
 }
 
 func TestSharedResponseShapeAndCorrectionErrors(t *testing.T) {

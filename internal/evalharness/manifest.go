@@ -11,6 +11,8 @@ import (
 var revisionPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 var imagePattern = regexp.MustCompile(`^ghcr\.io/markhuangai/dense-mem(?::[A-Za-z0-9._-]+)?@sha256:[0-9a-f]{64}$`)
 var modelPattern = regexp.MustCompile(`^[A-Za-z0-9@][A-Za-z0-9_./:-]{0,127}$`)
+var seedBuildPattern = regexp.MustCompile(`^local-[a-f0-9]{32}$`)
+var localImagePattern = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
 
 func RequireRunner() error {
 	if os.Getenv("GITHUB_ACTIONS") != "true" || os.Getenv("RUNNER_ENVIRONMENT") != "github-hosted" || os.Getenv("GITHUB_RUN_ID") == "" || os.Getenv("GITHUB_RUN_ATTEMPT") != "1" {
@@ -21,29 +23,91 @@ func RequireRunner() error {
 
 func ReadManifest(path string) (Manifest, error) {
 	var manifest Manifest
-	if err := RequireRunner(); err != nil {
-		return manifest, err
-	}
 	if err := readJSON(path, &manifest); err != nil {
 		return manifest, err
 	}
-	if manifest.Version != 1 || manifest.RunID == "" || manifest.WorkflowRunID != os.Getenv("GITHUB_RUN_ID") || !revisionPattern.MatchString(manifest.SourceRevision) || !imagePattern.MatchString(manifest.Image) {
+	if manifest.SeedBuildID == "" {
+		if err := RequireRunner(); err != nil {
+			return manifest, err
+		}
+		if manifest.WorkflowRunID != os.Getenv("GITHUB_RUN_ID") || (manifest.Mode == "live" && manifest.Operation != "run") {
+			return manifest, errors.New("hosted execution manifest identity or operation is invalid")
+		}
+	} else if os.Getenv("GITHUB_ACTIONS") == "true" || manifest.WorkflowRunID != "" || manifest.Mode != "live" || !seedBuildPattern.MatchString(manifest.SeedBuildID) || manifest.SeedBuildID != os.Getenv("EVAL_LOCAL_SEED_ID") ||
+		(manifest.Operation != "bootstrap" && manifest.Operation != "prepare" && manifest.Operation != "verify-seed") {
+		return manifest, errors.New("local execution permits only public seed preparation and restore verification")
+	}
+	imageValid := imagePattern.MatchString(manifest.Image)
+	if manifest.IntakeProof {
+		imageValid = manifest.SeedBuildID != "" && localImagePattern.MatchString(manifest.Image) && (manifest.Operation == "prepare" || manifest.Operation == "verify-seed")
+	}
+	if manifest.SkipAISecurityReview && (manifest.SeedBuildID == "" || manifest.Operation != "prepare" || !seedImagePattern.MatchString(manifest.SeedImage)) {
+		return manifest, errors.New("skipping AI security review requires preparation from a public seed bootstrap")
+	}
+	if manifest.ResumeScope != nil && (manifest.SeedBuildID == "" || manifest.Operation != "prepare" || manifest.IntakeProof || !seedImagePattern.MatchString(manifest.SeedImage)) {
+		return manifest, errors.New("resuming requires a local public seed build and its pinned bootstrap")
+	}
+	if manifest.Version != 1 || manifest.RunID == "" || !revisionPattern.MatchString(manifest.SourceRevision) || !imageValid {
 		return manifest, errors.New("execution manifest identity is invalid")
 	}
-	if manifest.Mode != "live" && manifest.Mode != "fixtures" && manifest.Mode != "replay" {
+	if manifest.Mode != "live" && manifest.Mode != "fixtures" {
 		return manifest, errors.New("invalid runner campaign mode")
 	}
-	if manifest.Mode != "replay" && manifest.RunID != manifest.WorkflowRunID+"-"+manifest.Dataset {
+	if manifest.RunID != manifest.ExecutionID()+"-"+manifest.Dataset {
 		return manifest, errors.New("manifest does not belong to this dataset job")
 	}
-	if !modelPattern.MatchString(manifest.Model) || strings.Contains(manifest.Model, "://") || manifest.EmbeddingModel != "@cf/baai/bge-m3" || manifest.EmbeddingDimensions != 1024 || manifest.ContextWindowTokens < 16384 {
+	if !modelPattern.MatchString(manifest.Model) || strings.Contains(manifest.Model, "://") || manifest.EmbeddingModel != "text-embedding-3-small" || manifest.EmbeddingDimensions != 1536 || manifest.ContextWindowTokens < 16384 {
 		return manifest, errors.New("explicit verified model and context settings are required")
+	}
+	if manifest.Operation != "prepare" && manifest.Operation != "run" && manifest.Operation != "bootstrap" && manifest.Operation != "verify-seed" {
+		return manifest, errors.New("invalid workflow-internal operation")
+	}
+	if manifest.Operation == "prepare" || manifest.Operation == "bootstrap" {
+		if err := validateImportWorkers(manifest.ImportWorkers); err != nil {
+			return manifest, err
+		}
+		if !releasePattern.MatchString(manifest.BaseRelease) {
+			return manifest, errors.New("seed preparation base release is invalid")
+		}
+	} else if manifest.ImportWorkers != 0 {
+		return manifest, errors.New("scored evaluation has no import workers")
+	}
+	if manifest.SeedDir == "" || (manifest.Operation == "run" && manifest.Mode == "live" && !seedImagePattern.MatchString(manifest.SeedImage)) {
+		return manifest, errors.New("immutable seed identity and directory are required")
+	}
+	if manifest.Operation == "verify-seed" && !manifest.IntakeProof && !localImagePattern.MatchString(manifest.SeedImage) {
+		return manifest, errors.New("seed boot verification requires an immutable local PostgreSQL image")
+	}
+	if manifest.Operation == "run" && manifest.Mode == "fixtures" && manifest.SeedImage != "" && !localImagePattern.MatchString(manifest.SeedImage) {
+		return manifest, errors.New("fixture seed must use an immutable local PostgreSQL image")
 	}
 	if manifest.DataDir == "" || manifest.OutputDir == "" || len(manifest.RegistryHash) != 64 {
 		return manifest, errors.New("manifest data and output identity missing")
 	}
-	if manifest.Mode != "replay" && (manifest.ModelDeadline.IsZero() || manifest.ModelDeadline.After(time.Now().Add(330*time.Minute))) {
-		return manifest, errors.New("model deadline is missing or exceeds 330 minutes")
+	maximum := 330 * time.Minute
+	if manifest.ModelDeadline.IsZero() || manifest.ModelDeadline.After(time.Now().Add(maximum)) {
+		return manifest, errors.New("model deadline is missing or exceeds the campaign limit")
 	}
 	return manifest, nil
+}
+
+func (m Manifest) PostgresRuntimeImage() string {
+	if (m.Operation == "run" || m.Operation == "verify-seed") && m.SeedImage != "" {
+		return m.SeedImage
+	}
+	return PostgresImage
+}
+
+func (m Manifest) ExecutionID() string {
+	if m.SeedBuildID != "" {
+		return m.SeedBuildID
+	}
+	return m.WorkflowRunID
+}
+
+func validateImportWorkers(workers int) error {
+	if workers < 1 || workers > maxImportWorkers {
+		return errors.New("import workers must be between 1 and 100")
+	}
+	return nil
 }

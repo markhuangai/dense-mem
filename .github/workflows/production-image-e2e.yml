@@ -33,6 +33,10 @@ on:
         required: false
       DENSE_MEM_EVAL_EMBED_API_KEY:
         required: false
+      DENSE_MEM_EVAL_TEAM_API_KEY:
+        required: false
+      DENSE_MEM_EVAL_DATABASE_PASSWORD:
+        required: false
   workflow_dispatch:
     inputs:
       pr_number:
@@ -43,11 +47,31 @@ on:
         description: Optional runner-only evaluation; full E2E remains the default
         type: choice
         default: none
-        options: [none, fixtures, live, replay]
-      replay_run_id:
-        description: Retained evaluation workflow run for runtime-free replay
+        options: [none, fixtures, live]
+      seed_version:
+        description: Public evaluation seed suffix (latest or UTCtimestamp-release)
         type: string
-        default: ''
+        default: latest
+      run_hotpotqa:
+        description: HotpotQA
+        type: boolean
+        default: true
+      run_musique:
+        description: MuSiQue
+        type: boolean
+        default: true
+      run_2wikimultihopqa:
+        description: 2WikiMultiHopQA
+        type: boolean
+        default: true
+      run_nq_rear:
+        description: NQ Rear
+        type: boolean
+        default: true
+      run_popqa:
+        description: PopQA
+        type: boolean
+        default: true
 
 permissions:
   actions: read
@@ -117,7 +141,7 @@ jobs:
                 throw new Error("manual trial must target the actor's own current same-repository PR head");
               }
               const evaluation = process.env.INPUT_EVALUATION || "none";
-              if (!["none", "fixtures", "live", "replay"].includes(evaluation)) throw new Error("invalid evaluation mode");
+              if (!["none", "fixtures", "live"].includes(evaluation)) throw new Error("invalid evaluation mode");
               if (evaluation !== "none") {
                 if (Number(context.runAttempt) !== 1) throw new Error("evaluation job reruns are unsupported");
                 const { data: triggeringPermission } = await github.rest.repos.getCollaboratorPermissionLevel({ owner, repo, username: process.env.TRIGGERING_ACTOR });
@@ -134,15 +158,19 @@ jobs:
               const { data: workflowRun } = await github.rest.actions.getWorkflowRun({
                 owner, repo, run_id: Number(receipt.status.runId),
               });
+              const { data: publishedRun } = await github.rest.actions.getWorkflowRunAttempt({
+                owner, repo, run_id: Number(receipt.status.runId), attempt_number: Number(receipt.status.runAttempt),
+              });
               if (workflowRun.id !== Number(receipt.status.runId) ||
-                  workflowRun.run_attempt !== Number(receipt.status.runAttempt) ||
+                  publishedRun.id !== workflowRun.id || publishedRun.run_attempt !== Number(receipt.status.runAttempt) ||
+                  workflowRun.run_attempt < publishedRun.run_attempt ||
                   workflowRun.event !== "pull_request_target" ||
                   workflowRun.path !== ".github/workflows/pr-test-image.yml" ||
                   workflowRun.display_title !== `PR test image: PR #${pull.number}`) {
                 throw new Error("the trusted preview workflow receipt is invalid");
               }
-              const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
-                owner, repo, run_id: workflowRun.id, filter: "latest", per_page: 100,
+              const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRunAttempt, {
+                owner, repo, run_id: publishedRun.id, attempt_number: publishedRun.run_attempt, per_page: 100,
               });
               if (!jobs.some((job) => job.name === "Publish trusted preview" && job.conclusion === "success")) {
                 throw new Error("the trusted preview publish job did not pass");
@@ -353,16 +381,22 @@ jobs:
       source_repository: ${{ needs.authorize.outputs.source_repository }}
       source_revision: ${{ needs.authorize.outputs.source_revision }}
       mode: ${{ inputs.evaluation }}
-      replay_run_id: ${{ inputs.replay_run_id }}
+      seed_version: ${{ inputs.seed_version || 'latest' }}
+      dataset_selection: >-
+        {"hotpotqa":${{ inputs.run_hotpotqa }},"musique":${{ inputs.run_musique }},
+        "2wikimultihopqa":${{ inputs.run_2wikimultihopqa }},"nq_rear":${{ inputs.run_nq_rear }},
+        "popqa":${{ inputs.run_popqa }}}
       model: dense-mem-testing
       context_window_tokens: '500000'
     secrets:
       eval-model: ${{ secrets.DENSE_MEM_EVAL_MODEL }}
       eval-context-window: ${{ secrets.DENSE_MEM_EVAL_CONTEXT_WINDOW_TOKENS }}
       eval-verifier-url: ${{ '' || vars.DENSE_MEM_EVAL_VERIFIER_URL || secrets.DENSE_MEM_EVAL_VERIFIER_URL }}
-      eval-embedding-url: ${{ (vars.CLOUDFLARE_ACCOUNT_ID != '' || secrets.CLOUDFLARE_ACCOUNT_ID != '') && format('https://api.cloudflare.com/client/v4/accounts/{0}/ai/v1', vars.CLOUDFLARE_ACCOUNT_ID || secrets.CLOUDFLARE_ACCOUNT_ID) || vars.DENSE_MEM_EVAL_EMBED_URL || secrets.DENSE_MEM_EVAL_EMBED_URL }}
+      eval-embedding-url: ${{ 'https://api.openai.com/v1' || vars.DENSE_MEM_EVAL_EMBED_URL || secrets.DENSE_MEM_EVAL_EMBED_URL }}
       eval-api-key: ${{ secrets.DENSE_MEM_EVAL_API_KEY }}
       eval-embedding-api-key: ${{ secrets.DENSE_MEM_EVAL_EMBED_API_KEY }}
+      eval-team-api-key: ${{ secrets.DENSE_MEM_EVAL_TEAM_API_KEY }}
+      eval-database-password: ${{ secrets.DENSE_MEM_EVAL_DATABASE_PASSWORD }}
 
   report:
     name: Aggregate production E2E results

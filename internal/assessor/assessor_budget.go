@@ -59,8 +59,12 @@ func CountSemanticAssessmentRequestTokens(
 	if err != nil {
 		return 0, 0, err
 	}
+	prompt, schema := SemanticAssessmentSystemPrompt, SemanticAssessmentResponseSchemaWithLimits(limits)
+	if req.DecisionRouting != nil && req.DecisionRouting.SkipAISecurityReview {
+		prompt, schema = SemanticAssessmentPromptForGeneration(req), SemanticAssessmentGenerationSchema(req, limits)
+	}
 	if limits.LegacyProviderFraming {
-		inputTokens, err = CountTokens(semanticAssessmentSystemPrompt+string(payload), limits.Tokenizer)
+		inputTokens, err = CountTokens(prompt+string(payload), limits.Tokenizer)
 		if err != nil {
 			return 0, 0, err
 		}
@@ -69,10 +73,10 @@ func CountSemanticAssessmentRequestTokens(
 	inputTokens, err = CountSemanticAssessmentProviderRequestTokens(
 		limits.ProviderModel,
 		limits.ProviderSchemaName,
-		SemanticAssessmentResponseSchemaWithLimits(limits),
+		schema,
 		limits.ProviderTemperatureDisabled,
 		[]SemanticAssessmentProviderMessage{
-			{Role: "system", Content: SemanticAssessmentSystemPrompt},
+			{Role: "system", Content: prompt},
 			{Role: "user", Content: string(payload)},
 		},
 		limits.Tokenizer,

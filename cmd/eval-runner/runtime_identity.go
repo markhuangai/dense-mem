@@ -42,7 +42,7 @@ func verifyRuntime(ctx context.Context, manifest evalharness.Manifest) error {
 }
 
 func validateRuntime(manifest evalharness.Manifest, setting func(string) string, server, postgres runtimeContainer) error {
-	if manifest.RunID != manifest.WorkflowRunID+"-"+manifest.Dataset || setting("EVAL_SERVER_CONTAINER") != "densemem-eval-"+manifest.RunID+"-server" {
+	if manifest.RunID != manifest.ExecutionID()+"-"+manifest.Dataset || setting("EVAL_SERVER_CONTAINER") != "densemem-eval-"+manifest.RunID+"-server" {
 		return errors.New("runtime does not belong to this dataset job")
 	}
 	for _, container := range []runtimeContainer{server, postgres} {
@@ -50,7 +50,7 @@ func validateRuntime(manifest evalharness.Manifest, setting func(string) string,
 			return errors.New("runtime container ownership differs from this dataset job")
 		}
 	}
-	if server.Config.Image != manifest.Image || postgres.Config.Image != "pgvector/pgvector:0.8.2-pg18-trixie" {
+	if server.Config.Image != manifest.Image || postgres.Config.Image != manifest.PostgresRuntimeImage() {
 		return errors.New("runtime images differ from the workflow manifest")
 	}
 	port := func(container runtimeContainer, internal string) string {

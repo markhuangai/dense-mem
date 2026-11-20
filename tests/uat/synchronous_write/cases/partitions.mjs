@@ -92,6 +92,26 @@ export async function run({ rpc, rawRPC, runStep }) {
       }
     });
   }
+  for (const [fault, code, turns] of [
+    ["security", "submission_policy_rejected", 1],
+    ["partition-security-invalid", "provider_response_invalid", 3],
+    ["partition-security-timeout", "provider_unavailable", 1],
+  ]) {
+    await runStep(`intake-review-${fault}`, async () => {
+      const provider = `${process.env.DENSE_MEM_E2E_PROVIDER_URL}/health`;
+      const before = await (await fetch(provider)).json();
+      const call = await progressCall({ apiKey, args: argsFor(`Review input. [fixture-fault:${fault}]`), token: JSON.stringify(randomUUID()) });
+      const result = call.terminal.result.structuredContent;
+      assert.equal(result.processing_state, "failed");
+      assert.equal(result.errors[0].code, code);
+      assert(rememberCanonicalCounts(team, result.submission_id).every((value) => value === 0));
+      const after = await (await fetch(provider)).json();
+      assert.equal(after.embedding_calls, before.embedding_calls, "rejected intake must stop before embeddings");
+      const exchanges = after.chat_requests.slice(before.chat_requests.length);
+      assert.equal(exchanges.length, turns);
+      assert(exchanges.every((entry) => entry.schema_name === "dense_mem_semantic_partition_response" && entry.generated_fields.includes("evidence_security_results")));
+    });
+  }
   await runStep("publication-rollback-capture", async () => {
     const fn="partition_capture_"+randomUUID().replaceAll("-","");
     const args=argsFor("Intended original.\nIntended tail. [fixture-fault:partition-split]");

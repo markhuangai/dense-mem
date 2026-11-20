@@ -68,6 +68,11 @@ func TestFixturePackValidatesWholeSourceAndRejectsTampering(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, corpus, 3)
 	require.Len(t, questions, 2)
+	require.Equal(t, "hotpotqa:row:0", corpus[0].SourceDocID)
+	require.Equal(t, "hotpotqa:0", corpus[1].SourceDocID)
+	require.Equal(t, "hotpotqa:row:2", corpus[2].SourceDocID)
+	require.Equal(t, []string{corpus[0].SourceDocID}, questions[0].GoldSources)
+	require.Equal(t, []string{corpus[1].SourceDocID}, questions[1].GoldSources)
 	directory := t.TempDir()
 	for _, source := range []SourceFile{dataset.Corpus, dataset.Questions} {
 		data, err := os.ReadFile(filepath.Join("../../tests/eval/fixtures", source.Path))
@@ -117,6 +122,8 @@ func TestDatasetLocksAndAdmissionRejectIncompleteSources(t *testing.T) {
 		{"corpus denominator", corpus, questions, 2, 1},
 		{"question denominator", corpus, questions, 1, 2},
 		{"fractional identity", strings.Replace(corpus, `"idx":0`, `"idx":0.5`, 1), questions, 1, 1},
+		{"null identity", strings.Replace(corpus, `"idx":0`, `"idx":null`, 1), questions, 1, 1},
+		{"string identity", strings.Replace(corpus, `"idx":0`, `"idx":"0"`, 1), questions, 1, 1},
 		{"duplicate identity", `[{"idx":0,"title":"Title","text":"first."},{"idx":0,"title":"Title","text":"other."}]`, questions, 2, 1},
 		{"empty source", strings.Replace(corpus, "first.", "", 1), questions, 1, 1},
 		{"admission bound", strings.Replace(corpus, "first.", strings.Repeat("x", 16385), 1), questions, 1, 1},

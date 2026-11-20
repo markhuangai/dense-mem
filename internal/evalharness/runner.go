@@ -2,7 +2,6 @@ package evalharness
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -14,7 +13,7 @@ import (
 )
 
 type completion struct {
-	ImportedRows       int                    `json:"imported_rows"`
+	ImportedRows       int                    `json:"restored_rows"`
 	CanonicalHash      string                 `json:"canonical_hash"`
 	ElapsedMS          float64                `json:"elapsed_ms"`
 	Failure            string                 `json:"failure"`
@@ -36,6 +35,7 @@ func Run(ctx context.Context, manifest Manifest, corpus []CorpusItem, questions 
 	}
 	stage := "startup"
 	defer func() {
+		logsComplete := true
 		shutdown, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
 		defer cancel()
 		if err := native.Pause(shutdown); err != nil {
@@ -43,6 +43,7 @@ func Run(ctx context.Context, manifest Manifest, corpus []CorpusItem, questions 
 		}
 		if native.RuntimeLogs != nil {
 			if err := native.RuntimeLogs(shutdown); err != nil {
+				logsComplete = false
 				runErr = errors.Join(runErr, err)
 			}
 		}
@@ -57,7 +58,7 @@ func Run(ctx context.Context, manifest Manifest, corpus []CorpusItem, questions 
 			runErr = errors.Join(runErr, err)
 			report.Failure = "log capture incomplete"
 		} else {
-			report.CaptureComplete = true
+			report.CaptureComplete = logsComplete
 		}
 		if err := FinalizeReport(&report); err != nil {
 			runErr = errors.Join(runErr, err)
@@ -68,52 +69,34 @@ func Run(ctx context.Context, manifest Manifest, corpus []CorpusItem, questions 
 	}()
 	work, stop := context.WithDeadline(ctx, manifest.ModelDeadline)
 	defer stop()
-	if err := native.ResolveScope(work); err != nil {
-		return report, err
-	}
-	before, err := native.Snapshot(work)
+	stage = "seed verification"
+	seed, mapping, canonical, initial, err := VerifySeed(work, manifest, corpus, client, native)
 	if err != nil {
 		return report, err
 	}
-	if before.EvidenceCount != 0 || before.ForeignSources != 0 || before.Ontology.Enabled || !before.Ontology.Paused {
-		return report, errors.New("runner instance must be fresh with ontology disabled and paused")
-	}
-	stage = "import"
-	mapping, err := client.ImportCorpusWithConcurrency(work, corpus, DefaultImportConcurrency)
 	report.ImportedRows = len(mapping.BySourceDocID)
-	if err != nil {
-		return report, err
+	report.Identity.SeedImage = manifest.SeedImage
+	report.Identity.SeedRelease = seed.BaseRelease
+	report.Identity.SeedPreparationWorkers = seed.ImportWorkers
+	report.Timings = manifest.Timings
+	if report.Timings == nil {
+		report.Timings = map[string]float64{}
 	}
-	canonical, err := native.VerifyMappings(work, corpus, mapping)
-	if err != nil {
-		return report, err
-	}
-	for source, parts := range mapping.Partitions {
-		if err = client.Capture.Emit("mapping", map[string]any{"source_id": source, "partitions": parts}); err != nil {
-			return report, err
-		}
-	}
-	for id, evidence := range canonical {
-		if err = client.Capture.Emit("canonical", map[string]any{"evidence_id": id, "evidence": evidence}); err != nil {
-			return report, err
-		}
-	}
-	initial, err := native.Snapshot(work)
-	if err != nil {
-		return report, err
-	}
-	if err = NativeReady(initial, false, true, manifest, native.Scope.TeamID); err != nil {
+	if err = client.Capture.Emit("seed_verified", map[string]any{"seed_image": manifest.SeedImage, "corpus_rows": len(mapping.BySourceDocID), "canonical_evidence": len(canonical)}); err != nil {
 		return report, err
 	}
 	report.Identity.CanonicalHash = initial.CanonicalHash
 	report.NativeMeasurements = append(report.NativeMeasurements, initial)
 	stage = "ontology off"
+	conditionStarted := time.Now()
 	scores, err := runCondition(work, manifest, corpus, questions, mapping, canonical, client, transport, "off")
+	report.Timings["ontology_off_scoring"] = float64(time.Since(conditionStarted)) / float64(time.Millisecond)
 	report.Scores = append(report.Scores, scores...)
 	if err != nil {
 		return report, err
 	}
 	stage = "ontology convergence"
+	conditionStarted = time.Now()
 	if err = native.EnableOntology(work, manifest); err != nil {
 		return report, err
 	}
@@ -135,8 +118,11 @@ func Run(ctx context.Context, manifest Manifest, corpus []CorpusItem, questions 
 		return report, errors.New("canonical Evidence changed while draining")
 	}
 	report.NativeMeasurements = append(report.NativeMeasurements, frozen)
+	report.Timings["ontology_convergence_and_drain"] = float64(time.Since(conditionStarted)) / float64(time.Millisecond)
 	stage = "ontology on"
+	conditionStarted = time.Now()
 	scores, err = runCondition(work, manifest, corpus, questions, mapping, canonical, client, transport, "on")
+	report.Timings["ontology_on_scoring"] = float64(time.Since(conditionStarted)) / float64(time.Millisecond)
 	report.Scores = append(report.Scores, scores...)
 	if err != nil {
 		return report, err
@@ -183,6 +169,11 @@ func runCondition(ctx context.Context, manifest Manifest, corpus []CorpusItem, q
 	if err := client.Capture.Emit("condition_started", map[string]string{"condition": condition}); err != nil {
 		return nil, err
 	}
+	policies := []string{"single", "multi_turn"}
+	progress := captureProgress{Stage: "questions", Condition: condition, Unit: "answers", Total: len(questions) * len(policies)}
+	if err := client.Capture.emitProgress(progress); err != nil {
+		return nil, err
+	}
 	bySource := map[string]CorpusItem{}
 	for _, item := range corpus {
 		bySource[item.SourceDocID] = item
@@ -202,7 +193,7 @@ func runCondition(ctx context.Context, manifest Manifest, corpus []CorpusItem, q
 					initial.Error = err.Error()
 				}
 				observation := Observation{QuestionID: question.ID, Condition: condition, Initial: initial, Hosts: []HostResult{}}
-				for _, policy := range []string{"single", "multi_turn"} {
+				for _, policy := range policies {
 					observation.Hosts = append(observation.Hosts, RunHost(ctx, client, transport, manifest, HostQuestion{ID: question.ID, Query: question.Query}, initial, policy, condition))
 				}
 				err := client.Capture.Emit("observation", observation)
@@ -212,6 +203,17 @@ func runCondition(ctx context.Context, manifest Manifest, corpus []CorpusItem, q
 				}
 				mu.Lock()
 				scores = append(scores, measured...)
+				completed := 0
+				for _, score := range measured {
+					if score.Completed {
+						completed++
+					}
+				}
+				progress.Completed += completed
+				progress.Failed += len(policies) - completed
+				if progressErr := client.Capture.emitProgress(progress); err == nil {
+					err = progressErr
+				}
 				if err != nil && first == nil {
 					first = err
 				}
@@ -233,110 +235,4 @@ schedule:
 		return scores, first
 	}
 	return scores, ctx.Err()
-}
-
-func ReplayReport(events []Event, manifest Manifest, corpus []CorpusItem, questions []Question) (Report, error) {
-	if len(events) < 2 {
-		return Report{}, errors.New("replay unavailable: no complete capture")
-	}
-	var recorded Manifest
-	if err := decodePayload(events[0], &recorded); err != nil {
-		return Report{}, err
-	}
-	if recorded.SourceRevision != manifest.SourceRevision || recorded.Image != manifest.Image || recorded.RegistryHash != manifest.RegistryHash || recorded.Dataset != manifest.Dataset || recorded.RunID != manifest.RunID || recorded.Model != manifest.Model || recorded.ContextWindowTokens != manifest.ContextWindowTokens || recorded.EmbeddingModel != manifest.EmbeddingModel || recorded.EmbeddingDimensions != manifest.EmbeddingDimensions {
-		return Report{}, errors.New("replay identity differs from pinned campaign")
-	}
-	report := NewReport(recorded, len(corpus), len(questions))
-	mapping := newKnowledgeMapping()
-	canonical := map[string]CanonicalEvidence{}
-	bySource := map[string]CorpusItem{}
-	for _, item := range corpus {
-		bySource[item.SourceDocID] = item
-	}
-	byQuestion := map[string]Question{}
-	for _, q := range questions {
-		byQuestion[q.ID] = q
-	}
-	validated := false
-	for _, event := range events[1 : len(events)-1] {
-		switch event.Kind {
-		case "mapping":
-			if validated {
-				return report, errors.New("replay mappings changed after observation")
-			}
-			var value struct {
-				SourceID   string              `json:"source_id"`
-				Partitions []ImportedPartition `json:"partitions"`
-			}
-			if err := decodePayload(event, &value); err != nil {
-				return report, err
-			}
-			if _, exists := mapping.Partitions[value.SourceID]; exists {
-				return report, errors.New("duplicate replay mapping")
-			}
-			if mapping.Partitions == nil {
-				mapping.Partitions = map[string][]ImportedPartition{}
-			}
-			mapping.Partitions[value.SourceID] = value.Partitions
-		case "canonical":
-			if validated {
-				return report, errors.New("replay canonical Evidence changed after observation")
-			}
-			var value struct {
-				EvidenceID string            `json:"evidence_id"`
-				Evidence   CanonicalEvidence `json:"evidence"`
-			}
-			if err := decodePayload(event, &value); err != nil {
-				return report, err
-			}
-			if _, exists := canonical[value.EvidenceID]; exists {
-				return report, errors.New("duplicate replay canonical identity")
-			}
-			canonical[value.EvidenceID] = value.Evidence
-		case "observation":
-			if !validated {
-				if err := ValidateMappings(corpus, mapping, canonical); err != nil {
-					return report, fmt.Errorf("replay unavailable: %w", err)
-				}
-				validated = true
-			}
-			var observation Observation
-			if err := decodePayload(event, &observation); err != nil {
-				return report, err
-			}
-			question, exists := byQuestion[observation.QuestionID]
-			if !exists {
-				return report, errors.New("replay contains an unknown question")
-			}
-			scores, err := ScoreObservation(question, observation, bySource, mapping, canonical)
-			if err != nil {
-				return report, err
-			}
-			report.Scores = append(report.Scores, scores...)
-		}
-	}
-	var terminal completion
-	if err := json.Unmarshal(events[len(events)-1].Payload, &terminal); err != nil {
-		return report, err
-	}
-	report.ImportedRows, report.ElapsedMS, report.Failure, report.Identity.CanonicalHash, report.NativeMeasurements = terminal.ImportedRows, terminal.ElapsedMS, terminal.Failure, terminal.CanonicalHash, terminal.NativeMeasurements
-	report.ServerUsage = terminal.ServerUsage
-	if terminal.Failure == "" && (len(mapping.Partitions) != len(corpus) || len(terminal.NativeMeasurements) != 3) {
-		return report, errors.New("replay unavailable: required mapping or preservation evidence missing")
-	}
-	if terminal.Failure == "" && !validated {
-		if err := ValidateMappings(corpus, mapping, canonical); err != nil {
-			return report, fmt.Errorf("replay unavailable: %w", err)
-		}
-	}
-	for _, measurement := range terminal.NativeMeasurements {
-		if measurement.CanonicalHash != terminal.CanonicalHash {
-			return report, errors.New("replay canonical preservation failed")
-		}
-	}
-	report.CaptureComplete = true
-	if err := FinalizeReport(&report); err != nil {
-		return report, err
-	}
-	return report, nil
 }

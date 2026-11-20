@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/markhuangai/dense-mem/internal/config"
@@ -15,6 +16,16 @@ import (
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/stretchr/testify/require"
 )
+
+type decisionExchangeRecorder []modelprovider.ProviderExchange
+
+func (r *decisionExchangeRecorder) RecordProviderExchange(_ context.Context, exchange modelprovider.ProviderExchange) {
+	*r = append(*r, exchange)
+}
+
+type decisionRoundTripper func(*http.Request) (*http.Response, error)
+
+func (f decisionRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
 
 func TestEvidenceOnlyUnitDecisionIncompleteHTTPBodyRemainsAVisibleFailure(t *testing.T) {
 	var logs bytes.Buffer
@@ -27,14 +38,38 @@ func TestEvidenceOnlyUnitDecisionIncompleteHTTPBodyRemainsAVisibleFailure(t *tes
 		require.NoError(t, writer.Flush())
 	}))
 	defer server.Close()
-	result, err := fixtureProvider(t, "openai", server.URL, &logs).Decide(context.Background(), fixtureRequest())
+	var exchanges decisionExchangeRecorder
+	ctx := modelprovider.WithExchangeRecorder(t.Context(), &exchanges)
+	result, err := fixtureProvider(t, "openai", server.URL, &logs).Decide(ctx, fixtureRequest())
 	var provider *modelprovider.ProviderError
 	require.ErrorAs(t, err, &provider)
 	require.Equal(t, "transport", provider.FailureClass)
 	require.Empty(t, result.Answers)
+	require.Len(t, exchanges, 1)
+	require.Equal(t, http.StatusOK, exchanges[0].StatusCode)
+	require.Equal(t, "interrupted", exchanges[0].CaptureState)
+	require.Equal(t, modelprovider.NetworkInterruptedResponse, exchanges[0].Outcome)
 	require.Contains(t, logs.String(), "response_body")
 	require.Contains(t, logs.String(), "decision.exchange.completed")
 	require.NotContains(t, logs.String(), "private-decision-fixture-key")
+}
+
+func TestDecisionConnectionResetRetainsNetworkCause(t *testing.T) {
+	var logs bytes.Buffer
+	p := fixtureProvider(t, "openai", "http://fixture.invalid", &logs)
+	p.client.Transport = decisionRoundTripper(func(*http.Request) (*http.Response, error) {
+		return nil, syscall.ECONNRESET
+	})
+	var exchanges decisionExchangeRecorder
+	ctx := modelprovider.WithExchangeRecorder(t.Context(), &exchanges)
+	_, err := p.Decide(ctx, fixtureRequest())
+	var provider *modelprovider.ProviderError
+	require.ErrorAs(t, err, &provider)
+	require.Equal(t, "transport", provider.FailureClass)
+	require.Len(t, exchanges, 1)
+	require.Zero(t, exchanges[0].StatusCode)
+	require.Equal(t, "no_response", exchanges[0].CaptureState)
+	require.Equal(t, modelprovider.NetworkConnectionReset, exchanges[0].Outcome)
 }
 
 func TestEvidenceOnlyUnitDecisionFailuresPreserveCompleteExchanges(t *testing.T) {
@@ -68,12 +103,16 @@ func TestEvidenceOnlyUnitDecisionFailuresPreserveCompleteExchanges(t *testing.T)
 			}))
 			defer server.Close()
 			p := fixtureProvider(t, "openai", server.URL, &logs)
-			result, err := p.Decide(context.Background(), fixtureRequest())
+			var exchanges decisionExchangeRecorder
+			ctx := modelprovider.WithExchangeRecorder(t.Context(), &exchanges)
+			result, err := p.Decide(ctx, fixtureRequest())
 			require.Equal(t, 1, calls)
+			require.Len(t, exchanges, 1)
 			require.NotContains(t, logs.String(), p.config.APIKey)
 			require.Contains(t, logs.String(), "decision.exchange.completed")
 			if test.status != 200 || test.reportedOverflow {
 				require.Error(t, err)
+				require.Equal(t, "error", exchanges[0].Outcome)
 				require.Empty(t, result.Answers)
 				if test.status == 429 {
 					var rate *modelprovider.RateLimitError
@@ -89,6 +128,7 @@ func TestEvidenceOnlyUnitDecisionFailuresPreserveCompleteExchanges(t *testing.T)
 				}
 			} else {
 				require.NoError(t, err)
+				require.Equal(t, "ok", exchanges[0].Outcome)
 				require.Equal(t, "unavailable", result.Receipts[0].ProviderRequestID)
 			}
 		})

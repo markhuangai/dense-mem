@@ -37,6 +37,34 @@ func TestLoadPostgresAndCoordinationDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadPostgresAdvisoryLockConcurrency(t *testing.T) {
+	for _, value := range []string{"", "20", "0", "-1", "25", "26", "invalid"} {
+		t.Run(value, func(t *testing.T) {
+			clearEnv()
+			setRequiredEnv()
+			t.Setenv("POSTGRES_ADVISORY_LOCK_CONCURRENCY", value)
+			cfg, err := Load()
+			if value == "" || value == "20" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := 0
+				if value == "20" {
+					want = 20
+				}
+				if cfg.PostgresAdvisoryLockConcurrency != want {
+					t.Fatalf("advisory override = %d, want %d", cfg.PostgresAdvisoryLockConcurrency, want)
+				}
+				return
+			}
+			validation, ok := err.(*ValidationError)
+			if !ok || validation.Field != "POSTGRES_ADVISORY_LOCK_CONCURRENCY" {
+				t.Fatalf("expected advisory concurrency validation error, got %v", err)
+			}
+		})
+	}
+}
+
 func TestLoadPostgresAndCoordinationOverrides(t *testing.T) {
 	clearEnv()
 	setRequiredEnv()

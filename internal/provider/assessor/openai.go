@@ -322,7 +322,7 @@ func (v *OpenAIAssessor) openAIStructuredChatJSON(
 
 	httpResp, err := v.httpClient.Do(httpReq)
 	if err != nil {
-		recordOpenAIExchange(ctx, "assessor", model, bodyBytes, nil, "", 0, "no_response", started)
+		recordOpenAIExchange(ctx, "assessor", model, bodyBytes, nil, "", 0, "no_response", started, err)
 		if ctx.Err() != nil {
 			latencyOutcome = "timeout"
 			return "", &TimeoutError{
@@ -340,14 +340,14 @@ func (v *OpenAIAssessor) openAIStructuredChatJSON(
 
 	rawResponse, readErr := io.ReadAll(io.LimitReader(httpResp.Body, openAIVerifierMaxResponseBytes+1))
 	if readErr != nil {
-		recordOpenAIExchange(ctx, "assessor", model, bodyBytes, rawResponse, httpResp.Header.Get("Content-Type"), httpResp.StatusCode, "response_read_failed", started)
+		recordOpenAIExchange(ctx, "assessor", model, bodyBytes, rawResponse, httpResp.Header.Get("Content-Type"), httpResp.StatusCode, "response_read_failed", started, readErr)
 		return "", &ProviderError{Provider: openAIVerifierProvider, Message: "failed to read provider response", FailureClass: ProviderFailureClassProtocol}
 	}
 	if len(rawResponse) > openAIVerifierMaxResponseBytes {
-		recordOpenAIExchange(ctx, "assessor", model, bodyBytes, rawResponse, httpResp.Header.Get("Content-Type"), httpResp.StatusCode, "response_too_large", started)
+		recordOpenAIExchange(ctx, "assessor", model, bodyBytes, rawResponse, httpResp.Header.Get("Content-Type"), httpResp.StatusCode, "response_too_large", started, nil)
 		return "", &ProviderError{Provider: openAIVerifierProvider, Message: "provider response exceeds transport limit", FailureClass: ProviderFailureClassProtocol}
 	}
-	recordOpenAIExchange(ctx, "assessor", model, bodyBytes, rawResponse, httpResp.Header.Get("Content-Type"), httpResp.StatusCode, "captured", started)
+	recordOpenAIExchange(ctx, "assessor", model, bodyBytes, rawResponse, httpResp.Header.Get("Content-Type"), httpResp.StatusCode, "captured", started, nil)
 	apiResp, err := decodeOpenAIVerifierAPIResponse(bytes.NewReader(rawResponse))
 	if err != nil {
 		if httpResp.StatusCode == http.StatusOK {
@@ -506,7 +506,7 @@ func (v *OpenAIAssessor) openAIStructuredChatMessagesJSONWithUsage(
 	if err != nil {
 		httpMS := time.Since(httpStarted).Milliseconds()
 		diagnostics.HTTPMS = &httpMS
-		recordOpenAIExchange(ctx, "assessor", model, bodyBytes, nil, "", 0, "no_response", started)
+		recordOpenAIExchange(ctx, "assessor", model, bodyBytes, nil, "", 0, "no_response", started, err)
 		if openAIRequestTimedOutOrCanceled(ctx, err) {
 			latencyOutcome = "timeout"
 			return openAIStructuredChatResult{}, &TimeoutError{
@@ -526,7 +526,7 @@ func (v *OpenAIAssessor) openAIStructuredChatMessagesJSONWithUsage(
 	httpMS := time.Since(httpStarted).Milliseconds()
 	diagnostics.HTTPMS = &httpMS
 	if readErr != nil {
-		recordOpenAIExchange(ctx, "assessor", model, bodyBytes, rawResponse, httpResp.Header.Get("Content-Type"), httpResp.StatusCode, "response_read_failed", started)
+		recordOpenAIExchange(ctx, "assessor", model, bodyBytes, rawResponse, httpResp.Header.Get("Content-Type"), httpResp.StatusCode, "response_read_failed", started, readErr)
 		if openAIRequestTimedOutOrCanceled(ctx, readErr) {
 			latencyOutcome = "timeout"
 			return openAIStructuredChatResult{}, &TimeoutError{Provider: openAIVerifierProvider, Message: "provider response timed out or was canceled"}
@@ -534,10 +534,10 @@ func (v *OpenAIAssessor) openAIStructuredChatMessagesJSONWithUsage(
 		return openAIStructuredChatResult{}, &ProviderError{Provider: openAIVerifierProvider, Message: "failed to read provider response", FailureClass: ProviderFailureClassProtocol}
 	}
 	if len(rawResponse) > openAIVerifierMaxResponseBytes {
-		recordOpenAIExchange(ctx, "assessor", model, bodyBytes, rawResponse, httpResp.Header.Get("Content-Type"), httpResp.StatusCode, "response_too_large", started)
+		recordOpenAIExchange(ctx, "assessor", model, bodyBytes, rawResponse, httpResp.Header.Get("Content-Type"), httpResp.StatusCode, "response_too_large", started, nil)
 		return openAIStructuredChatResult{}, &ProviderError{Provider: openAIVerifierProvider, Message: fmt.Sprintf("provider response exceeds %d byte transport limit", openAIVerifierMaxResponseBytes), FailureClass: ProviderFailureClassProtocol}
 	}
-	recordOpenAIExchange(ctx, "assessor", model, bodyBytes, rawResponse, httpResp.Header.Get("Content-Type"), httpResp.StatusCode, "captured", started)
+	recordOpenAIExchange(ctx, "assessor", model, bodyBytes, rawResponse, httpResp.Header.Get("Content-Type"), httpResp.StatusCode, "captured", started, nil)
 
 	diagnostics.FailurePhase = "response_status"
 	if httpResp.StatusCode == http.StatusTooManyRequests {
@@ -611,7 +611,7 @@ func (v *OpenAIAssessor) openAIStructuredChatMessagesJSONWithUsage(
 	}, nil
 }
 
-func recordOpenAIExchange(ctx context.Context, component, model string, requestBody, responseBody []byte, responseContentType string, statusCode int, outcome string, started time.Time) {
+func recordOpenAIExchange(ctx context.Context, component, model string, requestBody, responseBody []byte, responseContentType string, statusCode int, outcome string, started time.Time, transportErr error) {
 	recorder := modelprovider.ExchangeRecorderFromContext(ctx)
 	if recorder == nil {
 		return
@@ -619,6 +619,14 @@ func recordOpenAIExchange(ctx context.Context, component, model string, requestB
 	captureState := ""
 	if len(requestBody) > modelprovider.MaxProviderDiagnosticBodyBytes || len(responseBody) > modelprovider.MaxProviderDiagnosticBodyBytes {
 		captureState = "truncated"
+	}
+	if failure := modelprovider.TransientNetworkFailure(transportErr); failure != "" {
+		if outcome == "no_response" {
+			captureState = "no_response"
+		} else if captureState == "" {
+			captureState = "interrupted"
+		}
+		outcome = failure
 	}
 	recorder.RecordProviderExchange(ctx, modelprovider.ProviderExchange{
 		Component:           component,

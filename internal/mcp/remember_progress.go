@@ -196,6 +196,7 @@ func (p *sdkRememberProgress) emitUpdate(ctx context.Context, update requestctx.
 	message := progressMessage(rememberapp.ProgressStage(update.Stage))
 	operation := map[string]string{
 		"partition": "partition provider", "assessment": "assessment provider",
+		"intake_security":     "intake security provider",
 		"duplicate_embedding": "duplicate embedding provider", "embedding": "embedding provider",
 		"session_extraction": "session extraction provider", "recall_embedding": "query embedding provider",
 		"recall_reranking": "Recall ranking provider",

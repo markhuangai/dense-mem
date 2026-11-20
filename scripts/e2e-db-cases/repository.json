@@ -3,6 +3,13 @@
   "capability": "repository",
   "cases": [
     {
+      "id": "repository/TestEvidenceInsertPreservesDriverFailures",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestEvidenceInsertPreservesDriverFailures$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/ledger_repository_integration_test.go"
+    },
+    {
       "id": "repository/TestComposeRememberPrimitives",
       "package": "./internal/knowledge/postgres",
       "run": "^TestComposeRememberPrimitives$",

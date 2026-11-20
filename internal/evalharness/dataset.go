@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -74,11 +75,16 @@ func (r Registry) Dataset(id string) (Dataset, error) {
 }
 
 func FileHash(path string) (string, error) {
-	data, err := os.ReadFile(path)
+	file, err := os.Open(path)
 	if err != nil {
 		return "", err
 	}
-	return bytesHash(data), nil
+	defer file.Close()
+	hash := sha256.New()
+	if _, err = io.Copy(hash, file); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
 func bytesHash(data []byte) string { sum := sha256.Sum256(data); return hex.EncodeToString(sum[:]) }
@@ -122,12 +128,15 @@ func LoadDataset(dataset Dataset, directory string) ([]CorpusItem, []Question, e
 	corpus := make([]CorpusItem, 0, len(rows))
 	byText := map[string][]string{}
 	seen := map[string]bool{}
-	for _, row := range rows {
-		var index int
-		if err := json.Unmarshal(row.Index, &index); err != nil {
-			return nil, nil, errors.New("corpus index must be an integer")
+	for position, row := range rows {
+		id := dataset.ID + ":row:" + strconv.Itoa(position)
+		if len(row.Index) != 0 {
+			var index *int
+			if err := json.Unmarshal(row.Index, &index); err != nil || index == nil {
+				return nil, nil, errors.New("corpus index must be an integer when present")
+			}
+			id = dataset.ID + ":" + strconv.Itoa(*index)
 		}
-		id := dataset.ID + ":" + strconv.Itoa(index)
 		content := row.Title + "\n" + row.Text
 		if seen[id] || row.Text == "" || utf8.RuneCountInString(content) > 16384 {
 			return nil, nil, errors.New("invalid corpus row or admission limit")

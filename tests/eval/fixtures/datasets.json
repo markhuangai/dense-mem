@@ -9,7 +9,7 @@
       "adapter": "hotpotqa",
       "corpus": {
         "path": "hotpotqa_corpus.json",
-        "sha256": "1a1632353c0ac55fc0b915ef35e2b8db864f6420b0d8dcb7825ad44362653572",
+        "sha256": "b53bf4da25a6c049382c393644ea82f5b91839e8b282e2698be5998fea6a07c0",
         "rows": 3
       },
       "questions": {

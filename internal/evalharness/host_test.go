@@ -20,6 +20,41 @@ func (f scriptedAnswer) Complete(ctx context.Context, request modelprovider.Stru
 	return f(ctx, request)
 }
 
+func TestConditionProgressCountsCompletedAndFailedAnswers(t *testing.T) {
+	question, observation, bySource, mapping, canonical := scoringFixture()
+	failedQuestion := question
+	failedQuestion.ID, failedQuestion.Query = "failed-question", "Provider failure"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "recall_memory", r.Header.Get("Mcp-Name"))
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"result": map[string]any{"structuredContent": observation.Initial.Result}}))
+	}))
+	defer server.Close()
+	var logs bytes.Buffer
+	client := &HTTPClient{BaseURL: server.URL, APIKey: "synthetic", Client: server.Client(), Capture: captureFixture(&logs)}
+	transport := scriptedAnswer(func(_ context.Context, request modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
+		var input struct{ Question string }
+		require.NoError(t, json.Unmarshal([]byte(request.Messages[1].Content), &input))
+		if input.Question == failedQuestion.Query {
+			return modelprovider.StructuredResult{}, errors.New("provider unavailable")
+		}
+		body, err := json.Marshal(hostAction{Action: "answer", Answer: "Postgres", Citations: []Citation{}})
+		return modelprovider.StructuredResult{Content: string(body)}, err
+	})
+	corpus := []CorpusItem{}
+	for _, item := range bySource {
+		corpus = append(corpus, item)
+	}
+	scores, err := runCondition(context.Background(), Manifest{Model: "synthetic", ContextWindowTokens: 500000}, corpus, []Question{question, failedQuestion}, mapping, canonical, client, transport, "off")
+	require.NoError(t, err)
+	require.Len(t, scores, 4)
+	progress := capturedProgress(t, logs.Bytes())
+	require.Len(t, progress, 3)
+	require.Equal(t, captureProgress{Stage: "questions", Condition: "off", Unit: "answers", Total: 4, Remaining: 4}, progress[0])
+	require.Equal(t, 2, progress[1].Completed+progress[1].Failed)
+	require.Equal(t, 2, progress[1].Remaining)
+	require.Equal(t, captureProgress{Stage: "questions", Condition: "off", Unit: "answers", Total: 4, Completed: 2, Failed: 2}, progress[2])
+}
+
 func TestIndependentHostsShareInitialRecallAndEnforceEightCalls(t *testing.T) {
 	additional := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

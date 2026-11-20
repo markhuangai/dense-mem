@@ -10,15 +10,17 @@ import (
 )
 
 type SemanticAssessmentRouting struct {
-	Security    []SemanticAssessmentEvidenceSecurityResult
-	Equivalence []SemanticAssessmentEvidenceEquivalenceResult
-	Stages      []modelprovider.DecisionStage
+	SkipAISecurityReview bool
+	Security             []SemanticAssessmentEvidenceSecurityResult
+	Equivalence          []SemanticAssessmentEvidenceEquivalenceResult
+	Stages               []modelprovider.DecisionStage
 }
 
 func SemanticSecurityHazards() []string { return semanticSecurityKinds() }
 
 func semanticAssessmentGenerationJSON(response SemanticAssessmentResponse) ([]byte, error) {
 	response.DecisionStages = nil
+	response.AISecurityReview = ""
 	return json.Marshal(response)
 }
 
@@ -45,13 +47,21 @@ func SemanticAssessmentGenerationInstruction(request SemanticAssessmentRequest) 
 		return ""
 	}
 	instruction := ""
-	if request.DecisionRouting.Security != nil {
+	if request.DecisionRouting.Security != nil && !request.DecisionRouting.SkipAISecurityReview {
 		instruction += "\nThe server has completed evidence security review. Do not classify security or return evidence_security_results. Continue evaluating all evidence for the remaining fields."
 	}
 	if request.DecisionRouting.Equivalence != nil {
 		instruction += "\nThe server has completed evidence deduplication. Do not classify equivalence or return evidence_equivalence_results. Candidate evidence remains read-only context for cited conflicts."
 	}
 	return instruction
+}
+
+func SemanticAssessmentPromptForGeneration(request SemanticAssessmentRequest) string {
+	prompt := SemanticAssessmentSystemPrompt
+	if request.DecisionRouting != nil && request.DecisionRouting.SkipAISecurityReview {
+		prompt = "You are Dense-Mem's Evidence equivalence and conflict assessor. " + semanticAssessmentPromptIntro + semanticAssessmentTaskPrompt + "\n\n" + SemanticAssessmentConflictContext
+	}
+	return prompt + SemanticAssessmentGenerationInstruction(request)
 }
 
 func DecodeSemanticAssessmentGeneration(raw []byte, request SemanticAssessmentRequest, limits SemanticAssessmentLimits) (SemanticAssessmentResponse, error) {

@@ -815,7 +815,13 @@ func TestOpenAIAssessorWithUsageSurfacesMarshalRequestAndTransportFailures(t *te
 			return nil, context.DeadlineExceeded
 		}),
 	})
-	_, err = v.openAIStructuredChatJSONWithUsage(context.Background(), "model", "schema", map[string]any{}, "system", map[string]any{})
+	recorder := &assessorExchangeRecorder{}
+	ctx := modelprovider.WithExchangeRecorder(t.Context(), recorder)
+	_, err = v.openAIStructuredChatJSONWithUsage(ctx, "model", "schema", map[string]any{}, "system", map[string]any{})
+	require.Len(t, recorder.exchanges, 1)
+	require.Equal(t, modelprovider.NetworkTimeout, recorder.exchanges[0].Outcome)
+	require.Equal(t, "no_response", recorder.exchanges[0].CaptureState)
+	require.Zero(t, recorder.exchanges[0].StatusCode)
 	var timeout *TimeoutError
 	require.ErrorAs(t, err, &timeout)
 

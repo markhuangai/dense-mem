@@ -7,7 +7,7 @@ import { rememberWithEmbeddingRetry } from "../remember_retry.mjs";
 
 export const name = "progress";
 const messages = ["Checking session ownership", "Preparing extraction windows", "Waiting for extraction window capacity", "Extracting exact session excerpts", "Validating session excerpts", "Regenerating session excerpts", "Saving validated session excerpts", "Preparing Recall policy", "Reading the search contract", "Preparing query embedding", "Searching authorized Evidence", "Reading authorized Evidence", "Reading Evidence conflicts", "Ranking authorized Evidence", "Selecting related topics", "Recording the Recall snapshot", "Reading the authorized Evidence trace", "Applying Evidence retraction", "Recording Recall feedback", "Reading Evidence for export", "Building the memory pack", "Recording evaluation audit", "Listing authorized evaluation references", "Validating input", "Checking previous result", "Returning saved result", "Preparing intake", "Preparing semantic boundaries", "Partitioning submitted text", "Validating partitions", "Regenerating partitions", "Preparing duplicate-search embeddings", "Checking duplicate Evidence", "Assessing Evidence", "Validating assessment", "Regenerating assessment", "Preparing search state", "Committing", "Preparing result", "Recording failure result", "Waiting for an identical request", "Preparing embedding batch"];
-const providerMessage = /^(Waiting for (partition|assessment|duplicate embedding|embedding|session extraction|query embedding|Recall ranking) provider capacity|Waiting before retrying (partition|assessment|duplicate embedding|embedding|session extraction|query embedding|Recall ranking) provider|Calling (partition|assessment|duplicate embedding|embedding|session extraction|query embedding|Recall ranking) provider)$/;
+const providerMessage = /^(Waiting for (partition|assessment|intake security|duplicate embedding|embedding|session extraction|query embedding|Recall ranking) provider capacity|Waiting before retrying (partition|assessment|intake security|duplicate embedding|embedding|session extraction|query embedding|Recall ranking) provider|Calling (partition|assessment|intake security|duplicate embedding|embedding|session extraction|query embedding|Recall ranking) provider)$/;
 const rememberModel = "dense-mem-synchronous-write-e2e-remember";
 
 export async function run({ expect, runStep }) {
@@ -271,7 +271,7 @@ async function progressAttempt({ apiKey, name = "remember", args, token, accept 
       assert.equal(item.params.progress, progress.length + 1);
       assert(!Object.hasOwn(item.params, "total"));
       const baseMessage=item.params.message.replace(/ \(\d+\/\d+\)$/," ").trim();
-      assert(messages.includes(baseMessage)||providerMessage.test(baseMessage)||/^Regenerating (assessment|Recall ranking) provider response$/.test(baseMessage),item.params.message);
+      assert(messages.includes(baseMessage)||providerMessage.test(baseMessage)||/^Regenerating (assessment|intake security|Recall ranking) provider response$/.test(baseMessage),item.params.message);
       assert.notEqual(progress.at(-1)?.params.message,item.params.message,"identical consecutive updates must be suppressed");
       if (/^-?\d+$/.test(token)) assert(text.includes('"progressToken":' + token + ",") || text.includes('"progressToken":' + token + "}"));
       else assert.equal(item.params.progressToken, JSON.parse(token));

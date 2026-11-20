@@ -31,7 +31,21 @@ type rememberPreparationError struct {
 func (e *rememberPreparationError) Error() string { return "remember preparation failed" }
 func (e *rememberPreparationError) Unwrap() error { return e.Cause }
 
-func (p *rememberSynchronousProcessor) prepareRemember(ctx context.Context, input rememberapp.RememberProcessRequest, snapshot rememberapp.RememberAssessmentSnapshot, scope rememberapp.RememberAssessmentScope, started time.Time) (*preparedRemember, error) {
+func (p *rememberSynchronousProcessor) rememberDecisionSnapshot(ctx context.Context) (*domain.DecisionRuntimeConfig, error) {
+	if p.decisions == nil {
+		return nil, nil
+	}
+	if p.decisionSettings == nil {
+		return nil, fmt.Errorf("%w: decision settings are required", rememberapp.ErrRememberProviderUnavailable)
+	}
+	value, err := p.decisionSettings.DecisionRuntimeConfig(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("%w: decision settings unavailable: %w", rememberapp.ErrRememberProviderUnavailable, err)
+	}
+	return &value, nil
+}
+
+func (p *rememberSynchronousProcessor) prepareRemember(ctx context.Context, input rememberapp.RememberProcessRequest, snapshot rememberapp.RememberAssessmentSnapshot, scope rememberapp.RememberAssessmentScope, started time.Time, intakeSecurity *rememberapp.RememberIntakeSecurity) (*preparedRemember, error) {
 	ingestID := scope.IngestID
 	assessorTurns := 0
 	var assessorDiagnostics map[string]any
@@ -40,15 +54,14 @@ func (p *rememberSynchronousProcessor) prepareRemember(ctx context.Context, inpu
 		return nil, &rememberPreparationError{Phase: phase, AssessorTurns: assessorTurns, AssessorSecurityRejected: input.AssessorSecurityRejected, Cause: err}
 	}
 	var decisionSnapshot *domain.DecisionRuntimeConfig
-	if p.decisions != nil {
-		if p.decisionSettings == nil {
-			return fail(fmt.Errorf("%w: decision settings are required", rememberapp.ErrRememberProviderUnavailable), "assessment")
-		}
-		value, err := p.decisionSettings.DecisionRuntimeConfig(ctx)
+	if intakeSecurity != nil {
+		decisionSnapshot = intakeSecurity.DecisionSnapshot
+	} else {
+		var err error
+		decisionSnapshot, err = p.rememberDecisionSnapshot(ctx)
 		if err != nil {
-			return fail(fmt.Errorf("%w: decision settings unavailable: %w", rememberapp.ErrRememberProviderUnavailable, err), "assessment")
+			return fail(err, "assessment")
 		}
-		decisionSnapshot = &value
 	}
 	var handleErr error
 	input, handleErr = p.resolveRememberEvidenceHandles(ctx, input)
@@ -99,7 +112,7 @@ func (p *rememberSynchronousProcessor) prepareRemember(ctx context.Context, inpu
 	prepared, err := rememberapp.AssessSynchronousRemember(ctx, rememberapp.SynchronousAssessmentDependencies{
 		Provider: p.provider, Limits: p.limits, Metrics: p.metrics, Logger: p.logger,
 		Decisions: p.decisions, DecisionSnapshot: decisionSnapshot,
-	}, rememberapp.SynchronousAssessmentInput{Scope: scope, Snapshot: snapshot})
+	}, rememberapp.SynchronousAssessmentInput{Scope: scope, Snapshot: snapshot, IntakeSecurity: intakeSecurity})
 	assessorDiagnostics = rememberapp.SynchronousAssessmentDiagnostics(err)
 	if prepared != nil {
 		assessorDiagnostics = prepared.Diagnostics
@@ -173,7 +186,7 @@ func (p *rememberSynchronousProcessor) PrepareSession(ctx context.Context, req s
 	}
 	snapshot, scope := rememberAssessmentSnapshot(input, req.SubmissionID)
 	snapshot.MaxEvidenceItems = session.MaxExcerpts
-	prepared, err := p.prepareRemember(ctx, input, snapshot, scope, started)
+	prepared, err := p.prepareRemember(ctx, input, snapshot, scope, started, nil)
 	if err != nil {
 		var failure *rememberPreparationError
 		phase := "assessment"

@@ -264,13 +264,17 @@ func (p *rememberSynchronousProcessor) processRememberUnlocked(
 		return fail(rememberapp.SecurityRejectionFailure(input.SecuritySignals, input.SecuritySignalsTruncated, "initial_scan"), "assessment")
 	}
 	rememberapp.ReportProgress(ctx, rememberapp.ProgressPreparingIntake)
-	partitioned, partitionErr := p.partitionRemember(ctx, input, ingestID)
+	decisionSnapshot, err := p.rememberDecisionSnapshot(ctx)
+	if err != nil {
+		return fail(err, "assessment")
+	}
+	partitioned, intakeSecurity, partitionErr := p.partitionRemember(ctx, input, ingestID, decisionSnapshot)
 	if partitionErr != nil {
 		return fail(partitionErr, "assessment")
 	}
 	partitionSnapshot, _ := rememberAssessmentSnapshot(partitioned, ingestID)
 	partitionSnapshot.MaxEvidenceItems = repository.MaxRememberPartitions
-	preparedWrite, prepareErr := p.prepareRemember(ctx, partitioned, partitionSnapshot, scope, started)
+	preparedWrite, prepareErr := p.prepareRemember(ctx, partitioned, partitionSnapshot, scope, started, intakeSecurity)
 	if prepareErr != nil {
 		var preparation *rememberPreparationError
 		if errors.As(prepareErr, &preparation) {

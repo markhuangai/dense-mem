@@ -1,33 +1,34 @@
 package evalharness
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
 	"log/slog"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/markhuangai/dense-mem/internal/jsonstrict"
 	"github.com/markhuangai/dense-mem/internal/observability"
 )
 
 const captureLimit = 16 << 20
+const captureInlineLimit = observability.MaxOperationMetadataBytes / 2
 
 type Capture struct {
-	Logger    *slog.Logger
-	Protector *observability.CredentialProtector
-	RunID     string
-	mu        sync.Mutex
-	sequence  int
-	previous  string
-	failed    bool
+	Logger               *slog.Logger
+	Protector            *observability.CredentialProtector
+	RunID                string
+	mu                   sync.Mutex
+	sequence             int
+	failed               bool
+	importStart          time.Time
+	importStartCompleted int
 }
 
 type Event struct {
@@ -35,22 +36,50 @@ type Event struct {
 	Payload json.RawMessage `json:"payload"`
 }
 
-type captureRecord struct {
-	RunID    string                            `json:"run_id"`
-	Sequence int                               `json:"sequence"`
-	Previous string                            `json:"previous"`
-	Chunk    observability.DiagnosticBodyChunk `json:"payload_chunk"`
+type captureProgress struct {
+	Stage     string `json:"stage"`
+	Condition string `json:"condition,omitempty"`
+	Unit      string `json:"unit"`
+	Total     int    `json:"total"`
+	Completed int    `json:"completed"`
+	Failed    int    `json:"failed"`
+	Remaining int    `json:"remaining"`
+}
+
+func (c *Capture) emitProgress(progress captureProgress) error {
+	if progress.Total < 0 || progress.Completed < 0 || progress.Failed < 0 || progress.Completed > progress.Total || progress.Failed > progress.Total-progress.Completed {
+		return errors.New("invalid evaluation progress counts")
+	}
+	progress.Remaining = progress.Total - progress.Completed - progress.Failed
+	return c.Emit("progress", progress)
+}
+
+func (c *Capture) incomplete() bool {
+	if c == nil {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.failed
 }
 
 func NewRunnerCredentialProtector(configured ...string) *observability.CredentialProtector {
 	values := append([]string(nil), configured...)
 	for _, value := range configured {
+		if endpoint, err := url.Parse(value); err == nil && (endpoint.Scheme == "http" || endpoint.Scheme == "https") && endpoint.Hostname() != "" {
+			// DNS and TLS errors can contain the host alone.
+			values = append(values, endpoint.Hostname())
+		}
+	}
+	for _, value := range values {
 		if value == "" {
 			continue
 		}
 		for _, encoding := range []*base64.Encoding{base64.StdEncoding, base64.RawStdEncoding, base64.URLEncoding, base64.RawURLEncoding} {
 			values = append(values, encoding.EncodeToString([]byte(value)))
 		}
+		encoded := hex.EncodeToString([]byte(value))
+		values = append(values, encoded, strings.ToUpper(encoded))
 	}
 	return observability.NewCredentialProtector(values...)
 }
@@ -63,6 +92,22 @@ func (c *Capture) Emit(kind string, payload any) error {
 	defer c.mu.Unlock()
 	if c.failed {
 		return errors.New("benchmark log capture is incomplete")
+	}
+	if progress, ok := payload.(captureProgress); ok && progress.Stage == "import" {
+		if c.importStart.IsZero() {
+			c.importStart = time.Now()
+			c.importStartCompleted = progress.Completed
+		}
+		elapsed := time.Since(c.importStart)
+		rate := float64(0)
+		if elapsed > 0 {
+			rate = float64(max(0, progress.Completed-c.importStartCompleted)) / elapsed.Minutes()
+		}
+		payload = struct {
+			captureProgress
+			ElapsedMS          int64   `json:"elapsed_ms"`
+			DocumentsPerMinute float64 `json:"documents_per_minute"`
+		}{progress, elapsed.Milliseconds(), rate}
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -86,7 +131,15 @@ func (c *Capture) Emit(kind string, payload any) error {
 		c.Logger.Error("eval_capture_unavailable", "run_id", c.RunID, "sequence", c.sequence+1, "reason", reason.Code())
 		return errors.New("benchmark payload protection unavailable")
 	}
-	chunks := observability.ChunkProtectedDiagnosticBody(protected, captureLimit)
+	var event Event
+	if err := json.Unmarshal(protected, &event); err != nil {
+		c.failed = true
+		return errors.New("protected benchmark event is invalid")
+	}
+	var chunks []observability.DiagnosticBodyChunk
+	if len(protected) > captureInlineLimit {
+		chunks = observability.ChunkProtectedDiagnosticBody(protected, captureLimit)
+	}
 	for _, chunk := range chunks {
 		if chunk.State != "captured" {
 			c.failed = true
@@ -95,16 +148,20 @@ func (c *Capture) Emit(kind string, payload any) error {
 		}
 	}
 	c.sequence++
-	for _, chunk := range chunks {
-		record, err := json.Marshal(captureRecord{RunID: c.RunID, Sequence: c.sequence, Previous: c.previous, Chunk: chunk})
-		if err != nil {
-			c.failed = true
-			return err
-		}
-		// Encode only after credential protection so Actions masking cannot change replay bytes.
-		c.Logger.Debug("eval_capture", "record", base64.StdEncoding.EncodeToString(record))
+	level, message := slog.LevelDebug, "eval_capture"
+	if event.Kind == "progress" {
+		level, message = slog.LevelInfo, "eval_progress"
+	} else if event.Kind == "resources" {
+		level, message = slog.LevelInfo, "eval_resources"
 	}
-	c.previous = chunks[0].SHA256
+	fields := []any{"run_id", c.RunID, "sequence", c.sequence, "kind", event.Kind}
+	if len(chunks) == 0 {
+		c.Logger.Log(context.Background(), level, message, append(fields, "payload", json.RawMessage(event.Payload))...)
+		return nil
+	}
+	for _, chunk := range chunks {
+		c.Logger.Log(context.Background(), level, message, append(fields, "payload_chunk", chunk)...)
+	}
 	return nil
 }
 
@@ -122,108 +179,6 @@ func (c *Capture) ProtectError(err error) string {
 	return string(value)
 }
 
-// ReplayEvents reconstructs only the exact run's ordered, complete protected log stream.
-func ReplayEvents(readers []io.Reader, runID string) ([]Event, error) {
-	events := []Event{}
-	previous := ""
-	sequence := 1
-	var current []captureRecord
-	consume := func() error {
-		count := current[0].Chunk.Count
-		if count <= 0 || len(current) != count {
-			return errors.New("replay unavailable: incomplete payload chunks")
-		}
-		parts := make([]string, count)
-		seen := map[int]bool{}
-		for _, row := range current {
-			chunk := row.Chunk
-			if chunk.State != "captured" || chunk.Count != count || chunk.Index < 0 || chunk.Index >= count || seen[chunk.Index] || row.Previous != previous || chunk.SHA256 != current[0].Chunk.SHA256 {
-				return errors.New("replay unavailable: invalid capture chain")
-			}
-			seen[chunk.Index] = true
-			parts[chunk.Index] = chunk.Body
-		}
-		body := []byte(strings.Join(parts, ""))
-		if bytesHash(body) != current[0].Chunk.SHA256 {
-			return errors.New("replay unavailable: payload hash mismatch")
-		}
-		var event Event
-		if err := json.Unmarshal(body, &event); err != nil {
-			return err
-		}
-		switch event.Kind {
-		case "started", "mapping", "canonical", "observation", "finished":
-			events = append(events, event)
-		}
-		previous = current[0].Chunk.SHA256
-		sequence++
-		current = nil
-		return nil
-	}
-	for _, reader := range readers {
-		scanner := bufio.NewScanner(reader)
-		scanner.Buffer(make([]byte, 64<<10), 1<<20)
-		for scanner.Scan() {
-			line := scanner.Text()
-			start := strings.Index(line, "{")
-			if start < 0 {
-				continue
-			}
-			var envelope struct {
-				Message string `json:"msg"`
-				Record  string `json:"record"`
-				RunID   string `json:"run_id"`
-			}
-			if json.Unmarshal([]byte(line[start:]), &envelope) != nil {
-				if strings.Contains(line, "eval_capture") && strings.Contains(line, runID) {
-					return nil, errors.New("replay unavailable: malformed log record")
-				}
-				continue
-			}
-			if envelope.Message == "eval_capture_unavailable" && envelope.RunID == runID {
-				return nil, errors.New("replay unavailable: capture unavailable")
-			}
-			if envelope.Message != "eval_capture" {
-				continue
-			}
-			body, err := base64.StdEncoding.DecodeString(envelope.Record)
-			var row captureRecord
-			if err != nil || json.Unmarshal(body, &row) != nil {
-				return nil, errors.New("replay unavailable: malformed encoded capture record")
-			}
-			if row.RunID != runID {
-				continue
-			}
-			if row.Sequence != sequence {
-				return nil, errors.New("replay unavailable: log sequence interrupted or duplicated")
-			}
-			if row.Chunk.Count < 1 || row.Chunk.Count > captureLimit/1024+1 {
-				return nil, errors.New("replay unavailable: invalid chunk bound")
-			}
-			current = append(current, row)
-			if len(current) == row.Chunk.Count {
-				if err := consume(); err != nil {
-					return nil, err
-				}
-			}
-		}
-		if err := scanner.Err(); err != nil {
-			return nil, fmt.Errorf("replay unavailable: %w", err)
-		}
-	}
-	if len(current) != 0 {
-		return nil, errors.New("replay unavailable: interrupted payload")
-	}
-	if len(events) == 0 {
-		return nil, errors.New("replay unavailable: retained Actions logs missing or expired")
-	}
-	if events[0].Kind != "started" || events[len(events)-1].Kind != "finished" {
-		return nil, errors.New("replay unavailable: capture lacks terminal boundaries")
-	}
-
-	return events, nil
-}
-
 func readJSON(path string, out any) error {
 	file, err := os.Open(path)
 	if err != nil {
@@ -239,8 +194,4 @@ func writeJSON(path string, value any) error {
 		return err
 	}
 	return os.WriteFile(path, append(data, '\n'), 0600)
-}
-
-func decodePayload(event Event, out any) error {
-	return jsonstrict.Decode(bytes.NewReader(event.Payload), out, captureLimit)
 }

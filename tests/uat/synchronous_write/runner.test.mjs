@@ -169,21 +169,21 @@ test("partition fixture faults survive boundary annotations and exercise complet
   const requestFor = (fault, separator = "\r\n\r\n ") => structuredRequest("dense_mem_semantic_partition_response", {
     request_id: "partition",
     policy_version: "fixture",
-    items: [{ item_id: "item:0", boundary_text: `⟦p0⟧First meaning.${separator}⟦p1⟧Second meaning [⟦p2⟧fixture-⟦p3⟧fault:⟦p4⟧${fault}]⟦p5⟧` }],
+    items: [{ item_id: "item:0", boundary_text: `First meaning.${separator}⟦p1⟧Second meaning [⟦p2⟧fixture-⟦p3⟧fault:⟦p4⟧${fault}]` }],
   });
   for (const fault of ["partition-split", "partition-missing", "partition-unknown", "partition-repair"]) {
     const request = requestFor(fault);
     assert.equal(fixtureFault(request, "assessment"), fault);
     const response = fixtureChatResponse(request, fixtureFault(request, "assessment"));
-    if (fault === "partition-split") assert.deepEqual(response.items[0].end_refs, ["p1", "p5"]);
+    if (fault === "partition-split") assert.deepEqual(response.items[0].cut_refs, ["p1"]);
     else if (fault === "partition-missing") assert.deepEqual(response.items, []);
-    else assert.deepEqual(response.items[0].end_refs, ["invented"]);
+    else assert.deepEqual(response.items[0].cut_refs, ["invented"]);
   }
   const repaired = requestFor("partition-repair");
-  assert.deepEqual(fixtureChatResponse(repaired, fixtureFault(repaired, "assessment"), 2).items[0].end_refs, ["p5"]);
+  assert.deepEqual(fixtureChatResponse(repaired, fixtureFault(repaired, "assessment"), 2).items[0].cut_refs, []);
   for (const separator of ["\u2028", "\u2029"]) {
     const request = requestFor("partition-split", separator);
-    assert.deepEqual(fixtureChatResponse(request, fixtureFault(request, "assessment")).items[0].end_refs, ["p1", "p5"]);
+    assert.deepEqual(fixtureChatResponse(request, fixtureFault(request, "assessment")).items[0].cut_refs, ["p1"]);
   }
 });
 

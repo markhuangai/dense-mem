@@ -1,0 +1,129 @@
+name: Run evaluation
+
+on:
+  workflow_dispatch:
+    inputs:
+      image:
+        description: Dense-Mem production image tag (for example test-777) or full GHCR reference
+        required: true
+        type: string
+      mode:
+        description: Public benchmark or synthetic system dry run
+        type: choice
+        default: live
+        options: [live, fixtures]
+      seed_version:
+        description: Public seed suffix (latest or UTCtimestamp-release)
+        type: string
+        default: latest
+      run_hotpotqa:
+        description: HotpotQA
+        type: boolean
+        default: true
+      run_musique:
+        description: MuSiQue
+        type: boolean
+        default: true
+      run_2wikimultihopqa:
+        description: 2WikiMultiHopQA
+        type: boolean
+        default: true
+      run_nq_rear:
+        description: NQ Rear
+        type: boolean
+        default: true
+      run_popqa:
+        description: PopQA
+        type: boolean
+        default: true
+
+permissions:
+  actions: read
+  contents: read
+  packages: read
+
+jobs:
+  authorize:
+    name: Authorize and pin evaluation image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      image: ${{ steps.image.outputs.image }}
+      source_revision: ${{ steps.request.outputs.source_revision }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - name: Validate manual request
+        id: request
+        uses: actions/github-script@v9
+        env:
+          INPUT_IMAGE: ${{ inputs.image }}
+          INPUT_MODE: ${{ inputs.mode }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+        with:
+          script: |
+            const { manualEvaluationRequest } = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/evaluation-policy.mjs`);
+            const { owner, repo } = context.repo;
+            const permission = async (username) => (await github.rest.repos.getCollaboratorPermissionLevel({ owner, repo, username })).data.permission;
+            const request = manualEvaluationRequest({
+              image: process.env.INPUT_IMAGE, mode: process.env.INPUT_MODE,
+              repository: `${owner}/${repo}`, ref: context.ref, runAttempt: context.runAttempt,
+              actorPermission: await permission(context.actor),
+              triggeringPermission: await permission(process.env.TRIGGERING_ACTOR),
+            });
+            core.setOutput("source_revision", context.sha);
+            core.setOutput("image", request.image);
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Resolve immutable production image
+        id: image
+        env:
+          REQUESTED_IMAGE: ${{ steps.request.outputs.image }}
+        run: |
+          set -euo pipefail
+          docker pull --quiet --platform linux/amd64 "${REQUESTED_IMAGE}" > /dev/null
+          docker image inspect "${REQUESTED_IMAGE}" > "${RUNNER_TEMP}/evaluation-image.json"
+          node --input-type=module <<'NODE'
+          import fs from "node:fs";
+          import { resolveEvaluationImage } from "./.github/scripts/evaluation-policy.mjs";
+          const inspected = JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/evaluation-image.json`))[0];
+          const resolved = resolveEvaluationImage(process.env.REQUESTED_IMAGE, process.env.GITHUB_REPOSITORY, inspected);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `image=${resolved.image}\n`);
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `Image: \`${resolved.image}\`\n\nImage source: \`${resolved.revision}\`\n`);
+          NODE
+
+  evaluation:
+    name: Public RAG evaluation
+    needs: authorize
+    uses: ./.github/workflows/evaluation.yml
+    with:
+      image: ${{ needs.authorize.outputs.image }}
+      source_repository: ${{ github.repository }}
+      source_revision: ${{ needs.authorize.outputs.source_revision }}
+      mode: ${{ inputs.mode }}
+      seed_version: ${{ inputs.seed_version }}
+      dataset_selection: >-
+        {"hotpotqa":${{ inputs.run_hotpotqa }},"musique":${{ inputs.run_musique }},
+        "2wikimultihopqa":${{ inputs.run_2wikimultihopqa }},"nq_rear":${{ inputs.run_nq_rear }},
+        "popqa":${{ inputs.run_popqa }}}
+      model: dense-mem-testing
+      context_window_tokens: '500000'
+    secrets:
+      eval-model: ${{ secrets.DENSE_MEM_EVAL_MODEL }}
+      eval-context-window: ${{ secrets.DENSE_MEM_EVAL_CONTEXT_WINDOW_TOKENS }}
+      eval-verifier-url: ${{ '' || vars.DENSE_MEM_EVAL_VERIFIER_URL || secrets.DENSE_MEM_EVAL_VERIFIER_URL }}
+      eval-embedding-url: ${{ 'https://api.openai.com/v1' || vars.DENSE_MEM_EVAL_EMBED_URL || secrets.DENSE_MEM_EVAL_EMBED_URL }}
+      eval-api-key: ${{ secrets.DENSE_MEM_EVAL_API_KEY }}
+      eval-embedding-api-key: ${{ secrets.DENSE_MEM_EVAL_EMBED_API_KEY }}
+      eval-team-api-key: ${{ secrets.DENSE_MEM_EVAL_TEAM_API_KEY }}
+      eval-database-password: ${{ secrets.DENSE_MEM_EVAL_DATABASE_PASSWORD }}

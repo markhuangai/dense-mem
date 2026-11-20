@@ -178,7 +178,7 @@ func (p *Provider) encodeBatch(ctx context.Context, groups []modelprovider.Decis
 		return batch{}, err
 	}
 	if tokens > p.config.MaxInputTokens {
-		return batch{}, fmt.Errorf("estimated request tokens %d exceed %d", tokens, p.config.MaxInputTokens)
+		return batch{}, &modelprovider.DecisionInputBudgetError{Scope: "request", Observed: tokens, Limit: p.config.MaxInputTokens}
 	}
 	for _, group := range groups {
 		for _, question := range group.Questions {
@@ -202,7 +202,7 @@ func (p *Provider) encodeBatch(ctx context.Context, groups []modelprovider.Decis
 				return batch{}, countErr
 			}
 			if count > p.config.MaxQuestionInputTokens {
-				return batch{}, fmt.Errorf("estimated shared state plus question tokens %d exceed %d", count, p.config.MaxQuestionInputTokens)
+				return batch{}, &modelprovider.DecisionInputBudgetError{Scope: "shared state plus question", Observed: count, Limit: p.config.MaxQuestionInputTokens}
 			}
 		}
 	}
@@ -228,11 +228,14 @@ func (p *Provider) call(ctx context.Context, batch batch, common []observability
 	exchange := modelprovider.ProviderExchange{Component: "decision", Model: p.config.Model, RequestBody: batch.body, RequestContentType: "application/json", StartedAt: started, CaptureState: "captured"}
 	defer func() {
 		exchange.CompletedAt = time.Now()
-		exchange.Outcome = "ok"
 		level := slog.LevelInfo
 		if err != nil {
-			exchange.Outcome = "error"
+			if exchange.Outcome == "" {
+				exchange.Outcome = "error"
+			}
 			level = slog.LevelError
+		} else {
+			exchange.Outcome = "ok"
 		}
 		if exchange.StatusCode == http.StatusOK {
 			if receipt.Usage == nil {
@@ -288,6 +291,9 @@ func (p *Provider) call(ctx context.Context, batch batch, common []observability
 	httpMS := time.Since(httpStarted).Milliseconds()
 	diagnostics.HTTPMS = &httpMS
 	if err != nil {
+		if kind := modelprovider.TransientNetworkFailure(err); kind != "" {
+			exchange.Outcome, exchange.CaptureState = kind, "no_response"
+		}
 		if ctx.Err() != nil {
 			return result, receipt, ctx.Err()
 		}
@@ -305,6 +311,9 @@ func (p *Provider) call(ctx context.Context, batch batch, common []observability
 	}
 	exchange.ResponseBody = body
 	if readErr != nil {
+		if kind := modelprovider.TransientNetworkFailure(readErr); kind != "" {
+			exchange.Outcome, exchange.CaptureState = kind, "interrupted"
+		}
 		if ctx.Err() != nil {
 			return result, receipt, ctx.Err()
 		}

@@ -59,19 +59,22 @@ type AxisSummary struct {
 }
 
 type Reproducibility struct {
-	Version             int    `json:"version"`
-	RunID               string `json:"run_id"`
-	WorkflowRunID       string `json:"workflow_run_id"`
-	SourceRevision      string `json:"source_revision"`
-	Image               string `json:"image"`
-	RegistryHash        string `json:"registry_sha256"`
-	Dataset             string `json:"dataset"`
-	Model               string `json:"model"`
-	EmbeddingModel      string `json:"embedding_model"`
-	EmbeddingDimensions int    `json:"embedding_dimensions"`
-	ContextWindowTokens int    `json:"context_window_tokens"`
-	CanonicalHash       string `json:"canonical_sha256"`
-	ScoringPolicy       string `json:"scoring_policy"`
+	Version                int    `json:"version"`
+	RunID                  string `json:"run_id"`
+	WorkflowRunID          string `json:"workflow_run_id"`
+	SourceRevision         string `json:"source_revision"`
+	Image                  string `json:"image"`
+	RegistryHash           string `json:"registry_sha256"`
+	Dataset                string `json:"dataset"`
+	Model                  string `json:"model"`
+	EmbeddingModel         string `json:"embedding_model"`
+	EmbeddingDimensions    int    `json:"embedding_dimensions"`
+	ContextWindowTokens    int    `json:"context_window_tokens"`
+	SeedImage              string `json:"seed_image,omitempty"`
+	SeedRelease            string `json:"seed_base_release,omitempty"`
+	SeedPreparationWorkers int    `json:"seed_preparation_workers,omitempty"`
+	CanonicalHash          string `json:"canonical_sha256"`
+	ScoringPolicy          string `json:"scoring_policy"`
 }
 
 type Report struct {
@@ -82,8 +85,9 @@ type Report struct {
 	ExpectedAnswers    int                           `json:"expected_answers"`
 	CompletedAnswers   int                           `json:"completed_answers"`
 	CorpusRows         int                           `json:"corpus_rows"`
-	ImportedRows       int                           `json:"imported_rows"`
+	ImportedRows       int                           `json:"restored_rows"`
 	ElapsedMS          float64                       `json:"elapsed_ms"`
+	Timings            map[string]float64            `json:"timings_ms,omitempty"`
 	Scores             []CaseScore                   `json:"scores"`
 	Matrix             []AxisSummary                 `json:"comparison_matrix"`
 	OntologyDelta      map[string]map[string]float64 `json:"ontology_delta"`
@@ -279,7 +283,7 @@ func ScoreObservation(question Question, observation Observation, corpus map[str
 }
 
 func NewReport(manifest Manifest, corpusCount, questionCount int) Report {
-	return Report{Identity: Reproducibility{Version: 1, RunID: manifest.RunID, WorkflowRunID: manifest.WorkflowRunID, SourceRevision: manifest.SourceRevision, Image: manifest.Image, RegistryHash: manifest.RegistryHash, Dataset: manifest.Dataset, Model: manifest.Model, EmbeddingModel: manifest.EmbeddingModel, EmbeddingDimensions: manifest.EmbeddingDimensions, ContextWindowTokens: manifest.ContextWindowTokens, ScoringPolicy: "public-rag-em-f1-canonical-sources-v1"}, ExpectedAnswers: questionCount * 4, CorpusRows: corpusCount, Scores: []CaseScore{}, NativeMeasurements: []NativeObservation{}, Limitations: []string{"Complete published curated packs; original upstream datasets are larger.", "Pinned dataset README supplies no clear common license; upstream attribution and licensing remain dataset-specific.", "Reported token totals include only available measurements; unavailable and partial measurements remain explicit.", "Actual gateway billing is unavailable; no monetary cost is inferred.", "Retrieval uses original canonical source IDs at the first 1/5/10 Evidence slots; partitions and equivalent IDs add no extra source credit."}}
+	return Report{Identity: Reproducibility{Version: 1, RunID: manifest.RunID, WorkflowRunID: manifest.WorkflowRunID, SourceRevision: manifest.SourceRevision, Image: manifest.Image, RegistryHash: manifest.RegistryHash, Dataset: manifest.Dataset, Model: manifest.Model, EmbeddingModel: manifest.EmbeddingModel, EmbeddingDimensions: manifest.EmbeddingDimensions, ContextWindowTokens: manifest.ContextWindowTokens, SeedImage: manifest.SeedImage, ScoringPolicy: "public-rag-em-f1-canonical-sources-v1"}, ExpectedAnswers: questionCount * 4, CorpusRows: corpusCount, Scores: []CaseScore{}, NativeMeasurements: []NativeObservation{}, Limitations: []string{"Complete published curated packs; original upstream datasets are larger.", "Pinned dataset README supplies no clear common license; upstream attribution and licensing remain dataset-specific.", "Reported token totals include only available measurements; unavailable and partial measurements remain explicit.", "Actual gateway billing is unavailable; no monetary cost is inferred.", "Current-run provider usage excludes historical seed preparation.", "Retrieval uses original canonical source IDs at the first 1/5/10 Evidence slots; partitions and equivalent IDs add no extra source credit."}}
 }
 
 func FinalizeReport(report *Report) error {

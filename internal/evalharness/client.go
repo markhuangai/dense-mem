@@ -8,11 +8,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 )
 
@@ -27,6 +29,10 @@ type HTTPClient struct {
 }
 
 type HTTPStatusError struct{ StatusCode int }
+
+type httpNetworkError struct{ kind string }
+
+func (e *httpNetworkError) Error() string { return "HTTP transport failed: " + e.kind }
 
 var errMalformedHTTPJSON = errors.New("invalid HTTP JSON response")
 
@@ -86,6 +92,11 @@ func (c *HTTPClient) doJSON(ctx context.Context, method, url, bearer string, inp
 			if captureErr := c.ExchangeCapture.Emit("answer_wire_unavailable", map[string]any{"exchange_id": exchange, "operation_id": scope.OperationID, "attempt": scope.Attempt, "state": "no_response", "error": c.ExchangeCapture.ProtectError(err)}); captureErr != nil {
 				return captureErr
 			}
+		} else if captureErr := c.logServiceTransportFailure(req, exchange, "request", 0, err); captureErr != nil {
+			return captureErr
+		}
+		if kind := modelprovider.TransientNetworkFailure(err); kind != "" {
+			return &httpNetworkError{kind: kind}
 		}
 		return errors.New("HTTP transport failed or cancelled: " + safeContextError(ctx))
 	}
@@ -101,6 +112,17 @@ func (c *HTTPClient) doJSON(ctx context.Context, method, url, bearer string, inp
 		}
 	}
 	if err != nil {
+		if c.ExchangeCapture == nil {
+			if captureErr := c.logServiceTransportFailure(req, exchange, "response_body", response.StatusCode, err); captureErr != nil {
+				return captureErr
+			}
+		}
+		if response.StatusCode < 200 || response.StatusCode >= 300 {
+			return fmt.Errorf("HTTP response body interrupted: %w", &HTTPStatusError{StatusCode: response.StatusCode})
+		}
+		if kind := modelprovider.TransientNetworkFailure(err); kind != "" {
+			return &httpNetworkError{kind: kind}
+		}
 		return errors.New("HTTP response body interrupted")
 	}
 	if len(data) > 16<<20 {
@@ -122,6 +144,20 @@ func (c *HTTPClient) doJSON(ctx context.Context, method, url, bearer string, inp
 		return errMalformedHTTPJSON
 	}
 	return nil
+}
+
+func (c *HTTPClient) logServiceTransportFailure(req *http.Request, exchange, stage string, status int, cause error) error {
+	if c.Capture == nil {
+		return nil
+	}
+	var requestErr *url.Error
+	if errors.As(cause, &requestErr) {
+		cause = requestErr.Err
+	}
+	return c.Capture.Emit("runtime_transport_failure", map[string]any{
+		"link": "runner_to_dense_mem", "exchange_id": exchange, "stage": stage, "status_code": status,
+		"mcp_method": req.Header.Get("Mcp-Method"), "mcp_tool": req.Header.Get("Mcp-Name"), "error": c.Capture.ProtectError(cause),
+	})
 }
 
 func safeContextError(ctx context.Context) string {
@@ -195,48 +231,158 @@ func (c *HTTPClient) ImportCorpus(ctx context.Context, items []CorpusItem) (Know
 }
 
 func (c *HTTPClient) ImportCorpusWithConcurrency(ctx context.Context, items []CorpusItem, concurrency int) (KnowledgeMapping, error) {
-	mapping := newKnowledgeMapping()
-	if concurrency < 1 || concurrency > 10 {
-		return mapping, errors.New("invalid import concurrency")
+	return c.importCorpus(ctx, items, concurrency, nil)
+}
+
+const maxNetworkRetries = 5
+const seedRateLimitCooldown = time.Minute
+
+type importRateLimit struct {
+	mu       sync.Mutex
+	cooldown time.Duration
+	until    time.Time
+}
+
+func (r *importRateLimit) pause() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.until = time.Now().Add(r.cooldown)
+}
+
+func (r *importRateLimit) wait(ctx context.Context) error {
+	for r != nil {
+		r.mu.Lock()
+		delay := time.Until(r.until)
+		r.mu.Unlock()
+		if delay <= 0 {
+			break
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
 	}
-	if _, err := c.ensureContract(ctx); err != nil {
+	return ctx.Err()
+}
+
+type corpusImportOptions struct {
+	native    *Native
+	recovered KnowledgeMapping
+	outcome   func(corpusImportJob, error)
+	rateLimit *importRateLimit
+}
+
+type corpusImportJob struct {
+	item    CorpusItem
+	input   map[string]any
+	attempt int
+}
+
+func (c *HTTPClient) importCorpus(ctx context.Context, items []CorpusItem, concurrency int, native *Native) (KnowledgeMapping, error) {
+	return c.importCorpusWithOutcomes(ctx, items, concurrency, corpusImportOptions{native: native})
+}
+
+func (c *HTTPClient) importCorpusWithOutcomes(ctx context.Context, items []CorpusItem, concurrency int, options corpusImportOptions) (KnowledgeMapping, error) {
+	mapping := options.recovered
+	if mapping.BySourceDocID == nil {
+		mapping = newKnowledgeMapping()
+	}
+	outcome := options.outcome
+	if err := validateImportWorkers(concurrency); err != nil {
+		return mapping, err
+	}
+	initialProgress := captureProgress{Stage: "import", Unit: "documents", Total: len(items), Completed: len(mapping.BySourceDocID)}
+	if err := c.Capture.emitProgress(initialProgress); err != nil {
 		return mapping, err
 	}
 	work, stop := context.WithCancel(ctx)
 	defer stop()
-	jobs := make(chan CorpusItem)
+	jobs := make([]corpusImportJob, 0, len(items))
+	for _, item := range items {
+		if _, completed := mapping.BySourceDocID[item.SourceDocID]; !completed {
+			jobs = append(jobs, corpusImportJob{item: item, attempt: 1})
+		}
+	}
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var first error
-	for range concurrency {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for item := range jobs {
-				itemMapping, err := c.importCorpusItem(work, item)
+	failed := 0
+	stopProgress := make(chan struct{})
+	progressDone := make(chan struct{})
+	go func() {
+		defer close(progressDone)
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stopProgress:
+				return
+			case <-ticker.C:
 				mu.Lock()
+				err := c.Capture.emitProgress(captureProgress{Stage: "import", Unit: "documents", Total: len(items), Completed: len(mapping.BySourceDocID), Failed: failed})
 				if err != nil {
 					if first == nil {
 						first = err
 					}
 					stop()
-				} else {
+				}
+				mu.Unlock()
+				if err != nil {
+					return
+				}
+			}
+		}
+	}()
+	finishProgress := func() error {
+		close(stopProgress)
+		<-progressDone
+		return c.Capture.emitProgress(captureProgress{Stage: "import", Unit: "documents", Total: len(items), Completed: len(mapping.BySourceDocID), Failed: failed})
+	}
+	if _, err := c.ensureContract(work); err != nil {
+		progressErr := finishProgress()
+		return mapping, errors.Join(err, first, progressErr)
+	}
+	for range concurrency {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				mu.Lock()
+				if len(jobs) == 0 || work.Err() != nil {
+					mu.Unlock()
+					return
+				}
+				job := jobs[0]
+				jobs[0] = corpusImportJob{}
+				jobs = jobs[1:]
+				mu.Unlock()
+				itemMapping, requeue, err := c.importCorpusItem(work, &job, options.native, options.rateLimit)
+				mu.Lock()
+				if !requeue && outcome != nil {
+					outcome(job, err)
+				}
+				switch {
+				case requeue:
+					jobs = append(jobs, job)
+				case err != nil:
+					failed++
+					if first == nil && (outcome == nil || c.Capture.incomplete()) {
+						first = err
+						stop()
+					}
+				default:
 					mergeKnowledgeMapping(&mapping, itemMapping)
 				}
 				mu.Unlock()
 			}
 		}()
 	}
-schedule:
-	for _, item := range items {
-		select {
-		case jobs <- item:
-		case <-work.Done():
-			break schedule
-		}
-	}
-	close(jobs)
 	wg.Wait()
+	progressErr := finishProgress()
+	first = errors.Join(first, progressErr)
 	if first != nil {
 		return mapping, first
 	}
@@ -259,50 +405,113 @@ func corpusRememberInput(item CorpusItem) map[string]any {
 	return map[string]any{"target_space": "team_shared", "idempotency_key": "eval:" + item.SourceDocID, "evidence": []map[string]any{evidence}}
 }
 
-func (c *HTTPClient) importCorpusItem(ctx context.Context, item CorpusItem) (KnowledgeMapping, error) {
+func (c *HTTPClient) importCorpusItem(ctx context.Context, job *corpusImportJob, native *Native, rateLimit *importRateLimit) (KnowledgeMapping, bool, error) {
 	mapping := newKnowledgeMapping()
-	input := corpusRememberInput(item)
-	for attempt := 1; attempt <= 2; attempt++ {
+	item := job.item
+	if job.input == nil {
+		job.input = corpusRememberInput(item)
+	}
+	for {
+		if err := rateLimit.wait(ctx); err != nil {
+			return mapping, false, err
+		}
 		started := time.Now()
 		var result map[string]any
-		err := c.CallTool(ctx, "remember", input, &result)
+		err := c.CallTool(ctx, "remember", job.input, &result)
+		elapsed := time.Since(started)
 		if err == nil && stringValue(result["submission_id"]) == "" {
 			err = errors.New("remember response missing submission identity")
 		}
 		if err == nil {
 			mapping, err = c.importTerminalRememberResult(item, result, mapping)
 		}
-		event := map[string]any{"source_id": item.SourceDocID, "attempt": attempt, "idempotency_key": input["idempotency_key"], "result": result, "elapsed_ms": float64(time.Since(started)) / float64(time.Millisecond)}
+		var status int
+		var networkFailure string
+		rateLimited := false
+		if err != nil || job.attempt > 1 {
+			event := map[string]any{"source_id": item.SourceDocID, "attempt": job.attempt, "idempotency_key": job.input["idempotency_key"], "result": result, "elapsed_ms": float64(elapsed) / float64(time.Millisecond)}
+			if err != nil {
+				event["error"] = err.Error()
+				var httpErr *HTTPStatusError
+				var networkErr *httpNetworkError
+				var toolErr *StructuredToolError
+				switch {
+				case errors.As(err, &httpErr):
+					status = httpErr.StatusCode
+					event["http_status"] = status
+				case errors.As(err, &networkErr):
+					networkFailure = networkErr.kind
+					event["network_failure"] = networkFailure
+				case native != nil && ctx.Err() == nil && errors.As(err, &toolErr):
+					var checked bool
+					status, networkFailure, checked = native.rememberProviderTransportFailure(ctx, toolErr.Result)
+					if status != 0 {
+						event["provider_http_status"] = status
+					} else if checked {
+						event["provider_status"] = "unavailable"
+					}
+					if networkFailure != "" {
+						event["provider_network_failure"] = networkFailure
+					}
+				}
+			}
+			rateLimited = rateLimit != nil && status == http.StatusTooManyRequests
+			if rateLimited {
+				rateLimit.pause()
+			}
+			if captureErr := c.Capture.Emit("import_attempt", event); captureErr != nil {
+				return mapping, false, captureErr
+			}
+		}
 		if err == nil {
-			event["admitted_input"] = input
-		} else {
-			event["error"] = err.Error()
+			return mapping, false, nil
 		}
-		if captureErr := c.Capture.Emit("import_attempt", event); captureErr != nil {
-			return mapping, captureErr
+		if ctx.Err() != nil {
+			return mapping, false, err
 		}
-		if err == nil {
-			return mapping, nil
+		if rateLimited || isRetryableGatewayStatus(status) || (status < 300 && networkFailure != "") {
+			if job.attempt > maxNetworkRetries {
+				return mapping, false, err
+			}
+			event := map[string]any{"source_id": item.SourceDocID, "attempt": job.attempt + 1, "idempotency_key": job.input["idempotency_key"]}
+			if rateLimited || isRetryableGatewayStatus(status) {
+				event["gateway_http_status"] = status
+			}
+			if rateLimited {
+				event["backoff_ms"] = rateLimit.cooldown.Milliseconds()
+			}
+			if networkFailure != "" {
+				event["network_failure"] = networkFailure
+			}
+			if err := c.Capture.Emit("intake_retry", event); err != nil {
+				return mapping, false, err
+			}
+			job.attempt++
+			return mapping, true, nil
 		}
-		if attempt == 2 || ctx.Err() != nil {
-			return mapping, err
+		if job.attempt != 1 {
+			return mapping, false, err
 		}
-		retry, original, retryable, terminal := terminalRememberRetryInput("remember", input, err)
+		retry, original, retryable, terminal := terminalRememberRetryInput("remember", job.input, err)
 		if terminal {
-			input = retry
-			if err := c.Capture.Emit("intake_retry", map[string]any{"source_id": item.SourceDocID, "original_attempt_id": original, "original_retryable": retryable, "idempotency_key": input["idempotency_key"]}); err != nil {
-				return mapping, err
+			job.input = retry
+			if err := c.Capture.Emit("intake_retry", map[string]any{"source_id": item.SourceDocID, "original_attempt_id": original, "original_retryable": retryable, "idempotency_key": job.input["idempotency_key"]}); err != nil {
+				return mapping, false, err
 			}
 		} else if !isTransientCallToolError(err) {
-			return mapping, err
+			return mapping, false, err
 		}
 		select {
 		case <-ctx.Done():
-			return mapping, ctx.Err()
+			return mapping, false, ctx.Err()
 		case <-time.After(750 * time.Millisecond):
 		}
+		job.attempt++
 	}
-	return mapping, errors.New("intake attempts exhausted")
+}
+
+func isRetryableGatewayStatus(status int) bool {
+	return status == http.StatusBadGateway || status == http.StatusServiceUnavailable || status == http.StatusGatewayTimeout || status == 524
 }
 
 func isTransientHTTPError(err error) bool {

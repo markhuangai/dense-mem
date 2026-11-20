@@ -10,6 +10,7 @@ const userURL = required("DENSE_MEM_USER_URL");
 const providerURL = required("DENSE_MEM_E2E_PROVIDER_URL");
 const headers = { Authorization: `Bearer ${required("DENSE_MEM_CONTROL_TOKEN")}`, "Content-Type": "application/json" };
 const original = await control("/config/ontology-maintenance");
+const originalGeneral = await control("/config/general");
 const teams = [];
 const since = new Date().toISOString();
 let failure;
@@ -30,8 +31,12 @@ try {
     team.credential = await control(`/teams/${team.id}/credentials`, { name: "concurrency acceptance", scopes: ["read", "write"], rate_limit: 300 });
   }
   const overrides = [{ team_id: teams[0].id, max_concurrency: 2 }];
+  // Keep the first frozen window away from a schedule boundary during the shared browser checks.
+  await control("/config/general", { items: [{ key: "APP_TIMEZONE", value: "UTC" }] }, "PATCH");
+  const fixtureStartTime = new Date().toISOString().slice(11, 16);
   await control("/config/ontology-maintenance", { items: [
     { key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "true" }, { key: "ONTOLOGY_MAINTENANCE_CONTEXT_WINDOW_TOKENS", value: "300000" },
+    { key: "ONTOLOGY_MAINTENANCE_START_TIME_LOCAL", value: fixtureStartTime },
     { key: "ONTOLOGY_MAINTENANCE_MAX_CONCURRENCY", value: "3" },
     { key: "ONTOLOGY_MAINTENANCE_TEAM_MAX_CONCURRENCY", value: "1" },
     { key: "ONTOLOGY_MAINTENANCE_TEAM_OVERRIDES_JSON", value: JSON.stringify(overrides) },
@@ -47,6 +52,10 @@ try {
     return next.active_ontology_requests === 3 ? next : null;
   }, 90000, "three model requests did not overlap under the configured caps");
   assert.equal(health.max_active_ontology_requests, 3);
+  const fixtureWindow = (await control("/ontology/status")).window;
+  assert.equal(fixtureWindow.policy.timezone, "UTC");
+  assert.equal(fixtureWindow.policy.start_time_local, fixtureStartTime);
+  assert(Date.parse(fixtureWindow.ends_at) - Date.now() > 60 * 60 * 1000, "fixture window must outlast the shared browser checks");
   const running = JSON.parse(query(`SELECT COALESCE(jsonb_agg(jsonb_build_object('team',team_id,'sources',sources)),'[]') FROM ontology_maintenance_batches WHERE status='running' AND lease_until>clock_timestamp()`));
   assert.equal(running.filter((batch) => batch.team === teams[0].id).length, 2, "one team must have two simultaneous provider batches");
   assert.equal(running.filter((batch) => batch.team === teams[1].id).length, 1, "the inherited serial cap must retain another team's slot");
@@ -91,6 +100,10 @@ finally {
     () => fixture("normal"),
     ...teams.map((team) => () => control(`/teams/${team.id}`, undefined, "DELETE")),
     () => control("/config/ontology-maintenance", { items: original.items.map(({ key, value }) => ({ key, value })) }, "PATCH"),
+    async () => {
+      const restored = await control("/config/general", { items: originalGeneral.items.map(({ key, value }) => ({ key, value })) }, "PATCH");
+      assert.equal(restored.effective.timezone, originalGeneral.effective.timezone);
+    },
     () => control("/ontology/resume", { operation_key: randomUUID() }),
   ]) { try { await action(); } catch (error) { failures.push(error); } }
   if (failures.length) throw new AggregateError(failures, "ontology concurrency acceptance or cleanup failed");

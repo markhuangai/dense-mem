@@ -96,7 +96,22 @@ func TestStructuredProviderDiagnosticsRetainResponseBodyTimeoutAndCancellation(t
 					}
 				}()
 			}
-			result, err := provider.Complete(ctx, modelprovider.StructuredRequest{Model: "fixture", Schema: map[string]any{}})
+			recorder := &assessorExchangeRecorder{}
+			recorded := modelprovider.WithExchangeRecorder(ctx, recorder)
+			result, err := provider.Complete(recorded, modelprovider.StructuredRequest{Model: "fixture", Schema: map[string]any{}})
+			require.Len(t, recorder.exchanges, 1)
+			exchange := recorder.exchanges[0]
+			require.Equal(t, http.StatusOK, exchange.StatusCode)
+			switch mode {
+			case "protocol":
+				require.Equal(t, modelprovider.NetworkInterruptedResponse, exchange.Outcome)
+				require.Equal(t, "interrupted", exchange.CaptureState)
+			case "client_deadline":
+				require.Equal(t, modelprovider.NetworkTimeout, exchange.Outcome)
+				require.Equal(t, "interrupted", exchange.CaptureState)
+			case "cancellation":
+				require.Equal(t, "response_read_failed", exchange.Outcome)
+			}
 			require.Error(t, err)
 			if mode == "protocol" {
 				require.Equal(t, modelprovider.ProviderFailureClassProtocol, modelprovider.ProviderFailureDetails(err).Class)
