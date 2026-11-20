@@ -63,13 +63,15 @@ func waitUntil(ctx context.Context, readyAt time.Time) error {
 
 func answerRetryAfter(value string, receivedAt time.Time) time.Time {
 	value = strings.TrimSpace(value)
-	seconds, err := strconv.ParseUint(value, 10, 64)
-	const maximum = time.Duration(1<<63 - 1)
-	if errors.Is(err, strconv.ErrRange) || (err == nil && seconds > uint64(maximum/time.Second)) {
-		return receivedAt.Add(maximum)
-	}
-	if err == nil {
-		return receivedAt.Add(time.Duration(seconds) * time.Second)
+	if value != "" && strings.Trim(value, "0123456789") == "" {
+		seconds, err := strconv.ParseInt(value, 10, 64)
+		const maximum = time.Duration(1<<63 - 1)
+		if errors.Is(err, strconv.ErrRange) || seconds > int64(maximum/time.Second) {
+			return receivedAt.Add(maximum)
+		}
+		if err == nil {
+			return receivedAt.Add(time.Duration(seconds) * time.Second)
+		}
 	}
 	if retryAt, err := http.ParseTime(value); err == nil {
 		return retryAt

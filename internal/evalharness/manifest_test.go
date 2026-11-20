@@ -21,6 +21,25 @@ func TestReadManifestValidatesExecutionPins(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, valid, actual)
 	for _, tc := range []struct {
+		name          string
+		workers, want int
+	}{
+		{"omitted", 0, 4}, {"minimum", 4, 4}, {"maximum", 10, 10}, {"too few", 3, 0}, {"too many", 11, 0},
+	} {
+		t.Run("answer workers "+tc.name, func(t *testing.T) {
+			manifest := valid
+			manifest.Operation, manifest.ImportWorkers, manifest.AnswerWorkers = "run", 0, tc.workers
+			require.NoError(t, writeJSON(file, manifest))
+			read, err := ReadManifest(file)
+			if tc.want == 0 {
+				require.ErrorContains(t, err, "answer_workers must be 4..10")
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.want, read.AnswerWorkers)
+		})
+	}
+	for _, tc := range []struct {
 		name, message string
 		change        func(*Manifest)
 	}{
@@ -44,6 +63,7 @@ func TestReadManifestValidatesExecutionPins(t *testing.T) {
 		{"embedding dimensions", "model and context", func(m *Manifest) { m.EmbeddingDimensions = 512 }},
 		{"retired embedding dimensions", "model and context", func(m *Manifest) { m.EmbeddingDimensions = 1024 }},
 		{"context", "model and context", func(m *Manifest) { m.ContextWindowTokens = 16383 }},
+		{"answer workers during preparation", "answer_workers applies only to scored evaluation", func(m *Manifest) { m.AnswerWorkers = 4 }},
 		{"missing import workers", "import workers", func(m *Manifest) { m.ImportWorkers = 0 }},
 		{"negative import workers", "import workers", func(m *Manifest) { m.ImportWorkers = -1 }},
 		{"excessive import workers", "import workers", func(m *Manifest) { m.ImportWorkers = 101 }},

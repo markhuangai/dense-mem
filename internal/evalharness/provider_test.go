@@ -300,7 +300,10 @@ func TestAnswerRetryAfterAcceptsDeltaAndHTTPDate(t *testing.T) {
 	now := time.Date(2026, 11, 20, 4, 0, 0, 0, time.UTC)
 	require.Equal(t, now.Add(7*time.Second), answerRetryAfter("7", now))
 	require.True(t, now.Add(time.Minute).Equal(answerRetryAfter(now.Add(time.Minute).Format(http.TimeFormat), now)))
-	for _, header := range []string{"", "-1", "garbage"} {
+	for _, header := range []string{"9223372037", "999999999999999999999"} {
+		require.Equal(t, now.Add(time.Duration(1<<63-1)), answerRetryAfter(header, now))
+	}
+	for _, header := range []string{"", "-1", "+1", "garbage", "999999999999999999999junk"} {
 		require.True(t, answerRetryAfter(header, now).IsZero())
 	}
 }
