@@ -59,10 +59,10 @@ type runnerServiceFixture struct {
 }
 
 func newRunnerServiceFixture(t *testing.T) *runnerServiceFixture {
-	return newRunnerServiceFixtureWithOntology(t, nil)
+	return newRunnerServiceFixtureWithOntology(t, nil, nil)
 }
 
-func newRunnerServiceFixtureWithOntology(t *testing.T, before func(context.Context, *ontologypg.Store, requestctx.Actor, assessment.Request) (int, error)) *runnerServiceFixture {
+func newRunnerServiceFixtureWithOntology(t *testing.T, initial []ontology.Change, before func(context.Context, *ontologypg.Store, requestctx.Actor, assessment.Request) (int, error)) *runnerServiceFixture {
 	t.Helper()
 	admin, app, rls, cleanup := setupRememberProcessorIntegrationDB(t)
 	t.Cleanup(cleanup)
@@ -85,6 +85,14 @@ func newRunnerServiceFixtureWithOntology(t *testing.T, before func(context.Conte
 	_, err := configuration.UpdateOntologyMaintenanceSettings(ctx, map[string]string{domain.AppConfigOntologyEnabled: "true", domain.AppConfigOntologyModel: "runner-ontology", domain.AppConfigOntologyContextWindow: "300000", domain.AppConfigOntologyConcurrency: "4", domain.AppConfigOntologyTeamConcurrency: "4"}, "control", "", "")
 	require.NoError(t, err)
 	ontologyStore := ontologypg.NewStore(app, rls)
+	if len(initial) > 0 {
+		manager := actor
+		manager.Role = "manager"
+		_, err := ontologyStore.PublishManager(requestctx.WithActor(ctx, manager), teamID.String(), ontology.Publication{
+			OperationKey: "runner-initial-definitions", Reason: "Establish the initial fixture vocabulary", Changes: initial,
+		})
+		require.NoError(t, err)
+	}
 	policy, err := configuration.OntologyMaintenanceRuntimeConfig(ctx)
 	require.NoError(t, err)
 	_, err = ontologyStore.EnsureMaintenanceWindow(ctx, policy, time.Now())

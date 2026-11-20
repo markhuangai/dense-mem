@@ -43,15 +43,21 @@ func TestRunnerCampaignConditionsAndCapture(t *testing.T) {
 
 func testRunnerCampaignConditionsAndCapture(t *testing.T, scenario string) {
 	var organizations atomic.Int32
-	f := newRunnerServiceFixtureWithOntology(t, func(ctx context.Context, store *ontologypg.Store, actor requestctx.Actor, _ assessment.Request) (int, error) {
+	topicID := uuid.NewString()
+	var initial []ontology.Change
+	if scenario == "stale source" {
+		initial = []ontology.Change{{Record: ontology.Record{ID: topicID, Kind: ontology.Topic, Definition: &ontology.Definition{Key: "postgresql", Label: "PostgreSQL"}}}}
+	}
+	f := newRunnerServiceFixtureWithOntology(t, initial, func(ctx context.Context, store *ontologypg.Store, actor requestctx.Actor, _ assessment.Request) (int, error) {
 		number := organizations.Add(1)
 		switch {
 		case scenario == "stale source" && number == 1:
 			actor.Role = "manager"
-			topic := ontology.Record{ID: uuid.NewString(), Kind: ontology.Topic, Definition: &ontology.Definition{Key: "postgresql", Label: "PostgreSQL"}}
+			// A new pin changes the assessment context without requeueing the source through vocabulary discovery.
+			pin := ontology.Record{ID: uuid.NewString(), Kind: ontology.OverrideKind, Override: &ontology.Override{Action: ontology.PinDefinition, TargetID: topicID}}
 			_, err := store.PublishManager(requestctx.WithActor(ctx, actor), actor.TeamID.String(), ontology.Publication{
-				OperationKey: "runner-concurrent-topic", Reason: "Introduce relevant vocabulary during assessment",
-				Changes: []ontology.Change{{Record: topic}},
+				OperationKey: "runner-concurrent-pin", ExpectedRevision: 1, Reason: "Pin the candidate topic during assessment",
+				Changes: []ontology.Change{{Record: pin}},
 			})
 			return 0, err
 		case (scenario == "rate limited" || scenario == "mixed failure") && number == 1:
@@ -161,10 +167,11 @@ func testRunnerCampaignConditionsAndCapture(t *testing.T, scenario string) {
 	}
 	require.True(t, report.CaptureComplete)
 	if scenario == "stale source" || scenario == "rate limited" {
-		require.Contains(t, logs.String(), "ontology_recovery_started")
-		require.Contains(t, logs.String(), "ontology_recovery_finished")
-		require.NotContains(t, logs.String(), f.native.ControlToken)
-		require.Contains(t, logs.String(), map[string]string{"stale source": "context_hash", "rate limited": "rate_limited"}[scenario])
+		require.True(t, strings.Contains(logs.String(), `"kind":"ontology_recovery_started"`), "the runner must submit the native retry")
+		require.True(t, strings.Contains(logs.String(), `"kind":"ontology_recovery_finished"`), "the runner must record the terminal native retry")
+		require.False(t, strings.Contains(logs.String(), f.native.ControlToken), "the recovery log must protect the control credential")
+		diagnosis := map[string]string{"stale source": `"freshness_check":"context_hash"`, "rate limited": `"attempt_failure":"rate_limited"`}[scenario]
+		require.True(t, strings.Contains(logs.String(), diagnosis), "the recovery log must show the durable failure reason")
 		require.GreaterOrEqual(t, organizations.Load(), int32(2))
 	}
 	require.Equal(t, initialPackets[0], initialPackets[1])
