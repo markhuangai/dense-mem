@@ -18,8 +18,8 @@ on:
         default: latest
       answer_workers:
         description: Concurrent answer workers per dataset (4–10)
-        type: number
-        default: 4
+        type: string
+        default: '4'
       run_hotpotqa:
         description: HotpotQA
         type: boolean

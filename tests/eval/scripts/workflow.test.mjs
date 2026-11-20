@@ -304,13 +304,16 @@ test("runner workflow reserves shutdown time, retains numeric artifacts and aggr
   assert.equal(datasets.env.WORKFLOW_EMBEDDING_DIMENSIONS, "1536");
   assert.equal(datasets.env.DENSE_MEM_EVAL_IMPORT_WORKERS, undefined);
   assert.equal(Object.hasOwn(workflow.on.workflow_call.inputs, "import_workers"), false);
+  const workerInput = workflow.on.workflow_call.inputs.answer_workers;
+  assert.deepEqual(workerInput, { type: "string", default: "4" });
   for (const entrypoint of ["run-evaluation.yml", "production-image-e2e.yml"]) {
     const caller = await readWorkflow(entrypoint);
     const inputs = caller.on.workflow_dispatch.inputs;
     const call = workflowJob(caller, "evaluation").with;
     assert.equal(Object.hasOwn(inputs, "import_workers"), false);
     assert.equal(Object.hasOwn(call, "import_workers"), false);
-    assert.equal(inputs.answer_workers.default, 4);
+    assert.equal(inputs.answer_workers.type, workerInput.type);
+    assert.equal(inputs.answer_workers.default, workerInput.default);
     assert.equal(call.answer_workers, "${{ inputs.answer_workers }}");
     const chosen = {};
     for (const { id } of registry.datasets) {
@@ -360,7 +363,7 @@ test("the matrix supports selected public datasets and requires at least one", a
     ["live", undefined, registry.datasets.map(({ id }) => id), undefined, 5],
     ["live", undefined, registry.datasets.map(({ id }) => id), "10", 2],
     ["live", JSON.stringify(liveSelection), ["hotpotqa", "2wikimultihopqa"], "6", 3],
-    ["fixtures", '{"hotpotqa":false}', ["hotpotqa"], undefined, 5],
+    ["fixtures", '{"hotpotqa":false}', ["hotpotqa"], "4", 5],
   ]) {
     fs.writeFileSync(output, "");
     await main("matrix", { ...env, EVAL_MODE: mode, EVAL_DATASET_SELECTION: selection, EVAL_ANSWER_WORKERS: workers });

@@ -22,8 +22,8 @@ on:
         type: string
         default: ''
       answer_workers:
-        type: number
-        default: 4
+        type: string
+        default: '4'
       model:
         type: string
         default: ''
