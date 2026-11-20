@@ -26,9 +26,14 @@ type HTTPClient struct {
 	ExchangeCapture *Capture
 	contractMu      sync.Mutex
 	contractMode    contractMode
+	answerAdmission answerAdmission
 }
 
-type HTTPStatusError struct{ StatusCode int }
+type HTTPStatusError struct {
+	StatusCode int
+	retryAt    time.Time
+	held       bool
+}
 
 type httpNetworkError struct{ kind string }
 
@@ -101,6 +106,17 @@ func (c *HTTPClient) doJSON(ctx context.Context, method, url, bearer string, inp
 		return errors.New("HTTP transport failed or cancelled: " + safeContextError(ctx))
 	}
 	defer response.Body.Close()
+	var statusErr *HTTPStatusError
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		statusErr = &HTTPStatusError{StatusCode: response.StatusCode}
+		if response.StatusCode == http.StatusTooManyRequests {
+			statusErr.retryAt = answerRetryAfter(response.Header.Get("Retry-After"), time.Now())
+			if hold, ok := ctx.Value(answerRateLimitKey{}).(func(time.Time) time.Time); ok {
+				statusErr.retryAt = hold(statusErr.retryAt)
+				statusErr.held = true
+			}
+		}
+	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, (16<<20)+1))
 	if c.ExchangeCapture != nil {
 		state := "captured"
@@ -117,8 +133,8 @@ func (c *HTTPClient) doJSON(ctx context.Context, method, url, bearer string, inp
 				return captureErr
 			}
 		}
-		if response.StatusCode < 200 || response.StatusCode >= 300 {
-			return fmt.Errorf("HTTP response body interrupted: %w", &HTTPStatusError{StatusCode: response.StatusCode})
+		if statusErr != nil {
+			return fmt.Errorf("HTTP response body interrupted: %w", statusErr)
 		}
 		if kind := modelprovider.TransientNetworkFailure(err); kind != "" {
 			return &httpNetworkError{kind: kind}
@@ -128,8 +144,8 @@ func (c *HTTPClient) doJSON(ctx context.Context, method, url, bearer string, inp
 	if len(data) > 16<<20 {
 		return errors.New("HTTP response exceeds capture bound")
 	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return &HTTPStatusError{StatusCode: response.StatusCode}
+	if statusErr != nil {
+		return statusErr
 	}
 	if out == nil {
 		return nil

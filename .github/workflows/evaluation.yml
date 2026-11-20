@@ -21,6 +21,9 @@ on:
       dataset_selection:
         type: string
         default: ''
+      answer_workers:
+        type: number
+        default: 4
       model:
         type: string
         default: ''
@@ -59,6 +62,8 @@ jobs:
     timeout-minutes: 10
     outputs:
       matrix: ${{ steps.registry.outputs.matrix }}
+      max_parallel: ${{ steps.registry.outputs.max_parallel }}
+      answer_workers: ${{ steps.registry.outputs.answer_workers }}
       seed_images: ${{ steps.seeds.outputs.images }}
     steps:
       - uses: actions/checkout@v7
@@ -73,6 +78,7 @@ jobs:
       - id: registry
         env:
           EVAL_MODE: ${{ inputs.mode }}
+          EVAL_ANSWER_WORKERS: ${{ inputs.answer_workers }}
           EVAL_SOURCE_REVISION: ${{ inputs.source_revision }}
           EVAL_IMAGE: ${{ inputs.image }}
         run: node tests/eval/scripts/workflow.mjs matrix
@@ -98,9 +104,11 @@ jobs:
     timeout-minutes: 360
     strategy:
       fail-fast: false
+      max-parallel: ${{ fromJSON(needs.registry.outputs.max_parallel) }}
       matrix: ${{ fromJSON(needs.registry.outputs.matrix) }}
     env:
       EVAL_MODE: ${{ inputs.mode }}
+      EVAL_ANSWER_WORKERS: ${{ needs.registry.outputs.answer_workers }}
       EVAL_DATASET: ${{ matrix.dataset }}
       EVAL_IMAGE: ${{ inputs.image }}
       EVAL_SOURCE_REVISION: ${{ inputs.source_revision }}

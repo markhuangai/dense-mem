@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
+import { createServer } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { requireRunner } from "../../../.github/scripts/evaluation-policy.mjs";
-import { cleanup, location, main } from "./workflow.mjs";
+import { cleanup, location, main, prepareFixtureSeed, runBinary, saveRuntimeJSON, setup } from "./workflow.mjs";
 
 const image = "busybox:1.37.0-musl";
 const ownershipLabel = "io.dense-mem.eval.run";
@@ -99,4 +100,90 @@ test("local seed cleanup preserves only its owned checkpoint until completion", 
   assert.equal(docker("run", "--rm", "--mount", `type=volume,source=${runtime.volume},target=/owned,readonly`, image, "cat", "/owned/receipt"), "committed-row");
   await cleanup(runtime.env);
   assert.equal(exists("volume", runtime.volume), false);
+});
+
+test("hosted cutoff stops the owned server before capture and preserves verified scores", { timeout: 900_000 }, async (t) => {
+  requireRunner(process.env);
+  const fixture = fs.mkdtempSync(path.join(process.env.RUNNER_TEMP, "evaluation-deadline-"));
+  const env = { ...process.env, EVAL_MODE: "fixtures", EVAL_DATASET: "hotpotqa" };
+  const fixtureEnv = () => ({ ...env, GITHUB_RUN_ID: `${env.GITHUB_RUN_ID}-fixture-${randomUUID()}` });
+  const preparedEnv = fixtureEnv();
+  const runEnvs = [fixtureEnv(), fixtureEnv()];
+  let seed;
+  t.after(async () => {
+    for (const ownedEnv of [preparedEnv, ...runEnvs]) {
+      const { directory, stateFile } = location(ownedEnv);
+      if (fs.existsSync(stateFile)) await cleanup(ownedEnv);
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+    if (seed) {
+      const stored = JSON.parse(docker("image", "inspect", seed.seedImage))[0];
+      assert.equal(stored.Id, seed.seedImage);
+      docker("image", "rm", seed.seedImage);
+    }
+    fs.rmSync(fixture, { recursive: true });
+  });
+  seed = await prepareFixtureSeed(preparedEnv);
+  const foreign = scope(t, true);
+  const realDocker = spawnSync("sh", ["-c", "command -v docker"], { encoding: "utf8" }).stdout.trim();
+  assert.ok(path.isAbsolute(realDocker));
+  const instrumentedDocker = path.join(fixture, "docker");
+  fs.writeFileSync(instrumentedDocker, `#!/bin/sh
+set -eu
+if [ "$1" = container ] && [ "$2" = logs ]; then
+  "$EVAL_FIXTURE_DOCKER" container inspect --format '{{.State.Running}}' "$3" > "$EVAL_FIXTURE_EXIT_PROOF"
+  while [ "$(date +%s)" -le "$EVAL_FIXTURE_PRESERVE_UNTIL" ]; do sleep 1; done
+fi
+exec "$EVAL_FIXTURE_DOCKER" "$@"
+`, { mode: 0o700 });
+  const runner = path.join(fixture, "runner");
+  fs.writeFileSync(runner, `#!/bin/sh
+exec "$EVAL_FIXTURE_RUNNER" "$@" > "$EVAL_FIXTURE_LOG" 2>&1
+`, { mode: 0o700 });
+
+  let unfinishedRequests = 0;
+  const heldAnswer = createServer(() => { unfinishedRequests++; });
+  await new Promise((resolve) => heldAnswer.listen(0, "127.0.0.1", resolve));
+  t.after(() => { heldAnswer.closeAllConnections(); heldAnswer.close(); });
+  for (const [index, runEnv] of runEnvs.entries()) {
+    const verified = index === 1;
+    const runtime = await setup(runEnv, seed);
+    const container = `densemem-eval-${runtime.paths.runID}-server`;
+    const marker = JSON.stringify({ level: "WARN", msg: "terminal capture canary", detail: runtime.state.environment.EVAL_CONTROL_TOKEN });
+    docker("container", "exec", container, "sh", "-c", 'printf "%s\n" "$1" >> /proc/1/fd/1', "fixture", marker);
+    const deadline = Math.floor(Date.now() / 1000) + (verified ? 150 : 12);
+    runtime.manifest.model_deadline = new Date(deadline * 1000).toISOString();
+    saveRuntimeJSON(runtime.paths.manifestFile, runtime.manifest);
+    const proof = path.join(fixture, `exit-${index}`);
+    const output = path.join(fixture, `console-${index}`);
+    const environment = {
+      ...runEnv, PATH: `${fixture}:${runEnv.PATH}`, EVAL_MODEL_DEADLINE_EPOCH: String(deadline),
+      EVAL_RUNNER_BINARY: runner, EVAL_FIXTURE_DOCKER: realDocker, EVAL_FIXTURE_EXIT_PROOF: proof,
+      EVAL_FIXTURE_LOG: output, EVAL_FIXTURE_RUNNER: runEnv.EVAL_RUNNER_BINARY,
+      EVAL_FIXTURE_PRESERVE_UNTIL: verified ? String(deadline) : "0",
+    };
+    const runRuntime = verified ? runtime : {
+      ...runtime,
+      state: { ...runtime.state, environment: { ...runtime.state.environment, DENSE_MEM_EVAL_VERIFIER_URL: `http://127.0.0.1:${heldAnswer.address().port}/v1` } },
+    };
+    if (verified) await runBinary("run", runRuntime, environment);
+    else await assert.rejects(runBinary("run", runRuntime, environment), /Runner binary operation failed/);
+    const report = JSON.parse(fs.readFileSync(path.join(runtime.manifest.output_dir, "scores.json"), "utf8"));
+    const console = fs.readFileSync(output, "utf8");
+    assert.equal(fs.readFileSync(proof, "utf8").trim(), "false", "capture opened only after owned exit");
+    assert.ok(console.includes("terminal capture canary"));
+    assert.equal(console.includes(runtime.state.environment.EVAL_CONTROL_TOKEN), false, "terminal capture protects credentials");
+    assert.equal(report.complete, verified);
+    assert.equal(report.model_verified_before_cutoff, verified);
+    if (verified) {
+      assert.equal(report.capture_complete, true);
+      assert.equal(report.completed_answers, 8);
+      assert.ok(Date.now() > deadline * 1000, "completed model result finished capture in the preservation window");
+    } else {
+      assert.ok(unfinishedRequests > 0);
+      assert.match(report.failure, /ontology off incomplete/);
+    }
+    await cleanup(runEnv);
+  }
+  assert.equal(docker("container", "inspect", "--format", "{{.State.Running}}", foreign.container), "true");
 });

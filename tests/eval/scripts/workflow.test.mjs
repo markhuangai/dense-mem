@@ -310,6 +310,8 @@ test("runner workflow reserves shutdown time, retains numeric artifacts and aggr
     const call = workflowJob(caller, "evaluation").with;
     assert.equal(Object.hasOwn(inputs, "import_workers"), false);
     assert.equal(Object.hasOwn(call, "import_workers"), false);
+    assert.equal(inputs.answer_workers.default, 4);
+    assert.equal(call.answer_workers, "${{ inputs.answer_workers }}");
     const chosen = {};
     for (const { id } of registry.datasets) {
       assert.equal(inputs[`run_${id}`]?.type, "boolean");
@@ -321,6 +323,8 @@ test("runner workflow reserves shutdown time, retains numeric artifacts and aggr
   }
   assert.equal(workflow.env.EVAL_DATASET_SELECTION, "${{ inputs.dataset_selection }}");
   assert.equal(datasets["runs-on"], "ubuntu-latest"); assert.equal(datasets["timeout-minutes"], 360); assert.equal(datasets.strategy["fail-fast"], false);
+  assert.equal(datasets.strategy["max-parallel"], "${{ fromJSON(needs.registry.outputs.max_parallel) }}");
+  assert.equal(datasets.env.EVAL_ANSWER_WORKERS, "${{ needs.registry.outputs.answer_workers }}");
   const deadline = datasets.steps.find((step) => step.name === "Freeze model deadline").run;
   assert.match(deadline, /minutes=330/);
   assert.ok(datasets.steps.filter((step) => step.uses?.startsWith("actions/upload-artifact@")).every((step) => step.with["retention-days"] === 2));
@@ -352,22 +356,44 @@ test("the matrix supports selected public datasets and requires at least one", a
   const output = path.join(directory, "output");
   const env = { ...hostedTest, GITHUB_OUTPUT: output };
   const liveSelection = { hotpotqa: true, musique: false, "2wikimultihopqa": true, nq_rear: false, popqa: false };
-  for (const [mode, selection, expected] of [
-    ["live", undefined, registry.datasets.map(({ id }) => id)],
-    ["live", JSON.stringify(liveSelection), ["hotpotqa", "2wikimultihopqa"]],
-    ["fixtures", '{"hotpotqa":false}', ["hotpotqa"]],
+  for (const [mode, selection, expected, workers, maxParallel] of [
+    ["live", undefined, registry.datasets.map(({ id }) => id), undefined, 5],
+    ["live", undefined, registry.datasets.map(({ id }) => id), "10", 2],
+    ["live", JSON.stringify(liveSelection), ["hotpotqa", "2wikimultihopqa"], "6", 3],
+    ["fixtures", '{"hotpotqa":false}', ["hotpotqa"], undefined, 5],
   ]) {
     fs.writeFileSync(output, "");
-    await main("matrix", { ...env, EVAL_MODE: mode, EVAL_DATASET_SELECTION: selection });
-    const matrix = JSON.parse(fs.readFileSync(output, "utf8").trim().slice("matrix=".length));
-    assert.deepEqual(matrix.dataset, expected);
+    await main("matrix", { ...env, EVAL_MODE: mode, EVAL_DATASET_SELECTION: selection, EVAL_ANSWER_WORKERS: workers });
+    const [matrix, answerWorkers, parallelism] = fs.readFileSync(output, "utf8").trim().split("\n");
+    assert.deepEqual(JSON.parse(matrix.slice("matrix=".length)).dataset, expected);
+    assert.equal(answerWorkers, `answer_workers=${workers ?? 4}`);
+    assert.equal(parallelism, `max_parallel=${maxParallel}`);
   }
   fs.writeFileSync(output, "");
   for (const selection of ['{"hotpotqa":false}', '{"hotpotqa":"true"}', '{"qasper":true}', "null", "not-json"]) {
     await assert.rejects(main("matrix", { ...env, EVAL_MODE: "live", EVAL_DATASET_SELECTION: selection }), /Dataset selection/);
     assert.equal(fs.readFileSync(output, "utf8"), "");
   }
+  for (const workers of ["0", "3", "11", "4.5", "invalid"]) {
+    await assert.rejects(main("matrix", { ...env, EVAL_MODE: "live", EVAL_ANSWER_WORKERS: workers }), /EVAL_ANSWER_WORKERS/);
+    assert.equal(fs.readFileSync(output, "utf8"), "");
+  }
   for (const mode of ["replay", "none", "unknown", ""]) await assert.rejects(main("matrix", { ...env, EVAL_MODE: mode }), /Invalid evaluation mode/);
+});
+
+test("aggregation requires one answer worker count across every reported dataset", () => {
+  const reports = registry.datasets.map(({ id, corpus, questions }) => ({
+    identity: { dataset: id, answer_workers: 10 },
+    corpus_rows: corpus.rows,
+    expected_answers: questions.rows * 4,
+    completed_answers: questions.rows * 4,
+    complete: true,
+    capture_complete: true,
+  }));
+  assert.equal(aggregate(registry, reports).completed_answers, 20000);
+  assert.equal(aggregate(registry, reports.slice(1)).complete, false);
+  reports[0].identity.answer_workers = 4;
+  assert.throws(() => aggregate(registry, reports), /different campaign identities/);
 });
 
 test("pinning reports a missing selected seed without looking up unselected tags", async (t) => {

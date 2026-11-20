@@ -20,7 +20,10 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/evalharness"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
+	"github.com/markhuangai/dense-mem/internal/ontology/assessment"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
+	ontologypg "github.com/markhuangai/dense-mem/internal/ontology/postgres"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -33,7 +36,35 @@ func (f runnerAnswerTransport) Complete(ctx context.Context, request modelprovid
 }
 
 func TestRunnerCampaignConditionsAndCapture(t *testing.T) {
-	f := newRunnerServiceFixture(t)
+	for _, scenario := range []string{"ordinary", "stale source", "rate limited", "mixed failure"} {
+		t.Run(scenario, func(t *testing.T) { testRunnerCampaignConditionsAndCapture(t, scenario) })
+	}
+}
+
+func testRunnerCampaignConditionsAndCapture(t *testing.T, scenario string) {
+	var organizations atomic.Int32
+	f := newRunnerServiceFixtureWithOntology(t, func(ctx context.Context, store *ontologypg.Store, actor requestctx.Actor, _ assessment.Request) (int, error) {
+		number := organizations.Add(1)
+		switch {
+		case scenario == "stale source" && number == 1:
+			actor.Role = "manager"
+			topic := ontology.Record{ID: uuid.NewString(), Kind: ontology.Topic, Definition: &ontology.Definition{Key: "postgresql", Label: "PostgreSQL"}}
+			_, err := store.PublishManager(requestctx.WithActor(ctx, actor), actor.TeamID.String(), ontology.Publication{
+				OperationKey: "runner-concurrent-topic", Reason: "Introduce relevant vocabulary during assessment",
+				Changes: []ontology.Change{{Record: topic}},
+			})
+			return 0, err
+		case (scenario == "rate limited" || scenario == "mixed failure") && number == 1:
+			return http.StatusTooManyRequests, nil
+		case scenario == "mixed failure":
+			return http.StatusUnauthorized, nil
+		default:
+			return 0, nil
+		}
+	})
+	if scenario == "rate limited" {
+		f.native.Now = func() time.Time { return time.Now().Add(5 * time.Minute) }
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	require.NoError(t, f.native.Control(ctx, http.MethodPatch, "/config/ontology-maintenance", map[string]any{"items": []map[string]string{{"key": domain.AppConfigOntologyEnabled, "value": "false"}}}, nil))
@@ -46,6 +77,9 @@ func TestRunnerCampaignConditionsAndCapture(t *testing.T) {
 	var logs bytes.Buffer
 	f.native.Client.Capture = &evalharness.Capture{RunID: manifest.RunID, Logger: slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})), Protector: evalharness.NewRunnerCredentialProtector(f.native.Client.APIKey, f.native.ControlToken)}
 	corpus := []evalharness.CorpusItem{{SourceDocID: "source-one", Content: "Project Alpha stores durable memory in PostgreSQL."}}
+	if scenario == "mixed failure" {
+		corpus = append(corpus, evalharness.CorpusItem{SourceDocID: "source-other", Content: "Jupiter attracts sixty moons across astronomical orbits."})
+	}
 	questions := []evalharness.Question{{ID: "question-one", Query: "Where does Project Alpha store durable memory?", Answers: []string{"PostgreSQL", "private-gold-answer-canary"}, GoldSources: []string{"source-one"}}}
 	var calls atomic.Int32
 	var initialPackets [4]evalharness.MemoryCall
@@ -82,8 +116,13 @@ func TestRunnerCampaignConditionsAndCapture(t *testing.T) {
 	go func() {
 		for ctx.Err() == nil {
 			if _, err := f.maintenance.RunTurn(ctx); err != nil && ctx.Err() == nil && !errors.Is(err, ontology.ErrMaintenancePaused) {
-				worker <- err
-				return
+				expected := (scenario == "stale source" && errors.Is(err, ontology.ErrSourceStale)) ||
+					((scenario == "rate limited" || scenario == "mixed failure") && errors.Is(err, modelprovider.ErrVerifierRateLimit)) ||
+					(scenario == "mixed failure" && errors.Is(err, modelprovider.ErrVerifierProvider))
+				if !expected {
+					worker <- err
+					return
+				}
 			}
 			select {
 			case <-ctx.Done():
@@ -101,8 +140,18 @@ func TestRunnerCampaignConditionsAndCapture(t *testing.T) {
 	providerCalls := f.provider.calls
 	report, err := evalharness.Run(ctx, manifest, corpus, questions, f.native.Client, transport, f.native)
 	require.Equal(t, providerCalls, f.provider.calls, "scoring never imports the corpus again")
+	if scenario == "mixed failure" {
+		require.ErrorContains(t, err, "no supported recovery")
+		require.False(t, report.Complete)
+		require.Equal(t, 2, report.CompletedAnswers)
+		require.GreaterOrEqual(t, organizations.Load(), int32(2))
+		require.Contains(t, logs.String(), "rate_limited")
+		require.NotContains(t, logs.String(), "ontology_recovery_started")
+		return
+	}
 	require.NoError(t, err)
 	require.True(t, report.Complete)
+	require.True(t, report.ModelVerified)
 	require.Equal(t, 4, report.ExpectedAnswers)
 	require.Equal(t, 4, report.CompletedAnswers)
 	require.Equal(t, int32(4), calls.Load())
@@ -111,6 +160,13 @@ func TestRunnerCampaignConditionsAndCapture(t *testing.T) {
 		require.Equal(t, report.Identity.CanonicalHash, observation.CanonicalHash)
 	}
 	require.True(t, report.CaptureComplete)
+	if scenario == "stale source" || scenario == "rate limited" {
+		require.Contains(t, logs.String(), "ontology_recovery_started")
+		require.Contains(t, logs.String(), "ontology_recovery_finished")
+		require.NotContains(t, logs.String(), f.native.ControlToken)
+		require.Contains(t, logs.String(), map[string]string{"stale source": "context_hash", "rate limited": "rate_limited"}[scenario])
+		require.GreaterOrEqual(t, organizations.Load(), int32(2))
+	}
 	require.Equal(t, initialPackets[0], initialPackets[1])
 	require.Equal(t, initialPackets[2], initialPackets[3])
 	conditions := []string{}

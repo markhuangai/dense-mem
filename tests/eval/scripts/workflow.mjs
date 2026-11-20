@@ -6,7 +6,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { buildBootableSeed, extractSeed, verifySeedFiles, restoreSeed, dumpSeed, sealSeed, verifySeedCredentialExclusions, seedReference, resolveSeedImage, postgresImage } from "../../../.github/scripts/evaluation-seeds.mjs";
-import { requireRunner, configuration, resolveImportWorkers, requireEvaluationImportSupport, registryMatrix, evaluationDatasets, sha256, aggregate, ownedResource } from "../../../.github/scripts/evaluation-policy.mjs";
+import { requireRunner, configuration, resolveAnswerWorkers, resolveImportWorkers, requireEvaluationImportSupport, registryMatrix, evaluationDatasets, sha256, aggregate, ownedResource } from "../../../.github/scripts/evaluation-policy.mjs";
 
 const label = "io.dense-mem.eval.run";
 const secret = () => randomBytes(32).toString("base64url");
@@ -189,6 +189,7 @@ export async function setup(env, options = {}) {
   if (!Number.isFinite(deadline.getTime()) || deadline <= new Date() || deadline > Date.now() + 330 * 60_000) throw new Error("Runner model deadline is invalid");
   const manifest = { version: 1, run_id: paths.runID, workflow_run_id: paths.seedBuildID ? "" : env.GITHUB_RUN_ID, seed_build_id: paths.seedBuildID, source_revision: env.EVAL_SOURCE_REVISION, image: env.EVAL_IMAGE, registry_sha256: sha256(registryBytes), dataset: paths.dataset, mode: env.EVAL_MODE, operation, model: configured.model, embedding_model: "text-embedding-3-small", embedding_dimensions: 1536, context_window_tokens: configured.context, import_workers: configured.importWorkers, base_release: env.EVAL_BASE_RELEASE || (fixture ? "v0.0.0" : ""), seed_image: seedImage, seed_dir: seedDir, model_deadline: deadline.toISOString(), data_dir: dataDir, output_dir: outputDir, timings_ms: {}, intake_proof: intakeProof, skip_ai_security_review: skipAISecurityReview };
   if (checkpoint) manifest.resume_scope = checkpoint.scope;
+  if (operation === "run") manifest.answer_workers = resolveAnswerWorkers(env.EVAL_ANSWER_WORKERS);
   save(paths.manifestFile, manifest);
   const prefix = `densemem-eval-${paths.runID}`;
   const state = { runID: paths.runID, source: env.EVAL_SOURCE_REVISION, image: env.EVAL_IMAGE, network: `${prefix}-network`, volume: `${prefix}-postgres`, containers: [`${prefix}-server`, `${prefix}-postgres`, `${prefix}-seed`, ...(fixture ? [`${prefix}-provider`] : [])], environment: {} };
@@ -353,8 +354,12 @@ export async function main(mode, env = process.env) {
   const registryPath = live ? "tests/eval/datasets.json" : "tests/eval/fixtures/datasets.json";
   const selection = live ? env.EVAL_DATASET_SELECTION : undefined;
   if (mode === "matrix") {
+    const workers = resolveAnswerWorkers(env.EVAL_ANSWER_WORKERS);
     const matrix = { dataset: evaluationDatasets(read(registryPath), selection).map(({ id }) => id) };
-    fs.appendFileSync(env.GITHUB_OUTPUT, `matrix=${JSON.stringify(matrix)}\n`); return;
+    const maxParallel = Math.floor(20 / workers);
+    fs.appendFileSync(env.GITHUB_OUTPUT, `matrix=${JSON.stringify(matrix)}\nanswer_workers=${workers}\nmax_parallel=${maxParallel}\n`);
+    if (env.GITHUB_STEP_SUMMARY) fs.appendFileSync(env.GITHUB_STEP_SUMMARY, `Answer workers per dataset: ${workers}. Concurrent dataset jobs: up to ${maxParallel}.\n`);
+    return;
   }
   if (mode === "pin-seeds" && live) {
     const bytes = fs.readFileSync(registryPath);
@@ -387,31 +392,42 @@ export async function main(mode, env = process.env) {
     if (!report.complete) process.exitCode = 1; return;
   }
   if (mode !== "run") throw new Error("Unsupported workflow operation");
-  let runtime;
-  if (env.EVAL_MODE === "fixtures") {
-    const prepared = await setup({ ...env, DENSE_MEM_EVAL_IMPORT_WORKERS: "4" }, { operation: "prepare" });
-    await runBinary("prepare", prepared, env);
-    dumpSeed(docker, `densemem-eval-${prepared.paths.runID}-postgres`, prepared.seedDir);
-    await sealSeed(prepared.seedDir);
-    fs.writeFileSync(path.join(prepared.seedDir, "NOTICE.md"), "# Synthetic evaluation seed\n");
-    const seedImage = await buildBootableSeed(docker, `densemem-eval-${prepared.paths.runID}-postgres`, prepared.seedDir, seedSecrets(prepared.state));
-    const apiKey = prepared.state.environment.EVAL_API_KEY;
-    await cleanup(env);
-    runtime = await setup(env, { seedImage, apiKey });
-  } else runtime = await setup(env);
+  const options = live ? undefined : await prepareFixtureSeed(env);
+  const runtime = await setup(env, options);
   await runBinary("run", runtime, env);
+}
+
+export async function prepareFixtureSeed(env) {
+  const prepared = await setup({ ...env, DENSE_MEM_EVAL_IMPORT_WORKERS: "4" }, { operation: "prepare" });
+  await runBinary("prepare", prepared, env);
+  const postgres = `densemem-eval-${prepared.paths.runID}-postgres`;
+  dumpSeed(docker, postgres, prepared.seedDir);
+  await sealSeed(prepared.seedDir);
+  fs.writeFileSync(path.join(prepared.seedDir, "NOTICE.md"), "# Synthetic evaluation seed\n");
+  const seedImage = await buildBootableSeed(docker, postgres, prepared.seedDir, seedSecrets(prepared.state));
+  const apiKey = prepared.state.environment.EVAL_API_KEY;
+  await cleanup(env);
+  return { seedImage, apiKey };
 }
 
 export async function runBinary(operation, { paths, state }, env = process.env, signal) {
   signal?.throwIfAborted();
   const child = spawn(env.EVAL_RUNNER_BINARY, [operation, paths.manifestFile], { stdio: "inherit", env: privateEnvironment(state, env) });
+  let stopping = false;
   const stop = () => {
+    if (stopping) return;
+    stopping = true;
     child.kill("SIGTERM");
     try {
       const name = `densemem-eval-${paths.runID}-server`;
-      const actual = JSON.parse(docker(["container", "inspect", name]))[0];
+      const deadline = Date.now() + 120_000;
+      const actual = JSON.parse(docker(["container", "inspect", name], operation === "run" ? { timeout: 120_000 } : undefined))[0];
       ownedResource({ Labels: actual.Config.Labels }, paths.runID);
-      docker(["container", "stop", "--signal=SIGTERM", "--timeout=-1", actual.Id], { timeout: 120_000 });
+      if (actual.State.Running) {
+        const stopTimeout = operation === "run" ? "--timeout=0" : "--timeout=-1";
+        const budget = operation === "run" ? Math.max(1, deadline - Date.now()) : 120_000;
+        docker(["container", "stop", "--signal=SIGTERM", stopTimeout, actual.Id], { timeout: budget });
+      }
     } catch { process.stderr.write("Runner deadline shutdown failed; owned cleanup remains required.\n"); process.exitCode = 1; }
   };
   signal?.addEventListener("abort", stop, { once: true });

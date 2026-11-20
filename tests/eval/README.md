@@ -134,6 +134,11 @@ at least one checked. `seed_version=latest` resolves each selected dataset's
 current seed once. Use a UTC timestamp/release suffix to select historical
 seeds for the checked datasets.
 
+Set `answer_workers` to an integer from 4 to 10. The default is 4. Both manual
+workflows limit parallel dataset jobs to `floor(20 / answer_workers)`, so
+`answer_workers=10` runs at most two datasets and 20 answer requests at once
+per campaign.
+
 ```bash
 gh workflow run run-evaluation.yml --repo markhuangai/dense-mem --ref main \
   -f image=test-777 -f run_musique=false -f run_2wikimultihopqa=false \
@@ -232,14 +237,27 @@ dimensions, and `https://api.openai.com/v1`. Use the existing dedicated Secrets
 `DENSE_MEM_EVAL_API_KEY`, `DENSE_MEM_EVAL_EMBED_API_KEY`, and
 `DENSE_MEM_EVAL_VERIFIER_URL`. Ordinary settings resolve workflow value, repository
 Variable, repository Secret, then explicit error; invalid supplied values fail.
-There is no backing-model setting. Ontology and answer concurrency are four;
-embedding concurrency is two. Seed preparation alone uses its requested workers.
+Ontology concurrency is four and embedding concurrency is two. The report
+records the effective answer worker count. Seed preparation uses its requested
+import workers.
 
-Benchmark exchanges are emitted as credential-protected JSON in Actions logs. Look for
-`runtime_transport_failure` for the underlying connection error and its request
-and exchange IDs. Incomplete capture still fails validation. Initial security
-rejection is content-free. Reports show model names without provider URLs or
-credentials.
+Answer turns can retry two confirmed transport failures across response
+regeneration. Connection interruptions and HTTP 429, 502, 503, 504 and 524 use
+one- and two-second backoffs. On 429, new answer dispatches for that dataset wait
+through the longer of the backoff and a valid `Retry-After`. The model deadline
+bounds every wait. Each attempt and any unavailable usage remain visible.
+
+Once ordinary ontology work drains, a verified set of stale publications or
+durable rate-limit failures gets one native recovery pass. The runner retries
+the originating runs serially in the authenticated scope. Full coverage and a
+matching canonical fingerprint are required before ontology-on scoring.
+
+Benchmark exchanges are emitted as credential-protected JSON at DEBUG. Use
+`gh run view <run> --job <job> --log` to collect a dataset job. Match answer
+attempts with their operation and exchange IDs and ontology recovery with its
+originating run and assessment IDs. Reassemble chunks by run, sequence and
+hash. The numeric reports contain identities, counts and timings. Initial
+security rejection stays content-free.
 
 Reports separate seed identity, seeded rows, pull, PostgreSQL startup, migration/readiness,
 scoring and ontology timings. Current-run usage excludes historical seed
@@ -247,10 +265,12 @@ preparation. Host latency and throughput retain their existing definitions;
 unavailable billing remains unavailable rather than an inferred monetary cost.
 
 Model work stops after 330 minutes per dataset. Hosted dataset jobs end after
-360 minutes. Scoring jobs use `fail-fast: false` and aggregate
-every failed, timed-out or missing axis. There is no automatic rebuild, campaign
-restart or deadline extension. Numeric artifacts retain two days; published seed
-versions remain in the registry.
+360 minutes. The runner stops the owned server before collecting terminal logs.
+The preservation window allows up to two minutes for shutdown and up to twenty
+minutes for capture. A verified pre-cutoff result can finish capture during
+that window. Interrupted model work or incomplete capture fails the dataset.
+Scoring jobs use `fail-fast: false` and aggregate every failed, timed-out or
+missing axis. Numeric artifacts retain two days.
 
 Replace [baseline.json](baseline.json) only after a newer complete overall
 measurement. Preserve historical evidence. Maintenance-only retirement remains
@@ -272,7 +292,7 @@ fixture campaign remotely to verify export, protected errors, seeded startup, sc
 and owned cleanup. The registered PostgreSQL tests exercise sustained intake at
 twenty workers, including credential activity, pool waits and commit timing.
 
-Build and publish all five public seeds. Run a full live evaluation with the
-published seed digests before human merge. Observe the live campaign for up to
-seven hours. Keep the existing measured baseline until a complete replacement
-campaign succeeds.
+Verify all five seed digests before the full live evaluation and run it before
+human merge. When using ten answer workers and two concurrent datasets, observe
+the full campaign for up to nineteen hours. Replace the measured baseline after
+all 20,000 answers and the required coverage and capture checks pass.

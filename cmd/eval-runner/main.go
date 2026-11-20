@@ -127,7 +127,12 @@ func execute(ctx context.Context, args []string, logger *observability.Logger, p
 	native := &evalharness.Native{DB: database, Client: client, Scope: evalharness.Scope{TeamID: os.Getenv("EVAL_TEAM_ID"), CredentialID: os.Getenv("EVAL_CREDENTIAL_ID")}, ControlURL: os.Getenv("EVAL_CONTROL_URL"), ControlToken: os.Getenv("EVAL_CONTROL_TOKEN")}
 	native.ServerUsage = map[string]evalharness.UsageTotals{}
 	native.RuntimeLogs = func(ctx context.Context) error {
-		return runtimeLogs(ctx, manifest.RunID, capture, native.ServerUsage, manifest.ResumeScope == nil)
+		return runtimeLogs(ctx, manifest.RunID, capture, native.ServerUsage, manifest.ResumeScope == nil, manifest.Operation == "run")
+	}
+	if manifest.Operation == "run" {
+		native.StopRuntime = func(ctx context.Context, cutoff bool) error {
+			return stopRuntime(ctx, manifest.RunID, cutoff)
+		}
 	}
 	if args[0] == "prepare" {
 		prepareCtx, stop := context.WithCancel(ctx)

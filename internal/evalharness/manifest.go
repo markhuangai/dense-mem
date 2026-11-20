@@ -62,6 +62,14 @@ func ReadManifest(path string) (Manifest, error) {
 	if manifest.Operation != "prepare" && manifest.Operation != "run" && manifest.Operation != "bootstrap" && manifest.Operation != "verify-seed" {
 		return manifest, errors.New("invalid workflow-internal operation")
 	}
+	if manifest.Operation == "run" {
+		manifest.AnswerWorkers = manifest.effectiveAnswerWorkers()
+		if manifest.AnswerWorkers < defaultAnswerWorkers || manifest.AnswerWorkers > maxAnswerWorkers {
+			return manifest, errors.New("answer_workers must be 4..10")
+		}
+	} else if manifest.AnswerWorkers != 0 {
+		return manifest, errors.New("answer_workers applies only to scored evaluation")
+	}
 	if manifest.Operation == "prepare" || manifest.Operation == "bootstrap" {
 		if err := validateImportWorkers(manifest.ImportWorkers); err != nil {
 			return manifest, err
@@ -89,6 +97,13 @@ func ReadManifest(path string) (Manifest, error) {
 		return manifest, errors.New("model deadline is missing or exceeds the campaign limit")
 	}
 	return manifest, nil
+}
+
+func (m Manifest) effectiveAnswerWorkers() int {
+	if m.AnswerWorkers == 0 {
+		return defaultAnswerWorkers
+	}
+	return m.AnswerWorkers
 }
 
 func (m Manifest) PostgresRuntimeImage() string {

@@ -16,15 +16,47 @@ import (
 	"github.com/markhuangai/dense-mem/internal/observability"
 )
 
-func runtimeLogs(ctx context.Context, runID string, capture *evalharness.Capture, usage map[string]evalharness.UsageTotals, requireUsage bool) error {
+func ownedRuntimeContainer(ctx context.Context, runID string) (id string, running bool, err error) {
 	container := os.Getenv("EVAL_SERVER_CONTAINER")
 	if container != "densemem-eval-"+runID+"-server" {
-		return errors.New("server log collection identity mismatch")
+		return "", false, errors.New("server log collection identity mismatch")
 	}
-	inspection := exec.CommandContext(ctx, "docker", "inspect", "--format", `{{index .Config.Labels "io.dense-mem.eval.run"}}`, container)
-	label, err := inspection.Output()
-	if err != nil || strings.TrimSpace(string(label)) != runID {
-		return errors.New("server log ownership cannot be verified")
+	inspection := exec.CommandContext(ctx, "docker", "container", "inspect", "--format", `{{.Id}} {{.State.Running}} {{index .Config.Labels "io.dense-mem.eval.run"}}`, container)
+	data, err := inspection.Output()
+	fields := strings.Fields(string(data))
+	if err != nil || len(fields) != 3 || fields[2] != runID || (fields[1] != "true" && fields[1] != "false") {
+		return "", false, errors.New("server log ownership cannot be verified")
+	}
+	if id, err := hex.DecodeString(fields[0]); err != nil || len(id) != sha256.Size {
+		return "", false, errors.New("server container ID is invalid")
+	}
+	return fields[0], fields[1] == "true", nil
+}
+
+func stopRuntime(ctx context.Context, runID string, cutoff bool) error {
+	id, running, err := ownedRuntimeContainer(ctx, runID)
+	if err != nil || !running {
+		return err
+	}
+	if !cutoff {
+		if err := exec.CommandContext(ctx, "docker", "container", "stop", "--signal=SIGTERM", "--timeout=60", id).Run(); err != nil {
+			return errors.New("owned evaluation server stop failed")
+		}
+	}
+	// The workflow owns the immediate stop at cutoff. Wait for the same container's terminal state.
+	if err := exec.CommandContext(ctx, "docker", "container", "wait", id).Run(); err != nil {
+		return errors.New("owned evaluation server exit could not be confirmed")
+	}
+	return nil
+}
+
+func runtimeLogs(ctx context.Context, runID string, capture *evalharness.Capture, usage map[string]evalharness.UsageTotals, requireUsage, requireExited bool) error {
+	id, running, err := ownedRuntimeContainer(ctx, runID)
+	if err != nil {
+		return err
+	}
+	if requireExited && running {
+		return errors.New("owned evaluation server is still running")
 	}
 	file, err := os.CreateTemp("", "evaluation-server-*.log")
 	if err != nil {
@@ -32,7 +64,7 @@ func runtimeLogs(ctx context.Context, runID string, capture *evalharness.Capture
 	}
 	defer os.Remove(file.Name())
 	defer file.Close()
-	command := exec.CommandContext(ctx, "docker", "logs", container)
+	command := exec.CommandContext(ctx, "docker", "container", "logs", id)
 	command.Stdout = file
 	command.Stderr = file
 	if err = command.Run(); err != nil {

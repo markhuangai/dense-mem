@@ -57,6 +57,10 @@ export function resolveImportWorkers(value) {
   return Number(resolveSetting("DENSE_MEM_EVAL_IMPORT_WORKERS", [value], (v) => /^[1-9][0-9]*$/.test(v) && Number(v) <= 100));
 }
 
+export function resolveAnswerWorkers(value) {
+  return Number(resolveSetting("EVAL_ANSWER_WORKERS", [value, "4"], (v) => /^(?:[4-9]|10)$/.test(v)));
+}
+
 export function configuration(env, { allowHTTPVerifier = false } = {}) {
   const model = resolveSetting("DENSE_MEM_EVAL_MODEL", [env.DENSE_MEM_EVAL_MODEL], (v) => /^[A-Za-z0-9@][A-Za-z0-9_./:-]{0,127}$/.test(v) && !v.includes("://"));
   const context = resolveSetting("DENSE_MEM_EVAL_CONTEXT_WINDOW_TOKENS", [env.DENSE_MEM_EVAL_CONTEXT_WINDOW_TOKENS], (v) => /^[1-9][0-9]*$/.test(v) && Number.isSafeInteger(Number(v)) && Number(v) >= 16384);
@@ -116,7 +120,11 @@ export function aggregate(registry, reports) {
     if (report.expected_answers !== dataset.questions.rows * 4 || report.corpus_rows !== dataset.corpus.rows) throw new Error("Report denominator differs from source registry");
     return { dataset: dataset.id, expected: report.expected_answers, completed: report.completed_answers, complete: report.complete === true && report.capture_complete === true, matrix: report.comparison_matrix, ontology_delta: report.ontology_delta, identity: report.identity, failure: report.failure || "" };
   });
-  const identities = new Set(rows.filter((row) => row.identity).map((row) => JSON.stringify([row.identity.source_revision, row.identity.image, row.identity.registry_sha256, row.identity.model, row.identity.embedding_model, row.identity.embedding_dimensions, row.identity.context_window_tokens, row.identity.workflow_run_id])));
+  const identities = new Set(rows.filter((row) => row.identity).map(({ identity }) => JSON.stringify([
+    identity.source_revision, identity.image, identity.registry_sha256, identity.model, identity.embedding_model,
+    identity.embedding_dimensions, identity.context_window_tokens, identity.workflow_run_id,
+    resolveAnswerWorkers(identity.answer_workers),
+  ])));
   if (identities.size > 1) throw new Error("Dataset jobs used different campaign identities");
   return { complete: rows.every((row) => row.complete), expected_answers: expected, completed_answers: rows.reduce((sum, row) => sum + row.completed, 0), datasets: rows };
 }

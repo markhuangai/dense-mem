@@ -59,6 +59,10 @@ type runnerServiceFixture struct {
 }
 
 func newRunnerServiceFixture(t *testing.T) *runnerServiceFixture {
+	return newRunnerServiceFixtureWithOntology(t, nil)
+}
+
+func newRunnerServiceFixtureWithOntology(t *testing.T, before func(context.Context, *ontologypg.Store, requestctx.Actor, assessment.Request) (int, error)) *runnerServiceFixture {
 	t.Helper()
 	admin, app, rls, cleanup := setupRememberProcessorIntegrationDB(t)
 	t.Cleanup(cleanup)
@@ -97,6 +101,18 @@ func newRunnerServiceFixture(t *testing.T) *runnerServiceFixture {
 		if err := json.Unmarshal([]byte(envelope.Messages[1].Content), &input); err != nil {
 			http.Error(w, "invalid organization request", 400)
 			return
+		}
+		if before != nil {
+			status, err := before(r.Context(), ontologyStore, actor, input)
+			if err != nil {
+				t.Errorf("organization fixture intervention: %v", err)
+				http.Error(w, "fixture intervention failed", http.StatusInternalServerError)
+				return
+			}
+			if status != 0 {
+				http.Error(w, "synthetic provider failure", status)
+				return
+			}
 		}
 		body, err := json.Marshal(runnerOrganizationResponse(input))
 		if err != nil {

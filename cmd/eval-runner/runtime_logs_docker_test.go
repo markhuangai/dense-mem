@@ -54,21 +54,21 @@ func TestRuntimeLogDockerOwnershipAndCompleteCollection(t *testing.T) {
 	capture := &evalharness.Capture{RunID: owner, Logger: slog.New(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: slog.LevelDebug})), Protector: evalharness.NewRunnerCredentialProtector(runtimeLogKeyCanary, runtimeLogURLCanary)}
 	t.Setenv("EVAL_SERVER_CONTAINER", create(owner, owner, runtimeProviderLogFixture(t)))
 	usage := map[string]evalharness.UsageTotals{}
-	require.NoError(t, runtimeLogs(ctx, owner, capture, usage, true))
+	require.NoError(t, runtimeLogs(ctx, owner, capture, usage, true, true))
 	require.Len(t, usage, 5)
 	require.EqualValues(t, 1, usage["ontology"].Unavailable)
 	protected := runtimeCapturePayloads(t, output.Bytes())
 	require.NotContains(t, protected, runtimeLogKeyCanary)
 	require.NotContains(t, protected, runtimeLogURLCanary)
-	require.ErrorContains(t, runtimeLogs(ctx, "another-run", capture, usage, true), "identity mismatch")
+	require.ErrorContains(t, runtimeLogs(ctx, "another-run", capture, usage, true, true), "identity mismatch")
 	foreign := "logs-" + uuid.NewString()
 	t.Setenv("EVAL_SERVER_CONTAINER", create(foreign, owner, "foreign provider exchange\n"))
 	before := output.String()
-	require.ErrorContains(t, runtimeLogs(ctx, foreign, capture, usage, true), "ownership cannot be verified")
+	require.ErrorContains(t, runtimeLogs(ctx, foreign, capture, usage, true, true), "ownership cannot be verified")
 	require.Equal(t, before, output.String(), "foreign logs are rejected before capture")
 	other := "logs-" + uuid.NewString()
 	t.Setenv("EVAL_SERVER_CONTAINER", create(other, other, "no exchanges\n"))
 	empty := &evalharness.Capture{RunID: other, Logger: capture.Logger, Protector: capture.Protector}
-	require.ErrorContains(t, runtimeLogs(ctx, other, empty, map[string]evalharness.UsageTotals{}, true), "required runtime provider exchanges are missing")
-	require.NoError(t, runtimeLogs(ctx, other, empty, map[string]evalharness.UsageTotals{}, false))
+	require.ErrorContains(t, runtimeLogs(ctx, other, empty, map[string]evalharness.UsageTotals{}, true, true), "required runtime provider exchanges are missing")
+	require.NoError(t, runtimeLogs(ctx, other, empty, map[string]evalharness.UsageTotals{}, false, true))
 }

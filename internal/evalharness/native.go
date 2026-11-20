@@ -35,6 +35,8 @@ type Native struct {
 	ControlURL   string
 	ControlToken string
 	Client       *HTTPClient
+	Now          func() time.Time
+	StopRuntime  func(context.Context, bool) error
 	RuntimeLogs  func(context.Context) error
 	ServerUsage  map[string]UsageTotals
 }
@@ -277,7 +279,27 @@ func NativeReady(observation NativeObservation, ontologyEnabled, paused bool, ma
 	if status.Enabled != ontologyEnabled || status.Paused != paused {
 		return errors.New("unexpected native ontology state")
 	}
-	if observation.ActiveBatches != 0 || observation.ActivePreparations != 0 || observation.Unreconciled != 0 || status.ActiveWork != 0 {
+	if err := nativeDrained(observation); err != nil {
+		return err
+	}
+	if !ontologyEnabled {
+		return nil
+	}
+	if status.ConfigurationError != "" || !status.DiscoveryComplete || !status.CoverageComplete || status.Counts.Pending != 0 || status.Counts.Failed != 0 || status.Counts.Ambiguous != 0 || status.Counts.Eligible != status.Counts.Organized {
+		return errors.New("ontology coverage is incomplete")
+	}
+	return nativeOntologyPolicy(status, manifest, teamID)
+}
+
+func nativeOntologyPolicy(status ontology.MaintenanceStatus, manifest Manifest, teamID string) error {
+	if status.Window == nil || status.Window.Policy.Model != manifest.Model || status.Window.Policy.ContextWindowTokens != int64(manifest.ContextWindowTokens) || status.Window.Policy.MaxConcurrency != 4 || status.Window.Policy.TeamConcurrency(teamID) != 4 {
+		return errors.New("effective ontology capacity differs from campaign settings")
+	}
+	return nil
+}
+
+func nativeDrained(observation NativeObservation) error {
+	if observation.ActiveBatches != 0 || observation.ActivePreparations != 0 || observation.Unreconciled != 0 || observation.Ontology.ActiveWork != 0 {
 		return errors.New("native model work has not drained")
 	}
 	measurement, err := MeasureAttempts(observation.ProviderAttempts)
@@ -286,15 +308,6 @@ func NativeReady(observation NativeObservation, ontologyEnabled, paused bool, ma
 	}
 	if measurement.Unfinished != 0 {
 		return errors.New("durable attempts have not reconciled")
-	}
-	if !ontologyEnabled {
-		return nil
-	}
-	if status.ConfigurationError != "" || !status.DiscoveryComplete || !status.CoverageComplete || status.Counts.Pending != 0 || status.Counts.Failed != 0 || status.Counts.Ambiguous != 0 || status.Counts.Eligible != status.Counts.Organized {
-		return errors.New("ontology coverage is incomplete")
-	}
-	if status.Window == nil || status.Window.Policy.Model != manifest.Model || status.Window.Policy.ContextWindowTokens != int64(manifest.ContextWindowTokens) || status.Window.Policy.MaxConcurrency != 4 || status.Window.Policy.TeamConcurrency(teamID) != 4 {
-		return errors.New("effective ontology capacity differs from campaign settings")
 	}
 	return nil
 }
