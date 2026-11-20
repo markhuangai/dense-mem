@@ -38,15 +38,14 @@ type partitionPostgresAssessor struct {
 
 func (p *partitionPostgresAssessor) Complete(_ context.Context, request modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
 	p.calls.Add(1)
-	return partitionFixtureCompleteWithCuts(request, func(item assessor.PartitionItem, refs []string) []string {
-		ends := refs[len(refs)-1:]
+	return partitionFixtureCompleteWithCuts(request, func(item assessor.PartitionItem) []string {
 		if newline := strings.Index(item.BoundaryText, "\n"); newline >= 0 {
 			next := regexp.MustCompile(`⟦([^⟧]+)⟧`).FindStringSubmatch(item.BoundaryText[newline:])
-			if len(next) > 1 && next[1] != ends[0] {
-				ends = append([]string{next[1]}, ends...)
+			if len(next) > 1 {
+				return []string{next[1]}
 			}
 		}
-		return ends
+		return []string{}
 	})
 }
 

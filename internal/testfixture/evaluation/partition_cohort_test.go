@@ -12,15 +12,15 @@ import (
 func TestPartitionFixtureExactTextAndOffsets(t *testing.T) {
 	for _, example := range PartitionCases() {
 		t.Run(example.Name, func(t *testing.T) {
-			request := assessor.PreparePartitionRequest("fixture", []string{example.Text})
+			request := assessor.PreparePartitionRequest("fixture", []string{example.Text}, false)
 			item := request.Items[0]
 			expected := []string{example.Text}
 			if example.Parts == 2 {
 				expected = strings.SplitAfter(example.Text, "\n\n")
 			}
-			ends := []string{}
+			cuts := []string{}
 			offset := 0
-			for _, part := range expected {
+			for _, part := range expected[:len(expected)-1] {
 				offset += len([]rune(part))
 				found := ""
 				for ref, boundary := range item.Refs {
@@ -29,9 +29,9 @@ func TestPartitionFixtureExactTextAndOffsets(t *testing.T) {
 					}
 				}
 				require.NotEmpty(t, found, "expected exact fixture boundary must be available")
-				ends = append(ends, found)
+				cuts = append(cuts, found)
 			}
-			encoded, err := json.Marshal(assessor.PartitionResponse{RequestID: request.RequestID, Items: []assessor.PartitionResult{{ItemID: item.ItemID, EndRefs: ends}}})
+			encoded, err := json.Marshal(assessor.PartitionResponse{RequestID: request.RequestID, Items: []assessor.PartitionResult{{ItemID: item.ItemID, CutRefs: cuts}}})
 			require.NoError(t, err)
 			spans, err := assessor.ValidatePartitionResponse(request, encoded)
 			require.NoError(t, err)

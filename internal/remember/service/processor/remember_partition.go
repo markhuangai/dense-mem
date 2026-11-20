@@ -33,8 +33,8 @@ func (p *rememberSynchronousProcessor) partitionRemember(ctx context.Context, in
 	for i, item := range input.Evidence {
 		contents[i] = item.Content
 	}
-	req := assessor.PreparePartitionRequest("partition:"+attemptID, contents)
-	req.ReviewSecurity = !input.SkipAISecurityReview && (p.decisions == nil || settings == nil || !settings.Effective.SecurityReview)
+	reviewSecurity := !input.SkipAISecurityReview && (p.decisions == nil || settings == nil || !settings.Effective.SecurityReview)
+	req := assessor.PreparePartitionRequest("partition:"+attemptID, contents, reviewSecurity)
 	limits := p.limits
 	defaults := assessor.DefaultSemanticAssessmentLimits()
 	if limits.Tokenizer == "" {
@@ -97,7 +97,7 @@ func (p *rememberSynchronousProcessor) partitionRemember(ctx context.Context, in
 			review.DecisionStages = routing.Stages
 		}
 		if !req.ReviewSecurity && (routing == nil || routing.Security == nil) {
-			req.ReviewSecurity = true
+			req = assessor.PreparePartitionRequest(req.RequestID, contents, true)
 			if err := prepare(); err != nil {
 				return input, nil, err
 			}

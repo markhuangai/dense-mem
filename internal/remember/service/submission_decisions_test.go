@@ -28,7 +28,7 @@ func decisionRoutingFixture() (assessor.SemanticAssessmentRequest, *domain.Decis
 func TestRememberIntakeSecurityAndDeduplicationUseDifferentInputs(t *testing.T) {
 	request, settings := decisionRoutingFixture()
 	const whole = "The active team limit is 4. The change to 8 applies next week."
-	partition := assessor.PreparePartitionRequest("whole-document-review", []string{whole})
+	partition := assessor.PreparePartitionRequest("whole-document-review", []string{whole}, false)
 	calls := 0
 	provider := decisionFunction(func(_ context.Context, req modelprovider.DecisionRequest) (modelprovider.DecisionResult, error) {
 		calls++
@@ -71,7 +71,7 @@ func TestRememberIntakeSecurityAndDeduplicationUseDifferentInputs(t *testing.T) 
 
 func TestRememberIntakeDecisionBudgetUsesMeasuredClientGuidance(t *testing.T) {
 	_, settings := decisionRoutingFixture()
-	partition := assessor.PreparePartitionRequest("whole-document-review", []string{"The PostgreSQL notes describe the current storage layout."})
+	partition := assessor.PreparePartitionRequest("whole-document-review", []string{"The PostgreSQL notes describe the current storage layout."}, false)
 	budget := &modelprovider.DecisionInputBudgetError{Scope: "request", Observed: 1540, Limit: 1024}
 	provider := decisionFunction(func(context.Context, modelprovider.DecisionRequest) (modelprovider.DecisionResult, error) {
 		return modelprovider.DecisionResult{}, &modelprovider.ProviderError{FailureClass: modelprovider.ProviderFailureClassRequestInvalid, Cause: budget}

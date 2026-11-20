@@ -33,7 +33,7 @@ func TestRememberPartitionUnspacedCitationAnchors(t *testing.T) {
 		quote, err := SemanticEvidenceSpan(content, response.EvidenceConflictResults[0].Positions[0].Start, response.EvidenceConflictResults[0].Positions[0].End)
 		require.NoError(t, err)
 		require.Equal(t, string([]rune(content)[start:]), quote)
-		require.Len(t, PreparePartitionRequest("unspaced", []string{content}).Items[0].Refs, 2, "citation anchors cannot become semantic cut points")
+		require.Len(t, PreparePartitionRequest("unspaced", []string{content}, false).Items[0].Refs, 2, "citation anchors cannot become semantic cut points")
 	}
 }
 
@@ -41,19 +41,15 @@ func TestRememberPartitionTailCitationResolvesExactUnicodeSourceOffsets(t *testi
 	const first = "Independent prelude.\n\n"
 	const quote = "tail quote."
 	content := first + strings.Repeat("界", 16384-len([]rune(first))-len([]rune(quote))-1) + " " + quote
-	req := PreparePartitionRequest("tail-citation", []string{content})
-	var cut, final string
+	req := PreparePartitionRequest("tail-citation", []string{content}, false)
+	var cut string
 	for ref, offset := range req.Items[0].Refs {
 		if offset == len([]rune(first)) {
 			cut = ref
 		}
-		if offset == 16384 {
-			final = ref
-		}
 	}
 	require.NotEmpty(t, cut)
-	require.NotEmpty(t, final)
-	body, err := json.Marshal(PartitionResponse{RequestID: req.RequestID, Items: []PartitionResult{{ItemID: req.Items[0].ItemID, EndRefs: []string{cut, final}}}})
+	body, err := json.Marshal(PartitionResponse{RequestID: req.RequestID, Items: []PartitionResult{{ItemID: req.Items[0].ItemID, CutRefs: []string{cut}}}})
 	require.NoError(t, err)
 	spans, err := ValidatePartitionResponse(req, body)
 	require.NoError(t, err)

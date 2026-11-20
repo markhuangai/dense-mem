@@ -283,15 +283,14 @@ function fixtureChatResponse(payload, requestFault = "none", attempt = 1) {
   if (schemaName === "dense_mem_semantic_partition_response") {
     const input = structuredInput(payload, (value) => Array.isArray(value.items) && value.policy_version);
     const result = { request_id: input.request_id, items: input.items.map((item) => {
-      const refs = [...item.boundary_text.matchAll(/⟦([^⟧]+)⟧/g)].map((match) => match[1]);
-      const breakRef = [...item.boundary_text.matchAll(/[\r\n\u2028\u2029]\s*⟦([^⟧]+)⟧/g)].map((match) => match[1]).find((ref) => ref !== refs.at(-1));
-      return { item_id: item.item_id, end_refs: requestFault === "partition-split" && breakRef ? [breakRef, refs.at(-1)] : [refs.at(-1)] };
+      const breakRef = item.boundary_text.match(/[\r\n\u2028\u2029]\s*⟦([^⟧]+)⟧/)?.[1];
+      return { item_id: item.item_id, cut_refs: requestFault === "partition-split" && breakRef ? [breakRef] : [] };
     }) };
     if (input.review_security) {
       result.evidence_security_results = input.items.map((item) => {
         const content = item.boundary_text.replace(/⟦[^⟧]+⟧/g, "");
         if (contextualRejections.has(content) || (requestFault === "security" && faultMarker([content]) === "security")) {
-          const { start_ref, end_ref } = wholeEvidenceRange(item);
+          const { start_ref, end_ref } = item;
           return { evidence_id: item.item_id, decision: "reject", signals: [{ kind: "instruction_override", start_ref, end_ref }] };
         }
         return { evidence_id: item.item_id, decision: "pass", signals: [] };
@@ -303,8 +302,8 @@ function fixtureChatResponse(payload, requestFault = "none", attempt = 1) {
       }
     }
     if (requestFault === "partition-missing") result.items = [];
-    if (requestFault === "partition-unknown") result.items[0].end_refs = ["invented"];
-    if (requestFault === "partition-repair" && attempt === 1) result.items[0].end_refs = ["invented"];
+    if (requestFault === "partition-unknown") result.items[0].cut_refs = ["invented"];
+    if (requestFault === "partition-repair" && attempt === 1) result.items[0].cut_refs = ["invented"];
     return result;
   }
   if (schemaName === "session_evidence_excerpts_v2") return fixtureSessionExtraction(structuredInput(payload, (input) => input.window));

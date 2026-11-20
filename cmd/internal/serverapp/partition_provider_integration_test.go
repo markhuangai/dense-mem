@@ -6,17 +6,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"regexp"
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 )
 
 func partitionFixtureComplete(request modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
-	return partitionFixtureCompleteWithCuts(request, func(_ assessor.PartitionItem, refs []string) []string { return refs[len(refs)-1:] })
+	return partitionFixtureCompleteWithCuts(request, func(assessor.PartitionItem) []string { return []string{} })
 }
 
-func partitionFixtureCompleteWithCuts(request modelprovider.StructuredRequest, cuts func(assessor.PartitionItem, []string) []string) (modelprovider.StructuredResult, error) {
+func partitionFixtureCompleteWithCuts(request modelprovider.StructuredRequest, cuts func(assessor.PartitionItem) []string) (modelprovider.StructuredResult, error) {
 	var input assessor.PartitionRequest
 	if len(request.Messages) < 2 {
 		return modelprovider.StructuredResult{}, fmt.Errorf("missing partition input")
@@ -27,12 +26,7 @@ func partitionFixtureCompleteWithCuts(request modelprovider.StructuredRequest, c
 	result := assessor.PartitionResponse{RequestID: input.RequestID, Items: make([]assessor.PartitionResult, len(input.Items))}
 	review := assessor.PartitionSecurityResponse{}
 	for i, item := range input.Items {
-		matches := regexp.MustCompile(`⟦([^⟧]+)⟧`).FindAllStringSubmatch(item.BoundaryText, -1)
-		refs := make([]string, len(matches))
-		for j, match := range matches {
-			refs[j] = match[1]
-		}
-		result.Items[i] = assessor.PartitionResult{ItemID: item.ItemID, EndRefs: cuts(item, refs)}
+		result.Items[i] = assessor.PartitionResult{ItemID: item.ItemID, CutRefs: cuts(item)}
 		review.SecurityResults = append(review.SecurityResults, assessor.SemanticAssessmentEvidenceSecurityResult{EvidenceID: item.ItemID, Decision: "pass", Signals: []assessor.SemanticAssessmentSecuritySignal{}})
 	}
 	if input.ReviewSecurity {

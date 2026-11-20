@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
 	"testing"
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
@@ -30,8 +29,7 @@ func (p *processorAssessmentProviderStub) Complete(_ context.Context, request mo
 	response := assessor.PartitionResponse{RequestID: input.RequestID, Items: make([]assessor.PartitionResult, len(input.Items))}
 	review := assessor.PartitionSecurityResponse{}
 	for i, item := range input.Items {
-		refs := regexp.MustCompile(`⟦([^⟧]+)⟧`).FindAllStringSubmatch(item.BoundaryText, -1)
-		response.Items[i] = assessor.PartitionResult{ItemID: item.ItemID, EndRefs: []string{refs[len(refs)-1][1]}}
+		response.Items[i] = assessor.PartitionResult{ItemID: item.ItemID, CutRefs: []string{}}
 		review.SecurityResults = append(review.SecurityResults, assessor.SemanticAssessmentEvidenceSecurityResult{EvidenceID: item.ItemID, Decision: "pass", Signals: []assessor.SemanticAssessmentSecuritySignal{}})
 	}
 	if input.ReviewSecurity {
@@ -105,6 +103,8 @@ func TestRememberPartitionUsesWholeDocumentDecisionBeforeGeneration(t *testing.T
 				var partition assessor.PartitionRequest
 				require.NoError(t, json.Unmarshal([]byte(request.Messages[1].Content), &partition))
 				require.Equal(t, testCase.combined, partition.ReviewSecurity)
+				require.Equal(t, testCase.combined, partition.Items[0].StartRef != "")
+				require.Equal(t, testCase.combined, partition.Items[0].EndRef != "")
 				_, securityField := request.Schema["properties"].(map[string]any)["evidence_security_results"]
 				require.Equal(t, testCase.combined, securityField)
 				if testCase.skip {
