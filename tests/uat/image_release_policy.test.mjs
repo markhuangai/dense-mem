@@ -267,11 +267,10 @@ test("shared CI partitions slow gates independently of YAML layout and setup ver
 });
 
 test("non-E2E image and release jobs use GitHub-hosted runners", async () => {
-  const [preview, prereleaseImage, demoImage, prerelease, release, startPrerelease] =
+  const [preview, prereleaseImage, prerelease, release, startPrerelease] =
     await Promise.all([
       readWorkflow("pr-test-image.yml"),
       readWorkflow("publish-image.yml"),
-      readWorkflow("publish-demo-image.yml"),
       readWorkflow("release-rc.yml"),
       readWorkflow("release.yml"),
       readWorkflow("start-prerelease.yml"),
@@ -281,7 +280,6 @@ test("non-E2E image and release jobs use GitHub-hosted runners", async () => {
     assertHostedJob(preview, name);
   }
   assertHostedJob(prereleaseImage, "publish");
-  assertHostedJob(demoImage, "publish-demo");
   for (const name of [
     "classify-release",
     "prepare-prerelease",
@@ -297,7 +295,6 @@ test("non-E2E image and release jobs use GitHub-hosted runners", async () => {
 
   assertQemuBeforeBuildx(preview, "build");
   assertQemuBeforeBuildx(prereleaseImage, "publish");
-  assertQemuBeforeBuildx(demoImage, "publish-demo");
   const upgraded = structuredClone(prereleaseImage);
   for (const step of upgraded.jobs.publish.steps) {
     step.name = "Renamed image step";
@@ -306,6 +303,111 @@ test("non-E2E image and release jobs use GitHub-hosted runners", async () => {
   assertQemuBeforeBuildx(parseWorkflow(stringifyWorkflow(upgraded, { indent: 4, sortKeys: true })), "publish");
   upgraded.jobs.publish.steps.reverse();
   assert.throws(() => assertQemuBeforeBuildx(upgraded, "publish"));
+});
+
+test("publisher and helper jobs preserve their effective token permissions", async () => {
+  const registryWrite = { contents: "read", packages: "write" };
+  const previewRead = { actions: "read", contents: "read", packages: "read", "pull-requests": "read", statuses: "read" };
+  for (const [filename, permissions] of [
+    ["publish-image.yml", { publish: registryWrite }],
+    ["pr-test-image.yml", {
+      build: { contents: "read" },
+      publish: { ...registryWrite, "pull-requests": "write", statuses: "write" },
+    }],
+    ["pr-image-cleanup.yml", { cleanup: { ...registryWrite, actions: "read", "pull-requests": "read" } }],
+    ["development-e2e-cleanup.yml", { cleanup: { ...registryWrite, actions: "read" } }],
+    ["release-rc.yml", {
+      "prepare-prerelease": { contents: "write" },
+      "resolve-production-source": previewRead,
+      "promote-preview-image": { ...previewRead, packages: "write" },
+      "publish-image": registryWrite,
+      "publish-demo-image": registryWrite,
+    }],
+    ["start-prerelease.yml", { "start-prerelease": { actions: "read", contents: "write" } }],
+    ["development-e2e.yml", { build: registryWrite, postgres: { contents: "read" } }],
+    ["production-e2e-scenario.yml", { scenario: { contents: "read", packages: "read" } }],
+  ]) {
+    const workflow = await readWorkflow(filename);
+    for (const [id, expected] of Object.entries(permissions)) {
+      assert.deepEqual(workflowJob(workflow, id).permissions ?? workflow.permissions, expected, `${filename} ${id}`);
+    }
+  }
+});
+
+test("the shared publisher maps both image variants and supports a historical tag", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "dense-mem-image-variants-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const workflow = await readWorkflow("publish-image.yml");
+  const release = await readWorkflow("release-rc.yml");
+  const dispatch = workflow.on.workflow_dispatch.inputs.variant;
+  const callable = workflow.on.workflow_call.inputs.variant;
+  assert.deepEqual(dispatch.options, ["production", "demo"]);
+  assert.equal(dispatch.default, "production");
+  assert.equal(callable.default, "production");
+  const publish = workflowJob(workflow, "publish");
+  const validate = runStep(publish, 'case "${INPUT_VARIANT}"');
+  const checkout = actionStep(publish, "actions/checkout");
+  assert.equal(publish.steps.indexOf(validate), 0);
+  assert.equal(checkout.with.ref, "refs/tags/${{ steps.version.outputs.tag }}");
+  assert.ok(publish.steps.indexOf(checkout) < publish.steps.indexOf(runStep(publish, "docker login")));
+  const build = actionStep(publish, "docker/build-push-action");
+  const meta = actionStep(publish, "docker/metadata-action");
+  assert.equal(build.with.platforms, "linux/amd64,linux/arm64/v8");
+  assert.equal(build.with.tags, "${{ steps.meta.outputs.tags }}");
+  assert.equal(build.with.labels, "${{ steps.meta.outputs.labels }}");
+
+  const tag = "v1.0.0-rc.0";
+  const githubOutput = join(directory, "output");
+  const validateInputs = (variant, inputTag, output = githubOutput) => execFileAsync("bash", ["-c", validate.run], {
+    cwd: directory,
+    env: { ...process.env, INPUT_VARIANT: variant, INPUT_TAG: inputTag, GITHUB_REF_NAME: tag, GITHUB_OUTPUT: output },
+  });
+  for (const [jobId, variant, imageTag, dockerfile, target, cacheScope, displayName] of [
+    ["publish-image", "production", tag, "./Dockerfile", "production", "dense-mem-release", "Build and push prerelease image"],
+    ["publish-demo-image", "demo", `demo-${tag}`, "./Dockerfile.demo", "", "dense-mem-demo", "Build and push demo image"],
+  ]) {
+    const caller = workflowJob(release, jobId);
+    assert.equal(caller.uses, "./.github/workflows/publish-image.yml");
+    assert.equal(caller.with.variant ?? callable.default, variant);
+
+    await writeFile(githubOutput, "");
+    const { stdout } = await validateInputs(variant, variant === "demo" ? tag : "");
+    assert.match(stdout, new RegExp(`Preparing ${variant} image`));
+    const outputs = Object.fromEntries((await readFile(githubOutput, "utf8")).trim().split("\n").map((line) => line.split("=")));
+    const resolve = (value) => value.replace(/\$\{\{ steps\.version\.outputs\.(\w+) \}\}/g, (_, key) => outputs[key]);
+    assert.equal(resolve(checkout.with.ref), `refs/tags/${tag}`);
+    assert.equal(resolve(meta.with.tags).trim(), `type=raw,value=${imageTag}`);
+    assert.equal(resolve(build.with.file), dockerfile);
+    assert.equal(resolve(build.with.target), target);
+    assert.match(resolve(build.with["build-args"]), new RegExp(`^IMAGE_VERSION=${imageTag}$`, "m"));
+    assert.equal(resolve(build.with["cache-from"]), `type=gha,scope=${cacheScope}`);
+    assert.equal(resolve(build.with["cache-to"]), `type=gha,mode=max,scope=${cacheScope}`);
+
+    const nameExpression = publish.name.slice(4, -3);
+    const jobName = new Function("inputs", `return (${nameExpression});`)({ variant });
+    assert.equal(jobName, displayName);
+  }
+
+  const rejectedOutput = join(directory, "rejected");
+  await assert.rejects(validateInputs("unknown", tag, rejectedOutput), { stdout: /Invalid prerelease image variant/ });
+  await assert.rejects(validateInputs("production", `${tag}\nversion=latest`, rejectedOutput), { stdout: /only builds prerelease tags/ });
+  await assert.rejects(readFile(rejectedOutput), { code: "ENOENT" });
+});
+
+test("the regctl installer rejects corrupt bytes before publishing the binary or its config", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "dense-mem-regctl-checksum-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const binary = join(directory, "regctl");
+  const config = join(directory, "regctl.json");
+  const githubEnv = join(directory, "env");
+  const installer = fileURLToPath(new URL("../../.github/scripts/install-regctl.sh", import.meta.url));
+  const curl = join(directory, "curl");
+  await writeFile(curl, '#!/usr/bin/env bash\nprintf "corrupt download" > "$3"\n');
+  await chmod(curl, 0o700);
+  await assert.rejects(execFileAsync("bash", [installer, binary, config], {
+    env: { ...process.env, GITHUB_ENV: githubEnv, PATH: `${directory}:${process.env.PATH}` },
+  }), { stderr: /regctl v[\d.]+ linux-amd64 SHA-256 verification failed/ });
+  for (const path of [binary, config, githubEnv]) await assert.rejects(readFile(path), { code: "ENOENT" });
 });
 
 test("PR preview workflow gates owner/admin and one-shot approval before digest handoff", async () => {

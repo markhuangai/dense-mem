@@ -36,7 +36,8 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - name: Checkout repository
+      - &checkout-source
+        name: Checkout repository
         uses: actions/checkout@v7
         with:
           fetch-depth: 1
@@ -44,7 +45,8 @@ jobs:
           repository: ${{ inputs.source-repository || github.repository }}
           ref: ${{ inputs.source-revision }}
 
-      - name: Set up Node.js
+      - &setup-node
+        name: Set up Node.js
         uses: actions/setup-node@v7
         with:
           node-version: 24
@@ -86,25 +88,16 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 1
-          persist-credentials: false
-          repository: ${{ inputs.source-repository || github.repository }}
-          ref: ${{ inputs.source-revision }}
+      - *checkout-source
 
-      - name: Set up Go
+      - &setup-go
+        name: Set up Go
         uses: actions/setup-go@v7
         with:
           go-version: "1.26.11"
           cache: false
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          package-manager-cache: false
+      - *setup-node
 
       - name: Install lint dependencies
         run: npm ci --prefix .lint
@@ -189,19 +182,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 1
-          persist-credentials: false
-          repository: ${{ inputs.source-repository || github.repository }}
-          ref: ${{ inputs.source-revision }}
+      - *checkout-source
 
-      - name: Set up Go
-        uses: actions/setup-go@v7
-        with:
-          go-version: "1.26.11"
-          cache: false
+      - *setup-go
 
       - name: Run Go tests
         shell: bash
@@ -230,19 +213,9 @@ jobs:
       matrix:
         part: [core, postgres]
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 1
-          persist-credentials: false
-          repository: ${{ inputs.source-repository || github.repository }}
-          ref: ${{ inputs.source-revision }}
+      - *checkout-source
 
-      - name: Set up Go
-        uses: actions/setup-go@v7
-        with:
-          go-version: "1.26.11"
-          cache: false
+      - *setup-go
 
       - name: Produce complete coverage part
         run: scripts/coverage-report.sh --complete-part '${{ matrix.part }}'
@@ -260,19 +233,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 1
-          persist-credentials: false
-          repository: ${{ inputs.source-repository || github.repository }}
-          ref: ${{ inputs.source-revision }}
+      - *checkout-source
 
-      - name: Set up Go
-        uses: actions/setup-go@v7
-        with:
-          go-version: "1.26.11"
-          cache: false
+      - *setup-go
 
       - name: Download core coverage profiles
         uses: actions/download-artifact@v8

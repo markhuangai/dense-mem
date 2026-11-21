@@ -284,7 +284,8 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - name: Validate controller outputs
+      - &validate-preview-inputs
+        name: Validate controller outputs
         shell: bash
         env:
           HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
@@ -379,17 +380,7 @@ jobs:
       digest: ${{ steps.publish.outputs.digest }}
 
     steps:
-      - name: Validate controller outputs
-        shell: bash
-        env:
-          HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
-          MAIN_SHA: ${{ needs.resolve.outputs.main_sha }}
-          PR_NUMBER: ${{ needs.resolve.outputs.pr_number }}
-        run: |
-          set -euo pipefail
-          [[ "${HEAD_SHA}" =~ ^[0-9a-f]{40}$ ]]
-          [[ "${MAIN_SHA}" =~ ^[0-9a-f]{40}$ ]]
-          [[ "${PR_NUMBER}" =~ ^[1-9][0-9]*$ ]]
+      - *validate-preview-inputs
 
       - name: Checkout trusted workflow helpers
         uses: actions/checkout@v7
@@ -425,19 +416,18 @@ jobs:
               core.setFailed("the pull request is no longer open against main at the approved head");
             }
 
+      - name: Checkout pinned regctl installer
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          path: .ci-workflow
+          sparse-checkout: .github/scripts/install-regctl.sh
+          sparse-checkout-cone-mode: false
+
       - name: Install pinned regctl
         shell: bash
-        env:
-          REGCTL_SHA256: c93aa7638749f5aaac1a8e01787321889c78f0101809bb2880343478d0ba0467
-        run: |
-          set -euo pipefail
-          export REGCTL_CONFIG="${RUNNER_TEMP}/regctl-config.json"
-          echo "REGCTL_CONFIG=${REGCTL_CONFIG}" >> "${GITHUB_ENV}"
-          curl -fsSL -o "${RUNNER_TEMP}/regctl" \
-            https://github.com/regclient/regclient/releases/download/v0.11.5/regctl-linux-amd64
-          printf '%s  %s\n' "${REGCTL_SHA256}" "${RUNNER_TEMP}/regctl" | sha256sum -c -
-          chmod +x "${RUNNER_TEMP}/regctl"
-          "${RUNNER_TEMP}/regctl" config set --docker-cred=false --docker-cert=false
+        run: bash .ci-workflow/.github/scripts/install-regctl.sh "${RUNNER_TEMP}/regctl" "${RUNNER_TEMP}/regctl-config.json"
 
       - name: Log in to GHCR
         shell: bash
