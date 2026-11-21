@@ -55,14 +55,11 @@ func ReadManifest(path string) (Manifest, error) {
 	if manifest.Mode != "live" && manifest.Mode != "fixtures" {
 		return manifest, errors.New("invalid runner campaign mode")
 	}
-	expectedID := manifest.ExecutionID() + "-" + manifest.Dataset
-	if manifest.Condition != "" {
-		if (manifest.Condition != "off" && manifest.Condition != "on") || (manifest.Operation != "run" && manifest.Operation != "verify-seed") {
-			return manifest, errors.New("invalid evaluation condition")
-		}
-		expectedID += "-" + manifest.Condition
+	if manifest.Condition != "" &&
+		((manifest.Condition != "off" && manifest.Condition != "on") || (manifest.Operation != "run" && manifest.Operation != "verify-seed")) {
+		return manifest, errors.New("invalid evaluation condition")
 	}
-	if manifest.RunID != expectedID {
+	if manifest.RunID != manifest.DatasetRunID() {
 		return manifest, errors.New("manifest does not belong to this dataset job")
 	}
 	if !modelPattern.MatchString(manifest.Model) || strings.Contains(manifest.Model, "://") || manifest.EmbeddingModel != "text-embedding-3-small" || manifest.EmbeddingDimensions != 1536 || manifest.ContextWindowTokens < 16384 {
@@ -153,6 +150,14 @@ func (m Manifest) ExecutionID() string {
 		return m.SeedBuildID
 	}
 	return m.WorkflowRunID
+}
+
+func (m Manifest) DatasetRunID() string {
+	id := m.ExecutionID() + "-" + m.Dataset
+	if m.Condition != "" {
+		id += "-" + m.Condition
+	}
+	return id
 }
 
 func validateImportWorkers(workers int) error {

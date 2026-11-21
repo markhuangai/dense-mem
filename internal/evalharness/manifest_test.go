@@ -43,6 +43,7 @@ func TestReadManifestValidatesExecutionPins(t *testing.T) {
 		name, message string
 		change        func(*Manifest)
 	}{
+		{"unknown operation", "workflow-internal operation", func(m *Manifest) { m.Operation = "retired" }},
 		{"version", "identity", func(m *Manifest) { m.Version = 2 }},
 		{"run identity", "identity", func(m *Manifest) { m.RunID = "" }},
 		{"workflow run", "identity", func(m *Manifest) { m.WorkflowRunID = "43" }},
@@ -75,6 +76,35 @@ func TestReadManifestValidatesExecutionPins(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			manifest := valid
+			tc.change(&manifest)
+			require.NoError(t, writeJSON(file, manifest))
+			_, err := ReadManifest(file)
+			require.ErrorContains(t, err, tc.message)
+		})
+	}
+	frozen := valid
+	frozen.Mode, frozen.Operation, frozen.ImportWorkers = "live", "run", 0
+	frozen.RunID, frozen.Condition = "42-hotpotqa-on", "on"
+	frozen.SeedImage = "ghcr.io/markhuangai/dense-mem-eval-postgres@sha256:" + strings.Repeat("d", 64)
+	frozen.ParentSeedImage = "ghcr.io/markhuangai/dense-mem-eval-postgres@sha256:" + strings.Repeat("e", 64)
+	require.NoError(t, writeJSON(file, frozen))
+	actual, err = ReadManifest(file)
+	require.NoError(t, err)
+	require.Equal(t, frozen.ParentSeedImage, actual.ParentSeedImage)
+	require.Equal(t, frozen.SeedImage, actual.PostgresRuntimeImage())
+	for _, tc := range []struct {
+		name, message string
+		change        func(*Manifest)
+	}{
+		{"scoring without a condition", "requires a frozen condition", func(m *Manifest) { m.RunID, m.Condition = "42-hotpotqa", "" }},
+		{"unknown condition", "invalid evaluation condition", func(m *Manifest) { m.Condition = "both" }},
+		{"unpinned parent", "distinct pinned parent", func(m *Manifest) { m.ParentSeedImage = "" }},
+		{"self parent", "distinct pinned parent", func(m *Manifest) { m.ParentSeedImage = m.SeedImage }},
+		{"off with a parent", "parent pin applies only", func(m *Manifest) { m.RunID, m.Condition = "42-hotpotqa-off", "off" }},
+		{"score job with a bake checkpoint", "checkpoint applies only", func(m *Manifest) { m.BakeStateDir = t.TempDir() }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			manifest := frozen
 			tc.change(&manifest)
 			require.NoError(t, writeJSON(file, manifest))
 			_, err := ReadManifest(file)
@@ -117,6 +147,36 @@ func TestReadManifestPermitsOnlyPublicSeedOperationsLocally(t *testing.T) {
 			require.Equal(t, manifest, actual)
 		})
 	}
+	t.Run("ontology preparation pins the parent, policy and deadline", func(t *testing.T) {
+		valid := base
+		valid.Operation = "bake-ontology"
+		valid.BakeStateDir = t.TempDir()
+		valid.ModelDeadline = time.Now().Add(23 * time.Hour)
+		valid.SeedImage = "ghcr.io/markhuangai/dense-mem-eval-postgres@sha256:" + strings.Repeat("d", 64)
+		file := filepath.Join(t.TempDir(), "manifest.json")
+		require.NoError(t, writeJSON(file, valid))
+		parsed, err := ReadManifest(file)
+		require.NoError(t, err)
+		require.Equal(t, valid.SeedImage, parsed.PostgresRuntimeImage())
+		require.Equal(t, valid.BakeStateDir, parsed.BakeStateDir)
+		for _, tc := range []struct {
+			name, message string
+			change        func(*Manifest)
+		}{
+			{"relative checkpoint", "private checkpoint", func(m *Manifest) { m.BakeStateDir = "relative" }},
+			{"floating parent", "pinned seed", func(m *Manifest) { m.SeedImage = "ghcr.io/markhuangai/dense-mem-eval-postgres:hotpotqa-latest" }},
+			{"incorrect context", "verified model settings", func(m *Manifest) { m.ContextWindowTokens = 300000 }},
+			{"too much time", "exceeds the campaign limit", func(m *Manifest) { m.ModelDeadline = time.Now().Add(25 * time.Hour) }},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				manifest := valid
+				tc.change(&manifest)
+				require.NoError(t, writeJSON(file, manifest))
+				_, err := ReadManifest(file)
+				require.ErrorContains(t, err, tc.message)
+			})
+		}
+	})
 
 	for _, tc := range []struct {
 		name   string

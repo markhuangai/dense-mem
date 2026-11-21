@@ -1,7 +1,10 @@
 package ontology
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -40,4 +43,20 @@ func TestPreparationCooldownFencesNewAdmissionAndRestoresRepeated429(t *testing.
 	require.NoError(t, restored.check())
 	require.NoError(t, admit())
 	require.Equal(t, 2, admitted)
+}
+
+func TestPreparationCooldownBlocksAdmissionWhenTheCheckpointCannotBeSaved(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "until")
+	cooldown, err := RestorePreparationCooldown(path)
+	require.NoError(t, err)
+	require.NoError(t, os.Mkdir(path, 0700))
+	var output bytes.Buffer
+	cooldown.hold(t.Context(), slog.New(slog.NewJSONHandler(&output, nil)), time.Time{})
+	require.Contains(t, output.String(), "ontology preparation cooldown checkpoint unavailable")
+	require.Contains(t, output.String(), `"http_status":429`)
+	require.ErrorIs(t, cooldown.check(), contract.ErrMaintenancePaused)
+	_, err = RestorePreparationCooldown(path)
+	require.ErrorContains(t, err, "checkpoint is invalid or unavailable")
+	_, err = RestorePreparationCooldown("relative")
+	require.ErrorContains(t, err, "must be absolute")
 }

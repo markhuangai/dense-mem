@@ -43,6 +43,8 @@ func TestRunnerCampaignConditionsAndCapture(t *testing.T) {
 	}
 	t.Run("prepared ontology after window expiry", func(t *testing.T) { testPreparedOntology(t, "expiry") })
 	t.Run("settled ambiguity blocks preparation", func(t *testing.T) { testPreparedOntology(t, "ambiguous") })
+	t.Run("unclassified provider failure blocks preparation", func(t *testing.T) { testPreparedOntology(t, "provider failure") })
+	t.Run("stale input is retried only once per source", func(t *testing.T) { testPreparedOntology(t, "stale twice") })
 	t.Run("checkpoint resumes after repeated interrupted 429s beyond leases", func(t *testing.T) { testPreparedOntology(t, "resume") })
 }
 
@@ -56,9 +58,29 @@ func testPreparedOntology(t *testing.T, scenario string) {
 		fixture.cooldown, err = organization.RestorePreparationCooldown(filepath.Join(stateDir, "until"))
 		require.NoError(t, err)
 	}
-	f := newRunnerServiceFixtureWithOntology(t, nil, func(context.Context, *ontologypg.Store, requestctx.Actor, assessment.Request) (int, error) {
-		if providerCalls.Add(1) <= 2 && scenario == "resume" {
+	var definitions []ontology.Change
+	if scenario == "stale twice" {
+		definitions = []ontology.Change{
+			{Record: ontology.Record{ID: uuid.NewString(), Kind: ontology.Topic, Definition: &ontology.Definition{Key: "postgresql", Label: "PostgreSQL"}}},
+			{Record: ontology.Record{ID: uuid.NewString(), Kind: ontology.Topic, Definition: &ontology.Definition{Key: "memory", Label: "Durable memory"}}},
+		}
+	}
+	f := newRunnerServiceFixtureWithOntology(t, definitions, func(ctx context.Context, store *ontologypg.Store, actor requestctx.Actor, _ assessment.Request) (int, error) {
+		calls := providerCalls.Add(1)
+		if scenario == "provider failure" {
+			return http.StatusUnauthorized, nil
+		}
+		if calls <= 2 && scenario == "resume" {
 			return http.StatusTooManyRequests, nil
+		}
+		if scenario == "stale twice" && calls <= int64(len(definitions)) {
+			actor.Role = "manager"
+			record := ontology.Record{ID: uuid.NewString(), Kind: ontology.OverrideKind, Override: &ontology.Override{Action: ontology.PinDefinition, TargetID: definitions[calls-1].Record.ID}}
+			_, err := store.PublishManager(requestctx.WithActor(ctx, actor), actor.TeamID.String(), ontology.Publication{
+				OperationKey: uuid.NewString(), ExpectedRevision: calls, Reason: "Change an existing candidate context during assessment",
+				Changes: []ontology.Change{{Record: record}},
+			})
+			return 0, err
 		}
 		return 0, nil
 	}, fixture)
@@ -79,6 +101,17 @@ func testPreparedOntology(t *testing.T, scenario string) {
 	require.NoError(t, os.WriteFile(filepath.Join(manifest.SeedDir, "seed.json"), body, 0600))
 	manifest.SeedImage = "sha256:" + strings.Repeat("d", 64)
 	manifest.Mode, manifest.Operation, manifest.BakeStateDir = "fixtures", "bake-ontology", stateDir
+	if scenario == "expiry" {
+		off := manifest
+		off.Condition, off.Operation, off.ImportWorkers = "off", "run", 0
+		testFrozenConditionScoring(t, ctx, f, off, corpus, seed.CanonicalHash, 0, "")
+		wrongScope := seed.Scope
+		wrongScope.Generation++
+		manifest.ResumeScope = &wrongScope
+		require.ErrorContains(t, evalharness.BakeOntology(ctx, manifest, corpus, f.native.Client, f.native), "checkpoint is not drained in its original scope")
+		require.Zero(t, providerCalls.Load())
+		manifest.ResumeScope = nil
+	}
 	var logs bytes.Buffer
 	f.native.Client.Capture = &evalharness.Capture{RunID: "synthetic-prepare", Logger: slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})), Protector: evalharness.NewRunnerCredentialProtector(f.native.ControlToken)}
 	done := make(chan error, 1)
@@ -86,6 +119,12 @@ func testPreparedOntology(t *testing.T, scenario string) {
 	go func() {
 		for turnCtx.Err() == nil {
 			_, err := f.maintenance.RunTurn(turnCtx)
+			if scenario == "provider failure" && errors.Is(err, modelprovider.ErrVerifierProvider) {
+				continue
+			}
+			if scenario == "stale twice" && errors.Is(err, ontology.ErrSourceStale) {
+				continue
+			}
 			if err != nil && !errors.Is(err, ontology.ErrMaintenancePaused) && !errors.Is(err, modelprovider.ErrVerifierRateLimit) && turnCtx.Err() == nil {
 				done <- err
 				return
@@ -136,10 +175,20 @@ func testPreparedOntology(t *testing.T, scenario string) {
 			require.NotEmpty(t, saved.Key)
 			require.True(t, f.snapshot(t).Ontology.Paused)
 			require.LessOrEqual(t, providerCalls.Load(), int64(2))
+			// Resume from the persisted intent when the response was lost after native commit.
+			body, err := os.ReadFile(retryPath)
+			require.NoError(t, err)
+			var intents []map[string]json.RawMessage
+			require.NoError(t, json.Unmarshal(body, &intents))
+			require.Len(t, intents, 1)
+			delete(intents[0], "run")
+			body, err = json.Marshal(intents)
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(retryPath, body, 0600))
 			manifest.ResumeScope = &seed.Scope
 			require.Equal(t, originalDeadline, manifest.ModelDeadline)
 			require.NoError(t, evalharness.BakeOntology(ctx, manifest, corpus, f.native.Client, f.native))
-			body, err := os.ReadFile(retryPath)
+			body, err = os.ReadFile(retryPath)
 			require.NoError(t, err)
 			var recovered []retry
 			require.NoError(t, json.Unmarshal(body, &recovered))
@@ -191,6 +240,24 @@ func testPreparedOntology(t *testing.T, scenario string) {
 		require.True(t, f.snapshot(t).Ontology.Paused)
 		return
 	}
+	if scenario == "provider failure" {
+		require.ErrorContains(t, err, "failure has no supported recovery")
+		require.NoFileExists(t, meta)
+		require.NoFileExists(t, filepath.Join(stateDir, "recovery.json"))
+		require.Contains(t, logs.String(), "ontology_failed_sources")
+		require.True(t, f.snapshot(t).Ontology.Paused)
+		require.Equal(t, int64(1), providerCalls.Load())
+		return
+	}
+	if scenario == "stale twice" {
+		require.ErrorContains(t, err, "source remained stale after recovery")
+		require.NoFileExists(t, meta)
+		require.Contains(t, logs.String(), "context_hash")
+		require.Contains(t, logs.String(), "ontology_recovery_finished")
+		require.True(t, f.snapshot(t).Ontology.Paused)
+		require.Equal(t, int64(2), providerCalls.Load())
+		return
+	}
 	require.NoError(t, err)
 	body, err = os.ReadFile(meta)
 	require.NoError(t, err)
@@ -210,9 +277,130 @@ func testPreparedOntology(t *testing.T, scenario string) {
 	require.Nil(t, restored.Ontology.Window)
 	require.Equal(t, seed.CanonicalHash, restored.CanonicalHash)
 	require.EqualValues(t, seed.Ontology.Usage.Attempts, len(restored.ProviderAttempts))
+	manifest.ImportWorkers = 0
+	for _, interruption := range []string{"", "answer", "recall", "drift", "capture", "shutdown"} {
+		testFrozenConditionScoring(t, ctx, f, manifest, corpus, seed.CanonicalHash, len(restored.ProviderAttempts), interruption)
+	}
 	manifest.ParentSeedImage = "sha256:" + strings.Repeat("f", 64)
 	_, _, _, _, err = evalharness.VerifySeed(ctx, manifest, corpus, f.native.Client, f.native)
 	require.ErrorContains(t, err, "parent differs")
+	manifest.ParentSeedImage = seed.Ontology.ParentImage
+	seed.Ontology.Fingerprint = strings.Repeat("0", 64)
+	body, err = json.Marshal(seed)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(manifest.SeedDir, "seed.json"), body, 0600))
+	_, _, _, _, err = evalharness.VerifySeed(ctx, manifest, corpus, f.native.Client, f.native)
+	require.ErrorContains(t, err, "differ from the preparation receipt")
+}
+
+func testFrozenConditionScoring(t *testing.T, ctx context.Context, fixture *runnerServiceFixture, manifest evalharness.Manifest, corpus []evalharness.CorpusItem, canonicalHash string, ontologyAttempts int, interruption string) {
+	t.Helper()
+	manifest.RunID = "synthetic-" + manifest.Condition
+	manifest.OutputDir = t.TempDir()
+	var logs bytes.Buffer
+	client := fixture.native.Client
+	client.Capture = &evalharness.Capture{RunID: manifest.RunID, Logger: slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})), Protector: evalharness.NewRunnerCredentialProtector(fixture.native.ControlToken)}
+	if interruption == "capture" {
+		fixture.native.RuntimeLogs = func(context.Context) error {
+			_, err := os.ReadFile(filepath.Join(manifest.OutputDir, "terminal-server.log"))
+			return err
+		}
+		defer func() { fixture.native.RuntimeLogs = nil }()
+	}
+	if interruption == "shutdown" {
+		fixture.native.StopRuntime = func(_ context.Context, cutoff bool) error {
+			require.False(t, cutoff)
+			return context.DeadlineExceeded
+		}
+		fixture.native.RuntimeLogs = func(context.Context) error {
+			t.Error("terminal logs require confirmed server exit")
+			return nil
+		}
+		defer func() { fixture.native.StopRuntime, fixture.native.RuntimeLogs = nil, nil }()
+	}
+	work, cancel := context.WithCancel(ctx)
+	defer cancel()
+	if interruption == "recall" {
+		underlying := client.Client.Transport
+		defer func() { client.Client.Transport = underlying }()
+		client.Client.Transport = seedRoundTripper(func(req *http.Request) (*http.Response, error) {
+			response, err := underlying.RoundTrip(req)
+			if req.URL.Path == "/mcp" {
+				cancel()
+			}
+			return response, err
+		})
+	}
+	var calls atomic.Int32
+	transport := runnerAnswerTransport(func(context.Context, modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
+		call := calls.Add(1)
+		switch {
+		case call == 2 && interruption == "answer":
+			cancel()
+			return modelprovider.StructuredResult{}, context.Canceled
+		case call == 1 && interruption == "drift":
+			if err := fixture.native.Control(work, http.MethodPost, "/ontology/resume", map[string]string{"operation_key": uuid.NewString()}, nil); err != nil {
+				return modelprovider.StructuredResult{}, err
+			}
+		}
+		return modelprovider.StructuredResult{Content: `{"action":"answer","query":"","topic_id":"","evidence_id":"","answer":"PostgreSQL","citations":[]}`}, nil
+	})
+	questions := []evalharness.Question{{ID: "question-one", Query: "Where does Project Alpha store durable memory?", Answers: []string{"PostgreSQL"}, GoldSources: []string{"source-one"}}}
+	report, err := evalharness.Run(work, manifest, corpus, questions, client, transport, fixture.native)
+	switch interruption {
+	case "answer", "recall":
+		require.ErrorIs(t, err, context.Canceled)
+		require.False(t, report.Complete)
+		require.False(t, report.ModelVerified)
+		if interruption == "answer" {
+			require.Equal(t, 1, report.CompletedAnswers)
+		} else {
+			require.Zero(t, report.CompletedAnswers)
+			require.Zero(t, calls.Load())
+		}
+		require.Contains(t, logs.String(), `"kind":"campaign_failed"`)
+	case "drift":
+		require.ErrorContains(t, err, "restored ontology is not complete and paused")
+		require.False(t, report.Complete)
+		require.False(t, report.ModelVerified)
+		require.Equal(t, 2, report.CompletedAnswers)
+		require.NoError(t, fixture.native.Pause(ctx))
+	case "capture":
+		require.ErrorIs(t, err, os.ErrNotExist)
+		require.Equal(t, "log capture incomplete", report.Failure)
+		require.True(t, report.ModelVerified)
+		require.False(t, report.CaptureComplete)
+		require.False(t, report.Complete)
+		require.Equal(t, 2, report.CompletedAnswers)
+	case "shutdown":
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		require.Equal(t, "runtime shutdown incomplete", report.Failure)
+		require.True(t, report.ModelVerified)
+		require.False(t, report.CaptureComplete)
+		require.False(t, report.Complete)
+		require.Equal(t, 2, report.CompletedAnswers)
+	default:
+		require.NoError(t, err)
+		require.True(t, report.Complete)
+		require.True(t, report.ModelVerified)
+		require.True(t, report.CaptureComplete)
+		require.Equal(t, 2, report.CompletedAnswers)
+		require.Len(t, report.NativeMeasurements, 2)
+		require.Contains(t, report.Timings, "scoring_through_flush")
+		for _, score := range report.Scores {
+			require.Equal(t, float64(1), score.EM)
+		}
+	}
+	if interruption != "recall" {
+		require.Equal(t, int32(2), calls.Load())
+		require.Equal(t, 1, strings.Count(logs.String(), `"kind":"initial_recall"`))
+	}
+	require.Equal(t, canonicalHash, report.Identity.CanonicalHash)
+	require.Equal(t, 2, report.ExpectedAnswers)
+	require.FileExists(t, filepath.Join(manifest.OutputDir, "scores.json"))
+	require.Contains(t, logs.String(), `"kind":"finished"`)
+	require.NotContains(t, logs.String(), fixture.native.ControlToken)
+	require.Len(t, fixture.snapshot(t).ProviderAttempts, ontologyAttempts)
 }
 
 func testRunnerCampaignConditionsAndCapture(t *testing.T, scenario string) {

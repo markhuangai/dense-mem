@@ -328,13 +328,54 @@ func TestQueuedCapturePropagatesWriteFailure(t *testing.T) {
 	require.True(t, capture.incomplete())
 }
 
+func TestQueuedCapturePreservesTerminalExchangesAfterWorkCancellation(t *testing.T) {
+	var output bytes.Buffer
+	capture := captureFixture(&output)
+	ctx, cancel := context.WithCancel(t.Context())
+	capture.startQueue(cancel)
+	cancel()
+	require.NoError(t, capture.EmitTerminal(ctx, "answer_wire_unavailable", map[string]string{"exchange_id": "interrupted-answer"}))
+	require.NoError(t, capture.finishQueue(t.Context()))
+	defer capture.queue.cancelPreserve()
+	events := capturedEvents(t, output.Bytes())
+	require.Len(t, events, 1)
+	require.Equal(t, "answer_wire_unavailable", events[0].Kind)
+	require.JSONEq(t, `{"exchange_id":"interrupted-answer"}`, string(events[0].Payload))
+}
+
+func TestQueuedCaptureReportsUnserializableRecords(t *testing.T) {
+	var output bytes.Buffer
+	capture := captureFixture(&output)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	capture.startQueue(cancel)
+	require.ErrorContains(t, capture.EmitContext(ctx, "observation", make(chan string)), "unsupported type")
+	require.ErrorContains(t, capture.finishQueue(ctx), "did not drain")
+	require.True(t, capture.incomplete())
+}
+
+func TestQueuedCaptureReportsAnOversizedRecordWithoutEmittingIt(t *testing.T) {
+	var output bytes.Buffer
+	capture := captureFixture(&output)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	capture.startQueue(cancel)
+	require.ErrorContains(t, capture.EmitContext(ctx, "observation", strings.Repeat("x", captureLimit)), "payload exceeds limit")
+	require.ErrorContains(t, capture.finishQueue(ctx), "did not drain")
+	require.Empty(t, output.String())
+}
+
 type heldCaptureWriter struct {
 	started chan struct{}
 	release chan struct{}
 }
 
 func (w heldCaptureWriter) Write(data []byte) (int, error) {
-	close(w.started)
+	select {
+	case <-w.started:
+	default:
+		close(w.started)
+	}
 	<-w.release
 	return len(data), nil
 }
@@ -349,6 +390,10 @@ func TestQueuedCaptureBoundsBlockedWriter(t *testing.T) {
 		capture.startQueue(cancel)
 		require.NoError(t, capture.EmitContext(ctx, "observation", "public"))
 		<-sink.started
+		for range cap(capture.queue.events) {
+			require.NoError(t, capture.EmitContext(ctx, "observation", "waiting on the sink"))
+		}
+		require.ErrorContains(t, capture.EmitContext(ctx, "observation", "beyond queue capacity"), "queue unavailable")
 		require.ErrorContains(t, capture.finishQueue(ctx), "did not drain")
 		require.True(t, capture.incomplete())
 	})

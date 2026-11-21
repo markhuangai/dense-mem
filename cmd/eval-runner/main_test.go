@@ -22,6 +22,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sys/unix"
 )
 
 func TestCLIValidatesPinnedFixturesAndRejectsIncompleteSetup(t *testing.T) {
@@ -48,6 +49,27 @@ func TestCLIValidatesPinnedFixturesAndRejectsIncompleteSetup(t *testing.T) {
 	require.Contains(t, console.String(), "evaluation_validated")
 	require.NotContains(t, console.String(), "synthetic-cli-key")
 	require.NotContains(t, console.String(), "provider-canary")
+	t.Run("main emits validation through a pipe", func(t *testing.T) {
+		read, write, err := os.Pipe()
+		require.NoError(t, err)
+		defer read.Close()
+		defer write.Close()
+		originalArgs := os.Args
+		t.Cleanup(func() { os.Args = originalArgs })
+		os.Args = []string{"eval-runner", "validate", path}
+		originalStdout, err := unix.Dup(unix.Stdout)
+		require.NoError(t, err)
+		defer unix.Close(originalStdout)
+		func() {
+			require.NoError(t, unix.Dup3(int(write.Fd()), unix.Stdout, 0))
+			defer func() { require.NoError(t, unix.Dup3(originalStdout, unix.Stdout, 0)) }()
+			main()
+		}()
+		require.NoError(t, write.Close())
+		data, err := io.ReadAll(read)
+		require.NoError(t, err)
+		require.Contains(t, string(data), `"msg":"evaluation_validated"`)
+	})
 	require.ErrorContains(t, execute(context.Background(), []string{"run", path}, logger, protector), "required runner setting missing: DENSE_MEM_EVAL_API_KEY")
 	manifest.ModelDeadline = time.Now().Add(-time.Second)
 	writeManifest()
@@ -125,11 +147,44 @@ func TestCLIValidatesPinnedFixturesAndRejectsIncompleteSetup(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(admission), scope.CredentialID)
 	require.Contains(t, string(admission), "eval:hotpotqa:row:0")
+	bake := manifest
+	bake.Operation, bake.ImportWorkers, bake.SkipAISecurityReview = "bake-ontology", 0, false
+	bake.BakeStateDir = t.TempDir()
+	body, err = json.Marshal(bake)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, body, 0600))
+	require.NoError(t, execute(t.Context(), []string{"validate", path}, logger, protector))
+	require.ErrorContains(t, execute(t.Context(), []string{"prepare", path}, logger, protector), "command differs")
+	for name, value := range map[string]string{
+		"DENSE_MEM_EVAL_API_KEY": "synthetic", "DENSE_MEM_EVAL_VERIFIER_URL": "https://fixture.example/v1",
+		"EVAL_API_KEY": "synthetic", "EVAL_CONTROL_TOKEN": "synthetic", "EVAL_DATABASE_URL": "synthetic",
+		"EVAL_TEAM_ID": scope.TeamID, "EVAL_CREDENTIAL_ID": scope.CredentialID,
+	} {
+		t.Setenv(name, value)
+	}
+	require.ErrorContains(t, execute(cancelled, []string{"bake-ontology", path}, logger, protector), "runner container identity cannot be verified")
 
 	manifest.IntakeProof, manifest.Image = true, "sha256:"+strings.Repeat("e", 64)
 	manifest.DataDir = filepath.Join(root, "tests/eval/fixtures")
 	writeManifest()
 	require.ErrorIs(t, execute(t.Context(), []string{"validate", path}, logger, protector), os.ErrNotExist)
+}
+
+func TestConsoleReportsAnUnavailableOutputDescriptor(t *testing.T) {
+	file, err := os.CreateTemp(t.TempDir(), "console")
+	require.NoError(t, err)
+	originalStdout := os.Stdout
+	t.Cleanup(func() { os.Stdout = originalStdout })
+	os.Stdout = file
+	writer, closeConsole, err := evaluationConsole()
+	require.NoError(t, err)
+	defer closeConsole()
+	require.Same(t, file, writer)
+	require.NoError(t, file.Close())
+	_, _, err = evaluationConsole()
+	require.ErrorIs(t, err, os.ErrClosed)
+	_, err = (evaluationPipe{file: file}).Write([]byte("record after exit"))
+	require.Error(t, err)
 }
 
 func TestBootstrapRejectsIncompleteSetupBeforeWritingScope(t *testing.T) {
@@ -212,6 +267,16 @@ func TestRuntimeLogCollectorHonorsCancellationBetweenRecords(t *testing.T) {
 	defer reader.Close()
 	defer writer.Close()
 	require.ErrorIs(t, logReader(ctx, reader, capture, map[string]evalharness.UsageTotals{}), context.Canceled)
+}
+
+func TestRuntimeLogCollectorReportsAnUnavailableOutputSink(t *testing.T) {
+	for _, line := range []string{"unstructured Docker warning", `{"level":"WARN","msg":"owned server stopped unexpectedly"}`} {
+		read, write := io.Pipe()
+		require.NoError(t, read.Close())
+		capture := &evalharness.Capture{Logger: slog.New(slog.NewJSONHandler(write, &slog.HandlerOptions{Level: slog.LevelDebug})), Protector: observability.NewCredentialProtector()}
+		require.ErrorContains(t, logReader(t.Context(), strings.NewReader(line+"\n"), capture, map[string]evalharness.UsageTotals{}), "benchmark console write failed")
+		require.NoError(t, write.Close())
+	}
 }
 
 const runtimeLogKeyCanary = "provider-log-key-canary-1739"

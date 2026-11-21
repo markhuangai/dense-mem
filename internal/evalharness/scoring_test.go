@@ -41,6 +41,26 @@ func scoringFixture() (Question, Observation, map[string]CorpusItem, KnowledgeMa
 	return q, Observation{QuestionID: q.ID, Condition: "off", Initial: initial, Hosts: hosts}, corpus, mapping, canonical
 }
 
+func TestConditionReportRejectsInvalidScoringAxes(t *testing.T) {
+	for _, test := range []struct {
+		name, want string
+		questions  int
+		scores     []CaseScore
+	}{
+		{"zero denominator", "invalid expected denominator", 0, nil},
+		{"different condition", "scored condition differs", 1, []CaseScore{{Condition: "off"}}},
+		{"duplicate observation", "duplicate scored observation", 1, []CaseScore{{Condition: "on", Policy: "single", QuestionID: "a"}, {Condition: "on", Policy: "single", QuestionID: "a"}}},
+		{"too many observations", "exceeds public denominator", 1, []CaseScore{{Condition: "on", Policy: "single", QuestionID: "a"}, {Condition: "on", Policy: "single", QuestionID: "b"}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			report := NewReport(Manifest{Condition: "on"}, 1, test.questions)
+			report.Scores = test.scores
+			require.ErrorContains(t, FinalizeReport(&report), test.want)
+			require.False(t, report.Complete)
+		})
+	}
+}
+
 func TestScoringSeparatesRankedSourcesDeliveredTextAnswersAndCitations(t *testing.T) {
 	q, observation, corpus, mapping, canonical := scoringFixture()
 	scores, err := ScoreObservation(q, observation, corpus, mapping, canonical)

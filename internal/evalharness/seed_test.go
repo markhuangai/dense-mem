@@ -45,6 +45,13 @@ func TestSeedValidationBindsSourcesCredentialsAndEmbeddingContract(t *testing.T)
 	}
 	manifest.Model = "another-answer-model"
 	require.NoError(t, seed.Validate(manifest, seed.Scope, 3), "a frozen ingestion seed can evaluate a different answer model")
+	invalid := seed
+	invalid.Scope.OwnerID = uuid.Nil.String()
+	require.ErrorContains(t, invalid.Validate(manifest, invalid.Scope, 3), "seed identity is invalid")
+	manifest.Operation, manifest.SeedImage = "verify-seed", "sha256:"+strings.Repeat("e", 64)
+	require.ErrorContains(t, seed.Validate(manifest, seed.Scope, 3), "format differs")
+	seed.Version = bootableSeedVersion
+	require.NoError(t, seed.Validate(manifest, seed.Scope, 3))
 }
 
 func TestSeedValidationRequiresSkipProvenanceForIntakeProof(t *testing.T) {
@@ -82,12 +89,19 @@ func TestSeedAdmissionManifestReplacesReadOnlyFileOnResume(t *testing.T) {
 func TestSeedFilesRejectCorruptedDumpMappingAndSize(t *testing.T) {
 	seed, _ := validSeedFixture(t)
 	dir := t.TempDir()
+	_, _, err := ReadSeed(dir)
+	require.ErrorIs(t, err, os.ErrNotExist)
+	require.NoError(t, writeJSON(filepath.Join(dir, "seed.json"), seed))
+	_, _, err = ReadSeed(dir)
+	require.ErrorIs(t, err, os.ErrNotExist)
 	mapping := KnowledgeMapping{Partitions: map[string][]ImportedPartition{}}
 	require.NoError(t, writeJSON(filepath.Join(dir, "mapping.json"), mapping))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "database.dump"), []byte("synthetic binary checksum fixture"), 0600))
-	var err error
 	seed.MappingHash, err = FileHash(filepath.Join(dir, "mapping.json"))
 	require.NoError(t, err)
+	require.NoError(t, writeJSON(filepath.Join(dir, "seed.json"), seed))
+	_, _, err = ReadSeed(dir)
+	require.ErrorIs(t, err, os.ErrNotExist)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "database.dump"), []byte("synthetic binary checksum fixture"), 0600))
 	seed.DumpHash, err = FileHash(filepath.Join(dir, "database.dump"))
 	require.NoError(t, err)
 	info, err := os.Stat(filepath.Join(dir, "database.dump"))
@@ -115,6 +129,10 @@ func TestSeedFilesRejectCorruptedDumpMappingAndSize(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, seed, actual)
 	require.Equal(t, mapping, restored)
+	seed.Version = 3
+	require.NoError(t, writeJSON(filepath.Join(dir, "seed.json"), seed))
+	_, _, err = ReadSeed(dir)
+	require.ErrorContains(t, err, "unknown seed metadata version")
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "mapping.json"), []byte("{}"), 0600))
 	_, _, err = ReadSeed(dir)
 	require.ErrorContains(t, err, "mapping digest")

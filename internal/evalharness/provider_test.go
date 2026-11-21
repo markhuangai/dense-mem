@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -114,6 +115,39 @@ func TestAnswerWireCaptureProtectsFailedResponseAndPreservesExactBody(t *testing
 	require.NotContains(t, protected.String(), key)
 	require.NotContains(t, protected.String(), "Authorization")
 	require.NotContains(t, protected.String(), upstream.URL)
+}
+
+type boundedWireSink int
+
+func (s *boundedWireSink) Write(data []byte) (int, error) {
+	if *s == 0 {
+		return 0, io.ErrClosedPipe
+	}
+	*s--
+	return len(data), nil
+}
+
+func TestAnswerWireCapturePropagatesSinkFailures(t *testing.T) {
+	var count atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		count.Add(1)
+		_, _ = io.WriteString(w, completeFixtureAnswer)
+	}))
+	defer upstream.Close()
+	request := modelprovider.StructuredRequest{Model: "fixture"}
+	fail := func(accepted boundedWireSink) {
+		t.Helper()
+		capture := &Capture{Logger: slog.New(slog.NewJSONHandler(&accepted, &slog.HandlerOptions{Level: slog.LevelDebug})), Protector: observability.NewCredentialProtector()}
+		_, err := (AnswerTransport{URL: upstream.URL, Client: upstream.Client(), Capture: capture}).Complete(t.Context(), request)
+		require.ErrorContains(t, err, "benchmark console write failed")
+	}
+	fail(0)
+	require.Zero(t, count.Load(), "a failed request capture must prevent dispatch")
+	fail(1)
+	require.EqualValues(t, 1, count.Load())
+	upstream.Close()
+	fail(1)
+	require.EqualValues(t, 1, count.Load(), "a no-response record must also surface a failed sink")
 }
 
 func TestCanceledHostStartsNoFurtherProviderAttempts(t *testing.T) {
@@ -263,6 +297,11 @@ func TestAnswer429HoldsOtherWorkersAndCancellationInterruptsTheHold(t *testing.T
 	}, 4*time.Second, 5*time.Millisecond)
 	first := <-dispatched
 	require.GreaterOrEqual(t, heldUntil.Sub(first), 3*time.Second)
+	short, stopShort := context.WithTimeout(ctx, 500*time.Millisecond)
+	shortResult := run(short)
+	stopShort()
+	require.Contains(t, shortResult.Error, "deadline exceeded")
+	require.Empty(t, shortResult.Attempts)
 	cancelled, stop := context.WithCancel(ctx)
 	defer stop()
 	waiting := &observedAnswerWait{Context: cancelled, waiting: make(chan struct{})}
