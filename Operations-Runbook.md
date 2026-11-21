@@ -95,6 +95,8 @@ Validation checks migration state, catalog compatibility, and Evidence preservat
 
 Prerelease publication performs its separate source-based production-copy rehearsal before publishing images. It does not start the staging application. The [deployment workflow](https://github.com/markhuangai/dense-mem/blob/41e278673679c1d9634cd63a68d13c74e8a46452/.github/workflows/deploy-stage.yml) owns invocation and image selection; [Development And Testing](Development-And-Testing#staging-validation) describes the verification boundaries.
 
+Use the workflow guide to rebuild a production or demo image from an existing prerelease tag. [Publish a prerelease image](https://github.com/markhuangai/dense-mem/blob/main/.github/workflows/README.md#publish-a-prerelease-image)
+
 ## Health Triage
 
 1. Record the image/source revision, UTC window, correlation ID, and bounded public error.
