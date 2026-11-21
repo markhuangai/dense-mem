@@ -27,15 +27,16 @@ type MaintenanceAuditPreparer interface {
 }
 
 type MaintenanceDependencies struct {
-	Repository      contract.MaintenanceRepository
-	Config          MaintenanceConfigSource
-	Organizer       func(string, int64, assessment.AttemptAccounting) *Service
-	DefaultModel    string
-	ProviderTimeout time.Duration
-	Audit           MaintenanceAuditPreparer
-	Now             func() time.Time
-	Logger          *slog.Logger
-	Diagnostics     MaintenanceDiagnosticCapture
+	Repository          contract.MaintenanceRepository
+	Config              MaintenanceConfigSource
+	Organizer           func(string, int64, assessment.AttemptAccounting) *Service
+	DefaultModel        string
+	ProviderTimeout     time.Duration
+	Audit               MaintenanceAuditPreparer
+	Now                 func() time.Time
+	Logger              *slog.Logger
+	Diagnostics         MaintenanceDiagnosticCapture
+	PreparationCooldown *PreparationCooldown
 }
 
 type MaintenanceDiagnosticCapture struct {
@@ -180,6 +181,9 @@ func (s *MaintenanceService) RunTurn(ctx context.Context) (bool, error) {
 
 func (s *MaintenanceService) prepareTurn(ctx context.Context) (work *maintenanceWork, progress bool, runErr error) {
 	started := time.Now()
+	if err := s.deps.PreparationCooldown.check(); err != nil {
+		return nil, false, err
+	}
 	policy, err := s.policy(ctx)
 	if err != nil {
 		return nil, false, err
@@ -250,6 +254,11 @@ func (s *MaintenanceService) executeBatch(ctx context.Context, work maintenanceW
 		claimCtx = modelprovider.WithExchangeRecorder(claimCtx, recorder)
 	}
 	claimCtx = observability.WithExchangeScope(claimCtx, observability.ExchangeScope{TeamID: claim.TeamID, RunID: claim.RunID, BatchID: claim.ID})
+	if cooldown := s.deps.PreparationCooldown; cooldown != nil {
+		claimCtx = modelprovider.WithRateLimitObserver(claimCtx, func(retryAt time.Time) {
+			cooldown.hold(claimCtx, s.deps.Logger, retryAt)
+		})
+	}
 	defer func() {
 		failure := contract.MaintenanceFailureCode(runErr)
 		if failure == "" {
@@ -289,7 +298,7 @@ func (s *MaintenanceService) executeBatch(ctx context.Context, work maintenanceW
 			}
 		}
 	}()
-	accounting := &maintenanceAttemptAccounting{repository: s.deps.Repository, claim: claim, now: s.deps.Now, admitted: map[int]bool{}}
+	accounting := &maintenanceAttemptAccounting{repository: s.deps.Repository, claim: claim, now: s.deps.Now, admitted: map[int]bool{}, cooldown: s.deps.PreparationCooldown}
 	organizer := s.deps.Organizer(work.policy.Model, work.policy.ContextWindowTokens, accounting)
 	organizer.policy = &work.policy
 	assessmentCtx := observability.WithAIOperation(claimCtx, observability.AIOperationOntologyOrganization, len(claim.Sources))
@@ -329,11 +338,15 @@ type maintenanceAttemptAccounting struct {
 	now        func() time.Time
 	mu         sync.Mutex
 	admitted   map[int]bool
+	cooldown   *PreparationCooldown
 }
 
 func (a *maintenanceAttemptAccounting) BeforeAttempt(ctx context.Context, id string, number, input, output int) (context.Context, error) {
 	return modelprovider.WithAdmissionCallback(ctx, func(dispatchCtx context.Context) error {
-		if err := a.repository.AdmitMaintenanceAttempt(dispatchCtx, a.claim, id, number, input, output, a.now()); err != nil {
+		err := a.cooldown.admit(func() error {
+			return a.repository.AdmitMaintenanceAttempt(dispatchCtx, a.claim, id, number, input, output, a.now())
+		})
+		if err != nil {
 			return err
 		}
 		a.mu.Lock()

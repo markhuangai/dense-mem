@@ -127,7 +127,7 @@ func RunHost(ctx context.Context, client *HTTPClient, transport modelprovider.St
 			if err == nil {
 				break
 			}
-			if captureErr := client.Capture.Emit("answer_validation_failed", map[string]any{"question_id": question.ID, "condition": condition, "policy": policy, "attempt": len(result.Attempts), "reason": err.Error()}); captureErr != nil {
+			if captureErr := client.Capture.EmitContext(ctx, "answer_validation_failed", map[string]any{"question_id": question.ID, "condition": condition, "policy": policy, "attempt": len(result.Attempts), "reason": err.Error()}); captureErr != nil {
 				result.Error = captureErr.Error()
 				return result
 			}
@@ -166,7 +166,7 @@ func RunHost(ctx context.Context, client *HTTPClient, transport modelprovider.St
 			}
 		}
 		result.Calls = append(result.Calls, call)
-		if err := client.Capture.Emit("host_memory", map[string]any{"question_id": question.ID, "condition": condition, "policy": policy, "call": call}); err != nil {
+		if err := client.Capture.EmitContext(ctx, "host_memory", map[string]any{"question_id": question.ID, "condition": condition, "policy": policy, "call_index": len(result.Calls) - 1, "call": call}); err != nil {
 			result.Error = err.Error()
 			return result
 		}

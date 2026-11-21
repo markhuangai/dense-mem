@@ -126,7 +126,8 @@ func TestEvaluationManifestRejectsImportCapacityAndUnpinnedSeeds(t *testing.T) {
 	t.Setenv("GITHUB_RUN_ID", "42")
 	t.Setenv("GITHUB_RUN_ATTEMPT", "1")
 	_, manifest := validSeedFixture(t)
-	manifest.Version, manifest.RunID, manifest.WorkflowRunID, manifest.Operation, manifest.Mode = 1, "42-hotpotqa", "42", "run", "live"
+	manifest.Version, manifest.RunID, manifest.WorkflowRunID, manifest.Operation, manifest.Mode = 1, "42-hotpotqa-off", "42", "run", "live"
+	manifest.Condition = "off"
 	manifest.SourceRevision, manifest.Image = strings.Repeat("a", 40), "ghcr.io/markhuangai/dense-mem@sha256:"+strings.Repeat("b", 64)
 	manifest.Model, manifest.ContextWindowTokens = "dense-mem-testing", 500000
 	manifest.DataDir, manifest.OutputDir, manifest.SeedDir = "data", "public", "seed"

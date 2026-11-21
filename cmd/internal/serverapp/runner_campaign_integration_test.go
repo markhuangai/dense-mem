@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -20,6 +21,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/evalharness"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
+	organization "github.com/markhuangai/dense-mem/internal/ontology"
 	"github.com/markhuangai/dense-mem/internal/ontology/assessment"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	ontologypg "github.com/markhuangai/dense-mem/internal/ontology/postgres"
@@ -39,6 +41,154 @@ func TestRunnerCampaignConditionsAndCapture(t *testing.T) {
 	for _, scenario := range []string{"ordinary", "stale source", "rate limited", "mixed failure"} {
 		t.Run(scenario, func(t *testing.T) { testRunnerCampaignConditionsAndCapture(t, scenario) })
 	}
+	t.Run("prepared ontology after window expiry", func(t *testing.T) { testPreparedOntology(t, "expiry") })
+	t.Run("settled ambiguity blocks preparation", func(t *testing.T) { testPreparedOntology(t, "ambiguous") })
+	t.Run("checkpoint resumes after repeated interrupted 429s beyond leases", func(t *testing.T) { testPreparedOntology(t, "resume") })
+}
+
+func testPreparedOntology(t *testing.T, scenario string) {
+	var offset atomic.Int64
+	var providerCalls atomic.Int64
+	fixture := runnerPreparationFixture{now: func() time.Time { return time.Now().Add(time.Duration(offset.Load())) }, ambiguous: scenario == "ambiguous"}
+	stateDir := t.TempDir()
+	if scenario == "resume" {
+		var err error
+		fixture.cooldown, err = organization.RestorePreparationCooldown(filepath.Join(stateDir, "until"))
+		require.NoError(t, err)
+	}
+	f := newRunnerServiceFixtureWithOntology(t, nil, func(context.Context, *ontologypg.Store, requestctx.Actor, assessment.Request) (int, error) {
+		if providerCalls.Add(1) <= 2 && scenario == "resume" {
+			return http.StatusTooManyRequests, nil
+		}
+		return 0, nil
+	}, fixture)
+	ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
+	defer cancel()
+	corpus := []evalharness.CorpusItem{{SourceDocID: "source-one", Content: "Project Alpha stores durable memory in PostgreSQL."}}
+	manifest := f.manifest
+	manifest.SeedDir, manifest.BaseRelease = t.TempDir(), "v2.8.1-rc.5"
+	manifest.SourceRevision, manifest.RegistryHash = strings.Repeat("a", 40), strings.Repeat("c", 64)
+	manifest.Image = "ghcr.io/markhuangai/dense-mem@sha256:" + strings.Repeat("b", 64)
+	manifest.Dataset, manifest.ModelDeadline = "synthetic", time.Now().Add(230*time.Second)
+	seed, err := evalharness.Prepare(ctx, manifest, corpus, f.native.Client, f.native)
+	require.NoError(t, err)
+	seed = runnerSealSyntheticSeed(t, manifest.SeedDir, seed)
+	seed.Version = 2
+	body, err := json.Marshal(seed)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(manifest.SeedDir, "seed.json"), body, 0600))
+	manifest.SeedImage = "sha256:" + strings.Repeat("d", 64)
+	manifest.Mode, manifest.Operation, manifest.BakeStateDir = "fixtures", "bake-ontology", stateDir
+	var logs bytes.Buffer
+	f.native.Client.Capture = &evalharness.Capture{RunID: "synthetic-prepare", Logger: slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})), Protector: evalharness.NewRunnerCredentialProtector(f.native.ControlToken)}
+	done := make(chan error, 1)
+	turnCtx, stop := context.WithCancel(ctx)
+	go func() {
+		for turnCtx.Err() == nil {
+			_, err := f.maintenance.RunTurn(turnCtx)
+			if err != nil && !errors.Is(err, ontology.ErrMaintenancePaused) && !errors.Is(err, modelprovider.ErrVerifierRateLimit) && turnCtx.Err() == nil {
+				done <- err
+				return
+			}
+			select {
+			case <-turnCtx.Done():
+			case <-time.After(10 * time.Millisecond):
+			}
+		}
+		done <- nil
+	}()
+	var joined bool
+	defer func() {
+		if !joined {
+			stop()
+			require.NoError(t, <-done)
+		}
+	}()
+	if scenario == "resume" {
+		originalDeadline := manifest.ModelDeadline
+		interruption, interrupt := context.WithCancel(ctx)
+		defer interrupt()
+		retryPath := filepath.Join(stateDir, "recovery.json")
+		type retry struct {
+			Run string `json:"run"`
+			Key string `json:"key"`
+		}
+		receipt := make(chan retry, 1)
+		go func() {
+			for interruption.Err() == nil {
+				var saved []retry
+				body, err := os.ReadFile(retryPath)
+				if err == nil && json.Unmarshal(body, &saved) == nil && len(saved) == 1 && saved[0].Run != "" {
+					receipt <- saved[0]
+					interrupt()
+					return
+				}
+				select {
+				case <-interruption.Done():
+				case <-time.After(20 * time.Millisecond):
+				}
+			}
+		}()
+		require.Error(t, evalharness.BakeOntology(interruption, manifest, corpus, f.native.Client, f.native))
+		select {
+		case saved := <-receipt:
+			require.NotEmpty(t, saved.Key)
+			require.True(t, f.snapshot(t).Ontology.Paused)
+			require.Equal(t, int64(1), providerCalls.Load())
+			manifest.ResumeScope = &seed.Scope
+			require.Equal(t, originalDeadline, manifest.ModelDeadline)
+			require.NoError(t, evalharness.BakeOntology(ctx, manifest, corpus, f.native.Client, f.native))
+			body, err := os.ReadFile(retryPath)
+			require.NoError(t, err)
+			var recovered []retry
+			require.NoError(t, json.Unmarshal(body, &recovered))
+			require.Len(t, recovered, 2)
+			require.Equal(t, saved, recovered[0])
+			attempts := f.snapshot(t).ProviderAttempts
+			require.Len(t, attempts, 3)
+			times := []time.Time{attempts[0].AdmittedAt, attempts[1].AdmittedAt, attempts[2].AdmittedAt}
+			slices.SortFunc(times, func(a, b time.Time) int { return a.Compare(b) })
+			require.GreaterOrEqual(t, times[1].Sub(times[0]), 59*time.Second)
+			require.GreaterOrEqual(t, times[2].Sub(times[1]), 59*time.Second)
+			return
+		default:
+			t.Fatal("preparation did not persist the first native retry")
+		}
+	}
+	err = evalharness.BakeOntology(ctx, manifest, corpus, f.native.Client, f.native)
+	stop()
+	joined = true
+	require.NoError(t, <-done)
+	meta := filepath.Join(manifest.BakeStateDir, "ontology-prepared.json")
+	if scenario == "ambiguous" {
+		require.ErrorContains(t, err, "unresolved ambiguous")
+		require.NoFileExists(t, meta)
+		require.Contains(t, logs.String(), "ontology_preparation_ambiguous")
+		require.True(t, f.snapshot(t).Ontology.Paused)
+		return
+	}
+	require.NoError(t, err)
+	body, err = os.ReadFile(meta)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(body, &seed))
+	require.Positive(t, seed.Ontology.Counts.Eligible)
+	require.Equal(t, seed.Ontology.Counts.Eligible, seed.Ontology.Counts.Organized)
+	require.Equal(t, 8, seed.Ontology.Workers)
+	seed.Version = 2
+	body, err = json.Marshal(seed)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(manifest.SeedDir, "seed.json"), body, 0600))
+	manifest.Condition, manifest.Operation, manifest.ParentSeedImage = "on", "run", manifest.SeedImage
+	manifest.SeedImage = "sha256:" + strings.Repeat("e", 64)
+	offset.Store(int64(48 * time.Hour))
+	_, _, _, restored, err := evalharness.VerifySeed(ctx, manifest, corpus, f.native.Client, f.native)
+	require.NoError(t, err)
+	require.Nil(t, restored.Ontology.Window)
+	require.Equal(t, seed.CanonicalHash, restored.CanonicalHash)
+	require.EqualValues(t, seed.Ontology.Usage.Attempts, len(restored.ProviderAttempts))
+	manifest.ParentSeedImage = "sha256:" + strings.Repeat("f", 64)
+	_, _, _, _, err = evalharness.VerifySeed(ctx, manifest, corpus, f.native.Client, f.native)
+	require.ErrorContains(t, err, "parent differs")
 }
 
 func testRunnerCampaignConditionsAndCapture(t *testing.T, scenario string) {

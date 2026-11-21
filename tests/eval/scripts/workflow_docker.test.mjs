@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import { createServer } from "node:http";
 import os from "node:os";
@@ -105,10 +105,10 @@ test("local seed cleanup preserves only its owned checkpoint until completion", 
 test("hosted cutoff stops the owned server before capture and preserves verified scores", { timeout: 900_000 }, async (t) => {
   requireRunner(process.env);
   const fixture = fs.mkdtempSync(path.join(process.env.RUNNER_TEMP, "evaluation-deadline-"));
-  const env = { ...process.env, EVAL_MODE: "fixtures", EVAL_DATASET: "hotpotqa" };
+  const env = { ...process.env, EVAL_MODE: "fixtures", EVAL_DATASET: "hotpotqa", EVAL_CONDITION: "" };
   const fixtureEnv = () => ({ ...env, GITHUB_RUN_ID: `${env.GITHUB_RUN_ID}-fixture-${randomUUID()}` });
   const preparedEnv = fixtureEnv();
-  const runEnvs = [fixtureEnv(), fixtureEnv()];
+  const runEnvs = [fixtureEnv(), fixtureEnv()].map((arm) => ({ ...arm, EVAL_CONDITION: "off" }));
   let seed;
   t.after(async () => {
     for (const ownedEnv of [preparedEnv, ...runEnvs]) {
@@ -142,7 +142,20 @@ exec "$EVAL_FIXTURE_RUNNER" "$@" > "$EVAL_FIXTURE_LOG" 2>&1
 `, { mode: 0o700 });
 
   let unfinishedRequests = 0;
-  const heldAnswer = createServer(() => { unfinishedRequests++; });
+  const heldAnswer = createServer(async (request, response) => {
+    let body = "";
+    for await (const chunk of request) body += chunk;
+    const messages = JSON.parse(body).messages;
+    const question = JSON.parse(messages.findLast(({ role }) => role === "user").content).question;
+    if (question.includes("coordination")) {
+      unfinishedRequests++;
+      return;
+    }
+    const answer = { action: "answer", query: "", topic_id: "", evidence_id: "", answer: "PostgreSQL", citations: [] };
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(answer) }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }));
+  });
   await new Promise((resolve) => heldAnswer.listen(0, "127.0.0.1", resolve));
   t.after(() => { heldAnswer.closeAllConnections(); heldAnswer.close(); });
   for (const [index, runEnv] of runEnvs.entries()) {
@@ -177,11 +190,31 @@ exec "$EVAL_FIXTURE_RUNNER" "$@" > "$EVAL_FIXTURE_LOG" 2>&1
     assert.equal(report.model_verified_before_cutoff, verified);
     if (verified) {
       assert.equal(report.capture_complete, true);
-      assert.equal(report.completed_answers, 8);
+      assert.equal(report.completed_answers, 4);
+      assert.equal(report.identity.condition, "off");
+      assert.ok(report.timings_ms.scoring_through_flush > 0);
       assert.ok(Date.now() > deadline * 1000, "completed model result finished capture in the preservation window");
     } else {
       assert.ok(unfinishedRequests > 0);
-      assert.match(report.failure, /ontology off incomplete/);
+      assert.match(report.failure, /ontology off incomplete|log capture incomplete/);
+      assert.equal(report.completed_answers, 2);
+      const records = console.split("\n").filter((line) => line.startsWith("{")).map(JSON.parse);
+      const terminal = records.find(({ kind, payload }) => kind === "answer_wire_unavailable" && payload?.state === "no_response");
+      assert.ok(terminal, "cutoff must preserve the explicit no-response outcome");
+      assert.ok(records.some(({ kind, payload }) => kind === "answer_response" && payload.operation_id === terminal.payload.operation_id &&
+        payload.attempt.number === terminal.payload.attempt), "cutoff must preserve the attempt usage state");
+      const requests = records.filter(({ kind }) => kind === "answer_wire_request");
+      const sequences = new Set(requests.map(({ sequence }) => sequence));
+      const decoded = [...sequences].map((sequence) => {
+        const group = requests.filter((record) => record.sequence === sequence);
+        if (group[0].payload) return group[0].payload;
+        const chunks = group.map(({ payload_chunk }) => payload_chunk).sort((a, b) => a.index - b.index);
+        const body = chunks.map((chunk) => chunk.body).join("");
+        assert.equal(chunks.length, chunks[0].count);
+        assert.equal(createHash("sha256").update(body).digest("hex"), chunks[0].sha256);
+        return JSON.parse(body).payload;
+      });
+      assert.ok(decoded.some(({ exchange_id }) => exchange_id === terminal.payload.exchange_id), "wire request and terminal must share an exchange ID");
     }
     await cleanup(runEnv);
   }

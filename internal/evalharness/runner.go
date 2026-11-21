@@ -45,10 +45,18 @@ func Run(ctx context.Context, manifest Manifest, corpus []CorpusItem, questions 
 		report.Timings = map[string]float64{}
 	}
 	stage, timing, phaseStarted := "seed verification", "seed_verification", time.Now()
+	work, stop := context.WithDeadline(ctx, manifest.ModelDeadline)
+	defer stop()
+	var scoringStarted time.Time
+	if manifest.Condition != "" {
+		client.Capture.startQueue(stop)
+	}
 	advance := func(next, key string) {
 		report.Timings[timing] = elapsedMS(phaseStarted)
 		stage, timing, phaseStarted = next, key, time.Now()
-		if client.Capture.Logger != nil {
+		if client.Capture.queue != nil {
+			_ = client.Capture.EmitContext(work, "phase_started", map[string]any{"stage": stage, "condition": manifest.Condition, "answer_workers": manifest.AnswerWorkers})
+		} else if client.Capture.Logger != nil {
 			client.Capture.Logger.Info("evaluation phase started", "run_id", manifest.RunID, "stage", stage, "answer_workers", manifest.AnswerWorkers)
 		}
 	}
@@ -75,9 +83,17 @@ func Run(ctx context.Context, manifest Manifest, corpus []CorpusItem, questions 
 		}
 		cancel()
 		report.Timings["runtime_shutdown"] = elapsedMS(shutdownStarted)
+		var preserve context.Context
+		var stopCapture context.CancelFunc
+		if queue := client.Capture.queue; queue != nil {
+			preserve = queue.preservation(ctx)
+			stopCapture = queue.cancelPreserve
+		} else {
+			preserve, stopCapture = context.WithTimeout(context.WithoutCancel(ctx), 20*time.Minute)
+		}
+		defer stopCapture()
 		if logsComplete && native.RuntimeLogs != nil {
 			captureStarted := time.Now()
-			preserve, stopCapture := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Minute)
 			if err := native.RuntimeLogs(preserve); err != nil {
 				logsComplete = false
 				if runErr == nil {
@@ -85,23 +101,38 @@ func Run(ctx context.Context, manifest Manifest, corpus []CorpusItem, questions 
 				}
 				runErr = errors.Join(runErr, fmt.Errorf("protected runtime capture: %w", err))
 			}
-			stopCapture()
 			report.Timings["runtime_log_capture"] = elapsedMS(captureStarted)
 		}
 		report.ServerUsage = native.ServerUsage
 		report.ElapsedMS = elapsedMS(started)
 		if runErr != nil {
 			report.Failure = stage + " incomplete"
-			_ = client.Capture.Emit("campaign_failed", map[string]any{"stage": stage, "error": client.Capture.ProtectError(runErr)})
+			_ = client.Capture.EmitContext(preserve, "campaign_failed", map[string]any{"stage": stage, "error": client.Capture.ProtectError(runErr)})
 			runErr = fmt.Errorf("%s: %w", report.Failure, runErr)
 		}
 		terminal := completion{ImportedRows: report.ImportedRows, CanonicalHash: report.Identity.CanonicalHash, ElapsedMS: report.ElapsedMS, Failure: report.Failure, NativeMeasurements: report.NativeMeasurements, ServerUsage: report.ServerUsage, Timings: report.Timings, ModelVerified: report.ModelVerified}
-		if err := client.Capture.Emit("finished", terminal); err != nil {
+		if err := client.Capture.EmitContext(preserve, "finished", terminal); err != nil {
 			runErr = errors.Join(runErr, err)
 			report.Failure = "log capture incomplete"
 		} else {
 			report.CaptureComplete = logsComplete
 		}
+		if queue := client.Capture.queue; queue != nil {
+			flushStarted := time.Now()
+			if err := client.Capture.finishQueue(preserve); err != nil {
+				runErr = errors.Join(runErr, err)
+				report.CaptureComplete = false
+				report.Failure = "log capture incomplete"
+			}
+			report.Timings["scoring_capture_flush"] = elapsedMS(flushStarted)
+			report.Timings["capture_queue_worker_ms"] = float64(queue.waitNS.Load()) / float64(time.Millisecond)
+			report.Timings["capture_sink_ms"] = float64(queue.sinkNS.Load()) / float64(time.Millisecond)
+			report.Timings["answer_http_worker_ms"] = float64(queue.httpNS.Load()) / float64(time.Millisecond)
+			if finished := queue.scoringFinishedNS.Load(); finished != 0 && !scoringStarted.IsZero() {
+				report.Timings["scoring_through_flush"] = float64(max(time.Unix(0, finished).Sub(scoringStarted), 0)) / float64(time.Millisecond)
+			}
+		}
+		report.ElapsedMS = elapsedMS(started)
 		if err := FinalizeReport(&report); err != nil {
 			runErr = errors.Join(runErr, err)
 		}
@@ -109,8 +140,6 @@ func Run(ctx context.Context, manifest Manifest, corpus []CorpusItem, questions 
 			runErr = errors.Join(runErr, err)
 		}
 	}()
-	work, stop := context.WithDeadline(ctx, manifest.ModelDeadline)
-	defer stop()
 	seed, mapping, canonical, initial, err := VerifySeed(work, manifest, corpus, client, native)
 	if err != nil {
 		return report, err
@@ -119,10 +148,38 @@ func Run(ctx context.Context, manifest Manifest, corpus []CorpusItem, questions 
 	report.Identity.SeedImage = manifest.SeedImage
 	report.Identity.SeedRelease = seed.BaseRelease
 	report.Identity.SeedPreparationWorkers = seed.ImportWorkers
-	if err = client.Capture.Emit("seed_verified", map[string]any{"seed_image": manifest.SeedImage, "corpus_rows": len(mapping.BySourceDocID), "canonical_evidence": len(canonical)}); err != nil {
+	if err = client.Capture.EmitContext(work, "seed_verified", map[string]any{"seed_image": manifest.SeedImage, "corpus_rows": len(mapping.BySourceDocID), "canonical_evidence": len(canonical)}); err != nil {
 		return report, err
 	}
 	report.Identity.CanonicalHash = initial.CanonicalHash
+	report.Identity.ParentSeedImage = manifest.ParentSeedImage
+	if seed.Ontology != nil {
+		report.Preparation = seed.Ontology
+	}
+	if manifest.Condition != "" {
+		initial.ProviderAttempts = nil
+		report.NativeMeasurements = append(report.NativeMeasurements, initial)
+		pausedAndDrained = true
+		advance("ontology "+manifest.Condition, "ontology_"+manifest.Condition+"_scoring")
+		scoringStarted = phaseStarted
+		report.Scores, err = runCondition(work, manifest, corpus, questions, mapping, canonical, client, transport, manifest.Condition)
+		native.RequireRuntimeUsage = len(report.Scores) != 0
+		if err != nil {
+			return report, err
+		}
+		advance("final verification", "final_verification")
+		_, _, _, final, err := VerifySeed(work, manifest, corpus, client, native)
+		if err != nil {
+			return report, err
+		}
+		if work.Err() != nil || !time.Now().Before(manifest.ModelDeadline) {
+			return report, context.DeadlineExceeded
+		}
+		final.ProviderAttempts = nil
+		report.NativeMeasurements = append(report.NativeMeasurements, final)
+		report.ModelVerified = true
+		return report, nil
+	}
 	report.NativeMeasurements = append(report.NativeMeasurements, initial)
 	advance("ontology off", "ontology_off_scoring")
 	scores, err := runCondition(work, manifest, corpus, questions, mapping, canonical, client, transport, "off")
@@ -214,12 +271,14 @@ func waitNative(ctx context.Context, native *Native, manifest Manifest, paused b
 }
 
 func runCondition(ctx context.Context, manifest Manifest, corpus []CorpusItem, questions []Question, mapping KnowledgeMapping, canonical map[string]CanonicalEvidence, client *HTTPClient, transport modelprovider.StructuredTransport, condition string) ([]CaseScore, error) {
-	if err := client.Capture.Emit("condition_started", map[string]string{"condition": condition}); err != nil {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	if err := client.Capture.EmitContext(ctx, "condition_started", map[string]string{"condition": condition}); err != nil {
 		return nil, err
 	}
 	policies := []string{"single", "multi_turn"}
 	progress := captureProgress{Stage: "questions", Condition: condition, Unit: "answers", Total: len(questions) * len(policies)}
-	if err := client.Capture.emitProgress(progress); err != nil {
+	if err := client.Capture.emitProgressContext(ctx, progress); err != nil {
 		return nil, err
 	}
 	bySource := map[string]CorpusItem{}
@@ -231,6 +290,7 @@ func runCondition(ctx context.Context, manifest Manifest, corpus []CorpusItem, q
 	var mu sync.Mutex
 	var scores []CaseScore
 	var first error
+	lastProgress := time.Now()
 	for range manifest.effectiveAnswerWorkers() {
 		wg.Add(1)
 		go func() {
@@ -241,14 +301,19 @@ func runCondition(ctx context.Context, manifest Manifest, corpus []CorpusItem, q
 					initial.Error = err.Error()
 				}
 				observation := Observation{QuestionID: question.ID, Condition: condition, Initial: initial, Hosts: []HostResult{}}
+				if err := client.Capture.EmitContext(ctx, "initial_recall", map[string]any{"question_id": question.ID, "condition": condition, "call": initial}); err != nil {
+					mu.Lock()
+					if first == nil {
+						first = err
+					}
+					mu.Unlock()
+					cancel()
+					return
+				}
 				for _, policy := range policies {
 					observation.Hosts = append(observation.Hosts, RunHost(ctx, client, transport, manifest, HostQuestion{ID: question.ID, Query: question.Query}, initial, policy, condition))
 				}
-				err := client.Capture.Emit("observation", observation)
-				var measured []CaseScore
-				if err == nil {
-					measured, err = ScoreObservation(question, observation, bySource, mapping, canonical)
-				}
+				measured, err := ScoreObservation(question, observation, bySource, mapping, canonical)
 				mu.Lock()
 				scores = append(scores, measured...)
 				completed := 0
@@ -259,13 +324,27 @@ func runCondition(ctx context.Context, manifest Manifest, corpus []CorpusItem, q
 				}
 				progress.Completed += completed
 				progress.Failed += len(policies) - completed
-				if progressErr := client.Capture.emitProgress(progress); err == nil {
-					err = progressErr
+				periodic := time.Since(lastProgress) >= time.Minute
+				if periodic {
+					lastProgress = time.Now()
 				}
+				current := progress
 				if err != nil && first == nil {
 					first = err
 				}
 				mu.Unlock()
+				err = client.Capture.EmitTerminal(ctx, "observation", observationReceipt(observation))
+				if periodic && err == nil {
+					err = client.Capture.emitProgressContext(ctx, current)
+				}
+				if err != nil {
+					mu.Lock()
+					if first == nil {
+						first = err
+					}
+					mu.Unlock()
+					cancel()
+				}
 			}
 		}()
 	}
@@ -279,8 +358,30 @@ schedule:
 	}
 	close(jobs)
 	wg.Wait()
+	if err := client.Capture.emitProgressContext(ctx, progress); first == nil {
+		first = err
+	}
+	if err := client.Capture.EmitTerminal(ctx, "condition_finished", map[string]string{"condition": condition}); first == nil {
+		first = err
+	}
 	if first != nil {
 		return scores, first
 	}
 	return scores, ctx.Err()
+}
+
+func observationReceipt(observation Observation) any {
+	hosts := make([]HostResult, len(observation.Hosts))
+	for i, host := range observation.Hosts {
+		if len(host.Calls) != 0 {
+			host.Calls = host.Calls[1:]
+		}
+		hosts[i] = host
+	}
+	return struct {
+		Version   int          `json:"version"`
+		Question  string       `json:"question_id"`
+		Condition string       `json:"condition"`
+		Hosts     []HostResult `json:"hosts"`
+	}{2, observation.QuestionID, observation.Condition, hosts}
 }

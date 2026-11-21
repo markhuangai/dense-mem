@@ -124,19 +124,48 @@ key fails before ingestion. The seeded PostgreSQL entrypoint applies the
 configured database password through a local socket before accepting TCP
 connections. Each Dense-Mem runtime generates its own control token.
 
+## Prepare ontology-on images
+
+Use the existing production preview and the published ontology-off seeds.
+
+```bash
+node --env-file=eval.env tests/eval/scripts/local-seeds.mjs --variant ontology-on --pr 794
+```
+
+The builder pins the selected off digests, restores fresh databases, and
+prepares ontology serially with eight ontology and verifier workers and a
+500,000-token context. The 24-hour model deadline and cooldown survive a
+checkpoint. A confirmed HTTP 429 suspends new ontology attempts for at least
+60 seconds from the latest 429 or until the provider's later Retry-After.
+Admitted work reconciles. Resume with `--resume <build-id>` after a paused,
+drained checkpoint. Full discovery and positive, complete coverage are required
+for publication. Unresolved ambiguity or failed accounting leaves the checkpoint
+private.
+
+Private preparation can start once the trusted current-head preview and CodeQL
+receipts exist, while Repository CI or Production image E2E runs. Promotion
+requires the exact-head checks and the hosted synthetic pair. The builder
+fresh-restores the credential-checked export before publishing the dated
+`<dataset>-ontology-on-<version>` image and then
+`<dataset>-ontology-on-latest`. The child records the off parent digest,
+canonical, search and ontology fingerprints, and durable window and usage
+receipts. Build and scoring each record their own runtime image.
+
 ## Run an evaluation
 
 Use **Actions → Run evaluation → Run workflow**, select `main`, and enter a
 Dense-Mem production image tag such as `test-777`, `v2.8.1-rc.6`, or `v2.8.1`.
 You can also enter a full GHCR tag or digest reference. In `mode=live`, the five
 public datasets are checked by default. Uncheck any you want to omit and leave
-at least one checked. `seed_version=latest` resolves each selected dataset's
-current seed once. Use a UTC timestamp/release suffix to select historical
-seeds for the checked datasets.
+at least one checked. `seed_version` selects the off seed and
+`ontology_seed_version` selects the on seed. Both default to `latest`.
+Use a UTC timestamp/release suffix to select a dated version. The on seed
+must cite the selected off digest as its parent.
 
 Set `answer_workers` to an integer from 4 to 10. The default is 4. Both manual
-workflows limit parallel dataset jobs to `floor(20 / answer_workers)`, so
-`answer_workers=10` runs at most two datasets and 20 answer requests at once
+workflows limit parallel dataset and condition jobs to
+`floor(20 / answer_workers)`, so `answer_workers=10` runs at most two
+jobs and 20 answer requests at once
 per campaign.
 
 ```bash
@@ -147,19 +176,16 @@ gh workflow run run-evaluation.yml --repo markhuangai/dense-mem --ref main \
 
 The application must be a Linux amd64 production image from this repository with
 verified source metadata. The workflow pins the application and each selected
-seed to a digest before provider-backed jobs. Missing or incompatible selected
-seeds fail explicitly. Use a complete report with `full_public_campaign=true`
+seed to a digest before provider-backed jobs. Missing or incompatible conditions
+remain incomplete while verified conditions finish. Use a complete report with `full_public_campaign=true`
 to replace the overall baseline.
 
-Each dataset starts its pinned PostgreSQL image in fresh writable storage.
-Dense-Mem then starts and applies pending migrations. Check source locks, counts,
-authenticated scope, partition mappings, canonical fingerprint, embedding
-contract, search convergence and the ontology-off state before scoring.
-
-```text
-boot seeded PostgreSQL → migrate and verify → score with ontology off
-  → enable ontology and converge → pause and drain → score with ontology on
-```
+Each condition starts its pinned PostgreSQL image in fresh writable storage.
+Dense-Mem applies pending migrations and verifies source locks, row counts,
+authenticated scope, mappings, fingerprints, embedding and search contracts,
+and the frozen condition. The on image must have complete paused coverage and
+verifiable durable preparation windows, including after those windows expire.
+Scoring verifies the state again and checks for new ontology attempts.
 
 The seed image build creates the schema, loads memory spaces before rows whose
 checks resolve shared-space identity, then restores remaining data and indexes
@@ -174,13 +200,13 @@ migration and readiness times separately.
 The own-PR route remains `production-image-e2e.yml` dispatched on the current
 own-PR branch with `pr_number` and `evaluation=live`. It requires the current
 head's successful full production-image receipt and uses that image. Both live
-routes accept the dataset checkboxes and `seed_version`. `evaluation=none` runs
+routes accept the dataset checkboxes, `seed_version`, and `ontology_seed_version`. `evaluation=none` runs
 ordinary production E2E.
 
 `mode=fixtures` is the evaluation system dry run. It prepares three synthetic
 documents through a deterministic provider, including one document that gets
-two HTTP 524 responses before succeeding. It builds and boots a seeded image,
-then produces eight scored answers across two ontology conditions and two
+two HTTP 524 responses before succeeding. It derives and boots the off/on pair
+and produces eight scored answers across two ontology conditions and two
 answer policies. It makes no external model calls and publishes no seed image.
 
 ## Prove seed intake before a push
@@ -237,9 +263,8 @@ dimensions, and `https://api.openai.com/v1`. Use the existing dedicated Secrets
 `DENSE_MEM_EVAL_API_KEY`, `DENSE_MEM_EVAL_EMBED_API_KEY`, and
 `DENSE_MEM_EVAL_VERIFIER_URL`. Ordinary settings resolve workflow value, repository
 Variable, repository Secret, then explicit error; invalid supplied values fail.
-Ontology concurrency is four and embedding concurrency is two. The report
-records the effective answer worker count. Seed preparation uses its requested
-import workers.
+Embedding concurrency is two. The report records the effective answer worker
+count, and the local import builder records its requested import workers.
 
 Answer turns can retry two confirmed transport failures across response
 regeneration. Connection interruptions and HTTP 429, 502, 503, 504 and 524 use
@@ -247,24 +272,25 @@ one- and two-second backoffs. On 429, new answer dispatches for that dataset wai
 through the longer of the backoff and a valid `Retry-After`. The model deadline
 bounds every wait. Each attempt and any unavailable usage remain visible.
 
-Once ordinary ontology work drains, a verified set of stale publications or
-durable rate-limit failures gets one native recovery pass. The runner retries
-the originating runs serially in the authenticated scope. Full coverage and a
-matching canonical fingerprint are required before ontology-on scoring.
+Once local ontology discovery and ordinary work drain, the builder can recover
+scoped stale sources once and confirmed rate-limited failures within the
+original deadline. Protected receipts identify the originating runs and outcomes.
 
 Benchmark exchanges are emitted as credential-protected JSON at DEBUG. Use
 `gh run view <run> --job <job> --log` to collect a dataset job. Match answer
 attempts with their operation and exchange IDs and ontology recovery with its
 originating run and assessment IDs. Reassemble chunks by run, sequence and
-hash. The numeric reports contain identities, counts and timings. Initial
+hash. The wire exchange owns the protected body and the attempt record carries
+usage and retry decisions. Join each policy observation to the shared
+`initial_recall` record using its question and condition. The numeric reports contain identities, counts and timings. Initial
 security rejection stays content-free.
 
-Reports separate seed identity, seeded rows, pull, PostgreSQL startup, migration/readiness,
-scoring and ontology timings. Current-run usage excludes historical seed
+Reports include seed identity, pull, PostgreSQL startup, migration, readiness,
+scoring through log flush, queue wait and HTTP timing. Current-run usage excludes historical seed
 preparation. Host latency and throughput retain their existing definitions;
 unavailable billing remains unavailable rather than an inferred monetary cost.
 
-Model work stops after 330 minutes per dataset. Hosted dataset jobs end after
+Model work stops after 330 minutes per dataset and condition. Hosted jobs end after
 360 minutes. The runner stops the owned server before collecting terminal logs.
 The preservation window allows up to two minutes for shutdown and up to twenty
 minutes for capture. A verified pre-cutoff result can finish capture during
@@ -286,13 +312,12 @@ Run Development E2E on the exact pushed SHA with PostgreSQL shards `all` and
 observation budget is ninety minutes, including owned-image cleanup.
 
 Require current-head reviews and CodeQL before requesting the trusted image
-and full validation. Before a paid seed build, verify Repository CI, CodeQL
-analysis, CodeQL and Production image E2E on the exact PR head. Run the internal
-fixture campaign remotely to verify export, protected errors, seeded startup, scoring
-and owned cleanup. The registered PostgreSQL tests exercise sustained intake at
+and full validation. For ontology-on exports, use the private preparation and
+public promotion checks above. Run the hosted synthetic pair to prove export,
+protected failure capture, seeded startup, scoring, and owned cleanup. The registered PostgreSQL tests exercise sustained intake at
 twenty workers, including credential activity, pool waits and commit timing.
 
-Verify all five seed digests before the full live evaluation and run it before
-human merge. When using ten answer workers and two concurrent datasets, observe
-the full campaign for up to nineteen hours. Replace the measured baseline after
+Verify both seed digests for each of the five datasets before the full live
+evaluation and run it before human merge. At ten answer workers and two
+concurrent jobs, observe the full campaign for up to 32 hours. Replace the measured baseline after
 all 20,000 answers and the required coverage and capture checks pass.

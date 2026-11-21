@@ -280,3 +280,76 @@ func capturedProgress(t *testing.T, logs []byte) []captureProgress {
 	}
 	return updates
 }
+
+func TestQueuedCaptureReconstructsScoringAndRetainsImmutableInputs(t *testing.T) {
+	var output bytes.Buffer
+	capture := captureFixture(&output)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	capture.startQueue(cancel)
+	question, observation, corpus, mapping, canonical := scoringFixture()
+	expected, err := ScoreObservation(question, observation, corpus, mapping, canonical)
+	require.NoError(t, err)
+	require.NoError(t, capture.EmitContext(ctx, "initial_recall", map[string]any{"question_id": question.ID, "condition": observation.Condition, "call": observation.Initial}))
+	require.NoError(t, capture.EmitContext(ctx, "observation", observationReceipt(observation)))
+	observation.Hosts[0].Answer = "changed after queueing"
+	require.NoError(t, capture.finishQueue(ctx))
+	events := capturedEvents(t, output.Bytes())
+	require.Len(t, events, 2)
+	var initial struct {
+		Call MemoryCall `json:"call"`
+	}
+	require.NoError(t, json.Unmarshal(events[0].Payload, &initial))
+	var restored Observation
+	require.NoError(t, json.Unmarshal(events[1].Payload, &restored))
+	restored.Initial = initial.Call
+	for i := range restored.Hosts {
+		restored.Hosts[i].Calls = append([]MemoryCall{initial.Call}, restored.Hosts[i].Calls...)
+	}
+	measured, err := ScoreObservation(question, restored, corpus, mapping, canonical)
+	require.NoError(t, err)
+	require.Equal(t, expected, measured)
+	require.NotContains(t, string(events[1].Payload), "changed after queueing")
+	require.NotContains(t, string(events[1].Payload), "\"initial\"")
+}
+
+type failedCaptureWriter struct{}
+
+func (failedCaptureWriter) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
+
+func TestQueuedCapturePropagatesWriteFailure(t *testing.T) {
+	capture := &Capture{Logger: slog.New(slog.NewJSONHandler(failedCaptureWriter{}, &slog.HandlerOptions{Level: slog.LevelDebug})), Protector: observability.NewCredentialProtector()}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	capture.startQueue(cancel)
+	require.NoError(t, capture.EmitContext(ctx, "observation", "public"))
+	<-ctx.Done()
+	require.ErrorContains(t, capture.finishQueue(context.Background()), "did not drain")
+	require.True(t, capture.incomplete())
+}
+
+type heldCaptureWriter struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (w heldCaptureWriter) Write(data []byte) (int, error) {
+	close(w.started)
+	<-w.release
+	return len(data), nil
+}
+
+func TestQueuedCaptureBoundsBlockedWriter(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		sink := heldCaptureWriter{started: make(chan struct{}), release: make(chan struct{})}
+		defer close(sink.release)
+		capture := &Capture{Logger: slog.New(slog.NewJSONHandler(sink, &slog.HandlerOptions{Level: slog.LevelDebug})), Protector: observability.NewCredentialProtector()}
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		capture.startQueue(cancel)
+		require.NoError(t, capture.EmitContext(ctx, "observation", "public"))
+		<-sink.started
+		require.ErrorContains(t, capture.finishQueue(ctx), "did not drain")
+		require.True(t, capture.incomplete())
+	})
+}

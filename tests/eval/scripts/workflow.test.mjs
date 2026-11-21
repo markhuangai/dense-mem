@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import imagePolicy from "../../../.github/scripts/image-release-policy.cjs";
-import { resolveSetting, resolveImportWorkers, requireEvaluationImportSupport, configuration, requireRunner, registryMatrix, aggregate, ownedResource, manualEvaluationRequest, resolveEvaluationImage, sha256 } from "../../../.github/scripts/evaluation-policy.mjs";
+import { resolveSetting, resolveImportWorkers, requireEvaluationImportSupport, configuration, requireRunner, registryMatrix, aggregate, aggregateConditions, ownedResource, manualEvaluationRequest, resolveEvaluationImage, sha256 } from "../../../.github/scripts/evaluation-policy.mjs";
 import { readWorkflow, workflowJob, runStep } from "../../uat/workflow_helpers.mjs";
 import { serverEnvironment, databaseCapacity, startupTimings, control, main } from "./workflow.mjs";
 
@@ -368,7 +368,7 @@ test("the matrix supports selected public datasets and requires at least one", a
     fs.writeFileSync(output, "");
     await main("matrix", { ...env, EVAL_MODE: mode, EVAL_DATASET_SELECTION: selection, EVAL_ANSWER_WORKERS: workers });
     const [matrix, answerWorkers, parallelism] = fs.readFileSync(output, "utf8").trim().split("\n");
-    assert.deepEqual(JSON.parse(matrix.slice("matrix=".length)).dataset, expected);
+    assert.deepEqual(JSON.parse(matrix.slice("matrix=".length)).include, expected.flatMap((dataset) => (mode === "live" ? ["off", "on"] : [""]).map((condition) => ({ dataset, condition }))));
     assert.equal(answerWorkers, `answer_workers=${workers ?? 4}`);
     assert.equal(parallelism, `max_parallel=${maxParallel}`);
   }
@@ -407,24 +407,76 @@ test("pinning reports a missing selected seed without looking up unselected tags
     manifests.push(pathname);
     return new Response(null, { status: 404 });
   });
-  await assert.rejects(main("pin-seeds", { ...hostedTest, EVAL_MODE: "live", EVAL_DATASET_SELECTION: '{"hotpotqa":false,"popqa":true}' }), /Public seed is unavailable for popqa/);
-  assert.deepEqual(manifests, ["/v2/markhuangai/dense-mem-eval-postgres/manifests/popqa-latest"]);
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "evaluation-pins-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  await main("pin-seeds", { ...hostedTest, EVAL_MODE: "live", RUNNER_TEMP: directory, GITHUB_OUTPUT: path.join(directory, "output"),
+    EVAL_DATASET_SELECTION: '{"hotpotqa":false,"popqa":true}' });
+  const pins = JSON.parse(fs.readFileSync(path.join(directory, "output"), "utf8").trim().slice("images=".length));
+  assert.match(pins.popqa.on_failure, /popqa-ontology-on-latest/);
+  assert.match(pins.popqa.off_failure, /popqa-latest/);
+  assert.deepEqual(manifests, ["/v2/markhuangai/dense-mem-eval-postgres/manifests/popqa-latest", "/v2/markhuangai/dense-mem-eval-postgres/manifests/popqa-ontology-on-latest"]);
 });
 
-test("a complete single-dataset report keeps its actual denominator and scope", async (t) => {
+test("a complete single-dataset pair keeps its actual denominator and scope", async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "evaluation-aggregate-test-"));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
-  const reports = path.join(directory, "evaluation-reports", "evaluation-hotpotqa");
-  fs.mkdirSync(reports, { recursive: true });
-  fs.writeFileSync(path.join(reports, "scores.json"), JSON.stringify({
-    identity: { dataset: "hotpotqa" }, corpus_rows: registry.datasets[0].corpus.rows,
-    expected_answers: 4000, completed_answers: 4000, complete: true, capture_complete: true,
-  }));
-  await main("aggregate", { ...hostedTest, EVAL_MODE: "live", EVAL_DATASET_SELECTION: '{"hotpotqa":true}', RUNNER_TEMP: directory, GITHUB_STEP_SUMMARY: path.join(directory, "summary") });
+  const source = "a".repeat(40);
+  const image = pinnedImage;
+  const registryHash = sha256(fs.readFileSync(new URL("../datasets.json", import.meta.url)));
+  const pair = { off: "off-pin", on: "on-pin" };
+  for (const condition of ["off", "on"]) {
+    const reports = path.join(directory, "evaluation-reports", `evaluation-hotpotqa-${condition}`);
+    fs.mkdirSync(reports, { recursive: true });
+    const fixture = frozenReport(registry.datasets[0], condition, { source, image, registryHash, pair });
+    fs.writeFileSync(path.join(reports, "scores.json"), JSON.stringify(fixture));
+    fs.writeFileSync(path.join(reports, "cleanup.json"), JSON.stringify({ run_id: fixture.identity.run_id, complete: true }));
+  }
+  await main("aggregate", { ...hostedTest, EVAL_MODE: "live", EVAL_DATASET_SELECTION: '{"hotpotqa":true}', RUNNER_TEMP: directory,
+    EVAL_SOURCE_REVISION: source, EVAL_IMAGE: image, EVAL_ANSWER_WORKERS: "10", EVAL_PINNED_SEEDS: JSON.stringify({ hotpotqa: pair }),
+    GITHUB_STEP_SUMMARY: path.join(directory, "summary") });
   const result = JSON.parse(fs.readFileSync(path.join(directory, "evaluation-reports", "aggregate", "comparison.json")));
   assert.equal(result.complete, true);
   assert.equal(result.full_public_campaign, false);
   assert.equal(result.expected_answers, 4000);
   assert.equal(result.completed_answers, 4000);
   assert.deepEqual(result.datasets.map(({ dataset }) => dataset), ["hotpotqa"]);
+});
+
+function frozenReport(dataset, condition, { source, image, registryHash, pair }) {
+  const { id, questions, corpus } = dataset;
+  return {
+    identity: { dataset: id, condition, run_id: `42-${id}-${condition}`, workflow_run_id: "42", source_revision: source, image,
+      registry_sha256: registryHash, answer_workers: 10, seed_image: pair[condition], parent_seed_image: condition === "on" ? pair.off : undefined,
+      canonical_sha256: "c".repeat(64), model: "fixture", scoring_policy: "fixture" },
+    corpus_rows: corpus.rows, restored_rows: corpus.rows, expected_answers: questions.rows * 2, completed_answers: questions.rows * 2,
+    complete: true, capture_complete: true, owned_cleanup: true, model_verified_before_cutoff: true,
+    comparison_matrix: ["single", "multi_turn"].map((policy) => ({ policy, condition, expected: questions.rows, completed: questions.rows, mean: {
+      recall_at_1: 0.5, recall_at_5: 0.6, recall_at_10: 0.7, exact_match: 1, f1: 1, final_supporting_text_coverage: 1,
+    }, all_support_recovery_rate: 1 })),
+  };
+}
+
+test("an incomplete or incompatible ontology result preserves other scores", () => {
+  const source = "a".repeat(40), image = pinnedImage, registryHash = "b".repeat(64);
+  const pair = { off: "off-pin", on: "on-pin" };
+  const dataset = registry.datasets[0];
+  const off = frozenReport(dataset, "off", { source, image, registryHash, pair });
+  const on = frozenReport(dataset, "on", { source, image, registryHash, pair });
+  const aggregatePair = (reports) => aggregateConditions(registry, reports, {
+    runID: "42", source, image, registryHash, answerWorkers: 10, pins: { [dataset.id]: pair },
+  });
+  const partial = aggregatePair([off]);
+  assert.equal(partial.completed_answers, 2000);
+  assert.equal(partial.expected_answers, 20000);
+  assert.equal(partial.complete, false);
+  const compatible = aggregatePair([off, on]);
+  assert.equal(compatible.datasets[0].complete, true);
+  assert.equal(compatible.datasets[0].ontology_delta.single.f1, 0);
+  on.identity.canonical_sha256 = "d".repeat(64);
+  const incompatible = aggregatePair([off, on]);
+  assert.equal(incompatible.datasets[0].complete, false);
+  assert.equal(incompatible.datasets[0].ontology_delta, null);
+  assert.equal(incompatible.completed_answers, 4000);
+  on.identity.parent_seed_image = "different-parent";
+  assert.equal(aggregatePair([off, on]).completed_answers, 2000);
 });

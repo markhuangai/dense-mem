@@ -69,7 +69,7 @@ func (c *HTTPClient) doJSON(ctx context.Context, method, url, bearer string, inp
 	exchange := uuid.NewString()
 	scope := observability.ExchangeScopeFromContext(ctx)
 	if c.ExchangeCapture != nil {
-		if err := c.ExchangeCapture.Emit("answer_wire_request", map[string]any{"exchange_id": exchange, "operation_id": scope.OperationID, "attempt": scope.Attempt, "body": json.RawMessage(payload)}); err != nil {
+		if err := c.ExchangeCapture.EmitContext(ctx, "answer_wire_request", map[string]any{"exchange_id": exchange, "operation_id": scope.OperationID, "attempt": scope.Attempt, "body": json.RawMessage(payload)}); err != nil {
 			return err
 		}
 	}
@@ -91,10 +91,12 @@ func (c *HTTPClient) doJSON(ctx context.Context, method, url, bearer string, inp
 	if client == nil {
 		client = &http.Client{Timeout: 5 * time.Minute}
 	}
+	httpStarted := time.Now()
 	response, err := client.Do(req)
 	if err != nil {
+		c.ExchangeCapture.recordHTTP(httpStarted)
 		if c.ExchangeCapture != nil {
-			if captureErr := c.ExchangeCapture.Emit("answer_wire_unavailable", map[string]any{"exchange_id": exchange, "operation_id": scope.OperationID, "attempt": scope.Attempt, "state": "no_response", "error": c.ExchangeCapture.ProtectError(err)}); captureErr != nil {
+			if captureErr := c.ExchangeCapture.EmitTerminal(ctx, "answer_wire_unavailable", map[string]any{"exchange_id": exchange, "operation_id": scope.OperationID, "attempt": scope.Attempt, "state": "no_response", "error": c.ExchangeCapture.ProtectError(err)}); captureErr != nil {
 				return captureErr
 			}
 		} else if captureErr := c.logServiceTransportFailure(req, exchange, "request", 0, err); captureErr != nil {
@@ -118,12 +120,13 @@ func (c *HTTPClient) doJSON(ctx context.Context, method, url, bearer string, inp
 		}
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, (16<<20)+1))
+	c.ExchangeCapture.recordHTTP(httpStarted)
 	if c.ExchangeCapture != nil {
 		state := "captured"
 		if err != nil {
 			state = "interrupted"
 		}
-		if captureErr := c.ExchangeCapture.Emit("answer_wire_response", map[string]any{"exchange_id": exchange, "operation_id": scope.OperationID, "attempt": scope.Attempt, "state": state, "status_code": response.StatusCode, "body": string(data)}); captureErr != nil {
+		if captureErr := c.ExchangeCapture.EmitTerminal(ctx, "answer_wire_response", map[string]any{"exchange_id": exchange, "operation_id": scope.OperationID, "attempt": scope.Attempt, "state": state, "status_code": response.StatusCode, "body": string(data)}); captureErr != nil {
 			return captureErr
 		}
 	}
@@ -170,7 +173,7 @@ func (c *HTTPClient) logServiceTransportFailure(req *http.Request, exchange, sta
 	if errors.As(cause, &requestErr) {
 		cause = requestErr.Err
 	}
-	return c.Capture.Emit("runtime_transport_failure", map[string]any{
+	return c.Capture.EmitTerminal(req.Context(), "runtime_transport_failure", map[string]any{
 		"link": "runner_to_dense_mem", "exchange_id": exchange, "stage": stage, "status_code": status,
 		"mcp_method": req.Header.Get("Mcp-Method"), "mcp_tool": req.Header.Get("Mcp-Name"), "error": c.Capture.ProtectError(cause),
 	})

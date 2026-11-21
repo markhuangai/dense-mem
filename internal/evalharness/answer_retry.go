@@ -99,8 +99,13 @@ func (e answerExchange) complete(ctx context.Context, request modelprovider.Stru
 		}
 		number := len(result.Attempts) + 1
 		event := map[string]any{"question_id": e.questionID, "condition": e.condition, "policy": result.Policy, "turn": len(result.Calls), "regeneration": regeneration}
-		event["attempt"], event["request"] = number, request
-		if err := capture.Emit("answer_request", event); err != nil {
+		event["attempt"] = number
+		event["operation_id"] = operation
+		event["model"] = request.Model
+		event["schema_name"] = request.SchemaName
+		event["input_limit"], event["output_limit"] = request.MaxInputTokens, request.MaxOutputTokens
+		event["temperature"] = request.Temperature
+		if err := capture.EmitContext(ctx, "answer_request", event); err != nil {
 			return response, err
 		}
 		called := time.Now()
@@ -127,15 +132,17 @@ func (e answerExchange) complete(ctx context.Context, request modelprovider.Stru
 		if deadline, ok := ctx.Deadline(); ok && !retryAt.Before(deadline) {
 			retry = false
 		}
-		if !retryAt.IsZero() && capture != nil && capture.Logger != nil {
-			capture.Logger.Warn("evaluation answer transport failure",
-				"run_id", e.runID, "operation_id", operation, "attempt", number, "http_status", status,
-				"network_failure", network, "wait_ms", max(0, time.Until(retryAt).Milliseconds()), "retrying", retry)
-		}
 		result.Attempts = append(result.Attempts, attempt)
-		delete(event, "request")
-		event["attempt"], event["response"] = attempt, response
-		if err := capture.Emit("answer_response", event); err != nil {
+		if !retryAt.IsZero() {
+			if err := capture.EmitTerminal(ctx, "answer_transport_retry", map[string]any{
+				"operation_id": operation, "attempt": number, "http_status": status,
+				"network_failure": network, "wait_ms": max(0, time.Until(retryAt).Milliseconds()), "retrying": retry,
+			}); err != nil {
+				return response, err
+			}
+		}
+		event["attempt"], event["diagnostics"] = attempt, response.Diagnostics
+		if err := capture.EmitTerminal(ctx, "answer_response", event); err != nil {
 			return response, err
 		}
 		if !retry {

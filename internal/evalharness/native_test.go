@@ -49,7 +49,7 @@ func TestRunnerGuardRejectsLocalExecutionAndReruns(t *testing.T) {
 func TestNativeReadinessRejectsUndrainedWorkAndCapacityDrift(t *testing.T) {
 	manifest := Manifest{Model: "synthetic", ContextWindowTokens: 500000, EmbeddingModel: "text-embedding-3-small", EmbeddingDimensions: 1536}
 	now := time.Now()
-	observation := NativeObservation{Ontology: ontology.MaintenanceStatus{Enabled: true, Paused: true, DiscoveryComplete: true, CoverageComplete: true,
+	observation := NativeObservation{Ontology: ontology.MaintenanceStatus{Enabled: true, Paused: true, DiscoveryComplete: true, CoverageComplete: true, Counts: ontology.MaintenanceCounts{Eligible: 1, Organized: 1},
 		Window: &ontology.MaintenanceWindow{Policy: domain.OntologyMaintenanceConfig{Model: manifest.Model, ContextWindowTokens: 500000, MaxConcurrency: 4, TeamMaxConcurrency: 4}}},
 		ProviderAttempts: []NativeAttempt{{OperationKey: "operation", AssessmentID: "assessment", Number: 1, Terminal: true, ReconciledAt: &now, UsageAvailable: true, Input: 2, Output: 3, Total: 5}}}
 	require.NoError(t, json.Unmarshal([]byte(`{"search":{"status":"converged","expected_documents":1,"current_documents":1,"contract":{"model":"text-embedding-3-small","dimensions":1536}}}`), &observation))
@@ -65,6 +65,7 @@ func TestNativeReadinessRejectsUndrainedWorkAndCapacityDrift(t *testing.T) {
 		"negative usage":       func(o *NativeObservation) { o.ProviderAttempts[0].Input = -1 },
 		"ontology state":       func(o *NativeObservation) { o.Ontology.Paused = false },
 		"coverage incomplete":  func(o *NativeObservation) { o.Ontology.CoverageComplete = false },
+		"empty ontology":       func(o *NativeObservation) { o.Ontology.Counts = ontology.MaintenanceCounts{} },
 		"model drift":          func(o *NativeObservation) { o.Ontology.Window.Policy.Model = "different" },
 		"context drift":        func(o *NativeObservation) { o.Ontology.Window.Policy.ContextWindowTokens-- },
 		"team override": func(o *NativeObservation) {

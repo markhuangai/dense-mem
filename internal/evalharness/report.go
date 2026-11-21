@@ -66,12 +66,14 @@ type Reproducibility struct {
 	Image                  string `json:"image"`
 	RegistryHash           string `json:"registry_sha256"`
 	Dataset                string `json:"dataset"`
+	Condition              string `json:"condition,omitempty"`
 	Model                  string `json:"model"`
 	EmbeddingModel         string `json:"embedding_model"`
 	EmbeddingDimensions    int    `json:"embedding_dimensions"`
 	ContextWindowTokens    int    `json:"context_window_tokens"`
 	AnswerWorkers          int    `json:"answer_workers"`
 	SeedImage              string `json:"seed_image,omitempty"`
+	ParentSeedImage        string `json:"parent_seed_image,omitempty"`
 	SeedRelease            string `json:"seed_base_release,omitempty"`
 	SeedPreparationWorkers int    `json:"seed_preparation_workers,omitempty"`
 	CanonicalHash          string `json:"canonical_sha256"`
@@ -83,6 +85,7 @@ type Report struct {
 	Complete           bool                          `json:"complete"`
 	CaptureComplete    bool                          `json:"capture_complete"`
 	ModelVerified      bool                          `json:"model_verified_before_cutoff"`
+	Preparation        *PreparedOntology             `json:"ontology_preparation,omitempty"`
 	Failure            string                        `json:"failure,omitempty"`
 	ExpectedAnswers    int                           `json:"expected_answers"`
 	CompletedAnswers   int                           `json:"completed_answers"`
@@ -285,11 +288,19 @@ func ScoreObservation(question Question, observation Observation, corpus map[str
 }
 
 func NewReport(manifest Manifest, corpusCount, questionCount int) Report {
-	return Report{Identity: Reproducibility{Version: 1, RunID: manifest.RunID, WorkflowRunID: manifest.WorkflowRunID, SourceRevision: manifest.SourceRevision, Image: manifest.Image, RegistryHash: manifest.RegistryHash, Dataset: manifest.Dataset, Model: manifest.Model, EmbeddingModel: manifest.EmbeddingModel, EmbeddingDimensions: manifest.EmbeddingDimensions, ContextWindowTokens: manifest.ContextWindowTokens, AnswerWorkers: manifest.effectiveAnswerWorkers(), SeedImage: manifest.SeedImage, ScoringPolicy: "public-rag-em-f1-canonical-sources-v1"}, ExpectedAnswers: questionCount * 4, CorpusRows: corpusCount, Scores: []CaseScore{}, NativeMeasurements: []NativeObservation{}, Limitations: []string{"Complete published curated packs; original upstream datasets are larger.", "Pinned dataset README supplies no clear common license; upstream attribution and licensing remain dataset-specific.", "Reported token totals include only available measurements; unavailable and partial measurements remain explicit.", "Actual gateway billing is unavailable; no monetary cost is inferred.", "Current-run provider usage excludes historical seed preparation.", "Retrieval uses original canonical source IDs at the first 1/5/10 Evidence slots; partitions and equivalent IDs add no extra source credit."}}
+	denominator := 4
+	if manifest.Condition != "" {
+		denominator = 2
+	}
+	return Report{Identity: Reproducibility{Version: 1, RunID: manifest.RunID, WorkflowRunID: manifest.WorkflowRunID, SourceRevision: manifest.SourceRevision, Image: manifest.Image, RegistryHash: manifest.RegistryHash, Dataset: manifest.Dataset, Condition: manifest.Condition, Model: manifest.Model, EmbeddingModel: manifest.EmbeddingModel, EmbeddingDimensions: manifest.EmbeddingDimensions, ContextWindowTokens: manifest.ContextWindowTokens, AnswerWorkers: manifest.effectiveAnswerWorkers(), SeedImage: manifest.SeedImage, ParentSeedImage: manifest.ParentSeedImage, ScoringPolicy: "public-rag-em-f1-canonical-sources-v1"}, ExpectedAnswers: questionCount * denominator, CorpusRows: corpusCount, Scores: []CaseScore{}, NativeMeasurements: []NativeObservation{}, Limitations: []string{"Complete published curated packs; original upstream datasets are larger.", "Pinned dataset README supplies no clear common license; upstream attribution and licensing remain dataset-specific.", "Reported token totals include only available measurements; unavailable and partial measurements remain explicit.", "Actual gateway billing is unavailable; no monetary cost is inferred.", "Current-run provider usage excludes historical seed preparation.", "Retrieval uses original canonical source IDs at the first 1/5/10 Evidence slots; partitions and equivalent IDs add no extra source credit."}}
 }
 
 func FinalizeReport(report *Report) error {
-	questions := report.ExpectedAnswers / 4
+	conditions := []string{"off", "on"}
+	if report.Identity.Condition != "" {
+		conditions = []string{report.Identity.Condition}
+	}
+	questions := report.ExpectedAnswers / (2 * len(conditions))
 	if questions <= 0 {
 		return errors.New("invalid expected denominator")
 	}
@@ -297,6 +308,9 @@ func FinalizeReport(report *Report) error {
 	report.CompletedAnswers = 0
 	seen := map[string]bool{}
 	for _, score := range report.Scores {
+		if report.Identity.Condition != "" && score.Condition != report.Identity.Condition {
+			return errors.New("scored condition differs from the report")
+		}
 		key := score.Condition + ":" + score.Policy + ":" + score.QuestionID
 		if seen[key] {
 			return errors.New("duplicate scored observation")
@@ -307,7 +321,7 @@ func FinalizeReport(report *Report) error {
 		a, b := report.Scores[i], report.Scores[j]
 		return a.Condition+":"+a.Policy+":"+a.QuestionID < b.Condition+":"+b.Policy+":"+b.QuestionID
 	})
-	for _, condition := range []string{"off", "on"} {
+	for _, condition := range conditions {
 		for _, policy := range []string{"single", "multi_turn"} {
 			axis := AxisSummary{Condition: condition, Policy: policy, Expected: questions}
 			for _, score := range report.Scores {
@@ -371,6 +385,11 @@ func FinalizeReport(report *Report) error {
 		}
 	}
 	report.OntologyDelta = map[string]map[string]float64{}
+	report.Complete = report.Failure == "" && report.CaptureComplete && report.CompletedAnswers == report.ExpectedAnswers && report.ImportedRows == report.CorpusRows
+	if report.Identity.Condition != "" {
+		report.Complete = report.Complete && report.ModelVerified
+		return nil
+	}
 	for _, policy := range []string{"single", "multi_turn"} {
 		var off, on AxisSummary
 		for _, axis := range report.Matrix {
@@ -384,6 +403,5 @@ func FinalizeReport(report *Report) error {
 		}
 		report.OntologyDelta[policy] = map[string]float64{"recall_at_1": on.Mean.Recall1 - off.Mean.Recall1, "recall_at_5": on.Mean.Recall5 - off.Mean.Recall5, "recall_at_10": on.Mean.Recall10 - off.Mean.Recall10, "all_support_recovery_rate": on.AllSupportRecovery - off.AllSupportRecovery, "exact_match": on.Mean.EM - off.Mean.EM, "f1": on.Mean.F1 - off.Mean.F1, "supporting_text_coverage": on.Mean.FinalTextCoverage - off.Mean.FinalTextCoverage}
 	}
-	report.Complete = report.Failure == "" && report.CaptureComplete && report.CompletedAnswers == report.ExpectedAnswers && report.ImportedRows == report.CorpusRows
 	return nil
 }

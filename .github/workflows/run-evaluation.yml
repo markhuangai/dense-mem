@@ -16,6 +16,10 @@ on:
         description: Public seed suffix (latest or UTCtimestamp-release)
         type: string
         default: latest
+      ontology_seed_version:
+        description: Prepared ontology seed suffix (latest or UTCtimestamp-release)
+        type: string
+        default: latest
       answer_workers:
         description: Concurrent answer workers per dataset (4–10)
         type: string
@@ -116,6 +120,7 @@ jobs:
       source_revision: ${{ needs.authorize.outputs.source_revision }}
       mode: ${{ inputs.mode }}
       seed_version: ${{ inputs.seed_version }}
+      ontology_seed_version: ${{ inputs.ontology_seed_version }}
       answer_workers: ${{ inputs.answer_workers }}
       dataset_selection: >-
         {"hotpotqa":${{ inputs.run_hotpotqa }},"musique":${{ inputs.run_musique }},

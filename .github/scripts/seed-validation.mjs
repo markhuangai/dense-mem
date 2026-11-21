@@ -86,3 +86,18 @@ export async function seedValidationState(github, proof) {
   }
   return pending ? "pending" : "success";
 }
+
+export async function ontologyFixtureValidated(github, proof) {
+  const response = await github.request(`GET /repos/${repository}/actions/workflows/production-image-e2e.yml/runs`,
+    { head_sha: proof.source_revision, event: "workflow_dispatch", per_page: 100 });
+  for (const run of response.data.workflow_runs) {
+    if (run.head_sha !== proof.source_revision || run.event !== "workflow_dispatch" || Number(run.run_attempt) !== 1 ||
+        run.actor?.login !== proof.actor || run.path !== ".github/workflows/production-image-e2e.yml" || run.conclusion !== "success") continue;
+    const jobs = await seedGitHubPages(github, `/repos/${repository}/actions/runs/${run.id}/attempts/1/jobs`, "jobs");
+    const synthetic = jobs.find((job) => job.name === "Public RAG evaluation / Prepare and score synthetic pair");
+    const aggregate = jobs.find((job) => job.name === "Public RAG evaluation / Aggregate selected dataset outcomes");
+    if (synthetic?.conclusion === "success" && aggregate?.conclusion === "success" &&
+        synthetic.steps?.some((step) => step.name === "Build and score frozen synthetic pair" && step.conclusion === "success")) return run.id;
+  }
+  return null;
+}

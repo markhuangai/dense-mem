@@ -139,14 +139,14 @@ func logReader(ctx context.Context, reader io.Reader, capture *evalharness.Captu
 			CaptureState   string                             `json:"capture_state"`
 		}
 		if json.Unmarshal([]byte(line), &record) != nil {
-			if err := capture.Emit("runtime_log", map[string]string{"line": line}); err != nil {
+			if err := capture.EmitContext(ctx, "runtime_log", map[string]string{"line": line}); err != nil {
 				return err
 			}
 			continue
 		}
 		switch strings.ToUpper(record.Level) {
 		case "WARN", "ERROR", "FATAL":
-			if err := capture.Emit("runtime_log", map[string]string{"line": line}); err != nil {
+			if err := capture.EmitContext(ctx, "runtime_log", map[string]string{"line": line}); err != nil {
 				return err
 			}
 		}
@@ -214,7 +214,7 @@ func logReader(ctx context.Context, reader io.Reader, capture *evalharness.Captu
 				} else {
 					diagnostic["error"] = string(body)
 				}
-				if err := capture.Emit("runtime_transport_failure", diagnostic); err != nil {
+				if err := capture.EmitContext(ctx, "runtime_transport_failure", diagnostic); err != nil {
 					return err
 				}
 			}
