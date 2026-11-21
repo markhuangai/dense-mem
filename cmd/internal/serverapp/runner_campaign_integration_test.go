@@ -110,8 +110,9 @@ func testPreparedOntology(t *testing.T, scenario string) {
 		defer interrupt()
 		retryPath := filepath.Join(stateDir, "recovery.json")
 		type retry struct {
-			Run string `json:"run"`
-			Key string `json:"key"`
+			Origin string `json:"origin"`
+			Run    string `json:"run"`
+			Key    string `json:"key"`
 		}
 		receipt := make(chan retry, 1)
 		go func() {
@@ -134,7 +135,7 @@ func testPreparedOntology(t *testing.T, scenario string) {
 		case saved := <-receipt:
 			require.NotEmpty(t, saved.Key)
 			require.True(t, f.snapshot(t).Ontology.Paused)
-			require.Equal(t, int64(1), providerCalls.Load())
+			require.LessOrEqual(t, providerCalls.Load(), int64(2))
 			manifest.ResumeScope = &seed.Scope
 			require.Equal(t, originalDeadline, manifest.ModelDeadline)
 			require.NoError(t, evalharness.BakeOntology(ctx, manifest, corpus, f.native.Client, f.native))
@@ -142,14 +143,37 @@ func testPreparedOntology(t *testing.T, scenario string) {
 			require.NoError(t, err)
 			var recovered []retry
 			require.NoError(t, json.Unmarshal(body, &recovered))
-			require.Len(t, recovered, 2)
+			page, err := f.maintenance.Runs(ctx, "", ontology.MaxPageSize)
+			require.NoError(t, err)
+			runs := make(map[string]ontology.MaintenanceRun, len(page.Runs))
+			for _, run := range page.Runs {
+				runs[run.ID] = run
+			}
+			first := runs[saved.Run]
+			require.Equal(t, saved.Key, first.OperationKey)
+			require.Equal(t, "incomplete", first.Status)
+			// Pause can close the checkpointed retry before it acquires a batch.
+			if first.CompletedBatches == 0 {
+				require.Contains(t, []string{"maintenance_paused", "window_closed"}, first.FailureCode)
+				require.Len(t, recovered, 3)
+				require.Equal(t, saved.Origin, recovered[1].Origin)
+				require.NotEqual(t, saved.Key, recovered[1].Key)
+			} else {
+				require.Len(t, recovered, 2)
+			}
 			require.Equal(t, saved, recovered[0])
+			failed, completed := recovered[len(recovered)-2], recovered[len(recovered)-1]
+			require.Equal(t, failed.Run, completed.Origin)
+			require.Equal(t, "provider_unavailable", runs[failed.Run].FailureCode)
+			require.Equal(t, "completed", runs[completed.Run].Status)
 			attempts := f.snapshot(t).ProviderAttempts
 			require.Len(t, attempts, 3)
-			times := []time.Time{attempts[0].AdmittedAt, attempts[1].AdmittedAt, attempts[2].AdmittedAt}
-			slices.SortFunc(times, func(a, b time.Time) int { return a.Compare(b) })
-			require.GreaterOrEqual(t, times[1].Sub(times[0]), 59*time.Second)
-			require.GreaterOrEqual(t, times[2].Sub(times[1]), 59*time.Second)
+			require.EqualValues(t, len(attempts), providerCalls.Load())
+			slices.SortFunc(attempts, func(a, b evalharness.NativeAttempt) int { return a.AdmittedAt.Compare(b.AdmittedAt) })
+			require.Equal(t, []string{"provider_unavailable", "provider_unavailable", "completed"},
+				[]string{attempts[0].Outcome, attempts[1].Outcome, attempts[2].Outcome})
+			require.GreaterOrEqual(t, attempts[1].AdmittedAt.Sub(attempts[0].AdmittedAt), 59*time.Second)
+			require.GreaterOrEqual(t, attempts[2].AdmittedAt.Sub(attempts[1].AdmittedAt), 59*time.Second)
 			return
 		default:
 			t.Fatal("preparation did not persist the first native retry")
