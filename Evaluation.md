@@ -13,7 +13,7 @@ jobs, one per dataset and condition. Retrieval enters through MCP.
 
 Maintainers prepare the ontology-on child locally from the published off
 parent. The builder uses eight ontology workers, a 500,000-token context and
-a deadline of 24 hours per dataset. HTTP 429 holds new ontology requests for
+a deadline of 48 hours per dataset. HTTP 429 holds new ontology requests for
 at least 60 seconds or the provider's longer wait. The builder pauses and
 drains the ontology before exporting a verified, fully organized image.
 
