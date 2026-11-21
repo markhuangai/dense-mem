@@ -822,7 +822,8 @@ test("workflow is trusted, event-fenced, dry-run capable, and registered in CI",
   assert.match(workflow, /packages: write/);
   assert.match(workflow, /persist-credentials: false/);
   assert.match(workflow, /ref: main/);
-  assert.match(workflow, /REGCTL_SHA256/);
+  assert.match(workflow, /ref: \$\{\{ github\.workflow_sha \}\}/);
+  assert.match(workflow, /bash \.ci-workflow\/\.github\/scripts\/install-regctl\.sh/);
   assert.match(workflow, /CLEANUP_BATCH_LIMIT: "200"/);
   assert.match(workflow, /CLEANUP_ALLOW_LEGACY/);
   assert.match(workflow, /timeout-minutes: 100/);

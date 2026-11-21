@@ -69,12 +69,14 @@ jobs:
       answer_workers: ${{ steps.registry.outputs.answer_workers }}
       seed_images: ${{ steps.seeds.outputs.images }}
     steps:
-      - uses: actions/checkout@v7
+      - &checkout-source
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.source_repository }}
           ref: ${{ inputs.source_revision }}
           persist-credentials: false
-      - uses: actions/setup-node@v7
+      - &setup-node
+        uses: actions/setup-node@v7
         with:
           node-version: 24
           package-manager-cache: false
@@ -135,15 +137,8 @@ jobs:
           minutes=330
           printf 'EVAL_MODEL_DEADLINE_EPOCH=%s\n' "$(( $(date +%s) + minutes * 60 ))" >> "${GITHUB_ENV}"
           printf 'EVAL_RUNNER_BINARY=%s/eval-runner\n' "${RUNNER_TEMP}" >> "${GITHUB_ENV}"
-      - uses: actions/checkout@v7
-        with:
-          repository: ${{ inputs.source_repository }}
-          ref: ${{ inputs.source_revision }}
-          persist-credentials: false
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          package-manager-cache: false
+      - *checkout-source
+      - *setup-node
       - name: Require verified condition pin
         if: inputs.mode == 'live' && env.EVAL_SEED_IMAGE == ''
         run: exit 1
@@ -196,15 +191,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
-        with:
-          repository: ${{ inputs.source_repository }}
-          ref: ${{ inputs.source_revision }}
-          persist-credentials: false
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          package-manager-cache: false
+      - *checkout-source
+      - *setup-node
       - name: Download available numeric reports
         id: download
         continue-on-error: true

@@ -106,6 +106,15 @@ jobs:
               );
             }
 
+      - name: Checkout pinned prerelease helper
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          path: .ci-workflow
+          sparse-checkout: .github/scripts/github-prerelease.cjs
+          sparse-checkout-cone-mode: false
+
       - name: Create prerelease seed tag
         if: steps.version.outputs.tag_exists != 'true'
         shell: bash
@@ -146,32 +155,7 @@ jobs:
           TARGET_SHA: ${{ steps.version.outputs.target_sha }}
         with:
           script: |
-            const tag = process.env.TAG;
-            const request = {
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              tag,
-            };
-
-            try {
-              const { data } = await github.rest.repos.getReleaseByTag(request);
-              if (!data.prerelease) {
-                core.setFailed(`${tag} exists as a non-prerelease GitHub Release`);
-              } else {
-                core.info(`${tag} prerelease already exists`);
-              }
-            } catch (error) {
-              if (error.status !== 404) {
-                throw error;
-              }
-
-              await github.rest.repos.createRelease({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                tag_name: tag,
-                target_commitish: process.env.TARGET_SHA,
-                name: tag,
-                body: "",
-                prerelease: true,
-              });
-            }
+            const { ensureGitHubPrerelease } = require("./.ci-workflow/.github/scripts/github-prerelease.cjs");
+            await ensureGitHubPrerelease({
+              github, core, repository: context.repo, tag: process.env.TAG, targetSha: process.env.TARGET_SHA, body: "",
+            });

@@ -5,6 +5,7 @@ import { test } from "node:test";
 import { GitHubApi } from "../../.github/scripts/pr-image-cleanup.cjs";
 import policy from "../../.github/scripts/development-e2e-policy.cjs";
 import { readRegistry } from "../../scripts/e2e-scenario-registry.mjs";
+import { readWorkflow, workflowJob } from "./workflow_helpers.mjs";
 
 const repository = "markhuangai/dense-mem";
 const revision = "a".repeat(40);
@@ -100,6 +101,23 @@ test("development selections support E2E-only, PostgreSQL-only, subsets, and all
   assert.equal((await policy.selectDevelopmentTests(extended, "new_branch_scenario", "")).scenario_matrix.include[0].name, "new_branch_scenario");
 });
 
+test("development job reauthorization reads both actors and rejects stale attempts", async () => {
+  const observed = [];
+  await apiFixture((incoming) => {
+    const actor = incoming.url.split("/").at(-2);
+    observed.push(actor);
+    return { permission: actor === "contributor" ? "write" : "admin" };
+  }, async (api) => {
+    const context = { repo: { owner: "markhuangai", repo: "dense-mem" }, actor: "owner", ref: "refs/heads/main" };
+    const env = { GITHUB_API_URL: api.apiUrl, GITHUB_TOKEN: "fixture", TRIGGERING_ACTOR: "admin", GITHUB_RUN_ATTEMPT: "1" };
+    await policy.authorizeDevelopmentJob(context, env);
+    assert.deepEqual(observed, ["owner", "admin"]);
+    await assert.rejects(policy.authorizeDevelopmentJob(context, { ...env, TRIGGERING_ACTOR: "contributor" }), /repository-admin permission/);
+    await assert.rejects(policy.authorizeDevelopmentJob(context, { ...env, GITHUB_RUN_ATTEMPT: "2" }), /job reruns cannot reuse/);
+    await assert.rejects(policy.authorizeDevelopmentJob({ ...context, ref: "refs/heads/feature" }, env), /workflow from main/);
+  });
+});
+
 test("development selections reject empty, malformed, unknown, and duplicate lists", async () => {
   for (const [scenarios, postgres] of [["", ""], ["unknown", ""], ["synchronous_write,,mcp_oauth", ""], ["all,synchronous_write", ""], ["synchronous_write,synchronous_write", ""], ["conflict", ""], ["", "7"], ["", "all,0"], ["", "0,0"]]) {
     await assert.rejects(policy.selectDevelopmentTests(readRegistry(), scenarios, postgres));
@@ -132,12 +150,22 @@ test("development workflow runs selected groups independently with one pinned GH
   assert.match(workflow, /scripts\/e2e-host-controller\.sh precheck/);
   assert.match(workflow, /if: always\(\)/);
   assert.match(workflow, /policy.assertDevelopmentResults/);
-  assert.equal((workflow.match(/policy.authorizeDevelopmentExecution/g) || []).length, 2);
   assert.match(workflow, /development: true/);
-  const reusable = await readFile(new URL("../../.github/workflows/production-e2e-scenario.yml", import.meta.url), "utf8");
-  assert.match(reusable, /development:\n\s+required: false\n\s+default: false\n\s+type: boolean/);
-  assert.match(reusable, /if: inputs.development/);
-  assert.ok(reusable.indexOf("policy.authorizeDevelopmentExecution") < reusable.indexOf("- name: Checkout exact tested revision"));
+  const development = await readWorkflow("development-e2e.yml");
+  const reusable = await readWorkflow("production-e2e-scenario.yml");
+  assert.deepEqual(reusable.on.workflow_call.inputs.development, { required: false, default: false, type: "boolean" });
+  for (const [definition, jobName] of [[development, "build"], [development, "postgres"], [reusable, "scenario"]]) {
+    const { steps } = workflowJob(definition, jobName);
+    const policyCheckout = steps.find((step) => step.with?.path === ".ci-policy");
+    const sourceCheckout = steps.find((step) => step.name === "Checkout exact tested revision" || step.name === "Checkout exact tested source");
+    const authorize = steps.find((step) => step.with?.script?.includes("policy.authorizeDevelopmentJob"));
+    assert.equal(policyCheckout?.with.ref, "${{ github.workflow_sha }}");
+    assert.match(authorize?.with.script, /require\('\.\/\.ci-policy\/\.github\/scripts\/development-e2e-policy\.cjs'\)/);
+    assert.equal(authorize.env.TRIGGERING_ACTOR, "${{ github.triggering_actor }}");
+    assert.ok(sourceCheckout);
+    assert.ok(steps.indexOf(policyCheckout) < steps.indexOf(authorize) && steps.indexOf(authorize) < steps.indexOf(sourceCheckout));
+    if (jobName === "scenario") assert.equal(authorize.if, "inputs.development");
+  }
 });
 
 test("development cleanup uses trusted completion events and an hourly recovery sweep", async () => {
@@ -148,6 +176,6 @@ test("development cleanup uses trusted completion events and an hourly recovery 
   assert.doesNotMatch(workflow, /workflow_run.conclusion ==|head_sha|head_repository|upload-artifact|download-artifact/);
   assert.match(workflow, /ref: \$\{\{ github.workflow_sha \}\}/);
   assert.match(workflow, /packages: write/);
-  assert.match(workflow, /REGCTL_SHA256/);
+  assert.match(workflow, /bash \.github\/scripts\/install-regctl\.sh.*development-regctl\.json/);
   assert.match(workflow, /node \.github\/scripts\/development-e2e-cleanup\.cjs/);
 });

@@ -227,7 +227,8 @@ jobs:
             scripts/e2e-scenarios.json
             scripts/e2e-scenario-registry.mjs
 
-      - name: Set up Node.js
+      - &setup-node
+        name: Set up Node.js
         uses: actions/setup-node@v7
         with:
           node-version: 24
@@ -267,7 +268,8 @@ jobs:
     env:
       DENSE_MEM_CI_REPOSITORY: ${{ github.repository }}
     steps:
-      - name: Checkout exact pull request source
+      - &checkout-source
+        name: Checkout exact pull request source
         uses: actions/checkout@v7
         with:
           clean: true
@@ -275,12 +277,9 @@ jobs:
           persist-credentials: false
           ref: ${{ needs.authorize.outputs.source_revision }}
           repository: ${{ needs.authorize.outputs.source_repository }}
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          package-manager-cache: false
-      - name: Set up rootless Docker
+      - *setup-node
+      - &setup-rootless-docker
+        name: Set up rootless Docker
         id: docker
         uses: docker/setup-docker-action@v5
         with:
@@ -288,7 +287,8 @@ jobs:
           set-host: true
           daemon-config: |
             {"exec-opts":["native.cgroupdriver=cgroupfs"]}
-      - name: Generate temporary CI configuration
+      - &bootstrap-ci
+        name: Generate temporary CI configuration
         shell: bash
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ inputs.cloudflare_account_id || vars.CLOUDFLARE_ACCOUNT_ID }}
@@ -320,33 +320,10 @@ jobs:
       - name: Set PostgreSQL execution deadline
         shell: bash
         run: printf 'POSTGRES_DEADLINE=%s\n' "$(( $(date +%s) + 27 * 60 ))" >> "${GITHUB_ENV}"
-      - name: Checkout exact pull request source
-        uses: actions/checkout@v7
-        with:
-          clean: true
-          fetch-depth: 1
-          persist-credentials: false
-          ref: ${{ needs.authorize.outputs.source_revision }}
-          repository: ${{ needs.authorize.outputs.source_repository }}
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          package-manager-cache: false
-      - name: Set up rootless Docker
-        id: docker
-        uses: docker/setup-docker-action@v5
-        with:
-          rootless: true
-          set-host: true
-          daemon-config: |
-            {"exec-opts":["native.cgroupdriver=cgroupfs"]}
-      - name: Generate temporary CI configuration
-        shell: bash
-        env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ inputs.cloudflare_account_id || vars.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: bash scripts/e2e-ci-bootstrap.sh
+      - *checkout-source
+      - *setup-node
+      - *setup-rootless-docker
+      - *bootstrap-ci
       - name: Run disposable PostgreSQL regressions
         shell: bash
         env:

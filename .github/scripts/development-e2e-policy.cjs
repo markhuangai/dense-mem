@@ -1,5 +1,7 @@
 "use strict";
 
+const { GitHubApi } = require("./pr-image-cleanup.cjs");
+
 const WORKFLOW_PATH = ".github/workflows/development-e2e.yml";
 const SHA_PATTERN = /^[0-9a-f]{40}$/;
 const RUN_TAG_PATTERN = /^run-([1-9][0-9]*)-([1-9][0-9]*)$/;
@@ -33,6 +35,18 @@ async function authorizeDevelopmentExecution({ api, repository, ref, actor, trig
   if (ref !== "refs/heads/main") throw new Error("dispatch the trusted development workflow from main");
   await requireAdministrators(api, repository, [actor, triggeringActor]);
   if (String(runAttempt) !== "1") throw new Error("start a fresh development dispatch; job reruns cannot reuse cleaned images or cached authorization");
+}
+
+function authorizeDevelopmentJob(context, env) {
+  const repository = `${context.repo.owner}/${context.repo.repo}`;
+  return authorizeDevelopmentExecution({
+    api: new GitHubApi({ apiUrl: env.GITHUB_API_URL, token: env.GITHUB_TOKEN, repository }),
+    repository,
+    ref: context.ref,
+    actor: context.actor,
+    triggeringActor: env.TRIGGERING_ACTOR,
+    runAttempt: env.GITHUB_RUN_ATTEMPT,
+  });
 }
 
 async function resolveDevelopmentRequest({ api, repository, ref, actor, triggeringActor, sourceRef, runId, runAttempt }) {
@@ -118,6 +132,6 @@ function assertDevelopmentResults({ authorize, build, scenarios, postgres, hasSc
 
 module.exports = {
   WORKFLOW_PATH, SHA_PATTERN, RUN_TAG_PATTERN, imageName, runTag,
-  requireAdministrators, authorizeDevelopmentExecution, resolveDevelopmentRequest, selectDevelopmentTests,
+  requireAdministrators, authorizeDevelopmentExecution, authorizeDevelopmentJob, resolveDevelopmentRequest, selectDevelopmentTests,
   assertDevelopmentImage, assertTrustedDevelopmentRun, assertDevelopmentResults,
 };
