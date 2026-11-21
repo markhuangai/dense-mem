@@ -3,10 +3,11 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { createServer } from "node:net";
 import { createServer as createHTTPServer } from "node:http";
-import { mkdtemp, writeFile, chmod, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import { GitHubApi, RegistryClient } from "../../.github/scripts/pr-image-cleanup.cjs";
 import { cleanupDevelopmentImages } from "../../.github/scripts/development-e2e-cleanup.cjs";
 
@@ -226,12 +227,10 @@ test("development cleanup verifies real image ownership and preserves active or 
     return { version, manifest };
   };
   try {
-    const response = await request("https://github.com/regclient/regclient/releases/download/v0.11.5/regctl-linux-amd64", { signal: AbortSignal.timeout(30000) });
-    const bytes = Buffer.from(await response.arrayBuffer());
-    assert.equal(createHash("sha256").update(bytes).digest("hex"), "c93aa7638749f5aaac1a8e01787321889c78f0101809bb2880343478d0ba0467");
-    await writeFile(binary, bytes);
-    await chmod(binary, 0o700);
-    process.env.REGCTL_CONFIG = join(temporary, "regctl.json");
+    const installer = fileURLToPath(new URL("../../.github/scripts/install-regctl.sh", import.meta.url));
+    const config = join(temporary, "regctl.json");
+    execFileSync("bash", [installer, binary, config], { env: { ...process.env, GITHUB_ENV: "" }, timeout: 30000, stdio: "pipe" });
+    process.env.REGCTL_CONFIG = config;
     execFileSync(binary, ["registry", "set", `127.0.0.1:${port}`, "--tls", "disabled"], { stdio: "pipe" });
     let ready = false;
     for (let attempt = 0; attempt < 120; attempt += 1) {

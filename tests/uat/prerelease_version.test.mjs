@@ -5,6 +5,8 @@ import { devNull, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { ensureGitHubPrerelease } from "../../.github/scripts/github-prerelease.cjs";
+import { readWorkflow, workflowJob } from "./workflow_helpers.mjs";
 
 const resolver = fileURLToPath(
   new URL("../../.github/scripts/prerelease-version.sh", import.meta.url),
@@ -70,6 +72,63 @@ function commitFiles(repository, message, files) {
   git(repository, "commit", "--quiet", "-m", message);
   return git(repository, "rev-parse", "HEAD");
 }
+
+test("both workflows load prerelease creation from the trusted workflow revision", async () => {
+  const release = workflowJob(await readWorkflow("release-rc.yml"), "prepare-prerelease");
+  const start = workflowJob(await readWorkflow("start-prerelease.yml"), "start-prerelease");
+  for (const [job, helperName] of [[release, "Ensure GitHub prerelease"], [start, "Ensure blank GitHub prerelease"]]) {
+    const checkout = job.steps.find((step) => step.with?.["sparse-checkout"] === ".github/scripts/github-prerelease.cjs");
+    assert.equal(checkout?.with.ref, "${{ github.workflow_sha }}");
+    assert.equal(checkout.with.path, ".ci-workflow");
+    assert.equal(checkout.with["persist-credentials"], false);
+    const operation = job.steps.find((step) => step.name === helperName);
+    assert.ok(operation);
+    assert.ok(job.steps.indexOf(checkout) < job.steps.indexOf(operation));
+    assert.match(operation.with.script, /require\("\.\/\.ci-workflow\/\.github\/scripts\/github-prerelease\.cjs"\)/);
+  }
+  assert.match(release.steps.find((step) => step.name === "Ensure GitHub prerelease").with.script, /readFileSync\("prerelease-notes\.md"/);
+  assert.match(start.steps.find((step) => step.name === "Ensure blank GitHub prerelease").with.script, /body: ""/);
+});
+
+test("GitHub prerelease creation preserves notes and retries without overwriting releases", async () => {
+  const repository = { owner: "maintainer", repo: "memory" };
+  const tag = "v1.0.0-rc.0";
+  const targetSha = "a".repeat(40);
+  for (const body of ["Release candidate notes", ""]) {
+    const creations = [];
+    const messages = [];
+    const failures = [];
+    let release;
+    let lookupError;
+    const repos = {
+      async getReleaseByTag(request) {
+        assert.deepEqual(request, { ...repository, tag });
+        if (lookupError) throw lookupError;
+        if (!release) throw Object.assign(new Error("missing release"), { status: 404 });
+        return { data: release };
+      },
+      async createRelease(request) {
+        creations.push(request);
+        release = request;
+      },
+    };
+    const request = {
+      github: { rest: { repos } },
+      core: { info: (message) => messages.push(message), setFailed: (message) => failures.push(message) },
+      repository, tag, targetSha, body,
+    };
+    await ensureGitHubPrerelease(request);
+    await ensureGitHubPrerelease(request);
+    assert.deepEqual(creations, [{ ...repository, tag_name: tag, target_commitish: targetSha, name: tag, body, prerelease: true }]);
+    assert.deepEqual(messages, [`${tag} prerelease already exists`]);
+    release = { prerelease: false };
+    await ensureGitHubPrerelease(request);
+    assert.deepEqual(failures, [`${tag} exists as a non-prerelease GitHub Release`]);
+    lookupError = Object.assign(new Error("GitHub unavailable"), { status: 503 });
+    await assert.rejects(ensureGitHubPrerelease(request), /GitHub unavailable/);
+    assert.equal(creations.length, 1);
+  }
+});
 
 test("temporary repositories ignore configured global hooks", (t) => {
   const home = mkdtempSync(join(tmpdir(), "dense-mem-prerelease-home-"));

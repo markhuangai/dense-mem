@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { test } from "node:test";
 import policy from "../../.github/scripts/fork-e2e-policy.cjs";
+import { actionSteps, readWorkflow, runStep, workflowJob } from "./workflow_helpers.mjs";
 
 const registry = JSON.parse(await readFile(new URL("../../scripts/e2e-scenarios.json", import.meta.url), "utf8"));
 const scenarios = registry.scenarios.map((entry) => entry.name);
@@ -29,6 +30,42 @@ test("fork receipt accepts the full job name declared by the reusable workflow",
   completed.push({ name: `Contributor E2E / ${declared}`, conclusion: "success", steps: ["Run scenario", "Stop scenario stack"].map((name) => ({ name, conclusion: "success" })) });
   policy.requireCompleteForkJobs(completed, ["full"]);
   assert.throws(() => policy.requireCompleteForkJobs(completed.map((job) => job.name.endsWith(declared) ? { ...job, name: "Fork scenario dreaming_telemetry_portal" } : job), ["full"]), /required fork job/);
+});
+
+test("fork prechecks overlay the approved harness before bootstrap or controller execution", async () => {
+  const workflow = await readWorkflow("fork-e2e.yml");
+  function assertTrustedPreparation(job) {
+    const [source, harness] = actionSteps(job, "actions/checkout");
+    assert.deepEqual(source.with, {
+      repository: "${{ needs.authorize.outputs.source_repository }}",
+      ref: "${{ inputs.source_sha }}",
+      "persist-credentials": false,
+    });
+    assert.deepEqual(harness.with, {
+      repository: "markhuangai/dense-mem",
+      ref: "${{ inputs.trusted_revision }}",
+      "persist-credentials": false,
+      path: ".ci-harness",
+    });
+    const prepare = runStep(job, "node .ci-harness/.github/scripts/fork-e2e-workspace.cjs");
+    const bootstrap = runStep(job, "bash scripts/e2e-ci-bootstrap.sh");
+    const controller = runStep(job, "scripts/e2e-host-controller.sh");
+    const order = [source, harness, prepare, bootstrap, controller].map((step) => job.steps.indexOf(step));
+    assert.deepEqual(order, order.toSorted((left, right) => left - right));
+  }
+  for (const id of ["rootless", "database"]) {
+    const job = workflowJob(workflow, id);
+    assertTrustedPreparation(job);
+    const invalid = structuredClone(job);
+    const bootstrap = runStep(invalid, "bash scripts/e2e-ci-bootstrap.sh");
+    invalid.steps.splice(invalid.steps.indexOf(bootstrap), 1);
+    invalid.steps.unshift(bootstrap);
+    assert.throws(() => assertTrustedPreparation(invalid));
+    assert.deepEqual(job.permissions ?? workflow.permissions, { actions: "read", contents: "read", packages: "read" });
+  }
+  assert.deepEqual(workflowJob(workflow, "sign").permissions, {
+    actions: "read", contents: "read", "id-token": "write", attestations: "write", "artifact-metadata": "write",
+  });
 });
 
 test("fork receipt binds approved source, image, preview attempt, workflow revision, run, and complete results", () => {

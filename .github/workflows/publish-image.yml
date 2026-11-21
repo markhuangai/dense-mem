@@ -7,12 +7,21 @@ on:
         description: "Existing prerelease Git tag to publish, without refs/tags/ (example: v1.0.0-rc.0)"
         required: true
         type: string
+      variant:
+        description: Image variant to publish
+        type: choice
+        options: [production, demo]
+        default: production
   workflow_call:
     inputs:
       tag:
         description: "Existing prerelease Git tag to publish, without refs/tags/ (example: v1.0.0-rc.0)"
         required: true
         type: string
+      variant:
+        description: Image variant to publish
+        type: string
+        default: production
 
 permissions:
   contents: read
@@ -23,30 +32,48 @@ env:
 
 jobs:
   publish:
-    name: Build and push prerelease image
+    name: ${{ inputs.variant == 'demo' && 'Build and push demo image' || 'Build and push prerelease image' }}
     runs-on: ubuntu-latest
 
     steps:
-      - name: Validate prerelease tag
+      - name: Validate prerelease image inputs
         id: version
         shell: bash
         env:
           INPUT_TAG: ${{ inputs.tag }}
+          INPUT_VARIANT: ${{ inputs.variant }}
         run: |
           set -euo pipefail
 
-          if [[ -n "${INPUT_TAG}" ]]; then
-            tag="${INPUT_TAG}"
-          else
-            tag="${GITHUB_REF_NAME}"
-          fi
-
-          if [[ ! "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-.+$ ]]; then
+          tag="${INPUT_TAG:-${GITHUB_REF_NAME}}"
+          if [[ ! "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-.+$ ]] ||
+            ! git check-ref-format "refs/tags/${tag}"; then
             echo "::error::publish-image only builds prerelease tags like v1.0.0-rc.0"
             exit 1
           fi
 
-          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          case "${INPUT_VARIANT}" in
+            production)
+              version="${tag}"
+              dockerfile=./Dockerfile
+              target=production
+              cache_scope=dense-mem-release
+              ;;
+            demo)
+              version="demo-${tag}"
+              dockerfile=./Dockerfile.demo
+              target=
+              cache_scope=dense-mem-demo
+              ;;
+            *)
+              echo "::error::Invalid prerelease image variant. Choose production or demo."
+              exit 1
+              ;;
+          esac
+
+          printf 'Preparing %s image %s from Git tag %s\n' "${INPUT_VARIANT}" "${version}" "${tag}"
+          printf '%s\n' "tag=${tag}" "version=${version}" "dockerfile=${dockerfile}" \
+            "target=${target}" "cache_scope=${cache_scope}" >> "${GITHUB_OUTPUT}"
 
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -92,22 +119,22 @@ jobs:
           context: git
           images: ${{ steps.image.outputs.name }}
           tags: |
-            type=raw,value=${{ steps.version.outputs.tag }}
+            type=raw,value=${{ steps.version.outputs.version }}
 
       - name: Build and push image
         uses: docker/build-push-action@v7
         with:
           context: .
-          file: ./Dockerfile
-          target: production
+          file: ${{ steps.version.outputs.dockerfile }}
+          target: ${{ steps.version.outputs.target }}
           platforms: linux/amd64,linux/arm64/v8
           push: true
           provenance: false
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            IMAGE_VERSION=${{ steps.version.outputs.tag }}
+            IMAGE_VERSION=${{ steps.version.outputs.version }}
             IMAGE_REVISION=${{ steps.source.outputs.revision }}
             IMAGE_CREATED=${{ steps.source.outputs.created }}
-          cache-from: type=gha,scope=dense-mem-release
-          cache-to: type=gha,mode=max,scope=dense-mem-release
+          cache-from: type=gha,scope=${{ steps.version.outputs.cache_scope }}
+          cache-to: type=gha,mode=max,scope=${{ steps.version.outputs.cache_scope }}

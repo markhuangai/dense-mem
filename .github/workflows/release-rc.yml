@@ -152,6 +152,16 @@ jobs:
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: git log -1 --format=%B "${HEAD_SHA}" > prerelease-notes.md
 
+      - name: Checkout pinned prerelease helper
+        if: steps.version.outputs.is_prerelease == 'true'
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          path: .ci-workflow
+          sparse-checkout: .github/scripts/github-prerelease.cjs
+          sparse-checkout-cone-mode: false
+
       - name: Ensure GitHub prerelease
         if: steps.version.outputs.is_prerelease == 'true'
         uses: actions/github-script@v9
@@ -160,37 +170,13 @@ jobs:
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         with:
           script: |
-            const fs = require("fs");
+            const fs = require("node:fs");
+            const { ensureGitHubPrerelease } = require("./.ci-workflow/.github/scripts/github-prerelease.cjs");
             const tag = process.env.TAG;
             const body = fs.readFileSync("prerelease-notes.md", "utf8").trim() || tag;
-            const request = {
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              tag: tag,
-            };
-
-            try {
-              const { data } = await github.rest.repos.getReleaseByTag(request);
-              if (!data.prerelease) {
-                core.setFailed(`${tag} exists as a non-prerelease GitHub Release`);
-              } else {
-                core.info(`${tag} prerelease already exists`);
-              }
-            } catch (error) {
-              if (error.status !== 404) {
-                throw error;
-              }
-
-              await github.rest.repos.createRelease({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                tag_name: tag,
-                target_commitish: process.env.HEAD_SHA,
-                name: tag,
-                body,
-                prerelease: true,
-              });
-            }
+            await ensureGitHubPrerelease({
+              github, core, repository: context.repo, tag, targetSha: process.env.HEAD_SHA, body,
+            });
 
   no-release:
     name: No prerelease required
@@ -313,26 +299,28 @@ jobs:
           fi
           echo "preview_eligible=true" >> "${GITHUB_OUTPUT}"
 
-      - name: Install pinned regctl
-        id: regctl
+      - name: Checkout pinned regctl installer
+        id: installer_checkout
         if: steps.git.outputs.preview_eligible == 'true'
         continue-on-error: true
+        uses: actions/checkout@v7
+        with: &regctl-installer
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          path: .ci-workflow
+          sparse-checkout: .github/scripts/install-regctl.sh
+          sparse-checkout-cone-mode: false
+
+      - name: Install pinned regctl
+        id: regctl
+        if: steps.installer_checkout.outcome == 'success'
+        continue-on-error: true
         shell: bash
-        env:
-          REGCTL_SHA256: c93aa7638749f5aaac1a8e01787321889c78f0101809bb2880343478d0ba0467
-        run: |
-          set -euo pipefail
-          export REGCTL_CONFIG="${RUNNER_TEMP}/regctl-config.json"
-          echo "REGCTL_CONFIG=${REGCTL_CONFIG}" >> "${GITHUB_ENV}"
-          curl -fsSL -o "${RUNNER_TEMP}/regctl" \
-            https://github.com/regclient/regclient/releases/download/v0.11.5/regctl-linux-amd64
-          printf '%s  %s\n' "${REGCTL_SHA256}" "${RUNNER_TEMP}/regctl" | sha256sum -c -
-          chmod +x "${RUNNER_TEMP}/regctl"
-          "${RUNNER_TEMP}/regctl" config set --docker-cred=false --docker-cert=false
+        run: bash .ci-workflow/.github/scripts/install-regctl.sh "${RUNNER_TEMP}/regctl" "${RUNNER_TEMP}/regctl-config.json"
 
       - name: Log in to GHCR for preview validation
         id: registry-login
-        if: steps.git.outputs.preview_eligible == 'true'
+        if: steps.regctl.outcome == 'success'
         continue-on-error: true
         shell: bash
         env:
@@ -499,19 +487,13 @@ jobs:
               core.setFailed(`The preview receipt changed before promotion: ${resolved.reason}.`);
             }
 
+      - name: Checkout pinned regctl installer
+        uses: actions/checkout@v7
+        with: *regctl-installer
+
       - name: Install pinned regctl
         shell: bash
-        env:
-          REGCTL_SHA256: c93aa7638749f5aaac1a8e01787321889c78f0101809bb2880343478d0ba0467
-        run: |
-          set -euo pipefail
-          export REGCTL_CONFIG="${RUNNER_TEMP}/regctl-config.json"
-          echo "REGCTL_CONFIG=${REGCTL_CONFIG}" >> "${GITHUB_ENV}"
-          curl -fsSL -o "${RUNNER_TEMP}/regctl" \
-            https://github.com/regclient/regclient/releases/download/v0.11.5/regctl-linux-amd64
-          printf '%s  %s\n' "${REGCTL_SHA256}" "${RUNNER_TEMP}/regctl" | sha256sum -c -
-          chmod +x "${RUNNER_TEMP}/regctl"
-          "${RUNNER_TEMP}/regctl" config set --docker-cred=false --docker-cert=false
+        run: bash .ci-workflow/.github/scripts/install-regctl.sh "${RUNNER_TEMP}/regctl" "${RUNNER_TEMP}/regctl-config.json"
 
       - name: Log in to GHCR
         shell: bash
@@ -564,9 +546,10 @@ jobs:
     permissions:
       contents: read
       packages: write
-    uses: ./.github/workflows/publish-demo-image.yml
+    uses: ./.github/workflows/publish-image.yml
     with:
       tag: ${{ needs.prepare-prerelease.outputs.tag }}
+      variant: demo
 
   verify-python:
     name: Verify changed Python prerelease

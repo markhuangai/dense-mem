@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import policy from "../../.github/scripts/image-release-policy.cjs";
+import { actionStep, parseWorkflow } from "./workflow_helpers.mjs";
 
 const repository = "markhuangai/dense-mem";
 const head = "a".repeat(40);
@@ -208,6 +209,10 @@ function workflowJob(workflow, name) {
 function workflowValue(block, name, context) {
   const expression = block.match(new RegExp(`^ +${name}: \\$\\{\\{ (.+) \\}\\}$`, "m"))?.[1];
   assert.ok(expression, `${name} expression must exist`);
+  return evaluateExpression(expression, context);
+}
+
+function evaluateExpression(expression, context) {
   const javascript = expression.replace(/inputs\.([a-z][a-z-]*)/g, 'inputs["$1"]');
   return new Function(...Object.keys(context), `return (${javascript});`)(...Object.values(context));
 }
@@ -328,7 +333,7 @@ test("deferred placeholders preserve the latest started and terminal validation 
 });
 
 test("approved owner and fork CI handoffs preserve the resolved source through every shared checkout", async () => {
-  const shared = await readFile(new URL("../../.github/workflows/ci-shared.yml", import.meta.url), "utf8");
+  const shared = parseWorkflow(await readFile(new URL("../../.github/workflows/ci-shared.yml", import.meta.url), "utf8"));
   const caller = workflowJob(previewWorkflow, "ci");
   const condition = caller.match(/^    if: (.+)$/m)[1];
   const shouldRun = new Function("needs", `return (${condition});`);
@@ -341,11 +346,11 @@ test("approved owner and fork CI handoffs preserve the resolved source through e
       .map((name) => [name, workflowValue(caller, name, { needs })]));
     assert.deepEqual(inputs, { "source-repository": current.head.repo.full_name, "source-revision": head, "migration-base-ref": pull.base.sha });
     for (const name of ["npm-audit", "postgres-migrations", "quality", "go-tests", "coverage", "coverage-merge", "python"]) {
-      const checkout = workflowJob(shared, name);
+      const checkout = actionStep(shared.jobs[name], "actions/checkout");
       const values = { inputs, github: { repository, sha: "e".repeat(40) } };
-      assert.equal(workflowValue(checkout, "repository", values), current.head.repo.full_name);
-      assert.equal(workflowValue(checkout, "ref", values), head);
-      assert.match(checkout, /persist-credentials: false/);
+      assert.equal(evaluateExpression(checkout.with.repository.slice(4, -3), values), current.head.repo.full_name);
+      assert.equal(evaluateExpression(checkout.with.ref.slice(4, -3), values), head);
+      assert.equal(checkout.with["persist-credentials"], false);
     }
     const stale = previewFixture({ current, triggerHead: "f".repeat(40) });
     await stale.run("Resolve current pull request state");
@@ -353,7 +358,8 @@ test("approved owner and fork CI handoffs preserve the resolved source through e
     assert.deepEqual(stale.writes, []);
     assert.deepEqual(stale.removedLabels, []);
   }
-  assert.match(workflowJob(shared, "postgres-migrations"), /MIGRATION_BASE: \$\{\{ inputs\.migration-base-ref \}\}/);
+  const migrations = shared.jobs["postgres-migrations"].steps.find((step) => step.env?.MIGRATION_BASE);
+  assert.equal(migrations?.env.MIGRATION_BASE, "${{ inputs.migration-base-ref }}");
 });
 
 test("fork previews withhold the upstream Cloudflare token and require a verified contributor result", async () => {

@@ -36,17 +36,7 @@ jobs:
           package-manager-cache: false
       - name: Install pinned regctl
         shell: bash
-        env:
-          REGCTL_SHA256: c93aa7638749f5aaac1a8e01787321889c78f0101809bb2880343478d0ba0467
-        run: |
-          set -euo pipefail
-          curl -fsSL -o "${RUNNER_TEMP}/regctl" \
-            https://github.com/regclient/regclient/releases/download/v0.11.5/regctl-linux-amd64
-          printf '%s  %s\n' "${REGCTL_SHA256}" "${RUNNER_TEMP}/regctl" | sha256sum -c -
-          chmod +x "${RUNNER_TEMP}/regctl"
-          export REGCTL_CONFIG="${RUNNER_TEMP}/development-regctl.json"
-          printf 'REGCTL_CONFIG=%s\n' "${REGCTL_CONFIG}" >> "${GITHUB_ENV}"
-          "${RUNNER_TEMP}/regctl" config set --docker-cred=false --docker-cert=false
+        run: bash .github/scripts/install-regctl.sh "${RUNNER_TEMP}/regctl" "${RUNNER_TEMP}/development-regctl.json"
       - name: Log in to GHCR
         shell: bash
         env:
