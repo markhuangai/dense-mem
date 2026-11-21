@@ -208,7 +208,7 @@ export function restoreSeed(docker, postgres, directory) {
 export function dumpSeed(docker, postgres, directory) {
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
   const fd = fs.openSync(path.join(directory, "database.dump"), "wx", 0o600);
-  try { docker(["exec", postgres, "pg_dump", "--username=densemem", "--dbname=densemem", "--format=custom", "--no-owner", "--no-privileges", ...excludedSeedData.map((table) => `--exclude-table-data=public.${table}`)], { stdio: ["ignore", fd, "pipe"], timeout: 20 * 60_000 }); }
+  try { docker(["exec", "--user", "postgres", postgres, "pg_dump", "--username=densemem", "--dbname=densemem", "--format=custom", "--no-owner", "--no-privileges", ...excludedSeedData.map((table) => `--exclude-table-data=public.${table}`)], { stdio: ["ignore", fd, "pipe"], timeout: 20 * 60_000 }); }
   catch (error) { preservePostgresFailure(directory, "dump", error); throw error; }
   finally { fs.closeSync(fd); }
 }

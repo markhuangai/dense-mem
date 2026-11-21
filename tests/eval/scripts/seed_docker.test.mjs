@@ -117,6 +117,13 @@ test("production seed exporter preserves data, excludes payloads and protects re
   assert.match(bootLogs, /Skipping initialization/);
   assert.ok(!bootLogs.includes(canary) && !bootLogs.includes(bootCanary));
 
+  const reexported = path.join(paths.directory, "reexported");
+  dumpSeed(docker, boot, reexported);
+  for (const file of ["seed.json", "mapping.json"]) fs.copyFileSync(path.join(seedDir, file), path.join(reexported, file));
+  await sealSeed(reexported);
+  await verifySeedFiles(reexported, dataset, registryHash, 1);
+  await verifySeedCredentialExclusions(docker, boot, reexported, [canary, bootCanary]);
+
   for (const file of ["seed.json", "mapping.json"]) {
     const target = path.join(seedDir, file);
     const original = fs.readFileSync(target);
