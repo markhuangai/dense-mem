@@ -6,7 +6,7 @@ import test from "node:test";
 import imagePolicy from "../../../.github/scripts/image-release-policy.cjs";
 import { resolveSetting, resolveImportWorkers, requireEvaluationImportSupport, configuration, requireRunner, registryMatrix, aggregate, aggregateConditions, ownedResource, manualEvaluationRequest, resolveEvaluationImage, sha256 } from "../../../.github/scripts/evaluation-policy.mjs";
 import { readWorkflow, workflowJob, runStep } from "../../uat/workflow_helpers.mjs";
-import { serverEnvironment, databaseCapacity, startupTimings, control, main } from "./workflow.mjs";
+import { serverEnvironment, databaseCapacity, startupTimings, control, location, main, setup } from "./workflow.mjs";
 
 const registry = JSON.parse(fs.readFileSync(new URL("../datasets.json", import.meta.url)));
 const valid = { DENSE_MEM_EVAL_MODEL: "configured-model", DENSE_MEM_EVAL_CONTEXT_WINDOW_TOKENS: "300000", DENSE_MEM_EVAL_IMPORT_WORKERS: "10", DENSE_MEM_EVAL_VERIFIER_URL: "https://provider.example/v1", DENSE_MEM_EVAL_EMBED_URL: "https://api.openai.com/v1", DENSE_MEM_EVAL_API_KEY: "generation-canary", DENSE_MEM_EVAL_EMBED_API_KEY: "embedding-canary", WORKFLOW_EMBEDDING_MODEL: "text-embedding-3-small", WORKFLOW_EMBEDDING_DIMENSIONS: "1536" };
@@ -17,6 +17,33 @@ const pinnedImage = `ghcr.io/${repository}@sha256:${"a".repeat(64)}`;
 const revision = "b".repeat(40);
 const manualRequest = { image: taggedImage, repository, ref: "refs/heads/main", runAttempt: 1, actorPermission: "admin", triggeringPermission: "admin" };
 const inspectedImage = { Os: "linux", Architecture: "amd64", RepoDigests: [pinnedImage], Config: { Labels: { "org.opencontainers.image.variant": "production", "org.opencontainers.image.source": `https://github.com/${repository}`, "org.opencontainers.image.revision": revision } } };
+
+test("local ontology preparation accepts up to 48 hours before runtime allocation", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ontology-deadline-"));
+  t.after(() => fs.rmSync(root, { recursive: true }));
+  const env = {
+    ...valid,
+    DENSE_MEM_EVAL_MODEL: "dense-mem-testing",
+    DENSE_MEM_EVAL_CONTEXT_WINDOW_TOKENS: "500000",
+    EVAL_MODE: "live",
+    EVAL_DATASET: "hotpotqa",
+    EVAL_LOCAL_SEED_ID: `local-${"a".repeat(32)}`,
+    EVAL_LOCAL_SEED_ROOT: root,
+    EVAL_IMAGE: pinnedImage,
+    EVAL_SOURCE_REVISION: revision,
+    EVAL_SEED_IMAGE: `ghcr.io/markhuangai/dense-mem-eval-postgres@sha256:${"c".repeat(64)}`,
+  };
+  const paths = location(env);
+  const now = Math.floor(Date.now() / 1000);
+  const options = { operation: "bake-ontology" };
+  await assert.rejects(setup({ ...env, EVAL_MODEL_DEADLINE_EPOCH: String(now + 49 * 3600) }, options), /model deadline is invalid/);
+  assert.equal(fs.existsSync(paths.manifestFile), false);
+  const deadline = now + 48 * 3600;
+  // An unset database password stops this preflight before Docker is invoked.
+  await assert.rejects(setup({ ...env, EVAL_MODEL_DEADLINE_EPOCH: String(deadline) }, options), /private runtime configuration/);
+  assert.equal(JSON.parse(fs.readFileSync(paths.manifestFile, "utf8")).model_deadline, new Date(deadline * 1000).toISOString());
+  assert.equal(fs.existsSync(paths.stateFile), false);
+});
 
 test("startup measurements separate migration from subsequent readiness and reject unavailable boundaries", () => {
   const start = Date.parse("2026-11-16T16:00:00Z");

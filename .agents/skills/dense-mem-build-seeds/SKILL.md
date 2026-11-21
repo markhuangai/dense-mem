@@ -21,7 +21,7 @@ description: Build and publish complete Dense-Mem public evaluation PostgreSQL s
 
 Use `node tests/eval/scripts/local-seeds.mjs --variant ontology-on --pr <PR_NUMBER>`.
 The builder pins the existing off parents and prepares them serially with
-eight workers, a 500,000-token context, and a 24-hour deadline per dataset.
+eight workers, a 500,000-token context, and a 48-hour deadline per dataset.
 A confirmed 429 holds dispatch for at least 60 seconds and respects a longer
 Retry-After. Use the saved build ID to resume a drained checkpoint.
 

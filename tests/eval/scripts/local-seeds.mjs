@@ -8,7 +8,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { configuration, resolveEvaluationImage, requireEvaluationImportSupport, sha256 } from "../../../.github/scripts/evaluation-policy.mjs";
 import { seedBuildRequest, seedBuildVersion, resolveSeedBuildSource, requireSeedBuildValidation, seedReference, resolveSeedImage, dumpSeed, sealSeed, buildBootableSeed, publishSeed, verifySeedCredentialExclusions, verifySeedFiles, validSeedDigest, hashFile, postgresImage } from "../../../.github/scripts/evaluation-seeds.mjs";
 import { ontologyFixtureValidated, seedValidationState } from "../../../.github/scripts/seed-validation.mjs";
-import { setup, cleanup, diagnostics, docker, location, runBinary, prepareOntologyExport, seedSecrets, saveRuntimeJSON as save } from "./workflow.mjs";
+import { setup, cleanup, diagnostics, docker, location, runBinary, prepareOntologyExport, seedSecrets, ontologyPreparationSeconds, saveRuntimeJSON as save } from "./workflow.mjs";
 
 const read = (file) => JSON.parse(fs.readFileSync(file, "utf8"));
 const notice = () => `# Public evaluation seed\n\nSource: osunlp/HippoRAG_2 at 5ec05b38deecc3318bb432c69865959c56058990.\n\n${fs.readFileSync("tests/eval/source_locks/hipporag_2.json", "utf8")}\n\nHotpotQA attribution: https://github.com/hotpotqa/hotpot (CC BY-SA 4.0).\nMuSiQue attribution: https://github.com/StonyBrookNLP/musique (CC BY 4.0).\nOther dataset-specific upstream attribution and licensing limitations are recorded above.\nThe application Apache-2.0 license is not asserted for these corpora.\n`;
@@ -354,7 +354,7 @@ async function buildOntologySeeds({ build, rows, env, receipt, controller, befor
     for (const dataset of build.datasets) {
       signal.throwIfAborted();
       await seedValidationState(github, build.validation);
-      const deadline = build.deadlines[dataset] ??= Math.floor(Date.now() / 1000) + 24 * 60 * 60;
+      const deadline = build.deadlines[dataset] ??= Math.floor(Date.now() / 1000) + ontologyPreparationSeconds;
       save(receipt, build);
       const axis = { ...env, EVAL_DATASET: dataset, EVAL_SEED_IMAGE: build.parents[dataset], EVAL_MODEL_DEADLINE_EPOCH: String(deadline) };
       const paths = location(axis);

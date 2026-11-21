@@ -73,6 +73,12 @@ func TestReadManifestValidatesExecutionPins(t *testing.T) {
 		{"registry identity", "data and output", func(m *Manifest) { m.RegistryHash = "short" }},
 		{"missing deadline", "deadline", func(m *Manifest) { m.ModelDeadline = time.Time{} }},
 		{"extended deadline", "deadline", func(m *Manifest) { m.ModelDeadline = time.Now().Add(331 * time.Minute) }},
+		{"extended hosted ontology deadline", "deadline", func(m *Manifest) {
+			m.Operation, m.ImportWorkers = "bake-ontology", 0
+			m.SeedImage = "sha256:" + strings.Repeat("d", 64)
+			m.BakeStateDir = t.TempDir()
+			m.ModelDeadline = time.Now().Add(331 * time.Minute)
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			manifest := valid
@@ -151,7 +157,7 @@ func TestReadManifestPermitsOnlyPublicSeedOperationsLocally(t *testing.T) {
 		valid := base
 		valid.Operation = "bake-ontology"
 		valid.BakeStateDir = t.TempDir()
-		valid.ModelDeadline = time.Now().Add(23 * time.Hour)
+		valid.ModelDeadline = time.Now().UTC().Add(48 * time.Hour).Truncate(time.Second)
 		valid.SeedImage = "ghcr.io/markhuangai/dense-mem-eval-postgres@sha256:" + strings.Repeat("d", 64)
 		file := filepath.Join(t.TempDir(), "manifest.json")
 		require.NoError(t, writeJSON(file, valid))
@@ -159,6 +165,7 @@ func TestReadManifestPermitsOnlyPublicSeedOperationsLocally(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, valid.SeedImage, parsed.PostgresRuntimeImage())
 		require.Equal(t, valid.BakeStateDir, parsed.BakeStateDir)
+		require.Equal(t, valid.ModelDeadline, parsed.ModelDeadline)
 		for _, tc := range []struct {
 			name, message string
 			change        func(*Manifest)
@@ -166,7 +173,7 @@ func TestReadManifestPermitsOnlyPublicSeedOperationsLocally(t *testing.T) {
 			{"relative checkpoint", "private checkpoint", func(m *Manifest) { m.BakeStateDir = "relative" }},
 			{"floating parent", "pinned seed", func(m *Manifest) { m.SeedImage = "ghcr.io/markhuangai/dense-mem-eval-postgres:hotpotqa-latest" }},
 			{"incorrect context", "verified model settings", func(m *Manifest) { m.ContextWindowTokens = 300000 }},
-			{"too much time", "exceeds the campaign limit", func(m *Manifest) { m.ModelDeadline = time.Now().Add(25 * time.Hour) }},
+			{"too much time", "exceeds the campaign limit", func(m *Manifest) { m.ModelDeadline = time.Now().Add(49 * time.Hour) }},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				manifest := valid

@@ -11,6 +11,7 @@ import { requireRunner, configuration, resolveAnswerWorkers, resolveImportWorker
 const label = "io.dense-mem.eval.run";
 const secret = () => randomBytes(32).toString("base64url");
 const read = (file) => JSON.parse(fs.readFileSync(file, "utf8"));
+export const ontologyPreparationSeconds = 48 * 60 * 60;
 export function saveRuntimeJSON(file, value) {
   const temporary = `${file}.${randomBytes(8).toString("hex")}.tmp`;
   try {
@@ -190,8 +191,8 @@ export async function setup(env, options = {}) {
   fs.mkdirSync(outputDir, { mode: 0o700, recursive: true });
   fs.mkdirSync(seedDir, { mode: 0o700, recursive: true });
   const deadline = new Date(Number(env.EVAL_MODEL_DEADLINE_EPOCH) * 1000);
-  const limit = baking ? 24 * 60 : 330;
-  if (!Number.isFinite(deadline.getTime()) || deadline <= new Date() || deadline > Date.now() + limit * 60_000) throw new Error("Runner model deadline is invalid");
+  const limit = baking && paths.seedBuildID ? ontologyPreparationSeconds : 330 * 60;
+  if (!Number.isFinite(deadline.getTime()) || deadline <= new Date() || deadline > Date.now() + limit * 1000) throw new Error("Runner model deadline is invalid");
   const manifest = { version: 1, run_id: paths.runID, workflow_run_id: paths.seedBuildID ? "" : env.GITHUB_RUN_ID, seed_build_id: paths.seedBuildID, source_revision: env.EVAL_SOURCE_REVISION, image: env.EVAL_IMAGE, registry_sha256: sha256(registryBytes), dataset: paths.dataset, mode: env.EVAL_MODE, operation, model: configured.model, embedding_model: "text-embedding-3-small", embedding_dimensions: 1536, context_window_tokens: configured.context, import_workers: configured.importWorkers, base_release: env.EVAL_BASE_RELEASE || (fixture ? "v0.0.0" : ""), seed_image: seedImage, seed_dir: seedDir, model_deadline: deadline.toISOString(), data_dir: dataDir, output_dir: outputDir, timings_ms: {}, intake_proof: intakeProof, skip_ai_security_review: skipAISecurityReview };
   if (checkpoint) manifest.resume_scope = checkpoint.scope;
   if (paths.condition) manifest.condition = paths.condition;

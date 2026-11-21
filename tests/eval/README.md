@@ -134,9 +134,10 @@ node --env-file=eval.env tests/eval/scripts/local-seeds.mjs --variant ontology-o
 
 The builder pins the selected off digests, restores fresh databases, and
 prepares ontology serially with eight ontology and verifier workers and a
-500,000-token context. The 24-hour model deadline and cooldown survive a
-checkpoint. A confirmed HTTP 429 suspends new ontology attempts for at least
-60 seconds from the latest 429 or until the provider's later Retry-After.
+500,000-token context. New builds get 48 hours of model work per dataset. The
+saved deadline and cooldown survive a checkpoint. A confirmed HTTP 429
+suspends new ontology attempts for at least 60 seconds from the latest 429 or
+until the provider's later Retry-After.
 Admitted work reconciles. Resume with `--resume <build-id>` after a paused,
 drained checkpoint. Full discovery and positive, complete coverage are required
 for publication. Unresolved ambiguity or failed accounting leaves the checkpoint

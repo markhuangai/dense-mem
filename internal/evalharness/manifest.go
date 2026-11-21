@@ -110,7 +110,9 @@ func ReadManifest(path string) (Manifest, error) {
 	}
 	maximum := 330 * time.Minute
 	if bake {
-		maximum = 24 * time.Hour
+		if manifest.SeedBuildID != "" {
+			maximum = 48 * time.Hour
+		}
 		if !validParentSeed(manifest, manifest.SeedImage) || !filepath.IsAbs(manifest.BakeStateDir) ||
 			(manifest.Mode == "live" && (manifest.Model != "dense-mem-testing" || manifest.ContextWindowTokens != 500000)) {
 			return manifest, errors.New("ontology preparation requires a pinned seed, private checkpoint and verified model settings")
