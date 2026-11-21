@@ -312,22 +312,11 @@ type preparationRetry struct {
 	MaxBatches int      `json:"max_batches"`
 	Sources    []string `json:"stale_sources"`
 	Run        string   `json:"run,omitempty"`
+	terminal   bool
 }
 
 func retryPreparation(ctx context.Context, n *Native, manifest Manifest, snapshot NativeObservation, path string, retries *[]preparationRetry) (bool, error) {
-	failures, err := n.failedOntologySources(ctx)
-	if err != nil {
-		return false, err
-	}
-	if int64(len(failures)) != snapshot.Ontology.Counts.Failed {
-		return false, errors.New("native failure count differs from the authenticated scope")
-	}
-	if len(failures) != 0 {
-		if err := n.Client.Capture.Emit("ontology_failed_sources", map[string]any{"scope": n.Scope, "failures": failures}); err != nil {
-			return false, err
-		}
-	}
-	if len(*retries) > 0 {
+	if len(*retries) > 0 && !(*retries)[len(*retries)-1].terminal {
 		last := &(*retries)[len(*retries)-1]
 		if last.Run == "" {
 			// A process may have stopped between dispatch and checkpointing its receipt.
@@ -348,12 +337,22 @@ func retryPreparation(ctx context.Context, n *Native, manifest Manifest, snapsho
 		default:
 			return false, errors.New("ontology preparation retry has no terminal receipt")
 		}
-		if err := n.Client.Capture.Emit("ontology_recovery_finished", state); err != nil {
-			return false, err
-		}
+		last.terminal = true
+		// The retry may have finalized after the snapshot was read.
+		return true, n.Client.Capture.Emit("ontology_recovery_finished", state)
+	}
+	failures, err := n.failedOntologySources(ctx)
+	if err != nil {
+		return false, err
+	}
+	if int64(len(failures)) != snapshot.Ontology.Counts.Failed {
+		return false, errors.New("native failure count differs from the authenticated scope")
 	}
 	if len(failures) == 0 {
 		return false, nil
+	}
+	if err := n.Client.Capture.Emit("ontology_failed_sources", map[string]any{"scope": n.Scope, "failures": failures}); err != nil {
+		return false, err
 	}
 	next := preparationRetry{Origin: failures[0].RunID}
 	count := 0

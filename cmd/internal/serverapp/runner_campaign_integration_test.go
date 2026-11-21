@@ -198,27 +198,39 @@ func testPreparedOntology(t *testing.T, scenario string) {
 			for _, run := range page.Runs {
 				runs[run.ID] = run
 			}
-			first := runs[saved.Run]
-			require.Equal(t, saved.Key, first.OperationKey)
-			require.Equal(t, "incomplete", first.Status)
-			// Pause can close the checkpointed retry before it acquires a batch.
-			if first.CompletedBatches == 0 {
-				require.Contains(t, []string{"maintenance_paused", "window_closed"}, first.FailureCode)
-				require.Len(t, recovered, 3)
-				require.Equal(t, saved.Origin, recovered[1].Origin)
-				require.NotEqual(t, saved.Key, recovered[1].Key)
-			} else {
-				require.Len(t, recovered, 2)
-			}
+			require.GreaterOrEqual(t, len(recovered), 2)
+			require.LessOrEqual(t, len(recovered), 3)
 			require.Equal(t, saved, recovered[0])
-			failed, completed := recovered[len(recovered)-2], recovered[len(recovered)-1]
-			require.Equal(t, failed.Run, completed.Origin)
-			require.Equal(t, "provider_unavailable", runs[failed.Run].FailureCode)
-			require.Equal(t, "completed", runs[completed.Run].Status)
 			attempts := f.snapshot(t).ProviderAttempts
 			require.Len(t, attempts, 3)
 			require.EqualValues(t, len(attempts), providerCalls.Load())
 			slices.SortFunc(attempts, func(a, b evalharness.NativeAttempt) int { return a.AdmittedAt.Compare(b.AdmittedAt) })
+			attemptRuns := make([]string, len(attempts))
+			for i, attempt := range attempts {
+				batchID := strings.TrimPrefix(attempt.OperationKey, "maintenance:")
+				require.NoError(t, f.admin.WithContext(ctx).Raw(`SELECT run_id::text FROM ontology_maintenance_batches
+					WHERE batch_id=?::uuid AND team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=?`,
+					batchID, seed.Scope.TeamID, seed.Scope.SpaceID, seed.Scope.Generation).Row().Scan(&attemptRuns[i]))
+			}
+			require.Equal(t, saved.Origin, attemptRuns[0])
+			completed := recovered[len(recovered)-1]
+			require.Equal(t, attemptRuns[1], completed.Origin)
+			require.Equal(t, attemptRuns[2], completed.Run)
+			require.Equal(t, completed.Key, runs[completed.Run].OperationKey)
+			require.Equal(t, "completed", runs[completed.Run].Status)
+			for _, prior := range recovered[:len(recovered)-1] {
+				state := runs[prior.Run]
+				require.Equal(t, prior.Key, state.OperationKey)
+				require.Equal(t, "incomplete", state.Status)
+				require.Equal(t, saved.Origin, prior.Origin)
+				if prior.Run == attemptRuns[1] {
+					require.Equal(t, "provider_unavailable", state.FailureCode)
+				} else {
+					// Pause may interrupt admission after the retry has claimed a batch.
+					require.Contains(t, []string{"maintenance_paused", "window_closed"}, state.FailureCode)
+					require.NotContains(t, attemptRuns, prior.Run)
+				}
+			}
 			require.Equal(t, []string{"provider_unavailable", "provider_unavailable", "completed"},
 				[]string{attempts[0].Outcome, attempts[1].Outcome, attempts[2].Outcome})
 			require.GreaterOrEqual(t, attempts[1].AdmittedAt.Sub(attempts[0].AdmittedAt), 59*time.Second)
