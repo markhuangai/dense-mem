@@ -298,6 +298,8 @@ test("local seed builds require current-head checks and a verified publisher att
   f.latest.conclusion = null;
   f.statuses[1].state = "pending";
   await assert.rejects(resolve(), /passing current-head CI\/E2E/);
+  const staged = await resolveSeedBuildSource(f.github, 42, f.source, { privatePreparation: true });
+  assert.equal(staged.image, source.image);
   await assert.rejects(requireSeedBuildValidation(f.github, source.validation), /passing current-head CI\/E2E/);
   f.latest.status = "completed";
   f.latest.conclusion = "success";

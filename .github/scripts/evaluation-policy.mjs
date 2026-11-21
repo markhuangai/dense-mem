@@ -57,6 +57,10 @@ export function resolveImportWorkers(value) {
   return Number(resolveSetting("DENSE_MEM_EVAL_IMPORT_WORKERS", [value], (v) => /^[1-9][0-9]*$/.test(v) && Number(v) <= 100));
 }
 
+export function resolveAnswerWorkers(value) {
+  return Number(resolveSetting("EVAL_ANSWER_WORKERS", [value, "4"], (v) => /^(?:[4-9]|10)$/.test(v)));
+}
+
 export function configuration(env, { allowHTTPVerifier = false } = {}) {
   const model = resolveSetting("DENSE_MEM_EVAL_MODEL", [env.DENSE_MEM_EVAL_MODEL], (v) => /^[A-Za-z0-9@][A-Za-z0-9_./:-]{0,127}$/.test(v) && !v.includes("://"));
   const context = resolveSetting("DENSE_MEM_EVAL_CONTEXT_WINDOW_TOKENS", [env.DENSE_MEM_EVAL_CONTEXT_WINDOW_TOKENS], (v) => /^[1-9][0-9]*$/.test(v) && Number.isSafeInteger(Number(v)) && Number(v) >= 16384);
@@ -116,7 +120,11 @@ export function aggregate(registry, reports) {
     if (report.expected_answers !== dataset.questions.rows * 4 || report.corpus_rows !== dataset.corpus.rows) throw new Error("Report denominator differs from source registry");
     return { dataset: dataset.id, expected: report.expected_answers, completed: report.completed_answers, complete: report.complete === true && report.capture_complete === true, matrix: report.comparison_matrix, ontology_delta: report.ontology_delta, identity: report.identity, failure: report.failure || "" };
   });
-  const identities = new Set(rows.filter((row) => row.identity).map((row) => JSON.stringify([row.identity.source_revision, row.identity.image, row.identity.registry_sha256, row.identity.model, row.identity.embedding_model, row.identity.embedding_dimensions, row.identity.context_window_tokens, row.identity.workflow_run_id])));
+  const identities = new Set(rows.filter((row) => row.identity).map(({ identity }) => JSON.stringify([
+    identity.source_revision, identity.image, identity.registry_sha256, identity.model, identity.embedding_model,
+    identity.embedding_dimensions, identity.context_window_tokens, identity.workflow_run_id,
+    resolveAnswerWorkers(identity.answer_workers),
+  ])));
   if (identities.size > 1) throw new Error("Dataset jobs used different campaign identities");
   return { complete: rows.every((row) => row.complete), expected_answers: expected, completed_answers: rows.reduce((sum, row) => sum + row.completed, 0), datasets: rows };
 }
@@ -124,4 +132,66 @@ export function aggregate(registry, reports) {
 export function ownedResource(resource, runID) {
   if (resource?.Labels?.["io.dense-mem.eval.run"] !== runID) throw new Error("Cleanup ownership differs from this dataset job");
   return true;
+}
+
+export function aggregateConditions(registry, reports, { runID, source, image, registryHash, answerWorkers, pins }) {
+  const rows = registry.datasets.map(({ id, questions, corpus }) => {
+    const expected = questions.rows * 2;
+    let settings;
+    const arms = ["off", "on"].map((condition) => {
+      const unavailable = (reason) => ({ condition, expected, completed: 0, complete: false, unavailable: reason });
+      if (pins && !pins[id]?.[condition]) return unavailable(pins[id]?.[condition + "_failure"] || "seed pin missing");
+      const matches = reports.filter((item) => item.identity?.dataset === id && item.identity.condition === condition);
+      if (matches.length !== 1) return unavailable(matches.length ? "duplicate reports" : "missing or timed-out condition");
+      const report = matches[0];
+      const identity = report.identity;
+      if (identity.run_id !== `${runID}-${id}-${condition}` || String(identity.workflow_run_id) !== String(runID) ||
+          identity.source_revision !== source || identity.image !== image || identity.registry_sha256 !== registryHash ||
+          identity.answer_workers !== answerWorkers || (pins && identity.seed_image !== pins[id][condition]) ||
+          (condition === "on" && pins && identity.parent_seed_image !== pins[id].off)) {
+        return unavailable("report identity differs from the planned condition");
+      }
+      const matrix = report.comparison_matrix;
+      if (report.expected_answers !== expected || report.corpus_rows !== corpus.rows ||
+          !Array.isArray(matrix) || matrix.length !== 2 ||
+          !["single", "multi_turn"].every((policy) => matrix.some((axis) => axis.policy === policy && axis.condition === condition &&
+            axis.expected === questions.rows && Number.isSafeInteger(axis.completed) && axis.completed >= 0 && axis.completed <= axis.expected)) ||
+          report.completed_answers !== matrix.reduce((sum, axis) => sum + axis.completed, 0)) {
+        return unavailable("invalid report denominator or scoring axes");
+      }
+      const complete = report.complete === true && report.capture_complete === true && report.model_verified_before_cutoff === true &&
+        report.owned_cleanup === true && report.restored_rows === corpus.rows && report.completed_answers === expected &&
+        /^[a-f0-9]{64}$/.test(identity.canonical_sha256 || "");
+      const config = JSON.stringify([identity.model, identity.embedding_model, identity.embedding_dimensions, identity.context_window_tokens, identity.scoring_policy]);
+      settings ??= config;
+      return {
+        condition, expected, completed: report.completed_answers, complete, identity, matrix,
+        settings: config, timings_ms: report.timings_ms, ontology_preparation: report.ontology_preparation, server_usage: report.server_usage,
+        owned_cleanup: report.owned_cleanup, failure: report.failure || (complete ? "" : "condition verification, capture or cleanup incomplete"),
+      };
+    });
+    const [off, on] = arms;
+    const paired = off.complete && on.complete && off.settings === on.settings && off.identity.seed_image === on.identity.parent_seed_image &&
+      off.identity.canonical_sha256 === on.identity.canonical_sha256;
+    const deltas = {};
+    if (paired) {
+      for (const policy of ["single", "multi_turn"]) {
+        const a = off.matrix.find((axis) => axis.policy === policy);
+        const b = on.matrix.find((axis) => axis.policy === policy);
+        const pairs = ["recall_at_1", "recall_at_5", "recall_at_10", "exact_match", "f1"].map((metric) => [metric, b.mean[metric] - a.mean[metric]]);
+        pairs.push(["all_support_recovery_rate", b.all_support_recovery_rate - a.all_support_recovery_rate],
+          ["supporting_text_coverage", b.mean.final_supporting_text_coverage - a.mean.final_supporting_text_coverage]);
+        deltas[policy] = Object.fromEntries(pairs);
+      }
+    }
+    return { dataset: id, expected: expected * 2, completed: off.completed + on.completed, complete: paired, arms, ontology_delta: paired ? deltas : null, settings };
+  });
+  const configs = new Set(rows.flatMap((row) => row.arms.map((arm) => arm.settings).filter(Boolean)));
+  return {
+    complete: rows.every((row) => row.complete) && configs.size === 1,
+    expected_answers: rows.reduce((sum, row) => sum + row.expected, 0),
+    completed_answers: rows.reduce((sum, row) => sum + row.completed, 0),
+    datasets: rows,
+    failure: configs.size > 1 ? "conditions used different scoring settings" : "",
+  };
 }

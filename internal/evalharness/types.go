@@ -3,6 +3,8 @@ package evalharness
 import "time"
 
 const maxImportWorkers = 100
+const defaultAnswerWorkers = 4
+const maxAnswerWorkers = 10
 
 type CorpusItem struct {
 	SourceDocID   string         `json:"source_doc_id"`
@@ -66,6 +68,10 @@ type Manifest struct {
 	EmbeddingDimensions  int                `json:"embedding_dimensions"`
 	ContextWindowTokens  int                `json:"context_window_tokens"`
 	ImportWorkers        int                `json:"import_workers"`
+	AnswerWorkers        int                `json:"answer_workers,omitempty"`
+	Condition            string             `json:"condition,omitempty"`
+	ParentSeedImage      string             `json:"parent_seed_image,omitempty"`
+	BakeStateDir         string             `json:"bake_state_dir,omitempty"`
 	Operation            string             `json:"operation,omitempty"`
 	SeedImage            string             `json:"seed_image,omitempty"`
 	SeedDir              string             `json:"seed_dir,omitempty"`

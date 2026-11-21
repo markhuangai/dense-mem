@@ -521,26 +521,34 @@ func (v *OpenAIAssessor) openAIStructuredChatMessagesJSONWithUsage(
 		}
 	}
 	defer func() { _ = httpResp.Body.Close() }()
+	rateLimited := httpResp.StatusCode == http.StatusTooManyRequests
+	if rateLimited {
+		modelprovider.ObserveRateLimit(ctx, httpResp.Header.Get("Retry-After"), time.Now())
+	}
 	diagnostics.FailurePhase = "response_body"
 	rawResponse, readErr := io.ReadAll(io.LimitReader(httpResp.Body, openAIVerifierMaxResponseBytes+1))
 	httpMS := time.Since(httpStarted).Milliseconds()
 	diagnostics.HTTPMS = &httpMS
 	if readErr != nil {
 		recordOpenAIExchange(ctx, "assessor", model, bodyBytes, rawResponse, httpResp.Header.Get("Content-Type"), httpResp.StatusCode, "response_read_failed", started, readErr)
-		if openAIRequestTimedOutOrCanceled(ctx, readErr) {
+		if !rateLimited && openAIRequestTimedOutOrCanceled(ctx, readErr) {
 			latencyOutcome = "timeout"
 			return openAIStructuredChatResult{}, &TimeoutError{Provider: openAIVerifierProvider, Message: "provider response timed out or was canceled"}
 		}
-		return openAIStructuredChatResult{}, &ProviderError{Provider: openAIVerifierProvider, Message: "failed to read provider response", FailureClass: ProviderFailureClassProtocol}
-	}
-	if len(rawResponse) > openAIVerifierMaxResponseBytes {
+		if !rateLimited {
+			return openAIStructuredChatResult{}, &ProviderError{Provider: openAIVerifierProvider, Message: "failed to read provider response", FailureClass: ProviderFailureClassProtocol}
+		}
+	} else if len(rawResponse) > openAIVerifierMaxResponseBytes {
 		recordOpenAIExchange(ctx, "assessor", model, bodyBytes, rawResponse, httpResp.Header.Get("Content-Type"), httpResp.StatusCode, "response_too_large", started, nil)
-		return openAIStructuredChatResult{}, &ProviderError{Provider: openAIVerifierProvider, Message: fmt.Sprintf("provider response exceeds %d byte transport limit", openAIVerifierMaxResponseBytes), FailureClass: ProviderFailureClassProtocol}
+		if !rateLimited {
+			return openAIStructuredChatResult{}, &ProviderError{Provider: openAIVerifierProvider, Message: fmt.Sprintf("provider response exceeds %d byte transport limit", openAIVerifierMaxResponseBytes), FailureClass: ProviderFailureClassProtocol}
+		}
+	} else {
+		recordOpenAIExchange(ctx, "assessor", model, bodyBytes, rawResponse, httpResp.Header.Get("Content-Type"), httpResp.StatusCode, "captured", started, nil)
 	}
-	recordOpenAIExchange(ctx, "assessor", model, bodyBytes, rawResponse, httpResp.Header.Get("Content-Type"), httpResp.StatusCode, "captured", started, nil)
 
 	diagnostics.FailurePhase = "response_status"
-	if httpResp.StatusCode == http.StatusTooManyRequests {
+	if rateLimited {
 		latencyOutcome = "rate_limited"
 		return openAIStructuredChatResult{}, &RateLimitError{
 			Provider:   openAIVerifierProvider,

@@ -25,7 +25,7 @@ export function seedBuildRequest(registry, dataset, workers) {
   return { dataset: dataset === "all" ? allowed : [dataset], workers: resolveImportWorkers(String(workers)) };
 }
 
-export async function resolveSeedBuildSource(github, pullNumber, checkoutRevision) {
+export async function resolveSeedBuildSource(github, pullNumber, checkoutRevision, { privatePreparation = false } = {}) {
   if ((pullNumber !== undefined && (!Number.isSafeInteger(pullNumber) || pullNumber < 1)) || !/^[0-9a-f]{40}$/.test(checkoutRevision)) throw new Error("Seed source requires an exact checkout revision and a valid PR number when supplied");
   const repository = "markhuangai/dense-mem", base = `/repos/${repository}`;
   const get = async (endpoint) => (await github.request(`GET ${base}/${endpoint}`)).data;
@@ -70,7 +70,8 @@ export async function resolveSeedBuildSource(github, pullNumber, checkoutRevisio
   const preview = imagePolicy.selectPreviewReceipt({ comments, pull, status: receipt.status, repository });
   if (!released && (preview.trusted_revision !== main || pull.base.sha !== main)) throw new Error("Seed PR image must be validated against current main");
   const validation = { source_revision: sourceRevision, pull_number: pull.number, actor: pull.user.login, run_id: run.id, publisher_attempt: published.run_attempt, validation_attempt: run.run_attempt, ...(released ? { main_revision: main, release_revision: releaseRevision } : {}) };
-  await requireSeedBuildValidation(github, validation);
+  if (privatePreparation && !released) await seedValidationState(github, validation);
+  else await requireSeedBuildValidation(github, validation);
   const image = released ? `ghcr.io/${repository}:${baseRelease}` : `ghcr.io/${repository}@${preview.image.split("@")[1]}`;
   return { image, sourceRevision: released ? releaseRevision : sourceRevision, checkoutRevision, baseRelease, validation };
 }
@@ -79,9 +80,10 @@ export async function requireSeedBuildValidation(github, validation) {
   if (await seedValidationState(github, validation) !== "success") throw new Error("Seed building requires passing current-head CI/E2E");
 }
 
-export function seedReference(dataset, selected = "latest") {
-  if (!/^(bootstrap|hotpotqa|musique|2wikimultihopqa|nq_rear|popqa)$/.test(dataset) || (selected !== "latest" && !version.test(selected))) throw new Error("Invalid seed version or dataset");
-  return `${seedRepository}:${dataset}-${selected}`;
+export function seedReference(dataset, selected = "latest", condition = "off") {
+  if (!/^(bootstrap|hotpotqa|musique|2wikimultihopqa|nq_rear|popqa)$/.test(dataset) || (selected !== "latest" && !version.test(selected)) ||
+      !["off", "on"].includes(condition) || (dataset === "bootstrap" && condition === "on")) throw new Error("Invalid seed version, condition or dataset");
+  return `${seedRepository}:${dataset}${condition === "on" ? "-ontology-on" : ""}-${selected}`;
 }
 
 export function seedBuildVersion(baseRelease, now = new Date()) {
@@ -135,12 +137,35 @@ export function extractSeed(docker, image, directory, container, runID, options)
   }
 }
 
-export async function verifySeedFiles(directory, dataset, registryHash, corpusRows, { intakeProof = false, bootable = false } = {}) {
+export async function verifySeedFiles(directory, dataset, registryHash, corpusRows, { intakeProof = false, bootable = false, condition = "off", allowLocal = false } = {}) {
   const metadata = seedMetadata(read(path.join(directory, "seed.json")), dataset, registryHash, corpusRows, { bootable });
   if ((metadata.intake_proof ?? false) !== intakeProof || (intakeProof && metadata.ai_security_review !== "skipped")) throw new Error("Seed export kind or admission policy differs from the requested operation");
   if (!bootable && (await hashFile(path.join(directory, "database.dump")) !== metadata.dump_sha256 || fs.statSync(path.join(directory, "database.dump")).size !== metadata.dump_bytes)) throw new Error("Seed dump checksum or size differs");
   if (dataset !== "bootstrap" && await hashFile(path.join(directory, "mapping.json")) !== metadata.mapping_sha256) throw new Error("Seed mapping checksum differs");
+  const prepared = metadata.ontology_preparation;
+  if (condition === "on") {
+    if (prepared?.version !== 1 || !validSeedDigest(prepared.parent_seed_image, allowLocal) || !digest.test(prepared.ontology_sha256 || "") ||
+        !digest.test(prepared.attempts_sha256 || "") || !/^[0-9a-f]{40}$/.test(prepared.source_revision || "") ||
+        prepared.workers !== 8 || !Array.isArray(prepared.windows) || prepared.windows.length === 0 ||
+        !Number.isSafeInteger(prepared.counts?.eligible) || prepared.counts.eligible < 1 || prepared.counts.eligible !== prepared.counts.organized ||
+        ["pending", "failed", "ambiguous"].some((name) => prepared.counts[name] !== 0) || prepared.usage?.unfinished !== 0) {
+      throw new Error("Seed ontology preparation metadata is incomplete");
+    }
+  } else if (prepared !== undefined) throw new Error("Ontology-off seed contains preparation metadata");
   return metadata;
+}
+
+export function validSeedDigest(image, allowLocal = false) {
+  return typeof image === "string" && ((allowLocal && localImageID.test(image)) ||
+    (image.startsWith(seedRepository + "@") && localImageID.test(image.slice(seedRepository.length + 1))));
+}
+
+export function verifySeedPair(parent, child, image) {
+  const fields = ["dataset", "registry_sha256", "corpus_rows", "source_revision", "scope", "canonical_sha256", "search_sha256",
+    "mapping_sha256", "embedding_model", "embedding_dimensions"];
+  if (child.ontology_preparation?.parent_seed_image !== image || fields.some((key) => JSON.stringify(child[key]) !== JSON.stringify(parent[key]))) {
+    throw new Error("Ontology-on seed does not derive from the selected off seed");
+  }
 }
 
 export function remainingSeedRestoreEntries(toc) {
@@ -183,7 +208,7 @@ export function restoreSeed(docker, postgres, directory) {
 export function dumpSeed(docker, postgres, directory) {
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
   const fd = fs.openSync(path.join(directory, "database.dump"), "wx", 0o600);
-  try { docker(["exec", postgres, "pg_dump", "--username=densemem", "--dbname=densemem", "--format=custom", "--no-owner", "--no-privileges", ...excludedSeedData.map((table) => `--exclude-table-data=public.${table}`)], { stdio: ["ignore", fd, "pipe"], timeout: 20 * 60_000 }); }
+  try { docker(["exec", "--user", "postgres", postgres, "pg_dump", "--username=densemem", "--dbname=densemem", "--format=custom", "--no-owner", "--no-privileges", ...excludedSeedData.map((table) => `--exclude-table-data=public.${table}`)], { stdio: ["ignore", fd, "pipe"], timeout: 20 * 60_000 }); }
   catch (error) { preservePostgresFailure(directory, "dump", error); throw error; }
   finally { fs.closeSync(fd); }
 }
@@ -228,9 +253,9 @@ export async function verifySeedCredentialExclusions(docker, postgres, directory
 }
 
 export async function buildBootableSeed(docker, postgres, directory, secrets) {
-  const { dataset, registry_sha256: registryHash, corpus_rows: corpusRows } = read(path.join(directory, "seed.json"));
+  const { dataset, registry_sha256: registryHash, corpus_rows: corpusRows, ontology_preparation: prepared } = read(path.join(directory, "seed.json"));
   if (dataset === "bootstrap") throw new Error("Bootstrap seeds use a logical archive");
-  const seed = await verifySeedFiles(directory, dataset, registryHash, corpusRows);
+  const seed = await verifySeedFiles(directory, dataset, registryHash, corpusRows, { condition: prepared ? "on" : "off", allowLocal: true });
   await verifySeedCredentialExclusions(docker, postgres, directory, secrets);
   const context = fs.mkdtempSync(path.join(directory, "image-"));
   try {
@@ -274,10 +299,13 @@ export async function resolveSeedImage(reference, env = process.env) {
 }
 
 export async function publishSeed(docker, directory, dataset, selected, env, beforePublication, resume) {
-  if (read(path.join(directory, "seed.json")).intake_proof) throw new Error("Intake proof exports cannot be published");
+  const metadata = read(path.join(directory, "seed.json"));
+  if (metadata.intake_proof) throw new Error("Intake proof exports cannot be published");
+  const condition = metadata.ontology_preparation ? "on" : "off";
+  if (condition === "on" && !validSeedDigest(metadata.ontology_preparation.parent_seed_image)) throw new Error("Published ontology-on seed requires a registry parent");
   if (typeof beforePublication !== "function") throw new Error("Seed publication requires a fresh validation gate");
-  const tagged = seedReference(dataset, selected);
-  const alias = seedReference(dataset);
+  const tagged = seedReference(dataset, selected, condition);
+  const alias = seedReference(dataset, "latest", condition);
   const bootable = dataset !== "bootstrap";
   if (bootable && !localImageID.test(resume?.bootableImage || "")) throw new Error("Seed publication requires a verified bootable image");
   const files = ["database.dump", "seed.json", "NOTICE.md"];

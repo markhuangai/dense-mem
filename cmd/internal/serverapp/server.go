@@ -274,7 +274,11 @@ func RunActiveServer(
 	sessionAssessmentLimits.MaxEvidenceItems = 100
 	sessionAssessor := assessorprovider.NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGateAndModel(&cfg, aiHTTPClient, sessionAssessmentLimits, aiConcurrencyGate, sessionModels.remember)
 	sessionAssessor.SetMetrics(discoverabilityMetrics)
-	ontologyMaintenance := buildOntologyMaintenance(ontologyStore, appConfigService, assessorProvider, assessmentLimits, sessionModels.remember, time.Duration(cfg.GetAIVerifierTimeoutSeconds())*time.Second, auditService, rootSlogLogger(logger), ontologyDiagnosticCapture(operationLogService, diagnosticProtector, rootDiagnosticLogger(logger)))
+	preparationCooldown, err := ontology.RestorePreparationCooldown(cfg.OntologyPreparationCooldownFile)
+	if err != nil {
+		return err
+	}
+	ontologyMaintenance := buildOntologyMaintenance(ontologyStore, appConfigService, assessorProvider, assessmentLimits, sessionModels.remember, time.Duration(cfg.GetAIVerifierTimeoutSeconds())*time.Second, auditService, rootSlogLogger(logger), ontologyDiagnosticCapture(operationLogService, diagnosticProtector, rootDiagnosticLogger(logger)), preparationCooldown)
 	applications := buildApplicationBundle(applicationCompositionDependencies{
 		PublicSeedAdmission:  seedAdmission,
 		Knowledge:            knowledgeStore,

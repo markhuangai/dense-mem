@@ -59,6 +59,16 @@ type runnerServiceFixture struct {
 }
 
 func newRunnerServiceFixture(t *testing.T) *runnerServiceFixture {
+	return newRunnerServiceFixtureWithOntology(t, nil, nil)
+}
+
+type runnerPreparationFixture struct {
+	now       func() time.Time
+	ambiguous bool
+	cooldown  *organization.PreparationCooldown
+}
+
+func newRunnerServiceFixtureWithOntology(t *testing.T, initial []ontology.Change, before func(context.Context, *ontologypg.Store, requestctx.Actor, assessment.Request) (int, error), preparation ...runnerPreparationFixture) *runnerServiceFixture {
 	t.Helper()
 	admin, app, rls, cleanup := setupRememberProcessorIntegrationDB(t)
 	t.Cleanup(cleanup)
@@ -78,9 +88,25 @@ func newRunnerServiceFixture(t *testing.T) *runnerServiceFixture {
 	search := searchpg.NewStore(app, rls)
 	audit := auditapp.New(auditpg.NewStore(app, rls))
 	configuration := settings.NewAppConfigService(settingspg.NewAppConfigRepository(app, rls), nil)
-	_, err := configuration.UpdateOntologyMaintenanceSettings(ctx, map[string]string{domain.AppConfigOntologyEnabled: "true", domain.AppConfigOntologyModel: "runner-ontology", domain.AppConfigOntologyContextWindow: "300000", domain.AppConfigOntologyConcurrency: "4", domain.AppConfigOntologyTeamConcurrency: "4"}, "control", "", "")
+	var fixture runnerPreparationFixture
+	if len(preparation) != 0 {
+		fixture = preparation[0]
+	}
+	enabled := "true"
+	if fixture.now != nil {
+		enabled = "false"
+	}
+	_, err := configuration.UpdateOntologyMaintenanceSettings(ctx, map[string]string{domain.AppConfigOntologyEnabled: enabled, domain.AppConfigOntologyModel: "runner-ontology", domain.AppConfigOntologyContextWindow: "300000", domain.AppConfigOntologyConcurrency: "4", domain.AppConfigOntologyTeamConcurrency: "4"}, "control", "", "")
 	require.NoError(t, err)
 	ontologyStore := ontologypg.NewStore(app, rls)
+	if len(initial) > 0 {
+		manager := actor
+		manager.Role = "manager"
+		_, err := ontologyStore.PublishManager(requestctx.WithActor(ctx, manager), teamID.String(), ontology.Publication{
+			OperationKey: "runner-initial-definitions", Reason: "Establish the initial fixture vocabulary", Changes: initial,
+		})
+		require.NoError(t, err)
+	}
 	policy, err := configuration.OntologyMaintenanceRuntimeConfig(ctx)
 	require.NoError(t, err)
 	_, err = ontologyStore.EnsureMaintenanceWindow(ctx, policy, time.Now())
@@ -98,7 +124,33 @@ func newRunnerServiceFixture(t *testing.T) *runnerServiceFixture {
 			http.Error(w, "invalid organization request", 400)
 			return
 		}
-		body, err := json.Marshal(runnerOrganizationResponse(input))
+		if before != nil {
+			status, err := before(r.Context(), ontologyStore, actor, input)
+			if err != nil {
+				t.Errorf("organization fixture intervention: %v", err)
+				http.Error(w, "fixture intervention failed", http.StatusInternalServerError)
+				return
+			}
+			if status == http.StatusTooManyRequests && fixture.cooldown != nil {
+				w.Header().Set("Content-Length", "42")
+				w.Header().Set("Retry-After", "1")
+				w.WriteHeader(status)
+				_, _ = w.Write([]byte("{"))
+				return
+			}
+			if status != 0 {
+				http.Error(w, "synthetic provider failure", status)
+				return
+			}
+		}
+		output := runnerOrganizationResponse(input)
+		if fixture.ambiguous {
+			output.Definitions = []assessment.Definition{}
+			for i := range output.Items {
+				output.Items[i] = assessment.Decision{Ref: output.Items[i].Ref, Status: "ambiguous", Reason: "fixture ambiguity"}
+			}
+		}
+		body, err := json.Marshal(output)
 		if err != nil {
 			http.Error(w, "invalid fixture result", 500)
 			return
@@ -107,9 +159,14 @@ func newRunnerServiceFixture(t *testing.T) *runnerServiceFixture {
 	}))
 	t.Cleanup(upstream.Close)
 	transport := assessorprovider.NewOpenAIAssessor(&config.Config{AIVerifierAPIURL: upstream.URL, AIVerifierAPIKey: "synthetic", AIVerifierModel: "runner-ontology"}, upstream.Client())
-	maintenance := organization.NewMaintenanceService(organization.MaintenanceDependencies{Repository: ontologyStore, Config: configuration, Audit: audit, DefaultModel: "runner-ontology", Organizer: func(model string, tokens int64, accounting assessment.AttemptAccounting) *organization.Service {
-		return organization.NewService(ontologyStore, assessment.NewProviderWithAccounting(transport, model, assessor.DefaultSemanticAssessmentLimits(), accounting, int(tokens)))
-	}})
+	var timeout time.Duration
+	if fixture.cooldown != nil {
+		timeout = time.Second
+	}
+	maintenance := organization.NewMaintenanceService(organization.MaintenanceDependencies{Repository: ontologyStore, Config: configuration, Audit: audit, DefaultModel: "runner-ontology", Now: fixture.now,
+		PreparationCooldown: fixture.cooldown, ProviderTimeout: timeout, Organizer: func(model string, tokens int64, accounting assessment.AttemptAccounting) *organization.Service {
+			return organization.NewService(ontologyStore, assessment.NewProviderWithAccounting(transport, model, assessor.DefaultSemanticAssessmentLimits(), accounting, int(tokens)))
+		}})
 	_, err = maintenance.Command(ctx, domain.OntologyMaintenanceCommand{Action: "pause", OperationKey: uuid.NewString()}, "", "")
 	require.NoError(t, err)
 	recallStore := recallpg.NewStore(app, rls, search, recallpg.LoadRecallEvidenceConflictRecords).

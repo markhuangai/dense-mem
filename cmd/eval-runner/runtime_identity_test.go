@@ -12,7 +12,7 @@ func TestRuntimeEndpointsMustBelongToThisJobsProductionContainers(t *testing.T) 
 	manifest := evalharness.Manifest{RunID: "42-hotpotqa", WorkflowRunID: "42", Dataset: "hotpotqa", Image: "pinned-production-image"}
 	decode := func(image string) runtimeContainer {
 		var container runtimeContainer
-		require.NoError(t, json.Unmarshal([]byte(`{"Config":{"Image":"`+image+`","Labels":{"io.dense-mem.eval.run":"42-hotpotqa"}},"State":{"Running":true},"NetworkSettings":{"Ports":{"8080/tcp":[{"HostIP":"127.0.0.1","HostPort":"10080"}],"8090/tcp":[{"HostIP":"127.0.0.1","HostPort":"10090"}],"5432/tcp":[{"HostIP":"127.0.0.1","HostPort":"15432"}]},"Networks":{"densemem-eval-42-hotpotqa-network":{}}}}`), &container))
+		require.NoError(t, json.Unmarshal([]byte(`{"Config":{"Image":"`+image+`","Labels":{"io.dense-mem.eval.run":"`+manifest.RunID+`"}},"State":{"Running":true},"NetworkSettings":{"Ports":{"8080/tcp":[{"HostIP":"127.0.0.1","HostPort":"10080"}],"8090/tcp":[{"HostIP":"127.0.0.1","HostPort":"10090"}],"5432/tcp":[{"HostIP":"127.0.0.1","HostPort":"15432"}]},"Networks":{"densemem-eval-`+manifest.RunID+`-network":{}}}}`), &container))
 		return container
 	}
 	server, postgres := decode(manifest.Image), decode("pgvector/pgvector:0.8.2-pg18-trixie")
@@ -39,4 +39,14 @@ func TestRuntimeEndpointsMustBelongToThisJobsProductionContainers(t *testing.T) 
 	server = decode(manifest.Image)
 	server.NetworkSettings.Ports["8080/tcp"][0].HostIP = "0.0.0.0"
 	require.ErrorContains(t, validateRuntime(manifest, get, server, postgres), "loopback")
+
+	for _, condition := range []string{"off", "on"} {
+		manifest.Condition = condition
+		manifest.RunID = "42-hotpotqa-" + condition
+		settings["EVAL_SERVER_CONTAINER"] = "densemem-eval-" + manifest.RunID + "-server"
+		server, postgres := decode(manifest.Image), decode(manifest.SeedImage)
+		require.NoError(t, validateRuntime(manifest, get, server, postgres))
+		server.Config.Labels["io.dense-mem.eval.run"] = "42-hotpotqa"
+		require.ErrorContains(t, validateRuntime(manifest, get, server, postgres), "ownership")
+	}
 }
