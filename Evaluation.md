@@ -7,27 +7,32 @@ conditions and the single-Recall and multi-turn policies.
 
 ## Image Boundary And Tool Surface
 
-Each GitHub-hosted dataset job restores its pinned PostgreSQL seed into fresh
-storage and starts the pinned Dense-Mem production image. Retrieval enters
-through MCP. The isolated runner uses the private control API to enable,
-recover, and pause ontology maintenance.
+Each GitHub-hosted job restores one pinned PostgreSQL image into fresh storage
+and starts the pinned Dense-Mem production image. A complete campaign has ten
+jobs, one per dataset and condition. Retrieval enters through MCP.
+
+Maintainers prepare the ontology-on child locally from the published off
+parent. The builder uses eight ontology workers, a 500,000-token context and
+a deadline of 24 hours per dataset. HTTP 429 holds new ontology requests for
+at least 60 seconds or the provider's longer wait. The builder pauses and
+drains the ontology before exporting a verified, fully organized image.
 
 ## Current Evidence Evaluation
 
 ```mermaid
 flowchart TB
-  Seed["Published PostgreSQL seed"] --> Verify["Restore, migrate, and verify Evidence"]
-  Verify --> Off["Score with ontology off"]
-  Off --> Converge["Converge ontology, then pause and drain"]
-  Converge --> On["Score with ontology on"]
-  On --> Report["Compare both conditions and answer policies"]
+  Parent["Published ontology-off image"] --> Prep["Prepare and verify ontology locally"]
+  Prep --> Child["Published ontology-on image"]
+  Parent --> Off["Verify and score off"]
+  Child --> On["Verify and score on"]
+  Off --> Compare["Compare complete compatible pairs"]
+  On --> Compare
 ```
 
-The runner verifies the source locks, authorized scope, embedding and search
-state, and canonical Evidence fingerprint before scoring. It checks the same
-fingerprint after ontology work and final scoring. Native recovery reassesses
-confirmed stale or rate-limited failures through the existing maintenance
-command.
+The paired images share canonical Evidence, original mappings, and search
+fingerprints. The on image also records its parent digest and ontology
+fingerprint. The hosted job verifies the appropriate state before and after
+scoring. Preparation usage and scoring usage have independent receipts.
 
 ## Validate And Smoke-Test
 
@@ -39,9 +44,8 @@ documents the Actions inputs and trusted validation routes.
 ## Matched Campaign And Comparison
 
 Use matching source, image, registry, model, embedding, and worker settings
-across the dataset jobs. Revisions with an `answer_workers` input accept four
-through ten workers per dataset. At ten workers, two datasets can score at
-once. Confirmed transient answer transport failures can retry within the model
+across the jobs. Revisions with an `answer_workers` input accept four
+through ten workers per job. At ten workers, two jobs can score at once. Confirmed transient answer transport failures can retry within the model
 deadline. HTTP 429 delays new answer requests in the affected dataset.
 
 Reports record retrieval and answer metrics, phase timings, usage, canonical
