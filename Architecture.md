@@ -45,7 +45,7 @@ flowchart LR
 | Search | Search contracts, query orchestration, index mechanics, and reconciliation. |
 | Privacy / Settings / Operations / Audit | Erasure and retention, configuration, diagnostics, and audit use cases. |
 
-The [checked architecture inventory](https://github.com/markhuangai/dense-mem/blob/152448a4c4c4192a7492ad3ae2ca311fcb82851a/architecture/ownership.v2.json) and [capability contracts](https://github.com/markhuangai/dense-mem/blob/152448a4c4c4192a7492ad3ae2ca311fcb82851a/architecture/capability-contracts.md) own package-level detail.
+Package-level detail lives with the source. [Capability contracts](https://github.com/markhuangai/dense-mem/blob/main/architecture/capability-contracts.md)
 
 ## Runtime Composition
 
@@ -70,11 +70,8 @@ Startup validates configuration, connects to a writable PostgreSQL primary, seri
 | How are identity and spaces enforced? | [Request Lifecycle And Security](Request-Lifecycle-And-Security) |
 | How do startup, backup, and recovery work? | [Operations Runbook](Operations-Runbook) |
 
-## Architecture Checks
+## Code Ownership And Design Review
 
-```bash
-node scripts/check-architecture.mjs
-node --test tests/uat/architecture_conformance.test.mjs
-```
+Handlers validate request shape and translate results. Application services orchestrate use cases and domain policy through ports. Adapters implement those ports and own infrastructure details such as SQL and driver-error translation. Capabilities expose narrow public contracts, and composition wires private implementations.
 
-Schema-version-2 fragments declare exact package/browser units, public/private visibility, worker anchors, and database-case ownership. Independent discovery rejects missing, duplicate, stale, or forbidden dependencies. One cohesive owner supplies each authoritative policy; similar syntax alone is not a reason to create a shared abstraction.
+The AI reviewer follows changed code from its callers to the decision owner and its adapters. It evaluates whether existing code or a maintained dependency can meet the requirement more simply. Build and behavioral checks still exercise the production boundaries. [Development And Testing](Development-And-Testing)
