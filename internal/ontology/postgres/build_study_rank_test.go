@@ -154,7 +154,7 @@ func TestOntologyRankFirstVocabulary(t *testing.T) {
 		require.NoError(t, f.store.withScope(context.Background(), f.team, true, func(tx *gorm.DB, fence scope) error {
 			sources, err := organizationSources(tx, fence, []ontology.SourceHandle{source})
 			require.NoError(t, err)
-			unforced, err := f.store.organizationVocabulary(tx, fence, sources, nil)
+			unforced, err := f.store.organizationVocabulary(tx, fence, sources, []string{})
 			require.NoError(t, err)
 			require.Len(t, unforced, ontology.MaxVocabularyCandidates)
 			for i, candidate := range unforced {
