@@ -4,6 +4,8 @@ on:
     branches: [perf/ontology-build-study]
 permissions:
   contents: read
+env:
+  ONTOLOGY_STUDY_VARIANT: vector
 
 jobs:
   accuracy:
@@ -27,7 +29,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 tests/eval/scripts/ontology_build_study.py cohorts base "$ONTOLOGY_STUDY_REPORT_DIR"
-          python3 tests/eval/scripts/ontology_build_study.py cohorts topic "$ONTOLOGY_STUDY_REPORT_DIR"
+          python3 tests/eval/scripts/ontology_build_study.py cohorts "$ONTOLOGY_STUDY_VARIANT" "$ONTOLOGY_STUDY_REPORT_DIR"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -47,11 +49,16 @@ jobs:
     steps: &measure
       - *checkout
       - *go
-      - name: Alternate base and topic-filter builds from one mature PostgreSQL template
+      - name: Alternate base and candidate builds from one mature PostgreSQL template
         env:
           ONTOLOGY_STUDY_REPORT_DIR: ${{ runner.temp }}/ontology-build-study
           ONTOLOGY_STUDY_DATASET: ${{ matrix.dataset }}
-        run: go test -tags=integration,ontology_study -count=1 -timeout=145m -run '^TestMatureOntologyBuildComparison$' -v ./internal/ontology/postgres
+        shell: bash
+        run: |
+          set -euo pipefail
+          export ONTOLOGY_STUDY_VECTOR_SQL="$RUNNER_TEMP/ontology-study-vector.sql"
+          python3 tests/eval/scripts/ontology_build_study.py render-vector "$ONTOLOGY_STUDY_VECTOR_SQL"
+          go test -tags=integration,ontology_study -count=1 -timeout=145m -run '^TestMatureOntologyBuildComparison$' -v ./internal/ontology/postgres
       - uses: actions/upload-artifact@v7
         if: always()
         with:

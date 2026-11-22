@@ -31,14 +31,16 @@ import (
 )
 
 type studyRankQueries struct {
-	calls   atomic.Int64
-	elapsed atomic.Int64
+	calls, elapsed, discoveryElapsed atomic.Int64
+	exampleOnce                      sync.Once
+	exampleSQL                       string
+	exampleArgs                      []any
 }
 
-// Both arms pass through the same GORM callbacks; only the SQL predicate differs.
 func instrumentStudyQuery(t *testing.T, f *ontologyFixture, arm string) *studyRankQueries {
 	t.Helper()
 	q := &studyRankQueries{}
+	vectorPattern := studyVectorPattern()
 	before := func(tx *gorm.DB) {
 		sql := tx.Statement.SQL.String()
 		if !strings.HasPrefix(sql, "WITH ranked AS (") || !strings.Contains(sql, "ts_rank_cd(") {
@@ -54,13 +56,29 @@ func instrumentStudyQuery(t *testing.T, f *ontologyFixture, arm string) *studyRa
 			replacement += " AND revision.kind = 'topic'"
 		}
 		sql = strings.Replace(sql, anchor, replacement, 1)
+		if arm == "vector" {
+			var err error
+			sql, err = studyVectorSQL(sql, vectorPattern)
+			if err != nil {
+				tx.AddError(err)
+				return
+			}
+		}
+		q.exampleOnce.Do(func() {
+			q.exampleSQL = sql
+			q.exampleArgs = append([]any{}, tx.Statement.Vars...)
+		})
 		tx.Statement.SQL.Reset()
 		tx.Statement.SQL.WriteString(sql)
 		tx.Statement.Settings.Store("ontology-study-row-start", time.Now())
 	}
 	after := func(tx *gorm.DB) {
 		if start, ok := tx.Statement.Settings.LoadAndDelete("ontology-study-row-start"); ok {
-			q.elapsed.Add(time.Since(start.(time.Time)).Nanoseconds())
+			ns := time.Since(start.(time.Time)).Nanoseconds()
+			q.elapsed.Add(ns)
+			if discoveryStats(tx.Statement.Context) != nil {
+				q.discoveryElapsed.Add(ns)
+			}
 			q.calls.Add(1)
 		}
 	}
@@ -316,6 +334,7 @@ func studyFinalQuality(t *testing.T, f *ontologyFixture, seed *buildStudySeed) s
 
 func studyFixedProbe(t *testing.T, f *ontologyFixture, seed *buildStudySeed, arm string) string {
 	t.Helper()
+	installStudyVectors(t, f, arm)
 	stats := instrumentStudyQuery(t, f, arm)
 	var inputs []assessment.Request
 	service, calls := organizationFixtureService(t, f, nil, func(request assessment.Request, response *assessment.Response) {
@@ -343,6 +362,8 @@ func studyFixedProbe(t *testing.T, f *ontologyFixture, seed *buildStudySeed, arm
 }
 
 type studyTiming struct {
+	BackfillAndVerificationMS, CorrectionPublicationMS, DiscoveryMS, DiscoveryQueryReturnMS    float64
+	ExampleVocabularyPlan                                                                      studyQueryPlan
 	NewPending, RefreshedPending, DiscoveryRefreshWrites                                       int
 	Arm                                                                                        string
 	Pair                                                                                       int
@@ -380,6 +401,7 @@ func timeStudyArm(t *testing.T, f *ontologyFixture, seed *buildStudySeed, arm st
 	require.Equal(t, seed.startingMarkers, initial)
 	m := studyTiming{Arm: arm, Pair: pair, InitialMarkers: initial, MaximumMarkers: initial, InitialOldestMarkerAgeMS: age, MaxOldestMarkerAgeMS: age}
 	start := time.Now()
+	m.BackfillAndVerificationMS = installStudyVectors(t, f, arm)
 	_, stop := startScheduler(t, service, nil, 1)
 	var unlock sync.Once
 	release := func() { unlock.Do(func() { close(repo.resume) }) }
@@ -391,6 +413,7 @@ func timeStudyArm(t *testing.T, f *ontologyFixture, seed *buildStudySeed, arm st
 	}
 	correctionStart := time.Now()
 	revalidationPublish(t, f, ontology.Change{Record: seed.correctionTopic}, ontology.Change{Record: seed.override})
+	m.CorrectionPublicationMS = float64(time.Since(correctionStart).Microseconds()) / 1000
 	release()
 	var status ontology.MaintenanceStatus
 	for {
@@ -417,6 +440,9 @@ func timeStudyArm(t *testing.T, f *ontologyFixture, seed *buildStudySeed, arm st
 	schedulerAssertDrained(t, f)
 	status, err = f.store.MaintenanceStatus(ctx, time.Now())
 	require.NoError(t, err)
+	if arm == "vector" {
+		verifyStudyVectors(t, f)
+	}
 	m.ElapsedMS = float64(time.Since(start).Microseconds()) / 1000
 	m.Coverage = status.Counts
 	require.True(t, status.Paused && status.DiscoveryComplete && status.CoverageComplete, "status=%+v", status.Counts)
@@ -431,10 +457,13 @@ func timeStudyArm(t *testing.T, f *ontologyFixture, seed *buildStudySeed, arm st
 	require.Positive(t, m.ProviderAttempts)
 	m.QueryCount = stats.calls.Load()
 	m.QueryReturnMS = float64(stats.elapsed.Load()) / 1e6
+	m.DiscoveryQueryReturnMS = float64(stats.discoveryElapsed.Load()) / 1e6
+	m.ExampleVocabularyPlan = explainStudyQuery(t, f, stats)
 	m.UniqueRefreshed = len(repo.refreshed)
 	m.DistinctReceipts = len(repo.receipts)
 	var timings []float64
 	for _, p := range repo.pages {
+		m.DiscoveryMS += p.Milliseconds
 		m.MarkersCompleted += p.Counts.CompletedMarkers
 		m.MarkerMatches += p.Counts.EnumeratedMatches
 		require.Equal(t, p.Counts.Requeues, p.Changes.Enqueued+p.Changes.Requeued+p.Changes.RefreshedPending, "account for each committed native queue refresh")
@@ -460,21 +489,23 @@ func timeStudyArm(t *testing.T, f *ontologyFixture, seed *buildStudySeed, arm st
 
 func TestMatureOntologyBuildComparison(t *testing.T) {
 	shape := studyShape(t)
+	candidate := os.Getenv("ONTOLOGY_STUDY_VARIANT")
+	require.Contains(t, []string{"topic", "vector"}, candidate)
 	seed := buildStudyTemplate(t, shape)
 	cloner := newBuildStudyCloner(t, seed)
 	if !t.Run("queue-transitions", func(t *testing.T) { proveStudyQueueTransitions(t, cloner.clone(t), seed) }) {
 		return
 	}
 	inputHashes := map[string]string{}
-	for _, arm := range []string{"base", "topic"} {
+	for _, arm := range []string{"base", candidate} {
 		if !t.Run("fixed-input-"+arm, func(t *testing.T) { inputHashes[arm] = studyFixedProbe(t, cloner.clone(t), seed, arm) }) {
 			return
 		}
 	}
-	require.Equal(t, inputHashes["base"], inputHashes["topic"], "ordered vocabulary and HTTP model inputs")
+	require.Equal(t, inputHashes["base"], inputHashes[candidate], "ordered vocabulary and HTTP model inputs")
 	var runs []studyTiming
 	for pair := range 4 {
-		arms := []string{"base", "topic"}
+		arms := []string{"base", candidate}
 		if pair%2 != 0 {
 			slices.Reverse(arms)
 		}
@@ -492,12 +523,12 @@ func TestMatureOntologyBuildComparison(t *testing.T) {
 		}
 	}
 	report := struct {
-		Protocol                                     string
+		Protocol, Candidate                          string
 		Shape                                        buildStudyShape
 		SeedSources, BackgroundTopics, ChangeMarkers int
 		FixedInputSHA                                string
 		Runs                                         []studyTiming
-	}{"ontology-build-drain-v1", shape, len(seed.sources), seed.backgroundTopics, seed.startingMarkers, inputHashes["base"], runs}
+	}{"ontology-build-drain-v1", candidate, shape, len(seed.sources), seed.backgroundTopics, seed.startingMarkers, inputHashes["base"], runs}
 	b, err := json.MarshalIndent(report, "", "  ")
 	require.NoError(t, err)
 	dir := os.Getenv("ONTOLOGY_STUDY_REPORT_DIR")
