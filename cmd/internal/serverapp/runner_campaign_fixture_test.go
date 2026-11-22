@@ -54,6 +54,7 @@ type runnerServiceFixture struct {
 	mcp            *httptest.Server
 	control        *httptest.Server
 	maintenance    *organization.MaintenanceService
+	ontology       *ontologypg.Store
 	provider       *runnerRememberAssessor
 	reconciliation searchapp.SearchReconciliationService
 }
@@ -113,7 +114,8 @@ func newRunnerServiceFixture(t *testing.T) *runnerServiceFixture {
 	_, err = maintenance.Command(ctx, domain.OntologyMaintenanceCommand{Action: "pause", OperationKey: uuid.NewString()}, "", "")
 	require.NoError(t, err)
 	recallStore := recallpg.NewStore(app, rls, search, recallpg.LoadRecallEvidenceConflictRecords).
-		WithOntology(func() recallpg.OntologyReader { return ontologyStore.NewRecallReader() })
+		WithOntology(func() recallpg.OntologyReader { return ontologyStore.NewRecallReader() }).
+		WithTopics(ontologyStore.NewTopicReader())
 	reader := recall.NewRecallService(recall.RecallDependencies{Search: recallStore, Provider: embedder, OntologyConfig: configuration})
 	reg, err := registry.BuildActive(registry.Dependencies{RememberBindings: registry.RememberBindings{Service: writer}, RecallBindings: registry.RecallBindings{Service: reader}})
 	require.NoError(t, err)
@@ -136,7 +138,8 @@ func newRunnerServiceFixture(t *testing.T) *runnerServiceFixture {
 	native := &evalharness.Native{DB: pool, Scope: evalharness.Scope{TeamID: teamID.String(), CredentialID: ownerID.String()}, ControlURL: control.URL, ControlToken: "runner-control", Client: client}
 	require.NoError(t, native.ResolveScope(ctx))
 	manifest := evalharness.Manifest{ImportWorkers: 10, Model: "runner-ontology", ContextWindowTokens: 300000, EmbeddingModel: model, EmbeddingDimensions: dimensions}
-	return &runnerServiceFixture{admin: admin, native: native, manifest: manifest, mcp: mcp, control: control, maintenance: maintenance, provider: provider, reconciliation: searchapp.NewSearchReconciliationService(searchapp.SearchReconciliationDependencies{Repository: search, Projection: store, Executor: semanticwrite.NewProviderExecutor(embedder)})}
+	return &runnerServiceFixture{admin: admin, native: native, manifest: manifest, mcp: mcp, control: control, maintenance: maintenance,
+		ontology: ontologyStore, provider: provider, reconciliation: searchapp.NewSearchReconciliationService(searchapp.SearchReconciliationDependencies{Repository: search, Projection: store, Executor: semanticwrite.NewProviderExecutor(embedder)})}
 }
 
 type runnerRememberAssessor struct {

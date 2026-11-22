@@ -52,3 +52,9 @@ elapsed time on 20-source fixtures with 20 and 100 catalog records. Each shape
 uses two warmups and ten measured claims. The fixture verifies that every claim
 selects the same sources and preserves canonical state. SQL counts include the
 lease and claim writes.
+
+The registered server precheck `TestRunnerOntologyPacingUnderForegroundLoad`
+compares consecutive admissions with one batch per tick for three ticks while
+MCP Remember and Recall run against real PostgreSQL. GitHub Actions uses
+one-minute ticks. The accelerated local case checks correctness. Reports include
+foreground p95, correction-to-topic time through Recall, and backlog drain time.

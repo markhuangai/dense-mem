@@ -80,6 +80,13 @@
       "source": "cmd/internal/serverapp/runner_campaign_integration_test.go"
     },
     {
+      "id": "server/TestRunnerOntologyPacingUnderForegroundLoad",
+      "package": "./cmd/internal/serverapp",
+      "run": "^TestRunnerOntologyPacingUnderForegroundLoad$",
+      "phase": "precheck",
+      "source": "cmd/internal/serverapp/runner_ontology_pacing_integration_test.go"
+    },
+    {
       "id": "server/TestMCPToolProgressPostgres",
       "package": "./cmd/internal/serverapp",
       "run": "^TestMCPToolProgressPostgres$",
