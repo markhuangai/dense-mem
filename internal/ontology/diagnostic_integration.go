@@ -10,7 +10,7 @@ import (
 	contract "github.com/markhuangai/dense-mem/internal/ontology/contract"
 )
 
-// AssessDiagnostic uses native construction and validation without deterministic shortcuts or publication, only in integration builds.
+// AssessDiagnostic runs the native assessment path without publishing.
 func (s *Service) AssessDiagnostic(ctx context.Context, sourceContext contract.OrganizationContext) (assessment.Request, assessment.Response, []contract.AssessmentAttempt, error) {
 	receipt := contract.OrganizationReceipt{ID: uuid.NewString()}
 	for _, source := range sourceContext.Sources {

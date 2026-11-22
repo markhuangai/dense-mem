@@ -92,7 +92,7 @@ func organizationExchangeValidation(exchange modelprovider.ProviderExchange) str
 	}
 	response, err := assessment.Decode(responseEnvelope.Choices[0].Message.Content)
 	if err == nil {
-		err = assessment.Validate(request, response)
+		err = assessment.ValidateModelResponse(request, response)
 	}
 	if err != nil {
 		return err.Error()
@@ -132,7 +132,7 @@ func TestOrganizationDiagnosticCaptureUsesRealProviderValidation(t *testing.T) {
 		response := organizationFixtureResponse(request, nil)
 		response.Items[0].Reason = cfg.AIVerifierAPIKey
 		if calls.Add(1) < 3 || exhaust.Load() {
-			response.Equivalence[0].Relation = "equivalent"
+			response.Equivalence = append(response.Equivalence, assessment.Equivalence{Ref: request.Pairs[0].Ref, Relation: "equivalent"})
 		}
 		encoded, err := json.Marshal(response)
 		if err != nil {
@@ -151,8 +151,8 @@ func TestOrganizationDiagnosticCaptureUsesRealProviderValidation(t *testing.T) {
 	recorder := newOrganizationDiagnosticRecorder(t, directory, "manager-separation", cfg)
 	request := assessment.Request{RequestID: "diagnostic-fixture", Definitions: []assessment.Definition{}, Items: []assessment.Item{{Ref: "a", Kind: ontology.EvidenceSource, Text: "Atlas uses PostgreSQL."}, {Ref: "b", Kind: ontology.EvidenceSource, Text: "Atlas uses PostgreSQL."}}, Pairs: []assessment.Pair{{Ref: "pair", LeftRef: "a", RightRef: "b", RequiredRelation: "distinct"}}}
 	expectedValidation := assessor.SemanticValidationError{
-		Field:   "equivalence[0].relation",
-		Message: `pair "pair" contradicts deterministic context or manager rule: must equal required_relation "distinct"; received "equivalent"`,
+		Field:   "equivalence[0].ref",
+		Message: `pair ref "pair" is outside the requested pair allowlist`,
 	}
 	_, attempts, err := provider.Assess(modelprovider.WithExchangeRecorder(context.Background(), recorder), request)
 	require.NoError(t, err)
@@ -169,7 +169,7 @@ func TestOrganizationDiagnosticCaptureUsesRealProviderValidation(t *testing.T) {
 		require.Equal(t, true, entry["diagnostic_only"])
 		require.Equal(t, true, entry["ineligible_for_quality_gate"])
 		if sequence < 3 {
-			require.Equal(t, expectedValidation.Error(), entry["validation_error"])
+			require.Contains(t, entry["validation_error"], expectedValidation.Error())
 		} else {
 			require.Empty(t, entry["validation_error"])
 		}
@@ -183,7 +183,7 @@ func TestOrganizationDiagnosticCaptureUsesRealProviderValidation(t *testing.T) {
 				ValidationErrors []assessor.SemanticValidationError `json:"validation_errors"`
 			}
 			require.NoError(t, json.Unmarshal([]byte(outbound.Messages[len(outbound.Messages)-1].Content), &correction))
-			require.Equal(t, []assessor.SemanticValidationError{expectedValidation}, correction.ValidationErrors)
+			require.Contains(t, correction.ValidationErrors, expectedValidation)
 		}
 		require.Equal(t, fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(entry["request_body"].(string)))), entry["request_sha256"])
 		require.Equal(t, fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(entry["response_body"].(string)))), entry["response_sha256"])
@@ -202,7 +202,7 @@ func TestOrganizationDiagnosticCaptureUsesRealProviderValidation(t *testing.T) {
 	require.NotContains(t, string(body), cfg.AIVerifierAPIKey)
 	var failed map[string]any
 	require.NoError(t, json.Unmarshal(body, &failed))
-	require.Equal(t, expectedValidation.Error(), failed["validation_error"])
+	require.Contains(t, failed["validation_error"], expectedValidation.Error())
 }
 
 func TestOrganizationDiagnosticHashesSurviveAggregateCaptureLimit(t *testing.T) {

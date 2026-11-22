@@ -239,16 +239,18 @@ func TestOrganizationDetailedSharedFeedbackRepairsCompleteResponses(t *testing.T
 			request.Items[0].LockedDefinitionRef = locked.Ref
 			request.Pairs[0].RequiredRelation = "distinct"
 			invalid.Items[1].Reason = strings.Repeat("x", 129)
-			invalidErr := Validate(request, invalid)
+			invalidErr := ValidateModelResponse(request, invalid)
 			var rejected *assessor.SemanticAssessmentResponseValidationError
 			require.ErrorAs(t, invalidErr, &rejected)
-			require.Len(t, rejected.Errors, 3)
-			require.Contains(t, invalidErr.Error(), `items[0].definition_ref: item "a" classification changes deterministic reuse: must equal locked_definition_ref "locked"; received "new-topic"`)
-			require.Contains(t, invalidErr.Error(), `pair "pair" contradicts deterministic context or manager rule: must equal required_relation "distinct"; received "equivalent"`)
+			require.Contains(t, invalidErr.Error(), `item ref "a" is outside the requested item allowlist`)
+			require.Contains(t, invalidErr.Error(), `pair ref "pair" is outside the requested pair allowlist`)
+			require.Contains(t, invalidErr.Error(), "at most 128 bytes")
 			_, valid := assessmentFixture()
 			valid.Items[0].DefinitionRef = locked.Ref
 			valid.Equivalence[0].Relation = "distinct"
 			require.NoError(t, Validate(request, valid))
+			complete := valid
+			valid.Items, valid.Equivalence = valid.Items[1:], []Equivalence{}
 			original, err := json.Marshal(request)
 			require.NoError(t, err)
 			calls := 0
@@ -281,7 +283,7 @@ func TestOrganizationDetailedSharedFeedbackRepairsCompleteResponses(t *testing.T
 			require.Len(t, attempts, 3)
 			if repair {
 				require.NoError(t, err)
-				require.Equal(t, valid, result)
+				require.Equal(t, complete, result)
 			} else {
 				require.ErrorIs(t, err, modelprovider.ErrVerifierMalformedResponse)
 				require.Empty(t, result)

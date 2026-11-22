@@ -182,11 +182,11 @@ func runnerOrganizationResponse(request assessment.Request) assessment.Response 
 	response := assessment.Response{RequestID: request.RequestID, Definitions: []assessment.Definition{}, Items: []assessment.Decision{}, Equivalence: []assessment.Equivalence{}}
 	created := map[string]string{}
 	for _, item := range request.Items {
-		kind, key := ontology.Topic, "runner-storage"
-		ref := item.LockedDefinitionRef
-		if ref == "" {
-			ref = item.PreferredDefinitionRef
+		if item.LockedDefinitionRef != "" {
+			continue
 		}
+		kind, key := ontology.Topic, "runner-storage"
+		ref := item.PreferredDefinitionRef
 		if ref == "" {
 			for _, definition := range request.Definitions {
 				if definition.Kind == kind {
@@ -206,11 +206,9 @@ func runnerOrganizationResponse(request assessment.Request) assessment.Response 
 		response.Items = append(response.Items, assessment.Decision{Ref: item.Ref, Status: "classified", DefinitionRef: ref})
 	}
 	for _, pair := range request.Pairs {
-		relation := pair.RequiredRelation
-		if relation == "" {
-			relation = "distinct"
+		if pair.RequiredRelation == "" {
+			response.Equivalence = append(response.Equivalence, assessment.Equivalence{Ref: pair.Ref, Relation: "distinct"})
 		}
-		response.Equivalence = append(response.Equivalence, assessment.Equivalence{Ref: pair.Ref, Relation: relation})
 	}
 	return response
 }

@@ -219,6 +219,11 @@ func TestOrganizationEquivalenceRejectsInconsistentChains(t *testing.T) {
 	err := Validate(request, response)
 	require.ErrorContains(t, err, "not transitive")
 	requireValidation(t, err, "validate", "equivalence_transitivity", "equivalence")
+
+	request.Pairs[0].RequiredRelation = "equivalent"
+	response.Equivalence = response.Equivalence[1:]
+	err = ValidateModelResponse(request, response)
+	requireValidation(t, err, "validate", "equivalence_transitivity", "equivalence")
 }
 
 func TestOrganizationSuppliedDefinitionsAreReusedWithoutEchoes(t *testing.T) {
@@ -252,9 +257,11 @@ func TestOrganizationEchoCorrectionRegeneratesCompleteResponses(t *testing.T) {
 	response.Definitions[0].Label = "PostgreSQL"
 	response.Items[0].DefinitionRef = "d0"
 	response.Items[1].DefinitionRef = "d1"
+	complete := response
+	response.Equivalence = []Equivalence{}
 	echoed := response
 	echoed.Definitions = append([]Definition{response.Definitions[0]}, supplied)
-	echoError := Validate(request, echoed)
+	echoError := ValidateModelResponse(request, echoed)
 	require.Error(t, echoError)
 	incomplete := response
 	incomplete.Items = incomplete.Items[:1]
@@ -276,7 +283,7 @@ func TestOrganizationEchoCorrectionRegeneratesCompleteResponses(t *testing.T) {
 	}), "model", assessor.DefaultSemanticAssessmentLimits(), 300000)
 	result, attempts, err := provider.Assess(context.Background(), request)
 	require.NoError(t, err)
-	require.Equal(t, response, result)
+	require.Equal(t, complete, result)
 	require.Len(t, attempts, 3)
 	require.Equal(t, 3, calls)
 	require.Equal(t, "response_invalid", attempts[0].FailureCode)
@@ -584,7 +591,7 @@ func TestOrganizationPairCoverageIncludesNegativeAndLockedDecisions(t *testing.T
 	request, response := assessmentFixture()
 	for _, decisions := range [][]Equivalence{{}, {{Ref: "pair", Relation: "distinct"}, {Ref: "pair", Relation: "distinct"}}} {
 		response.Equivalence = decisions
-		require.ErrorContains(t, Validate(request, response), "exactly one decision per supplied pair ref")
+		require.ErrorContains(t, Validate(request, response), "exactly one decision per requested pair ref")
 	}
 	for _, relation := range []string{"distinct", "ambiguous", "equivalent"} {
 		response.Equivalence = []Equivalence{{Ref: "pair", Relation: relation}}
@@ -601,7 +608,7 @@ func TestOrganizationPairCoverageIncludesNegativeAndLockedDecisions(t *testing.T
 	response.Equivalence = []Equivalence{}
 	require.NoError(t, Validate(request, response))
 	response.Equivalence = []Equivalence{{Ref: "pair", Relation: "distinct"}}
-	require.ErrorContains(t, Validate(request, response), "outside allowlist")
+	require.ErrorContains(t, Validate(request, response), "outside the requested pair allowlist")
 }
 
 func TestOrganizationPairCoverageRegenerationAcceptsCompleteNegativeResults(t *testing.T) {
@@ -754,13 +761,14 @@ func TestOrganizationMissingDefinitionCorrectionPreservesLockedReuse(t *testing.
 	valid.Definitions[0].Label = "PostgreSQL"
 	valid.Items[0].DefinitionRef = supplied.Ref
 	valid.Items[1].DefinitionRef = "d1"
+	complete := valid
+	valid.Items = valid.Items[1:]
 	missing := valid
 	missing.Definitions = []Definition{}
-	require.ErrorContains(t, Validate(request, missing), `items[1].definition_ref: item "b" definition_ref "d1" is outside allowlist`)
+	require.ErrorContains(t, ValidateModelResponse(request, missing), `items[0].definition_ref: item "b" definition_ref "d1" is outside allowlist`)
 	unlocked := valid
-	unlocked.Items = append([]Decision{}, valid.Items...)
-	unlocked.Items[0].DefinitionRef = "d1"
-	require.ErrorContains(t, Validate(request, unlocked), `item "a" classification changes deterministic reuse: must equal locked_definition_ref "d0"; received "d1"`)
+	unlocked.Items = []Decision{{Ref: "a", Status: "classified", DefinitionRef: "d1"}}
+	require.ErrorContains(t, ValidateModelResponse(request, unlocked), `item ref "a" is outside the requested item allowlist`)
 	responses := []Response{missing, unlocked, valid}
 	calls := 0
 	provider := NewProvider(fixtureTransport(func(_ context.Context, req modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
@@ -768,7 +776,7 @@ func TestOrganizationMissingDefinitionCorrectionPreservesLockedReuse(t *testing.
 		if calls > 0 {
 			var correction correctionFeedback
 			require.NoError(t, json.Unmarshal([]byte(req.Messages[len(req.Messages)-1].Content), &correction))
-			requireCorrectionErrors(t, Validate(request, responses[calls-1]), correction.ValidationErrors)
+			requireCorrectionErrors(t, ValidateModelResponse(request, responses[calls-1]), correction.ValidationErrors)
 		}
 		encoded, err := json.Marshal(responses[calls])
 		require.NoError(t, err)
@@ -777,7 +785,7 @@ func TestOrganizationMissingDefinitionCorrectionPreservesLockedReuse(t *testing.
 	}), "model", assessor.DefaultSemanticAssessmentLimits(), 300000)
 	result, attempts, err := provider.Assess(context.Background(), request)
 	require.NoError(t, err)
-	require.Equal(t, valid, result)
+	require.Equal(t, complete, result)
 	require.Len(t, attempts, 3)
 	require.Equal(t, 3, calls)
 }

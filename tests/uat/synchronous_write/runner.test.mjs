@@ -107,8 +107,8 @@ test("an interrupted nested fault identifies its active step before completion",
   }
 });
 
-test("provider fixture routes topic organization with locked classifications and pair constraints", () => {
-  const request = structuredRequest("ontology_evidence_organization_v3", {
+test("provider fixture answers unresolved topic and equivalence questions", () => {
+  const request = structuredRequest("ontology_evidence_organization_v4", {
     request_id: "organization-fixture", definitions: [{ ref: "locked-topic", kind: "topic" }],
     items: [{ ref: "evidence-a", kind: "evidence", locked_definition_ref: "locked-topic" }, { ref: "evidence-b", kind: "evidence", text: "Atlas uses Redis." }],
     pairs: [{ ref: "separated", required_relation: "distinct" }, { ref: "joined", required_relation: "equivalent" }, { ref: "unconstrained", required_relation: "" }],
@@ -116,9 +116,9 @@ test("provider fixture routes topic organization with locked classifications and
   const response = fixtureChatResponse(request);
   assert.equal(response.request_id, "organization-fixture");
   assert.deepEqual(Object.keys(response).sort(), ["definitions", "equivalence", "items", "request_id"]);
-  assert.equal(response.items[0].definition_ref, "locked-topic");
+  assert.deepEqual(response.items.map((item) => item.ref), ["evidence-b"]);
   assert.equal(response.definitions[0].kind, "topic");
-  assert.deepEqual(response.equivalence.map((pair) => pair.relation), ["distinct", "equivalent", "distinct"]);
+  assert.deepEqual(response.equivalence, [{ ref: "unconstrained", relation: "distinct" }]);
 });
 
 test("synchronous-write cases are sorted and filterable", async () => {
@@ -193,7 +193,7 @@ test("provider fixture scopes faults to the active Evidence, topic or session in
   assert.equal(fixtureFault(staleContext, "assessment"), "");
   for (const [schema, input] of [
     ["dense_mem_evidence_assessment_response", { evidence: [{ content: "Current [fixture-fault:timeout]." }] }],
-    ["ontology_evidence_organization_v3", { items: [{ text: "Current [fixture-fault:timeout]." }] }],
+    ["ontology_evidence_organization_v4", { items: [{ text: "Current [fixture-fault:timeout]." }] }],
     ["session_evidence_excerpts_v2", { window: { core: [{ text: "Current [fixture-fault:timeout]." }] } }],
   ]) assert.equal(fixtureFault(structuredRequest(schema, input), "assessment"), "timeout");
   assert.equal(fixtureFault({ input: ["Current embedding input [fixture-fault:embedding-count]."] }, "embedding"), "embedding-count");
