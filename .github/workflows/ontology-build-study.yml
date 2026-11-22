@@ -5,7 +5,7 @@ on:
 permissions:
   contents: read
 env:
-  ONTOLOGY_STUDY_VARIANT: pages
+  ONTOLOGY_STUDY_VARIANT: rank-first
 
 jobs:
   accuracy:
@@ -28,8 +28,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 tests/eval/scripts/ontology_build_study.py cohorts base "$ONTOLOGY_STUDY_REPORT_DIR"
-          python3 tests/eval/scripts/ontology_build_study.py cohorts "$ONTOLOGY_STUDY_VARIANT" "$ONTOLOGY_STUDY_REPORT_DIR"
+          for arm in base vector rank-first; do
+            python3 tests/eval/scripts/ontology_build_study.py cohorts "$arm" "$ONTOLOGY_STUDY_REPORT_DIR"
+          done
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -38,9 +39,9 @@ jobs:
           if-no-files-found: error
 
   primary:
-    name: Paired drain / ${{ matrix.dataset }}
+    name: Matched drains / ${{ matrix.dataset }}
     runs-on: ubuntu-latest
-    timeout-minutes: 165
+    timeout-minutes: 215
     strategy:
       fail-fast: false
       matrix:
@@ -49,22 +50,17 @@ jobs:
     steps: &measure
       - *checkout
       - *go
-      - name: Alternate base and candidate builds from one mature PostgreSQL template
+      - name: Compare three lookups from one frozen PostgreSQL template
         env:
           ONTOLOGY_STUDY_REPORT_DIR: ${{ runner.temp }}/ontology-build-study
           ONTOLOGY_STUDY_DATASET: ${{ matrix.dataset }}
         shell: bash
         run: |
           set -euo pipefail
-          options=()
-          if [[ "$ONTOLOGY_STUDY_VARIANT" == pages ]]; then
-            python3 tests/eval/scripts/ontology_build_study.py render-pages "$RUNNER_TEMP/ontology-pages"
-            options+=("-overlay=$RUNNER_TEMP/ontology-pages/overlay.json")
-          elif [[ "$ONTOLOGY_STUDY_VARIANT" == vector ]]; then
-            export ONTOLOGY_STUDY_VECTOR_SQL="$RUNNER_TEMP/ontology-study-vector.sql"
-            python3 tests/eval/scripts/ontology_build_study.py render-vector "$ONTOLOGY_STUDY_VECTOR_SQL"
-          fi
-          go test "${options[@]}" -tags=integration,ontology_study -count=1 -timeout=145m -run '^TestMatureOntologyBuildComparison$' -v ./internal/ontology/postgres
+          export ONTOLOGY_STUDY_VECTOR_SQL="$RUNNER_TEMP/ontology-study-vector.sql"
+          python3 tests/eval/scripts/ontology_build_study.py render-vector "$ONTOLOGY_STUDY_VECTOR_SQL"
+          python3 tests/eval/scripts/ontology_build_study.py render-lookup "$RUNNER_TEMP/ontology-lookups"
+          go test -overlay="$RUNNER_TEMP/ontology-lookups/overlay.json" -tags=integration,ontology_study -count=1 -timeout=200m -run '^TestMatureOntologyBuildComparison$' -v ./internal/ontology/postgres
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -73,8 +69,9 @@ jobs:
           if-no-files-found: error
 
   decision:
-    name: Compare complete primary pairs
+    name: Compare matched primary drains
     needs: [primary, accuracy]
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     outputs:
       advance: ${{ steps.compare.outputs.advance }}
@@ -86,18 +83,21 @@ jobs:
           path: measurements
           merge-multiple: true
       - id: compare
-        run: python3 tests/eval/scripts/ontology_build_study.py compare measurements hotpotqa musique
+        env:
+          ONTOLOGY_STUDY_PREREQUISITES: ${{ (needs.primary.result == 'success' && needs.accuracy.result == 'success') && 'success' || 'failure' }}
+        run: python3 tests/eval/scripts/ontology_build_study.py compare-lookups measurements hotpotqa musique
       - uses: actions/upload-artifact@v7
+        if: always()
         with:
           name: primary-comparison
           path: measurements/comparison.json
 
   remaining:
-    name: Confirm paired drain / ${{ matrix.dataset }}
+    name: Confirm matched drains / ${{ matrix.dataset }}
     needs: decision
     if: needs.decision.outputs.advance == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 165
+    timeout-minutes: 215
     env: *postgres
     strategy:
       fail-fast: false
@@ -107,6 +107,7 @@ jobs:
 
   result:
     needs: [decision, remaining]
+    if: ${{ !cancelled() && needs.decision.outputs.advance == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - *checkout
@@ -115,8 +116,11 @@ jobs:
           pattern: study-*
           path: measurements
           merge-multiple: true
-      - run: python3 tests/eval/scripts/ontology_build_study.py compare measurements hotpotqa musique 2wikimultihopqa nq_rear popqa
+      - env:
+          ONTOLOGY_STUDY_PREREQUISITES: ${{ needs.remaining.result }}
+        run: python3 tests/eval/scripts/ontology_build_study.py compare-lookups measurements hotpotqa musique 2wikimultihopqa nq_rear popqa
       - uses: actions/upload-artifact@v7
+        if: always()
         with:
           name: five-shape-comparison
           path: measurements/comparison.json

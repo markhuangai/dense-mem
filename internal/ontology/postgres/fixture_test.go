@@ -46,6 +46,8 @@ type ontologyFixture struct {
 	space       string
 	generation  int64
 	schema      map[string]string
+	container   *postgrescontainer.PostgresContainer
+	requestBody func(requestID string, body []byte)
 }
 
 func newOntologyFixture(t *testing.T) *ontologyFixture {
@@ -134,7 +136,7 @@ func newOntologyFixtureWithMode(t *testing.T, historical, maintenance bool) *ont
 		require.NoError(t, db.Close())
 	})
 	rls := storage.NewRLS()
-	fixture := &ontologyFixture{admin: admin, app: app, rls: rls, store: NewStore(app, rls), knowledge: knowledge.NewStore(app, rls), schema: schema}
+	fixture := &ontologyFixture{admin: admin, app: app, rls: rls, store: NewStore(app, rls), knowledge: knowledge.NewStore(app, rls), schema: schema, container: container}
 	team := &domain.Team{Name: "ontology-" + uuid.NewString()}
 	require.NoError(t, access.NewTeamRepository(admin, rls).Create(context.Background(), team))
 	fixture.team = team.ID.String()

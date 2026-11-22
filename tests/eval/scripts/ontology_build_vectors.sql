@@ -52,6 +52,7 @@ $publication$;
 CREATE TRIGGER ontology_study_publish_vector AFTER INSERT OR UPDATE OF version ON ontology_record_heads
 FOR EACH ROW WHEN (NEW.kind='topic' AND NOT NEW.retired) EXECUTE FUNCTION ontology_study_publish_vector();
 
+-- study phase: backfill
 INSERT INTO ontology_study_topic_vectors(team_id,shared_space_id,space_generation,record_id,version,document)
     SELECT head.team_id,head.shared_space_id,head.space_generation,head.record_id,head.version,
            ontology_study_make_vector(head.names,COALESCE(payload.body->'definition'->>'description',''))
@@ -59,5 +60,6 @@ INSERT INTO ontology_study_topic_vectors(team_id,shared_space_id,space_generatio
         USING(team_id,shared_space_id,space_generation,record_id,version)
     WHERE head.kind='topic' AND NOT head.retired;
 
+-- study phase: index
 CREATE INDEX ontology_study_topic_vectors_gin ON ontology_study_topic_vectors USING gin(document);
 ANALYZE ontology_study_topic_vectors;

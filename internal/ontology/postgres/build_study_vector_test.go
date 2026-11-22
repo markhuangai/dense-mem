@@ -4,6 +4,7 @@ package postgres
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -21,6 +22,12 @@ import (
 
 const studyRevisionJoin = "JOIN ontology_revision_records AS revision USING(team_id,shared_space_id,space_generation,record_id,version)"
 
+var studyBindPattern = regexp.MustCompile(`\$[0-9]+`)
+
+func studyBoundLookupSHA(sql string) string {
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(studyBindPattern.ReplaceAllString(sql, "?"))))
+}
+
 func studyVectorPattern() *regexp.Regexp {
 	before, after, _ := strings.Cut(vocabularyVectorSQL, "?")
 	return regexp.MustCompile(regexp.QuoteMeta(before) + `(\$[0-9]+)` + regexp.QuoteMeta(after))
@@ -35,21 +42,50 @@ func studyVectorSQL(query string, pattern *regexp.Regexp) (string, error) {
 	return pattern.ReplaceAllString(query, `ontology_study_cached(studyvec.document,$1::text[])`), nil
 }
 
-func installStudyVectors(t *testing.T, f *ontologyFixture, arm string) float64 {
+type studyVectorInstall struct {
+	Rows                                         int
+	SetupMS, BackfillMS, IndexMS, VerificationMS float64
+	TotalMS                                      float64
+}
+
+func hasStudyVectors(arm string) bool {
+	return arm == "vector" || arm == "rank-first"
+}
+
+func installStudyVectors(t *testing.T, f *ontologyFixture, arm string) studyVectorInstall {
 	t.Helper()
-	if arm != "vector" {
-		return 0
+	var result studyVectorInstall
+	if !hasStudyVectors(arm) {
+		return result
 	}
+	start := time.Now()
 	script, err := os.ReadFile(os.Getenv("ONTOLOGY_STUDY_VECTOR_SQL"))
 	require.NoError(t, err)
-	start := time.Now()
+	parts := regexp.MustCompile(`(?m)^-- study phase: (?:backfill|index)$`).Split(string(script), -1)
+	require.Len(t, parts, 3)
 	require.NoError(t, f.admin.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Exec("SET LOCAL app.tx_mode='migration'").Error; err != nil {
 			return err
 		}
-		return tx.Exec(string(script)).Error
+		stage := time.Now()
+		if err := tx.Exec(parts[0]).Error; err != nil {
+			return err
+		}
+		result.SetupMS = studyMS(time.Since(stage))
+		stage = time.Now()
+		backfill := tx.Exec(parts[1])
+		if backfill.Error != nil {
+			return backfill.Error
+		}
+		result.Rows = int(backfill.RowsAffected)
+		result.BackfillMS = studyMS(time.Since(stage))
+		stage = time.Now()
+		err := tx.Exec(parts[2]).Error
+		result.IndexMS = studyMS(time.Since(stage))
+		return err
 	}))
-	verifyStudyVectors(t, f)
+	verifyStart := time.Now()
+	require.Equal(t, result.Rows, verifyStudyVectors(t, f))
 	var visible int
 	require.NoError(t, f.app.Raw("SELECT count(*) FROM ontology_study_topic_vectors").Row().Scan(&visible))
 	require.Zero(t, visible, "non-bypass connection outside any team scope")
@@ -59,13 +95,16 @@ func installStudyVectors(t *testing.T, f *ontologyFixture, arm string) float64 {
 		WHERE pg_class.oid='ontology_study_topic_vectors'::regclass
 		AND indexrelid='ontology_study_topic_vectors_gin'::regclass`).Row().Scan(&forced, &valid, &bypass))
 	require.True(t, forced && valid && !bypass)
-	return float64(time.Since(start).Microseconds()) / 1000
+	result.VerificationMS = studyMS(time.Since(verifyStart))
+	result.TotalMS = studyMS(time.Since(start))
+	return result
 }
 
-func verifyStudyVectors(t *testing.T, f *ontologyFixture) {
+func verifyStudyVectors(t *testing.T, f *ontologyFixture) int {
 	t.Helper()
+	var total int
 	require.NoError(t, f.store.withScope(context.Background(), f.team, true, func(tx *gorm.DB, fence scope) error {
-		var total, mismatches int
+		var mismatches int
 		err := tx.Raw(`SELECT count(*),count(*) FILTER (WHERE studyvec.document IS DISTINCT FROM `+vocabularyVectorSQL+`)
 			FROM ontology_record_heads AS head JOIN ontology_revision_records AS revision
 			USING(team_id,shared_space_id,space_generation,record_id,version)
@@ -81,19 +120,27 @@ func verifyStudyVectors(t *testing.T, f *ontologyFixture) {
 		}
 		return nil
 	}))
+	return total
 }
 
 type studyPlanNode struct {
-	Relation string          `json:"Relation Name"`
-	Index    string          `json:"Index Name"`
-	Loops    int             `json:"Actual Loops"`
-	Plans    []studyPlanNode `json:"Plans"`
+	Type          string          `json:"Node Type"`
+	Subplan       string          `json:"Subplan Name"`
+	Relation      string          `json:"Relation Name"`
+	Index         string          `json:"Index Name"`
+	Rows          float64         `json:"Actual Rows"`
+	Filtered      float64         `json:"Rows Removed by Filter"`
+	IndexFiltered float64         `json:"Rows Removed by Index Recheck"`
+	Loops         int             `json:"Actual Loops"`
+	Plans         []studyPlanNode `json:"Plans"`
 }
 
 type studyQueryPlan struct {
-	Indexes                 []string
-	Relations               []string
-	PlanningMS, ExecutionMS float64
+	Indexes, Relations                        []string
+	PlanningMS, ExecutionMS                   float64
+	Raw                                       json.RawMessage
+	RankedPageRows, PayloadRowsVisited        float64
+	PageBeforePayload, PayloadKeyedWithinPage bool
 }
 
 func explainStudyQuery(t *testing.T, f *ontologyFixture, stats *studyRankQueries) studyQueryPlan {
@@ -103,19 +150,20 @@ func explainStudyQuery(t *testing.T, f *ontologyFixture, stats *studyRankQueries
 		Planning  float64       `json:"Planning Time"`
 		Execution float64       `json:"Execution Time"`
 	}
+	var body []byte
 	require.NotEmpty(t, stats.exampleSQL)
 	require.NoError(t, f.store.withScope(context.Background(), f.team, true, func(tx *gorm.DB, _ scope) error {
-		var b []byte
-		err := tx.Statement.ConnPool.QueryRowContext(tx.Statement.Context, "EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) "+stats.exampleSQL, stats.exampleArgs...).Scan(&b)
+		err := tx.Statement.ConnPool.QueryRowContext(tx.Statement.Context, "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) "+stats.exampleSQL, stats.exampleArgs...).Scan(&body)
 		if err != nil {
 			return err
 		}
-		return json.Unmarshal(b, &sample)
+		return json.Unmarshal(body, &sample)
 	}))
 	require.Len(t, sample, 1)
-	plan := studyQueryPlan{PlanningMS: sample[0].Planning, ExecutionMS: sample[0].Execution}
-	var visit func(studyPlanNode)
-	visit = func(node studyPlanNode) {
+	plan := studyQueryPlan{PlanningMS: sample[0].Planning, ExecutionMS: sample[0].Execution, Raw: body}
+	var pageFound, rankedPayload, unkeyedPayload bool
+	var visit func(studyPlanNode, bool)
+	visit = func(node studyPlanNode, insidePage bool) {
 		if node.Loops == 0 {
 			return
 		}
@@ -125,11 +173,23 @@ func explainStudyQuery(t *testing.T, f *ontologyFixture, stats *studyRankQueries
 		if node.Index != "" {
 			plan.Indexes = append(plan.Indexes, node.Index)
 		}
+		if node.Subplan == "CTE page" {
+			insidePage = true
+			pageFound = node.Type == "Limit"
+			plan.RankedPageRows = node.Rows
+		}
+		if strings.HasSuffix(node.Relation, "_revision_payloads") {
+			plan.PayloadRowsVisited += (node.Rows + node.Filtered + node.IndexFiltered) * float64(node.Loops)
+			rankedPayload = rankedPayload || insidePage
+			unkeyedPayload = unkeyedPayload || node.Index == ""
+		}
 		for _, child := range node.Plans {
-			visit(child)
+			visit(child, insidePage)
 		}
 	}
-	visit(sample[0].Root)
+	visit(sample[0].Root, false)
+	plan.PageBeforePayload = pageFound && !rankedPayload
+	plan.PayloadKeyedWithinPage = plan.PageBeforePayload && !unkeyedPayload && plan.RankedPageRows >= plan.PayloadRowsVisited
 	slices.Sort(plan.Relations)
 	plan.Relations = slices.Compact(plan.Relations)
 	slices.Sort(plan.Indexes)

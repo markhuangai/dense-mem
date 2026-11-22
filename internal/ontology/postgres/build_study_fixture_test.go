@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"slices"
@@ -21,6 +22,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/settings"
 	settingsdb "github.com/markhuangai/dense-mem/internal/settings/postgres"
 	"github.com/stretchr/testify/require"
+	tcexec "github.com/testcontainers/testcontainers-go/exec"
 	gormpg "gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -220,6 +222,22 @@ func newBuildStudyCloner(t *testing.T, seed *buildStudySeed) *buildStudyCloner {
 	c.controller = db
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	return c
+}
+
+func studyTemplateSHA(t *testing.T, seed *buildStudySeed) string {
+	t.Helper()
+	code, output, err := seed.fixture.container.Exec(t.Context(), []string{
+		"bash", "-o", "pipefail", "-c",
+		"pg_dump --no-password --format=custom --username=testuser --dbname=ontology_test | sha256sum",
+	}, tcexec.Multiplexed())
+	require.NoError(t, err)
+	body, err := io.ReadAll(output)
+	require.NoError(t, err)
+	require.Zero(t, code, "%s", body)
+	digest, _, found := strings.Cut(string(body), " ")
+	require.True(t, found)
+	require.Regexp(t, "^[a-f0-9]{64}$", digest)
+	return digest
 }
 
 func (c *buildStudyCloner) clone(t *testing.T) *ontologyFixture {

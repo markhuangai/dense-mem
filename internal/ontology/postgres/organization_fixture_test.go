@@ -1,8 +1,10 @@
 package postgres
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -96,6 +98,7 @@ func organizationFixtureServiceWithIdentity(t *testing.T, f *ontologyFixture, eq
 func organizationFixtureServiceWithAccounting(t *testing.T, f *ontologyFixture, equivalent func(assessment.Item, assessment.Item) bool, edit func(assessment.Request, *assessment.Response), model string, limits assessor.SemanticAssessmentLimits, accounting assessment.AttemptAccounting, contextWindowTokens int, usage ...map[string]int) (*organization.Service, *atomic.Int32) {
 	t.Helper()
 	calls := &atomic.Int32{}
+	requestBody := f.requestBody
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		var envelope struct {
@@ -106,7 +109,19 @@ func organizationFixtureServiceWithAccounting(t *testing.T, f *ontologyFixture, 
 				} `json:"json_schema"`
 			} `json:"response_format"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&envelope); err != nil {
+		var reader io.Reader = r.Body
+		var body []byte
+		if requestBody != nil {
+			var err error
+			body, err = io.ReadAll(r.Body)
+			if err != nil {
+				t.Error(err)
+				w.WriteHeader(400)
+				return
+			}
+			reader = bytes.NewReader(body)
+		}
+		if err := json.NewDecoder(reader).Decode(&envelope); err != nil {
 			t.Error(err)
 			w.WriteHeader(400)
 			return
@@ -125,6 +140,9 @@ func organizationFixtureServiceWithAccounting(t *testing.T, f *ontologyFixture, 
 		if envelope.ResponseFormat.JSONSchema.Name != assessment.SchemaName {
 			t.Error("wrong response schema")
 		}
+		if requestBody != nil {
+			requestBody(request.RequestID, body)
+		}
 		response := organizationFixtureResponse(request, equivalent)
 		if edit != nil {
 			edit(request, &response)
@@ -136,11 +154,11 @@ func organizationFixtureServiceWithAccounting(t *testing.T, f *ontologyFixture, 
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		body := map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": string(encoded)}}}}
+		result := map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": string(encoded)}}}}
 		if len(usage) > 0 {
-			body["usage"] = usage[0]
+			result["usage"] = usage[0]
 		}
-		if err := json.NewEncoder(w).Encode(body); err != nil && r.Context().Err() == nil {
+		if err := json.NewEncoder(w).Encode(result); err != nil && r.Context().Err() == nil {
 			t.Error(err)
 		}
 	}))

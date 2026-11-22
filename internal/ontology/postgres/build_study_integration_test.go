@@ -37,6 +37,10 @@ type studyRankQueries struct {
 	exampleArgs                      []any
 }
 
+func studyMS(elapsed time.Duration) float64 {
+	return float64(elapsed.Microseconds()) / 1000
+}
+
 func instrumentStudyQuery(t *testing.T, f *ontologyFixture, arm string) *studyRankQueries {
 	t.Helper()
 	q := &studyRankQueries{}
@@ -56,7 +60,14 @@ func instrumentStudyQuery(t *testing.T, f *ontologyFixture, arm string) *studyRa
 			replacement += " AND revision.kind = 'topic'"
 		}
 		sql = strings.Replace(sql, anchor, replacement, 1)
-		if arm == "vector" {
+		if os.Getenv("ONTOLOGY_STUDY_VARIANT") == "rank-first" {
+			hasVector := strings.Contains(sql, "JOIN ontology_study_topic_vectors")
+			ranksFirst := strings.Contains(sql, "page AS MATERIALIZED")
+			if hasVector != hasStudyVectors(arm) || ranksFirst != (arm == "rank-first") {
+				tx.AddError(fmt.Errorf("selected lookup %s differs from executed SQL", arm))
+				return
+			}
+		} else if arm == "vector" {
 			var err error
 			sql, err = studyVectorSQL(sql, vectorPattern)
 			if err != nil {
@@ -218,7 +229,7 @@ type studyRepository struct {
 
 func (r *studyRepository) DiscoverMaintenance(ctx context.Context, turn ontology.MaintenanceTurn, limit int) (ontology.MaintenanceDiscoveryResult, error) {
 	var elapsed time.Duration
-	var observedLimit int
+	observedLimit := limit
 	selected := make(map[ontology.SourceHandle]bool)
 	receipts := make(map[string]bool)
 	observe := func(e maintenanceDiscoveryEvent) {
@@ -436,6 +447,12 @@ type studyTiming struct {
 	Requeues, FreshnessChecks, MarkerMatches, MarkersCompleted                                 int
 	QueryCount, ReportedInput, ReportedOutput, UnknownUsage, ProviderAttempts                  int64
 	Quality                                                                                    studyQuality
+	VectorInstall                                                                              studyVectorInstall
+	LookupSHA                                                                                  string
+	DiscoveryComplete, CoverageComplete, Paused                                                bool
+	LiveLeases, RunningBatches                                                                 int
+	ActiveWork, UnreconciledAttempts                                                           int64
+	CorrectionAfterCommitMS, FinalVectorVerificationMS                                         float64
 }
 
 type studyScheduledInput struct {
@@ -443,11 +460,18 @@ type studyScheduledInput struct {
 	Sources    []ontology.SourceHandle
 	Candidates []ontology.RecordView
 	Requests   []assessment.Request
+	HTTPBodies []string
 }
 
 func studyScheduledInputs(t *testing.T, f *ontologyFixture, seed *buildStudySeed, arm string) []studyScheduledInput {
 	t.Helper()
 	t.Setenv("ONTOLOGY_STUDY_ACTIVE_ARM", arm)
+	rankStudy := os.Getenv("ONTOLOGY_STUDY_VARIANT") == "rank-first"
+	var stats *studyRankQueries
+	if rankStudy {
+		installStudyVectors(t, f, arm)
+		stats = instrumentStudyQuery(t, f, arm)
+	}
 	repo := newStudyRepository(f)
 	close(repo.resume)
 	var turns []studyScheduledInput
@@ -458,6 +482,17 @@ func studyScheduledInputs(t *testing.T, f *ontologyFixture, seed *buildStudySeed
 		}
 		input := studyScheduledInput{Requests: []assessment.Request{}}
 		var mu sync.Mutex
+		if rankStudy {
+			f.requestBody = func(requestID string, body []byte) {
+				if uuid.Validate(requestID) != nil || !strings.Contains(string(body), requestID) {
+					t.Error("missing generated request ID in fixture HTTP body")
+					return
+				}
+				mu.Lock()
+				input.HTTPBodies = append(input.HTTPBodies, strings.ReplaceAll(string(body), requestID, "<study-request-id>"))
+				mu.Unlock()
+			}
+		}
 		classify := func(request assessment.Request, response *assessment.Response) {
 			mu.Lock()
 			input.Requests = append(input.Requests, request)
@@ -466,8 +501,10 @@ func studyScheduledInputs(t *testing.T, f *ontologyFixture, seed *buildStudySeed
 		}
 		observe := func(_ context.Context, d assessment.Diagnostic) {
 			if d.Stage == "completed" && d.SourceContext != nil && d.Input != nil {
+				mu.Lock()
 				input.Sources = d.Input.Sources
 				input.Candidates = d.SourceContext.Candidates
+				mu.Unlock()
 			}
 		}
 		service := studyService(t, f, repo, classify, observe)
@@ -480,9 +517,19 @@ func studyScheduledInputs(t *testing.T, f *ontologyFixture, seed *buildStudySeed
 		require.NotEmpty(t, input.Sources)
 		require.NotEmpty(t, input.Candidates)
 		mu.Lock()
-		totalRequests += len(input.Requests)
+		if rankStudy {
+			require.Len(t, input.HTTPBodies, len(input.Requests), "capture each emitted HTTP request")
+			input.Requests = nil
+			require.Equal(t, ontology.MaintenancePageSize, input.PageLimit)
+			totalRequests += len(input.HTTPBodies)
+		} else {
+			totalRequests += len(input.Requests)
+		}
 		turns = append(turns, input)
 		mu.Unlock()
+	}
+	if rankStudy {
+		require.Positive(t, stats.calls.Load(), "fixed schedule exercised the selected SQL")
 	}
 	require.Positive(t, totalRequests, "record real provider HTTP requests from native maintenance turns")
 	if arm == "pages" {
@@ -519,7 +566,9 @@ func timeStudyArm(t *testing.T, f *ontologyFixture, seed *buildStudySeed, arm st
 	require.Equal(t, seed.startingMarkers, initial)
 	m := studyTiming{Arm: arm, Pair: pair, InitialMarkers: initial, MaximumMarkers: initial, InitialOldestMarkerAgeMS: age, MaxOldestMarkerAgeMS: age}
 	start := time.Now()
-	m.BackfillAndVerificationMS = installStudyVectors(t, f, arm)
+	m.VectorInstall = installStudyVectors(t, f, arm)
+	m.BackfillAndVerificationMS = m.VectorInstall.TotalMS
+	t.Logf("study stage=scheduler_start arm=%s pair=%d vector_rows=%d vector_setup_ms=%.3f", arm, pair, m.VectorInstall.Rows, m.VectorInstall.TotalMS)
 	_, stop := startScheduler(t, service, nil, 1)
 	var unlock sync.Once
 	release := func() { unlock.Do(func() { close(repo.resume) }) }
@@ -531,14 +580,19 @@ func timeStudyArm(t *testing.T, f *ontologyFixture, seed *buildStudySeed, arm st
 	}
 	correctionStart := time.Now()
 	revalidationPublish(t, f, ontology.Change{Record: seed.correctionTopic}, ontology.Change{Record: seed.override})
-	m.CorrectionPublicationMS = float64(time.Since(correctionStart).Microseconds()) / 1000
+	correctionCommit := time.Now()
+	m.CorrectionPublicationMS = studyMS(correctionCommit.Sub(correctionStart))
+	t.Logf("study stage=manager_publication arm=%s pair=%d topic=%s target=%s publication_ms=%.3f",
+		arm, pair, seed.correctionTopic.ID, seed.sources[0].ID, m.CorrectionPublicationMS)
 	release()
 	var status ontology.MaintenanceStatus
 	for {
 		status, err = f.store.MaintenanceStatus(ctx, time.Now())
 		require.NoError(t, err)
 		if m.CorrectionMS == 0 && slices.Contains(studyRecall(t, f, seed.correctionTopic.Definition.Key).Sources, seed.sources[0]) {
-			m.CorrectionMS = float64(time.Since(correctionStart).Microseconds()) / 1000
+			observed := time.Now()
+			m.CorrectionMS = studyMS(observed.Sub(correctionStart))
+			m.CorrectionAfterCommitMS = studyMS(observed.Sub(correctionCommit))
 		}
 		count, age := studyMarkerInfo(t, f)
 		m.MaximumMarkers = max(m.MaximumMarkers, count)
@@ -558,16 +612,28 @@ func timeStudyArm(t *testing.T, f *ontologyFixture, seed *buildStudySeed, arm st
 	schedulerAssertDrained(t, f)
 	status, err = f.store.MaintenanceStatus(ctx, time.Now())
 	require.NoError(t, err)
-	if arm == "vector" {
+	if hasStudyVectors(arm) {
+		verifyStart := time.Now()
 		verifyStudyVectors(t, f)
+		m.FinalVectorVerificationMS = studyMS(time.Since(verifyStart))
 	}
-	m.ElapsedMS = float64(time.Since(start).Microseconds()) / 1000
 	m.Coverage = status.Counts
 	require.True(t, status.Paused && status.DiscoveryComplete && status.CoverageComplete, "status=%+v", status.Counts)
 	require.Positive(t, m.Coverage.Eligible)
 	require.Equal(t, m.Coverage.Eligible, m.Coverage.Organized)
 	require.Zero(t, m.RemainingMarkers)
 	require.Positive(t, m.CorrectionMS)
+	m.DiscoveryComplete, m.CoverageComplete, m.Paused = status.DiscoveryComplete, status.CoverageComplete, status.Paused
+	m.ActiveWork, m.UnreconciledAttempts = int64(status.ActiveWork), status.Usage.UnreconciledAttempts
+	require.NoError(t, f.admin.Raw(`SELECT
+		(SELECT count(*) FROM ontology_maintenance_teams WHERE lease_until>clock_timestamp()),
+		(SELECT count(*) FROM ontology_maintenance_batches WHERE status='running')`).Row().Scan(&m.LiveLeases, &m.RunningBatches))
+	require.Zero(t, m.LiveLeases)
+	require.Zero(t, m.RunningBatches)
+	require.Zero(t, m.UnreconciledAttempts)
+	m.ElapsedMS = studyMS(time.Since(start))
+	t.Logf("study stage=coverage_drained arm=%s pair=%d eligible=%d organized=%d active_work=%d markers=%d elapsed_ms=%.3f",
+		arm, pair, m.Coverage.Eligible, m.Coverage.Organized, m.ActiveWork, m.RemainingMarkers, m.ElapsedMS)
 	m.ReportedInput = status.Usage.ReportedInputTokens - before.Usage.ReportedInputTokens
 	m.ReportedOutput = status.Usage.ReportedOutputTokens - before.Usage.ReportedOutputTokens
 	m.UnknownUsage = status.Usage.UnavailableUsageAttempts - before.Usage.UnavailableUsageAttempts
@@ -576,7 +642,11 @@ func timeStudyArm(t *testing.T, f *ontologyFixture, seed *buildStudySeed, arm st
 	m.QueryCount = stats.calls.Load()
 	m.QueryReturnMS = float64(stats.elapsed.Load()) / 1e6
 	m.DiscoveryQueryReturnMS = float64(stats.discoveryElapsed.Load()) / 1e6
-	m.ExampleVocabularyPlan = explainStudyQuery(t, f, stats)
+	if os.Getenv("ONTOLOGY_STUDY_VARIANT") == "rank-first" {
+		m.LookupSHA = studyBoundLookupSHA(stats.exampleSQL)
+	} else {
+		m.ExampleVocabularyPlan = explainStudyQuery(t, f, stats)
+	}
 	m.UniqueRefreshed = len(repo.refreshed)
 	m.DistinctReceipts = len(repo.receipts)
 	var timings, readyTimings []float64
@@ -613,7 +683,10 @@ func timeStudyArm(t *testing.T, f *ontologyFixture, seed *buildStudySeed, arm st
 	slices.Sort(readyTimings)
 	m.PagesBeforeReadyBatch = len(readyTimings)
 	m.ReadyPageP95MS = readyTimings[(95*len(readyTimings)+99)/100-1]
-	if os.Getenv("ONTOLOGY_STUDY_VARIANT") == "pages" {
+	switch os.Getenv("ONTOLOGY_STUDY_VARIANT") {
+	case "rank-first":
+		require.Equal(t, m.Pages, m.FullPages, "every discovery page must use the normal limit")
+	case "pages":
 		require.Equal(t, m.Pages, m.SmallPages+m.FullPages, "observe the effective limit inside every committed discovery transaction")
 		require.Equal(t, ontology.MaintenancePageSize, m.LastPageSize, "finish with a full-size page")
 		if arm == "pages" {
@@ -634,6 +707,10 @@ func timeStudyArm(t *testing.T, f *ontologyFixture, seed *buildStudySeed, arm st
 func TestMatureOntologyBuildComparison(t *testing.T) {
 	shape := studyShape(t)
 	candidate := os.Getenv("ONTOLOGY_STUDY_VARIANT")
+	if candidate == "rank-first" {
+		runRankFirstComparison(t, shape)
+		return
+	}
 	require.Contains(t, []string{"topic", "vector", "pages"}, candidate)
 	seed := buildStudyTemplate(t, shape)
 	cloner := newBuildStudyCloner(t, seed)
