@@ -1,6 +1,6 @@
 # Development And Testing
 
-Follow the current module/toolchain files, browser manifests, and checked capability inventory. Application services own policy; storage/provider adapters implement ports. [Architecture](Architecture#architecture-checks) explains dependency enforcement.
+Follow the current module and toolchain files and browser manifests. For non-trivial changes, identify the decision owner, check for reusable code and dependencies, and cover supported success and an adverse case. [Code Ownership And Design Review](Architecture#code-ownership-and-design-review)
 
 ## Change Workflow
 
@@ -23,11 +23,9 @@ From the application repository:
 ```bash
 go test ./internal/remember/... ./internal/recall/... ./internal/tools/registry/... -count=1
 npm test --prefix web
-node scripts/check-architecture.mjs
-node --test tests/uat/architecture_conformance.test.mjs
 ```
 
-The repository script `./scripts/ci-check.sh` owns the expanded Python, browser, proxy, Go, static-analysis, architecture, and coverage command inventory. During Dense-Mem delivery, run only the assigned focused checks locally; full suites and coverage run through remote PR CI after the review phase. Do not assemble a duplicate full local run.
+The repository script `./scripts/ci-check.sh` lists the expanded Python, browser, proxy, Go, static analysis, and coverage checks. During Dense-Mem delivery, run the assigned focused checks locally. Full suites and coverage run through remote PR CI after the review phase.
 
 ## PostgreSQL And Production-Entry Tests
 
