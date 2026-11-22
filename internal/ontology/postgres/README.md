@@ -55,6 +55,8 @@ lease and claim writes.
 
 The registered server precheck `TestRunnerOntologyPacingUnderForegroundLoad`
 compares consecutive admissions with one batch per tick for three ticks while
-MCP Remember and Recall run against real PostgreSQL. GitHub Actions uses
-one-minute ticks. The accelerated local case checks correctness. Reports include
-foreground p95, correction-to-topic time through Recall, and backlog drain time.
+MCP Remember and Recall run against real PostgreSQL. Each arm samples 48 calls
+per tool at the same cadence around admissions. The precheck uses one-minute
+ticks. Direct Go runs use accelerated ticks to check correctness. Reports
+include foreground p95, correction-to-topic time through Recall, and backlog
+drain time.

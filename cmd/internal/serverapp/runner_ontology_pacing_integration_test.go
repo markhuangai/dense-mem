@@ -24,7 +24,9 @@ import (
 const (
 	originalPacingEvidence  = "Obsidian cools."
 	correctedPacingEvidence = "Fluorite fluoresces."
-	pacingSamples           = 48
+	pacingBatches           = 3
+	pacingSamplesPerBatch   = 16
+	pacingSampleInterval    = 150 * time.Millisecond
 )
 
 type ontologyPacingMeasurement struct {
@@ -41,7 +43,7 @@ type ontologyPacingMeasurement struct {
 
 func TestRunnerOntologyPacingUnderForegroundLoad(t *testing.T) {
 	tick := time.Minute
-	if os.Getenv("GITHUB_ACTIONS") != "true" {
+	if os.Getenv("DENSE_MEM_CI_PRECHECK_RUN_ID") == "" {
 		tick = 3 * time.Second
 	}
 	var measurements []ontologyPacingMeasurement
@@ -133,8 +135,12 @@ func measureOntologyPacing(t *testing.T, mode string, tick time.Duration) ontolo
 	var rememberTimes, recallTimes []time.Duration
 	group, foreground := errgroup.WithContext(ctx)
 	group.Go(func() error {
-		for sample := range pacingSamples {
-			if err := waitForPacingTime(foreground, start.Add(time.Duration(sample)*tick/20)); err != nil {
+		for sample := range pacingBatches * pacingSamplesPerBatch {
+			delay := time.Duration(sample) * pacingSampleInterval
+			if mode == "three_ticks" {
+				delay = time.Duration(sample/pacingSamplesPerBatch)*tick + time.Duration(sample%pacingSamplesPerBatch)*pacingSampleInterval
+			}
+			if err := waitForPacingTime(foreground, start.Add(delay)); err != nil {
 				return err
 			}
 			started := time.Now()
@@ -158,8 +164,7 @@ func measureOntologyPacing(t *testing.T, mode string, tick time.Duration) ontolo
 
 	var topicTime time.Duration
 	var correctionBatch int
-	const backlogBatches = 3
-	for batch := range backlogBatches {
+	for batch := range pacingBatches {
 		if mode == "three_ticks" {
 			require.NoError(t, waitForPacingTime(foreground, start.Add(time.Duration(batch)*tick)))
 		}
@@ -189,16 +194,16 @@ func measureOntologyPacing(t *testing.T, mode string, tick time.Duration) ontolo
 	}
 	drain()
 	drainTime := time.Since(start)
-	require.Equal(t, initialBatches+backlogBatches, batchCount())
+	require.Equal(t, initialBatches+pacingBatches, batchCount())
 	require.Positive(t, topicTime, "current topic follow-up must include the corrected Evidence")
 	require.NoError(t, group.Wait())
-	require.Len(t, rememberTimes, pacingSamples)
+	require.Len(t, rememberTimes, pacingBatches*pacingSamplesPerBatch)
 	require.Len(t, recallTimes, len(rememberTimes))
 	slices.Sort(rememberTimes)
 	slices.Sort(recallTimes)
 	p95 := (len(rememberTimes)*95 - 1) / 100
 	return ontologyPacingMeasurement{
-		Mode: mode, TickMS: tick.Milliseconds(), Batches: backlogBatches, SamplesPerTool: len(rememberTimes),
+		Mode: mode, TickMS: tick.Milliseconds(), Batches: pacingBatches, SamplesPerTool: len(rememberTimes),
 		RememberP95MS: float64(rememberTimes[p95].Microseconds()) / 1000, RecallP95MS: float64(recallTimes[p95].Microseconds()) / 1000,
 		CorrectionBatch: correctionBatch, CorrectionTopicMS: topicTime.Milliseconds(), BacklogDrainMS: drainTime.Milliseconds(),
 	}
