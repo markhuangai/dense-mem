@@ -1,0 +1,109 @@
+name: Ontology build study
+on:
+  push:
+    branches: [perf/ontology-build-study]
+permissions:
+  contents: read
+
+jobs:
+  accuracy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 165
+    env: &postgres
+      DENSE_MEM_REPOSITORY_TESTCONTAINERS: "1"
+    steps:
+      - &checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - &go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Compare frozen organization and Recall cohorts on real PostgreSQL
+        env:
+          ONTOLOGY_STUDY_REPORT_DIR: ${{ runner.temp }}/ontology-build-study
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tests/eval/scripts/ontology_build_study.py cohorts base "$ONTOLOGY_STUDY_REPORT_DIR"
+          python3 tests/eval/scripts/ontology_build_study.py cohorts topic "$ONTOLOGY_STUDY_REPORT_DIR"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: study-accuracy
+          path: ${{ runner.temp }}/ontology-build-study/*.json
+          if-no-files-found: error
+
+  primary:
+    name: Paired drain / ${{ matrix.dataset }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 165
+    strategy:
+      fail-fast: false
+      matrix:
+        dataset: [hotpotqa, musique]
+    env: *postgres
+    steps: &measure
+      - *checkout
+      - *go
+      - name: Alternate base and topic-filter builds from one mature PostgreSQL template
+        env:
+          ONTOLOGY_STUDY_REPORT_DIR: ${{ runner.temp }}/ontology-build-study
+          ONTOLOGY_STUDY_DATASET: ${{ matrix.dataset }}
+        run: go test -tags=integration,ontology_study -count=1 -timeout=145m -run '^TestMatureOntologyBuildComparison$' -v ./internal/ontology/postgres
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: study-${{ matrix.dataset }}
+          path: ${{ runner.temp }}/ontology-build-study/*.json
+          if-no-files-found: error
+
+  decision:
+    name: Compare complete primary pairs
+    needs: [primary, accuracy]
+    runs-on: ubuntu-latest
+    outputs:
+      advance: ${{ steps.compare.outputs.advance }}
+    steps:
+      - *checkout
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: study-*
+          path: measurements
+          merge-multiple: true
+      - id: compare
+        run: python3 tests/eval/scripts/ontology_build_study.py compare measurements hotpotqa musique
+      - uses: actions/upload-artifact@v7
+        with:
+          name: primary-comparison
+          path: measurements/comparison.json
+
+  remaining:
+    name: Confirm paired drain / ${{ matrix.dataset }}
+    needs: decision
+    if: needs.decision.outputs.advance == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 165
+    env: *postgres
+    strategy:
+      fail-fast: false
+      matrix:
+        dataset: [2wikimultihopqa, nq_rear, popqa]
+    steps: *measure
+
+  result:
+    needs: [decision, remaining]
+    runs-on: ubuntu-latest
+    steps:
+      - *checkout
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: study-*
+          path: measurements
+          merge-multiple: true
+      - run: python3 tests/eval/scripts/ontology_build_study.py compare measurements hotpotqa musique 2wikimultihopqa nq_rear popqa
+      - uses: actions/upload-artifact@v7
+        with:
+          name: five-shape-comparison
+          path: measurements/comparison.json
