@@ -141,25 +141,25 @@ func (f *recallOntologyFixture) organizerWithAccounting(t testing.TB, meanings m
 		}
 		if definitionRef == "" {
 			definitionRef = "postgresql-topic"
-			response.Definitions = append(response.Definitions, assessment.Definition{Ref: definitionRef, Kind: ontology.Topic, Key: "postgresql", Label: "PostgreSQL", Description: "Synthetic PostgreSQL source organization", Aliases: []string{"database"}})
 		}
 		items := map[string]assessment.Item{}
 		for _, item := range request.Items {
 			items[item.Ref] = item
-			ref := definitionRef
-			if item.LockedDefinitionRef != "" {
-				ref = item.LockedDefinitionRef
+			if item.LockedDefinitionRef == "" {
+				response.Items = append(response.Items, assessment.Decision{Ref: item.Ref, Status: "classified", DefinitionRef: definitionRef})
 			}
-			response.Items = append(response.Items, assessment.Decision{Ref: item.Ref, Status: "classified", DefinitionRef: ref})
+		}
+		if definitionRef == "postgresql-topic" && len(response.Items) != 0 {
+			response.Definitions = append(response.Definitions, assessment.Definition{Ref: definitionRef, Kind: ontology.Topic, Key: "postgresql", Label: "PostgreSQL", Description: "Synthetic PostgreSQL source organization", Aliases: []string{"database"}})
 		}
 		for _, pair := range request.Pairs {
-			relation := pair.RequiredRelation
-			if relation == "" {
-				relation = "distinct"
-				left, right := meanings[items[pair.LeftRef].Text], meanings[items[pair.RightRef].Text]
-				if !forceDistinct && left != "" && left == right {
-					relation = "equivalent"
-				}
+			if pair.RequiredRelation != "" {
+				continue
+			}
+			relation := "distinct"
+			left, right := meanings[items[pair.LeftRef].Text], meanings[items[pair.RightRef].Text]
+			if !forceDistinct && left != "" && left == right {
+				relation = "equivalent"
 			}
 			response.Equivalence = append(response.Equivalence, assessment.Equivalence{Ref: pair.Ref, Relation: relation})
 		}

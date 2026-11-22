@@ -57,21 +57,21 @@ func (s *Store) ClaimMaintenanceBatch(ctx context.Context, turn ontology.Mainten
 			return closeErr
 		}
 		for _, seed := range seeds {
-			contextData, err := s.organizationContext(tx, fence, []ontology.SourceHandle{seed})
-			if err != nil && !errors.Is(err, ontology.ErrContextBound) {
+			snapshot, err := readSource(tx, fence, seed)
+			if err != nil && !errors.Is(err, ontology.ErrSourceStale) {
 				return err
 			}
-			if errors.Is(err, ontology.ErrContextBound) {
-				claim.Sources = []ontology.SourceHandle{seed}
-				return collectMaintenanceRevisions(tx, fence, claim)
-			}
-			if len(contextData.Sources) != 1 || !contextData.Sources[0].Eligible {
+			if errors.Is(err, ontology.ErrSourceStale) {
 				if err := refreshMaintenanceSource(tx, fence, seed, false); err != nil {
 					return err
 				}
 				continue
 			}
 			handles, overflow, err := s.maintenanceGroupClosure(tx, fence, []ontology.SourceHandle{seed})
+			if errors.Is(err, ontology.ErrContextBound) {
+				claim.Sources = []ontology.SourceHandle{seed}
+				return collectMaintenanceRevisions(tx, fence, claim)
+			}
 			if err != nil {
 				return err
 			}
@@ -81,7 +81,8 @@ func (s *Store) ClaimMaintenanceBatch(ctx context.Context, turn ontology.Mainten
 			if maintenanceClosureBusy(handles, busy) {
 				continue
 			}
-			peers, err := maintenanceRelatedSources(tx, fence, contextData.Sources[0], turn.RetryRunID)
+			seedGroup := handles
+			peers, err := maintenanceRelatedSources(tx, fence, snapshot, turn.RetryRunID)
 			if err != nil {
 				return err
 			}
@@ -93,11 +94,22 @@ func (s *Store) ClaimMaintenanceBatch(ctx context.Context, turn ontology.Mainten
 					continue
 				}
 				candidate, tooLarge, err := s.maintenanceGroupClosure(tx, fence, append(append([]ontology.SourceHandle{}, handles...), peer))
+				if errors.Is(err, ontology.ErrContextBound) {
+					continue
+				}
 				if err != nil {
 					return err
 				}
 				if !tooLarge && !maintenanceClosureBusy(candidate, busy) {
 					handles = candidate
+				}
+			}
+			if len(handles) > len(seedGroup) {
+				// Preserve the required group and let unrelated peers be claimed later if their combined context exceeds the bound.
+				if _, err := s.organizationContext(tx, fence, handles); errors.Is(err, ontology.ErrContextBound) {
+					handles = seedGroup
+				} else if err != nil {
+					return err
 				}
 			}
 			claim.Sources = handles
@@ -205,15 +217,16 @@ func (s *Store) maintenanceGroupClosure(tx *gorm.DB, fence scope, initial []onto
 		if len(handles) > ontology.MaxOrganizationSources {
 			return nil, true, nil
 		}
-		data, err := s.organizationContext(tx, fence, handles)
-		if err != nil && !errors.Is(err, ontology.ErrContextBound) {
+		records, err := organizationSourceRecords(tx, fence, handles, true)
+		if err != nil {
 			return nil, false, err
 		}
-		if errors.Is(err, ontology.ErrContextBound) {
-			return handles, false, nil
+		views, err := s.organizationViews(tx, fence, records)
+		if err != nil {
+			return nil, false, err
 		}
 		before := len(handles)
-		for _, record := range data.Records {
+		for _, record := range views {
 			var members []ontology.SourceHandle
 			if record.Current && record.Group != nil {
 				members = record.Group.Members

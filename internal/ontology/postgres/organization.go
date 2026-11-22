@@ -69,49 +69,9 @@ func (s *Store) organizationContext(tx *gorm.DB, fence scope, handles []ontology
 	if err != nil {
 		return result, err
 	}
-	keys := []string{}
-	for _, handle := range handles {
-		keys = append(keys, ontology.SourceKey(handle))
-	}
-	rows, err := tx.Raw(`SELECT DISTINCT revision.body, head.record_id
-            FROM ontology_record_heads AS head JOIN ontology_revision_records AS revision
-              USING (team_id,shared_space_id,space_generation,record_id,version)
-            JOIN ontology_source_dependencies AS dependency
-              ON dependency.team_id=head.team_id AND dependency.shared_space_id=head.shared_space_id
-              AND dependency.space_generation=head.space_generation AND dependency.record_id=head.record_id
-              AND dependency.record_version=head.version
-            WHERE head.team_id=?::uuid AND head.shared_space_id=?::uuid AND head.space_generation=?
-              AND (NOT head.retired OR head.kind IN ('evidence_group','relationship_group'))
-              AND dependency.source_kind || ':' || dependency.source_id=ANY(?::text[])
-            ORDER BY head.record_id LIMIT ?`, fence.TeamID, fence.SpaceID, fence.Generation, pq.Array(keys), ontology.MaxDependencyRecords+1).Rows()
+	records, err := organizationSourceRecords(tx, fence, handles, false)
 	if err != nil {
 		return result, err
-	}
-	var records []ontology.Record
-	for rows.Next() {
-		var body []byte
-		var id string
-		if err := rows.Scan(&body, &id); err != nil {
-			rows.Close()
-			return result, err
-		}
-		record, err := decodeRecord(body)
-		if err != nil {
-			rows.Close()
-			return result, err
-		}
-		records = append(records, record)
-	}
-	err = rows.Err()
-	closeErr := rows.Close()
-	if err != nil {
-		return result, err
-	}
-	if closeErr != nil {
-		return result, closeErr
-	}
-	if len(records) > ontology.MaxDependencyRecords {
-		return result, ontology.ErrContextBound
 	}
 	result.Records, err = s.organizationViews(tx, fence, records)
 	if err != nil {
@@ -146,6 +106,58 @@ func (s *Store) organizationContext(tx *gorm.DB, fence scope, handles []ontology
 	}
 	result.Revision, err = catalogRevision(tx, fence)
 	return result, err
+}
+
+func organizationSourceRecords(tx *gorm.DB, fence scope, handles []ontology.SourceHandle, groupingOnly bool) ([]ontology.Record, error) {
+	keys := []string{}
+	for _, handle := range handles {
+		keys = append(keys, ontology.SourceKey(handle))
+	}
+	filter := "(NOT head.retired OR head.kind IN ('evidence_group','relationship_group'))"
+	if groupingOnly {
+		filter = "NOT head.retired AND (head.kind='evidence_group' OR (head.kind='override' AND revision.body->'override'->>'action'='group_together'))"
+	}
+	rows, err := tx.Raw(`SELECT DISTINCT revision.body, head.record_id
+            FROM ontology_record_heads AS head JOIN ontology_revision_records AS revision
+              USING (team_id,shared_space_id,space_generation,record_id,version)
+            JOIN ontology_source_dependencies AS dependency
+              ON dependency.team_id=head.team_id AND dependency.shared_space_id=head.shared_space_id
+              AND dependency.space_generation=head.space_generation AND dependency.record_id=head.record_id
+              AND dependency.record_version=head.version
+            WHERE head.team_id=?::uuid AND head.shared_space_id=?::uuid AND head.space_generation=?
+              AND `+filter+`
+              AND dependency.source_kind || ':' || dependency.source_id=ANY(?::text[])
+            ORDER BY head.record_id LIMIT ?`, fence.TeamID, fence.SpaceID, fence.Generation, pq.Array(keys), ontology.MaxDependencyRecords+1).Rows()
+	if err != nil {
+		return nil, err
+	}
+	var records []ontology.Record
+	for rows.Next() {
+		var body []byte
+		var id string
+		if err := rows.Scan(&body, &id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		record, err := decodeRecord(body)
+		if err != nil {
+			rows.Close()
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	err = rows.Err()
+	closeErr := rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	if closeErr != nil {
+		return nil, closeErr
+	}
+	if len(records) > ontology.MaxDependencyRecords {
+		return nil, ontology.ErrContextBound
+	}
+	return records, nil
 }
 
 func organizationSources(tx *gorm.DB, fence scope, handles []ontology.SourceHandle) ([]ontology.SourceSnapshot, error) {

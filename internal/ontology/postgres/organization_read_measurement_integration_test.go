@@ -183,6 +183,7 @@ func TestOntologyMaintenanceReadMeasurement(t *testing.T) {
 				measurements = append(measurements, measurement)
 			}
 		}
+		measurements = append(measurements, measureOrganizationBatchClaim(t, f, counter, handles, catalogSize))
 		canonical[catalogSize] = [2]string{before, schedulerCanonical(t, f)}
 		require.Equal(t, canonical[catalogSize][0], canonical[catalogSize][1])
 	}
@@ -195,4 +196,40 @@ func TestOntologyMaintenanceReadMeasurement(t *testing.T) {
 	encoded, err := json.MarshalIndent(report, "", "  ")
 	require.NoError(t, err)
 	t.Logf("ontology_read_measurement %s", encoded)
+}
+
+func measureOrganizationBatchClaim(t *testing.T, f *ontologyFixture, counter *organizationReadCounter, handles []ontology.SourceHandle, catalogSize int) organizationReadMeasurement {
+	t.Helper()
+	ctx := context.Background()
+	window := maintenanceWindow(t, f, maintenanceSettings(t, f))
+	measurement := organizationReadMeasurement{CatalogSize: catalogSize, Sources: len(handles), Phase: "batch_claim"}
+	var samples []float64
+	for repeat := range 12 {
+		turn, err := f.store.ClaimMaintenanceTurn(ctx, window.ID, time.Now(), time.Minute)
+		require.NoError(t, err)
+		require.NotNil(t, turn)
+		if repeat == 0 {
+			require.NoError(t, f.store.discoverMaintenanceError(ctx, *turn, ontology.MaintenancePageSize))
+		}
+		counter.queries.Store(0)
+		started := time.Now()
+		claim, err := f.store.ClaimMaintenanceBatch(ctx, *turn, window.ID, time.Now())
+		elapsed, queries := time.Since(started), counter.queries.Load()
+		require.NoError(t, err)
+		require.NotNil(t, claim)
+		require.ElementsMatch(t, handles, claim.Sources)
+		require.NoError(t, f.store.CompleteMaintenanceBatch(ctx, *claim, ontology.OrganizationResult{}, "maintenance_paused", time.Now()))
+		if repeat >= 2 {
+			samples = append(samples, float64(elapsed.Microseconds())/1000)
+			require.Positive(t, queries)
+			if measurement.Queries == 0 {
+				measurement.Queries = queries
+			}
+			require.Equal(t, measurement.Queries, queries)
+		}
+	}
+	sort.Float64s(samples)
+	measurement.MedianMS = (samples[4] + samples[5]) / 2
+	measurement.P95MS = samples[9]
+	return measurement
 }

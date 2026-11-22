@@ -112,7 +112,7 @@ const server = createServer(async (request, response) => {
       schema_name: typeof payload.response_format?.json_schema?.name === "string" ? payload.response_format.json_schema.name : "",
       fault: routeFault,
       generated_fields: Object.keys(payload.response_format?.json_schema?.schema?.properties || {}),
-      source_kinds: payload.response_format?.json_schema?.name === "ontology_evidence_organization_v3"
+      source_kinds: payload.response_format?.json_schema?.name === "ontology_evidence_organization_v4"
         ? [...new Set((assessmentInput(payload).items || []).map((item) => item.kind))] : [],
     });
   }
@@ -208,7 +208,7 @@ const server = createServer(async (request, response) => {
       return;
     }
     let assessment;
-    if (payload.response_format?.json_schema?.name === "ontology_evidence_organization_v3") {
+    if (payload.response_format?.json_schema?.name === "ontology_evidence_organization_v4") {
       activeOntologyRequests += 1;
       maxActiveOntologyRequests = Math.max(maxActiveOntologyRequests, activeOntologyRequests);
       try {
@@ -307,7 +307,7 @@ function fixtureChatResponse(payload, requestFault = "none", attempt = 1) {
     return result;
   }
   if (schemaName === "session_evidence_excerpts_v2") return fixtureSessionExtraction(structuredInput(payload, (input) => input.window));
-  if (schemaName === "ontology_evidence_organization_v3") return fixtureOntologyOrganization(payload);
+  if (schemaName === "ontology_evidence_organization_v4") return fixtureOntologyOrganization(payload);
   if (schemaName !== "dense_mem_evidence_assessment_response") throw new Error(`unsupported fixture schema ${schemaName}`);
   const assessment = fixtureAssessment(assessmentInput(payload), requestFault);
   if (requestFault === "routed-field-repair" || requestFault === "routed-field-exhausted") {
@@ -335,23 +335,23 @@ function fixtureOntologyOrganization(payload) {
     ontologyFailuresRemaining -= 1;
     return { request_id: input.request_id, definitions: [], items: [], equivalence: [] };
   }
+  const questions = input.items.filter((item) => !item.locked_definition_ref);
+  const pairs = input.pairs.filter((pair) => !pair.required_relation);
   if (ontologyMode === "ambiguous") {
     return {
       request_id: input.request_id, definitions: [],
-      items: input.items.map((item) => item.locked_definition_ref
-        ? { ref: item.ref, status: "classified", definition_ref: item.locked_definition_ref, reason: "" }
-        : { ref: item.ref, status: "ambiguous", definition_ref: "", reason: "classification_uncertain" }),
-      equivalence: input.pairs.map((pair) => ({ ref: pair.ref, relation: pair.required_relation || "ambiguous" })),
+      items: questions.map((item) => ({ ref: item.ref, status: "ambiguous", definition_ref: "", reason: "classification_uncertain" })),
+      equivalence: pairs.map((pair) => ({ ref: pair.ref, relation: "ambiguous" })),
     };
   }
   const definitions = [];
   const created = new Map();
-  const items = input.items.map((item) => {
+  const items = questions.map((item) => {
     const topicKey = /redis|keydb/i.test(JSON.stringify(item)) ? "memory-coordination" : "memory-storage";
     const candidateKey = ontologyMode === "matching"
       ? (/\bheliostat\b/i.test(item.text) ? "suntracker" : /\babout\b/i.test(item.text) ? "about" : /\band\b/i.test(item.text) ? "conjunctioncatalog" : "grammarnoise")
       : topicKey;
-    let ref = item.locked_definition_ref || item.preferred_definition_ref || input.definitions.find((definition) => definition.kind === "topic" && definition.key === candidateKey)?.ref || created.get(topicKey);
+    let ref = item.preferred_definition_ref || input.definitions.find((definition) => definition.kind === "topic" && definition.key === candidateKey)?.ref || created.get(topicKey);
     if (!ref) {
       ref = `new-definition-${definitions.length}`;
       created.set(topicKey, ref);
@@ -361,11 +361,11 @@ function fixtureOntologyOrganization(payload) {
   });
   const sourceItems = new Map(input.items.map((item) => [item.ref, item]));
   const equivalentFixtureTexts = new Set(["Atlas stores PostgreSQL data.", "Atlas uses PostgreSQL for data storage."]);
-  return { request_id: input.request_id, definitions, items, equivalence: input.pairs.map((pair) => {
+  return { request_id: input.request_id, definitions, items, equivalence: pairs.map((pair) => {
     const left = sourceItems.get(pair.left_ref);
     const right = sourceItems.get(pair.right_ref);
     const equivalent = equivalentFixtureTexts.has(left?.text) && equivalentFixtureTexts.has(right?.text);
-    return { ref: pair.ref, relation: pair.required_relation || (equivalent ? "equivalent" : "distinct") };
+    return { ref: pair.ref, relation: equivalent ? "equivalent" : "distinct" };
   }) };
 }
 
@@ -423,7 +423,7 @@ export function fixtureFault(payload, route) {
     const input = structuredInput(payload, (value) => value.window);
     return faultMarker([input.window?.before, ...(input.window?.core || []), input.window?.after].filter(Boolean).map((segment) => segment.text));
   }
-  if (schemaName === "ontology_evidence_organization_v3") {
+  if (schemaName === "ontology_evidence_organization_v4") {
     const input = structuredInput(payload, (value) => Array.isArray(value.items));
     return faultMarker((input.items || []).map((item) => item.text));
   }

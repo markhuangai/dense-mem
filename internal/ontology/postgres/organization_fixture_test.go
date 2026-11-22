@@ -48,10 +48,10 @@ func organizationFixtureResponse(request assessment.Request, equivalent func(ass
 	items := map[string]assessment.Item{}
 	for _, item := range request.Items {
 		items[item.Ref] = item
-		ref := item.LockedDefinitionRef
-		if ref == "" {
-			ref = item.PreferredDefinitionRef
+		if item.LockedDefinitionRef != "" {
+			continue
 		}
+		ref := item.PreferredDefinitionRef
 		if ref == "" {
 			for _, d := range request.Definitions {
 				if item.Kind == ontology.EvidenceSource && d.Kind == ontology.Topic {
@@ -73,12 +73,12 @@ func organizationFixtureResponse(request assessment.Request, equivalent func(ass
 		response.Items = append(response.Items, assessment.Decision{Ref: item.Ref, Status: "classified", DefinitionRef: ref})
 	}
 	for _, pair := range request.Pairs {
-		relation := pair.RequiredRelation
-		if relation == "" {
-			relation = "distinct"
-			if equivalent != nil && equivalent(items[pair.LeftRef], items[pair.RightRef]) {
-				relation = "equivalent"
-			}
+		if pair.RequiredRelation != "" {
+			continue
+		}
+		relation := "distinct"
+		if equivalent != nil && equivalent(items[pair.LeftRef], items[pair.RightRef]) {
+			relation = "equivalent"
 		}
 		response.Equivalence = append(response.Equivalence, assessment.Equivalence{Ref: pair.Ref, Relation: relation})
 	}

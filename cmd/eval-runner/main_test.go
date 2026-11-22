@@ -307,7 +307,8 @@ func runtimeProviderLogFixture(t *testing.T) string {
 	}{
 		{"partition", "dense_mem_semantic_partition_response", map[string]int{"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5}},
 		{"assessment", "dense_mem_evidence_assessment_response", map[string]int{"prompt_tokens": 4, "completion_tokens": 3}},
-		{"ontology", "ontology_evidence_organization_v3", nil},
+		{"ontology-previous", "ontology_evidence_organization_v3", nil},
+		{"ontology", "ontology_evidence_organization_v4", nil},
 		{"embedding", "", map[string]int{"prompt_tokens": 7, "completion_tokens": 0, "total_tokens": 7}},
 		{"other", "unknown_schema", map[string]int{"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 5}},
 	} {
@@ -340,12 +341,16 @@ func TestRuntimeLogCollectorReconstructsProtectedExchangesAndUsage(t *testing.T)
 	require.EqualValues(t, 5, usage["intake_partition"].Total)
 	require.EqualValues(t, 1, usage["intake_assessment"].Partial)
 	require.EqualValues(t, 4, usage["intake_assessment"].Input)
-	require.EqualValues(t, 1, usage["ontology"].Unavailable)
+	require.EqualValues(t, 2, usage["ontology"].Unavailable)
 	require.EqualValues(t, 1, usage["embedding"].Available)
 	require.EqualValues(t, 7, usage["embedding"].Total)
 	require.EqualValues(t, 1, usage["other"].Partial)
-	for _, total := range usage {
-		require.EqualValues(t, 1, total.Attempts)
+	for phase, total := range usage {
+		if phase == "ontology" {
+			require.EqualValues(t, 2, total.Attempts)
+		} else {
+			require.EqualValues(t, 1, total.Attempts)
+		}
 	}
 	for _, text := range []string{logs, output.String()} {
 		require.NotContains(t, text, runtimeLogKeyCanary)
