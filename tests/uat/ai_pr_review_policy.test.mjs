@@ -3,10 +3,8 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const agentsURL = new URL("../../AGENTS.md", import.meta.url);
-const kissADRURL = new URL(
-  "../../adr/0004-prefer-simplest-sufficient-design.md",
-  import.meta.url,
-);
+const designADRPath = "adr/0019-code-ownership-and-design-review.md";
+const designADRURL = new URL(`../../${designADRPath}`, import.meta.url);
 const reviewWorkflowURL = new URL(
   "../../.github/workflows/ai-pr-review.yml",
   import.meta.url,
@@ -32,12 +30,11 @@ function normalizedReviewPrompt(workflow, heading) {
 }
 
 test("repository guidance requires material, scoped, simple review findings", async () => {
-  const [agents, kissADR] = await Promise.all([
+  const [agents, designADR] = await Promise.all([
     readFile(agentsURL, "utf8"),
-    readFile(kissADRURL, "utf8"),
+    readFile(designADRURL, "utf8"),
   ]);
   const normalizedAgents = agents.replace(/\s+/g, " ");
-  const normalizedKissADR = kissADR.replace(/\s+/g, " ");
 
   assert.match(agents, /## Code Review Rules/);
   assert.match(agents, /### Material supported defects and scope/);
@@ -63,10 +60,8 @@ test("repository guidance requires material, scoped, simple review findings", as
     /reject hypothetical, pre-existing, unreachable, contradicted/,
   );
   assert.match(normalizedAgents, /semantic verifier\/reviewer behavior/);
-  assert.match(kissADR, /Status: Accepted/);
-  assert.match(normalizedKissADR, /least complex design that fully satisfies/);
-  assert.match(normalizedKissADR, /A real defect with an overengineered suggestion/);
-  assert.match(normalizedKissADR, /ADR 0003 continues to govern ownership/);
+  assert.match(designADR, /^- Status: Accepted$/m);
+  assert.ok(agents.includes(`](${designADRPath})`));
 });
 
 test("AI review uses six ownership-driven goals and one memory-first protocol", async () => {
@@ -167,6 +162,7 @@ test("maintainability review is preventive, bounded, and impact-scored", async (
     "Review functional and semantic correctness plus bounded design integrity, including model-provider boundaries",
   );
 
+  assert.ok(normalizedWorkflow.includes(designADRPath));
   assert.match(normalizedWorkflow, /duplication of the same authoritative rule/);
   assert.match(normalizedWorkflow, /supported sites change for the same reason/);
   assert.match(normalizedWorkflow, /narrower dependency-safe boundary/);

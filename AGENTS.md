@@ -32,6 +32,8 @@
 - Accepted repository architecture decisions live in `adr/`. Before non-trivial
   design, implementation, or review, enumerate `adr/*.md` and read every
   accepted record relevant to the affected behavior.
+- [ADR 0019](adr/0019-code-ownership-and-design-review.md) governs code
+  ownership, KISS, dependency reuse, and design review.
 - Accepted ADRs describe the governing target. A transitional implementation
   may differ only when the ADR states its bounded rationale and removal
   condition; do not widen that exception or treat the transition as the
@@ -67,11 +69,6 @@
   Evidence state, lifecycle, ownership, and organizational eligibility.
 - Preserve existing package patterns where they enforce these boundaries. Do
   not rename the tree or create parallel v2 packages without a concrete need.
-- Apply KISS ("Keep It Simple, Stupid"): choose the simplest sufficient design
-  that preserves current supported behavior and every accepted invariant. New
-  abstractions, configuration, durable state, background processes, or
-  generalization require a concrete current need; simplicity never excuses a
-  hidden failure, duplicated authority, or weaker security or data integrity.
 
 ## Semantic Invariants
 
@@ -284,8 +281,12 @@
 ## Change And Test Workflow
 
 1. Inspect the current package, interfaces, migrations, callers, and tests.
-2. State current behavior, the target invariant, and any unresolved mismatch.
-3. Add or adjust the smallest real-logic test that proves the behavior.
+2. Trace a real caller to the decision owner and state the target invariant.
+   Check existing code, the standard library, and installed packages before
+   writing a standard mechanism. Verify the versioned API and trade-offs of a
+   maintained dependency if needed, and explain consequential choices in the PR.
+3. Use the smallest real-logic tests that exercise supported success and an
+   adverse case for changed behavior.
 4. Implement one reviewable responsibility with the simplest sufficient design
    and without unrelated cleanup.
 5. Run focused tests, then repository checks, and inspect the final diff.

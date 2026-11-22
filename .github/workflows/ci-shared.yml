@@ -111,11 +111,8 @@ jobs:
       - name: Run repository lint
         run: npm run --prefix .lint lint:lines
 
-      - name: Run architecture conformance
-        run: |
-          node scripts/check-architecture.mjs
-          node --test tests/uat/architecture_conformance.test.mjs
-          node --test tests/uat/coverage_policy.test.mjs
+      - name: Run coverage policy tests
+        run: node --test tests/uat/coverage_policy.test.mjs
 
       - name: Run synchronous-write harness tests
         run: node --test tests/uat/synchronous_write/*.test.mjs

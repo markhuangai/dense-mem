@@ -12,9 +12,11 @@ Select packages and cases for the behavior being changed:
 ```bash
 go test ./internal/remember/... ./internal/recall/... -count=1
 npm test --prefix web
-node scripts/check-architecture.mjs
-node --test tests/uat/architecture_conformance.test.mjs
 ```
+
+For changes to review or coverage policy, use the corresponding focused
+tests in `tests/uat/`. [ADR 0019](../adr/0019-code-ownership-and-design-review.md)
+defines the ownership and dependency rules used in design review.
 
 RLS, migrations, transactions, constraints, idempotency, vector execution, and
 concurrency require real PostgreSQL-backed proof. Provider transport fixtures
