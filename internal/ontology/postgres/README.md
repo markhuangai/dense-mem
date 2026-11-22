@@ -46,3 +46,9 @@ Discovery duration includes commit. Preparation includes discovery, provider tur
 timing excludes decoding/transaction boundaries; do not add these measurements as exclusive phases or infer
 release speedup. Concurrent writers can invalidate a later source check of the same receipt. Preserve
 per-source freshness, marker/cursor progress, cancellation and rollback.
+
+`TestOntologyMaintenanceReadMeasurement` reports batch-claim SQL statements and
+elapsed time on 20-source fixtures with 20 and 100 catalog records. Each shape
+uses two warmups and ten measured claims. The fixture verifies that every claim
+selects the same sources and preserves canonical state. SQL counts include the
+lease and claim writes.
