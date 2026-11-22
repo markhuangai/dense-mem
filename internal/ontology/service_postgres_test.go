@@ -122,26 +122,25 @@ func TestOrganizationServiceWithPostgres(t *testing.T) {
 					break
 				}
 			}
-			if ref == "new-topic" {
+			for _, item := range request.Items {
+				if item.LockedDefinitionRef != "" {
+					continue
+				}
+				response.Items = append(response.Items, assessment.Decision{Ref: item.Ref, Status: "classified", DefinitionRef: ref})
+			}
+			if ref == "new-topic" && len(response.Items) != 0 {
 				response.Definitions = append(response.Definitions, assessment.Definition{Ref: ref, Kind: kind, Key: key, Label: key, Aliases: []string{}})
 			}
-			for _, item := range request.Items {
-				definitionRef := ref
-				if item.LockedDefinitionRef != "" {
-					definitionRef = item.LockedDefinitionRef
-				}
-				response.Items = append(response.Items, assessment.Decision{Ref: item.Ref, Status: "classified", DefinitionRef: definitionRef})
-			}
 			for _, pair := range request.Pairs {
-				relation := pair.RequiredRelation
-				if relation == "" {
-					relation = "distinct"
-					if mode.Load() == 7 {
-						relation = "equivalent"
-					}
-					if mode.Load() == 4 {
-						relation = "ambiguous"
-					}
+				if pair.RequiredRelation != "" {
+					continue
+				}
+				relation := "distinct"
+				if mode.Load() == 7 {
+					relation = "equivalent"
+				}
+				if mode.Load() == 4 {
+					relation = "ambiguous"
 				}
 				response.Equivalence = append(response.Equivalence, assessment.Equivalence{Ref: pair.Ref, Relation: relation})
 			}

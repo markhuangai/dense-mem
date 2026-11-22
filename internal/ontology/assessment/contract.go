@@ -12,7 +12,7 @@ import (
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 )
 
-const SchemaName = "ontology_evidence_organization_v3"
+const SchemaName = "ontology_evidence_organization_v4"
 
 type Item struct {
 	Ref                    string              `json:"ref"`
@@ -65,6 +65,49 @@ type Response struct {
 	Definitions []Definition  `json:"definitions"`
 	Items       []Decision    `json:"items"`
 	Equivalence []Equivalence `json:"equivalence"`
+}
+
+func (request Request) questions() Request {
+	questions := Request{RequestID: request.RequestID}
+	for _, item := range request.Items {
+		if item.LockedDefinitionRef == "" {
+			questions.Items = append(questions.Items, item)
+		}
+	}
+	for _, pair := range request.Pairs {
+		if pair.RequiredRelation == "" {
+			questions.Pairs = append(questions.Pairs, pair)
+		}
+	}
+	return questions
+}
+
+func (request Request) withServerDecisions(response Response) Response {
+	items := make(map[string]Decision, len(response.Items))
+	for _, decision := range response.Items {
+		items[decision.Ref] = decision
+	}
+	pairs := make(map[string]Equivalence, len(response.Equivalence))
+	for _, decision := range response.Equivalence {
+		pairs[decision.Ref] = decision
+	}
+	response.Items = make([]Decision, 0, len(request.Items))
+	for _, item := range request.Items {
+		decision := items[item.Ref]
+		if item.LockedDefinitionRef != "" {
+			decision = Decision{Ref: item.Ref, Status: "classified", DefinitionRef: item.LockedDefinitionRef}
+		}
+		response.Items = append(response.Items, decision)
+	}
+	response.Equivalence = make([]Equivalence, 0, len(request.Pairs))
+	for _, pair := range request.Pairs {
+		decision := pairs[pair.Ref]
+		if pair.RequiredRelation != "" {
+			decision = Equivalence{Ref: pair.Ref, Relation: pair.RequiredRelation}
+		}
+		response.Equivalence = append(response.Equivalence, decision)
+	}
+	return response
 }
 
 func Decode(raw string) (Response, error) {
@@ -140,6 +183,14 @@ func Decode(raw string) (Response, error) {
 }
 
 func Validate(request Request, response Response) error {
+	return validateDecisions(request, request, response)
+}
+
+func ValidateModelResponse(request Request, response Response) error {
+	return validateDecisions(request, request.questions(), response)
+}
+
+func validateDecisions(request, questions Request, response Response) error {
 	var errs []assessor.SemanticValidationError
 	var cause error
 	if response.RequestID != request.RequestID {
@@ -156,12 +207,12 @@ func Validate(request Request, response Response) error {
 	if len(response.Definitions) > ontology.MaxVocabularyCandidates {
 		errs = append(errs, validationIssue("definitions", "definition_limit", "must contain at most %d definitions; received %d", ontology.MaxVocabularyCandidates, len(response.Definitions)))
 	}
-	if len(response.Items) != len(request.Items) {
-		errs = append(errs, validationIssue("items", "item_count_mismatch", "must contain exactly %d decisions, one per supplied item ref; received %d", len(request.Items), len(response.Items)))
+	if len(response.Items) != len(questions.Items) {
+		errs = append(errs, validationIssue("items", "item_count_mismatch", "must contain exactly %d decisions, one per requested item ref; received %d", len(questions.Items), len(response.Items)))
 	}
 	if len(response.Definitions) > ontology.MaxVocabularyCandidates || len(response.Items) > 20 || len(response.Equivalence) > 190 {
 		if len(response.Equivalence) > 190 {
-			errs = append(errs, validationIssue("equivalence", "equivalence_coverage", "must contain exactly one decision per supplied pair ref; received %d", len(response.Equivalence)))
+			errs = append(errs, validationIssue("equivalence", "equivalence_coverage", "must contain exactly one decision per requested pair ref; received %d", len(response.Equivalence)))
 		}
 		return validationResult(errs, nil)
 	}
@@ -225,7 +276,7 @@ func Validate(request Request, response Response) error {
 		}
 	}
 	items := map[string]Item{}
-	for _, item := range request.Items {
+	for _, item := range questions.Items {
 		items[item.Ref] = item
 	}
 	seen := map[string]bool{}
@@ -234,7 +285,7 @@ func Validate(request Request, response Response) error {
 		path := fmt.Sprintf("items[%d]", i)
 		item, ok := items[decision.Ref]
 		if !ok {
-			errs = append(errs, validationIssue(path+".ref", "item_ref_unknown", "item ref %q is outside the supplied item allowlist", decision.Ref))
+			errs = append(errs, validationIssue(path+".ref", "item_ref_unknown", "item ref %q is outside the requested item allowlist", decision.Ref))
 			continue
 		}
 		if seen[decision.Ref] {
@@ -269,9 +320,9 @@ func Validate(request Request, response Response) error {
 			errs = append(errs, validationIssue(path+".status", "item_status", "item %q status must be classified or ambiguous; received %q", decision.Ref, decision.Status))
 		}
 	}
-	for _, item := range request.Items {
+	for _, item := range questions.Items {
 		if !seen[item.Ref] {
-			errs = append(errs, validationIssue("items", "item_count_mismatch", "missing decision for supplied item ref %q; return each supplied item exactly once", item.Ref))
+			errs = append(errs, validationIssue("items", "item_count_mismatch", "missing decision for requested item ref %q; return each requested item exactly once", item.Ref))
 		}
 	}
 	for _, ref := range newRefs {
@@ -283,17 +334,22 @@ func Validate(request Request, response Response) error {
 	choices := []assessor.SemanticAssessmentEvidenceEquivalenceResult{}
 	pairs := map[string]Pair{}
 	pairRefs := []string{}
-	for _, pair := range request.Pairs {
+	for _, pair := range questions.Pairs {
 		pairs[pair.Ref] = pair
 		pairRefs = append(pairRefs, pair.Ref)
 		groups = append(groups, assessor.SemanticAssessmentEvidenceEquivalenceCandidateGroup{EvidenceID: pair.Ref, Candidates: []assessor.SemanticAssessmentEvidenceEquivalenceCandidate{{EvidenceID: "equivalent", Content: "complete meaning equivalence"}}})
 	}
 	equivalent := map[string]bool{}
+	for _, pair := range request.Pairs {
+		if pair.RequiredRelation == "equivalent" {
+			equivalent[pairKey(pair.LeftRef, pair.RightRef)] = true
+		}
+	}
 	for i, decision := range response.Equivalence {
 		path := fmt.Sprintf("equivalence[%d]", i)
 		pair, ok := pairs[decision.Ref]
 		if !ok {
-			errs = append(errs, validationIssue(path+".ref", "equivalence_ref", "pair ref %q is outside allowlist supplied in request.pairs", decision.Ref))
+			errs = append(errs, validationIssue(path+".ref", "equivalence_ref", "pair ref %q is outside the requested pair allowlist", decision.Ref))
 		}
 		choice := assessor.SemanticAssessmentEvidenceEquivalenceResult{EvidenceID: decision.Ref, Action: "new"}
 		switch decision.Relation {
@@ -316,7 +372,7 @@ func Validate(request Request, response Response) error {
 	coverageErrors := assessor.ValidateEvidenceEquivalenceResults(groups, choices)
 	if len(coverageErrors) > 0 {
 		received, _ := json.Marshal(response.Equivalence)
-		errs = append(errs, validationIssue("equivalence", "equivalence_coverage", "return exactly one decision per supplied pair ref %q, including distinct and ambiguous pairs; duplicate pair refs are not allowed; received %s", pairRefs, received))
+		errs = append(errs, validationIssue("equivalence", "equivalence_coverage", "return exactly one decision per requested pair ref %q, including distinct and ambiguous pairs; duplicate pair refs are not allowed; received %s", pairRefs, received))
 		for _, issue := range coverageErrors {
 			field := strings.ReplaceAll(strings.ReplaceAll(issue.Field, "evidence_equivalence_results", "equivalence"), ".evidence_id", ".ref")
 			errs = append(errs, validationIssue(field, "equivalence_coverage", "%s", issue.Message))

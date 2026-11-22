@@ -54,6 +54,7 @@ type runnerServiceFixture struct {
 	mcp            *httptest.Server
 	control        *httptest.Server
 	maintenance    *organization.MaintenanceService
+	ontology       *ontologypg.Store
 	provider       *runnerRememberAssessor
 	reconciliation searchapp.SearchReconciliationService
 }
@@ -170,7 +171,8 @@ func newRunnerServiceFixtureWithOntology(t *testing.T, initial []ontology.Change
 	_, err = maintenance.Command(ctx, domain.OntologyMaintenanceCommand{Action: "pause", OperationKey: uuid.NewString()}, "", "")
 	require.NoError(t, err)
 	recallStore := recallpg.NewStore(app, rls, search, recallpg.LoadRecallEvidenceConflictRecords).
-		WithOntology(func() recallpg.OntologyReader { return ontologyStore.NewRecallReader() })
+		WithOntology(func() recallpg.OntologyReader { return ontologyStore.NewRecallReader() }).
+		WithTopics(ontologyStore.NewTopicReader())
 	reader := recall.NewRecallService(recall.RecallDependencies{Search: recallStore, Provider: embedder, OntologyConfig: configuration})
 	reg, err := registry.BuildActive(registry.Dependencies{RememberBindings: registry.RememberBindings{Service: writer}, RecallBindings: registry.RecallBindings{Service: reader}})
 	require.NoError(t, err)
@@ -193,7 +195,8 @@ func newRunnerServiceFixtureWithOntology(t *testing.T, initial []ontology.Change
 	native := &evalharness.Native{DB: pool, Scope: evalharness.Scope{TeamID: teamID.String(), CredentialID: ownerID.String()}, ControlURL: control.URL, ControlToken: "runner-control", Client: client}
 	require.NoError(t, native.ResolveScope(ctx))
 	manifest := evalharness.Manifest{ImportWorkers: 10, Model: "runner-ontology", ContextWindowTokens: 300000, EmbeddingModel: model, EmbeddingDimensions: dimensions}
-	return &runnerServiceFixture{admin: admin, native: native, manifest: manifest, mcp: mcp, control: control, maintenance: maintenance, provider: provider, reconciliation: searchapp.NewSearchReconciliationService(searchapp.SearchReconciliationDependencies{Repository: search, Projection: store, Executor: semanticwrite.NewProviderExecutor(embedder)})}
+	return &runnerServiceFixture{admin: admin, native: native, manifest: manifest, mcp: mcp, control: control, maintenance: maintenance,
+		ontology: ontologyStore, provider: provider, reconciliation: searchapp.NewSearchReconciliationService(searchapp.SearchReconciliationDependencies{Repository: search, Projection: store, Executor: semanticwrite.NewProviderExecutor(embedder)})}
 }
 
 type runnerRememberAssessor struct {
@@ -239,11 +242,11 @@ func runnerOrganizationResponse(request assessment.Request) assessment.Response 
 	response := assessment.Response{RequestID: request.RequestID, Definitions: []assessment.Definition{}, Items: []assessment.Decision{}, Equivalence: []assessment.Equivalence{}}
 	created := map[string]string{}
 	for _, item := range request.Items {
-		kind, key := ontology.Topic, "runner-storage"
-		ref := item.LockedDefinitionRef
-		if ref == "" {
-			ref = item.PreferredDefinitionRef
+		if item.LockedDefinitionRef != "" {
+			continue
 		}
+		kind, key := ontology.Topic, "runner-storage"
+		ref := item.PreferredDefinitionRef
 		if ref == "" {
 			for _, definition := range request.Definitions {
 				if definition.Kind == kind {
@@ -263,11 +266,9 @@ func runnerOrganizationResponse(request assessment.Request) assessment.Response 
 		response.Items = append(response.Items, assessment.Decision{Ref: item.Ref, Status: "classified", DefinitionRef: ref})
 	}
 	for _, pair := range request.Pairs {
-		relation := pair.RequiredRelation
-		if relation == "" {
-			relation = "distinct"
+		if pair.RequiredRelation == "" {
+			response.Equivalence = append(response.Equivalence, assessment.Equivalence{Ref: pair.Ref, Relation: "distinct"})
 		}
-		response.Equivalence = append(response.Equivalence, assessment.Equivalence{Ref: pair.Ref, Relation: relation})
 	}
 	return response
 }

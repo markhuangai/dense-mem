@@ -45,7 +45,7 @@ func TestOntologyContextAndRepairWitnessesUseNativeHTTPHistory(t *testing.T) {
 				require.NoError(t, json.NewDecoder(r.Body).Decode(&envelope))
 				require.Len(t, envelope.Messages, 2+2*(calls-1))
 				require.Contains(t, envelope.Messages[0].Content, "supplied owner and provenance context")
-				require.Contains(t, envelope.Messages[0].Content, "Copy nonempty locked_definition_ref")
+				require.Contains(t, envelope.Messages[0].Content, "omit those refs from the response")
 				var immutable assessment.Request
 				require.NoError(t, json.Unmarshal([]byte(envelope.Messages[1].Content), &immutable))
 				require.Equal(t, request, immutable)
@@ -71,15 +71,17 @@ func TestOntologyContextAndRepairWitnessesUseNativeHTTPHistory(t *testing.T) {
 				}
 				response := assessment.Response{RequestID: request.RequestID, Definitions: []assessment.Definition{}, Items: []assessment.Decision{}, Equivalence: []assessment.Equivalence{}}
 				for _, item := range request.Items {
-					response.Items = append(response.Items, assessment.Decision{Ref: item.Ref, Status: "classified", DefinitionRef: topicRef})
+					if item.LockedDefinitionRef == "" {
+						response.Items = append(response.Items, assessment.Decision{Ref: item.Ref, Status: "classified", DefinitionRef: topicRef})
+					}
 				}
 				if mode == "legitimate_ambiguity" {
-					response.Items[19] = assessment.Decision{Ref: "s19", Status: "ambiguous", Reason: "The supplied meaning is insufficient."}
+					response.Items[18] = assessment.Decision{Ref: "s19", Status: "ambiguous", Reason: "The supplied meaning is insufficient."}
 				} else if mode == "missing_decision_exhausted" || mode == "repair_succeeds" && calls < 3 {
-					response.Items = response.Items[:19]
+					response.Items = response.Items[:18]
 				}
 				if mode == "empty_lock" {
-					response.Items[8] = assessment.Decision{Ref: "s8", Status: "ambiguous", Reason: "The evidence does not establish a suitable topic."}
+					response.Items[7] = assessment.Decision{Ref: "s8", Status: "ambiguous", Reason: "The evidence does not establish a suitable topic."}
 				}
 				if mode == "unused_definition_exhausted" {
 					response.Definitions = append(response.Definitions, assessment.Definition{Ref: fmt.Sprintf("unused%d", calls), Kind: contract.Topic,

@@ -96,6 +96,13 @@ default 30 days; stdout retention remains deployment-owned.
 
 ## Operator assessment diagnostics
 
+Automatic organization asks the model to fill only the topic assignments and
+pair comparisons that the server has yet to resolve. The request includes fixed
+decisions as context. The v4 provider schema requires a reply for every open
+reference. Dense-Mem rejects extra references and checks the combined
+equivalence decisions before publication. A fully resolved batch uses zero
+provider attempts.
+
 Ontology assessment receipts and maintenance attempt logs retain an optional
 `validation` object for rejected provider responses. Its stage, rule code and
 field family are server-owned identifiers; expected and actual counts appear

@@ -140,24 +140,7 @@ func (s *Service) Organize(ctx context.Context, teamID string, input contract.Or
 	s.provider.Observe(ctx, observation)
 	response := assessment.Response{RequestID: request.RequestID, Definitions: []assessment.Definition{}, Items: []assessment.Decision{}, Equivalence: []assessment.Equivalence{}}
 	if len(request.Items) > 0 {
-		deterministic := true
-		for _, item := range request.Items {
-			if item.LockedDefinitionRef == "" {
-				deterministic = false
-			}
-			response.Items = append(response.Items, assessment.Decision{Ref: item.Ref, Status: "classified", DefinitionRef: item.LockedDefinitionRef})
-		}
-		for _, pair := range request.Pairs {
-			if pair.RequiredRelation == "" {
-				deterministic = false
-			}
-			response.Equivalence = append(response.Equivalence, assessment.Equivalence{Ref: pair.Ref, Relation: pair.RequiredRelation})
-		}
-		if deterministic {
-			err = assessment.Validate(request, response)
-		} else {
-			response, receipt.Result.Attempts, err = s.provider.Assess(ctx, request)
-		}
+		response, receipt.Result.Attempts, err = s.provider.Assess(ctx, request)
 		if err != nil {
 			return s.finish(ctx, teamID, receipt, contract.Publication{}, err)
 		}

@@ -70,7 +70,7 @@ func TestRuntimeLogDockerOwnershipAndCompleteCollection(t *testing.T) {
 	require.NoError(t, stopRuntime(ctx, owner, false))
 	require.NoError(t, runtimeLogs(ctx, owner, capture, usage, true, true))
 	require.Len(t, usage, 5)
-	require.EqualValues(t, 1, usage["ontology"].Unavailable)
+	require.EqualValues(t, 2, usage["ontology"].Unavailable)
 	protected := runtimeCapturePayloads(t, output.Bytes())
 	require.NotContains(t, protected, runtimeLogKeyCanary)
 	require.NotContains(t, protected, runtimeLogURLCanary)

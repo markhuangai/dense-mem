@@ -1812,7 +1812,7 @@ test(`${shardCount} precheck shards preserve every real runner selection exactly
   }
   assert.equal(new Set(actual).size, actual.length);
   assert.deepEqual(actual.sort(), inventory.sort());
-  assert.equal(actual.length, 626);
+  assert.equal(actual.length, 627);
   assert.equal(counts[0], shardCount === 6 ? 11 : 1);
   assert.equal(counts[1], shardCount === 6 ? 2 : 1);
   assert.equal((await run("bash", ["-c", command, "six-shards", root])).stdout, stdout);

@@ -239,7 +239,7 @@ func logReader(ctx context.Context, reader io.Reader, capture *evalharness.Captu
 						item.Phase = "intake_partition"
 					case "dense_mem_evidence_assessment_response":
 						item.Phase = "intake_assessment"
-					case "ontology_evidence_organization_v3":
+					case "ontology_evidence_organization_v3", "ontology_evidence_organization_v4":
 						item.Phase = "ontology"
 					default:
 						if request.Input != nil {
