@@ -25,6 +25,7 @@ import (
 	organization "github.com/markhuangai/dense-mem/internal/ontology"
 	"github.com/markhuangai/dense-mem/internal/ontology/assessment"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
+	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -218,15 +219,20 @@ func studyService(t *testing.T, f *ontologyFixture, repo *studyRepository) *orga
 	})
 }
 
-func studyRecall(t *testing.T, f *ontologyFixture, term string) ontology.RecallOrganization {
-	t.Helper()
+func readStudyRecall(f *ontologyFixture, term string, limit int) (ontology.RecallOrganization, error) {
 	var found ontology.RecallOrganization
 	ctx := f.actor(0, "manager")
-	err := f.rls.WithTeamTx(ctx, f.app, f.team, func(tx *gorm.DB) error {
+	err := f.rls.WithTeamReadOnlyRepeatableTx(ctx, f.app, f.team, func(tx *gorm.DB) error {
 		var err error
-		found, err = f.store.ReadRecall(ctx, tx, f.team, ontology.RecallReadInput{SpaceID: f.space, Query: term, Limit: 20})
+		found, err = f.store.ReadRecall(ctx, tx, f.team, ontology.RecallReadInput{SpaceID: f.space, Query: term, Limit: limit})
 		return err
 	})
+	return found, err
+}
+
+func studyRecall(t *testing.T, f *ontologyFixture, term string) ontology.RecallOrganization {
+	t.Helper()
+	found, err := readStudyRecall(f, term, recallcontract.MaxRecallCandidateCount)
 	require.NoError(t, err)
 	require.Empty(t, found.Degradation)
 	return found
@@ -280,8 +286,26 @@ func studyFinalQuality(t *testing.T, f *ontologyFixture, seed *buildStudySeed) s
 	}
 	var recalls []ontology.RecallOrganization
 	for i := range seed.classes {
-		result := studyRecall(t, f, studyClass(i))
-		require.NotEmpty(t, result.Sources)
+		term := studyClass(i)
+		var want []string
+		for _, source := range seed.sources {
+			if seed.classByID[source.ID] == term && source.ID != seed.sources[0].ID {
+				want = append(want, source.ID)
+			}
+		}
+		slices.Sort(want)
+		const narrowBudget = 20
+		if len(want) > narrowBudget {
+			_, err := readStudyRecall(f, term, narrowBudget)
+			require.ErrorIs(t, err, ontology.ErrContextBound, "bounded reader must expose an incomplete candidate pool")
+		}
+		result := studyRecall(t, f, term)
+		var got []string
+		for _, source := range result.Sources {
+			got = append(got, source.ID)
+		}
+		require.NotEmpty(t, want)
+		require.Equal(t, want, got, "all ordered direct members for %s", term)
 		recalls = append(recalls, result)
 	}
 	corrected := studyRecall(t, f, seed.correctionTopic.Definition.Key)
