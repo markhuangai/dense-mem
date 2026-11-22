@@ -43,6 +43,27 @@ def vector_source(original):
     return original[:start]+block+original[end:]
 
 
+def page_overlay(directory):
+    source = Path("internal/ontology/postgres/maintenance_discovery.go").resolve()
+    original = source.read_text()
+    anchor = "\t\tif kind < len(maintenanceSourceKinds) {"
+    if original.count(anchor) != 1 or original.count('"strings"') != 1:
+        raise ValueError("unexpected discovery source")
+    invocation = """\t\tselectedLimit, err := studyDiscoveryPageLimit(tx, fence, kind, turn, limit)
+\t\tif err != nil {
+\t\t\treturn err
+\t\t}
+\t\tlimit = selectedLimit
+"""
+    directory.mkdir(exist_ok=True, parents=True)
+    variant = directory.resolve() / source.name
+    function = Path("tests/eval/scripts/ontology_build_pages.go.inc").read_text()
+    variant.write_text(original.replace('"strings"', '"os"\n\t"strings"').replace(anchor, invocation + anchor) + "\n" + function)
+    overlay = directory / "overlay.json"
+    overlay.write_text(json.dumps({"Replace": {str(source): str(variant)}}))
+    return overlay
+
+
 @contextlib.contextmanager
 def study_migration(arm):
     if arm != "vector":
@@ -80,6 +101,8 @@ def cohorts(arm, directory):
             overlay = Path(temp) / "overlay.json"
             overlay.write_text(json.dumps({"Replace": {str(source): str(variant)}}))
             command.extend(["-overlay", str(overlay)])
+        elif arm == "pages":
+            command.extend(["-overlay", str(page_overlay(Path(temp)))])
         required = [
             "TestOntologyOrganizationCohort", "TestOntologyMaintenanceMatchingCohort",
             "TestOntologyOrganizationBatchedVocabulary", "TestOntologyOrganizationBatchedPublicationFences",
@@ -87,7 +110,7 @@ def cohorts(arm, directory):
             "TestRecallAccuracyCohort",
         ]
         command += ["-run", "^(" + "|".join(required) + ")$", "./internal/ontology/postgres", "./internal/recall/postgres"]
-        p = subprocess.Popen(command, stdout=subprocess.PIPE, text=True)
+        p = subprocess.Popen(command, stdout=subprocess.PIPE, text=True, env={**os.environ, "ONTOLOGY_STUDY_ACTIVE_ARM": arm})
         fragments = {}
         recall_cases = []
         for line in p.stdout:
@@ -122,6 +145,22 @@ def cohorts(arm, directory):
             raise SystemExit("incomplete real PostgreSQL quality cohorts")
 
 
+def compare_scheduled_inputs(streams):
+    for arm, size in (("base", 100), ("pages", 25)):
+        turns = streams[arm]
+        if len(turns) != 3 or turns[0]["PageLimit"] != size or not any(t["Requests"] for t in turns):
+            raise ValueError("incomplete scheduled probe for " + arm)
+    changes = []
+    for index, (left, right) in enumerate(zip(streams["base"], streams["pages"]), start=1):
+        fields = [f for f in ("Sources", "Candidates") if left[f] != right[f]]
+        requests = [[{k: v for k, v in r.items() if k != "request_id"} for r in turn["Requests"]] for turn in (left, right)]
+        if requests[0] != requests[1]:
+            fields.append("Requests")
+        if fields:
+            changes.append({"turn": index, "different": fields})
+    return changes
+
+
 def compare(directory, datasets):
     passed = True
     all_reports = {}
@@ -135,6 +174,7 @@ def compare(directory, datasets):
         variant = data.get("Candidate", "topic")
         if variant not in ("topic","vector","pages"):
             raise ValueError("unknown study candidate")
+        schedule_changes = compare_scheduled_inputs(data["ScheduledInputs"]) if variant == "pages" else None
         expected = {(pair, arm) for pair in range(1,5) for arm in ("base",variant)}
         if len(runs) != 8 or set(groups) != expected or not data["FixedInputSHA"]:
             raise ValueError("incomplete paired evidence for " + name)
@@ -159,7 +199,7 @@ def compare(directory, datasets):
         all_reports[name] = {"candidate":variant,"report_sha256":hashlib.sha256(p.read_bytes()).hexdigest(), "base_ms":base, "candidate_ms":candidate, "paired_saving_ms":savings,
                              "base_mad_ms":repeat_noise, "median_paired_speedup":statistics.median(a/b for a,b in zip(base,candidate)),
                              "base_correction_ms":bc,"candidate_correction_ms":cc,"consistent_speedup":consistent,"correction_regression":correction_slower,
-                             "advance":passes}
+                             "scheduled_input_differences":schedule_changes, "advance":passes}
     out = {"datasets":all_reports,"advance":passed}
     print(json.dumps(out,indent=2))
     (directory / "comparison.json").write_text(json.dumps(out, indent=2)+"\n")
@@ -172,16 +212,20 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
     cohort = sub.add_parser("cohorts")
-    cohort.add_argument("arm", choices=["base","topic","vector"])
+    cohort.add_argument("arm", choices=["base","topic","vector","pages"])
     cohort.add_argument("directory", type=Path)
     comparison = sub.add_parser("compare")
     comparison.add_argument("directory", type=Path)
     comparison.add_argument("datasets", nargs="+")
     render = sub.add_parser("render-vector")
     render.add_argument("output", type=Path)
+    pages = sub.add_parser("render-pages")
+    pages.add_argument("directory", type=Path)
     args = parser.parse_args()
     if args.command == "render-vector":
         args.output.write_text(vector_ddl())
+    elif args.command == "render-pages":
+        page_overlay(args.directory)
     elif args.command == "cohorts":
         cohorts(args.arm,args.directory)
     else:

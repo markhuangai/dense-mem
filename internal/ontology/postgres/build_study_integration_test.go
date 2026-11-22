@@ -165,11 +165,45 @@ func proveStudyQueueTransitions(t *testing.T, f *ontologyFixture, seed *buildStu
 	}
 }
 
+func proveStudyInitialPage(t *testing.T, f *ontologyFixture) {
+	t.Helper()
+	t.Setenv("ONTOLOGY_STUDY_ACTIVE_ARM", "pages")
+	ctx := context.Background()
+	window := maintenanceWindow(t, f, buildStudySettings(f))
+	turn, err := f.store.ClaimMaintenanceTurn(ctx, window.ID, time.Now(), 5*time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, turn)
+	require.NoError(t, f.store.withScope(ctx, f.team, false, func(tx *gorm.DB, fence scope) error {
+		updated := tx.Exec(`UPDATE ontology_maintenance_teams SET discovery_kind=0,discovery_cursor=''
+			WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND lease_token=?::uuid`,
+			fence.TeamID, fence.SpaceID, fence.Generation, turn.LeaseToken)
+		if updated.Error == nil && updated.RowsAffected != 1 {
+			return errors.New("could not restore initial enumeration cursor on study clone")
+		}
+		return updated.Error
+	}))
+	var observed int
+	ctx = context.WithValue(ctx, maintenanceDiscoveryObservationKey{}, maintenanceDiscoveryObserver(func(event maintenanceDiscoveryEvent) {
+		if event.Phase == "study_page_limit" {
+			observed = event.Sources
+		}
+	}))
+	result, err := f.store.DiscoverMaintenance(ctx, *turn, ontology.MaintenancePageSize)
+	require.NoError(t, err)
+	require.True(t, result.Committed)
+	require.Equal(t, ontology.MaintenancePageSize, observed)
+	require.Equal(t, observed, result.Counts.InitialSources)
+	require.NoError(t, f.store.ReleaseMaintenanceTurn(ctx, *turn))
+}
+
 type studyPage struct {
 	Changes                studyQueueChanges
 	Milliseconds           float64
 	Counts                 ontology.MaintenanceDiscoveryCounts
 	ValidationMilliseconds float64
+	Limit                  int
+	Lease                  string
+	BatchClaimed           time.Time
 }
 
 type studyRepository struct {
@@ -184,10 +218,13 @@ type studyRepository struct {
 
 func (r *studyRepository) DiscoverMaintenance(ctx context.Context, turn ontology.MaintenanceTurn, limit int) (ontology.MaintenanceDiscoveryResult, error) {
 	var elapsed time.Duration
+	var observedLimit int
 	selected := make(map[ontology.SourceHandle]bool)
 	receipts := make(map[string]bool)
 	observe := func(e maintenanceDiscoveryEvent) {
 		switch e.Phase {
+		case "study_page_limit":
+			observedLimit = e.Sources
 		case "source_finished":
 			if e.Err == nil {
 				selected[e.Source] = true
@@ -205,7 +242,8 @@ func (r *studyRepository) DiscoverMaintenance(ctx context.Context, turn ontology
 		return result, err
 	}
 	r.mu.Lock()
-	r.pages = append(r.pages, studyPage{changes, float64(result.Duration.Microseconds()) / 1000, result.Counts, float64(elapsed.Microseconds()) / 1000})
+	r.pages = append(r.pages, studyPage{Changes: changes, Milliseconds: float64(result.Duration.Microseconds()) / 1000,
+		Counts: result.Counts, ValidationMilliseconds: float64(elapsed.Microseconds()) / 1000, Limit: observedLimit, Lease: turn.LeaseToken})
 	for source := range selected {
 		r.refreshed[source] = true
 	}
@@ -223,7 +261,29 @@ func (r *studyRepository) DiscoverMaintenance(ctx context.Context, turn ontology
 	return result, nil
 }
 
-func studyService(t *testing.T, f *ontologyFixture, repo *studyRepository) *organization.MaintenanceService {
+func (r *studyRepository) ClaimMaintenanceBatch(ctx context.Context, turn ontology.MaintenanceTurn, window string, now time.Time) (*ontology.MaintenanceClaim, error) {
+	r.mu.Lock()
+	page := len(r.pages) - 1
+	observed := page >= 0 && r.pages[page].Lease == turn.LeaseToken
+	r.mu.Unlock()
+	if !observed {
+		return nil, errors.New("batch claim without its committed discovery page")
+	}
+	claim, err := r.MaintenanceRepository.ClaimMaintenanceBatch(ctx, turn, window, now)
+	if err == nil && claim != nil {
+		r.mu.Lock()
+		r.pages[page].BatchClaimed = time.Now()
+		r.mu.Unlock()
+	}
+	return claim, err
+}
+
+func newStudyRepository(f *ontologyFixture) *studyRepository {
+	return &studyRepository{MaintenanceRepository: f.store, first: make(chan struct{}), resume: make(chan struct{}),
+		refreshed: map[ontology.SourceHandle]bool{}, receipts: map[string]bool{}}
+}
+
+func studyService(t *testing.T, f *ontologyFixture, repo *studyRepository, classify func(assessment.Request, *assessment.Response), observer assessment.Observer) *organization.MaintenanceService {
 	return organization.NewMaintenanceService(organization.MaintenanceDependencies{
 		Repository: repo, Config: buildStudySettings(f), DefaultModel: "fixture-model", ProviderTimeout: time.Minute,
 		Audit: auditapp.New(auditpg.NewStore(f.app, f.rls)),
@@ -231,8 +291,8 @@ func studyService(t *testing.T, f *ontologyFixture, repo *studyRepository) *orga
 			if a == nil {
 				return organization.NewService(nil, assessment.NewProvider(nil, model, maintenanceFixtureLimits(), int(tokens)))
 			}
-			service, _ := organizationFixtureServiceWithAccounting(t, f, nil, studyClassification, model, maintenanceFixtureLimits(), a, int(tokens), map[string]int{"prompt_tokens": 40, "completion_tokens": 20, "total_tokens": 60})
-			return service
+			service, _ := organizationFixtureServiceWithAccounting(t, f, nil, classify, model, maintenanceFixtureLimits(), a, int(tokens), map[string]int{"prompt_tokens": 40, "completion_tokens": 20, "total_tokens": 60})
+			return service.WithDiagnostics(observer)
 		},
 	})
 }
@@ -362,6 +422,8 @@ func studyFixedProbe(t *testing.T, f *ontologyFixture, seed *buildStudySeed, arm
 }
 
 type studyTiming struct {
+	SmallPages, FullPages, LastPageSize, PagesBeforeReadyBatch                                 int
+	FirstBatchMS, DiscoveryBeforeReadyBatchMS, ReadyPageP95MS                                  float64
 	BackfillAndVerificationMS, CorrectionPublicationMS, DiscoveryMS, DiscoveryQueryReturnMS    float64
 	ExampleVocabularyPlan                                                                      studyQueryPlan
 	NewPending, RefreshedPending, DiscoveryRefreshWrites                                       int
@@ -376,6 +438,61 @@ type studyTiming struct {
 	Quality                                                                                    studyQuality
 }
 
+type studyScheduledInput struct {
+	PageLimit  int
+	Sources    []ontology.SourceHandle
+	Candidates []ontology.RecordView
+	Requests   []assessment.Request
+}
+
+func studyScheduledInputs(t *testing.T, f *ontologyFixture, seed *buildStudySeed, arm string) []studyScheduledInput {
+	t.Helper()
+	t.Setenv("ONTOLOGY_STUDY_ACTIVE_ARM", arm)
+	repo := newStudyRepository(f)
+	close(repo.resume)
+	var turns []studyScheduledInput
+	totalRequests := 0
+	for i := range 3 {
+		if i == 1 {
+			revalidationPublish(t, f, ontology.Change{Record: seed.correctionTopic}, ontology.Change{Record: seed.override})
+		}
+		input := studyScheduledInput{Requests: []assessment.Request{}}
+		var mu sync.Mutex
+		classify := func(request assessment.Request, response *assessment.Response) {
+			mu.Lock()
+			input.Requests = append(input.Requests, request)
+			mu.Unlock()
+			studyClassification(request, response)
+		}
+		observe := func(_ context.Context, d assessment.Diagnostic) {
+			if d.Stage == "completed" && d.SourceContext != nil && d.Input != nil {
+				input.Sources = d.Input.Sources
+				input.Candidates = d.SourceContext.Candidates
+			}
+		}
+		service := studyService(t, f, repo, classify, observe)
+		progress, err := service.RunTurn(context.Background())
+		require.NoError(t, err)
+		require.True(t, progress)
+		require.Len(t, repo.pages, i+1)
+		require.False(t, repo.pages[i].BatchClaimed.IsZero())
+		input.PageLimit = repo.pages[i].Limit
+		require.NotEmpty(t, input.Sources)
+		require.NotEmpty(t, input.Candidates)
+		mu.Lock()
+		totalRequests += len(input.Requests)
+		turns = append(turns, input)
+		mu.Unlock()
+	}
+	require.Positive(t, totalRequests, "record real provider HTTP requests from native maintenance turns")
+	if arm == "pages" {
+		require.Equal(t, 25, turns[0].PageLimit)
+	} else {
+		require.Equal(t, ontology.MaintenancePageSize, turns[0].PageLimit)
+	}
+	return turns
+}
+
 func studyMarkerInfo(t *testing.T, f *ontologyFixture) (int, float64) {
 	t.Helper()
 	var count int
@@ -387,11 +504,12 @@ func studyMarkerInfo(t *testing.T, f *ontologyFixture) (int, float64) {
 
 func timeStudyArm(t *testing.T, f *ontologyFixture, seed *buildStudySeed, arm string, pair int) studyTiming {
 	t.Helper()
+	t.Setenv("ONTOLOGY_STUDY_ACTIVE_ARM", arm)
 	ctx := context.Background()
 	stats := instrumentStudyQuery(t, f, arm)
 	observeStudyQueue(t, f)
-	repo := &studyRepository{MaintenanceRepository: f.store, first: make(chan struct{}), resume: make(chan struct{}), refreshed: map[ontology.SourceHandle]bool{}, receipts: map[string]bool{}}
-	service := studyService(t, f, repo)
+	repo := newStudyRepository(f)
+	service := studyService(t, f, repo, studyClassification, nil)
 	before, err := f.store.MaintenanceStatus(ctx, time.Now())
 	require.NoError(t, err)
 	require.Positive(t, before.Counts.Pending)
@@ -461,8 +579,21 @@ func timeStudyArm(t *testing.T, f *ontologyFixture, seed *buildStudySeed, arm st
 	m.ExampleVocabularyPlan = explainStudyQuery(t, f, stats)
 	m.UniqueRefreshed = len(repo.refreshed)
 	m.DistinctReceipts = len(repo.receipts)
-	var timings []float64
+	var timings, readyTimings []float64
 	for _, p := range repo.pages {
+		m.LastPageSize = p.Limit
+		if p.Limit == 25 {
+			m.SmallPages++
+		} else if p.Limit == ontology.MaintenancePageSize {
+			m.FullPages++
+		}
+		if !p.BatchClaimed.IsZero() {
+			if m.FirstBatchMS == 0 {
+				m.FirstBatchMS = float64(p.BatchClaimed.Sub(start).Microseconds()) / 1000
+			}
+			m.DiscoveryBeforeReadyBatchMS += p.Milliseconds
+			readyTimings = append(readyTimings, p.Milliseconds)
+		}
 		m.DiscoveryMS += p.Milliseconds
 		m.MarkersCompleted += p.Counts.CompletedMarkers
 		m.MarkerMatches += p.Counts.EnumeratedMatches
@@ -478,6 +609,19 @@ func timeStudyArm(t *testing.T, f *ontologyFixture, seed *buildStudySeed, arm st
 	slices.Sort(timings)
 	m.Pages = len(timings)
 	require.NotEmpty(t, timings)
+	require.NotEmpty(t, readyTimings)
+	slices.Sort(readyTimings)
+	m.PagesBeforeReadyBatch = len(readyTimings)
+	m.ReadyPageP95MS = readyTimings[(95*len(readyTimings)+99)/100-1]
+	if os.Getenv("ONTOLOGY_STUDY_VARIANT") == "pages" {
+		require.Equal(t, m.Pages, m.SmallPages+m.FullPages, "observe the effective limit inside every committed discovery transaction")
+		require.Equal(t, ontology.MaintenancePageSize, m.LastPageSize, "finish with a full-size page")
+		if arm == "pages" {
+			require.Positive(t, m.SmallPages)
+		} else {
+			require.Zero(t, m.SmallPages)
+		}
+	}
 	m.PageMedianMS = timings[len(timings)/2]
 	m.PageP95MS = timings[(95*len(timings)+99)/100-1]
 	require.Positive(t, m.QueryCount)
@@ -490,15 +634,24 @@ func timeStudyArm(t *testing.T, f *ontologyFixture, seed *buildStudySeed, arm st
 func TestMatureOntologyBuildComparison(t *testing.T) {
 	shape := studyShape(t)
 	candidate := os.Getenv("ONTOLOGY_STUDY_VARIANT")
-	require.Contains(t, []string{"topic", "vector"}, candidate)
+	require.Contains(t, []string{"topic", "vector", "pages"}, candidate)
 	seed := buildStudyTemplate(t, shape)
 	cloner := newBuildStudyCloner(t, seed)
 	if !t.Run("queue-transitions", func(t *testing.T) { proveStudyQueueTransitions(t, cloner.clone(t), seed) }) {
 		return
 	}
+	if candidate == "pages" && !t.Run("initial-page", func(t *testing.T) { proveStudyInitialPage(t, cloner.clone(t)) }) {
+		return
+	}
 	inputHashes := map[string]string{}
+	scheduled := map[string][]studyScheduledInput{}
 	for _, arm := range []string{"base", candidate} {
 		if !t.Run("fixed-input-"+arm, func(t *testing.T) { inputHashes[arm] = studyFixedProbe(t, cloner.clone(t), seed, arm) }) {
+			return
+		}
+		if candidate == "pages" && !t.Run("scheduled-input-"+arm, func(t *testing.T) {
+			scheduled[arm] = studyScheduledInputs(t, cloner.clone(t), seed, arm)
+		}) {
 			return
 		}
 	}
@@ -527,8 +680,9 @@ func TestMatureOntologyBuildComparison(t *testing.T) {
 		Shape                                        buildStudyShape
 		SeedSources, BackgroundTopics, ChangeMarkers int
 		FixedInputSHA                                string
+		ScheduledInputs                              map[string][]studyScheduledInput
 		Runs                                         []studyTiming
-	}{"ontology-build-drain-v1", candidate, shape, len(seed.sources), seed.backgroundTopics, seed.startingMarkers, inputHashes["base"], runs}
+	}{"ontology-build-drain-v1", candidate, shape, len(seed.sources), seed.backgroundTopics, seed.startingMarkers, inputHashes["base"], scheduled, runs}
 	b, err := json.MarshalIndent(report, "", "  ")
 	require.NoError(t, err)
 	dir := os.Getenv("ONTOLOGY_STUDY_REPORT_DIR")

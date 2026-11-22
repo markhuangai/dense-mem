@@ -5,7 +5,7 @@ on:
 permissions:
   contents: read
 env:
-  ONTOLOGY_STUDY_VARIANT: vector
+  ONTOLOGY_STUDY_VARIANT: pages
 
 jobs:
   accuracy:
@@ -56,9 +56,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          export ONTOLOGY_STUDY_VECTOR_SQL="$RUNNER_TEMP/ontology-study-vector.sql"
-          python3 tests/eval/scripts/ontology_build_study.py render-vector "$ONTOLOGY_STUDY_VECTOR_SQL"
-          go test -tags=integration,ontology_study -count=1 -timeout=145m -run '^TestMatureOntologyBuildComparison$' -v ./internal/ontology/postgres
+          options=()
+          if [[ "$ONTOLOGY_STUDY_VARIANT" == pages ]]; then
+            python3 tests/eval/scripts/ontology_build_study.py render-pages "$RUNNER_TEMP/ontology-pages"
+            options+=("-overlay=$RUNNER_TEMP/ontology-pages/overlay.json")
+          elif [[ "$ONTOLOGY_STUDY_VARIANT" == vector ]]; then
+            export ONTOLOGY_STUDY_VECTOR_SQL="$RUNNER_TEMP/ontology-study-vector.sql"
+            python3 tests/eval/scripts/ontology_build_study.py render-vector "$ONTOLOGY_STUDY_VECTOR_SQL"
+          fi
+          go test "${options[@]}" -tags=integration,ontology_study -count=1 -timeout=145m -run '^TestMatureOntologyBuildComparison$' -v ./internal/ontology/postgres
       - uses: actions/upload-artifact@v7
         if: always()
         with:
