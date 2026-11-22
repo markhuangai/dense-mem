@@ -1,19 +1,8 @@
 # Capability contract ownership
 
-The schema-version-2 architecture manifest is assembled from capability
-fragments under `architecture/modules/`. Each fragment owns the exact source
-units, worker anchors, and database-case registrations for one capability. The
-central manifest owns discovery, profiles, and fragment inventory. The loader
-rejects missing, duplicate, unlisted, or undiscovered units.
-
-The dependency role matrix is defined once by `architecture/manifest.mjs` and
-is injected into the merged manifest. It is not copied into the JSON inventory.
-
-The dependency direction is transport to application to domain and ports.
-PostgreSQL adapters implement capability ports and may use only domain, ports,
-and the shared PostgreSQL infrastructure. Composition constructs private
-adapters. Cross-capability imports require a public target; private units stay
-inside their owning capability.
+[ADR 0019](../adr/0019-code-ownership-and-design-review.md) defines the
+dependency direction and design review standard. The packages below own
+specific parts of the supported runtime behavior.
 
 ## Native owners
 
@@ -85,11 +74,6 @@ files and are covered by the normal Go test suite. The frozen baseline preserves
 IDs, run expressions, phases, and scenario ownership while allowing a
 capability to relocate a fixture to its native package.
 
-The central architecture manifest, registry loader, composition root, and E2E
-host controller are shared read-only infrastructure for capability cutovers.
-Native fragments and fixtures may update their own ownership records and
-registrations without restoring a broad shared facade.
-
 ## Coverage and verification
 
 Database-free Go production and evaluation packages, browser modules, and the
@@ -98,8 +82,6 @@ sources, empty reports, omitted browser modules, exact-boundary percentages,
 and profile duplication. PostgreSQL adapter and integration coverage remains a
 separate proof of SQL, RLS, transaction, lock, and concurrency behavior.
 
-The architecture conformance UAT and checker validate fragment completeness,
-visibility, dependency direction, worker anchors, database-case ownership, and
-the absence of retired migration metadata. Workers remain permanent ownership
-records; their identities are discovered from source and compared with the
-manifest on every check.
+Design review follows changed callers, contracts, and private implementations.
+Exercise worker startup, cancellation, and shutdown at their lifecycle
+boundary when that behavior changes.

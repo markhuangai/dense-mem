@@ -183,7 +183,7 @@ function assertSharedCI(shared, supportedVersions) {
   const quality = shared.jobs.quality;
   for (const command of [
     "npm ci --prefix .lint", "npm ci --prefix packages/mcp-proxy", "npm run --prefix .lint lint:lines",
-    "node scripts/check-architecture.mjs", "npm run test:coverage --prefix packages/mcp-proxy",
+    "node --test tests/uat/coverage_policy.test.mjs", "npm run test:coverage --prefix packages/mcp-proxy",
     "node --test tests/uat/image_release_policy.test.mjs", "node --test tests/uat/prerelease_version.test.mjs",
     "node --test tests/uat/go_vulnerability_scan_policy.test.mjs", "node --test tests/uat/ai_pr_review_policy.test.mjs",
     "node --test tests/uat/npm_vulnerability_scan_policy.test.mjs",
@@ -244,7 +244,7 @@ test("shared CI partitions slow gates independently of YAML layout and setup ver
   assertSharedCI(parseWorkflow(stringifyWorkflow(upgraded, { indent: 4, sortKeys: true, forceQuotes: true })), supported);
   for (const mutate of [
     (w) => { delete w.jobs["go-tests"]; },
-    (w) => { w.jobs.quality.steps = w.jobs.quality.steps.filter((step) => !step.run?.includes("node scripts/check-architecture.mjs")); },
+    (w) => { w.jobs.quality.steps = w.jobs.quality.steps.filter((step) => !step.run?.includes("node --test tests/uat/coverage_policy.test.mjs")); },
     (w) => { w.jobs.python.strategy.matrix.python.pop(); },
     (w) => { w.jobs.python.strategy.matrix.python.push("9.99"); },
     (w) => { w.jobs.python.strategy.matrix.include = []; },

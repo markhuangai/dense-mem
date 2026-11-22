@@ -10,8 +10,6 @@ npm ci --prefix .lint
 npm ci --prefix web
 npm ci --prefix packages/mcp-proxy
 npm run --prefix .lint lint:lines
-node scripts/check-architecture.mjs
-node --test tests/uat/architecture_conformance.test.mjs
 node --test tests/uat/synchronous_write/*.test.mjs
 node --test tests/uat/decision_providers/*.test.mjs
 node --test tests/uat/embedding_upstream.test.mjs
