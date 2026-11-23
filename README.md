@@ -51,8 +51,9 @@ server without running tests, run python3 with the built preview directory.
 
     python3 -m http.server --bind 127.0.0.1 --directory _preview 4173
 
-The source linker verifies pinned code paths against Git history. In a shallow
-clone, fetch the application and migration source revisions before running it.
+The link check verifies cited files and lines at their pinned commits. It
+reads GitHub's public source for historical commits that are absent from the
+checkout. The migration inventory check reads its source revision from Git.
 
 ## Browser assets
 

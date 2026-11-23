@@ -6,7 +6,9 @@ from pathlib import Path
 import re
 import subprocess
 import sys
-from urllib.parse import unquote, urljoin, urlsplit
+from urllib.error import URLError
+from urllib.parse import quote, unquote, urljoin, urlsplit
+from urllib.request import urlopen
 
 BASE = "https://markhuangai.github.io/dense-mem/"
 REPOSITORY = "https://github.com/markhuangai/dense-mem/"
@@ -47,10 +49,18 @@ def check_source(relative, text):
     ref = parts[1] + ":" + parts[2]
     if ref not in checked_blobs:
         result = subprocess.run(["git", "show", ref], capture_output=True, check=False)
-        checked_blobs[ref] = len(result.stdout.splitlines()) if result.returncode == 0 else None
+        if result.returncode == 0:
+            checked_blobs[ref] = len(result.stdout.splitlines())
+        else:
+            # GitHub retains some cited review commits outside branch history.
+            raw = "https://raw.githubusercontent.com/markhuangai/dense-mem/" + parts[1] + "/" + quote(parts[2])
+            try:
+                with urlopen(raw, timeout=10) as response:
+                    checked_blobs[ref] = len(response.read().splitlines())
+            except (URLError, OSError) as failure:
+                errors.append(f"{text}: unable to read pinned source {ref} ({failure})")
+                checked_blobs[ref] = None
     length = checked_blobs[ref]
-    if length is None:
-        errors.append(f"{text}: missing {ref}")
     for line in re.findall(r"L(\d+)", uri.fragment):
         if length is not None and not 1 <= int(line) <= length:
             errors.append(f"{text}: line {line} outside {ref}")
