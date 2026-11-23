@@ -14,15 +14,15 @@
 - Do not add repository references to local paths for separately maintained
   documentation. State the invariant directly in this repository.
 - Keep both root README languages concise, with a working quickstart and a
-  prominent wiki link. Put file-specific instructions in directory README files.
-- The `wiki` branch owns wiki pages; feature PRs target `main`, while companion
-  documentation PRs target `wiki` without product review or product CI gates.
-  Link the wiki PR for documented behavior changes, or explain why none is needed.
-  Update affected directory guides with the feature and maintain one canonical
-  explanation per subject. Preserve source-versus-deployment availability.
-- Publish the wiki only through the trusted main-branch publisher after wiki
-  merges. Reconcile direct live edits through a wiki PR; do not merge application
-  `main` into `wiki` or edit the live wiki as a competing source.
+  prominent documentation site link. Put file-specific instructions in
+  directory README files.
+- The `gh-pages` branch owns the documentation site. Feature PRs target
+  `main`. Link a companion PR targeting `gh-pages` for documented behavior
+  changes, or explain why the site needs no update. Update affected directory
+  guides with the feature. Keep one canonical explanation per subject, stable
+  links, and a clear distinction between source and deployment availability.
+- Follow the [documentation delivery policy](.github/workflows/README.md#publish-documentation)
+  for separate worktrees, site checks, and publication through GitHub Pages.
 - Inspect current code, interfaces, migrations, callers, and tests before
   changing behavior. Distinguish transitional implementation from the target
   architecture instead of assuming either one fully describes the other.

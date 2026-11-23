@@ -25,9 +25,9 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/markhuangai/dense-mem/wiki">文档 / Wiki</a> ·
-  <a href="https://github.com/markhuangai/dense-mem/wiki/Quick-Start">部署指南</a> ·
-  <a href="https://github.com/markhuangai/dense-mem/wiki/Architecture">工作原理</a>
+  <a href="https://markhuangai.github.io/dense-mem/">交互式文档</a> ·
+  <a href="https://markhuangai.github.io/dense-mem/Quick-Start/">部署指南</a> ·
+  <a href="https://markhuangai.github.io/dense-mem/Architecture/">工作原理</a>
 </p>
 
 Dense-Mem 是使用 Streamable HTTP 的独立 HTTP MCP 记忆服务器。AI 客户端决定
@@ -55,8 +55,8 @@ PostgreSQL 与 pgvector 是唯一持久权威。Redis 只负责协调：单节�
 - **追踪历史。** Recall 返回有效 Evidence，Trace 解释来源；更正和撤回保留历史链路。
 - **组织而不制造事实。** 派生主题帮助发现内容，Evidence 始终是规范记忆。
 
-[Using Dense-Mem](https://github.com/markhuangai/dense-mem/wiki/Using-Dense-Mem)
-介绍记忆使用流程；[Architecture](https://github.com/markhuangai/dense-mem/wiki/Architecture)
+[Using Dense-Mem](https://markhuangai.github.io/dense-mem/Using-Dense-Mem/)
+介绍记忆使用流程；[Architecture](https://markhuangai.github.io/dense-mem/Architecture/)
 解释系统设计。
 
 ## 快速开始
@@ -87,7 +87,7 @@ ${EDITOR:-vi} .env
 | `AI_VERIFIER_MODEL` | 用于评估 Evidence 的聊天模型 |
 
 示例提供 OpenAI embedding 默认配置。使用其他 provider 时，应一起调整 endpoint、
-模型和维度；详见 [Configuration](https://github.com/markhuangai/dense-mem/wiki/Configuration)。
+模型和维度；详见 [Configuration](https://markhuangai.github.io/dense-mem/Configuration/)。
 
 ```bash
 docker compose up -d
@@ -96,7 +96,7 @@ curl -fsS http://127.0.0.1:8080/ready
 ```
 
 启动过程先执行 migration，再进入就绪状态。后续启动仍应保留镜像版本；修改已有
-数据库前，请阅读 [Operations Runbook](https://github.com/markhuangai/dense-mem/wiki/Operations-Runbook)。
+数据库前，请阅读 [Operations Runbook](https://markhuangai.github.io/dense-mem/Operations-Runbook/)。
 
 ## 连接 AI 客户端
 
@@ -104,7 +104,7 @@ curl -fsS http://127.0.0.1:8080/ready
    创建团队，再创建该团队的第一个 credential。
 2. 打开用户门户 `http://127.0.0.1:8080/ui`。**Connect** 页面提供 MCP 连接信息；
    本地 MCP endpoint 是 `http://127.0.0.1:8080/mcp`。
-3. 按照 [MCP Clients](https://github.com/markhuangai/dense-mem/wiki/MCP-Clients)
+3. 按照 [MCP Clients](https://markhuangai.github.io/dense-mem/MCP-Clients/)
    配置宿主客户端，再尝试 Remember、Recall 和 Trace 流程。
 
 控制监听端口应保持私有。配置的托管模型 provider 可能接收 Evidence 和查询；
@@ -115,14 +115,14 @@ curl -fsS http://127.0.0.1:8080/ready
 
 | 目标 | 指南 |
 | --- | --- |
-| 了解记忆工作原理 | [Wiki](https://github.com/markhuangai/dense-mem/wiki) · [Using Dense-Mem](https://github.com/markhuangai/dense-mem/wiki/Using-Dense-Mem) |
-| 配置与运维 | [Configuration](https://github.com/markhuangai/dense-mem/wiki/Configuration) · [Operations](https://github.com/markhuangai/dense-mem/wiki/Operations-Runbook) |
+| 了解记忆工作原理 | [记忆流程演示](https://markhuangai.github.io/dense-mem/) · [Using Dense-Mem](https://markhuangai.github.io/dense-mem/Using-Dense-Mem/) |
+| 配置与运维 | [Configuration](https://markhuangai.github.io/dense-mem/Configuration/) · [Operations](https://markhuangai.github.io/dense-mem/Operations-Runbook/) |
 | 选择部署示例 | [Examples](examples/README.md) · [Grafana](examples/grafana/README.md) |
 | 集成客户端 | [Python / ADK / LangChain](packages/python/README.md) · [stdio MCP proxy](packages/mcp-proxy/README.md) |
 | 开发与测试 | [Scripts](scripts/README.md) · [Evaluation](tests/eval/README.md) · [ADRs](adr/) |
 
-详细原理和使用说明放在 wiki；与仓库文件配套的操作说明放在对应目录的 README。
-行为变更应更新相关指南，并关联配套 wiki PR，或说明为何无需更新 wiki。
+文档站提供交互式流程演示和详细参考。与仓库文件配套的操作说明放在对应目录的 README。
+行为变更应关联配套的 `gh-pages` PR，或说明文档站为何无需更新。
 
 Dense-Mem 也是这篇研究预印本的一部分：
 [Governed Enterprise AI Memory Beyond RAG: From Vector Retrieval to Permissioned

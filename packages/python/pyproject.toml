@@ -22,7 +22,7 @@ classifiers = [
 
 [project.urls]
 Repository = "https://github.com/markhuangai/dense-mem"
-Documentation = "https://github.com/markhuangai/dense-mem/wiki/Framework-Integrations"
+Documentation = "https://markhuangai.github.io/dense-mem/Framework-Integrations/"
 Issues = "https://github.com/markhuangai/dense-mem/issues"
 
 [project.optional-dependencies]

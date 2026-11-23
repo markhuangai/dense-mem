@@ -2,7 +2,7 @@
 
 Run commands below from the repository root with a private `.env` file. The
 [root quickstart](../README.md#quickstart) covers a fresh local installation;
-the [wiki](https://github.com/markhuangai/dense-mem/wiki/Quick-Start) explains
+the [setup guide](https://markhuangai.github.io/dense-mem/Quick-Start/) explains
 setup, client connection, and a first memory workflow.
 
 ## Choose an example
@@ -25,14 +25,14 @@ settings are `POSTGRES_PASSWORD`, `CONTROL_PORTAL_TOKEN`, `AI_API_KEY`, and
 The base example supplies OpenAI embedding defaults. Change the embedding
 endpoint, model, and dimensions together when selecting another provider.
 Chat models use `AI_VERIFIER_MODEL`, with optional Remember/conflict overrides.
-The wiki's [Configuration](https://github.com/markhuangai/dense-mem/wiki/Configuration)
+The [Configuration](https://markhuangai.github.io/dense-mem/Configuration/)
 page owns setting meanings and bounds, including optional typed decisions.
 
 For Ollama on the Docker host, use the OpenAI-compatible endpoint
 `http://host.docker.internal:11434/v1`, supply the provider-required API-key
 value, select installed embedding/chat models, and set the embedding dimensions.
 The base Compose file includes the Linux host-gateway mapping. See
-[Public HTTPS And Redis](https://github.com/markhuangai/dense-mem/wiki/Public-HTTPS-And-Redis)
+[Public HTTPS And Redis](https://markhuangai.github.io/dense-mem/Public-HTTPS-And-Redis/)
 before adding public ingress or multiple instances.
 
 ## Telemetry and Grafana
@@ -51,8 +51,8 @@ docker compose --env-file .env \
 
 Prometheus and Grafana bind to loopback at ports 9090 and 3000. The
 [Grafana guide](grafana/README.md) owns dashboard provisioning, exporters,
-metric interpretation, and credential-handling instructions. The wiki's
-[Telemetry](https://github.com/markhuangai/dense-mem/wiki/Telemetry) page explains
+metric interpretation, and credential-handling instructions. The
+[Telemetry](https://markhuangai.github.io/dense-mem/Telemetry/) page explains
 observation and troubleshooting workflows.
 
 ## Startup and operations
@@ -65,12 +65,12 @@ curl -fsS http://127.0.0.1:8080/ready
 
 The server applies pending migrations before serving. Existing databases need
 the backup and compatibility checks in the
-[Operations Runbook](https://github.com/markhuangai/dense-mem/wiki/Operations-Runbook).
+[Operations Runbook](https://markhuangai.github.io/dense-mem/Operations-Runbook/).
 The control portal stays private. Use the
-[portals guide](https://github.com/markhuangai/dense-mem/wiki/Portals-And-API-Keys)
+[portals guide](https://markhuangai.github.io/dense-mem/Portals-And-API-Keys/)
 for team/credential administration and the
-[logging reference](https://github.com/markhuangai/dense-mem/wiki/Telemetry#operation-logs-and-protected-captures)
+[logging reference](https://markhuangai.github.io/dense-mem/Telemetry/#operation-logs-and-protected-captures)
 for diagnostics.
 
-When changing an example, update this guide and its canonical wiki explanation
+When changing an example, update this guide and its canonical documentation
 in the same feature delivery. Keep generated data and credentials out of Git.
