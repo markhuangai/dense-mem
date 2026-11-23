@@ -108,21 +108,21 @@ func TestOrganizationValidationDiagnosticsCompleteRepairAndLimitPrecedence(t *te
 		provider := NewProvider(fixtureTransport(func(_ context.Context, outbound modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
 			calls++
 			require.Equal(t, SystemPrompt, outbound.Messages[0].Content)
-			require.Equal(t, ResponseSchema(request.RequestID), outbound.Schema)
+			requireSchemaJSON(t, ResponseSchema(request.RequestID), outbound.Schema)
 			if calls > 1 {
 				var correction correctionFeedback
 				require.NoError(t, json.Unmarshal([]byte(outbound.Messages[len(outbound.Messages)-1].Content), &correction))
 				expected := "request_id: is required"
 				if overflow {
-					expected = "output exceeds token budget"
+					expected = "output_tokens: at most"
 				}
 				require.Contains(t, correctionMessages(correction), expected)
 				require.Equal(t, "{}", outbound.Messages[len(outbound.Messages)-2].Content)
 			}
 			if calls == 3 && !overflow {
-				return modelprovider.StructuredResult{Content: string(valid), PromptTokens: 17, CompletionTokens: 9, TotalTokens: 26}, nil
+				return modelprovider.StructuredResult{Content: string(valid), PromptTokens: 17, CompletionTokens: 9, TotalTokens: 26, UsageAvailable: true}, nil
 			}
-			result := modelprovider.StructuredResult{Content: "{}", PromptTokens: 17, CompletionTokens: 9, TotalTokens: 26}
+			result := modelprovider.StructuredResult{Content: "{}", PromptTokens: 17, CompletionTokens: 9, TotalTokens: 26, UsageAvailable: true}
 			if overflow {
 				result.CompletionTokens = limits.MaxOutputTokens + 1
 			}
@@ -259,7 +259,7 @@ func TestOrganizationDetailedSharedFeedbackRepairsCompleteResponses(t *testing.T
 				calls++
 				require.Len(t, outbound.Messages, 2*calls)
 				require.Equal(t, string(original), outbound.Messages[1].Content)
-				require.Equal(t, ResponseSchema(request.RequestID), outbound.Schema)
+				requireSchemaJSON(t, ResponseSchema(request.RequestID), outbound.Schema)
 				if calls > 1 {
 					var feedback correctionFeedback
 					require.NoError(t, json.Unmarshal([]byte(outbound.Messages[len(outbound.Messages)-1].Content), &feedback))

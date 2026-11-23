@@ -79,6 +79,15 @@ func (f fixtureTransport) Complete(ctx context.Context, request modelprovider.St
 	return f(ctx, request)
 }
 
+func requireSchemaJSON(t *testing.T, expected, actual any) {
+	t.Helper()
+	expectedJSON, err := json.Marshal(expected)
+	require.NoError(t, err)
+	actualJSON, err := json.Marshal(actual)
+	require.NoError(t, err)
+	require.JSONEq(t, string(expectedJSON), string(actualJSON))
+}
+
 func TestOrganizationValidResponseOutputLimits(t *testing.T) {
 	request, response := assessmentFixture()
 	require.NoError(t, Validate(request, response))
@@ -444,7 +453,7 @@ func TestOrganizationEmptyDefinitionKeyCompleteRepair(t *testing.T) {
 				properties := outbound.Schema["properties"].(map[string]any)
 				definition := properties["definitions"].(map[string]any)["items"].(map[string]any)
 				key := definition["properties"].(map[string]any)["key"]
-				require.Equal(t, map[string]any{"type": "string", "minLength": 1, "maxLength": 128}, key)
+				requireSchemaJSON(t, map[string]any{"type": "string", "minLength": 1, "maxLength": 128}, key)
 				if calls > 1 {
 					var correction correctionFeedback
 					require.NoError(t, json.Unmarshal([]byte(outbound.Messages[len(outbound.Messages)-1].Content), &correction))

@@ -361,9 +361,9 @@ func TestRememberProcessorRecordsAssessmentRejectionTrails(t *testing.T) {
 		require.Equal(t, assessor.SemanticAssessmentMaxProviderTurns-1, provider.repairCalls)
 	})
 
-	t.Run("later assessor rejection retains admitted request", func(t *testing.T) {
+	t.Run("partition security rejection retains admitted request", func(t *testing.T) {
 		ledger := &rememberPipelineLedgerStub{rememberFailureLedgerStub: &rememberFailureLedgerStub{}}
-		provider := &processorAssessmentProviderStub{reject: true}
+		provider := &processorAssessmentProviderStub{rejectPartition: true}
 		processor := &rememberSynchronousProcessor{ledger: ledger, provider: provider, protector: observability.NewCredentialProtector()}
 		_, err := processor.ProcessRemember(context.Background(), input)
 		var processErr *rememberapp.RememberProcessError
@@ -371,6 +371,8 @@ func TestRememberProcessorRecordsAssessmentRejectionTrails(t *testing.T) {
 		require.ErrorIs(t, err, rememberapp.ErrRememberPolicyRejected)
 		require.Equal(t, "failed", ledger.invocation.Outcome)
 		require.Equal(t, "assessment", ledger.invocation.FailedPhase)
+		require.Equal(t, 1, provider.partitionCalls)
+		require.Zero(t, provider.assessCalls)
 		require.Contains(t, string(ledger.invocation.RequestBody), "admitted")
 		require.NotContains(t, string(ledger.invocation.RequestBody), "hash_only")
 	})
@@ -653,12 +655,12 @@ func (s *rememberPipelineLedgerStub) CommitRememberWithEmbeddings(_ context.Cont
 }
 
 type processorAssessmentProviderStub struct {
-	partitionCalls int
-	partitionReply func(modelprovider.StructuredRequest) string
-	reject         bool
-	invalid        bool
-	assessCalls    int
-	repairCalls    int
+	partitionCalls  int
+	partitionReply  func(modelprovider.StructuredRequest) string
+	rejectPartition bool
+	invalid         bool
+	assessCalls     int
+	repairCalls     int
 }
 
 func (p *processorAssessmentProviderStub) response(request assessor.SemanticAssessmentRequest) assessor.SemanticAssessmentResponse {
@@ -667,14 +669,7 @@ func (p *processorAssessmentProviderStub) response(request assessor.SemanticAsse
 	}
 	security := make([]assessor.SemanticAssessmentEvidenceSecurityResult, 0, len(request.Evidence))
 	for _, evidence := range request.Evidence {
-		result := assessor.SemanticAssessmentEvidenceSecurityResult{EvidenceID: evidence.EvidenceID, Decision: "pass", Signals: []assessor.SemanticAssessmentSecuritySignal{}}
-		if p.reject {
-			startRef, _ := assessor.SemanticAssessmentBoundaryRef(evidence, 0)
-			endRef, _ := assessor.SemanticAssessmentBoundaryRef(evidence, len([]rune(evidence.Content)))
-			result.Decision = "reject"
-			result.Signals = []assessor.SemanticAssessmentSecuritySignal{{EvidenceID: evidence.EvidenceID, Kind: "instruction_override", StartRef: startRef, EndRef: endRef}}
-		}
-		security = append(security, result)
+		security = append(security, assessor.SemanticAssessmentEvidenceSecurityResult{EvidenceID: evidence.EvidenceID, Decision: "pass", Signals: []assessor.SemanticAssessmentSecuritySignal{}})
 	}
 	return assessor.SemanticAssessmentResponse{
 		RequestID: request.RequestID, EvidenceSecurityResults: security,

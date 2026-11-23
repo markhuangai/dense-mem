@@ -46,9 +46,19 @@ func (p *processorAssessmentProviderStub) Complete(_ context.Context, request mo
 	review := assessor.PartitionSecurityResponse{}
 	for i, item := range input.Items {
 		response.Items[i] = assessor.PartitionResult{ItemID: item.ItemID, CutRefs: []string{}}
-		review.SecurityResults = append(review.SecurityResults, assessor.SemanticAssessmentEvidenceSecurityResult{EvidenceID: item.ItemID, Decision: "pass", Signals: []assessor.SemanticAssessmentSecuritySignal{}})
+		security := assessor.SemanticAssessmentEvidenceSecurityResult{EvidenceID: item.ItemID, Decision: "pass", Signals: []assessor.SemanticAssessmentSecuritySignal{}}
+		if p.rejectPartition {
+			security.Decision = "reject"
+			security.Signals = []assessor.SemanticAssessmentSecuritySignal{{
+				EvidenceID: item.ItemID, Kind: "instruction_override", StartRef: item.StartRef, EndRef: item.EndRef,
+			}}
+		}
+		review.SecurityResults = append(review.SecurityResults, security)
 	}
 	if input.ReviewSecurity {
+		if p.rejectPartition {
+			response.Items = response.Items[:0]
+		}
 		review.PartitionResponse = response
 		body, err := json.Marshal(review)
 		return modelprovider.StructuredResult{Content: string(body)}, err
