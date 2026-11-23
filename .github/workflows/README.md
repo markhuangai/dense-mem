@@ -38,6 +38,8 @@ published routes and deep links. For a failure, inspect the run for the source
 commit and build or deployment error, fix the source through a documentation
 PR, and verify its resulting deployment. A PR check proves a candidate build.
 The post-merge run and rendered site establish publication.
+When an application PR replaces existing documentation links, publish and
+verify the new destinations before merging that application PR.
 
 ## Publish a prerelease image
 

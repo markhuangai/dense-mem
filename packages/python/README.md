@@ -199,7 +199,7 @@ unset. The adapter does not add trace calls or post-filter authorized shared mem
 
 The extra is pinned to google-adk==2.14.1 and requires opentelemetry-api>=1.45.2. Core and extra installed-wheel checks,
 Python 3.11–3.14 and MCP SDK minimum/latest matrices, and google_adk_memory E2E
-are release gates. Package publication and live wiki publication remain separate.
+are release gates. Package releases and GitHub Pages publication run independently.
 
 ## Development and release
 
