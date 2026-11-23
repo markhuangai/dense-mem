@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
@@ -35,7 +35,7 @@ func TestAuthFailureRequestCapture(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			e := echo.New()
-			e.POST("/mcp", func(c echo.Context) error {
+			e.POST("/mcp", func(c *echo.Context) error {
 				snapshot := CaptureAuthFailureRequest(c, "invalid api key")
 				secrets := requestctx.AuthenticationSecretsFromContext(c.Request().Context())
 				for _, secret := range []string{"presented-test-key", "second-presented-key", "auxiliary-identity", "secondary-basic-canary", "proxy-identity", "proxy-basic-canary"} {
@@ -89,7 +89,7 @@ func TestAuthFailureRequestCapture(t *testing.T) {
 func TestAuthFailureRequestPreservesConsumedFormAndSuccessfulBody(t *testing.T) {
 	const body = "grant_type=client_credentials&client_secret=test%2Bsecret&client_id=example"
 	e := echo.New()
-	e.POST("/form", func(c echo.Context) error {
+	e.POST("/form", func(c *echo.Context) error {
 		PreserveAuthFailureBody(c)
 		PreserveAuthFailureBody(c)
 		require.NoError(t, c.Request().ParseForm())
@@ -98,7 +98,7 @@ func TestAuthFailureRequestPreservesConsumedFormAndSuccessfulBody(t *testing.T) 
 		require.Equal(t, body, snapshot.Body)
 		return c.NoContent(http.StatusUnauthorized)
 	})
-	e.POST("/success", func(c echo.Context) error {
+	e.POST("/success", func(c *echo.Context) error {
 		PreserveAuthFailureBody(c)
 		received, err := io.ReadAll(c.Request().Body)
 		require.NoError(t, err)
@@ -137,7 +137,7 @@ func TestAuthFailureRequestSlowOrDisconnectedBody(t *testing.T) {
 	for _, disconnected := range []bool{false, true} {
 		t.Run(fmt.Sprint(disconnected), func(t *testing.T) {
 			e := echo.New()
-			e.POST("/mcp", func(c echo.Context) error {
+			e.POST("/mcp", func(c *echo.Context) error {
 				return c.JSON(http.StatusUnauthorized, CaptureAuthFailureRequest(c, "invalid key"))
 			})
 			server := httptest.NewServer(e)
@@ -169,7 +169,7 @@ func TestAuthFailureRequestThroughAuthentication(t *testing.T) {
 			e := newTestEcho()
 			security := &mockSecurityService{}
 			e.Use(AuthMiddlewareWithOptions(&mockCredentialRepository{}, nil, security, testAuthOptions(nil)))
-			e.GET("/test", func(c echo.Context) error { return c.String(http.StatusOK, "unreachable") })
+			e.GET("/test", func(c *echo.Context) error { return c.String(http.StatusOK, "unreachable") })
 			req := httptest.NewRequest(http.MethodGet, "/test", nil)
 			if authorization != "" {
 				req.Header.Set("Authorization", authorization)

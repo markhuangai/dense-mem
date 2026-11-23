@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/markhuangai/dense-mem/internal/config"
 	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
@@ -346,7 +346,7 @@ func TestNewServerDefaultsBodyLimitForNilConfig(t *testing.T) {
 func TestRequestLoggerOmitsQueryString(t *testing.T) {
 	logger := &captureLogProvider{}
 	e := NewServer(config.Config{}, logger, HealthConfig{})
-	e.GET("/ui/api/recall", func(c echo.Context) error {
+	e.GET("/ui/api/recall", func(c *echo.Context) error {
 		return c.String(http.StatusOK, "ok")
 	})
 
@@ -381,7 +381,7 @@ func TestRequestLoggerOmitsQueryString(t *testing.T) {
 func TestRequestLoggerCapturesRecoveredPanic(t *testing.T) {
 	logger := &captureLogProvider{}
 	e := NewServer(config.Config{}, logger, HealthConfig{})
-	e.GET("/panic", func(echo.Context) error {
+	e.GET("/panic", func(*echo.Context) error {
 		panic("handler panic")
 	})
 
@@ -409,7 +409,7 @@ func TestRequestLoggerCapturesRecoveredPanic(t *testing.T) {
 func TestRequestLoggerCapturesBodyLimitRejection(t *testing.T) {
 	logger := &captureLogProvider{}
 	e := NewServer(config.Config{HTTPMaxBodyBytes: 1}, logger, HealthConfig{})
-	e.POST("/limited", func(c echo.Context) error {
+	e.POST("/limited", func(c *echo.Context) error {
 		return c.NoContent(http.StatusNoContent)
 	})
 
@@ -444,7 +444,7 @@ func TestControlPortalRequestLoggerCapturesBodyLimitCorrelation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("control portal: %v", err)
 	}
-	e.POST("/limited", func(c echo.Context) error {
+	e.POST("/limited", func(c *echo.Context) error {
 		return c.NoContent(http.StatusNoContent)
 	})
 
@@ -469,7 +469,7 @@ func TestControlPortalRequestLoggerCapturesRecoveredPanic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("control portal: %v", err)
 	}
-	e.GET("/panic", func(echo.Context) error {
+	e.GET("/panic", func(*echo.Context) error {
 		panic("handler panic")
 	})
 
@@ -497,7 +497,7 @@ func TestControlPortalRequestLoggerCapturesRecoveredPanic(t *testing.T) {
 func TestRequestLoggerPreservesAuthenticatedContext(t *testing.T) {
 	logger := &captureLogProvider{}
 	e := NewServer(config.Config{}, logger, HealthConfig{})
-	e.GET("/context", func(c echo.Context) error {
+	e.GET("/context", func(c *echo.Context) error {
 		return c.NoContent(http.StatusNoContent)
 	})
 
@@ -528,7 +528,7 @@ func TestRequestLoggerPreservesAuthenticatedContext(t *testing.T) {
 func TestRequestLoggerDetachesCanceledContextForCompletion(t *testing.T) {
 	logger := &captureLogProvider{}
 	e := NewServer(config.Config{}, logger, HealthConfig{})
-	e.GET("/canceled", func(c echo.Context) error {
+	e.GET("/canceled", func(c *echo.Context) error {
 		return c.NoContent(http.StatusNoContent)
 	})
 
@@ -570,7 +570,7 @@ func TestContextLogHelpersRequireContextualProviders(t *testing.T) {
 func TestRequestLoggerTreatsAnonymousUserSessionProbeAsInfo(t *testing.T) {
 	logger := &captureLogProvider{}
 	e := NewServer(config.Config{}, logger, HealthConfig{})
-	e.GET("/ui/api/session", func(c echo.Context) error {
+	e.GET("/ui/api/session", func(c *echo.Context) error {
 		return httperr.New(httperr.AUTH_MISSING, "authentication required")
 	})
 
@@ -607,7 +607,7 @@ func TestRequestLoggerKeepsInvalidSessionCredentialsAtError(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			logger := &captureLogProvider{}
 			e := NewServer(config.Config{}, logger, HealthConfig{})
-			e.GET("/ui/api/session", func(c echo.Context) error {
+			e.GET("/ui/api/session", func(c *echo.Context) error {
 				return httperr.New(httperr.AUTH_MISSING, "authentication required")
 			})
 			req := httptest.NewRequest(http.MethodGet, "/ui/api/session", nil)
@@ -636,7 +636,7 @@ func logAttrValue(attrs []httpcontract.LogAttr, key string) string {
 
 func TestNewServerUsesDirectIPByDefault(t *testing.T) {
 	e := NewServer(config.Config{}, &captureLogProvider{}, HealthConfig{})
-	e.GET("/ip", func(c echo.Context) error {
+	e.GET("/ip", func(c *echo.Context) error {
 		return c.String(http.StatusOK, c.RealIP())
 	})
 
@@ -654,7 +654,7 @@ func TestNewServerUsesDirectIPByDefault(t *testing.T) {
 
 func TestServerWrapperMethods(t *testing.T) {
 	e := echo.New()
-	server := &Server{echo: e}
+	server := &Server{echo: e, server: NewHTTPServer(e, nil)}
 
 	if got := server.GetEcho(); got != e {
 		t.Fatalf("GetEcho() = %p; want %p", got, e)
@@ -668,7 +668,7 @@ func TestServerWrapperMethods(t *testing.T) {
 		t.Fatalf("Shutdown() error = %v", err)
 	}
 
-	if err := ShutdownServer(e, &captureLogProvider{}); err != nil {
+	if err := ShutdownServer(server.server, &captureLogProvider{}); err != nil {
 		t.Fatalf("ShutdownServer() error = %v", err)
 	}
 }

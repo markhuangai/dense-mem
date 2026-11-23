@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/stretchr/testify/require"
 )
 
@@ -72,39 +72,41 @@ func TestRuntimeLifecycleStartsAndJoinsConfiguredWorkerCount(t *testing.T) {
 	require.Equal(t, int32(3), stopped.Load())
 }
 
-func TestBindEchoServerReservesAddressBeforeServing(t *testing.T) {
-	first := echo.New()
-	listener, err := bindEchoServer(first, "127.0.0.1:0")
+func TestBindHTTPServerReservesAddressBeforeServing(t *testing.T) {
+	first := &http.Server{}
+	listener, err := bindHTTPServer(first, "127.0.0.1:0")
 	require.NoError(t, err)
 	require.NotNil(t, listener)
 	defer listener.Close()
 
-	second := echo.New()
-	_, err = bindEchoServer(second, listener.Addr().String())
+	second := &http.Server{}
+	_, err = bindHTTPServer(second, listener.Addr().String())
 	require.Error(t, err)
 	_ = first.Shutdown(context.Background())
 }
 
-func TestBindEchoServerUsesConcreteTCPListener(t *testing.T) {
-	server := echo.New()
-	listener, err := bindEchoServer(server, "127.0.0.1:0")
+func TestBindHTTPServerUsesConcreteTCPListener(t *testing.T) {
+	handler := echo.New()
+	server := &http.Server{Handler: handler}
+	listener, err := bindHTTPServer(server, "127.0.0.1:0")
 	require.NoError(t, err)
 	defer listener.Close()
 	require.NotEmpty(t, listener.Addr().String())
 }
 
-func TestShutdownEchoServerDrainsActiveRequest(t *testing.T) {
-	server := echo.New()
-	listener, err := bindEchoServer(server, "127.0.0.1:0")
+func TestShutdownHTTPServerDrainsActiveRequest(t *testing.T) {
+	handler := echo.New()
+	server := &http.Server{Handler: handler}
+	listener, err := bindHTTPServer(server, "127.0.0.1:0")
 	require.NoError(t, err)
 	entered := make(chan struct{})
 	release := make(chan struct{})
-	server.GET("/", func(c echo.Context) error {
+	handler.GET("/", func(c *echo.Context) error {
 		close(entered)
 		<-release
 		return c.NoContent(http.StatusNoContent)
 	})
-	serveErrs := serveEchoServer(server, listener.Addr().String())
+	serveErrs := serveHTTPServer(server, listener)
 	requestDone := make(chan error, 1)
 	go func() {
 		resp, requestErr := http.Get("http://" + listener.Addr().String() + "/")
@@ -121,7 +123,7 @@ func TestShutdownEchoServerDrainsActiveRequest(t *testing.T) {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	shutdownDone := make(chan error, 1)
-	go func() { shutdownDone <- shutdownEchoServer(shutdownCtx, server) }()
+	go func() { shutdownDone <- shutdownHTTPServer(shutdownCtx, server) }()
 	select {
 	case <-shutdownDone:
 		t.Fatal("server shutdown completed before active request drained")
@@ -141,18 +143,19 @@ func TestShutdownEchoServerDrainsActiveRequest(t *testing.T) {
 	}
 }
 
-func TestShutdownEchoServerForcesCloseAfterGracefulTimeout(t *testing.T) {
-	server := echo.New()
-	listener, err := bindEchoServer(server, "127.0.0.1:0")
+func TestShutdownHTTPServerForcesCloseAfterGracefulTimeout(t *testing.T) {
+	handler := echo.New()
+	server := &http.Server{Handler: handler}
+	listener, err := bindHTTPServer(server, "127.0.0.1:0")
 	require.NoError(t, err)
 	entered := make(chan struct{})
 	release := make(chan struct{})
-	server.GET("/", func(c echo.Context) error {
+	handler.GET("/", func(c *echo.Context) error {
 		close(entered)
 		<-release
 		return c.NoContent(http.StatusNoContent)
 	})
-	serveErrs := serveEchoServer(server, listener.Addr().String())
+	serveErrs := serveHTTPServer(server, listener)
 	requestDone := make(chan struct{})
 	go func() {
 		resp, _ := http.Get("http://" + listener.Addr().String() + "/")
@@ -167,7 +170,7 @@ func TestShutdownEchoServerForcesCloseAfterGracefulTimeout(t *testing.T) {
 		t.Fatal("request did not enter handler")
 	}
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
-	err = shutdownEchoServer(shutdownCtx, server)
+	err = shutdownHTTPServer(shutdownCtx, server)
 	cancel()
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	close(release)

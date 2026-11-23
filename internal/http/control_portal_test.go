@@ -968,7 +968,7 @@ func TestControlPortalServiceAndValidationErrorBranches(t *testing.T) {
 	securitySvc.deleteErr = errors.New("ban delete failed")
 	require.Equal(t, http.StatusInternalServerError, do(http.MethodDelete, "/control/api/security/bans/203.0.113.9", "").Code)
 
-	require.NoError(t, ShutdownControlPortal(server, nil))
+	require.NoError(t, ShutdownControlPortal(NewHTTPServer(server, nil), nil))
 }
 
 func TestControlPortalTeamsIgnoreRetiredDreamingConfig(t *testing.T) {

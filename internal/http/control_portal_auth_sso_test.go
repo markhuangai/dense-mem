@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -28,7 +28,7 @@ func TestControlPortalMiddlewareIgnoresOriginBehindTLSProxy(t *testing.T) {
 	e := echo.New()
 	e.HTTPErrorHandler = httperr.ErrorHandler
 	e.Use(controlPortalMiddleware("secret", nil, identity))
-	e.GET("/session", func(c echo.Context) error {
+	e.GET("/session", func(c *echo.Context) error {
 		return c.String(nethttp.StatusOK, controlPortalActorFromContext(c.Request().Context()))
 	})
 
@@ -75,10 +75,10 @@ func TestControlPortalMiddlewareAcceptsCurrentSSOSessionAndRecordsSafeFailures(t
 	e := echo.New()
 	e.HTTPErrorHandler = httperr.ErrorHandler
 	e.Use(controlPortalMiddleware("static-token", recorder, identity))
-	e.GET("/session", func(c echo.Context) error {
+	e.GET("/session", func(c *echo.Context) error {
 		return c.String(nethttp.StatusOK, controlPortalActorFromContext(c.Request().Context()))
 	})
-	e.GET("/identity", func(c echo.Context) error {
+	e.GET("/identity", func(c *echo.Context) error {
 		return c.String(nethttp.StatusOK, controlPortalActorIdentityFromContext(c.Request().Context()))
 	})
 
@@ -115,12 +115,12 @@ func TestControlPortalMiddlewareAcceptsCurrentSSOSessionAndRecordsSafeFailures(t
 func TestControlPortalMiddlewareRetainsPresentedSecretsOnFailure(t *testing.T) {
 	var observed context.Context
 	e := echo.New()
-	e.HTTPErrorHandler = func(_ error, c echo.Context) {
+	e.HTTPErrorHandler = func(c *echo.Context, _ error) {
 		observed = c.Request().Context()
 		_ = c.NoContent(nethttp.StatusUnauthorized)
 	}
 	e.Use(controlPortalMiddleware("expected", nil))
-	e.GET("/session", func(c echo.Context) error {
+	e.GET("/session", func(c *echo.Context) error {
 		return c.NoContent(nethttp.StatusOK)
 	})
 
@@ -140,7 +140,7 @@ func TestControlPortalMiddlewareMarksSuccessfulAuthentication(t *testing.T) {
 	var observed context.Context
 	e := echo.New()
 	e.Use(controlPortalMiddleware("expected", nil))
-	e.GET("/session", func(c echo.Context) error {
+	e.GET("/session", func(c *echo.Context) error {
 		observed = c.Request().Context()
 		return c.NoContent(nethttp.StatusOK)
 	})

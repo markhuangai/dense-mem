@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	demoservice "github.com/markhuangai/dense-mem/cmd/internal/demo/service"
 	httpmw "github.com/markhuangai/dense-mem/internal/http/middleware"
@@ -15,7 +15,7 @@ import (
 
 func RequestQuotaMiddleware(manager *demoservice.QuotaManager) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			teamID := ""
 			if actor, ok := requestctx.ActorFromContext(c.Request().Context()); ok && actor.TeamID != uuid.Nil {
 				teamID = actor.TeamID.String()

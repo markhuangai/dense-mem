@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 
@@ -250,7 +250,7 @@ func TestRecallHandlerMapsGenericError(t *testing.T) {
 
 func injectActorMiddleware(teamID uuid.UUID, profileID uuid.UUID) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			ctx := requestctx.WithActor(c.Request().Context(), requestctx.Actor{
 				TeamID:  teamID,
 				OwnerID: profileID,

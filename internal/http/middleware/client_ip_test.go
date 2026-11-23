@@ -5,7 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
@@ -25,7 +25,7 @@ func TestClientIPMiddlewareStoresRealIPInContext(t *testing.T) {
 			e := echo.New()
 			e.IPExtractor = tc.extractor
 			e.Use(ClientIPMiddleware())
-			e.GET("/test", func(c echo.Context) error {
+			e.GET("/test", func(c *echo.Context) error {
 				got := requestctx.ClientIPFromContext(c.Request().Context())
 				if got != tc.wantIP {
 					t.Errorf("ClientIPFromContext() = %q; want %q", got, tc.wantIP)

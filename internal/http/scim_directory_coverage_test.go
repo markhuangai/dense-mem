@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/stretchr/testify/require"
 
 	"github.com/elimity-com/scim"
@@ -97,10 +97,11 @@ func TestDirectorySCIMOAuthAndErrorHelpers(t *testing.T) {
 		"missing grant": httptest.NewRequest(http.MethodPost, "/scim/oauth/token", nil),
 	} {
 		t.Run(name, func(t *testing.T) {
-			ctx := e.NewContext(req, httptest.NewRecorder())
+			recorder := httptest.NewRecorder()
+			ctx := e.NewContext(req, recorder)
 			err := h.oauthToken(ctx)
 			require.NoError(t, err)
-			require.Equal(t, http.StatusBadRequest, ctx.Response().Status)
+			require.Equal(t, http.StatusBadRequest, recorder.Code)
 		})
 	}
 	ctx := e.NewContext(httptest.NewRequest(http.MethodGet, "/", nil), httptest.NewRecorder())
@@ -117,14 +118,12 @@ func TestDirectorySCIMServeRejectsMalformedAuthentication(t *testing.T) {
 	h := &directorySCIMHandler{directory: directory}
 	e := echo.New()
 	ctx := e.NewContext(httptest.NewRequest(http.MethodGet, "/", nil), httptest.NewRecorder())
-	ctx.SetParamNames("connectorId", "*")
-	ctx.SetParamValues("not-a-uuid", "Users")
+	ctx.SetPathValues(echo.PathValues{{Name: "connectorId", Value: "not-a-uuid"}, {Name: "*", Value: "Users"}})
 	if err := h.serve(ctx); err != nil {
 		t.Fatal(err)
 	}
 	ctx = e.NewContext(httptest.NewRequest(http.MethodGet, "/", nil), httptest.NewRecorder())
-	ctx.SetParamNames("connectorId", "*")
-	ctx.SetParamValues(uuid.NewString(), "Users")
+	ctx.SetPathValues(echo.PathValues{{Name: "connectorId", Value: uuid.NewString()}, {Name: "*", Value: "Users"}})
 	if err := h.serve(ctx); err != nil {
 		t.Fatal(err)
 	}

@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -263,8 +263,7 @@ func TestControlPortalObservabilityUnavailableAndNotFound(t *testing.T) {
 	req = httptest.NewRequest(http.MethodGet, "/control/api/recall-feedback-events/rec_missing", nil)
 	rec = httptest.NewRecorder()
 	c = e.NewContext(req, rec)
-	c.SetParamNames("recallId")
-	c.SetParamValues("rec_missing")
+	c.SetPathValues(echo.PathValues{{Name: "recallId", Value: "rec_missing"}})
 	err := h.getRecallFeedbackEvent(c)
 	require.ErrorContains(t, err, "recall feedback event not found")
 }

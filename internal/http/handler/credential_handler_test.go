@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/http/dto"
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
@@ -371,8 +371,7 @@ func TestCredentialHandlerCreateDerivesSSOOwnerForManager(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 	c.SetPath("/ui/api/team/credentials")
-	c.SetParamNames("teamId")
-	c.SetParamValues(teamID.String())
+	c.SetPathValues(echo.PathValues{{Name: "teamId", Value: teamID.String()}})
 
 	wrapped := middleware.BindAndValidate[dto.CreateCredentialRequest](middleware.CreateCredentialBodyKey)(h.Create)
 	require.NoError(t, wrapped(c))
@@ -396,8 +395,7 @@ func TestCredentialHandlerCreateDoesNotDeriveSSOOwnerForNonManager(t *testing.T)
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 	c.SetPath("/ui/api/team/credentials")
-	c.SetParamNames("teamId")
-	c.SetParamValues(teamID.String())
+	c.SetPathValues(echo.PathValues{{Name: "teamId", Value: teamID.String()}})
 
 	wrapped := middleware.BindAndValidate[dto.CreateCredentialRequest](middleware.CreateCredentialBodyKey)(h.Create)
 	require.NoError(t, wrapped(c))
@@ -690,11 +688,11 @@ func runCredentialHandlerWithOptionalBodyAndPrincipalTeam(t *testing.T, method, 
 	return rec, wrapped(c)
 }
 
-func newCredentialHandlerContext(t *testing.T, method, target, path string, paramNames, paramVals []string, body string) (*httptest.ResponseRecorder, echo.Context) {
+func newCredentialHandlerContext(t *testing.T, method, target, path string, paramNames, paramVals []string, body string) (*httptest.ResponseRecorder, *echo.Context) {
 	return newCredentialHandlerContextWithPrincipalTeam(t, method, target, path, paramNames, paramVals, body, uuid.Nil)
 }
 
-func newCredentialHandlerContextWithPrincipalTeam(t *testing.T, method, target, path string, paramNames, paramVals []string, body string, principalTeamID uuid.UUID) (*httptest.ResponseRecorder, echo.Context) {
+func newCredentialHandlerContextWithPrincipalTeam(t *testing.T, method, target, path string, paramNames, paramVals []string, body string, principalTeamID uuid.UUID) (*httptest.ResponseRecorder, *echo.Context) {
 	t.Helper()
 
 	e := echo.New()
@@ -717,8 +715,11 @@ func newCredentialHandlerContextWithPrincipalTeam(t *testing.T, method, target, 
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 	c.SetPath(path)
-	c.SetParamNames(paramNames...)
-	c.SetParamValues(paramVals...)
+	pathValues := make(echo.PathValues, 0, len(paramNames))
+	for index, name := range paramNames {
+		pathValues = append(pathValues, echo.PathValue{Name: name, Value: paramVals[index]})
+	}
+	c.SetPathValues(pathValues)
 
 	return rec, c
 }

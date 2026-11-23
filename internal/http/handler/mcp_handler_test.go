@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/mcp"
 	"github.com/markhuangai/dense-mem/internal/sse"
@@ -218,7 +218,7 @@ func TestMCPHandlerSDKPostValidationBranches(t *testing.T) {
 	h := NewMCPHandlerWithLifecycleAndRuntimeConfig(registry.New(), testMCPLogger(), nil, nil)
 	e := echo.New()
 	profileID := uuid.New()
-	newContext := func(body string) (echo.Context, *httptest.ResponseRecorder) {
+	newContext := func(body string) (*echo.Context, *httptest.ResponseRecorder) {
 		req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(body))
 		req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 		req = req.WithContext(mcpTestContext(req.Context(), profileID, []string{"read"}))

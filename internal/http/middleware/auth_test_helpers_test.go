@@ -1,7 +1,7 @@
 package middleware
 
 import (
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/markhuangai/dense-mem/internal/crypto"
 	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 )

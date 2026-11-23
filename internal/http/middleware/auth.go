@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
@@ -98,7 +98,7 @@ type AuthOptions struct {
 func AuthMiddlewareWithOptions(repo accessservice.CredentialStore, auditSvc accessservice.AuditService, securitySvc SecurityBanService, opts AuthOptions) echo.MiddlewareFunc {
 	verifier := opts.CredentialVerifier
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			// Extract Authorization header
 			authHeader := c.Request().Header.Get("Authorization")
 
@@ -302,7 +302,7 @@ func AuthMiddlewareWithOptions(repo accessservice.CredentialStore, auditSvc acce
 	}
 }
 
-func authenticatedPathTeamID(c echo.Context) (*uuid.UUID, error) {
+func authenticatedPathTeamID(c *echo.Context) (*uuid.UUID, error) {
 	raw := strings.TrimSpace(c.Param("teamId"))
 	if raw == "" {
 		return nil, nil
@@ -334,7 +334,7 @@ func oauthAuthError(err error) error {
 var errNoSSOSession = errors.New("no sso session")
 var errNoUserPortalSession = errors.New("no user portal session")
 
-func authenticateSSOSession(c echo.Context, authenticator SSOSessionAuthenticator) error {
+func authenticateSSOSession(c *echo.Context, authenticator SSOSessionAuthenticator) error {
 	cookie, err := c.Request().Cookie(accessservice.SSOSessionCookieName)
 	if err != nil || strings.TrimSpace(cookie.Value) == "" {
 		return errNoSSOSession
@@ -359,7 +359,7 @@ func authenticateSSOSession(c echo.Context, authenticator SSOSessionAuthenticato
 	return setSessionPrincipal(c, actor, "sso_session", cookie.Value, csrfToken)
 }
 
-func authenticateUserPortalSession(c echo.Context, authenticator UserPortalSessionAuthenticator, entitlementValidator SSOEntitlementValidator) error {
+func authenticateUserPortalSession(c *echo.Context, authenticator UserPortalSessionAuthenticator, entitlementValidator SSOEntitlementValidator) error {
 	cookie, err := c.Request().Cookie(accessservice.UserPortalSessionCookieName)
 	if err != nil || strings.TrimSpace(cookie.Value) == "" {
 		return errNoUserPortalSession
@@ -392,7 +392,7 @@ func authenticateUserPortalSession(c echo.Context, authenticator UserPortalSessi
 	return setSessionPrincipal(c, actor, "credential_session", cookie.Value, csrfToken)
 }
 
-func setSessionPrincipal(c echo.Context, actor *domain.AuthenticatedActor, authMethod string, secrets ...string) error {
+func setSessionPrincipal(c *echo.Context, actor *domain.AuthenticatedActor, authMethod string, secrets ...string) error {
 	principal, actorContext, err := principalAndActorContext(actor, authMethod, "")
 	if err != nil {
 		return err
@@ -534,7 +534,7 @@ type LastUsedRecorder interface {
 // for over-quota valid keys.
 func LastUsedMiddleware(recorder LastUsedRecorder) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			principal := GetPrincipal(c.Request().Context())
 			if principal != nil && principal.AuthMethod == "api_key" && principal.CredentialID != nil {
 				if recorder != nil {
@@ -547,20 +547,20 @@ func LastUsedMiddleware(recorder LastUsedRecorder) echo.MiddlewareFunc {
 }
 
 // logAuthFailure logs an authentication failure event to the audit accessservice.
-func logAuthFailure(c echo.Context, auditSvc accessservice.AuditService, securitySvc SecurityBanService, profileID *string, reason, message string) {
+func logAuthFailure(c *echo.Context, auditSvc accessservice.AuditService, securitySvc SecurityBanService, profileID *string, reason, message string) {
 	logAuthFailureForEntity(c, auditSvc, securitySvc, profileID, "api_key", reason, message)
 }
 
-func logOAuthAuthFailure(c echo.Context, auditSvc accessservice.AuditService, securitySvc SecurityBanService, profileID *string, reason, message string) {
+func logOAuthAuthFailure(c *echo.Context, auditSvc accessservice.AuditService, securitySvc SecurityBanService, profileID *string, reason, message string) {
 	logAuthFailureForEntity(c, auditSvc, securitySvc, profileID, "oauth", reason, message)
 }
 
-func logAuthFailureForEntity(c echo.Context, auditSvc accessservice.AuditService, securitySvc SecurityBanService, profileID *string, entityType, reason, message string) {
+func logAuthFailureForEntity(c *echo.Context, auditSvc accessservice.AuditService, securitySvc SecurityBanService, profileID *string, entityType, reason, message string) {
 	if securitySvc != nil {
 		request := CaptureAuthFailureRequest(c, message)
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request().Context()), 5*time.Second)
 		if _, err := securitySvc.RecordAuthFailure(ctx, c.RealIP(), authFailureSurface(c), reason, request); err != nil {
-			c.Logger().Errorf("security auth failure record failed: %v", err)
+			c.Logger().ErrorContext(c.Request().Context(), "security auth failure record failed", "error", err)
 		}
 		cancel()
 	}
@@ -584,7 +584,7 @@ func logAuthFailureForEntity(c echo.Context, auditSvc accessservice.AuditService
 	_ = auditSvc.AuthFailure(ctx, profileID, entityType, "", metadata, clientIP, correlationID)
 }
 
-func authFailureSurface(c echo.Context) string {
+func authFailureSurface(c *echo.Context) string {
 	path := c.Path()
 	if path == "" {
 		path = c.Request().URL.Path
@@ -628,7 +628,7 @@ func RequirePrincipal(ctx context.Context) (*Principal, error) {
 // It should be used after AuthMiddleware to enforce authentication on specific routes.
 func RequireAuth() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			if GetPrincipal(c.Request().Context()) == nil {
 				return httperr.New(httperr.AUTH_MISSING, "authentication required")
 			}

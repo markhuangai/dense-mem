@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	"github.com/markhuangai/dense-mem/internal/settings"
@@ -36,7 +36,7 @@ func TestControlOntologyMaintenanceErrorResponses(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			router := echo.New()
 			router.HTTPErrorHandler = httperr.ErrorHandler
-			router.GET("/control/api/ontology/status", func(echo.Context) error {
+			router.GET("/control/api/ontology/status", func(*echo.Context) error {
 				return ontologyControlError(fmt.Errorf("internal diagnostic details: %w", testCase.cause))
 			})
 			response := httptest.NewRecorder()

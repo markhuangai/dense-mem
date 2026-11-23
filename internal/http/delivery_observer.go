@@ -8,7 +8,7 @@ import (
 	"net"
 	"net/http"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 )
 
 const deliveryObserverContextKey = "dense-mem.delivery-observer"
@@ -291,13 +291,16 @@ func deliveryCapabilityWriter(o *DeliveryObservation, capabilities int) http.Res
 }
 
 func observeDelivery(next echo.HandlerFunc) echo.HandlerFunc {
-	return func(c echo.Context) error {
-		response := c.Response()
-		original := response.Writer
+	return func(c *echo.Context) error {
+		response, err := echo.UnwrapResponse(c.Response())
+		if err != nil {
+			return err
+		}
+		original := response.ResponseWriter
 		writer, observation := NewDeliveryResponseWriter(original)
-		response.Writer = writer
+		response.ResponseWriter = writer
 		c.Set(deliveryObserverContextKey, observation)
-		defer func() { response.Writer = original }()
+		defer func() { response.ResponseWriter = original }()
 		return next(c)
 	}
 }
@@ -308,7 +311,7 @@ func DeliveryObservationMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
 	return observeDelivery(next)
 }
 
-func deliveryObserverFromContext(c echo.Context) *DeliveryObservation {
+func deliveryObserverFromContext(c *echo.Context) *DeliveryObservation {
 	if c == nil {
 		return nil
 	}

@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres/testfixture"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
@@ -50,7 +50,7 @@ func TestServerLifecycleDrainsRequestsBeforeAdapters(t *testing.T) {
 			runDone <- RunFromEnvironment(processCtx, RuntimeOptions{
 				DisableControlPortal: true,
 				RegisterRoutes: func(runtime RuntimeContext) error {
-					runtime.Echo.GET("/__lifecycle", func(c echo.Context) error {
+					runtime.Echo.GET("/__lifecycle", func(c *echo.Context) error {
 						close(requestEntered)
 						<-requestRelease
 						return c.NoContent(http.StatusNoContent)
@@ -58,10 +58,10 @@ func TestServerLifecycleDrainsRequestsBeforeAdapters(t *testing.T) {
 					return nil
 				},
 				BuildWorker: func(_ context.Context, runtime RuntimeContext) (RuntimeWorker, error) {
-					if runtime.Echo == nil || runtime.Echo.Listener == nil {
+					if runtime.Echo == nil || runtime.HTTPAddress == "" {
 						return nil, errors.New("lifecycle probe received no bound listener")
 					}
-					probe.addresses <- runtime.Echo.Listener.Addr().String()
+					probe.addresses <- runtime.HTTPAddress
 					return probe, nil
 				},
 			})
@@ -174,7 +174,7 @@ func TestServerLifecycleBuildWorkerFailureUsesStartupAbort(t *testing.T) {
 		err := RunFromEnvironment(context.Background(), RuntimeOptions{
 			DisableControlPortal: true,
 			BuildWorker: func(_ context.Context, runtime RuntimeContext) (RuntimeWorker, error) {
-				boundAddress = runtime.Echo.Listener.Addr().String()
+				boundAddress = runtime.HTTPAddress
 				return nil, errors.New("worker construction failed")
 			},
 		})
@@ -203,7 +203,7 @@ func TestServerLifecycleForcesListenerCloseAfterCancellation(t *testing.T) {
 			runDone <- RunFromEnvironment(processCtx, RuntimeOptions{
 				DisableControlPortal: true,
 				RegisterRoutes: func(runtime RuntimeContext) error {
-					runtime.Echo.GET("/__lifecycle-force", func(c echo.Context) error {
+					runtime.Echo.GET("/__lifecycle-force", func(c *echo.Context) error {
 						close(requestEntered)
 						<-requestRelease
 						return c.NoContent(http.StatusNoContent)
@@ -211,7 +211,7 @@ func TestServerLifecycleForcesListenerCloseAfterCancellation(t *testing.T) {
 					return nil
 				},
 				BuildWorker: func(_ context.Context, runtime RuntimeContext) (RuntimeWorker, error) {
-					addressCh <- runtime.Echo.Listener.Addr().String()
+					addressCh <- runtime.HTTPAddress
 					return nil, nil
 				},
 			})

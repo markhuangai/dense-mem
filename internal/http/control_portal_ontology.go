@@ -4,7 +4,7 @@ import (
 	"errors"
 	"strconv"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/http/response"
@@ -48,7 +48,7 @@ func registerOntologyMaintenanceRoutes(api *echo.Group, h *controlPortalHandler)
 	api.POST("/ontology/resume", h.resumeOntologyMaintenance, middleware.BindAndValidateStrict[controlOntologyPauseRequest](ontologyPauseBodyKey))
 }
 
-func (h *controlPortalHandler) getOntologyMaintenanceConfig(c echo.Context) error {
+func (h *controlPortalHandler) getOntologyMaintenanceConfig(c *echo.Context) error {
 	value, err := h.appConfig.GetOntologyMaintenanceSettings(c.Request().Context())
 	if err != nil {
 		return ontologyControlError(err)
@@ -56,7 +56,7 @@ func (h *controlPortalHandler) getOntologyMaintenanceConfig(c echo.Context) erro
 	return response.SuccessOK(c, value)
 }
 
-func (h *controlPortalHandler) updateOntologyMaintenanceConfig(c echo.Context) error {
+func (h *controlPortalHandler) updateOntologyMaintenanceConfig(c *echo.Context) error {
 	body := middleware.MustGetValidatedBody[controlOntologyConfigRequest](c.Request().Context(), ontologyConfigBodyKey)
 	values := map[string]string{}
 	for _, item := range body.Items {
@@ -72,7 +72,7 @@ func (h *controlPortalHandler) updateOntologyMaintenanceConfig(c echo.Context) e
 	return response.SuccessOK(c, value)
 }
 
-func (h *controlPortalHandler) getOntologyMaintenanceStatus(c echo.Context) error {
+func (h *controlPortalHandler) getOntologyMaintenanceStatus(c *echo.Context) error {
 	value, err := h.ontology.Status(c.Request().Context())
 	if err != nil {
 		return ontologyControlError(err)
@@ -80,7 +80,7 @@ func (h *controlPortalHandler) getOntologyMaintenanceStatus(c echo.Context) erro
 	return response.SuccessOK(c, value)
 }
 
-func (h *controlPortalHandler) listOntologyMaintenanceRuns(c echo.Context) error {
+func (h *controlPortalHandler) listOntologyMaintenanceRuns(c *echo.Context) error {
 	for key := range c.QueryParams() {
 		if key != "limit" && key != "cursor" {
 			return httperr.New(httperr.VALIDATION_ERROR, "unknown ontology run query parameter")
@@ -101,31 +101,31 @@ func (h *controlPortalHandler) listOntologyMaintenanceRuns(c echo.Context) error
 	return response.SuccessOK(c, value)
 }
 
-func (h *controlPortalHandler) runOntologyMaintenance(c echo.Context) error {
+func (h *controlPortalHandler) runOntologyMaintenance(c *echo.Context) error {
 	return h.ontologyRunCommand(c, "run", "")
 }
-func (h *controlPortalHandler) retryOntologyMaintenance(c echo.Context) error {
+func (h *controlPortalHandler) retryOntologyMaintenance(c *echo.Context) error {
 	id, err := parseControlUUID(c.Param("runId"), "run ID")
 	if err != nil {
 		return err
 	}
 	return h.ontologyRunCommand(c, "retry", id.String())
 }
-func (h *controlPortalHandler) ontologyRunCommand(c echo.Context, action, runID string) error {
+func (h *controlPortalHandler) ontologyRunCommand(c *echo.Context, action, runID string) error {
 	body := middleware.MustGetValidatedBody[controlOntologyRunRequest](c.Request().Context(), ontologyCommandBodyKey)
 	return h.ontologyCommand(c, domain.OntologyMaintenanceCommand{OperationKey: body.OperationKey, Action: action, MaxBatches: body.MaxBatches, RetryRunID: runID})
 }
-func (h *controlPortalHandler) pauseOntologyMaintenance(c echo.Context) error {
+func (h *controlPortalHandler) pauseOntologyMaintenance(c *echo.Context) error {
 	return h.ontologyPauseCommand(c, "pause")
 }
-func (h *controlPortalHandler) resumeOntologyMaintenance(c echo.Context) error {
+func (h *controlPortalHandler) resumeOntologyMaintenance(c *echo.Context) error {
 	return h.ontologyPauseCommand(c, "resume")
 }
-func (h *controlPortalHandler) ontologyPauseCommand(c echo.Context, action string) error {
+func (h *controlPortalHandler) ontologyPauseCommand(c *echo.Context, action string) error {
 	body := middleware.MustGetValidatedBody[controlOntologyPauseRequest](c.Request().Context(), ontologyPauseBodyKey)
 	return h.ontologyCommand(c, domain.OntologyMaintenanceCommand{OperationKey: body.OperationKey, Action: action})
 }
-func (h *controlPortalHandler) ontologyCommand(c echo.Context, input domain.OntologyMaintenanceCommand) error {
+func (h *controlPortalHandler) ontologyCommand(c *echo.Context, input domain.OntologyMaintenanceCommand) error {
 	value, err := h.ontology.Command(c.Request().Context(), input, c.RealIP(), middleware.GetCorrelationID(c.Request().Context()))
 	if err != nil {
 		return ontologyControlError(err)

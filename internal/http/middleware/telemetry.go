@@ -4,7 +4,7 @@ import (
 	"crypto/subtle"
 	"strings"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
@@ -15,7 +15,7 @@ import (
 func TelemetryScrapeTokenMiddleware(token string) echo.MiddlewareFunc {
 	expected := strings.TrimSpace(token)
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			got := c.Request().Header.Get("X-Telemetry-Scrape-Token")
 			if got == "" {
 				auth := c.Request().Header.Get(echo.HeaderAuthorization)

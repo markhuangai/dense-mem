@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/crypto"
@@ -31,7 +31,7 @@ func TestTransportCompositionPreservesRouteAndUserHookOrder(t *testing.T) {
 	var postAuthHooks []string
 	markHook := func(marker string) echo.MiddlewareFunc {
 		return func(next echo.HandlerFunc) echo.HandlerFunc {
-			return func(c echo.Context) error {
+			return func(c *echo.Context) error {
 				userHooks = append(userHooks, marker)
 				return next(c)
 			}
@@ -39,7 +39,7 @@ func TestTransportCompositionPreservesRouteAndUserHookOrder(t *testing.T) {
 	}
 	markPostAuthHook := func(marker string) echo.MiddlewareFunc {
 		return func(next echo.HandlerFunc) echo.HandlerFunc {
-			return func(c echo.Context) error {
+			return func(c *echo.Context) error {
 				postAuthHooks = append(postAuthHooks, marker)
 				return next(c)
 			}
@@ -71,12 +71,12 @@ func TestTransportCompositionPreservesRouteAndUserHookOrder(t *testing.T) {
 			DisableControlPortal: true,
 			RegisterRoutes: func(runtime RuntimeContext) error {
 				routeRegistered = true
-				for _, route := range runtime.Echo.Routes() {
+				for _, route := range runtime.Echo.Router().Routes() {
 					if route.Path == "/mcp" {
 						mcpPresentDuringRegister = true
 					}
 				}
-				runtime.Echo.GET("/registered-before-protected", func(echo.Context) error { return nil })
+				runtime.Echo.GET("/registered-before-protected", func(*echo.Context) error { return nil })
 				return nil
 			},
 			PostAuthMiddleware:   []echo.MiddlewareFunc{markPostAuthHook("post-auth-1"), markPostAuthHook("post-auth-2")},
@@ -90,21 +90,21 @@ func TestTransportCompositionPreservesRouteAndUserHookOrder(t *testing.T) {
 		t.Fatal("RegisterRoutes hook was not called")
 	}
 
-	routes := composition.e.Routes()
+	routes := composition.e.Router().Routes()
 	mcpRegistered := false
-	var sessionRoute *echo.Route
+	sessionRegistered := false
 	for _, route := range routes {
 		if route.Path == "/mcp" && route.Method == http.MethodPost {
 			mcpRegistered = true
 		}
 		if route.Path == "/ui/api/session" && route.Method == http.MethodGet {
-			sessionRoute = route
+			sessionRegistered = true
 		}
 	}
 	if mcpPresentDuringRegister || !mcpRegistered {
 		t.Fatalf("protected route registration order: present during callback=%t registered afterward=%t", mcpPresentDuringRegister, mcpRegistered)
 	}
-	if sessionRoute == nil {
+	if !sessionRegistered {
 		t.Fatal("user portal session route was not registered")
 	}
 

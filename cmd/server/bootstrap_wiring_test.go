@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	internalhttp "github.com/markhuangai/dense-mem/internal/http"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 	"github.com/stretchr/testify/require"
@@ -17,8 +17,8 @@ func TestServerBootstrapWiresKnowledgePipeline(t *testing.T) {
 	require.NotNil(t, reg, "registry must be non-nil")
 
 	ph := internalhttp.ProtectedHandlers{
-		MCPPost: func(c echo.Context) error { return nil },
-		MCPGet:  func(c echo.Context) error { return nil },
+		MCPPost: func(c *echo.Context) error { return nil },
+		MCPGet:  func(c *echo.Context) error { return nil },
 	}
 	require.NotNil(t, ph.MCPPost, "ProtectedHandlers.MCPPost must be non-nil after handler assignment")
 	require.NotNil(t, ph.MCPGet, "ProtectedHandlers.MCPGet must be non-nil after handler assignment")

@@ -6,9 +6,9 @@
     "lint:lines": "cd .. && .lint/node_modules/.bin/textlint --config .textlintrc.json --ignore-path .textlintignore --format stylish \"**/*.{css,go,html,js,json,md,sh,sql,toml,ts,tsx,txt,yaml,yml}\""
   },
   "devDependencies": {
-    "glob": "14.0.4",
-    "js-yaml": "4.3.2",
-    "textlint": "^15.8.0",
+    "glob": "14.0.6",
+    "js-yaml": "5.5.0",
+    "textlint": "^16.1.1",
     "textlint-rule-max-number-of-lines": "^1.0.3"
   },
   "overrides": {

@@ -2,11 +2,12 @@ package middleware
 
 import (
 	"context"
+	"net/http"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
@@ -18,7 +19,7 @@ import (
 // has derived team/key identity. Metrics are aggregated by route template, not raw path.
 func UsageMetricsMiddleware(recorder operations.UsageMetricsRecorder) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			start := time.Now()
 			requestContext, mcpMetrics := domain.WithMCPToolMetrics(c.Request().Context())
 			c.SetRequest(c.Request().WithContext(requestContext))
@@ -33,7 +34,7 @@ func UsageMetricsMiddleware(recorder operations.UsageMetricsRecorder) echo.Middl
 // scrape-oriented metrics backends such as Prometheus.
 func TelemetryHTTPMiddleware(recorder httpcontract.HTTPMetrics) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			start := time.Now()
 			err := next(c)
 			recordTelemetryHTTPMetric(c, recorder, start, err)
@@ -42,7 +43,7 @@ func TelemetryHTTPMiddleware(recorder httpcontract.HTTPMetrics) echo.MiddlewareF
 	}
 }
 
-func recordUsageMetric(c echo.Context, recorder operations.UsageMetricsRecorder, start time.Time, err error, mcpMetrics *domain.MCPToolMetrics) {
+func recordUsageMetric(c *echo.Context, recorder operations.UsageMetricsRecorder, start time.Time, err error, mcpMetrics *domain.MCPToolMetrics) {
 	if recorder == nil {
 		return
 	}
@@ -75,7 +76,7 @@ func recordUsageMetric(c echo.Context, recorder operations.UsageMetricsRecorder,
 	})
 }
 
-func recordTelemetryHTTPMetric(c echo.Context, recorder httpcontract.HTTPMetrics, start time.Time, err error) {
+func recordTelemetryHTTPMetric(c *echo.Context, recorder httpcontract.HTTPMetrics, start time.Time, err error) {
 	if recorder == nil {
 		return
 	}
@@ -110,21 +111,19 @@ func isMCPRoute(route string) bool {
 	return route == "/mcp" || strings.HasSuffix(strings.TrimSuffix(route, "/"), "/mcp")
 }
 
-func usageStatus(c echo.Context, err error) int {
-	if err == nil {
-		if c.Response().Status != 0 {
-			return c.Response().Status
-		}
-		return 200
-	}
+func usageStatus(c *echo.Context, err error) int {
 	if apiErr, ok := err.(*httperr.APIError); ok {
 		return httperr.HTTPStatusCode(apiErr.Code)
 	}
-	if httpErr, ok := err.(*echo.HTTPError); ok {
-		return httpErr.Code
+	if status := echo.StatusCode(err); status != 0 {
+		return status
 	}
-	if c.Response().Status != 0 {
-		return c.Response().Status
+	response, _ := echo.UnwrapResponse(c.Response())
+	if response != nil && response.Status != 0 {
+		return response.Status
 	}
-	return 500
+	if err == nil {
+		return http.StatusOK
+	}
+	return http.StatusInternalServerError
 }

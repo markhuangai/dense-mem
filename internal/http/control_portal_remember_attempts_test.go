@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/config"
@@ -92,7 +92,7 @@ func TestControlPortalRememberAttemptValidationAndNotFound(t *testing.T) {
 
 func TestControlPortalRememberAttemptErrorsAndBounds(t *testing.T) {
 	e := echo.New()
-	newContext := func(path string) echo.Context {
+	newContext := func(path string) *echo.Context {
 		return e.NewContext(httptest.NewRequest(http.MethodGet, path, nil), httptest.NewRecorder())
 	}
 
@@ -123,9 +123,8 @@ func TestControlPortalRememberAttemptErrorsAndBounds(t *testing.T) {
 	require.ErrorContains(t, h.getRememberAttemptDiagnostic(withRememberAttemptParams(newContext("/"), uuid.NewString(), uuid.NewString())), "detail failed")
 }
 
-func withRememberAttemptParams(ctx echo.Context, teamID, attemptID string) echo.Context {
-	ctx.SetParamNames("teamId", "attemptId")
-	ctx.SetParamValues(teamID, attemptID)
+func withRememberAttemptParams(ctx *echo.Context, teamID, attemptID string) *echo.Context {
+	ctx.SetPathValues(echo.PathValues{{Name: "teamId", Value: teamID}, {Name: "attemptId", Value: attemptID}})
 	return ctx
 }
 

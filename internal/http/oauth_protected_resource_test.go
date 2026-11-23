@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -137,7 +137,7 @@ func TestOAuthProtectedResourceChallengeUsesMatchingMetadataDocument(t *testing.
 	e := echo.New()
 	e.HTTPErrorHandler = httperr.ErrorHandler
 	RegisterProtectedRoutesWithHandlers(e, ProtectedDeps{OAuthMetadata: provider}, ProtectedHandlers{
-		MCPGet: func(c echo.Context) error { return c.NoContent(nethttp.StatusOK) },
+		MCPGet: func(c *echo.Context) error { return c.NoContent(nethttp.StatusOK) },
 	})
 
 	tests := []struct {
@@ -222,22 +222,22 @@ func TestOAuthProtectedResourceChallengeSkipsNonOAuthFailureSurfaces(t *testing.
 		{
 			name:     "successful handler",
 			provider: provider,
-			next:     func(echo.Context) error { return nil },
+			next:     func(*echo.Context) error { return nil },
 		},
 		{
 			name: "provider absent",
-			next: func(echo.Context) error { return httperr.New(httperr.AUTH_MISSING, "unauthorized") },
+			next: func(*echo.Context) error { return httperr.New(httperr.AUTH_MISSING, "unauthorized") },
 		},
 		{
 			name:     "non unauthorized api error",
 			provider: provider,
-			next:     func(echo.Context) error { return httperr.New(httperr.FORBIDDEN, "forbidden") },
+			next:     func(*echo.Context) error { return httperr.New(httperr.FORBIDDEN, "forbidden") },
 		},
 		{
 			name:     "invalid scoped team",
 			provider: provider,
 			path:     "/teams/:teamId/mcp",
-			next:     func(echo.Context) error { return echo.NewHTTPError(nethttp.StatusUnauthorized) },
+			next:     func(*echo.Context) error { return echo.ErrUnauthorized },
 		},
 	}
 	for _, test := range tests {
@@ -248,8 +248,7 @@ func TestOAuthProtectedResourceChallengeSkipsNonOAuthFailureSurfaces(t *testing.
 			c := e.NewContext(req, rec)
 			c.SetPath(test.path)
 			if test.path != "" {
-				c.SetParamNames("teamId")
-				c.SetParamValues("invalid")
+				c.SetPathValues(echo.PathValues{{Name: "teamId", Value: "invalid"}})
 			}
 			err := oauthProtectedResourceChallenge(test.provider)(test.next)(c)
 			if test.name == "successful handler" {
@@ -267,16 +266,16 @@ func TestOAuthProtectedResourceChallengeSkipsNonOAuthFailureSurfaces(t *testing.
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 	c.SetPath("/mcp")
-	err := oauthProtectedResourceChallenge(provider)(func(echo.Context) error {
-		return echo.NewHTTPError(nethttp.StatusUnauthorized)
+	err := oauthProtectedResourceChallenge(provider)(func(*echo.Context) error {
+		return echo.ErrUnauthorized
 	})(c)
 	require.Error(t, err)
 	require.Empty(t, rec.Header().Get(echo.HeaderWWWAuthenticate))
 
 	provider.metadataErr = nil
 	provider.metadata.AuthorizationServers = nil
-	err = oauthProtectedResourceChallenge(provider)(func(echo.Context) error {
-		return echo.NewHTTPError(nethttp.StatusUnauthorized)
+	err = oauthProtectedResourceChallenge(provider)(func(*echo.Context) error {
+		return echo.ErrUnauthorized
 	})(c)
 	require.Error(t, err)
 	require.Empty(t, rec.Header().Get(echo.HeaderWWWAuthenticate))
@@ -289,14 +288,14 @@ func TestOAuthProtectedResourceChallengeSkipsNonOAuthFailureSurfaces(t *testing.
 	rec = httptest.NewRecorder()
 	c = e.NewContext(req, rec)
 	c.SetPath("/mcp")
-	err = oauthProtectedResourceChallenge(provider)(func(echo.Context) error {
-		return echo.NewHTTPError(nethttp.StatusUnauthorized)
+	err = oauthProtectedResourceChallenge(provider)(func(*echo.Context) error {
+		return echo.ErrUnauthorized
 	})(c)
 	require.Error(t, err)
 	require.Empty(t, rec.Header().Get(echo.HeaderWWWAuthenticate))
 
 	require.Equal(t, nethttp.StatusInternalServerError, oauthErrorStatus(errors.New("unknown")))
-	require.Equal(t, nethttp.StatusUnauthorized, oauthErrorStatus(echo.NewHTTPError(nethttp.StatusUnauthorized)))
+	require.Equal(t, nethttp.StatusUnauthorized, oauthErrorStatus(echo.ErrUnauthorized))
 }
 
 type oauthMetadataStub struct {

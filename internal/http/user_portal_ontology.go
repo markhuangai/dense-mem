@@ -5,7 +5,7 @@ import (
 	"slices"
 	"strconv"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/markhuangai/dense-mem/internal/http/dto"
 	mw "github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/http/response"
@@ -32,7 +32,7 @@ type ontologyManagementHandler struct{ service *ontology.ManagementService }
 func registerOntologyManagementRoutes(api *echo.Group, service *ontology.ManagementService) {
 	h := &ontologyManagementHandler{service: service}
 	group := api.Group("/ontology", func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			err := next(c)
 			var publicError *httperr.APIError
 			if errors.As(err, &publicError) && publicError.Code == httperr.FORBIDDEN {
@@ -41,7 +41,7 @@ func registerOntologyManagementRoutes(api *echo.Group, service *ontology.Managem
 			return err
 		}
 	}, mw.RequireRole(access.CredentialRoleManager), userPortalServiceAvailable(service != nil, "ontology management unavailable"), func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			c.Response().Header().Set(echo.HeaderCacheControl, "no-store")
 			ctx := ontology.WithManagementAuditContext(c.Request().Context(), c.RealIP(), mw.GetCorrelationID(c.Request().Context()))
 			c.SetRequest(c.Request().WithContext(ctx))
@@ -67,7 +67,7 @@ func registerOntologyManagementRoutes(api *echo.Group, service *ontology.Managem
 
 func ontologyQuery(allowed ...string) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			for name, values := range c.QueryParams() {
 				if !slices.Contains(allowed, name) || len(values) != 1 {
 					return httperr.New(httperr.VALIDATION_ERROR, "unknown or repeated ontology query parameter")
@@ -78,7 +78,7 @@ func ontologyQuery(allowed ...string) echo.MiddlewareFunc {
 	}
 }
 
-func ontologyIntQuery(c echo.Context, name string, fallback int64) (int64, error) {
+func ontologyIntQuery(c *echo.Context, name string, fallback int64) (int64, error) {
 	raw := c.QueryParam(name)
 	if raw == "" {
 		return fallback, nil
@@ -90,7 +90,7 @@ func ontologyIntQuery(c echo.Context, name string, fallback int64) (int64, error
 	return value, nil
 }
 
-func ontologyPageLimit(c echo.Context) (int, error) {
+func ontologyPageLimit(c *echo.Context) (int, error) {
 	value, err := ontologyIntQuery(c, "limit", 50)
 	if err != nil {
 		return 0, err
@@ -101,7 +101,7 @@ func ontologyPageLimit(c echo.Context) (int, error) {
 	return int(value), nil
 }
 
-func managementResponse(c echo.Context, value any, err error) error {
+func managementResponse(c *echo.Context, value any, err error) error {
 	if err == nil {
 		return response.SuccessOK(c, value)
 	}
@@ -119,7 +119,7 @@ func managementResponse(c echo.Context, value any, err error) error {
 	}
 }
 
-func (h *ontologyManagementHandler) records(c echo.Context) error {
+func (h *ontologyManagementHandler) records(c *echo.Context) error {
 	limit, err := ontologyPageLimit(c)
 	if err != nil {
 		return err
@@ -127,7 +127,7 @@ func (h *ontologyManagementHandler) records(c echo.Context) error {
 	value, err := h.service.Records(c.Request().Context(), ontology.Kind(c.QueryParam("kind")), c.QueryParam("cursor"), limit)
 	return managementResponse(c, value, err)
 }
-func (h *ontologyManagementHandler) record(c echo.Context) error {
+func (h *ontologyManagementHandler) record(c *echo.Context) error {
 	version, err := ontologyIntQuery(c, "version", 0)
 	if err != nil {
 		return err
@@ -135,7 +135,7 @@ func (h *ontologyManagementHandler) record(c echo.Context) error {
 	value, err := h.service.Record(c.Request().Context(), c.Param("id"), version)
 	return managementResponse(c, value, err)
 }
-func (h *ontologyManagementHandler) sources(c echo.Context) error {
+func (h *ontologyManagementHandler) sources(c *echo.Context) error {
 	limit, err := ontologyPageLimit(c)
 	if err != nil {
 		return err
@@ -147,11 +147,11 @@ func (h *ontologyManagementHandler) sources(c echo.Context) error {
 	value, err := h.service.Sources(c.Request().Context(), kind, c.QueryParam("cursor"), c.QueryParam("q"), limit)
 	return managementResponse(c, value, err)
 }
-func (h *ontologyManagementHandler) status(c echo.Context) error {
+func (h *ontologyManagementHandler) status(c *echo.Context) error {
 	value, err := h.service.Status(c.Request().Context())
 	return managementResponse(c, value, err)
 }
-func (h *ontologyManagementHandler) drafts(c echo.Context) error {
+func (h *ontologyManagementHandler) drafts(c *echo.Context) error {
 	limit, err := ontologyPageLimit(c)
 	if err != nil {
 		return err
@@ -159,32 +159,32 @@ func (h *ontologyManagementHandler) drafts(c echo.Context) error {
 	value, err := h.service.Drafts(c.Request().Context(), c.QueryParam("cursor"), limit)
 	return managementResponse(c, value, err)
 }
-func (h *ontologyManagementHandler) draft(c echo.Context) error {
+func (h *ontologyManagementHandler) draft(c *echo.Context) error {
 	value, err := h.service.Draft(c.Request().Context(), c.Param("id"))
 	return managementResponse(c, value, err)
 }
-func (h *ontologyManagementHandler) saveDraft(c echo.Context) error {
+func (h *ontologyManagementHandler) saveDraft(c *echo.Context) error {
 	body := mw.MustGetValidatedBody[ontologySaveDraftRequest](c.Request().Context(), ontologySaveBodyKey)
 	value, err := h.service.SaveDraft(c.Request().Context(), c.Param("id"), ontology.SaveDraftInput{OperationKey: body.OperationKey, ExpectedVersion: *body.ExpectedVersion, ExpectedRevision: *body.ExpectedRevision, Reason: body.Reason, Edits: body.Edits})
 	return managementResponse(c, value, err)
 }
-func (h *ontologyManagementHandler) preview(c echo.Context) error {
+func (h *ontologyManagementHandler) preview(c *echo.Context) error {
 	body := mw.MustGetValidatedBody[dto.OntologyPreviewRequest](c.Request().Context(), ontologyPreviewBodyKey)
 	value, err := h.service.Preview(c.Request().Context(), c.Param("id"), *body.ExpectedVersion)
 	return managementResponse(c, value, err)
 }
-func (h *ontologyManagementHandler) publish(c echo.Context) error {
+func (h *ontologyManagementHandler) publish(c *echo.Context) error {
 	return h.commandDraft(c, "publish")
 }
-func (h *ontologyManagementHandler) discard(c echo.Context) error {
+func (h *ontologyManagementHandler) discard(c *echo.Context) error {
 	return h.commandDraft(c, "discard")
 }
-func (h *ontologyManagementHandler) commandDraft(c echo.Context, action string) error {
+func (h *ontologyManagementHandler) commandDraft(c *echo.Context, action string) error {
 	body := mw.MustGetValidatedBody[dto.OntologyDraftCommandRequest](c.Request().Context(), ontologyDraftBodyKey)
 	value, err := h.service.CommandDraft(c.Request().Context(), c.Param("id"), action, ontology.DraftCommand{OperationKey: body.OperationKey, ExpectedVersion: *body.ExpectedVersion, ExpectedRevision: *body.ExpectedRevision, Reason: body.Reason})
 	return managementResponse(c, value, err)
 }
-func (h *ontologyManagementHandler) publications(c echo.Context) error {
+func (h *ontologyManagementHandler) publications(c *echo.Context) error {
 	limit, err := ontologyPageLimit(c)
 	if err != nil {
 		return err
@@ -196,11 +196,11 @@ func (h *ontologyManagementHandler) publications(c echo.Context) error {
 	value, err := h.service.Publications(c.Request().Context(), after, limit)
 	return managementResponse(c, value, err)
 }
-func (h *ontologyManagementHandler) publication(c echo.Context) error {
+func (h *ontologyManagementHandler) publication(c *echo.Context) error {
 	value, err := h.service.Publication(c.Request().Context(), c.Param("id"))
 	return managementResponse(c, value, err)
 }
-func (h *ontologyManagementHandler) rollback(c echo.Context) error {
+func (h *ontologyManagementHandler) rollback(c *echo.Context) error {
 	body := mw.MustGetValidatedBody[dto.OntologyRollbackRequest](c.Request().Context(), ontologyRollbackBodyKey)
 	value, err := h.service.Rollback(c.Request().Context(), c.Param("id"), ontology.DraftCommand{OperationKey: body.OperationKey, ExpectedRevision: *body.ExpectedRevision, Reason: body.Reason})
 	return managementResponse(c, value, err)

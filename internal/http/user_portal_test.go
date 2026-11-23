@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,7 +14,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/config"
@@ -251,8 +252,8 @@ func TestPublicIPRateLimitFailureDoesNotLogRawError(t *testing.T) {
 	e := echo.New()
 	e.HTTPErrorHandler = httperr.ErrorHandler
 	var logs bytes.Buffer
-	e.Logger.SetOutput(&logs)
-	e.GET("/rate-limited", func(c echo.Context) error {
+	e.Logger = slog.New(slog.NewJSONHandler(&logs, nil))
+	e.GET("/rate-limited", func(c *echo.Context) error {
 		return c.NoContent(http.StatusNoContent)
 	}, publicIPRateLimitMiddleware("test", failingPublicRateLimitService{err: errors.New("postgres password=not-safe-to-log")}, &config.Config{RateLimitPerMinute: 1}))
 
@@ -432,6 +433,9 @@ func TestUserPortalStaticDoesNotShadowAPI(t *testing.T) {
 	authKey, rawKey := userPortalTestKey(t, teamID, uuid.New(), "Mine", []string{"read", "write"})
 	staticDir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(staticDir, "index.html"), []byte("<!doctype html><title>ui</title>"), 0o644))
+	require.NoError(t, os.Mkdir(filepath.Join(staticDir, "assets"), 0o755))
+	const asset = "console.log('user portal asset')"
+	require.NoError(t, os.WriteFile(filepath.Join(staticDir, "assets", "app.js"), []byte(asset), 0o644))
 	server := userPortalTestServer(t, teamID, authKey, &userPortalKeySvc{keys: []*domain.Credential{authKey}}, staticDir)
 
 	uiReq := httptest.NewRequest(http.MethodGet, "/ui", nil)
@@ -439,6 +443,16 @@ func TestUserPortalStaticDoesNotShadowAPI(t *testing.T) {
 	server.ServeHTTP(uiRec, uiReq)
 	require.Equal(t, http.StatusOK, uiRec.Code)
 	require.Contains(t, uiRec.Body.String(), "<title>ui</title>")
+
+	assetRec := httptest.NewRecorder()
+	server.ServeHTTP(assetRec, httptest.NewRequest(http.MethodGet, "/ui/assets/app.js", nil))
+	require.Equal(t, http.StatusOK, assetRec.Code)
+	require.Equal(t, asset, assetRec.Body.String())
+
+	fallbackRec := httptest.NewRecorder()
+	server.ServeHTTP(fallbackRec, httptest.NewRequest(http.MethodGet, "/ui/assets-preview", nil))
+	require.Equal(t, http.StatusOK, fallbackRec.Code)
+	require.Contains(t, fallbackRec.Body.String(), "<title>ui</title>")
 
 	apiReq := httptest.NewRequest(http.MethodGet, "/ui/api/session", nil)
 	apiReq.Header.Set("Authorization", "Bearer "+rawKey)
@@ -729,7 +743,7 @@ func userPortalTestServer(t *testing.T, teamID uuid.UUID, authKey *domain.Creden
 	return e
 }
 
-func userPortalEchoContext(t *testing.T, method, target, body string, principal *httpmw.Principal) echo.Context {
+func userPortalEchoContext(t *testing.T, method, target, body string, principal *httpmw.Principal) *echo.Context {
 	t.Helper()
 
 	e := echo.New()

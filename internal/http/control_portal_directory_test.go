@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -236,7 +236,7 @@ func TestControlDirectoryHandlersValidateIdentifiersBodiesAndServiceFailures(t *
 	require.Error(t, handler.updateDirectoryConnector(c))
 }
 
-func controlDirectoryContext(method, body string, params map[string]string) (echo.Context, *httptest.ResponseRecorder) {
+func controlDirectoryContext(method, body string, params map[string]string) (*echo.Context, *httptest.ResponseRecorder) {
 	request := httptest.NewRequest(method, "/control/api", strings.NewReader(body))
 	if body != "" {
 		request.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
@@ -252,8 +252,11 @@ func controlDirectoryContext(method, body string, params map[string]string) (ech
 				values = append(values, value)
 			}
 		}
-		ctx.SetParamNames(names...)
-		ctx.SetParamValues(values...)
+		pathValues := make(echo.PathValues, 0, len(names))
+		for index, name := range names {
+			pathValues = append(pathValues, echo.PathValue{Name: name, Value: values[index]})
+		}
+		ctx.SetPathValues(pathValues)
 	}
 	return ctx, recorder
 }

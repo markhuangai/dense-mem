@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/stretchr/testify/require"
 
 	demoservice "github.com/markhuangai/dense-mem/cmd/internal/demo/service"
@@ -121,7 +121,7 @@ func TestRequestQuotaMiddlewareConsumesResolvedTeam(t *testing.T) {
 	e := echo.New()
 	e.HTTPErrorHandler = httperr.ErrorHandler
 	e.Use(RequestQuotaMiddleware(manager))
-	e.GET("/", func(c echo.Context) error {
+	e.GET("/", func(c *echo.Context) error {
 		return c.NoContent(http.StatusNoContent)
 	})
 	teamID := uuid.New()

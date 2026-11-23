@@ -14,8 +14,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
-	echomw "github.com/labstack/echo/v4/middleware"
+	"github.com/labstack/echo/v5"
+	echomw "github.com/labstack/echo/v5/middleware"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
 	dto "github.com/markhuangai/dense-mem/internal/http/dto"
@@ -82,11 +82,11 @@ func newControlPortalServerWithMetricsAndTelemetry(
 		return nil, fmt.Errorf("control portal: token is required")
 	}
 
-	e := echo.New()
-	configureEchoLogger(e, logger)
-	applyServerLimits(e)
+	e := echo.NewWithConfig(echo.Config{
+		Logger:           NewEchoLogger(logger),
+		HTTPErrorHandler: httperr.ErrorHandler,
+	})
 	applyIPExtractor(e)
-	e.HTTPErrorHandler = httperr.ErrorHandler
 	e.Use(observeDelivery)
 	e.Use(echomw.RequestLoggerWithConfig(echomw.RequestLoggerConfig{
 		HandleError:  true,
@@ -94,9 +94,8 @@ func newControlPortalServerWithMetricsAndTelemetry(
 		LogURI:       true,
 		LogStatus:    true,
 		LogLatency:   true,
-		LogError:     true,
 		LogRoutePath: true,
-		LogValuesFunc: func(c echo.Context, v echomw.RequestLoggerValues) error {
+		LogValuesFunc: func(c *echo.Context, v echomw.RequestLoggerValues) error {
 			if logger == nil {
 				return nil
 			}
@@ -111,7 +110,7 @@ func newControlPortalServerWithMetricsAndTelemetry(
 	}))
 	e.Use(rootRecover(logger))
 	e.Use(httpmw.CorrelationIDMiddleware())
-	e.Use(echomw.BodyLimit(fmt.Sprintf("%dB", controlMaxBodyBytes(cfg))))
+	e.Use(echomw.BodyLimit(int64(controlMaxBodyBytes(cfg))))
 
 	var securitySvc settings.SecurityService
 	if len(securitySvcs) > 0 {
@@ -244,7 +243,7 @@ func newControlPortalServerWithMetricsAndTelemetry(
 	return e, nil
 }
 
-func (h *controlPortalHandler) getMetrics(c echo.Context) error {
+func (h *controlPortalHandler) getMetrics(c *echo.Context) error {
 	if h.metrics == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "usage metrics unavailable")
 	}
@@ -268,7 +267,7 @@ func (h *controlPortalHandler) getMetrics(c echo.Context) error {
 	}})
 }
 
-func (h *controlPortalHandler) getTelemetry(c echo.Context) error {
+func (h *controlPortalHandler) getTelemetry(c *echo.Context) error {
 	if h.telemetry == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "telemetry unavailable")
 	}
@@ -283,7 +282,7 @@ func (h *controlPortalHandler) getTelemetry(c echo.Context) error {
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": snapshot})
 }
 
-func (h *controlPortalHandler) listTeams(c echo.Context) error {
+func (h *controlPortalHandler) listTeams(c *echo.Context) error {
 	limit, offset := controlPagination(c)
 	teams, err := h.teams.List(c.Request().Context(), limit, offset)
 	if err != nil {
@@ -304,7 +303,7 @@ func (h *controlPortalHandler) listTeams(c echo.Context) error {
 	return response.PaginatedOK(c, items, response.Pagination{Limit: limit, Offset: offset, Total: total})
 }
 
-func (h *controlPortalHandler) createTeam(c echo.Context) error {
+func (h *controlPortalHandler) createTeam(c *echo.Context) error {
 	var body dto.CreateTeamRequest
 	if err := c.Bind(&body); err != nil {
 		return httperr.New(httperr.VALIDATION_ERROR, "malformed JSON body")
@@ -328,7 +327,7 @@ func (h *controlPortalHandler) createTeam(c echo.Context) error {
 	return c.JSON(nethttp.StatusCreated, map[string]any{"data": item})
 }
 
-func (h *controlPortalHandler) updateTeam(c echo.Context) error {
+func (h *controlPortalHandler) updateTeam(c *echo.Context) error {
 	teamID, err := parseControlUUID(controlTeamIDParam(c), "team ID")
 	if err != nil {
 		return err
@@ -363,7 +362,7 @@ func (h *controlPortalHandler) updateTeam(c echo.Context) error {
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": item})
 }
 
-func (h *controlPortalHandler) deleteTeam(c echo.Context) error {
+func (h *controlPortalHandler) deleteTeam(c *echo.Context) error {
 	teamID, err := parseControlUUID(controlTeamIDParam(c), "team ID")
 	if err != nil {
 		return err
@@ -374,7 +373,7 @@ func (h *controlPortalHandler) deleteTeam(c echo.Context) error {
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": map[string]string{"status": "deleted"}})
 }
 
-func (h *controlPortalHandler) listCredentials(c echo.Context) error {
+func (h *controlPortalHandler) listCredentials(c *echo.Context) error {
 	teamID, err := parseControlUUID(controlTeamIDParam(c), "team ID")
 	if err != nil {
 		return err
@@ -395,7 +394,7 @@ func (h *controlPortalHandler) listCredentials(c echo.Context) error {
 	return response.PaginatedOK(c, items, response.Pagination{Limit: limit, Offset: offset, Total: total})
 }
 
-func (h *controlPortalHandler) createCredential(c echo.Context) error {
+func (h *controlPortalHandler) createCredential(c *echo.Context) error {
 	teamID, err := parseControlUUID(controlTeamIDParam(c), "team ID")
 	if err != nil {
 		return err
@@ -437,7 +436,7 @@ func (h *controlPortalHandler) createCredential(c echo.Context) error {
 	})
 }
 
-func (h *controlPortalHandler) updateCredential(c echo.Context) error {
+func (h *controlPortalHandler) updateCredential(c *echo.Context) error {
 	teamID, err := parseControlUUID(controlTeamIDParam(c), "team ID")
 	if err != nil {
 		return err
@@ -489,7 +488,7 @@ func (h *controlPortalHandler) updateCredential(c echo.Context) error {
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": toControlCredential(credential)})
 }
 
-func (h *controlPortalHandler) rotateCredential(c echo.Context) error {
+func (h *controlPortalHandler) rotateCredential(c *echo.Context) error {
 	teamID, err := parseControlUUID(controlTeamIDParam(c), "team ID")
 	if err != nil {
 		return err
@@ -531,7 +530,7 @@ func (h *controlPortalHandler) rotateCredential(c echo.Context) error {
 	})
 }
 
-func (h *controlPortalHandler) deleteCredential(c echo.Context) error {
+func (h *controlPortalHandler) deleteCredential(c *echo.Context) error {
 	teamID, err := parseControlUUID(controlTeamIDParam(c), "team ID")
 	if err != nil {
 		return err
@@ -546,7 +545,7 @@ func (h *controlPortalHandler) deleteCredential(c echo.Context) error {
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": map[string]string{"status": "deleted"}})
 }
 
-func (h *controlPortalHandler) getSecuritySettings(c echo.Context) error {
+func (h *controlPortalHandler) getSecuritySettings(c *echo.Context) error {
 	if h.security == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "security service unavailable")
 	}
@@ -557,7 +556,7 @@ func (h *controlPortalHandler) getSecuritySettings(c echo.Context) error {
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": toControlSecuritySettings(settings)})
 }
 
-func (h *controlPortalHandler) updateSecuritySettings(c echo.Context) error {
+func (h *controlPortalHandler) updateSecuritySettings(c *echo.Context) error {
 	if h.security == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "security service unavailable")
 	}
@@ -592,7 +591,7 @@ func (h *controlPortalHandler) updateSecuritySettings(c echo.Context) error {
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": toControlSecuritySettings(updated)})
 }
 
-func (h *controlPortalHandler) listSecurityBans(c echo.Context) error {
+func (h *controlPortalHandler) listSecurityBans(c *echo.Context) error {
 	if h.security == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "security service unavailable")
 	}
@@ -609,7 +608,7 @@ func (h *controlPortalHandler) listSecurityBans(c echo.Context) error {
 	return response.PaginatedOK(c, items, response.Pagination{Limit: limit, Offset: offset, Total: total})
 }
 
-func (h *controlPortalHandler) createSecurityBan(c echo.Context) error {
+func (h *controlPortalHandler) createSecurityBan(c *echo.Context) error {
 	if h.security == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "security service unavailable")
 	}
@@ -635,7 +634,7 @@ func (h *controlPortalHandler) createSecurityBan(c echo.Context) error {
 	return c.JSON(nethttp.StatusCreated, map[string]any{"data": toControlSecurityBan(*ban)})
 }
 
-func (h *controlPortalHandler) deleteSecurityBan(c echo.Context) error {
+func (h *controlPortalHandler) deleteSecurityBan(c *echo.Context) error {
 	if h.security == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "security service unavailable")
 	}
@@ -695,7 +694,7 @@ type controlDependencyResponse struct {
 	ReasonCode *string `json:"reason_code,omitempty"`
 }
 
-func controlTelemetryFilter(c echo.Context) (operations.TelemetryFilter, error) {
+func controlTelemetryFilter(c *echo.Context) (operations.TelemetryFilter, error) {
 	scope := strings.TrimSpace(c.QueryParam("scope"))
 	if scope == "" {
 		scope = "system"
@@ -791,15 +790,15 @@ func boolCount(values ...bool) int {
 	}
 	return count
 }
-func controlTeamIDParam(c echo.Context) string {
+func controlTeamIDParam(c *echo.Context) string {
 	return c.Param("teamId")
 }
 
-func controlCredentialIDParam(c echo.Context) string {
+func controlCredentialIDParam(c *echo.Context) string {
 	return c.Param("credentialId")
 }
 
-func controlPagination(c echo.Context) (int, int) {
+func controlPagination(c *echo.Context) (int, int) {
 	limit := 20
 	offset := 0
 	if raw := c.QueryParam("limit"); raw != "" {
@@ -933,10 +932,10 @@ func controlTimePtr(t *time.Time) *string {
 	formatted := t.Format(time.RFC3339)
 	return &formatted
 }
-func ShutdownControlPortal(e *echo.Echo, logger httpcontract.LogProvider) error {
+func ShutdownControlPortal(server *nethttp.Server, logger httpcontract.LogProvider) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := e.Shutdown(ctx); err != nil && logger != nil {
+	if err := server.Shutdown(ctx); err != nil && logger != nil {
 		logger.Error("control portal shutdown error", errors.New(tools.SanitizeError(err)))
 		return err
 	}

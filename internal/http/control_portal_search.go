@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
 	"github.com/markhuangai/dense-mem/internal/http/response"
@@ -13,7 +13,7 @@ import (
 	searchapp "github.com/markhuangai/dense-mem/internal/search"
 )
 
-func (h *controlPortalHandler) getSearchConvergence(c echo.Context) error {
+func (h *controlPortalHandler) getSearchConvergence(c *echo.Context) error {
 	if h.convergence == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "search convergence unavailable")
 	}

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/markhuangai/dense-mem/cmd/internal/demo/service"
 	"github.com/stretchr/testify/require"
 )
@@ -30,7 +30,7 @@ func TestRegisterRoutesUsesUserPortalAPIPrefix(t *testing.T) {
 	RegisterRoutes(e, nil, "")
 
 	paths := map[string]struct{}{}
-	for _, route := range e.Routes() {
+	for _, route := range e.Router().Routes() {
 		if route.Method == http.MethodPost {
 			paths[route.Path] = struct{}{}
 		}

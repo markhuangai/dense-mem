@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/http/response"
 	"github.com/markhuangai/dense-mem/internal/httperr"
@@ -19,7 +19,7 @@ const (
 	controlMetricsMaxWindowMinutes     = 43200
 )
 
-func controlMetricsFilter(c echo.Context) (domain.UsageMetricsFilter, error) {
+func controlMetricsFilter(c *echo.Context) (domain.UsageMetricsFilter, error) {
 	windowMinutes := controlMetricsDefaultWindowMinutes
 	if raw := strings.TrimSpace(c.QueryParam("window_minutes")); raw != "" {
 		parsed, err := strconv.Atoi(raw)
@@ -55,7 +55,7 @@ func controlMetricsFilter(c echo.Context) (domain.UsageMetricsFilter, error) {
 	}, nil
 }
 
-func (h *controlPortalHandler) listOperationLogs(c echo.Context) error {
+func (h *controlPortalHandler) listOperationLogs(c *echo.Context) error {
 	if h.operationLogs == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "operation logs unavailable")
 	}
@@ -74,7 +74,7 @@ func (h *controlPortalHandler) listOperationLogs(c echo.Context) error {
 	})
 }
 
-func (h *controlPortalHandler) listRecallFeedbackEvents(c echo.Context) error {
+func (h *controlPortalHandler) listRecallFeedbackEvents(c *echo.Context) error {
 	if h.recallFeedback == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "recall feedback events unavailable")
 	}
@@ -93,7 +93,7 @@ func (h *controlPortalHandler) listRecallFeedbackEvents(c echo.Context) error {
 	})
 }
 
-func (h *controlPortalHandler) getRecallFeedbackEvent(c echo.Context) error {
+func (h *controlPortalHandler) getRecallFeedbackEvent(c *echo.Context) error {
 	if h.recallFeedback == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "recall feedback events unavailable")
 	}
@@ -111,7 +111,7 @@ func (h *controlPortalHandler) getRecallFeedbackEvent(c echo.Context) error {
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": event})
 }
 
-func controlOperationLogsFilter(c echo.Context) (domain.OperationLogFilter, error) {
+func controlOperationLogsFilter(c *echo.Context) (domain.OperationLogFilter, error) {
 	limit, offset := controlPagination(c)
 	if raw := strings.TrimSpace(c.QueryParam("limit")); raw != "" {
 		parsed, err := strconv.Atoi(raw)
@@ -220,7 +220,7 @@ func controlOperationLogsFilter(c echo.Context) (domain.OperationLogFilter, erro
 	}, nil
 }
 
-func controlRecallFeedbackEventsFilter(c echo.Context) (domain.RecallFeedbackEventFilter, error) {
+func controlRecallFeedbackEventsFilter(c *echo.Context) (domain.RecallFeedbackEventFilter, error) {
 	limit, offset := controlPagination(c)
 	if raw := strings.TrimSpace(c.QueryParam("limit")); raw != "" {
 		parsed, err := strconv.Atoi(raw)
