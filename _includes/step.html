@@ -1,0 +1,74 @@
+{% assign step = include.step %}
+{% assign flow_steps = site.steps | where: 'workflow', step.workflow | sort: 'order' %}
+<article id="{{ step.anchor }}" class="workbench" aria-labelledby="{{ step.anchor }}-title"
+  data-step data-chapter="{{ step.chapter | escape }}" data-legacy="{{ step.legacy | escape }}">
+  {% if step.legacy %}<span class="anchor-alias" id="{{ step.legacy }}" aria-hidden="true"></span>{% endif %}
+  <header class="step-heading">
+    <p class="kicker">{{ step.chapter | escape }} · Step {{ include.index }}</p>
+    <h2 id="{{ step.anchor }}-title" tabindex="-1">{{ step.title | escape }}</h2>
+  </header>
+  <figure class="diagram" aria-labelledby="{{ step.anchor }}-figure">
+    <div class="fig-top">
+      <span id="{{ step.anchor }}-figure" class="fig-label">{{ step.figure | escape }}</span>
+      <button class="tool-button" type="button" data-replay aria-label="Replay this diagram's animation" hidden><span aria-hidden="true">↻</span> Replay</button>
+    </div>
+    <div class="surface">
+      {% if step.scene %}
+        <div class="scene" data-scene="{{ step.scene }}">
+          <div class="node"><p>{{ step.fallback | escape }}</p></div>
+        </div>
+      {% else %}
+        <div class="scene process-flow" aria-label="Workflow progression">
+          {% for item in flow_steps %}
+          <div class="node process-node{% if item.order == step.order %} current{% endif %}" data-move>
+            <span class="mini-label">{{ item.chapter | escape }}</span>
+            <b>{{ item.title | escape }}</b>
+          </div>
+          {% unless forloop.last %}<span class="down" data-wire aria-hidden="true"></span>{% endunless %}
+          {% endfor %}
+        </div>
+      {% endif %}
+    </div>
+    <figcaption>{{ step.caption | escape }}</figcaption>
+  </figure>
+  <div class="reading">
+    <div class="step-copy">{{ step.content }}</div>
+    {% if step.term %}
+      <div class="term" data-term>
+        <button class="term-button" type="button" aria-expanded="false" aria-controls="{{ step.term.id | escape }}" aria-describedby="{{ step.term.id | escape }}">{{ step.term.label | escape }} <span aria-hidden="true">ⓘ</span></button>
+        <span class="term-definition" id="{{ step.term.id | escape }}">{{ step.term.definition | escape }}</span>
+      </div>
+    {% endif %}
+    {% if step.details or step.sample %}
+      <details class="expander">
+        <summary>{{ step.question | default: 'Read the details' | escape }}</summary>
+        <div class="deep">
+          {% for detail in step.details %}{{ detail | markdownify }}{% endfor %}
+          {% if step.sample %}
+            <h3>{{ step.sample_label | escape }}</h3>
+            <pre class="payload"><code data-sample="{{ step.sample }}">See the tool's argument fields in the Technical Reference.</code></pre>
+          {% endif %}
+        </div>
+      </details>
+    {% endif %}
+    {% for detail_id in step.sequences %}
+      {% assign sequence = site.data.examples.atlas_sequences[detail_id] %}
+      {% include sequence.html sequence=sequence id=detail_id %}
+    {% endfor %}
+    {% if step.refs or step.guide %}
+      <details class="expander source-links">
+        <summary>Sources and reference</summary>
+        {% if step.guide %}<p><a href="{{ step.guide | relative_url }}">Open the reference guide</a></p>{% endif %}
+        {% if step.refs %}
+        <p>{{ site.contract_version }} · <a href="{{ site.source_repository }}/commit/{{ site.source_revision }}">{{ site.source_revision | slice: 0, 8 }}</a></p>
+        <ul>
+          {% for ref in step.refs %}
+            {% assign parts = ref | split: ':' %}
+            <li><a href="{{ site.source_repository }}/blob/{{ site.source_revision }}/{{ parts[0] }}#L{{ parts[1] }}">{{ ref | escape }}</a></li>
+          {% endfor %}
+        </ul>
+        {% endif %}
+      </details>
+    {% endif %}
+  </div>
+</article>

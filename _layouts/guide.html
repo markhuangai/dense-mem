@@ -1,0 +1,22 @@
+---
+layout: base
+---
+<main id="content" class="reference">
+  {% unless page.retired or page.url == '/Home/' %}
+  <aside class="reference-rail" aria-label="Guide navigation">
+    <a href="{{ '/guides/' | relative_url }}">← All guides</a>
+    {% if page.workflows %}
+    <p>Walkthroughs</p>
+    <ul>
+      {% for id in page.workflows %}
+        {% assign flow = site.data.workflows[id] %}
+        <li><a href="{{ flow.url | relative_url }}">{{ flow.title | escape }}</a></li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </aside>
+  {% endunless %}
+  <article class="prose">
+    {{ content }}
+  </article>
+</main>

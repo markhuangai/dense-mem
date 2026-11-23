@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>{{ page.title | escape }} · {{ site.title | escape }}</title>
+  <link rel="icon" type="image/svg+xml" href="{{ '/assets/mark.svg' | relative_url }}">
+  <link rel="stylesheet" href="{{ '/assets/css/site.css' | relative_url }}">
+  <script type="module" src="{{ '/assets/js/site.js' | relative_url }}"></script>
+</head>
+<body>
+  <a class="skip-link" href="#content">Skip to content</a>
+  <div class="shell">
+    <header class="mast">
+      <a class="brand" href="{{ '/' | relative_url }}" aria-label="Dense-Mem documentation home">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>Dense-Mem
+      </a>
+      <nav class="site-nav" aria-label="Documentation">
+        <a href="{{ '/Quick-Start/' | relative_url }}">Quick Start</a>
+        <a href="{{ '/guides/' | relative_url }}">All guides</a>
+        <a href="{{ '/search/' | relative_url }}">Search</a>
+      </nav>
+    </header>
+    {{ content }}
+    <footer class="site-footer">
+      <a href="{{ site.source_repository }}">GitHub repository</a>
+      <a href="{{ '/Documentation-Maintenance/' | relative_url }}">Maintain these guides</a>
+    </footer>
+  </div>
+</body>
+</html>

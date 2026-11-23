@@ -1,0 +1,19 @@
+---
+layout: null
+permalink: /assets/search.json
+---
+{
+  "guides": [
+    {% assign guides = site.guides | where_exp: 'doc', 'doc.retired != true' %}
+    {% for doc in guides %}
+      {"title": {{ doc.title | jsonify }}, "url": {{ doc.url | relative_url | jsonify }}, "html": {{ doc.content | jsonify }}}{% unless forloop.last %},{% endunless %}
+    {% endfor %}
+  ],
+  "steps": [
+    {% for step in site.steps %}
+      {% assign flow = site.data.workflows[step.workflow] %}
+      {% assign url = flow.url | relative_url | append: '#' | append: step.anchor %}
+      {"title": {{ step.title | jsonify }}, "guide": {{ flow.title | jsonify }}, "url": {{ url | jsonify }}, "html": {{ step.content | jsonify }}, "detail": {{ step.details | join: ' ' | jsonify }}}{% unless forloop.last %},{% endunless %}
+    {% endfor %}
+  ]
+}

@@ -1,0 +1,33 @@
+name: Documentation site
+
+on:
+  pull_request:
+    branches: [gh-pages]
+  push:
+    branches: [gh-pages]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Build and verify documentation
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - uses: actions/jekyll-build-pages@v1.0.13
+        with:
+          source: ./
+          destination: ./_preview/dense-mem
+      - run: python3 tests/check-site.py _preview/dense-mem
+      - run: npm ci --ignore-scripts
+      - run: npx playwright install --with-deps chromium
+      - run: npm test

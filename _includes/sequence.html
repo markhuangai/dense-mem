@@ -1,0 +1,47 @@
+{% assign sequence = include.sequence %}
+<details class="expander sequence" data-sequence="{{ include.id }}">
+  <summary>{{ sequence.title | escape }}</summary>
+  <div class="sequence-inner">
+    <p class="sequence-intro">{{ sequence.intro | escape }}</p>
+    {% if sequence.variants.size > 1 %}
+    <fieldset class="variant-buttons" data-variants hidden>
+      <legend>Choose an outcome</legend>
+      {% for variant in sequence.variants %}
+        <button type="button" data-variant="{{ forloop.index0 }}" aria-pressed="{{ forloop.first }}">{{ variant.label | escape }}</button>
+      {% endfor %}
+    </fieldset>
+    {% endif %}
+    {% for variant in sequence.variants %}
+      <div data-sequence-variant>
+        {% if sequence.variants.size > 1 %}<h3 class="static-variant">{{ variant.label | escape }}</h3>{% endif %}
+        {% for frame in variant.frames %}
+          <section class="sequence-frame" data-frame data-move>
+            {% if frame.stage %}<p class="frame-stage">{{ frame.stage | escape }}</p>{% endif %}
+            <h3>{{ frame.title | escape }}</h3>
+            {{ frame.note | markdownify }}
+            {% if frame.rows %}
+            <dl class="detail-rows" data-move>
+              {% for row in frame.rows %}
+              <div data-move><dt>{{ row.name | escape }}</dt><dd data-snapshot-value="{{ row.value | escape }}">{{ row.text | default: row.name | escape }}</dd></div>
+              {% endfor %}
+            </dl>
+            {% endif %}
+            {% if frame.sample %}
+              <details class="payload-detail">
+                <summary>{{ frame.sample_label | default: 'Inspect example payload' | escape }}</summary>
+                <pre class="payload" data-move><code data-sample="{{ frame.sample | escape }}">See the cited contract for the full shape.</code></pre>
+              </details>
+            {% endif %}
+          </section>
+        {% endfor %}
+      </div>
+    {% endfor %}
+    <nav class="sequence-controls" aria-label="{{ sequence.title | escape }} controls" hidden>
+      <span data-frame-count aria-live="polite"></span>
+      <div class="control-set">
+        <button class="secondary" type="button" data-frame-back>Previous detail</button>
+        <button class="primary" type="button" data-frame-next>Next detail</button>
+      </div>
+    </nav>
+  </div>
+</details>

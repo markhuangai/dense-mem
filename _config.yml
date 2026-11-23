@@ -1,0 +1,31 @@
+title: Dense-Mem
+url: https://markhuangai.github.io
+baseurl: /dense-mem
+source_repository: https://github.com/markhuangai/dense-mem
+source_revision: 5106a69e3d5cce82859d15bbb56acadc434e0135
+contract_version: dense-mem.v2.8.0
+markdown: kramdown
+kramdown:
+  input: GFM
+  hard_wrap: false
+collections:
+  steps:
+    output: false
+  guides:
+    output: true
+defaults:
+  - scope:
+      path: ""
+      type: guides
+    values:
+      layout: guide
+exclude:
+  - README.md
+  - _preview
+  - package.json
+  - package-lock.json
+  - playwright.config.mjs
+  - node_modules
+  - tests
+  - test-results
+  - playwright-report
