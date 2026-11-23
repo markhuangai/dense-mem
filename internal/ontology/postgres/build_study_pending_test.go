@@ -164,8 +164,9 @@ func TestOntologyPendingRefreshStudy(t *testing.T) {
 	t.Run("active-group-peer-keeps-the-correction", func(t *testing.T) {
 		f := newOrganizationFixture(t)
 		observeStudyQueue(t, f)
-		a := pendingStudyEvidence(t, f, 1, "Alphanacre.")
-		b := discoveryEvidence(t, f, 2)
+		const sharedMeaning = "PostgreSQL storage for Atlas."
+		a := pendingStudyEvidence(t, f, 1, sharedMeaning)
+		b := pendingStudyEvidence(t, f, 2, sharedMeaning)
 		group := ontology.Record{ID: uuid.NewString(), Kind: ontology.OverrideKind,
 			Override: &ontology.Override{Action: ontology.GroupTogether, Members: []ontology.SourceHandle{a, b}},
 			Sources:  []ontology.SourceDependency{f.source(t, a), f.source(t, b)}}
