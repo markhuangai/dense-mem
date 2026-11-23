@@ -25,9 +25,9 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/markhuangai/dense-mem/wiki">Documentation / Wiki</a> ·
-  <a href="https://github.com/markhuangai/dense-mem/wiki/Quick-Start">Setup guide</a> ·
-  <a href="https://github.com/markhuangai/dense-mem/wiki/Architecture">How it works</a>
+  <a href="https://markhuangai.github.io/dense-mem/">Interactive documentation</a> ·
+  <a href="https://markhuangai.github.io/dense-mem/Quick-Start/">Setup guide</a> ·
+  <a href="https://markhuangai.github.io/dense-mem/Architecture/">How it works</a>
 </p>
 
 Dense-Mem is a standalone HTTP MCP memory server using Streamable HTTP. AI
@@ -58,9 +58,9 @@ isolated team and try disposable memory before self-hosting.
 - **Organize without inventing facts.** Derived topics help discovery while
   Evidence remains canonical memory.
 
-See [Using Dense-Mem](https://github.com/markhuangai/dense-mem/wiki/Using-Dense-Mem)
+See [Using Dense-Mem](https://markhuangai.github.io/dense-mem/Using-Dense-Mem/)
 for the memory workflow and
-[Architecture](https://github.com/markhuangai/dense-mem/wiki/Architecture) for the
+[Architecture](https://markhuangai.github.io/dense-mem/Architecture/) for the
 system design.
 
 ## Quickstart
@@ -93,7 +93,7 @@ Set these values in `.env`:
 
 The example supplies OpenAI embedding defaults. For other providers, change the
 endpoint, model, and dimensions together; see
-[Configuration](https://github.com/markhuangai/dense-mem/wiki/Configuration).
+[Configuration](https://markhuangai.github.io/dense-mem/Configuration/).
 
 ```bash
 docker compose up -d
@@ -103,7 +103,7 @@ curl -fsS http://127.0.0.1:8080/ready
 
 Startup applies migrations before readiness. Keep the image pin for later
 starts; consult the
-[Operations Runbook](https://github.com/markhuangai/dense-mem/wiki/Operations-Runbook)
+[Operations Runbook](https://markhuangai.github.io/dense-mem/Operations-Runbook/)
 before changing an existing database.
 
 ## Connect your AI client
@@ -113,7 +113,7 @@ before changing an existing database.
 2. Open the user portal at `http://127.0.0.1:8080/ui`. Its **Connect** page shows
    the MCP connection details. The local MCP endpoint is `http://127.0.0.1:8080/mcp`.
 3. Configure your host using the
-   [MCP client guide](https://github.com/markhuangai/dense-mem/wiki/MCP-Clients),
+   [MCP client guide](https://markhuangai.github.io/dense-mem/MCP-Clients/),
    then try a Remember, Recall, and Trace workflow.
 
 The control listener stays private. Configured hosted model providers can
@@ -124,15 +124,15 @@ stay within your infrastructure. External memory automation uses `/mcp`.
 
 | Goal | Guide |
 | --- | --- |
-| Learn how memory works | [Wiki](https://github.com/markhuangai/dense-mem/wiki) · [Using Dense-Mem](https://github.com/markhuangai/dense-mem/wiki/Using-Dense-Mem) |
-| Configure and operate a server | [Configuration](https://github.com/markhuangai/dense-mem/wiki/Configuration) · [Operations](https://github.com/markhuangai/dense-mem/wiki/Operations-Runbook) |
+| Learn how memory works | [Evidence walkthrough](https://markhuangai.github.io/dense-mem/) · [Using Dense-Mem](https://markhuangai.github.io/dense-mem/Using-Dense-Mem/) |
+| Configure and operate a server | [Configuration](https://markhuangai.github.io/dense-mem/Configuration/) · [Operations](https://markhuangai.github.io/dense-mem/Operations-Runbook/) |
 | Choose deployment examples | [Examples](examples/README.md) · [Grafana](examples/grafana/README.md) |
 | Integrate a client | [Python / ADK / LangChain](packages/python/README.md) · [stdio MCP proxy](packages/mcp-proxy/README.md) |
 | Develop and test | [Scripts](scripts/README.md) · [Evaluation](tests/eval/README.md) · [ADRs](adr/) |
 
-Detailed explanations live in the wiki; instructions tied to checked-in files
-live in their directory guides. Behavior changes update the affected guide and
-link a companion wiki PR, or explain why no wiki update is needed.
+The documentation site holds interactive walkthroughs and detailed reference.
+Directory READMEs cover the files they accompany. For documented behavior
+changes, link a companion `gh-pages` PR or explain why the site needs no update.
 
 Dense-Mem is part of the research preprint
 [Governed Enterprise AI Memory Beyond RAG: From Vector Retrieval to Permissioned
