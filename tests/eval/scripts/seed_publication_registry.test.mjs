@@ -12,6 +12,8 @@ import { docker } from "./workflow.mjs";
 
 const exec = promisify(execFile);
 const fixturePath = fileURLToPath(import.meta.url);
+const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
+const workerPath = path.relative(repoRoot, fixturePath);
 const registryHash = "c".repeat(64);
 const nativeFetch = globalThis.fetch;
 const ghcr = "ghcr.io/";
@@ -94,7 +96,19 @@ if (process.argv[2] === "--publisher") {
 } else {
   test("seed publication serializes independent builders against a real OCI registry", { timeout: 150000 }, async (t) => {
     const directory = await fs.mkdtemp(path.join(tmpdir(), "dense-mem-publisher-"));
-    t.after(() => fs.rm(directory, { recursive: true }));
+    const worktrees = [];
+    t.after(async () => {
+      for (const worktree of worktrees) {
+        await fs.rm(path.join(worktree, ".seed-exports"), { recursive: true, force: true });
+        await exec("git", ["-C", repoRoot, "worktree", "remove", worktree]);
+      }
+      await fs.rm(directory, { recursive: true });
+    });
+    for (const name of ["first-builder", "second-builder"]) {
+      const worktree = path.join(directory, name);
+      await exec("git", ["-C", repoRoot, "worktree", "add", "--quiet", "--detach", worktree, "HEAD"]);
+      worktrees.push(worktree);
+    }
     const container = docker(["run", "--rm", "-d", "-p", "127.0.0.1::5000", "registry:2"]);
     t.after(() => docker(["stop", container]));
     const address = docker(["port", container, "5000/tcp"]);
@@ -102,9 +116,9 @@ if (process.argv[2] === "--publisher") {
     const { inspect } = registryClient(address);
     const locks = path.join(directory, "publisher-state");
 
-    async function build(dataset, identity, date) {
-      const working = path.join(directory, identity);
-      await fs.mkdir(working);
+    async function build(worktree, dataset, identity, date) {
+      const working = path.join(worktree, ".seed-exports", identity);
+      await fs.mkdir(working, { recursive: true });
       const dump = path.join(working, "database.dump");
       const mapping = path.join(working, "mapping.json");
       await fs.writeFile(dump, identity);
@@ -125,7 +139,7 @@ if (process.argv[2] === "--publisher") {
       return {
         selected, imageTag, builtTag,
         publish: async (predecessor = "", barrier = "") => {
-          const { stdout } = await exec(process.execPath, [fixturePath, "--publisher", address, locks, dataset, selected, identity, predecessor, barrier], {
+          const { stdout } = await exec(process.execPath, [path.join(worktree, workerPath), "--publisher", address, locks, dataset, selected, identity, predecessor, barrier], {
             cwd: working, timeout: 60000, env: process.env,
           });
           return JSON.parse(stdout);
@@ -133,10 +147,10 @@ if (process.argv[2] === "--publisher") {
       };
     }
 
-    const older = await build("hotpotqa", "a", "2026-11-16T17:00:00Z");
-    const newer = await build("hotpotqa", "b", "2026-11-16T18:00:00Z");
-    const firstBootstrap = await build("bootstrap", "c", "2026-11-16T17:00:00Z");
-    const secondBootstrap = await build("bootstrap", "d", "2026-11-16T18:00:00Z");
+    const older = await build(worktrees[0], "hotpotqa", "a", "2026-11-16T17:00:00Z");
+    const newer = await build(worktrees[1], "hotpotqa", "b", "2026-11-16T18:00:00Z");
+    const firstBootstrap = await build(worktrees[0], "bootstrap", "c", "2026-11-16T17:00:00Z");
+    const secondBootstrap = await build(worktrees[1], "bootstrap", "d", "2026-11-16T18:00:00Z");
     const localTags = [older, newer, firstBootstrap, secondBootstrap].flatMap(build => [build.imageTag, build.builtTag]);
     localTags.push(address + "/" + seedReference("hotpotqa").slice(ghcr.length), address + "/" + seedReference("bootstrap").slice(ghcr.length));
     t.after(() => {
@@ -148,6 +162,7 @@ if (process.argv[2] === "--publisher") {
 
     const barrier = path.join(directory, "dataset-barrier");
     const promoting = newer.publish("", barrier);
+    let winner;
     try {
       await until(() => fs.access(barrier).then(() => true, () => false));
       const conflict = await older.publish();
@@ -156,8 +171,8 @@ if (process.argv[2] === "--publisher") {
       assert.equal(await inspect("hotpotqa-" + older.selected), null);
     } finally {
       await fs.writeFile(barrier + ".release", "resume");
+      winner = await promoting;
     }
-    const winner = await promoting;
     const newestDigest = await inspect("hotpotqa-" + newer.selected);
     assert.match(newestDigest, /^sha256:/);
     assert.equal(winner.image, seedRepository + "@" + newestDigest);
@@ -173,13 +188,14 @@ if (process.argv[2] === "--publisher") {
 
     const bootstrapBarrier = path.join(directory, "bootstrap-barrier");
     const bootstrap = firstBootstrap.publish("", bootstrapBarrier);
+    let first;
     try {
       await until(() => fs.access(bootstrapBarrier).then(() => true, () => false));
       assert.match((await secondBootstrap.publish()).error, /Another build is publishing/);
     } finally {
       await fs.writeFile(bootstrapBarrier + ".release", "resume");
+      first = await bootstrap;
     }
-    const first = await bootstrap;
     const bootstrapDigest = await inspect("bootstrap-" + firstBootstrap.selected);
     assert.equal(first.image, seedRepository + "@" + bootstrapDigest);
     assert.match((await secondBootstrap.publish()).error, /alias changed/);

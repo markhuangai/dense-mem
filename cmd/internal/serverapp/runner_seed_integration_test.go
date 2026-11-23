@@ -254,8 +254,10 @@ func TestRunnerSeedLogicalRestoreMigrationAndCredentialIdentity(t *testing.T) {
 	_, _, _, _, err = evalharness.VerifySeed(ctx, manifest, corpus, f.native.Client, &native)
 	require.ErrorContains(t, err, "seed assessment provenance differs")
 	require.NoError(t, os.WriteFile(seedPath, body, 0600))
+	// Keep the projection converged so VerifySeed must detect the changed vector through its fingerprint.
+	changedVector := "[" + strings.TrimSuffix(strings.Repeat("0.5,", manifest.EmbeddingDimensions), ",") + "]"
 	require.NoError(t, storagepostgres.NewRLS().WithSystemTx(ctx, restored, func(tx *gorm.DB) error {
-		result := tx.Exec(`UPDATE search_documents SET document_text=document_text || ' incompatible restored seed' WHERE team_id=? AND search_state='current'`, native.Scope.TeamID)
+		result := tx.Exec(`UPDATE search_documents SET embedding=?::vector WHERE team_id=? AND search_state='current'`, changedVector, native.Scope.TeamID)
 		require.Positive(t, result.RowsAffected)
 		return result.Error
 	}))
