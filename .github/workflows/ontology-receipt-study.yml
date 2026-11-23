@@ -1,0 +1,144 @@
+name: Ontology receipt recheck study
+
+on:
+  push:
+    branches: [perf/ontology-receipt-invalidation]
+
+permissions:
+  contents: read
+
+env:
+  DENSE_MEM_REPOSITORY_TESTCONTAINERS: "1"
+
+jobs:
+  correctness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version: 1.26.11
+      - name: Restore pinned experimental sources
+        run: python3 tests/eval/ontology-receipts/prepare.py hosted "$RUNNER_TEMP/ontology-receipt-source"
+      - name: Compare full verification, concurrent changes, and ordered Recall
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$STUDY_TREE"
+          go test -mod=readonly -tags=integration,ontology_study -timeout=35m -count=1 -v \
+            -run '^TestReceiptRecheck(CurrentInputs|MixedCutoff|WithdrawalFencesPeers|BackfillBoundsAndFallback|BackfillCounters|OverrideRetarget)$' \
+            ./internal/ontology/postgres | tee "$ONTOLOGY_STUDY_REPORT_DIR/correctness.log"
+          ONTOLOGY_STUDY_ACTIVE_ARM=receipt ONTOLOGY_STUDY_INSTALL_SCHEMA=1 ONTOLOGY_STUDY_VERIFY_SKIPS=1 \
+            go test -mod=readonly -tags=integration,ontology_study -timeout=35m -count=1 -v \
+            -run '^(TestOntologyOrganizationCohort|TestOntologyMaintenanceMatchingCohort|TestOntologyOrganizationBatchedVocabulary|TestOntologyOrganizationBatchedPublicationFences)$' \
+            ./internal/ontology/postgres | tee -a "$ONTOLOGY_STUDY_REPORT_DIR/correctness.log"
+          go test -mod=readonly -tags=integration,ontology_study -timeout=15m -count=1 -v \
+            -run '^TestRecallAccuracyCohort$' ./internal/recall/postgres | tee -a "$ONTOLOGY_STUDY_REPORT_DIR/correctness.log"
+          printf '{"pass":true,"study_source":"%s"}\n' "$GITHUB_SHA" > "$ONTOLOGY_STUDY_REPORT_DIR/correctness.json"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: receipt-study-correctness
+          path: ${{ runner.temp }}/ontology-receipt-results/
+          if-no-files-found: error
+
+  scale:
+    name: Catalog scale / ${{ matrix.factor }}x
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        factor: [1, 4, 16]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version: 1.26.11
+      - name: Restore pinned experimental sources
+        run: python3 tests/eval/ontology-receipts/prepare.py hosted "$RUNNER_TEMP/ontology-receipt-source"
+      - name: Vary topic count and change fanout
+        env:
+          ONTOLOGY_STUDY_CATALOG_FACTOR: ${{ matrix.factor }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$STUDY_TREE"
+          go test -mod=readonly -tags=integration,ontology_study -timeout=35m -count=1 -v \
+            -run '^TestReceiptRecheckScale$' ./internal/ontology/postgres | tee "$ONTOLOGY_STUDY_REPORT_DIR/scale-${ONTOLOGY_STUDY_CATALOG_FACTOR}.log"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: receipt-study-scale-${{ matrix.factor }}
+          path: ${{ runner.temp }}/ontology-receipt-results/scale-*
+          if-no-files-found: error
+
+  matched-drain:
+    name: Matched drains / ${{ matrix.dataset }}
+    needs: [correctness, scale]
+    runs-on: ubuntu-latest
+    timeout-minutes: 215
+    strategy:
+      fail-fast: false
+      matrix:
+        dataset: [hotpotqa, musique, 2wikimultihopqa, nq_rear, popqa]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version: 1.26.11
+      - name: Restore pinned experimental sources
+        run: python3 tests/eval/ontology-receipts/prepare.py hosted "$RUNNER_TEMP/ontology-receipt-source"
+      - name: Compare whole drains and correction latency
+        env:
+          ONTOLOGY_STUDY_DATASET: ${{ matrix.dataset }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$STUDY_TREE"
+          go test -mod=readonly -tags=integration,ontology_study -timeout=200m -count=1 -v \
+            -run '^TestReceiptRecheckMatchedDrains$' ./internal/ontology/postgres | tee "$ONTOLOGY_STUDY_REPORT_DIR/${ONTOLOGY_STUDY_DATASET}.log"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: receipt-study-drains-${{ matrix.dataset }}
+          path: ${{ runner.temp }}/ontology-receipt-results/${{ matrix.dataset }}.*
+          if-no-files-found: error
+
+  decision:
+    name: Decide whether to run private HotpotQA
+    needs: [correctness, scale, matched-drain]
+    if: ${{ always() && !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: receipt-study-*
+          path: receipts
+          merge-multiple: true
+      - name: Validate the matched receipts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tests/eval/ontology-receipts/compare.py receipts "$GITHUB_SHA"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: ontology-receipt-study-decision
+          path: receipts/comparison.json
+          if-no-files-found: error

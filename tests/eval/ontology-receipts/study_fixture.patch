@@ -1,0 +1,32 @@
+--- a/internal/ontology/postgres/build_study_integration_test.go
++++ b/internal/ontology/postgres/build_study_integration_test.go
+@@ -435,0 +436,2 @@
++	BackfillChecks                                                                             int
++	BackfillMS                                                                                 float64
+@@ -471 +473 @@
+-	if rankStudy {
++	if rankStudy || os.Getenv("ONTOLOGY_STUDY_VARIANT") == "receipt" {
+@@ -472,0 +475 @@
++		installReceiptRecheckSchema(t, f, arm)
+@@ -485 +488 @@
+-		if rankStudy {
++		if rankStudy || os.Getenv("ONTOLOGY_STUDY_VARIANT") == "receipt" {
+@@ -520 +523 @@
+-		if rankStudy {
++		if rankStudy || os.Getenv("ONTOLOGY_STUDY_VARIANT") == "receipt" {
+@@ -531 +534 @@
+-	if rankStudy {
++	if rankStudy || os.Getenv("ONTOLOGY_STUDY_VARIANT") == "receipt" {
+@@ -570,0 +574 @@
++	m.BackfillAndVerificationMS += installReceiptRecheckSchema(t, f, arm)
+@@ -675,0 +680,2 @@
++		m.BackfillChecks += p.Counts.StudyBackfillChecks
++		m.BackfillMS += p.Counts.StudyBackfillMS
+@@ -697,0 +704 @@
++	m.BackfillAndVerificationMS += m.BackfillMS
+--- a/internal/ontology/postgres/fixture_test.go
++++ b/internal/ontology/postgres/fixture_test.go
+@@ -151,0 +152,3 @@
++	if os.Getenv("ONTOLOGY_STUDY_INSTALL_SCHEMA") == "1" {
++		installReceiptRecheckSchema(t, fixture, "receipt")
++	}

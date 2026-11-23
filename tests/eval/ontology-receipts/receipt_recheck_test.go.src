@@ -1,0 +1,662 @@
+//go:build integration && ontology_study
+
+package postgres
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/lib/pq"
+	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
+	"github.com/markhuangai/dense-mem/internal/observability"
+	organization "github.com/markhuangai/dense-mem/internal/ontology"
+	"github.com/markhuangai/dense-mem/internal/ontology/assessment"
+	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
+	"github.com/markhuangai/dense-mem/internal/settings"
+	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
+)
+
+func installReceiptRecheckSchema(t *testing.T, f *ontologyFixture, arm string) float64 {
+	t.Helper()
+	if arm != "receipt" {
+		return 0
+	}
+	start := time.Now()
+	data, err := os.ReadFile(os.Getenv("ONTOLOGY_STUDY_RECEIPT_SQL"))
+	require.NoError(t, err)
+	up, _, ok := strings.Cut(string(data), "-- +goose Down")
+	require.True(t, ok)
+	require.NoError(t, f.admin.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec("SET LOCAL app.tx_mode='migration'").Error; err != nil {
+			return err
+		}
+		return tx.Exec(up).Error
+	}))
+	var protected int
+	require.NoError(t, f.app.Raw(`SELECT count(*) FROM pg_class
+		WHERE relname IN ('ontology_study_receipts','ontology_study_inputs','ontology_study_changes') AND relforcerowsecurity`).Row().Scan(&protected))
+	require.Equal(t, 3, protected)
+	return studyMS(time.Since(start))
+}
+
+func writeReceiptStudyReport(t *testing.T, name string, receipt any) {
+	t.Helper()
+	body, err := json.MarshalIndent(receipt, "", "  ")
+	require.NoError(t, err)
+	dir := os.Getenv("ONTOLOGY_STUDY_REPORT_DIR")
+	require.NotEmpty(t, dir)
+	require.NoError(t, os.MkdirAll(dir, 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, name+".json"), body, 0600))
+}
+
+func TestReceiptRecheckMatchedDrains(t *testing.T) {
+	t.Setenv("ONTOLOGY_STUDY_VARIANT", "receipt")
+	t.Setenv("ONTOLOGY_STUDY_ACTIVE_ARM", "base")
+	shape := studyShape(t)
+	seed := buildStudyTemplate(t, shape)
+	dump := studyTemplateSHA(t, seed)
+	cloner := newBuildStudyCloner(t, seed)
+
+	orders := [][]string{{"base", "receipt"}, {"receipt", "base"}, {"base", "receipt"}, {"receipt", "base"}}
+	if shape.Dataset == "hotpotqa" || shape.Dataset == "musique" {
+		orders = [][]string{
+			{"base", "vector", "receipt"}, {"receipt", "vector", "base"},
+			{"vector", "receipt", "base"}, {"base", "receipt", "vector"},
+		}
+	}
+	arms := orders[0]
+	var schedule []studyScheduledInput
+	fixedHashes := map[string]string{}
+	for _, arm := range arms {
+		if !t.Run("correctness-"+arm, func(t *testing.T) {
+			t.Setenv("ONTOLOGY_STUDY_VERIFY_SKIPS", "1")
+			f := cloner.clone(t)
+			inputs := studyScheduledInputs(t, f, seed, arm)
+			require.Len(t, inputs, 3)
+			if schedule == nil {
+				schedule = inputs
+			}
+			require.Equal(t, schedule, inputs, "full HTTP requests, ordered vocabulary and source claims at a fixed schedule")
+			fixedHashes[arm] = studyHash(t, inputs)
+		}) {
+			return
+		}
+	}
+
+	var runs []studyTiming
+	for pair, order := range orders {
+		for _, arm := range order {
+			if !t.Run(fmt.Sprintf("pair-%d-%s", pair+1, arm), func(t *testing.T) {
+				m := timeStudyArm(t, cloner.clone(t), seed, arm, pair+1)
+				if len(runs) > 0 {
+					require.Equal(t, runs[0].Quality, m.Quality, "same final semantics and ordered runtime Recall")
+				}
+				runs = append(runs, m)
+				body, err := json.Marshal(m)
+				require.NoError(t, err)
+				t.Logf("ontology_receipt_study_arm %s", body)
+			}) {
+				return
+			}
+		}
+	}
+	writeReceiptStudyReport(t, shape.Dataset, struct {
+		Protocol    string
+		Dataset     string
+		TemplateSHA string
+		SeedSources int
+		TopicCount  int
+		ChangeCount int
+		FixedHashes map[string]string
+		Runs        []studyTiming
+	}{"ontology-receipt-recheck-v1", shape.Dataset, dump, len(seed.sources), seed.backgroundTopics,
+		seed.startingMarkers, fixedHashes, runs})
+}
+
+type receiptScaleResult struct {
+	CatalogSize, ChangedTopics, StockMatches, CandidateMatches, ChecksAvoided int
+	StockSourceRows, CandidateSourceRows, FullCheckMS                         float64
+	CatalogFactor                                                             int
+	Fanout                                                                    string
+}
+
+func TestReceiptRecheckScale(t *testing.T) {
+	t.Setenv("ONTOLOGY_STUDY_ACTIVE_ARM", "base")
+	t.Setenv("ONTOLOGY_STUDY_VERIFY_SKIPS", "1")
+	factor, err := strconv.Atoi(os.Getenv("ONTOLOGY_STUDY_CATALOG_FACTOR"))
+	require.NoError(t, err)
+	require.Contains(t, []int{1, 4, 16}, factor)
+	f := newOrganizationFixture(t)
+	config := concurrencyConfig(t, f, 8, 8)
+	for i := range 40 {
+		f.organizationEvidence(t, i%len(f.owners), fmt.Sprintf("Atlas PostgreSQL checkrow%02d", i), nil)
+	}
+	topic := testTopic("postgresql")
+	revalidationPublish(t, f, ontology.Change{Record: topic})
+	service, _ := maintenanceServiceFixture(t, f, config, nil)
+	drainMaintenance(t, service)
+	initial, err := f.store.MaintenanceStatus(t.Context(), time.Now())
+	require.NoError(t, err)
+	require.EqualValues(t, 40, initial.Counts.Organized)
+	require.True(t, initial.CoverageComplete)
+	t.Setenv("ONTOLOGY_STUDY_ACTIVE_ARM", "receipt")
+	installReceiptRecheckSchema(t, f, "receipt")
+	finishStudyBackfill(t, f, config)
+	require.NoError(t, f.store.withScope(t.Context(), f.team, true, func(tx *gorm.DB, fence scope) error {
+		var count int
+		err := tx.Raw(`SELECT count(*) FROM ontology_maintenance_sources WHERE status='organized'
+			AND ontology_study_can_skip(team_id,shared_space_id,space_generation,assessment_id)`).Row().Scan(&count)
+		if err == nil {
+			require.Equal(t, 40, count, "all sources in the fixed cohort must have a usable proof")
+		}
+		return err
+	}))
+	n := 128 * factor
+	var background []ontology.Change
+	for i := range n {
+		record := testTopic(fmt.Sprintf("studyarchive%06d", i))
+		background = append(background, ontology.Change{Record: record})
+	}
+	for changes := range slices.Chunk(background, ontology.MaxChanges) {
+		revalidationPublish(t, f, changes...)
+	}
+	const changesPerShape = 16
+	var measurements []receiptScaleResult
+	for _, fanout := range []string{"disjoint", "narrow", "common", "dependent"} {
+		var changes []ontology.Change
+		for i := range changesPerShape {
+			record := testTopic(fmt.Sprintf("%schange%06d", fanout, i))
+			switch fanout {
+			case "narrow":
+				record.Definition.Description = fmt.Sprintf("checkrow%02d", i)
+			case "common":
+				record.Definition.Description = "Atlas PostgreSQL"
+			case "dependent":
+				// An alias makes the existing required record newer and must invalidate its receipts.
+				record = topic
+				record.Definition = &ontology.Definition{Key: topic.Definition.Key, Label: topic.Definition.Label, Description: "Atlas PostgreSQL revised"}
+				changes = append(changes, ontology.Change{ExpectedVersion: 1, Record: record})
+			}
+			if fanout == "dependent" {
+				break
+			}
+			changes = append(changes, ontology.Change{Record: record})
+		}
+		revalidationPublish(t, f, changes...)
+		m := receiptScaleResult{CatalogSize: n + 1, CatalogFactor: factor, Fanout: fanout, ChangedTopics: len(changes)}
+		for _, change := range changes {
+			sample := compareStudySelection(t, f, change.Record.ID)
+			m.StockMatches += sample.StockMatches
+			m.CandidateMatches += sample.CandidateMatches
+			m.ChecksAvoided += sample.ChecksAvoided
+			m.StockSourceRows += sample.StockSourceRows
+			m.CandidateSourceRows += sample.CandidateSourceRows
+			m.FullCheckMS += sample.FullCheckMS
+		}
+		switch fanout {
+		case "disjoint":
+			require.Zero(t, m.StockMatches)
+		case "narrow", "common":
+			require.Positive(t, m.StockMatches)
+			require.Equal(t, m.StockMatches, m.ChecksAvoided)
+			require.Zero(t, m.CandidateMatches)
+		case "dependent":
+			require.Positive(t, m.CandidateMatches)
+			require.Zero(t, m.ChecksAvoided)
+		}
+		measurements = append(measurements, m)
+	}
+	writeReceiptStudyReport(t, fmt.Sprintf("scale-%d", factor), measurements)
+}
+
+func finishStudyBackfill(t *testing.T, f *ontologyFixture, config *settings.AppConfigServiceImpl) {
+	t.Helper()
+	window := maintenanceWindow(t, f, config)
+	turn, err := f.store.ClaimMaintenanceTurn(t.Context(), window.ID, time.Now(), 10*time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, turn)
+	defer func() { require.NoError(t, f.store.ReleaseMaintenanceTurn(context.Background(), *turn)) }()
+	for stride := 0; stride < 1000; stride++ {
+		count, err := f.store.backfillStudyReceipts(t.Context(), *turn)
+		require.NoError(t, err)
+		if count == 0 {
+			return
+		}
+		require.LessOrEqual(t, count, studyBackfillPage)
+	}
+	t.Fatal("receipt verification did not finish")
+}
+
+func compareStudySelection(t *testing.T, f *ontologyFixture, topic string) receiptScaleResult {
+	t.Helper()
+	var out receiptScaleResult
+	require.NoError(t, f.store.withScope(t.Context(), f.team, true, func(tx *gorm.DB, fence scope) error {
+		reader := func(query string) ([]string, float64) {
+			args := []any{fence.TeamID, fence.SpaceID, fence.Generation, topic, "", "", "", "",
+				pq.Array(ontology.VocabularyStopWords()), 1 << 30}
+			var planJSON []byte
+			require.NoError(t, tx.Raw("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) "+query, args...).Row().Scan(&planJSON))
+			var plans []struct{ Plan studyPlanNode }
+			require.NoError(t, json.Unmarshal(planJSON, &plans))
+			require.Len(t, plans, 1)
+			var seen float64
+			var scan func(studyPlanNode)
+			scan = func(node studyPlanNode) {
+				if node.Relation == "ontology_maintenance_sources" {
+					seen += (node.Rows + node.Filtered + node.IndexFiltered) * float64(node.Loops)
+				}
+				for _, child := range node.Plans {
+					scan(child)
+				}
+			}
+			scan(plans[0].Plan)
+			var ids []string
+			require.NoError(t, tx.Raw("SELECT source_id FROM ("+query+") AS selected", args...).Scan(&ids).Error)
+			return ids, seen
+		}
+		base, visited := reader(maintenanceDefinitionPageSQL)
+		candidate, visitedAfter := reader(receiptStudyMarkerSQL(maintenanceDefinitionPageSQL))
+		out.StockMatches, out.CandidateMatches = len(base), len(candidate)
+		out.StockSourceRows, out.CandidateSourceRows = visited, visitedAfter
+		ctx := context.WithValue(tx.Statement.Context, maintenanceDiscoveryObservationKey{}, maintenanceDiscoveryObserver(func(e maintenanceDiscoveryEvent) {
+			if e.Phase == "study_skip_verified" {
+				out.ChecksAvoided++
+			}
+		}))
+		start := time.Now()
+		err := observeStudySkip(tx.WithContext(ctx), fence, []maintenanceMarker{
+			{AnchorKind: "ontology_record_heads", TargetKind: "definition", TargetID: topic},
+		})
+		out.FullCheckMS = studyMS(time.Since(start))
+		return err
+	}))
+	return out
+}
+
+func TestReceiptRecheckCurrentInputs(t *testing.T) {
+	t.Setenv("ONTOLOGY_STUDY_VERIFY_SKIPS", "1")
+	t.Setenv("ONTOLOGY_STUDY_ACTIVE_ARM", "base")
+	f := newOrganizationFixture(t)
+	source := f.organizationEvidence(t, 0, "Atlas stores evidence in PostgreSQL.", nil)
+	peer := f.organizationEvidence(t, 1, "Atlas uses PostgreSQL for persistence.", nil)
+	topic := testTopic("postgresql")
+	revalidationPublish(t, f, ontology.Change{Record: topic})
+	config := concurrencyConfig(t, f, 8, 8)
+	service, _ := maintenanceServiceFixture(t, f, config, nil)
+	drainMaintenance(t, service)
+
+	t.Setenv("ONTOLOGY_STUDY_ACTIVE_ARM", "receipt")
+	installReceiptRecheckSchema(t, f, "receipt")
+	finishStudyBackfill(t, f, config)
+	t.Run("word overlap and protected diagnostic", func(t *testing.T) {
+		unrelated := testTopic("application")
+		unrelated.Definition.Description = "Atlas PostgreSQL"
+		revalidationPublish(t, f, ontology.Change{Record: unrelated})
+		timing := compareStudySelection(t, f, unrelated.ID)
+		require.Positive(t, timing.ChecksAvoided)
+	})
+	t.Run("new and removed pin dirties current receipt", func(t *testing.T) {
+		pin := ontology.Record{ID: uuid.NewString(), Kind: ontology.OverrideKind,
+			Override: &ontology.Override{Action: ontology.PinDefinition, TargetID: topic.ID}}
+		revalidationPublish(t, f, ontology.Change{Record: pin})
+		marker := maintenanceMarker{AnchorKind: "ontology_study_input", TargetKind: "definition", TargetID: "record:" + topic.ID}
+		require.NoError(t, f.store.withScope(t.Context(), f.team, true, func(tx *gorm.DB, fence scope) error {
+			handles, err := maintenanceMarkerSources(tx, fence, marker, ontology.MaintenancePageSize)
+			require.NoError(t, err)
+			require.ElementsMatch(t, []ontology.SourceHandle{source, peer}, handles)
+			return nil
+		}))
+		drainMaintenance(t, service)
+		stored, err := f.store.GetRecord(t.Context(), f.team, pin.ID, 0)
+		require.NoError(t, err)
+		stored.Record.Retired = true
+		revalidationPublish(t, f, ontology.Change{ExpectedVersion: stored.Version, Record: stored.Record})
+		drainMaintenance(t, service)
+	})
+	t.Run("protected console reconstructs a skip and a rejection", func(t *testing.T) {
+		alternative := testTopic("datastore")
+		alternative.Definition.Description = "Atlas PostgreSQL"
+		revalidationPublish(t, f, ontology.Change{Record: alternative})
+		var output bytes.Buffer
+		assessmentID := revalidationQueue(t, f, source).AssessmentID
+		var privateKey string
+		require.NoError(t, f.store.withScope(t.Context(), f.team, true, func(tx *gorm.DB, fence scope) error {
+			return tx.Raw(`SELECT operation_key FROM ontology_assessments WHERE team_id=?::uuid
+			 AND shared_space_id=?::uuid AND space_generation=? AND assessment_id=?::uuid ORDER BY created_at LIMIT 1`,
+				fence.TeamID, fence.SpaceID, fence.Generation, assessmentID).Row().Scan(&privateKey)
+		}))
+		require.NotEmpty(t, privateKey)
+		protector := observability.NewCredentialProtector(privateKey)
+		root := observability.NewConsoleWithProtector(slog.LevelDebug, protector, &output).ContextSlog()
+		restarted := NewStore(f.app, f.rls)
+		logged := organization.NewMaintenanceService(organization.MaintenanceDependencies{
+			Repository: restarted, Config: config, DefaultModel: "fixture-model", ProviderTimeout: time.Minute,
+			Logger: root, StudyProtector: protector,
+			Organizer: func(model string, window int64, accounting assessment.AttemptAccounting) *organization.Service {
+				if accounting == nil {
+					return organization.NewService(nil, assessment.NewProvider(nil, model, maintenanceFixtureLimits(), int(window)))
+				}
+				generated, _ := organizationFixtureServiceWithAccounting(t, f, nil, nil, model, maintenanceFixtureLimits(), accounting, int(window))
+				return generated
+			},
+		})
+		drainMaintenance(t, logged)
+		skip := requireStudyDiagnostic(t, output.String(), "ontology receipt lexical skip", "fully_assigned_current_receipt")
+		require.Equal(t, assessmentID, skip)
+		output.Reset()
+		pin := ontology.Record{ID: uuid.NewString(), Kind: ontology.OverrideKind,
+			Override: &ontology.Override{Action: ontology.PinDefinition, TargetID: topic.ID}}
+		revalidationPublish(t, f, ontology.Change{Record: pin})
+		drainMaintenance(t, logged)
+		require.Equal(t, assessmentID, requireStudyDiagnostic(t, output.String(), "ontology receipt discovery rejection detail", "context_hash"))
+		require.Contains(t, output.String(), "ontology receipt discovery rejection")
+		require.NotContains(t, output.String(), privateKey)
+		var outsideScope int
+		require.NoError(t, f.app.Raw("SELECT count(*) FROM ontology_study_inputs").Row().Scan(&outsideScope))
+		require.Zero(t, outsideScope)
+	})
+}
+
+func requireStudyDiagnostic(t *testing.T, logs, message, reason string) string {
+	t.Helper()
+	var chunks []observability.DiagnosticBodyChunk
+	var runID, assessmentID string
+	infos := map[string]bool{}
+	for _, line := range strings.Split(strings.TrimSpace(logs), "\n") {
+		var entry struct {
+			Level        string                             `json:"level"`
+			Message      string                             `json:"msg"`
+			RunID        string                             `json:"run_id"`
+			AssessmentID string                             `json:"assessment_id"`
+			Payload      *observability.DiagnosticBodyChunk `json:"payload_chunk"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(line), &entry))
+		if entry.Level == "INFO" && entry.Message == "ontology maintenance discovery" {
+			infos[entry.RunID] = true
+		}
+		if entry.Level != "DEBUG" || entry.Message != message || entry.Payload == nil {
+			continue
+		}
+		if runID == "" {
+			runID, assessmentID = entry.RunID, entry.AssessmentID
+		}
+		if entry.AssessmentID == assessmentID && len(chunks) < entry.Payload.Count {
+			chunks = append(chunks, *entry.Payload)
+		}
+	}
+	require.NotEmpty(t, assessmentID)
+	require.True(t, infos[runID], "join the protected detail to the committed discovery event")
+	require.NotEmpty(t, chunks)
+	require.Len(t, chunks, chunks[0].Count)
+	var joined strings.Builder
+	for index, chunk := range chunks {
+		require.Equal(t, index, chunk.Index)
+		require.Equal(t, "captured", chunk.State)
+		joined.WriteString(chunk.Body)
+	}
+	require.Equal(t, chunks[0].SHA256, fmt.Sprintf("%x", sha256.Sum256([]byte(joined.String()))))
+	require.Contains(t, joined.String(), reason)
+	return assessmentID
+}
+
+func TestReceiptRecheckMixedCutoff(t *testing.T) {
+	t.Setenv("ONTOLOGY_STUDY_VERIFY_SKIPS", "1")
+	t.Setenv("ONTOLOGY_STUDY_ACTIVE_ARM", "receipt")
+	f := newOrganizationFixture(t)
+	installReceiptRecheckSchema(t, f, "receipt")
+	fixed := f.organizationEvidence(t, 0, "Atlas PostgreSQL", nil)
+	free := f.organizationEvidence(t, 1, "celestial observation", nil)
+	service, _ := organizationFixtureService(t, f, nil, nil)
+	_, err := service.Organize(t.Context(), f.team, ontology.OrganizationInput{OperationKey: "fixed-peer", Sources: []ontology.SourceHandle{fixed}})
+	require.NoError(t, err)
+	var changes []ontology.Change
+	for i := range ontology.MaxVocabularyCandidates {
+		record := testTopic(fmt.Sprintf("celestialfacet%02d", i))
+		record.Definition.Description = "celestial"
+		changes = append(changes, ontology.Change{Record: record})
+	}
+	revalidationPublish(t, f, changes...)
+	handles := []ontology.SourceHandle{fixed, free}
+	mixed, _ := organizationFixtureService(t, f, nil, ambiguousClassification)
+	input := ontology.OrganizationInput{OperationKey: "mixed-receipt", Sources: handles}
+	result, err := mixed.Organize(t.Context(), f.team, input)
+	require.NoError(t, err)
+	require.True(t, result.Current)
+	require.NoError(t, f.store.withScope(t.Context(), f.team, false, func(tx *gorm.DB, fence scope) error {
+		for _, handle := range handles {
+			if err := refreshMaintenanceSource(tx, fence, handle, false); err != nil {
+				return err
+			}
+			if err := tx.Exec(`UPDATE ontology_maintenance_sources SET status='organized',assessment_id=?::uuid
+			 WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND source_id=?`,
+				result.AssessmentID, fence.TeamID, fence.SpaceID, fence.Generation, handle.ID).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	}))
+	before, err := f.store.ReadOrganization(t.Context(), f.team, handles)
+	require.NoError(t, err)
+	require.Len(t, before.Candidates, ontology.MaxVocabularyCandidates)
+	newcomer := testTopic("celestial")
+	revalidationPublish(t, f, ontology.Change{Record: newcomer})
+	after, err := f.store.ReadOrganization(t.Context(), f.team, handles)
+	require.NoError(t, err)
+	require.Len(t, after.Candidates, ontology.MaxVocabularyCandidates)
+	require.Contains(t, organizationCandidateIDs(after), newcomer.ID)
+	require.NotContains(t, organizationCandidateIDs(before), newcomer.ID)
+	stats := compareStudySelection(t, f, newcomer.ID)
+	require.Positive(t, stats.CandidateMatches)
+	require.Zero(t, stats.ChecksAvoided)
+	replayed, err := mixed.Organize(t.Context(), f.team, input)
+	require.NoError(t, err)
+	require.False(t, replayed.Current)
+}
+
+func organizationCandidateIDs(data ontology.OrganizationContext) []string {
+	ids := make([]string, 0, len(data.Candidates))
+	for _, candidate := range data.Candidates {
+		ids = append(ids, candidate.ID)
+	}
+	return ids
+}
+
+func TestReceiptRecheckWithdrawalFencesPeers(t *testing.T) {
+	t.Setenv("ONTOLOGY_STUDY_ACTIVE_ARM", "base")
+	x := newDiscoveryFixture(t, []int{2}, []string{"organized"}, true)
+	f := x.f
+	t.Setenv("ONTOLOGY_STUDY_ACTIVE_ARM", "receipt")
+	t.Setenv("ONTOLOGY_STUDY_VERIFY_SKIPS", "1")
+	installReceiptRecheckSchema(t, f, "receipt")
+	backfilled, err := f.store.backfillStudyReceipts(t.Context(), x.turn)
+	require.NoError(t, err)
+	require.Positive(t, backfilled)
+	noise := testTopic("wordoverlap")
+	noise.Definition.Description = "PostgreSQL discovery measurement"
+	revalidationPublish(t, f, ontology.Change{Record: noise})
+	require.Positive(t, compareStudySelection(t, f, noise.ID).ChecksAvoided)
+
+	other := maintenanceOtherTeam(t, f)
+	require.NoError(t, other.store.withScope(t.Context(), other.team, true, func(tx *gorm.DB, fence scope) error {
+		var reads int
+		err := tx.Raw(`SELECT count(*) FROM ontology_study_receipts WHERE team_id=?::uuid`, f.team).Row().Scan(&reads)
+		require.Zero(t, reads)
+		return err
+	}))
+
+	writerStarted := make(chan struct{})
+	allowCommit := make(chan struct{})
+	write := make(chan error, 1)
+	// Hold the supported retraction's real transaction between its write and commit.
+	const callback = "ontology_study_withdrawal_barrier"
+	require.NoError(t, f.app.Callback().Raw().After("gorm:raw").Register(callback, func(tx *gorm.DB) {
+		if tx.Error == nil && strings.HasPrefix(strings.TrimSpace(tx.Statement.SQL.String()), "INSERT INTO evidence_lifecycle_events") {
+			close(writerStarted)
+			<-allowCommit
+		}
+	}))
+	t.Cleanup(func() { require.NoError(t, f.app.Callback().Raw().Remove(callback)) })
+	go func() {
+		_, err := f.knowledge.RetractEvidence(f.actor(1, "member"), knowledge.RetractEvidenceInput{
+			TeamID: f.team, OwnerProfileID: f.owners[1], EvidenceIDs: []string{x.sources[0].ID},
+			Reason: "study withdrawal", IdempotencyKey: "study-concurrent-withdrawal", RequestHash: testHash("study-concurrent-withdrawal"),
+		})
+		write <- err
+	}()
+	select {
+	case <-writerStarted:
+	case err := <-write:
+		require.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("withdrawal transaction did not reach the commit barrier")
+	}
+	defer func() {
+		select {
+		case <-allowCommit:
+		default:
+			close(allowCommit)
+		}
+	}()
+	require.Positive(t, compareStudySelection(t, f, noise.ID).ChecksAvoided)
+	close(allowCommit)
+	require.NoError(t, <-write)
+	require.Zero(t, compareStudySelection(t, f, noise.ID).ChecksAvoided)
+	affected := maintenanceMarker{AnchorKind: "ontology_study_input", TargetKind: "definition", TargetID: "evidence:" + x.sources[0].ID}
+	require.NoError(t, f.store.withScope(t.Context(), f.team, true, func(tx *gorm.DB, fence scope) error {
+		handles, err := maintenanceMarkerSources(tx, fence, affected, ontology.MaintenancePageSize)
+		require.NoError(t, err)
+		require.ElementsMatch(t, x.sources, handles)
+		return nil
+	}))
+}
+
+func TestReceiptRecheckBackfillBoundsAndFallback(t *testing.T) {
+	t.Setenv("ONTOLOGY_STUDY_ACTIVE_ARM", "base")
+	widths := make([]int, studyBackfillPage+1)
+	for index := range widths {
+		widths[index] = 1
+	}
+	x := newDiscoveryFixture(t, widths, nil, false)
+	f := x.f
+	// New-key replay copies a validated immutable receipt under a second operation key.
+	require.NoError(t, f.store.withScope(t.Context(), f.team, false, func(tx *gorm.DB, fence scope) error {
+		original, found, err := organizationByKey(tx, fence, "discovery-receipt-000")
+		require.NoError(t, err)
+		require.True(t, found)
+		for index := range 2 * studyBackfillPage {
+			alias := original
+			alias.OperationKey = fmt.Sprintf("historical-replay-%02d", index)
+			if err := insertOrganization(tx, fence, alias); err != nil {
+				return err
+			}
+		}
+		return nil
+	}))
+	t.Setenv("ONTOLOGY_STUDY_ACTIVE_ARM", "receipt")
+	t.Setenv("ONTOLOGY_STUDY_VERIFY_SKIPS", "1")
+	installReceiptRecheckSchema(t, f, "receipt")
+	noise := testTopic("sourcealias")
+	noise.Definition.Description = "PostgreSQL discovery measurement"
+	revalidationPublish(t, f, ontology.Change{Record: noise})
+	first := compareStudySelection(t, f, noise.ID)
+	require.Equal(t, len(widths), first.CandidateMatches)
+	require.Zero(t, first.ChecksAvoided, "missing proof falls back")
+	number, err := f.store.backfillStudyReceipts(t.Context(), x.turn)
+	require.NoError(t, err)
+	require.Equal(t, studyBackfillPage, number)
+	restarted := NewStore(f.app, f.rls)
+	number, err = restarted.backfillStudyReceipts(t.Context(), x.turn)
+	require.NoError(t, err)
+	require.Equal(t, 1, number)
+	number, err = restarted.backfillStudyReceipts(t.Context(), x.turn)
+	require.NoError(t, err)
+	require.Zero(t, number)
+	require.Equal(t, len(widths), compareStudySelection(t, f, noise.ID).ChecksAvoided)
+
+	handle := x.sources[0]
+	var window string
+	require.NoError(t, f.admin.Raw("SELECT window_id::text FROM ontology_maintenance_runs WHERE run_id=?::uuid", x.turn.RunID).Row().Scan(&window))
+	body, err := json.Marshal([]ontology.SourceHandle{handle})
+	require.NoError(t, err)
+	require.NoError(t, f.store.withScope(t.Context(), f.team, false, func(tx *gorm.DB, fence scope) error {
+		return tx.Exec(`INSERT INTO ontology_maintenance_batches(batch_id,run_id,window_id,team_id,shared_space_id,space_generation,
+		   lease_token,lease_until,sources,revisions,created_at) VALUES(?::uuid,?::uuid,?::uuid,?::uuid,?::uuid,?,
+		   ?::uuid,clock_timestamp()+interval '1 minute',?::jsonb,'{}',clock_timestamp())`,
+			uuid.NewString(), x.turn.RunID, window, fence.TeamID, fence.SpaceID, fence.Generation,
+			x.turn.LeaseToken, string(body)).Error
+	}))
+	active := compareStudySelection(t, f, noise.ID)
+	require.Equal(t, len(widths)-1, active.ChecksAvoided)
+	require.Equal(t, 1, active.CandidateMatches, "the active claim uses the original revalidation path")
+}
+
+func TestReceiptRecheckOverrideRetarget(t *testing.T) {
+	t.Setenv("ONTOLOGY_STUDY_ACTIVE_ARM", "receipt")
+	t.Setenv("ONTOLOGY_STUDY_VERIFY_SKIPS", "1")
+	f := newOrganizationFixture(t)
+	installReceiptRecheckSchema(t, f, "receipt")
+	a := f.organizationEvidence(t, 0, "PostgreSQL storage", nil)
+	b := f.organizationEvidence(t, 1, "SQLite database", nil)
+	postgres, sqlite := testTopic("postgresql"), testTopic("sqlite")
+	pin := ontology.Record{ID: uuid.NewString(), Kind: ontology.OverrideKind,
+		Override: &ontology.Override{Action: ontology.PinDefinition, TargetID: postgres.ID}}
+	revalidationPublish(t, f, ontology.Change{Record: postgres}, ontology.Change{Record: sqlite}, ontology.Change{Record: pin})
+	config := concurrencyConfig(t, f, 8, 8)
+	service, _ := maintenanceServiceFixture(t, f, config, nil)
+	drainMaintenance(t, service)
+	for _, shape := range []struct {
+		source ontology.SourceHandle
+		topic  ontology.Record
+	}{{a, postgres}, {b, sqlite}} {
+		current, err := f.store.ReadOrganization(t.Context(), f.team, []ontology.SourceHandle{shape.source})
+		require.NoError(t, err)
+		locked, _ := ontology.OrganizationClassification(current.Sources[0], current.Records, nil)
+		require.Equal(t, shape.topic.ID, locked)
+	}
+	pin.Override.TargetID = sqlite.ID
+	revalidationPublish(t, f, ontology.Change{ExpectedVersion: 1, Record: pin})
+	for _, check := range []struct {
+		target ontology.Record
+		source ontology.SourceHandle
+	}{{postgres, a}, {sqlite, b}} {
+		marker := maintenanceMarker{AnchorKind: "ontology_study_input", TargetKind: "definition", TargetID: "record:" + check.target.ID}
+		require.NoError(t, f.store.withScope(t.Context(), f.team, true, func(tx *gorm.DB, fence scope) error {
+			handles, err := maintenanceMarkerSources(tx, fence, marker, ontology.MaintenancePageSize)
+			require.NoError(t, err)
+			require.Contains(t, handles, check.source)
+			return nil
+		}))
+	}
+	drainMaintenance(t, service)
+	status, err := f.store.MaintenanceStatus(t.Context(), time.Now())
+	require.NoError(t, err)
+	require.True(t, status.CoverageComplete)
+}
+
+func TestReceiptRecheckBackfillCounters(t *testing.T) {
+	t.Setenv("ONTOLOGY_STUDY_ACTIVE_ARM", "base")
+	x := newDiscoveryFixture(t, []int{1, 1, 1}, nil, false)
+	t.Setenv("ONTOLOGY_STUDY_ACTIVE_ARM", "receipt")
+	installReceiptRecheckSchema(t, x.f, "receipt")
+	first, err := x.f.store.DiscoverMaintenance(t.Context(), x.turn, ontology.MaintenancePageSize)
+	require.NoError(t, err)
+	require.True(t, first.Committed)
+	require.Equal(t, 3, first.Counts.StudyBackfillChecks)
+	require.Positive(t, first.Counts.StudyBackfillMS)
+	second, err := x.f.store.DiscoverMaintenance(t.Context(), x.turn, ontology.MaintenancePageSize)
+	require.NoError(t, err)
+	require.Zero(t, second.Counts.StudyBackfillChecks)
+}

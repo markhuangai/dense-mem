@@ -1,0 +1,689 @@
+--- a/cmd/internal/serverapp/server.go
++++ b/cmd/internal/serverapp/server.go
+@@ -281 +281 @@
+-	ontologyMaintenance := buildOntologyMaintenance(ontologyStore, appConfigService, assessorProvider, assessmentLimits, sessionModels.remember, time.Duration(cfg.GetAIVerifierTimeoutSeconds())*time.Second, auditService, rootSlogLogger(logger), ontologyDiagnosticCapture(operationLogService, diagnosticProtector, rootDiagnosticLogger(logger)), preparationCooldown)
++	ontologyMaintenance := buildOntologyMaintenance(ontologyStore, appConfigService, assessorProvider, assessmentLimits, sessionModels.remember, time.Duration(cfg.GetAIVerifierTimeoutSeconds())*time.Second, auditService, rootSlogLogger(logger), ontologyDiagnosticCapture(operationLogService, diagnosticProtector, rootDiagnosticLogger(logger)), preparationCooldown).WithStudyProtector(diagnosticProtector)
+--- a/internal/evalharness/manifest.go
++++ b/internal/evalharness/manifest.go
+@@ -42,0 +43,5 @@
++	if os.Getenv("ONTOLOGY_RECEIPT_PRIVATE_TRIAL") == "1" {
++		imageValid = manifest.SeedBuildID != "" && manifest.Dataset == "hotpotqa" && bake &&
++			manifest.ResumeScope != nil && localImagePattern.MatchString(manifest.Image)
++	}
++
+--- a/internal/evalharness/ontology_seed.go
++++ b/internal/evalharness/ontology_seed.go
+@@ -180,0 +181,3 @@
++	if os.Getenv("ONTOLOGY_RECEIPT_PRIVATE_TRIAL") == "1" {
++		return observeReceiptTrial(work, manifest, client, native, initial, seed.CanonicalHash)
++	}
+--- /dev/null
++++ b/internal/evalharness/receipt_trial.go
+@@ -0,0 +1,134 @@
++package evalharness
++
++import (
++	"context"
++	"errors"
++	"net/http"
++	"path/filepath"
++	"strconv"
++	"time"
++
++	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
++)
++
++type receiptTrialPoint struct {
++	ElapsedMS int64
++	Observed  time.Time
++	Counts    ontology.MaintenanceCounts
++	Active    int
++}
++
++type receiptTrialResult struct {
++	RunID, Source, Image, Parent, Canonical string
++	Started, MeasuredEnd, Paused            time.Time
++	Progress                                []receiptTrialPoint
++	NetOrganized                            int64
++	Usage                                   AttemptMeasurement
++	Drained                                 bool
++}
++
++func observeReceiptTrial(ctx context.Context, manifest Manifest, client *HTTPClient, native *Native, initial NativeObservation, canonical string) error {
++	const measured = time.Hour
++	if manifest.SeedBuildID == "" || manifest.Dataset != "hotpotqa" || manifest.ResumeScope == nil ||
++		initial.CanonicalHash != canonical || initial.Ontology.Counts.Eligible != 13810 ||
++		initial.Ontology.Counts.Organized != 3295 || initial.Ontology.Counts.Pending != 10446 ||
++		initial.Ontology.Counts.Ambiguous != 61 || initial.Ontology.Counts.Failed != 8 ||
++		len(initial.ProviderAttempts) != 2506 || initial.ForeignWork != 0 || initial.ForeignSources != 0 {
++		return errors.New("HotpotQA trial did not start from the archived paused checkpoint")
++	}
++	if time.Until(manifest.ModelDeadline) < measured+time.Minute {
++		return errors.New("HotpotQA trial cannot finish its measured hour within the reserved budget")
++	}
++	result := receiptTrialResult{
++		RunID: manifest.RunID, Source: manifest.SourceRevision, Image: manifest.Image,
++		Parent: manifest.SeedImage, Canonical: canonical,
++	}
++	path := filepath.Join(manifest.BakeStateDir, "receipt-trial-result.json")
++	if err := native.EnableOntology(ctx, manifest); err != nil {
++		return err
++	}
++	prior := make(map[string]bool, len(initial.ProviderAttempts))
++	for _, attempt := range initial.ProviderAttempts {
++		prior[receiptTrialAttemptKey(attempt)] = true
++	}
++	for {
++		var status ontology.MaintenanceStatus
++		if err := native.Control(ctx, http.MethodGet, "/ontology/status", nil, &status); err != nil {
++			return err
++		}
++		if !status.Enabled || status.Paused || status.ConfigurationError != "" {
++			return errors.New("HotpotQA observation lost its native ontology settings")
++		}
++		if status.Window != nil {
++			if err := nativeOntologyPolicy(status, manifest, native.Scope.TeamID); err != nil {
++				return err
++			}
++		}
++		now := time.Now().UTC()
++		if result.Started.IsZero() {
++			result.Started = now
++		}
++		point := receiptTrialPoint{ElapsedMS: now.Sub(result.Started).Milliseconds(), Observed: now,
++			Counts: status.Counts, Active: status.ActiveWork}
++		if len(result.Progress) == 0 || now.Sub(result.Progress[len(result.Progress)-1].Observed) >= 5*time.Minute || now.Sub(result.Started) >= measured {
++			result.Progress = append(result.Progress, point)
++			if err := writeJSON(path, result); err != nil {
++				return err
++			}
++			if client.Capture != nil && client.Capture.Logger != nil {
++				client.Capture.Logger.InfoContext(ctx, "ontology receipt trial progress", "run_id", manifest.RunID,
++					"elapsed_ms", point.ElapsedMS, "organized", point.Counts.Organized, "eligible", point.Counts.Eligible,
++					"pending", point.Counts.Pending, "active", point.Active)
++			}
++		}
++		if now.Sub(result.Started) >= measured {
++			result.MeasuredEnd = now
++			result.NetOrganized = int64(point.Counts.Organized - result.Progress[0].Counts.Organized)
++			break
++		}
++		select {
++		case <-ctx.Done():
++			return ctx.Err()
++		case <-time.After(min(10*time.Second, time.Until(result.Started.Add(measured)))):
++		}
++	}
++	if err := writeJSON(path, result); err != nil {
++		return err
++	}
++	drain, finish := context.WithTimeout(context.WithoutCancel(ctx), 16*time.Minute)
++	defer finish()
++	if err := pausePreparation(drain, native); err != nil {
++		return err
++	}
++	final, err := native.Snapshot(drain)
++	if err != nil {
++		return err
++	}
++	if final.CanonicalHash != canonical || final.ForeignSources != 0 || final.ForeignWork != 0 ||
++		!final.Ontology.Paused || nativeDrained(final) != nil {
++		return errors.New("HotpotQA trial failed its paused, drained and canonical verification")
++	}
++	var measuredAttempts []NativeAttempt
++	for _, attempt := range final.ProviderAttempts {
++		if !prior[receiptTrialAttemptKey(attempt)] && !attempt.AdmittedAt.Before(result.Started) && !attempt.AdmittedAt.After(result.MeasuredEnd) {
++			measuredAttempts = append(measuredAttempts, attempt)
++		}
++	}
++	result.Usage, err = MeasureAttempts(measuredAttempts)
++	if err != nil {
++		return err
++	}
++	result.Paused = time.Now().UTC()
++	result.Drained = true
++	if err := writeJSON(path, result); err != nil {
++		return err
++	}
++	if native.RuntimeLogs != nil {
++		return native.RuntimeLogs(drain)
++	}
++	return nil
++}
++
++func receiptTrialAttemptKey(attempt NativeAttempt) string {
++	return attempt.OperationKey + "/" + attempt.AssessmentID + "/" + strconv.Itoa(attempt.Number)
++}
+--- /dev/null
++++ b/internal/ontology/contract/maintenance_study_logger.go
+@@ -0,0 +1,32 @@
++package contract
++
++import (
++	"context"
++	"log/slog"
++)
++
++type maintenanceStudyLoggerKey struct{}
++
++type maintenanceStudyLog struct {
++	logger  *slog.Logger
++	capture func(context.Context, string, []byte, int, ...slog.Attr)
++}
++
++func WithMaintenanceStudyLogger(ctx context.Context, logger *slog.Logger, capture func(context.Context, string, []byte, int, ...slog.Attr)) context.Context {
++	if logger == nil {
++		return ctx
++	}
++	return context.WithValue(ctx, maintenanceStudyLoggerKey{}, maintenanceStudyLog{logger, capture})
++}
++
++func MaintenanceStudyLogger(ctx context.Context) *slog.Logger {
++	value, _ := ctx.Value(maintenanceStudyLoggerKey{}).(maintenanceStudyLog)
++	return value.logger
++}
++
++func LogMaintenanceStudyBody(ctx context.Context, event string, body []byte, limit int, attrs ...slog.Attr) {
++	value, _ := ctx.Value(maintenanceStudyLoggerKey{}).(maintenanceStudyLog)
++	if value.capture != nil {
++		value.capture(ctx, event, body, limit, attrs...)
++	}
++}
+--- a/internal/ontology/contract/maintenance.go
++++ b/internal/ontology/contract/maintenance.go
+@@ -118,7 +118,9 @@
+-	InitialSources       int `json:"initial_sources"`
+-	EnumeratedMatches    int `json:"enumerated_matches"`
+-	RefreshedSources     int `json:"refreshed_sources"`
+-	FreshnessInvocations int `json:"freshness_invocations"`
+-	DistinctReceipts     int `json:"distinct_receipts"`
+-	Requeues             int `json:"requeues"`
+-	CompletedMarkers     int `json:"completed_markers"`
++	StudyBackfillChecks  int     `json:"study_backfill_checks,omitempty"`
++	StudyBackfillMS      float64 `json:"study_backfill_ms,omitempty"`
++	InitialSources       int     `json:"initial_sources"`
++	EnumeratedMatches    int     `json:"enumerated_matches"`
++	RefreshedSources     int     `json:"refreshed_sources"`
++	FreshnessInvocations int     `json:"freshness_invocations"`
++	DistinctReceipts     int     `json:"distinct_receipts"`
++	Requeues             int     `json:"requeues"`
++	CompletedMarkers     int     `json:"completed_markers"`
+--- a/internal/ontology/maintenance.go
++++ b/internal/ontology/maintenance.go
+@@ -39,0 +40 @@
++	StudyProtector      observability.DiagnosticProtector
+@@ -57,0 +59,5 @@
++}
++
++func (s *MaintenanceService) WithStudyProtector(protector observability.DiagnosticProtector) *MaintenanceService {
++	s.deps.StudyProtector = protector
++	return s
+@@ -232,0 +239,3 @@
++	turnCtx = contract.WithMaintenanceStudyLogger(turnCtx, s.deps.Logger, func(ctx context.Context, event string, body []byte, limit int, attrs ...slog.Attr) {
++		observability.LogDiagnosticBody(ctx, s.deps.Logger, s.deps.StudyProtector, event, body, limit, attrs...)
++	})
+--- a/internal/ontology/maintenance_diagnostics.go
++++ b/internal/ontology/maintenance_diagnostics.go
+@@ -27,0 +28,2 @@
++		slog.Int("freshness_invocations", result.Counts.FreshnessInvocations),
++		slog.Int("study_backfill_checks", result.Counts.StudyBackfillChecks),
+--- a/internal/ontology/postgres/maintenance_discovery.go
++++ b/internal/ontology/postgres/maintenance_discovery.go
+@@ -24,0 +25,7 @@
++	if receiptStudyEnabled() {
++		ctx = context.WithValue(ctx, studyTurnKey{}, turn)
++		if err := studyBackfillTurn(ctx, s, turn, stats); err != nil {
++			result.Attempted = stats.counts
++			return result, err
++		}
++	}
+@@ -108 +115,3 @@
+-			current, err := (&Store{}).organizationInputsCurrent(tx, fence, receipt)
++			rejection, err := (&Store{}).organizationInputRejection(tx, fence, receipt)
++			current := rejection == nil && err == nil
++			recordStudyDiscoveryRejection(tx.Statement.Context, fence, receipt, rejection)
+@@ -215 +224,4 @@
+-		err := appendRows(maintenanceDefinitionPageSQL, fence.TeamID, fence.SpaceID, fence.Generation, recordID, sourceKind, sourceID, kind, id, pq.Array(ontology.VocabularyStopWords()), limit)
++		if marker.AnchorKind == "ontology_study_input" {
++			recordID, sourceKind, sourceID = "", marker.AnchorKind, marker.TargetID
++		}
++		err := appendRows(receiptStudyMarkerSQL(maintenanceDefinitionPageSQL), fence.TeamID, fence.SpaceID, fence.Generation, recordID, sourceKind, sourceID, kind, id, pq.Array(ontology.VocabularyStopWords()), limit)
+--- a/internal/ontology/postgres/maintenance_markers.go
++++ b/internal/ontology/postgres/maintenance_markers.go
+@@ -54,0 +55,3 @@
++		if receiptStudyEnabled() && marker.AnchorKind == "ontology_study_backfill" {
++			continue
++		}
+@@ -64,0 +68,3 @@
++				if receiptStudyEnabled() && next.AnchorKind == "ontology_study_backfill" {
++					continue
++				}
+@@ -164,0 +171,3 @@
++		if marker.AnchorKind == "ontology_study_input" {
++			input[i].RecordID, input[i].SourceKind, input[i].SourceID = "", marker.AnchorKind, marker.TargetID
++		}
+@@ -171 +180 @@
+-	rows, err := tx.Raw(maintenanceDefinitionGroupSQL, string(body), fence.TeamID, fence.SpaceID, fence.Generation, pq.Array(ontology.VocabularyStopWords()), limit+1, limit).Rows()
++	rows, err := tx.Raw(receiptStudyMarkerSQL(maintenanceDefinitionGroupSQL), string(body), fence.TeamID, fence.SpaceID, fence.Generation, pq.Array(ontology.VocabularyStopWords()), limit+1, limit).Rows()
+@@ -206,0 +216,3 @@
++	if err := observeStudySkip(tx, fence, markers); err != nil {
++		return err
++	}
+--- a/internal/ontology/postgres/organization.go
++++ b/internal/ontology/postgres/organization.go
+@@ -93,0 +94 @@
++	noteStudyClassification(tx, len(unclassified) == 0)
+@@ -115,0 +117 @@
++	noteStudyInputs(tx, "association:", keys)
+@@ -185,0 +188 @@
++	noteStudyInputs(tx, "record:", forced)
+@@ -490,0 +494 @@
++		var trace *studyReceiptTrace
+@@ -491,0 +496,6 @@
++			if receiptStudyEnabled() {
++				tx, trace, err = studyTrace(tx.Statement.Context, tx, true)
++				if err != nil {
++					return err
++				}
++			}
+@@ -499,0 +510,6 @@
++			if trace != nil && trace.fixed {
++				trace.fixed, err = studySourceFingerprintsMatch(receipt, contextData.Sources)
++				if err != nil {
++					return err
++				}
++			}
+@@ -511,0 +528,5 @@
++		}
++		if trace != nil {
++			if err := recordStudyReceipt(tx, fence, receipt, trace); err != nil {
++				return err
++			}
+--- /dev/null
++++ b/internal/ontology/postgres/receipt_recheck_study.go
+@@ -0,0 +1,361 @@
++package postgres
++
++import (
++	"context"
++	"database/sql"
++	"encoding/json"
++	"errors"
++	"fmt"
++	"log/slog"
++	"os"
++	"strings"
++	"sync"
++	"time"
++
++	"github.com/lib/pq"
++	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
++	"gorm.io/gorm"
++)
++
++type studyReceiptTraceKey struct{}
++
++type studyReceiptTrace struct {
++	observed string
++	xid      string
++	inputs   map[string]bool
++	fixed    bool
++}
++
++func receiptStudyEnabled() bool { return os.Getenv("ONTOLOGY_STUDY_ACTIVE_ARM") == "receipt" }
++
++func studyTrace(ctx context.Context, tx *gorm.DB, publication bool) (*gorm.DB, *studyReceiptTrace, error) {
++	trace := &studyReceiptTrace{inputs: map[string]bool{}}
++	if err := tx.Raw(`SELECT pg_current_snapshot()::text, CASE WHEN ? THEN pg_current_xact_id()::text ELSE '' END`, publication).
++		Row().Scan(&trace.observed, &trace.xid); err != nil {
++		return nil, nil, err
++	}
++	return tx.WithContext(context.WithValue(ctx, studyReceiptTraceKey{}, trace)), trace, nil
++}
++
++func noteStudyInputs(tx *gorm.DB, prefix string, values []string) {
++	trace, _ := tx.Statement.Context.Value(studyReceiptTraceKey{}).(*studyReceiptTrace)
++	if trace == nil {
++		return
++	}
++	for _, value := range values {
++		trace.inputs[prefix+value] = true
++	}
++}
++
++func noteStudyClassification(tx *gorm.DB, fixed bool) {
++	if trace, _ := tx.Statement.Context.Value(studyReceiptTraceKey{}).(*studyReceiptTrace); trace != nil {
++		trace.fixed = fixed
++	}
++}
++
++func recordStudyReceipt(tx *gorm.DB, fence scope, receipt ontology.OrganizationReceipt, trace *studyReceiptTrace) error {
++	members := make([]string, 0, len(receipt.Sources))
++	for _, member := range receipt.Sources {
++		members = append(members, member.ID)
++	}
++	written := tx.Exec(`INSERT INTO ontology_study_receipts(team_id,shared_space_id,space_generation,assessment_id,operation_key,fully_assigned,observed,publication_xid,members)
++	 VALUES (?::uuid,?::uuid,?,?::uuid,?,?,?::pg_snapshot,NULLIF(?,'')::xid8,?::text[]) ON CONFLICT DO NOTHING`,
++		fence.TeamID, fence.SpaceID, fence.Generation, receipt.ID, receipt.OperationKey, trace.fixed, trace.observed, trace.xid, pq.Array(members))
++	if written.Error != nil || written.RowsAffected != 1 {
++		return written.Error
++	}
++	// The full freshness reader checks every recorded revision before rebuilding the context.
++	for _, dependency := range receipt.Dependencies {
++		trace.inputs["record:"+dependency.ID] = true
++	}
++	inputs, readIDs := []string{}, []string{}
++	for input := range trace.inputs {
++		inputs = append(inputs, input)
++		if id, ok := strings.CutPrefix(input, "evidence:"); ok {
++			readIDs = append(readIDs, id)
++		}
++	}
++	return tx.Exec(`INSERT INTO ontology_study_inputs(team_id,shared_space_id,space_generation,assessment_id,input_key)
++	 SELECT ?::uuid,?::uuid,?,?::uuid,key FROM (
++	  SELECT unnest(?::text[]) AS key
++	  UNION SELECT 'source:'||source_id FROM evidence_fragments
++	    WHERE (team_id,space_id,space_generation)=(?::uuid,?::uuid,?) AND fragment_id=ANY(?::uuid[]) AND source_id IS NOT NULL
++	  UNION SELECT 'ingest:'||ingest_id FROM evidence_fragments
++	    WHERE (team_id,space_id,space_generation)=(?::uuid,?::uuid,?) AND fragment_id=ANY(?::uuid[])
++	 ) AS input WHERE key IS NOT NULL`, fence.TeamID, fence.SpaceID, fence.Generation, receipt.ID, pq.Array(inputs),
++		fence.TeamID, fence.SpaceID, fence.Generation, pq.Array(readIDs), fence.TeamID, fence.SpaceID, fence.Generation, pq.Array(readIDs)).Error
++}
++
++func studySourceFingerprintsMatch(receipt ontology.OrganizationReceipt, sources []ontology.SourceSnapshot) (bool, error) {
++	if len(sources) != len(receipt.Sources) {
++		return false, nil
++	}
++	for i, source := range sources {
++		hash, err := ontology.SourceFingerprint(source)
++		if err != nil {
++			return false, err
++		}
++		if !source.Eligible || source.SourceHandle != receipt.Sources[i].SourceHandle || hash != receipt.Sources[i].Fingerprint {
++			return false, nil
++		}
++	}
++	return true, nil
++}
++
++const studyBackfillPage = 12
++
++func (s *Store) backfillStudyReceipts(ctx context.Context, turn ontology.MaintenanceTurn) (int, error) {
++	var count int
++	err := s.withScope(ctx, turn.TeamID, false, func(tx *gorm.DB, fence scope) error {
++		if fence.SpaceID != turn.SpaceID || fence.Generation != turn.Generation {
++			return ontology.ErrLeaseLost
++		}
++		if err := checkMaintenanceTurn(tx, turn); err != nil {
++			return err
++		}
++		rows, err := tx.Raw(`SELECT assessment.body FROM (
++		 SELECT DISTINCT source.assessment_id FROM ontology_maintenance_sources AS source
++		 LEFT JOIN ontology_study_receipts AS projection USING(team_id,shared_space_id,space_generation,assessment_id)
++		 WHERE (source.team_id,source.shared_space_id,source.space_generation)=(?::uuid,?::uuid,?)
++		  AND source.eligible AND source.status IN ('organized','ambiguous') AND source.assessment_id IS NOT NULL AND projection.assessment_id IS NULL
++		 ORDER BY source.assessment_id LIMIT ?
++		) AS awaiting CROSS JOIN LATERAL (
++		 SELECT body FROM ontology_assessments
++		 WHERE (team_id,shared_space_id,space_generation,assessment_id)=(?::uuid,?::uuid,?,awaiting.assessment_id)
++		 ORDER BY created_at,operation_key LIMIT 1
++		) AS assessment ORDER BY awaiting.assessment_id`, fence.TeamID, fence.SpaceID, fence.Generation,
++			studyBackfillPage, fence.TeamID, fence.SpaceID, fence.Generation).Rows()
++		if err != nil {
++			return err
++		}
++		receipts := []ontology.OrganizationReceipt{}
++		for rows.Next() {
++			var body []byte
++			if err := rows.Scan(&body); err != nil {
++				_ = rows.Close()
++				return err
++			}
++			receipt, err := decodeOrganization(body)
++			if err != nil {
++				_ = rows.Close()
++				return err
++			}
++			receipts = append(receipts, receipt)
++		}
++		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
++			return err
++		}
++		if len(receipts) > 0 {
++			if err := lockOrganizationCatalog(tx, fence); err != nil {
++				return err
++			}
++		}
++		for _, receipt := range receipts {
++			traced, trace, err := studyTrace(ctx, tx, false)
++			if err != nil {
++				return err
++			}
++			rejection, err := s.organizationInputRejection(traced, fence, receipt)
++			if err != nil {
++				return err
++			}
++			if receipt.Result.FailureCode != "" || rejection != nil {
++				trace.fixed = false
++			}
++			if err := recordStudyReceipt(traced, fence, receipt, trace); err != nil {
++				return err
++			}
++			count++
++		}
++		if count < studyBackfillPage {
++			return tx.Exec(`DELETE FROM ontology_maintenance_markers WHERE team_id=?::uuid
++			 AND shared_space_id=?::uuid AND space_generation=? AND anchor_kind='ontology_study_backfill' AND anchor_id=?`,
++				fence.TeamID, fence.SpaceID, fence.Generation, fence.TeamID).Error
++		}
++		return nil
++	})
++	return count, err
++}
++
++const studyLexicalJoin = "JOIN words ON source.vocabulary_words && words.terms"
++const studyLexicalPredicate = `source.status='organized' AND
++ ontology_study_can_skip(source.team_id,source.shared_space_id,source.space_generation,source.assessment_id)`
++const studySubscribedSources = `
++ UNION
++ SELECT source.source_kind,source.source_id
++ FROM input AS scope JOIN ontology_study_inputs AS watched USING(team_id,shared_space_id,space_generation)
++ JOIN ontology_study_receipts AS receipt USING(team_id,shared_space_id,space_generation,assessment_id)
++ JOIN ontology_study_changes AS change USING(team_id,shared_space_id,space_generation,input_key)
++ JOIN ontology_maintenance_sources AS source USING(team_id,shared_space_id,space_generation,assessment_id)
++ WHERE scope.source_kind='ontology_study_input' AND watched.input_key=scope.source_id
++ AND change.writer IS DISTINCT FROM receipt.publication_xid AND NOT pg_visible_in_snapshot(change.writer,receipt.observed)
++`
++
++func receiptStudyMarkerSQL(base string) string {
++	if !receiptStudyEnabled() {
++		return base
++	}
++	return strings.Replace(base, studyLexicalJoin, studyLexicalJoin+"\n WHERE NOT ("+studyLexicalPredicate+")"+studySubscribedSources, 1)
++}
++
++func studyBackfillTurn(ctx context.Context, s *Store, turn ontology.MaintenanceTurn, stats *maintenanceDiscoveryStats) error {
++	started := time.Now()
++	count, err := s.backfillStudyReceipts(ctx, turn)
++	duration := time.Since(started)
++	stats.counts.StudyBackfillMS = float64(duration.Microseconds()) / 1000
++	if err == nil {
++		stats.counts.StudyBackfillChecks = count
++	}
++	if logger := ontology.MaintenanceStudyLogger(ctx); logger != nil && (count != 0 || err != nil) {
++		level := slog.LevelInfo
++		if err != nil {
++			level = slog.LevelError
++		}
++		logger.LogAttrs(ctx, level, "ontology receipt study backfill",
++			slog.String("team_id", turn.TeamID), slog.String("run_id", turn.RunID),
++			slog.String("space_id", turn.SpaceID), slog.Int64("space_generation", turn.Generation),
++			slog.Int("receipts", count), slog.Bool("committed", err == nil), slog.Any("error", err),
++			slog.Float64("duration_ms", stats.counts.StudyBackfillMS))
++	}
++	return err
++}
++
++// Verify every omitted stock candidate in correctness runs. The timed arms do
++// not use this test oracle. The runtime logger retains one witnessed skip.
++func observeStudySkip(tx *gorm.DB, fence scope, markers []maintenanceMarker) error {
++	if !receiptStudyEnabled() {
++		return nil
++	}
++	ctx := tx.Statement.Context
++	logger := ontology.MaintenanceStudyLogger(ctx)
++	turn, _ := ctx.Value(studyTurnKey{}).(ontology.MaintenanceTurn)
++	verify := os.Getenv("ONTOLOGY_STUDY_VERIFY_SKIPS") == "1"
++	sample := logger != nil && logger.Enabled(ctx, slog.LevelDebug) && studyShouldSample(turn.RunID)
++	if !verify && !sample {
++		return nil
++	}
++	for _, marker := range markers {
++		if marker.AnchorKind != "ontology_record_heads" {
++			continue
++		}
++		started := time.Now()
++		kind, id, _ := strings.Cut(marker.Cursor, ":")
++		args := []any{fence.TeamID, fence.SpaceID, fence.Generation, marker.TargetID, "", "", kind, id,
++			pq.Array(ontology.VocabularyStopWords()), 1 << 30}
++		var pruned []struct {
++			Kind, ID string
++			Version  int64
++		}
++		// EXCEPT removes hits still selected by the explicit dependency branches.
++		baseline := "(" + maintenanceDefinitionPageSQL + ")"
++		candidate := "(" + receiptStudyMarkerSQL(maintenanceDefinitionPageSQL) + ")"
++		query := "SELECT source_kind AS kind,source_id AS id,source_version AS version FROM (" + baseline + " EXCEPT " + candidate + ") AS omitted"
++		query += " ORDER BY source_kind,source_id"
++		if !verify {
++			query += " LIMIT 1"
++		}
++		if err := tx.Raw(query, append(append([]any{}, args...), args...)...).Scan(&pruned).Error; err != nil {
++			return fmt.Errorf("enumerate omitted receipt study sources: %w", err)
++		}
++		for _, row := range pruned {
++			var body []byte
++			err := tx.Raw(`SELECT assessment.body FROM ontology_maintenance_sources AS source
++				JOIN ontology_assessments AS assessment USING(team_id,shared_space_id,space_generation,assessment_id)
++				WHERE (source.team_id,source.shared_space_id,source.space_generation,source.source_kind,source.source_id)=
++				      (?::uuid,?::uuid,?,?,?) AND source.status='organized'`,
++				fence.TeamID, fence.SpaceID, fence.Generation, row.Kind, row.ID).Row().Scan(&body)
++			if !verify && errors.Is(err, sql.ErrNoRows) {
++				continue
++			}
++			if err != nil {
++				return err
++			}
++			receipt, err := decodeOrganization(body)
++			if err != nil {
++				return err
++			}
++			if verify {
++				failure, err := (&Store{}).organizationInputRejection(tx, fence, receipt)
++				if err != nil {
++					return err
++				}
++				if failure != nil {
++					return fmt.Errorf("receipt study omitted stale source %s from marker %s with receipt %s: %s",
++						row.ID, marker.TargetID, receipt.ID, failure.Check)
++				}
++				observeMaintenanceSource(ctx, fence, ontology.SourceHandle{Kind: ontology.SourceKind(row.Kind), ID: row.ID, Version: row.Version}, "study_skip_verified", nil)
++			}
++			if sample {
++				sample = false
++				ontology.LogMaintenanceStudyBody(ctx, "ontology receipt lexical skip",
++					studyDecisionBody(row.ID, receipt.ID, receipt.OperationKey, marker.TargetID), 8192,
++					slog.String("team_id", fence.TeamID), slog.String("space_id", fence.SpaceID),
++					slog.Int64("space_generation", fence.Generation), slog.String("run_id", turn.RunID),
++					slog.String("batch_id", strings.TrimPrefix(receipt.OperationKey, "maintenance:")),
++					slog.String("assessment_id", receipt.ID), slog.String("operation_key", receipt.OperationKey),
++					slog.String("provider_identity", receipt.ProviderIdentity), slog.String("policy_version", ontology.OrganizationPolicyVersion),
++					slog.Int64("duration_ms", time.Since(started).Milliseconds()))
++				studyRecordSample(turn.RunID)
++			}
++		}
++		if !verify && !sample {
++			break
++		}
++	}
++	return nil
++}
++
++func studyDecisionBody(source, receipt, operation, topic string) []byte {
++	data, _ := json.Marshal(struct {
++		Source, Receipt, Operation, Topic, Reason string
++	}{source, receipt, operation, topic, "fully_assigned_current_receipt"})
++	return data
++}
++
++func studyInputsForHandles(handles []ontology.SourceHandle) []string {
++	ids := make([]string, 0, len(handles))
++	for _, handle := range handles {
++		if handle.Kind == ontology.EvidenceSource {
++			ids = append(ids, handle.ID)
++		}
++	}
++	return ids
++}
++
++type studyTurnKey struct{}
++
++var studySampleMutex sync.Mutex
++var studySampleRun string
++
++func studyShouldSample(run string) bool {
++	studySampleMutex.Lock()
++	defer studySampleMutex.Unlock()
++	return studySampleRun != run
++}
++
++func studyRecordSample(run string) {
++	studySampleMutex.Lock()
++	studySampleRun = run
++	studySampleMutex.Unlock()
++}
++
++func recordStudyDiscoveryRejection(ctx context.Context, fence scope, receipt ontology.OrganizationReceipt, rejection *ontology.FreshnessRejection) {
++	logger := ontology.MaintenanceStudyLogger(ctx)
++	if logger == nil || rejection == nil || !receiptStudyEnabled() {
++		return
++	}
++	turn, _ := ctx.Value(studyTurnKey{}).(ontology.MaintenanceTurn)
++	attrs := []slog.Attr{
++		slog.String("team_id", fence.TeamID), slog.String("space_id", fence.SpaceID),
++		slog.Int64("space_generation", fence.Generation), slog.String("run_id", turn.RunID),
++		slog.String("assessment_id", receipt.ID), slog.String("operation_key", receipt.OperationKey),
++		slog.String("batch_id", strings.TrimPrefix(receipt.OperationKey, "maintenance:")),
++		slog.String("provider_identity", receipt.ProviderIdentity), slog.String("policy_version", ontology.OrganizationPolicyVersion),
++		slog.String("reason", rejection.Check),
++	}
++	logger.LogAttrs(ctx, slog.LevelWarn, "ontology receipt discovery rejection", attrs...)
++	if body, err := json.Marshal(rejection); err == nil {
++		ontology.LogMaintenanceStudyBody(ctx,
++			"ontology receipt discovery rejection detail", body, ontology.MaxPublicationBytes, attrs...)
++	}
++}
+--- a/internal/ontology/postgres/records.go
++++ b/internal/ontology/postgres/records.go
+@@ -69,0 +70,3 @@
++	noteStudyInputs(tx, "record:", ids)
++	noteStudyInputs(tx, "name:", names)
++	noteStudyInputs(tx, "association:", sourceKeys)
+--- a/internal/ontology/postgres/sources.go
++++ b/internal/ontology/postgres/sources.go
+@@ -67,0 +68 @@
++		noteStudyInputs(tx, "evidence:", ids)
+--- a/tests/eval/scripts/workflow.mjs
++++ b/tests/eval/scripts/workflow.mjs
+@@ -177 +177,2 @@
+-  const imagePattern = intakeProof ? /^sha256:[a-f0-9]{64}$/ : /^ghcr\.io\/markhuangai\/dense-mem(?::[A-Za-z0-9._-]+)?@sha256:[a-f0-9]{64}$/;
++  const receiptTrial = paths.seedBuildID && baking && checkpoint && options.receiptTrial === true;
++  const imagePattern = intakeProof || receiptTrial ? /^sha256:[a-f0-9]{64}$/ : /^ghcr\.io\/markhuangai\/dense-mem(?::[A-Za-z0-9._-]+)?@sha256:[a-f0-9]{64}$/;
+@@ -265,0 +267,7 @@
++  if (receiptTrial) {
++    const inspected = JSON.parse(docker(["image", "inspect", env.EVAL_IMAGE]))[0];
++    if (inspected.Id !== env.EVAL_IMAGE || inspected.Config.Labels?.["io.dense-mem.ontology-receipt-study"] !== env.ONTOLOGY_RECEIPT_STUDY_PATCH_SHA) {
++      throw new Error("Receipt trial image and tested patch differ");
++    }
++    serverEnv.ONTOLOGY_STUDY_ACTIVE_ARM = "receipt";
++  }
