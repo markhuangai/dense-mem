@@ -1,6 +1,7 @@
 // Materialized alongside the pinned native seed builder. This entry point never exports a seed.
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { createInterface } from "node:readline";
@@ -13,24 +14,45 @@ const canonical = "4596792fdf681b7e000b6b3fccad137fd0050efb4c28ede58f4bd08e0d925
 const dataSHA = "9c9653a9e5cb490bd074fbda44a97dcaea858f8baeff6836f7364760aa6ea9b3";
 const parent = "ghcr.io/markhuangai/dense-mem-eval-postgres@sha256:bbb0c68334a97374cf6498de327028463b4cf619b736e084b290c4cc7df3edaf";
 const copyImage = "sha256:f6a95d611e0a8780fabdb2aec43e31275b2720dfefa3e41b16835bfc42454478";
+const repository = "markhuangai/dense-mem";
 const read = (filename) => JSON.parse(fs.readFileSync(filename, "utf8"));
 
 function requireTrial(condition, message) {
   if (!condition) throw new Error(message);
 }
 
-function verifiedGate(run, filename, identity) {
+function verifiedGate(run, identity) {
   requireTrial(/^[1-9][0-9]+$/.test(run), "Invalid hosted study run identity");
-  const proof = read(filename);
-  const remote = JSON.parse(execFileSync("gh", ["run", "view", run, "--repo", "markhuangai/dense-mem",
+  const remote = JSON.parse(execFileSync("gh", ["run", "view", run, "--repo", repository,
     "--json", "headSha,conclusion,event,workflowName,attempt,url"], { encoding: "utf8", timeout: 15_000 }));
-  requireTrial(proof.evidence_complete && proof.advance && remote.conclusion === "success" &&
+  requireTrial(remote.conclusion === "success" &&
     remote.event === "push" && remote.workflowName === "Ontology receipt recheck study" && remote.attempt === 1 &&
-    proof.study_source === identity.study_source && remote.headSha === identity.study_source &&
+    remote.headSha === identity.study_source, "Hosted ontology study run does not match the materialized source");
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "dense-mem-receipt-decision-"));
+  let proof;
+  try {
+    execFileSync("gh", ["run", "download", run, "--repo", repository,
+      "--name", "ontology-receipt-study-decision", "--dir", directory], { timeout: 60_000 });
+    proof = read(path.join(directory, "comparison.json"));
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+  requireTrial(proof.evidence_complete === true && proof.advance === true && proof.study_source === identity.study_source &&
+    /^[a-f0-9]{64}$/.test(identity.runtime_patch_sha256) && /^[a-f0-9]{64}$/.test(identity.migration_sha256) &&
     proof.base_source === base && proof.runtime_patch_sha256 === identity.runtime_patch_sha256 &&
     proof.migration_sha256 === identity.migration_sha256,
   "Hosted ontology study receipt has not qualified this candidate");
   return remote.url;
+}
+
+function verifyStudyImage(image, identity) {
+  const [inspected] = JSON.parse(docker(["image", "inspect", image]));
+  requireTrial(inspected.Id === image && inspected.Config.Labels?.["io.dense-mem.ontology-receipt-study"] === identity.runtime_patch_sha256,
+    "Private trial image and tested runtime patch differ");
+  const installedMigration = docker(["run", "--rm", "--pull=never", "--network=none", "--entrypoint", "sha256sum", image,
+    "/app/migrations/postgres/v2_8/20991123010000_receipt_recheck_study.sql"], { timeout: 60_000 });
+  requireTrial(installedMigration.split(/\s+/, 1)[0] === identity.migration_sha256,
+    "Private trial image and tested migration differ");
 }
 
 function ownerOf(name) {
@@ -130,12 +152,12 @@ async function recordRuntimeLog(trial, result) {
   });
 }
 
-async function main([run, gatePath, transferPath, checkpointPath, output]) {
+async function main([run, transferPath, checkpointPath, output]) {
   const start = Date.now();
-  requireTrial([gatePath, transferPath, checkpointPath, output].every((file) => file && path.isAbsolute(file)), "Use absolute private study paths");
+  requireTrial([transferPath, checkpointPath, output].every((file) => file && path.isAbsolute(file)), "Use absolute private study paths");
   const identity = read("ontology-receipt-study-identity.json");
   requireTrial(identity.mode === "private", "Materialize the private study checkout");
-  const url = verifiedGate(run, gatePath, identity);
+  const url = verifiedGate(run, identity);
   const env = {
     ...localSeedEnvironment(process.env, 8), EVAL_DATASET: "hotpotqa",
     EVAL_LOCAL_SEED_ID: "local-" + randomBytes(16).toString("hex"),
@@ -143,7 +165,6 @@ async function main([run, gatePath, transferPath, checkpointPath, output]) {
     EVAL_SOURCE_REVISION: base,
     EVAL_MODEL_DEADLINE_EPOCH: String(Math.floor((start + 100 * 60_000) / 1000)),
     ONTOLOGY_RECEIPT_PRIVATE_TRIAL: "1",
-    ONTOLOGY_RECEIPT_STUDY_PATCH_SHA: identity.runtime_patch_sha256,
   };
   requireTrial(/^sha256:[a-f0-9]{64}$/.test(env.EVAL_IMAGE || "") && path.isAbsolute(env.EVAL_RUNNER_BINARY || ""),
     "Use the local immutable receipt-study image and runner");
@@ -168,6 +189,7 @@ async function main([run, gatePath, transferPath, checkpointPath, output]) {
   process.on("SIGTERM", stop);
   let sampler, runtime, trialError, result, ready;
   try {
+    verifyStudyImage(env.EVAL_IMAGE, identity);
     const volume = createPrivateCopy(transfer, trial.directory, trial.runID);
     saveRuntimeJSON(trial.checkpointFile, {
       version: 1, run_id: trial.runID, volume, source_revision: base, image: env.EVAL_IMAGE,
@@ -195,30 +217,43 @@ async function main([run, gatePath, transferPath, checkpointPath, output]) {
     process.off("SIGINT", stop);
     process.off("SIGTERM", stop);
     if (fs.existsSync(trial.stateFile)) {
-      let capture = "complete";
       try {
-        const partial = path.join(trial.directory, "receipt-trial-result.json");
-        await recordRuntimeLog(trial, result || (fs.existsSync(partial) ? read(partial) : {}));
-      } catch (error) {
-        capture = "unavailable";
-        trialError ||= error;
-      }
-      saveRuntimeJSON(path.join(trial.directory, "receipt-trial-capture.json"), {
-        run_id: trial.runID, outcome: capture,
-      });
-      if (runtime && ready && result) {
-        saveRuntimeJSON(path.join(trial.directory, "receipt-trial-setup.json"), {
-          setup_ms: ready - start, native_validation_ms: Date.parse(result.Started) - ready,
-          migration_ms: runtime.manifest.timings_ms.migration, readiness_ms: runtime.manifest.timings_ms.readiness,
+        let capture = "complete";
+        try {
+          const partial = path.join(trial.directory, "receipt-trial-result.json");
+          await recordRuntimeLog(trial, result || (fs.existsSync(partial) ? read(partial) : {}));
+        } catch (error) {
+          capture = "unavailable";
+          trialError ||= error;
+        }
+        saveRuntimeJSON(path.join(trial.directory, "receipt-trial-capture.json"), {
+          run_id: trial.runID, outcome: capture,
         });
-      }
-      try {
-        await cleanup(env, { retainVolume: fs.existsSync(trial.checkpointFile) });
+        if (runtime && ready && result) {
+          saveRuntimeJSON(path.join(trial.directory, "receipt-trial-setup.json"), {
+            setup_ms: ready - start, native_validation_ms: Date.parse(result.Started) - ready,
+            migration_ms: runtime.manifest.timings_ms.migration, readiness_ms: runtime.manifest.timings_ms.readiness,
+          });
+        }
       } catch (error) {
-        saveRuntimeJSON(path.join(trial.directory, "receipt-trial-cleanup.json"), { run_id: trial.runID, complete: false });
-        throw new AggregateError([trialError, error].filter(Boolean), "Private trial cleanup failed");
+        process.stderr.write("Private trial could not save its diagnostic receipts.\n");
+        trialError ||= error;
+      } finally {
+        let complete = false;
+        try {
+          await cleanup(env, { retainVolume: fs.existsSync(trial.checkpointFile) });
+          complete = true;
+        } catch (error) {
+          process.stderr.write("Private trial cleanup failed.\n");
+          trialError ||= error;
+        }
+        try {
+          saveRuntimeJSON(path.join(trial.directory, "receipt-trial-cleanup.json"), { run_id: trial.runID, complete });
+        } catch (error) {
+          process.stderr.write("Private trial could not save its cleanup receipt.\n");
+          trialError ||= error;
+        }
       }
-      saveRuntimeJSON(path.join(trial.directory, "receipt-trial-cleanup.json"), { run_id: trial.runID, complete: true });
     }
   }
   if (trialError) throw trialError;

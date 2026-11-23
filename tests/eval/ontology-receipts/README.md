@@ -20,7 +20,8 @@ input and change tables and their triggers with a five-second lock timeout.
 It does not rewrite historical receipts or canonical Evidence. The existing
 per-team turn advances backfill in transactions of at most 12 assessment
 receipts, with completion recorded by receipt ID and the original reader
-validating eligibility for future pruning. The schema is confined to the
+validating eligibility for future pruning. When the backfill marker drains,
+discovery stops scanning for historical receipts. The schema is confined to the
 study clone. Keep the clone paused and drained before replacing its study
 image. An incompatible image leaves the clone private.
 
@@ -35,11 +36,14 @@ coverage, pause and drain. The fixed-schedule correctness arms match
 provider HTTP inputs and Recall order. They also run the original freshness
 reader against every omitted source before counting that skip.
 
-The scale matrix independently varies catalog size at fixed Evidence and
-examines disjoint changes, narrow and common lexical overlaps, and a
-required definition change. The latter retains validation. The reports
-include visited source rows from PostgreSQL plans, provider attempts and
-tokens, actual requeues and all paired drain and correction times. A slowdown in at least
+The scale matrix independently varies catalog size at fixed Evidence. Each
+size uses one catalog for the disjoint, narrow, common and dependent cases.
+The lexical cases query different topic IDs in that catalog. The dependent case
+edits the existing assigned topic and retains validation. The reports count
+source rows visited in the outer PostgreSQL plans. Source-row visits inside the
+receipt certification function are unavailable in those plans. Reports also
+contain provider attempts and tokens, actual requeues and paired drain and
+correction times. A slowdown in at least
 three pairs with a median beyond the control's median absolute deviation is
 repeatable. A gate of `advance: false` with complete evidence means hold. Missing or failed
 jobs leave the evidence incomplete. Keep the run URL, source and patch
@@ -63,11 +67,12 @@ hashes, template digests and comparison artifact.
 
    ```bash
    node --env-file="$private_env" tests/eval/scripts/receipt-trial.mjs \
-     "$hosted_run" "$comparison_json" "$transfer_receipt" "$inactive_checkpoint" "$private_output"
+     "$hosted_run" "$transfer_receipt" "$inactive_checkpoint" "$private_output"
    ```
 
-The entry point checks the hosted decision, the local image label and the
-archived transfer identity. It opens the inactive origin volume read-only
+The entry point retrieves the decision artifact from the specified hosted run.
+It verifies the local image label, the migration bytes bundled in the image
+and the archived transfer identity. It opens the inactive origin volume read-only
 and copies it to a separately owned volume. It verifies the canonical
 13,810-Evidence corpus, starting queue counts and terminal attempts before
 enabling maintenance. The same model, eight worker slots and provider

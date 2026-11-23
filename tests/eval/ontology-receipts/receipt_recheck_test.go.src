@@ -128,7 +128,7 @@ func TestReceiptRecheckMatchedDrains(t *testing.T) {
 
 type receiptScaleResult struct {
 	CatalogSize, ChangedTopics, StockMatches, CandidateMatches, ChecksAvoided int
-	StockSourceRows, CandidateSourceRows, FullCheckMS                         float64
+	StockOuterPlanSourceRows, CandidateOuterPlanSourceRows, FullCheckMS       float64
 	CatalogFactor                                                             int
 	Fanout                                                                    string
 }
@@ -165,57 +165,73 @@ func TestReceiptRecheckScale(t *testing.T) {
 		}
 		return err
 	}))
-	n := 128 * factor
-	var background []ontology.Change
-	for i := range n {
-		record := testTopic(fmt.Sprintf("studyarchive%06d", i))
-		background = append(background, ontology.Change{Record: record})
-	}
-	for changes := range slices.Chunk(background, ontology.MaxChanges) {
-		revalidationPublish(t, f, changes...)
-	}
 	const changesPerShape = 16
-	var measurements []receiptScaleResult
-	for _, fanout := range []string{"disjoint", "narrow", "common", "dependent"} {
-		var changes []ontology.Change
+	type scaleCase struct {
+		fanout  string
+		changes []ontology.Change
+	}
+	cases := []scaleCase{{fanout: "disjoint"}, {fanout: "narrow"}, {fanout: "common"}}
+	catalogSize := 128*factor + 1
+	var topics []ontology.Change
+	for i := range catalogSize - 1 - changesPerShape*len(cases) {
+		record := testTopic(fmt.Sprintf("studyarchive%06d", i))
+		topics = append(topics, ontology.Change{Record: record})
+	}
+	for index := range cases {
+		probe := &cases[index]
 		for i := range changesPerShape {
-			record := testTopic(fmt.Sprintf("%schange%06d", fanout, i))
-			switch fanout {
+			record := testTopic(fmt.Sprintf("%schange%06d", probe.fanout, i))
+			switch probe.fanout {
 			case "narrow":
 				record.Definition.Description = fmt.Sprintf("checkrow%02d", i)
 			case "common":
 				record.Definition.Description = "Atlas PostgreSQL"
-			case "dependent":
-				// An alias makes the existing required record newer and must invalidate its receipts.
-				record = topic
-				record.Definition = &ontology.Definition{Key: topic.Definition.Key, Label: topic.Definition.Label, Description: "Atlas PostgreSQL revised"}
-				changes = append(changes, ontology.Change{ExpectedVersion: 1, Record: record})
 			}
-			if fanout == "dependent" {
-				break
-			}
-			changes = append(changes, ontology.Change{Record: record})
+			change := ontology.Change{Record: record}
+			probe.changes = append(probe.changes, change)
+			topics = append(topics, change)
 		}
+	}
+	for changes := range slices.Chunk(topics, ontology.MaxChanges) {
 		revalidationPublish(t, f, changes...)
-		m := receiptScaleResult{CatalogSize: n + 1, CatalogFactor: factor, Fanout: fanout, ChangedTopics: len(changes)}
-		for _, change := range changes {
+	}
+	topic.Definition.Description = "Atlas PostgreSQL revised"
+	cases = append(cases, scaleCase{fanout: "dependent", changes: []ontology.Change{{ExpectedVersion: 1, Record: topic}}})
+	var measurements []receiptScaleResult
+	for _, probe := range cases {
+		if probe.fanout == "dependent" {
+			revalidationPublish(t, f, probe.changes...)
+		}
+		m := receiptScaleResult{CatalogFactor: factor, Fanout: probe.fanout, ChangedTopics: len(probe.changes)}
+		require.NoError(t, f.store.withScope(t.Context(), f.team, true, func(tx *gorm.DB, fence scope) error {
+			return tx.Raw(`SELECT count(*) FROM ontology_record_heads
+			 WHERE (team_id,shared_space_id,space_generation)=(?::uuid,?::uuid,?) AND kind='topic' AND NOT retired`,
+				fence.TeamID, fence.SpaceID, fence.Generation).Row().Scan(&m.CatalogSize)
+		}))
+		require.Equal(t, catalogSize, m.CatalogSize, "compare every fanout at the same catalog size")
+		for _, change := range probe.changes {
 			sample := compareStudySelection(t, f, change.Record.ID)
 			m.StockMatches += sample.StockMatches
 			m.CandidateMatches += sample.CandidateMatches
 			m.ChecksAvoided += sample.ChecksAvoided
-			m.StockSourceRows += sample.StockSourceRows
-			m.CandidateSourceRows += sample.CandidateSourceRows
+			m.StockOuterPlanSourceRows += sample.StockOuterPlanSourceRows
+			m.CandidateOuterPlanSourceRows += sample.CandidateOuterPlanSourceRows
 			m.FullCheckMS += sample.FullCheckMS
 		}
-		switch fanout {
+		switch probe.fanout {
 		case "disjoint":
 			require.Zero(t, m.StockMatches)
+			require.Zero(t, m.CandidateMatches)
 		case "narrow", "common":
-			require.Positive(t, m.StockMatches)
+			want := changesPerShape
+			if probe.fanout == "common" {
+				want *= fixedCohort
+			}
+			require.Equal(t, want, m.StockMatches)
 			require.Equal(t, m.StockMatches, m.ChecksAvoided)
 			require.Zero(t, m.CandidateMatches)
 		case "dependent":
-			require.Positive(t, m.CandidateMatches)
+			require.Equal(t, fixedCohort, m.CandidateMatches)
 			require.Zero(t, m.ChecksAvoided)
 		}
 		measurements = append(measurements, m)
@@ -271,7 +287,7 @@ func compareStudySelection(t *testing.T, f *ontologyFixture, topic string) recei
 		base, visited := reader(maintenanceDefinitionPageSQL)
 		candidate, visitedAfter := reader(receiptStudyMarkerSQL(maintenanceDefinitionPageSQL))
 		out.StockMatches, out.CandidateMatches = len(base), len(candidate)
-		out.StockSourceRows, out.CandidateSourceRows = visited, visitedAfter
+		out.StockOuterPlanSourceRows, out.CandidateOuterPlanSourceRows = visited, visitedAfter
 		ctx := context.WithValue(tx.Statement.Context, maintenanceDiscoveryObservationKey{}, maintenanceDiscoveryObserver(func(e maintenanceDiscoveryEvent) {
 			if e.Phase == "study_skip_verified" {
 				out.ChecksAvoided++
@@ -511,7 +527,7 @@ func TestReceiptRecheckWithdrawalFencesPeers(t *testing.T) {
 
 	writerStarted := make(chan struct{})
 	allowCommit := make(chan struct{})
-	write := make(chan error, 1)
+	writerDone := make(chan struct{})
 	// Hold the supported retraction's real transaction between its write and commit.
 	const callback = "ontology_study_withdrawal_barrier"
 	require.NoError(t, f.app.Callback().Raw().After("gorm:raw").Register(callback, func(tx *gorm.DB) {
@@ -521,30 +537,47 @@ func TestReceiptRecheckWithdrawalFencesPeers(t *testing.T) {
 		}
 	}))
 	t.Cleanup(func() { require.NoError(t, f.app.Callback().Raw().Remove(callback)) })
-	go func() {
-		_, err := f.knowledge.RetractEvidence(f.actor(1, "member"), knowledge.RetractEvidenceInput{
-			TeamID: f.team, OwnerProfileID: f.owners[1], EvidenceIDs: []string{x.sources[0].ID},
-			Reason: "study withdrawal", IdempotencyKey: "study-concurrent-withdrawal", RequestHash: testHash("study-concurrent-withdrawal"),
-		})
-		write <- err
-	}()
-	select {
-	case <-writerStarted:
-	case err := <-write:
-		require.NoError(t, err)
-	case <-time.After(10 * time.Second):
-		t.Fatal("withdrawal transaction did not reach the commit barrier")
-	}
-	defer func() {
+	release := func() {
 		select {
 		case <-allowCommit:
 		default:
 			close(allowCommit)
 		}
+	}
+	writerContext, cancel := context.WithTimeout(f.actor(1, "member"), 30*time.Second)
+	defer func() {
+		release()
+		cancel()
+		select {
+		case <-writerDone:
+		case <-time.After(10 * time.Second):
+			t.Error("withdrawal writer did not exit before fixture cleanup")
+		}
 	}()
+	var withdrawalErr error
+	go func() {
+		defer close(writerDone)
+		_, withdrawalErr = f.knowledge.RetractEvidence(writerContext, knowledge.RetractEvidenceInput{
+			TeamID: f.team, OwnerProfileID: f.owners[1], EvidenceIDs: []string{x.sources[0].ID},
+			Reason: "study withdrawal", IdempotencyKey: "study-concurrent-withdrawal", RequestHash: testHash("study-concurrent-withdrawal"),
+		})
+	}()
+	select {
+	case <-writerStarted:
+	case <-writerDone:
+		require.NoError(t, withdrawalErr)
+		t.Fatal("withdrawal finished before the commit barrier")
+	case <-time.After(10 * time.Second):
+		t.Fatal("withdrawal transaction did not reach the commit barrier")
+	}
 	require.Positive(t, compareStudySelection(t, f, noise.ID).ChecksAvoided)
-	close(allowCommit)
-	require.NoError(t, <-write)
+	release()
+	select {
+	case <-writerDone:
+		require.NoError(t, withdrawalErr)
+	case <-writerContext.Done():
+		t.Fatal("withdrawal transaction did not finish after releasing the commit barrier")
+	}
 	require.Zero(t, compareStudySelection(t, f, noise.ID).ChecksAvoided)
 	affected := maintenanceMarker{AnchorKind: "ontology_study_input", TargetKind: "definition", TargetID: "evidence:" + x.sources[0].ID}
 	require.NoError(t, f.store.withScope(t.Context(), f.team, true, func(tx *gorm.DB, fence scope) error {
@@ -613,6 +646,16 @@ func TestReceiptRecheckBackfillBoundsAndFallback(t *testing.T) {
 	active := compareStudySelection(t, f, noise.ID)
 	require.Equal(t, len(widths)-1, active.ChecksAvoided)
 	require.Equal(t, 1, active.CandidateMatches, "the active claim uses the original revalidation path")
+	missing := revalidationQueue(t, f, x.sources[1]).AssessmentID
+	require.NoError(t, f.store.withScope(t.Context(), f.team, false, func(tx *gorm.DB, fence scope) error {
+		return tx.Exec(`DELETE FROM ontology_study_receipts
+		 WHERE (team_id,shared_space_id,space_generation,assessment_id)=(?::uuid,?::uuid,?,?::uuid)`,
+			fence.TeamID, fence.SpaceID, fence.Generation, missing).Error
+	}))
+	number, err = restarted.backfillStudyReceipts(t.Context(), x.turn)
+	require.NoError(t, err)
+	require.Zero(t, number, "a drained backfill marker must not rescan historical receipts")
+	require.Equal(t, 2, compareStudySelection(t, f, noise.ID).CandidateMatches, "the missing projection still falls back")
 }
 
 func TestReceiptRecheckOverrideRetarget(t *testing.T) {

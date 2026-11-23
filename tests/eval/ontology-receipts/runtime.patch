@@ -301,7 +301,7 @@
 +			}
 --- /dev/null
 +++ b/internal/ontology/postgres/receipt_recheck_study.go
-@@ -0,0 +1,361 @@
+@@ -0,0 +1,368 @@
 +package postgres
 +
 +import (
@@ -415,6 +415,13 @@
 +			return ontology.ErrLeaseLost
 +		}
 +		if err := checkMaintenanceTurn(tx, turn); err != nil {
++			return err
++		}
++		var queued bool
++		if err := tx.Raw(`SELECT EXISTS (SELECT 1 FROM ontology_maintenance_markers
++		  WHERE (team_id,shared_space_id,space_generation,anchor_kind,anchor_id)=
++		        (?::uuid,?::uuid,?,'ontology_study_backfill',?))`,
++			fence.TeamID, fence.SpaceID, fence.Generation, fence.TeamID).Row().Scan(&queued); err != nil || !queued {
 +			return err
 +		}
 +		rows, err := tx.Raw(`SELECT assessment.body FROM (
@@ -679,11 +686,5 @@
 -  const imagePattern = intakeProof ? /^sha256:[a-f0-9]{64}$/ : /^ghcr\.io\/markhuangai\/dense-mem(?::[A-Za-z0-9._-]+)?@sha256:[a-f0-9]{64}$/;
 +  const receiptTrial = paths.seedBuildID && baking && checkpoint && options.receiptTrial === true;
 +  const imagePattern = intakeProof || receiptTrial ? /^sha256:[a-f0-9]{64}$/ : /^ghcr\.io\/markhuangai\/dense-mem(?::[A-Za-z0-9._-]+)?@sha256:[a-f0-9]{64}$/;
-@@ -265,0 +267,7 @@
-+  if (receiptTrial) {
-+    const inspected = JSON.parse(docker(["image", "inspect", env.EVAL_IMAGE]))[0];
-+    if (inspected.Id !== env.EVAL_IMAGE || inspected.Config.Labels?.["io.dense-mem.ontology-receipt-study"] !== env.ONTOLOGY_RECEIPT_STUDY_PATCH_SHA) {
-+      throw new Error("Receipt trial image and tested patch differ");
-+    }
-+    serverEnv.ONTOLOGY_STUDY_ACTIVE_ARM = "receipt";
-+  }
+@@ -265,0 +267 @@
++  if (receiptTrial) serverEnv.ONTOLOGY_STUDY_ACTIVE_ARM = "receipt";
