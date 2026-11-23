@@ -36,7 +36,8 @@ async function assertAcceptedDesignDecision(path) {
   const adr = await readFile(path, "utf8");
   assert.match(adr, /^- Status: Accepted$/m);
   const decision = adr.split(/^## Decision[ \t]*\r?$/m)[1]?.split(/^#{1,2}[ \t]/m)[0];
-  assert.match(decision?.replace(/<!--[\s\S]*?-->/g, "") ?? "", /[\p{L}\p{N}]/u, "accepted ADR must contain a Decision");
+  const parts = decision?.match(/<!--[\s\S]*?(?:-->|$)|[^<]+|</g) ?? [];
+  assert.ok(parts.some((part) => !part.startsWith("<!--") && /[\p{L}\p{N}]/u.test(part)), "accepted ADR must contain a Decision");
 }
 
 test("repository guidance requires material, scoped, simple review findings", async (t) => {
@@ -78,7 +79,7 @@ test("repository guidance requires material, scoped, simple review findings", as
   const section = /^## Decision[ \t]*\r?\n[\s\S]*?(?=^##[ \t])/m;
   await writeFile(fixture, designADR.replace(section, "## Decision\n\nOwn each policy in one place.\n\n"));
   await assertAcceptedDesignDecision(fixture);
-  for (const content of ["", "## Decision\n\n"]) {
+  for (const content of ["", "## Decision\n\n", "## Decision\n\n<!-- Pending decision -->\n\n"]) {
     await writeFile(fixture, designADR.replace(section, content));
     await assert.rejects(assertAcceptedDesignDecision(fixture), /must contain a Decision/);
   }
