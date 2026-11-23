@@ -141,7 +141,8 @@ func TestReceiptRecheckScale(t *testing.T) {
 	require.Contains(t, []int{1, 4, 16}, factor)
 	f := newOrganizationFixture(t)
 	config := concurrencyConfig(t, f, 8, 8)
-	for i := range 40 {
+	const fixedCohort = ontology.MaxOrganizationSources
+	for i := range fixedCohort {
 		f.organizationEvidence(t, i%len(f.owners), fmt.Sprintf("Atlas PostgreSQL checkrow%02d", i), nil)
 	}
 	topic := testTopic("postgresql")
@@ -150,7 +151,7 @@ func TestReceiptRecheckScale(t *testing.T) {
 	drainMaintenance(t, service)
 	initial, err := f.store.MaintenanceStatus(t.Context(), time.Now())
 	require.NoError(t, err)
-	require.EqualValues(t, 40, initial.Counts.Organized)
+	require.EqualValues(t, fixedCohort, initial.Counts.Organized)
 	require.True(t, initial.CoverageComplete)
 	t.Setenv("ONTOLOGY_STUDY_ACTIVE_ARM", "receipt")
 	installReceiptRecheckSchema(t, f, "receipt")
@@ -160,7 +161,7 @@ func TestReceiptRecheckScale(t *testing.T) {
 		err := tx.Raw(`SELECT count(*) FROM ontology_maintenance_sources WHERE status='organized'
 			AND ontology_study_can_skip(team_id,shared_space_id,space_generation,assessment_id)`).Row().Scan(&count)
 		if err == nil {
-			require.Equal(t, 40, count, "all sources in the fixed cohort must have a usable proof")
+			require.Equal(t, fixedCohort, count, "all sources in the fixed cohort must have a usable proof")
 		}
 		return err
 	}))
@@ -327,9 +328,20 @@ func TestReceiptRecheckCurrentInputs(t *testing.T) {
 		drainMaintenance(t, service)
 	})
 	t.Run("protected console reconstructs a skip and a rejection", func(t *testing.T) {
+		t.Setenv("ONTOLOGY_STUDY_ACTIVE_ARM", "base")
+		x := newDiscoveryFixture(t, []int{2}, []string{"organized"}, false)
+		f, source, topic := x.f, x.sources[0], x.topic
+		t.Setenv("ONTOLOGY_STUDY_ACTIVE_ARM", "receipt")
+		installReceiptRecheckSchema(t, f, "receipt")
+		count, err := f.store.backfillStudyReceipts(t.Context(), x.turn)
+		require.NoError(t, err)
+		require.Equal(t, 1, count)
+		require.NoError(t, f.store.ReleaseMaintenanceTurn(t.Context(), x.turn))
+		config := maintenanceSettings(t, f)
 		alternative := testTopic("datastore")
-		alternative.Definition.Description = "Atlas PostgreSQL"
+		alternative.Definition.Description = "PostgreSQL discovery measurement"
 		revalidationPublish(t, f, ontology.Change{Record: alternative})
+		require.Equal(t, len(x.sources), compareStudySelection(t, f, alternative.ID).ChecksAvoided)
 		var output bytes.Buffer
 		assessmentID := revalidationQueue(t, f, source).AssessmentID
 		var privateKey string
