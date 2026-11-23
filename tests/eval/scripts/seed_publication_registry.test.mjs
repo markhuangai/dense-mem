@@ -63,7 +63,7 @@ async function until(predicate) {
   assert.fail("seed registry or publication barrier was not reached");
 }
 
-async function worker(address, publisherDirectory, dataset, selected, discriminator, predecessor, barrier = "") {
+async function worker(address, publisherDirectory, dataset, selected, discriminator, bootableImage, predecessor, barrier = "") {
   const { github } = registryClient(address);
   globalThis.fetch = (input, options) => {
     const url = new URL(input);
@@ -73,16 +73,8 @@ async function worker(address, publisherDirectory, dataset, selected, discrimina
   };
   const localDocker = (args, options) => docker(args.map(arg => arg.startsWith(seedRepository) ? address + "/" + arg.slice(ghcr.length) : arg), options);
   const directory = process.cwd();
-  const bootable = dataset !== "bootstrap";
-  const bootableTag = address + "/test-seed:" + discriminator;
-  let bootableImage;
-  if (bootable) {
-    await fs.writeFile("Dockerfile", 'FROM scratch\nLABEL io.dense-mem.eval.seed-format="postgres-v2"\nCOPY database.dump /seed/database.dump\n');
-    localDocker(["build", "--quiet", "--network=none", "--platform=linux/amd64", "--tag", bootableTag, directory]);
-    bootableImage = localDocker(["image", "inspect", "--format", "{{.Id}}", bootableTag]);
-  }
   const runID = "local-" + discriminator.repeat(32) + "-" + dataset;
-  await verifySeedFiles(directory, dataset, registryHash, bootable ? 1 : 0);
+  await verifySeedFiles(directory, dataset, registryHash, dataset === "bootstrap" ? 0 : 1);
   let gates = 0;
   try {
     const image = await publishSeed(localDocker, directory, dataset, selected, {}, async () => {
@@ -142,10 +134,19 @@ if (process.argv[2] === "--publisher") {
       const selected = seedBuildVersion("v2.8.1", new Date(date));
       const imageTag = address + "/" + seedReference(dataset, selected).slice(ghcr.length);
       const builtTag = address + "/test-seed:" + identity;
+      let bootableImage = "";
       return {
         selected, imageTag, builtTag,
         publish: async (predecessor = "", barrier = "") => {
-          const { stdout } = await exec(process.execPath, [path.join(worktree, workerPath), "--publisher", address, locks, dataset, selected, identity, predecessor, barrier], {
+          if (dataset !== "bootstrap" && !bootableImage) {
+            await fs.writeFile(path.join(working, "Dockerfile"),
+              'FROM scratch\nLABEL io.dense-mem.eval.seed-format="postgres-v2"\nCOPY database.dump /seed/database.dump\n');
+            docker(["build", "--quiet", "--network=none", "--platform=linux/amd64", "--tag", builtTag, working]);
+            bootableImage = docker(["image", "inspect", "--format", "{{.Id}}", builtTag]);
+          }
+          const { stdout } = await exec(process.execPath, [
+            path.join(worktree, workerPath), "--publisher", address, locks, dataset, selected, identity, bootableImage, predecessor, barrier,
+          ], {
             cwd: working, timeout: 60000, env: process.env,
           });
           return JSON.parse(stdout);
