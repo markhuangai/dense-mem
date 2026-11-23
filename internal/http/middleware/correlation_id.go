@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/markhuangai/dense-mem/internal/correlation"
 )
@@ -18,7 +18,7 @@ const CorrelationIDHeader = "X-Correlation-ID"
 // request context and echoed back in the response header.
 func CorrelationIDMiddleware() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			id := c.Request().Header.Get(CorrelationIDHeader)
 			if id == "" {
 				id = uuid.New().String()

@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -508,7 +508,7 @@ func privateMemoryOperationID(t *testing.T, body []byte) string {
 	return response.Data.OperationID
 }
 
-func callDeleteSSOCredential(handler *userPortalHandler, c echo.Context) error {
+func callDeleteSSOCredential(handler *userPortalHandler, c *echo.Context) error {
 	body := `{"acknowledge_irreversible":true}`
 	c.Request().Body = io.NopCloser(strings.NewReader(body))
 	c.Request().ContentLength = int64(len(body))

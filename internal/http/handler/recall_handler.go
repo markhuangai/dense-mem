@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	dto "github.com/markhuangai/dense-mem/internal/http/dto"
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
@@ -24,7 +24,7 @@ func NewRecallHandler(svc recall.RecallService) *RecallHandler {
 	return &RecallHandler{svc: svc}
 }
 
-func (h *RecallHandler) Handle(c echo.Context) error {
+func (h *RecallHandler) Handle(c *echo.Context) error {
 	ctx := c.Request().Context()
 	_, ok := middleware.GetResolvedTeamID(ctx)
 	if !ok {

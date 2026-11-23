@@ -13,7 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
@@ -43,7 +43,7 @@ func (b *authFailureBody) Read(p []byte) (int, error) {
 }
 
 // PreserveAuthFailureBody observes bytes a form parser consumes without changing its reader.
-func PreserveAuthFailureBody(c echo.Context) {
+func PreserveAuthFailureBody(c *echo.Context) {
 	req := c.Request()
 	if req.Body == nil || req.Body == http.NoBody {
 		return
@@ -62,7 +62,7 @@ func sensitiveAuthHeader(name string) bool {
 }
 
 // CaptureAuthFailureRequest never drains more than the capture budget after a rejection.
-func CaptureAuthFailureRequest(c echo.Context, message string) *domain.SecurityAuthFailureRequest {
+func CaptureAuthFailureRequest(c *echo.Context, message string) *domain.SecurityAuthFailureRequest {
 	req := c.Request()
 	result := &domain.SecurityAuthFailureRequest{
 		ID: uuid.NewString(), CapturedAt: time.Now().UTC(), Method: req.Method,
@@ -158,7 +158,7 @@ func CaptureAuthFailureRequest(c echo.Context, message string) *domain.SecurityA
 	return result
 }
 
-func captureAuthFailureBody(c echo.Context) (string, domain.SecurityRequestCapture) {
+func captureAuthFailureBody(c *echo.Context) (string, domain.SecurityRequestCapture) {
 	req := c.Request()
 	state := domain.SecurityRequestCapture{State: "captured", Limit: domain.SecurityRequestBodyLimit}
 	unavailable := func(reason string) (string, domain.SecurityRequestCapture) {

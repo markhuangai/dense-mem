@@ -3,7 +3,7 @@ package http
 import (
 	"strings"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/markhuangai/dense-mem/internal/http/dto"
 	"github.com/markhuangai/dense-mem/internal/http/handler"
@@ -110,7 +110,7 @@ func useUserPortalMiddleware(api *echo.Group, deps UserPortalDeps, authOpts http
 
 func userPortalServiceAvailable(available bool, message string) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			if !available {
 				return httperr.New(httperr.SERVICE_UNAVAILABLE, message)
 			}

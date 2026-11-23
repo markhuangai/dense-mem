@@ -3,7 +3,7 @@ package middleware
 import (
 	"context"
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"net/http"
@@ -261,7 +261,7 @@ func TestAuthMiddleware_MissingHeader(t *testing.T) {
 	rec := httptest.NewRecorder()
 
 	handlerCalled := false
-	e.GET("/test", func(c echo.Context) error {
+	e.GET("/test", func(c *echo.Context) error {
 		handlerCalled = true
 		return c.String(http.StatusOK, "ok")
 	})
@@ -288,7 +288,7 @@ func TestAuthMiddleware_WithSecurityStillAuditsAuthFailure(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
 	req.RemoteAddr = "192.0.2.10:12345"
 	rec := httptest.NewRecorder()
-	e.GET("/test", func(c echo.Context) error {
+	e.GET("/test", func(c *echo.Context) error {
 		return c.String(http.StatusOK, "ok")
 	})
 
@@ -350,7 +350,7 @@ func TestAuthMiddleware_MalformedHeader(t *testing.T) {
 			rec := httptest.NewRecorder()
 
 			handlerCalled := false
-			e.GET("/test", func(c echo.Context) error {
+			e.GET("/test", func(c *echo.Context) error {
 				handlerCalled = true
 				return c.String(http.StatusOK, "ok")
 			})
@@ -381,7 +381,7 @@ func TestAuthMiddleware_NoMatchingKey(t *testing.T) {
 	rec := httptest.NewRecorder()
 
 	handlerCalled := false
-	e.GET("/test", func(c echo.Context) error {
+	e.GET("/test", func(c *echo.Context) error {
 		handlerCalled = true
 		return c.String(http.StatusOK, "ok")
 	})
@@ -420,7 +420,7 @@ func TestAuthMiddleware_RevokedKey(t *testing.T) {
 	rec := httptest.NewRecorder()
 
 	handlerCalled := false
-	e.GET("/test", func(c echo.Context) error {
+	e.GET("/test", func(c *echo.Context) error {
 		handlerCalled = true
 		return c.String(http.StatusOK, "ok")
 	})
@@ -459,7 +459,7 @@ func TestAuthMiddleware_ExpiredKey(t *testing.T) {
 	rec := httptest.NewRecorder()
 
 	handlerCalled := false
-	e.GET("/test", func(c echo.Context) error {
+	e.GET("/test", func(c *echo.Context) error {
 		handlerCalled = true
 		return c.String(http.StatusOK, "ok")
 	})
@@ -498,7 +498,7 @@ func TestAuthMiddleware_ValidKey_StoresPrincipal(t *testing.T) {
 	rec := httptest.NewRecorder()
 
 	var capturedPrincipal *Principal
-	e.GET("/test", func(c echo.Context) error {
+	e.GET("/test", func(c *echo.Context) error {
 		capturedPrincipal = GetPrincipal(c.Request().Context())
 		assert.Equal(t, []string{rawKey}, requestctx.AuthenticationSecretsFromContext(c.Request().Context()))
 
@@ -565,7 +565,7 @@ func TestAuthMiddleware_SSOEntitlementValidatorOverridesPrincipal(t *testing.T) 
 	var capturedPrincipal *Principal
 	var capturedActor requestctx.Actor
 	var actorOK bool
-	e.GET("/test", func(c echo.Context) error {
+	e.GET("/test", func(c *echo.Context) error {
 		capturedPrincipal = GetPrincipal(c.Request().Context())
 		capturedActor, actorOK = requestctx.ActorFromContext(c.Request().Context())
 		assert.True(t, requestctx.AuthenticationVerifiedFromContext(c.Request().Context()))
@@ -626,7 +626,7 @@ func TestAuthMiddleware_SSOEntitlementValidatorDeniesKey(t *testing.T) {
 	rec := httptest.NewRecorder()
 
 	handlerCalled := false
-	e.GET("/test", func(c echo.Context) error {
+	e.GET("/test", func(c *echo.Context) error {
 		handlerCalled = true
 		return c.String(http.StatusOK, "ok")
 	})
@@ -660,7 +660,7 @@ func TestAuthMiddleware_SSOSessionAuthenticatesWithoutAuthorizationHeader(t *tes
 	rec := httptest.NewRecorder()
 
 	var capturedPrincipal *Principal
-	e.GET("/test", func(c echo.Context) error {
+	e.GET("/test", func(c *echo.Context) error {
 		capturedPrincipal = GetPrincipal(c.Request().Context())
 		return c.String(http.StatusOK, "ok")
 	})
@@ -695,7 +695,7 @@ func TestAuthMiddleware_SSOSessionRequiresCSRFHeaderForUnsafeMethods(t *testing.
 	req.AddCookie(&http.Cookie{Name: accessservice.SSOCSRFCookieName, Value: "cookie-csrf"})
 	rec := httptest.NewRecorder()
 	handlerCalled := false
-	e.POST("/test", func(c echo.Context) error {
+	e.POST("/test", func(c *echo.Context) error {
 		handlerCalled = true
 		return c.String(http.StatusOK, "ok")
 	})
@@ -726,7 +726,7 @@ func TestAuthMiddleware_SSOSessionUsesCSRFHeaderForUnsafeMethods(t *testing.T) {
 	req.AddCookie(&http.Cookie{Name: accessservice.SSOCSRFCookieName, Value: "cookie-csrf"})
 	req.Header.Set(accessservice.SSOCSRFHeaderName, "header-csrf")
 	rec := httptest.NewRecorder()
-	e.POST("/test", func(c echo.Context) error {
+	e.POST("/test", func(c *echo.Context) error {
 		return c.String(http.StatusOK, "ok")
 	})
 
@@ -761,7 +761,7 @@ func TestAuthMiddleware_LegacyPrefixLookupFallback(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
 	req.Header.Set("Authorization", "Bearer "+rawKey)
 	rec := httptest.NewRecorder()
-	e.GET("/test", func(c echo.Context) error {
+	e.GET("/test", func(c *echo.Context) error {
 		return c.String(http.StatusOK, "ok")
 	})
 
@@ -800,7 +800,7 @@ func TestAuthMiddleware_ProfilelessKeyRejected(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer "+rawKey)
 	rec := httptest.NewRecorder()
 
-	e.GET("/test", func(c echo.Context) error {
+	e.GET("/test", func(c *echo.Context) error {
 		return c.String(http.StatusOK, "ok")
 	})
 
@@ -834,7 +834,7 @@ func TestAuthMiddleware_DoesNotTouchLastUsed(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer "+rawKey)
 	rec := httptest.NewRecorder()
 
-	e.GET("/test", func(c echo.Context) error {
+	e.GET("/test", func(c *echo.Context) error {
 		return c.String(http.StatusOK, "ok")
 	})
 
@@ -860,7 +860,7 @@ func TestLastUsedMiddleware_TouchLastUsed_Background(t *testing.T) {
 	}
 
 	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			req := c.Request().WithContext(SetPrincipalForTest(c.Request().Context(), principal))
 			c.SetRequest(req)
 			return next(c)
@@ -871,7 +871,7 @@ func TestLastUsedMiddleware_TouchLastUsed_Background(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
 	rec := httptest.NewRecorder()
 
-	e.GET("/test", func(c echo.Context) error {
+	e.GET("/test", func(c *echo.Context) error {
 		return c.String(http.StatusOK, "ok")
 	})
 
@@ -906,7 +906,7 @@ func TestLastUsedMiddleware_SkipsWhenRateLimited(t *testing.T) {
 	}
 
 	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			req := c.Request().WithContext(SetPrincipalForTest(c.Request().Context(), principal))
 			c.SetRequest(req)
 			return next(c)
@@ -918,7 +918,7 @@ func TestLastUsedMiddleware_SkipsWhenRateLimited(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
 	rec := httptest.NewRecorder()
 
-	e.GET("/test", func(c echo.Context) error {
+	e.GET("/test", func(c *echo.Context) error {
 		return c.String(http.StatusOK, "ok")
 	})
 
@@ -974,7 +974,7 @@ func TestPrincipalInterfaceAndRequireAuthHelpers(t *testing.T) {
 
 	e := newTestEcho()
 	e.Use(RequireAuth())
-	e.GET("/protected", func(c echo.Context) error {
+	e.GET("/protected", func(c *echo.Context) error {
 		return c.String(http.StatusOK, "ok")
 	})
 	req := httptest.NewRequest(http.MethodGet, "/protected", nil).WithContext(ctx)

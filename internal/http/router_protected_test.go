@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
@@ -138,7 +138,7 @@ func (r *routerCredentialRepo) touched(id uuid.UUID) bool {
 
 func TestRegisterProtectedRoutesWithHandlersRegistersConfiguredSurface(t *testing.T) {
 	e := echo.New()
-	noContent := func(c echo.Context) error { return c.NoContent(204) }
+	noContent := func(c *echo.Context) error { return c.NoContent(204) }
 
 	RegisterProtectedRoutesWithHandlers(e, ProtectedDeps{}, ProtectedHandlers{
 		MCPPost: noContent,
@@ -203,7 +203,7 @@ func TestRegisterProtectedRoutesWithHandlersRegistersConfiguredSurface(t *testin
 
 func registeredRoutes(e *echo.Echo) map[string]bool {
 	routes := make(map[string]bool)
-	for _, route := range e.Routes() {
+	for _, route := range e.Router().Routes() {
 		routes[route.Method+" "+route.Path] = true
 	}
 	return routes

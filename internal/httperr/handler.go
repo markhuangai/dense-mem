@@ -1,10 +1,11 @@
 package httperr
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/markhuangai/dense-mem/internal/correlation"
 )
@@ -56,16 +57,29 @@ func HTTPStatusCode(code ErrorCode) int {
 
 // ErrorHandler is the central Echo error handler that formats all errors
 // into the standard error envelope.
-func ErrorHandler(err error, c echo.Context) {
-	// Determine the APIError and status code
+func ErrorHandler(c *echo.Context, err error) {
+	response, _ := echo.UnwrapResponse(c.Response())
+	if response != nil && response.Committed {
+		return
+	}
+
+	correlationID := correlation.FromContext(c.Request().Context())
 	var apiErr *APIError
 	var statusCode int
-
-	if he, ok := err.(*echo.HTTPError); ok {
-		// Handle Echo's HTTPError
-		statusCode = he.Code
-		apiErr = echoHTTPErrorToAPIError(he)
-		if he.Code == http.StatusNotFound && c != nil && c.Path() == "" {
+	if errors.As(err, &apiErr) {
+		statusCode = HTTPStatusCode(apiErr.Code)
+	} else {
+		statusCode = echo.StatusCode(err)
+		if statusCode == 0 {
+			statusCode = http.StatusInternalServerError
+		}
+		message := http.StatusText(statusCode)
+		var echoErr *echo.HTTPError
+		if errors.As(err, &echoErr) && echoErr.Message != "" {
+			message = echoErr.Message
+		}
+		apiErr = echoHTTPErrorToAPIError(statusCode, message)
+		if statusCode == http.StatusNotFound && c.Path() == "" {
 			apiErr = WithGuidance(
 				New(NOT_FOUND, "The requested route is not available."),
 				"invalid_request",
@@ -73,30 +87,12 @@ func ErrorHandler(err error, c echo.Context) {
 				"Use a supported route and HTTP method, then submit the request again.",
 				false,
 				nil,
-				correlation.FromContext(c.Request().Context()),
+				correlationID,
 			)
 		}
-	} else if ae, ok := err.(*APIError); ok {
-		// Handle our typed APIError
-		apiErr = ae
-		statusCode = HTTPStatusCode(ae.Code)
-	} else {
-		// Handle generic errors
-		apiErr = New(INTERNAL_ERROR, stablePublicMessage(http.StatusInternalServerError))
-		statusCode = http.StatusInternalServerError
 	}
-	apiErr = withDefaultGuidance(apiErr, statusCode, correlation.FromContext(c.Request().Context()))
-	apiErr = apiErr.bounded(statusCode)
-
-	// Don't overwrite the response if already committed
-	if c.Response().Committed {
-		return
-	}
-
-	// Send the APIError directly as a flat JSON object {code, message, details}.
-	// AC-X6: The stable external contract exposes code at the top level so
-	// callers can match on body.code without needing to unwrap a nested key.
-	c.JSON(statusCode, apiErr)
+	apiErr = withDefaultGuidance(apiErr, statusCode, correlationID)
+	_ = c.JSON(statusCode, apiErr.bounded(statusCode))
 }
 
 func withDefaultGuidance(err *APIError, status int, correlationID string) *APIError {
@@ -128,20 +124,8 @@ func withDefaultGuidance(err *APIError, status int, correlationID string) *APIEr
 	return WithGuidance(err, reason, action, remediation, retryable, nil, correlationID)
 }
 
-// echoHTTPErrorToAPIError converts an Echo HTTPError to our APIError.
-// Uses safe formatting to avoid panics on non-string Message types.
-func echoHTTPErrorToAPIError(he *echo.HTTPError) *APIError {
-	// Safely format message - handle both string and non-string types
-	message := "unknown error"
-	if he.Message != nil {
-		if msg, ok := he.Message.(string); ok {
-			message = msg
-		} else {
-			message = he.Error()
-		}
-	}
-
-	switch he.Code {
+func echoHTTPErrorToAPIError(status int, message string) *APIError {
+	switch status {
 	case http.StatusBadRequest, http.StatusRequestEntityTooLarge, http.StatusMethodNotAllowed, http.StatusUnsupportedMediaType:
 		return New(VALIDATION_ERROR, message)
 	case http.StatusUnauthorized:

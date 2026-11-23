@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/labstack/echo/v5"
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
@@ -264,7 +265,7 @@ func TestCompositionHelpersCoverNilPortsAndTelemetryBranches(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	req.Header.Set("Authorization", "Bearer token")
 	rec := httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
+	server.Handler.ServeHTTP(rec, req)
 	if rec.Code == http.StatusNotFound {
 		t.Fatal("metrics route was not registered")
 	}
@@ -275,7 +276,7 @@ func TestCompositionHelpersCoverNilPortsAndTelemetryBranches(t *testing.T) {
 
 func TestTelemetryListenerUsesRootBackedTransportObservations(t *testing.T) {
 	var logs bytes.Buffer
-	logger := observability.NewWithHandler(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	logger := observability.NewWithHandler(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	server, err := newTelemetryScrapeServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}), "token", transportLogger(logger))
@@ -284,10 +285,22 @@ func TestTelemetryListenerUsesRootBackedTransportObservations(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = shutdownTelemetryScrapeServer(server) })
 
+	const presentedSecret = "echo-framework-test-credential"
+	framework := server.Handler.(*echo.Echo).Logger
+	framework.Debug("debug suppressed at info")
+	framework.ErrorContext(observability.WithAuthenticationSecrets(context.Background(), presentedSecret),
+		"framework request failed", "detail", "credential "+presentedSecret)
+	if output := logs.String(); !strings.Contains(output, `"component":"echo"`) ||
+		!strings.Contains(output, `"msg":"framework request failed"`) ||
+		strings.Contains(output, presentedSecret) || strings.Contains(output, "debug suppressed at info") {
+		t.Fatal("protected framework logging did not preserve the root level, component and credential protection")
+	}
+	logs.Reset()
+
 	request := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	request.Header.Set("Authorization", "Bearer token")
 	response := httptest.NewRecorder()
-	server.ServeHTTP(response, request)
+	server.Handler.ServeHTTP(response, request)
 	if response.Code != http.StatusNoContent {
 		t.Fatalf("successful scrape status = %d", response.Code)
 	}
@@ -297,7 +310,7 @@ func TestTelemetryListenerUsesRootBackedTransportObservations(t *testing.T) {
 
 	logs.Reset()
 	rejected := httptest.NewRecorder()
-	server.ServeHTTP(rejected, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	server.Handler.ServeHTTP(rejected, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	if rejected.Code != http.StatusUnauthorized {
 		t.Fatalf("rejected scrape status = %d", rejected.Code)
 	}
@@ -320,7 +333,7 @@ func TestTelemetryListenerCapturesRecoveredPanic(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	request.Header.Set("Authorization", "Bearer token")
 	response := httptest.NewRecorder()
-	server.ServeHTTP(response, request)
+	server.Handler.ServeHTTP(response, request)
 
 	if response.Code != http.StatusInternalServerError {
 		t.Fatalf("panic status = %d, want %d", response.Code, http.StatusInternalServerError)

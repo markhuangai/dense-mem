@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
 	"github.com/markhuangai/dense-mem/internal/httperr"
@@ -16,7 +16,7 @@ import (
 // RateLimitMiddleware creates a rate limiting middleware using the fixed-window algorithm.
 func RateLimitMiddleware(svc accessservice.RateLimitServiceInterface, cfg httpcontract.ConfigProvider, auditSvc accessservice.AuditService) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			// Get the principal from context
 			principal := GetPrincipal(c.Request().Context())
 			if principal == nil {
@@ -47,7 +47,7 @@ func RateLimitMiddleware(svc accessservice.RateLimitServiceInterface, cfg httpco
 			rateLimitSubject := ownerID + ":key:" + subjectID.String()
 			allowed, remaining, resetAt, err := svc.Check(ctx, rateLimitSubject, routePath, limit)
 			if err != nil {
-				c.Logger().Errorf("rate limit check failed: %v", err)
+				c.Logger().ErrorContext(c.Request().Context(), "rate limit check failed", "error", err)
 				return httperr.New(httperr.SERVICE_UNAVAILABLE, "rate limit service unavailable")
 			}
 
@@ -85,7 +85,7 @@ func rateLimitRoutePath(routePath string) string {
 }
 
 // logRateLimit logs and audits a rate limit event.
-func logRateLimit(c echo.Context, auditSvc accessservice.AuditService, profileID, routePath string, limit, remaining int, resetAt time.Time) {
+func logRateLimit(c *echo.Context, auditSvc accessservice.AuditService, profileID, routePath string, limit, remaining int, resetAt time.Time) {
 	if auditSvc == nil {
 		return
 	}

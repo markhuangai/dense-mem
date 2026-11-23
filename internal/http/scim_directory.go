@@ -14,7 +14,7 @@ import (
 	"github.com/elimity-com/scim/optional"
 	"github.com/elimity-com/scim/schema"
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
@@ -55,8 +55,14 @@ func RegisterDirectorySCIM(e *echo.Echo, directory *accessservice.DirectoryIdent
 	}
 	rateLimit := publicIPRateLimitMiddleware("directory-scim", cfg.RateLimitSvc, cfg.Config)
 	e.POST("/scim/oauth/token", h.oauthToken, rateLimit)
-	e.Any("/scim/v2/:connectorId", h.serve, rateLimit)
-	e.Any("/scim/v2/:connectorId/*", h.serve, rateLimit)
+	// Keep the Echo v4 method set so extension methods do not reach SCIM middleware.
+	methods := []string{
+		nethttp.MethodConnect, nethttp.MethodDelete, nethttp.MethodGet, nethttp.MethodHead,
+		nethttp.MethodOptions, nethttp.MethodPatch, nethttp.MethodPost, "PROPFIND",
+		nethttp.MethodPut, nethttp.MethodTrace, "REPORT",
+	}
+	e.Match(methods, "/scim/v2/:connectorId", h.serve, rateLimit)
+	e.Match(methods, "/scim/v2/:connectorId/*", h.serve, rateLimit)
 	return nil
 }
 
@@ -122,7 +128,7 @@ func newDirectorySCIMProtocolServer(directory *accessservice.DirectoryIdentitySe
 	return server, nil
 }
 
-func (h *directorySCIMHandler) oauthToken(c echo.Context) error {
+func (h *directorySCIMHandler) oauthToken(c *echo.Context) error {
 	if h.security != nil {
 		httpmw.PreserveAuthFailureBody(c)
 	}
@@ -162,12 +168,12 @@ func (h *directorySCIMHandler) oauthToken(c echo.Context) error {
 	})
 }
 
-func directoryOAuthError(c echo.Context, status int, code string) error {
+func directoryOAuthError(c *echo.Context, status int, code string) error {
 	directoryOAuthNoStore(c)
 	return c.JSON(status, map[string]string{"error": code})
 }
 
-func directoryOAuthNoStore(c echo.Context) {
+func directoryOAuthNoStore(c *echo.Context) {
 	c.Response().Header().Set(echo.HeaderCacheControl, "no-store")
 	c.Response().Header().Set("Pragma", "no-cache")
 }
@@ -200,7 +206,7 @@ func directoryOAuthPresentedSecrets(request *nethttp.Request, clientSecret strin
 	return secrets
 }
 
-func recordDirectoryOAuthAuthFailure(c echo.Context, securitySvc settings.SecurityService) {
+func recordDirectoryOAuthAuthFailure(c *echo.Context, securitySvc settings.SecurityService) {
 	if securitySvc == nil {
 		return
 	}
@@ -212,7 +218,7 @@ func recordDirectoryOAuthAuthFailure(c echo.Context, securitySvc settings.Securi
 	}
 }
 
-func (h *directorySCIMHandler) serve(c echo.Context) error {
+func (h *directorySCIMHandler) serve(c *echo.Context) error {
 	connectorID, err := uuid.Parse(c.Param("connectorId"))
 	if err != nil {
 		return directorySCIMError(c, scimerrors.ScimError{Status: nethttp.StatusNotFound})
@@ -289,7 +295,7 @@ func directoryBearerToken(request *nethttp.Request) (string, bool) {
 	return token, token != ""
 }
 
-func directorySCIMError(c echo.Context, scimErr scimerrors.ScimError) error {
+func directorySCIMError(c *echo.Context, scimErr scimerrors.ScimError) error {
 	payload, err := json.Marshal(scimErr)
 	if err != nil {
 		return err

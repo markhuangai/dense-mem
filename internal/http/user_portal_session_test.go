@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -26,7 +26,7 @@ type portalSessionManagerStub struct {
 	result       *accessservice.UserPortalSessionResult
 }
 
-func invokeCreatePortalSession(t *testing.T, h *userPortalHandler, c echo.Context) error {
+func invokeCreatePortalSession(t *testing.T, h *userPortalHandler, c *echo.Context) error {
 	t.Helper()
 	return httpmw.BindAndValidateStrict[dto.CreateUserPortalSessionRequest](userPortalCreateSessionBodyKey)(h.createPortalSession)(c)
 }
@@ -71,7 +71,9 @@ func TestCreatePortalSessionSetsHostOnlyUiCookies(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, keyID, manager.createdKeyID)
 
-	recorder, ok := c.Response().Writer.(*httptest.ResponseRecorder)
+	response, err := echo.UnwrapResponse(c.Response())
+	require.NoError(t, err)
+	recorder, ok := response.Unwrap().(*httptest.ResponseRecorder)
 	require.True(t, ok)
 	cookies := recorder.Result().Cookies()
 	var sessionCookie, csrfCookie *http.Cookie
@@ -105,7 +107,9 @@ func TestCreatePortalSessionUsesBrowserSessionCookiesWhenRememberDisabled(t *tes
 	c := userPortalEchoContext(t, http.MethodPost, "/ui/api/session", `{"remember":false}`, portalSessionPrincipal(uuid.New(), uuid.New(), "api_key"))
 
 	require.NoError(t, invokeCreatePortalSession(t, h, c))
-	recorder, ok := c.Response().Writer.(*httptest.ResponseRecorder)
+	response, err := echo.UnwrapResponse(c.Response())
+	require.NoError(t, err)
+	recorder, ok := response.Unwrap().(*httptest.ResponseRecorder)
 	require.True(t, ok)
 	found := 0
 	for _, cookie := range recorder.Result().Cookies() {
@@ -189,7 +193,9 @@ func TestLogoutPortalSessionRequiresDoubleSubmitCsrfAndClearsCookies(t *testing.
 	require.NoError(t, h.logoutPortalSession(c))
 	require.Equal(t, "opaque-session", manager.logoutToken)
 	cleared := map[string]*http.Cookie{}
-	recorder, ok := c.Response().Writer.(*httptest.ResponseRecorder)
+	response, err := echo.UnwrapResponse(c.Response())
+	require.NoError(t, err)
+	recorder, ok := response.Unwrap().(*httptest.ResponseRecorder)
 	require.True(t, ok)
 	for _, cookie := range recorder.Result().Cookies() {
 		if cookie.MaxAge < 0 {
@@ -202,7 +208,7 @@ func TestLogoutPortalSessionRequiresDoubleSubmitCsrfAndClearsCookies(t *testing.
 	invalid := userPortalEchoContext(t, http.MethodPost, "/ui/api/session/logout", "", nil)
 	invalid.Request().Header.Set("Cookie", accessservice.UserPortalSessionCookieName+"=opaque-session; "+accessservice.UserPortalCSRFCookieName+"=csrf-token")
 	invalid.Request().Header.Set(accessservice.SSOCSRFHeaderName, "wrong")
-	err := h.logoutPortalSession(invalid)
+	err = h.logoutPortalSession(invalid)
 	var apiErr *httperr.APIError
 	require.ErrorAs(t, err, &apiErr)
 	require.Equal(t, httperr.FORBIDDEN, apiErr.Code)

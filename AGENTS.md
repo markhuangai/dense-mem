@@ -44,7 +44,7 @@
 
 ## Current Stack
 
-- Go 1.26 with Echo v4; PostgreSQL access uses GORM/pgx and goose migrations;
+- Go 1.26 with Echo v5; PostgreSQL access uses GORM/pgx and goose migrations;
   validation uses `go-playground/validator/v10`; Redis uses `go-redis/v9`.
 - Configuration is loaded from environment variables through `internal/config`.
   Do not introduce a second configuration framework.

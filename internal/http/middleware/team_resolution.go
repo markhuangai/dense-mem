@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/httperr"
@@ -62,7 +62,7 @@ func isScopedMCPRoute(path string) bool {
 // first-party memory routes. Authorization remains a separate middleware.
 func TeamResolutionMiddleware(svc TeamResolutionServiceInterface) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			ctx := c.Request().Context()
 			principal := GetPrincipal(ctx)
 			path := c.Request().URL.Path

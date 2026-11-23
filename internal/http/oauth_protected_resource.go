@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
@@ -45,7 +45,7 @@ func RegisterOAuthProtectedResourceRoutes(e *echo.Echo, provider OAuthProtectedR
 }
 
 func oauthProtectedResourceMetadataHandler(provider OAuthProtectedResourceProvider) echo.HandlerFunc {
-	return func(c echo.Context) error {
+	return func(c *echo.Context) error {
 		metadata, err := provider.OAuthProtectedResourceMetadata(c.Request().Context())
 		if err != nil {
 			return httperr.New(httperr.SERVICE_UNAVAILABLE, "oauth resource metadata unavailable")
@@ -78,7 +78,7 @@ func oauthProtectedResourceMetadataHandler(provider OAuthProtectedResourceProvid
 
 func oauthProtectedResourceChallenge(provider OAuthProtectedResourceProvider) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			err := next(c)
 			if err == nil || provider == nil || oauthErrorStatus(err) != nethttp.StatusUnauthorized {
 				return err
@@ -106,14 +106,13 @@ func oauthErrorStatus(err error) int {
 	if errors.As(err, &apiErr) {
 		return httperr.HTTPStatusCode(apiErr.Code)
 	}
-	var echoErr *echo.HTTPError
-	if errors.As(err, &echoErr) {
-		return echoErr.Code
+	if status := echo.StatusCode(err); status != 0 {
+		return status
 	}
 	return nethttp.StatusInternalServerError
 }
 
-func oauthMetadataTeamID(c echo.Context, basePath string) (*uuid.UUID, error) {
+func oauthMetadataTeamID(c *echo.Context, basePath string) (*uuid.UUID, error) {
 	if c.Path() != oauthProtectedResourceMetadataWildcardRoute {
 		return oauthTeamIDParam(c)
 	}
@@ -137,7 +136,7 @@ func oauthMetadataTeamID(c echo.Context, basePath string) (*uuid.UUID, error) {
 	return &teamID, nil
 }
 
-func oauthTeamIDParam(c echo.Context) (*uuid.UUID, error) {
+func oauthTeamIDParam(c *echo.Context) (*uuid.UUID, error) {
 	raw := strings.TrimSpace(c.Param("teamId"))
 	if raw == "" {
 		return nil, nil
@@ -149,7 +148,7 @@ func oauthTeamIDParam(c echo.Context) (*uuid.UUID, error) {
 	return &teamID, nil
 }
 
-func oauthRequestTeamID(c echo.Context) (*uuid.UUID, error) {
+func oauthRequestTeamID(c *echo.Context) (*uuid.UUID, error) {
 	if c.Path() != "/teams/:teamId/mcp" {
 		return nil, nil
 	}
@@ -173,7 +172,7 @@ func oauthResourceURLs(base *url.URL, teamID *uuid.UUID) (*url.URL, *url.URL) {
 	return &resourceURL, &metadataURL
 }
 
-func oauthPublicBaseURL(c echo.Context, provider OAuthProtectedResourceProvider) *url.URL {
+func oauthPublicBaseURL(c *echo.Context, provider OAuthProtectedResourceProvider) *url.URL {
 	configured, err := provider.MCPPublicBaseURL(c.Request().Context())
 	if err != nil || strings.TrimSpace(configured) == "" {
 		return nil

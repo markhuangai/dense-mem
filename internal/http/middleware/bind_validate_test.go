@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/httperr"
@@ -39,7 +39,7 @@ func (e fakeValidationErrorCollection) Errors() []error { return e.errs }
 func TestBindAndValidateStoresValidatedBody(t *testing.T) {
 	e := echo.New()
 	e.HTTPErrorHandler = httperr.ErrorHandler
-	e.POST("/body", func(c echo.Context) error {
+	e.POST("/body", func(c *echo.Context) error {
 		body := MustGetValidatedBody[bindValidateBody](c.Request().Context(), "body")
 		return c.JSON(http.StatusOK, map[string]any{"name": body.Name, "email": body.Email})
 	}, BindAndValidate[bindValidateBody]("body"))
@@ -57,7 +57,7 @@ func TestBindAndValidateStoresValidatedBody(t *testing.T) {
 func TestBindAndValidateRejectsMalformedAndInvalidBodies(t *testing.T) {
 	e := echo.New()
 	e.HTTPErrorHandler = httperr.ErrorHandler
-	e.POST("/body", func(c echo.Context) error {
+	e.POST("/body", func(c *echo.Context) error {
 		return c.NoContent(http.StatusNoContent)
 	}, BindAndValidate[bindValidateBody]("body"))
 
@@ -79,7 +79,7 @@ func TestBindAndValidateRejectsMalformedAndInvalidBodies(t *testing.T) {
 func TestBindAndValidateStrictRejectsUnknownAndTrailingBodies(t *testing.T) {
 	e := echo.New()
 	e.HTTPErrorHandler = httperr.ErrorHandler
-	e.POST("/body", func(c echo.Context) error {
+	e.POST("/body", func(c *echo.Context) error {
 		return c.NoContent(http.StatusNoContent)
 	}, BindAndValidateStrict[bindValidateBody]("body"))
 

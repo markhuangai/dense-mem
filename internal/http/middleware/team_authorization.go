@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
@@ -41,7 +41,7 @@ func (s *teamAuthorizationService) CrossTeamDenied(ctx context.Context, actorTea
 // This middleware must run after both AuthMiddleware and TeamResolutionMiddleware.
 func AuthorizeTeam(authzSvc TeamAuthorizationService) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			ctx := c.Request().Context()
 			principal := GetPrincipal(ctx)
 

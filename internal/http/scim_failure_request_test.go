@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	cryptoutil "github.com/markhuangai/dense-mem/internal/crypto"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
@@ -85,10 +85,11 @@ func TestDirectorySCIMOAuthFailureRequestDiagnostics(t *testing.T) {
 				}
 				req.SetBasicAuth(clientID, secret)
 			}
-			ctx := echo.New().NewContext(req, httptest.NewRecorder())
+			recorder := httptest.NewRecorder()
+			ctx := echo.New().NewContext(req, recorder)
 			require.NoError(t, h.oauthToken(ctx))
 			if mode == "success" || mode == "basic_success" {
-				require.Equal(t, nethttp.StatusOK, ctx.Response().Status)
+				require.Equal(t, nethttp.StatusOK, recorder.Code)
 				require.Equal(t, "original+wire", ctx.Request().PostForm.Get("marker"))
 				if mode == "basic_success" {
 					require.Equal(t, presented, ctx.Request().PostForm.Get("client_secret"))
@@ -99,7 +100,7 @@ func TestDirectorySCIMOAuthFailureRequestDiagnostics(t *testing.T) {
 				require.Nil(t, securityRepo.ban)
 				return
 			}
-			require.Equal(t, nethttp.StatusUnauthorized, ctx.Response().Status)
+			require.Equal(t, nethttp.StatusUnauthorized, recorder.Code)
 			require.NotNil(t, securityRepo.ban)
 			encoded, err := json.Marshal(securityRepo.ban.Metadata["last_request"])
 			require.NoError(t, err)

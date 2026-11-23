@@ -3,7 +3,7 @@ package serverapp
 import (
 	"context"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/config"
@@ -22,6 +22,7 @@ type CounterStore interface {
 
 type RuntimeContext struct {
 	Echo              *echo.Echo
+	HTTPAddress       string
 	Config            *config.Config
 	TeamService       accessservice.TeamService
 	CredentialService accessservice.CredentialService

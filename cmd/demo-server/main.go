@@ -9,7 +9,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/markhuangai/dense-mem/cmd/internal/demo"
 	demopostgres "github.com/markhuangai/dense-mem/cmd/internal/demo/postgres"
@@ -82,7 +82,7 @@ func demoRuntimeOptions() serverapp.RuntimeOptions {
 
 func deferredDemoQuotaMiddleware(manager **demoservice.QuotaManager) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			if manager == nil || *manager == nil {
 				return httperr.New(httperr.SERVICE_UNAVAILABLE, "demo quota store unavailable")
 			}

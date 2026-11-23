@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/config"
@@ -571,18 +571,18 @@ func TestControlConfigNilResponses(t *testing.T) {
 func TestControlPortalConfigUnavailableHandlers(t *testing.T) {
 	tests := []struct {
 		name string
-		call func(*controlPortalHandler, echo.Context) error
+		call func(*controlPortalHandler, *echo.Context) error
 	}{
-		{name: "get general", call: func(h *controlPortalHandler, c echo.Context) error { return h.getGeneralConfig(c) }},
-		{name: "update general", call: func(h *controlPortalHandler, c echo.Context) error { return h.updateGeneralConfig(c) }},
-		{name: "get sso", call: func(h *controlPortalHandler, c echo.Context) error { return h.getSSOConfig(c) }},
-		{name: "update sso", call: func(h *controlPortalHandler, c echo.Context) error { return h.updateSSOConfig(c) }},
-		{name: "get operation logs", call: func(h *controlPortalHandler, c echo.Context) error { return h.getOperationLogConfig(c) }},
-		{name: "update operation logs", call: func(h *controlPortalHandler, c echo.Context) error { return h.updateOperationLogConfig(c) }},
-		{name: "get recall feedback", call: func(h *controlPortalHandler, c echo.Context) error { return h.getRecallFeedbackConfig(c) }},
-		{name: "update recall feedback", call: func(h *controlPortalHandler, c echo.Context) error { return h.updateRecallFeedbackConfig(c) }},
-		{name: "get telemetry pricing", call: func(h *controlPortalHandler, c echo.Context) error { return h.getTelemetryPricingConfig(c) }},
-		{name: "update telemetry pricing", call: func(h *controlPortalHandler, c echo.Context) error { return h.updateTelemetryPricingConfig(c) }},
+		{name: "get general", call: func(h *controlPortalHandler, c *echo.Context) error { return h.getGeneralConfig(c) }},
+		{name: "update general", call: func(h *controlPortalHandler, c *echo.Context) error { return h.updateGeneralConfig(c) }},
+		{name: "get sso", call: func(h *controlPortalHandler, c *echo.Context) error { return h.getSSOConfig(c) }},
+		{name: "update sso", call: func(h *controlPortalHandler, c *echo.Context) error { return h.updateSSOConfig(c) }},
+		{name: "get operation logs", call: func(h *controlPortalHandler, c *echo.Context) error { return h.getOperationLogConfig(c) }},
+		{name: "update operation logs", call: func(h *controlPortalHandler, c *echo.Context) error { return h.updateOperationLogConfig(c) }},
+		{name: "get recall feedback", call: func(h *controlPortalHandler, c *echo.Context) error { return h.getRecallFeedbackConfig(c) }},
+		{name: "update recall feedback", call: func(h *controlPortalHandler, c *echo.Context) error { return h.updateRecallFeedbackConfig(c) }},
+		{name: "get telemetry pricing", call: func(h *controlPortalHandler, c *echo.Context) error { return h.getTelemetryPricingConfig(c) }},
+		{name: "update telemetry pricing", call: func(h *controlPortalHandler, c *echo.Context) error { return h.updateTelemetryPricingConfig(c) }},
 	}
 
 	for _, tt := range tests {
@@ -596,7 +596,7 @@ func TestControlPortalConfigGetErrors(t *testing.T) {
 	h := &controlPortalHandler{appConfig: &controlAppConfigSvc{getErr: errors.New("repo failed")}}
 	tests := []struct {
 		name string
-		call func(echo.Context) error
+		call func(*echo.Context) error
 	}{
 		{name: "general", call: h.getGeneralConfig},
 		{name: "sso", call: h.getSSOConfig},
@@ -616,27 +616,27 @@ func TestControlPortalConfigUpdateBackendErrors(t *testing.T) {
 	backendErr := errors.New("db failed")
 	tests := []struct {
 		name string
-		call func(*controlPortalHandler, echo.Context) error
+		call func(*controlPortalHandler, *echo.Context) error
 		body string
 	}{
 		{
 			name: "general",
-			call: func(h *controlPortalHandler, c echo.Context) error { return h.updateGeneralConfig(c) },
+			call: func(h *controlPortalHandler, c *echo.Context) error { return h.updateGeneralConfig(c) },
 			body: `{"items":[{"key":"APP_TIMEZONE","value":"UTC"}]}`,
 		},
 		{
 			name: "operation logs",
-			call: func(h *controlPortalHandler, c echo.Context) error { return h.updateOperationLogConfig(c) },
+			call: func(h *controlPortalHandler, c *echo.Context) error { return h.updateOperationLogConfig(c) },
 			body: `{"items":[{"key":"OPERATION_LOG_RETENTION_DAYS","value":"45"}]}`,
 		},
 		{
 			name: "recall feedback",
-			call: func(h *controlPortalHandler, c echo.Context) error { return h.updateRecallFeedbackConfig(c) },
+			call: func(h *controlPortalHandler, c *echo.Context) error { return h.updateRecallFeedbackConfig(c) },
 			body: `{"items":[{"key":"RECALL_FEEDBACK_ENABLED","value":"true"}]}`,
 		},
 		{
 			name: "telemetry pricing",
-			call: func(h *controlPortalHandler, c echo.Context) error { return h.updateTelemetryPricingConfig(c) },
+			call: func(h *controlPortalHandler, c *echo.Context) error { return h.updateTelemetryPricingConfig(c) },
 			body: `{"items":[{"key":"TELEMETRY_COST_VERIFIER_INPUT_USD_PER_MILLION_TOKENS","value":"1"}]}`,
 		},
 	}
@@ -669,7 +669,7 @@ func TestControlPortalRemovedProfileRoutesReturnNotFound(t *testing.T) {
 	}
 }
 
-func newControlConfigContext(method, body string) echo.Context {
+func newControlConfigContext(method, body string) *echo.Context {
 	e := echo.New()
 	req := httptest.NewRequest(method, "/", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")

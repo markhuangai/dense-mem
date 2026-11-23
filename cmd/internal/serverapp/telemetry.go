@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/labstack/echo/v4"
-	echomw "github.com/labstack/echo/v4/middleware"
+	"github.com/labstack/echo/v5"
+	echomw "github.com/labstack/echo/v5/middleware"
 
 	densehttp "github.com/markhuangai/dense-mem/internal/http"
 	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
@@ -18,7 +18,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/tools"
 )
 
-func newTelemetryScrapeServer(scrapeHandler nethttp.Handler, scrapeToken string, loggers ...httpcontract.LogProvider) (*echo.Echo, error) {
+func newTelemetryScrapeServer(scrapeHandler nethttp.Handler, scrapeToken string, loggers ...httpcontract.LogProvider) (*nethttp.Server, error) {
 	if scrapeHandler == nil {
 		return nil, fmt.Errorf("telemetry scrape handler is required")
 	}
@@ -26,20 +26,15 @@ func newTelemetryScrapeServer(scrapeHandler nethttp.Handler, scrapeToken string,
 		return nil, fmt.Errorf("telemetry scrape token is required")
 	}
 
-	e := echo.New()
 	var logger httpcontract.LogProvider
 	if len(loggers) > 0 {
 		logger = loggers[0]
 	}
-	if rootLogger := densehttp.NewEchoLogger(logger); rootLogger != nil {
-		e.Logger = rootLogger
-		e.StdLogger = densehttp.EchoServerErrorLogger(logger)
-	}
-	e.Server.ReadHeaderTimeout = 5 * time.Second
-	e.Server.ReadTimeout = 30 * time.Second
-	e.Server.IdleTimeout = 60 * time.Second
-	e.IPExtractor = echo.ExtractIPFromXFFHeader()
-	e.HTTPErrorHandler = httperr.ErrorHandler
+	e := echo.NewWithConfig(echo.Config{
+		Logger:           densehttp.NewEchoLogger(logger),
+		HTTPErrorHandler: httperr.ErrorHandler,
+		IPExtractor:      echo.ExtractIPFromXFFHeader(),
+	})
 	e.Use(densehttp.DeliveryObservationMiddleware)
 	e.Use(echomw.RequestLoggerWithConfig(echomw.RequestLoggerConfig{
 		HandleError:  true,
@@ -47,9 +42,8 @@ func newTelemetryScrapeServer(scrapeHandler nethttp.Handler, scrapeToken string,
 		LogURI:       true,
 		LogStatus:    true,
 		LogLatency:   true,
-		LogError:     true,
 		LogRoutePath: true,
-		LogValuesFunc: func(c echo.Context, values echomw.RequestLoggerValues) error {
+		LogValuesFunc: func(c *echo.Context, values echomw.RequestLoggerValues) error {
 			if logger == nil {
 				return nil
 			}
@@ -69,11 +63,11 @@ func newTelemetryScrapeServer(scrapeHandler nethttp.Handler, scrapeToken string,
 	e.Use(densehttp.RootRecover(logger))
 	e.Use(httpmw.CorrelationIDMiddleware())
 	e.GET("/metrics", echo.WrapHandler(scrapeHandler), httpmw.TelemetryScrapeTokenMiddleware(scrapeToken))
-	return e, nil
+	return densehttp.NewHTTPServer(e, logger), nil
 }
 
-func shutdownTelemetryScrapeServer(e *echo.Echo) error {
+func shutdownTelemetryScrapeServer(server *nethttp.Server) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	return e.Shutdown(ctx)
+	return server.Shutdown(ctx)
 }

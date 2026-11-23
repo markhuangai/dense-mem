@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/markhuangai/dense-mem/internal/http/dto"
 	httpmw "github.com/markhuangai/dense-mem/internal/http/middleware"
@@ -19,7 +19,7 @@ import (
 
 const userPortalCreateSessionBodyKey = "user_portal_create_session"
 
-func (h *userPortalHandler) createPortalSession(c echo.Context) error {
+func (h *userPortalHandler) createPortalSession(c *echo.Context) error {
 	principal := httpmw.GetPrincipal(c.Request().Context())
 	if principal == nil || principal.AuthMethod != "api_key" {
 		return httperr.New(httperr.FORBIDDEN, "direct API key authentication required")
@@ -46,7 +46,7 @@ func (h *userPortalHandler) createPortalSession(c echo.Context) error {
 	return response.SuccessOK(c, map[string]string{"status": "signed_in"})
 }
 
-func (h *userPortalHandler) logoutPortalSession(c echo.Context) error {
+func (h *userPortalHandler) logoutPortalSession(c *echo.Context) error {
 	if cookie, err := c.Request().Cookie(accessservice.UserPortalSessionCookieName); err == nil && strings.TrimSpace(cookie.Value) != "" {
 		if err := validateUserPortalLogoutCSRF(c); err != nil {
 			return err
@@ -63,7 +63,7 @@ func (h *userPortalHandler) logoutPortalSession(c echo.Context) error {
 	return response.SuccessOK(c, map[string]string{"status": "signed_out"})
 }
 
-func validateUserPortalLogoutCSRF(c echo.Context) error {
+func validateUserPortalLogoutCSRF(c *echo.Context) error {
 	headerToken := strings.TrimSpace(c.Request().Header.Get(accessservice.SSOCSRFHeaderName))
 	cookie, err := c.Request().Cookie(accessservice.UserPortalCSRFCookieName)
 	if err != nil || headerToken == "" || strings.TrimSpace(cookie.Value) == "" {
@@ -82,7 +82,7 @@ func (h *userPortalHandler) portalCookieSecure(ctx context.Context) bool {
 	return h.sso.CookieSecure(ctx)
 }
 
-func setUserPortalCookie(c echo.Context, name, value string, httpOnly, remember bool, expires time.Time, secure bool) {
+func setUserPortalCookie(c *echo.Context, name, value string, httpOnly, remember bool, expires time.Time, secure bool) {
 	cookie := &nethttp.Cookie{
 		Name:     name,
 		Value:    value,
@@ -98,7 +98,7 @@ func setUserPortalCookie(c echo.Context, name, value string, httpOnly, remember 
 	c.SetCookie(cookie)
 }
 
-func clearUserPortalCookie(c echo.Context, name string, httpOnly, secure bool) {
+func clearUserPortalCookie(c *echo.Context, name string, httpOnly, secure bool) {
 	c.SetCookie(&nethttp.Cookie{
 		Name:     name,
 		Value:    "",

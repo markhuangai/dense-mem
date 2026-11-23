@@ -3,7 +3,7 @@ package http
 import (
 	"errors"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	httpmw "github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/http/response"
 	"github.com/markhuangai/dense-mem/internal/httperr"
@@ -16,7 +16,7 @@ type controlDecisionConfigRequest struct {
 	Items []controlTelemetryPricingConfigItemRequest `json:"items" validate:"required,min=1,max=4,dive"`
 }
 
-func (h *controlPortalHandler) getDecisionConfig(c echo.Context) error {
+func (h *controlPortalHandler) getDecisionConfig(c *echo.Context) error {
 	value, err := h.decisions.GetDecisionSettings(c.Request().Context())
 	if err != nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "decision configuration unavailable")
@@ -24,7 +24,7 @@ func (h *controlPortalHandler) getDecisionConfig(c echo.Context) error {
 	return response.SuccessOK(c, value)
 }
 
-func (h *controlPortalHandler) updateDecisionConfig(c echo.Context) error {
+func (h *controlPortalHandler) updateDecisionConfig(c *echo.Context) error {
 	body := httpmw.MustGetValidatedBody[controlDecisionConfigRequest](c.Request().Context(), decisionConfigBodyKey)
 	values := make(map[string]string, len(body.Items))
 	for _, item := range body.Items {

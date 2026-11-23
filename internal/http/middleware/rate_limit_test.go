@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/markhuangai/dense-mem/internal/httperr"
@@ -83,7 +83,7 @@ func runRateLimitMiddlewareContract(t *testing.T, name string, svc accessservice
 	principalProfileID := uuid.New()
 	principal := &Principal{CredentialID: testUUIDPtr(uuid.New()), OwnerID: principalProfileID, Role: "standard"}
 
-	e.GET("/ui/api/team/profiles/:id", func(c echo.Context) error {
+	e.GET("/ui/api/team/profiles/:id", func(c *echo.Context) error {
 		return c.NoContent(http.StatusOK)
 	})
 
@@ -119,7 +119,7 @@ func TestRateLimitMiddlewareSharesMCPRouteAliasBucket(t *testing.T) {
 	e := echo.New()
 	e.HTTPErrorHandler = httperr.ErrorHandler
 	e.Use(RateLimitMiddleware(accessservice.NewRateLimitService(inmem.NewInMemoryRateLimitStore()), &testRateLimitConfig{rateLimitPerMinute: 1}, nil))
-	handler := func(c echo.Context) error { return c.NoContent(http.StatusOK) }
+	handler := func(c *echo.Context) error { return c.NoContent(http.StatusOK) }
 	e.GET("/mcp", handler)
 	e.GET("/teams/:teamId/mcp", handler)
 	e.GET("/ui/api/other", handler)
@@ -152,7 +152,7 @@ func TestRateLimitMiddleware_EdgeBranches(t *testing.T) {
 		e := echo.New()
 		limiter := &stubRateLimitService{allowed: true}
 		e.Use(RateLimitMiddleware(limiter, cfg, nil))
-		e.GET("/ui/api/other", func(c echo.Context) error {
+		e.GET("/ui/api/other", func(c *echo.Context) error {
 			return c.NoContent(http.StatusNoContent)
 		})
 
@@ -168,7 +168,7 @@ func TestRateLimitMiddleware_EdgeBranches(t *testing.T) {
 		e := echo.New()
 		e.HTTPErrorHandler = httperr.ErrorHandler
 		e.Use(RateLimitMiddleware(&stubRateLimitService{allowed: true}, cfg, nil))
-		e.GET("/ui/api/other", func(c echo.Context) error {
+		e.GET("/ui/api/other", func(c *echo.Context) error {
 			return c.NoContent(http.StatusOK)
 		})
 
@@ -185,7 +185,7 @@ func TestRateLimitMiddleware_EdgeBranches(t *testing.T) {
 		e.HTTPErrorHandler = httperr.ErrorHandler
 		limiter := &stubRateLimitService{err: errors.New("store down")}
 		e.Use(RateLimitMiddleware(limiter, cfg, nil))
-		e.GET("/ui/api/other", func(c echo.Context) error {
+		e.GET("/ui/api/other", func(c *echo.Context) error {
 			return c.NoContent(http.StatusOK)
 		})
 
@@ -206,7 +206,7 @@ func TestRateLimitMiddleware_EdgeBranches(t *testing.T) {
 		e := echo.New()
 		limiter := &stubRateLimitService{allowed: true, remaining: 4}
 		e.Use(RateLimitMiddleware(limiter, cfg, nil))
-		e.GET("/ui/api/other", func(c echo.Context) error {
+		e.GET("/ui/api/other", func(c *echo.Context) error {
 			return c.NoContent(http.StatusOK)
 		})
 
@@ -237,7 +237,7 @@ func TestRateLimitMiddleware_EdgeBranches(t *testing.T) {
 		}
 		e.Use(CorrelationIDMiddleware())
 		e.Use(RateLimitMiddleware(limiter, cfg, &mockAuditService{}))
-		e.DELETE("/ui/api/other", func(c echo.Context) error {
+		e.DELETE("/ui/api/other", func(c *echo.Context) error {
 			return c.NoContent(http.StatusOK)
 		})
 

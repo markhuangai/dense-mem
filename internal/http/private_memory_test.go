@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -134,7 +134,7 @@ func TestCredentialPrivateMemoryHTTPContract(t *testing.T) {
 	e := echo.New()
 	e.HTTPErrorHandler = httperr.ErrorHandler
 	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			ctx := httpmw.SetPrincipalForTest(c.Request().Context(), &httpmw.Principal{
 				TeamID: teamID, IdentityID: credentialID, OwnerID: credentialID,
 				CredentialID: &credentialID, AuthMethod: "api_key", Grants: []string{"read", "write"},
@@ -185,7 +185,7 @@ func TestCredentialPrivateMemoryHTTPAllowsTeamReadOnly(t *testing.T) {
 	e := echo.New()
 	e.HTTPErrorHandler = httperr.ErrorHandler
 	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			ctx := httpmw.SetPrincipalForTest(c.Request().Context(), &httpmw.Principal{
 				TeamID: teamID, IdentityID: credentialID, OwnerID: credentialID,
 				CredentialID: &credentialID, AuthMethod: "api_key", Grants: []string{"read"},
@@ -217,7 +217,7 @@ func TestSSOPrivateMemoryErasureAllowsTeamReadOnly(t *testing.T) {
 	e := echo.New()
 	e.HTTPErrorHandler = httperr.ErrorHandler
 	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			ctx := httpmw.SetPrincipalForTest(c.Request().Context(), &httpmw.Principal{
 				TeamID: teamID, IdentityID: identityID, OwnerID: identityID,
 				AuthMethod: "sso_session", Grants: []string{"read"},
@@ -270,8 +270,7 @@ func TestOwnerErasureStatusOmitsControlIdentifiers(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 	c.SetPath("/ui/api/private-memory/erasures/:operationId")
-	c.SetParamNames("operationId")
-	c.SetParamValues(operation.ID.String())
+	c.SetPathValues(echo.PathValues{{Name: "operationId", Value: operation.ID.String()}})
 
 	require.NoError(t, handler.getOwnerPrivateMemoryErasure(c))
 	require.Equal(t, http.StatusOK, rec.Code)
@@ -291,8 +290,7 @@ func TestControlErasureStatusIncludesGovernanceIdentifiers(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 	c.SetPath("/control/api/private-memory/erasures/:operationId")
-	c.SetParamNames("operationId")
-	c.SetParamValues(operation.ID.String())
+	c.SetPathValues(echo.PathValues{{Name: "operationId", Value: operation.ID.String()}})
 
 	require.NoError(t, handler.getPrivateMemoryErasure(c))
 	require.Equal(t, http.StatusOK, rec.Code)
@@ -519,11 +517,10 @@ func TestPrivateMemoryResponseHelpersAndBoundedErrors(t *testing.T) {
 	e := echo.New()
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	c := e.NewContext(req, httptest.NewRecorder())
-	c.SetParamNames("id")
-	c.SetParamValues(uuid.Nil.String())
+	c.SetPathValues(echo.PathValues{{Name: "id", Value: uuid.Nil.String()}})
 	_, err := privateMemoryUUIDParam(c, "id", "space ID")
 	require.Error(t, err)
-	c.SetParamValues(uuid.New().String())
+	c.SetPathValues(echo.PathValues{{Name: "id", Value: uuid.NewString()}})
 	_, err = privateMemoryUUIDParam(c, "id", "space ID")
 	require.NoError(t, err)
 }
@@ -531,7 +528,7 @@ func TestPrivateMemoryResponseHelpersAndBoundedErrors(t *testing.T) {
 func TestPrivateMemoryOwnerHandlersRejectUnavailableOrWrongPrincipals(t *testing.T) {
 	e := echo.New()
 	operationID := uuid.New()
-	newContext := func(method, target string, principal *httpmw.Principal) echo.Context {
+	newContext := func(method, target string, principal *httpmw.Principal) *echo.Context {
 		t.Helper()
 		req := httptest.NewRequest(method, target, nil)
 		if principal != nil {
@@ -540,8 +537,7 @@ func TestPrivateMemoryOwnerHandlersRejectUnavailableOrWrongPrincipals(t *testing
 		rec := httptest.NewRecorder()
 		c := e.NewContext(req, rec)
 		c.SetPath("/ui/api/private-memory/erasures/:operationId")
-		c.SetParamNames("operationId")
-		c.SetParamValues(operationID.String())
+		c.SetPathValues(echo.PathValues{{Name: "operationId", Value: operationID.String()}})
 		return c
 	}
 	assertCode := func(err error, code httperr.ErrorCode) {
@@ -584,13 +580,12 @@ func TestPrivateMemoryControlHandlersPropagateRepositoryFailures(t *testing.T) {
 	stub := &privateMemoryHTTPServiceStub{requestErr: backendErr}
 	handler := &controlPortalHandler{privateMemory: stub}
 	e := echo.New()
-	newContext := func(method, target, path, name, value string) echo.Context {
+	newContext := func(method, target, path, name, value string) *echo.Context {
 		t.Helper()
 		c := e.NewContext(httptest.NewRequest(method, target, nil), httptest.NewRecorder())
 		c.SetPath(path)
 		if name != "" {
-			c.SetParamNames(name)
-			c.SetParamValues(value)
+			c.SetPathValues(echo.PathValues{{Name: name, Value: value}})
 		}
 		return c
 	}
@@ -647,7 +642,9 @@ func TestPrivateMemoryControlHandlersPropagateRepositoryFailures(t *testing.T) {
 		spaceID.String(),
 	)
 	require.NoError(t, handler.releasePrivateMemoryLegalHold(releaseContext))
-	require.Contains(t, releaseContext.Response().Writer.(*httptest.ResponseRecorder).Body.String(), `"released":false`)
+	response, err := echo.UnwrapResponse(releaseContext.Response())
+	require.NoError(t, err)
+	require.Contains(t, response.Unwrap().(*httptest.ResponseRecorder).Body.String(), `"released":false`)
 
 	stub.requestErr = backendErr
 	e.HTTPErrorHandler = httperr.ErrorHandler

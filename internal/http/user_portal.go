@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
@@ -137,7 +137,7 @@ type userPortalCreateSSOCredentialRequest struct {
 	MemoryBinding json.RawMessage `json:"memory_binding"`
 }
 
-func (h *userPortalHandler) session(c echo.Context) error {
+func (h *userPortalHandler) session(c *echo.Context) error {
 	session, err := h.currentSession(c)
 	if err != nil {
 		return err
@@ -145,7 +145,7 @@ func (h *userPortalHandler) session(c echo.Context) error {
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": session})
 }
 
-func userPortalOptionalIntQuery(c echo.Context, name string) (int, error) {
+func userPortalOptionalIntQuery(c *echo.Context, name string) (int, error) {
 	raw := strings.TrimSpace(c.QueryParam(name))
 	if raw == "" {
 		return 0, nil
@@ -157,7 +157,7 @@ func userPortalOptionalIntQuery(c echo.Context, name string) (int, error) {
 	return value, nil
 }
 
-func (h *userPortalHandler) rotateCurrentCredential(c echo.Context) error {
+func (h *userPortalHandler) rotateCurrentCredential(c *echo.Context) error {
 	if err := rejectEditableRotateBody(c); err != nil {
 		return err
 	}
@@ -200,7 +200,7 @@ func (h *userPortalHandler) rotateCurrentCredential(c echo.Context) error {
 	}})
 }
 
-func (h *userPortalHandler) currentSession(c echo.Context) (userPortalSessionResponse, error) {
+func (h *userPortalHandler) currentSession(c *echo.Context) (userPortalSessionResponse, error) {
 	ctx := c.Request().Context()
 	principal := httpmw.GetPrincipal(ctx)
 	if principal == nil {
@@ -257,7 +257,7 @@ func (h *userPortalHandler) currentSession(c echo.Context) (userPortalSessionRes
 	}, nil
 }
 
-func (h *userPortalHandler) currentSSOSession(c echo.Context) (userPortalSessionResponse, error) {
+func (h *userPortalHandler) currentSSOSession(c *echo.Context) (userPortalSessionResponse, error) {
 	if h.sso == nil {
 		return userPortalSessionResponse{}, httperr.New(httperr.AUTH_MISSING, "authentication required")
 	}
@@ -318,7 +318,7 @@ func (h *userPortalHandler) mcpPublicBaseURL(ctx context.Context) (string, error
 	return strings.TrimRight(strings.TrimSpace(runtime.MCPPublicBaseURL), "/"), nil
 }
 
-func (h *userPortalHandler) ssoProviders(c echo.Context) error {
+func (h *userPortalHandler) ssoProviders(c *echo.Context) error {
 	if h.sso == nil {
 		return c.JSON(nethttp.StatusOK, map[string]any{"data": []userPortalSSOProviderResponse{}})
 	}
@@ -337,7 +337,7 @@ func (h *userPortalHandler) ssoProviders(c echo.Context) error {
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": items})
 }
 
-func (h *userPortalHandler) startSSO(c echo.Context) error {
+func (h *userPortalHandler) startSSO(c *echo.Context) error {
 	if h.sso == nil {
 		return httperr.New(httperr.NOT_FOUND, "sso is not configured")
 	}
@@ -356,7 +356,7 @@ func (h *userPortalHandler) startSSO(c echo.Context) error {
 	return c.Redirect(nethttp.StatusFound, start.AuthURL)
 }
 
-func (h *userPortalHandler) completeSSO(c echo.Context) error {
+func (h *userPortalHandler) completeSSO(c *echo.Context) error {
 	if h.sso == nil {
 		return httperr.New(httperr.NOT_FOUND, "sso is not configured")
 	}
@@ -379,7 +379,7 @@ func (h *userPortalHandler) completeSSO(c echo.Context) error {
 	return c.Redirect(nethttp.StatusFound, result.RedirectPath)
 }
 
-func (h *userPortalHandler) logoutSSO(c echo.Context) error {
+func (h *userPortalHandler) logoutSSO(c *echo.Context) error {
 	if cookie, err := c.Request().Cookie(accessservice.SSOSessionCookieName); err == nil && strings.TrimSpace(cookie.Value) != "" {
 		if err := validateSSOLogoutCSRF(c); err != nil {
 			return err
@@ -393,7 +393,7 @@ func (h *userPortalHandler) logoutSSO(c echo.Context) error {
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": map[string]string{"status": "signed_out"}})
 }
 
-func (h *userPortalHandler) switchSSOTeam(c echo.Context) error {
+func (h *userPortalHandler) switchSSOTeam(c *echo.Context) error {
 	if h.sso == nil {
 		return httperr.New(httperr.NOT_FOUND, "sso is not configured")
 	}
@@ -426,7 +426,7 @@ func (h *userPortalHandler) switchSSOTeam(c echo.Context) error {
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": session})
 }
 
-func (h *userPortalHandler) createSSOCredential(c echo.Context) error {
+func (h *userPortalHandler) createSSOCredential(c *echo.Context) error {
 	info, principal, err := h.ssoRequestSession(c)
 	if err != nil {
 		return err
@@ -472,7 +472,7 @@ func (h *userPortalHandler) createSSOCredential(c echo.Context) error {
 	}})
 }
 
-func (h *userPortalHandler) listSSOCredentials(c echo.Context) error {
+func (h *userPortalHandler) listSSOCredentials(c *echo.Context) error {
 	info, _, err := h.ssoRequestSession(c)
 	if err != nil {
 		return err
@@ -494,7 +494,7 @@ func (h *userPortalHandler) listSSOCredentials(c echo.Context) error {
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": items})
 }
 
-func (h *userPortalHandler) getSSOCredential(c echo.Context) error {
+func (h *userPortalHandler) getSSOCredential(c *echo.Context) error {
 	_, _, credential, err := h.ssoOwnedCredentialByID(c)
 	if err != nil {
 		return err
@@ -502,7 +502,7 @@ func (h *userPortalHandler) getSSOCredential(c echo.Context) error {
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": toUserPortalCredential(credential)})
 }
 
-func (h *userPortalHandler) rotateSSOCredential(c echo.Context) error {
+func (h *userPortalHandler) rotateSSOCredential(c *echo.Context) error {
 	if err := rejectEditableRotateBody(c); err != nil {
 		return err
 	}
@@ -551,7 +551,7 @@ func (h *userPortalHandler) rotateSSOCredential(c echo.Context) error {
 	}})
 }
 
-func (h *userPortalHandler) ssoRequestSession(c echo.Context) (*accessservice.SSOSessionInfo, *httpmw.Principal, error) {
+func (h *userPortalHandler) ssoRequestSession(c *echo.Context) (*accessservice.SSOSessionInfo, *httpmw.Principal, error) {
 	if h.sso == nil {
 		return nil, nil, httperr.New(httperr.NOT_FOUND, "sso is not configured")
 	}
@@ -581,7 +581,7 @@ func (h *userPortalHandler) ssoOwnedCredentials(ctx context.Context, teamID, ide
 	return credentialService.ListSSOOwnedCredentials(ctx, teamID, identityID)
 }
 
-func (h *userPortalHandler) ssoOwnedCredentialByID(c echo.Context) (*accessservice.SSOSessionInfo, *httpmw.Principal, *domain.Credential, error) {
+func (h *userPortalHandler) ssoOwnedCredentialByID(c *echo.Context) (*accessservice.SSOSessionInfo, *httpmw.Principal, *domain.Credential, error) {
 	info, principal, err := h.ssoRequestSession(c)
 	if err != nil {
 		return nil, nil, nil, err
@@ -607,7 +607,7 @@ func (h *userPortalHandler) ssoOwnedCredentialByID(c echo.Context) (*accessservi
 	return info, principal, credential, nil
 }
 
-func userPortalCredentialParam(c echo.Context) (uuid.UUID, error) {
+func userPortalCredentialParam(c *echo.Context) (uuid.UUID, error) {
 	credentialID, err := uuid.Parse(strings.TrimSpace(c.Param("credentialId")))
 	if err != nil || credentialID == uuid.Nil {
 		return uuid.Nil, httperr.New(httperr.INVALID_UUID, "invalid credential ID format")
@@ -695,7 +695,7 @@ func nextSSOOwnedCredentialName(base string, existing []*domain.Credential) stri
 	}
 }
 
-func validateSSOLogoutCSRF(c echo.Context) error {
+func validateSSOLogoutCSRF(c *echo.Context) error {
 	headerToken := strings.TrimSpace(c.Request().Header.Get(accessservice.SSOCSRFHeaderName))
 	cookie, err := c.Request().Cookie(accessservice.SSOCSRFCookieName)
 	if err != nil || headerToken == "" || strings.TrimSpace(cookie.Value) == "" {
@@ -707,7 +707,7 @@ func validateSSOLogoutCSRF(c echo.Context) error {
 	return nil
 }
 
-func rejectEditableRotateBody(c echo.Context) error {
+func rejectEditableRotateBody(c *echo.Context) error {
 	if c.Request().Body == nil {
 		return nil
 	}

@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
 	httpmw "github.com/markhuangai/dense-mem/internal/http/middleware"
@@ -15,7 +15,7 @@ import (
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 )
 
-func (h *controlPortalHandler) listRememberAttemptDiagnostics(c echo.Context) error {
+func (h *controlPortalHandler) listRememberAttemptDiagnostics(c *echo.Context) error {
 	if h.rememberAttempts == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "remember attempt diagnostics unavailable")
 	}
@@ -33,7 +33,7 @@ func (h *controlPortalHandler) listRememberAttemptDiagnostics(c echo.Context) er
 	return response.PaginatedOK(c, page.Items, response.Pagination{Limit: filter.Limit, Offset: filter.Offset, Total: page.Total})
 }
 
-func (h *controlPortalHandler) getRememberAttemptDiagnostic(c echo.Context) error {
+func (h *controlPortalHandler) getRememberAttemptDiagnostic(c *echo.Context) error {
 	if h.rememberAttempts == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "remember attempt diagnostics unavailable")
 	}
@@ -69,7 +69,7 @@ func (h *controlPortalHandler) getRememberAttemptDiagnostic(c echo.Context) erro
 	return response.SuccessOK(c, detail)
 }
 
-func controlRememberAttemptDiagnosticFilter(c echo.Context) (rememberapp.RememberAttemptDiagnosticFilter, error) {
+func controlRememberAttemptDiagnosticFilter(c *echo.Context) (rememberapp.RememberAttemptDiagnosticFilter, error) {
 	limit, offset := controlPagination(c)
 	if raw := strings.TrimSpace(c.QueryParam("limit")); raw != "" {
 		parsed, err := strconv.Atoi(raw)

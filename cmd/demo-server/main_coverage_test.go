@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/cmd/internal/serverapp"
@@ -53,7 +53,7 @@ func TestDemoRuntimeOptionsAndDeferredQuotaMiddleware(t *testing.T) {
 	e := echo.New()
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rec := httptest.NewRecorder()
-	err := options.PostAuthMiddleware[0](func(echo.Context) error { return nil })(e.NewContext(req, rec))
+	err := options.PostAuthMiddleware[0](func(*echo.Context) error { return nil })(e.NewContext(req, rec))
 	if err == nil {
 		t.Fatal("deferred quota middleware accepted an uninitialized manager")
 	}

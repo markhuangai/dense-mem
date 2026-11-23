@@ -12,7 +12,7 @@ import (
 	"github.com/elimity-com/scim"
 	scimerrors "github.com/elimity-com/scim/errors"
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	filterparser "github.com/scim2/filter-parser/v2"
 	"github.com/stretchr/testify/require"
 
@@ -197,12 +197,14 @@ func TestDirectorySCIMFilteringErrorsAndSmallHelpers(t *testing.T) {
 	require.Error(t, directorySCIMMutationError(errors.New("required field")))
 
 	e := echo.New()
-	ctx := e.NewContext(httptest.NewRequest(nethttp.MethodPost, "/", nil), httptest.NewRecorder())
+	recorder := httptest.NewRecorder()
+	ctx := e.NewContext(httptest.NewRequest(nethttp.MethodPost, "/", nil), recorder)
 	require.NoError(t, directoryOAuthError(ctx, nethttp.StatusBadRequest, "invalid_request"))
-	require.Equal(t, nethttp.StatusBadRequest, ctx.Response().Status)
-	ctx = e.NewContext(httptest.NewRequest(nethttp.MethodGet, "/", nil), httptest.NewRecorder())
+	require.Equal(t, nethttp.StatusBadRequest, recorder.Code)
+	recorder = httptest.NewRecorder()
+	ctx = e.NewContext(httptest.NewRequest(nethttp.MethodGet, "/", nil), recorder)
 	require.NoError(t, directorySCIMError(ctx, scimErrorStatus(nethttp.StatusUnauthorized)))
-	require.Equal(t, nethttp.StatusUnauthorized, ctx.Response().Status)
+	require.Equal(t, nethttp.StatusUnauthorized, recorder.Code)
 
 	require.Equal(t, "token", mustDirectoryBearer(t, "Bearer token"))
 	_, ok := directoryBearerToken(httptest.NewRequest(nethttp.MethodGet, "/", nil))

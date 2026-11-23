@@ -3,15 +3,14 @@ package http
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
 	"strings"
 	"time"
 
-	"github.com/labstack/echo/v4"
-	"github.com/labstack/echo/v4/middleware"
+	"github.com/labstack/echo/v5"
+	"github.com/labstack/echo/v5/middleware"
 
 	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
 	httpmw "github.com/markhuangai/dense-mem/internal/http/middleware"
@@ -55,7 +54,8 @@ func (h HealthConfig) dependencyCheckRegistry() *dependencyCheckFlightRegistry {
 // Server is the Echo server wrapper.
 // It holds the Echo instance and configuration.
 type Server struct {
-	echo *echo.Echo
+	echo   *echo.Echo
+	server *http.Server
 }
 
 // ServerProvider is the companion interface for Server.
@@ -76,31 +76,27 @@ func (s *Server) GetEcho() *echo.Echo {
 
 // Start starts the server on the given address.
 func (s *Server) Start(addr string) error {
-	return s.echo.Start(addr)
+	s.server.Addr = addr
+	return s.server.ListenAndServe()
 }
 
 // Shutdown gracefully shuts down the server with the given context.
 func (s *Server) Shutdown(ctx context.Context) error {
-	return s.echo.Shutdown(ctx)
+	return s.server.Shutdown(ctx)
 }
 
 // NewServer creates a new Echo server with the given configuration and health checks.
 // It sets up the correlation ID middleware, error handler, and public routes.
 // The health and ready endpoints are not behind auth, team, or rate-limit middleware.
 func NewServer(cfg httpcontract.BodyLimitConfig, logger httpcontract.LogProvider, health HealthConfig) *echo.Echo {
-	e := echo.New()
-	if rootLogger := NewEchoLogger(logger); rootLogger != nil {
-		e.Logger = rootLogger
-		e.StdLogger = echoServerErrorLogger(logger)
-	}
+	e := echo.NewWithConfig(echo.Config{
+		Logger:           NewEchoLogger(logger),
+		HTTPErrorHandler: httperr.ErrorHandler,
+	})
 	if health.dependencyFlights == nil {
 		health.dependencyFlights = newDependencyCheckFlightRegistry()
 	}
-	applyServerLimits(e)
 	applyIPExtractor(e)
-
-	// Set custom error handler
-	e.HTTPErrorHandler = httperr.ErrorHandler
 
 	// Global middleware (applies to all routes). Completion observers stay
 	// outside recovery and body-limit middleware so early failures still emit
@@ -113,9 +109,8 @@ func NewServer(cfg httpcontract.BodyLimitConfig, logger httpcontract.LogProvider
 		LogStatus:    true,
 		LogLatency:   true,
 		LogRemoteIP:  true,
-		LogError:     true,
 		LogRoutePath: true,
-		LogValuesFunc: func(c echo.Context, v middleware.RequestLoggerValues) error {
+		LogValuesFunc: func(c *echo.Context, v middleware.RequestLoggerValues) error {
 			if logger == nil {
 				return nil
 			}
@@ -151,7 +146,7 @@ func NewServer(cfg httpcontract.BodyLimitConfig, logger httpcontract.LogProvider
 	if cfg != nil {
 		maxBodyBytes = cfg.GetHTTPMaxBodyBytes()
 	}
-	e.Use(middleware.BodyLimit(fmt.Sprintf("%dB", effectiveMaxBodyBytes(maxBodyBytes))))
+	e.Use(middleware.BodyLimit(int64(effectiveMaxBodyBytes(maxBodyBytes))))
 
 	// Register public routes (no auth/team/rate-limit middleware).
 	registerPublicRoutes(e, health)
@@ -159,7 +154,7 @@ func NewServer(cfg httpcontract.BodyLimitConfig, logger httpcontract.LogProvider
 	return e
 }
 
-func isAnonymousUserSessionProbe(c echo.Context, v middleware.RequestLoggerValues) bool {
+func isAnonymousUserSessionProbe(c *echo.Context, v middleware.RequestLoggerValues) bool {
 	if c == nil || c.Request() == nil ||
 		v.Method != http.MethodGet ||
 		requestLogURI(c) != "/ui/api/session" ||
@@ -179,7 +174,7 @@ func isAnonymousUserSessionProbe(c echo.Context, v middleware.RequestLoggerValue
 	return true
 }
 
-func requestLogURI(c echo.Context) string {
+func requestLogURI(c *echo.Context) string {
 	if c == nil || c.Request() == nil || c.Request().URL == nil {
 		return ""
 	}
@@ -192,10 +187,15 @@ func requestLogURI(c echo.Context) string {
 	return "/"
 }
 
-func applyServerLimits(e *echo.Echo) {
-	e.Server.ReadHeaderTimeout = 5 * time.Second
-	e.Server.ReadTimeout = 30 * time.Second
-	e.Server.IdleTimeout = 60 * time.Second
+// NewHTTPServer configures a listener around the transport handler.
+func NewHTTPServer(handler http.Handler, logger httpcontract.LogProvider) *http.Server {
+	return &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		ErrorLog:          EchoServerErrorLogger(logger),
+	}
 }
 
 func applyIPExtractor(e *echo.Echo) {
@@ -214,28 +214,29 @@ func effectiveMaxBodyBytes(value int) int {
 
 // NewServerWithGracefulShutdown creates a new server and returns it along with a shutdown function.
 // The shutdown function uses a 10-second timeout for graceful shutdown.
-func NewServerWithGracefulShutdown(cfg httpcontract.BodyLimitConfig, logger httpcontract.LogProvider, health HealthConfig) (*echo.Echo, func()) {
-	e := NewServer(cfg, logger, health)
+func NewServerWithGracefulShutdown(cfg httpcontract.BodyLimitConfig, logger httpcontract.LogProvider, health HealthConfig) (*http.Server, func()) {
+	server := NewHTTPServer(NewServer(cfg, logger, health), logger)
 
 	shutdown := func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		if err := e.Shutdown(ctx); err != nil {
+		if err := server.Shutdown(ctx); err != nil {
 			if logger != nil {
 				logger.Error("server shutdown error", errors.New(tools.SanitizeError(err)))
 			}
 		}
 	}
 
-	return e, shutdown
+	return server, shutdown
 }
 
 // RunServer starts the server and handles graceful shutdown.
 // It blocks until the server is shut down.
-func RunServer(e *echo.Echo, addr string, logger httpcontract.LogProvider) error {
+func RunServer(server *http.Server, addr string, logger httpcontract.LogProvider) error {
+	server.Addr = addr
 	// Start server in a goroutine
 	go func() {
-		if err := e.Start(addr); err != nil && err != http.ErrServerClosed {
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			if logger != nil {
 				logger.Error("server start error", errors.New(tools.SanitizeError(err)))
 			}
@@ -254,13 +255,13 @@ func RunServer(e *echo.Echo, addr string, logger httpcontract.LogProvider) error
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	return e.Shutdown(ctx)
+	return server.Shutdown(ctx)
 }
 
 // ShutdownServer gracefully shuts down the Echo server with a 10-second timeout.
 // This function is used by main.go for graceful shutdown.
-func ShutdownServer(e *echo.Echo, logger httpcontract.LogProvider) error {
+func ShutdownServer(server *http.Server, logger httpcontract.LogProvider) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	return e.Shutdown(ctx)
+	return server.Shutdown(ctx)
 }

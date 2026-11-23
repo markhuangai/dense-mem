@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	demoservice "github.com/markhuangai/dense-mem/cmd/internal/demo/service"
 )
@@ -20,11 +20,11 @@ func RegisterRoutes(e *echo.Echo, provisioner SessionProvisioner, configuredBase
 		configuredBaseURL = os.Getenv("DEMO_PUBLIC_BASE_URL")
 	}
 
-	e.GET("/", func(c echo.Context) error {
+	e.GET("/", func(c *echo.Context) error {
 		return c.HTML(http.StatusOK, landingHTML)
 	})
 
-	e.POST("/ui/api/demo/session", func(c echo.Context) error {
+	e.POST("/ui/api/demo/session", func(c *echo.Context) error {
 		resp, err := provisioner.Provision(c.Request().Context(), demoservice.ProvisionOptions{
 			ClientIP: c.RealIP(),
 			BaseURL:  requestBaseURL(c, configuredBaseURL),
@@ -36,7 +36,7 @@ func RegisterRoutes(e *echo.Echo, provisioner SessionProvisioner, configuredBase
 	})
 }
 
-func requestBaseURL(c echo.Context, configured string) string {
+func requestBaseURL(c *echo.Context, configured string) string {
 	if base := strings.TrimRight(strings.TrimSpace(configured), "/"); base != "" {
 		return base
 	}
