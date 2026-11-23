@@ -22,7 +22,13 @@ function registryClient(address) {
   const endpoint = "http://" + address + "/v2/" + seedRepository.slice(ghcr.length);
   const inspect = async (tag) => {
     const response = await nativeFetch(endpoint + "/manifests/" + tag, {
-      method: "HEAD", headers: { Accept: "application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json" },
+      method: "HEAD",
+      headers: { Accept: [
+        "application/vnd.oci.image.index.v1+json",
+        "application/vnd.docker.distribution.manifest.list.v2+json",
+        "application/vnd.oci.image.manifest.v1+json",
+        "application/vnd.docker.distribution.manifest.v2+json",
+      ].join(", ") },
       signal: AbortSignal.timeout(5000),
     });
     if (response.status === 404) return null;
@@ -173,6 +179,7 @@ if (process.argv[2] === "--publisher") {
       await fs.writeFile(barrier + ".release", "resume");
       winner = await promoting;
     }
+    assert.ok(winner.image, JSON.stringify(winner));
     const newestDigest = await inspect("hotpotqa-" + newer.selected);
     assert.match(newestDigest, /^sha256:/);
     assert.equal(winner.image, seedRepository + "@" + newestDigest);
