@@ -1,3 +1,7 @@
+--- a/internal/ontology/postgres/build_study_fixture_test.go
++++ b/internal/ontology/postgres/build_study_fixture_test.go
+@@ -119,0 +120 @@
++		domain.AppConfigOntologyStartTime:     time.Now().UTC().Format("15:04"),
 --- a/internal/ontology/postgres/build_study_integration_test.go
 +++ b/internal/ontology/postgres/build_study_integration_test.go
 @@ -435,0 +436,2 @@

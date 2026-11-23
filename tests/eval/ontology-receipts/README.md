@@ -28,9 +28,10 @@ image. An incompatible image leaves the clone private.
 
 A normal push of `perf/ontology-receipt-invalidation` runs correctness, scale,
 and matched-drain jobs on GitHub-hosted PostgreSQL 18. The first two jobs
-gate the matched five-dataset shapes. Every timed arm includes clone setup
-that differs by implementation, incremental backfill, manager correction,
-full coverage, pause and drain. The fixed-schedule correctness arms match
+gate the matched five-dataset shapes. The fixture opens its maintenance window
+at template setup so a scheduled rollover cannot interrupt the matched arms.
+Every arm times its own setup, incremental backfill, manager correction, full
+coverage, pause and drain. The fixed-schedule correctness arms match
 provider HTTP inputs and Recall order. They also run the original freshness
 reader against every omitted source before counting that skip.
 
