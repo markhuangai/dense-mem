@@ -1,0 +1,48 @@
+---
+layout: base
+---
+{% assign flow = site.data.workflows[page.workflow] %}
+{% assign steps = site.steps | where: 'workflow', page.workflow | sort: 'order' %}
+<main id="content" class="walkthrough" data-player data-workflow="{{ page.workflow | escape }}">
+  <div class="intro">
+    <div>
+      <h1>{{ page.title | escape }}</h1>
+      <p>{{ flow.description | escape }}</p>
+    </div>
+    <div class="guide-actions" data-player-controls hidden>
+      <button class="secondary" type="button" data-read-all aria-pressed="false">Read all steps</button>
+      <button class="secondary" type="button" data-open-contents aria-haspopup="dialog" aria-controls="contents">Steps</button>
+    </div>
+  </div>
+  <nav class="chapters" aria-label="Walkthrough chapters" data-chapters hidden>
+    {% assign chapter_names = steps | map: 'chapter' | uniq %}
+    {% for chapter in chapter_names %}
+      {% assign start = steps | where: 'chapter', chapter | first %}
+      <a class="chapter" href="#{{ start.anchor }}" data-jump="{{ start.anchor }}"><span class="chapter-label">{{ chapter | escape }}</span></a>
+    {% endfor %}
+  </nav>
+  {% for step in steps %}
+    {% include step.html step=step index=forloop.index %}
+  {% endfor %}
+  <nav class="transport" aria-label="Step navigation" data-player-controls hidden>
+    <div class="step-count"><span data-counter></span><span class="keyboard" aria-hidden="true">← → keys</span></div>
+    <div class="control-set">
+      <button class="secondary" type="button" data-back><span aria-hidden="true">←</span> Back</button>
+      <button class="primary" type="button" data-next><span data-next-label>Next</span> <span aria-hidden="true">→</span></button>
+    </div>
+  </nav>
+  <dialog class="dialog" id="contents" aria-labelledby="contents-title">
+    <div class="dialog-head"><h2 id="contents-title">Walkthrough steps</h2><button class="secondary" type="button" data-close-contents>Close</button></div>
+    <nav class="index-grid" aria-label="All steps">
+      <ol>
+        {% for step in steps %}
+          <li><a href="#{{ step.anchor }}" data-jump="{{ step.anchor }}">{{ step.title | escape }}</a></li>
+        {% endfor %}
+      </ol>
+    </nav>
+  </dialog>
+  <div class="sr-only" role="status" data-announcement></div>
+  {% if page.workflow == 'evidence' %}
+    <script type="application/json" id="atlas-example">{{ site.data.examples.atlas | jsonify | replace: '</', '<\/' }}</script>
+  {% endif %}
+</main>

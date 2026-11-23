@@ -1,0 +1,148 @@
+[
+  {
+    "title": "Get Started",
+    "anchor": "get-started",
+    "links": [
+      {
+        "title": "Home",
+        "url": "/Home/"
+      },
+      {
+        "title": "Quick Start",
+        "url": "/Quick-Start/"
+      },
+      {
+        "title": "Hosted Demo",
+        "url": "/Hosted-Demo/"
+      }
+    ]
+  },
+  {
+    "title": "Use Memory",
+    "anchor": "use-memory",
+    "links": [
+      {
+        "title": "Using Dense-Mem",
+        "url": "/Using-Dense-Mem/"
+      },
+      {
+        "title": "MCP Clients",
+        "url": "/MCP-Clients/"
+      },
+      {
+        "title": "Framework Integrations",
+        "url": "/Framework-Integrations/"
+      },
+      {
+        "title": "Conflicts And Corrections",
+        "url": "/Conflicts-And-Corrections/"
+      },
+      {
+        "title": "Memory Packs",
+        "url": "/Memory-Packs/"
+      },
+      {
+        "title": "Recall Feedback",
+        "url": "/Recall-Feedback/"
+      }
+    ]
+  },
+  {
+    "title": "Understand The System",
+    "anchor": "understand-the-system",
+    "links": [
+      {
+        "title": "Architecture",
+        "url": "/Architecture/"
+      },
+      {
+        "title": "Evidence Model And Lifecycle",
+        "url": "/Evidence-Model-And-Lifecycle/"
+      },
+      {
+        "title": "Topics And Organization",
+        "url": "/Topics-And-Organization/"
+      },
+      {
+        "title": "Memory Write Pipeline",
+        "url": "/Write-Pipeline/"
+      },
+      {
+        "title": "Data Model And Storage",
+        "url": "/Data-Model-And-Storage/"
+      },
+      {
+        "title": "PostgreSQL Cluster-Safe Schema",
+        "url": "/PostgreSQL-Cluster-Safe-Schema/"
+      },
+      {
+        "title": "Recall Ranking",
+        "url": "/Recall-Ranking/"
+      },
+      {
+        "title": "Vector Search And Ranking",
+        "url": "/Vector-Search-And-Ranking/"
+      },
+      {
+        "title": "ANN, HNSW, And Halfvec",
+        "url": "/ANN-HNSW-And-Halfvec/"
+      },
+      {
+        "title": "Technical Reference",
+        "url": "/Technical-Reference/"
+      }
+    ]
+  },
+  {
+    "title": "Operate",
+    "anchor": "operate",
+    "links": [
+      {
+        "title": "Configuration",
+        "url": "/Configuration/"
+      },
+      {
+        "title": "Portals And API Keys",
+        "url": "/Portals-And-API-Keys/"
+      },
+      {
+        "title": "User Portal SSO",
+        "url": "/User-Portal-SSO/"
+      },
+      {
+        "title": "Request Lifecycle And Security",
+        "url": "/Request-Lifecycle-And-Security/"
+      },
+      {
+        "title": "Public HTTPS And Redis",
+        "url": "/Public-HTTPS-And-Redis/"
+      },
+      {
+        "title": "Operations Runbook",
+        "url": "/Operations-Runbook/"
+      },
+      {
+        "title": "Telemetry",
+        "url": "/Telemetry/"
+      }
+    ]
+  },
+  {
+    "title": "Contribute",
+    "anchor": "contribute",
+    "links": [
+      {
+        "title": "Development And Testing",
+        "url": "/Development-And-Testing/"
+      },
+      {
+        "title": "Evaluation",
+        "url": "/Evaluation/"
+      },
+      {
+        "title": "Documentation Maintenance",
+        "url": "/Documentation-Maintenance/"
+      }
+    ]
+  }
+]

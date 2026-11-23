@@ -1,0 +1,465 @@
+{
+  "revision": "1d1a54d50ae3f17db62d18bb7888dc6655e7288d",
+  "files": {
+    "ANN-HNSW-And-Halfvec.md": {
+      "path": "/ANN-HNSW-And-Halfvec/",
+      "anchors": [
+        "ann-hnsw-and-halfvec",
+        "outcome-and-responsibility",
+        "dimension-and-index-capability",
+        "contract-and-index-decision-guide",
+        "separate-versioned-contracts",
+        "postgresql-storage-and-query-shape",
+        "readiness-and-failure",
+        "topology-and-load",
+        "risks-and-verification"
+      ],
+      "diagrams": 1
+    },
+    "Architecture.md": {
+      "path": "/Architecture/",
+      "anchors": [
+        "architecture",
+        "runtime-boundaries",
+        "dependency-direction",
+        "runtime-composition",
+        "read-and-write-responsibilities",
+        "code-ownership-and-design-review"
+      ],
+      "diagrams": 2
+    },
+    "Community-And-Dreaming.md": {
+      "path": "/Community-And-Dreaming/",
+      "anchors": [
+        "community-and-dreaming"
+      ],
+      "diagrams": 0
+    },
+    "Configuration.md": {
+      "path": "/Configuration/",
+      "anchors": [
+        "configuration",
+        "sources-and-precedence",
+        "required-startup-settings",
+        "listeners",
+        "postgresql-and-pgvector",
+        "embedding-provider-and-contract",
+        "search-index-construction",
+        "assessor",
+        "typed-decision-providers",
+        "ontology-maintenance",
+        "redis-rate-limits-and-streams",
+        "runtime-sso-oauth-and-private-memory",
+        "private-session-ingestion",
+        "recall-feedback",
+        "telemetry-and-logging",
+        "enterprise-exports"
+      ],
+      "diagrams": 1
+    },
+    "Conflicts-And-Corrections.md": {
+      "path": "/Conflicts-And-Corrections/",
+      "anchors": [
+        "conflicts-and-corrections",
+        "choose-the-workflow",
+        "replace-owned-evidence",
+        "retract-owned-evidence",
+        "evidence-conflicts",
+        "operator-inspection-and-decision",
+        "failure-and-recovery"
+      ],
+      "diagrams": 2
+    },
+    "Data-Model-And-Storage.md": {
+      "path": "/Data-Model-And-Storage/",
+      "anchors": [
+        "data-model-and-storage",
+        "storage-responsibilities",
+        "source-retention-and-acceptance",
+        "derived-state",
+        "isolation-and-private-erasure",
+        "backup-and-operations"
+      ],
+      "diagrams": 2
+    },
+    "Development-And-Testing.md": {
+      "path": "/Development-And-Testing/",
+      "anchors": [
+        "development-and-testing",
+        "change-workflow",
+        "local-checks",
+        "postgresql-and-production-entry-tests",
+        "behavioral-acceptance",
+        "staging-validation",
+        "python-package-and-frameworks",
+        "review-and-ci-phases",
+        "data-migrations-and-artifacts",
+        "remote-development-tests",
+        "fork-pull-request-validation",
+        "documentation-changes"
+      ],
+      "diagrams": 1
+    },
+    "Documentation-Maintenance.md": {
+      "path": "/Documentation-Maintenance/",
+      "anchors": [
+        "documentation-maintenance",
+        "implementation-status",
+        "repository-documentation-and-publication",
+        "publish-and-recover",
+        "canonical-page-ownership",
+        "single-source-rules",
+        "updating-and-verifying"
+      ],
+      "diagrams": 1
+    },
+    "Dreaming.md": {
+      "path": "/Dreaming/",
+      "anchors": [
+        "dreaming"
+      ],
+      "diagrams": 0
+    },
+    "Entity-Identity-And-Resolution.md": {
+      "path": "/Entity-Identity-And-Resolution/",
+      "anchors": [
+        "entity-identity-and-resolution"
+      ],
+      "diagrams": 0
+    },
+    "Evaluation.md": {
+      "path": "/Evaluation/",
+      "anchors": [
+        "evaluation",
+        "image-boundary-and-tool-surface",
+        "current-evidence-evaluation",
+        "validate-and-smoke-test",
+        "matched-campaign-and-comparison",
+        "change-gate-and-artifacts"
+      ],
+      "diagrams": 1
+    },
+    "Evidence-Model-And-Lifecycle.md": {
+      "path": "/Evidence-Model-And-Lifecycle/",
+      "anchors": [
+        "evidence-model-and-lifecycle",
+        "the-memory-model",
+        "exactness-and-reuse",
+        "lifecycle",
+        "visibility-and-ownership",
+        "time-views-and-provenance"
+      ],
+      "diagrams": 2
+    },
+    "Framework-Integrations.md": {
+      "path": "/Framework-Integrations/",
+      "anchors": [
+        "framework-integrations",
+        "authentication-and-operations",
+        "remember-with-python",
+        "exact-private-session-ingestion",
+        "failures-and-unknown-outcomes",
+        "google-adk-2141",
+        "langchain-core-154",
+        "build-and-validation"
+      ],
+      "diagrams": 1
+    },
+    "Home.md": {
+      "path": "/Home/",
+      "anchors": [
+        "dense-mem",
+        "start-here",
+        "choose-the-right-memory"
+      ],
+      "diagrams": 1
+    },
+    "Hosted-Demo.md": {
+      "path": "/Hosted-Demo/",
+      "anchors": [
+        "hosted-demo",
+        "shared-demo-workspace",
+        "test-the-current-contract",
+        "interpret-the-result"
+      ],
+      "diagrams": 1
+    },
+    "MCP-Clients.md": {
+      "path": "/MCP-Clients/",
+      "anchors": [
+        "mcp-clients",
+        "credentials-and-discovery",
+        "claude-code",
+        "codex",
+        "remember-progress",
+        "verify-the-connection",
+        "session-and-python-integrations",
+        "troubleshooting"
+      ],
+      "diagrams": 1
+    },
+    "Memory-Packs.md": {
+      "path": "/Memory-Packs/",
+      "anchors": [
+        "memory-packs",
+        "export-boundary",
+        "artifact-contents",
+        "use-at-a-destination",
+        "recovery-boundary"
+      ],
+      "diagrams": 2
+    },
+    "Operations-Runbook.md": {
+      "path": "/Operations-Runbook/",
+      "anchors": [
+        "operations-runbook",
+        "startup-and-readiness",
+        "destructive-migration-boundary",
+        "evidence-only-cutover",
+        "staging-deployment",
+        "health-triage",
+        "synchronous-remember-failure-triage",
+        "search-convergence",
+        "recall-latency-or-quality",
+        "ontology-maintenance",
+        "evidence-conflicts",
+        "private-memory-erasure",
+        "backup",
+        "restore-and-disaster-recovery",
+        "routine-maintenance-and-shutdown"
+      ],
+      "diagrams": 5
+    },
+    "Portals-And-API-Keys.md": {
+      "path": "/Portals-And-API-Keys/",
+      "anchors": [
+        "portals-and-api-keys",
+        "portal-responsibilities",
+        "sign-in-and-connect",
+        "credentials-and-api-keys",
+        "create-and-rotate",
+        "sso-owned-credentials",
+        "private-memory-erasure",
+        "control-workspace"
+      ],
+      "diagrams": 2
+    },
+    "PostgreSQL-Cluster-Safe-Schema.md": {
+      "path": "/PostgreSQL-Cluster-Safe-Schema/",
+      "anchors": [
+        "postgresql-cluster-safe-schema",
+        "supported-topology",
+        "transaction-and-key-boundaries",
+        "versioned-search-and-organization",
+        "durable-work",
+        "migrations-and-proof"
+      ],
+      "diagrams": 1
+    },
+    "Public-HTTPS-And-Redis.md": {
+      "path": "/Public-HTTPS-And-Redis/",
+      "anchors": [
+        "public-https-and-redis",
+        "network-boundary",
+        "https",
+        "forwarded-client-ip",
+        "public-surface",
+        "redis-decision",
+        "single-instance",
+        "replicas",
+        "redis-security",
+        "failure-sequence",
+        "checks",
+        "risks-and-mitigations",
+        "acceptance-invariants"
+      ],
+      "diagrams": 3
+    },
+    "Quick-Start.md": {
+      "path": "/Quick-Start/",
+      "anchors": [
+        "quick-start",
+        "local-shape",
+        "1-pin-deployment-inputs",
+        "2-configure-and-start",
+        "3-create-a-credential-and-connect",
+        "4-discover-and-test-memory",
+        "stop-and-restart"
+      ],
+      "diagrams": 1
+    },
+    "Recall-Feedback.md": {
+      "path": "/Recall-Feedback/",
+      "anchors": [
+        "recall-feedback",
+        "flow",
+        "submission",
+        "partial-failure",
+        "stored-investigation-record",
+        "offline-use-and-retention"
+      ],
+      "diagrams": 2
+    },
+    "Recall-Ranking.md": {
+      "path": "/Recall-Ranking/",
+      "anchors": [
+        "recall-ranking",
+        "retrieval-flow",
+        "eligibility",
+        "topics-and-equivalence",
+        "authorized-space-branches",
+        "failure-and-degradation",
+        "trace-and-feedback"
+      ],
+      "diagrams": 1
+    },
+    "Relationship-Model-And-Lifecycle.md": {
+      "path": "/Relationship-Model-And-Lifecycle/",
+      "anchors": [
+        "relationship-model-and-lifecycle"
+      ],
+      "diagrams": 0
+    },
+    "Request-Lifecycle-And-Security.md": {
+      "path": "/Request-Lifecycle-And-Security/",
+      "anchors": [
+        "request-lifecycle-and-security",
+        "network-surfaces",
+        "protected-request-boundary",
+        "api-key-authentication",
+        "oauth-bearer-authentication-for-mcp",
+        "browser-session-and-csrf",
+        "memory-space-authorization",
+        "row-and-search-isolation",
+        "write-time-security",
+        "diagnostics-providers-and-audit",
+        "progress-notification-boundary",
+        "private-erasure-boundary"
+      ],
+      "diagrams": 4
+    },
+    "Technical-Reference.md": {
+      "path": "/Technical-Reference/",
+      "anchors": [
+        "technical-reference",
+        "tool-catalog",
+        "common-rules",
+        "remember",
+        "request",
+        "response",
+        "optional-progress",
+        "ingest_session",
+        "request-1",
+        "response-1",
+        "recall_memory",
+        "request-2",
+        "response-2",
+        "trace_memory",
+        "request-3",
+        "retract_evidence",
+        "request-4",
+        "submit_recall_session_feedback",
+        "request-5",
+        "export_memory_pack",
+        "request-6",
+        "errors-and-client-actions",
+        "http-surface"
+      ],
+      "diagrams": 0
+    },
+    "Telemetry.md": {
+      "path": "/Telemetry/",
+      "anchors": [
+        "telemetry",
+        "observation-surfaces",
+        "active-metrics",
+        "operation-logs-and-protected-captures",
+        "remember-progress-diagnostics",
+        "migration-observations",
+        "dashboard-states",
+        "cost-rate-card",
+        "query-examples",
+        "enterprise-exports",
+        "diagnose-without-inventing-state"
+      ],
+      "diagrams": 3
+    },
+    "Topics-And-Organization.md": {
+      "path": "/Topics-And-Organization/",
+      "anchors": [
+        "topics-and-organization",
+        "organization-boundary",
+        "discover-and-follow-a-topic",
+        "enablement-and-freshness",
+        "evidence-only-cutover",
+        "manager-workflow"
+      ],
+      "diagrams": 3
+    },
+    "User-Portal-SSO.md": {
+      "path": "/User-Portal-SSO/",
+      "anchors": [
+        "user-portal-sso",
+        "browser-login-flow",
+        "sso-login-visibility",
+        "provider-fields",
+        "microsoft-entra-id--azure-ad-scim-directory-automation",
+        "control-portal-sso",
+        "generic-oidc-group-and-role-mapping",
+        "example-zitadel-cloud-with-project-roles",
+        "sso-troubleshooting",
+        "related-configuration"
+      ],
+      "diagrams": 1
+    },
+    "Using-Dense-Mem.md": {
+      "path": "/Using-Dense-Mem/",
+      "anchors": [
+        "using-dense-mem",
+        "everyday-workflow",
+        "choose-the-destination",
+        "submit-exact-evidence",
+        "retrieve-and-follow-up",
+        "maintain-memory",
+        "unknown-outcomes"
+      ],
+      "diagrams": 1
+    },
+    "Vector-Search-And-Ranking.md": {
+      "path": "/Vector-Search-And-Ranking/",
+      "anchors": [
+        "vector-search-and-ranking",
+        "embeddings-and-distance",
+        "candidate-fusion",
+        "optional-typed-reranking",
+        "memory-space-fusion",
+        "change-and-measurement"
+      ],
+      "diagrams": 1
+    },
+    "Write-Pipeline.md": {
+      "path": "/Write-Pipeline/",
+      "anchors": [
+        "memory-write-pipeline",
+        "end-to-end-flow",
+        "exact-intake-and-duplicate-handling",
+        "complete-assessment",
+        "atomic-commit-and-deadlines",
+        "replay-and-recovery",
+        "private-session-intake"
+      ],
+      "diagrams": 3
+    },
+    "_Sidebar.md": {
+      "path": "/guides/",
+      "anchors": [
+        "get-started",
+        "use-memory",
+        "understand-the-system",
+        "operate",
+        "contribute"
+      ],
+      "diagrams": 0
+    }
+  }
+}

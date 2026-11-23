@@ -1,0 +1,81 @@
+{
+  "subject": {
+    "source": "Operations handoff",
+    "content": "Atlas keeps routine snapshots for 30 days.\nThe support desk opens at noon.",
+    "exception": "Legal holds suspend Atlas snapshot expiry.",
+    "requestKey": "atlas-handoff-01",
+    "query": "routine snapshots",
+    "timestamp": "2026-11-23T10:00:00Z"
+  },
+  "evidence": {
+    "E1": {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "short": "Retention period"
+    },
+    "E2": {
+      "id": "00000000-0000-4000-8000-000000000002",
+      "short": "Support hours"
+    },
+    "E3": {
+      "id": "00000000-0000-4000-8000-000000000003",
+      "short": "Legal hold"
+    }
+  },
+  "topics": {
+    "operations": {
+      "id": "10000000-0000-4000-8000-000000000000",
+      "name": "Operations",
+      "members": [],
+      "key": "operations",
+      "description": "Operational practices for the Atlas team.",
+      "aliases": []
+    },
+    "retention": {
+      "id": "10000000-0000-4000-8000-000000000001",
+      "name": "Snapshot retention",
+      "members": [
+        "E1",
+        "E3"
+      ],
+      "key": "snapshot-retention",
+      "description": "How long snapshots are kept and when expiry is suspended.",
+      "aliases": [
+        "routine backup retention"
+      ],
+      "parent": "operations"
+    },
+    "hours": {
+      "id": "10000000-0000-4000-8000-000000000002",
+      "name": "Support hours",
+      "members": [
+        "E2"
+      ],
+      "key": "support-hours",
+      "description": "When the support desk is open.",
+      "aliases": [
+        "desk hours"
+      ],
+      "parent": "operations"
+    }
+  },
+  "recall": {
+    "limit": 1,
+    "topic_limit": 2
+  },
+  "exemplars": {
+    "text_order": [
+      "E1"
+    ],
+    "vector_order": [
+      "E1",
+      "E3",
+      "E2"
+    ]
+  },
+  "rows": {
+    "submittedItem": "20000000-0000-4000-8000-000000000001",
+    "occurrence": "20000000-0000-4000-8000-000000000002",
+    "ingest": "20000000-0000-4000-8000-000000000003",
+    "searchDocument": "20000000-0000-4000-8000-000000000004"
+  }
+}

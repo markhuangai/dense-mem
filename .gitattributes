@@ -1,0 +1,2 @@
+assets/vendor/*.min.js -diff linguist-vendored
+assets/fonts/*.woff2 binary

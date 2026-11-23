@@ -1,0 +1,29 @@
+---
+layout: base
+title: All guides
+permalink: /guides/
+---
+<main id="content" class="guide-index">
+  <h1>All guides</h1>
+  <p>Open a step-through walkthrough or jump into a reference.</p>
+  <section aria-labelledby="walkthroughs">
+    <h2 id="walkthroughs">Walkthroughs</h2>
+    <div class="trail-grid">
+      {% for record in site.data.workflows %}
+        {% assign flow = record[1] %}
+        <a href="{{ flow.url | relative_url }}"><strong>{{ flow.title | escape }}</strong><span>{{ flow.description | escape }}</span></a>
+      {% endfor %}
+    </div>
+  </section>
+  <section aria-labelledby="references">
+    <h2 id="references">Guides and reference</h2>
+    <div class="reference-grid">
+      {% for group in site.data.navigation %}
+        <div>
+          <h3 id="{{ group.anchor }}">{{ group.title | escape }}</h3>
+          <ul>{% for link in group.links %}<li><a href="{{ link.url | relative_url }}">{{ link.title | escape }}</a></li>{% endfor %}</ul>
+        </div>
+      {% endfor %}
+    </div>
+  </section>
+</main>

@@ -1,0 +1,12 @@
+{
+  "name": "dense-mem-documentation",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.14.0",
+    "@playwright/test": "1.65.0"
+  }
+}

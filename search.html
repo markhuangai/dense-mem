@@ -1,0 +1,18 @@
+---
+layout: base
+title: Search
+permalink: /search/
+---
+<main id="content" class="prose search" data-search data-index="{{ '/assets/search.json' | relative_url }}">
+  <h1>Search documentation</h1>
+  <form action="{{ '/search/' | relative_url }}" role="search">
+    <label for="doc-query">Topic, command, or setting</label>
+    <div class="control-set">
+      <input type="search" id="doc-query" name="q" required>
+      <button class="primary" type="submit">Search</button>
+    </div>
+  </form>
+  <p role="status" data-search-status></p>
+  <ol class="search-results" data-search-results></ol>
+  <noscript><p>Browse <a href="{{ '/guides/' | relative_url }}">all guides</a> or use your browser's Find command.</p></noscript>
+</main>

@@ -1,0 +1,273 @@
+ai_partition:
+  title: Watch the partition model exchange
+  intro: One complete structured response determines where the server slices the item.
+  variants:
+    - label: Valid response
+      frames:
+        - title: Server sends the marked source
+          note: The JSON includes request-scoped boundary IDs. The source text and its newline belong to the original item.
+          sample: partitionRequest
+        - title: Model chooses one cut
+          note: The model returns a cut reference. Dense-Mem checks the reference and reconstructs both exact spans from the original.
+          sample: partitionResponse
+        - title: Server admits two exact spans
+          note: The first span ends immediately after the newline. The two spans reconstruct the entire original.
+          rows:
+            - name: span A
+              value: spanA
+              text: First line and newline
+            - name: span B
+              value: spanB
+              text: Second line
+    - label: Unknown boundary
+      frames:
+        - title: Server sends the same marked source
+          note: Each candidate boundary belongs only to this request and item.
+          sample: partitionRequest
+        - title: Model returns an unknown reference
+          note: The proposed cut is outside the supplied reference list. The entire response fails validation.
+          sample: partitionRejected
+        - title: Server requests a complete replacement
+          note: Dense-Mem retries within the bounded regeneration policy. If validation never succeeds, the request publishes zero new Evidence.
+          rows:
+            - name: Published Evidence
+              text: "0"
+
+ai_assessment:
+  title: Inspect the Evidence assessment
+  intro: This example shows the generation route for equivalence and conflict assessment.
+  variants:
+    - label: Accept both slices
+      frames:
+        - title: Supply the original meanings
+          note: The assessor sees two submitted slices and a bounded list of authorized comparison candidates. The existing legal-hold passage is context for the first decision.
+          sample: assessmentCandidate
+          sample_label: Inspect selected request fields
+        - title: Return every open decision
+          note: The response keeps the submitted passages distinct from the candidate and reports zero conflict proposals.
+          sample: assessmentResponse
+        - title: Validate before preparing the commit
+          note: The server validates the response schema, coverage, candidate references, and cited spans. The two submitted fragments can proceed to the required search preparation.
+    - label: Reject an invented candidate
+      frames:
+        - title: Return an out-of-list reuse decision
+          note: The model names a candidate the server never supplied. An invented reference fails the entire assessment.
+          sample: assessmentRejected
+        - title: Regenerate or fail
+          note: Request a complete corrected response within the retry bound. A persistent failure leaves the existing legal-hold Evidence available and publishes zero new Evidence.
+          rows:
+            - name: New Evidence
+              text: "0"
+
+database_commit:
+  title: Watch the PostgreSQL transaction
+  intro: Selected row fields from a fictional write show what becomes visible at commit.
+  variants:
+    - label: Successful commit
+      frames:
+        - title: Prepare search outside the transaction
+          stage: Prepare vectors
+          note: The server has validated the assessment and prepares any required vectors. Existing eligible vectors can be reused where the embedding and search contracts allow it.
+          rows:
+            - name: New rows visible to readers
+              text: "0"
+        - title: Write the original item and lineage
+          stage: Inside transaction
+          note: The server rechecks authorization, idempotency, and the search contract inside the transaction. It writes the original item, the occurrence, and the partition link as part of the same commit.
+          rows:
+            - name: Submitted item
+              value: submittedItem
+            - name: E1 occurrence
+              value: occurrence
+            - name: Partition span
+              value: spanA
+          sample: writeLineage
+          sample_label: Inspect selected row fields for E1
+        - title: Publish search state and the receipt
+          stage: Commit visible to readers
+          note: The transaction also writes the decisions, search documents, required vectors, and replay receipt. After commit, Recall can find E1 and E2. Topic placement is separate work.
+          rows:
+            - name: Search document
+              value: searchDocument
+            - name: Replay key
+              value: replayKey
+          sample: writeSearch
+          sample_label: Inspect selected search and receipt fields
+    - label: Roll back before commit
+      frames:
+        - title: Stage rows inside the transaction
+          stage: Inside transaction
+          note: The same lineage rows can be present inside the transaction while they remain invisible to readers.
+          sample: writeLineage
+        - title: Fail while writing search state
+          stage: Rollback
+          note: An error can occur before the transaction lands. The transaction rolls back every new write from this operation.
+          rows:
+            - name: New lineage rows visible
+              text: "0"
+            - name: New search rows visible
+              text: "0"
+            - name: Completed replay receipt
+              text: Absent
+        - title: Return the failed outcome
+          note: A separate failure record may explain the attempt. The caller follows the returned recovery policy and retains the original key and request for a retry where allowed.
+
+ai_ontology:
+  title: Watch how the AI chooses a topic
+  intro: These fictional exchanges follow the organizer’s structured request and response types.
+  variants:
+    - label: Reuse an existing topic
+      frames:
+        - title: Send a bounded shortlist
+          stage: Dense-Mem → model
+          note: Current candidate definitions arrive with the exact passages and allowed comparisons. The limit is up to 20 definitions per batch, further bounded by the configured vocabulary token limit.
+          rows:
+            - name: Parent topic
+              value: parentTopic
+            - name: Candidate topic
+              value: hoursTopic
+            - name: Candidate topic
+              value: retentionTopic
+          sample: ontologyReuseRequest
+        - title: Select a supplied reference
+          stage: Model → Dense-Mem
+          note: Both retention passages use the same supplied definition reference. The pair remains distinct because each passage supplies a different condition.
+          sample: ontologyReuseResponse
+        - title: Validate and publish direct assignments
+          stage: Server policy and publication
+          note: Dense-Mem checks coverage and references, then rechecks source eligibility and relevant revisions before publication.
+          rows:
+            - name: E1 and E3
+              value: retentionTopic
+              text: Existing retention topic
+            - name: Catalog change
+              text: Two direct assignments
+    - label: Propose a missing topic
+      frames:
+        - title: Send the eligible passages
+          stage: Dense-Mem → model
+          note: In this alternative, the team’s existing shortlist lacks a definition that fits the input. The model receives the same Evidence and the available definitions.
+          sample: ontologyNewRequest
+        - title: Propose and use one new definition
+          stage: Model → Dense-Mem
+          note: The response includes a new topic once, then both decisions reference it. When the fit is uncertain the model can mark an open item ambiguous.
+          sample: ontologyNewResponse
+        - title: Check the definition and assignments
+          stage: Server policy and publication
+          note: Dense-Mem validates the proposal, checks for existing definitions and stale inputs, then publishes the accepted definition and direct assignments together.
+          rows:
+            - name: Proposed topic
+              value: retentionTopic
+              text: Retention topic
+            - name: Evidence already stored
+              text: E1 and E3
+
+database_ontology:
+  title: Inspect the topic assignment
+  intro: Follow the published assignment from its topic definition to the existing source.
+  variants:
+    - label: Current publication
+      frames:
+        - title: Load current source versions
+          note: The worker reads eligible shared Evidence and snapshots the relevant source fingerprints, catalog definitions, and overrides.
+          rows:
+            - name: Source
+              value: evidenceOne
+              text: E1
+            - name: Version
+              text: "1"
+        - title: Publish a definition and assignment relationship
+          note: A versioned assignment records the Evidence source and its direct definition. The parent of a topic is catalog navigation.
+          sample: organizationAssignment
+          sample_label: Inspect selected organization record fields
+        - title: Read current direct membership
+          note: Recall checks the assignment, definition, source eligibility, and current dependency state. A stale assignment drops out of current topic reads.
+          rows:
+            - name: Selected topic
+              value: retentionTopic
+              text: Retention topic
+            - name: Eligible direct Evidence
+              text: E1 and E3
+
+ai_query_vector:
+  title: Inspect the query embedding
+  intro: The query vector supports search. Recall itself returns stored Evidence.
+  variants:
+    - label: Vector available
+      frames:
+        - title: Embed the query text
+          note: The server uses the active search contract and submits the query to the configured embedding provider. The configured dimensions and the resulting vector belong to that contract.
+          sample: embeddingInput
+          sample_label: Inspect the logical embedding input
+        - title: Search current vectors
+          note: PostgreSQL searches the eligible current vectors with the active contract. Its nearest results contribute to rank fusion alongside full-text matches.
+    - label: Vector unavailable
+      frames:
+        - title: The query embedding fails
+          note: A provider failure or unusable vector removes this optional search channel for the call.
+          rows:
+            - name: Vector branch
+              text: Unavailable
+        - title: Continue with eligible word matches
+          note: Full-text search still returns the passage with both query terms. The public result records a degradation.
+          rows:
+            - name: Lexical result
+              value: evidenceOne
+              text: E1
+            - name: Degradation
+              text: Vector recall unavailable
+
+database_read:
+  title: See the eligible read and hydration
+  intro: Follow the candidate from a search projection to the exact authorized Evidence.
+  variants:
+    - label: Retrieve and hydrate
+      frames:
+        - title: Scope each search branch
+          stage: Search projection
+          note: The SQL adapter applies the authorized space, lifecycle, and requested eligibility filters. Each candidate can identify its search projection.
+          sample: readCandidate
+          sample_label: Inspect selected candidate fields
+        - title: Hydrate eligible Evidence
+          stage: Authorized Evidence
+          note: Dense-Mem loads the original Evidence text for the ranked candidate and checks eligibility again. The selected result uses the Evidence ID and the shared space label.
+          sample: recallResult
+          sample_label: Inspect selected result fields
+        - title: Look up the direct topic hint
+          stage: Current topic membership
+          note: The topic read follows current assignments and counts eligible direct Evidence. The hint gives the caller a topic ID to use in a new request.
+          rows:
+            - name: Hint
+              value: retentionTopic
+              text: Retention topic
+            - name: Eligible Evidence
+              value: retentionCount
+              text: Two passages
+
+database_trace:
+  title: Follow the database provenance links
+  intro: The occurrence and partition connect the canonical ID to the exact original.
+  variants:
+    - label: Trace E1
+      frames:
+        - title: Start from the Evidence ID
+          note: Trace uses the authenticated actor’s allowed spaces and returns bounded evidence history.
+          rows:
+            - name: E1
+              value: evidenceOne
+              text: Evidence ID
+            - name: Occurrence
+              value: occurrence
+              text: Occurrence ID
+        - title: Resolve the partition mapping
+          note: The occurrence links to partition zero of submitted item zero. The mapping supplies offsets and the original item’s content hash.
+          sample: tracePartition
+        - title: Verify the source slice
+          note: Slice the original text by Unicode code points. The displayed end is exclusive and the newline is part of E1.
+          rows:
+            - name: Exact span
+              value: spanA
+              text: First partition
+            - name: Exact Evidence
+              value: evidenceText
+              text: The original retention line
