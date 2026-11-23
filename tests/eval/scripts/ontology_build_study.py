@@ -60,6 +60,12 @@ COHORTS = (
     "TestRecallAccuracyCohort",
 )
 LOOKUP_REGRESSIONS = ("TestOntologyRankFirstVocabulary", "TestOntologyVocabularyUsesCurrentCandidateWindow")
+PENDING_ARMS = ("base", "base-skip", "vector", "vector-skip")
+PENDING_ORDERS = tuple(
+    tuple(PENDING_ARMS[ord(arm) - ord("A")] for arm in order)
+    for order in ("ABDC", "BCAD", "CDBA", "DACB")
+)
+PENDING_REGRESSIONS = ("TestOntologyPendingRefreshStudy", "TestOntologyMaintenanceCurrentReceiptCompletion")
 
 
 def lookup_overlay(directory):
@@ -114,7 +120,7 @@ func studyWitnessVocabulary(query string) {
 
 func studyVocabularyLookup() string {
     switch os.Getenv("ONTOLOGY_STUDY_ACTIVE_ARM") {
-    case "vector":
+    case "vector", "vector-skip":
         return """ + vector_sql + """
     case "rank-first":
         return """ + rank_sql + """
@@ -128,6 +134,98 @@ func studyVocabularyLookup() string {
     variant.write_text(patched)
     overlay = directory / "overlay.json"
     overlay.write_text(json.dumps({"Replace": {str(source): str(variant)}}))
+    return overlay
+
+
+def pending_overlay(directory):
+    overlay = lookup_overlay(directory)
+    replacements = json.loads(overlay.read_text())["Replace"]
+    root = Path("internal/ontology/postgres").resolve()
+
+    def replace(text, old, new):
+        if text.count(old) != 1:
+            raise ValueError("pending refresh overlay source changed: " + old.splitlines()[0])
+        return text.replace(old, new, 1)
+
+    def save(name, text):
+        path = directory.resolve() / name
+        path.write_text(text)
+        replacements[str(root / name)] = str(path)
+
+    def with_pending_policy(text, name, parameters, arguments):
+        prefix = f"func {name}(tx *gorm.DB, fence scope, handle ontology.SourceHandle, {parameters} bool) error {{"
+        return replace(text, prefix, prefix + f"""
+    return {name}WithQueuePolicy(tx, fence, handle, {arguments}, false)
+}}
+
+func {name}WithQueuePolicy(tx *gorm.DB, fence scope, handle ontology.SourceHandle, {parameters}, unclaimed bool) error {{""")
+
+    discovery_name = "maintenance_discovery.go"
+    discovery = (root / discovery_name).read_text()
+    discovery = replace(discovery, "\t\tif kind < len(maintenanceSourceKinds) {",
+                        '\t\tstudyPendingEvent(tx, fence, "study_page_limit", limit)\n\t\tif kind < len(maintenanceSourceKinds) {')
+    discovery = with_pending_policy(discovery, "refreshMaintenanceSource", "force", "force")
+    discovery = with_pending_policy(discovery, "refreshMaintenanceInvalidation", "definition", "definition")
+    discovery = replace(discovery, "refreshMaintenanceSource(tx, fence, handle, definition)",
+                        "refreshMaintenanceSourceWithQueuePolicy(tx, fence, handle, definition, unclaimed)")
+    discovery = replace(discovery, "\twrite := tx.Exec(`INSERT INTO ontology_maintenance_sources", """
+    skipEligible := force && snapshot.Eligible && unclaimed
+    pendingPredicate := ""
+    if skipEligible {
+        pendingPredicate = ` AND NOT (
+          ontology_maintenance_sources.eligible IS TRUE
+          AND ontology_maintenance_sources.status IS NOT DISTINCT FROM 'pending'
+          AND ontology_maintenance_sources.source_version IS NOT DISTINCT FROM EXCLUDED.source_version
+          AND ontology_maintenance_sources.fingerprint IS NOT DISTINCT FROM EXCLUDED.fingerprint
+          AND ontology_maintenance_sources.meaning_key IS NOT DISTINCT FROM EXCLUDED.meaning_key
+          AND ontology_maintenance_sources.search_tsv IS NOT DISTINCT FROM EXCLUDED.search_tsv
+          AND ontology_maintenance_sources.vocabulary_words IS NOT DISTINCT FROM EXCLUDED.vocabulary_words
+          AND ontology_maintenance_sources.reason IS NOT DISTINCT FROM EXCLUDED.reason)`
+    }
+    write := tx.Exec(`INSERT INTO ontology_maintenance_sources""")
+    discovery = replace(discovery, "OR ?`, fence.TeamID, fence.SpaceID, fence.Generation, handle.Kind, handle.ID, handle.Version, fingerprint",
+                        "OR ?`+pendingPredicate, fence.TeamID, fence.SpaceID, fence.Generation, handle.Kind, handle.ID, handle.Version, fingerprint")
+    discovery = replace(discovery, '\tif write.Error == nil && write.RowsAffected > 0 && status == "pending" {', """
+    if write.Error == nil && write.RowsAffected == 0 {
+        if skipEligible {
+            observeMaintenanceSource(tx.Statement.Context, fence, handle, "study_pending_skip", nil)
+        } else {
+            observeMaintenanceSource(tx.Statement.Context, fence, handle, "study_queue_noop", nil)
+        }
+    }
+    if write.Error == nil && write.RowsAffected > 0 && status == "pending" {""")
+    save(discovery_name, discovery)
+
+    markers_name = "maintenance_markers.go"
+    markers = replace((root / markers_name).read_text(), '"errors"', '"errors"\n "os"')
+    markers = with_pending_policy(markers, "refreshSelectedMaintenanceSource", "definition", "definition")
+    markers = replace(markers, "err := refreshMaintenanceInvalidation(tx, fence, handle, definition)",
+                      "err := refreshMaintenanceInvalidationWithQueuePolicy(tx, fence, handle, definition, unclaimed)")
+    markers = replace(markers, "\tfor _, handle := range page.Sources {\n\t\tif err := refreshSelectedMaintenanceSource(tx, fence, handle, true); err != nil {", """
+    var busy map[string]bool
+    if len(page.Sources) != 0 {
+        studyPendingEvent(tx, fence, "study_definition_page", len(page.Sources))
+        arm := os.Getenv("ONTOLOGY_STUDY_ACTIVE_ARM")
+        if arm == "base-skip" || arm == "vector-skip" {
+            busy, err = maintenanceBusySources(tx, fence)
+            if err != nil {
+                return err
+            }
+            studyPendingEvent(tx, fence, "study_claim_read", len(busy))
+        }
+    }
+    for _, handle := range page.Sources {
+        unclaimed := busy != nil && !busy[ontology.SourceKey(handle)]
+        if err := refreshSelectedMaintenanceSourceWithQueuePolicy(tx, fence, handle, true, unclaimed); err != nil {""")
+    markers += """
+func studyPendingEvent(tx *gorm.DB, fence scope, phase string, sources int) {
+    if observer, ok := tx.Statement.Context.Value(maintenanceDiscoveryObservationKey{}).(maintenanceDiscoveryObserver); ok && observer != nil {
+        observer(maintenanceDiscoveryEvent{Phase: phase, Scope: fence, Sources: sources})
+    }
+}
+"""
+    save(markers_name, markers)
+    overlay.write_text(json.dumps({"Replace": replacements}))
     return overlay
 
 
@@ -154,7 +252,7 @@ def page_overlay(directory):
 
 @contextlib.contextmanager
 def study_migration(arm):
-    if arm not in ("vector", "rank-first"):
+    if arm not in ("vector", "rank-first", "vector-skip"):
         yield
         return
     if os.environ.get("GITHUB_ACTIONS") != "true" or os.environ.get("RUNNER_ENVIRONMENT") != "github-hosted":
@@ -172,7 +270,7 @@ def study_migration(arm):
         path.unlink()
 
 
-def cohorts(arm, directory):
+def cohorts(arm, directory, *, pending=False):
     root = Path.cwd()
     source = root / "internal/ontology/postgres/organization.go"
     original = source.read_text()
@@ -184,7 +282,10 @@ def cohorts(arm, directory):
               "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"], "tests": {}}
     with tempfile.TemporaryDirectory() as temp, study_migration(arm):
         command = ["go", "test", "-json", "-count=1", "-tags=integration", "-p=1", "-timeout=70m"]
-        if arm in LOOKUP_ARMS:
+        if pending:
+            command.extend(["-overlay", str(pending_overlay(Path(temp)))])
+            command[command.index("-tags=integration")] = "-tags=integration,ontology_study"
+        elif arm in LOOKUP_ARMS:
             command.extend(["-overlay", str(lookup_overlay(Path(temp)))])
             command[command.index("-tags=integration")] = "-tags=integration,ontology_study"
         elif arm == "topic":
@@ -196,7 +297,9 @@ def cohorts(arm, directory):
         elif arm == "pages":
             command.extend(["-overlay", str(page_overlay(Path(temp)))])
         required = list(COHORTS)
-        if arm in LOOKUP_ARMS:
+        if pending:
+            required.extend(PENDING_REGRESSIONS)
+        elif arm in LOOKUP_ARMS:
             required.extend(LOOKUP_REGRESSIONS)
         command += ["-run", "^(" + "|".join(required) + ")$", "./internal/ontology/postgres", "./internal/recall/postgres"]
         environment = {**os.environ, "ONTOLOGY_STUDY_ACTIVE_ARM": arm, "ONTOLOGY_STUDY_WITNESS": "1"}
@@ -233,7 +336,7 @@ def cohorts(arm, directory):
         (directory / ("cohorts-" + arm + ".json")).write_text(json.dumps(report, indent=2) + "\n")
         if status or any(report["tests"].get(test) != "pass" for test in required):
             raise SystemExit("incomplete real PostgreSQL quality cohorts")
-        if arm in LOOKUP_ARMS and "lookup_sha256" not in report:
+        if (pending or arm in LOOKUP_ARMS) and "lookup_sha256" not in report:
             raise ValueError("cohorts did not witness the selected lookup")
         if arm != "base":
             base = json.loads((directory / "cohorts-base.json").read_text())
@@ -318,8 +421,8 @@ def valid_sha(value, size=64):
     return re.fullmatch(f"[0-9a-f]{{{size}}}", value or "") is not None
 
 
-def verify_lookup_schedule(schedules):
-    require_study(set(schedules) == set(LOOKUP_ARMS), "missing fixed-schedule arm")
+def verify_lookup_schedule(schedules, arms=LOOKUP_ARMS):
+    require_study(set(schedules) == set(arms), "missing fixed-schedule arm")
     for arm, turns in schedules.items():
         require_study(len(turns) == 3, f"{arm}: expected three scheduled turns")
         require_study(any(t["HTTPBodies"] for t in turns), f"{arm}: missing emitted requests")
@@ -359,8 +462,10 @@ def paired_lookup_savings(control, variant):
     }
 
 
-def compare_lookup_dataset(data, name, source, witnesses):
-    require_study(data["Protocol"] == "ontology-build-rank-first-v1" and data["Shape"]["Dataset"] == name,
+def compare_lookup_dataset(data, name, source, witnesses, *, pending=False):
+    protocol = "ontology-build-pending-refresh-v1" if pending else "ontology-build-rank-first-v1"
+    arms, orders = (PENDING_ARMS, PENDING_ORDERS) if pending else (LOOKUP_ARMS, LOOKUP_ORDERS)
+    require_study(data["Protocol"] == protocol and data["Shape"]["Dataset"] == name,
                   f"{name}: study identity mismatch")
     require_study((data["Source"], data["RunID"], data["RunAttempt"]) == source and data["Runner"],
                   f"{name}: runner or source identity mismatch")
@@ -368,18 +473,19 @@ def compare_lookup_dataset(data, name, source, witnesses):
                   and valid_sha(data["CorrectionSHA"].removeprefix("sha256:")), f"{name}: missing frozen input identities")
     require_study(data["Stage"] == "complete", f"{name}: stopped at {data['Stage']}")
     plans = data["Plans"]
-    require_study(set(plans) == set(LOOKUP_ARMS), f"{name}: missing arm query plan")
+    require_study(set(plans) == set(arms), f"{name}: missing arm query plan")
     require_study(set(p["BindingsSHA"] for p in plans.values()) == {plans["base"]["BindingsSHA"]}
                   and valid_sha(plans["base"]["BindingsSHA"].removeprefix("sha256:")), f"{name}: EXPLAIN bindings changed")
     for arm, report in plans.items():
         require_study(report["QuerySHA"] == witnesses[arm] and report["Plan"]["Raw"], f"{name}/{arm}: missing actual query plan")
-    require_study(plans["rank-first"]["Plan"]["PageBeforePayload"], f"{name}: payload work below ranking limit")
-    verify_lookup_schedule(data["ScheduledInputs"])
+    if not pending:
+        require_study(plans["rank-first"]["Plan"]["PageBeforePayload"], f"{name}: payload work below ranking limit")
+    verify_lookup_schedule(data["ScheduledInputs"], arms)
 
     runs = data["Runs"]
-    expected = [(i, arm) for i, order in enumerate(LOOKUP_ORDERS, start=1) for arm in order]
+    expected = [(i, arm) for i, order in enumerate(orders, start=1) for arm in order]
     require_study([(r["Pair"], r["Arm"]) for r in runs] == expected, f"{name}: incomplete or misordered repetitions")
-    groups = {arm: [] for arm in LOOKUP_ARMS}
+    groups = {arm: [] for arm in arms}
     for r in runs:
         arm = r["Arm"]
         counts = r["Coverage"]
@@ -394,56 +500,129 @@ def compare_lookup_dataset(data, name, source, witnesses):
                       and r["FullPages"] == r["Pages"] > 0 and r["LastPageSize"] == 100
                       and min(r["ElapsedMS"], r["CorrectionMS"], r["ProviderAttempts"]) > 0,
                       f"{scope}: incomplete quality or runtime checks")
-        require_study((r["VectorInstall"]["Rows"] > 0) == (arm != "base"), f"{scope}: wrong projection setup")
+        require_study((r["VectorInstall"]["Rows"] > 0) == arm.startswith(("vector", "rank-first")),
+                      f"{scope}: wrong projection setup")
+        if pending:
+            verify_pending_queue(r, scope)
         groups[arm].append(r)
-    return {
+    result = {
         "template_sha256": data["TemplateSHA"],
         "correction_sha256": data["CorrectionSHA"],
         "runner": data["Runner"],
         "postgres_version": data["PostgresVersion"],
+        "query_plans": {arm: {k: v for k, v in p["Plan"].items() if k != "Raw"} for arm, p in plans.items()},
+    }
+    if pending:
+        result.update(skip_vs_current=compare_pending_queue(groups["base"], groups["base-skip"]),
+                      skip_vs_vectors=compare_pending_queue(groups["vector"], groups["vector-skip"]))
+        return result
+    return {
+        **result,
         "rank_first_vs_original": paired_lookup_savings(groups["base"], groups["rank-first"]),
         "rank_first_vs_stored_vector": paired_lookup_savings(groups["vector"], groups["rank-first"]),
         "stored_vector_vs_original": paired_lookup_savings(groups["base"], groups["vector"]),
-        "query_plans": {arm: {k: v for k, v in p["Plan"].items() if k != "Raw"} for arm, p in plans.items()},
     }
 
 
-def compare_lookups(directory, datasets):
+PENDING_COUNTERS = (
+    "PendingSkips", "OrdinaryNoOps", "DefinitionPages", "ClaimReads", "NewPending", "RefreshedPending",
+    "DiscoveryRefreshWrites", "Requeues", "FreshnessChecks", "ValidationMS", "ProviderAttempts",
+    "ReportedInput", "ReportedOutput", "UnknownUsage",
+)
+
+
+def verify_pending_queue(run, scope):
+    for field in PENDING_COUNTERS:
+        require_study(run[field] >= 0, f"{scope}: invalid {field}")
+    require_study(run["NewPending"] + run["RefreshedPending"] + run["Requeues"] == run["DiscoveryRefreshWrites"],
+                  f"{scope}: committed queue writes do not reconcile")
+    if run["Arm"].endswith("-skip"):
+        require_study(run["ClaimReads"] == run["DefinitionPages"] > 0, f"{scope}: missing once-per-page claim reads")
+    else:
+        require_study(run["DefinitionPages"] > 0 and run["ClaimReads"] == run["PendingSkips"] == 0,
+                      f"{scope}: control exercised candidate queue behavior")
+
+
+def compare_pending_queue(control, candidate):
+    result = paired_lookup_savings(control, candidate)
+    witnessed = all(r["PendingSkips"] > 0 for r in candidate)
+    result["committed_skip_in_every_candidate"] = witnessed
+    result["passes_screen"] = result["passes_screen"] and witnessed
+    result["verdict"] = ("proceed" if result["passes_screen"] else "hold") if witnessed else "inconclusive"
+    for name, runs in (("control_counters", control), ("candidate_counters", candidate)):
+        result[name] = [{field: r[field] for field in PENDING_COUNTERS} for r in runs]
+    return result
+
+
+def pending_decision(results):
+    five_shapes = len(results) == 5
+    verdicts = {}
+    for name in ("skip_vs_current", "skip_vs_vectors"):
+        verdicts[name] = {
+            "eligible_to_advance": all(r[name]["passes_screen"] for r in results.values()),
+            "verdict": ("inconclusive" if any(r[name]["verdict"] == "inconclusive" for r in results.values())
+                        else "proceed" if all(r[name]["passes_screen"] for r in results.values()) else "hold"),
+        }
+    passes = any(v["eligible_to_advance"] for v in verdicts.values())
+    current = verdicts["skip_vs_current"]["eligible_to_advance"]
+    if five_shapes and current:
+        outcome = "qualifies-for-production-approval"
+    elif five_shapes and passes:
+        outcome = "stored-vectors-dependency"
+    elif not five_shapes and passes:
+        outcome = "advance-to-remaining"
+    elif any(v["verdict"] == "inconclusive" for v in verdicts.values()):
+        outcome = "inconclusive"
+    else:
+        outcome = "hold"
+    return {"advance": passes, "comparisons": verdicts, "outcome": outcome}
+
+
+def compare_lookups(directory, datasets, *, pending=False):
     source = (os.environ["GITHUB_SHA"], os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"])
     out = {"source": source[0], "run_id": source[1], "run_attempt": source[2],
            "datasets": {}, "cohorts": {}, "advance": False, "outcome": "inconclusive"}
     error = None
     try:
         witnesses = {}
-        for arm in LOOKUP_ARMS:
+        arms = PENDING_ARMS if pending else LOOKUP_ARMS
+        regressions = PENDING_REGRESSIONS if pending else LOOKUP_REGRESSIONS
+        for arm in arms:
             cohort, sha = study_receipt(directory / f"cohorts-{arm}.json")
             require_study((cohort["source"], cohort["run_id"], cohort["run_attempt"]) == source and cohort["arm"] == arm,
                           f"{arm}: quality run identity mismatch")
-            require_study(cohort["tests"] == dict.fromkeys(COHORTS + LOOKUP_REGRESSIONS, "pass")
+            require_study(cohort["tests"] == dict.fromkeys(COHORTS + regressions, "pass")
                           and cohort["recall_cases"] == 96 and valid_sha(cohort["recall_sha256"])
                           and valid_sha(cohort["lookup_sha256"]), f"{arm}: incomplete cohort evidence")
             witnesses[arm] = cohort["lookup_sha256"]
             out["cohorts"][arm] = {"artifact_sha256": sha, "ordered_recall_sha256": cohort["recall_sha256"]}
-        require_study(len(set(witnesses.values())) == 3, "expected distinct original, vector and rank-first SQL")
+        if pending:
+            require_study(witnesses["base"] == witnesses["base-skip"] != witnesses["vector"] == witnesses["vector-skip"],
+                          "queue policy changed the lookup or the two lookups are identical")
+        else:
+            require_study(len(set(witnesses.values())) == 3, "expected distinct original, vector and rank-first SQL")
         require_study(len({c["ordered_recall_sha256"] for c in out["cohorts"].values()}) == 1, "ordered Recall drift")
         for name in datasets:
             data, sha = study_receipt(directory / f"{name}.json")
-            result = compare_lookup_dataset(data, name, source, witnesses)
+            result = compare_lookup_dataset(data, name, source, witnesses, pending=pending)
             out["datasets"][name] = {**result, "artifact_sha256": sha}
         require_study(os.getenv("ONTOLOGY_STUDY_PREREQUISITES", "success") == "success", "a required hosted job failed")
         results = out["datasets"]
-        advances = all(x["rank_first_vs_original"]["passes_screen"] for x in results.values())
-        incremental = all(results[name]["rank_first_vs_stored_vector"]["passes_screen"] for name in ("hotpotqa", "musique"))
-        target = results["hotpotqa"]["rank_first_vs_original"]["median_paired_saving_percent"] >= 13
-        five_shapes = len(results) == 5
-        out.update(
-            advance=advances,
-            hotpotqa_target_met=target,
-            incremental_gate_passed=incremental,
-            stored_vector_screen_passed=all(x["stored_vector_vs_original"]["passes_screen"] for x in results.values()),
-            outcome=("qualifies-for-production-approval" if advances and incremental and target else "hold")
-            if five_shapes else ("advance-to-remaining" if advances else "hold"),
-        )
+        if pending:
+            out.update(pending_decision(results))
+        else:
+            advances = all(x["rank_first_vs_original"]["passes_screen"] for x in results.values())
+            incremental = all(results[name]["rank_first_vs_stored_vector"]["passes_screen"] for name in ("hotpotqa", "musique"))
+            target = results["hotpotqa"]["rank_first_vs_original"]["median_paired_saving_percent"] >= 13
+            five_shapes = len(results) == 5
+            out.update(
+                advance=advances,
+                hotpotqa_target_met=target,
+                incremental_gate_passed=incremental,
+                stored_vector_screen_passed=all(x["stored_vector_vs_original"]["passes_screen"] for x in results.values()),
+                outcome=("qualifies-for-production-approval" if advances and incremental and target else "hold")
+                if five_shapes else ("advance-to-remaining" if advances else "hold"),
+            )
     except (KeyError, OSError, TypeError, ValueError) as exc:
         error = str(exc)
         out["error"] = error
@@ -463,18 +642,26 @@ if __name__ == "__main__":
     cohort = sub.add_parser("cohorts")
     cohort.add_argument("arm", choices=[*LOOKUP_ARMS, "topic", "pages"])
     cohort.add_argument("directory", type=Path)
+    pending_cohort = sub.add_parser("pending-cohorts")
+    pending_cohort.add_argument("arm", choices=PENDING_ARMS)
+    pending_cohort.add_argument("directory", type=Path)
     comparison = sub.add_parser("compare")
     comparison.add_argument("directory", type=Path)
     comparison.add_argument("datasets", nargs="+")
     rank_comparison = sub.add_parser("compare-lookups")
     rank_comparison.add_argument("directory", type=Path)
     rank_comparison.add_argument("datasets", nargs="+")
+    pending_comparison = sub.add_parser("compare-pending")
+    pending_comparison.add_argument("directory", type=Path)
+    pending_comparison.add_argument("datasets", nargs="+")
     render = sub.add_parser("render-vector")
     render.add_argument("output", type=Path)
     pages = sub.add_parser("render-pages")
     pages.add_argument("directory", type=Path)
     lookup = sub.add_parser("render-lookup")
     lookup.add_argument("directory", type=Path)
+    pending = sub.add_parser("render-pending")
+    pending.add_argument("directory", type=Path)
     args = parser.parse_args()
     if args.command == "render-vector":
         args.output.write_text(vector_ddl())
@@ -482,9 +669,15 @@ if __name__ == "__main__":
         page_overlay(args.directory)
     elif args.command == "render-lookup":
         lookup_overlay(args.directory)
+    elif args.command == "render-pending":
+        pending_overlay(args.directory)
     elif args.command == "cohorts":
         cohorts(args.arm,args.directory)
+    elif args.command == "pending-cohorts":
+        cohorts(args.arm, args.directory, pending=True)
     elif args.command == "compare-lookups":
         compare_lookups(args.directory, args.datasets)
+    elif args.command == "compare-pending":
+        compare_lookups(args.directory, args.datasets, pending=True)
     else:
         compare(args.directory,args.datasets)

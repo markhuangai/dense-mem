@@ -41,6 +41,11 @@ func studyMS(elapsed time.Duration) float64 {
 	return float64(elapsed.Microseconds()) / 1000
 }
 
+func usesStudyLookupOverlay() bool {
+	variant := os.Getenv("ONTOLOGY_STUDY_VARIANT")
+	return variant == "rank-first" || variant == "pending-refresh"
+}
+
 func instrumentStudyQuery(t *testing.T, f *ontologyFixture, arm string) *studyRankQueries {
 	t.Helper()
 	q := &studyRankQueries{}
@@ -60,7 +65,7 @@ func instrumentStudyQuery(t *testing.T, f *ontologyFixture, arm string) *studyRa
 			replacement += " AND revision.kind = 'topic'"
 		}
 		sql = strings.Replace(sql, anchor, replacement, 1)
-		if os.Getenv("ONTOLOGY_STUDY_VARIANT") == "rank-first" {
+		if usesStudyLookupOverlay() {
 			hasVector := strings.Contains(sql, "JOIN ontology_study_topic_vectors")
 			ranksFirst := strings.Contains(sql, "page AS MATERIALIZED")
 			if hasVector != hasStudyVectors(arm) || ranksFirst != (arm == "rank-first") {
@@ -102,6 +107,21 @@ type studyQueueKey struct{}
 
 type studyQueueChanges struct {
 	Enqueued, Requeued, RefreshedPending int
+	PendingSkips, OrdinaryNoOps          int
+	DefinitionPages, ClaimReads          int
+}
+
+func (changes *studyQueueChanges) observe(event maintenanceDiscoveryEvent) {
+	switch event.Phase {
+	case "study_definition_page":
+		changes.DefinitionPages++
+	case "study_claim_read":
+		changes.ClaimReads++
+	case "study_pending_skip":
+		changes.PendingSkips++
+	case "study_queue_noop":
+		changes.OrdinaryNoOps++
+	}
 }
 
 // PostgreSQL 18 returns the old and new status from the exact UPSERT without a second snapshot.
@@ -230,9 +250,14 @@ type studyRepository struct {
 func (r *studyRepository) DiscoverMaintenance(ctx context.Context, turn ontology.MaintenanceTurn, limit int) (ontology.MaintenanceDiscoveryResult, error) {
 	var elapsed time.Duration
 	observedLimit := limit
+	if os.Getenv("ONTOLOGY_STUDY_VARIANT") == "pending-refresh" {
+		observedLimit = 0
+	}
+	var changes studyQueueChanges
 	selected := make(map[ontology.SourceHandle]bool)
 	receipts := make(map[string]bool)
 	observe := func(e maintenanceDiscoveryEvent) {
+		changes.observe(e)
 		switch e.Phase {
 		case "study_page_limit":
 			observedLimit = e.Sources
@@ -245,7 +270,6 @@ func (r *studyRepository) DiscoverMaintenance(ctx context.Context, turn ontology
 			receipts[e.ReceiptID] = true
 		}
 	}
-	var changes studyQueueChanges
 	ctx = context.WithValue(ctx, studyQueueKey{}, &changes)
 	ctx = context.WithValue(ctx, maintenanceDiscoveryObservationKey{}, maintenanceDiscoveryObserver(observe))
 	result, err := r.MaintenanceRepository.DiscoverMaintenance(ctx, turn, limit)
@@ -438,6 +462,7 @@ type studyTiming struct {
 	BackfillAndVerificationMS, CorrectionPublicationMS, DiscoveryMS, DiscoveryQueryReturnMS    float64
 	ExampleVocabularyPlan                                                                      studyQueryPlan
 	NewPending, RefreshedPending, DiscoveryRefreshWrites                                       int
+	PendingSkips, OrdinaryNoOps, DefinitionPages, ClaimReads                                   int
 	Arm                                                                                        string
 	Pair                                                                                       int
 	Coverage                                                                                   ontology.MaintenanceCounts
@@ -466,9 +491,9 @@ type studyScheduledInput struct {
 func studyScheduledInputs(t *testing.T, f *ontologyFixture, seed *buildStudySeed, arm string) []studyScheduledInput {
 	t.Helper()
 	t.Setenv("ONTOLOGY_STUDY_ACTIVE_ARM", arm)
-	rankStudy := os.Getenv("ONTOLOGY_STUDY_VARIANT") == "rank-first"
+	captureHTTP := usesStudyLookupOverlay()
 	var stats *studyRankQueries
-	if rankStudy {
+	if captureHTTP {
 		installStudyVectors(t, f, arm)
 		stats = instrumentStudyQuery(t, f, arm)
 	}
@@ -482,7 +507,7 @@ func studyScheduledInputs(t *testing.T, f *ontologyFixture, seed *buildStudySeed
 		}
 		input := studyScheduledInput{Requests: []assessment.Request{}}
 		var mu sync.Mutex
-		if rankStudy {
+		if captureHTTP {
 			f.requestBody = func(requestID string, body []byte) {
 				if uuid.Validate(requestID) != nil || !strings.Contains(string(body), requestID) {
 					t.Error("missing generated request ID in fixture HTTP body")
@@ -517,7 +542,7 @@ func studyScheduledInputs(t *testing.T, f *ontologyFixture, seed *buildStudySeed
 		require.NotEmpty(t, input.Sources)
 		require.NotEmpty(t, input.Candidates)
 		mu.Lock()
-		if rankStudy {
+		if captureHTTP {
 			require.Len(t, input.HTTPBodies, len(input.Requests), "capture each emitted HTTP request")
 			input.Requests = nil
 			require.Equal(t, ontology.MaintenancePageSize, input.PageLimit)
@@ -528,7 +553,7 @@ func studyScheduledInputs(t *testing.T, f *ontologyFixture, seed *buildStudySeed
 		turns = append(turns, input)
 		mu.Unlock()
 	}
-	if rankStudy {
+	if captureHTTP {
 		require.Positive(t, stats.calls.Load(), "fixed schedule exercised the selected SQL")
 	}
 	require.Positive(t, totalRequests, "record real provider HTTP requests from native maintenance turns")
@@ -619,7 +644,7 @@ func timeStudyArm(t *testing.T, f *ontologyFixture, seed *buildStudySeed, arm st
 	}
 	m.Coverage = status.Counts
 	require.True(t, status.Paused && status.DiscoveryComplete && status.CoverageComplete, "status=%+v", status.Counts)
-	require.Positive(t, m.Coverage.Eligible)
+	require.EqualValues(t, len(seed.sources), m.Coverage.Eligible, "cover the frozen sources")
 	require.Equal(t, m.Coverage.Eligible, m.Coverage.Organized)
 	require.Zero(t, m.RemainingMarkers)
 	require.Positive(t, m.CorrectionMS)
@@ -630,6 +655,7 @@ func timeStudyArm(t *testing.T, f *ontologyFixture, seed *buildStudySeed, arm st
 		(SELECT count(*) FROM ontology_maintenance_batches WHERE status='running')`).Row().Scan(&m.LiveLeases, &m.RunningBatches))
 	require.Zero(t, m.LiveLeases)
 	require.Zero(t, m.RunningBatches)
+	require.Zero(t, m.ActiveWork)
 	require.Zero(t, m.UnreconciledAttempts)
 	m.ElapsedMS = studyMS(time.Since(start))
 	t.Logf("study stage=coverage_drained arm=%s pair=%d eligible=%d organized=%d active_work=%d markers=%d elapsed_ms=%.3f",
@@ -642,7 +668,7 @@ func timeStudyArm(t *testing.T, f *ontologyFixture, seed *buildStudySeed, arm st
 	m.QueryCount = stats.calls.Load()
 	m.QueryReturnMS = float64(stats.elapsed.Load()) / 1e6
 	m.DiscoveryQueryReturnMS = float64(stats.discoveryElapsed.Load()) / 1e6
-	if os.Getenv("ONTOLOGY_STUDY_VARIANT") == "rank-first" {
+	if usesStudyLookupOverlay() {
 		m.LookupSHA = studyBoundLookupSHA(stats.exampleSQL)
 	} else {
 		m.ExampleVocabularyPlan = explainStudyQuery(t, f, stats)
@@ -651,6 +677,10 @@ func timeStudyArm(t *testing.T, f *ontologyFixture, seed *buildStudySeed, arm st
 	m.DistinctReceipts = len(repo.receipts)
 	var timings, readyTimings []float64
 	for _, p := range repo.pages {
+		m.PendingSkips += p.Changes.PendingSkips
+		m.OrdinaryNoOps += p.Changes.OrdinaryNoOps
+		m.DefinitionPages += p.Changes.DefinitionPages
+		m.ClaimReads += p.Changes.ClaimReads
 		m.LastPageSize = p.Limit
 		if p.Limit == 25 {
 			m.SmallPages++
@@ -684,7 +714,7 @@ func timeStudyArm(t *testing.T, f *ontologyFixture, seed *buildStudySeed, arm st
 	m.PagesBeforeReadyBatch = len(readyTimings)
 	m.ReadyPageP95MS = readyTimings[(95*len(readyTimings)+99)/100-1]
 	switch os.Getenv("ONTOLOGY_STUDY_VARIANT") {
-	case "rank-first":
+	case "rank-first", "pending-refresh":
 		require.Equal(t, m.Pages, m.FullPages, "every discovery page must use the normal limit")
 	case "pages":
 		require.Equal(t, m.Pages, m.SmallPages+m.FullPages, "observe the effective limit inside every committed discovery transaction")
@@ -709,6 +739,10 @@ func TestMatureOntologyBuildComparison(t *testing.T) {
 	candidate := os.Getenv("ONTOLOGY_STUDY_VARIANT")
 	if candidate == "rank-first" {
 		runRankFirstComparison(t, shape)
+		return
+	}
+	if candidate == "pending-refresh" {
+		runPendingRefreshComparison(t, shape)
 		return
 	}
 	require.Contains(t, []string{"topic", "vector", "pages"}, candidate)

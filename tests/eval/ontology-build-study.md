@@ -12,6 +12,12 @@ The four alternating base/candidate pairs for each dataset run on the same GitHu
 
 The primary comparison uses HotpotQA and MuSiQue. A trial advances to the remaining shapes if every timed pair finishes faster, the median paired saving exceeds baseline median absolute deviation, the correction measurements do not show a repeatable regression, and all correctness checks pass. This screening rule is an experiment decision. Preserve every individual result. A failed or incomplete pair leaves the comparison inconclusive.
 
+## Pending Evidence refresh
+
+The pending-refresh workflow compares four arms in the order `ABDC`, `BCAD`, `CDBA`, `DACB`. A and B use the original vocabulary lookup. C and D install the same stored vectors. B and D also read the live batch closures once per nonempty definition page and skip a forced rewrite of an identical, eligible pending row outside those claims. The PostgreSQL conflict predicate still locks the row. A reported skip represents an avoided update and revision bump.
+
+The hosted report checks effective discovery pages of 100, the SQL used by each arm, and the fixed-schedule requests and candidates. It keeps committed pending skips, ordinary no-ops, new pending rows, pending rewrites and requeues as separate counters. A timed arm needs a committed skip to earn credit. Both comparisons share the same correction, provider usage and completion measurements. Compare B with A and D with C. If either comparison passes HotpotQA and MuSiQue, all four arms run against the remaining three shapes. A change to the original queue requires B to qualify on all five shapes. D measures the effect with the stored-vector dependency. [Previous experiment](https://github.com/markhuangai/dense-mem/issues/657#issuecomment-7088049520)
+
 ## Rank topic IDs before loading revisions
 
 Each hosted dataset job runs the original lookup, stored vectors, and rank-first hydration in four blocks. The execution orders are original/vector/rank-first, rank-first/vector/original, vector/rank-first/original, and original/rank-first/vector. The job records the SHA-256 of the frozen PostgreSQL template dump and correction fixture. Each arm uses a fresh clone. Both vector arms pay for the same projection installation, backfill, index, initial verification, and transactional publication. The clock stops after verified full coverage, pause, and drain. The correction latency includes publication, matching the earlier trials. The receipt also gives latency from commit to Recall visibility.

@@ -49,7 +49,7 @@ type studyVectorInstall struct {
 }
 
 func hasStudyVectors(arm string) bool {
-	return arm == "vector" || arm == "rank-first"
+	return arm == "vector" || arm == "vector-skip" || arm == "rank-first"
 }
 
 func installStudyVectors(t *testing.T, f *ontologyFixture, arm string) studyVectorInstall {

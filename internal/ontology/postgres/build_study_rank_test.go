@@ -27,6 +27,15 @@ var studyRankOrders = [][]string{
 	{"base", "rank-first", "vector"},
 }
 
+var studyPendingArms = []string{"base", "base-skip", "vector", "vector-skip"}
+
+var studyPendingOrders = [][]string{
+	{"base", "base-skip", "vector-skip", "vector"},
+	{"base-skip", "vector", "base", "vector-skip"},
+	{"vector", "vector-skip", "base-skip", "base"},
+	{"vector-skip", "base", "vector", "base-skip"},
+}
+
 type studyRankPlan struct {
 	QuerySHA, BindingsSHA string
 	Plan                  studyQueryPlan
@@ -73,11 +82,21 @@ func studyRankPlanProbe(t *testing.T, f *ontologyFixture, seed *buildStudySeed, 
 
 func runRankFirstComparison(t *testing.T, shape buildStudyShape) {
 	t.Helper()
+	runMatchedLookupComparison(t, shape, "ontology-build-rank-first-v1", studyRankArms, studyRankOrders)
+}
+
+func runPendingRefreshComparison(t *testing.T, shape buildStudyShape) {
+	t.Helper()
+	runMatchedLookupComparison(t, shape, "ontology-build-pending-refresh-v1", studyPendingArms, studyPendingOrders)
+}
+
+func runMatchedLookupComparison(t *testing.T, shape buildStudyShape, protocol string, arms []string, orders [][]string) {
+	t.Helper()
 	require.Equal(t, "github-hosted", os.Getenv("RUNNER_ENVIRONMENT"))
 	t.Setenv("ONTOLOGY_STUDY_ACTIVE_ARM", "base")
 	seed := buildStudyTemplate(t, shape)
 	report := studyRankReport{
-		Protocol: "ontology-build-rank-first-v1",
+		Protocol: protocol,
 		Source:   os.Getenv("GITHUB_SHA"), RunID: os.Getenv("GITHUB_RUN_ID"),
 		RunAttempt: os.Getenv("GITHUB_RUN_ATTEMPT"), Runner: os.Getenv("RUNNER_NAME"),
 		TemplateSHA:   studyTemplateSHA(t, seed),
@@ -107,7 +126,7 @@ func runRankFirstComparison(t *testing.T, shape buildStudyShape) {
 	if !t.Run("queue-transitions", func(t *testing.T) { proveStudyQueueTransitions(t, cloner.clone(t), seed) }) {
 		return
 	}
-	for _, arm := range studyRankArms {
+	for _, arm := range arms {
 		stage("explain-" + arm)
 		if !t.Run(report.Stage, func(t *testing.T) { report.Plans[arm] = studyRankPlanProbe(t, cloner.clone(t), seed, arm) }) {
 			return
@@ -127,7 +146,7 @@ func runRankFirstComparison(t *testing.T, shape buildStudyShape) {
 			require.Equal(t, studyHash(t, control.HTTPBodies), studyHash(t, input.HTTPBodies), "%s turn %d HTTP requests", arm, i+1)
 		}
 	}
-	for i, order := range studyRankOrders {
+	for i, order := range orders {
 		for _, arm := range order {
 			stage(fmt.Sprintf("pair-%d-%s", i+1, arm))
 			if !t.Run(report.Stage, func(t *testing.T) {

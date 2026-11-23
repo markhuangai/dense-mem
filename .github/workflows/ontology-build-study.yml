@@ -1,11 +1,11 @@
-name: Ontology build study
+name: Ontology pending refresh study
 on:
   push:
-    branches: [perf/ontology-build-study]
+    branches: [perf/ontology-pending-refresh-study]
 permissions:
   contents: read
 env:
-  ONTOLOGY_STUDY_VARIANT: rank-first
+  ONTOLOGY_STUDY_VARIANT: pending-refresh
 
 jobs:
   accuracy:
@@ -28,8 +28,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for arm in base vector rank-first; do
-            python3 tests/eval/scripts/ontology_build_study.py cohorts "$arm" "$ONTOLOGY_STUDY_REPORT_DIR"
+          for arm in base base-skip vector vector-skip; do
+            python3 tests/eval/scripts/ontology_build_study.py pending-cohorts "$arm" "$ONTOLOGY_STUDY_REPORT_DIR"
           done
       - uses: actions/upload-artifact@v7
         if: always()
@@ -50,7 +50,7 @@ jobs:
     steps: &measure
       - *checkout
       - *go
-      - name: Compare three lookups from one frozen PostgreSQL template
+      - name: Compare two queue policies on both lookups from one frozen PostgreSQL template
         env:
           ONTOLOGY_STUDY_REPORT_DIR: ${{ runner.temp }}/ontology-build-study
           ONTOLOGY_STUDY_DATASET: ${{ matrix.dataset }}
@@ -59,8 +59,8 @@ jobs:
           set -euo pipefail
           export ONTOLOGY_STUDY_VECTOR_SQL="$RUNNER_TEMP/ontology-study-vector.sql"
           python3 tests/eval/scripts/ontology_build_study.py render-vector "$ONTOLOGY_STUDY_VECTOR_SQL"
-          python3 tests/eval/scripts/ontology_build_study.py render-lookup "$RUNNER_TEMP/ontology-lookups"
-          go test -overlay="$RUNNER_TEMP/ontology-lookups/overlay.json" -tags=integration,ontology_study -count=1 -timeout=200m -run '^TestMatureOntologyBuildComparison$' -v ./internal/ontology/postgres
+          python3 tests/eval/scripts/ontology_build_study.py render-pending "$RUNNER_TEMP/ontology-pending"
+          go test -mod=readonly -overlay="$RUNNER_TEMP/ontology-pending/overlay.json" -tags=integration,ontology_study -count=1 -timeout=200m -run '^TestMatureOntologyBuildComparison$' -v ./internal/ontology/postgres
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -85,7 +85,7 @@ jobs:
       - id: compare
         env:
           ONTOLOGY_STUDY_PREREQUISITES: ${{ (needs.primary.result == 'success' && needs.accuracy.result == 'success') && 'success' || 'failure' }}
-        run: python3 tests/eval/scripts/ontology_build_study.py compare-lookups measurements hotpotqa musique
+        run: python3 tests/eval/scripts/ontology_build_study.py compare-pending measurements hotpotqa musique
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -118,7 +118,7 @@ jobs:
           merge-multiple: true
       - env:
           ONTOLOGY_STUDY_PREREQUISITES: ${{ needs.remaining.result }}
-        run: python3 tests/eval/scripts/ontology_build_study.py compare-lookups measurements hotpotqa musique 2wikimultihopqa nq_rear popqa
+        run: python3 tests/eval/scripts/ontology_build_study.py compare-pending measurements hotpotqa musique 2wikimultihopqa nq_rear popqa
       - uses: actions/upload-artifact@v7
         if: always()
         with:
