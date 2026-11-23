@@ -10,6 +10,6 @@ remaining validation and human approval requirements.
 
 ## Documentation impact
 
-Link the companion PR targeting `wiki`, or explain why no wiki update is needed.
-Update affected directory guides in this PR. Keep detailed explanations in their
-canonical wiki pages and the root READMEs concise.
+Link the companion PR targeting `gh-pages`, or explain why the documentation
+site needs no update. Update affected directory guides in this PR. Keep detailed
+explanations in their canonical guides and the root READMEs concise.

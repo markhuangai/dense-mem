@@ -6,8 +6,6 @@
     "lint:lines": "cd .. && .lint/node_modules/.bin/textlint --config .textlintrc.json --ignore-path .textlintignore --format stylish \"**/*.{css,go,html,js,json,md,sh,sql,toml,ts,tsx,txt,yaml,yml}\""
   },
   "devDependencies": {
-    "@textlint/markdown-to-ast": "16.1.1",
-    "github-slugger": "2.0.0",
     "glob": "14.0.6",
     "js-yaml": "5.5.0",
     "textlint": "^16.1.1",
