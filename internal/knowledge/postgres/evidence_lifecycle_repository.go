@@ -288,7 +288,7 @@ func planEvidenceLifecycle(
 		return nil, err
 	}
 	var plan *evidenceLifecyclePlan
-	err := withSystemModeInTx(ctx, tx, input.TeamID, input.OwnerProfileID, func(systemTx *gorm.DB) error {
+	err := storagepostgres.WithSystemModeInTx(ctx, tx, input.TeamID, input.OwnerProfileID, func(systemTx *gorm.DB) error {
 		var err error
 		plan, err = planEvidenceLifecycleInSystem(ctx, systemTx, input)
 		return err
@@ -544,7 +544,7 @@ func applyEvidenceLifecycleEffects(
 	operationID string,
 	plan *evidenceLifecyclePlan,
 ) error {
-	return withSystemModeInTx(ctx, tx, input.TeamID, input.OwnerProfileID, func(systemTx *gorm.DB) error {
+	return storagepostgres.WithSystemModeInTx(ctx, tx, input.TeamID, input.OwnerProfileID, func(systemTx *gorm.DB) error {
 		return applyEvidenceLifecycleEffectsInSystem(ctx, systemTx, input, operationID, plan)
 	})
 }

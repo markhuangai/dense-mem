@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 import { isDeepStrictEqual, parseArgs } from "node:util";
 import { fileURLToPath } from "node:url";
 import { configuration, resolveEvaluationImage, requireEvaluationImportSupport, sha256 } from "../../../.github/scripts/evaluation-policy.mjs";
-import { seedBuildRequest, seedBuildVersion, resolveSeedBuildSource, requireSeedBuildValidation, seedReference, resolveSeedImage, dumpSeed, sealSeed, buildBootableSeed, publishSeed, verifySeedCredentialExclusions, verifySeedFiles, hashFile, postgresImage } from "../../../.github/scripts/evaluation-seeds.mjs";
+import { seedBuildRequest, seedBuildVersion, resolveSeedBuildSource, requireSeedBuildValidation, seedReference, resolveSeedImage, dumpSeed, sealSeed, buildBootableSeed, publishSeed, lockLocalSeedFile, verifySeedCredentialExclusions, verifySeedFiles, hashFile, postgresImage } from "../../../.github/scripts/evaluation-seeds.mjs";
 import { setup, cleanup, diagnostics, docker, location, runBinary, seedSecrets, saveRuntimeJSON as save } from "./workflow.mjs";
 
 const read = (file) => JSON.parse(fs.readFileSync(file, "utf8"));
@@ -24,13 +24,7 @@ export function localSeedRequest(args, registry) {
 }
 
 export function lockSeedBuild(directory) {
-  const file = fs.openSync(path.join(directory, "build.lock"), fs.constants.O_CREAT | fs.constants.O_RDWR | fs.constants.O_NOFOLLOW, 0o600);
-  const lock = spawnSync("flock", ["--exclusive", "--nonblock", "3"], { stdio: ["ignore", "ignore", "ignore", file], timeout: 5000 });
-  if (lock.status !== 0) {
-    fs.closeSync(file);
-    throw new Error(lock.error ? "Seed build lock is unavailable; install flock" : "Seed build is already running");
-  }
-  return () => fs.closeSync(file);
+  return lockLocalSeedFile(path.join(directory, "build.lock"), "Seed build is already running");
 }
 
 export function savedSeedRequest(receipt, id, registry, registryHash) {
@@ -163,7 +157,7 @@ async function bootstrap(env, build, signal, beforePublication) {
       const runtime = await setup(env, { operation: "bootstrap", seedImage: "", seedDirectory: directory, signal });
       await runBinary("bootstrap", runtime, env, signal);
     }
-    return publishSeed(docker, directory, "bootstrap", build.version, {}, beforePublication, { runID: paths.runID, previousLatest });
+    return publishSeed(docker, directory, "bootstrap", build.version, {}, beforePublication, { runID: paths.runID, previousLatest }, { github });
   });
 }
 
@@ -201,7 +195,7 @@ async function buildDataset(env, build, signal, beforePublication, skipAISecurit
       prepareSeedExport(env, signal, { skipAISecurityReview, resumable: true, exportDirectory, dataDirectory: path.join(paths.directory, "data") }));
     if (seed.source_revision !== build.source_revision || seed.base_release !== env.EVAL_BASE_RELEASE || seed.import_workers !== build.workers ||
         (seed.ai_security_review === "skipped") !== skipAISecurityReview) throw new Error("Seed build verified export differs from the pinned build settings");
-    const image = await publishSeed(docker, directory, dataset, version, {}, beforePublication, { runID: paths.runID, previousLatest, bootableImage });
+    const image = await publishSeed(docker, directory, dataset, version, {}, beforePublication, { runID: paths.runID, previousLatest, bootableImage }, { github });
     const receipt = { dataset, image, version, corpus_rows: seed.corpus_rows, canonical_sha256: seed.canonical_sha256, workers: seed.import_workers, dump_bytes: seed.dump_bytes, preparation_ms: seed.elapsed_ms, base_release: seed.base_release, source_revision: seed.source_revision, ai_security_review: seed.ai_security_review || "ordinary" };
     save(finished, receipt);
     process.stdout.write(`${JSON.stringify({ event: "seed_published", ...receipt })}\n`);

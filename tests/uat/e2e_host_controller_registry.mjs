@@ -132,7 +132,6 @@ async function runCases(args) {
       await setStatus(mode === "denied" ? 401 : ["recover", "exhaust"].includes(mode) ? 500 : 200);
       let recovered = false, signalled = false;
       const started = Date.now();
-      const since = Math.floor(started / 1000);
       const result = await start(runID, async (output, child) => {
         if (mode === "recover" && !recovered && output.includes("retrying once in 2 seconds")) {
           recovered = true;
@@ -156,11 +155,18 @@ async function runCases(args) {
         assert.deepEqual(acquisition.map(match => match[2]), ["1", "2"]);
         assert.equal(acquisition[1][1], "0");
         projects.add(result.stdout);
-        const events = await docker("events", "--since", String(since), "--until", String(Math.floor(Date.now() / 1000) + 1),
-          "--filter", `label=com.docker.compose.project=${result.stdout}`, "--filter", "event=start", "--format", "{{json .}}");
-        const fixtures = events.split("\n").filter(Boolean).map(line => JSON.parse(line))
-          .filter(event => event.Actor?.Attributes?.["com.docker.compose.service"] === "postgres-init");
-        assert.equal(fixtures.length, 1, "fixture was replayed during acquisition recovery");
+        const finished = Date.now();
+        const receipt = await readFile(join(testRoot, "postgres-init-receipts", runID + ".log"), "utf8").catch(error => {
+          if (error.code === "ENOENT") return "";
+          throw error;
+        });
+        const entries = receipt.split("\n").filter(Boolean);
+        const proof = { event: "postgres_init_executions", run_id: runID, project: result.stdout, started_at: new Date(started), finished_at: new Date(finished), entries };
+        if (entries.length !== 1 || !entries[0].startsWith(runID + " ")) {
+          const daemon = await docker("version", "--format", "{{.Server.Version}}");
+          assert.fail(JSON.stringify({ ...proof, daemon_version: daemon }));
+        }
+        process.stdout.write(JSON.stringify(proof) + "\n");
         await docker("exec", (await docker("ps", "-q", "--filter", `label=com.docker.compose.project=${result.stdout}`, "--filter", "label=com.docker.compose.service=redis")), "sh", "-c", "test -f /etc/alpine-release");
         await exec(controller, ["stop", result.stdout]);
       } else {

@@ -19,10 +19,18 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
 	accesspostgres "github.com/markhuangai/dense-mem/internal/access/postgres"
+	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/crypto"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/evalharness"
+	knowledgepg "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	organization "github.com/markhuangai/dense-mem/internal/ontology"
+	ontologypg "github.com/markhuangai/dense-mem/internal/ontology/postgres"
+	searchapp "github.com/markhuangai/dense-mem/internal/search"
+	searchpg "github.com/markhuangai/dense-mem/internal/search/postgres"
+	"github.com/markhuangai/dense-mem/internal/settings"
+	settingspg "github.com/markhuangai/dense-mem/internal/settings/postgres"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	containerapi "github.com/moby/moby/api/types/container"
 	"github.com/stretchr/testify/require"
@@ -210,13 +218,34 @@ func TestRunnerSeedLogicalRestoreMigrationAndCredentialIdentity(t *testing.T) {
 	require.Equal(t, credential.MemorySpaceID, loaded.MemorySpaceID)
 	require.True(t, crypto.VerifyKey(key, loaded.KeyHash))
 	require.False(t, crypto.VerifyKey("wrong-seed-key", loaded.KeyHash))
+	rls := storagepostgres.NewRLS()
+	restoredSettings := settings.NewAppConfigService(settingspg.NewAppConfigRepository(restored, rls), nil)
+	restoredMaintenance := buildOntologyMaintenance(ontologypg.NewStore(restored, rls), restoredSettings, nil,
+		assessor.DefaultSemanticAssessmentLimits(), manifest.Model, 0, nil, nil, organization.MaintenanceDiagnosticCapture{})
+	restoredControl := runnerControlServer(t, restoredMaintenance, restoredSettings, searchapp.NewSearchConvergenceService(
+		searchpg.NewStore(restored, rls), knowledgepg.NewStore(restored, rls),
+	))
 	native := *f.native
-	native.DB = restoredDB
+	native.DB, native.ControlURL = restoredDB, restoredControl.URL
 	beforeCalls := f.provider.calls
-	_, _, _, _, err = evalharness.VerifySeed(ctx, manifest, corpus, f.native.Client, &native)
+	_, _, _, cleanObservation, err := evalharness.VerifySeed(ctx, manifest, corpus, f.native.Client, &native)
 	require.NoError(t, err)
+	require.Empty(t, cleanObservation.Ontology.ConfigurationError)
 	require.Equal(t, beforeCalls, f.provider.calls, "restoring and verifying a seed performs no Remember provider work")
 	require.Equal(t, seed.Scope, native.Scope)
+	setRestoredOntology := func(value string) {
+		t.Helper()
+		_, err := restoredSettings.UpdateOntologyMaintenanceSettings(ctx, map[string]string{domain.AppConfigOntologyEnabled: value}, "control", "", "")
+		require.NoError(t, err)
+	}
+	setRestoredOntology("true")
+	_, _, _, restoredObservation, err := evalharness.VerifySeed(ctx, manifest, corpus, f.native.Client, &native)
+	require.ErrorContains(t, err, "unexpected native ontology state")
+	require.True(t, restoredObservation.Ontology.Enabled)
+	_, _, _, sourceObservation, err := evalharness.VerifySeed(ctx, manifest, corpus, f.native.Client, f.native)
+	require.NoError(t, err)
+	require.False(t, sourceObservation.Ontology.Enabled)
+	setRestoredOntology("false")
 	claimedSkip := seed
 	claimedSkip.AISecurityReview = "skipped"
 	claimedBody, err := json.Marshal(claimedSkip)
@@ -225,8 +254,10 @@ func TestRunnerSeedLogicalRestoreMigrationAndCredentialIdentity(t *testing.T) {
 	_, _, _, _, err = evalharness.VerifySeed(ctx, manifest, corpus, f.native.Client, &native)
 	require.ErrorContains(t, err, "seed assessment provenance differs")
 	require.NoError(t, os.WriteFile(seedPath, body, 0600))
+	// Keep the projection converged so VerifySeed must detect the changed vector through its fingerprint.
+	changedVector := "[" + strings.TrimSuffix(strings.Repeat("0.5,", manifest.EmbeddingDimensions), ",") + "]"
 	require.NoError(t, storagepostgres.NewRLS().WithSystemTx(ctx, restored, func(tx *gorm.DB) error {
-		result := tx.Exec(`UPDATE search_documents SET document_text=document_text || ' incompatible restored seed' WHERE team_id=? AND search_state='current'`, native.Scope.TeamID)
+		result := tx.Exec(`UPDATE search_documents SET embedding=?::vector WHERE team_id=? AND search_state='current'`, changedVector, native.Scope.TeamID)
 		require.Positive(t, result.RowsAffected)
 		return result.Error
 	}))

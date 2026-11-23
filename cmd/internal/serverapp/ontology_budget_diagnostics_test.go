@@ -20,7 +20,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/ontology/assessment"
 	contract "github.com/markhuangai/dense-mem/internal/ontology/contract"
-	assessorprovider "github.com/markhuangai/dense-mem/internal/provider/assessor"
+	"github.com/markhuangai/dense-mem/internal/provider/structured"
 	"github.com/stretchr/testify/require"
 )
 
@@ -60,7 +60,7 @@ func TestOntologyReconstructedBoundedRequestReportsProtectionBudget(t *testing.T
 		logger := observability.NewWithHandler(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: slog.LevelDebug}))
 		client := observability.DiagnosticHTTPClient(upstream.Client(), logger.ContextSlog(), protector)
 		cfg := &config.Config{AIVerifierAPIURL: upstream.URL, AIVerifierAPIKey: secret, AIVerifierModel: "fixture-model"}
-		provider := assessment.NewProvider(assessorprovider.NewOpenAIAssessor(cfg, client), cfg.AIVerifierModel, assessor.DefaultSemanticAssessmentLimits(), 300000)
+		provider := assessment.NewProvider(structured.NewOpenAI(cfg, client), cfg.AIVerifierModel, assessor.DefaultSemanticAssessmentLimits(), 300000)
 		ctx := observability.WithAuthenticationSecrets(context.Background(), presented)
 		ctx = observability.WithExchangeScope(ctx, observability.ExchangeScope{TeamID: "synthetic-team", RunID: "synthetic-run", BatchID: "synthetic-batch"})
 		started := time.Now()

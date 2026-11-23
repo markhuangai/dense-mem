@@ -9,6 +9,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
+	assessmentfixture "github.com/markhuangai/dense-mem/internal/testfixture/assessment"
 	"log/slog"
 	"net/url"
 	"os"
@@ -239,19 +241,20 @@ func TestRememberServiceRejectsMigratedAttemptThroughPostgres(t *testing.T) {
 
 type rememberProcessorIntegrationRegistrationAssessor struct{ calls, repairs int }
 
-func (p *rememberProcessorIntegrationRegistrationAssessor) Assess(
-	_ context.Context, request assessor.SemanticAssessmentRequest,
-) (assessor.SemanticAssessmentSession, assessor.SemanticAssessmentTurn, error) {
+func (p *rememberProcessorIntegrationRegistrationAssessor) Complete(_ context.Context, wire modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
+	if wire.SchemaName == assessor.PartitionSchemaName {
+		return partitionFixtureComplete(wire)
+	}
+	if len(wire.Messages) > 2 {
+		p.repairs++
+		return modelprovider.StructuredResult{}, fmt.Errorf("valid Evidence response unexpectedly required repair")
+	}
 	p.calls++
-	response := rememberProcessorIntegrationAssessmentResponse(request)
-	return rememberProcessorIntegrationAssessmentSession{}, assessor.SemanticAssessmentTurn{Response: response, Turn: 1}, nil
-}
-
-func (p *rememberProcessorIntegrationRegistrationAssessor) Repair(
-	context.Context, assessor.SemanticAssessmentSession, assessor.SemanticAssessmentRepairRequest,
-) (assessor.SemanticAssessmentTurn, error) {
-	p.repairs++
-	return assessor.SemanticAssessmentTurn{}, fmt.Errorf("valid Evidence response unexpectedly required repair")
+	request, err := assessmentfixture.Request(wire)
+	if err != nil {
+		return modelprovider.StructuredResult{}, err
+	}
+	return assessmentfixture.Result(wire, rememberProcessorIntegrationAssessmentResponse(request))
 }
 
 func (*rememberProcessorIntegrationRegistrationAssessor) ModelName() string {
@@ -457,22 +460,17 @@ func rememberProcessorIntegrationDocumentHash(content string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-type rememberProcessorIntegrationAssessmentSession struct{}
-
-func (rememberProcessorIntegrationAssessmentSession) SessionID() string {
-	return "remember-integration-assessment"
-}
-
 type rememberProcessorIntegrationAssessor struct{}
 
-func (rememberProcessorIntegrationAssessor) Assess(_ context.Context, request assessor.SemanticAssessmentRequest) (assessor.SemanticAssessmentSession, assessor.SemanticAssessmentTurn, error) {
-	return rememberProcessorIntegrationAssessmentSession{}, assessor.SemanticAssessmentTurn{
-		Response: rememberProcessorIntegrationAssessmentResponse(request), Turn: 1,
-	}, nil
-}
-
-func (rememberProcessorIntegrationAssessor) Repair(_ context.Context, _ assessor.SemanticAssessmentSession, request assessor.SemanticAssessmentRepairRequest) (assessor.SemanticAssessmentTurn, error) {
-	return assessor.SemanticAssessmentTurn{Response: rememberProcessorIntegrationAssessmentResponse(request.Request), Turn: 2}, nil
+func (rememberProcessorIntegrationAssessor) Complete(_ context.Context, wire modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
+	if wire.SchemaName == assessor.PartitionSchemaName {
+		return partitionFixtureComplete(wire)
+	}
+	request, err := assessmentfixture.Request(wire)
+	if err != nil {
+		return modelprovider.StructuredResult{}, err
+	}
+	return assessmentfixture.Result(wire, rememberProcessorIntegrationAssessmentResponse(request))
 }
 
 func (rememberProcessorIntegrationAssessor) ModelName() string {

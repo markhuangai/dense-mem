@@ -3,7 +3,6 @@
 package serverapp
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 
@@ -36,14 +35,4 @@ func partitionFixtureCompleteWithCuts(request modelprovider.StructuredRequest, c
 	}
 	body, err := json.Marshal(result)
 	return modelprovider.StructuredResult{Content: string(body)}, err
-}
-
-func (*rememberProcessorIntegrationRegistrationAssessor) Complete(_ context.Context, r modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
-	return partitionFixtureComplete(r)
-}
-func (rememberProcessorIntegrationAssessor) Complete(_ context.Context, r modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
-	return partitionFixtureComplete(r)
-}
-func (*importAdmissionAssessor) Complete(_ context.Context, r modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
-	return partitionFixtureComplete(r)
 }

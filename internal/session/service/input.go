@@ -5,11 +5,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"strings"
 	"time"
 	"unicode/utf8"
 
-	"github.com/markhuangai/dense-mem/internal/assessor"
 	session "github.com/markhuangai/dense-mem/internal/session/contract"
 )
 
@@ -92,7 +92,7 @@ func BuildWindows(req session.Request, tokenizer string) ([]session.Window, erro
 	for start := 0; start < len(segments); {
 		end, tokens := start, 0
 		for end < len(segments) {
-			count, err := assessor.CountTokens(segments[end].Text, tokenizer)
+			count, err := modelprovider.CountTokens(segments[end].Text, tokenizer)
 			if err != nil {
 				return nil, err
 			}

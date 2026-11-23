@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/markhuangai/dense-mem/internal/jsonstrict"
+	"github.com/markhuangai/dense-mem/internal/service/generation"
 
 	"log/slog"
 	"testing"
@@ -26,7 +28,7 @@ func TestSynchronousAssessmentProviderDiagnosticsSurviveProtectedLogging(t *test
 	} {
 		diagnostics := &assessmentDiagnostics{started: time.Now()}
 		diagnostics.beginTurn(context.Background())
-		diagnostics.finishProviderTurn(assessor.SemanticAssessmentTurn{Diagnostics: provider}, nil)
+		diagnostics.finishGenerationAttempt(generation.Attempt{Provider: modelprovider.StructuredResult{Diagnostics: provider}})
 		var output bytes.Buffer
 		logger := observability.NewWithHandler(slog.NewJSONHandler(&output, nil))
 		logger.InfoContext(context.Background(), "remember_phase_completed", observability.LogAttr{Key: "assessor_diagnostics", Value: diagnostics.snapshot()})
@@ -124,12 +126,12 @@ func TestSynchronousAssessmentDiagnosticsBeforeProviderAndBounds(t *testing.T) {
 	d := &assessmentDiagnostics{started: time.Now()}
 	for range 5 {
 		d.beginTurn(context.Background())
-		d.finishProviderTurn(assessor.SemanticAssessmentTurn{}, nil)
+		d.finishGenerationAttempt(generation.Attempt{})
 		errors := make([]assessor.SemanticValidationError, 30)
 		for i := range errors {
 			errors[i] = assessor.SemanticValidationError{Field: "credential-canary", Message: "provider-secret", Code: "unsafe-canary"}
 		}
-		d.finishValidation(time.Now(), errors)
+		d.finishGenerationAttempt(generation.Attempt{Validation: &jsonstrict.ValidationError{Errors: errors}, ValidationElapsed: time.Millisecond})
 	}
 	encoded, marshalErr := json.Marshal(d.snapshot())
 	require.NoError(t, marshalErr)

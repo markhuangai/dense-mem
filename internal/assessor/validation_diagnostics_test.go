@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/markhuangai/dense-mem/internal/jsonstrict"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -42,16 +43,16 @@ func TestEvidenceSecurityCoverageDiagnosticCodes(t *testing.T) {
 }
 
 func TestSharedResponseShapeAndCorrectionErrors(t *testing.T) {
-	_, errs := ValidateResponseObject([]byte(`{"required":null,"z":0,"a":0}`), "items[2]", []string{"required", "optional"}, nil, map[string]bool{"optional": true})
+	_, errs := jsonstrict.ValidateResponseObject([]byte(`{"required":null,"z":0,"a":0}`), "items[2]", []string{"required", "optional"}, nil, map[string]bool{"optional": true})
 	require.Equal(t, []SemanticValidationError{
 		{Field: "items[2].required", Message: "must not be null"},
 		{Field: "items[2].a", Message: "is unknown"},
 		{Field: "items[2].z", Message: "is unknown"},
 	}, errs)
-	_, errs = ValidateResponseObject([]byte(`{"required":null}`), "", []string{"required", "optional"}, map[string]bool{"required": true}, map[string]bool{"optional": true})
+	_, errs = jsonstrict.ValidateResponseObject([]byte(`{"required":null}`), "", []string{"required", "optional"}, map[string]bool{"required": true}, map[string]bool{"optional": true})
 	require.Empty(t, errs)
-	require.Equal(t, []SemanticValidationError{{Field: "items[1].ref", Message: "is required"}}, ValidateResponseArrayObjects([]byte(`[{"ref":"a"},{}]`), "items", []string{"ref"}, nil, nil))
-	_, errs = ValidateResponseObject([]byte(`{"ref":"a","ref":"b"}`), "items[0]", []string{"ref"}, nil, nil)
+	require.Equal(t, []SemanticValidationError{{Field: "items[1].ref", Message: "is required"}}, jsonstrict.ValidateResponseArrayObjects([]byte(`[{"ref":"a"},{}]`), "items", []string{"ref"}, nil, nil))
+	_, errs = jsonstrict.ValidateResponseObject([]byte(`{"ref":"a","ref":"b"}`), "items[0]", []string{"ref"}, nil, nil)
 	require.ErrorContains(t, errs[0], "duplicate JSON field")
 
 	errs = make([]SemanticValidationError, SemanticAssessmentMaxCorrectionErrors+2)
@@ -59,7 +60,7 @@ func TestSharedResponseShapeAndCorrectionErrors(t *testing.T) {
 		errs[i] = SemanticValidationError{Field: fmt.Sprintf("items[%03d].ref", len(errs)-i), Message: "is duplicated", Code: "private"}
 	}
 	original := append([]SemanticValidationError(nil), errs...)
-	bounded := BoundSemanticAssessmentCorrectionErrors(errs)
+	bounded := jsonstrict.BoundIssues(errs)
 	require.Equal(t, original, errs)
 	require.Len(t, bounded, SemanticAssessmentMaxCorrectionErrors)
 	require.Equal(t, "items[001].ref", bounded[0].Field)
@@ -87,9 +88,9 @@ func TestSharedCorrectionErrorsPreserveDistinctIssuesBeforeCountBound(t *testing
 	errs = append(errs, differentField, differentCode, differentMessage, differentCode)
 	original := append([]SemanticValidationError(nil), errs...)
 
-	bounded := BoundSemanticAssessmentCorrectionErrors(errs)
+	bounded := jsonstrict.BoundIssues(errs)
 	require.Equal(t, original, errs)
-	require.Equal(t, []SemanticValidationError{issue, differentCode, differentMessage, differentField}, bounded)
+	require.Equal(t, []SemanticValidationError{issue, differentMessage, differentField}, bounded)
 	encoded, err := json.Marshal(bounded)
 	require.NoError(t, err)
 	require.NotContains(t, string(encoded), `"code"`)

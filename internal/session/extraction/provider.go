@@ -7,10 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
+	"github.com/markhuangai/dense-mem/internal/service/generation"
 	session "github.com/markhuangai/dense-mem/internal/session/contract"
 )
 
@@ -20,6 +22,7 @@ type Provider struct {
 	transport modelprovider.StructuredTransport
 	model     string
 	limits    assessor.SemanticAssessmentLimits
+	logger    *slog.Logger
 }
 
 func NewProvider(transport modelprovider.StructuredTransport, model string, limits assessor.SemanticAssessmentLimits) *Provider {
@@ -38,91 +41,51 @@ func (p *Provider) Identity() string {
 	return "sha256:" + hex.EncodeToString(digest[:])
 }
 
-func (p *Provider) Extract(ctx context.Context, request session.ExtractionRequest) (session.ExtractionResponse, error) {
-	var response session.ExtractionResponse
-	err := p.complete(ctx, "session_evidence_excerpts_v2", extractionPrompt, session.ExtractionResponseSchema(), request, func(raw []byte) error {
-		decoded, err := session.DecodeExtraction(raw)
-		if err != nil {
-			return err
-		}
-		if err := session.ValidateExtraction(request, decoded); err != nil {
-			return err
-		}
-		response = decoded
-		return nil
-	})
-	if err != nil {
-		return session.ExtractionResponse{}, err
-	}
-	return response, nil
+func (p *Provider) WithLogger(logger *slog.Logger) *Provider {
+	p.logger = logger
+	return p
 }
 
-func (p *Provider) complete(ctx context.Context, name, prompt string, schema map[string]any, request any, validate func([]byte) error) error {
+func (p *Provider) Extract(ctx context.Context, request session.ExtractionRequest) (session.ExtractionResponse, error) {
 	if p == nil || p.transport == nil || p.model == "" {
-		return &modelprovider.ProviderError{Provider: "session", Message: "session extraction transport is unavailable", FailureClass: modelprovider.ProviderFailureClassProviderUnavailable}
+		return session.ExtractionResponse{}, &modelprovider.ProviderError{Provider: "session", Message: "session extraction transport is unavailable", FailureClass: modelprovider.ProviderFailureClassProviderUnavailable}
 	}
 	payload, err := json.Marshal(request)
 	if err != nil {
-		return err
+		return session.ExtractionResponse{}, err
 	}
-	base := []modelprovider.Message{{Role: "system", Content: prompt}, {Role: "user", Content: string(payload)}}
-	messages := append([]modelprovider.Message(nil), base...)
-	for turn := 1; turn <= 3; turn++ {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		converted := make([]assessor.SemanticAssessmentProviderMessage, 0, len(messages))
-		for _, message := range messages {
-			converted = append(converted, assessor.SemanticAssessmentProviderMessage{Role: message.Role, Content: message.Content})
-		}
-		tokens, err := assessor.CountSemanticAssessmentProviderRequestTokens(p.model, name, schema, p.limits.ProviderTemperatureDisabled, converted, p.limits.Tokenizer)
-		if err != nil {
-			return err
-		}
-		if tokens > p.limits.MaxInputTokens {
-			return session.ErrBudget
-		}
-		requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "provider_request", Operation: "session_extraction", Attempt: turn, Total: 3})
-		result, err := p.transport.Complete(ctx, modelprovider.StructuredRequest{
-			Model: p.model, Messages: messages, SchemaName: name, Schema: schema,
+	service := generation.Service[session.ExtractionResponse]{Transport: p.transport, Logger: p.logger}
+	result, err := service.Run(ctx, generation.Task[session.ExtractionResponse]{
+		ID: request.RequestID, Capability: "session", Tokenizer: p.limits.Tokenizer,
+		Correction: "Return one complete replacement object for the original immutable request.",
+		Request: modelprovider.StructuredRequest{
+			Model: p.model, SchemaName: "session_evidence_excerpts_v2", Schema: session.ExtractionResponseSchema(),
+			Messages:       []modelprovider.Message{{Role: "system", Content: extractionPrompt}, {Role: "user", Content: string(payload)}},
+			Temperature:    modelprovider.StructuredTemperature(p.limits.ProviderTemperatureDisabled),
 			MaxInputTokens: p.limits.MaxInputTokens, MaxOutputTokens: p.limits.MaxOutputTokens,
-		})
-		if err != nil {
-			return err
-		}
-		if result.PromptTokens > p.limits.MaxInputTokens || result.CompletionTokens > p.limits.MaxOutputTokens {
-			return session.ErrBudget
-		}
-		outputTokens, err := assessor.CountTokens(result.Content, p.limits.Tokenizer)
-		if err != nil {
-			return err
-		}
-		requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "session_validation"})
-		validationErr := validate([]byte(result.Content))
-		if outputTokens > p.limits.MaxOutputTokens {
-			validationErr = fmt.Errorf("output token budget exceeded")
-		}
-		if errors.Is(validationErr, session.ErrBudget) {
-			return validationErr
-		}
-		if validationErr == nil {
-			return nil
-		}
-		if turn == 3 {
-			return &modelprovider.MalformedResponseError{Provider: "session", Message: "session response remained invalid after complete regeneration", FailureClass: "malformed_exhausted", Attempts: turn}
-		}
-		requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "session_regeneration", Attempt: turn + 1, Total: 3})
-		diagnostic := []rune(validationErr.Error())
-		if len(diagnostic) > 256 {
-			diagnostic = diagnostic[:256]
-		}
-		correction, err := json.Marshal(map[string]string{"validation_errors": string(diagnostic), "instruction": "Return one complete replacement object for the original immutable request."})
-		if err != nil {
-			return err
-		}
-		messages = append(append([]modelprovider.Message(nil), base...), modelprovider.Message{Role: "user", Content: string(correction)})
+		},
+		BeforeAttempt: func(ctx context.Context, attempt, _ int) (context.Context, error) {
+			requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "provider_request", Operation: "session_extraction", Attempt: attempt, Total: modelprovider.StructuredResponseLimit})
+			return ctx, nil
+		},
+		BeforeRepair: func(ctx context.Context, attempt generation.Attempt) error {
+			requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "session_regeneration", Attempt: attempt.Number + 1, Total: modelprovider.StructuredResponseLimit})
+			return ctx.Err()
+		},
+		Validate: func(ctx context.Context, raw []byte) (session.ExtractionResponse, error) {
+			requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "session_validation"})
+			response, err := session.DecodeExtraction(raw)
+			if err == nil {
+				err = session.ValidateExtraction(request, response)
+			}
+			return response, err
+		},
+	})
+	var malformed *modelprovider.MalformedResponseError
+	if errors.As(err, &malformed) && malformed.FailureClass == "input_budget" {
+		return session.ExtractionResponse{}, fmt.Errorf("%w: %w", session.ErrBudget, err)
 	}
-	return errors.New("session extraction regeneration exhausted")
+	return result.Value, err
 }
 
 var _ session.Extractor = (*Provider)(nil)

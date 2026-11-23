@@ -1,29 +1,17 @@
-package assessorprovider
+package structured
 
 import (
 	"context"
 
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
-
 	"github.com/markhuangai/dense-mem/internal/observability"
-
-	"github.com/markhuangai/dense-mem/internal/assessor"
 )
-
-type openAIStructuredChatResult struct {
-	Content string
-	// Usage is populated only when both token sides can be priced.
-	Usage *openAIVerifierUsage
-	// ReportedUsage retains raw provider values for token-budget enforcement.
-	ReportedUsage *openAIVerifierUsage
-	Diagnostics   *modelprovider.CallDiagnostics
-}
 
 func openAIVerifierUsageSupportsPricing(usage *openAIVerifierUsage) bool {
 	return usage != nil && usage.PromptTokens > 0 && usage.CompletionTokens > 0
 }
 
-func (v *OpenAIAssessor) recordVerifierProviderUsage(ctx context.Context, model string, usage *openAIVerifierUsage) {
+func (v *OpenAI) recordVerifierProviderUsage(ctx context.Context, model string, usage *openAIVerifierUsage) {
 	if usage == nil {
 		return
 	}
@@ -40,20 +28,20 @@ func (v *OpenAIAssessor) recordVerifierProviderUsage(ctx context.Context, model 
 	})
 }
 
-func (v *OpenAIAssessor) recordVerifierMissingUsage(ctx context.Context, model string) {
+func (v *OpenAI) recordVerifierMissingUsage(ctx context.Context, model string) {
 	observability.RecordAIOperationUnpriced(ctx, v.metrics, observability.AIComponentVerifier, model, "missing_usage")
 }
 
-func (v *OpenAIAssessor) recordVerifierTokenizerUsage(ctx context.Context, model string, requestJSON []byte, content string) {
+func (v *OpenAI) recordVerifierTokenizerUsage(ctx context.Context, model string, requestJSON []byte, content string) {
 	if !observability.HasAIOperation(ctx) {
 		return
 	}
-	inputTokens, err := assessor.CountTokens(string(requestJSON), v.assessmentLimits.Tokenizer)
+	inputTokens, err := modelprovider.CountTokens(string(requestJSON), v.tokenizer)
 	if err != nil {
 		observability.RecordAIOperationUnpriced(ctx, v.metrics, observability.AIComponentVerifier, model, "tokenizer_error")
 		return
 	}
-	outputTokens, err := assessor.CountTokens(content, v.assessmentLimits.Tokenizer)
+	outputTokens, err := modelprovider.CountTokens(content, v.tokenizer)
 	if err != nil {
 		observability.RecordAIOperationUnpriced(ctx, v.metrics, observability.AIComponentVerifier, model, "tokenizer_error")
 		return

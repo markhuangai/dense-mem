@@ -47,3 +47,9 @@ export function jobScripts(job) {
   return (job.steps ?? []).flatMap((step) => [step.run, step.with?.script])
     .filter((script) => typeof script === "string").join("\n");
 }
+
+export const sharedRegressionsCommand = "bash scripts/test-shared-regressions.sh";
+
+export async function readSharedRegressions() {
+  return readFile(new URL("../../scripts/test-shared-regressions.sh", import.meta.url), "utf8");
+}

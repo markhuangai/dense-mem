@@ -7,6 +7,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
+	assessmentfixture "github.com/markhuangai/dense-mem/internal/testfixture/assessment"
 	"io"
 	"log/slog"
 	"net/http"
@@ -224,7 +226,14 @@ type importAdmissionAssessor struct {
 	delay     time.Duration
 }
 
-func (p *importAdmissionAssessor) Assess(ctx context.Context, request assessor.SemanticAssessmentRequest) (assessor.SemanticAssessmentSession, assessor.SemanticAssessmentTurn, error) {
+func (p *importAdmissionAssessor) Complete(ctx context.Context, wire modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
+	if wire.SchemaName == assessor.PartitionSchemaName {
+		return partitionFixtureComplete(wire)
+	}
+	request, err := assessmentfixture.Request(wire)
+	if err != nil {
+		return modelprovider.StructuredResult{}, err
+	}
 	p.calls.Add(1)
 	active := p.active.Add(1)
 	defer p.active.Add(-1)
@@ -239,7 +248,7 @@ func (p *importAdmissionAssessor) Assess(ctx context.Context, request assessor.S
 		case <-p.gate:
 		case <-ctx.Done():
 			p.cancelled <- struct{}{}
-			return nil, assessor.SemanticAssessmentTurn{}, ctx.Err()
+			return modelprovider.StructuredResult{}, ctx.Err()
 		}
 	}
 	if p.delay > 0 {
@@ -248,14 +257,10 @@ func (p *importAdmissionAssessor) Assess(ctx context.Context, request assessor.S
 		select {
 		case <-timer.C:
 		case <-ctx.Done():
-			return nil, assessor.SemanticAssessmentTurn{}, ctx.Err()
+			return modelprovider.StructuredResult{}, ctx.Err()
 		}
 	}
-	return (&rememberProcessorIntegrationRegistrationAssessor{}).Assess(ctx, request)
-}
-
-func (*importAdmissionAssessor) Repair(context.Context, assessor.SemanticAssessmentSession, assessor.SemanticAssessmentRepairRequest) (assessor.SemanticAssessmentTurn, error) {
-	return assessor.SemanticAssessmentTurn{}, fmt.Errorf("admission fixture unexpectedly required response repair")
+	return (&rememberProcessorIntegrationRegistrationAssessor{}).Complete(ctx, wire)
 }
 
 func (*importAdmissionAssessor) ModelName() string {

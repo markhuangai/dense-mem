@@ -11,6 +11,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/embedding"
 	embeddingcontract "github.com/markhuangai/dense-mem/internal/embedding/contract"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
+	assessmentfixture "github.com/markhuangai/dense-mem/internal/testfixture/assessment"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
@@ -48,6 +49,9 @@ type progressPostgresAssessor struct {
 }
 
 func (p *progressPostgresAssessor) Complete(ctx context.Context, r modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
+	if r.SchemaName != assessor.PartitionSchemaName {
+		return p.completeAssessment(ctx, r)
+	}
 	if p.gate != nil && p.gateOperation == "partition" {
 		if err := modelprovider.AcquireConcurrency(ctx, p.gate); err != nil {
 			return modelprovider.StructuredResult{}, err
@@ -65,10 +69,14 @@ func (p *progressPostgresAssessor) Complete(ctx context.Context, r modelprovider
 	return partitionFixtureComplete(r)
 }
 
-func (p *progressPostgresAssessor) Assess(ctx context.Context, request assessor.SemanticAssessmentRequest) (assessor.SemanticAssessmentSession, assessor.SemanticAssessmentTurn, error) {
+func (p *progressPostgresAssessor) completeAssessment(ctx context.Context, wire modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
+	request, err := assessmentfixture.Request(wire)
+	if err != nil {
+		return modelprovider.StructuredResult{}, err
+	}
 	if p.gate != nil && p.gateOperation == "assessment" {
 		if err := modelprovider.AcquireConcurrency(ctx, p.gate); err != nil {
-			return nil, assessor.SemanticAssessmentTurn{}, err
+			return modelprovider.StructuredResult{}, err
 		}
 		defer modelprovider.ReleaseConcurrency(p.gate)
 	}
@@ -79,14 +87,14 @@ func (p *progressPostgresAssessor) Assess(ctx context.Context, request assessor.
 			select {
 			case <-p.release:
 			case <-ctx.Done():
-				return nil, assessor.SemanticAssessmentTurn{}, ctx.Err()
+				return modelprovider.StructuredResult{}, ctx.Err()
 			}
 		}
 		if strings.Contains(evidence.Content, "[progress:assessment]") {
-			return nil, assessor.SemanticAssessmentTurn{}, errors.New("progress fixture assessment transport unavailable")
+			return modelprovider.StructuredResult{}, errors.New("progress fixture assessment transport unavailable")
 		}
 	}
-	return p.rememberProcessorIntegrationAssessor.Assess(ctx, request)
+	return p.rememberProcessorIntegrationAssessor.Complete(ctx, wire)
 }
 
 type progressPostgresEmbedder struct {

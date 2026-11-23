@@ -1,4 +1,4 @@
-package assessor
+package modelprovider
 
 import (
 	"encoding/json"
@@ -7,32 +7,33 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestMarshalSemanticAssessmentProviderRequestSupportsDisabledTemperatureAndRejectsInvalidSchema(t *testing.T) {
-	body, err := MarshalSemanticAssessmentProviderRequest("model", "schema", map[string]any{"type": "object"}, true, nil)
+func TestStructuredRequestSupportsDisabledTemperatureAndRejectsInvalidSchema(t *testing.T) {
+	body, err := MarshalStructuredRequest(StructuredRequest{Model: "model", SchemaName: "schema", Schema: map[string]any{"type": "object"}})
 	require.NoError(t, err)
 	var decoded map[string]any
 	require.NoError(t, json.Unmarshal(body, &decoded))
 	_, hasTemperature := decoded["temperature"]
 	require.False(t, hasTemperature)
 
-	_, err = MarshalSemanticAssessmentProviderRequest("model", "schema", map[string]any{"unsupported": func() {}}, false, nil)
+	_, err = MarshalStructuredRequest(StructuredRequest{Model: "model", SchemaName: "schema", Schema: map[string]any{"unsupported": func() {}}})
 	require.Error(t, err)
-	_, err = CountSemanticAssessmentProviderRequestTokens("model", "schema", map[string]any{"type": "object"}, false, nil, "not-a-tokenizer")
+	_, err = CountStructuredRequestTokens(StructuredRequest{Model: "model", SchemaName: "schema", Schema: map[string]any{"type": "object"}}, "not-a-tokenizer")
 	require.Error(t, err)
 }
 
-func TestMarshalSemanticAssessmentProviderRequestMatchesTokenMeasurement(t *testing.T) {
+func TestStructuredRequestMatchesTokenMeasurement(t *testing.T) {
 	schema := map[string]any{
 		"type": "object",
 		"properties": map[string]any{
 			"ok": map[string]any{"type": "boolean"},
 		},
 	}
-	messages := []SemanticAssessmentProviderMessage{
+	messages := []Message{
 		{Role: "system", Content: "system instruction"},
 		{Role: "user", Content: `{"request_id":"request-1"}`},
 	}
-	body, err := MarshalSemanticAssessmentProviderRequest("assessor-model", "assessment", schema, false, messages)
+	request := StructuredRequest{Model: "assessor-model", SchemaName: "assessment", Schema: schema, Temperature: StructuredTemperature(false), Messages: messages}
+	body, err := MarshalStructuredRequest(request)
 	if err != nil {
 		t.Fatalf("marshal provider request: %v", err)
 	}
@@ -46,7 +47,7 @@ func TestMarshalSemanticAssessmentProviderRequestMatchesTokenMeasurement(t *test
 	if decoded["temperature"] != float64(0) {
 		t.Fatalf("temperature = %#v", decoded["temperature"])
 	}
-	measured, err := CountSemanticAssessmentProviderRequestTokens("assessor-model", "assessment", schema, false, messages, "o200k_base")
+	measured, err := CountStructuredRequestTokens(request, "o200k_base")
 	if err != nil {
 		t.Fatalf("count provider request: %v", err)
 	}

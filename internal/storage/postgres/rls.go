@@ -128,6 +128,42 @@ func (r *RLS) WithSystemTx(ctx context.Context, db *gorm.DB, fn func(tx *gorm.DB
 	})
 }
 
+// WithSystemModeInTx temporarily clears the profile scope on the caller's
+// transaction, then restores the supplied IDs in profile mode.
+func WithSystemModeInTx(
+	ctx context.Context,
+	tx *gorm.DB,
+	teamID string,
+	profileID string,
+	fn func(systemTx *gorm.DB) error,
+) error {
+	if err := tx.WithContext(ctx).Exec("SELECT set_config('app.current_team_id', '', true)").Error; err != nil {
+		return err
+	}
+	if err := tx.WithContext(ctx).Exec("SELECT set_config('app.current_profile_id', '', true)").Error; err != nil {
+		return err
+	}
+	if err := tx.WithContext(ctx).Exec("SELECT set_config('app.tx_mode', 'system', true)").Error; err != nil {
+		return err
+	}
+	fnErr := fn(tx)
+	resetErr := resetProfileModeInTx(ctx, tx, teamID, profileID)
+	if fnErr != nil {
+		return fnErr
+	}
+	return resetErr
+}
+
+func resetProfileModeInTx(ctx context.Context, tx *gorm.DB, teamID, profileID string) error {
+	if err := tx.WithContext(ctx).Exec("SELECT set_config('app.current_team_id', ?, true)", teamID).Error; err != nil {
+		return err
+	}
+	if err := tx.WithContext(ctx).Exec("SELECT set_config('app.current_profile_id', ?, true)", profileID).Error; err != nil {
+		return err
+	}
+	return tx.WithContext(ctx).Exec("SELECT set_config('app.tx_mode', 'profile', true)").Error
+}
+
 // WithTeamReadOnlyRepeatableTx executes a bounded read model query against one
 // team in a repeatable-read, read-only transaction. The transaction-local RLS
 // settings are installed before any application table is read.

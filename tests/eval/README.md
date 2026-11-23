@@ -99,7 +99,12 @@ hotpotqa-latest
 Dated tags are immutable. Their release suffix is the release associated with
 current main, including release candidates; during PR testing it names that base
 release. The timestamp prevents same-day rebuild collisions. Each successful
-build updates only its dataset's latest alias. Dataset images contain a
+build updates only its dataset's latest alias. Run the publisher from one
+designated Linux host and OS account. Builds from different checkouts on that
+host share a per-alias lock during publication. A competing publisher or a
+stale or ambiguous latest generation produces an explicit conflict and keeps
+the verified build available to resume. The bootstrap alias is created once.
+Dataset images contain a
 PostgreSQL 18/pgvector cluster on the pinned base, metadata, mappings and source
 notices. The private archive is a build input. The shared bootstrap uses a
 logical archive under the same package with a `bootstrap-` prefix.

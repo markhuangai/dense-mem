@@ -3,6 +3,8 @@ package config
 import (
 	"math"
 	"strings"
+
+	"github.com/markhuangai/dense-mem/internal/assessor"
 )
 
 type aiVerifierAssessmentConfig interface {
@@ -109,4 +111,19 @@ func (c *Config) GetMemoryAutoWriteConfidenceThreshold() float64 {
 		return DefaultMemoryAutoWriteConfidenceThreshold
 	}
 	return c.MemoryAutoWriteConfidenceThreshold
+}
+
+// SemanticAssessmentLimitsForConfig maps the configured assessor budget into the
+// single limits value shared by the provider and placement worker.
+func SemanticAssessmentLimitsForConfig(cfg ConfigProvider) assessor.SemanticAssessmentLimits {
+	budget := AIVerifierAssessmentBudgetFor(cfg)
+	limits := assessor.DefaultSemanticAssessmentLimits()
+	limits.ProviderModel = cfg.GetAIVerifierModel()
+	limits.ProviderSchemaName = assessor.SemanticAssessmentSchemaName
+	limits.ProviderTemperatureDisabled = AIVerifierTemperatureDisabled(cfg)
+	limits.Tokenizer = budget.Tokenizer
+	limits.MaxInputTokens = budget.MaxInputTokens
+	limits.MaxOutputTokens = budget.MaxOutputTokens
+	limits.MaxCandidateContextTokens = budget.MaxCandidateContextTokens
+	return limits
 }

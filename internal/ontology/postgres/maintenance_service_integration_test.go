@@ -26,7 +26,7 @@ import (
 	organization "github.com/markhuangai/dense-mem/internal/ontology"
 	"github.com/markhuangai/dense-mem/internal/ontology/assessment"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
-	assessorprovider "github.com/markhuangai/dense-mem/internal/provider/assessor"
+	"github.com/markhuangai/dense-mem/internal/provider/structured"
 	"github.com/markhuangai/dense-mem/internal/settings"
 	"github.com/stretchr/testify/require"
 )
@@ -351,7 +351,7 @@ func TestOntologyMaintenanceProviderFailureReleasesCapacity(t *testing.T) {
 			t.Cleanup(server.Close)
 			limits := maintenanceFixtureLimits()
 			cfg := &config.Config{AIVerifierAPIURL: server.URL, AIVerifierAPIKey: "synthetic-provider-key", AIVerifierModel: "fixture-model"}
-			transport := assessorprovider.NewOpenAIAssessorWithAssessmentLimits(cfg, server.Client(), limits)
+			transport := structured.NewOpenAI(cfg, server.Client())
 			service := organization.NewMaintenanceService(organization.MaintenanceDependencies{Repository: f.store, Config: configured, ProviderTimeout: time.Minute,
 				Organizer: func(model string, capacity int64, accounting assessment.AttemptAccounting) *organization.Service {
 					return organization.NewService(f.store, assessment.NewProviderWithAccounting(transport, model, limits, accounting, int(capacity)))

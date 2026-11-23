@@ -1,6 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
+import { userInfo } from "node:os";
 import { fileURLToPath } from "node:url";
 import { ownedResource, registryMatrix, resolveImportWorkers } from "./evaluation-policy.mjs";
 import imagePolicy from "./image-release-policy.cjs";
@@ -273,11 +275,66 @@ export async function resolveSeedImage(reference, env = process.env) {
   return `${seedRepository}@${hash}`;
 }
 
-export async function publishSeed(docker, directory, dataset, selected, env, beforePublication, resume) {
+export function lockLocalSeedFile(filename, busyMessage) {
+  const file = fs.openSync(filename, fs.constants.O_CREAT | fs.constants.O_RDWR | fs.constants.O_NOFOLLOW, 0o600);
+  const lock = spawnSync("flock", ["--exclusive", "--nonblock", "--conflict-exit-code", "73", "3"], {
+    stdio: ["ignore", "ignore", "ignore", file], timeout: 5000,
+  });
+  if (lock.status !== 0) {
+    fs.closeSync(file);
+    throw new Error(lock.status === 73 ? busyMessage : "Seed build lock is unavailable; check flock and the publishing filesystem");
+  }
+  return () => fs.closeSync(file);
+}
+
+const packagePath = "/users/markhuangai/packages/container/dense-mem-eval-postgres";
+
+async function currentSeedGeneration(github, dataset, pinned) {
+  const hash = pinned.split("@")[1];
+  const versions = await seedGitHubPages(github, packagePath + "/versions");
+  const matching = versions.filter(item => item.name === hash);
+  if (matching.length !== 1) return null;
+  const prefix = dataset + "-";
+  const candidates = matching[0].metadata?.container?.tags
+    ?.filter(tag => tag.startsWith(prefix) && version.test(tag.slice(prefix.length))) ?? [];
+  return candidates.length === 1 ? candidates[0].slice(prefix.length).split("-")[0] : null;
+}
+
+function publicationConflict(reason, alias, candidate, observed, buildID) {
+  return Object.assign(new Error(reason), {
+    diagnostic: { event: "seed_publication_conflict", alias, candidate, observed_digest: observed, build_id: buildID, reason },
+  });
+}
+
+export async function publishSeed(docker, directory, dataset, selected, env, beforePublication, resume, {
+  github,
+  publisherDirectory = path.join(userInfo().homedir, ".local", "state", "dense-mem", "seed-publisher"),
+} = {}) {
   if (read(path.join(directory, "seed.json")).intake_proof) throw new Error("Intake proof exports cannot be published");
   if (typeof beforePublication !== "function") throw new Error("Seed publication requires a fresh validation gate");
   const tagged = seedReference(dataset, selected);
   const alias = seedReference(dataset);
+  const conflict = (reason, observed = null) => publicationConflict(reason, alias, tagged, observed, resume?.runID);
+  fs.mkdirSync(publisherDirectory, { recursive: true, mode: 0o700 });
+  const state = fs.lstatSync(publisherDirectory);
+  if (!state.isDirectory() || state.uid !== process.getuid() || (state.mode & 0o077) !== 0) {
+    throw conflict("Seed publisher lock directory is not private");
+  }
+  const lockFile = path.join(publisherDirectory, createHash("sha256").update(alias).digest("hex") + ".lock");
+  let unlock;
+  try {
+    unlock = lockLocalSeedFile(lockFile, "Another build is publishing this seed alias");
+  } catch (error) {
+    throw conflict(error.message);
+  }
+  try {
+    return await publishLockedSeed(docker, directory, dataset, selected, env, beforePublication, resume, github, tagged, alias, conflict);
+  } finally {
+    unlock();
+  }
+}
+
+async function publishLockedSeed(docker, directory, dataset, selected, env, beforePublication, resume, github, tagged, alias, conflict) {
   const bootable = dataset !== "bootstrap";
   if (bootable && !localImageID.test(resume?.bootableImage || "")) throw new Error("Seed publication requires a verified bootable image");
   const files = ["database.dump", "seed.json", "NOTICE.md"];
@@ -313,14 +370,24 @@ export async function publishSeed(docker, directory, dataset, selected, env, bef
     if (!pinned) throw new Error("Published seed has no immutable registry digest");
   }
   if (bootable && loadSeedImage(docker, pinned, { bootable }) !== resume.bootableImage) throw new Error("Dated seed image differs from the verified local image");
-  if (resume) {
-    const latest = await resolveSeedImage(alias, env);
-    if (latest === pinned) return pinned;
-    if (latest !== resume.previousLatest) throw new Error("Seed latest alias changed after the local export was verified");
+  const latest = await resolveSeedImage(alias, env);
+  if (latest === pinned) return pinned;
+  if (latest !== (resume?.previousLatest ?? null) || (!bootable && latest)) {
+    throw conflict("Seed latest alias changed after the local export was verified", latest);
+  }
+  if (latest) {
+    let generation;
+    try { generation = await currentSeedGeneration(github, dataset, latest); }
+    catch {
+      throw conflict("Seed latest alias generation could not be verified", latest);
+    }
+    if (!generation) throw conflict("Seed latest alias has an ambiguous dated generation", latest);
+    if (generation >= selected.split("-")[0]) throw conflict("Seed latest alias already has a newer or equal generation", latest);
   }
   docker(["tag", aliasSource, alias]);
   await beforePublication();
   docker(["push", "--quiet", alias], { timeout: 20 * 60_000 });
-  if (await resolveSeedImage(alias, env) !== pinned) throw new Error("Seed latest alias differs from the verified dated image");
+  const published = await resolveSeedImage(alias, env);
+  if (published !== pinned) throw conflict("Seed latest alias differs from the verified dated image", published);
   return pinned;
 }

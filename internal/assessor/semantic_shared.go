@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"strings"
 	"unicode"
+
+	"github.com/markhuangai/dense-mem/internal/jsonstrict"
 )
 
 var semanticHiddenControlMarkupPattern = regexp.MustCompile(`(?is)<\s*(?:script|iframe|object|embed|meta|svg)\b|\bon[a-z]{3,32}\s*=`)
@@ -27,12 +29,7 @@ type SemanticReviewEvidence struct {
 	CurrentSourceRevisionID string         `json:"-"`
 }
 
-// SemanticValidationError is a bounded field-level contract validation error.
-type SemanticValidationError struct {
-	Field   string `json:"field"`
-	Message string `json:"message"`
-	Code    string `json:"-"`
-}
+type SemanticValidationError = jsonstrict.Issue
 
 func semanticEvidenceByID(evidence []SemanticReviewEvidence) map[string]SemanticReviewEvidence {
 	out := make(map[string]SemanticReviewEvidence, len(evidence))
@@ -48,13 +45,6 @@ func semanticAssessmentAllEvidence(req SemanticAssessmentRequest) map[string]Sem
 		out[strings.TrimSpace(item.EvidenceID)] = item
 	}
 	return out
-}
-
-func (e SemanticValidationError) Error() string {
-	if e.Field == "" {
-		return e.Message
-	}
-	return e.Field + ": " + e.Message
 }
 
 func semanticSecuritySignalSpanMatchesKind(kind, quote string, allowCommentMarker bool) bool {

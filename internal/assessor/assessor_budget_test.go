@@ -2,6 +2,7 @@ package assessor
 
 import (
 	"encoding/json"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"strings"
 	"testing"
 
@@ -197,7 +198,7 @@ func TestCountSemanticAssessmentRequestTokensMatchesOmittedCandidateFields(t *te
 		}
 		expectedPayload, err := json.Marshal(candidateFields)
 		require.NoError(t, err)
-		expectedTokens, err := CountTokens(string(expectedPayload), limits.Tokenizer)
+		expectedTokens, err := modelprovider.CountTokens(string(expectedPayload), limits.Tokenizer)
 		require.NoError(t, err)
 		require.Equal(t, expectedTokens, candidateContextTokens)
 	}

@@ -1,13 +1,18 @@
 package service
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
-	"time"
+	"log/slog"
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
+	"github.com/markhuangai/dense-mem/internal/jsonstrict"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
+	"github.com/markhuangai/dense-mem/internal/service/generation"
 )
 
 type submissionAssessmentValidationTurn struct {
@@ -104,136 +109,145 @@ func SynchronousAssessmentProviderTurns(err error) int {
 	return turns
 }
 
+type submissionAssessmentResponseValidator func(context.Context, assessor.SemanticAssessmentRequest, assessor.SemanticAssessmentResponse) ([]assessor.SemanticValidationError, error)
+
+const repairInstruction = "Return one complete replacement object for the unchanged original Evidence and known context. Repair every validation error together. Copy only the supplied evidence IDs and boundary refs. Return all opposing conflict positions and exactly one equivalence result per candidate group. Never return a patch or explanation."
+
 func (s *assessmentEngine) assessRememberSession(
 	ctx context.Context,
 	request assessor.SemanticAssessmentRequest,
 	refresh func(context.Context) (assessor.SemanticAssessmentRequest, error),
 	turnOffset int,
-) (assessor.SemanticAssessmentResponse, assessor.SemanticAssessmentSession, assessor.SemanticAssessmentRequest, error) {
-	return s.assessRememberSessionWithValidator(ctx, request, refresh, turnOffset, nil)
-}
-
-type submissionAssessmentResponseValidator func(context.Context, assessor.SemanticAssessmentRequest, assessor.SemanticAssessmentResponse) ([]assessor.SemanticValidationError, error)
-
-func (s *assessmentEngine) assessRememberSessionWithValidator(
-	ctx context.Context,
-	request assessor.SemanticAssessmentRequest,
-	refresh func(context.Context) (assessor.SemanticAssessmentRequest, error),
-	turnOffset int,
 	validate submissionAssessmentResponseValidator,
-) (assessor.SemanticAssessmentResponse, assessor.SemanticAssessmentSession, assessor.SemanticAssessmentRequest, error) {
+) (assessor.SemanticAssessmentResponse, error) {
 	if s == nil || s.provider == nil {
-		return assessor.SemanticAssessmentResponse{}, nil, request, errors.New("synchronous assessment provider is required")
+		return assessor.SemanticAssessmentResponse{}, errors.New("synchronous assessment provider is required")
 	}
 	if refresh == nil {
-		return assessor.SemanticAssessmentResponse{}, nil, request, errors.New("synchronous assessment refresh is required")
+		return assessor.SemanticAssessmentResponse{}, errors.New("synchronous assessment refresh is required")
+	}
+	payload, err := json.Marshal(request)
+	if err != nil {
+		return assessor.SemanticAssessmentResponse{}, err
 	}
 	s.completedInputTokens, s.completedOutputTokens = 0, 0
-	s.diagnostics.beginTurn(ctx)
-	session, turn, err := s.provider.Assess(ctx, request)
-	s.diagnostics.finishProviderTurn(turn, err)
-	if err != nil {
-		s.completedInputTokens += max(0, turn.InputTokens)
-		s.completedOutputTokens += max(0, turn.OutputTokens)
-		return assessor.SemanticAssessmentResponse{}, session, request, err
-	}
-	response, finalRequest, err := s.completeRememberSessionTurnsWithValidator(ctx, session, turn, request, refresh, turnOffset, validate)
-	return response, session, finalRequest, err
-}
-
-func (s *assessmentEngine) completeRememberSessionTurnsWithValidator(
-	ctx context.Context,
-	session assessor.SemanticAssessmentSession,
-	turn assessor.SemanticAssessmentTurn,
-	request assessor.SemanticAssessmentRequest,
-	refresh func(context.Context) (assessor.SemanticAssessmentRequest, error),
-	turnOffset int,
-	validate submissionAssessmentResponseValidator,
-) (assessor.SemanticAssessmentResponse, assessor.SemanticAssessmentRequest, error) {
-	if s == nil || s.provider == nil {
-		return assessor.SemanticAssessmentResponse{}, request, errors.New("synchronous assessment provider is required")
-	}
 	var validationHistory []submissionAssessmentValidationTurn
-	validationAttempts := 0
-	for {
-		validationAttempts++
-		totalTurns := turnOffset + validationAttempts
-		response := turn.Response
-		inputTokens := turn.InputTokens
-		if inputTokens <= 0 {
-			inputTokens = response.InputTokens
-		}
-		if inputTokens <= 0 {
-			inputTokens = request.InputTokens
-		}
-		outputTokens := turn.OutputTokens
-		if outputTokens <= 0 {
-			outputTokens = response.OutputTokens
-		}
-		s.completedInputTokens += inputTokens
-		s.completedOutputTokens += outputTokens
-		validationStarted := time.Now()
-		ReportProgress(ctx, ProgressValidatingAssessment)
-		validationErrors := append([]assessor.SemanticValidationError(nil), turn.ValidationErrors...)
-		if len(validationErrors) == 0 {
-			response, validationErrors = assessor.PrepareSemanticAssessmentResponse(request, response, s.limits)
-		}
-		if len(validationErrors) == 0 && validate != nil {
-			var err error
-			validationErrors, err = validate(ctx, request, response)
-			if err != nil {
-				s.diagnostics.finishValidation(validationStarted, validationErrors)
-				return assessor.SemanticAssessmentResponse{}, request, &submissionAssessmentConsumedTurnsError{
-					cause:         wrapSubmissionAssessmentValidationHistory(err, validationHistory),
-					providerTurns: totalTurns,
-				}
-			}
-		}
-		s.diagnostics.finishValidation(validationStarted, validationErrors)
-		if len(validationErrors) == 0 {
-			response.ProviderTurns = totalTurns
-			return response, request, nil
-		}
-		observability.RecordAssessorValidationFailure(s.metrics, assessmentValidationStage(turn.ValidationStage))
-		for _, family := range semanticAssessmentValidationFieldFamiliesForService(validationErrors) {
-			observability.RecordAssessorValidationFieldFailure(s.metrics, assessmentValidationStage(turn.ValidationStage), family)
-		}
-		validationFields := make([]string, 0, len(validationErrors))
-		for _, validationError := range validationErrors {
-			validationFields = append(validationFields, validationError.Field)
-		}
-		validationHistory = append(validationHistory, submissionAssessmentValidationTurn{
-			Attempt:    totalTurns,
-			Stage:      assessmentValidationStage(turn.ValidationStage),
-			Fields:     validationFields,
-			ErrorCount: len(validationErrors),
-		})
-		if totalTurns >= SemanticMaxAssessorTurns {
-			failure := &assessor.MalformedResponseError{
-				Provider:                "semantic_assessor",
-				Message:                 "semantic assessor response remained invalid after bounded correction",
-				FailureClass:            "malformed_exhausted",
-				Attempts:                totalTurns,
-				ValidationStage:         assessmentValidationStage(turn.ValidationStage),
-				ValidationFieldFamilies: semanticAssessmentValidationFieldFamiliesForService(validationErrors),
-			}
-			return assessor.SemanticAssessmentResponse{}, request, wrapSubmissionAssessmentValidationHistory(failure, validationHistory)
-		}
-		nextRequest, err := refresh(ctx)
-		if err != nil {
-			return assessor.SemanticAssessmentResponse{}, request, &submissionAssessmentConsumedTurnsError{cause: wrapSubmissionAssessmentValidationHistory(err, validationHistory), providerTurns: totalTurns}
-		}
-		s.diagnostics.beginTurn(ctx)
-		requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: string(ProgressRegeneratingAssessment), Attempt: totalTurns + 1, Total: SemanticMaxAssessorTurns})
-		turn, err = s.provider.Repair(ctx, session, assessor.SemanticAssessmentRepairRequest{
-			Request: nextRequest, ValidationErrors: validationErrors,
-		})
-		s.diagnostics.finishProviderTurn(turn, err)
-		if err != nil {
-			s.completedInputTokens += max(0, turn.InputTokens)
-			s.completedOutputTokens += max(0, turn.OutputTokens)
-			return assessor.SemanticAssessmentResponse{}, request, &submissionAssessmentConsumedTurnsError{cause: wrapSubmissionAssessmentValidationHistory(err, validationHistory), providerTurns: totalTurns}
-		}
-		request = nextRequest
+	completedTurns := turnOffset
+	correction := repairInstruction
+	if request.DecisionRouting == nil || request.DecisionRouting.Security == nil {
+		correction += " Return exactly one security result per submitted Evidence ID."
 	}
+	correction += assessor.SemanticAssessmentGenerationInstruction(request)
+	if request.DecisionRouting != nil && request.DecisionRouting.SkipAISecurityReview {
+		correction += "\n\n" + assessor.SemanticAssessmentConflictContext
+	} else {
+		correction += "\n\n" + assessor.SemanticAssessmentContextPolicy
+	}
+
+	var logger *slog.Logger
+	if root, ok := s.logger.(interface{ ContextSlog() *slog.Logger }); ok {
+		logger = root.ContextSlog()
+	}
+	service := generation.Service[assessor.SemanticAssessmentResponse]{Transport: s.provider, Logger: logger}
+	result, err := service.Run(ctx, generation.Task[assessor.SemanticAssessmentResponse]{
+		ID: request.RequestID, Capability: "semantic_assessor", Tokenizer: s.limits.Tokenizer,
+		Correction: correction, ResponsesConsumed: turnOffset,
+		Request: modelprovider.StructuredRequest{
+			Model: s.provider.ModelName(), SchemaName: assessor.SemanticAssessmentSchemaName,
+			Schema:         assessor.SemanticAssessmentGenerationSchema(request, s.limits),
+			Messages:       []modelprovider.Message{{Role: "system", Content: assessor.SemanticAssessmentPromptForGeneration(request)}, {Role: "user", Content: string(payload)}},
+			Temperature:    modelprovider.StructuredTemperature(s.limits.ProviderTemperatureDisabled),
+			MaxInputTokens: s.limits.MaxInputTokens, MaxOutputTokens: s.limits.MaxOutputTokens,
+		},
+		BeforeAttempt: func(ctx context.Context, _ int, _ int) (context.Context, error) {
+			s.diagnostics.beginTurn(ctx)
+			return ctx, nil
+		},
+		BeforeRepair: func(ctx context.Context, attempt generation.Attempt) error {
+			next, err := refresh(ctx)
+			if err != nil {
+				return err
+			}
+			nextPayload, err := json.Marshal(next)
+			if err != nil {
+				return err
+			}
+			if next.TeamID != request.TeamID || next.OwnerProfileID != request.OwnerProfileID || !bytes.Equal(payload, nextPayload) ||
+				!assessor.SameSemanticAssessmentRouting(request.DecisionRouting, next.DecisionRouting) {
+				return &modelprovider.ProviderError{Provider: "semantic_assessor", Message: "repair changed the immutable assessment request", FailureClass: modelprovider.ProviderFailureClassRequestInvalid}
+			}
+			requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: string(ProgressRegeneratingAssessment), Attempt: attempt.Number + 1, Total: SemanticMaxAssessorTurns})
+			return ctx.Err()
+		},
+		Validate: func(ctx context.Context, raw []byte) (assessor.SemanticAssessmentResponse, error) {
+			ReportProgress(ctx, ProgressValidatingAssessment)
+			reply, err := assessor.DecodeSemanticAssessmentGeneration(raw, request, s.limits)
+			if err != nil {
+				var rejected *jsonstrict.ValidationError
+				if errors.As(err, &rejected) {
+					return reply, &jsonstrict.ValidationError{Stage: "response_json", Errors: rejected.Errors, Cause: rejected.Cause}
+				}
+				return reply, &jsonstrict.ValidationError{Stage: "response_json", Errors: []jsonstrict.Issue{jsonstrict.ResponseJSONValidationError(err, "")}}
+			}
+			reply, issues := assessor.PrepareSemanticAssessmentResponse(request, reply, s.limits)
+			if len(issues) == 0 && validate != nil {
+				issues, err = validate(ctx, request, reply)
+			}
+			if len(issues) > 0 {
+				return reply, &jsonstrict.ValidationError{Stage: "response_contract", Errors: issues}
+			}
+			return reply, err
+		},
+		Observe: func(ctx context.Context, attempt generation.Attempt) {
+			s.diagnostics.finishGenerationAttempt(attempt)
+			if attempt.Err == nil || attempt.ValidationElapsed > 0 || attempt.Provider.UsageAvailable {
+				s.completedInputTokens += attempt.EffectiveInputTokens()
+				output := attempt.OutputTokens
+				if attempt.Provider.CompletionTokens > 0 {
+					output = attempt.Provider.CompletionTokens
+				}
+				s.completedOutputTokens += output
+			}
+			if attempt.Err == nil || attempt.Validation != nil || attempt.OutputTokens > 0 {
+				completedTurns = attempt.Number
+			}
+			if attempt.Validation == nil {
+				return
+			}
+			issues := attempt.Validation.Errors
+			stage := assessmentValidationStage(attempt.Validation.Stage)
+			observability.RecordAssessorValidationFailure(s.metrics, stage)
+			for _, family := range semanticAssessmentValidationFieldFamiliesForService(issues) {
+				observability.RecordAssessorValidationFieldFailure(s.metrics, stage, family)
+			}
+			fields := make([]string, 0, len(issues))
+			for _, issue := range issues {
+				fields = append(fields, issue.Field)
+			}
+			validationHistory = append(validationHistory, submissionAssessmentValidationTurn{
+				Attempt: attempt.Number, Stage: stage, Fields: fields, ErrorCount: len(issues),
+			})
+		},
+	})
+	if err != nil {
+		var malformed *modelprovider.MalformedResponseError
+		if errors.As(err, &malformed) {
+			switch malformed.FailureClass {
+			case "malformed_exhausted":
+				last := result.Attempts[len(result.Attempts)-1].Validation
+				malformed.ValidationFieldFamilies = semanticAssessmentValidationFieldFamiliesForService(last.Errors)
+			case "input_budget":
+				observability.RecordAssessorValidationFailure(s.metrics, "input_budget")
+			}
+		}
+		wrapped := wrapSubmissionAssessmentValidationHistory(err, validationHistory)
+		if completedTurns > 0 {
+			wrapped = &submissionAssessmentConsumedTurnsError{cause: wrapped, providerTurns: completedTurns}
+		}
+		return assessor.SemanticAssessmentResponse{}, wrapped
+	}
+	last := result.Attempts[len(result.Attempts)-1]
+	result.Value.InputTokens = last.EffectiveInputTokens()
+	result.Value.ProviderTurns = last.Number
+	return result.Value, nil
 }

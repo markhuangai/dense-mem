@@ -15,7 +15,7 @@ COMPOSE_FILE="${TEST_ROOT}/docker-compose.yml"
 ENV_FILE="${TEST_ROOT}/.env"
 PROMETHEUS_FILE="${TEST_ROOT}/prometheus.yml"
 POSTGRES_READINESS_FILE="${TEST_ROOT}/postgres-readiness.sh"
-mkdir -p "$CONFIG_DIR" "$JOB_DIR"
+mkdir -p "$CONFIG_DIR" "$JOB_DIR" "${TEST_ROOT}/postgres-init-receipts"
 
 project_one=""
 project_two=""
@@ -146,9 +146,9 @@ export DENSE_MEM_CI_REPOSITORY="${DENSE_MEM_CI_TEST_REPOSITORY:-markhuangai/dens
 
 write_compose() {
   local mode="$1"
-  node - "$COMPOSE_FILE" "$mode" "$POSTGRES_READINESS_FILE" <<'NODE'
+  node - "$COMPOSE_FILE" "$mode" "$POSTGRES_READINESS_FILE" "${TEST_ROOT}/postgres-init-receipts" <<'NODE'
 const fs = require("node:fs");
-const [destination, mode, readinessFile] = process.argv.slice(2);
+const [destination, mode, readinessFile, initReceipts] = process.argv.slice(2);
 const serverCommand = mode === "fail" ? ["sh", "-c", "exit 1"] : ["sh", "-c", "while :; do sleep 3600; done"];
 const runtimeUser = mode === "bootstrap-role"
   ? "densemem_e2e_bootstrap"
@@ -177,6 +177,7 @@ const postgresInitCommand = [
   "sh",
   "-ec",
   [
+    'printf "%s %s %s\\n" "$${FIXTURE_RUN_ID}" "$(hostname)" "$(date -u +%FT%TZ)" >> "/fixture-receipts/$${FIXTURE_RUN_ID}.log"',
     'until pg_isready -h "$${POSTGRES_HOST}" -U "$${POSTGRES_BOOTSTRAP_USER}" -d "$${POSTGRES_BOOTSTRAP_DB}"; do sleep 1; done',
     'PGPASSWORD="$${POSTGRES_RUNTIME_PASSWORD}" psql -h "$${POSTGRES_HOST}" -U "$${POSTGRES_RUNTIME_USER}" -d "$${POSTGRES_RUNTIME_DB}" -v ON_ERROR_STOP=1 <<\'SQL\'',
     ...stateStatements,
@@ -215,10 +216,13 @@ const lines = [
   "      POSTGRES_HOST: postgres",
   "      POSTGRES_BOOTSTRAP_USER: densemem_e2e_bootstrap",
   "      POSTGRES_BOOTSTRAP_DB: densemem",
+  "      FIXTURE_RUN_ID: ${DENSE_MEM_CI_RUN_ID:?required}",
   "      POSTGRES_RUNTIME_USER: " + runtimeUser,
   "      POSTGRES_RUNTIME_PASSWORD: controller-test-password",
   "      POSTGRES_RUNTIME_DB: densemem",
   "    command: " + JSON.stringify(postgresInitCommand),
+  "    volumes:",
+  "      - " + JSON.stringify(initReceipts + ":/fixture-receipts"),
   "    depends_on:",
   "      postgres:",
   "        condition: service_healthy",

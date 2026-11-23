@@ -36,7 +36,16 @@ type partitionPostgresAssessor struct {
 	beforeAssessment func(context.Context)
 }
 
-func (p *partitionPostgresAssessor) Complete(_ context.Context, request modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
+func (p *partitionPostgresAssessor) Complete(ctx context.Context, request modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
+	if request.SchemaName != assessor.PartitionSchemaName {
+		if p.beforeAssessment != nil {
+			p.beforeAssessment(ctx)
+		}
+		if err := ctx.Err(); err != nil {
+			return modelprovider.StructuredResult{}, err
+		}
+		return p.rememberProcessorIntegrationAssessor.Complete(ctx, request)
+	}
 	p.calls.Add(1)
 	return partitionFixtureCompleteWithCuts(request, func(item assessor.PartitionItem) []string {
 		if newline := strings.Index(item.BoundaryText, "\n"); newline >= 0 {
@@ -47,16 +56,6 @@ func (p *partitionPostgresAssessor) Complete(_ context.Context, request modelpro
 		}
 		return []string{}
 	})
-}
-
-func (p *partitionPostgresAssessor) Assess(ctx context.Context, r assessor.SemanticAssessmentRequest) (assessor.SemanticAssessmentSession, assessor.SemanticAssessmentTurn, error) {
-	if p.beforeAssessment != nil {
-		p.beforeAssessment(ctx)
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, assessor.SemanticAssessmentTurn{}, err
-	}
-	return p.rememberProcessorIntegrationAssessor.Assess(ctx, r)
 }
 
 func TestRememberPartitionPostgres(t *testing.T) {

@@ -361,9 +361,9 @@ func TestRememberProcessorRecordsAssessmentRejectionTrails(t *testing.T) {
 		require.Equal(t, assessor.SemanticAssessmentMaxProviderTurns-1, provider.repairCalls)
 	})
 
-	t.Run("later assessor rejection retains admitted request", func(t *testing.T) {
+	t.Run("partition security rejection retains admitted request", func(t *testing.T) {
 		ledger := &rememberPipelineLedgerStub{rememberFailureLedgerStub: &rememberFailureLedgerStub{}}
-		provider := &processorAssessmentProviderStub{reject: true}
+		provider := &processorAssessmentProviderStub{rejectPartition: true}
 		processor := &rememberSynchronousProcessor{ledger: ledger, provider: provider, protector: observability.NewCredentialProtector()}
 		_, err := processor.ProcessRemember(context.Background(), input)
 		var processErr *rememberapp.RememberProcessError
@@ -371,6 +371,8 @@ func TestRememberProcessorRecordsAssessmentRejectionTrails(t *testing.T) {
 		require.ErrorIs(t, err, rememberapp.ErrRememberPolicyRejected)
 		require.Equal(t, "failed", ledger.invocation.Outcome)
 		require.Equal(t, "assessment", ledger.invocation.FailedPhase)
+		require.Equal(t, 1, provider.partitionCalls)
+		require.Zero(t, provider.assessCalls)
 		require.Contains(t, string(ledger.invocation.RequestBody), "admitted")
 		require.NotContains(t, string(ledger.invocation.RequestBody), "hash_only")
 	})
@@ -652,22 +654,13 @@ func (s *rememberPipelineLedgerStub) CommitRememberWithEmbeddings(_ context.Cont
 	return s.commitResult, nil
 }
 
-type processorAssessmentSessionStub struct{}
-
-func (*processorAssessmentSessionStub) SessionID() string { return "processor-assessment" }
-
 type processorAssessmentProviderStub struct {
-	partitionCalls int
-	partitionReply func(modelprovider.StructuredRequest) string
-	reject         bool
-	invalid        bool
-	assessCalls    int
-	repairCalls    int
-}
-
-func (p *processorAssessmentProviderStub) Assess(_ context.Context, request assessor.SemanticAssessmentRequest) (assessor.SemanticAssessmentSession, assessor.SemanticAssessmentTurn, error) {
-	p.assessCalls++
-	return &processorAssessmentSessionStub{}, assessor.SemanticAssessmentTurn{Response: p.response(request)}, nil
+	partitionCalls  int
+	partitionReply  func(modelprovider.StructuredRequest) string
+	rejectPartition bool
+	invalid         bool
+	assessCalls     int
+	repairCalls     int
 }
 
 func (p *processorAssessmentProviderStub) response(request assessor.SemanticAssessmentRequest) assessor.SemanticAssessmentResponse {
@@ -676,28 +669,13 @@ func (p *processorAssessmentProviderStub) response(request assessor.SemanticAsse
 	}
 	security := make([]assessor.SemanticAssessmentEvidenceSecurityResult, 0, len(request.Evidence))
 	for _, evidence := range request.Evidence {
-		result := assessor.SemanticAssessmentEvidenceSecurityResult{EvidenceID: evidence.EvidenceID, Decision: "pass", Signals: []assessor.SemanticAssessmentSecuritySignal{}}
-		if p.reject {
-			startRef, _ := assessor.SemanticAssessmentBoundaryRef(evidence, 0)
-			endRef, _ := assessor.SemanticAssessmentBoundaryRef(evidence, len([]rune(evidence.Content)))
-			result.Decision = "reject"
-			result.Signals = []assessor.SemanticAssessmentSecuritySignal{{EvidenceID: evidence.EvidenceID, Kind: "instruction_override", StartRef: startRef, EndRef: endRef}}
-		}
-		security = append(security, result)
+		security = append(security, assessor.SemanticAssessmentEvidenceSecurityResult{EvidenceID: evidence.EvidenceID, Decision: "pass", Signals: []assessor.SemanticAssessmentSecuritySignal{}})
 	}
 	return assessor.SemanticAssessmentResponse{
 		RequestID: request.RequestID, EvidenceSecurityResults: security,
 		EvidenceEquivalenceResults: []assessor.SemanticAssessmentEvidenceEquivalenceResult{},
 		EvidenceConflictResults:    []assessor.SemanticAssessmentEvidenceConflictResult{},
 	}
-}
-
-func (p *processorAssessmentProviderStub) Repair(_ context.Context, _ assessor.SemanticAssessmentSession, request assessor.SemanticAssessmentRepairRequest) (assessor.SemanticAssessmentTurn, error) {
-	p.repairCalls++
-	if !p.invalid {
-		return assessor.SemanticAssessmentTurn{}, errors.New("unexpected assessment repair")
-	}
-	return assessor.SemanticAssessmentTurn{Response: p.response(request.Request)}, nil
 }
 
 func (*processorAssessmentProviderStub) ModelName() string { return "processor-assessment-model" }
@@ -869,7 +847,7 @@ func TestRememberDiagnosticsRecordsUncapturedPhasesAndDerivedSecurityHash(t *tes
 	require.Equal(t, "not_captured", items[2].CaptureState)
 	require.False(t, items[1].CapturedAt.IsZero())
 
-	var nilRecorder *rememberExchangeRecorder
+	var nilRecorder *observability.ProviderExchangeRecorder
 	nilRecorder.RecordProviderExchange(context.Background(), modelprovider.ProviderExchange{})
 	require.Nil(t, nilRecorder.Snapshot())
 }
@@ -924,7 +902,7 @@ func TestRememberInvocationDiagnosticsProtectsRequestScopedAuthenticationSecrets
 
 func TestRememberExchangeRecorderProtectsRequestScopedAuthenticationSecrets(t *testing.T) {
 	requestSecret := "database-backed-request-secret"
-	recorder := &rememberExchangeRecorder{protector: observability.NewCredentialProtector()}
+	recorder := observability.NewProviderExchangeRecorder(observability.NewCredentialProtector())
 	ctx := observability.WithAuthenticationSecrets(context.Background(), requestSecret)
 	recorder.RecordProviderExchange(ctx, modelprovider.ProviderExchange{
 		Component: "assessor", RequestBody: []byte(`{"authorization":"database-backed-request-secret"}`), Outcome: "captured",

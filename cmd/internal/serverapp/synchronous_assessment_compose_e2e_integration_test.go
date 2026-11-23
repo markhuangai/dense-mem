@@ -16,7 +16,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/config"
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
-	assessorprovider "github.com/markhuangai/dense-mem/internal/provider/assessor"
+	"github.com/markhuangai/dense-mem/internal/provider/structured"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 )
 
@@ -31,7 +31,7 @@ func TestComposeEvidenceOnlyAssessmentPreservesExactEvidence(t *testing.T) {
 		AIVerifierModel: "dense-mem-e2e-verifier", AIVerifierTimeoutSeconds: 10,
 		AIVerifierMaxConcurrency: 1, AIVerifierDisableTemperature: true,
 	}
-	assessorProvider := assessorprovider.NewOpenAIAssessorWithAssessmentLimits(cfg, &http.Client{Timeout: 10 * time.Second}, limits)
+	assessorProvider := structured.NewOpenAI(cfg, &http.Client{Timeout: 10 * time.Second})
 	teamID, ownerID, ingestID := uuid.NewString(), uuid.NewString(), uuid.NewString()
 	evidence := []knowledgecontract.EvidenceFragment{
 		{FragmentID: uuid.NewString(), EvidenceIndex: 0, Content: "Dense-Mem uses PostgreSQL.", Authority: "primary"},

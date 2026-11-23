@@ -24,8 +24,8 @@ func (p *rememberSynchronousProcessor) partitionRemember(ctx context.Context, in
 	ctx = requestctx.WithProgressOperation(ctx, "partition")
 	ctx = observability.WithMetricIdentity(ctx, input.TeamID, input.OwnerProfileID)
 	ctx = observability.WithAIOperation(ctx, observability.AIOperationSemanticAssessment, len(input.Evidence))
-	transport, ok := p.provider.(modelprovider.StructuredTransport)
-	if !ok {
+	transport := p.provider
+	if transport == nil {
 		return input, nil, fmt.Errorf("%w: partition transport is unavailable", remember.ErrRememberProviderUnavailable)
 	}
 	remember.ReportProgress(ctx, remember.ProgressPreparingBoundaries)
@@ -49,6 +49,7 @@ func (p *rememberSynchronousProcessor) partitionRemember(ctx context.Context, in
 	outputLimit := min(limits.MaxOutputTokens, 8192)
 	conversation := modelprovider.StructuredRequest{
 		Model: p.provider.ModelName(), SchemaName: assessor.PartitionSchemaName,
+		Temperature:    modelprovider.StructuredTemperature(limits.ProviderTemperatureDisabled),
 		MaxInputTokens: limits.MaxInputTokens, MaxOutputTokens: outputLimit,
 	}
 	prepare := func() error {
@@ -65,11 +66,7 @@ func (p *rememberSynchronousProcessor) partitionRemember(ctx context.Context, in
 		return nil
 	}
 	countTokens := func(turn int) (int, error) {
-		converted := make([]assessor.SemanticAssessmentProviderMessage, len(conversation.Messages))
-		for i, m := range conversation.Messages {
-			converted[i] = assessor.SemanticAssessmentProviderMessage{Role: m.Role, Content: m.Content}
-		}
-		tokens, countErr := assessor.CountSemanticAssessmentProviderRequestTokens(conversation.Model, conversation.SchemaName, conversation.Schema, limits.ProviderTemperatureDisabled, converted, limits.Tokenizer)
+		tokens, countErr := modelprovider.CountStructuredRequestTokens(conversation, limits.Tokenizer)
 		if countErr != nil {
 			return 0, fmt.Errorf("%w: partition request sizing failed: %w", remember.ErrRememberInputBudgetExceeded, countErr)
 		}
@@ -132,7 +129,7 @@ func (p *rememberSynchronousProcessor) partitionRemember(ctx context.Context, in
 			return input, nil, err
 		}
 		remember.ReportProgress(ctx, remember.ProgressValidatingPartitions)
-		responseTokens, countErr := assessor.CountTokens(result.Content, limits.Tokenizer)
+		responseTokens, countErr := modelprovider.CountTokens(result.Content, limits.Tokenizer)
 		var spans [][][2]int
 		var validationErr error
 		if countErr != nil || responseTokens > outputLimit || result.CompletionTokens > outputLimit {

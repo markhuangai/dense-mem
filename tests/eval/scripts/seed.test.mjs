@@ -56,7 +56,7 @@ test("seed publication protects dated tags and verifies each push and alias dige
   const digest = `sha256:${"a".repeat(64)}`;
   const collision = ["resolve:dated"];
   const validationAfterBuild = [...collision, "build", "validate"];
-  const validationBeforeAlias = [...validationAfterBuild, "push:dated", "resolve:dated", "tag:latest", "validate"];
+  const validationBeforeAlias = [...validationAfterBuild, "push:dated", "resolve:dated", "resolve:latest", "tag:latest", "validate"];
   const published = [...validationBeforeAlias, "push:latest", "resolve:latest"];
   for (const scenario of [
     { name: "existing dated tag", existing: true, error: /already exists/, expected: collision },
@@ -94,7 +94,7 @@ test("seed publication protects dated tags and verifies each push and alias dige
         events.push("validate");
         if (++gateCalls === scenario.rejectGate) throw new Error("stale validation");
       };
-      const result = publishSeed(docker, directory, "bootstrap", selected, {}, validate);
+      const result = publishSeed(docker, directory, "bootstrap", selected, {}, validate, undefined, { publisherDirectory: path.join(directory, "locks") });
       if (scenario.error) await assert.rejects(result, scenario.error);
       else assert.equal(await result, dated.split(":")[0] + "@" + digest);
       assert.deepEqual(events, scenario.expected);
@@ -145,6 +145,8 @@ test("seed publication resume checks the verified image identity before updating
     { name: "dated push succeeded and latest still points to the prior image", alias: previous, push: true },
     { name: "both pushes already succeeded", alias: pinned, push: false },
     { name: "dated image conflict", alias: previous, changed: true, error: /differs from the verified local image/ },
+    { name: "older build verified after a newer alias already existed", alias: previous, later: true, error: /newer or equal generation/ },
+    { name: "latest generation metadata is ambiguous", alias: previous, ambiguous: true, error: /ambiguous dated generation/ },
     { name: "a newer alias appeared", alias: `${repository}@sha256:${"c".repeat(64)}`, error: /alias changed/ },
     { name: "first bootstrap dated tag exists before its alias", dataset: "bootstrap", alias: null, push: true },
   ]) {
@@ -180,7 +182,13 @@ test("seed publication resume checks the verified image identity before updating
           default: assert.fail(`unexpected Docker operation ${args[0]}`);
         }
       };
-      const result = publishSeed(docker, directory, dataset, version, {}, async () => { gated = true; }, { runID, previousLatest, bootableImage });
+      const prior = seedBuildVersion("v2.8.1", new Date(scenario.later ? "2099-01-01" : "2025-01-01"));
+      const tags = [dataset + "-latest", dataset + "-" + prior];
+      if (scenario.ambiguous) tags.push(dataset + "-" + version);
+      const github = { request: async () => ({ data: [{ name: previous.split("@")[1], metadata: { container: { tags } } }] }) };
+      const result = publishSeed(docker, directory, dataset, version, {}, async () => { gated = true; }, { runID, previousLatest, bootableImage }, {
+        github, publisherDirectory: path.join(directory, "locks"),
+      });
       if (scenario.error) await assert.rejects(result, scenario.error);
       else assert.equal(await result, pinned);
       assert.deepEqual(mutations, scenario.push ? [["tag", pinned, latest], ["push", "--quiet", latest]] : []);

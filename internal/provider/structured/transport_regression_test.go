@@ -1,4 +1,4 @@
-package assessorprovider
+package structured
 
 import (
 	"net/http"
