@@ -1,46 +1,9 @@
 package assessor
 
-import (
-	"context"
-	"github.com/markhuangai/dense-mem/internal/modelprovider"
-)
+import "github.com/markhuangai/dense-mem/internal/modelprovider"
 
-// SemanticAssessmentSession is an opaque provider-owned conversation handle.
-// The application passes it back to Repair without inspecting provider state.
-type SemanticAssessmentSession interface {
-	SessionID() string
-}
-
-// SemanticAssessmentTurn is one complete assessor response. ValidationErrors
-// are repairable response-contract issues; provider and transport failures are
-// returned as errors instead. A server-rejected completed response may return
-// token usage with its error without making the response eligible for commit.
-type SemanticAssessmentTurn struct {
-	Response         SemanticAssessmentResponse
-	ValidationErrors []SemanticValidationError
-	ValidationStage  string
-	InputTokens      int
-	OutputTokens     int
-	Turn             int
-	Diagnostics      *modelprovider.CallDiagnostics
-	ValidationMS     *int64
-}
-
-// SemanticAssessmentRepairRequest carries refreshed server-owned context and
-// bounded validation feedback. The submitted semantic envelope remains fixed.
-type SemanticAssessmentRepairRequest struct {
-	Request          SemanticAssessmentRequest
-	ValidationErrors []SemanticValidationError
-}
-
-// RememberAssessor is the application-owned Remember assessment session port.
-// Assess and Repair each perform one provider turn; the application owns the
-// semantic-turn bound and decides when refreshed candidates are required.
-type RememberAssessor interface {
-	Assess(context.Context, SemanticAssessmentRequest) (SemanticAssessmentSession, SemanticAssessmentTurn, error)
-	Repair(context.Context, SemanticAssessmentSession, SemanticAssessmentRepairRequest) (SemanticAssessmentTurn, error)
+// Provider supplies the named structured transport used by Evidence assessment and partitioning.
+type Provider interface {
+	modelprovider.StructuredTransport
 	ModelName() string
 }
-
-// Provider is the application-facing Remember assessor port.
-type Provider = RememberAssessor

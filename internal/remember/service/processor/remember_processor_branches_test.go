@@ -652,10 +652,6 @@ func (s *rememberPipelineLedgerStub) CommitRememberWithEmbeddings(_ context.Cont
 	return s.commitResult, nil
 }
 
-type processorAssessmentSessionStub struct{}
-
-func (*processorAssessmentSessionStub) SessionID() string { return "processor-assessment" }
-
 type processorAssessmentProviderStub struct {
 	partitionCalls int
 	partitionReply func(modelprovider.StructuredRequest) string
@@ -663,11 +659,6 @@ type processorAssessmentProviderStub struct {
 	invalid        bool
 	assessCalls    int
 	repairCalls    int
-}
-
-func (p *processorAssessmentProviderStub) Assess(_ context.Context, request assessor.SemanticAssessmentRequest) (assessor.SemanticAssessmentSession, assessor.SemanticAssessmentTurn, error) {
-	p.assessCalls++
-	return &processorAssessmentSessionStub{}, assessor.SemanticAssessmentTurn{Response: p.response(request)}, nil
 }
 
 func (p *processorAssessmentProviderStub) response(request assessor.SemanticAssessmentRequest) assessor.SemanticAssessmentResponse {
@@ -690,14 +681,6 @@ func (p *processorAssessmentProviderStub) response(request assessor.SemanticAsse
 		EvidenceEquivalenceResults: []assessor.SemanticAssessmentEvidenceEquivalenceResult{},
 		EvidenceConflictResults:    []assessor.SemanticAssessmentEvidenceConflictResult{},
 	}
-}
-
-func (p *processorAssessmentProviderStub) Repair(_ context.Context, _ assessor.SemanticAssessmentSession, request assessor.SemanticAssessmentRepairRequest) (assessor.SemanticAssessmentTurn, error) {
-	p.repairCalls++
-	if !p.invalid {
-		return assessor.SemanticAssessmentTurn{}, errors.New("unexpected assessment repair")
-	}
-	return assessor.SemanticAssessmentTurn{Response: p.response(request.Request)}, nil
 }
 
 func (*processorAssessmentProviderStub) ModelName() string { return "processor-assessment-model" }
@@ -869,7 +852,7 @@ func TestRememberDiagnosticsRecordsUncapturedPhasesAndDerivedSecurityHash(t *tes
 	require.Equal(t, "not_captured", items[2].CaptureState)
 	require.False(t, items[1].CapturedAt.IsZero())
 
-	var nilRecorder *rememberExchangeRecorder
+	var nilRecorder *observability.ProviderExchangeRecorder
 	nilRecorder.RecordProviderExchange(context.Background(), modelprovider.ProviderExchange{})
 	require.Nil(t, nilRecorder.Snapshot())
 }
@@ -924,7 +907,7 @@ func TestRememberInvocationDiagnosticsProtectsRequestScopedAuthenticationSecrets
 
 func TestRememberExchangeRecorderProtectsRequestScopedAuthenticationSecrets(t *testing.T) {
 	requestSecret := "database-backed-request-secret"
-	recorder := &rememberExchangeRecorder{protector: observability.NewCredentialProtector()}
+	recorder := observability.NewProviderExchangeRecorder(observability.NewCredentialProtector())
 	ctx := observability.WithAuthenticationSecrets(context.Background(), requestSecret)
 	recorder.RecordProviderExchange(ctx, modelprovider.ProviderExchange{
 		Component: "assessor", RequestBody: []byte(`{"authorization":"database-backed-request-secret"}`), Outcome: "captured",

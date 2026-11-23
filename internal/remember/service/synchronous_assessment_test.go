@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"errors"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
+	assessmentfixture "github.com/markhuangai/dense-mem/internal/testfixture/assessment"
 	"strings"
 	"testing"
 
@@ -14,67 +16,44 @@ import (
 	repository "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 )
 
-type synchronousAssessmentSessionStub struct{ id string }
-
-func (s *synchronousAssessmentSessionStub) SessionID() string { return s.id }
-
 type synchronousAssessmentProviderStub struct {
-	model           string
-	response        func(assessor.SemanticAssessmentRequest, int) assessor.SemanticAssessmentResponse
-	err             error
-	errorTurn       assessor.SemanticAssessmentTurn
-	repairErr       error
-	repairErrorTurn assessor.SemanticAssessmentTurn
-	assessTurn      int
-	repairTurn      int
-	calls           int
-	repairCalls     int
-	session         *synchronousAssessmentSessionStub
-	beforeCall      func(context.Context)
-	repairErrors    []assessor.SemanticValidationError
-	assessRequest   assessor.SemanticAssessmentRequest
-	repairRequest   assessor.SemanticAssessmentRequest
+	model                     string
+	response                  func(assessor.SemanticAssessmentRequest, int) assessor.SemanticAssessmentResponse
+	err                       error
+	errorTurn                 modelprovider.StructuredResult
+	repairErr                 error
+	repairErrorTurn           modelprovider.StructuredResult
+	calls, repairCalls        int
+	corrections               []string
+	beforeCall                func(context.Context)
+	inputTokens, outputTokens int
 }
 
-func (s *synchronousAssessmentProviderStub) Assess(ctx context.Context, request assessor.SemanticAssessmentRequest) (assessor.SemanticAssessmentSession, assessor.SemanticAssessmentTurn, error) {
-	s.calls++
-	s.assessRequest = request
+func (s *synchronousAssessmentProviderStub) Complete(ctx context.Context, wire modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
+	request, err := assessmentfixture.Request(wire)
+	if err != nil {
+		return modelprovider.StructuredResult{}, err
+	}
+	repair := len(wire.Messages) > 2
+	if repair {
+		s.repairCalls++
+		s.corrections = append(s.corrections, wire.Messages[len(wire.Messages)-1].Content)
+	} else {
+		s.calls++
+	}
 	if s.beforeCall != nil {
 		s.beforeCall(ctx)
 	}
-	if s.err != nil {
-		return nil, s.errorTurn, s.err
-	}
-	if s.session == nil {
-		s.session = &synchronousAssessmentSessionStub{id: "assessment-session"}
-	}
-	turn := s.calls
-	if s.assessTurn > 0 {
-		turn = s.assessTurn
-	}
-	response := s.response(request, turn)
-	return s.session, assessor.SemanticAssessmentTurn{Response: response, Turn: turn}, nil
-}
-
-func (s *synchronousAssessmentProviderStub) Repair(ctx context.Context, session assessor.SemanticAssessmentSession, request assessor.SemanticAssessmentRepairRequest) (assessor.SemanticAssessmentTurn, error) {
-	s.repairCalls++
-	s.repairErrors = append([]assessor.SemanticValidationError(nil), request.ValidationErrors...)
-	s.repairRequest = request.Request
-	if s.beforeCall != nil {
-		s.beforeCall(ctx)
-	}
-	if session == nil || session.SessionID() != "assessment-session" {
-		return assessor.SemanticAssessmentTurn{}, errors.New("unexpected assessment session")
-	}
-	if s.repairErr != nil {
+	if repair && s.repairErr != nil {
 		return s.repairErrorTurn, s.repairErr
 	}
-	turn := s.calls + s.repairCalls
-	if s.repairTurn > 0 {
-		turn = s.repairTurn
+	if !repair && s.err != nil {
+		return s.errorTurn, s.err
 	}
-	response := s.response(request.Request, turn)
-	return assessor.SemanticAssessmentTurn{Response: response, Turn: turn}, nil
+	result, err := assessmentfixture.Result(wire, s.response(request, s.calls+s.repairCalls))
+	result.PromptTokens, result.CompletionTokens = s.inputTokens, s.outputTokens
+	result.UsageAvailable = s.inputTokens > 0 || s.outputTokens > 0
+	return result, err
 }
 
 func (s *synchronousAssessmentProviderStub) ModelName() string {
@@ -485,18 +464,18 @@ func TestSynchronousAssessmentErrorClassificationAndHelpers(t *testing.T) {
 
 	engine := &assessmentEngine{}
 	request := assessor.SemanticAssessmentRequest{}
-	_, _, _, err := engine.assessRememberSession(context.Background(), request, func(context.Context) (assessor.SemanticAssessmentRequest, error) { return request, nil }, 0)
+	_, err := engine.assessRememberSession(context.Background(), request, func(context.Context) (assessor.SemanticAssessmentRequest, error) { return request, nil }, 0, nil)
 	require.ErrorContains(t, err, "provider is required")
 	fixture := synchronousAssessmentFixture(t)
 	engine = newSynchronousAssessmentEngine(fixture.deps, fixture.input.Scope.TeamID, fixture.input.Scope.OwnerProfileID).assessmentEngine
-	_, _, _, err = engine.assessRememberSession(context.Background(), request, nil, 0)
+	_, err = engine.assessRememberSession(context.Background(), request, nil, 0, nil)
 	require.ErrorContains(t, err, "refresh is required")
 	fixture.provider.err = errors.New("provider request failed")
 	plan, planErr := buildSubmissionAssessmentPlan(fixture.input.Snapshot)
 	require.NoError(t, planErr)
 	request, err = engine.buildRequest(context.Background(), fixture.input.Scope, plan)
 	require.NoError(t, err)
-	_, _, _, err = engine.assessRememberSession(context.Background(), request, func(context.Context) (assessor.SemanticAssessmentRequest, error) { return request, nil }, 0)
+	_, err = engine.assessRememberSession(context.Background(), request, func(context.Context) (assessor.SemanticAssessmentRequest, error) { return request, nil }, 0, nil)
 	require.ErrorIs(t, err, fixture.provider.err)
 
 	require.NoError(t, normalizeSynchronousAssessmentPreflightError(nil))

@@ -2,6 +2,7 @@ package assessor
 
 import (
 	"fmt"
+	"github.com/markhuangai/dense-mem/internal/jsonstrict"
 	"strings"
 	"testing"
 
@@ -105,7 +106,7 @@ func TestSemanticAssessmentEvidenceEquivalenceRequiresCompleteAllowlistedResults
 			testCase.mutate(&response)
 			_, errs := PrepareSemanticAssessmentResponse(prepared, response, limits)
 			require.NotEmpty(t, errs)
-			require.Contains(t, semanticAssessmentJoinedErrors(errs), testCase.want)
+			require.Contains(t, (&jsonstrict.ValidationError{Errors: errs}).Error(), testCase.want)
 		})
 	}
 }
@@ -126,7 +127,7 @@ func TestSemanticAssessmentEvidenceEquivalenceBoundsCandidateAllowlist(t *testin
 		}},
 	}
 	_, errs := PrepareSemanticAssessmentRequest(request, DefaultSemanticAssessmentLimits())
-	require.Contains(t, semanticAssessmentJoinedErrors(errs), "evidence_equivalence_candidates[0].candidates: must contain at most 10 candidates")
+	require.Contains(t, (&jsonstrict.ValidationError{Errors: errs}).Error(), "evidence_equivalence_candidates[0].candidates: must contain at most 10 candidates")
 }
 
 func TestValidateSemanticAssessmentEvidenceEquivalenceCandidatesRejectsMalformedGroups(t *testing.T) {
@@ -145,7 +146,7 @@ func TestValidateSemanticAssessmentEvidenceEquivalenceCandidatesRejectsMalformed
 		},
 	}
 	errs := validateSemanticAssessmentEvidenceEquivalenceCandidates(request)
-	joined := semanticAssessmentJoinedErrors(errs)
+	joined := (&jsonstrict.ValidationError{Errors: errs}).Error()
 	require.Contains(t, joined, "evidence_equivalence_candidates[0].evidence_id: is required")
 	require.Contains(t, joined, "evidence_equivalence_candidates[0].candidates[0].evidence_id: is required and must be bounded")
 	require.Contains(t, joined, "evidence_equivalence_candidates[0].candidates[0].content: is required")
@@ -176,7 +177,7 @@ func TestValidateSemanticAssessmentEvidenceEquivalenceResultsRejectsMalformedRes
 		{EvidenceID: "submitted", Action: "invalid"},
 		{EvidenceID: "unknown", Action: "new"},
 	})
-	joined := semanticAssessmentJoinedErrors(errs)
+	joined := (&jsonstrict.ValidationError{Errors: errs}).Error()
 	require.Contains(t, joined, "evidence_equivalence_candidates[0].evidence_id: is required")
 	require.Contains(t, joined, "evidence_equivalence_candidates[1].candidates[1].evidence_id: is duplicated")
 	require.Contains(t, joined, "evidence_equivalence_candidates[1].candidates[2].evidence_id: is required and must be bounded")

@@ -266,7 +266,7 @@ func AssessSynchronousRemember(
 	providerCtx := observability.WithMetricIdentity(ctx, input.Scope.TeamID, input.Scope.OwnerProfileID)
 	providerCtx = observability.WithAIOperation(providerCtx, observability.AIOperationSemanticAssessment, 1)
 	started := time.Now()
-	response, _, finalRequest, err := concrete.assessRememberSessionWithValidator(providerCtx, request, refresh, 0, func(validateCtx context.Context, _ assessor.SemanticAssessmentRequest, response assessor.SemanticAssessmentResponse) ([]assessor.SemanticValidationError, error) {
+	response, err := concrete.assessRememberSession(providerCtx, request, refresh, 0, func(_ context.Context, _ assessor.SemanticAssessmentRequest, response assessor.SemanticAssessmentResponse) ([]assessor.SemanticValidationError, error) {
 		return validateSubmissionAssessmentEvidenceConflictCanonicalization(plan, response), nil
 	})
 	if err != nil {
@@ -322,23 +322,23 @@ func AssessSynchronousRemember(
 	}
 	inputTokens := response.InputTokens
 	if inputTokens <= 0 {
-		inputTokens = finalRequest.InputTokens
+		inputTokens = request.InputTokens
 	}
 	observability.RecordAssessorCall(deps.Metrics, concrete.completedInputTokens, concrete.completedOutputTokens, time.Since(started).Seconds(), "ok")
 	now := time.Now().UTC()
 	assessment := repository.SubmissionAssessment{
 		TeamID: input.Scope.TeamID, AssessmentID: assessmentID, OwnerProfileID: input.Scope.OwnerProfileID,
 		IngestID:  input.Scope.IngestID,
-		RequestID: finalRequest.RequestID, AssessorContractVersion: domain.ContractVersion,
+		RequestID: request.RequestID, AssessorContractVersion: domain.ContractVersion,
 		Model: deps.Provider.ModelName(), Tokenizer: assessmentTokenizer(deps.Limits),
 		RevisionNumber: 1, ProviderTurns: providerTurns, InputTokens: inputTokens,
-		OutputTokens: response.OutputTokens, CandidateContextTokens: finalRequest.CandidateContextTokens,
-		CandidateContextTruncated:         finalRequest.CandidateContextTruncated,
-		CandidateContextOmittedCandidates: finalRequest.CandidateContextOmittedCandidates,
+		OutputTokens: response.OutputTokens, CandidateContextTokens: request.CandidateContextTokens,
+		CandidateContextTruncated:         request.CandidateContextTruncated,
+		CandidateContextOmittedCandidates: request.CandidateContextOmittedCandidates,
 		NormalizedResponse:                canonicalJSON, ResponseHash: semanticAssessmentHash(canonicalJSON),
 		ValidatedAt: now, CreatedAt: now,
 	}
-	return &SynchronousAssessmentResult{Response: response, Request: finalRequest, Plan: plan, Assessment: assessment}, nil
+	return &SynchronousAssessmentResult{Response: response, Request: request, Plan: plan, Assessment: assessment}, nil
 }
 
 func normalizeSynchronousAssessmentPreflightError(err error) error {

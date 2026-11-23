@@ -44,16 +44,12 @@ type Extractor interface {
 
 func DecodeExtraction(raw []byte) (ExtractionResponse, error) {
 	var response ExtractionResponse
-	if err := jsonstrict.Decode(bytes.NewReader(raw), &response, 1<<20); err != nil {
-		return response, err
+	if len(raw) > 1<<20 {
+		return response, &jsonstrict.ValidationError{Stage: "response_json", Errors: []jsonstrict.Issue{{Field: "response", Message: "extraction response exceeds the byte limit"}}}
 	}
-	if err := requireResponseKeys(raw, []string{"request_id", "overflow", "coverage", "excerpts", "security_signals"}, nil); err != nil {
-		return response, err
-	}
-	var object map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &object); err != nil {
-		return response, err
-	}
+	validation := &jsonstrict.ValidationError{Stage: "response_json"}
+	object, issues := jsonstrict.ValidateResponseObject(raw, "", []string{"request_id", "overflow", "coverage", "excerpts", "security_signals"}, nil, nil)
+	validation.Errors = issues
 	for _, section := range []struct {
 		name     string
 		required []string
@@ -61,62 +57,47 @@ func DecodeExtraction(raw []byte) (ExtractionResponse, error) {
 		{"excerpts", []string{"event_index", "start", "end", "content"}},
 		{"security_signals", []string{"segment_ref", "kind"}},
 	} {
-		var entries []json.RawMessage
-		if err := json.Unmarshal(object[section.name], &entries); err != nil {
-			return response, err
+		if value, ok := object[section.name]; ok && !bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			validation.Errors = append(validation.Errors, jsonstrict.ValidateResponseArrayObjects(value, section.name, section.required, nil, nil)...)
 		}
-		for _, entry := range entries {
-			if err := requireResponseKeys(entry, section.required, nil); err != nil {
-				return response, err
-			}
-		}
+	}
+	if len(validation.Errors) != 0 {
+		return response, validation
+	}
+	if err := json.Unmarshal(raw, &response); err != nil {
+		validation.Errors = []jsonstrict.Issue{jsonstrict.ResponseJSONValidationError(err, "")}
+		return response, validation
 	}
 	return response, nil
 }
 
-func requireResponseKeys(raw []byte, required, nullable []string) error {
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &fields); err != nil {
-		return err
-	}
-	if len(fields) != len(required) {
-		return fmt.Errorf("response contains unknown or missing fields")
-	}
-	for _, key := range required {
-		value, ok := fields[key]
-		if !ok {
-			return fmt.Errorf("missing %s", key)
-		}
-		if bytes.Equal(bytes.TrimSpace(value), []byte("null")) && !stringMember(nullable, key) {
-			return fmt.Errorf("%s cannot be null", key)
-		}
-	}
-	return nil
+func invalidExtraction(field, reason string) error {
+	return &jsonstrict.ValidationError{Stage: "response_contract", Errors: []jsonstrict.Issue{{Field: field, Message: reason}}}
 }
 
 func ValidateExtraction(request ExtractionRequest, response ExtractionResponse) error {
 	if response.RequestID != request.RequestID {
-		return fmt.Errorf("request_id must equal %q", request.RequestID)
+		return invalidExtraction("request_id", fmt.Sprintf("must equal %q", request.RequestID))
 	}
 	if response.Coverage == nil || response.Excerpts == nil || response.SecuritySignals == nil {
-		return fmt.Errorf("extraction response arrays are required")
+		return invalidExtraction("response", "extraction response arrays are required")
 	}
 	if len(response.Excerpts) > MaxExcerpts || len(response.SecuritySignals) > 64 {
-		return fmt.Errorf("extraction response exceeds closed bounds")
+		return invalidExtraction("response", "extraction response exceeds closed bounds")
 	}
 	core := map[string]bool{}
 	for _, segment := range request.Window.Core {
 		core[segment.Ref] = true
 	}
 	seen := map[string]bool{}
-	for _, ref := range response.Coverage {
+	for index, ref := range response.Coverage {
 		if !core[ref] || seen[ref] {
-			return fmt.Errorf("unknown or duplicated coverage ref")
+			return invalidExtraction(fmt.Sprintf("coverage[%d]", index), "unknown or duplicated coverage ref")
 		}
 		seen[ref] = true
 	}
 	if len(seen) != len(core) {
-		return fmt.Errorf("incomplete extraction coverage")
+		return invalidExtraction("coverage", "incomplete extraction coverage")
 	}
 	segments := WindowSegments(request.Window)
 	sort.Slice(segments, func(i, j int) bool {
@@ -126,9 +107,9 @@ func ValidateExtraction(request ExtractionRequest, response ExtractionResponse) 
 		return segments[i].Start < segments[j].Start
 	})
 	seenExcerpts := map[string]bool{}
-	for _, excerpt := range response.Excerpts {
+	for index, excerpt := range response.Excerpts {
 		if excerpt.Start < 0 || excerpt.End <= excerpt.Start || excerpt.End-excerpt.Start > 999 || strings.TrimSpace(excerpt.Content) == "" {
-			return fmt.Errorf("invalid excerpt bounds")
+			return invalidExtraction(fmt.Sprintf("excerpts[%d]", index), "invalid excerpt bounds")
 		}
 		cursor := excerpt.Start
 		var exact strings.Builder
@@ -138,7 +119,7 @@ func ValidateExtraction(request ExtractionRequest, response ExtractionResponse) 
 				continue
 			}
 			if segment.Start > cursor || len([]rune(segment.Text)) != segment.End-segment.Start {
-				return fmt.Errorf("excerpt is outside contiguous current-event text")
+				return invalidExtraction(fmt.Sprintf("excerpts[%d]", index), "excerpt is outside contiguous current-event text")
 			}
 			end := min(excerpt.End, segment.End)
 			exact.WriteString(string([]rune(segment.Text)[cursor-segment.Start : end-segment.Start]))
@@ -149,11 +130,11 @@ func ValidateExtraction(request ExtractionRequest, response ExtractionResponse) 
 			}
 		}
 		if !intersectsCore || cursor != excerpt.End || exact.String() != excerpt.Content {
-			return fmt.Errorf("excerpt does not match exact current-event text and original offsets")
+			return invalidExtraction(fmt.Sprintf("excerpts[%d]", index), "excerpt does not match exact current-event text and original offsets")
 		}
 		key := fmt.Sprintf("%d:%d:%d", excerpt.EventIndex, excerpt.Start, excerpt.End)
 		if seenExcerpts[key] {
-			return fmt.Errorf("duplicated excerpt")
+			return invalidExtraction(fmt.Sprintf("excerpts[%d]", index), "duplicated excerpt")
 		}
 		seenExcerpts[key] = true
 	}
@@ -162,10 +143,10 @@ func ValidateExtraction(request ExtractionRequest, response ExtractionResponse) 
 		byRef[segment.Ref] = true
 	}
 	seenSignals := map[string]bool{}
-	for _, signal := range response.SecuritySignals {
+	for index, signal := range response.SecuritySignals {
 		key := signal.SegmentRef + ":" + signal.Kind
 		if seenSignals[key] || !byRef[signal.SegmentRef] || !stringMember([]string{"prompt_injection", "exfiltration", "hidden_control_markup"}, signal.Kind) {
-			return fmt.Errorf("invalid or duplicated security signal")
+			return invalidExtraction(fmt.Sprintf("security_signals[%d]", index), "invalid or duplicated security signal")
 		}
 		seenSignals[key] = true
 	}

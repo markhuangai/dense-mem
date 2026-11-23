@@ -3,6 +3,13 @@
   "capability": "postgres",
   "cases": [
     {
+      "id": "postgres/TestWithSystemModeInTxRestoresAndRollsBack",
+      "package": "./internal/storage/postgres",
+      "run": "^TestWithSystemModeInTxRestoresAndRollsBack$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/rls_integration_test.go"
+    },
+    {
       "id": "postgres/TestOpenOperationLogClientUsesDedicatedTwoConnectionPool",
       "package": "./internal/storage/postgres",
       "run": "^TestOpenOperationLogClientUsesDedicatedTwoConnectionPool$",

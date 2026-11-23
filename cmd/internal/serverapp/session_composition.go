@@ -21,10 +21,12 @@ func buildSessionApplication(deps rememberApplicationDependencies, repository se
 		Limits: limits, Metrics: deps.Metrics, Logger: deps.Logger, DiagnosticProtector: deps.DiagnosticProtector,
 	})
 	return sessionservice.NewService(sessionservice.Dependencies{
-		Repository: repository, Preparer: preparer, Extractor: extraction.NewProvider(transport, model, limits),
+		Repository: repository, Preparer: preparer, Extractor: extraction.NewProvider(transport, model, limits).WithLogger(rootDiagnosticLogger(deps.Logger)),
 		Enabled: enabled, Tokenizer: limits.Tokenizer, Auditor: newRememberSecurityRejectionAuditAdapter(deps.Audit), Logger: deps.Logger,
 		DiagnosticProtector: deps.DiagnosticProtector,
-		DiagnosticRecorder:  func() modelprovider.SnapshotRecorder { return remember.NewDiagnosticRecorder(deps.DiagnosticProtector) },
+		DiagnosticRecorder: func() modelprovider.SnapshotRecorder {
+			return observability.NewProviderExchangeRecorder(deps.DiagnosticProtector)
+		},
 		DiagnosticLog: func(ctx context.Context, scope session.Scope, id string, body []byte) {
 			observability.LogDiagnosticBody(ctx, rootDiagnosticLogger(deps.Logger), deps.DiagnosticProtector,
 				"session_evidence_diagnostics", body, 64<<20, slog.String("team_id", scope.TeamID),

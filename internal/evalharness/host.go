@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/jsonstrict"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
@@ -86,11 +85,9 @@ func RunHost(ctx context.Context, client *HTTPClient, transport modelprovider.St
 				return result
 			}
 			schema := hostSchema(actions)
-			converted := make([]assessor.SemanticAssessmentProviderMessage, 0, len(base))
-			for _, m := range base {
-				converted = append(converted, assessor.SemanticAssessmentProviderMessage{Role: m.Role, Content: m.Content})
-			}
-			inputTokens, err := assessor.CountSemanticAssessmentProviderRequestTokens(manifest.Model, "public_rag_answer_v1", schema, true, converted, "o200k_base")
+			inputTokens, err := modelprovider.CountStructuredRequestTokens(modelprovider.StructuredRequest{
+				Model: manifest.Model, SchemaName: "public_rag_answer_v1", Schema: schema, Messages: base,
+			}, "o200k_base")
 			if err != nil || inputTokens+8192 > manifest.ContextWindowTokens {
 				result.Error = "complete answer request exceeds verified context window"
 				return result
@@ -141,7 +138,7 @@ func RunHost(ctx context.Context, client *HTTPClient, transport modelprovider.St
 			if err == nil {
 				err = validateHostAction(action, result.Calls, actions)
 			}
-			outputTokens, tokenErr := assessor.CountTokens(response.Content, "o200k_base")
+			outputTokens, tokenErr := modelprovider.CountTokens(response.Content, "o200k_base")
 			if tokenErr != nil || outputTokens > 8192 || response.PromptTokens > manifest.ContextWindowTokens-8192 || response.CompletionTokens > 8192 {
 				err = errors.New("answer exceeds the verified context budget")
 			}

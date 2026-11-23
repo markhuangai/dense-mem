@@ -1,3 +1,4 @@
+import { readSharedRegressions, sharedRegressionsCommand } from "./workflow_helpers.mjs";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
@@ -833,6 +834,7 @@ test("workflow is trusted, event-fenced, dry-run capable, and registered in CI",
   assert.match(release, /name: No prerelease required/);
   assert.match(release, /needs:\n      - classify-release\n      - prepare-prerelease/);
   assert.match(release, /needs\.prepare-prerelease\.outputs\.should_publish == 'false'/);
-  assert.match(ci, /node --test tests\/uat\/pr_image_cleanup\.test\.mjs/);
+  assert.ok(ci.includes(sharedRegressionsCommand));
+  assert.ok((await readSharedRegressions()).includes("tests/uat/pr_image_cleanup.test.mjs"));
   assert.match(ci, /node --test tests\/uat\/pr_image_cleanup_registry\.test\.mjs/);
 });

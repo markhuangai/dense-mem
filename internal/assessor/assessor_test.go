@@ -2,6 +2,8 @@ package assessor
 
 import (
 	"encoding/json"
+	"github.com/markhuangai/dense-mem/internal/jsonstrict"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"strings"
 	"testing"
 
@@ -91,7 +93,7 @@ func TestSemanticAssessmentTokenBudgetsAreEnforced(t *testing.T) {
 	req, limits := semanticAssessmentTestRequest(t)
 	req.EvidenceEquivalenceCandidates = []SemanticAssessmentEvidenceEquivalenceCandidateGroup{{EvidenceID: "ev-1", Candidates: []SemanticAssessmentEvidenceEquivalenceCandidate{}}}
 	limits.MaxCandidateContextTokens = 1
-	if _, errs := PrepareSemanticAssessmentRequest(req, limits); len(errs) == 0 || !strings.Contains(semanticAssessmentJoinedErrors(errs), "candidate_context_tokens") {
+	if _, errs := PrepareSemanticAssessmentRequest(req, limits); len(errs) == 0 || !strings.Contains((&jsonstrict.ValidationError{Errors: errs}).Error(), "candidate_context_tokens") {
 		t.Fatalf("PrepareSemanticAssessmentRequest() errors = %#v, want candidate token budget error", errs)
 	}
 
@@ -116,15 +118,15 @@ func TestSemanticAssessmentInputBudgetIncludesFixedSystemPrompt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal prepared request: %v", err)
 	}
-	payloadTokens, err := CountTokens(string(payload), limits.Tokenizer)
+	payloadTokens, err := modelprovider.CountTokens(string(payload), limits.Tokenizer)
 	if err != nil {
-		t.Fatalf("CountTokens(payload) error = %v", err)
+		t.Fatalf("modelprovider.CountTokens(payload) error = %v", err)
 	}
 	if prepared.InputTokens <= payloadTokens {
 		t.Fatalf("InputTokens = %d, want prompt-inclusive count greater than payload %d", prepared.InputTokens, payloadTokens)
 	}
 	limits.MaxInputTokens = payloadTokens + 1
-	if _, errs := PrepareSemanticAssessmentRequest(req, limits); len(errs) == 0 || !strings.Contains(semanticAssessmentJoinedErrors(errs), "input_tokens") {
+	if _, errs := PrepareSemanticAssessmentRequest(req, limits); len(errs) == 0 || !strings.Contains((&jsonstrict.ValidationError{Errors: errs}).Error(), "input_tokens") {
 		t.Fatalf("PrepareSemanticAssessmentRequest() errors = %#v, want prompt-inclusive input token budget error", errs)
 	}
 }

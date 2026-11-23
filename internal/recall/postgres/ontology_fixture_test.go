@@ -21,7 +21,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/ontology/assessment"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	ontologypostgres "github.com/markhuangai/dense-mem/internal/ontology/postgres"
-	assessorprovider "github.com/markhuangai/dense-mem/internal/provider/assessor"
+	"github.com/markhuangai/dense-mem/internal/provider/structured"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	storage "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"github.com/stretchr/testify/require"
@@ -171,7 +171,7 @@ func (f *recallOntologyFixture) organizerWithAccounting(t testing.TB, meanings m
 	t.Cleanup(server.Close)
 	limits := assessor.DefaultSemanticAssessmentLimits()
 	cfg := &config.Config{AIVerifierAPIURL: server.URL, AIVerifierAPIKey: "synthetic-provider-key", AIVerifierModel: "fixture-model"}
-	transport := assessorprovider.NewOpenAIAssessorWithAssessmentLimits(cfg, server.Client(), limits)
+	transport := structured.NewOpenAI(cfg, server.Client())
 	return organization.NewService(f.ontology, assessment.NewProviderWithAccounting(transport, "fixture-model", limits, accounting, 300000)), calls
 }
 

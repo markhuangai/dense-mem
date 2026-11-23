@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -36,16 +37,15 @@ func TestSynchronousAssessmentCountsServerRejectedProviderUsage(t *testing.T) {
 			metrics := observability.NewInMemoryDiscoverabilityMetrics()
 			fixture.deps.Metrics = metrics
 			failure := &assessor.MalformedResponseError{FailureClass: "input_budget", Attempts: 1, ValidationStage: "conversation_input_tokens"}
-			usage := assessor.SemanticAssessmentTurn{InputTokens: 200001, OutputTokens: 9}
-			wantInput, wantOutput := usage.InputTokens, usage.OutputTokens
+			usage := modelprovider.StructuredResult{PromptTokens: 200001, CompletionTokens: 9, UsageAvailable: true}
+			wantInput, wantOutput := usage.PromptTokens, usage.CompletionTokens
 			if repair {
 				fixture.provider.response = func(request assessor.SemanticAssessmentRequest, _ int) assessor.SemanticAssessmentResponse {
 					response := validSynchronousAssessmentResponse(request)
 					response.RequestID = "wrong-request"
-					response.InputTokens = 100
-					response.OutputTokens = 10
 					return response
 				}
+				fixture.provider.inputTokens, fixture.provider.outputTokens = 100, 10
 				fixture.provider.repairErr = failure
 				fixture.provider.repairErrorTurn = usage
 				wantInput += 100

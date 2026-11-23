@@ -8,14 +8,15 @@ import (
 	"io"
 	"strings"
 
+	"github.com/markhuangai/dense-mem/internal/jsonstrict"
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
-	"github.com/tiktoken-go/tokenizer"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
 )
 
 const (
 	SemanticAssessmentSchemaName                       = "dense_mem_evidence_assessment_response"
-	SemanticAssessmentMaxProviderTurns                 = 3
-	SemanticAssessmentMaxCorrectionErrors              = 100
+	SemanticAssessmentMaxProviderTurns                 = modelprovider.StructuredResponseLimit
+	SemanticAssessmentMaxCorrectionErrors              = jsonstrict.MaxCorrectionIssues
 	SemanticAssessmentMaxEvidenceSpans                 = knowledgecontract.MaxRememberPartitions
 	SemanticAssessmentMaxEvidenceConflictResults       = knowledgecontract.EvidenceConflictMaxResults
 	SemanticAssessmentMaxEvidenceConflictPositions     = knowledgecontract.EvidenceConflictMaxPositions
@@ -94,18 +95,6 @@ func normalizeSemanticAssessmentLimits(limits SemanticAssessmentLimits) Semantic
 	return limits
 }
 
-func CountTokens(text string, tokenizerName string) (int, error) {
-	codec, err := tokenizer.Get(tokenizer.Encoding(strings.TrimSpace(tokenizerName)))
-	if err != nil {
-		return 0, fmt.Errorf("tokenizer %q: %w", tokenizerName, err)
-	}
-	count, err := codec.Count(text)
-	if err != nil {
-		return 0, fmt.Errorf("count tokens with %q: %w", tokenizerName, err)
-	}
-	return count, nil
-}
-
 func PrepareSemanticAssessmentRequest(
 	req SemanticAssessmentRequest,
 	limits SemanticAssessmentLimits,
@@ -164,13 +153,19 @@ func DecodeSemanticAssessmentResponseJSON(
 	limits SemanticAssessmentLimits,
 ) (SemanticAssessmentResponse, error) {
 	limits = normalizeSemanticAssessmentLimits(limits)
-	outputTokens, err := CountTokens(string(raw), limits.Tokenizer)
+	outputTokens, err := modelprovider.CountTokens(string(raw), limits.Tokenizer)
 	if err != nil {
 		return SemanticAssessmentResponse{}, err
 	}
 	if outputTokens > limits.MaxOutputTokens {
 		return SemanticAssessmentResponse{}, fmt.Errorf("semantic assessment response exceeds %d token limit", limits.MaxOutputTokens)
 	}
+	response, err := decodeSemanticAssessmentResponse(raw)
+	response.OutputTokens = outputTokens
+	return response, err
+}
+
+func decodeSemanticAssessmentResponse(raw []byte) (SemanticAssessmentResponse, error) {
 	if errs := validateSemanticAssessmentResponseRaw(raw); len(errs) > 0 {
 		return SemanticAssessmentResponse{}, &SemanticAssessmentResponseValidationError{Errors: errs}
 	}
@@ -183,7 +178,6 @@ func DecodeSemanticAssessmentResponseJSON(
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return SemanticAssessmentResponse{}, errors.New("semantic assessment response contains trailing JSON")
 	}
-	response.OutputTokens = outputTokens
 	return response, nil
 }
 
@@ -231,7 +225,7 @@ func PrepareSemanticAssessmentResponse(
 	if err != nil {
 		return response, []SemanticValidationError{semanticErr("response", "cannot be normalized")}
 	}
-	outputTokens, err := CountTokens(string(canonical), limits.Tokenizer)
+	outputTokens, err := modelprovider.CountTokens(string(canonical), limits.Tokenizer)
 	if err != nil {
 		return response, []SemanticValidationError{semanticErr("tokenizer", err.Error())}
 	}

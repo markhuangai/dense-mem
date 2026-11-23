@@ -182,7 +182,7 @@ func (p *rememberSynchronousProcessor) processRememberUnlocked(
 		return nil, errors.New("remember processor: ledger is required")
 	}
 	started := time.Now()
-	exchangeRecorder := &rememberExchangeRecorder{protector: p.protector}
+	exchangeRecorder := observability.NewProviderExchangeRecorder(p.protector)
 	ctx = modelprovider.WithExchangeRecorder(ctx, exchangeRecorder)
 	ingestID := uuid.NewString()
 	requestctx.SetRememberInvocationID(ctx, ingestID)
@@ -417,7 +417,7 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 	}
 	publicResult, terminalResult := terminalRememberFailureResult(status)
 	var exchanges []modelprovider.ProviderExchange
-	if recorder, ok := modelprovider.ExchangeRecorderFromContext(ctx).(*rememberExchangeRecorder); ok {
+	if recorder, ok := modelprovider.ExchangeRecorderFromContext(ctx).(modelprovider.SnapshotRecorder); ok {
 		exchanges = recorder.Snapshot()
 	}
 	var callerResponse []byte

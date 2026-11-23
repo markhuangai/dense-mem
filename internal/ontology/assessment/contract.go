@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/markhuangai/dense-mem/internal/jsonstrict"
 	"sort"
 	"strings"
 
@@ -114,7 +115,7 @@ func Decode(raw string) (Response, error) {
 	if len(raw) > ontology.MaxPublicationBytes {
 		return Response{}, validationResult([]assessor.SemanticValidationError{validationIssue("response", "strict_json", "JSON input exceeds %d bytes", ontology.MaxPublicationBytes)}, nil)
 	}
-	fields, errs := assessor.ValidateResponseObject([]byte(raw), "", []string{"request_id", "definitions", "items", "equivalence"}, nil, nil)
+	fields, errs := jsonstrict.ValidateResponseObject([]byte(raw), "", []string{"request_id", "definitions", "items", "equivalence"}, nil, nil)
 	for _, section := range []struct {
 		name   string
 		fields []string
@@ -124,7 +125,7 @@ func Decode(raw string) (Response, error) {
 		{"equivalence", []string{"ref", "relation"}},
 	} {
 		if value, ok := fields[section.name]; ok && !bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
-			errs = append(errs, assessor.ValidateResponseArrayObjects(value, section.name, section.fields, nil, nil)...)
+			errs = append(errs, jsonstrict.ValidateResponseArrayObjects(value, section.name, section.fields, nil, nil)...)
 		}
 	}
 	for i := range errs {
@@ -146,7 +147,7 @@ func Decode(raw string) (Response, error) {
 	var response Response
 	decode := func(raw json.RawMessage, path string, target any) {
 		if err := json.Unmarshal(raw, target); err != nil {
-			issue := assessor.ResponseJSONValidationError(err, path)
+			issue := jsonstrict.ResponseJSONValidationError(err, path)
 			issue.Code = "strict_json"
 			issue.Message += fmt.Sprintf("; %v; offending item: %s", err, raw)
 			errs = append(errs, issue)

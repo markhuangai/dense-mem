@@ -8,6 +8,8 @@ type Message struct {
 	Content string
 }
 
+const StructuredResponseLimit = 3
+
 // StructuredRequest describes a provider-owned JSON-schema request without
 // exposing application policy or durable identifiers.
 type StructuredRequest struct {
@@ -15,11 +17,9 @@ type StructuredRequest struct {
 	Messages   []Message
 	SchemaName string
 	Schema     map[string]any
-	// Temperature is an optional transport hint; a capability adapter may
-	// apply or ignore it according to its provider contract.
+	// A nil temperature omits the field from the provider envelope.
 	Temperature *float64
-	// MaxInputTokens is a semantic budget enforced by the capability adapter;
-	// a shared transport may not enforce it.
+	// The generation coordinator enforces these limits outside the HTTP envelope.
 	MaxInputTokens int
 	// MaxOutputTokens is a semantic budget enforced by the capability adapter;
 	// a shared transport may not enforce it.
@@ -33,6 +33,7 @@ type StructuredResult struct {
 	CompletionTokens int
 	TotalTokens      int
 	UsageAvailable   bool
+	StatusCode       int
 	Diagnostics      *CallDiagnostics
 }
 

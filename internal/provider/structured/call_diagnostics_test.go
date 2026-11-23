@@ -1,4 +1,4 @@
-package assessorprovider
+package structured
 
 import (
 	"context"
@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/stretchr/testify/require"
@@ -26,7 +25,7 @@ func TestStructuredProviderDiagnosticsSeparateQueueAdmissionAndHTTP(t *testing.T
 	defer server.Close()
 	gate := make(chan struct{}, 1)
 	gate <- struct{}{}
-	provider := NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGate(&config.Config{AIVerifierAPIURL: server.URL, AIVerifierAPIKey: "synthetic-key"}, server.Client(), assessor.DefaultSemanticAssessmentLimits(), gate)
+	provider := NewOpenAIWithModel(&config.Config{AIVerifierAPIURL: server.URL, AIVerifierAPIKey: "synthetic-key"}, server.Client(), gate, "fixture")
 	ctx := modelprovider.WithAdmissionCallback(context.Background(), func(context.Context) error {
 		time.Sleep(25 * time.Millisecond)
 		return nil
@@ -84,7 +83,7 @@ func TestStructuredProviderDiagnosticsRetainResponseBodyTimeoutAndCancellation(t
 					return response, err
 				})
 			}
-			provider := NewOpenAIAssessor(&config.Config{AIVerifierAPIURL: server.URL}, client)
+			provider := NewOpenAI(&config.Config{AIVerifierAPIURL: server.URL}, client)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			if mode == "cancellation" {
@@ -135,7 +134,7 @@ func TestStructuredProviderDiagnosticsDistinguishUndispatchedFailures(t *testing
 	defer server.Close()
 	for _, phase := range []string{"queue", "admission", "prepare"} {
 		t.Run(phase, func(t *testing.T) {
-			provider := NewOpenAIAssessor(&config.Config{AIVerifierAPIURL: server.URL}, server.Client())
+			provider := NewOpenAI(&config.Config{AIVerifierAPIURL: server.URL}, server.Client())
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 			defer cancel()
 			request := modelprovider.StructuredRequest{Model: "fixture", Schema: map[string]any{}}

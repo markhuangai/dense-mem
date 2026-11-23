@@ -15,7 +15,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
@@ -79,7 +78,7 @@ func TestPackingPreservesGroupsAndExactSerializedLimits(t *testing.T) {
 				}
 				tokens := func(body []byte) int {
 					t.Helper()
-					count, err := assessor.CountTokens(string(body), p.tokenizer)
+					count, err := modelprovider.CountTokens(string(body), p.tokenizer)
 					if err != nil {
 						t.Fatal(err)
 					}

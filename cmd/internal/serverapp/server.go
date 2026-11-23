@@ -24,8 +24,8 @@ import (
 	operations "github.com/markhuangai/dense-mem/internal/operations"
 	operationspostgres "github.com/markhuangai/dense-mem/internal/operations/postgres"
 	privacy "github.com/markhuangai/dense-mem/internal/privacy/postgres"
-	assessorprovider "github.com/markhuangai/dense-mem/internal/provider/assessor"
 	decisionprovider "github.com/markhuangai/dense-mem/internal/provider/decision"
+	"github.com/markhuangai/dense-mem/internal/provider/structured"
 	recallpostgres "github.com/markhuangai/dense-mem/internal/recall/postgres"
 	settingspostgres "github.com/markhuangai/dense-mem/internal/settings/postgres"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
@@ -252,11 +252,11 @@ func RunActiveServer(
 	openaiProvider := searchApplication.EmbeddingProvider
 	retryEmbedder := searchApplication.RetryEmbedding
 	sessionModels := aiSessionModelsForConfig(&cfg)
-	assessmentLimits := assessorprovider.SemanticAssessmentLimitsForConfig(&cfg)
+	assessmentLimits := config.SemanticAssessmentLimitsForConfig(&cfg)
 	assessmentLimits.ProviderModel = sessionModels.remember
 	aiHTTPClient := observability.DiagnosticHTTPClient(&nethttp.Client{Timeout: time.Duration(cfg.GetAIVerifierTimeoutSeconds()) * time.Second}, rootDiagnosticLogger(logger), diagnosticProtector)
 	aiConcurrencyGate := modelprovider.NewConcurrencyGate(config.AIVerifierMaxConcurrency(&cfg))
-	assessorProvider := assessorprovider.NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGateAndModel(&cfg, aiHTTPClient, assessmentLimits, aiConcurrencyGate, sessionModels.remember)
+	assessorProvider := structured.NewOpenAIWithModel(&cfg, aiHTTPClient, aiConcurrencyGate, sessionModels.remember)
 	assessorProvider.SetMetrics(discoverabilityMetrics)
 	var decisions modelprovider.DecisionProvider
 	if cfg.Decision.Configured() {
@@ -272,9 +272,7 @@ func RunActiveServer(
 	}
 	sessionAssessmentLimits := assessmentLimits
 	sessionAssessmentLimits.MaxEvidenceItems = 100
-	sessionAssessor := assessorprovider.NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGateAndModel(&cfg, aiHTTPClient, sessionAssessmentLimits, aiConcurrencyGate, sessionModels.remember)
-	sessionAssessor.SetMetrics(discoverabilityMetrics)
-	ontologyMaintenance := buildOntologyMaintenance(ontologyStore, appConfigService, assessorProvider, assessmentLimits, sessionModels.remember, time.Duration(cfg.GetAIVerifierTimeoutSeconds())*time.Second, auditService, rootSlogLogger(logger), ontologyDiagnosticCapture(operationLogService, diagnosticProtector, rootDiagnosticLogger(logger)))
+	ontologyMaintenance := buildOntologyMaintenance(ontologyStore, appConfigService, assessorProvider, assessmentLimits, sessionModels.remember, time.Duration(cfg.GetAIVerifierTimeoutSeconds())*time.Second, auditService, rootDiagnosticLogger(logger), ontologyDiagnosticCapture(operationLogService, diagnosticProtector, rootDiagnosticLogger(logger)))
 	applications := buildApplicationBundle(applicationCompositionDependencies{
 		PublicSeedAdmission:  seedAdmission,
 		Knowledge:            knowledgeStore,
@@ -285,7 +283,7 @@ func RunActiveServer(
 		RecallFeedbackEvents: recallFeedbackEventRepo,
 		Assessor:             assessorProvider,
 		Decisions:            decisions, DecisionSettings: appConfigService,
-		SessionAssessor:        sessionAssessor,
+		SessionAssessor:        assessorProvider,
 		SessionEnabled:         cfg.SessionIngestEnabled && cfg.GetAIVerifierAPIURL() != "" && cfg.GetAIVerifierAPIKey() != "" && cfg.IsEmbeddingConfigured(),
 		RememberModel:          sessionModels.remember,
 		GeneratorTransport:     assessorProvider,

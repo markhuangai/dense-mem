@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	assessmentfixture "github.com/markhuangai/dense-mem/internal/testfixture/assessment"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -31,7 +32,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/ontology/assessment"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	ontologypg "github.com/markhuangai/dense-mem/internal/ontology/postgres"
-	assessorprovider "github.com/markhuangai/dense-mem/internal/provider/assessor"
+	"github.com/markhuangai/dense-mem/internal/provider/structured"
 	"github.com/markhuangai/dense-mem/internal/recall"
 	recallpg "github.com/markhuangai/dense-mem/internal/recall/postgres"
 	remember "github.com/markhuangai/dense-mem/internal/remember/service"
@@ -107,7 +108,7 @@ func newRunnerServiceFixture(t *testing.T) *runnerServiceFixture {
 		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": string(body)}}}})
 	}))
 	t.Cleanup(upstream.Close)
-	transport := assessorprovider.NewOpenAIAssessor(&config.Config{AIVerifierAPIURL: upstream.URL, AIVerifierAPIKey: "synthetic", AIVerifierModel: "runner-ontology"}, upstream.Client())
+	transport := structured.NewOpenAI(&config.Config{AIVerifierAPIURL: upstream.URL, AIVerifierAPIKey: "synthetic", AIVerifierModel: "runner-ontology"}, upstream.Client())
 	maintenance := organization.NewMaintenanceService(organization.MaintenanceDependencies{Repository: ontologyStore, Config: configuration, Audit: audit, DefaultModel: "runner-ontology", Organizer: func(model string, tokens int64, accounting assessment.AttemptAccounting) *organization.Service {
 		return organization.NewService(ontologyStore, assessment.NewProviderWithAccounting(transport, model, assessor.DefaultSemanticAssessmentLimits(), accounting, int(tokens)))
 	}})
@@ -128,10 +129,7 @@ func newRunnerServiceFixture(t *testing.T) *runnerServiceFixture {
 		e.ServeHTTP(w, r.WithContext(callCtx))
 	}))
 	t.Cleanup(mcp.Close)
-	portal, err := densehttp.NewControlPortalServerWithCapabilityBindings(&config.Config{ControlPortalToken: "runner-control"}, nil, nil, nil, densehttp.ControlPortalBindings{Telemetry: densehttp.ControlPortalTelemetry{Ontology: maintenance, Config: configuration, Convergence: searchapp.NewSearchConvergenceService(search, store)}}, densehttp.HealthConfig{}, nil)
-	require.NoError(t, err)
-	control := httptest.NewServer(portal)
-	t.Cleanup(control.Close)
+	control := runnerControlServer(t, maintenance, configuration, searchapp.NewSearchConvergenceService(search, store))
 	pool, err := admin.DB()
 	require.NoError(t, err)
 	client := &evalharness.HTTPClient{BaseURL: mcp.URL, APIKey: "fixture", Client: mcp.Client()}
@@ -142,38 +140,58 @@ func newRunnerServiceFixture(t *testing.T) *runnerServiceFixture {
 		ontology: ontologyStore, provider: provider, reconciliation: searchapp.NewSearchReconciliationService(searchapp.SearchReconciliationDependencies{Repository: search, Projection: store, Executor: semanticwrite.NewProviderExecutor(embedder)})}
 }
 
+func runnerControlServer(t *testing.T, maintenance *organization.MaintenanceService, configuration settings.AppConfigService, convergence searchapp.SearchConvergenceReader) *httptest.Server {
+	t.Helper()
+	bindings := densehttp.ControlPortalBindings{Telemetry: densehttp.ControlPortalTelemetry{
+		Ontology: maintenance, Config: configuration, Convergence: convergence,
+	}}
+	portal, err := densehttp.NewControlPortalServerWithCapabilityBindings(&config.Config{ControlPortalToken: "runner-control"}, nil, nil, nil, bindings, densehttp.HealthConfig{}, nil)
+	require.NoError(t, err)
+	control := httptest.NewServer(portal)
+	t.Cleanup(control.Close)
+	return control
+}
+
 type runnerRememberAssessor struct {
 	rememberProcessorIntegrationRegistrationAssessor
 	failures int
 }
 
-func (p *runnerRememberAssessor) Assess(ctx context.Context, request assessor.SemanticAssessmentRequest) (assessor.SemanticAssessmentSession, assessor.SemanticAssessmentTurn, error) {
+func (p *runnerRememberAssessor) Complete(ctx context.Context, wire modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
+	if wire.SchemaName == assessor.PartitionSchemaName {
+		return partitionFixtureComplete(wire)
+	}
 	if p.failures > 0 {
 		p.failures--
 		p.calls++
-		return nil, assessor.SemanticAssessmentTurn{}, &assessorprovider.ProviderError{
+		return modelprovider.StructuredResult{}, &modelprovider.ProviderError{
 			Provider: "runner-fixture", FailureClass: modelprovider.ProviderFailureClassHTTPServer, StatusCode: http.StatusServiceUnavailable,
 		}
 	}
-	session, turn, err := p.rememberProcessorIntegrationRegistrationAssessor.Assess(ctx, request)
-	if err != nil || !strings.HasPrefix(request.Evidence[0].Content, "PostgreSQL stores durable memory for") {
-		return session, turn, err
+	request, err := assessmentfixture.Request(wire)
+	if err != nil {
+		return modelprovider.StructuredResult{}, err
 	}
+	if !strings.HasPrefix(request.Evidence[0].Content, "PostgreSQL stores durable memory for") {
+		return p.rememberProcessorIntegrationRegistrationAssessor.Complete(ctx, wire)
+	}
+	p.calls++
+	reply := rememberProcessorIntegrationAssessmentResponse(request)
 	for _, group := range request.EvidenceEquivalenceCandidates {
 		for _, candidate := range group.Candidates {
 			if candidate.Content != "Project Alpha stores durable memory in PostgreSQL." {
 				continue
 			}
-			for index := range turn.Response.EvidenceEquivalenceResults {
-				result := &turn.Response.EvidenceEquivalenceResults[index]
+			for index := range reply.EvidenceEquivalenceResults {
+				result := &reply.EvidenceEquivalenceResults[index]
 				if result.EvidenceID == group.EvidenceID {
 					result.Action, result.CandidateEvidenceID = "reuse", &candidate.EvidenceID
-					return session, turn, nil
+					return assessmentfixture.Result(wire, reply)
 				}
 			}
 		}
 	}
-	return nil, assessor.SemanticAssessmentTurn{}, fmt.Errorf("paraphrase fixture has no supplied canonical candidate")
+	return modelprovider.StructuredResult{}, fmt.Errorf("paraphrase fixture has no supplied canonical candidate")
 }
 
 func pairArgumentString(arguments map[string]any, key string) string {

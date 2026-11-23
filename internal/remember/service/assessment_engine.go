@@ -28,8 +28,12 @@ func newAssessmentEngine(deps SynchronousAssessmentDependencies, teamID, ownerID
 	if metrics == nil {
 		metrics = observability.NoopDiscoverabilityMetrics()
 	}
+	limits := assessor.NormalizeSemanticAssessmentLimits(deps.Limits)
+	if deps.Provider != nil {
+		limits.ProviderModel = deps.Provider.ModelName()
+	}
 	return &assessmentEngine{
-		provider: deps.Provider, limits: deps.Limits,
+		provider: deps.Provider, limits: limits,
 		teamID: strings.TrimSpace(teamID), ownerProfileID: strings.TrimSpace(ownerID),
 		now: time.Now, metrics: metrics, logger: deps.Logger,
 	}

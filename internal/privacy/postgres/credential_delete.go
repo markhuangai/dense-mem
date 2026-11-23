@@ -13,6 +13,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	privacycontract "github.com/markhuangai/dense-mem/internal/privacy/contract"
+	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
 type CredentialDeletionAuditInput = privacycontract.CredentialDeletionAuditInput
@@ -20,7 +21,7 @@ type CredentialDeletionAuditInput = privacycontract.CredentialDeletionAuditInput
 // QueueCredentialPrivateErasureTx is the privacy-owned port used by the
 // existing credential transaction. It never opens or commits a transaction.
 func QueueCredentialPrivateErasureTx(ctx context.Context, tx *gorm.DB, teamID, credentialID uuid.UUID) error {
-	return withSystemModeInTx(ctx, tx, teamID.String(), teamID.String(), func(systemTx *gorm.DB) error {
+	return storagepostgres.WithSystemModeInTx(ctx, tx, teamID.String(), teamID.String(), func(systemTx *gorm.DB) error {
 		space, err := privateMemorySpaceForCredentialTx(ctx, systemTx, teamID, credentialID, false)
 		if err != nil {
 			return err
@@ -77,30 +78,6 @@ func AppendCredentialDeletionAuditTx(ctx context.Context, tx *gorm.DB, teamID, c
 		return fmt.Errorf("append credential deletion audit: %w", err)
 	}
 	return nil
-}
-
-func withSystemModeInTx(ctx context.Context, tx *gorm.DB, teamID, profileID string, fn func(*gorm.DB) error) error {
-	if err := tx.WithContext(ctx).Exec("SELECT set_config('app.current_team_id', '', true)").Error; err != nil {
-		return err
-	}
-	if err := tx.WithContext(ctx).Exec("SELECT set_config('app.current_profile_id', '', true)").Error; err != nil {
-		return err
-	}
-	if err := tx.WithContext(ctx).Exec("SELECT set_config('app.tx_mode', 'system', true)").Error; err != nil {
-		return err
-	}
-	fnErr := fn(tx)
-	resetErr := tx.WithContext(ctx).Exec("SELECT set_config('app.current_team_id', ?, true)", teamID).Error
-	if resetErr == nil {
-		resetErr = tx.WithContext(ctx).Exec("SELECT set_config('app.current_profile_id', ?, true)", profileID).Error
-	}
-	if resetErr == nil {
-		resetErr = tx.WithContext(ctx).Exec("SELECT set_config('app.tx_mode', 'profile', true)").Error
-	}
-	if fnErr != nil {
-		return fnErr
-	}
-	return resetErr
 }
 
 func nullTimePtr(value sql.NullTime) *time.Time {

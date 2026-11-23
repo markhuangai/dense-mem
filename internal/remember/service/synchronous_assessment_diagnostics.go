@@ -5,8 +5,8 @@ import (
 	"errors"
 	"time"
 
-	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
+	"github.com/markhuangai/dense-mem/internal/service/generation"
 )
 
 type assessmentDiagnostics struct {
@@ -49,26 +49,24 @@ func (d *assessmentDiagnostics) beginTurn(ctx context.Context) {
 	d.turns = append(d.turns, d.current)
 }
 
-func (d *assessmentDiagnostics) finishProviderTurn(turn assessor.SemanticAssessmentTurn, err error) {
+func (d *assessmentDiagnostics) finishGenerationAttempt(attempt generation.Attempt) {
 	if d == nil || d.current == nil {
 		return
 	}
 	d.current["elapsed_ms"] = time.Since(d.turnStarted).Milliseconds()
-	if turn.Diagnostics != nil {
-		if turn.Diagnostics.Valid() {
-			d.current["provider"] = turn.Diagnostics.LogFields()
+	d.current["usage_available"] = attempt.Provider.UsageAvailable
+	if diagnostic := attempt.Provider.Diagnostics; diagnostic != nil {
+		if diagnostic.Valid() {
+			d.current["provider"] = diagnostic.LogFields()
 		} else {
 			d.current["provider_diagnostics_unavailable"] = true
 		}
 	}
-	if turn.ValidationMS != nil && *turn.ValidationMS >= 0 {
-		d.current["validation_ms"] = *turn.ValidationMS
+	if attempt.ValidationElapsed > 0 {
+		d.current["validation_ms"] = attempt.ValidationElapsed.Milliseconds()
 	}
-	if turn.ValidationStage != "" {
-		d.current["validation_stage"] = boundedAssessorValidationStage(turn.ValidationStage)
-	}
-	if err != nil {
-		failure := modelprovider.ProviderFailureDetails(err)
+	if attempt.Err != nil && attempt.Validation == nil {
+		failure := modelprovider.ProviderFailureDetails(attempt.Err)
 		d.current["failure_class"] = boundedAssessmentProviderFailureClass(failure.Class)
 		if failure.StatusCode >= 100 && failure.StatusCode <= 599 {
 			d.current["status_code"] = failure.StatusCode
@@ -77,23 +75,22 @@ func (d *assessmentDiagnostics) finishProviderTurn(turn assessor.SemanticAssessm
 			d.current["retry_after_ms"] = failure.RetryAfter.Milliseconds()
 		}
 	}
-}
-
-func (d *assessmentDiagnostics) finishValidation(started time.Time, issues []assessor.SemanticValidationError) {
-	if d == nil || d.current == nil {
-		return
+	if attempt.ValidationElapsed > 0 {
+		d.current["error_count"] = 0
+		d.current["truncated"] = false
+		d.current["issues"] = []map[string]any{}
 	}
-	d.current["elapsed_ms"] = time.Since(d.turnStarted).Milliseconds()
-	providerValidation, _ := d.current["validation_ms"].(int64)
-	d.current["validation_ms"] = providerValidation + time.Since(started).Milliseconds()
-	d.current["error_count"] = min(len(issues), maxAssessorValidationFields)
-	d.current["truncated"] = len(issues) > maxAssessorValidationFields
-	bounded := make([]map[string]any, 0, min(len(issues), maxAssessorValidationFields))
-	for _, issue := range issues[:min(len(issues), maxAssessorValidationFields)] {
-		field, _ := normalizeAssessmentValidationField(issue.Field)
-		bounded = append(bounded, map[string]any{"field": field, "code": boundedAssessmentValidationCode(issue.Code)})
+	if validation := attempt.Validation; validation != nil {
+		d.current["validation_stage"] = boundedAssessorValidationStage(validation.Stage)
+		d.current["error_count"] = min(len(validation.Errors), maxAssessorValidationFields)
+		d.current["truncated"] = len(validation.Errors) > maxAssessorValidationFields
+		bounded := make([]map[string]any, 0, min(len(validation.Errors), maxAssessorValidationFields))
+		for _, issue := range validation.Errors[:min(len(validation.Errors), maxAssessorValidationFields)] {
+			field, _ := normalizeAssessmentValidationField(issue.Field)
+			bounded = append(bounded, map[string]any{"field": field, "code": boundedAssessmentValidationCode(issue.Code)})
+		}
+		d.current["issues"] = bounded
 	}
-	d.current["issues"] = bounded
 }
 
 func (d *assessmentDiagnostics) snapshot() map[string]any {

@@ -18,7 +18,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	assessorprovider "github.com/markhuangai/dense-mem/internal/provider/assessor"
+	"github.com/markhuangai/dense-mem/internal/provider/structured"
 )
 
 func TestApplicationBundleBuildsEveryCapabilityService(t *testing.T) {
@@ -83,10 +83,10 @@ func TestConfiguredSessionProvidersShareConcurrencyGate(t *testing.T) {
 		AIVerifierAPIURL: server.URL, AIVerifierAPIKey: "test-key", AIVerifierModel: "verifier-model",
 	}
 	gate := modelprovider.NewConcurrencyGate(1)
-	assessorProvider := assessorprovider.NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGateAndModel(
-		cfg, server.Client(), assessor.DefaultSemanticAssessmentLimits(), gate, "remember-model",
+	assessorProvider := structured.NewOpenAIWithModel(
+		cfg, server.Client(), gate, "remember-model",
 	)
-	sessionProvider := assessorprovider.NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGateAndModel(cfg, server.Client(), assessor.DefaultSemanticAssessmentLimits(), gate, "session-model")
+	sessionProvider := structured.NewOpenAIWithModel(cfg, server.Client(), gate, "session-model")
 
 	if err := modelprovider.AcquireConcurrency(context.Background(), gate); err != nil {
 		t.Fatalf("acquire shared gate: %v", err)
@@ -173,14 +173,15 @@ func TestConfiguredSessionModelsDoNotFallbackAfterProviderFailure(t *testing.T) 
 	}
 	models := aiSessionModelsForConfig(cfg)
 	gate := modelprovider.NewConcurrencyGate(1)
-	assessorProvider := assessorprovider.NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGateAndModel(
-		cfg, server.Client(), assessor.DefaultSemanticAssessmentLimits(), gate, models.remember,
+	assessorProvider := structured.NewOpenAIWithModel(
+		cfg, server.Client(), gate, models.remember,
 	)
 
 	calls := []func() error{
 		func() error {
-			_, _, err := assessorProvider.Assess(context.Background(), assessor.SemanticAssessmentRequest{
-				RequestID: "remember-request", TeamID: "team", Evidence: []assessor.SemanticReviewEvidence{{EvidenceID: "evidence", Content: "safe evidence"}},
+			_, err := assessorProvider.Complete(context.Background(), modelprovider.StructuredRequest{
+				Model: assessorProvider.ModelName(), SchemaName: assessor.SemanticAssessmentSchemaName, Schema: assessor.SemanticAssessmentResponseSchema(),
+				Messages: []modelprovider.Message{{Role: "user", Content: "safe evidence"}},
 			})
 			return err
 		},

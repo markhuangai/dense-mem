@@ -3,6 +3,7 @@ package assessment
 import (
 	"context"
 	"encoding/json"
+	"github.com/markhuangai/dense-mem/internal/jsonstrict"
 	"strings"
 	"testing"
 
@@ -176,7 +177,7 @@ func requireCorrectionErrors(t *testing.T, err error, actual []assessor.Semantic
 	t.Helper()
 	var rejected *assessor.SemanticAssessmentResponseValidationError
 	require.ErrorAs(t, err, &rejected)
-	expected, marshalErr := json.Marshal(assessor.BoundSemanticAssessmentCorrectionErrors(rejected.Errors))
+	expected, marshalErr := json.Marshal(jsonstrict.BoundIssues(rejected.Errors))
 	require.NoError(t, marshalErr)
 	encoded, marshalErr := json.Marshal(actual)
 	require.NoError(t, marshalErr)

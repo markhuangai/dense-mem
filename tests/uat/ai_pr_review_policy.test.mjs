@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
+import { readSharedRegressions, sharedRegressionsCommand } from "./workflow_helpers.mjs";
 
 const agentsURL = new URL("../../AGENTS.md", import.meta.url);
 const designADRPath = "adr/0019-code-ownership-and-design-review.md";
@@ -29,7 +32,14 @@ function normalizedReviewPrompt(workflow, heading) {
   return workflow.slice(start, end).replace(/\s+/g, " ");
 }
 
-test("repository guidance requires material, scoped, simple review findings", async () => {
+async function assertAcceptedDesignDecision(path) {
+  const adr = await readFile(path, "utf8");
+  assert.match(adr, /^- Status: Accepted$/m);
+  const decision = adr.split(/^## Decision[ \t]*\r?$/m)[1]?.split(/^#{1,2}[ \t]/m)[0];
+  assert.match(decision?.replace(/<!--[\s\S]*?-->/g, "") ?? "", /[\p{L}\p{N}]/u, "accepted ADR must contain a Decision");
+}
+
+test("repository guidance requires material, scoped, simple review findings", async (t) => {
   const [agents, designADR] = await Promise.all([
     readFile(agentsURL, "utf8"),
     readFile(designADRURL, "utf8"),
@@ -60,8 +70,18 @@ test("repository guidance requires material, scoped, simple review findings", as
     /reject hypothetical, pre-existing, unreachable, contradicted/,
   );
   assert.match(normalizedAgents, /semantic verifier\/reviewer behavior/);
-  assert.match(designADR, /^- Status: Accepted$/m);
-  assert.ok(agents.includes(`](${designADRPath})`));
+  await assertAcceptedDesignDecision(designADRURL);
+  assert.ok(agents.includes("](" + designADRPath + ")"));
+  const fixtureDir = await mkdtemp(join(tmpdir(), "dense-mem-review-adr-"));
+  t.after(() => rm(fixtureDir, { recursive: true }));
+  const fixture = join(fixtureDir, "design.md");
+  const section = /^## Decision[ \t]*\r?\n[\s\S]*?(?=^##[ \t])/m;
+  await writeFile(fixture, designADR.replace(section, "## Decision\n\nOwn each policy in one place.\n\n"));
+  await assertAcceptedDesignDecision(fixture);
+  for (const content of ["", "## Decision\n\n"]) {
+    await writeFile(fixture, designADR.replace(section, content));
+    await assert.rejects(assertAcceptedDesignDecision(fixture), /must contain a Decision/);
+  }
 });
 
 test("AI review uses six ownership-driven goals and one memory-first protocol", async () => {
@@ -274,11 +294,9 @@ test("review safety controls and CI policy coverage remain enabled", async () =>
   assert.match(workflow, /auto-approve: "false"/);
   assert.match(workflow, /permission_policy: always_allow/);
   assert.match(workflow, /org_max_permission: allow/);
-  assert.match(
-    sharedWorkflow,
-    /node --test tests\/uat\/ai_pr_review_policy\.test\.mjs/,
-  );
-  assert.match(ciCheck, /node --test tests\/uat\/ai_pr_review_policy\.test\.mjs/);
+  assert.ok(sharedWorkflow.includes(sharedRegressionsCommand));
+  assert.ok(ciCheck.split("\n").includes(sharedRegressionsCommand));
+  assert.ok((await readSharedRegressions()).includes("tests/uat/ai_pr_review_policy.test.mjs"));
 });
 
 test("AI review uses the Claude endpoint without obsolete executor routing", async () => {
