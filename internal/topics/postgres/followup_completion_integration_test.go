@@ -93,18 +93,20 @@ func TestOntologyMaintenanceBoundedCompletionUsesPersistedOutcomes(t *testing.T)
 func TestOntologyMaintenanceEarlierAmbiguityKeepsBoundedRunIncomplete(t *testing.T) {
 	f := newOrganizationFixture(t)
 	f.organizationEvidence(t, 0, "Alpha.", nil)
-	f.organizationEvidence(t, 1, "Zebra.", nil)
 	settings := maintenanceSettings(t, f)
 	maintenanceWindow(t, f, settings)
 	run, err := f.store.MaintenanceCommand(context.Background(), domain.TopicMaintenanceCommand{Action: "run", OperationKey: "two-batches", MaxBatches: 2}, time.Now().UTC(), nil)
 	require.NoError(t, err)
-	first := true
 	service, _ := maintenanceServiceFixture(t, f, settings, func(request assessment.Request, response *assessment.Response) {
-		if first {
+		if len(request.Items) == 1 && request.Items[0].Text == "Alpha." {
 			ambiguousClassification(request, response)
-			first = false
 		}
 	})
+	progress, err := service.RunTurn(context.Background())
+	require.NoError(t, err)
+	require.True(t, progress)
+	require.Equal(t, 1, maintenanceRunByID(t, f, run.ID).CompletedBatches)
+	f.organizationEvidence(t, 1, "Zebra.", nil)
 	drainMaintenance(t, service)
 	completed := maintenanceRunByID(t, f, run.ID)
 	require.Equal(t, 2, completed.CompletedBatches)

@@ -27,12 +27,20 @@ func TestOntologyMaintenanceFinalizationCancellationAndDiscovery(t *testing.T) {
 			discovery, err := f.store.ClaimMaintenanceTurn(ctx, x.window.ID, time.Now().UTC(), time.Minute)
 			require.NoError(t, err)
 			require.NotNil(t, discovery)
+			require.NoError(t, f.rls.WithTeamTx(ctx, f.app, f.team, func(tx *gorm.DB) error {
+				for _, source := range x.claim.Sources {
+					if err := tx.Exec(`SELECT dense_mem_enqueue_topic_marker(?::uuid,?::uuid,?,'evidence_fragments',?,'evidence',?)`,
+						f.team, f.space, f.generation, source.ID, source.ID).Error; err != nil {
+						return err
+					}
+				}
+				return nil
+			}))
 			x.stageOutcome(t, mode)
 			before, history := f.canonicalSnapshot(t), x.history(t)
 			calls, receipts := x.calls.Load(), receiptCount(t, f)
 			statusBefore, err := f.store.MaintenanceStatus(ctx, time.Now())
 			require.NoError(t, err)
-			require.NoError(t, f.admin.Exec(`UPDATE topic_maintenance_teams SET discovery_kind=0,discovery_cursor='' WHERE team_id=?::uuid`, f.team).Error)
 			second := uuid.MustParse(x.claim.Sources[1].ID).String()
 			require.NoError(t, f.admin.Exec(fmt.Sprintf(`CREATE FUNCTION finalization_discovery_barrier() RETURNS trigger LANGUAGE plpgsql AS $$
 			 BEGIN IF NEW.source_id='%s' THEN PERFORM pg_advisory_xact_lock(603001); END IF; RETURN NEW; END $$;

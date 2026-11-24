@@ -61,18 +61,20 @@ func TestOntologyMatchingHistoricalReceiptRefresh(t *testing.T) {
 	require.Equal(t, legacy.ID, replay.AssessmentID)
 	revalidationRefresh(t, f, source)
 	require.NoError(t, f.admin.Exec(`UPDATE topic_maintenance_sources SET status='ambiguous',assessment_id=?::uuid WHERE team_id=?::uuid AND source_kind=? AND source_id=?`, legacy.ID, f.team, source.Kind, source.ID).Error)
+	queue := revalidationQueue(t, f, source)
 	f.store = NewStore(f.app, f.rls)
-	require.NoError(t, f.store.withScope(ctx, f.team, false, func(tx *gorm.DB, fence scope) error {
+	require.NoError(t, f.store.withScope(ctx, f.team, true, func(tx *gorm.DB, fence scope) error {
 		marker := maintenanceMarker{AnchorKind: "topic_record_heads", AnchorID: definition.ID, TargetKind: "definition", TargetID: definition.ID}
 		selected, err := maintenanceMarkerSources(tx, fence, marker, ontology.MaintenancePageSize)
 		require.NoError(t, err)
-		require.Equal(t, []ontology.SourceHandle{source}, selected, "historical receipt dependencies still schedule refresh without lexical overlap")
+		require.Empty(t, selected, "an archived receipt alone must not schedule assignment work")
 		page, err := maintenanceDefinitionGroupPage(tx, fence, []maintenanceMarker{marker}, ontology.MaintenancePageSize)
 		require.NoError(t, err)
-		require.Equal(t, selected, page.Sources)
-		return refreshMaintenanceInvalidation(tx, fence, source, true)
+		require.Empty(t, page.Sources)
+		return nil
 	}))
-	require.Equal(t, "pending", revalidationQueue(t, f, source).Status)
+	revalidationDiscover(t, f, maintenanceWindow(t, f, maintenanceSettings(t, f)))
+	require.Equal(t, queue, revalidationQueue(t, f, source))
 	require.Equal(t, history, revalidationReceiptHistory(t, f))
 	input.OperationKey = "reuse-filtered-context"
 	current, err := service.Organize(ctx, f.team, input)

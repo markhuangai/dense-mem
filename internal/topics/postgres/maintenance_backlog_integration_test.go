@@ -132,31 +132,50 @@ func TestOntologyMaintenanceLargeBacklogAndFairTurns(t *testing.T) {
 }
 
 func TestOntologyMaintenanceOversizedGroupClosure(t *testing.T) {
-	f := newOrganizationFixture(t)
-	var sources []ontology.SourceHandle
-	var dependencies []ontology.SourceDependency
-	for range 21 {
-		handle := f.organizationEvidence(t, 0, "Complete group source.", nil)
-		sources = append(sources, handle)
-		dependencies = append(dependencies, f.source(t, handle))
+	for _, tc := range []struct {
+		name   string
+		excess int
+	}{
+		{"at_the_assessment_bound", 0},
+		{"above_the_assessment_bound", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newOrganizationFixture(t)
+			ctx := t.Context()
+			size := ontology.MaxOrganizationSources + tc.excess
+			require.LessOrEqual(t, size, ontology.MaxMembers)
+			var sources []ontology.SourceHandle
+			var dependencies []ontology.SourceDependency
+			for range size {
+				handle := f.organizationEvidence(t, 0, "Complete group source.", nil)
+				sources = append(sources, handle)
+				dependencies = append(dependencies, f.source(t, handle))
+			}
+			group := ontology.Record{ID: uuid.NewString(), Kind: ontology.EvidenceGroup, Group: &ontology.Group{Members: sources}, Sources: dependencies}
+			_, err := f.store.PublishAutomatic(ctx, f.team, testPublication("large-group", 0, ontology.Change{Record: group}))
+			require.NoError(t, err)
+
+			window := maintenanceWindow(t, f, maintenanceSettings(t, f))
+			_, claim := maintenanceClaim(t, f, window)
+			require.Len(t, claim.Sources, ontology.MaxOrganizationSources, "Topic assignment proceeds independently within its batch bound")
+			neighborhoods, err := f.store.ReadEquivalenceNeighborhoods(ctx, *claim)
+			require.NoError(t, err)
+			if tc.excess == 0 {
+				require.Len(t, neighborhoods, 1)
+				require.ElementsMatch(t, sources, neighborhoods[0].Sources)
+			} else {
+				require.Empty(t, neighborhoods, "an oversized group cannot be sent to the provider in pieces")
+			}
+			view, err := f.store.GetRecord(ctx, f.team, group.ID, 0)
+			require.NoError(t, err)
+			require.True(t, view.Current)
+			require.ElementsMatch(t, sources, view.Group.Members)
+			status, err := f.store.MaintenanceStatus(ctx, time.Now().UTC())
+			require.NoError(t, err)
+			require.EqualValues(t, size, status.Counts.Pending)
+			require.Zero(t, status.Counts.Ambiguous)
+			require.False(t, status.CoverageComplete)
+			require.NoError(t, f.store.CompleteMaintenanceBatch(ctx, *claim, ontology.OrganizationResult{}, "maintenance_paused", time.Now()))
+		})
 	}
-	group := ontology.Record{ID: uuid.NewString(), Kind: ontology.OverrideKind, Override: &ontology.Override{Action: ontology.GroupTogether, Members: sources}, Sources: dependencies}
-	_, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("large-group", 0, ontology.Change{Record: group}))
-	require.NoError(t, err)
-	config := maintenanceSettings(t, f)
-	window := maintenanceWindow(t, f, config)
-	turn, err := f.store.ClaimMaintenanceTurn(context.Background(), window.ID, time.Now().UTC(), time.Minute)
-	require.NoError(t, err)
-	require.NotNil(t, turn)
-	for range 8 {
-		require.NoError(t, f.store.discoverMaintenanceError(context.Background(), *turn, ontology.MaintenancePageSize))
-	}
-	claim, err := f.store.ClaimMaintenanceBatch(context.Background(), *turn, window.ID, time.Now().UTC())
-	require.NoError(t, err)
-	require.Nil(t, claim)
-	status, err := f.store.MaintenanceStatus(context.Background(), time.Now().UTC())
-	require.NoError(t, err)
-	require.EqualValues(t, 1, status.Counts.Ambiguous)
-	require.False(t, status.CoverageComplete)
-	require.NoError(t, f.store.ReleaseMaintenanceTurn(context.Background(), *turn))
 }

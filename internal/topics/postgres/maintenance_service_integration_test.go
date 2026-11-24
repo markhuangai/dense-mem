@@ -359,7 +359,10 @@ func TestOntologyMaintenanceProviderFailureReleasesCapacity(t *testing.T) {
 			limits := maintenanceFixtureLimits()
 			cfg := &config.Config{AIVerifierAPIURL: server.URL, AIVerifierAPIKey: "synthetic-provider-key", AIVerifierModel: "fixture-model"}
 			transport := structured.NewOpenAI(cfg, server.Client())
+			communityTransport, _ := cohortTopicTransport(t, cfg.AIVerifierModel)
 			service := organization.NewMaintenanceService(organization.MaintenanceDependencies{Repository: f.store, Config: configured, ProviderTimeout: time.Minute,
+				Communities: f.store,
+				Placement:   organization.CommunityAssessor{Transport: communityTransport, Limits: limits},
 				Organizer: func(model string, capacity int64, accounting assessment.AttemptAccounting) *organization.Service {
 					return organization.NewService(f.store, assessment.NewProviderWithAccounting(transport, model, limits, accounting, int(capacity)))
 				}})

@@ -139,10 +139,13 @@ func schedulerFixtureService(t *testing.T, f *ontologyFixture, config *settings.
 	if len(repositories) > 0 {
 		repository = repositories[0]
 	}
+	limits := maintenanceFixtureLimits()
+	placement, _ := cohortTopicTransport(t, "fixture-model")
 	service := organization.NewMaintenanceService(organization.MaintenanceDependencies{Repository: repository, Config: config, DefaultModel: "fixture-model", ProviderTimeout: time.Minute,
+		Communities: f.store, Placement: organization.CommunityAssessor{Transport: placement, Limits: limits},
 		Organizer: func(model string, contextWindowTokens int64, accounting assessment.AttemptAccounting) *organization.Service {
 			if accounting == nil {
-				return organization.NewService(f.store, assessment.NewProvider(nil, model, maintenanceFixtureLimits(), int(contextWindowTokens)))
+				return organization.NewService(f.store, assessment.NewProvider(nil, model, limits, int(contextWindowTokens)))
 			}
 			organizer, _ := organizationFixtureServiceWithAccounting(t, f, nil, func(request assessment.Request, response *assessment.Response) {
 				calls.Add(1)
@@ -153,7 +156,7 @@ func schedulerFixtureService(t *testing.T, f *ontologyFixture, config *settings.
 				if edit != nil {
 					edit(request, response)
 				}
-			}, model, maintenanceFixtureLimits(), accounting, int(contextWindowTokens), map[string]int{"prompt_tokens": 40, "completion_tokens": 20, "total_tokens": 60})
+			}, model, limits, accounting, int(contextWindowTokens), map[string]int{"prompt_tokens": 40, "completion_tokens": 20, "total_tokens": 60})
 			return organizer
 		},
 	})

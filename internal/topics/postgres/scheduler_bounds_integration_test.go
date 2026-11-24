@@ -49,7 +49,9 @@ func TestOntologyMaintenanceParallelSchedulerAttemptBounds(t *testing.T) {
 	require.EqualValues(t, 20, observer.calls.Load())
 	status, err := f.store.MaintenanceStatus(context.Background(), time.Now())
 	require.NoError(t, err)
-	require.Positive(t, status.Counts.Pending, "the organization bound must leave real work for the next tick")
+	require.EqualValues(t, 50, status.Counts.Organized)
+	require.Positive(t, status.Communities.Standalone, "the shared scheduler must complete real Community work")
+	require.Positive(t, status.Communities.Pending, "the shared turn bound must leave real placement work for the next tick")
 	require.False(t, status.CoverageComplete)
 	schedulerAssertDrained(t, f)
 }

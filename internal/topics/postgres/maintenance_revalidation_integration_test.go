@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/topics/assessment"
 	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/assert"
@@ -195,19 +194,22 @@ func TestOntologyMaintenanceRevalidationChurn(t *testing.T) {
 		require.Equal(t, int32(2), ambiguousCalls.Load())
 		require.Equal(t, int32(1), calls.Load())
 	})
-	t.Run("manager choices remain fixed but relevant edits invalidate", func(t *testing.T) {
+	t.Run("materialized membership stays fixed until its Topic changes", func(t *testing.T) {
 		f := newOrganizationFixture(t)
 		source := f.organizationEvidence(t, 1, "Atlas PostgreSQL.", nil)
 		topic := testTopic("manager-storage")
-		override := ontology.Record{ID: uuid.NewString(), Kind: ontology.OverrideKind, Override: &ontology.Override{Action: ontology.SetClassification, DefinitionID: topic.ID, Members: []ontology.SourceHandle{source}}, Sources: []ontology.SourceDependency{f.source(t, source)}}
-		revalidationPublish(t, f, ontology.Change{Record: topic}, ontology.Change{Record: override})
+		membership := ontology.Record{
+			ID: ontology.OrganizationRecordID(f.team, ontology.AssignmentKind, ontology.SourceKey(source)), Kind: ontology.AssignmentKind,
+			Assignment: &ontology.Assignment{Source: source, DefinitionID: topic.ID}, Sources: []ontology.SourceDependency{f.source(t, source)},
+		}
+		revalidationPublish(t, f, ontology.Change{Record: topic}, ontology.Change{Record: membership})
 		before := f.canonicalSnapshot(t)
 		service, calls := organizationFixtureService(t, f, nil, nil)
-		input := ontology.OrganizationInput{OperationKey: "manager-choice", Sources: []ontology.SourceHandle{source}}
+		input := ontology.OrganizationInput{OperationKey: "materialized-membership", Sources: []ontology.SourceHandle{source}}
 		original, err := service.Organize(context.Background(), f.team, input)
 		require.NoError(t, err)
 		revalidationPublish(t, f, ontology.Change{Record: testTopic("atlas-postgresql-added")})
-		input.OperationKey = "manager-choice-replay"
+		input.OperationKey = "materialized-membership-replay"
 		replay, err := service.Organize(context.Background(), f.team, input)
 		require.NoError(t, err)
 		require.True(t, replay.Current)

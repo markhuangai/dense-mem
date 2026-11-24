@@ -55,20 +55,31 @@ func TestOntologyMaintenanceRevalidationDiscoveryIsolation(t *testing.T) {
 	require.Zero(t, leaked)
 	store, ctx, recorder := x.recorder(context.Background(), true)
 	ordered := discoverySortedSources(x.sources)
-	require.NoError(t, store.discoverMaintenanceError(ctx, x.turn, 1))
+	first, err := store.DiscoverMaintenance(ctx, x.turn, 1)
+	require.NoError(t, err)
+	require.Equal(t, 1, first.Counts.RefreshedSources)
+	require.Zero(t, first.Counts.FreshnessInvocations)
 	afterFirst := discoveryMarkerState(t, x)
 	require.EqualValues(t, 3, afterFirst["markers"])
 	require.Equal(t, ontology.SourceKey(ordered[0]), afterFirst["cursor"])
-	require.NoError(t, store.discoverMaintenanceError(ctx, x.turn, 1))
+	second, err := store.DiscoverMaintenance(ctx, x.turn, 1)
+	require.NoError(t, err)
+	require.Equal(t, 1, second.Counts.RefreshedSources)
+	require.Zero(t, second.Counts.FreshnessInvocations)
 	require.EqualValues(t, 0, discoveryMarkerState(t, x)["markers"])
-	checks := recorder.completed()
+	var checks []maintenanceDiscoveryEvent
+	for _, event := range recorder.events {
+		if event.Phase == "source_finished" {
+			checks = append(checks, event)
+		}
+	}
 	require.Len(t, checks, 2)
 	for i, check := range checks {
 		require.Equal(t, ordered[i], check.Source)
 		require.Equal(t, scope{TeamID: f.team, SpaceID: f.space, Generation: f.generation}, check.Scope)
-		require.True(t, check.Current)
 		require.NoError(t, check.Err)
 	}
+	require.Empty(t, recorder.completed())
 	for _, id := range append(privateIDs, foreign.ID) {
 		var count int
 		require.NoError(t, f.admin.Raw(`SELECT count(*) FROM topic_maintenance_sources WHERE team_id=?::uuid AND source_id=?`, f.team, id).Row().Scan(&count))

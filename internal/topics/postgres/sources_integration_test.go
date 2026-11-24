@@ -13,6 +13,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
+	storage "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -90,45 +91,48 @@ func TestOntologySharedSourceIsolationAndFreshness(t *testing.T) {
 }
 
 func TestOntologyManagerOverridesAndRollback(t *testing.T) {
-	f := newOntologyFixture(t)
-	topic := testTopic("people")
-	seed, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("seed", 0, ontology.Change{Record: topic}))
+	f := newHistoricalOntologyFixture(t)
+	ctx := context.Background()
+	migrator, err := storage.NewMigrator(f.admin)
 	require.NoError(t, err)
+	require.NoError(t, migrator.RunUpThroughEvidenceOnly(ctx))
+	people, engineer := testTopic("people"), testTopic("engineer")
 	handle := f.organizationEvidence(t, 0, "Ada works on Atlas.", nil)
-	dependency := f.source(t, handle)
-	classID := topic.ID
-	wrongOverride := ontology.Record{ID: uuid.NewString(), Kind: ontology.OverrideKind, Override: &ontology.Override{Action: ontology.SetClassification, DefinitionID: uuid.NewString(), Members: []ontology.SourceHandle{handle}}, Sources: []ontology.SourceDependency{dependency}}
-	_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("wrong-class", seed.Revision, ontology.Change{Record: wrongOverride}))
-	require.ErrorIs(t, err, ontology.ErrDependencyStale)
-	history, err := f.store.History(f.actor(0, "manager"), f.team, 0, 20)
-	require.NoError(t, err)
-	require.Len(t, history, 1)
-	override := ontology.Record{ID: uuid.NewString(), Kind: ontology.OverrideKind, Override: &ontology.Override{Action: ontology.SetClassification, DefinitionID: classID, Members: []ontology.SourceHandle{handle}}, Sources: []ontology.SourceDependency{dependency}}
-	pin, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("pin", seed.Revision, ontology.Change{Record: override}))
-	require.NoError(t, err)
-	other := ontology.Record{ID: uuid.NewString(), Kind: ontology.Topic, Definition: &ontology.Definition{Key: "engineer", Label: "Engineer", ParentID: classID}}
-	newClass, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("new-class", pin.Revision, ontology.Change{Record: other}))
-	require.NoError(t, err)
-	assignment := ontology.Record{ID: uuid.NewString(), Kind: ontology.AssignmentKind, Assignment: &ontology.Assignment{Source: handle, DefinitionID: other.ID}, Sources: []ontology.SourceDependency{dependency}}
-	_, err = f.store.PublishAutomatic(context.Background(), f.team, testPublication("contradict-pin", newClass.Revision, ontology.Change{Record: assignment}))
+	dependencies := []ontology.SourceDependency{f.source(t, handle)}
+	membership := ontology.Record{ID: uuid.NewString(), Kind: ontology.AssignmentKind, Assignment: &ontology.Assignment{Source: handle, DefinitionID: people.ID}, Sources: dependencies}
+	override := ontology.Record{ID: uuid.NewString(), Kind: ontology.OverrideKind, Override: &ontology.Override{Action: ontology.SetClassification, DefinitionID: people.ID, Members: []ontology.SourceHandle{handle}}, Sources: dependencies}
+	seedHistoricalRecords(t, f, "seed", people, engineer, membership)
+	original := seedHistoricalRecords(t, f, "historic-classification", override)
+	before := f.canonicalSnapshot(t)
+	require.NoError(t, migrator.RunUp(ctx))
+
+	manager := f.actor(0, "manager")
+	newOverride := override
+	newOverride.ID = uuid.NewString()
+	_, err = f.store.PublishManager(manager, f.team, testPublication("new-classification", 2, ontology.Change{Record: newOverride}))
 	require.ErrorIs(t, err, ontology.ErrOverride)
-	accepted := assignment
-	accepted.Assignment = &ontology.Assignment{Source: handle, DefinitionID: classID}
-	result, err := f.store.PublishAutomatic(context.Background(), f.team, testPublication("respect-pin", newClass.Revision, ontology.Change{Record: accepted}))
+	history, err := f.store.History(manager, f.team, 0, 20)
 	require.NoError(t, err)
-	storedOverride, err := f.store.GetRecord(f.actor(0, "manager"), f.team, override.ID, 0)
+	require.Len(t, history, 2)
+
+	membership.Assignment = &ontology.Assignment{Source: handle, DefinitionID: engineer.ID}
+	changed, err := f.store.PublishAutomatic(ctx, f.team, testPublication("change-membership", 2, ontology.Change{ExpectedVersion: 1, Record: membership}))
 	require.NoError(t, err)
-	storedOverride.Record.Retired = true
-	unpin, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("unpin", result.Revision, ontology.Change{ExpectedVersion: 1, Record: storedOverride.Record}))
+	current, err := f.store.GetRecord(manager, f.team, membership.ID, 0)
 	require.NoError(t, err)
-	rollback, err := f.store.Rollback(f.actor(0, "manager"), f.team, unpin.ID, "restore-pin", unpin.Revision, "restore manager classification")
+	require.True(t, current.Current)
+	require.Equal(t, engineer.ID, current.Assignment.DefinitionID)
+	rolled, err := f.store.Rollback(manager, f.team, changed.ID, "restore-membership", changed.Revision, "restore ordinary topic membership")
 	require.NoError(t, err)
-	_, err = f.store.PublishAutomatic(context.Background(), f.team, testPublication("still-pinned", rollback.Revision, ontology.Change{ExpectedVersion: 1, Record: assignment}))
-	require.ErrorIs(t, err, ontology.ErrOverride)
-	stored, err := f.store.GetRecord(f.actor(0, "manager"), f.team, override.ID, 0)
+	require.Equal(t, changed.Revision+1, rolled.Revision)
+	restored, err := f.store.GetRecord(manager, f.team, membership.ID, 0)
 	require.NoError(t, err)
-	require.Equal(t, int64(3), stored.Version)
-	require.False(t, stored.Retired)
+	require.True(t, restored.Current)
+	require.Equal(t, people.ID, restored.Assignment.DefinitionID)
+	retained, err := f.store.GetRecord(manager, f.team, override.ID, 1)
+	require.NoError(t, err)
+	require.Equal(t, original[override.ID], retained.Record)
+	require.Equal(t, before, f.canonicalSnapshot(t))
 }
 
 func TestOntologyRollbackRejectsStaleSources(t *testing.T) {

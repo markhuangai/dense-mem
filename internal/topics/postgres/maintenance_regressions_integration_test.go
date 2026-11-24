@@ -301,9 +301,9 @@ func TestOntologyMaintenanceControlInterruptionResumesSameWindow(t *testing.T) {
 
 func TestOntologyMaintenanceRetryDoesNotReleaseUnselectedFailures(t *testing.T) {
 	f := newOrganizationFixture(t)
-	for _, text := range []string{"alpha", "bravo", "charlie"} {
-		f.organizationEvidence(t, 0, text, nil)
-	}
+	f.organizationEvidence(t, 0, "alpha", nil)
+	maintenanceOtherTeam(t, f).organizationEvidence(t, 0, "bravo", nil)
+	maintenanceOtherTeam(t, f).organizationEvidence(t, 0, "charlie", nil)
 	config := maintenanceSettings(t, f)
 	_, err := config.UpdateTopicMaintenanceSettings(context.Background(), map[string]string{domain.AppConfigTopicMaintenanceContextWindow: "300000"}, "control", "", "")
 	require.NoError(t, err)

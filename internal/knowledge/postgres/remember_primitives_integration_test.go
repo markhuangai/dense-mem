@@ -103,15 +103,20 @@ func runRememberEvidenceOnlyAtomicScenario(t *testing.T) {
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "remember-primitives-evidence-only-owner")
 	repo := NewStore(appDB, rls)
 
-	repo.WithTopicAssignments(assignmentpg.NewStore(appDB, rls))
-	space, generation := duplicateTeamSharedSpace(t, adminDB, rls, teamID)
+	assignments := assignmentpg.NewStore(appDB, rls)
+	repo.WithTopicAssignments(assignments)
+	credential, err := accesspostgres.NewCredentialRepository(appDB, rls, nil).GetByIDForTeam(ctx, uuid.MustParse(teamID), uuid.MustParse(ownerID))
+	require.NoError(t, err)
+	require.NotNil(t, credential)
+	actorCtx := privateCredentialContext(credential)
+	space, generation := credential.TeamSharedSpaceID.String(), credential.TeamSharedSpaceGeneration
 	input := evidenceOnlyRememberInput(teamID, ownerID, "remember-primitives-evidence-only-success")
 	input.SpaceID, input.SpaceGeneration = space, generation
 	input.TopicAssignments = []assignment.Outcome{{Text: input.Evidence[0].Content, InputHash: input.RequestHash, Method: "generation", Proposals: []assignment.Proposal{{Label: "Storage", Description: "Data storage.", Quote: "stores"}, {Label: "Relationships", Description: "Semantic Relationships.", Quote: "Relationship"}}}}
-	plan, err := repo.PlanRememberEmbeddings(ctx, input)
+	plan, err := repo.PlanRememberEmbeddings(actorCtx, input)
 	require.NoError(t, err)
 	require.Len(t, plan.Documents, 1)
-	result, err := repo.CommitRememberWithEmbeddings(ctx, input, rememberTestEmbeddings(plan, false))
+	result, err := repo.CommitRememberWithEmbeddings(actorCtx, input, rememberTestEmbeddings(plan, false))
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Equal(t, "completed", result.Outcome)
@@ -132,14 +137,14 @@ func runRememberEvidenceOnlyAtomicScenario(t *testing.T) {
 	require.Equal(t, 2, published)
 	stale := evidenceOnlyRememberInput(teamID, ownerID, "remember-stale-assignment")
 	stale.SpaceID, stale.SpaceGeneration = space, generation
-	catalog, err := assignmentpg.NewStore(appDB, rls).ReadAssignmentCandidates(ctx, assignment.Scope{TeamID: teamID, SpaceID: space, Generation: generation}, assignment.Slice{Text: "Storage"})
+	catalog, err := assignments.ReadAssignmentCandidates(actorCtx, assignment.Scope{TeamID: teamID, SpaceID: space, Generation: generation}, assignment.Slice{Text: "Storage"})
 	candidates := catalog.Topics
 	require.NoError(t, err)
 	require.NotEmpty(t, candidates)
 	stale.TopicAssignments = []assignment.Outcome{{Text: stale.Evidence[0].Content, InputHash: stale.RequestHash, Method: "generation", Reviewed: candidates, Matches: []assignment.Match{{ID: candidates[0].ID, Version: candidates[0].Version + 1}}}}
-	stalePlan, err := repo.PlanRememberEmbeddings(ctx, stale)
+	stalePlan, err := repo.PlanRememberEmbeddings(actorCtx, stale)
 	require.NoError(t, err)
-	_, err = repo.CommitRememberWithEmbeddings(ctx, stale, rememberTestEmbeddings(stalePlan, false))
+	_, err = repo.CommitRememberWithEmbeddings(actorCtx, stale, rememberTestEmbeddings(stalePlan, false))
 	require.ErrorIs(t, err, assignment.ErrStale)
 	for name, count := range rememberPrimitiveCounts(t, ctx, adminDB, rls, teamID, stale.IngestID) {
 		require.Zero(t, count, name)
