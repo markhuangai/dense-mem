@@ -26,34 +26,20 @@ function prepareEvidence(fixture) {
   return {subject, topics, recall, rows, codePoints, cut, evidence, topicChoices, readModes};
 }
 
-function topicDefinition(topics, key, ref, parentRef) {
-  const topic = topics[key];
-  return {
-    ref, kind: "topic", key: topic.key, label: topic.name, description: topic.description,
-    aliases: topic.aliases, parent_ref: parentRef ?? ""
-  };
-}
-
-function ontologyExchange(data, propose) {
-  const {topics, evidence, subject} = data;
+function topicAssignmentExchange(data, propose) {
+  const {topics, evidence} = data;
   const requestId = propose ? "atlas-topic-proposal" : "atlas-topic-reuse";
-  const definitions = [topicDefinition(topics, "operations", "d0"), topicDefinition(topics, "hours", "d1", "d0")];
-  if (!propose) definitions.push(topicDefinition(topics, "retention", "d2", "d0"));
-  const items = ["E1", "E3"].map((id, index) => ({
-    ref: "s" + index, kind: "evidence", text: evidence[id].text, owner_ref: "owner0",
-    context: {metadata: "{}", labels: "{}", created_at: subject.timestamp},
-    locked_definition_ref: "", preferred_definition_ref: ""
+  const candidates = [topics.hours, topics.retention].map(topic => ({
+    id: topic.id, version: 1, label: topic.name, description: topic.description, aliases: topic.aliases
   }));
-  const topicRef = propose ? "new-retention" : "d2";
   return {
-    request: {
-      request_id: requestId, items, definitions,
-      pairs: [{ref: "p0", left_ref: "s0", right_ref: "s1", required_relation: ""}]
-    },
+    request: {request_id: requestId, evidence: evidence.E3.text, topics: candidates},
     response: {
-      request_id: requestId, definitions: propose ? [topicDefinition(topics, "retention", topicRef, "d0")] : [],
-      items: items.map(item => ({ref: item.ref, status: "classified", definition_ref: topicRef, reason: ""})),
-      equivalence: [{ref: "p0", relation: "distinct"}]
+      request_id: requestId, status: "assigned",
+      matches: [{id: topics.retention.id, quote: "Atlas snapshot expiry"}],
+      proposals: propose ? [{
+        label: "Legal holds", description: "How a legal hold affects ordinary retention policies.", quote: "Legal holds"
+      }] : []
     }
   };
 }
@@ -92,8 +78,8 @@ async function preparePayloads(data) {
     })),
     evidence_conflict_results: []
   };
-  const {request: ontologyReuseRequest, response: ontologyReuseResponse} = ontologyExchange(data, false);
-  const {request: ontologyNewRequest, response: ontologyNewResponse} = ontologyExchange(data, true);
+  const {request: topicReuseRequest, response: topicReuseResponse} = topicAssignmentExchange(data, false);
+  const {request: topicNewRequest, response: topicNewResponse} = topicAssignmentExchange(data, true);
   const partition = {
     source_item_id: rows.submittedItem, partition_index: 0, span_start: 0, span_end: cut
   };
@@ -123,7 +109,7 @@ async function preparePayloads(data) {
           assessmentResponse.evidence_equivalence_results[1]
         ]
       },
-      ontologyReuseRequest, ontologyReuseResponse, ontologyNewRequest, ontologyNewResponse,
+      topicReuseRequest, topicReuseResponse, topicNewRequest, topicNewResponse,
       writeLineage: {
         remember_submitted_items: {source_item_id: rows.submittedItem, ingest_id: rows.ingest, submitted_index: 0, content: subject.content, content_hash: "sha256:" + originalHash},
         evidence_occurrences: {occurrence_id: rows.occurrence, canonical_fragment_id: evidence.E1.id, content: evidence.E1.text},

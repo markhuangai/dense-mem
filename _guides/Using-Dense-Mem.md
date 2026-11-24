@@ -63,7 +63,7 @@ Topic filters use current direct memberships, without child-topic expansion. Rea
 | Source has changed | Remember exact replacement Evidence through direct supersession or source revision advancement. |
 | Source should no longer be used | Retract owned Evidence. |
 | Sources disagree | Inspect the exact conflict positions and provenance; submit genuine new Evidence when available. |
-| Shared organization needs correction | A manager uses the Ontology draft/preview/publication workflow. |
+| Shared organization needs correction | A manager uses the Topics draft, preview, and publication workflow. |
 | Need a portable artifact | Export authorized Evidence IDs and inspect hashes and omissions. |
 
 Procedures belong to [Conflicts And Corrections]({{ '/Conflicts-And-Corrections/' | relative_url }}), [Topics And Organization]({{ '/Topics-And-Organization/#manager-workflow' | relative_url }}), and [Memory Packs]({{ '/Memory-Packs/' | relative_url }}).

@@ -124,10 +124,10 @@ test("the paused worker branch stays separate from ordinary search on a phone", 
     const worker = activeView(page).locator("[data-piece=worker] details");
     await worker.locator("summary").tap();
     await expect(worker).toHaveAttribute("open", "");
-    await expect(worker.getByText(/Existing published topics can still be read/)).toBeVisible();
+    await expect(worker.getByText(/Eligible new shared saves still receive foreground assignments/)).toBeVisible();
     await expect(page.locator("[data-detail-preview]")).toBeHidden();
     await mode(page, "Follow the data").tap();
-    await activeView(page).getByText("ontology_maintenance_state.paused", {exact: true}).tap();
+    await activeView(page).getByText("topic_maintenance_state.paused", {exact: true}).tap();
     await expect(activeView(page).locator("[data-property=maintenance-paused] [data-field-transfer]")).toHaveText("true");
     const bookmark = page.url();
     await page.reload();
@@ -167,7 +167,7 @@ test("keeps static frames and original bookmarks usable without scripting", asyn
 });
 
 test("opens field search results at the matching step and checks accessibility", async ({page}) => {
-  await page.goto("./search/?q=ontology_maintenance_state.paused");
+  await page.goto("./search/?q=topic_maintenance_state.paused");
   await page.locator('.search-results a[href*="scenario=paused"]').first().click();
   await expect(activeView(page).locator("details[open][data-property=maintenance-paused]")).toBeVisible();
   const result = await new AxeBuilder({page}).withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze();

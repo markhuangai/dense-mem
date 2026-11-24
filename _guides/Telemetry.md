@@ -62,7 +62,7 @@ Admitted exact fields/text can remain in bounded protected diagnostics. Initial 
 
 Remember body captures expire after seven days, subject to applicable holds and erasure. Unavailable, expired, or truncated captures are incomplete evidence. A captured response write does not prove caller delivery. Operation-log retention is configured separately in [Configuration]({{ '/Configuration/#telemetry-and-logging' | relative_url }}).
 
-Ontology diagnostics join trusted team/actor, correlation, operation, run/batch/assessment, and provider-exchange identities. Complete protected DEBUG chunks are stdout-only and independent of optional telemetry. Preserve the full operation window and validate manifest hashes and chunk counts; missing required chunks cannot establish a diagnosis. Successful publication observations occur after transaction/audit success. Rejected assessment receipts can include bounded server-owned validation identifiers; absence does not imply success.
+Topic maintenance diagnostics join trusted team/actor, correlation, operation, run, batch, assessment, and provider-exchange identities. Complete protected DEBUG chunks are stdout-only and independent of optional telemetry. Preserve the full operation window and validate manifest hashes and chunk counts; missing required chunks cannot establish a diagnosis. Successful publication observations occur after transaction/audit success. Rejected assessment receipts can include bounded server-owned validation identifiers; absence does not imply success.
 
 ### Remember Progress Diagnostics
 

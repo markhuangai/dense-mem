@@ -16,7 +16,7 @@ Use the user portal for your team workspace and the separate private control por
 flowchart LR
   User["User or team manager"] --> UI["Main listener /ui"]
   UI --> Recall["Search memory"]
-  UI --> Ontology["Manager Ontology workspace"]
+  UI --> Topics["Manager Topics workspace"]
   UI --> Access["Connect, credentials and permitted team management"]
   Operator["Private operator"] --> Control["Separate control portal"]
   Control --> Admin["Teams, credentials, settings and security"]

@@ -10,7 +10,7 @@ frames:
   - id: prepare
     title: "Start with the same inputs"
     behavior: "The evaluator chooses a saved set of questions and source notes."
-    mechanics: "The GitHub-hosted workflow pins the production image and selected PostgreSQL seeds, then boots each seed with fresh writable storage and ontology off."
+    mechanics: "The GitHub-hosted workflow pins the production image and selected PostgreSQL seeds. Each seed boots in fresh writable storage with Topic organization disabled."
     story:
       - ["dataset", "Prepared questions", "Known source notes", ""]
       - ["run", "Evaluation", "Pinned inputs", "result"]

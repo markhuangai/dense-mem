@@ -95,7 +95,7 @@ export function createDrawings(fixture, data, example) {
       return '<div class="stack"><div class="receipt" data-move><div class="receipt-head"><b>PostgreSQL</b>' + mini("Single transaction") +
         '</div><div class="inside"><div class="pair"><div class="slice-line">' + ticket("E1", "A") + '<p class="body-text">Retention period</p></div>' +
         '<div class="slice-line">' + ticket("E2", "B") + '<p class="body-text">Support hours</p></div></div></div><dl>' +
-        line("Provenance", "Original item + two spans") + line("Search", "Text + required vectors") + line("Outcome", "Decisions + replay receipt") +
+        line("Provenance", "Original item + two spans") + line("Search", "Text + required vectors") + line("Topics", "Direct memberships") + line("Outcome", "Decisions + replay receipt") +
         '</dl></div>' + routeTo("completed") + '</div>';
     },
     discover() {
@@ -108,7 +108,7 @@ export function createDrawings(fixture, data, example) {
       return '<div class="stack"><div class="sheet" data-move><div class="paper-head"><b>Catalog vocabulary</b>' + mini("Available topics") +
         '</div><div class="topic-def"><b>' + escapeText(topics.retention.name) + '</b><p class="paper-sub">' + escapeText(topics.retention.description) + '</p></div>' +
         '<div class="topic-def"><b>' + escapeText(topics.hours.name) + '</b><p class="paper-sub">' + escapeText(topics.hours.description) + '</p></div></div>' +
-        '<div class="route">' + wire + '</div><div class="scope-line" data-move>' + ticket("E1") +
+        '<div class="route">' + wire + '</div><div class="scope-line" data-move>' + ticket("E3") +
         ' <span aria-hidden="true">→</span> <b>' + escapeText(topics.retention.name) + '</b></div></div>';
     },
     compare() {

@@ -9,9 +9,10 @@ figure: "Two candidate lists"
 scene: "channels"
 fallback: "Full-text and vector branches produce their own ordered candidates."
 caption: "The displayed vector order is illustrative. In a real call it depends on the embeddings and index."
-question: "Where can ontology help at this point?"
+question: "Where can Topics help at this point?"
 details: ["The shared branch can also match a current topic’s normalized key or unambiguous alias and introduce direct members as candidates. Topic discovery by itself adds no rank-fusion points. An approximate vector search can check newly discovered candidates against the query and rank them by distance.","Our “routine snapshots” query has no matching key or alias in the example catalog. The topic hint that appears later comes from the winning Evidence’s direct membership. Eligibility filters apply to candidates before their IDs leave storage."]
-refs: ["internal/recall/postgres/recall_repository.go:31","internal/recall/postgres/recall_repository.go:164","internal/ontology/contract/recall.go:82","internal/recall/postgres/recall_ontology_scoring.go:18"]
+source_revision: 6767dd33f5d3e2546b4afac39122db7bf01549f9
+refs: ["internal/recall/postgres/recall_repository.go:31","internal/recall/postgres/recall_repository.go:164","internal/topics/contract/recall.go:82","internal/recall/postgres/recall_ontology_scoring.go:18"]
 guide: "/Vector-Search-And-Ranking/"
 sequences: ["ai_query_vector"]
 ---

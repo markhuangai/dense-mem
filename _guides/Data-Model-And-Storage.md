@@ -28,7 +28,7 @@ flowchart TB
 | Decisions and lifecycle | Assessment decisions, `evidence_lifecycle_operations`, `evidence_lifecycle_events`, Evidence-conflict cases/positions/events. |
 | Request recovery | Remember attempts/intents, session events/extraction checkpoints, scoped operation identity and terminal receipts. |
 | Search | Evidence `search_documents`, embedding contracts, index/projection generations, and reconciliation state. |
-| Organization | Topic definitions, direct assignments, Evidence groups, overrides, immutable publications, and maintenance state. |
+| Topics | Topic definitions, direct memberships, Community placement, Evidence equivalence, immutable publications, and maintenance state. Historical override payloads remain available in history. |
 | Access and operations | Teams, identities, memberships, credentials, spaces, sessions, settings, audit, operation logs, and erasure state. |
 
 The factual graph and Neo4j have no executable production or evaluation path. Historical migration inputs are not a second runtime authority.

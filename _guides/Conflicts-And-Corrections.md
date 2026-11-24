@@ -18,7 +18,7 @@ flowchart TB
   Kind -->|"Owned source has a replacement"| Replace["Remember replacement Evidence"]
   Kind -->|"Owned source is withdrawn"| Retract["Retract Evidence"]
   Kind -->|"Sources disagree"| Inspect["Inspect Evidence conflict and trace"]
-  Kind -->|"Topic organization is wrong"| Organize["Manager ontology workflow"]
+  Kind -->|"Topic organization is wrong"| Organize["Manager Topic workflow"]
   Inspect --> New["Submit genuine new Evidence if available"]
   Inspect --> Admin["Authorized operator: resolve or dismiss"]
 ```

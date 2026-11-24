@@ -3,36 +3,36 @@ slug: "portal-topics"
 area: "user-portal"
 order: 4
 title: "Organize a team’s notes"
-summary: "Preview a topic change in the User Portal and see what a bandmate can find."
+summary: "Preview a Topic definition in the User Portal and see what a bandmate can find."
 references: [["Topics and organization", "/Topics-And-Organization/"]]
-covers: ["ui:ontology", "ui:ontology-preview", "ui:ontology-publish", "topic-follow-up"]
+covers: ["ui:topics", "ui:topics-preview", "ui:topics-publish", "topic-follow-up"]
 frames:
   - id: draft
-    title: "Draft an assignment"
-    behavior: "A band manager wants Maya’s note filed under Rehearsals."
-    mechanics: "The manager edits a draft against the current shared passage and catalog revision."
+    title: "Draft a Topic edit"
+    behavior: "The manager adds a description to Rehearsals so the band can recognize it."
+    mechanics: "The manager saves a personal draft against the current Topic and catalog revisions."
     story:
-      - ["room", "Shared note", "$room", ""]
+      - ["topic", "Current Topic", "$topic", ""]
       - ["topic", "Draft topic", "$topic", "gate"]
     flow:
-      - ["room", "Current shared Evidence", "$room", ""]
-      - ["topic", "Manager draft", "Proposed direct membership", "gate"]
+      - ["topic", "Current definition", "$topic", ""]
+      - ["topic", "Manager draft", "Proposed description", "gate"]
     fields: ["draft-revision", "role"]
   - id: preview
     title: "Preview and publish"
     behavior: "The manager checks the change, then publishes it."
-    mechanics: "Preview runs publication checks. Publish rechecks the revisions and adds the eligible assignment and audit record together."
+    mechanics: "Preview runs publication checks. Publish rechecks the revisions and records the catalog update and audit together. The scheduler revisits affected memberships."
     story:
-      - ["topic", "Preview", "One rehearsal passage", ""]
-      - ["membership", "Published", "$topic", "result"]
+      - ["topic", "Preview", "Rehearsals with a description", ""]
+      - ["topic", "Published", "$topic", "result"]
     flow:
-      - ["topic", "Draft revision", "Check source and catalog versions", "gate"]
-      - ["membership", "Published catalog", "Rehearsals has a direct member", "result"]
+      - ["topic", "Draft revision", "Check Topic and catalog versions", "gate"]
+      - ["topic", "Published catalog", "Updated Topic definition", "result"]
     fields: ["draft-revision", "topic-id"]
   - id: follow
     title: "Follow the topic"
-    behavior: "Sam opens Rehearsals to see matching notes filed directly under it."
-    mechanics: "Recall fetches eligible direct members of the selected topic. It selects direct members only."
+    behavior: "After assignment becomes current, Sam opens Rehearsals and finds Maya’s note."
+    mechanics: "Recall fetches eligible direct members of the selected Topic."
     story:
       - ["topic", "Related topic", "$topic", ""]
       - ["room", "In Rehearsals", "$room", "result"]
@@ -40,5 +40,6 @@ frames:
       - ["topic", "Selected topic ID", "$topic", ""]
       - ["room", "Authorized direct member", "$room", "result"]
     fields: ["topic-filter", "topic-id"]
-sources: [["User Portal topic editor", "web/src/user/OntologyPanel.tsx#L179"], ["Topic management draft contract", "internal/ontology/contract/management.go#L38"]]
+source_revision: 174afa13fdadf1bf9d4366669066e1ee4912c47b
+sources: [["User Portal Topic editor", "web/src/user/TopicsPanel.tsx#L191"], ["Topic management draft contract", "internal/topics/contract/management.go#L38"]]
 ---

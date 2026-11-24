@@ -127,7 +127,7 @@ def verify_lessons():
     coverage = {item for page in lesson_pages for item in page.coverage}
     # Supported surfaces checked against the tool registry, portal navigation, and runtime composition.
     required = set(contracts["tools"]) | set("""
-        ui:sign-in ui:workspace-picker ui:connect ui:search ui:team ui:my-credentials ui:ontology
+        ui:sign-in ui:workspace-picker ui:connect ui:search ui:team ui:my-credentials ui:topics
         control:all-teams control:overview control:credentials control:remember-attempts
         control:evidence-conflicts control:settings control:search control:recall-feedback control:logs
         control:maintenance control:sso control:security control:config
@@ -136,7 +136,7 @@ def verify_lessons():
         control-sso:providers control-sso:mappings control-sso:directory
         worker:operation-log worker:credential-activity worker:usage-metrics worker:recall-feedback
         worker:private-memory worker:private-retention worker:telemetry-pricing-refresh
-        worker:search-reconciliation worker:remember-diagnostics worker:ontology-maintenance worker:demo-cleanup
+        worker:search-reconciliation worker:remember-diagnostics worker:topic-maintenance worker:demo-cleanup
         ops:deploy ops:migrations ops:backup ops:restore ops:monitoring ops:evaluation
         profile:production profile:demo profile:evaluation
     """.split())

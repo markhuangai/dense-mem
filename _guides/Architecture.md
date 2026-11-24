@@ -23,7 +23,7 @@ flowchart TB
   App --> PG[("PostgreSQL + pgvector<br/>Durable authority")]
   App --> Providers["Assessment, extraction, embeddings<br/>Optional typed decisions"]
   App --> Coordination["Redis or single-process coordination"]
-  Workers["Ontology maintenance<br/>Search reconciliation<br/>Privacy maintenance"] --> App
+  Workers["Topic maintenance<br/>Search reconciliation<br/>Privacy maintenance"] --> App
 ```
 
 MCP is the supported external memory integration contract. Browser handlers are first-party interfaces. The control listener stays private or behind dedicated administrative ingress.
@@ -48,7 +48,7 @@ flowchart LR
 | Remember / Session | Strict intake, exact source staging, bounded provider orchestration, and terminal outcomes. |
 | Knowledge | Evidence, occurrences, source revisions, lifecycle, Evidence conflicts, and authoritative search writes. |
 | Recall / Trace / Memory packs | Authorized retrieval, bounded provenance reads, and portable Evidence exports. |
-| Ontology | Derived shared-Evidence topics, memberships, equivalence, and manager overrides. |
+| Topics | Shared-Evidence Topic assignment, direct memberships, Community placement, and Evidence equivalence. |
 | Search | Search contracts, query orchestration, index mechanics, and reconciliation. |
 | Privacy / Settings / Operations / Audit | Erasure and retention, configuration, diagnostics, and audit use cases. |
 

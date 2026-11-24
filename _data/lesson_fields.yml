@@ -91,7 +91,7 @@ search-current:
   type: "enum"
   from: "Remember terminal result"
   to: "Assistant · confirms availability"
-  use: "Required search preparation and the write have succeeded. Topic organization can happen later."
+  use: "Required search preparation and the write have succeeded. When Topic organization is enabled, Remember also commits any grounded direct memberships for eligible shared Evidence."
   value: "current"
   contract: ["remember", "result", "search_state"]
 sample-space:
@@ -215,7 +215,7 @@ role:
   path: "membership.role"
   type: "enum"
   from: "Authenticated membership · session data"
-  to: "User Portal · Team and Ontology"
+  to: "User Portal · Team and Topics"
   use: "The portal shows management panels when its role check permits. The server checks current role and grants again on management routes."
   value: "manager"
 credential:
@@ -367,26 +367,26 @@ replay-state:
 maintenance-key:
   path: "operation_key"
   type: "string"
-  from: "Control Portal · POST /control/api/ontology/pause"
+  from: "Control Portal · POST /control/api/topic-maintenance/pause"
   to: "Versioned command and receipt"
   use: "The portal sends a retained key for this action. The server stores the command and matches an unchanged retry to its prior receipt."
   value: "pause-band-topics-01"
 maintenance-enabled:
   path: "data.enabled"
   type: "boolean"
-  from: "GET /control/api/ontology/status"
+  from: "GET /control/api/topic-maintenance/status"
   to: "Control Portal · Enabled"
   use: "The server reports whether organization is enabled. The scheduler checks policy and the current window before it admits work."
   value: true
 maintenance-paused:
-  path: "ontology_maintenance_state.paused"
+  path: "topic_maintenance_state.paused"
   type: "boolean"
   from: "Accepted operator pause command"
   to: "Worker admission and status"
   use: "The server commits the Boolean on pause. The worker reads it before admitting its next batch. The status endpoint returns the same state as data.paused."
   value: true
 maintenance-paused-false:
-  path: "ontology_maintenance_state.paused"
+  path: "topic_maintenance_state.paused"
   type: "boolean"
   from: "Control maintenance state"
   to: "Worker admission and Control Portal status"
@@ -395,7 +395,7 @@ maintenance-paused-false:
 maintenance-status:
   path: "data.paused"
   type: "boolean"
-  from: "GET /control/api/ontology/status"
+  from: "GET /control/api/topic-maintenance/status"
   to: "Control Portal · Paused"
   use: "The status endpoint reads the committed pause flag. The portal labels the scheduler as paused and shows pending and active work separately."
   value: true

@@ -85,7 +85,7 @@ database_commit:
           sample_label: Inspect selected row fields for E1
         - title: Publish search state and the receipt
           stage: Commit visible to readers
-          note: The transaction also writes the decisions, search documents, required vectors, and replay receipt. After commit, Recall can find E1 and E2. Topic placement is separate work.
+          note: The transaction also writes the decisions, direct Topic memberships, search documents, required vectors, and replay receipt. After commit, Recall can find E1 and E2. The worker handles Community placement.
           rows:
             - name: Search document
               value: searchDocument
@@ -112,80 +112,75 @@ database_commit:
         - title: Return the failed outcome
           note: A separate failure record may explain the attempt. The caller follows the returned recovery policy and retains the original key and request for a retry where allowed.
 
-ai_ontology:
-  title: Watch how the AI chooses a topic
-  intro: These fictional exchanges follow the organizer’s structured request and response types.
+ai_topic_assignment:
+  title: Watch how the AI assigns Topics
+  intro: These fictional exchanges show the structured generation path for one Evidence passage.
   variants:
-    - label: Reuse an existing topic
+    - label: Reuse an existing Topic
       frames:
         - title: Send a bounded shortlist
           stage: Dense-Mem → model
-          note: Current candidate definitions arrive with the exact passages and allowed comparisons. The limit is up to 20 definitions per batch, further bounded by the configured vocabulary token limit.
+          note: Up to 20 current candidate Topics arrive with the exact passage.
           rows:
-            - name: Parent topic
-              value: parentTopic
-            - name: Candidate topic
+            - name: Candidate Topic
               value: hoursTopic
-            - name: Candidate topic
+            - name: Candidate Topic
               value: retentionTopic
-          sample: ontologyReuseRequest
-        - title: Select a supplied reference
+          sample: topicReuseRequest
+        - title: Select a supplied Topic
           stage: Model → Dense-Mem
-          note: Both retention passages use the same supplied definition reference. The pair remains distinct because each passage supplies a different condition.
-          sample: ontologyReuseResponse
-        - title: Validate and publish direct assignments
+          note: The response selects a Topic ID and quotes the exact text that grounds the choice.
+          sample: topicReuseResponse
+        - title: Validate and publish direct membership
           stage: Server policy and publication
-          note: Dense-Mem checks coverage and references, then rechecks source eligibility and relevant revisions before publication.
+          note: Dense-Mem verifies the Topic ID and source quote, then rechecks current eligibility and revisions before committing.
           rows:
-            - name: E1 and E3
+            - name: E3
               value: retentionTopic
-              text: Existing retention topic
-            - name: Catalog change
-              text: Two direct assignments
+              text: Existing retention Topic
     - label: Propose a missing topic
       frames:
-        - title: Send the eligible passages
+        - title: Send eligible Evidence and candidates
           stage: Dense-Mem → model
-          note: In this alternative, the team’s existing shortlist lacks a definition that fits the input. The model receives the same Evidence and the available definitions.
-          sample: ontologyNewRequest
-        - title: Propose and use one new definition
+          note: The same passage also addresses legal holds. The existing shortlist has no Topic for that meaning.
+          sample: topicNewRequest
+        - title: Match one Topic and propose another
           stage: Model → Dense-Mem
-          note: The response includes a new topic once, then both decisions reference it. When the fit is uncertain the model can mark an open item ambiguous.
-          sample: ontologyNewResponse
-        - title: Check the definition and assignments
+          note: This alternative keeps the existing match and proposes a distinct Topic. Each result includes an exact supporting quote.
+          sample: topicNewResponse
+        - title: Recheck and publish both memberships
           stage: Server policy and publication
-          note: Dense-Mem validates the proposal, checks for existing definitions and stale inputs, then publishes the accepted definition and direct assignments together.
+          note: Dense-Mem checks the new name against current Topics and aliases. The valid result commits with Evidence, search state, and the replay receipt.
           rows:
-            - name: Proposed topic
+            - name: Existing Topic
               value: retentionTopic
-              text: Retention topic
-            - name: Evidence already stored
-              text: E1 and E3
+            - name: Proposed Topic
+              text: Legal holds
 
-database_ontology:
-  title: Inspect the topic assignment
-  intro: Follow the published assignment from its topic definition to the existing source.
+database_topic_memberships:
+  title: Inspect a direct membership
+  intro: Follow the published membership from the Topic to its source.
   variants:
     - label: Current publication
       frames:
-        - title: Load current source versions
-          note: The worker reads eligible shared Evidence and snapshots the relevant source fingerprints, catalog definitions, and overrides.
+        - title: Recheck source and Topic revisions
+          note: Publication verifies the current shared space, exact Evidence identity, and relevant Topic revisions.
           rows:
             - name: Source
               value: evidenceOne
               text: E1
             - name: Version
               text: "1"
-        - title: Publish a definition and assignment relationship
-          note: A versioned assignment records the Evidence source and its direct definition. The parent of a topic is catalog navigation.
+        - title: Publish the direct membership
+          note: A versioned membership records the Evidence source and its Topic. A broader Topic supports catalog navigation.
           sample: organizationAssignment
-          sample_label: Inspect selected organization record fields
+          sample_label: Inspect selected membership fields
         - title: Read current direct membership
-          note: Recall checks the assignment, definition, source eligibility, and current dependency state. A stale assignment drops out of current topic reads.
+          note: Recall checks authorization, lifecycle, and current dependencies before returning members.
           rows:
-            - name: Selected topic
+            - name: Selected Topic
               value: retentionTopic
-              text: Retention topic
+              text: Retention Topic
             - name: Eligible direct Evidence
               text: E1 and E3
 

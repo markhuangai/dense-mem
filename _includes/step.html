@@ -60,11 +60,12 @@
         <summary>Sources and reference</summary>
         {% if step.guide %}<p><a href="{{ step.guide | relative_url }}">Open the reference guide</a></p>{% endif %}
         {% if step.refs %}
-        <p>{{ site.contract_version }} · <a href="{{ site.source_repository }}/commit/{{ site.source_revision }}">{{ site.source_revision | slice: 0, 8 }}</a></p>
+        {% assign source_revision = step.source_revision | default: site.source_revision %}
+        <p>{{ site.contract_version }} · <a href="{{ site.source_repository }}/tree/{{ source_revision }}">{{ source_revision | slice: 0, 8 }}</a></p>
         <ul>
           {% for ref in step.refs %}
             {% assign parts = ref | split: ':' %}
-            <li><a href="{{ site.source_repository }}/blob/{{ site.source_revision }}/{{ parts[0] }}#L{{ parts[1] }}">{{ ref | escape }}</a></li>
+            <li><a href="{{ site.source_repository }}/blob/{{ source_revision }}/{{ parts[0] }}#L{{ parts[1] }}">{{ ref | escape }}</a></li>
           {% endfor %}
         </ul>
         {% endif %}

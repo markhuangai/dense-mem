@@ -38,14 +38,14 @@ Candidate full-text, vector, source, and topic-membership queries are scoped bef
 
 Search writes retain source version/hash and embedding/index/projection identities. An older derived result cannot overwrite a newer source or generation. Physical index behavior is described in [ANN, HNSW, And Halfvec]({{ '/ANN-HNSW-And-Halfvec/' | relative_url }}).
 
-Ontology publication rechecks shared-source dependencies, overrides, leases, and generations. Provider work does not hold the publication transaction open. Private sources cannot enter organization.
+Topic publication rechecks shared-source dependencies, revisions, leases, and generations. Provider work runs outside the publication transaction. Only eligible shared Evidence enters Topic assignment.
 
 ## Durable Work
 
 | Work | Durable authority |
 | --- | --- |
 | Remember and session intake | Exact staging and terminal receipts; required semantic work completes synchronously. |
-| Ontology maintenance | PostgreSQL runs, attempts, source progress, leases, and publication history. |
+| Topic maintenance | PostgreSQL runs, attempts, source progress, leases, and publication history. |
 | Search reconciliation | Current source/contract fences and bounded recovery outcomes. |
 | Private erasure/retention | Sealed target, generation fences, holds, operation progress, and completion verification. |
 

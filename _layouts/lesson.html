@@ -62,8 +62,9 @@ layout: base
       {% for tool in page.tools %}
       <li><a href="{{ '/fields/' | relative_url }}#{{ tool }}"><code>{{ tool }}</code> fields</a></li>
       {% endfor %}
+      {% assign source_revision = page.source_revision | default: site.lesson_source_revision %}
       {% for source in page.sources %}
-      <li><a href="{{ site.source_repository }}/blob/{{ site.lesson_source_revision }}/{{ source[1] }}">{{ source[0] | escape }}</a></li>
+      <li><a href="{{ site.source_repository }}/blob/{{ source_revision }}/{{ source[1] }}">{{ source[0] | escape }}</a></li>
       {% endfor %}
     </ul>
   </section>
