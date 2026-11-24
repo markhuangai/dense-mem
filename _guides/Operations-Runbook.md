@@ -159,7 +159,9 @@ Required foreground embeddings finish before Remember success. Later source or c
 
 Use trace for individual Evidence state. Metrics cannot establish the lifecycle or truth of a source.
 
-## Ontology Maintenance
+<span id="ontology-maintenance"></span>
+
+## Topic Maintenance
 
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
@@ -173,16 +175,23 @@ flowchart LR
 
 | Private control route | Purpose |
 | --- | --- |
-| `GET/PATCH /control/api/config/ontology-maintenance` | Read/update supported settings. |
-| `GET /control/api/ontology/status` | Current policy, pause state, usage, and progress. |
-| `GET /control/api/ontology/runs` | Bounded run history. |
-| `POST /control/api/ontology/runs` | Explicit bounded run with retained `operation_key` and optional `max_batches`. |
-| `POST /control/api/ontology/runs/{runId}/retry` | Supported explicit retry of the selected run. |
-| `POST /control/api/ontology/pause` or `/resume` | Idempotent admission control with retained operation key. |
+| `GET/PATCH /control/api/config/topic-maintenance` | Read/update supported settings. |
+| `GET /control/api/topic-maintenance/status` | Current policy, pause state, usage, and progress. |
+| `GET /control/api/topic-maintenance/runs` | Bounded run history. |
+| `POST /control/api/topic-maintenance/runs` | Explicit bounded run with retained `operation_key` and optional `max_batches`. |
+| `POST /control/api/topic-maintenance/runs/{runId}/retry` | Supported explicit retry of the selected run. |
+| `POST /control/api/topic-maintenance/pause` or `/resume` | Idempotent admission control with retained operation key. |
 
-Inspect failed/ambiguous outcomes and unknown usage separately from pending or in-flight work. Disabling stops admissions and drains dispatched work. Pause preserves eligible current topic reads; disabling organization removes them. Neither control revives graph clustering or Dream. There are no token-allowance grants.
+Inspect Topic assignment and Community placement counts, failed or ambiguous outcomes, and unreconciled or unavailable usage. Pause stops background admission and lets dispatched work finish. Foreground assignment and Topic reads continue while enabled and paused. Disabling organization defers assignments and Topic reads. Ordinary Recall remains available.
 
-[Configuration]({{ '/Configuration/#ontology-maintenance' | relative_url }}) owns defaults; [Topics And Organization]({{ '/Topics-And-Organization/' | relative_url }}) owns publication and manager policy.
+See [Configuration]({{ '/Configuration/#topic-maintenance' | relative_url }}) and [Topics And Organization]({{ '/Topics-And-Organization/' | relative_url }}).
+
+## Topic Storage Upgrade
+
+1. Pause the old worker, drain leases, and verify provider usage reconciliation. Stop all old application writers.
+2. Record the source image and PostgreSQL schema version. Verify the pre-cutover backup by restoring it in isolation and checking scoped counts, canonical fingerprints, holds, and historical receipts.
+3. Start the compatible image with service traffic held. Follow migration phase, checkpoint, and fingerprint records in protected stdout. Startup opens listeners after the storage layout is verified.
+4. Verify Recall, catalog history, and preserved operator settings before reopening traffic. If interrupted, resume with the same compatible image and inspect its checkpoint verification. Restore the verified backup only within the pre-write recovery boundary. After new writes, recover forward.
 
 ## Evidence Conflicts
 

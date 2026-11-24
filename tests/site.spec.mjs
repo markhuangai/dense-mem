@@ -96,7 +96,7 @@ test("plays a database commit and rollback with one shared source identity", asy
   await expect(sequence.locator("[data-frame]:visible").getByRole("heading")).toHaveText("Stage rows inside the transaction");
 });
 
-test("reveals definitions and contrasts reuse with new definitions", async ({page}) => {
+test("reveals the shortlist and examples of existing and newly proposed Topics", async ({page}) => {
   await navigate(page, "./#choose-topic");
   const term = page.getByRole("button", {name: "Bounded vocabulary"});
   const definition = page.locator("#vocabulary-definition");
@@ -108,22 +108,24 @@ test("reveals definitions and contrasts reuse with new definitions", async ({pag
   await expect(definition).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(definition).toBeHidden();
-  const sequence = page.locator('[data-sequence="ai_ontology"]');
+  const sequence = page.locator('[data-sequence="ai_topic_assignment"]');
   await sequence.locator("summary").first().click();
-  const reuseRequest = await payload(sequence, "ontologyReuseRequest");
-  const reuseResponse = await payload(sequence, "ontologyReuseResponse");
-  expect(reuseResponse.definitions).toEqual([]);
-  const reused = reuseRequest.definitions.find(topic => topic.ref === reuseResponse.items[0].definition_ref);
+  const reuseRequest = await payload(sequence, "topicReuseRequest");
+  const reuseResponse = await payload(sequence, "topicReuseResponse");
+  expect(reuseResponse.proposals).toEqual([]);
+  const reused = reuseRequest.topics.find(topic => topic.id === reuseResponse.matches[0].id);
   expect(reused.label).toBe(atlas.topics.retention.name);
+  expect(reuseRequest.evidence).toContain(reuseResponse.matches[0].quote);
   await sequence.getByRole("button", {name: "Propose a missing topic"}).click();
-  const newRequest = await payload(sequence, "ontologyNewRequest");
-  const newResponse = await payload(sequence, "ontologyNewResponse");
-  expect(newRequest.definitions.map(topic => topic.label)).not.toContain(atlas.topics.retention.name);
-  expect(newResponse.definitions).toHaveLength(1);
-  expect(newResponse.definitions[0].label).toBe(atlas.topics.retention.name);
-  expect(newResponse.items.every(item => item.definition_ref === newResponse.definitions[0].ref)).toBe(true);
+  const newRequest = await payload(sequence, "topicNewRequest");
+  const newResponse = await payload(sequence, "topicNewResponse");
+  expect(newRequest.topics.map(topic => topic.label)).not.toContain("Legal holds");
+  expect(newResponse.matches).toEqual(reuseResponse.matches);
+  expect(newResponse.proposals).toHaveLength(1);
+  expect(newResponse.proposals[0].label).toBe("Legal holds");
+  expect(newRequest.evidence).toContain(newResponse.proposals[0].quote);
   await sequence.locator("[data-frame-next]").click();
-  await expect(sequence.locator("[data-frame]:visible").getByRole("heading")).toHaveText("Propose and use one new definition");
+  await expect(sequence.locator("[data-frame]:visible").getByRole("heading")).toHaveText("Match one Topic and propose another");
 });
 
 test("calculates hybrid and lexical ranks and applies direct topic membership", async ({page}) => {
@@ -156,7 +158,7 @@ test("works on touch, supports reduced motion and exposes the read-all view", as
     await expect(visibleStep(page).locator("[data-replay]")).toBeHidden();
     await page.locator("[data-read-all]").tap();
     await expect(page.locator("article[data-step]:visible")).toHaveCount(17);
-    const details = page.locator('[data-sequence="ai_ontology"]');
+    const details = page.locator('[data-sequence="ai_topic_assignment"]');
     await expect(details.locator("[data-frame]:visible")).toHaveCount(6);
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
     expect(notes).toEqual([]);

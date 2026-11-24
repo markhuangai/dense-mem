@@ -9,6 +9,18 @@ workflows: ["evaluate"]
 
 Evaluation enters through real MCP Remember and recall paths on a dedicated stack. Deterministic qrels score retrieval; the matched Evidence-only campaign additionally scores retained and candidate terminal answers under its frozen rubric.
 
+## Topic Assignment And Community Placement Comparison
+
+Issue #824 defines the measured release gate. It compares validated baseline and candidate application image digests using one unchanged parent seed per dataset. The five datasets are HotpotQA, MuSiQue, 2WikiMultiHopQA, NQ Rear, and PopQA. [Approved comparison scope](https://github.com/markhuangai/dense-mem/issues/824)
+
+1. After current-head CI and production-image E2E pass, prepare isolated baseline and candidate derivatives using the repository's `prepare-topics` seed command. Freeze the application image digests, baseline revision, and five parent seed digests in its input lock.
+2. Verify the ten prepared seed manifests through the trusted own-PR `production-image-e2e.yml` dispatch with `evaluation=live` and the paired seed lock. All arms must use the same exact inputs. Candidate coverage requires current direct membership for each eligible saved Evidence item and a terminal Community placement for each Topic. Seeds must be paused and drained with usage reconciled.
+3. Score both policies across all 5,000 locked questions on GitHub-hosted runners. Use matching shard checkpoints for interrupted scoring. Compare the lexical-only arm, disputed CLIMATE-FEVER evidence, and matched fresh Remember imports separately.
+
+An uncategorized result remains valid in production and fails the stricter assigned-seed gate. Partial runs cannot replace the overall baseline. Expanded ranking can become the default after the paired results show improved multi-hop and two-sided recovery with single-hop quality and isolation preserved.
+
+Commands, locks, prerequisites, and recovery details live with the source. Use the guide that matches the validated application revision. [Evaluation implementation and runbook](https://github.com/markhuangai/dense-mem/tree/main/tests/eval)
+
 ## Image Boundary And Tool Surface
 
 The separate `evaluation` image adds only `eval_list_knowledge_refs` and `eval_run_recall_case`. Production cannot expose them through a runtime flag. `examples/docker-compose.evaluation.yml` owns the dedicated stack; keep it separate from ordinary memory use.

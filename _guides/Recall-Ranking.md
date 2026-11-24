@@ -9,6 +9,8 @@ workflows: ["evidence","diagnose"]
 
 Recall returns eligible authorized Evidence, bounded Evidence conflicts, current related-topic hints, search states, and explicit degradations. Array order conveys rank; scores and provider attempts are not public result fields.
 
+With `RECALL_EXPANSION_ENABLED=true`, Recall takes up to five initial authorized hits per space. One bounded expansion uses distinctive terms and, for current shared Evidence, direct Topic peers. Candidate limits and a discount for broad Topics constrain expansion. Up to two qualifying expansion hits can enter the top ten. The optional Decision API reranks the authorized shortlist with same-space bridge context outside the database transaction. If that call fails, Recall reports the degradation and returns the deterministic order. Expanded ranking defaults to off pending the paired quality comparison.
+
 ## Retrieval Flow
 
 ```mermaid
@@ -22,7 +24,8 @@ flowchart TB
   Text --> Fuse["Bounded candidate fusion"]
   Vector --> Fuse
   Topic --> Fuse
-  Fuse --> Hydrate["Canonical hydration<br/>Authorization, lifecycle and time view"]
+  Fuse --> Expand["Optional term and direct-Topic expansion"]
+  Expand --> Hydrate["Canonical hydration<br/>Authorization, lifecycle and time view"]
   Hydrate --> Group["Current eligible equivalence grouping"]
   Group --> Decisions["Optional typed relevance reranking"]
   Decisions --> Space["Fuse authorized private/shared results"]
@@ -30,7 +33,7 @@ flowchart TB
   Result --> Hints["Current related-topic hints<br/>Eligible unseen counts and truncation"]
 ```
 
-A question embedding is reused across authorized branches. Explicit topic selection searches shared Evidence only. Candidate selection and counting are scoped before IDs leave the adapter; hydration checks authorization and eligibility again.
+A question embedding is reused across authorized branches. With `RECALL_DISABLE_QUERY_EMBEDDING=true`, Recall uses the lexical arm. Explicit topic selection searches shared Evidence only. Candidate selection and counting are scoped before IDs leave the adapter. Hydration checks authorization and eligibility again. See [Recall Search Modes]({{ '/Configuration/#recall-search-modes' | relative_url }}).
 
 ## Eligibility
 

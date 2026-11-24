@@ -117,7 +117,7 @@ flowchart TB
 | Remember shared | Explicit shared target and current write permission. |
 | Supersede/retract | Target ownership as well as destination permission. |
 | Trace/export | Read authorization for every Evidence target and exposed provenance. |
-| Ontology | Eligible shared sources; private sources excluded. |
+| Topic assignment | Eligible shared sources in the current space generation. |
 
 Every API credential has its own private space through its API-client membership. SSO/OAuth use the user's selected team membership private space. Credentials issued by one SSO user remain isolated from each other and from that user's membership-private space. A manager cannot read another user's private memory merely by being a manager.
 

@@ -10,7 +10,8 @@ scene: "ask"
 fallback: "The host submits the search query and result limits."
 caption: "The host chooses the search text and a one-result limit for this first pass."
 question: "How are time and visibility handled?"
-details: ["Recall accepts a query, current topic IDs, or both. On a multi-space query it searches each authorized space separately, then combines the resulting ranks. Explicit topic filters use the shared branch only.","valid_at concerns real-world Evidence time. known_at concerns what the system knew at a given time. Ontology organization is current-only. This example uses current Evidence, a working embedding provider, and no optional decision reranker."]
+details: ["Recall accepts a query, current topic IDs, or both. On a multi-space query it searches each authorized space separately, then combines the resulting ranks. Explicit topic filters use the shared branch only.","valid_at concerns real-world Evidence time. known_at concerns what the system knew at a given time. Topic membership is evaluated in the current view. This example uses current Evidence, a working embedding provider, and no optional decision reranker."]
+source_revision: main
 refs: ["internal/recall/recall.go:85","internal/recall/recall_spaces.go:50","internal/recall/postgres/recall_ontology.go:66"]
 guide: "/Technical-Reference/#recall_memory"
 sample: "recall"

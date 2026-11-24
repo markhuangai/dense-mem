@@ -7,25 +7,23 @@ workflows: ["manage-topics", "evidence", "diagnose"]
 
 # Topics And Organization
 
-Topics organize eligible team-shared Evidence directly. Topic membership, equivalence, and hierarchy are derived metadata; none creates submitted Evidence or establishes factual support. Private Evidence is excluded.
+Topics organize eligible team-shared Evidence. These routes and settings describe source behavior for the Topic assignment and Community placement release. Use the documentation for your installed image to verify deployment availability.
 
 ## Organization Boundary
 
 ```mermaid
-%%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart TB
-  Evidence[("Accepted shared Evidence")] --> Snapshot["Current eligible source snapshot"]
-  Snapshot --> Assess["Bounded organization assessment"]
-  Assess --> Validate["Validate the complete response"]
-  Validate --> Fence["Recheck sources, overrides,<br/>leases and generations"]
-  Fence --> Publish[("Atomic organization publication")]
-  Publish --> Topics["Topics and direct memberships"]
-  Publish --> Groups["Evidence equivalence groups"]
-  Topics --> Recall["Current discovery and follow-up"]
-  Groups --> Recall
+  Input["Shared Evidence"] --> Assess["Select existing Topics and propose missing Topics"]
+  Assess --> Publish["Commit Evidence, memberships and search state together"]
+  Publish --> Recall["Search immediately"]
+  Publish --> Maintenance["Periodic maintenance for affected Evidence and Topics"]
+  Maintenance --> Assignment["Assign additional grounded Topics"]
+  Maintenance --> Placement["Choose a broader Topic or leave it standalone"]
 ```
 
-Publication cannot create or edit canonical Evidence. Models propose; deterministic validation and publication policy decide.
+Remember can assign several direct Topics to each Evidence item. It sends a scoped shortlist of up to 20 existing Topics. When the optional Decision API is enabled for Topic assignment, it checks each candidate and checks for uncovered meaning. Structured generation handles uncertainty, uncovered meaning, and absent candidates. It can select existing Topics and propose new ones in the same response. A valid unclear result remains searchable as uncategorized. A required provider failure returns a typed error before publication.
+
+The scheduler also revisits older eligible Evidence when inputs change or an assessment is due. Community placement chooses an active broader Topic or records a standalone result. Evidence equivalence is evaluated independently and preserves each passage's exact text and provenance.
 
 ## Discover And Follow A Topic
 
@@ -47,13 +45,19 @@ Counts and selection apply visibility, lifecycle, temporal eligibility, freshnes
 
 | Condition | Effect |
 | --- | --- |
-| Organization enabled | Current eligible publications can participate in recall; maintenance can be admitted under its controls. |
-| Maintenance paused | Existing eligible publications remain readable. |
+| Organization enabled | Remember assigns Topics before returning. The scheduler also processes eligible existing Evidence and Community placement. |
+| Maintenance paused | Remember still assigns Topics. Existing Topics and memberships remain readable. |
 | Organization disabled | Topic reads stop; ordinary Evidence recall remains available. |
-| Evidence, definitions, or overrides change | Dependency fingerprints invalidate affected derived state. |
+| Evidence or Topic definitions change | Dependency fingerprints invalidate affected derived state. |
 | A publication's source or generation changes during assessment | Fenced publication cannot overwrite newer state. |
 
-Maintenance uses existing bounded scheduling, concurrency, provider backoff, and complete-response validation. Request context limits constrain individual model calls. There is no cumulative token allowance or spending budget. Exact controls are in [Configuration]({{ '/Configuration/#ontology-maintenance' | relative_url }}); operator procedures are in [Operations Runbook]({{ '/Operations-Runbook/#ontology-maintenance' | relative_url }}).
+Maintenance uses bounded scheduling, concurrency, provider backoff, and complete-response validation. Request context limits constrain individual model calls. See [Configuration]({{ '/Configuration/#topic-maintenance' | relative_url }}) and [Operations Runbook]({{ '/Operations-Runbook/#topic-maintenance' | relative_url }}).
+
+## Topic Storage Upgrade
+
+The startup migration preserves existing Topic IDs, revisions, direct memberships, Evidence equivalence, Community hierarchy, and frozen receipts. It moves eight maintenance settings to their new keys. Historical override records remain readable in publication history. Previously published associations are retained at cutover and follow ordinary eligibility and reassessment after startup.
+
+Before upgrading, stop incompatible writers and verify a restorable PostgreSQL backup. The compatible application finishes the migration before opening listeners. See [Operations Runbook]({{ '/Operations-Runbook/#topic-storage-upgrade' | relative_url }}).
 
 ## Evidence-Only Cutover
 
@@ -67,11 +71,11 @@ The one-time migration `20261110010000` resets derived organization before norma
 | Existing eligible shared Evidence | Rediscovered in active spaces and current generations without resubmission. Private and unavailable sources remain excluded. |
 | Already-applied cutover | Skipped; current organization remains intact. |
 
-Rebuilding runs after startup when maintenance is enabled, unpaused, and has model capacity. Rediscover topic handles afterward; rebuilt organization can differ. Ordinary publication and override rules below continue to apply. [Operations Runbook]({{ '/Operations-Runbook/#evidence-only-cutover' | relative_url }}) owns execution and recovery.
+Rebuilding after the earlier Evidence-only reset runs after startup when maintenance is enabled, unpaused, and has model capacity. Rediscover topic handles after that reset. See [Operations Runbook]({{ '/Operations-Runbook/#evidence-only-cutover' | relative_url }}).
 
 ## Manager Workflow
 
-Managers use the user portal's **Ontology** section. Inspection requires read access; saving and publication commands require write access. Drafts belong to their creator.
+Managers use **Topics** in the team portal. Inspection requires read access. Saving and publication commands require write access. Drafts belong to their creator.
 
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
@@ -85,13 +89,10 @@ flowchart LR
 
 | Operation | Constraint |
 | --- | --- |
-| Define a topic | Optional active topic parent; cycles and chains over 32 links reject. |
-| Classify Evidence | Eligible shared source and current version required. |
-| Group / keep separate | Preserve all original source handles and compatibility rules. |
-| Pin / remove override | Manager overrides are locks; definitions are pinned by default. |
+| Define a Topic | Active optional parent within a 32-link hierarchy without cycles. |
 | Preview | Uses publication validation and reports bounded examples and affected-source counts. |
-| Publish / rollback | Rechecks versions and eligibility; commits revision, audit, receipt, and draft completion together. |
+| Publish / rollback | Rechecks versions and eligibility. Commits revision, audit, receipt, and draft completion together. |
 
-The editor supports topics, assignments, Evidence groups, and overrides. It has no Entity-class, predicate-concept, or factual-inference workflow. A stale draft stays open: refresh its versions, review the changes, then save and preview again.
+The editor supports Topic definitions and their optional broader Topic. Remove retired edits from a historical draft before reuse. A stale draft stays open so the manager can refresh its versions and review it again.
 
-First-party management interfaces are under `/ui/api/ontology`; they do not replace the MCP memory contract. See [Portals And API Keys]({{ '/Portals-And-API-Keys/' | relative_url }}) for access and [Telemetry]({{ '/Telemetry/' | relative_url }}) for diagnostics.
+First-party management interfaces are under `/ui/api/topics`. See [Portals And API Keys]({{ '/Portals-And-API-Keys/' | relative_url }}) for access and [Telemetry]({{ '/Telemetry/' | relative_url }}) for diagnostics.

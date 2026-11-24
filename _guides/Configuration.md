@@ -116,25 +116,44 @@ These startup settings are independent; enabled decision providers never inherit
 
 TypeSafe configuration is capped at 64000 request / 32000 question tokens by default, or 262000 for both with explicit long-context opt-in. These are configured request ceilings, not measurements of provider capability or latency.
 
-**Settings → Decisions** stores four independent preferences: `DECISION_DEDUPLICATION_ENABLED`, `DECISION_SECURITY_REVIEW_ENABLED`, `DECISION_CONFLICT_REVIEW_ENABLED`, and `DECISION_RECALL_RERANKING_ENABLED`. Missing preferences default true after successful settings load; effective enablement also requires a configured provider. Explicit false persists. Refresh failure retains a visibly stale last-valid snapshot; absence of any valid snapshot fails required work.
+**Settings → Decisions** stores six independent preferences.
 
-## Ontology Maintenance
+| Capability | Key |
+| --- | --- |
+| Intake | `DECISION_DEDUPLICATION_ENABLED`, `DECISION_SECURITY_REVIEW_ENABLED`, `DECISION_CONFLICT_REVIEW_ENABLED` |
+| Organization | `DECISION_TOPIC_ASSIGNMENT_ENABLED`, `DECISION_COMMUNITY_PLACEMENT_ENABLED` |
+| Recall | `DECISION_RECALL_RERANKING_ENABLED` |
+
+Missing preferences default true after successful settings load. Effective enablement requires a configured Decision provider. Explicit false persists. On refresh failure the last valid snapshot is marked stale. Required work fails when no valid snapshot is available.
+
+## Recall Search Modes
+
+| Startup variable | Default | Effect |
+| --- | --- | --- |
+| `RECALL_EXPANSION_ENABLED` | `false` | Adds bounded term and current shared Topic expansion before optional reranking. |
+| `RECALL_DISABLE_QUERY_EMBEDDING` | `false` | Runs the lexical Recall arm without embedding the question. Remember still requires write embeddings. |
+
+See [Recall Ranking]({{ '/Recall-Ranking/' | relative_url }}).
+
+<span id="ontology-maintenance"></span>
+
+## Topic Maintenance
 
 These are runtime `app_config` keys edited in the control portal:
 
 | Key | Default or bound |
 | --- | --- |
-| `ONTOLOGY_MAINTENANCE_ENABLED` | `false`. |
-| `ONTOLOGY_MAINTENANCE_CADENCE_HOURS` | `12`; accepts 12 or 24. |
-| `ONTOLOGY_MAINTENANCE_START_TIME_LOCAL` | `03:00`, strict HH:MM. |
-| `ONTOLOGY_MAINTENANCE_MODEL` | Empty; optional composed-model override. |
-| `ONTOLOGY_MAINTENANCE_MAX_CONCURRENCY` | `1`; range 1–8. |
-| `ONTOLOGY_MAINTENANCE_TEAM_MAX_CONCURRENCY` | `1`; range 1–8. |
-| `ONTOLOGY_MAINTENANCE_TEAM_OVERRIDES_JSON` | Empty list; at most 128 unique team overrides, each concurrency 1–8. |
-| `ONTOLOGY_MAINTENANCE_CONTEXT_WINDOW_TOKENS` | Empty until configured; 1–1000000000, and must leave room for output. |
+| `TOPIC_MAINTENANCE_ENABLED` | `false`. |
+| `TOPIC_MAINTENANCE_CADENCE_HOURS` | `12`; accepts 12 or 24. |
+| `TOPIC_MAINTENANCE_START_TIME_LOCAL` | `03:00`, strict HH:MM. |
+| `TOPIC_MAINTENANCE_MODEL` | Empty; optional composed-model override. |
+| `TOPIC_MAINTENANCE_MAX_CONCURRENCY` | `1`; range 1–8. |
+| `TOPIC_MAINTENANCE_TEAM_MAX_CONCURRENCY` | `1`; range 1–8. |
+| `TOPIC_MAINTENANCE_TEAM_OVERRIDES_JSON` | Empty list; at most 128 unique team overrides, each concurrency 1–8. |
+| `TOPIC_MAINTENANCE_CONTEXT_WINDOW_TOKENS` | Empty until configured; 1–1000000000, and must leave room for output. |
 | `APP_TIMEZONE` | General runtime timezone, bootstrapped from the startup value (`Local` when unset). |
 
-Configure the model's full request context, including response headroom. There is no cumulative token-spending budget or allowance control. [Topics And Organization]({{ '/Topics-And-Organization/' | relative_url }}) owns semantics; [Operations Runbook]({{ '/Operations-Runbook/#ontology-maintenance' | relative_url }}) owns enable/pause/run procedures.
+Configure the model's full request context, including response headroom. The Topic storage upgrade migrates all eight supported `ONTOLOGY_MAINTENANCE_*` settings to the corresponding `TOPIC_MAINTENANCE_*` keys. See [Topics And Organization]({{ '/Topics-And-Organization/' | relative_url }}) and [Operations Runbook]({{ '/Operations-Runbook/#topic-maintenance' | relative_url }}).
 
 ## Redis, Rate Limits, And Streams
 

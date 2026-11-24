@@ -3,23 +3,24 @@ workflow: "evidence"
 order: 8
 anchor: "choose-topic"
 legacy: "step-8"
-title: "Choose a topic for each passage"
+title: "Assign Topics to each passage"
 chapter: "Organize"
-figure: "Topic classification"
+figure: "Direct Topic assignment"
 scene: "classify"
 fallback: "The organizer assigns the retention rule and its exception to the same topic."
 caption: "A topic definition has a name and description. An assignment refers to that definition and to one Evidence source."
 term:
   id: "vocabulary-definition"
   label: "Bounded vocabulary"
-  definition: "The shortlist of existing topic definitions supplied to this classification batch."
+  definition: "The scoped shortlist of up to 20 existing Topics."
 question: "What if a suitable topic does not exist?"
-details: ["Dense-Mem prioritizes required assignments and manager overrides, then looks for current definitions with matching names and descriptions. It sends up to 20 topic definitions per batch and trims the list to the configured vocabulary token bound.","A supplied definition carries its key, label, description, aliases, and a parent reference when that parent is also in the shortlist. The model can select a supplied topic, propose a genuinely new definition, or mark an open item ambiguous.","An existing eligible assignment or manager classification override fixes that choice. A batch whose decisions are all fixed can complete without a model call."]
-refs: ["internal/ontology/postgres/organization.go:185","internal/ontology/contract/organization.go:128","internal/ontology/request.go:17","internal/ontology/assessment/provider.go:87"]
+details: ["With optional Decisions enabled, Dense-Mem checks each candidate and asks whether relevant meaning remains uncovered.","Structured generation can match several existing Topics and propose new ones in the same reply. It supplies an exact supporting quote for each selection or proposal.","An unclear passage can remain uncategorized. It is still searchable."]
+source_revision: main
+refs: ["internal/topicassignment/service.go:49","internal/topicassignment/generation.go:19","internal/topicassignment/decisions.go:17"]
 guide: "/Topics-And-Organization/"
-sequences: ["ai_ontology"]
+sequences: ["ai_topic_assignment"]
 ---
 
-The organizer receives the exact passages and a shortlist of existing topics. Atlas’s shortlist includes **{{ site.data.examples.atlas.topics.retention.name }}** and **{{ site.data.examples.atlas.topics.hours.name }}**.
+For each passage, the assignment assessor receives exact text and a shortlist of existing Topics. Atlas’s shortlist includes **{{ site.data.examples.atlas.topics.retention.name }}** and **{{ site.data.examples.atlas.topics.hours.name }}**.
 
-A batch can receive up to **20 topic definitions**, with a separate token limit. The server supplies fixed assignments. The model answers the open classification and equivalence questions.
+The proposal example illustrates a second direct Topic for E3 while retaining the existing Snapshot retention match. In the main example, E3 uses the retention Topic.
