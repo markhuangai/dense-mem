@@ -4,11 +4,20 @@ package postgres
 
 import (
 	"context"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/markhuangai/dense-mem/internal/config"
+	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
+	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/provider/decision"
 	assignment "github.com/markhuangai/dense-mem/internal/topicassignment/contract"
 	"github.com/markhuangai/dense-mem/internal/topics"
 	"github.com/markhuangai/dense-mem/internal/topics/assessment"
@@ -93,6 +102,70 @@ func TestCommunityPlacementChecksRevisionsAndAccountsForProviderWork(t *testing.
 
 	t.Run("manager publication rolls back when a later edge closes a mixed cycle", testCommunityMixedHierarchyPublicationRollback)
 	t.Run("rejected hierarchy placement is deferred", testCommunityHierarchyRejectionDeferred)
+	t.Run("admitted decision outlives the preparation lease", testCommunityDecisionRenewsLease)
+}
+
+type communityDecisionSettings struct{}
+
+func (communityDecisionSettings) DecisionRuntimeConfig(context.Context) (domain.DecisionRuntimeConfig, error) {
+	return domain.DecisionRuntimeConfig{Revision: "lease-regression", Effective: domain.DecisionTasks{CommunityPlacement: true}}, nil
+}
+
+func testCommunityDecisionRenewsLease(t *testing.T) {
+	ctx := t.Context()
+	f := newOntologyFixture(t)
+	manager := f.actor(0, "manager")
+	child, parent := testTopic("postgresql-backup"), testTopic("postgresql")
+	child.ID, parent.ID = "10000000-0000-4000-8000-000000000001", "10000000-0000-4000-8000-000000000002"
+	child.Definition.Label, parent.Definition.Label = "PostgreSQL backup", "PostgreSQL"
+	_, err := f.store.PublishManager(manager, f.team, testPublication("community-decision-lease", 0,
+		contract.Change{Record: child}, contract.Change{Record: parent}))
+	require.NoError(t, err)
+
+	const providerTimeout = time.Second
+	const decisionTimeout = 30 * time.Second
+	const preparationLease = 3*providerTimeout + 15*time.Second
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		timer := time.NewTimer(preparationLease + time.Second)
+		defer timer.Stop()
+		select {
+		case <-r.Context().Done():
+			return
+		case <-timer.C:
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"model":"fixture","answers":[{"name":"parent","type":"choice","choice":%[1]q,"confidence":1,"probabilities":[{"value":%[1]q,"probability":1},{"value":"standalone","probability":0}]}],"usage":{"input_tokens":8,"output_tokens":2,"total_tokens":10}}`, parent.ID)
+	}))
+	defer upstream.Close()
+	limits := maintenanceFixtureLimits()
+	protector := observability.NewCredentialProtector("decision-lease-fixture")
+	logger := observability.NewConsoleWithProtector(slog.LevelDebug, protector, io.Discard)
+	provider, err := decisionprovider.New(config.DecisionProviderConfig{
+		Provider: "openai", APIURL: upstream.URL, APIKey: "decision-lease-fixture", Model: "fixture",
+		MaxInputTokens: 64000, MaxQuestionInputTokens: 64000, TimeoutSeconds: int(decisionTimeout.Seconds()), MaxConcurrency: 1,
+	}, limits.Tokenizer, upstream.Client(), logger, protector, nil)
+	require.NoError(t, err)
+	service := topics.NewMaintenanceService(topics.MaintenanceDependencies{
+		Repository: f.store, Config: maintenanceSettings(t, f), Communities: f.store,
+		ProviderTimeout: providerTimeout, DecisionTimeout: decisionTimeout,
+		Placement: topics.CommunityAssessor{Decisions: provider, Settings: communityDecisionSettings{}, Limits: limits},
+		Organizer: func(model string, capacity int64, _ assessment.AttemptAccounting) *topics.Service {
+			return topics.NewService(nil, assessment.NewProvider(nil, model, limits, int(capacity)))
+		},
+	})
+	progress, err := service.RunTurn(ctx)
+	require.NoError(t, err)
+	require.True(t, progress)
+	view, err := f.store.GetRecord(manager, f.team, child.ID, 0)
+	require.NoError(t, err)
+	require.Equal(t, parent.ID, view.CommunityParentID)
+	status, err := f.store.MaintenanceStatus(ctx, time.Now())
+	require.NoError(t, err)
+	require.EqualValues(t, 1, status.Communities.Placed)
+	require.EqualValues(t, 1, status.Usage.Attempts)
+	require.EqualValues(t, 10, status.Usage.ReportedTotalTokens)
+	require.Zero(t, status.Usage.UnreconciledAttempts)
+	require.Zero(t, status.ActiveWork)
 }
 
 type communityPlacementTransport func(context.Context, modelprovider.StructuredRequest) (modelprovider.StructuredResult, error)

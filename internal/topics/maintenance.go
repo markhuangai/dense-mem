@@ -258,28 +258,7 @@ func (s *MaintenanceService) executeBatch(ctx context.Context, work maintenanceW
 		return s.placeCommunity(ctx, work)
 	}
 	claim := work.claim
-	accounting := &maintenanceAttemptAccounting{repository: s.deps.Repository, claim: claim, now: s.deps.Now, admitted: map[maintenanceAttemptKey]bool{}}
-	deadline := claim.LeaseUntil.Add(-5 * time.Second)
-	var turnCtx context.Context
-	var cancel context.CancelFunc
-	if s.deps.Assign == nil {
-		turnCtx, cancel = context.WithDeadline(ctx, deadline)
-	} else {
-		leaseCtx, cancelLease := context.WithCancelCause(ctx)
-		turnCtx, cancel = leaseCtx, func() { cancelLease(nil) }
-		timer := time.AfterFunc(time.Until(deadline), func() { cancelLease(contract.ErrLeaseLost) })
-		defer timer.Stop()
-		accounting.attemptLease = 3*s.deps.ProviderTimeout + 15*time.Second
-		accounting.decisionLease = s.deps.DecisionTimeout + 15*time.Second
-		accounting.extend = func(leaseUntil time.Time) {
-			next := leaseUntil.Add(-5 * time.Second)
-			// Once the local lease has expired, let cancellation finish the turn.
-			if next.After(deadline) && timer.Stop() {
-				deadline = next
-				timer.Reset(time.Until(deadline))
-			}
-		}
-	}
+	turnCtx, cancel, accounting := s.maintenanceAdmission(ctx, claim, s.deps.Assign != nil)
 	defer cancel()
 	claimCtx := contract.WithMaintenanceClaim(turnCtx, claim)
 	var result contract.OrganizationResult
@@ -387,6 +366,31 @@ type maintenanceAttemptAccounting struct {
 	extend        func(time.Time)
 	mu            sync.Mutex
 	admitted      map[maintenanceAttemptKey]bool
+}
+
+func (s *MaintenanceService) maintenanceAdmission(ctx context.Context, claim contract.MaintenanceClaim, renewable bool) (context.Context, context.CancelFunc, *maintenanceAttemptAccounting) {
+	accounting := &maintenanceAttemptAccounting{repository: s.deps.Repository, claim: claim, now: s.deps.Now, admitted: map[maintenanceAttemptKey]bool{}}
+	deadline := claim.LeaseUntil.Add(-5 * time.Second)
+	if !renewable {
+		turnCtx, cancel := context.WithDeadline(ctx, deadline)
+		return turnCtx, cancel, accounting
+	}
+	turnCtx, cancel := context.WithCancelCause(ctx)
+	timer := time.AfterFunc(time.Until(deadline), func() { cancel(contract.ErrLeaseLost) })
+	accounting.attemptLease = 3*s.deps.ProviderTimeout + 15*time.Second
+	accounting.decisionLease = s.deps.DecisionTimeout + 15*time.Second
+	accounting.extend = func(leaseUntil time.Time) {
+		next := leaseUntil.Add(-5 * time.Second)
+		// Once the local lease has expired, let cancellation finish the turn.
+		if next.After(deadline) && timer.Stop() {
+			deadline = next
+			timer.Reset(time.Until(deadline))
+		}
+	}
+	return turnCtx, func() {
+		timer.Stop()
+		cancel(nil)
+	}, accounting
 }
 
 func (a *maintenanceAttemptAccounting) BeforeAttempt(ctx context.Context, id string, number, input, output int) (context.Context, error) {

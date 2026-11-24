@@ -154,7 +154,7 @@ func (s CommunityAssessor) decide(ctx context.Context, id, settings string, inpu
 
 func (s *MaintenanceService) placeCommunity(ctx context.Context, work maintenanceWork) error {
 	claim, input := work.claim, *work.community
-	opCtx, cancel := context.WithDeadline(ctx, claim.LeaseUntil.Add(-5*time.Second))
+	opCtx, cancel, accounting := s.maintenanceAdmission(ctx, claim, true)
 	defer cancel()
 	opCtx = observability.WithAIOperation(opCtx, observability.AIOperationCommunityPlacement, 1)
 	opCtx = observability.WithExchangeScope(opCtx, observability.ExchangeScope{TeamID: claim.TeamID, RunID: claim.RunID, BatchID: claim.ID, OperationID: claim.ID})
@@ -168,11 +168,14 @@ func (s *MaintenanceService) placeCommunity(ctx context.Context, work maintenanc
 			"topic_version", input.Topic.Version, "model", work.policy.Model, "policy", communityPolicy, "candidates", candidates)
 	}
 	placement := s.deps.Placement
-	placement.accounting = &maintenanceAttemptAccounting{repository: s.deps.Repository, claim: claim, now: s.deps.Now, admitted: map[maintenanceAttemptKey]bool{}}
+	placement.accounting = accounting
 	placement.contextWindow = work.policy.ContextWindowTokens
 	outcome, err := placement.Assess(opCtx, claim.ID, input, work.policy.Model)
 	failure := ""
 	if err != nil {
+		if errors.Is(context.Cause(opCtx), contract.ErrLeaseLost) {
+			err = errors.Join(contract.ErrLeaseLost, err)
+		}
 		outcome.Status, outcome.ParentID = "failed", ""
 		failure = maintenanceDiagnosticError(err)
 	}
@@ -181,7 +184,9 @@ func (s *MaintenanceService) placeCommunity(ctx context.Context, work maintenanc
 	status := outcome.Status
 	var persistErr error
 	var committed bool
-	if !errors.Is(err, contract.ErrMaintenancePaused) && !errors.Is(err, contract.ErrMaintenanceDisabled) && !errors.Is(err, contract.ErrWindowClosed) {
+	interrupted := errors.Is(err, contract.ErrMaintenancePaused) || errors.Is(err, contract.ErrMaintenanceDisabled) ||
+		errors.Is(err, contract.ErrWindowClosed) || errors.Is(err, contract.ErrLeaseLost)
+	if !interrupted {
 		persistErr = s.deps.Communities.CompleteCommunity(finishCtx, claim, input, outcome, failure, s.deps.Now())
 		if errors.Is(persistErr, contract.ErrConflict) {
 			err = persistErr
@@ -193,7 +198,7 @@ func (s *MaintenanceService) placeCommunity(ctx context.Context, work maintenanc
 		}
 		committed = persistErr == nil
 	}
-	if persistErr != nil || errors.Is(err, contract.ErrMaintenancePaused) || errors.Is(err, contract.ErrMaintenanceDisabled) || errors.Is(err, contract.ErrWindowClosed) {
+	if persistErr != nil || interrupted {
 		if failure == "" {
 			failure = maintenanceDiagnosticError(persistErr)
 		}
