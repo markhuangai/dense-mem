@@ -183,18 +183,20 @@ func (s *Store) commitPublication(tx *gorm.DB, fence scope, input ontology.Publi
 		}
 	}
 	// Community placements are version-bound, so inspect the proposed heads after the entire publication has been written.
+	var edges []communityEdge
 	for _, record := range prepared {
 		if record.Retired || record.Definition == nil || record.Definition.ParentID == "" {
 			continue
 		}
-		parent := record.Definition.ParentID
-		if err := checkCommunityAncestry(tx, fence, record.ID, parent); err != nil {
-			if errors.Is(err, ontology.ErrConflict) {
-				return ontology.PublicationResult{}, &ontology.PublicationRejection{
-					Cause: err, Reason: "community_hierarchy_conflict", RecordID: record.ID, ParentID: parent,
-				}
-			}
-			return ontology.PublicationResult{}, err
+		edges = append(edges, communityEdge{topicID: record.ID, parentID: record.Definition.ParentID})
+	}
+	conflict, err := conflictingCommunityEdge(tx, fence, edges)
+	if err != nil {
+		return ontology.PublicationResult{}, err
+	}
+	if conflict != nil {
+		return ontology.PublicationResult{}, &ontology.PublicationRejection{
+			Cause: ontology.ErrConflict, Reason: "community_hierarchy_conflict", RecordID: conflict.topicID, ParentID: conflict.parentID,
 		}
 	}
 	updated := tx.Exec(`UPDATE topic_catalog_heads SET revision=? WHERE team_id=?::uuid

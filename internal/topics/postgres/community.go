@@ -167,8 +167,13 @@ func (s *Store) CompleteCommunity(ctx context.Context, claim ontology.Maintenanc
 			return ontology.ErrSourceStale
 		}
 		if outcome.ParentID != "" {
-			if err := checkCommunityAncestry(tx, fence, input.Topic.ID, outcome.ParentID); err != nil {
+			edge := communityEdge{topicID: input.Topic.ID, parentID: outcome.ParentID}
+			conflict, err := conflictingCommunityEdge(tx, fence, []communityEdge{edge})
+			if err != nil {
 				return err
+			}
+			if conflict != nil {
+				return ontology.ErrConflict
 			}
 		}
 		settled := outcome.Status == "placed" || outcome.Status == "standalone"
@@ -201,30 +206,40 @@ func (s *Store) CompleteCommunity(ctx context.Context, claim ontology.Maintenanc
 	})
 }
 
-func checkCommunityAncestry(tx *gorm.DB, fence scope, topicID, parentID string) error {
-	var invalid bool
-	err := tx.Raw(`WITH RECURSIVE chain(id,depth) AS (
-		SELECT ?::uuid,1
+type communityEdge struct{ topicID, parentID string }
+
+func conflictingCommunityEdge(tx *gorm.DB, fence scope, edges []communityEdge) (*communityEdge, error) {
+	if len(edges) == 0 {
+		return nil, nil
+	}
+	topics := make([]string, 0, len(edges))
+	parents := make([]string, 0, len(edges))
+	for _, edge := range edges {
+		topics = append(topics, edge.topicID)
+		parents = append(parents, edge.parentID)
+	}
+	var ordinal int
+	err := tx.Raw(`WITH RECURSIVE chain(topic_id,id,ordinal,depth) AS (
+		SELECT edge.topic_id,edge.parent_id,edge.ordinal,1
+		FROM unnest(?::uuid[],?::uuid[]) WITH ORDINALITY AS edge(topic_id,parent_id,ordinal)
 		UNION ALL
-		SELECT CASE WHEN placement.status IS NULL THEN NULLIF(revision.body->'definition'->>'parent_id','')::uuid
-			ELSE placement.parent_topic_id END,chain.depth+1
+		SELECT chain.topic_id,CASE WHEN placement.status IS NULL THEN NULLIF(payload.body->'definition'->>'parent_id','')::uuid
+			ELSE placement.parent_topic_id END,chain.ordinal,chain.depth+1
 		FROM chain JOIN topic_record_heads AS head ON head.record_id=chain.id
-		JOIN topic_revision_records AS revision USING(team_id,shared_space_id,space_generation,record_id,version)
+		JOIN topic_revision_payloads AS payload USING(team_id,shared_space_id,space_generation,record_id,version)
 		LEFT JOIN LATERAL (SELECT status,parent_topic_id FROM community_placement_outcomes AS result
 			WHERE result.team_id=head.team_id AND result.shared_space_id=head.shared_space_id AND result.space_generation=head.space_generation
 			AND result.topic_id=head.record_id AND result.topic_version=head.version AND result.status IN ('placed','standalone')
 			AND `+currentCommunityParent+` ORDER BY result.created_at DESC,result.outcome_id LIMIT 1) AS placement ON true
 		WHERE head.team_id=?::uuid AND head.shared_space_id=?::uuid AND head.space_generation=? AND head.kind='topic' AND NOT head.retired
 		AND chain.depth<=?
-	) SELECT EXISTS(SELECT 1 FROM chain WHERE id=?::uuid OR (id IS NOT NULL AND depth>?))`, parentID, fence.TeamID, fence.SpaceID,
-		fence.Generation, ontology.MaxParentDepth, topicID, ontology.MaxParentDepth).Row().Scan(&invalid)
-	if err != nil {
-		return err
+	) SELECT COALESCE(min(ordinal),0) FROM chain WHERE id=topic_id OR (id IS NOT NULL AND depth>?)`,
+		pq.Array(topics), pq.Array(parents), fence.TeamID, fence.SpaceID, fence.Generation,
+		ontology.MaxParentDepth, ontology.MaxParentDepth).Row().Scan(&ordinal)
+	if err != nil || ordinal == 0 {
+		return nil, err
 	}
-	if invalid {
-		return ontology.ErrConflict
-	}
-	return nil
+	return &edges[ordinal-1], nil
 }
 
 func attachCommunityPlacement(tx *gorm.DB, fence scope, views []ontology.RecordView) error {

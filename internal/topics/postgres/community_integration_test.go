@@ -86,6 +86,65 @@ func TestCommunityPlacementChecksRevisionsAndAccountsForProviderWork(t *testing.
 	require.Zero(t, status.ActiveWork)
 	require.Zero(t, status.Usage.UnreconciledAttempts)
 	require.EqualValues(t, 1, status.Usage.UnavailableUsageAttempts)
+
+	t.Run("manager publication rolls back when a later edge closes a mixed cycle", testCommunityMixedHierarchyPublicationRollback)
+}
+
+func testCommunityMixedHierarchyPublicationRollback(t *testing.T) {
+	ctx := t.Context()
+	f := newOntologyFixture(t)
+	manager := f.actor(0, "manager")
+	window := maintenanceWindow(t, f, maintenanceSettings(t, f))
+	placed, placedParent, cycleChild := testTopic("postgresql"), testTopic("database-storage"), testTopic("infrastructure")
+	placed.ID = "00000000-0000-4000-8000-000000000001"
+	placedParent.Definition.Description = "PostgreSQL database storage"
+	placedParent.Definition.ParentID = cycleChild.ID
+	legalChild, legalParent := testTopic("log-retention"), testTopic("archiving")
+	seed, err := f.store.PublishManager(manager, f.team, testPublication("mixed-hierarchy-seed", 0,
+		contract.Change{Record: placed}, contract.Change{Record: cycleChild}, contract.Change{Record: placedParent},
+		contract.Change{Record: legalChild}, contract.Change{Record: legalParent}))
+	require.NoError(t, err)
+
+	turn, err := f.store.ClaimMaintenanceTurn(ctx, window.ID, time.Now(), time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, turn)
+	input, batch, err := f.store.ClaimCommunity(ctx, *turn, window.ID, time.Now())
+	require.NoError(t, err)
+	require.NotNil(t, input)
+	require.NotNil(t, batch)
+	require.Equal(t, placed.ID, input.Topic.ID)
+	require.Len(t, input.Candidates, 1)
+	require.Equal(t, placedParent.ID, input.Candidates[0].ID)
+	require.NoError(t, f.store.CompleteCommunity(ctx, *batch, *input, contract.CommunityOutcome{
+		InputHash: testHash("mixed-hierarchy-placement"), Method: "generation", Status: "placed", ParentID: placedParent.ID,
+	}, "", time.Now()))
+	placedView, err := f.store.GetRecord(manager, f.team, placed.ID, 0)
+	require.NoError(t, err)
+	require.Equal(t, placedParent.ID, placedView.CommunityParentID)
+	require.Empty(t, placedView.Definition.ParentID)
+
+	before, err := f.store.ListRecords(manager, f.team, contract.Topic, "", 10)
+	require.NoError(t, err)
+	legalChild.Definition.ParentID = legalParent.ID
+	cycleChild.Definition.ParentID = placed.ID
+	legal := contract.Change{Record: legalChild, ExpectedVersion: 1}
+	cycle := contract.Change{Record: cycleChild, ExpectedVersion: 1}
+	const operation = "edit-mixed-hierarchy"
+	_, err = f.store.PublishManager(manager, f.team, testPublication(operation, seed.Revision, legal, cycle))
+	require.ErrorIs(t, err, contract.ErrConflict)
+	var rejection *contract.PublicationRejection
+	require.ErrorAs(t, err, &rejection)
+	require.Equal(t, "community_hierarchy_conflict", rejection.Reason)
+	require.Equal(t, cycleChild.ID, rejection.RecordID)
+	require.Equal(t, placed.ID, rejection.ParentID)
+
+	after, err := f.store.ListRecords(manager, f.team, contract.Topic, "", 10)
+	require.NoError(t, err)
+	require.Equal(t, before, after)
+	accepted, err := f.store.PublishManager(manager, f.team, testPublication(operation, seed.Revision, legal))
+	require.NoError(t, err)
+	require.Equal(t, seed.Revision+1, accepted.Revision)
+	require.Equal(t, []contract.RevisionRef{{ID: legalChild.ID, Version: 2}}, accepted.Records)
 }
 
 func TestConcurrentTopicProposalsReuseScopedName(t *testing.T) {

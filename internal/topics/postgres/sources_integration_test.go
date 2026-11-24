@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	access "github.com/markhuangai/dense-mem/internal/access/postgres"
@@ -291,6 +292,7 @@ func TestOntologyOrganizationPreservesPerRecordDependencyBounds(t *testing.T) {
 	dependency := f.source(t, handle)
 	children := ontology.MaxDependencyRecords/2 + 1
 	revision := int64(0)
+	started := time.Now()
 	for offset := 0; offset < children; offset += ontology.MaxChanges / 2 {
 		changes := []ontology.Change{}
 		for i := offset; i < min(offset+ontology.MaxChanges/2, children); i++ {
@@ -303,6 +305,7 @@ func TestOntologyOrganizationPreservesPerRecordDependencyBounds(t *testing.T) {
 		published, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication(uuid.NewString(), revision, changes...))
 		require.NoError(t, err)
 		revision = published.Revision
+		t.Logf("published %d of %d parented Topics in %s", min(offset+ontology.MaxChanges/2, children), children, time.Since(started).Round(time.Millisecond))
 	}
 	contextData, err := f.store.ReadOrganization(context.Background(), f.team, []ontology.SourceHandle{handle})
 	require.NoError(t, err)
