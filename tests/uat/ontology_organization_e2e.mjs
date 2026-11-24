@@ -68,7 +68,7 @@ try {
   let status;
   for (let index = 0; index < maintenanceObservationAttempts; index++) {
     status = (await control("/topic-maintenance/status")).data;
-    if (status.discovery_complete && status.counts.pending === 0 && status.counts.organized > initial.counts.organized) break;
+    if (status.coverage_complete && status.counts.organized > initial.counts.organized) break;
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
   assert.equal(status.discovery_complete, true);
@@ -77,6 +77,8 @@ try {
   assert(status.counts.organized > initial.counts.organized);
   assert(status.usage.attempts > 0, "provider dispatches must have durable attempt identities");
   assert.equal(status.usage.unreconciled_attempts, 0);
+  assert.equal(status.active_work, 0);
+  assert.equal(status.coverage_complete, true, "Topic assignment and Community placement must both converge");
   const currentReceipts = JSON.parse(postgresQuery(`SELECT COALESCE(jsonb_agg(row_to_json(retained)),'[]') FROM (
     SELECT DISTINCT ON(evidence_id) evidence_id, status, method, input_hash FROM topic_assignment_outcomes
     WHERE team_id=${sqlLiteral(teamID)}::uuid AND evidence_id=ANY(ARRAY[${sourceIDs.map(sqlLiteral).join(",")}]::uuid[])

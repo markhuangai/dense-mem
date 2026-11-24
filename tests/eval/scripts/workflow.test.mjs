@@ -100,7 +100,11 @@ test("manual workflow accepts an image without PR inputs and keeps credentials i
   assert.equal(evaluation.with.source_revision, "${{ needs.authorize.outputs.source_revision }}");
   assert.equal(evaluation.with.model, "dense-mem-testing"); assert.equal(evaluation.with.context_window_tokens, "500000");
   const existing = workflowJob(await readWorkflow("production-image-e2e.yml"), "evaluation");
-  assert.deepEqual(evaluation.secrets, existing.secrets);
+  const { "eval-decision-api-key": decisionKey, ...ordinarySecrets } = existing.secrets;
+  assert.deepEqual(evaluation.secrets, ordinarySecrets);
+  assert.equal(decisionKey, "${{ secrets.DENSE_MEM_EVAL_DECISION_API_KEY }}");
+  const paired = workflowJob(await readWorkflow("evaluation.yml"), "paired");
+  assert.equal(paired.secrets["eval-decision-api-key"], "${{ secrets.eval-decision-api-key }}");
 });
 
 test("manual authorization executes both modes without PR or historical-run lookups", async (t) => {
