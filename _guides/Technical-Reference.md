@@ -23,7 +23,7 @@ Examples below are tool argument/result objects except where explicitly shown as
 | `submit_recall_session_feedback` | Write; feedback enabled | Recorded count or explicit partial failure. |
 | `export_memory_pack` | Read visibility to selected Evidence | Canonical Evidence/provenance artifact, hash, counts, and omissions. |
 
-Tools can be hidden when unavailable. Refresh discovery after upgrading. Evaluation tools belong to a separate build profile; see [Evaluation]({{ '/Evaluation/#image-boundary-and-tool-surface' | relative_url }}).
+Tools can be hidden when unavailable. Refresh discovery after upgrading. The hosted runner uses the production MCP tools for [Evaluation]({{ '/Evaluation/#image-boundary-and-tool-surface' | relative_url }}).
 
 ## Common Rules
 

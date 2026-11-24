@@ -2,13 +2,13 @@
 workflow: "evaluate"
 order: 2
 anchor: "run-matched-cases-on-github-hosted-runners"
-title: "Run matched cases on GitHub-hosted runners"
+title: "Run scoring on GitHub-hosted runners"
 chapter: "Execute"
-figure: "Run a matched evaluation"
-caption: "Both arms use the intended runner, cases, and configuration."
+figure: "Run a public QA evaluation"
+caption: "One job per selected dataset scores both answer policies."
 guide: "/Evaluation/#matched-campaign-and-comparison"
 question: "Inspect this step"
-details: ["Record exact inputs, concurrency controls, and failures. A missing arm or incomplete capture cannot establish a matched result."]
+details: ["Choose 4 to 10 answer workers. Ten workers allow up to two dataset jobs at a time."]
 ---
 
-Start the documented hosted jobs. Verify the pinned revision and image digest, and inspect that every required dataset and condition completed.
+Dispatch Run evaluation from main, or use Production image E2E on your validated PR head. Verify the pinned source and image in each result.
