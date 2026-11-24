@@ -9,7 +9,7 @@ workflows: ["evidence","diagnose"]
 
 Recall returns eligible authorized Evidence, bounded Evidence conflicts, current related-topic hints, search states, and explicit degradations. Array order conveys rank; scores and provider attempts are not public result fields.
 
-With `RECALL_EXPANSION_ENABLED=true`, Recall takes up to five initial authorized hits per space. One bounded expansion uses distinctive terms and, for current shared Evidence, direct Topic peers. Candidate limits and a discount for broad Topics constrain expansion. Up to two qualifying expansion hits can enter the top ten. The optional Decision API reranks the authorized shortlist with same-space bridge context outside the database transaction. If that call fails, Recall reports the degradation and returns the deterministic order. Expanded ranking defaults to off pending the paired quality comparison.
+Recall expansion is off by default. With `RECALL_EXPANSION_ENABLED=true`, Recall takes up to five initial authorized hits per space. One bounded expansion uses distinctive terms and, for current shared Evidence, direct Topic peers. Candidate limits and a discount for broad Topics constrain expansion. Up to two qualifying expansion hits can enter the top ten. The optional Decision API reranks the authorized shortlist with same-space bridge context outside the database transaction. If that call fails, Recall reports the degradation and returns the deterministic order.
 
 ## Retrieval Flow
 

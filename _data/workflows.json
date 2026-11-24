@@ -65,8 +65,8 @@
     "url": "/walkthroughs/privacy/"
   },
   "evaluate": {
-    "title": "Run a matched evaluation",
-    "description": "Follow prepared seeds through hosted execution, comparison, and a measured result.",
+    "title": "Run a public QA evaluation",
+    "description": "Select published seeds, run hosted scoring, and read the dataset reports.",
     "url": "/walkthroughs/evaluate/"
   },
   "contribute": {

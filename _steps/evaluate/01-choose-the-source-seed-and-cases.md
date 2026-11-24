@@ -4,11 +4,11 @@ order: 1
 anchor: "choose-the-source-seed-and-cases"
 title: "Choose the source, seed, and cases"
 chapter: "Prepare"
-figure: "Run a matched evaluation"
-caption: "Pinned input identities make a later comparison reproducible."
+figure: "Run a public QA evaluation"
+caption: "The production image, seed digest, and locked questions identify the run."
 guide: "/Evaluation/#image-boundary-and-tool-surface"
 question: "Inspect this step"
-details: ["Verify dataset provenance and runtime configuration. Keep generated seeds and raw artifacts in their documented storage locations."]
+details: ["Use a dated seed suffix to select a saved version. The workflow pins each selected seed before model work."]
 ---
 
-Choose the approved source revision, production image, dataset seed, and evaluation cases. Prepare public seeds using the documented local seed-builder route.
+Choose a production image and at least one of the five public datasets. To refresh a seed, use the local Docker builder in the evaluation guide.
