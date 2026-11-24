@@ -3,7 +3,13 @@ import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 
 const require = createRequire(new URL("../../.lint/package.json", import.meta.url));
-export const { load: parseWorkflow, dump: stringifyWorkflow } = require("js-yaml");
+const { load, dump } = require("js-yaml");
+export const parseWorkflow = load;
+
+export function stringifyWorkflow(workflow, options) {
+  // Sorting can put a shared value's alias before its anchor in js-yaml 5.
+  return dump(workflow, { ...options, noRefs: true });
+}
 
 export async function readWorkflow(name) {
   return parseWorkflow(await readFile(new URL("../../.github/workflows/" + name, import.meta.url), "utf8"));
@@ -40,4 +46,10 @@ export function runStep(job, command) {
 export function jobScripts(job) {
   return (job.steps ?? []).flatMap((step) => [step.run, step.with?.script])
     .filter((script) => typeof script === "string").join("\n");
+}
+
+export const sharedRegressionsCommand = "bash scripts/test-shared-regressions.sh";
+
+export async function readSharedRegressions() {
+  return readFile(new URL("../../scripts/test-shared-regressions.sh", import.meta.url), "utf8");
 }

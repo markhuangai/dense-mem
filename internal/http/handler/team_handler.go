@@ -5,7 +5,7 @@ import (
 	"strconv"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	dto "github.com/markhuangai/dense-mem/internal/http/dto"
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
@@ -38,7 +38,7 @@ func NewTeamHandler(svc TeamServiceInterface) *TeamHandler {
 
 // Get handles GET /ui/api/team.
 // Returns 200 with the team data.
-func (h *TeamHandler) Get(c echo.Context) error {
+func (h *TeamHandler) Get(c *echo.Context) error {
 	ctx := c.Request().Context()
 
 	teamIDStr := authenticatedTeamID(c)
@@ -69,7 +69,7 @@ func (h *TeamHandler) Get(c echo.Context) error {
 
 // Patch handles PATCH /ui/api/team.
 // Returns 200 with the updated team data.
-func (h *TeamHandler) Patch(c echo.Context) error {
+func (h *TeamHandler) Patch(c *echo.Context) error {
 	ctx := c.Request().Context()
 	principal := middleware.GetPrincipal(ctx)
 
@@ -124,7 +124,7 @@ func (h *TeamHandler) Patch(c echo.Context) error {
 
 // Delete handles DELETE /ui/api/team.
 // Returns 200 with { "status": "deleted" }.
-func (h *TeamHandler) Delete(c echo.Context) error {
+func (h *TeamHandler) Delete(c *echo.Context) error {
 	ctx := c.Request().Context()
 	principal := middleware.GetPrincipal(ctx)
 
@@ -156,7 +156,7 @@ func (h *TeamHandler) Delete(c echo.Context) error {
 	return response.SuccessOK(c, map[string]string{"status": "deleted"})
 }
 
-func authenticatedTeamID(c echo.Context) string {
+func authenticatedTeamID(c *echo.Context) string {
 	if principal := middleware.GetPrincipal(c.Request().Context()); principal != nil && principal.GetTeamID() != uuid.Nil {
 		return principal.GetTeamID().String()
 	}
@@ -178,7 +178,7 @@ func toTeamResponse(team *domain.Team) dto.TeamResponse {
 
 // parsePaginationParams extracts limit and offset from query params.
 // Defaults: limit=20, offset=0. Max limit=100.
-func parsePaginationParams(c echo.Context) (int, int) {
+func parsePaginationParams(c *echo.Context) (int, int) {
 	limit := 20
 	offset := 0
 

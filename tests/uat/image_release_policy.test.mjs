@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import policy from "../../.github/scripts/image-release-policy.cjs";
-import { actionStep, actionSteps, jobScripts, parseWorkflow, readWorkflow, runStep, stringifyWorkflow, workflowJob } from "./workflow_helpers.mjs";
+import { actionStep, actionSteps, jobScripts, parseWorkflow, readSharedRegressions, readWorkflow, runStep, sharedRegressionsCommand, stringifyWorkflow, workflowJob } from "./workflow_helpers.mjs";
 
 const {
   compareContainsMain,
@@ -166,7 +166,7 @@ function assertPythonMatrix(job, supportedVersions) {
   assert.ok(supportedVersions.includes(String(minimum[0].python)));
 }
 
-function assertSharedCI(shared, supportedVersions) {
+function assertSharedCI(shared, supportedVersions, regressions, local) {
   assert.deepEqual(new Set(Object.keys(shared.jobs)), new Set(["npm-audit", "postgres-migrations", "quality", "go-tests", "coverage", "coverage-merge", "python", "result"]));
   assert.equal(Number(shared.env.COVERAGE_THRESHOLD), 90);
   for (const job of Object.values(shared.jobs)) {
@@ -183,12 +183,14 @@ function assertSharedCI(shared, supportedVersions) {
   const quality = shared.jobs.quality;
   for (const command of [
     "npm ci --prefix .lint", "npm ci --prefix packages/mcp-proxy", "npm run --prefix .lint lint:lines",
-    "node scripts/check-architecture.mjs", "npm run test:coverage --prefix packages/mcp-proxy",
-    "node --test tests/uat/image_release_policy.test.mjs", "node --test tests/uat/prerelease_version.test.mjs",
-    "node --test tests/uat/go_vulnerability_scan_policy.test.mjs", "node --test tests/uat/ai_pr_review_policy.test.mjs",
-    "node --test tests/uat/npm_vulnerability_scan_policy.test.mjs",
-    "bash scripts/test-evaluation.sh",
+    "npm run test:coverage --prefix packages/mcp-proxy", sharedRegressionsCommand,
+    "bash scripts/test-evaluation.sh", "node --test tests/eval/scripts/seed_publication_registry.test.mjs",
   ]) runStep(quality, command);
+  assert.ok(local.split("\n").includes(sharedRegressionsCommand));
+  for (const suite of ["coverage_policy", "image_release_policy", "prerelease_version", "go_vulnerability_scan_policy",
+    "ai_pr_review_policy", "npm_vulnerability_scan_policy", "decision_providers/deployment", "ontology_semantic_diagnostics"]) {
+    assert.ok(regressions.includes("tests/uat/" + suite + ".test.mjs"), suite);
+  }
   for (const command of ["go test -timeout=", "scripts/static-analysis.sh", "scripts/go-vulnerability-scan.sh"]) {
     runStep(shared.jobs["go-tests"], command);
   }
@@ -222,8 +224,9 @@ test("low-trust preview builds do not export an Actions cache", async () => {
 });
 
 test("shared CI partitions slow gates independently of YAML layout and setup versions", async () => {
-  const [shared, pullRequest, push] = await Promise.all([
+  const [shared, pullRequest, push, regressions, local] = await Promise.all([
     readWorkflow("ci-shared.yml"), readWorkflow("ci-pr.yml"), readWorkflow("ci-push.yml"),
+    readSharedRegressions(), readFile(new URL("../../scripts/ci-check.sh", import.meta.url), "utf8"),
   ]);
   const { stdout } = await execFileAsync("python3", ["-c",
     "import json,sys,tomllib; print(json.dumps(tomllib.load(open(sys.argv[1], 'rb'))['project']['classifiers']))",
@@ -231,7 +234,7 @@ test("shared CI partitions slow gates independently of YAML layout and setup ver
   ]);
   const supported = JSON.parse(stdout).filter((value) => /^Programming Language :: Python :: \d+\.\d+$/.test(value))
     .map((value) => value.split(" :: ").at(-1));
-  assertSharedCI(shared, supported);
+  assertSharedCI(shared, supported, regressions, local);
   const upgraded = structuredClone(shared);
   for (const job of Object.values(upgraded.jobs)) {
     for (const step of job.steps ?? []) {
@@ -241,17 +244,17 @@ test("shared CI partitions slow gates independently of YAML layout and setup ver
       if (step.with?.["node-version"]) step.with["node-version"] = "26";
     }
   }
-  assertSharedCI(parseWorkflow(stringifyWorkflow(upgraded, { indent: 4, sortKeys: true, forceQuotes: true })), supported);
+  assertSharedCI(parseWorkflow(stringifyWorkflow(upgraded, { indent: 4, sortKeys: true, forceQuotes: true })), supported, regressions, local);
   for (const mutate of [
     (w) => { delete w.jobs["go-tests"]; },
-    (w) => { w.jobs.quality.steps = w.jobs.quality.steps.filter((step) => !step.run?.includes("node scripts/check-architecture.mjs")); },
+    (w) => { w.jobs.quality.steps = w.jobs.quality.steps.filter((step) => !step.run?.includes(sharedRegressionsCommand)); },
     (w) => { w.jobs.python.strategy.matrix.python.pop(); },
     (w) => { w.jobs.python.strategy.matrix.python.push("9.99"); },
     (w) => { w.jobs.python.strategy.matrix.include = []; },
   ]) {
     const invalid = structuredClone(shared);
     mutate(invalid);
-    assert.throws(() => assertSharedCI(invalid, supported));
+    assert.throws(() => assertSharedCI(invalid, supported, regressions, local));
   }
   const future = structuredClone(shared.jobs.python);
   future.strategy.matrix.python.push("3.15");

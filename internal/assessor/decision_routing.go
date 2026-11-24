@@ -64,9 +64,9 @@ func SemanticAssessmentPromptForGeneration(request SemanticAssessmentRequest) st
 	return prompt + SemanticAssessmentGenerationInstruction(request)
 }
 
-func DecodeSemanticAssessmentGeneration(raw []byte, request SemanticAssessmentRequest, limits SemanticAssessmentLimits) (SemanticAssessmentResponse, error) {
+func DecodeSemanticAssessmentGeneration(raw []byte, request SemanticAssessmentRequest, _ SemanticAssessmentLimits) (SemanticAssessmentResponse, error) {
 	if request.DecisionRouting == nil {
-		return DecodeSemanticAssessmentResponseJSON(raw, limits)
+		return decodeSemanticAssessmentResponse(raw)
 	}
 	if err := jsonstrict.RejectDuplicateFields(raw); err != nil {
 		return SemanticAssessmentResponse{}, err
@@ -99,7 +99,7 @@ func DecodeSemanticAssessmentGeneration(raw []byte, request SemanticAssessmentRe
 	if err != nil {
 		return SemanticAssessmentResponse{}, err
 	}
-	response, err := DecodeSemanticAssessmentResponseJSON(assembled, limits)
+	response, err := decodeSemanticAssessmentResponse(assembled)
 	if err == nil {
 		response.DecisionStages = append([]modelprovider.DecisionStage(nil), request.DecisionRouting.Stages...)
 	}

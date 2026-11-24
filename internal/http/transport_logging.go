@@ -5,15 +5,15 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/labstack/echo/v4"
-	"github.com/labstack/echo/v4/middleware"
+	"github.com/labstack/echo/v5"
+	"github.com/labstack/echo/v5/middleware"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
-func transportRequestAttrs(c echo.Context, values middleware.RequestLoggerValues) []httpcontract.LogAttr {
+func transportRequestAttrs(c *echo.Context, values middleware.RequestLoggerValues) []httpcontract.LogAttr {
 	uri := "/unmatched"
 	if values.RoutePath != "" {
 		uri = values.RoutePath
@@ -59,7 +59,7 @@ func transportRequestAttrs(c echo.Context, values middleware.RequestLoggerValues
 
 // TransportLogContext keeps request values available to completion logging
 // after the client has canceled the request or its deadline has elapsed.
-func TransportLogContext(c echo.Context) context.Context {
+func TransportLogContext(c *echo.Context) context.Context {
 	if c == nil || c.Request() == nil {
 		return context.Background()
 	}
@@ -68,7 +68,7 @@ func TransportLogContext(c echo.Context) context.Context {
 
 // TransportRequestAttrs exposes the bounded completion fields to the private
 // metrics listener, which shares the same root-backed transport contract.
-func TransportRequestAttrs(c echo.Context, values middleware.RequestLoggerValues) []httpcontract.LogAttr {
+func TransportRequestAttrs(c *echo.Context, values middleware.RequestLoggerValues) []httpcontract.LogAttr {
 	return transportRequestAttrs(c, values)
 }
 
@@ -80,7 +80,7 @@ func requestTransportStatus(values middleware.RequestLoggerValues) string {
 	return status
 }
 
-func requestDeliveryStage(c echo.Context, values middleware.RequestLoggerValues, observer *DeliveryObservation) string {
+func requestDeliveryStage(c *echo.Context, values middleware.RequestLoggerValues, observer *DeliveryObservation) string {
 	if observer != nil {
 		ctx := context.Background()
 		if c != nil && c.Request() != nil {
@@ -96,11 +96,14 @@ func requestDeliveryStage(c echo.Context, values middleware.RequestLoggerValues,
 	if errors.Is(values.Error, context.Canceled) || errors.Is(values.Error, context.DeadlineExceeded) {
 		return "disconnect_observed"
 	}
-	if values.Error != nil && c != nil && c.Response() != nil && c.Response().Committed {
-		return "write_error_observed"
-	}
-	if c != nil && c.Response() != nil && c.Response().Committed {
-		return "write_observed"
+	if c != nil {
+		response, _ := echo.UnwrapResponse(c.Response())
+		if response != nil && response.Committed {
+			if values.Error != nil {
+				return "write_error_observed"
+			}
+			return "write_observed"
+		}
 	}
 	return "prepared"
 }

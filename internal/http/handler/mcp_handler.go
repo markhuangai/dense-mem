@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/mcp"
@@ -50,7 +50,7 @@ func NewMCPHandlerWithLifecycleAndRuntimeConfig(reg registry.Registry, logger mc
 // HandlePost serves POST /mcp. It accepts a single JSON-RPC payload and returns
 // either 202 for notifications, application/json, or a one-shot text/event-stream
 // response, depending on the payload and Accept.
-func (h *MCPHandler) HandlePost(c echo.Context) error {
+func (h *MCPHandler) HandlePost(c *echo.Context) error {
 	ctx := c.Request().Context()
 	teamID, ok := middleware.GetResolvedTeamID(ctx)
 	if !ok {
@@ -64,7 +64,7 @@ func (h *MCPHandler) HandlePost(c echo.Context) error {
 	return h.handleSDKPost(c, teamID, principal)
 }
 
-func (h *MCPHandler) handleSDKPost(c echo.Context, teamID uuid.UUID, principal *middleware.Principal) error {
+func (h *MCPHandler) handleSDKPost(c *echo.Context, teamID uuid.UUID, principal *middleware.Principal) error {
 	request := c.Request()
 	requestContext := request.Context()
 	request = request.WithContext(rememberapp.WithCallerResponseRequestContext(requestContext, requestContext))
@@ -175,7 +175,7 @@ func acceptsSDKResponse(value string) bool {
 	return false
 }
 
-func writeSDKProtocolError(c echo.Context, status int, id json.RawMessage, message string) error {
+func writeSDKProtocolError(c *echo.Context, status int, id json.RawMessage, message string) error {
 	payload := map[string]any{
 		"jsonrpc": "2.0",
 		"id":      nil,
@@ -194,7 +194,7 @@ func writeSDKProtocolError(c echo.Context, status int, id json.RawMessage, messa
 }
 
 // HandleGet serves GET /mcp as an SSE stream for Streamable HTTP clients.
-func (h *MCPHandler) HandleGet(c echo.Context) error {
+func (h *MCPHandler) HandleGet(c *echo.Context) error {
 	if !acceptsEventStream(c.Request().Header.Get("Accept")) {
 		return c.NoContent(http.StatusMethodNotAllowed)
 	}

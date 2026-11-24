@@ -5,13 +5,12 @@ import { execFile, spawn, spawnSync } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
-import { buildBootableSeed, extractSeed, verifySeedFiles, restoreSeed, dumpSeed, sealSeed, verifySeedCredentialExclusions, seedReference, resolveSeedImage, verifySeedPair, postgresImage } from "../../../.github/scripts/evaluation-seeds.mjs";
-import { requireRunner, configuration, resolveAnswerWorkers, resolveImportWorkers, requireEvaluationImportSupport, registryMatrix, evaluationDatasets, sha256, aggregateConditions, ownedResource } from "../../../.github/scripts/evaluation-policy.mjs";
+import { buildBootableSeed, extractSeed, verifySeedFiles, restoreSeed, dumpSeed, sealSeed, verifySeedCredentialExclusions, seedReference, resolveSeedImage, seedVerificationReason, postgresImage } from "../../../.github/scripts/evaluation-seeds.mjs";
+import { requireRunner, configuration, resolveAnswerWorkers, resolveImportWorkers, requireEvaluationImportSupport, registryMatrix, evaluationDatasets, sha256, aggregate, ownedResource } from "../../../.github/scripts/evaluation-policy.mjs";
 
 const label = "io.dense-mem.eval.run";
 const secret = () => randomBytes(32).toString("base64url");
 const read = (file) => JSON.parse(fs.readFileSync(file, "utf8"));
-export const ontologyPreparationSeconds = 48 * 60 * 60;
 export function saveRuntimeJSON(file, value) {
   const temporary = `${file}.${randomBytes(8).toString("hex")}.tmp`;
   try {
@@ -78,13 +77,12 @@ export function mask(value, env = process.env) {
   if (env.GITHUB_ACTIONS === "true" && !env.EVAL_LOCAL_SEED_ID) process.stdout.write(`::add-mask::${value}\n`);
 }
 
-export function location(env) {
+export function location(env, scoring = false) {
   const dataset = env.EVAL_DATASET;
   if (!/^[a-z0-9_]+$/.test(dataset || "")) throw new Error("Invalid dataset job identity");
   const seedBuildID = env.EVAL_LOCAL_SEED_ID;
   if (seedBuildID && (env.GITHUB_ACTIONS === "true" || !/^local-[a-f0-9]{32}$/.test(seedBuildID) || !path.isAbsolute(env.EVAL_LOCAL_SEED_ROOT || ""))) throw new Error("Invalid local seed runtime identity");
-  const condition = env.EVAL_CONDITION || "";
-  if (condition && !["off", "on"].includes(condition)) throw new Error("Invalid evaluation condition");
+  const condition = scoring ? "off" : "";
   const runID = `${seedBuildID || env.GITHUB_RUN_ID}-${dataset}${condition ? "-" + condition : ""}`;
   const directory = path.join(seedBuildID ? env.EVAL_LOCAL_SEED_ROOT : env.RUNNER_TEMP, `dense-mem-eval-${runID}`);
   return { dataset, condition, runID, directory, seedBuildID, stateFile: path.join(directory, "runtime.json"), manifestFile: path.join(directory, "manifest.json"),
@@ -108,7 +106,7 @@ export function serverEnvironment(configured, environment) {
     POSTGRES_USER: "densemem", POSTGRES_DB: "densemem", POSTGRES_PASSWORD: environment.EVAL_DATABASE_PASSWORD, POSTGRES_HOST: "postgres", POSTGRES_PORT: "5432", POSTGRES_SSLMODE: "disable", POSTGRES_MAX_OPEN_CONNS: String(databaseCapacity(configured.importWorkers).application), POSTGRES_MAX_IDLE_CONNS: "10", ...(configured.importWorkers ? { POSTGRES_ADVISORY_LOCK_CONCURRENCY: String(configured.importWorkers) } : {}),
     RATE_LIMIT_PER_MINUTE: "200000",
     AI_API_URL: configured.embedding, AI_API_KEY: environment.DENSE_MEM_EVAL_EMBED_API_KEY, AI_API_EMBEDDING_MODEL: "text-embedding-3-small", AI_API_EMBEDDING_DIMENSIONS: "1536", AI_API_EMBEDDING_MAX_CONCURRENCY: "2", AI_API_EMBEDDING_MAX_BATCH_ITEMS: "100",
-    AI_VERIFIER_API_URL: configured.verifier, AI_VERIFIER_API_KEY: environment.DENSE_MEM_EVAL_API_KEY, AI_VERIFIER_MODEL: configured.model, AI_REMEMBER_MODEL: configured.model, AI_VERIFIER_DISABLE_TEMPERATURE: "true", AI_VERIFIER_MAX_CONCURRENCY: String(configured.ontologyWorkers || Math.max(4, configured.importWorkers || 0)), AI_VERIFIER_MAX_INPUT_TOKENS: String(configured.context - 8192), AI_VERIFIER_MAX_OUTPUT_TOKENS: "8192", AI_VERIFIER_MAX_CANDIDATE_CONTEXT_TOKENS: String(Math.min(50000, Math.floor((configured.context - 8192) / 2))), AI_VERIFIER_TIMEOUT_SECONDS: "300",
+    AI_VERIFIER_API_URL: configured.verifier, AI_VERIFIER_API_KEY: environment.DENSE_MEM_EVAL_API_KEY, AI_VERIFIER_MODEL: configured.model, AI_REMEMBER_MODEL: configured.model, AI_VERIFIER_DISABLE_TEMPERATURE: "true", AI_VERIFIER_MAX_CONCURRENCY: String(Math.max(4, configured.importWorkers || 0)), AI_VERIFIER_MAX_INPUT_TOKENS: String(configured.context - 8192), AI_VERIFIER_MAX_OUTPUT_TOKENS: "8192", AI_VERIFIER_MAX_CANDIDATE_CONTEXT_TOKENS: String(Math.min(50000, Math.floor((configured.context - 8192) / 2))), AI_VERIFIER_TIMEOUT_SECONDS: "300",
     REDIS_ADDR: "", DISTRIBUTED_COORDINATION_REQUIRED: "false", TELEMETRY_ENABLED: "false", OTLP_ENABLED: "false",
   };
 }
@@ -151,29 +149,27 @@ function port(container, internal) {
 }
 
 export async function setup(env, options = {}) {
-  const paths = location(env);
-  const fixture = env.EVAL_MODE === "fixtures";
   const operation = options.operation || "run";
+  const paths = location(env, operation === "run");
+  const fixture = env.EVAL_MODE === "fixtures";
   const preparing = operation === "prepare" || operation === "bootstrap";
-  const baking = operation === "bake-ontology";
   const { signal, intakeProof = false, skipAISecurityReview = false, resumable = false } = options;
   const seedImage = options.seedImage ?? env.EVAL_SEED_IMAGE ?? "";
   const bootable = !preparing && !intakeProof;
-  const seedOptions = { intakeProof: intakeProof && !preparing, bootable, allowLocal: fixture || operation === "verify-seed", condition: paths.condition || "off" };
+  const seedOptions = { intakeProof: intakeProof && !preparing, bootable, allowLocal: fixture || operation === "verify-seed" };
   signal?.throwIfAborted();
-  if (paths.seedBuildID && (env.EVAL_MODE !== "live" || (!preparing && !baking && operation !== "verify-seed"))) throw new Error("Local runtime permits only public seed preparation and restore verification");
+  if (paths.seedBuildID && (env.EVAL_MODE !== "live" || (!preparing && operation !== "verify-seed"))) throw new Error("Local runtime permits only public seed preparation and restore verification");
   if (!paths.seedBuildID) {
     requireRunner(env);
-    if (operation !== "run" && !(fixture && ["prepare", "bake-ontology"].includes(operation))) throw new Error("Hosted runtime permits only scoring and synthetic fixture preparation");
+    if (operation !== "run" && !(fixture && operation === "prepare")) throw new Error("Hosted runtime permits only scoring and synthetic fixture preparation");
   }
   if (intakeProof && (!paths.seedBuildID || !options.dataDirectory || (operation !== "prepare" && operation !== "verify-seed"))) throw new Error("Intake proof requires a local seed runtime and frozen public inputs");
   if (skipAISecurityReview && (!paths.seedBuildID || operation !== "prepare" || !seedImage)) throw new Error("AI security review can only be skipped during local preparation from a public bootstrap");
-  if (resumable && (!paths.seedBuildID || (!baking && operation !== "prepare") || intakeProof || !seedImage)) throw new Error("Only local public seed preparation supports checkpoints");
+  if (resumable && (!paths.seedBuildID || operation !== "prepare" || intakeProof || !seedImage)) throw new Error("Only local public seed preparation supports checkpoints");
   if (bootable && !seedImage) throw new Error("Evaluation requires a bootable PostgreSQL seed image");
   const checkpoint = resumable && fs.existsSync(paths.checkpointFile) ? read(paths.checkpointFile) : null;
   const configured = fixture ? { model: "fixture", context: 300_000, verifier: "", embedding: "" } : configuration(env, { allowHTTPVerifier: Boolean(paths.seedBuildID) });
   configured.importWorkers = preparing ? resolveImportWorkers(env.DENSE_MEM_EVAL_IMPORT_WORKERS) : 0;
-  if (baking) configured.ontologyWorkers = 8;
   const imagePattern = intakeProof ? /^sha256:[a-f0-9]{64}$/ : /^ghcr\.io\/markhuangai\/dense-mem(?::[A-Za-z0-9._-]+)?@sha256:[a-f0-9]{64}$/;
   if (!/^[a-f0-9]{40}$/.test(env.EVAL_SOURCE_REVISION || "") || !imagePattern.test(env.EVAL_IMAGE || "")) throw new Error("Immutable runner source and image are required");
   if (!intakeProof && !paths.seedBuildID) docker(["pull", "--quiet", env.EVAL_IMAGE]);
@@ -191,13 +187,10 @@ export async function setup(env, options = {}) {
   fs.mkdirSync(outputDir, { mode: 0o700, recursive: true });
   fs.mkdirSync(seedDir, { mode: 0o700, recursive: true });
   const deadline = new Date(Number(env.EVAL_MODEL_DEADLINE_EPOCH) * 1000);
-  const limit = baking && paths.seedBuildID ? ontologyPreparationSeconds : 330 * 60;
-  if (!Number.isFinite(deadline.getTime()) || deadline <= new Date() || deadline > Date.now() + limit * 1000) throw new Error("Runner model deadline is invalid");
+  if (!Number.isFinite(deadline.getTime()) || deadline <= new Date() || deadline > Date.now() + 330 * 60_000) throw new Error("Runner model deadline is invalid");
   const manifest = { version: 1, run_id: paths.runID, workflow_run_id: paths.seedBuildID ? "" : env.GITHUB_RUN_ID, seed_build_id: paths.seedBuildID, source_revision: env.EVAL_SOURCE_REVISION, image: env.EVAL_IMAGE, registry_sha256: sha256(registryBytes), dataset: paths.dataset, mode: env.EVAL_MODE, operation, model: configured.model, embedding_model: "text-embedding-3-small", embedding_dimensions: 1536, context_window_tokens: configured.context, import_workers: configured.importWorkers, base_release: env.EVAL_BASE_RELEASE || (fixture ? "v0.0.0" : ""), seed_image: seedImage, seed_dir: seedDir, model_deadline: deadline.toISOString(), data_dir: dataDir, output_dir: outputDir, timings_ms: {}, intake_proof: intakeProof, skip_ai_security_review: skipAISecurityReview };
   if (checkpoint) manifest.resume_scope = checkpoint.scope;
   if (paths.condition) manifest.condition = paths.condition;
-  if (paths.condition === "on") manifest.parent_seed_image = env.EVAL_PARENT_SEED_IMAGE;
-  if (baking) manifest.bake_state_dir = paths.directory;
   if (operation === "run") manifest.answer_workers = resolveAnswerWorkers(env.EVAL_ANSWER_WORKERS);
   save(paths.manifestFile, manifest);
   const prefix = `densemem-eval-${paths.runID}`;
@@ -217,12 +210,21 @@ export async function setup(env, options = {}) {
     manifest.timings_ms.seed_pull = Date.now() - started;
   }
   if (manifest.seed_image || options.seedDirectory) {
-    seed = await verifySeedFiles(inputSeedDir, preparing ? "bootstrap" : paths.dataset, manifest.registry_sha256, preparing ? 0 : seedOptions.intakeProof ? 20 : dataset.corpus.rows, seedOptions);
+    const expectedRows = preparing ? 0 : seedOptions.intakeProof ? 20 : dataset.corpus.rows;
+    const diagnostic = { run_id: paths.runID, dataset: paths.dataset, seed_image: seedImage,
+      expected_registry_sha256: manifest.registry_sha256, expected_rows: expectedRows };
+    const started = Date.now();
+    try {
+      seed = await verifySeedFiles(inputSeedDir, preparing ? "bootstrap" : paths.dataset, manifest.registry_sha256, expectedRows, { ...seedOptions, diagnostic });
+    } catch (error) {
+      const reason = seedVerificationReason(error);
+      process.stderr.write(`${JSON.stringify({ level: "ERROR", event: "eval_seed_restore_failed", ...diagnostic, reason, elapsed_ms: Date.now() - started })}\n`);
+      throw error;
+    }
   }
   if ((!preparing || intakeProof || skipAISecurityReview) && !seed) throw new Error("Runner evaluation requires a verified seed");
   const checkpointIdentity = { version: 1, run_id: paths.runID, volume: state.volume, source_revision: manifest.source_revision, image: manifest.image, registry_sha256: manifest.registry_sha256,
     bootstrap_image: seedImage, scope: seed?.scope, skip_ai_security_review: skipAISecurityReview };
-  if (baking) Object.assign(checkpointIdentity, { operation, model_deadline: manifest.model_deadline });
   if (checkpoint && !isDeepStrictEqual(checkpoint, checkpointIdentity)) throw new Error("Seed checkpoint identity differs from the pinned build and bootstrap");
   if (intakeProof) manifest.base_release = seed.base_release;
   if (skipAISecurityReview) save(path.join(paths.directory, "seed-admission-scope.json"), seed.scope);
@@ -263,14 +265,6 @@ export async function setup(env, options = {}) {
   }
   for (const value of [serverVerifier, serverEmbedding, configured.verifier, configured.embedding]) mask(value, env);
   const serverFile = path.join(paths.directory, "server.env");
-  if (baking) {
-    const cooldown = path.join(paths.directory, "cooldown");
-    // The enclosing host directory is private. The container's runtime user owns writes to this mount.
-    fs.mkdirSync(cooldown, { recursive: true, mode: 0o777 });
-    fs.chmodSync(cooldown, 0o777);
-    admissionMount.push("--mount", `type=bind,source=${cooldown},target=/tmp/ontology-preparation`);
-    serverEnv.ONTOLOGY_PREPARATION_COOLDOWN_FILE = "/tmp/ontology-preparation/until";
-  }
   fs.writeFileSync(serverFile, Object.entries(serverEnv).map(([key, value]) => `${key}=${value}`).join("\n") + "\n", { mode: 0o600 });
   Object.assign(state.environment, { DENSE_MEM_EVAL_VERIFIER_URL: configured.verifier, DENSE_MEM_EVAL_EMBED_URL: configured.embedding, AI_VERIFIER_API_URL: serverVerifier, AI_API_URL: serverEmbedding });
   save(paths.stateFile, state);
@@ -304,8 +298,8 @@ export async function setup(env, options = {}) {
   return { paths, state, manifest, seedDir };
 }
 
-export async function cleanup(env, { retainVolume = false } = {}) {
-  const paths = location(env);
+export async function cleanup(env, { retainVolume = false, scoring = false } = {}) {
+  const paths = location(env, scoring);
   if (retainVolume && (!paths.seedBuildID || !fs.existsSync(paths.checkpointFile))) throw new Error("Retaining a volume requires its local seed checkpoint");
   if (!fs.existsSync(paths.stateFile)) { process.stdout.write("No evaluation runtime was allocated.\n"); return; }
   const state = read(paths.stateFile);
@@ -346,8 +340,8 @@ export async function cleanup(env, { retainVolume = false } = {}) {
   process.stdout.write(`Evaluation runtime ${paths.runID} removed; ${storage}.\n`);
 }
 
-export async function diagnostics(env) {
-  const paths = location(env);
+export async function diagnostics(env, { scoring = false } = {}) {
+  const paths = location(env, scoring);
   if (!fs.existsSync(paths.stateFile) || fs.existsSync(path.join(paths.directory, "public/scores.json"))) return;
   const state = read(paths.stateFile);
   if (state.runID !== paths.runID) throw new Error("Startup log ownership mismatch");
@@ -377,7 +371,7 @@ export async function main(mode, env = process.env) {
   if (mode === "matrix") {
     const workers = resolveAnswerWorkers(env.EVAL_ANSWER_WORKERS);
     const datasets = evaluationDatasets(read(registryPath), selection);
-    const matrix = { include: datasets.flatMap(({ id }) => (live ? ["off", "on"] : [""]).map((condition) => ({ dataset: id, condition }))) };
+    const matrix = { include: datasets.map(({ id }) => ({ dataset: id })) };
     const maxParallel = Math.floor(20 / workers);
     fs.appendFileSync(env.GITHUB_OUTPUT, `matrix=${JSON.stringify(matrix)}\nanswer_workers=${workers}\nmax_parallel=${maxParallel}\n`);
     if (env.GITHUB_STEP_SUMMARY) fs.appendFileSync(env.GITHUB_STEP_SUMMARY, `Answer workers per job: ${workers}. Concurrent jobs: up to ${maxParallel}.\n`);
@@ -389,36 +383,47 @@ export async function main(mode, env = process.env) {
     const registryHash = sha256(bytes);
     const images = {};
     for (const { id, corpus } of evaluationDatasets(registry, selection)) {
-      const pins = {};
-      images[id] = pins;
-      let parent;
-      for (const condition of ["off", "on"]) {
-        const selected = condition === "off" ? env.EVAL_SEED_VERSION : env.EVAL_ONTOLOGY_SEED_VERSION;
-        const reference = seedReference(id, selected || "latest", condition);
-        const name = `seed-pin-${env.GITHUB_RUN_ID}-${id}-${condition}`;
-        const directory = path.join(env.RUNNER_TEMP, name);
-        try {
-          const image = await resolveSeedImage(reference, env);
-          if (!image) throw new Error("published seed is unavailable");
-          const bootable = { bootable: true, condition };
-          extractSeed(docker, image, directory, name, name, bootable);
-          const metadata = await verifySeedFiles(directory, id, registryHash, corpus.rows, bootable);
-          if (condition === "on") verifySeedPair(parent || {}, metadata, pins.off);
-          else parent = metadata;
-          pins[condition] = image;
-        } catch {
-          pins[condition + "_failure"] = `Unavailable or incompatible ${reference}`;
-          process.stdout.write(`${pins[condition + "_failure"]}\n`);
-        } finally {
-          fs.rmSync(directory, { recursive: true, force: true });
+      const reference = seedReference(id, env.EVAL_SEED_VERSION || "latest");
+      const name = `seed-pin-${env.GITHUB_RUN_ID}-${id}-off`;
+      const directory = path.join(env.RUNNER_TEMP, name);
+      const details = { run_id: env.GITHUB_RUN_ID, dataset: id, condition: "off", reference,
+        source_revision: env.EVAL_SOURCE_REVISION, image: env.EVAL_IMAGE, expected_registry_sha256: registryHash, expected_rows: corpus.rows };
+      const started = Date.now();
+      let failure = "registry_lookup_failed";
+      try {
+        const image = await resolveSeedImage(reference, env);
+        if (!image) {
+          failure = "published_seed_missing";
+          throw new Error(failure);
         }
+        details.seed_image = image;
+        failure = "seed_extraction_failed";
+        const bootable = { bootable: true };
+        extractSeed(docker, image, directory, name, name, bootable);
+        failure = "seed_verification_failed";
+        await verifySeedFiles(directory, id, registryHash, corpus.rows, { ...bootable, diagnostic: details });
+        images[id] = { image };
+        process.stdout.write(`${JSON.stringify({ level: "INFO", event: "eval_seed_pinned", ...details, elapsed_ms: Date.now() - started })}\n`);
+      } catch (error) {
+        if (failure === "seed_verification_failed") failure = seedVerificationReason(error);
+        images[id] = { failure };
+        process.stderr.write(`${JSON.stringify({ level: "ERROR", event: "eval_seed_pin_failed", ...details, reason: failure, elapsed_ms: Date.now() - started })}\n`);
+      } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
       }
     }
     fs.appendFileSync(env.GITHUB_OUTPUT, `images=${JSON.stringify(images)}\n`);
     return;
   }
-  if (mode === "cleanup") return cleanup(env);
-  if (mode === "diagnostics") return diagnostics(env);
+  if (mode === "cleanup") {
+    try { await cleanup(env, { scoring: true }); }
+    finally { if (!live) await cleanup(env); }
+    return;
+  }
+  if (mode === "diagnostics") {
+    const scoring = live || fs.existsSync(location(env, true).stateFile);
+    return diagnostics(env, { scoring });
+  }
   if (mode === "aggregate") {
     const registry = read(registryPath);
     const datasets = evaluationDatasets(registry, selection);
@@ -426,16 +431,23 @@ export async function main(mode, env = process.env) {
     const reports = [];
     for (const file of fs.existsSync(root) ? fs.readdirSync(root, { recursive: true }) : []) {
       if (path.basename(file) !== "scores.json") continue;
+      let report;
       try {
-        const report = read(path.join(root, file));
-        const receipt = path.join(root, path.dirname(file), "cleanup.json");
-        const clean = fs.existsSync(receipt) && read(receipt);
-        reports.push({ ...report, owned_cleanup: clean?.complete === true && clean.run_id === report.identity?.run_id });
+        report = read(path.join(root, file));
       } catch {
-        process.stdout.write("One evaluation artifact could not be read. Its condition remains incomplete.\n");
+        process.stderr.write("One numeric evaluation report could not be read. Its dataset remains incomplete.\n");
+        continue;
       }
+      let clean;
+      try {
+        const receipt = path.join(root, path.dirname(file), "cleanup.json");
+        if (fs.existsSync(receipt)) clean = read(receipt);
+      } catch {
+        process.stderr.write("One evaluation cleanup receipt could not be read. Its scores remain available.\n");
+      }
+      reports.push({ ...report, owned_cleanup: clean?.complete === true && clean.run_id === report?.identity?.run_id });
     }
-    const report = { ...aggregateConditions({ ...registry, datasets }, reports, {
+    const report = { ...aggregate({ ...registry, datasets }, reports, {
       runID: env.GITHUB_RUN_ID, source: env.EVAL_SOURCE_REVISION, image: env.EVAL_IMAGE,
       registryHash: sha256(fs.readFileSync(registryPath)), answerWorkers: resolveAnswerWorkers(env.EVAL_ANSWER_WORKERS),
       pins: live ? JSON.parse(env.EVAL_PINNED_SEEDS) : undefined,
@@ -450,17 +462,9 @@ export async function main(mode, env = process.env) {
     const runtime = await setup(env);
     return runBinary("run", runtime, env);
   }
-  const off = await prepareFixtureSeed(env);
-  const on = await prepareOntologyExport(env, off.seedImage, path.join(location(env).directory, "ontology-export"), { apiKey: off.apiKey });
-  for (const [condition, seedImage] of [["off", off.seedImage], ["on", on.bootableImage]]) {
-    const arm = { ...env, EVAL_CONDITION: condition, EVAL_PARENT_SEED_IMAGE: off.seedImage };
-    try {
-      const runtime = await setup(arm, { seedImage, apiKey: off.apiKey });
-      await runBinary("run", runtime, arm);
-    } finally {
-      await cleanup(arm);
-    }
-  }
+  const { seedImage, apiKey } = await prepareFixtureSeed(env);
+  const runtime = await setup(env, { seedImage, apiKey });
+  return runBinary("run", runtime, env);
 }
 
 export async function prepareFixtureSeed(env) {
@@ -476,22 +480,6 @@ export async function prepareFixtureSeed(env) {
   return { seedImage, apiKey };
 }
 
-export async function prepareOntologyExport(env, parent, directory, { apiKey, resumable, signal } = {}) {
-  const runtime = await setup(env, { operation: "bake-ontology", seedImage: parent, apiKey, resumable, signal });
-  await runBinary("bake-ontology", runtime, env, signal);
-  const metadata = read(path.join(runtime.paths.directory, "ontology-prepared.json"));
-  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
-  save(path.join(directory, "seed.json"), metadata);
-  fs.copyFileSync(path.join(runtime.seedDir, "mapping.json"), path.join(directory, "mapping.json"));
-  fs.copyFileSync(path.join(runtime.seedDir, "NOTICE.md"), path.join(directory, "NOTICE.md"));
-  const postgres = `densemem-eval-${runtime.paths.runID}-postgres`;
-  dumpSeed(docker, postgres, directory);
-  const seed = await sealSeed(directory);
-  const bootableImage = await buildBootableSeed(docker, postgres, directory, seedSecrets(runtime.state));
-  if (!resumable) await cleanup(env);
-  return { runtime, seed, bootableImage };
-}
-
 export async function runBinary(operation, { paths, state }, env = process.env, signal) {
   signal?.throwIfAborted();
   const child = spawn(env.EVAL_RUNNER_BINARY, [operation, paths.manifestFile], { stdio: "inherit", env: privateEnvironment(state, env) });
@@ -500,8 +488,6 @@ export async function runBinary(operation, { paths, state }, env = process.env, 
     if (stopping) return;
     stopping = true;
     child.kill("SIGTERM");
-    // Ontology preparation owns a pause and drain before local runtime cleanup.
-    if (operation === "bake-ontology") return;
     try {
       const name = `densemem-eval-${paths.runID}-server`;
       const deadline = Date.now() + 120_000;
@@ -518,7 +504,17 @@ export async function runBinary(operation, { paths, state }, env = process.env, 
   const cutoff = setTimeout(stop, Math.max(1, Number(env.EVAL_MODEL_DEADLINE_EPOCH) * 1000 - Date.now()));
   try {
     const code = await new Promise((resolve, reject) => { child.once("error", reject); child.once("exit", resolve); });
-    if (code !== 0) throw new Error("Runner binary operation failed; inspect protected logs");
+    if (code !== 0) {
+      const result = path.join(paths.directory, "public", "scores.json");
+      if (operation === "run" && fs.existsSync(result)) {
+        const { identity, capture_failure } = read(result);
+        if (identity?.run_id === paths.runID && capture_failure) {
+          process.stderr.write(`${JSON.stringify({ level: "ERROR", event: "eval_capture_failed", run_id: paths.runID,
+            dataset: paths.dataset, capture_failure })}\n`);
+        }
+      }
+      throw new Error("Runner binary operation failed; inspect protected logs");
+    }
     signal?.throwIfAborted();
   } finally { clearTimeout(cutoff); signal?.removeEventListener("abort", stop); }
 }

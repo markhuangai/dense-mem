@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -48,7 +48,7 @@ func TestProfileAuthorization_SameProfile_Allowed(t *testing.T) {
 	profileID := uuid.New()
 
 	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			// Set standard principal with matching profile
 			ctx := c.Request().Context()
 			ctx = context.WithValue(ctx, principalContextKey{}, &Principal{
@@ -66,7 +66,7 @@ func TestProfileAuthorization_SameProfile_Allowed(t *testing.T) {
 	e.Use(AuthorizeTeam(mockAuthzSvc))
 
 	handlerCalled := false
-	e.GET("/test", func(c echo.Context) error {
+	e.GET("/test", func(c *echo.Context) error {
 		handlerCalled = true
 		return c.String(http.StatusOK, "ok")
 	})
@@ -88,7 +88,7 @@ func TestProfileAuthorization_DifferentProfile_Forbidden(t *testing.T) {
 	targetProfileID := uuid.New()
 
 	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			// Set standard principal with different profile
 			ctx := c.Request().Context()
 			ctx = context.WithValue(ctx, principalContextKey{}, &Principal{
@@ -106,7 +106,7 @@ func TestProfileAuthorization_DifferentProfile_Forbidden(t *testing.T) {
 	e.Use(AuthorizeTeam(mockAuthzSvc))
 
 	handlerCalled := false
-	e.GET("/test", func(c echo.Context) error {
+	e.GET("/test", func(c *echo.Context) error {
 		handlerCalled = true
 		return c.String(http.StatusOK, "ok")
 	})
@@ -130,7 +130,7 @@ func TestProfileAuthorization_NoTargetProfile_PassThrough(t *testing.T) {
 	profileID := uuid.New()
 
 	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			// Set standard principal
 			ctx := c.Request().Context()
 			ctx = context.WithValue(ctx, principalContextKey{}, &Principal{
@@ -147,7 +147,7 @@ func TestProfileAuthorization_NoTargetProfile_PassThrough(t *testing.T) {
 	e.Use(AuthorizeTeam(mockAuthzSvc))
 
 	handlerCalled := false
-	e.GET("/test", func(c echo.Context) error {
+	e.GET("/test", func(c *echo.Context) error {
 		handlerCalled = true
 		return c.String(http.StatusOK, "ok")
 	})
@@ -169,7 +169,7 @@ func TestProfileAuthorization_NilPrincipal_Forbidden(t *testing.T) {
 	targetProfileID := uuid.New()
 
 	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			// Intentionally do NOT set a principal; simulate missing auth.
 			ctx := c.Request().Context()
 			ctx = context.WithValue(ctx, ResolvedTeamIDKey{}, targetProfileID)
@@ -180,7 +180,7 @@ func TestProfileAuthorization_NilPrincipal_Forbidden(t *testing.T) {
 	e.Use(AuthorizeTeam(mockAuthzSvc))
 
 	handlerCalled := false
-	e.GET("/test", func(c echo.Context) error {
+	e.GET("/test", func(c *echo.Context) error {
 		handlerCalled = true
 		return c.String(http.StatusOK, "ok")
 	})
@@ -201,7 +201,7 @@ func TestRequireScopes_MatchingScopes_AllowsFullSet(t *testing.T) {
 	profileID := uuid.New()
 
 	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			ctx := c.Request().Context()
 			ctx = context.WithValue(ctx, principalContextKey{}, &Principal{
 				CredentialID: testUUIDPtr(uuid.New()),
@@ -216,7 +216,7 @@ func TestRequireScopes_MatchingScopes_AllowsFullSet(t *testing.T) {
 	e.Use(RequireScopes("read", "write", "delete"))
 
 	handlerCalled := false
-	e.GET("/test", func(c echo.Context) error {
+	e.GET("/test", func(c *echo.Context) error {
 		handlerCalled = true
 		return c.String(http.StatusOK, "ok")
 	})
@@ -235,7 +235,7 @@ func TestRequireScopes_MatchingScopes_Allowed(t *testing.T) {
 	profileID := uuid.New()
 
 	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			ctx := c.Request().Context()
 			ctx = context.WithValue(ctx, principalContextKey{}, &Principal{
 				CredentialID: testUUIDPtr(uuid.New()),
@@ -250,7 +250,7 @@ func TestRequireScopes_MatchingScopes_Allowed(t *testing.T) {
 	e.Use(RequireScopes("read", "write"))
 
 	handlerCalled := false
-	e.GET("/test", func(c echo.Context) error {
+	e.GET("/test", func(c *echo.Context) error {
 		handlerCalled = true
 		return c.String(http.StatusOK, "ok")
 	})
@@ -269,7 +269,7 @@ func TestRequireScopes_MissingScope_Forbidden(t *testing.T) {
 	profileID := uuid.New()
 
 	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			ctx := c.Request().Context()
 			ctx = context.WithValue(ctx, principalContextKey{}, &Principal{
 				CredentialID: testUUIDPtr(uuid.New()),
@@ -284,7 +284,7 @@ func TestRequireScopes_MissingScope_Forbidden(t *testing.T) {
 	e.Use(RequireScopes("read", "write", "delete"))
 
 	handlerCalled := false
-	e.GET("/test", func(c echo.Context) error {
+	e.GET("/test", func(c *echo.Context) error {
 		handlerCalled = true
 		return c.String(http.StatusOK, "ok")
 	})

@@ -326,6 +326,36 @@ func TestQueuedCapturePropagatesWriteFailure(t *testing.T) {
 	<-ctx.Done()
 	require.ErrorContains(t, capture.finishQueue(context.Background()), "did not drain")
 	require.True(t, capture.incomplete())
+	failure := capture.firstFailure.Load()
+	require.NotNil(t, failure)
+	require.Equal(t, "observation", failure.Kind)
+	require.Equal(t, 1, failure.Sequence)
+	require.Equal(t, "console_write_failed", failure.Reason)
+}
+
+func TestQueuedCaptureRetainsProtectionBudgetFailure(t *testing.T) {
+	var output bytes.Buffer
+	const canary = "capture-credential-canary"
+	capture := captureFixture(&output)
+	capture.Protector = observability.NewCredentialProtector(canary, strings.Repeat("a", 3000)+"b")
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	capture.startQueue(cancel)
+	capture.setPhase("ontology off")
+	require.NoError(t, capture.EmitContext(ctx, "answer_wire_request", map[string]string{
+		"content": strings.Repeat("%61", 3000), "credential": canary,
+	}))
+	require.ErrorContains(t, capture.finishQueue(t.Context()), "did not drain")
+	failure := capture.firstFailure.Load()
+	require.NotNil(t, failure)
+	require.Equal(t, "ontology off", failure.Phase)
+	require.Equal(t, "answer_wire_request", failure.Kind)
+	require.Equal(t, 1, failure.Sequence)
+	require.Equal(t, "matching_work_exceeded", failure.Reason)
+	require.Contains(t, failure.Protection, "matching_work=")
+	require.Contains(t, output.String(), `"msg":"eval_capture_unavailable"`)
+	require.Contains(t, output.String(), `"reason":"matching_work_exceeded"`)
+	require.NotContains(t, output.String(), canary)
 }
 
 func TestQueuedCapturePreservesTerminalExchangesAfterWorkCancellation(t *testing.T) {
@@ -396,5 +426,8 @@ func TestQueuedCaptureBoundsBlockedWriter(t *testing.T) {
 		require.ErrorContains(t, capture.EmitContext(ctx, "observation", "beyond queue capacity"), "queue unavailable")
 		require.ErrorContains(t, capture.finishQueue(ctx), "did not drain")
 		require.True(t, capture.incomplete())
+		failure := capture.firstFailure.Load()
+		require.NotNil(t, failure)
+		require.Equal(t, "enqueue_interrupted", failure.Reason)
 	})
 }

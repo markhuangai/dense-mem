@@ -34,7 +34,7 @@ func (c *Capture) startQueue(cancelWork context.CancelFunc) {
 		defer q.stop()
 		for event := range q.events {
 			started := time.Now()
-			err := c.emit(q.ctx, event.Kind, event.Payload)
+			err := c.emit(q.ctx, event.phase, event.Kind, event.Payload)
 			q.sinkNS.Add(time.Since(started).Nanoseconds())
 			q.bytes.Release(int64(len(event.Payload)))
 			if err == nil && event.Kind == "condition_finished" {
@@ -87,6 +87,7 @@ func (c *Capture) finishQueue(ctx context.Context) error {
 			return nil
 		}
 	case <-ctx.Done():
+		c.recordFailure(CaptureFailure{Phase: c.currentPhase(), Kind: "queue_drain", Reason: "capture_deadline"})
 		c.lost.Store(true)
 		c.queue.stop()
 	}

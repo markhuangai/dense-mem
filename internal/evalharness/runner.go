@@ -30,14 +30,14 @@ func Run(ctx context.Context, manifest Manifest, corpus []CorpusItem, questions 
 	if client == nil || client.Capture == nil || native == nil {
 		return report, errors.New("runner dependencies are required")
 	}
+	if manifest.Condition != scoringCondition {
+		return report, errors.New("scoring requires ontology off")
+	}
 	manifest.AnswerWorkers = manifest.effectiveAnswerWorkers()
 	if manifest.AnswerWorkers < defaultAnswerWorkers || manifest.AnswerWorkers > maxAnswerWorkers {
 		return report, errors.New("answer_workers must be 4..10")
 	}
 	if err := os.MkdirAll(manifest.OutputDir, 0700); err != nil {
-		return report, err
-	}
-	if err := client.Capture.Emit("started", manifest); err != nil {
 		return report, err
 	}
 	report.Timings = maps.Clone(manifest.Timings)
@@ -48,17 +48,13 @@ func Run(ctx context.Context, manifest Manifest, corpus []CorpusItem, questions 
 	work, stop := context.WithDeadline(ctx, manifest.ModelDeadline)
 	defer stop()
 	var scoringStarted time.Time
-	if manifest.Condition != "" {
-		client.Capture.startQueue(stop)
-	}
+	client.Capture.startQueue(stop)
+	client.Capture.setPhase(stage)
 	advance := func(next, key string) {
 		report.Timings[timing] = elapsedMS(phaseStarted)
 		stage, timing, phaseStarted = next, key, time.Now()
-		if client.Capture.queue != nil {
-			_ = client.Capture.EmitContext(work, "phase_started", map[string]any{"stage": stage, "condition": manifest.Condition, "answer_workers": manifest.AnswerWorkers})
-		} else if client.Capture.Logger != nil {
-			client.Capture.Logger.Info("evaluation phase started", "run_id", manifest.RunID, "stage", stage, "answer_workers", manifest.AnswerWorkers)
-		}
+		client.Capture.setPhase(next)
+		_ = client.Capture.EmitContext(work, "phase_started", map[string]any{"stage": stage, "condition": scoringCondition, "answer_workers": manifest.AnswerWorkers})
 	}
 	var pausedAndDrained bool
 	defer func() {
@@ -83,18 +79,15 @@ func Run(ctx context.Context, manifest Manifest, corpus []CorpusItem, questions 
 		}
 		cancel()
 		report.Timings["runtime_shutdown"] = elapsedMS(shutdownStarted)
-		var preserve context.Context
-		var stopCapture context.CancelFunc
-		if queue := client.Capture.queue; queue != nil {
-			preserve = queue.preservation(ctx)
-			stopCapture = queue.cancelPreserve
-		} else {
-			preserve, stopCapture = context.WithTimeout(context.WithoutCancel(ctx), 20*time.Minute)
-		}
-		defer stopCapture()
+		queue := client.Capture.queue
+		preserve := queue.preservation(ctx)
+		defer queue.cancelPreserve()
+		captureStage := "log capture"
+		client.Capture.setPhase(captureStage)
 		if logsComplete && native.RuntimeLogs != nil {
 			captureStarted := time.Now()
 			if err := native.RuntimeLogs(preserve); err != nil {
+				client.Capture.recordFailure(CaptureFailure{Phase: captureStage, Kind: "runtime_logs", Reason: "runtime_log_collection_failed"})
 				logsComplete = false
 				if runErr == nil {
 					stage = "log capture"
@@ -117,21 +110,20 @@ func Run(ctx context.Context, manifest Manifest, corpus []CorpusItem, questions 
 		} else {
 			report.CaptureComplete = logsComplete
 		}
-		if queue := client.Capture.queue; queue != nil {
-			flushStarted := time.Now()
-			if err := client.Capture.finishQueue(preserve); err != nil {
-				runErr = errors.Join(runErr, err)
-				report.CaptureComplete = false
-				report.Failure = "log capture incomplete"
-			}
-			report.Timings["scoring_capture_flush"] = elapsedMS(flushStarted)
-			report.Timings["capture_queue_worker_ms"] = float64(queue.waitNS.Load()) / float64(time.Millisecond)
-			report.Timings["capture_sink_ms"] = float64(queue.sinkNS.Load()) / float64(time.Millisecond)
-			report.Timings["answer_http_worker_ms"] = float64(queue.httpNS.Load()) / float64(time.Millisecond)
-			if finished := queue.scoringFinishedNS.Load(); finished != 0 && !scoringStarted.IsZero() {
-				report.Timings["scoring_through_flush"] = float64(max(time.Unix(0, finished).Sub(scoringStarted), 0)) / float64(time.Millisecond)
-			}
+		flushStarted := time.Now()
+		if err := client.Capture.finishQueue(preserve); err != nil {
+			runErr = errors.Join(runErr, err)
+			report.CaptureComplete = false
+			report.Failure = "log capture incomplete"
 		}
+		report.Timings["scoring_capture_flush"] = elapsedMS(flushStarted)
+		report.Timings["capture_queue_worker_ms"] = float64(queue.waitNS.Load()) / float64(time.Millisecond)
+		report.Timings["capture_sink_ms"] = float64(queue.sinkNS.Load()) / float64(time.Millisecond)
+		report.Timings["answer_http_worker_ms"] = float64(queue.httpNS.Load()) / float64(time.Millisecond)
+		if finished := queue.scoringFinishedNS.Load(); finished != 0 && !scoringStarted.IsZero() {
+			report.Timings["scoring_through_flush"] = float64(max(time.Unix(0, finished).Sub(scoringStarted), 0)) / float64(time.Millisecond)
+		}
+		report.CaptureFailure = client.Capture.FirstFailure()
 		report.ElapsedMS = elapsedMS(started)
 		if err := FinalizeReport(&report); err != nil {
 			runErr = errors.Join(runErr, err)
@@ -140,6 +132,9 @@ func Run(ctx context.Context, manifest Manifest, corpus []CorpusItem, questions 
 			runErr = errors.Join(runErr, err)
 		}
 	}()
+	if err := client.Capture.emit(work, stage, "started", manifest); err != nil {
+		return report, err
+	}
 	seed, mapping, canonical, initial, err := VerifySeed(work, manifest, corpus, client, native)
 	if err != nil {
 		return report, err
@@ -152,73 +147,20 @@ func Run(ctx context.Context, manifest Manifest, corpus []CorpusItem, questions 
 		return report, err
 	}
 	report.Identity.CanonicalHash = initial.CanonicalHash
-	report.Identity.ParentSeedImage = manifest.ParentSeedImage
-	if seed.Ontology != nil {
-		report.Preparation = seed.Ontology
-	}
-	if manifest.Condition != "" {
-		initial.ProviderAttempts = nil
-		report.NativeMeasurements = append(report.NativeMeasurements, initial)
-		pausedAndDrained = true
-		advance("ontology "+manifest.Condition, "ontology_"+manifest.Condition+"_scoring")
-		scoringStarted = phaseStarted
-		report.Scores, err = runCondition(work, manifest, corpus, questions, mapping, canonical, client, transport, manifest.Condition)
-		native.RequireRuntimeUsage = len(report.Scores) != 0
-		if err != nil {
-			return report, err
-		}
-		advance("final verification", "final_verification")
-		_, _, _, final, err := VerifySeed(work, manifest, corpus, client, native)
-		if err != nil {
-			return report, err
-		}
-		if work.Err() != nil || !time.Now().Before(manifest.ModelDeadline) {
-			return report, context.DeadlineExceeded
-		}
-		final.ProviderAttempts = nil
-		report.NativeMeasurements = append(report.NativeMeasurements, final)
-		report.ModelVerified = true
-		return report, nil
-	}
+	initial.ProviderAttempts = nil
 	report.NativeMeasurements = append(report.NativeMeasurements, initial)
-	advance("ontology off", "ontology_off_scoring")
-	scores, err := runCondition(work, manifest, corpus, questions, mapping, canonical, client, transport, "off")
-	report.Scores = append(report.Scores, scores...)
-	if err != nil {
-		return report, err
-	}
-	advance("ontology convergence", "ontology_convergence_and_drain")
-	if err = native.EnableOntology(work, manifest); err != nil {
-		return report, err
-	}
-	if _, err := waitNative(work, native, manifest, false, initial.CanonicalHash); err != nil {
-		return report, err
-	}
-	if err = native.Pause(work); err != nil {
-		return report, err
-	}
-	frozen, err := waitNative(work, native, manifest, true, initial.CanonicalHash)
-	if err != nil {
-		return report, err
-	}
 	pausedAndDrained = true
-	report.NativeMeasurements = append(report.NativeMeasurements, frozen)
-	advance("ontology on", "ontology_on_scoring")
-	scores, err = runCondition(work, manifest, corpus, questions, mapping, canonical, client, transport, "on")
-	report.Scores = append(report.Scores, scores...)
+	advance("ontology off", "ontology_off_scoring")
+	scoringStarted = phaseStarted
+	report.Scores, err = runCondition(work, manifest, corpus, questions, mapping, canonical, client, transport)
+	native.RequireRuntimeUsage = len(report.Scores) != 0
 	if err != nil {
 		return report, err
 	}
 	advance("final verification", "final_verification")
-	final, err := native.Snapshot(work)
+	_, _, _, final, err := VerifySeed(work, manifest, corpus, client, native)
 	if err != nil {
 		return report, err
-	}
-	if err = NativeReady(final, true, true, manifest, native.Scope.TeamID); err != nil {
-		return report, err
-	}
-	if final.CanonicalHash != initial.CanonicalHash {
-		return report, errors.New("answer campaign changed canonical Evidence")
 	}
 	if err := work.Err(); err != nil {
 		return report, err
@@ -226,8 +168,9 @@ func Run(ctx context.Context, manifest Manifest, corpus []CorpusItem, questions 
 	if !time.Now().Before(manifest.ModelDeadline) {
 		return report, context.DeadlineExceeded
 	}
-	report.ModelVerified = true
+	final.ProviderAttempts = nil
 	report.NativeMeasurements = append(report.NativeMeasurements, final)
+	report.ModelVerified = true
 	return report, nil
 }
 
@@ -235,42 +178,8 @@ func elapsedMS(started time.Time) float64 {
 	return float64(time.Since(started)) / float64(time.Millisecond)
 }
 
-func waitNative(ctx context.Context, native *Native, manifest Manifest, paused bool, canonicalHash string) (NativeObservation, error) {
-	var recovery ontologyRecovery
-	for {
-		observation, err := native.Snapshot(ctx)
-		if err != nil {
-			return observation, err
-		}
-		if err = native.Client.Capture.Emit("native_observation", observation); err != nil {
-			return observation, err
-		}
-		if observation.CanonicalHash != canonicalHash {
-			return observation, errors.New("ontology changed canonical Evidence or provenance")
-		}
-		if observation.Ontology.ConfigurationError != "" || observation.ForeignSources != 0 || observation.ForeignWork != 0 || observation.Ontology.Counts.Ambiguous > 0 ||
-			(paused && observation.Ontology.Counts.Failed > 0) {
-			return observation, errors.New("native convergence failed")
-		}
-		var waiting bool
-		if !paused {
-			waiting, err = recovery.advance(ctx, native, manifest, observation)
-			if err != nil {
-				return observation, err
-			}
-		}
-		if !waiting && NativeReady(observation, true, paused, manifest, native.Scope.TeamID) == nil {
-			return observation, nil
-		}
-		select {
-		case <-ctx.Done():
-			return observation, fmt.Errorf("native convergence deadline: %w", ctx.Err())
-		case <-time.After(5 * time.Second):
-		}
-	}
-}
-
-func runCondition(ctx context.Context, manifest Manifest, corpus []CorpusItem, questions []Question, mapping KnowledgeMapping, canonical map[string]CanonicalEvidence, client *HTTPClient, transport modelprovider.StructuredTransport, condition string) ([]CaseScore, error) {
+func runCondition(ctx context.Context, manifest Manifest, corpus []CorpusItem, questions []Question, mapping KnowledgeMapping, canonical map[string]CanonicalEvidence, client *HTTPClient, transport modelprovider.StructuredTransport) ([]CaseScore, error) {
+	const condition = scoringCondition
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	if err := client.Capture.EmitContext(ctx, "condition_started", map[string]string{"condition": condition}); err != nil {

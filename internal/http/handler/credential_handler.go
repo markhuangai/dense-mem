@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	dto "github.com/markhuangai/dense-mem/internal/http/dto"
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
@@ -51,7 +51,7 @@ type CreateCredentialResponse struct {
 // Create handles POST /ui/api/team/credentials.
 // Requires manager role.
 // Returns 201 with the created credential and plaintext api_key.
-func (h *CredentialHandler) Create(c echo.Context) error {
+func (h *CredentialHandler) Create(c *echo.Context) error {
 	ctx := c.Request().Context()
 	principal := middleware.GetPrincipal(ctx)
 
@@ -125,7 +125,7 @@ func (h *CredentialHandler) Create(c echo.Context) error {
 // List handles GET /ui/api/team/credentials.
 // Requires manager role.
 // Returns 200 with paginated list of API credentials (never includes key_hash or plaintext).
-func (h *CredentialHandler) List(c echo.Context) error {
+func (h *CredentialHandler) List(c *echo.Context) error {
 	ctx := c.Request().Context()
 
 	teamIDStr := teamIDParam(c)
@@ -172,7 +172,7 @@ func (h *CredentialHandler) List(c echo.Context) error {
 // Requires manager role.
 // Returns 200 with the API credential data (never includes key_hash or plaintext).
 // Scoped to the credentialId in the path; cross-team IDs return NOT_FOUND.
-func (h *CredentialHandler) Get(c echo.Context) error {
+func (h *CredentialHandler) Get(c *echo.Context) error {
 	ctx := c.Request().Context()
 
 	teamIDStr := teamIDParam(c)
@@ -209,7 +209,7 @@ func (h *CredentialHandler) Get(c echo.Context) error {
 
 // Update handles PATCH /ui/api/team/credentials/:credentialId.
 // Requires manager role and can only update member credentials.
-func (h *CredentialHandler) Update(c echo.Context) error {
+func (h *CredentialHandler) Update(c *echo.Context) error {
 	ctx := c.Request().Context()
 	principal := middleware.GetPrincipal(ctx)
 
@@ -268,7 +268,7 @@ func (h *CredentialHandler) Update(c echo.Context) error {
 
 // Rotate handles POST /ui/api/team/credentials/:credentialId/rotate.
 // Requires manager role and can only rotate member credentials.
-func (h *CredentialHandler) Rotate(c echo.Context) error {
+func (h *CredentialHandler) Rotate(c *echo.Context) error {
 	ctx := c.Request().Context()
 	principal := middleware.GetPrincipal(ctx)
 
@@ -338,7 +338,7 @@ func (h *CredentialHandler) Rotate(c echo.Context) error {
 // Requires manager role and can only delete member credentials.
 // Returns 200 with { "status": "deleted" }.
 // Scoped to the credentialId in the path; cross-team IDs return NOT_FOUND.
-func (h *CredentialHandler) Delete(c echo.Context) error {
+func (h *CredentialHandler) Delete(c *echo.Context) error {
 	ctx := c.Request().Context()
 	principal := middleware.GetPrincipal(ctx)
 
@@ -398,7 +398,7 @@ func (h *CredentialHandler) rejectManagerTarget(ctx context.Context, teamID, cre
 	return nil
 }
 
-func teamIDParam(c echo.Context) string {
+func teamIDParam(c *echo.Context) string {
 	if v := c.Param("teamId"); v != "" {
 		return v
 	}
@@ -408,7 +408,7 @@ func teamIDParam(c echo.Context) string {
 	return ""
 }
 
-func credentialIDParam(c echo.Context) string {
+func credentialIDParam(c *echo.Context) string {
 	return c.Param("credentialId")
 }
 

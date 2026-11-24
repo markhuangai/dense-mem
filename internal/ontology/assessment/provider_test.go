@@ -56,7 +56,7 @@ func TestOrganizationExplicitContextWindow(t *testing.T) {
 	require.Empty(t, attempts)
 	require.Equal(t, 1, calls)
 	require.NotEqual(t, probe.Identity(), provider.Identity())
-	inputOnly, err := assessor.CountTokens(request.Items[0].Text+request.Items[1].Text, limits.Tokenizer)
+	inputOnly, err := modelprovider.CountTokens(request.Items[0].Text+request.Items[1].Text, limits.Tokenizer)
 	require.NoError(t, err)
 	require.Greater(t, measured, inputOnly, "complete schema and message framing must be counted")
 }
@@ -79,13 +79,22 @@ func (f fixtureTransport) Complete(ctx context.Context, request modelprovider.St
 	return f(ctx, request)
 }
 
+func requireSchemaJSON(t *testing.T, expected, actual any) {
+	t.Helper()
+	expectedJSON, err := json.Marshal(expected)
+	require.NoError(t, err)
+	actualJSON, err := json.Marshal(actual)
+	require.NoError(t, err)
+	require.JSONEq(t, string(expectedJSON), string(actualJSON))
+}
+
 func TestOrganizationValidResponseOutputLimits(t *testing.T) {
 	request, response := assessmentFixture()
 	require.NoError(t, Validate(request, response))
 	encoded, err := json.Marshal(response)
 	require.NoError(t, err)
 	limits := assessor.DefaultSemanticAssessmentLimits()
-	measured, err := assessor.CountTokens(string(encoded), limits.Tokenizer)
+	measured, err := modelprovider.CountTokens(string(encoded), limits.Tokenizer)
 	require.NoError(t, err)
 	for _, testCase := range []struct {
 		name     string
@@ -142,7 +151,17 @@ func TestOrganizationContextWindowIncludesRegenerationHistory(t *testing.T) {
 			tokens, err := NewProvider(nil, "model", limits, 300000).messageTokens(req.Messages, req.Schema)
 			require.NoError(t, err)
 			require.LessOrEqual(t, tokens+req.MaxOutputTokens, capacity)
+			var original Request
+			require.NoError(t, json.Unmarshal([]byte(req.Messages[1].Content), &original))
+			require.Equal(t, request, original)
 			if overflow {
+				for index := 2; index < len(req.Messages); index += 2 {
+					require.Equal(t, "assistant", req.Messages[index].Role)
+					require.Contains(t, req.Messages[index].Content, "exceeded the repair history budget")
+					var feedback correctionFeedback
+					require.NoError(t, json.Unmarshal([]byte(req.Messages[index+1].Content), &feedback))
+					require.Equal(t, "output_tokens", feedback.ValidationErrors[0].Field)
+				}
 				return modelprovider.StructuredResult{Content: strings.Repeat("invalid ", capacity)}, nil
 			}
 			if calls < 3 {
@@ -152,9 +171,11 @@ func TestOrganizationContextWindowIncludesRegenerationHistory(t *testing.T) {
 		}), "model", limits, capacity)
 		result, attempts, err := provider.Assess(context.Background(), request)
 		if overflow {
-			require.Error(t, err)
-			require.Equal(t, 1, calls, "oversized regeneration history must stop before a second dispatch")
-			require.Len(t, attempts, 1)
+			var malformed *modelprovider.MalformedResponseError
+			require.ErrorAs(t, err, &malformed)
+			require.Equal(t, "malformed_exhausted", malformed.FailureClass)
+			require.Equal(t, 3, calls)
+			require.Len(t, attempts, 3)
 			require.Empty(t, result.Items)
 		} else {
 			require.NoError(t, err)
@@ -299,13 +320,17 @@ func TestOrganizationCompleteRegenerationAndTokenAccounting(t *testing.T) {
 	transport := fixtureTransport(func(ctx context.Context, req modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
 		calls++
 		require.Equal(t, SchemaName, req.SchemaName)
-		require.Equal(t, ResponseSchema(request.RequestID), req.Schema)
+		expectedSchema, err := json.Marshal(ResponseSchema(request.RequestID))
+		require.NoError(t, err)
+		receivedSchema, err := json.Marshal(req.Schema)
+		require.NoError(t, err)
+		require.JSONEq(t, string(expectedSchema), string(receivedSchema))
 		if calls == 1 {
 			return modelprovider.StructuredResult{Content: `{"request_id":"request","definitions":[],"items":[],"equivalence":[]}`}, nil
 		}
 		require.Len(t, req.Messages, 4)
 		require.Contains(t, req.Messages[3].Content, "validation_errors")
-		return modelprovider.StructuredResult{Content: string(valid), PromptTokens: 500, CompletionTokens: 100}, nil
+		return modelprovider.StructuredResult{Content: string(valid), PromptTokens: 500, CompletionTokens: 100, UsageAvailable: true}, nil
 	})
 	provider := NewProvider(transport, "model", assessor.DefaultSemanticAssessmentLimits(), 300000)
 	result, attempts, err := provider.Assess(context.Background(), request)
@@ -338,7 +363,11 @@ func TestOrganizationRequestIdentitySchemaAndCompleteRepair(t *testing.T) {
 			provider := NewProvider(fixtureTransport(func(_ context.Context, outbound modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
 				calls = append(calls, outbound)
 				properties := outbound.Schema["properties"].(map[string]any)
-				require.Equal(t, map[string]any{"type": "string", "enum": []string{request.RequestID}}, properties["request_id"])
+				schemaJSON, err := json.Marshal(properties["request_id"])
+				require.NoError(t, err)
+				expectedJSON, err := json.Marshal(map[string]any{"type": "string", "enum": []string{request.RequestID}})
+				require.NoError(t, err)
+				require.JSONEq(t, string(expectedJSON), string(schemaJSON))
 				var original Request
 				require.NoError(t, json.Unmarshal([]byte(outbound.Messages[1].Content), &original))
 				require.Equal(t, request, original)
@@ -365,11 +394,7 @@ func TestOrganizationRequestIdentitySchemaAndCompleteRepair(t *testing.T) {
 			require.Len(t, attempts, 3)
 			require.Equal(t, measured, attempts[0].EstimatedInputTokens)
 			for i, outbound := range calls {
-				messages := make([]assessor.SemanticAssessmentProviderMessage, len(outbound.Messages))
-				for j, message := range outbound.Messages {
-					messages[j] = assessor.SemanticAssessmentProviderMessage{Role: message.Role, Content: message.Content}
-				}
-				tokens, countErr := assessor.CountSemanticAssessmentProviderRequestTokens(outbound.Model, outbound.SchemaName, outbound.Schema, limits.ProviderTemperatureDisabled, messages, limits.Tokenizer)
+				tokens, countErr := modelprovider.CountStructuredRequestTokens(outbound, limits.Tokenizer)
 				require.NoError(t, countErr)
 				require.Equal(t, tokens, attempts[i].EstimatedInputTokens)
 				require.Equal(t, calls[0].Schema, outbound.Schema)
@@ -428,7 +453,7 @@ func TestOrganizationEmptyDefinitionKeyCompleteRepair(t *testing.T) {
 				properties := outbound.Schema["properties"].(map[string]any)
 				definition := properties["definitions"].(map[string]any)["items"].(map[string]any)
 				key := definition["properties"].(map[string]any)["key"]
-				require.Equal(t, map[string]any{"type": "string", "minLength": 1, "maxLength": 128}, key)
+				requireSchemaJSON(t, map[string]any{"type": "string", "minLength": 1, "maxLength": 128}, key)
 				if calls > 1 {
 					var correction correctionFeedback
 					require.NoError(t, json.Unmarshal([]byte(outbound.Messages[len(outbound.Messages)-1].Content), &correction))
@@ -478,7 +503,7 @@ func TestOrganizationInitialBudgetAllowsBothCompleteRegenerations(t *testing.T) 
 	valid, err := json.Marshal(response)
 	require.NoError(t, err)
 	invalid := `{"invalid":"` + strings.Repeat("invalid ", limits.MaxOutputTokens-100) + `"}`
-	invalidTokens, err := assessor.CountTokens(invalid, limits.Tokenizer)
+	invalidTokens, err := modelprovider.CountTokens(invalid, limits.Tokenizer)
 	require.NoError(t, err)
 	require.LessOrEqual(t, invalidTokens, limits.MaxOutputTokens)
 	require.Greater(t, invalidTokens, limits.MaxOutputTokens/2)
@@ -523,7 +548,7 @@ func TestOrganizationLargeDiagnosticsCannotOverflowRepairContext(t *testing.T) {
 	require.NoError(t, err)
 	limits.MaxInputTokens = measurement + headroom
 	invalid := `{"雪` + strings.Repeat("invalid ", limits.MaxOutputTokens-100) + `":true}`
-	invalidTokens, err := assessor.CountTokens(invalid, limits.Tokenizer)
+	invalidTokens, err := modelprovider.CountTokens(invalid, limits.Tokenizer)
 	require.NoError(t, err)
 	require.LessOrEqual(t, invalidTokens, limits.MaxOutputTokens)
 	_, decodeErr := Decode(invalid)
@@ -534,16 +559,32 @@ func TestOrganizationLargeDiagnosticsCannotOverflowRepairContext(t *testing.T) {
 	calls := 0
 	provider := NewProvider(fixtureTransport(func(_ context.Context, req modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
 		calls++
-		require.LessOrEqual(t, len(req.Messages), 4)
+		tokens, err := modelprovider.CountStructuredRequestTokens(req, limits.Tokenizer)
+		require.NoError(t, err)
+		require.LessOrEqual(t, tokens, req.MaxInputTokens)
+		var original Request
+		require.NoError(t, json.Unmarshal([]byte(req.Messages[1].Content), &original))
+		require.Equal(t, request, original)
+		for index := 3; index < len(req.Messages); index += 2 {
+			var feedback correctionFeedback
+			require.NoError(t, json.Unmarshal([]byte(req.Messages[index].Content), &feedback))
+			require.Equal(t, "雪"+strings.Repeat("invalid ", limits.MaxOutputTokens-100), feedback.ValidationErrors[len(feedback.ValidationErrors)-1].Field)
+		}
+		if calls == 3 {
+			require.Contains(t, req.Messages[4].Content, "exceeded the repair history budget")
+		}
 		return modelprovider.StructuredResult{Content: invalid}, nil
 	}), "model", limits, 300000)
 	result, attempts, err := provider.Assess(context.Background(), request)
-	require.ErrorIs(t, err, modelprovider.ErrVerifierMalformedResponse)
-	require.ErrorContains(t, err, "input exceeds token budget")
+	var malformed *modelprovider.MalformedResponseError
+	require.ErrorAs(t, err, &malformed)
+	require.Equal(t, "malformed_exhausted", malformed.FailureClass)
 	require.Empty(t, result)
-	require.Len(t, attempts, 2)
-	require.Equal(t, 2, calls)
-	require.Equal(t, "response_invalid", attempts[0].FailureCode)
+	require.Len(t, attempts, 3)
+	require.Equal(t, 3, calls)
+	for _, attempt := range attempts {
+		require.Equal(t, "response_invalid", attempt.FailureCode)
+	}
 }
 
 func TestOrganizationProviderFailuresBudgetsAndCancellation(t *testing.T) {
@@ -669,7 +710,7 @@ func TestOrganizationFullPairCoverageRepairFitsConversation(t *testing.T) {
 	valid, err := json.Marshal(response)
 	require.NoError(t, err)
 	limits := assessor.DefaultSemanticAssessmentLimits()
-	outputTokens, err := assessor.CountTokens(string(valid), limits.Tokenizer)
+	outputTokens, err := modelprovider.CountTokens(string(valid), limits.Tokenizer)
 	require.NoError(t, err)
 	limits.MaxInputTokens, limits.MaxOutputTokens, limits.MaxCandidateContextTokens = 32000, outputTokens+128, 512
 	contextWindow := limits.MaxInputTokens + limits.MaxOutputTokens
@@ -699,7 +740,11 @@ func TestOrganizationFullPairCoverageRepairFitsConversation(t *testing.T) {
 					require.Len(t, outbound.Messages, 2*calls)
 					require.Equal(t, SystemPrompt, outbound.Messages[0].Content)
 					require.Equal(t, string(original), outbound.Messages[1].Content)
-					require.Equal(t, ResponseSchema(request.RequestID), outbound.Schema)
+					expectedSchema, err := json.Marshal(ResponseSchema(request.RequestID))
+					require.NoError(t, err)
+					receivedSchema, err := json.Marshal(outbound.Schema)
+					require.NoError(t, err)
+					require.JSONEq(t, string(expectedSchema), string(receivedSchema))
 					inputTokens, countErr := provider.messageTokens(outbound.Messages, outbound.Schema)
 					require.NoError(t, countErr)
 					require.LessOrEqual(t, inputTokens, outbound.MaxInputTokens)

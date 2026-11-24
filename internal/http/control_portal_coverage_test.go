@@ -8,10 +8,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 )
 
-func controlCoverageContext(path string) echo.Context {
+func controlCoverageContext(path string) *echo.Context {
 	return echo.New().NewContext(httptest.NewRequest(http.MethodGet, path, nil), httptest.NewRecorder())
 }
 
@@ -66,7 +66,7 @@ func TestControlPortalConstructorAndHandlerDependencyFailures(t *testing.T) {
 	}
 
 	h := &controlPortalHandler{}
-	for name, call := range map[string]func(echo.Context) error{
+	for name, call := range map[string]func(*echo.Context) error{
 		"metrics":           h.getMetrics,
 		"telemetry":         h.getTelemetry,
 		"security settings": h.getSecuritySettings,
@@ -82,9 +82,8 @@ func TestControlPortalConstructorAndHandlerDependencyFailures(t *testing.T) {
 		})
 	}
 	invalidTeam := controlCoverageContext("/teams/not-a-uuid")
-	invalidTeam.SetParamNames("teamId")
-	invalidTeam.SetParamValues("not-a-uuid")
-	for name, call := range map[string]func(echo.Context) error{
+	invalidTeam.SetPathValues(echo.PathValues{{Name: "teamId", Value: "not-a-uuid"}})
+	for name, call := range map[string]func(*echo.Context) error{
 		"update team":       h.updateTeam,
 		"delete team":       h.deleteTeam,
 		"list credentials":  h.listCredentials,

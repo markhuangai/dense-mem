@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/labstack/echo/v4"
-	"github.com/labstack/echo/v4/middleware"
+	"github.com/labstack/echo/v5"
+	"github.com/labstack/echo/v5/middleware"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 )
 
@@ -41,7 +41,7 @@ func TestHTTPServerLogURIAndAnonymousProbeBoundaries(t *testing.T) {
 	}
 	logger := &captureLogProvider{}
 	e := NewServer(nil, logger, HealthConfig{})
-	e.GET("/request-id", func(c echo.Context) error {
+	e.GET("/request-id", func(c *echo.Context) error {
 		c.Response().Header().Set(echo.HeaderXRequestID, "request-id")
 		return c.NoContent(http.StatusNoContent)
 	})
@@ -62,7 +62,7 @@ func TestRunServerHandlesStartFailureAndInterrupt(t *testing.T) {
 		}
 	})
 	defer timer.Stop()
-	if err := RunServer(e, "invalid-address", logger); err != nil {
+	if err := RunServer(NewHTTPServer(e, logger), "invalid-address", logger); err != nil {
 		t.Fatalf("RunServer: %v", err)
 	}
 	if logger.msg != "shutting down server" && logger.msg != "server start error" {

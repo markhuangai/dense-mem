@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/config"
@@ -89,7 +89,7 @@ func TestControlPortalRememberInvocationRoutes(t *testing.T) {
 
 func TestControlPortalRememberInvocationValidationAndErrors(t *testing.T) {
 	e := echo.New()
-	newContext := func(path string) echo.Context {
+	newContext := func(path string) *echo.Context {
 		return e.NewContext(httptest.NewRequest(http.MethodGet, path, nil), httptest.NewRecorder())
 	}
 
@@ -128,9 +128,8 @@ func TestControlPortalRememberInvocationValidationAndErrors(t *testing.T) {
 	require.ErrorContains(t, h.getRememberInvocationDiagnostic(withInvocationParams(newContext("/"), uuid.NewString(), uuid.NewString())), "detail failed")
 }
 
-func withInvocationParams(ctx echo.Context, teamID, invocationID string) echo.Context {
-	ctx.SetParamNames("teamId", "invocationId")
-	ctx.SetParamValues(teamID, invocationID)
+func withInvocationParams(ctx *echo.Context, teamID, invocationID string) *echo.Context {
+	ctx.SetPathValues(echo.PathValues{{Name: "teamId", Value: teamID}, {Name: "invocationId", Value: invocationID}})
 	return ctx
 }
 
@@ -181,8 +180,7 @@ func TestInvocationDetailUsesExactInvocationAndSameTeamTransportRows(t *testing.
 	e := echo.New()
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	ctx := e.NewContext(req, httptest.NewRecorder())
-	ctx.SetParamNames("teamId", "invocationId")
-	ctx.SetParamValues(teamID.String(), invocationID.String())
+	ctx.SetPathValues(echo.PathValues{{Name: "teamId", Value: teamID.String()}, {Name: "invocationId", Value: invocationID.String()}})
 	err := h.getRememberInvocationDiagnostic(ctx)
 	require.NoError(t, err)
 	require.Len(t, logs.filters, 1)
@@ -213,8 +211,7 @@ func TestInvocationDetailMarksPartialLogEnrichmentUnavailable(t *testing.T) {
 	}
 	e := echo.New()
 	ctx := e.NewContext(httptest.NewRequest(http.MethodGet, "/", nil), httptest.NewRecorder())
-	ctx.SetParamNames("teamId", "invocationId")
-	ctx.SetParamValues(teamID.String(), invocationID.String())
+	ctx.SetPathValues(echo.PathValues{{Name: "teamId", Value: teamID.String()}, {Name: "invocationId", Value: invocationID.String()}})
 
 	require.NoError(t, h.getRememberInvocationDiagnostic(ctx))
 	require.Equal(t, "write_observed", detail.DeliveryStage)
@@ -235,8 +232,7 @@ func TestInvocationDetailSurfacesEnrichmentUnavailable(t *testing.T) {
 	}
 	e := echo.New()
 	ctx := e.NewContext(httptest.NewRequest(http.MethodGet, "/", nil), httptest.NewRecorder())
-	ctx.SetParamNames("teamId", "invocationId")
-	ctx.SetParamValues(teamID.String(), invocationID.String())
+	ctx.SetPathValues(echo.PathValues{{Name: "teamId", Value: teamID.String()}, {Name: "invocationId", Value: invocationID.String()}})
 	require.NoError(t, h.getRememberInvocationDiagnostic(ctx))
 	require.True(t, detail.EnrichmentUnavailable)
 }
@@ -260,8 +256,7 @@ func TestInvocationDetailLeavesDeliveryStageUnknownForAmbiguousCorrelation(t *te
 	}
 	e := echo.New()
 	ctx := e.NewContext(httptest.NewRequest(http.MethodGet, "/", nil), httptest.NewRecorder())
-	ctx.SetParamNames("teamId", "invocationId")
-	ctx.SetParamValues(teamID.String(), invocationID.String())
+	ctx.SetPathValues(echo.PathValues{{Name: "teamId", Value: teamID.String()}, {Name: "invocationId", Value: invocationID.String()}})
 	require.NoError(t, h.getRememberInvocationDiagnostic(ctx))
 	require.Equal(t, "unknown_receipt", detail.DeliveryStage)
 }
@@ -283,8 +278,7 @@ func TestInvocationDetailLeavesDeliveryStageUnknownForCorrelationOnlyTransportRo
 	}
 	e := echo.New()
 	ctx := e.NewContext(httptest.NewRequest(http.MethodGet, "/", nil), httptest.NewRecorder())
-	ctx.SetParamNames("teamId", "invocationId")
-	ctx.SetParamValues(teamID.String(), invocationID.String())
+	ctx.SetPathValues(echo.PathValues{{Name: "teamId", Value: teamID.String()}, {Name: "invocationId", Value: invocationID.String()}})
 	require.NoError(t, h.getRememberInvocationDiagnostic(ctx))
 	require.Equal(t, "unknown_receipt", detail.DeliveryStage)
 }
@@ -302,8 +296,7 @@ func TestInvocationDetailMarksEmptyLogEnrichmentUnavailable(t *testing.T) {
 	}
 	e := echo.New()
 	ctx := e.NewContext(httptest.NewRequest(http.MethodGet, "/", nil), httptest.NewRecorder())
-	ctx.SetParamNames("teamId", "invocationId")
-	ctx.SetParamValues(teamID.String(), detail.InvocationID)
+	ctx.SetPathValues(echo.PathValues{{Name: "teamId", Value: teamID.String()}, {Name: "invocationId", Value: detail.InvocationID}})
 	require.NoError(t, h.getRememberInvocationDiagnostic(ctx))
 	require.True(t, detail.EnrichmentUnavailable)
 }

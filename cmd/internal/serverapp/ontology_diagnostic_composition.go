@@ -13,7 +13,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/ontology"
 	contract "github.com/markhuangai/dense-mem/internal/ontology/contract"
-	remember "github.com/markhuangai/dense-mem/internal/remember/service/processor"
 )
 
 func ontologyPublicationDiagnostics(logger *slog.Logger, protector observability.DiagnosticProtector) contract.PublicationObserver {
@@ -178,7 +177,7 @@ func ontologyPublicationDiagnostics(logger *slog.Logger, protector observability
 func ontologyDiagnosticCapture(sink observability.LogSink, protector observability.DiagnosticProtector, logger *slog.Logger) ontology.MaintenanceDiagnosticCapture {
 	return ontology.MaintenanceDiagnosticCapture{
 		Observe:     ontologyAssessmentDiagnostics(logger, protector),
-		NewRecorder: func() modelprovider.SnapshotRecorder { return remember.NewDiagnosticRecorder(protector) },
+		NewRecorder: func() modelprovider.SnapshotRecorder { return observability.NewProviderExchangeRecorder(protector) },
 		RecordFailure: func(ctx context.Context, claim contract.MaintenanceClaim, result contract.OrganizationResult, exchanges []modelprovider.ProviderExchange) error {
 			if sink == nil || protector == nil {
 				return errors.New("ontology diagnostic sink unavailable")

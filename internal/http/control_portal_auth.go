@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	httpmw "github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/httperr"
@@ -51,7 +51,7 @@ func controlPortalMiddleware(token string, securitySvc settings.SecurityService,
 		identityService = controlIdentity[0]
 	}
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			actor := ""
 			actorIdentity := ""
 			authSecrets := controlPortalPresentedSecrets(c.Request())
@@ -118,7 +118,7 @@ func controlPortalPresentedSecrets(req *nethttp.Request) []string {
 	return secrets
 }
 
-func recordControlAuthFailure(c echo.Context, securitySvc settings.SecurityService) {
+func recordControlAuthFailure(c *echo.Context, securitySvc settings.SecurityService) {
 	if securitySvc == nil {
 		return
 	}
@@ -126,6 +126,6 @@ func recordControlAuthFailure(c echo.Context, securitySvc settings.SecurityServi
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request().Context()), 5*time.Second)
 	defer cancel()
 	if _, err := securitySvc.RecordAuthFailure(ctx, c.RealIP(), "control", "AUTH_INVALID", request); err != nil {
-		c.Logger().Errorf("control security auth failure record failed: %v", err)
+		c.Logger().ErrorContext(c.Request().Context(), "control security auth failure record failed", "error", err)
 	}
 }

@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
 )
 
 // Reserve bounded correction-instruction room after the configured output
@@ -49,7 +51,7 @@ func CountSemanticAssessmentRequestTokens(
 	if err != nil {
 		return 0, 0, err
 	}
-	candidateContextTokens, err = CountTokens(string(contextPayload), limits.Tokenizer)
+	candidateContextTokens, err = modelprovider.CountTokens(string(contextPayload), limits.Tokenizer)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -59,28 +61,19 @@ func CountSemanticAssessmentRequestTokens(
 	if err != nil {
 		return 0, 0, err
 	}
-	prompt, schema := SemanticAssessmentSystemPrompt, SemanticAssessmentResponseSchemaWithLimits(limits)
-	if req.DecisionRouting != nil && req.DecisionRouting.SkipAISecurityReview {
-		prompt, schema = SemanticAssessmentPromptForGeneration(req), SemanticAssessmentGenerationSchema(req, limits)
-	}
+	prompt, schema := SemanticAssessmentPromptForGeneration(req), SemanticAssessmentGenerationSchema(req, limits)
 	if limits.LegacyProviderFraming {
-		inputTokens, err = CountTokens(prompt+string(payload), limits.Tokenizer)
+		inputTokens, err = modelprovider.CountTokens(prompt+string(payload), limits.Tokenizer)
 		if err != nil {
 			return 0, 0, err
 		}
 		return inputTokens, candidateContextTokens, nil
 	}
-	inputTokens, err = CountSemanticAssessmentProviderRequestTokens(
-		limits.ProviderModel,
-		limits.ProviderSchemaName,
-		schema,
-		limits.ProviderTemperatureDisabled,
-		[]SemanticAssessmentProviderMessage{
-			{Role: "system", Content: prompt},
-			{Role: "user", Content: string(payload)},
-		},
-		limits.Tokenizer,
-	)
+	inputTokens, err = modelprovider.CountStructuredRequestTokens(modelprovider.StructuredRequest{
+		Model: limits.ProviderModel, SchemaName: limits.ProviderSchemaName, Schema: schema,
+		Temperature: modelprovider.StructuredTemperature(limits.ProviderTemperatureDisabled),
+		Messages:    []modelprovider.Message{{Role: "system", Content: prompt}, {Role: "user", Content: string(payload)}},
+	}, limits.Tokenizer)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -294,7 +287,7 @@ func semanticAssessmentContextComponentTokens(value any, tokenizerName string) i
 	if err != nil {
 		return 0
 	}
-	tokens, err := CountTokens(string(payload), tokenizerName)
+	tokens, err := modelprovider.CountTokens(string(payload), tokenizerName)
 	if err != nil {
 		return 0
 	}

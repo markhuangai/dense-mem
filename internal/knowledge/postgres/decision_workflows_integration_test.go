@@ -20,8 +20,8 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	assessorprovider "github.com/markhuangai/dense-mem/internal/provider/assessor"
 	decisionprovider "github.com/markhuangai/dense-mem/internal/provider/decision"
+	"github.com/markhuangai/dense-mem/internal/provider/structured"
 	"github.com/markhuangai/dense-mem/internal/recall"
 
 	recallpostgres "github.com/markhuangai/dense-mem/internal/recall/postgres"
@@ -185,7 +185,7 @@ func TestDecisionRememberPostgresAtomicityReplayIsolationAndSettingsSnapshot(t *
 	logger := observability.New(slog.LevelError)
 	decisions, err := decisionprovider.New(config.DecisionProviderConfig{Provider: "openai", APIURL: server.URL + "/v1", APIKey: "decision-fixture-key", Model: "gpt-6-luna", MaxInputTokens: 32000, MaxQuestionInputTokens: 32000, MaxConcurrency: 2, TimeoutSeconds: 10}, "o200k_base", server.Client(), logger, protector, nil)
 	require.NoError(t, err)
-	generative := assessorprovider.NewOpenAIAssessor(&config.Config{AIVerifierAPIURL: server.URL + "/v1", AIVerifierAPIKey: "decision-fixture-key", AIVerifierModel: "fixture", AIVerifierMaxConcurrency: 2}, server.Client())
+	generative := structured.NewOpenAI(&config.Config{AIVerifierAPIURL: server.URL + "/v1", AIVerifierAPIKey: "decision-fixture-key", AIVerifierModel: "fixture", AIVerifierMaxConcurrency: 2}, server.Client())
 	api := processor.NewSynchronousProcessor(processor.ProcessorDependencies{Ledger: store, Assessor: generative, Decisions: decisions, DecisionSettings: controls, EmbeddingExecutor: semanticwrite.NewProviderExecutor(&sessionFactsEmbedder{}), Limits: assessor.DefaultSemanticAssessmentLimits(), Logger: logger, DiagnosticProtector: protector})
 	input := rememberapp.RememberProcessRequest{TeamID: team, OwnerProfileID: ownerA, SpaceID: shared, SpaceGeneration: generation, SpaceKind: domain.MemorySpaceTeamShared, IdempotencyKey: "decision-initial", RequestHash: "decision-initial", Evidence: rememberapp.RepositoryEvidenceInputs([]rememberapp.RememberEvidenceInput{{Content: "Decision shared evidence uses PostgreSQL.", SourceType: "manual"}})}
 	var unauthorized atomic.Bool

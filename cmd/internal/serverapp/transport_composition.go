@@ -3,10 +3,12 @@ package serverapp
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"net/http"
 	"strings"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	auditapp "github.com/markhuangai/dense-mem/internal/audit"
 	"github.com/markhuangai/dense-mem/internal/config"
 	conflictevidence "github.com/markhuangai/dense-mem/internal/conflict/evidence"
@@ -75,8 +77,8 @@ type transportCompositionInputs struct {
 
 type transportComposition struct {
 	e                   *echo.Echo
-	controlServer       *echo.Echo
-	telemetryServer     *echo.Echo
+	controlServer       *http.Server
+	telemetryServer     *http.Server
 	telemetryServerAddr string
 }
 
@@ -196,6 +198,13 @@ func (a httpLoggerAdapter) With(attrs ...httpcontract.LogAttr) httpcontract.LogP
 		return a
 	}
 	return httpLoggerAdapter{delegate: a.delegate.With(observabilityAttrs(attrs)...)}
+}
+
+func (a httpLoggerAdapter) Slog() *slog.Logger {
+	if provider, ok := a.delegate.(interface{ Slog() *slog.Logger }); ok {
+		return provider.Slog()
+	}
+	return nil
 }
 
 func observabilityAttrs(attrs []httpcontract.LogAttr) []observability.LogAttr {
@@ -399,7 +408,7 @@ func buildTransportComposition(deps transportCompositionInputs) (*transportCompo
 		if err != nil {
 			return nil, fmt.Errorf("build control portal server: %w", err)
 		}
-		composition.controlServer = controlServer
+		composition.controlServer = densehttp.NewHTTPServer(controlServer, transportLogger(deps.logger))
 	} else if deps.telemetry.ScrapeHandler != nil {
 		addr := strings.TrimSpace(deps.options.MetricsOnlyAddr)
 		if addr == "" {

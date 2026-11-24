@@ -20,29 +20,28 @@ var digestPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 var releasePattern = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(?:-rc\.[0-9]+)?$`)
 
 type SeedMetadata struct {
-	IntakeProof         bool              `json:"intake_proof,omitempty"`
-	AISecurityReview    string            `json:"ai_security_review,omitempty"`
-	Version             int               `json:"version"`
-	Dataset             string            `json:"dataset"`
-	RegistryHash        string            `json:"registry_sha256"`
-	BaseRelease         string            `json:"base_release"`
-	SourceRevision      string            `json:"source_revision"`
-	Scope               Scope             `json:"scope"`
-	CorpusRows          int               `json:"corpus_rows"`
-	CanonicalHash       string            `json:"canonical_sha256"`
-	SearchHash          string            `json:"search_sha256"`
-	MappingHash         string            `json:"mapping_sha256"`
-	DumpHash            string            `json:"dump_sha256"`
-	DumpBytes           int64             `json:"dump_bytes"`
-	SchemaVersion       int64             `json:"schema_version"`
-	PostgresImage       string            `json:"postgres_image"`
-	Model               string            `json:"model"`
-	ContextWindowTokens int               `json:"context_window_tokens"`
-	EmbeddingModel      string            `json:"embedding_model"`
-	EmbeddingDimensions int               `json:"embedding_dimensions"`
-	ImportWorkers       int               `json:"import_workers"`
-	ElapsedMS           float64           `json:"elapsed_ms"`
-	Ontology            *PreparedOntology `json:"ontology_preparation,omitempty"`
+	IntakeProof         bool    `json:"intake_proof,omitempty"`
+	AISecurityReview    string  `json:"ai_security_review,omitempty"`
+	Version             int     `json:"version"`
+	Dataset             string  `json:"dataset"`
+	RegistryHash        string  `json:"registry_sha256"`
+	BaseRelease         string  `json:"base_release"`
+	SourceRevision      string  `json:"source_revision"`
+	Scope               Scope   `json:"scope"`
+	CorpusRows          int     `json:"corpus_rows"`
+	CanonicalHash       string  `json:"canonical_sha256"`
+	SearchHash          string  `json:"search_sha256"`
+	MappingHash         string  `json:"mapping_sha256"`
+	DumpHash            string  `json:"dump_sha256"`
+	DumpBytes           int64   `json:"dump_bytes"`
+	SchemaVersion       int64   `json:"schema_version"`
+	PostgresImage       string  `json:"postgres_image"`
+	Model               string  `json:"model"`
+	ContextWindowTokens int     `json:"context_window_tokens"`
+	EmbeddingModel      string  `json:"embedding_model"`
+	EmbeddingDimensions int     `json:"embedding_dimensions"`
+	ImportWorkers       int     `json:"import_workers"`
+	ElapsedMS           float64 `json:"elapsed_ms"`
 }
 
 func (s SeedMetadata) Validate(manifest Manifest, scope Scope, corpusRows int) error {
@@ -115,7 +114,18 @@ func ReadSeed(dir string) (SeedMetadata, KnowledgeMapping, error) {
 func VerifySeed(ctx context.Context, manifest Manifest, corpus []CorpusItem, client *HTTPClient, native *Native) (SeedMetadata, KnowledgeMapping, map[string]CanonicalEvidence, NativeObservation, error) {
 	seed, mapping, canonical, observation, err := verifySeedContent(ctx, manifest, corpus, client, native)
 	if err == nil {
-		err = verifySeedCondition(ctx, native, manifest, seed, observation)
+		err = verifySeedCondition(native, manifest, observation)
+	}
+	if err != nil {
+		_ = client.Capture.EmitTerminal(ctx, "seed_verification_failed", map[string]any{
+			"dataset": manifest.Dataset, "seed_image": manifest.SeedImage, "scope": native.Scope,
+			"expected_rows": len(corpus), "mapped_rows": len(mapping.BySourceDocID),
+			"expected_registry_sha256": manifest.RegistryHash, "observed_registry_sha256": seed.RegistryHash,
+			"expected_canonical_sha256": seed.CanonicalHash, "observed_canonical_sha256": observation.CanonicalHash,
+			"ontology_enabled": observation.Ontology.Enabled, "ontology_paused": observation.Ontology.Paused,
+			"organized": observation.Ontology.Counts.Organized, "attempts": len(observation.ProviderAttempts),
+			"search": observation.Search, "error": client.Capture.ProtectError(err),
+		})
 	}
 	return seed, mapping, canonical, observation, err
 }
@@ -158,17 +168,11 @@ func verifySeedContent(ctx context.Context, manifest Manifest, corpus []CorpusIt
 	return seed, mapping, canonical, observation, err
 }
 
-func verifySeedCondition(ctx context.Context, native *Native, manifest Manifest, seed SeedMetadata, observation NativeObservation) error {
-	if manifest.Condition != "on" {
-		if seed.Ontology != nil || observation.Ontology.Counts.Organized != 0 || len(observation.ProviderAttempts) != 0 {
-			return errors.New("restored seed ontology-off state differs")
-		}
-		return NativeReady(observation, false, true, manifest, native.Scope.TeamID)
+func verifySeedCondition(native *Native, manifest Manifest, observation NativeObservation) error {
+	if observation.Ontology.Counts.Organized != 0 || len(observation.ProviderAttempts) != 0 {
+		return errors.New("restored seed ontology-off state differs")
 	}
-	if seed.Ontology == nil || seed.Ontology.ParentImage != manifest.ParentSeedImage {
-		return errors.New("restored ontology-on seed parent differs")
-	}
-	return verifyPreparedOntology(ctx, native, manifest, seed.Ontology, observation)
+	return NativeReady(observation, false, true, manifest, native.Scope.TeamID)
 }
 
 func Prepare(ctx context.Context, manifest Manifest, corpus []CorpusItem, client *HTTPClient, native *Native) (SeedMetadata, error) {

@@ -166,7 +166,6 @@ type Config struct {
 	memoryAutoWriteConfidenceThresholdSet bool
 	ControlHTTPAddr                       string
 	ControlPortalToken                    string `json:"-"`
-	OntologyPreparationCooldownFile       string `json:"-"`
 	TelemetryEnabled                      bool
 	TelemetryPrometheusURL                string
 	TelemetryPrometheusJob                string
@@ -565,7 +564,6 @@ func loadWithPostgresDSN(postgresDSN string) (Config, error) {
 	cfg.AppTimezone = getEnvOrDefault("APP_TIMEZONE", "Local")
 	cfg.ControlHTTPAddr = getEnvOrDefault("CONTROL_HTTP_ADDR", ":8090")
 	cfg.ControlPortalToken = os.Getenv("CONTROL_PORTAL_TOKEN")
-	cfg.OntologyPreparationCooldownFile = os.Getenv("ONTOLOGY_PREPARATION_COOLDOWN_FILE")
 	if transport := strings.ToLower(strings.TrimSpace(os.Getenv("MCP_TRANSPORT"))); transport != "" && transport != "sdk" {
 		return cfg, &ValidationError{Field: "MCP_TRANSPORT", Message: "must be unset or sdk; the official SDK is the only supported MCP transport"}
 	}

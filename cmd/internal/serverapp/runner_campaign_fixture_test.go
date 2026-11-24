@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	assessmentfixture "github.com/markhuangai/dense-mem/internal/testfixture/assessment"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,7 +15,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	accesspg "github.com/markhuangai/dense-mem/internal/access/postgres"
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	auditapp "github.com/markhuangai/dense-mem/internal/audit"
@@ -31,7 +32,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/ontology/assessment"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	ontologypg "github.com/markhuangai/dense-mem/internal/ontology/postgres"
-	assessorprovider "github.com/markhuangai/dense-mem/internal/provider/assessor"
+	"github.com/markhuangai/dense-mem/internal/provider/structured"
 	"github.com/markhuangai/dense-mem/internal/recall"
 	recallpg "github.com/markhuangai/dense-mem/internal/recall/postgres"
 	remember "github.com/markhuangai/dense-mem/internal/remember/service"
@@ -60,16 +61,6 @@ type runnerServiceFixture struct {
 }
 
 func newRunnerServiceFixture(t *testing.T) *runnerServiceFixture {
-	return newRunnerServiceFixtureWithOntology(t, nil, nil)
-}
-
-type runnerPreparationFixture struct {
-	now       func() time.Time
-	ambiguous bool
-	cooldown  *organization.PreparationCooldown
-}
-
-func newRunnerServiceFixtureWithOntology(t *testing.T, initial []ontology.Change, before func(context.Context, *ontologypg.Store, requestctx.Actor, assessment.Request) (int, error), preparation ...runnerPreparationFixture) *runnerServiceFixture {
 	t.Helper()
 	admin, app, rls, cleanup := setupRememberProcessorIntegrationDB(t)
 	t.Cleanup(cleanup)
@@ -89,25 +80,9 @@ func newRunnerServiceFixtureWithOntology(t *testing.T, initial []ontology.Change
 	search := searchpg.NewStore(app, rls)
 	audit := auditapp.New(auditpg.NewStore(app, rls))
 	configuration := settings.NewAppConfigService(settingspg.NewAppConfigRepository(app, rls), nil)
-	var fixture runnerPreparationFixture
-	if len(preparation) != 0 {
-		fixture = preparation[0]
-	}
-	enabled := "true"
-	if fixture.now != nil {
-		enabled = "false"
-	}
-	_, err := configuration.UpdateOntologyMaintenanceSettings(ctx, map[string]string{domain.AppConfigOntologyEnabled: enabled, domain.AppConfigOntologyModel: "runner-ontology", domain.AppConfigOntologyContextWindow: "300000", domain.AppConfigOntologyConcurrency: "4", domain.AppConfigOntologyTeamConcurrency: "4"}, "control", "", "")
+	_, err := configuration.UpdateOntologyMaintenanceSettings(ctx, map[string]string{domain.AppConfigOntologyEnabled: "true", domain.AppConfigOntologyModel: "runner-ontology", domain.AppConfigOntologyContextWindow: "300000", domain.AppConfigOntologyConcurrency: "4", domain.AppConfigOntologyTeamConcurrency: "4"}, "control", "", "")
 	require.NoError(t, err)
 	ontologyStore := ontologypg.NewStore(app, rls)
-	if len(initial) > 0 {
-		manager := actor
-		manager.Role = "manager"
-		_, err := ontologyStore.PublishManager(requestctx.WithActor(ctx, manager), teamID.String(), ontology.Publication{
-			OperationKey: "runner-initial-definitions", Reason: "Establish the initial fixture vocabulary", Changes: initial,
-		})
-		require.NoError(t, err)
-	}
 	policy, err := configuration.OntologyMaintenanceRuntimeConfig(ctx)
 	require.NoError(t, err)
 	_, err = ontologyStore.EnsureMaintenanceWindow(ctx, policy, time.Now())
@@ -125,33 +100,7 @@ func newRunnerServiceFixtureWithOntology(t *testing.T, initial []ontology.Change
 			http.Error(w, "invalid organization request", 400)
 			return
 		}
-		if before != nil {
-			status, err := before(r.Context(), ontologyStore, actor, input)
-			if err != nil {
-				t.Errorf("organization fixture intervention: %v", err)
-				http.Error(w, "fixture intervention failed", http.StatusInternalServerError)
-				return
-			}
-			if status == http.StatusTooManyRequests && fixture.cooldown != nil {
-				w.Header().Set("Content-Length", "42")
-				w.Header().Set("Retry-After", "1")
-				w.WriteHeader(status)
-				_, _ = w.Write([]byte("{"))
-				return
-			}
-			if status != 0 {
-				http.Error(w, "synthetic provider failure", status)
-				return
-			}
-		}
-		output := runnerOrganizationResponse(input)
-		if fixture.ambiguous {
-			output.Definitions = []assessment.Definition{}
-			for i := range output.Items {
-				output.Items[i] = assessment.Decision{Ref: output.Items[i].Ref, Status: "ambiguous", Reason: "fixture ambiguity"}
-			}
-		}
-		body, err := json.Marshal(output)
+		body, err := json.Marshal(runnerOrganizationResponse(input))
 		if err != nil {
 			http.Error(w, "invalid fixture result", 500)
 			return
@@ -159,15 +108,10 @@ func newRunnerServiceFixtureWithOntology(t *testing.T, initial []ontology.Change
 		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": string(body)}}}})
 	}))
 	t.Cleanup(upstream.Close)
-	transport := assessorprovider.NewOpenAIAssessor(&config.Config{AIVerifierAPIURL: upstream.URL, AIVerifierAPIKey: "synthetic", AIVerifierModel: "runner-ontology"}, upstream.Client())
-	var timeout time.Duration
-	if fixture.cooldown != nil {
-		timeout = time.Second
-	}
-	maintenance := organization.NewMaintenanceService(organization.MaintenanceDependencies{Repository: ontologyStore, Config: configuration, Audit: audit, DefaultModel: "runner-ontology", Now: fixture.now,
-		PreparationCooldown: fixture.cooldown, ProviderTimeout: timeout, Organizer: func(model string, tokens int64, accounting assessment.AttemptAccounting) *organization.Service {
-			return organization.NewService(ontologyStore, assessment.NewProviderWithAccounting(transport, model, assessor.DefaultSemanticAssessmentLimits(), accounting, int(tokens)))
-		}})
+	transport := structured.NewOpenAI(&config.Config{AIVerifierAPIURL: upstream.URL, AIVerifierAPIKey: "synthetic", AIVerifierModel: "runner-ontology"}, upstream.Client())
+	maintenance := organization.NewMaintenanceService(organization.MaintenanceDependencies{Repository: ontologyStore, Config: configuration, Audit: audit, DefaultModel: "runner-ontology", Organizer: func(model string, tokens int64, accounting assessment.AttemptAccounting) *organization.Service {
+		return organization.NewService(ontologyStore, assessment.NewProviderWithAccounting(transport, model, assessor.DefaultSemanticAssessmentLimits(), accounting, int(tokens)))
+	}})
 	_, err = maintenance.Command(ctx, domain.OntologyMaintenanceCommand{Action: "pause", OperationKey: uuid.NewString()}, "", "")
 	require.NoError(t, err)
 	recallStore := recallpg.NewStore(app, rls, search, recallpg.LoadRecallEvidenceConflictRecords).
@@ -185,10 +129,7 @@ func newRunnerServiceFixtureWithOntology(t *testing.T, initial []ontology.Change
 		e.ServeHTTP(w, r.WithContext(callCtx))
 	}))
 	t.Cleanup(mcp.Close)
-	portal, err := densehttp.NewControlPortalServerWithCapabilityBindings(&config.Config{ControlPortalToken: "runner-control"}, nil, nil, nil, densehttp.ControlPortalBindings{Telemetry: densehttp.ControlPortalTelemetry{Ontology: maintenance, Config: configuration, Convergence: searchapp.NewSearchConvergenceService(search, store)}}, densehttp.HealthConfig{}, nil)
-	require.NoError(t, err)
-	control := httptest.NewServer(portal)
-	t.Cleanup(control.Close)
+	control := runnerControlServer(t, maintenance, configuration, searchapp.NewSearchConvergenceService(search, store))
 	pool, err := admin.DB()
 	require.NoError(t, err)
 	client := &evalharness.HTTPClient{BaseURL: mcp.URL, APIKey: "fixture", Client: mcp.Client()}
@@ -199,38 +140,58 @@ func newRunnerServiceFixtureWithOntology(t *testing.T, initial []ontology.Change
 		ontology: ontologyStore, provider: provider, reconciliation: searchapp.NewSearchReconciliationService(searchapp.SearchReconciliationDependencies{Repository: search, Projection: store, Executor: semanticwrite.NewProviderExecutor(embedder)})}
 }
 
+func runnerControlServer(t *testing.T, maintenance *organization.MaintenanceService, configuration settings.AppConfigService, convergence searchapp.SearchConvergenceReader) *httptest.Server {
+	t.Helper()
+	bindings := densehttp.ControlPortalBindings{Telemetry: densehttp.ControlPortalTelemetry{
+		Ontology: maintenance, Config: configuration, Convergence: convergence,
+	}}
+	portal, err := densehttp.NewControlPortalServerWithCapabilityBindings(&config.Config{ControlPortalToken: "runner-control"}, nil, nil, nil, bindings, densehttp.HealthConfig{}, nil)
+	require.NoError(t, err)
+	control := httptest.NewServer(portal)
+	t.Cleanup(control.Close)
+	return control
+}
+
 type runnerRememberAssessor struct {
 	rememberProcessorIntegrationRegistrationAssessor
 	failures int
 }
 
-func (p *runnerRememberAssessor) Assess(ctx context.Context, request assessor.SemanticAssessmentRequest) (assessor.SemanticAssessmentSession, assessor.SemanticAssessmentTurn, error) {
+func (p *runnerRememberAssessor) Complete(ctx context.Context, wire modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
+	if wire.SchemaName == assessor.PartitionSchemaName {
+		return partitionFixtureComplete(wire)
+	}
 	if p.failures > 0 {
 		p.failures--
 		p.calls++
-		return nil, assessor.SemanticAssessmentTurn{}, &assessorprovider.ProviderError{
+		return modelprovider.StructuredResult{}, &modelprovider.ProviderError{
 			Provider: "runner-fixture", FailureClass: modelprovider.ProviderFailureClassHTTPServer, StatusCode: http.StatusServiceUnavailable,
 		}
 	}
-	session, turn, err := p.rememberProcessorIntegrationRegistrationAssessor.Assess(ctx, request)
-	if err != nil || !strings.HasPrefix(request.Evidence[0].Content, "PostgreSQL stores durable memory for") {
-		return session, turn, err
+	request, err := assessmentfixture.Request(wire)
+	if err != nil {
+		return modelprovider.StructuredResult{}, err
 	}
+	if !strings.HasPrefix(request.Evidence[0].Content, "PostgreSQL stores durable memory for") {
+		return p.rememberProcessorIntegrationRegistrationAssessor.Complete(ctx, wire)
+	}
+	p.calls++
+	reply := rememberProcessorIntegrationAssessmentResponse(request)
 	for _, group := range request.EvidenceEquivalenceCandidates {
 		for _, candidate := range group.Candidates {
 			if candidate.Content != "Project Alpha stores durable memory in PostgreSQL." {
 				continue
 			}
-			for index := range turn.Response.EvidenceEquivalenceResults {
-				result := &turn.Response.EvidenceEquivalenceResults[index]
+			for index := range reply.EvidenceEquivalenceResults {
+				result := &reply.EvidenceEquivalenceResults[index]
 				if result.EvidenceID == group.EvidenceID {
 					result.Action, result.CandidateEvidenceID = "reuse", &candidate.EvidenceID
-					return session, turn, nil
+					return assessmentfixture.Result(wire, reply)
 				}
 			}
 		}
 	}
-	return nil, assessor.SemanticAssessmentTurn{}, fmt.Errorf("paraphrase fixture has no supplied canonical candidate")
+	return modelprovider.StructuredResult{}, fmt.Errorf("paraphrase fixture has no supplied canonical candidate")
 }
 
 func pairArgumentString(arguments map[string]any, key string) string {

@@ -7,8 +7,6 @@ import (
 	"net"
 	"net/http"
 	"time"
-
-	"github.com/labstack/echo/v4"
 )
 
 const (
@@ -113,7 +111,7 @@ func (l *runtimeLifecycle) shutdown(ctx context.Context) error {
 	return joined
 }
 
-func shutdownEchoServer(ctx context.Context, server *echo.Echo) error {
+func shutdownHTTPServer(ctx context.Context, server *http.Server) error {
 	if server == nil {
 		return nil
 	}
@@ -121,7 +119,7 @@ func shutdownEchoServer(ctx context.Context, server *echo.Echo) error {
 		ctx = context.Background()
 	}
 	if err := server.Shutdown(ctx); err != nil {
-		return errors.Join(err, forceCloseEchoServer(server))
+		return errors.Join(err, forceCloseHTTPServer(server))
 	}
 	return nil
 }
@@ -166,20 +164,19 @@ func shutdownListeners(ctx context.Context, listeners ...listenerShutdown) error
 	return joined
 }
 
-func forceCloseEchoServer(server *echo.Echo) error {
+func forceCloseHTTPServer(server *http.Server) error {
 	if server == nil {
 		return nil
 	}
 	if err := server.Close(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return fmt.Errorf("force close echo server: %w", err)
+		return fmt.Errorf("force close HTTP server: %w", err)
 	}
 	return nil
 }
 
-// bindEchoServer reserves the listener before any worker starts. Echo's Start
-// still owns HTTP server configuration and serving; the pre-bound listener
-// makes address failures synchronous and allows startup to unwind safely.
-func bindEchoServer(server *echo.Echo, address string) (net.Listener, error) {
+// bindHTTPServer reserves the listener before any worker starts so address
+// failures are synchronous and startup can unwind safely.
+func bindHTTPServer(server *http.Server, address string) (net.Listener, error) {
 	if server == nil {
 		return nil, errors.New("runtime listener: server is required")
 	}
@@ -187,14 +184,14 @@ func bindEchoServer(server *echo.Echo, address string) (net.Listener, error) {
 	if err != nil {
 		return nil, err
 	}
-	server.Listener = listener
+	server.Addr = listener.Addr().String()
 	return listener, nil
 }
 
-func serveEchoServer(server *echo.Echo, address string) <-chan error {
+func serveHTTPServer(server *http.Server, listener net.Listener) <-chan error {
 	errorsCh := make(chan error, 1)
 	go func() {
-		errorsCh <- server.Start(address)
+		errorsCh <- server.Serve(listener)
 	}()
 	return errorsCh
 }

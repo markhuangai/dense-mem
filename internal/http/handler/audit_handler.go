@@ -5,7 +5,7 @@ import (
 	"strconv"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/http/response"
 	"github.com/markhuangai/dense-mem/internal/httperr"
@@ -48,7 +48,7 @@ type AuditLogResponse struct {
 
 // Get handles GET /ui/api/team/audit-log for the authenticated team.
 // No update/delete endpoints are provided - audit log is append-only.
-func (h *AuditHandler) Get(c echo.Context) error {
+func (h *AuditHandler) Get(c *echo.Context) error {
 	ctx := c.Request().Context()
 	principal := middleware.GetPrincipal(ctx)
 
@@ -105,7 +105,7 @@ func toAuditLogResponse(e accessservice.AuditLogEntry) AuditLogResponse {
 
 // parseAuditPaginationParams extracts limit and offset from query params.
 // Defaults: limit=20, offset=0. Max limit=100.
-func parseAuditPaginationParams(c echo.Context) (int, int) {
+func parseAuditPaginationParams(c *echo.Context) (int, int) {
 	limit := 20
 	offset := 0
 

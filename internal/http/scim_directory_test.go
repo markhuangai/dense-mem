@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -374,6 +374,14 @@ func TestDirectorySCIMRoutesAreRateLimited(t *testing.T) {
 		Config:       &config.Config{RateLimitPerMinute: 1},
 	}))
 
+	for _, path := range []string{"/scim/v2/" + connectorID.String(), "/scim/v2/" + connectorID.String() + "/Users"} {
+		response := httptest.NewRecorder()
+		e.ServeHTTP(response, httptest.NewRequest("SEARCH", path, nil))
+		require.Equal(t, nethttp.StatusMethodNotAllowed, response.Code)
+		require.Contains(t, response.Header().Get("Allow"), nethttp.MethodGet)
+		require.Empty(t, response.Header().Get("X-RateLimit-Limit"))
+	}
+
 	for _, testCase := range []struct {
 		name    string
 		method  string
@@ -488,10 +496,11 @@ func TestDirectorySCIMOAuthFailureRetainsOuterSecretContext(t *testing.T) {
 	request := httptest.NewRequest(nethttp.MethodPost, "/scim/oauth/token", strings.NewReader("grant_type=client_credentials"))
 	request.SetBasicAuth(clientID, presentedSecret)
 	request.Header.Set(echo.HeaderContentType, "application/x-www-form-urlencoded")
-	ctx := e.NewContext(request, httptest.NewRecorder())
+	recorder := httptest.NewRecorder()
+	ctx := e.NewContext(request, recorder)
 
 	require.NoError(t, h.oauthToken(ctx))
-	assert.Equal(t, nethttp.StatusUnauthorized, ctx.Response().Status)
+	assert.Equal(t, nethttp.StatusUnauthorized, recorder.Code)
 	authorization := request.Header.Get(echo.HeaderAuthorization)
 	basicToken := strings.TrimSpace(strings.TrimPrefix(authorization, "Basic "))
 	assert.ElementsMatch(t, []string{presentedSecret, basicToken, authorization}, requestctx.AuthenticationSecretsFromContext(ctx.Request().Context()))
@@ -512,8 +521,7 @@ func TestDirectorySCIMOuterRequestRetainsAuthenticatedSecrets(t *testing.T) {
 	request := httptest.NewRequest(nethttp.MethodGet, "/scim/v2/"+connectorID.String()+"/ServiceProviderConfig", nil)
 	request.Header.Set(echo.HeaderAuthorization, "Bearer "+rawToken)
 	ctx := e.NewContext(request, httptest.NewRecorder())
-	ctx.SetParamNames("connectorId", "*")
-	ctx.SetParamValues(connectorID.String(), "ServiceProviderConfig")
+	ctx.SetPathValues(echo.PathValues{{Name: "connectorId", Value: connectorID.String()}, {Name: "*", Value: "ServiceProviderConfig"}})
 
 	require.NoError(t, h.serve(ctx))
 	assert.Equal(t, []string{rawToken}, requestctx.AuthenticationSecretsFromContext(ctx.Request().Context()))
@@ -535,12 +543,12 @@ func TestDirectorySCIMFailureRetainsOuterBearerSecretContext(t *testing.T) {
 	e := echo.New()
 	request := httptest.NewRequest(nethttp.MethodGet, "/scim/v2/"+connectorID.String()+"/Users", nil)
 	request.Header.Set(echo.HeaderAuthorization, "Bearer "+presentedToken)
-	ctx := e.NewContext(request, httptest.NewRecorder())
-	ctx.SetParamNames("connectorId", "*")
-	ctx.SetParamValues(connectorID.String(), "Users")
+	recorder := httptest.NewRecorder()
+	ctx := e.NewContext(request, recorder)
+	ctx.SetPathValues(echo.PathValues{{Name: "connectorId", Value: connectorID.String()}, {Name: "*", Value: "Users"}})
 
 	require.NoError(t, h.serve(ctx))
-	assert.Equal(t, nethttp.StatusUnauthorized, ctx.Response().Status)
+	assert.Equal(t, nethttp.StatusUnauthorized, recorder.Code)
 	assert.Equal(t, []string{presentedToken}, requestctx.AuthenticationSecretsFromContext(ctx.Request().Context()))
 }
 

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	"strings"
 	"time"
 
@@ -216,17 +217,17 @@ func (r *Store) RecordRememberInvocationDiagnostic(ctx context.Context, input kn
 		input.ExpiresAt = input.CreatedAt.Add(rememberInvocationDiagnosticRetention)
 	}
 	if input.RequestCaptureState == "" {
-		input.RequestCaptureState = knowledgecontract.DiagnosticCaptureState("", "", len(input.RequestBody), 0)
+		input.RequestCaptureState = observability.DiagnosticCaptureState("", "", len(input.RequestBody), 0)
 	}
 	if input.CallerResponseCaptureState == "" {
-		input.CallerResponseCaptureState = knowledgecontract.DiagnosticCaptureState("", "", 0, len(input.CallerResponse))
+		input.CallerResponseCaptureState = observability.DiagnosticCaptureState("", "", 0, len(input.CallerResponse))
 	}
 	for index := range input.ProviderExchanges {
 		exchange := &input.ProviderExchanges[index]
 		exchange.CaptureState = strings.TrimSpace(exchange.CaptureState)
 		exchange.CaptureReason = strings.TrimSpace(exchange.CaptureReason)
 		if exchange.CaptureState == "" {
-			exchange.CaptureState = knowledgecontract.DiagnosticCaptureState("", exchange.Outcome, len(exchange.RequestBody), len(exchange.ResponseBody))
+			exchange.CaptureState = observability.DiagnosticCaptureState("", exchange.Outcome, len(exchange.RequestBody), len(exchange.ResponseBody))
 		}
 	}
 	if err := validateRememberInvocationDiagnostic(input); err != nil {

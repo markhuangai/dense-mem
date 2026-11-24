@@ -2,14 +2,13 @@ package httperr
 
 import (
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"unicode/utf8"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -156,7 +155,7 @@ func TestErrorHandler(t *testing.T) {
 		c := e.NewContext(req, rec)
 
 		apiErr := New(NOT_FOUND, "resource not found")
-		ErrorHandler(apiErr, c)
+		ErrorHandler(c, apiErr)
 
 		assert.Equal(t, http.StatusNotFound, rec.Code)
 		assert.Contains(t, rec.Body.String(), `"code":"NOT_FOUND"`)
@@ -166,7 +165,7 @@ func TestErrorHandler(t *testing.T) {
 	t.Run("classifies an unmatched route as a correctable request", func(t *testing.T) {
 		router := echo.New()
 		router.HTTPErrorHandler = ErrorHandler
-		router.GET("/known", func(c echo.Context) error {
+		router.GET("/known", func(c *echo.Context) error {
 			return c.NoContent(http.StatusNoContent)
 		})
 		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/missing", nil)
@@ -190,10 +189,10 @@ func TestErrorHandler(t *testing.T) {
 		rec := httptest.NewRecorder()
 		c := e.NewContext(req, rec)
 
-		ErrorHandler(WithGuidance(
+		ErrorHandler(c, WithGuidance(
 			New(CONFLICT, "team name already exists"),
 			"team_name_conflict", "correct_and_resubmit", "Choose a different team name and submit again.", false, nil, "",
-		), c)
+		))
 
 		var body APIError
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
@@ -210,7 +209,7 @@ func TestErrorHandler(t *testing.T) {
 		rec := httptest.NewRecorder()
 		c := e.NewContext(req, rec)
 
-		ErrorHandler(assert.AnError, c)
+		ErrorHandler(c, assert.AnError)
 
 		assert.Equal(t, http.StatusInternalServerError, rec.Code)
 		assert.Contains(t, rec.Body.String(), `"code":"INTERNAL_ERROR"`)
@@ -227,7 +226,7 @@ func TestErrorHandler(t *testing.T) {
 		for i := range details {
 			details[i] = ErrorDetail{Field: strings.Repeat("f", maxPublicErrorFieldRunes+10), Message: long}
 		}
-		ErrorHandler(NewWithDetails(VALIDATION_ERROR, long, details), c)
+		ErrorHandler(c, NewWithDetails(VALIDATION_ERROR, long, details))
 
 		assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 		var body struct {
@@ -244,14 +243,14 @@ func TestErrorHandler(t *testing.T) {
 
 		rec = httptest.NewRecorder()
 		c = e.NewContext(req, rec)
-		ErrorHandler(echo.NewHTTPError(http.StatusBadGateway, long), c)
+		ErrorHandler(c, echo.NewHTTPError(http.StatusBadGateway, long))
 		assert.Equal(t, http.StatusBadGateway, rec.Code)
 		assert.Contains(t, rec.Body.String(), `"message":"upstream service error"`)
 		assert.NotContains(t, rec.Body.String(), long)
 
 		rec = httptest.NewRecorder()
 		c = e.NewContext(req, rec)
-		ErrorHandler(NewWithDetails(VALIDATION_ERROR, "validation failed", []ErrorDetail{{Message: "value is invalid"}}), c)
+		ErrorHandler(c, NewWithDetails(VALIDATION_ERROR, "validation failed", []ErrorDetail{{Message: "value is invalid"}}))
 		var emptyFieldBody struct {
 			Details []ErrorDetail `json:"details"`
 		}
@@ -261,7 +260,7 @@ func TestErrorHandler(t *testing.T) {
 
 		rec = httptest.NewRecorder()
 		c = e.NewContext(req, rec)
-		ErrorHandler(echo.NewHTTPError(http.StatusRequestEntityTooLarge, "request body exceeds limit"), c)
+		ErrorHandler(c, echo.NewHTTPError(http.StatusRequestEntityTooLarge, "request body exceeds limit"))
 		assert.Equal(t, http.StatusRequestEntityTooLarge, rec.Code)
 		var oversizedBody APIError
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &oversizedBody))
@@ -272,7 +271,7 @@ func TestErrorHandler(t *testing.T) {
 		for _, status := range []int{http.StatusMethodNotAllowed, http.StatusUnsupportedMediaType} {
 			rec = httptest.NewRecorder()
 			c = e.NewContext(req, rec)
-			ErrorHandler(echo.NewHTTPError(status, http.StatusText(status)), c)
+			ErrorHandler(c, echo.NewHTTPError(status, http.StatusText(status)))
 			var clientError APIError
 			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &clientError))
 			assert.Equal(t, status, rec.Code)
@@ -282,16 +281,38 @@ func TestErrorHandler(t *testing.T) {
 		}
 	})
 
+	t.Run("preserves router errors and guidance", func(t *testing.T) {
+		router := echo.NewWithConfig(echo.Config{HTTPErrorHandler: ErrorHandler})
+		router.GET("/registered", func(c *echo.Context) error { return c.NoContent(http.StatusNoContent) })
+		for _, tc := range []struct {
+			method string
+			path   string
+			status int
+			code   ErrorCode
+		}{
+			{http.MethodGet, "/missing", http.StatusNotFound, NOT_FOUND},
+			{http.MethodPost, "/registered", http.StatusMethodNotAllowed, VALIDATION_ERROR},
+		} {
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, httptest.NewRequest(tc.method, tc.path, nil))
+			require.Equal(t, tc.status, rec.Code)
+			var body APIError
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+			require.Equal(t, tc.code, body.Code)
+			require.Equal(t, "correct_and_resubmit", body.NextAction)
+		}
+	})
+
 	t.Run("does not write committed response", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/test", nil)
 		rec := httptest.NewRecorder()
 		c := e.NewContext(req, rec)
-		c.Response().Committed = true
+		require.NoError(t, c.String(http.StatusAccepted, "already sent"))
 
-		ErrorHandler(New(NOT_FOUND, "resource not found"), c)
+		ErrorHandler(c, New(NOT_FOUND, "resource not found"))
 
-		assert.Equal(t, http.StatusOK, rec.Code)
-		assert.Empty(t, rec.Body.String())
+		assert.Equal(t, http.StatusAccepted, rec.Code)
+		assert.Equal(t, "already sent", rec.Body.String())
 	})
 }
 
@@ -315,9 +336,9 @@ func TestEchoHTTPErrorToAPIErrorBranches(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(http.StatusText(tc.status), func(t *testing.T) {
-			got := echoHTTPErrorToAPIError(echo.NewHTTPError(tc.status, errors.New("wrapped")))
+			got := echoHTTPErrorToAPIError(tc.status, "custom error message")
 			assert.Equal(t, tc.code, got.Code)
-			assert.Contains(t, got.Message, "wrapped")
+			assert.Equal(t, "custom error message", got.Message)
 		})
 	}
 }

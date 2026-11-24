@@ -18,9 +18,6 @@ on:
       seed_version:
         type: string
         default: latest
-      ontology_seed_version:
-        type: string
-        default: latest
       dataset_selection:
         type: string
         default: ''
@@ -99,12 +96,13 @@ jobs:
         env:
           EVAL_MODE: live
           EVAL_SEED_VERSION: ${{ inputs.seed_version }}
-          EVAL_ONTOLOGY_SEED_VERSION: ${{ inputs.ontology_seed_version }}
+          EVAL_SOURCE_REVISION: ${{ inputs.source_revision }}
+          EVAL_IMAGE: ${{ inputs.image }}
           GITHUB_TOKEN: ${{ github.token }}
         run: node tests/eval/scripts/workflow.mjs pin-seeds
 
   datasets:
-    name: ${{ inputs.mode == 'fixtures' && 'Prepare and score synthetic pair' || format('Evaluate {0} ontology {1}', matrix.dataset, matrix.condition) }}
+    name: ${{ inputs.mode == 'fixtures' && 'Prepare and score synthetic off seed' || format('Evaluate {0} ontology off', matrix.dataset) }}
     needs: registry
     runs-on: ubuntu-latest
     timeout-minutes: 360
@@ -116,12 +114,10 @@ jobs:
       EVAL_MODE: ${{ inputs.mode }}
       EVAL_ANSWER_WORKERS: ${{ needs.registry.outputs.answer_workers }}
       EVAL_DATASET: ${{ matrix.dataset }}
-      EVAL_CONDITION: ${{ matrix.condition }}
       EVAL_IMAGE: ${{ inputs.image }}
       EVAL_SOURCE_REVISION: ${{ inputs.source_revision }}
       WORKFLOW_EMBEDDING_MODEL: 'text-embedding-3-small'
-      EVAL_SEED_IMAGE: ${{ inputs.mode == 'live' && fromJSON(needs.registry.outputs.seed_images)[matrix.dataset][matrix.condition] || '' }}
-      EVAL_PARENT_SEED_IMAGE: ${{ inputs.mode == 'live' && fromJSON(needs.registry.outputs.seed_images)[matrix.dataset].off || '' }}
+      EVAL_SEED_IMAGE: ${{ inputs.mode == 'live' && fromJSON(needs.registry.outputs.seed_images)[matrix.dataset].image || '' }}
       WORKFLOW_EMBEDDING_DIMENSIONS: '1536'
       DENSE_MEM_EVAL_MODEL: ${{ inputs.model || vars.DENSE_MEM_EVAL_MODEL || secrets.eval-model }}
       DENSE_MEM_EVAL_CONTEXT_WINDOW_TOKENS: ${{ inputs.context_window_tokens || vars.DENSE_MEM_EVAL_CONTEXT_WINDOW_TOKENS || secrets.eval-context-window }}
@@ -139,10 +135,12 @@ jobs:
           printf 'EVAL_RUNNER_BINARY=%s/eval-runner\n' "${RUNNER_TEMP}" >> "${GITHUB_ENV}"
       - *checkout-source
       - *setup-node
-      - name: Require verified condition pin
+      - name: Require verified seed pin
         if: inputs.mode == 'live' && env.EVAL_SEED_IMAGE == ''
-        run: exit 1
-      - uses: actions/setup-go@v6
+        run: |
+          echo "::error::Selected ontology-off seed could not be pinned. See the registry job."
+          exit 1
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - name: Build workflow-internal runner
@@ -163,11 +161,7 @@ jobs:
       - name: Verify seed exports, protected failures and owned cleanup
         if: inputs.mode == 'fixtures'
         run: node --test tests/eval/scripts/workflow_docker.test.mjs tests/eval/scripts/seed_docker.test.mjs
-      - name: Build and score frozen synthetic pair
-        if: inputs.mode == 'fixtures'
-        run: node tests/eval/scripts/workflow.mjs run
-      - name: Run selected frozen condition
-        if: inputs.mode == 'live'
+      - name: Score frozen ontology-off seed
         run: node tests/eval/scripts/workflow.mjs run
       - name: Preserve protected startup failure logs
         if: failure()
@@ -179,8 +173,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: evaluation-${{ matrix.dataset }}-${{ matrix.condition || 'fixtures' }}
-          path: ${{ runner.temp }}/dense-mem-eval-${{ github.run_id }}-${{ matrix.dataset }}-${{ matrix.condition || '*' }}/public/*.json
+          name: evaluation-${{ matrix.dataset }}-off
+          path: ${{ runner.temp }}/dense-mem-eval-${{ github.run_id }}-${{ matrix.dataset }}-off/public/*.json
           retention-days: 2
           if-no-files-found: warn
 
@@ -200,7 +194,7 @@ jobs:
         with:
           pattern: evaluation-*
           path: ${{ runner.temp }}/evaluation-reports
-      - name: Build complete comparison matrix
+      - name: Aggregate frozen dataset reports
         env:
           EVAL_MODE: ${{ inputs.mode }}
           EVAL_SOURCE_REVISION: ${{ inputs.source_revision }}
@@ -208,7 +202,7 @@ jobs:
           EVAL_ANSWER_WORKERS: ${{ needs.registry.outputs.answer_workers }}
           EVAL_PINNED_SEEDS: ${{ needs.registry.outputs.seed_images }}
         run: node tests/eval/scripts/workflow.mjs aggregate
-      - name: Retain comparison including missing axes
+      - name: Retain scores including missing datasets
         if: always()
         uses: actions/upload-artifact@v7
         with:

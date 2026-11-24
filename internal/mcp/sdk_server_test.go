@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	sdkjsonrpc "github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
@@ -677,7 +677,7 @@ func TestSDKHTTP200ToolFailureIsRecordedAsLogicalFailure(t *testing.T) {
 	metrics := observability.NewPrometheusMetrics()
 	echoServer := echo.New()
 	toolHandler := server.NewSDKHTTPHandler(true)
-	wrapped := httpmiddleware.TelemetryHTTPMiddleware(metrics)(httpmiddleware.UsageMetricsMiddleware(nil)(func(c echo.Context) error {
+	wrapped := httpmiddleware.TelemetryHTTPMiddleware(metrics)(httpmiddleware.UsageMetricsMiddleware(nil)(func(c *echo.Context) error {
 		toolHandler.ServeHTTP(c.Response(), c.Request())
 		return nil
 	}))
@@ -706,7 +706,7 @@ func TestSDKHTTP200LookupRejectionsAreRecordedAsRPCFailures(t *testing.T) {
 	metrics := observability.NewPrometheusMetrics()
 	echoServer := echo.New()
 	toolHandler := server.NewSDKHTTPHandler(true)
-	wrapped := httpmiddleware.TelemetryHTTPMiddleware(metrics)(httpmiddleware.UsageMetricsMiddleware(nil)(func(c echo.Context) error {
+	wrapped := httpmiddleware.TelemetryHTTPMiddleware(metrics)(httpmiddleware.UsageMetricsMiddleware(nil)(func(c *echo.Context) error {
 		toolHandler.ServeHTTP(c.Response(), c.Request())
 		return nil
 	}))

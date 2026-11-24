@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 )
@@ -35,7 +34,6 @@ type Native struct {
 	ControlURL          string
 	ControlToken        string
 	Client              *HTTPClient
-	Now                 func() time.Time
 	StopRuntime         func(context.Context, bool) error
 	RuntimeLogs         func(context.Context) error
 	ServerUsage         map[string]UsageTotals
@@ -299,15 +297,8 @@ func fullOntologyCoverage(status ontology.MaintenanceStatus) error {
 	return nil
 }
 
-func ontologyWorkers(manifest Manifest) int {
-	if manifest.Operation == "bake-ontology" {
-		return 8
-	}
-	return 4
-}
-
 func nativeOntologyPolicy(status ontology.MaintenanceStatus, manifest Manifest, teamID string) error {
-	if status.Window == nil || status.Window.Policy.Model != manifest.Model || status.Window.Policy.ContextWindowTokens != int64(manifest.ContextWindowTokens) || status.Window.Policy.MaxConcurrency != ontologyWorkers(manifest) || status.Window.Policy.TeamConcurrency(teamID) != ontologyWorkers(manifest) {
+	if status.Window == nil || status.Window.Policy.Model != manifest.Model || status.Window.Policy.ContextWindowTokens != int64(manifest.ContextWindowTokens) || status.Window.Policy.MaxConcurrency != 4 || status.Window.Policy.TeamConcurrency(teamID) != 4 {
 		return errors.New("effective ontology capacity differs from campaign settings")
 	}
 	return nil
@@ -325,26 +316,6 @@ func nativeDrained(observation NativeObservation) error {
 		return errors.New("durable attempts have not reconciled")
 	}
 	return nil
-}
-
-func (n *Native) EnableOntology(ctx context.Context, manifest Manifest) error {
-	workers := strconv.Itoa(ontologyWorkers(manifest))
-	values := map[string]string{domain.AppConfigOntologyEnabled: "true", domain.AppConfigOntologyModel: manifest.Model, domain.AppConfigOntologyConcurrency: workers, domain.AppConfigOntologyTeamConcurrency: workers, domain.AppConfigOntologyContextWindow: strconv.Itoa(manifest.ContextWindowTokens)}
-	items := []map[string]string{}
-	for key, value := range values {
-		items = append(items, map[string]string{"key": key, "value": value})
-	}
-	if err := n.Control(ctx, http.MethodPatch, "/config/ontology-maintenance", map[string]any{"items": items}, nil); err != nil {
-		return err
-	}
-	if err := n.Control(ctx, http.MethodPost, "/ontology/resume", map[string]string{"operation_key": uuid.NewString()}, nil); err != nil {
-		return err
-	}
-	if manifest.Operation == "bake-ontology" {
-		// Use native scheduled runs across window boundaries, without adding a manual batch.
-		return nil
-	}
-	return n.Control(ctx, http.MethodPost, "/ontology/runs", map[string]any{"operation_key": uuid.NewString(), "max_batches": 0}, nil)
 }
 
 func (n *Native) Pause(ctx context.Context) error {

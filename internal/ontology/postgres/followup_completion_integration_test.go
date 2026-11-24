@@ -4,12 +4,12 @@ package postgres
 
 import (
 	"context"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/ontology/assessment"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
@@ -38,7 +38,7 @@ func TestOntologyMaintenanceBoundedCompletionUsesPersistedOutcomes(t *testing.T)
 			if outcome == "oversized" {
 				text = strings.Repeat("Atlas uses PostgreSQL. ", 50000)
 				limits := maintenanceFixtureLimits()
-				tokens, err := assessor.CountTokens(text, limits.Tokenizer)
+				tokens, err := modelprovider.CountTokens(text, limits.Tokenizer)
 				require.NoError(t, err)
 				require.Greater(t, tokens, limits.MaxInputTokens)
 			}

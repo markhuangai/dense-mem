@@ -4,44 +4,33 @@ import { randomBytes } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { isDeepStrictEqual, parseArgs } from "node:util";
 import { fileURLToPath } from "node:url";
-import { setTimeout as delay } from "node:timers/promises";
 import { configuration, resolveEvaluationImage, requireEvaluationImportSupport, sha256 } from "../../../.github/scripts/evaluation-policy.mjs";
-import { seedBuildRequest, seedBuildVersion, resolveSeedBuildSource, requireSeedBuildValidation, seedReference, resolveSeedImage, dumpSeed, sealSeed, buildBootableSeed, publishSeed, verifySeedCredentialExclusions, verifySeedFiles, validSeedDigest, hashFile, postgresImage } from "../../../.github/scripts/evaluation-seeds.mjs";
-import { ontologyFixtureValidated, seedValidationState } from "../../../.github/scripts/seed-validation.mjs";
-import { setup, cleanup, diagnostics, docker, location, runBinary, prepareOntologyExport, seedSecrets, ontologyPreparationSeconds, saveRuntimeJSON as save } from "./workflow.mjs";
+import { seedBuildRequest, seedBuildVersion, resolveSeedBuildSource, requireSeedBuildValidation, seedReference, resolveSeedImage, dumpSeed, sealSeed, buildBootableSeed, publishSeed, lockLocalSeedFile, verifySeedCredentialExclusions, verifySeedFiles, hashFile, postgresImage } from "../../../.github/scripts/evaluation-seeds.mjs";
+import { setup, cleanup, diagnostics, docker, location, runBinary, seedSecrets, saveRuntimeJSON as save } from "./workflow.mjs";
 
 const read = (file) => JSON.parse(fs.readFileSync(file, "utf8"));
 const notice = () => `# Public evaluation seed\n\nSource: osunlp/HippoRAG_2 at 5ec05b38deecc3318bb432c69865959c56058990.\n\n${fs.readFileSync("tests/eval/source_locks/hipporag_2.json", "utf8")}\n\nHotpotQA attribution: https://github.com/hotpotqa/hotpot (CC BY-SA 4.0).\nMuSiQue attribution: https://github.com/StonyBrookNLP/musique (CC BY 4.0).\nOther dataset-specific upstream attribution and licensing limitations are recorded above.\nThe application Apache-2.0 license is not asserted for these corpora.\n`;
 const localSettings = ["DENSE_MEM_EVAL_API_KEY", "DENSE_MEM_EVAL_EMBED_API_KEY", "DENSE_MEM_EVAL_VERIFIER_URL", "DENSE_MEM_EVAL_TEAM_API_KEY", "DENSE_MEM_EVAL_DATABASE_PASSWORD"];
 
 export function localSeedRequest(args, registry) {
-  const { values } = parseArgs({ args, options: { pr: { type: "string" }, dataset: { type: "string" }, workers: { type: "string" }, "skip-ai-security-check": { type: "boolean" }, resume: { type: "string" }, variant: { type: "string" }, "parent-pins": { type: "string" } } });
+  const { values } = parseArgs({ args, options: { pr: { type: "string" }, dataset: { type: "string" }, workers: { type: "string" }, "skip-ai-security-check": { type: "boolean" }, resume: { type: "string" } } });
   if (values.resume !== undefined) {
     if (!/^local-[a-f0-9]{32}$/.test(values.resume) || Object.keys(values).length !== 1) throw new Error("Seed build --resume requires only the saved local build ID");
     return { resume: values.resume };
   }
   const pr = values.pr === undefined ? undefined : Number(values.pr);
   if (pr !== undefined && (!/^[1-9][0-9]*$/.test(values.pr) || !Number.isSafeInteger(pr))) throw new Error("Seed build --pr must be a valid pull request number");
-  if (values.variant !== undefined || values["parent-pins"] !== undefined) {
-    if (values.variant !== "ontology-on" || pr === undefined || values.workers !== undefined || values["skip-ai-security-check"]) {
-      throw new Error("Seed build ontology-on requires --pr and its fixed eight-worker policy");
-    }
-    return { pr, ...seedBuildRequest(registry, values.dataset ?? "all", 8), variant: "ontology-on", parentPinsFile: values["parent-pins"], skipAISecurityReview: false };
-  }
   return { pr, ...seedBuildRequest(registry, values.dataset ?? "all", values.workers ?? 20), skipAISecurityReview: values["skip-ai-security-check"] ?? false };
 }
 
 export function lockSeedBuild(directory) {
-  const file = fs.openSync(path.join(directory, "build.lock"), fs.constants.O_CREAT | fs.constants.O_RDWR | fs.constants.O_NOFOLLOW, 0o600);
-  const lock = spawnSync("flock", ["--exclusive", "--nonblock", "3"], { stdio: ["ignore", "ignore", "ignore", file], timeout: 5000 });
-  if (lock.status !== 0) {
-    fs.closeSync(file);
-    throw new Error(lock.error ? "Seed build lock is unavailable; install flock" : "Seed build is already running");
-  }
-  return () => fs.closeSync(file);
+  return lockLocalSeedFile(path.join(directory, "build.lock"), "Seed build is already running");
 }
 
 export function savedSeedRequest(receipt, id, registry, registryHash) {
+  if (receipt?.variant !== undefined || receipt?.parents !== undefined) {
+    throw new Error("Checkpoint belongs to retired ontology preparation");
+  }
   if (receipt?.resume_version !== 1 || receipt.build_id !== id || receipt.registry_sha256 !== registryHash ||
       (receipt.pr !== null && (!Number.isSafeInteger(receipt.pr) || receipt.pr < 1)) ||
       !Array.isArray(receipt.datasets) || typeof receipt.skip_ai_security_review !== "boolean") {
@@ -50,13 +39,7 @@ export function savedSeedRequest(receipt, id, registry, registryHash) {
   seedReference("bootstrap", receipt.version);
   const { dataset, workers } = seedBuildRequest(registry, receipt.datasets.length === 1 ? receipt.datasets[0] : "all", receipt.workers);
   if (!isDeepStrictEqual(dataset, receipt.datasets)) throw new Error("Seed build checkpoint dataset selection is invalid");
-  const request = { pr: receipt.pr ?? undefined, dataset, workers, skipAISecurityReview: receipt.skip_ai_security_review };
-  if (receipt.variant !== undefined) {
-    if (receipt.variant !== "ontology-on" || !request.pr || workers !== 8 || request.skipAISecurityReview ||
-        !dataset.every((name) => validSeedDigest(receipt.parents?.[name]))) throw new Error("Seed build checkpoint has invalid ontology preparation settings");
-    request.variant = receipt.variant;
-  }
-  return request;
+  return { pr: receipt.pr ?? undefined, dataset, workers, skipAISecurityReview: receipt.skip_ai_security_review };
 }
 
 function command(binary, args) {
@@ -135,8 +118,7 @@ export async function verifiedSeedExport(paths, build, prepare) {
     const saved = read(verified);
     if (!/^seed-export-[A-Za-z0-9]{6}$/.test(saved.directory) || saved.version !== build.version) throw new Error("Seed build verified export receipt is invalid");
     const directory = path.join(paths.directory, saved.directory);
-    const seed = await verifySeedFiles(directory, dataset, build.registry_sha256, dataset === "bootstrap" ? 0 : build.rows[dataset],
-      { condition: build.variant === "ontology-on" ? "on" : "off" });
+    const seed = await verifySeedFiles(directory, dataset, build.registry_sha256, dataset === "bootstrap" ? 0 : build.rows[dataset]);
     if (await hashFile(path.join(directory, "seed.json")) !== saved.metadata_sha256) throw new Error("Seed build verified export metadata changed");
     if (dataset !== "bootstrap" && !/^sha256:[a-f0-9]{64}$/.test(saved.bootable_image || "")) throw new Error("Seed build has no verified bootable image receipt");
     return { directory, seed, bootableImage: saved.bootable_image, previousLatest: saved.previous_latest, reused: true };
@@ -145,7 +127,7 @@ export async function verifiedSeedExport(paths, build, prepare) {
   const directory = fs.mkdtempSync(path.join(paths.directory, "seed-export-"));
   const { seed, bootableImage } = await prepare(directory);
   if (dataset !== "bootstrap" && !/^sha256:[a-f0-9]{64}$/.test(bootableImage || "")) throw new Error("Seed build has no verified bootable image receipt");
-  const previousLatest = dataset === "bootstrap" ? null : await resolveSeedImage(seedReference(dataset, "latest", build.variant === "ontology-on" ? "on" : "off"), {});
+  const previousLatest = dataset === "bootstrap" ? null : await resolveSeedImage(seedReference(dataset), {});
   save(verified, { directory: path.basename(directory), version: build.version, metadata_sha256: await hashFile(path.join(directory, "seed.json")), bootable_image: bootableImage, previous_latest: previousLatest });
   return { directory, seed, bootableImage, previousLatest, reused: false };
 }
@@ -178,7 +160,7 @@ async function bootstrap(env, build, signal, beforePublication) {
       const runtime = await setup(env, { operation: "bootstrap", seedImage: "", seedDirectory: directory, signal });
       await runBinary("bootstrap", runtime, env, signal);
     }
-    return publishSeed(docker, directory, "bootstrap", build.version, {}, beforePublication, { runID: paths.runID, previousLatest });
+    return publishSeed(docker, directory, "bootstrap", build.version, {}, beforePublication, { runID: paths.runID, previousLatest }, { github });
   });
 }
 
@@ -216,7 +198,7 @@ async function buildDataset(env, build, signal, beforePublication, skipAISecurit
       prepareSeedExport(env, signal, { skipAISecurityReview, resumable: true, exportDirectory, dataDirectory: path.join(paths.directory, "data") }));
     if (seed.source_revision !== build.source_revision || seed.base_release !== env.EVAL_BASE_RELEASE || seed.import_workers !== build.workers ||
         (seed.ai_security_review === "skipped") !== skipAISecurityReview) throw new Error("Seed build verified export differs from the pinned build settings");
-    const image = await publishSeed(docker, directory, dataset, version, {}, beforePublication, { runID: paths.runID, previousLatest, bootableImage });
+    const image = await publishSeed(docker, directory, dataset, version, {}, beforePublication, { runID: paths.runID, previousLatest, bootableImage }, { github });
     const receipt = { dataset, image, version, corpus_rows: seed.corpus_rows, canonical_sha256: seed.canonical_sha256, workers: seed.import_workers, dump_bytes: seed.dump_bytes, preparation_ms: seed.elapsed_ms, base_release: seed.base_release, source_revision: seed.source_revision, ai_security_review: seed.ai_security_review || "ordinary" };
     save(finished, receipt);
     process.stdout.write(`${JSON.stringify({ event: "seed_published", ...receipt })}\n`);
@@ -263,7 +245,7 @@ export async function main(args, settings = process.env) {
 async function runSeedBuild({ id, directory, request, registryHash, rows, saved, receipt }, settings) {
   const env = localSeedEnvironment(settings, request.workers);
   if (command("git", ["status", "--porcelain", "--untracked-files=no"])) throw new Error("Seed building requires a clean tracked checkout of the tested PR head");
-  const source = await resolveSeedBuildSource(github, request.pr, command("git", ["rev-parse", "HEAD"]), { privatePreparation: request.variant === "ontology-on" });
+  const source = await resolveSeedBuildSource(github, request.pr, command("git", ["rev-parse", "HEAD"]));
   const { data: pkg } = await github.request("GET /users/markhuangai/packages/container/dense-mem-eval-postgres");
   if (pkg.visibility !== "public") throw new Error("Seed publication requires a public dense-mem-eval-postgres package");
   try {
@@ -283,17 +265,6 @@ async function runSeedBuild({ id, directory, request, registryHash, rows, saved,
   const build = { resume_version: 1, build_id: id, registry_sha256: registryHash, pr: request.pr ?? null, image: image.image,
     source_revision: source.sourceRevision, checkout_revision: source.checkoutRevision, version, validation: source.validation,
     workers: request.workers, datasets: request.dataset, skip_ai_security_review: request.skipAISecurityReview, bootstrap_image: saved?.bootstrap_image };
-  if (request.variant === "ontology-on") {
-    build.variant = request.variant;
-    build.deadlines = saved?.deadlines || {};
-    const pins = saved?.parents || (request.parentPinsFile ? read(request.parentPinsFile) : null);
-    build.parents = Object.fromEntries(await Promise.all(request.dataset.map(async (dataset) => {
-      const pin = pins ? pins[dataset] : await resolveSeedImage(seedReference(dataset), {});
-      if (!validSeedDigest(pin)) throw new Error(`Seed build has no pinned ontology-off parent for ${dataset}`);
-      return [dataset, pin];
-    })));
-    for (const pin of Object.values(build.parents)) docker(["pull", "--quiet", "--platform=linux/amd64", pin]);
-  }
   save(receipt, build);
   process.stdout.write(`Seed build receipts: ${path.relative(process.cwd(), directory)}\n`);
   let binary;
@@ -314,9 +285,6 @@ async function runSeedBuild({ id, directory, request, registryHash, rows, saved,
   };
   const datasetEnv = (dataset, seedImage = "") => ({ ...env, EVAL_DATASET: dataset, EVAL_SEED_IMAGE: seedImage, EVAL_MODEL_DEADLINE_EPOCH: String(Math.floor(Date.now() / 1000) + 330 * 60) });
   try {
-    if (build.variant === "ontology-on") {
-      return await buildOntologySeeds({ build, rows, env, receipt, controller, beforePublication });
-    }
     await beforePublication();
     const bootstrapImage = await bootstrap(datasetEnv("bootstrap"), build, controller.signal, beforePublication);
     build.bootstrap_image = bootstrapImage;
@@ -330,89 +298,6 @@ async function runSeedBuild({ id, directory, request, registryHash, rows, saved,
   } finally {
     for (const signal of ["SIGINT", "SIGTERM"]) process.removeListener(signal, stop);
   }
-}
-
-async function buildOntologySeeds({ build, rows, env, receipt, controller, beforePublication }) {
-  const watch = new AbortController();
-  const signal = controller.signal;
-  const monitor = (async () => {
-    try {
-      while (!watch.signal.aborted) {
-        await seedValidationState(github, build.validation);
-        await delay(30_000, undefined, { signal: watch.signal });
-      }
-    } catch (error) {
-      if (!watch.signal.aborted) {
-        process.stderr.write("Seed validation changed. Pausing ontology preparation and retaining its checkpoint.\n");
-        controller.abort(error);
-      }
-    }
-  })();
-  const staged = [];
-  const failures = [];
-  try {
-    for (const dataset of build.datasets) {
-      signal.throwIfAborted();
-      await seedValidationState(github, build.validation);
-      const deadline = build.deadlines[dataset] ??= Math.floor(Date.now() / 1000) + ontologyPreparationSeconds;
-      save(receipt, build);
-      const axis = { ...env, EVAL_DATASET: dataset, EVAL_SEED_IMAGE: build.parents[dataset], EVAL_MODEL_DEADLINE_EPOCH: String(deadline) };
-      const paths = location(axis);
-      try {
-        const prepared = await verifiedSeedExport(paths, { ...build, rows }, async (exportDirectory) => {
-          const checkpoint = fs.existsSync(paths.checkpointFile);
-          if (checkpoint) await cleanup(axis, { retainVolume: true });
-          return withOwnedRuntime(axis, async () => {
-            const prepared = await prepareOntologyExport(axis, build.parents[dataset], exportDirectory, { resumable: true, signal });
-            const verify = { ...axis, EVAL_CONDITION: "on", EVAL_PARENT_SEED_IMAGE: build.parents[dataset],
-              EVAL_MODEL_DEADLINE_EPOCH: String(Math.floor(Date.now() / 1000) + 330 * 60) };
-            await cleanup(verify);
-            await withOwnedRuntime(verify, async () => {
-              const restored = await setup(verify, { operation: "verify-seed", seedImage: prepared.bootableImage, signal });
-              await runBinary("verify-seed", restored, verify, signal);
-            });
-            return prepared;
-          }, { resumable: true });
-        });
-        staged.push({ dataset, paths, prepared });
-        process.stdout.write(`Ontology image for ${dataset} verified locally.\n`);
-      } catch (error) {
-        if (signal.aborted) throw error;
-        failures.push(dataset);
-        process.stderr.write(`Ontology preparation failed for ${dataset}. Private evidence was retained.\n`);
-      }
-      await promoteOntologySeeds(staged, build, signal, beforePublication);
-    }
-    const waitUntil = Date.now() + 30 * 60_000;
-    while (staged.length !== 0 && !(await promoteOntologySeeds(staged, build, signal, beforePublication))) {
-      if (Date.now() >= waitUntil) throw new Error("Seed publication requires passing current-head CI/E2E and the hosted pair fixture. Verified images are staged.");
-      await delay(30_000, undefined, { signal });
-    }
-    if (failures.length) throw new Error(`Seed build incomplete for ${failures.join(", ")}`);
-  } finally {
-    watch.abort();
-    await monitor;
-  }
-}
-
-async function promoteOntologySeeds(staged, build, signal, beforePublication) {
-  signal.throwIfAborted();
-  if (!staged.length) return true;
-  if (await seedValidationState(github, build.validation) !== "success" || !(await ontologyFixtureValidated(github, build.validation))) return false;
-  for (const { dataset, paths, prepared } of staged) {
-    const gate = async () => {
-      await beforePublication();
-      if (!(await ontologyFixtureValidated(github, build.validation))) throw new Error("Seed publication requires the hosted pair fixture for the same PR head");
-    };
-    const image = await publishSeed(docker, prepared.directory, dataset, build.version, {}, gate,
-      { runID: paths.runID, previousLatest: prepared.previousLatest, bootableImage: prepared.bootableImage });
-    const receipt = { dataset, image, parent_seed_image: build.parents[dataset], version: build.version,
-      source_revision: build.source_revision, ontology_preparation: prepared.seed.ontology_preparation };
-    save(path.join(paths.directory, "published.json"), receipt);
-    process.stdout.write(`${JSON.stringify({ event: "ontology_seed_published", ...receipt })}\n`);
-  }
-  staged.length = 0;
-  return true;
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {

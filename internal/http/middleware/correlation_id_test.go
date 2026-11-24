@@ -5,7 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -22,7 +22,7 @@ func TestCorrelationIDMiddleware(t *testing.T) {
 		rec := httptest.NewRecorder()
 
 		handlerCalled := false
-		e.GET("/test", func(c echo.Context) error {
+		e.GET("/test", func(c *echo.Context) error {
 			handlerCalled = true
 			// Verify correlation ID is in context
 			ctx := c.Request().Context()
@@ -45,7 +45,7 @@ func TestCorrelationIDMiddleware(t *testing.T) {
 		rec := httptest.NewRecorder()
 
 		var generatedID string
-		e.GET("/test2", func(c echo.Context) error {
+		e.GET("/test2", func(c *echo.Context) error {
 			ctx := c.Request().Context()
 			generatedID = GetCorrelationID(ctx)
 			// Verify it's a valid UUID format (36 chars with dashes)
@@ -72,7 +72,7 @@ func TestCorrelationIDMiddleware(t *testing.T) {
 			rec := httptest.NewRecorder()
 
 			var id string
-			e.GET("/test3", func(c echo.Context) error {
+			e.GET("/test3", func(c *echo.Context) error {
 				id = GetCorrelationID(c.Request().Context())
 				return c.String(http.StatusOK, "ok")
 			})

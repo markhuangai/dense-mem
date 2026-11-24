@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	mw "github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/ontology"
@@ -75,7 +75,7 @@ func TestOntologyManagementHTTPBoundedErrors(t *testing.T) {
 	} {
 		router := echo.New()
 		router.HTTPErrorHandler = httperr.ErrorHandler
-		router.GET("/", func(c echo.Context) error {
+		router.GET("/", func(c *echo.Context) error {
 			return managementResponse(c, nil, fmt.Errorf("private canary: %w", tc.err))
 		})
 		rec := httptest.NewRecorder()

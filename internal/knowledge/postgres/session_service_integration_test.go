@@ -24,7 +24,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	assessorprovider "github.com/markhuangai/dense-mem/internal/provider/assessor"
+	"github.com/markhuangai/dense-mem/internal/provider/structured"
 	processor "github.com/markhuangai/dense-mem/internal/remember/service/processor"
 	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
 	session "github.com/markhuangai/dense-mem/internal/session/contract"
@@ -108,7 +108,7 @@ func TestEvidenceOnlyPostgresMigratedSessionResumesUnchangedRequest(t *testing.T
 		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": string(body)}}}})
 	}))
 	defer server.Close()
-	transport := assessorprovider.NewOpenAIAssessor(&config.Config{AIVerifierAPIURL: server.URL, AIVerifierAPIKey: "migration-provider-canary", AIVerifierModel: "fixture", AIVerifierMaxConcurrency: 4}, server.Client())
+	transport := structured.NewOpenAI(&config.Config{AIVerifierAPIURL: server.URL, AIVerifierAPIKey: "migration-provider-canary", AIVerifierModel: "fixture", AIVerifierMaxConcurrency: 4}, server.Client())
 	path := filepath.Join(t.TempDir(), "session-resume.jsonl")
 	output, err := os.Create(path)
 	require.NoError(t, err)
@@ -123,7 +123,7 @@ func TestEvidenceOnlyPostgresMigratedSessionResumesUnchangedRequest(t *testing.T
 		Enabled: true, Repository: store, Preparer: preparer, Tokenizer: "o200k_base",
 		Extractor: extraction.NewProvider(transport, "fixture", assessor.DefaultSemanticAssessmentLimits()), Logger: logger,
 		DiagnosticProtector: protector,
-		DiagnosticRecorder:  func() modelprovider.SnapshotRecorder { return processor.NewDiagnosticRecorder(protector) },
+		DiagnosticRecorder:  func() modelprovider.SnapshotRecorder { return observability.NewProviderExchangeRecorder(protector) },
 		DiagnosticLog: func(ctx context.Context, scope session.Scope, id string, body []byte) {
 			observability.LogDiagnosticBody(ctx, logger.ContextSlog(), protector, "session_evidence_diagnostics", body, 64<<20,
 				slog.String("team_id", scope.TeamID), slog.String("owner_profile_id", scope.OwnerProfileID),
@@ -500,7 +500,7 @@ func TestSessionHTTPProviderFailureReceiptsPreserveActualClassifications(t *test
 			if mode == "provider-timeout" {
 				client.Timeout = 150 * time.Millisecond
 			}
-			transport := assessorprovider.NewOpenAIAssessor(&config.Config{AIVerifierAPIURL: server.URL, AIVerifierAPIKey: "fixture-key", AIVerifierModel: "fixture", AIVerifierMaxConcurrency: 1}, client)
+			transport := structured.NewOpenAI(&config.Config{AIVerifierAPIURL: server.URL, AIVerifierAPIKey: "fixture-key", AIVerifierModel: "fixture", AIVerifierMaxConcurrency: 1}, client)
 			api := service.NewService(service.Dependencies{Enabled: true, Repository: store, Preparer: processor.NewSynchronousProcessor(processor.ProcessorDependencies{Ledger: store}), Tokenizer: "o200k_base", Extractor: extraction.NewProvider(transport, "fixture", assessor.DefaultSemanticAssessmentLimits())})
 			req := intake.Request
 			req.IdempotencyKey = mode
@@ -575,7 +575,7 @@ func TestEvidenceOnlyPostgresSessionExcerptsDiagnosticsAndCheckpointRecovery(t *
 		_ = json.NewEncoder(w).Encode(map[string]any{"id": "fixture-provider-key", "choices": []any{map[string]any{"message": map[string]any{"content": string(body)}}}})
 	}))
 	defer server.Close()
-	transport := assessorprovider.NewOpenAIAssessor(&config.Config{AIVerifierAPIURL: server.URL, AIVerifierAPIKey: "fixture-provider-key", AIVerifierModel: "fixture", AIVerifierMaxConcurrency: 4}, server.Client())
+	transport := structured.NewOpenAI(&config.Config{AIVerifierAPIURL: server.URL, AIVerifierAPIKey: "fixture-provider-key", AIVerifierModel: "fixture", AIVerifierMaxConcurrency: 4}, server.Client())
 	store := NewStore(app, rls)
 	embedder := &sessionFactsEmbedder{}
 	protector := observability.NewCredentialProtector("fixture-provider-key")
@@ -583,7 +583,7 @@ func TestEvidenceOnlyPostgresSessionExcerptsDiagnosticsAndCheckpointRecovery(t *
 	api := service.NewService(service.Dependencies{
 		Enabled: true, Repository: store, Preparer: preparer, Tokenizer: "o200k_base",
 		Extractor: extraction.NewProvider(transport, "fixture", assessor.DefaultSemanticAssessmentLimits()), DiagnosticProtector: protector,
-		DiagnosticRecorder: func() modelprovider.SnapshotRecorder { return processor.NewDiagnosticRecorder(protector) },
+		DiagnosticRecorder: func() modelprovider.SnapshotRecorder { return observability.NewProviderExchangeRecorder(protector) },
 	})
 	reg, err := registry.BuildActive(registry.Dependencies{SessionBindings: registry.SessionBindings{Service: api}})
 	require.NoError(t, err)

@@ -14,15 +14,15 @@
 - Do not add repository references to local paths for separately maintained
   documentation. State the invariant directly in this repository.
 - Keep both root README languages concise, with a working quickstart and a
-  prominent wiki link. Put file-specific instructions in directory README files.
-- The `wiki` branch owns wiki pages; feature PRs target `main`, while companion
-  documentation PRs target `wiki` without product review or product CI gates.
-  Link the wiki PR for documented behavior changes, or explain why none is needed.
-  Update affected directory guides with the feature and maintain one canonical
-  explanation per subject. Preserve source-versus-deployment availability.
-- Publish the wiki only through the trusted main-branch publisher after wiki
-  merges. Reconcile direct live edits through a wiki PR; do not merge application
-  `main` into `wiki` or edit the live wiki as a competing source.
+  prominent documentation site link. Put file-specific instructions in
+  directory README files.
+- The `gh-pages` branch owns the documentation site. Feature PRs target
+  `main`. Link a companion PR targeting `gh-pages` for documented behavior
+  changes, or explain why the site needs no update. Update affected directory
+  guides with the feature. Keep one canonical explanation per subject, stable
+  links, and a clear distinction between source and deployment availability.
+- Follow the [documentation delivery policy](.github/workflows/README.md#publish-documentation)
+  for separate worktrees, site checks, and publication through GitHub Pages.
 - Inspect current code, interfaces, migrations, callers, and tests before
   changing behavior. Distinguish transitional implementation from the target
   architecture instead of assuming either one fully describes the other.
@@ -32,6 +32,8 @@
 - Accepted repository architecture decisions live in `adr/`. Before non-trivial
   design, implementation, or review, enumerate `adr/*.md` and read every
   accepted record relevant to the affected behavior.
+- [ADR 0019](adr/0019-code-ownership-and-design-review.md) governs code
+  ownership, KISS, dependency reuse, and design review.
 - Accepted ADRs describe the governing target. A transitional implementation
   may differ only when the ADR states its bounded rationale and removal
   condition; do not widen that exception or treat the transition as the
@@ -42,7 +44,7 @@
 
 ## Current Stack
 
-- Go 1.26 with Echo v4; PostgreSQL access uses GORM/pgx and goose migrations;
+- Go 1.26 with Echo v5; PostgreSQL access uses GORM/pgx and goose migrations;
   validation uses `go-playground/validator/v10`; Redis uses `go-redis/v9`.
 - Configuration is loaded from environment variables through `internal/config`.
   Do not introduce a second configuration framework.
@@ -67,11 +69,6 @@
   Evidence state, lifecycle, ownership, and organizational eligibility.
 - Preserve existing package patterns where they enforce these boundaries. Do
   not rename the tree or create parallel v2 packages without a concrete need.
-- Apply KISS ("Keep It Simple, Stupid"): choose the simplest sufficient design
-  that preserves current supported behavior and every accepted invariant. New
-  abstractions, configuration, durable state, background processes, or
-  generalization require a concrete current need; simplicity never excuses a
-  hidden failure, duplicated authority, or weaker security or data integrity.
 
 ## Semantic Invariants
 
@@ -284,8 +281,12 @@
 ## Change And Test Workflow
 
 1. Inspect the current package, interfaces, migrations, callers, and tests.
-2. State current behavior, the target invariant, and any unresolved mismatch.
-3. Add or adjust the smallest real-logic test that proves the behavior.
+2. Trace a real caller to the decision owner and state the target invariant.
+   Check existing code, the standard library, and installed packages before
+   writing a standard mechanism. Verify the versioned API and trade-offs of a
+   maintained dependency if needed, and explain consequential choices in the PR.
+3. Use the smallest real-logic tests that exercise supported success and an
+   adverse case for changed behavior.
 4. Implement one reviewable responsibility with the simplest sufficient design
    and without unrelated cleanup.
 5. Run focused tests, then repository checks, and inspect the final diff.

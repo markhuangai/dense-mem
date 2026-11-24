@@ -16,16 +16,12 @@ type ontologyMaintenanceStore interface {
 	contract.OrganizationRepository
 }
 
-func buildOntologyMaintenance(store ontologyMaintenanceStore, config ontology.MaintenanceConfigSource, transport modelprovider.StructuredTransport, limits assessor.SemanticAssessmentLimits, model string, timeout time.Duration, audit ontology.MaintenanceAuditPreparer, logger *slog.Logger, diagnostics ontology.MaintenanceDiagnosticCapture, cooldown ...*ontology.PreparationCooldown) *ontology.MaintenanceService {
-	var preparationCooldown *ontology.PreparationCooldown
-	if len(cooldown) > 0 {
-		preparationCooldown = cooldown[0]
-	}
+func buildOntologyMaintenance(store ontologyMaintenanceStore, config ontology.MaintenanceConfigSource, transport modelprovider.StructuredTransport, limits assessor.SemanticAssessmentLimits, model string, timeout time.Duration, audit ontology.MaintenanceAuditPreparer, logger *slog.Logger, diagnostics ontology.MaintenanceDiagnosticCapture) *ontology.MaintenanceService {
 	return ontology.NewMaintenanceService(ontology.MaintenanceDependencies{Repository: store, Config: config, DefaultModel: model, ProviderTimeout: timeout, Audit: audit, Logger: logger,
-		Diagnostics: diagnostics, PreparationCooldown: preparationCooldown, Organizer: func(model string, contextWindowTokens int64, accounting assessment.AttemptAccounting) *ontology.Service {
+		Diagnostics: diagnostics, Organizer: func(model string, contextWindowTokens int64, accounting assessment.AttemptAccounting) *ontology.Service {
 			configured := limits
 			configured.ProviderModel = model
-			return ontology.NewService(store, assessment.NewProviderWithAccounting(transport, model, configured, accounting, int(contextWindowTokens))).WithDiagnostics(diagnostics.Observe)
+			return ontology.NewService(store, assessment.NewProviderWithAccounting(transport, model, configured, accounting, int(contextWindowTokens)).WithLogger(logger)).WithDiagnostics(diagnostics.Observe)
 		},
 	})
 }

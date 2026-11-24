@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -49,7 +49,7 @@ func TestTeamResolution_PrincipalTeamStoredInContext(t *testing.T) {
 	}
 
 	var capturedProfileID uuid.UUID
-	e.GET("/ui/api/recall", func(c echo.Context) error {
+	e.GET("/ui/api/recall", func(c *echo.Context) error {
 		id, ok := GetResolvedTeamID(c.Request().Context())
 		require.True(t, ok, "profile ID should be in context")
 		capturedProfileID = id
@@ -75,7 +75,7 @@ func TestTeamResolution_NonCanonicalPrivateRoutePassesThrough(t *testing.T) {
 	}}
 
 	handlerCalled := false
-	e.GET("/ui/api/team/profiles/:profileId/test", func(c echo.Context) error {
+	e.GET("/ui/api/team/profiles/:profileId/test", func(c *echo.Context) error {
 		handlerCalled = true
 		return c.String(http.StatusOK, "ok")
 	}, TeamResolutionMiddleware(mockSvc))
@@ -112,13 +112,13 @@ func TestProfileResolution_PrincipalScoped_Valid(t *testing.T) {
 	}
 
 	var capturedProfileID uuid.UUID
-	e.GET("/ui/api/recall", func(c echo.Context) error {
+	e.GET("/ui/api/recall", func(c *echo.Context) error {
 		id, ok := GetResolvedTeamID(c.Request().Context())
 		require.True(t, ok, "profile ID should be in context")
 		capturedProfileID = id
 		return c.String(http.StatusOK, "ok")
 	}, func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			principal := &Principal{TeamID: teamID}
 			ctx := context.WithValue(c.Request().Context(), principalContextKey{}, principal)
 			c.SetRequest(c.Request().WithContext(ctx))
@@ -164,13 +164,13 @@ func TestProfileResolution_HeaderScopedCanonicalRoutes(t *testing.T) {
 			}
 
 			var capturedProfileID uuid.UUID
-			e.GET(route, func(c echo.Context) error {
+			e.GET(route, func(c *echo.Context) error {
 				id, ok := GetResolvedTeamID(c.Request().Context())
 				require.True(t, ok, "profile ID should be in context")
 				capturedProfileID = id
 				return c.String(http.StatusOK, "ok")
 			}, func(next echo.HandlerFunc) echo.HandlerFunc {
-				return func(c echo.Context) error {
+				return func(c *echo.Context) error {
 					principal := &Principal{TeamID: teamID}
 					ctx := context.WithValue(c.Request().Context(), principalContextKey{}, principal)
 					c.SetRequest(c.Request().WithContext(ctx))
@@ -233,13 +233,13 @@ func TestProfileResolution_HeaderScoped_UsesPrincipalProfile(t *testing.T) {
 	}
 
 	var capturedProfileID uuid.UUID
-	e.POST("/mcp", func(c echo.Context) error {
+	e.POST("/mcp", func(c *echo.Context) error {
 		id, ok := GetResolvedTeamID(c.Request().Context())
 		require.True(t, ok, "profile ID should be in context")
 		capturedProfileID = id
 		return c.String(http.StatusOK, "ok")
 	}, func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			principal := &Principal{TeamID: teamID}
 			ctx := context.WithValue(c.Request().Context(), principalContextKey{}, principal)
 			c.SetRequest(c.Request().WithContext(ctx))
@@ -276,13 +276,13 @@ func TestProfileResolution_PrincipalScoped_IgnoresOverrideHeaders(t *testing.T) 
 		},
 	}
 
-	e.POST("/mcp", func(c echo.Context) error {
+	e.POST("/mcp", func(c *echo.Context) error {
 		id, ok := GetResolvedTeamID(c.Request().Context())
 		require.True(t, ok, "profile ID should be in context")
 		assert.Equal(t, principalTeamID, id)
 		return c.String(http.StatusOK, "ok")
 	}, func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			principal := &Principal{TeamID: principalTeamID}
 			ctx := context.WithValue(c.Request().Context(), principalContextKey{}, principal)
 			c.SetRequest(c.Request().WithContext(ctx))
@@ -309,7 +309,7 @@ func TestProfileResolution_PrincipalScoped_MissingPrincipal(t *testing.T) {
 	mockSvc := &mockProfileResolutionService{}
 
 	handlerCalled := false
-	e.POST("/mcp", func(c echo.Context) error {
+	e.POST("/mcp", func(c *echo.Context) error {
 		handlerCalled = true
 		return c.String(http.StatusOK, "ok")
 	}, TeamResolutionMiddleware(mockSvc))
@@ -340,7 +340,7 @@ func TestProfileResolution_DeletedProfile_Returns404(t *testing.T) {
 	}
 
 	handlerCalled := false
-	e.GET("/ui/api/recall", func(c echo.Context) error {
+	e.GET("/ui/api/recall", func(c *echo.Context) error {
 		handlerCalled = true
 		return c.String(http.StatusOK, "ok")
 	}, injectTeamPrincipal(profileID), TeamResolutionMiddleware(mockSvc))
@@ -381,7 +381,7 @@ func TestProfileResolution_StoresInContext(t *testing.T) {
 	var found bool
 	var teamFound bool
 
-	e.GET("/ui/api/recall", func(c echo.Context) error {
+	e.GET("/ui/api/recall", func(c *echo.Context) error {
 		ctx := c.Request().Context()
 		capturedID, found = GetResolvedTeamID(ctx)
 		capturedTeam, teamFound = GetResolvedTeamContext(ctx)
@@ -420,7 +420,7 @@ func TestProfileResolution_ProfileNotFound(t *testing.T) {
 	}
 
 	handlerCalled := false
-	e.GET("/ui/api/recall", func(c echo.Context) error {
+	e.GET("/ui/api/recall", func(c *echo.Context) error {
 		handlerCalled = true
 		return c.String(http.StatusOK, "ok")
 	}, injectTeamPrincipal(profileID), TeamResolutionMiddleware(mockSvc))
@@ -444,7 +444,7 @@ func TestProfileResolution_NonProfileRoute_PassesThrough(t *testing.T) {
 	mockSvc := &mockProfileResolutionService{}
 
 	handlerCalled := false
-	e.GET("/ui/api/health", func(c echo.Context) error {
+	e.GET("/ui/api/health", func(c *echo.Context) error {
 		handlerCalled = true
 		// Verify no profile ID in context
 		_, found := GetResolvedTeamID(c.Request().Context())
@@ -475,7 +475,7 @@ func TestProfileResolution_ServiceError(t *testing.T) {
 	}
 
 	handlerCalled := false
-	e.GET("/ui/api/recall", func(c echo.Context) error {
+	e.GET("/ui/api/recall", func(c *echo.Context) error {
 		handlerCalled = true
 		return c.String(http.StatusOK, "ok")
 	}, injectTeamPrincipal(profileID), TeamResolutionMiddleware(mockSvc))
@@ -537,7 +537,7 @@ func TestProfileResolution_SetResolvedTeamIDForTest(t *testing.T) {
 
 func injectTeamPrincipal(teamID uuid.UUID) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			ctx := context.WithValue(c.Request().Context(), principalContextKey{}, &Principal{TeamID: teamID})
 			c.SetRequest(c.Request().WithContext(ctx))
 			return next(c)

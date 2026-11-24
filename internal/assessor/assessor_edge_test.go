@@ -2,6 +2,8 @@ package assessor
 
 import (
 	"encoding/json"
+	"github.com/markhuangai/dense-mem/internal/jsonstrict"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
 
 	"strings"
 	"testing"
@@ -94,8 +96,8 @@ func TestSemanticAssessmentLimitNormalizationAndTokenizerFailure(t *testing.T) {
 	if got := normalizeSemanticAssessmentLimits(SemanticAssessmentLimits{}); got != defaults {
 		t.Fatalf("normalized defaults = %#v, want %#v", got, defaults)
 	}
-	if _, err := CountTokens("Dense-Mem", "not-a-tokenizer"); err == nil || !strings.Contains(err.Error(), "not-a-tokenizer") {
-		t.Fatalf("CountTokens() error = %v, want tokenizer error", err)
+	if _, err := modelprovider.CountTokens("Dense-Mem", "not-a-tokenizer"); err == nil || !strings.Contains(err.Error(), "not-a-tokenizer") {
+		t.Fatalf("modelprovider.CountTokens() error = %v, want tokenizer error", err)
 	}
 
 }
@@ -125,7 +127,7 @@ func TestSemanticAssessmentEvidenceSecurityResultsRequireCompleteEvidenceCoverag
 			response := semanticAssessmentTestResponse()
 			test.mutate(&response)
 			_, validationErrors := PrepareSemanticAssessmentResponse(prepared, response, limits)
-			if len(validationErrors) == 0 || !strings.Contains(semanticAssessmentJoinedErrors(validationErrors), test.want) {
+			if len(validationErrors) == 0 || !strings.Contains((&jsonstrict.ValidationError{Errors: validationErrors}).Error(), test.want) {
 				t.Fatalf("PrepareSemanticAssessmentResponse() errors = %#v, want %q", validationErrors, test.want)
 			}
 		})

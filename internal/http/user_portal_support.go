@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
 	"github.com/markhuangai/dense-mem/internal/httperr"
@@ -22,7 +22,7 @@ func publicSSORateLimitMiddleware(svc accessservice.RateLimitServiceInterface, c
 
 func publicIPRateLimitMiddleware(subjectNamespace string, svc accessservice.RateLimitServiceInterface, cfg httpcontract.ConfigProvider) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			if svc == nil || cfg == nil {
 				return next(c)
 			}
@@ -56,7 +56,7 @@ func publicIPRateLimitMiddleware(subjectNamespace string, svc accessservice.Rate
 	}
 }
 
-func ssoSessionTokenFromRequest(c echo.Context) (string, error) {
+func ssoSessionTokenFromRequest(c *echo.Context) (string, error) {
 	cookie, err := c.Request().Cookie(accessservice.SSOSessionCookieName)
 	if err != nil || strings.TrimSpace(cookie.Value) == "" {
 		return "", httperr.New(httperr.AUTH_MISSING, "authentication required")
@@ -64,7 +64,7 @@ func ssoSessionTokenFromRequest(c echo.Context) (string, error) {
 	return cookie.Value, nil
 }
 
-func setSSOCookie(c echo.Context, name, value string, httpOnly bool, expires time.Time, secure bool) {
+func setSSOCookie(c *echo.Context, name, value string, httpOnly bool, expires time.Time, secure bool) {
 	c.SetCookie(&http.Cookie{
 		Name:     name,
 		Value:    value,
@@ -77,7 +77,7 @@ func setSSOCookie(c echo.Context, name, value string, httpOnly bool, expires tim
 	})
 }
 
-func clearSSOCookie(c echo.Context, name string) {
+func clearSSOCookie(c *echo.Context, name string) {
 	c.SetCookie(&http.Cookie{
 		Name:     name,
 		Value:    "",
@@ -116,8 +116,10 @@ func registerUserPortalStatic(e *echo.Echo, staticDir string) {
 		return
 	}
 
-	serveIndex := func(c echo.Context) error {
-		return c.File(indexPath)
+	indexFS := os.DirFS(staticDir)
+	indexFile := filepath.Base(indexPath)
+	serveIndex := func(c *echo.Context) error {
+		return c.FileFS(indexFile, indexFS)
 	}
 	e.GET("/ui", serveIndex)
 	e.GET("/ui/", serveIndex)
@@ -126,11 +128,11 @@ func registerUserPortalStatic(e *echo.Echo, staticDir string) {
 		e.Static("/ui/assets", assetsDir)
 	}
 
-	e.GET("/ui/*", func(c echo.Context) error {
+	e.GET("/ui/*", func(c *echo.Context) error {
 		if strings.HasPrefix(c.Request().URL.Path, "/ui/api/") {
 			return httperr.New(httperr.NOT_FOUND, "not found")
 		}
-		return c.File(indexPath)
+		return serveIndex(c)
 	})
 }
 

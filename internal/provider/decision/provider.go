@@ -14,7 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
@@ -40,7 +39,7 @@ func New(cfg config.DecisionProviderConfig, tokenizer string, client *http.Clien
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	if _, err := assessor.CountTokens("", tokenizer); err != nil {
+	if _, err := modelprovider.CountTokens("", tokenizer); err != nil {
 		return nil, fmt.Errorf("decision tokenizer: %w", err)
 	}
 	if logger == nil || protector == nil {
@@ -213,7 +212,7 @@ func (p *Provider) inputTokens(ctx context.Context, body []byte) (int, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
-	count, err := assessor.CountTokens(string(body), p.tokenizer)
+	count, err := modelprovider.CountTokens(string(body), p.tokenizer)
 	if ctx.Err() != nil {
 		return 0, ctx.Err()
 	}

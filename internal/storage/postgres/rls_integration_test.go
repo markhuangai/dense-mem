@@ -4,13 +4,18 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"net/url"
 	"os"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres/testfixture"
+	"github.com/stretchr/testify/require"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
@@ -223,6 +228,95 @@ func TestWithSystemTx(t *testing.T) {
 	if err != nil {
 		t.Fatalf("transaction failed: %v", err)
 	}
+}
+
+func TestWithSystemModeInTxRestoresAndRollsBack(t *testing.T) {
+	db, cleanup := setupRLSTestDB(t)
+	defer cleanup()
+	pool, err := db.DB()
+	require.NoError(t, err)
+	pool.SetMaxOpenConns(1)
+
+	teamA := createTestTeam(t, db, "Team A")
+	teamC := createTestTeam(t, db, "Team C")
+	profileA := createTestCredential(t, db, teamA, "Owner A")
+	profileB := createTestCredential(t, db, teamA, "Owner B")
+	profileC := createTestCredential(t, db, teamC, "Owner C")
+	spaceA := uuid.New()
+	ctx := requestctx.WithAllowedSpaces(context.Background(), []domain.MemorySpaceAccess{{ID: spaceA}})
+	rls := NewRLS()
+	type scope struct {
+		TxID, Team, Profile, Mode, Spaces, Layout string
+	}
+	readScope := func(tx *gorm.DB) scope {
+		t.Helper()
+		var current scope
+		err := tx.Raw("SELECT pg_current_xact_id()::text, current_setting('app.current_team_id'), current_setting('app.current_profile_id'), current_setting('app.tx_mode'), current_setting('app.allowed_space_ids'), current_setting('app.storage_layout')").
+			Row().Scan(&current.TxID, &current.Team, &current.Profile, &current.Mode, &current.Spaces, &current.Layout)
+		require.NoError(t, err)
+		return current
+	}
+	assertVisible := func(tx *gorm.DB, want ...uuid.UUID) {
+		t.Helper()
+		var ids []uuid.UUID
+		require.NoError(t, tx.Model(&Credential{}).Where("id IN ?", []uuid.UUID{profileA, profileB, profileC}).Pluck("id", &ids).Error)
+		require.ElementsMatch(t, want, ids)
+	}
+	callbackErr := errors.New("callback failed")
+	marker := uuid.New()
+	err = rls.WithTeamProfileTx(ctx, db, teamA.String(), profileA.String(), func(tx *gorm.DB) error {
+		before := readScope(tx)
+		require.Equal(t, scope{before.TxID, teamA.String(), profileA.String(), "profile", spaceA.String(), "feature-storage-v1"}, before)
+		assertVisible(tx, profileA, profileB)
+		require.NoError(t, WithSystemModeInTx(ctx, tx, teamA.String(), profileA.String(), func(system *gorm.DB) error {
+			require.Equal(t, scope{before.TxID, "", "", "system", before.Spaces, before.Layout}, readScope(system))
+			assertVisible(system, profileA, profileB, profileC)
+			return nil
+		}))
+		require.Equal(t, before, readScope(tx))
+		err := WithSystemModeInTx(ctx, tx, teamA.String(), profileA.String(), func(system *gorm.DB) error {
+			require.NoError(t, system.Create(&AuditLog{ID: marker, TeamID: &teamA, Operation: "test", EntityType: "test", EntityID: "rollback", ActorRole: "system", Timestamp: time.Now()}).Error)
+			return callbackErr
+		})
+		require.ErrorIs(t, err, callbackErr)
+		require.Equal(t, before, readScope(tx))
+		assertVisible(tx, profileA, profileB)
+		return err
+	})
+	require.ErrorIs(t, err, callbackErr)
+	require.NoError(t, rls.WithTeamProfileTx(context.Background(), db, teamA.String(), profileB.String(), func(tx *gorm.DB) error {
+		current := readScope(tx)
+		require.Equal(t, profileB.String(), current.Profile)
+		require.Empty(t, current.Spaces)
+		var count int64
+		require.NoError(t, tx.Model(&AuditLog{}).Where("id = ?", marker).Count(&count).Error)
+		require.Zero(t, count)
+		assertVisible(tx, profileA, profileB)
+		return nil
+	}))
+	for _, callback := range []error{nil, callbackErr} {
+		err := rls.WithTeamProfileTx(ctx, db, teamA.String(), profileA.String(), func(tx *gorm.DB) error {
+			return WithSystemModeInTx(ctx, tx, teamA.String(), profileA.String(), func(system *gorm.DB) error {
+				require.Error(t, system.Exec("SELECT 1 / 0").Error)
+				return callback
+			})
+		})
+		if callback != nil {
+			require.ErrorIs(t, err, callback)
+		} else {
+			var postgresErr *pgconn.PgError
+			require.ErrorAs(t, err, &postgresErr)
+			require.Equal(t, "25P02", postgresErr.Code)
+		}
+	}
+	require.NoError(t, rls.WithTeamProfileTx(context.Background(), db, teamC.String(), profileC.String(), func(tx *gorm.DB) error {
+		current := readScope(tx)
+		require.Equal(t, profileC.String(), current.Profile)
+		require.Equal(t, "profile", current.Mode)
+		require.Empty(t, current.Spaces)
+		assertVisible(tx, profileC)
+		return nil
+	}))
 }
 
 func TestReadOnlyRepeatableReadTransactionOptions(t *testing.T) {

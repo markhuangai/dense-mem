@@ -13,11 +13,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/labstack/echo/v5"
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	assessorprovider "github.com/markhuangai/dense-mem/internal/provider/assessor"
+	"github.com/markhuangai/dense-mem/internal/provider/structured"
 )
 
 func TestApplicationBundleBuildsEveryCapabilityService(t *testing.T) {
@@ -82,10 +83,10 @@ func TestConfiguredSessionProvidersShareConcurrencyGate(t *testing.T) {
 		AIVerifierAPIURL: server.URL, AIVerifierAPIKey: "test-key", AIVerifierModel: "verifier-model",
 	}
 	gate := modelprovider.NewConcurrencyGate(1)
-	assessorProvider := assessorprovider.NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGateAndModel(
-		cfg, server.Client(), assessor.DefaultSemanticAssessmentLimits(), gate, "remember-model",
+	assessorProvider := structured.NewOpenAIWithModel(
+		cfg, server.Client(), gate, "remember-model",
 	)
-	sessionProvider := assessorprovider.NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGateAndModel(cfg, server.Client(), assessor.DefaultSemanticAssessmentLimits(), gate, "session-model")
+	sessionProvider := structured.NewOpenAIWithModel(cfg, server.Client(), gate, "session-model")
 
 	if err := modelprovider.AcquireConcurrency(context.Background(), gate); err != nil {
 		t.Fatalf("acquire shared gate: %v", err)
@@ -172,14 +173,15 @@ func TestConfiguredSessionModelsDoNotFallbackAfterProviderFailure(t *testing.T) 
 	}
 	models := aiSessionModelsForConfig(cfg)
 	gate := modelprovider.NewConcurrencyGate(1)
-	assessorProvider := assessorprovider.NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGateAndModel(
-		cfg, server.Client(), assessor.DefaultSemanticAssessmentLimits(), gate, models.remember,
+	assessorProvider := structured.NewOpenAIWithModel(
+		cfg, server.Client(), gate, models.remember,
 	)
 
 	calls := []func() error{
 		func() error {
-			_, _, err := assessorProvider.Assess(context.Background(), assessor.SemanticAssessmentRequest{
-				RequestID: "remember-request", TeamID: "team", Evidence: []assessor.SemanticReviewEvidence{{EvidenceID: "evidence", Content: "safe evidence"}},
+			_, err := assessorProvider.Complete(context.Background(), modelprovider.StructuredRequest{
+				Model: assessorProvider.ModelName(), SchemaName: assessor.SemanticAssessmentSchemaName, Schema: assessor.SemanticAssessmentResponseSchema(),
+				Messages: []modelprovider.Message{{Role: "user", Content: "safe evidence"}},
 			})
 			return err
 		},
@@ -264,7 +266,7 @@ func TestCompositionHelpersCoverNilPortsAndTelemetryBranches(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	req.Header.Set("Authorization", "Bearer token")
 	rec := httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
+	server.Handler.ServeHTTP(rec, req)
 	if rec.Code == http.StatusNotFound {
 		t.Fatal("metrics route was not registered")
 	}
@@ -275,7 +277,7 @@ func TestCompositionHelpersCoverNilPortsAndTelemetryBranches(t *testing.T) {
 
 func TestTelemetryListenerUsesRootBackedTransportObservations(t *testing.T) {
 	var logs bytes.Buffer
-	logger := observability.NewWithHandler(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	logger := observability.NewWithHandler(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	server, err := newTelemetryScrapeServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}), "token", transportLogger(logger))
@@ -284,10 +286,22 @@ func TestTelemetryListenerUsesRootBackedTransportObservations(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = shutdownTelemetryScrapeServer(server) })
 
+	const presentedSecret = "echo-framework-test-credential"
+	framework := server.Handler.(*echo.Echo).Logger
+	framework.Debug("debug suppressed at info")
+	framework.ErrorContext(observability.WithAuthenticationSecrets(context.Background(), presentedSecret),
+		"framework request failed", "detail", "credential "+presentedSecret)
+	if output := logs.String(); !strings.Contains(output, `"component":"echo"`) ||
+		!strings.Contains(output, `"msg":"framework request failed"`) ||
+		strings.Contains(output, presentedSecret) || strings.Contains(output, "debug suppressed at info") {
+		t.Fatal("protected framework logging did not preserve the root level, component and credential protection")
+	}
+	logs.Reset()
+
 	request := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	request.Header.Set("Authorization", "Bearer token")
 	response := httptest.NewRecorder()
-	server.ServeHTTP(response, request)
+	server.Handler.ServeHTTP(response, request)
 	if response.Code != http.StatusNoContent {
 		t.Fatalf("successful scrape status = %d", response.Code)
 	}
@@ -297,7 +311,7 @@ func TestTelemetryListenerUsesRootBackedTransportObservations(t *testing.T) {
 
 	logs.Reset()
 	rejected := httptest.NewRecorder()
-	server.ServeHTTP(rejected, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	server.Handler.ServeHTTP(rejected, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	if rejected.Code != http.StatusUnauthorized {
 		t.Fatalf("rejected scrape status = %d", rejected.Code)
 	}
@@ -320,7 +334,7 @@ func TestTelemetryListenerCapturesRecoveredPanic(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	request.Header.Set("Authorization", "Bearer token")
 	response := httptest.NewRecorder()
-	server.ServeHTTP(response, request)
+	server.Handler.ServeHTTP(response, request)
 
 	if response.Code != http.StatusInternalServerError {
 		t.Fatalf("panic status = %d, want %d", response.Code, http.StatusInternalServerError)

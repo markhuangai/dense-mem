@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
 	httpmw "github.com/markhuangai/dense-mem/internal/http/middleware"
@@ -24,7 +24,7 @@ func registerRememberInvocationDiagnosticsRoutes(api *echo.Group, control *contr
 	api.GET("/teams/:teamId/remember-invocations/:invocationId", control.getRememberInvocationDiagnostic)
 }
 
-func (h *controlPortalHandler) listRememberInvocationDiagnostics(c echo.Context) error {
+func (h *controlPortalHandler) listRememberInvocationDiagnostics(c *echo.Context) error {
 	if h.rememberInvocations == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "remember invocation diagnostics unavailable")
 	}
@@ -42,7 +42,7 @@ func (h *controlPortalHandler) listRememberInvocationDiagnostics(c echo.Context)
 	return response.PaginatedOK(c, page.Items, response.Pagination{Limit: filter.Limit, Offset: filter.Offset, Total: page.Total})
 }
 
-func (h *controlPortalHandler) getRememberInvocationDiagnostic(c echo.Context) error {
+func (h *controlPortalHandler) getRememberInvocationDiagnostic(c *echo.Context) error {
 	if h.rememberInvocations == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "remember invocation diagnostics unavailable")
 	}
@@ -161,7 +161,7 @@ func enrichRememberInvocationFromTransportLogs(detail *rememberapp.RememberInvoc
 	return false
 }
 
-func controlRememberInvocationDiagnosticFilter(c echo.Context) (rememberapp.RememberInvocationDiagnosticFilter, error) {
+func controlRememberInvocationDiagnosticFilter(c *echo.Context) (rememberapp.RememberInvocationDiagnosticFilter, error) {
 	limit, offset := controlPagination(c)
 	if raw := strings.TrimSpace(c.QueryParam("limit")); raw != "" {
 		parsed, err := strconv.Atoi(raw)

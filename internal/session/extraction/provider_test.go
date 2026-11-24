@@ -4,11 +4,15 @@ import (
 	"context"
 	"encoding/json"
 
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
+	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
+	"github.com/markhuangai/dense-mem/internal/provider/structured"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	session "github.com/markhuangai/dense-mem/internal/session/contract"
 	"github.com/stretchr/testify/require"
@@ -78,7 +82,7 @@ func TestSessionProviderRegeneratesWhitespaceCitationBeforeCheckpointing(t *test
 	require.Equal(t, valid, response)
 	require.Len(t, transport.requests, 2)
 	require.Equal(t, transport.requests[0].Messages[1], transport.requests[1].Messages[1])
-	require.Contains(t, transport.requests[1].Messages[2].Content, "excerpt bounds")
+	require.Contains(t, transport.requests[1].Messages[len(transport.requests[1].Messages)-1].Content, "excerpt bounds")
 	valid.Excerpts[0] = session.Excerpt{EventIndex: 0, Start: 0, End: 524, Content: blank.Text + request.Window.Core[1].Text}
 	require.NoError(t, session.ValidateExtraction(request, valid))
 }
@@ -120,4 +124,58 @@ func TestSessionProviderCancellationAndInputBudgetPreventOutboundCalls(t *testin
 	_, err = NewProvider(nil, "fixture", limits).Extract(context.Background(), request)
 	var unavailable *modelprovider.ProviderError
 	require.ErrorAs(t, err, &unavailable)
+}
+
+func TestSessionProviderRealHTTPRecoveryAndExhaustion(t *testing.T) {
+	request, valid := extractionFixture()
+	for _, exhaust := range []bool{false, true} {
+		name := "recovery"
+		if exhaust {
+			name = "exhaustion"
+		}
+		t.Run(name, func(t *testing.T) {
+			calls := 0
+			var original string
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var envelope struct{ Messages []modelprovider.Message }
+				if err := json.NewDecoder(r.Body).Decode(&envelope); err != nil {
+					http.Error(w, "invalid fixture request", http.StatusBadRequest)
+					return
+				}
+				calls++
+				require.Len(t, envelope.Messages, 2*calls)
+				if calls == 1 {
+					original = envelope.Messages[1].Content
+				} else {
+					require.Equal(t, original, envelope.Messages[1].Content)
+					require.Equal(t, "assistant", envelope.Messages[2].Role)
+					require.Contains(t, envelope.Messages[2*calls-1].Content, "validation_errors")
+				}
+				candidate := valid
+				switch {
+				case calls == 1:
+					candidate.Coverage = []string{"non-current-ref"}
+				case calls == 2 || exhaust:
+					candidate.Excerpts = []session.Excerpt{{EventIndex: 0, Start: 0, End: 12, Content: "another text"}}
+				}
+				body, err := json.Marshal(candidate)
+				if err != nil {
+					http.Error(w, "fixture response error", http.StatusInternalServerError)
+					return
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": string(body)}}}})
+			}))
+			defer upstream.Close()
+			transport := structured.NewOpenAI(&config.Config{AIVerifierAPIURL: upstream.URL}, upstream.Client())
+			response, err := NewProvider(transport, "fixture", assessor.DefaultSemanticAssessmentLimits()).Extract(t.Context(), request)
+			require.Equal(t, 3, calls)
+			if exhaust {
+				require.ErrorIs(t, err, modelprovider.ErrVerifierMalformedResponse)
+				require.Empty(t, response.Excerpts)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, valid, response)
+		})
+	}
 }

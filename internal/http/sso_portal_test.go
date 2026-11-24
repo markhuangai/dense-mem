@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/config"
@@ -217,8 +217,7 @@ func TestUserPortalSSOErrorBranches(t *testing.T) {
 	handler := &userPortalHandler{}
 
 	c, _ := userSSOContext(nethttp.MethodGet, "/ui/api/sso/start/not-a-uuid", "", "")
-	c.SetParamNames("providerId")
-	c.SetParamValues("not-a-uuid")
+	c.SetPathValues(echo.PathValues{{Name: "providerId", Value: "not-a-uuid"}})
 	require.ErrorContains(t, handler.startSSO(c), "sso is not configured")
 
 	handler.sso = accessservice.NewSSOService(&httpSSORepoStub{}, accessservice.SSOConfig{})
@@ -270,8 +269,7 @@ func TestUserPortalSSOErrorBranches(t *testing.T) {
 		now:       now,
 	}, accessservice.SSOConfig{HTTPClient: discovery.Client(), Now: func() time.Time { return now }})
 	c, _ = userSSOContext(nethttp.MethodGet, "/ui/api/sso/start/"+providerID.String(), "", "")
-	c.SetParamNames("providerId")
-	c.SetParamValues(providerID.String())
+	c.SetPathValues(echo.PathValues{{Name: "providerId", Value: providerID.String()}})
 	require.ErrorContains(t, handler.startSSO(c), "sso public base url is not configured")
 
 	handler.sso = accessservice.NewSSOService(&httpSSORepoStub{
@@ -279,8 +277,7 @@ func TestUserPortalSSOErrorBranches(t *testing.T) {
 		now:       now,
 	}, accessservice.SSOConfig{PublicBaseURL: "https://portal.example.com", HTTPClient: discovery.Client(), Now: func() time.Time { return now }})
 	c, rec := userSSOContext(nethttp.MethodGet, "/ui/api/sso/start/"+providerID.String(), "", "")
-	c.SetParamNames("providerId")
-	c.SetParamValues(providerID.String())
+	c.SetPathValues(echo.PathValues{{Name: "providerId", Value: providerID.String()}})
 	require.NoError(t, handler.startSSO(c))
 	require.Equal(t, nethttp.StatusFound, rec.Code)
 	require.Contains(t, rec.Header().Get("Location"), discovery.URL+"/authorize")
@@ -297,37 +294,31 @@ func TestControlPortalSSOErrorBranches(t *testing.T) {
 	e := echo.New()
 	handler := &controlPortalHandler{}
 
-	for name, call := range map[string]func(echo.Context) error{
+	for name, call := range map[string]func(*echo.Context) error{
 		"list providers":  handler.listSSOProviders,
 		"create provider": handler.createSSOProvider,
-		"update provider": func(c echo.Context) error {
-			c.SetParamNames("providerId")
-			c.SetParamValues(uuid.NewString())
+		"update provider": func(c *echo.Context) error {
+			c.SetPathValues(echo.PathValues{{Name: "providerId", Value: uuid.NewString()}})
 			return handler.updateSSOProvider(c)
 		},
-		"delete provider": func(c echo.Context) error {
-			c.SetParamNames("providerId")
-			c.SetParamValues(uuid.NewString())
+		"delete provider": func(c *echo.Context) error {
+			c.SetPathValues(echo.PathValues{{Name: "providerId", Value: uuid.NewString()}})
 			return handler.deleteSSOProvider(c)
 		},
-		"list mappings": func(c echo.Context) error {
-			c.SetParamNames("providerId")
-			c.SetParamValues(uuid.NewString())
+		"list mappings": func(c *echo.Context) error {
+			c.SetPathValues(echo.PathValues{{Name: "providerId", Value: uuid.NewString()}})
 			return handler.listSSOMappings(c)
 		},
-		"create mapping": func(c echo.Context) error {
-			c.SetParamNames("providerId")
-			c.SetParamValues(uuid.NewString())
+		"create mapping": func(c *echo.Context) error {
+			c.SetPathValues(echo.PathValues{{Name: "providerId", Value: uuid.NewString()}})
 			return handler.createSSOMapping(c)
 		},
-		"update mapping": func(c echo.Context) error {
-			c.SetParamNames("providerId", "mappingId")
-			c.SetParamValues(uuid.NewString(), uuid.NewString())
+		"update mapping": func(c *echo.Context) error {
+			c.SetPathValues(echo.PathValues{{Name: "providerId", Value: uuid.NewString()}, {Name: "mappingId", Value: uuid.NewString()}})
 			return handler.updateSSOMapping(c)
 		},
-		"delete mapping": func(c echo.Context) error {
-			c.SetParamNames("providerId", "mappingId")
-			c.SetParamValues(uuid.NewString(), uuid.NewString())
+		"delete mapping": func(c *echo.Context) error {
+			c.SetPathValues(echo.PathValues{{Name: "providerId", Value: uuid.NewString()}, {Name: "mappingId", Value: uuid.NewString()}})
 			return handler.deleteSSOMapping(c)
 		},
 	} {
@@ -343,28 +334,24 @@ func TestControlPortalSSOErrorBranches(t *testing.T) {
 	req := httptest.NewRequest(nethttp.MethodPatch, "/", strings.NewReader(`{`))
 	req.Header.Set("Content-Type", "application/json")
 	c := e.NewContext(req, httptest.NewRecorder())
-	c.SetParamNames("providerId")
-	c.SetParamValues(uuid.NewString())
+	c.SetPathValues(echo.PathValues{{Name: "providerId", Value: uuid.NewString()}})
 	require.ErrorContains(t, handler.updateSSOProvider(c), "malformed JSON body")
 
 	req = httptest.NewRequest(nethttp.MethodPost, "/", strings.NewReader(`{`))
 	req.Header.Set("Content-Type", "application/json")
 	c = e.NewContext(req, httptest.NewRecorder())
-	c.SetParamNames("providerId")
-	c.SetParamValues(uuid.NewString())
+	c.SetPathValues(echo.PathValues{{Name: "providerId", Value: uuid.NewString()}})
 	require.ErrorContains(t, handler.createSSOMapping(c), "malformed JSON body")
 
 	req = httptest.NewRequest(nethttp.MethodDelete, "/", nil)
 	c = e.NewContext(req, httptest.NewRecorder())
-	c.SetParamNames("providerId", "mappingId")
-	c.SetParamValues("bad", uuid.NewString())
+	c.SetPathValues(echo.PathValues{{Name: "providerId", Value: "bad"}, {Name: "mappingId", Value: uuid.NewString()}})
 	require.ErrorContains(t, handler.deleteSSOMapping(c), "invalid SSO provider ID format")
 
 	req = httptest.NewRequest(nethttp.MethodPatch, "/", strings.NewReader(`{}`))
 	req.Header.Set("Content-Type", "application/json")
 	c = e.NewContext(req, httptest.NewRecorder())
-	c.SetParamNames("providerId", "mappingId")
-	c.SetParamValues(uuid.NewString(), "bad")
+	c.SetPathValues(echo.PathValues{{Name: "providerId", Value: uuid.NewString()}, {Name: "mappingId", Value: "bad"}})
 	require.ErrorContains(t, handler.updateSSOMapping(c), "invalid SSO group mapping ID format")
 
 	backendErr := errors.New("sso backend failed")
@@ -375,22 +362,19 @@ func TestControlPortalSSOErrorBranches(t *testing.T) {
 	handler.sso = accessservice.NewSSOService(&httpSSORepoStub{listMappingsErr: backendErr}, accessservice.SSOConfig{})
 	req = httptest.NewRequest(nethttp.MethodGet, "/", nil)
 	c = e.NewContext(req, httptest.NewRecorder())
-	c.SetParamNames("providerId")
-	c.SetParamValues(uuid.NewString())
+	c.SetPathValues(echo.PathValues{{Name: "providerId", Value: uuid.NewString()}})
 	require.ErrorIs(t, handler.listSSOMappings(c), backendErr)
 
 	handler.sso = accessservice.NewSSOService(&httpSSORepoStub{deleteProviderErr: backendErr}, accessservice.SSOConfig{})
 	req = httptest.NewRequest(nethttp.MethodDelete, "/", nil)
 	c = e.NewContext(req, httptest.NewRecorder())
-	c.SetParamNames("providerId")
-	c.SetParamValues(uuid.NewString())
+	c.SetPathValues(echo.PathValues{{Name: "providerId", Value: uuid.NewString()}})
 	require.ErrorIs(t, handler.deleteSSOProvider(c), backendErr)
 
 	handler.sso = accessservice.NewSSOService(&httpSSORepoStub{deleteMappingErr: backendErr}, accessservice.SSOConfig{})
 	req = httptest.NewRequest(nethttp.MethodDelete, "/", nil)
 	c = e.NewContext(req, httptest.NewRecorder())
-	c.SetParamNames("providerId", "mappingId")
-	c.SetParamValues(uuid.NewString(), uuid.NewString())
+	c.SetPathValues(echo.PathValues{{Name: "providerId", Value: uuid.NewString()}, {Name: "mappingId", Value: uuid.NewString()}})
 	require.ErrorIs(t, handler.deleteSSOMapping(c), backendErr)
 
 	require.Equal(t, controlSSOProviderResponse{}, toControlSSOProvider(nil))
@@ -547,7 +531,7 @@ func serveControlSSO(server nethttp.Handler, method, target, body string) *httpt
 	return rec
 }
 
-func userSSOContext(method, target, body, sessionToken string) (echo.Context, *httptest.ResponseRecorder) {
+func userSSOContext(method, target, body, sessionToken string) (*echo.Context, *httptest.ResponseRecorder) {
 	e := echo.New()
 	req := httptest.NewRequest(method, target, strings.NewReader(body))
 	if body != "" {
@@ -561,15 +545,14 @@ func userSSOContext(method, target, body, sessionToken string) (echo.Context, *h
 	segments := strings.Split(strings.Trim(target, "/"), "/")
 	for index, segment := range segments {
 		if segment == "credentials" && index+1 < len(segments) && segments[index+1] != "" {
-			c.SetParamNames("credentialId")
-			c.SetParamValues(segments[index+1])
+			c.SetPathValues(echo.PathValues{{Name: "credentialId", Value: segments[index+1]}})
 			break
 		}
 	}
 	return c, rec
 }
 
-func setUserSSOPrincipal(c echo.Context, ownerID, teamID uuid.UUID) {
+func setUserSSOPrincipal(c *echo.Context, ownerID, teamID uuid.UUID) {
 	ctx := httpmw.SetPrincipalForTest(c.Request().Context(), &httpmw.Principal{
 		IdentityID:   ownerID,
 		MembershipID: ownerID,
@@ -582,7 +565,7 @@ func setUserSSOPrincipal(c echo.Context, ownerID, teamID uuid.UUID) {
 	c.SetRequest(c.Request().WithContext(ctx))
 }
 
-func setUserCredentialPrincipal(c echo.Context, credentialID, teamID uuid.UUID) {
+func setUserCredentialPrincipal(c *echo.Context, credentialID, teamID uuid.UUID) {
 	ctx := httpmw.SetPrincipalForTest(c.Request().Context(), &httpmw.Principal{
 		IdentityID:   credentialID,
 		MembershipID: credentialID,
@@ -596,7 +579,7 @@ func setUserCredentialPrincipal(c echo.Context, credentialID, teamID uuid.UUID) 
 	c.SetRequest(c.Request().WithContext(ctx))
 }
 
-func addSSOCSRF(c echo.Context, token string) {
+func addSSOCSRF(c *echo.Context, token string) {
 	c.Request().Header.Set(accessservice.SSOCSRFHeaderName, token)
 	c.Request().AddCookie(&nethttp.Cookie{Name: accessservice.SSOCSRFCookieName, Value: token})
 }

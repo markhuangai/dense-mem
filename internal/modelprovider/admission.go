@@ -1,12 +1,6 @@
 package modelprovider
 
-import (
-	"context"
-	"net/http"
-	"strconv"
-	"strings"
-	"time"
-)
+import "context"
 
 // AdmissionCallback is invoked after a provider transport has acquired its
 // outbound-request admission slot and immediately before dispatching work.
@@ -38,25 +32,4 @@ func NotifyAdmission(ctx context.Context) error {
 		return nil
 	}
 	return callback(ctx)
-}
-
-type rateLimitObserverKey struct{}
-
-func WithRateLimitObserver(ctx context.Context, observe func(time.Time)) context.Context {
-	return context.WithValue(ctx, rateLimitObserverKey{}, observe)
-}
-
-func ObserveRateLimit(ctx context.Context, header string, now time.Time) {
-	observe, _ := ctx.Value(rateLimitObserverKey{}).(func(time.Time))
-	if observe == nil {
-		return
-	}
-	header = strings.TrimSpace(header)
-	if seconds, err := strconv.ParseUint(header, 10, 63); err == nil && seconds > 0 {
-		// A far-future header must not wrap around and reopen admission.
-		now = now.Add(time.Duration(min(seconds, uint64((1<<63-1)/time.Second))) * time.Second)
-	} else if date, err := http.ParseTime(header); err == nil && date.After(now) {
-		now = date
-	}
-	observe(now)
 }

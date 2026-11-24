@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 )
 
 func TestRequireRole(t *testing.T) {
@@ -35,7 +35,7 @@ func TestRequireRole(t *testing.T) {
 			c := e.NewContext(req, rec)
 
 			called := false
-			err := RequireRole("manager")(func(c echo.Context) error {
+			err := RequireRole("manager")(func(c *echo.Context) error {
 				called = true
 				return c.NoContent(http.StatusNoContent)
 			})(c)

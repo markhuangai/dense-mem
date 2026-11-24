@@ -1,6 +1,7 @@
 package assessor
 
 import (
+	"github.com/markhuangai/dense-mem/internal/jsonstrict"
 	"strings"
 	"testing"
 
@@ -58,7 +59,7 @@ func TestSemanticAssessmentEvidenceConflictRejectsUnsubmittedAndEquivalenceReuse
 		}}},
 	}
 	_, errs = PrepareSemanticAssessmentResponse(prepared, response, DefaultSemanticAssessmentLimits())
-	joined := semanticAssessmentJoinedErrors(errs)
+	joined := (&jsonstrict.ValidationError{Errors: errs}).Error()
 	require.Contains(t, joined, "candidate is also selected for equivalence")
 	require.NotContains(t, joined, "must contain at least one submitted evidence position")
 	require.False(t, strings.Contains(joined, "duplicates another position"))
@@ -102,7 +103,7 @@ func TestSemanticAssessmentEvidenceConflictRejectsMalformedCompleteResults(t *te
 			prepared, response := validEvidenceConflictAssessment(t)
 			testCase.mutate(&response, prepared)
 			_, errs := PrepareSemanticAssessmentResponse(prepared, response, DefaultSemanticAssessmentLimits())
-			require.Contains(t, semanticAssessmentJoinedErrors(errs), testCase.want)
+			require.Contains(t, (&jsonstrict.ValidationError{Errors: errs}).Error(), testCase.want)
 		})
 	}
 }
@@ -126,7 +127,7 @@ func TestSemanticAssessmentEvidenceConflictRejectsPaddedCitationIdentifiers(t *t
 			prepared, response := validEvidenceConflictAssessment(t)
 			testCase.mutate(&response.EvidenceConflictResults[0].Positions[0])
 			validated, errs := PrepareSemanticAssessmentResponse(prepared, response, DefaultSemanticAssessmentLimits())
-			require.Contains(t, semanticAssessmentJoinedErrors(errs), testCase.want)
+			require.Contains(t, (&jsonstrict.ValidationError{Errors: errs}).Error(), testCase.want)
 			require.Equal(t, response.EvidenceConflictResults[0].Positions[0].EvidenceID, validated.EvidenceConflictResults[0].Positions[0].EvidenceID)
 		})
 	}
@@ -140,7 +141,7 @@ func TestSemanticAssessmentEvidenceConflictRequiresCandidateAssociation(t *testi
 	end, _ := SemanticAssessmentBoundaryRef(candidate, len([]rune(candidate.Content)))
 	response.EvidenceConflictResults[0].Positions = append(response.EvidenceConflictResults[0].Positions, SemanticAssessmentEvidenceConflictPosition{EvidenceID: candidate.EvidenceID, StartRef: start, EndRef: end})
 	_, errs := PrepareSemanticAssessmentResponse(prepared, response, DefaultSemanticAssessmentLimits())
-	require.Contains(t, semanticAssessmentJoinedErrors(errs), "candidate is not associated with a submitted position in this result")
+	require.Contains(t, (&jsonstrict.ValidationError{Errors: errs}).Error(), "candidate is not associated with a submitted position in this result")
 }
 
 func TestSemanticAssessmentEvidenceConflictCitableEvidenceDeduplicatesSources(t *testing.T) {
@@ -156,7 +157,7 @@ func TestSemanticAssessmentEvidenceConflictCitableEvidenceDeduplicatesSources(t 
 	require.True(t, citable["same"].submitted)
 	require.Len(t, citable["candidate"].candidateFor, 2)
 	errs := resolveSemanticAssessmentEvidenceConflictResults(req, nil)
-	require.Contains(t, semanticAssessmentJoinedErrors(errs), "evidence_conflict_results: is required")
+	require.Contains(t, (&jsonstrict.ValidationError{Errors: errs}).Error(), "evidence_conflict_results: is required")
 }
 
 func TestSemanticAssessmentEvidenceConflictRejectsOversizedQuoteAndDuplicateCase(t *testing.T) {
@@ -175,7 +176,7 @@ func TestSemanticAssessmentEvidenceConflictRejectsOversizedQuoteAndDuplicateCase
 	base := SemanticAssessmentEvidenceConflictResult{Positions: []SemanticAssessmentEvidenceConflictPosition{{EvidenceID: "submitted", StartRef: startSubmitted, EndRef: endSubmitted}, {EvidenceID: "known", StartRef: startKnown, EndRef: endKnown}}}
 	response := SemanticAssessmentResponse{RequestID: prepared.RequestID, EvidenceSecurityResults: []SemanticAssessmentEvidenceSecurityResult{{EvidenceID: "submitted", Decision: "pass", Signals: []SemanticAssessmentSecuritySignal{}}}, EvidenceEquivalenceResults: []SemanticAssessmentEvidenceEquivalenceResult{}, EvidenceConflictResults: []SemanticAssessmentEvidenceConflictResult{base, base}}
 	_, errs = PrepareSemanticAssessmentResponse(prepared, response, limits)
-	joined := semanticAssessmentJoinedErrors(errs)
+	joined := (&jsonstrict.ValidationError{Errors: errs}).Error()
 	require.Contains(t, joined, "quote must contain at most 4000 runes")
 	require.Contains(t, joined, "duplicates another conflict result")
 }

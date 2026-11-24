@@ -13,7 +13,7 @@ requireRunner(process.env);
 test("production seed exporter preserves data, excludes payloads and protects restore failures", { timeout: 240_000 }, async (t) => {
   const dataset = `seed_export_${randomUUID().replaceAll("-", "")}`;
   const env = { ...process.env, EVAL_MODE: "fixtures", EVAL_DATASET: dataset };
-  const paths = location(env);
+  const paths = location(env, true);
   const container = `densemem-eval-${paths.runID}-postgres`;
   const seedDir = path.join(paths.directory, "seed");
   const canary = `seed-password-${randomUUID()}`;
@@ -21,7 +21,7 @@ test("production seed exporter preserves data, excludes payloads and protects re
   fs.mkdirSync(seedDir, { recursive: true, mode: 0o700 });
   const diagnostic = path.join(seedDir, "postgres-failure.log");
   fs.writeFileSync(paths.stateFile, JSON.stringify({ runID: paths.runID, environment: { EVAL_DATABASE_PASSWORD: canary } }), { mode: 0o600 });
-  fs.writeFileSync(paths.manifestFile, JSON.stringify({ version: 1, run_id: paths.runID, workflow_run_id: env.GITHUB_RUN_ID, source_revision: "b".repeat(40), image: `ghcr.io/markhuangai/dense-mem@sha256:${"a".repeat(64)}`, registry_sha256: sha256(fs.readFileSync("tests/eval/fixtures/datasets.json")), dataset, mode: "fixtures", operation: "run", model: "fixture", embedding_model: "text-embedding-3-small", embedding_dimensions: 1536, context_window_tokens: 300000, seed_dir: seedDir, data_dir: seedDir, output_dir: path.join(paths.directory, "public"), model_deadline: new Date(Date.now() + 60_000).toISOString() }), { mode: 0o600 });
+  fs.writeFileSync(paths.manifestFile, JSON.stringify({ version: 1, run_id: paths.runID, workflow_run_id: env.GITHUB_RUN_ID, source_revision: "b".repeat(40), image: `ghcr.io/markhuangai/dense-mem@sha256:${"a".repeat(64)}`, registry_sha256: sha256(fs.readFileSync("tests/eval/fixtures/datasets.json")), dataset, mode: "fixtures", operation: "run", condition: "off", seed_image: `sha256:${"d".repeat(64)}`, model: "fixture", embedding_model: "text-embedding-3-small", embedding_dimensions: 1536, context_window_tokens: 300000, seed_dir: seedDir, data_dir: seedDir, output_dir: path.join(paths.directory, "public"), model_deadline: new Date(Date.now() + 60_000).toISOString() }), { mode: 0o600 });
   const protectedDiagnostics = () => {
     const result = spawnSync(process.execPath, ["tests/eval/scripts/workflow.mjs", "diagnostics"], { encoding: "utf8", env, timeout: 30_000 });
     assert.equal(result.status, 0, "actual workflow diagnostics must protect PostgreSQL failures without a running server");

@@ -3,7 +3,7 @@ package http
 import (
 	"net/http"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 )
 
 // registerPublicRoutes registers public routes that do not require authentication,
@@ -25,7 +25,7 @@ func registerPublicRoutes(e *echo.Echo, healthConfig HealthConfig) {
 // In degraded (in-memory) mode it returns 200 with degraded=true, a reason, and checks.
 func handleHealth(healthConfig HealthConfig) echo.HandlerFunc {
 	registry := healthConfig.dependencyCheckRegistry()
-	return func(c echo.Context) error {
+	return func(c *echo.Context) error {
 		ctx := c.Request().Context()
 		checks := make(map[string]string)
 		for _, result := range runDependencyChecks(ctx, registry, healthConfig.Checks) {
@@ -59,7 +59,7 @@ func handleHealth(healthConfig HealthConfig) echo.HandlerFunc {
 // It executes all health checks and returns the appropriate status.
 func handleReady(healthConfig HealthConfig) echo.HandlerFunc {
 	registry := healthConfig.dependencyCheckRegistry()
-	return func(c echo.Context) error {
+	return func(c *echo.Context) error {
 		ctx := c.Request().Context()
 		dependencies := make(map[string]string)
 		allPass := true

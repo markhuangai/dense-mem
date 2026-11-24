@@ -6,14 +6,14 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 )
 
-func (h *controlPortalHandler) listDirectoryConnectors(c echo.Context) error {
+func (h *controlPortalHandler) listDirectoryConnectors(c *echo.Context) error {
 	if h.directory == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "directory identity service unavailable")
 	}
@@ -28,7 +28,7 @@ func (h *controlPortalHandler) listDirectoryConnectors(c echo.Context) error {
 	return c.JSON(200, map[string]any{"data": items})
 }
 
-func (h *controlPortalHandler) getDirectoryConnector(c echo.Context) error {
+func (h *controlPortalHandler) getDirectoryConnector(c *echo.Context) error {
 	if h.directory == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "directory identity service unavailable")
 	}
@@ -43,7 +43,7 @@ func (h *controlPortalHandler) getDirectoryConnector(c echo.Context) error {
 	return c.JSON(200, map[string]any{"data": toControlDirectoryConnector(connector)})
 }
 
-func (h *controlPortalHandler) createDirectoryConnector(c echo.Context) error {
+func (h *controlPortalHandler) createDirectoryConnector(c *echo.Context) error {
 	if h.directory == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "directory identity service unavailable")
 	}
@@ -65,7 +65,7 @@ func (h *controlPortalHandler) createDirectoryConnector(c echo.Context) error {
 	}})
 }
 
-func (h *controlPortalHandler) updateDirectoryConnector(c echo.Context) error {
+func (h *controlPortalHandler) updateDirectoryConnector(c *echo.Context) error {
 	if h.directory == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "directory identity service unavailable")
 	}
@@ -88,7 +88,7 @@ func (h *controlPortalHandler) updateDirectoryConnector(c echo.Context) error {
 	return c.JSON(200, map[string]any{"data": toControlDirectoryConnector(connector)})
 }
 
-func (h *controlPortalHandler) rotateDirectoryCredentials(c echo.Context) error {
+func (h *controlPortalHandler) rotateDirectoryCredentials(c *echo.Context) error {
 	if h.directory == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "directory identity service unavailable")
 	}
@@ -103,7 +103,7 @@ func (h *controlPortalHandler) rotateDirectoryCredentials(c echo.Context) error 
 	return c.JSON(200, map[string]any{"data": credential})
 }
 
-func (h *controlPortalHandler) previewDirectoryConnector(c echo.Context) error {
+func (h *controlPortalHandler) previewDirectoryConnector(c *echo.Context) error {
 	if h.directory == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "directory identity service unavailable")
 	}
@@ -118,7 +118,7 @@ func (h *controlPortalHandler) previewDirectoryConnector(c echo.Context) error {
 	return c.JSON(200, map[string]any{"data": preview})
 }
 
-func (h *controlPortalHandler) setDirectoryConnectorStatus(c echo.Context) error {
+func (h *controlPortalHandler) setDirectoryConnectorStatus(c *echo.Context) error {
 	if h.directory == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "directory identity service unavailable")
 	}
@@ -137,7 +137,7 @@ func (h *controlPortalHandler) setDirectoryConnectorStatus(c echo.Context) error
 	return c.JSON(200, map[string]any{"data": toControlDirectoryConnector(connector)})
 }
 
-func (h *controlPortalHandler) adoptDirectoryGroupTeam(c echo.Context) error {
+func (h *controlPortalHandler) adoptDirectoryGroupTeam(c *echo.Context) error {
 	if h.directory == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "directory identity service unavailable")
 	}

@@ -2,9 +2,12 @@ package service
 
 import (
 	"context"
-	"github.com/markhuangai/dense-mem/internal/assessor"
-	"github.com/stretchr/testify/require"
+	"encoding/json"
 	"testing"
+
+	"github.com/markhuangai/dense-mem/internal/assessor"
+	"github.com/markhuangai/dense-mem/internal/jsonstrict"
+	"github.com/stretchr/testify/require"
 )
 
 func TestEvidenceOnlyUnitAssessmentUsesExactEvidenceInIndexOrder(t *testing.T) {
@@ -61,5 +64,10 @@ func TestEvidenceOnlyUnitAssessmentRegeneratesTheWholeInvalidResponse(t *testing
 	require.Equal(t, 1, fixture.provider.repairCalls)
 	require.Len(t, prepared.Response.EvidenceSecurityResults, 2)
 	require.Equal(t, 2, prepared.Assessment.ProviderTurns)
-	require.NotEmpty(t, fixture.provider.repairErrors)
+	require.Len(t, fixture.provider.corrections, 1)
+	var correction struct {
+		Issues []jsonstrict.Issue `json:"validation_errors"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(fixture.provider.corrections[0]), &correction))
+	require.NotEmpty(t, correction.Issues)
 }

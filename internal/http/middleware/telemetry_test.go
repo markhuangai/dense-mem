@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/requestctx"
@@ -15,12 +15,12 @@ import (
 func TestTelemetryScrapeTokenMiddlewareRetainsPresentedSecretOnFailure(t *testing.T) {
 	var observed context.Context
 	e := echo.New()
-	e.HTTPErrorHandler = func(_ error, c echo.Context) {
+	e.HTTPErrorHandler = func(c *echo.Context, _ error) {
 		observed = c.Request().Context()
 		_ = c.NoContent(http.StatusUnauthorized)
 	}
 	e.Use(TelemetryScrapeTokenMiddleware("expected"))
-	e.GET("/metrics", func(c echo.Context) error {
+	e.GET("/metrics", func(c *echo.Context) error {
 		return c.NoContent(http.StatusOK)
 	})
 
@@ -38,7 +38,7 @@ func TestTelemetryScrapeTokenMiddlewareMarksVerifiedToken(t *testing.T) {
 	var observed context.Context
 	e := echo.New()
 	e.Use(TelemetryScrapeTokenMiddleware("expected"))
-	e.GET("/metrics", func(c echo.Context) error {
+	e.GET("/metrics", func(c *echo.Context) error {
 		observed = c.Request().Context()
 		return c.NoContent(http.StatusOK)
 	})

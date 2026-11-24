@@ -11,11 +11,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/labstack/echo/v4"
 	accesspostgres "github.com/markhuangai/dense-mem/internal/access/postgres"
 	"github.com/markhuangai/dense-mem/internal/config"
 	conflictpostgres "github.com/markhuangai/dense-mem/internal/conflict/postgres"
 	"github.com/markhuangai/dense-mem/internal/crypto"
+	densehttp "github.com/markhuangai/dense-mem/internal/http"
 	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
@@ -24,8 +24,8 @@ import (
 	operations "github.com/markhuangai/dense-mem/internal/operations"
 	operationspostgres "github.com/markhuangai/dense-mem/internal/operations/postgres"
 	privacy "github.com/markhuangai/dense-mem/internal/privacy/postgres"
-	assessorprovider "github.com/markhuangai/dense-mem/internal/provider/assessor"
 	decisionprovider "github.com/markhuangai/dense-mem/internal/provider/decision"
+	"github.com/markhuangai/dense-mem/internal/provider/structured"
 	recallpostgres "github.com/markhuangai/dense-mem/internal/recall/postgres"
 	settingspostgres "github.com/markhuangai/dense-mem/internal/settings/postgres"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
@@ -252,11 +252,11 @@ func RunActiveServer(
 	openaiProvider := searchApplication.EmbeddingProvider
 	retryEmbedder := searchApplication.RetryEmbedding
 	sessionModels := aiSessionModelsForConfig(&cfg)
-	assessmentLimits := assessorprovider.SemanticAssessmentLimitsForConfig(&cfg)
+	assessmentLimits := config.SemanticAssessmentLimitsForConfig(&cfg)
 	assessmentLimits.ProviderModel = sessionModels.remember
 	aiHTTPClient := observability.DiagnosticHTTPClient(&nethttp.Client{Timeout: time.Duration(cfg.GetAIVerifierTimeoutSeconds()) * time.Second}, rootDiagnosticLogger(logger), diagnosticProtector)
 	aiConcurrencyGate := modelprovider.NewConcurrencyGate(config.AIVerifierMaxConcurrency(&cfg))
-	assessorProvider := assessorprovider.NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGateAndModel(&cfg, aiHTTPClient, assessmentLimits, aiConcurrencyGate, sessionModels.remember)
+	assessorProvider := structured.NewOpenAIWithModel(&cfg, aiHTTPClient, aiConcurrencyGate, sessionModels.remember)
 	assessorProvider.SetMetrics(discoverabilityMetrics)
 	var decisions modelprovider.DecisionProvider
 	if cfg.Decision.Configured() {
@@ -272,13 +272,7 @@ func RunActiveServer(
 	}
 	sessionAssessmentLimits := assessmentLimits
 	sessionAssessmentLimits.MaxEvidenceItems = 100
-	sessionAssessor := assessorprovider.NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGateAndModel(&cfg, aiHTTPClient, sessionAssessmentLimits, aiConcurrencyGate, sessionModels.remember)
-	sessionAssessor.SetMetrics(discoverabilityMetrics)
-	preparationCooldown, err := ontology.RestorePreparationCooldown(cfg.OntologyPreparationCooldownFile)
-	if err != nil {
-		return err
-	}
-	ontologyMaintenance := buildOntologyMaintenance(ontologyStore, appConfigService, assessorProvider, assessmentLimits, sessionModels.remember, time.Duration(cfg.GetAIVerifierTimeoutSeconds())*time.Second, auditService, rootSlogLogger(logger), ontologyDiagnosticCapture(operationLogService, diagnosticProtector, rootDiagnosticLogger(logger)), preparationCooldown)
+	ontologyMaintenance := buildOntologyMaintenance(ontologyStore, appConfigService, assessorProvider, assessmentLimits, sessionModels.remember, time.Duration(cfg.GetAIVerifierTimeoutSeconds())*time.Second, auditService, rootDiagnosticLogger(logger), ontologyDiagnosticCapture(operationLogService, diagnosticProtector, rootDiagnosticLogger(logger)))
 	applications := buildApplicationBundle(applicationCompositionDependencies{
 		PublicSeedAdmission:  seedAdmission,
 		Knowledge:            knowledgeStore,
@@ -289,7 +283,7 @@ func RunActiveServer(
 		RecallFeedbackEvents: recallFeedbackEventRepo,
 		Assessor:             assessorProvider,
 		Decisions:            decisions, DecisionSettings: appConfigService,
-		SessionAssessor:        sessionAssessor,
+		SessionAssessor:        assessorProvider,
 		SessionEnabled:         cfg.SessionIngestEnabled && cfg.GetAIVerifierAPIURL() != "" && cfg.GetAIVerifierAPIKey() != "" && cfg.IsEmbeddingConfigured(),
 		RememberModel:          sessionModels.remember,
 		GeneratorTransport:     assessorProvider,
@@ -376,6 +370,7 @@ func RunActiveServer(
 	}
 	e := transport.e
 	runtimeCtx.Echo = e
+	publicServer := densehttp.NewHTTPServer(e, transportLogger(logger))
 	controlServer := transport.controlServer
 	telemetryServer := transport.telemetryServer
 	if err := processCtx.Err(); err != nil {
@@ -391,10 +386,11 @@ func RunActiveServer(
 	if err := processCtx.Err(); err != nil {
 		return err
 	}
-	publicListener, err := bindEchoServer(e, httpAddr)
+	publicListener, err := bindHTTPServer(publicServer, httpAddr)
 	if err != nil {
 		return fmt.Errorf("bind server listener: %w", err)
 	}
+	runtimeCtx.HTTPAddress = publicServer.Addr
 	var controlListener, telemetryListener net.Listener
 	closeBoundListeners := func() {
 		_ = publicListener.Close()
@@ -402,7 +398,7 @@ func RunActiveServer(
 		_ = telemetryListenerClose(telemetryListener)
 	}
 	if controlServer != nil {
-		controlListener, err = bindEchoServer(controlServer, cfg.GetControlHTTPAddr())
+		controlListener, err = bindHTTPServer(controlServer, cfg.GetControlHTTPAddr())
 		if err != nil {
 			closeBoundListeners()
 			return fmt.Errorf("bind control portal listener: %w", err)
@@ -412,7 +408,7 @@ func RunActiveServer(
 		if addr == "" {
 			addr = ":8091"
 		}
-		telemetryListener, err = bindEchoServer(telemetryServer, addr)
+		telemetryListener, err = bindHTTPServer(telemetryServer, addr)
 		if err != nil {
 			closeBoundListeners()
 			return fmt.Errorf("bind telemetry listener: %w", err)
@@ -548,10 +544,11 @@ func RunActiveServer(
 	}
 
 	listenerFailures := make(chan error, 3)
-	startListener := func(name string, server *echo.Echo, listener net.Listener, errorsCh <-chan error) {
+	startListener := func(name string, server *nethttp.Server, listener net.Listener) {
 		if server == nil || listener == nil {
 			return
 		}
+		errorsCh := serveHTTPServer(server, listener)
 		logger.Info("starting "+name, observability.String("addr", listener.Addr().String()))
 		lifecycle.start(name, func(ctx context.Context) {
 			select {
@@ -563,17 +560,9 @@ func RunActiveServer(
 			}
 		})
 	}
-	publicErrors := serveEchoServer(e, httpAddr)
-	startListener("server", e, publicListener, publicErrors)
-	if controlServer != nil {
-		startListener("control portal", controlServer, controlListener, serveEchoServer(controlServer, cfg.GetControlHTTPAddr()))
-	} else if telemetryServer != nil {
-		addr := strings.TrimSpace(transport.telemetryServerAddr)
-		if addr == "" {
-			addr = ":8091"
-		}
-		startListener("telemetry scrape server", telemetryServer, telemetryListener, serveEchoServer(telemetryServer, addr))
-	}
+	startListener("server", publicServer, publicListener)
+	startListener("control portal", controlServer, controlListener)
+	startListener("telemetry scrape server", telemetryServer, telemetryListener)
 
 	var runErr error
 	select {
@@ -590,14 +579,14 @@ func RunActiveServer(
 	listenerShutdowns := []listenerShutdown{{
 		name: "server",
 		shutdown: func(ctx context.Context) error {
-			return shutdownEchoServer(ctx, e)
+			return shutdownHTTPServer(ctx, publicServer)
 		},
 	}}
 	if controlServer != nil {
 		listenerShutdowns = append(listenerShutdowns, listenerShutdown{
 			name: "control portal",
 			shutdown: func(ctx context.Context) error {
-				return shutdownEchoServer(ctx, controlServer)
+				return shutdownHTTPServer(ctx, controlServer)
 			},
 		})
 	}
@@ -605,7 +594,7 @@ func RunActiveServer(
 		listenerShutdowns = append(listenerShutdowns, listenerShutdown{
 			name: "telemetry",
 			shutdown: func(ctx context.Context) error {
-				return shutdownEchoServer(ctx, telemetryServer)
+				return shutdownHTTPServer(ctx, telemetryServer)
 			},
 		})
 	}

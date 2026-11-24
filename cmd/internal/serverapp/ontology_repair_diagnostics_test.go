@@ -15,7 +15,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/ontology/assessment"
 	contract "github.com/markhuangai/dense-mem/internal/ontology/contract"
-	assessorprovider "github.com/markhuangai/dense-mem/internal/provider/assessor"
+	"github.com/markhuangai/dense-mem/internal/provider/structured"
 	"github.com/stretchr/testify/require"
 )
 
@@ -94,7 +94,7 @@ func TestOntologyContextAndRepairWitnessesUseNativeHTTPHistory(t *testing.T) {
 			}))
 			defer upstream.Close()
 			cfg := &config.Config{AIVerifierAPIURL: upstream.URL, AIVerifierAPIKey: "synthetic-provider-key", AIVerifierModel: "fixture-model"}
-			provider := assessment.NewProvider(assessorprovider.NewOpenAIAssessor(cfg, upstream.Client()), cfg.AIVerifierModel, assessor.DefaultSemanticAssessmentLimits(), 300000)
+			provider := assessment.NewProvider(structured.NewOpenAI(cfg, upstream.Client()), cfg.AIVerifierModel, assessor.DefaultSemanticAssessmentLimits(), 300000)
 			response, attempts, err := provider.Assess(context.Background(), request)
 			mu.Lock()
 			observedCalls := calls

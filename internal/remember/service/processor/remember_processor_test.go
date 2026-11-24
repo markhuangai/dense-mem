@@ -135,18 +135,18 @@ func TestRememberFailureDiagnosticsCapturesAdmittedBodiesAndProtectsConfiguredSe
 	require.Contains(t, string(items[2].ResponseBody), `"isError":true`)
 	require.Equal(t, "captured", items[1].Outcome)
 	require.Equal(t, "captured", items[1].CaptureState)
-	plain, _ := boundedRememberDiagnosticBody([]byte("api_key=plain-secret pq: password authentication failed for user dense"))
+	plain, _ := observability.BoundProviderDiagnosticBody([]byte("api_key=plain-secret pq: password authentication failed for user dense"))
 	require.Contains(t, string(plain), "plain-secret")
 	require.Contains(t, string(plain), "password authentication failed")
-	stack, _ := boundedRememberDiagnosticBody([]byte("goroutine 1 [running]:\nmain.main()\n\t/app/main.go:12\nprovider status"))
+	stack, _ := observability.BoundProviderDiagnosticBody([]byte("goroutine 1 [running]:\nmain.main()\n\t/app/main.go:12\nprovider status"))
 	require.Contains(t, string(stack), "main.main")
 	require.Contains(t, string(stack), "/app/main.go")
-	database, _ := boundedRememberDiagnosticBody([]byte("FATAL: password authentication failed for user dense"))
+	database, _ := observability.BoundProviderDiagnosticBody([]byte("FATAL: password authentication failed for user dense"))
 	require.Contains(t, string(database), "password authentication failed")
-	sqlState, _ := boundedRememberDiagnosticBody([]byte(`ERROR: duplicate key value violates unique constraint "accounts_pkey" (SQLSTATE 23505)`))
+	sqlState, _ := observability.BoundProviderDiagnosticBody([]byte(`ERROR: duplicate key value violates unique constraint "accounts_pkey" (SQLSTATE 23505)`))
 	require.Contains(t, string(sqlState), "duplicate key value violates unique constraint")
-	boundary, _ := boundedRememberDiagnosticBody(append([]byte(strings.Repeat("x", rememberDiagnosticMaxBodyBytes-20)), []byte(" api_key=boundary-secret")...))
-	protectedBoundary, _ := protectedRememberDiagnosticBody(boundary, protector)
+	boundary, _ := observability.BoundProviderDiagnosticBody(append([]byte(strings.Repeat("x", modelprovider.MaxProviderDiagnosticBodyBytes-20)), []byte(" api_key=boundary-secret")...))
+	protectedBoundary := observability.CaptureProviderDiagnosticBody(boundary, protector).Body
 	require.NotContains(t, string(protectedBoundary), "boundary-secret")
 }
 
@@ -332,7 +332,7 @@ func TestRememberCallerResponseDeliveryUsesRequestContext(t *testing.T) {
 }
 
 func TestRememberFailureDiagnosticsMarksOversizedRequestUnavailable(t *testing.T) {
-	input := rememberapp.RememberProcessRequest{OriginalRequest: []byte(strings.Repeat("x", rememberDiagnosticMaxBodyBytes+1))}
+	input := rememberapp.RememberProcessRequest{OriginalRequest: []byte(strings.Repeat("x", modelprovider.MaxProviderDiagnosticBodyBytes+1))}
 	items := rememberFailureDiagnostics(input, nil, nil, nil, true, "assessment", observability.NewCredentialProtector())
 	require.Equal(t, "unavailable", items[0].CaptureState)
 	require.Equal(t, "credential_protection_13:body_bytes_exceeded:body_bytes=16777216", items[0].CaptureReason)

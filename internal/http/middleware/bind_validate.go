@@ -3,7 +3,7 @@ package middleware
 import (
 	"context"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/markhuangai/dense-mem/internal/http/validation"
 	"github.com/markhuangai/dense-mem/internal/httperr"
@@ -20,7 +20,7 @@ const maximumStrictDTOBodyBytes int64 = 1 << 20
 // Handlers can retrieve the validated body using GetValidatedBody[T].
 func BindAndValidate[T any](ctxKey string) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			var body T
 
 			// Bind JSON body
@@ -49,7 +49,7 @@ func BindAndValidate[T any](ctxKey string) echo.MiddlewareFunc {
 // reject unknown fields and any second JSON value.
 func BindAndValidateStrict[T any](ctxKey string) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			var body T
 			if err := jsonstrict.Decode(c.Request().Body, &body, maximumStrictDTOBodyBytes); err != nil {
 				return httperr.New(httperr.VALIDATION_ERROR, "malformed JSON body")

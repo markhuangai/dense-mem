@@ -1,7 +1,7 @@
 package middleware
 
 import (
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/markhuangai/dense-mem/internal/httperr"
 )
@@ -15,7 +15,7 @@ import (
 // This middleware must run after AuthMiddleware.
 func RequireScopes(required ...string) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			ctx := c.Request().Context()
 			principal := GetPrincipal(ctx)
 
@@ -40,7 +40,7 @@ func RequireScopes(required ...string) echo.MiddlewareFunc {
 // This middleware must run after AuthMiddleware.
 func RequireRole(required string) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			principal := GetPrincipal(c.Request().Context())
 			if principal == nil {
 				return httperr.New(httperr.FORBIDDEN, "authentication required")

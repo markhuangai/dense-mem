@@ -1,6 +1,7 @@
 package evalharness
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -129,6 +130,13 @@ func TestSeedFilesRejectCorruptedDumpMappingAndSize(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, seed, actual)
 	require.Equal(t, mapping, restored)
+	retired := struct {
+		SeedMetadata
+		OntologyPreparation json.RawMessage `json:"ontology_preparation"`
+	}{seed, json.RawMessage("null")}
+	require.NoError(t, writeJSON(filepath.Join(dir, "seed.json"), retired))
+	_, _, err = ReadSeed(dir)
+	require.ErrorContains(t, err, "ontology_preparation")
 	seed.Version = 3
 	require.NoError(t, writeJSON(filepath.Join(dir, "seed.json"), seed))
 	_, _, err = ReadSeed(dir)

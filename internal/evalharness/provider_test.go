@@ -63,12 +63,12 @@ func TestHTTPAnswerAdapterRegeneratesIncompleteEnvelopesAndKeepsDenominators(t *
 				scores, err := ScoreObservation(question, observation, corpus, mapping, canonical)
 				require.NoError(t, err)
 				require.Equal(t, recovery, scores[0].Completed)
-				report := NewReport(Manifest{}, 3, 1)
+				report := NewReport(Manifest{Condition: "off"}, 3, 1)
 				report.Scores = scores
 				report.CaptureComplete = true
 				report.ImportedRows = 3
 				require.NoError(t, FinalizeReport(&report))
-				require.Equal(t, 4, report.ExpectedAnswers)
+				require.Equal(t, 2, report.ExpectedAnswers)
 				if recovery {
 					require.Equal(t, 2, report.CompletedAnswers)
 				} else {

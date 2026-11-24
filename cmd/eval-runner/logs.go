@@ -7,12 +7,15 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/evalharness"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 )
 
@@ -99,12 +102,15 @@ func logReader(ctx context.Context, reader io.Reader, capture *evalharness.Captu
 		Seen  map[int]bool
 		Parts []string
 		Hash  string
+		Bytes int
+		First evalharness.CaptureFailure
 	}
 	groups := map[string]*captured{}
 	type exchange struct {
 		Phase    string
 		Request  bool
 		Response bool
+		First    evalharness.CaptureFailure
 		Usage    *struct {
 			Input  *int64 `json:"prompt_tokens"`
 			Output *int64 `json:"completion_tokens"`
@@ -114,11 +120,14 @@ func logReader(ctx context.Context, reader io.Reader, capture *evalharness.Captu
 	exchanges := map[string]*exchange{}
 	finished := map[string]bool{}
 	var payloadErr error
-	rejectPayload := func(message string) {
+	rejectPayload := func(failure evalharness.CaptureFailure, reason, message string) {
 		if payloadErr == nil {
-			payloadErr = errors.New(message)
+			failure.Reason = reason
+			capture.RecordRuntimeLogFailure(failure)
+			payloadErr = fmt.Errorf("%s (%s at server log record %d)", message, reason, failure.Sequence)
 		}
 	}
+	lineNumber := 0
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -126,14 +135,13 @@ func logReader(ctx context.Context, reader io.Reader, capture *evalharness.Captu
 		if !scanner.Scan() {
 			break
 		}
+		lineNumber++
 		line := scanner.Text()
 		var record struct {
 			Level          string                             `json:"level"`
 			Message        string                             `json:"msg"`
 			Exchange       string                             `json:"exchange_id"`
 			Direction      string                             `json:"direction"`
-			Invocation     string                             `json:"invocation_id"`
-			Correlation    string                             `json:"correlation_id"`
 			TransportState string                             `json:"transport_capture_state"`
 			Chunk          *observability.DiagnosticBodyChunk `json:"payload_chunk"`
 			CaptureState   string                             `json:"capture_state"`
@@ -144,33 +152,51 @@ func logReader(ctx context.Context, reader io.Reader, capture *evalharness.Captu
 			}
 			continue
 		}
-		switch strings.ToUpper(record.Level) {
-		case "WARN", "ERROR", "FATAL":
-			if err := capture.EmitContext(ctx, "runtime_log", map[string]string{"line": line}); err != nil {
-				return err
+		failure := evalharness.CaptureFailure{Kind: "runtime_log", Sequence: lineNumber}
+		wire := record.Message == "ai_exchange_payload"
+		if wire {
+			failure.Kind = "ai_exchange_payload"
+			if exchange, err := uuid.Parse(record.Exchange); err == nil {
+				failure.ExchangeID = exchange.String()
 			}
 		}
 		if record.CaptureState == "unavailable" || record.CaptureState == "formatting_failed" || record.CaptureState == "interrupted" {
-			rejectPayload("required runtime payload capture is incomplete")
-			continue
-		}
-		transportFailure := record.Message == "ai_exchange_payload" && record.Exchange != "" && record.Direction == "transport_error"
-		// A bad exchange invalidates usage, but later failure reasons still explain the run.
-		if record.Chunk == nil || (payloadErr != nil && !transportFailure) {
+			rejectPayload(failure, "runtime_"+record.CaptureState, "required runtime payload capture is incomplete")
 			continue
 		}
 		chunk := record.Chunk
-		if chunk.State != "captured" || record.TransportState == "interrupted" || record.TransportState == "unavailable" {
-			rejectPayload("required runtime payload capture is unavailable or interrupted")
+		if chunk != nil && chunk.State != "captured" {
+			reason := observability.CredentialProtectionUnavailableReason(chunk.Reason)
+			code := reason.Code()
+			if code == "available" || code == "unknown" {
+				code = "runtime_payload_unavailable"
+			} else {
+				failure.Protection = reason.CaptureReason(modelprovider.MaxProviderDiagnosticBodyBytes)
+			}
+			failure.Bytes = chunk.OriginalBytes
+			rejectPayload(failure, code, "required runtime payload capture is unavailable")
 			continue
 		}
-		if chunk.Count < 1 || chunk.Count > (16<<20)/1024+1 {
-			rejectPayload("runtime payload chunk count exceeds capture bounds")
+		if record.TransportState == "interrupted" || record.TransportState == "unavailable" {
+			rejectPayload(failure, "runtime_transport_"+record.TransportState, "required runtime payload capture is unavailable or interrupted")
+			continue
+		}
+		switch strings.ToUpper(record.Level) {
+		case "WARN", "ERROR", "FATAL":
+			if err := capture.EmitContext(ctx, "runtime_log", map[string]string{"line": line}); err != nil {
+				return errors.Join(payloadErr, err)
+			}
+		}
+		if chunk == nil {
+			continue
+		}
+		if chunk.Count < 1 || chunk.Count > modelprovider.MaxProviderDiagnosticBodyBytes/1024+1 {
+			rejectPayload(failure, "chunk_count_exceeded", "runtime payload chunk count exceeds capture bounds")
 			continue
 		}
 		var identity map[string]json.RawMessage
 		if err := json.Unmarshal([]byte(line), &identity); err != nil {
-			rejectPayload("runtime payload identity is malformed")
+			rejectPayload(failure, "invalid_chunk_identity", "runtime payload identity is malformed")
 			continue
 		}
 		for _, key := range []string{"time", "level", "payload_chunk"} {
@@ -182,16 +208,22 @@ func logReader(ctx context.Context, reader io.Reader, capture *evalharness.Captu
 		}
 		key := hashBytes(encoded) + ":" + chunk.SHA256
 		if record.Exchange != "" && finished[key] {
-			rejectPayload("runtime payload chunk duplicated")
+			rejectPayload(failure, "duplicate_chunk", "runtime payload chunk duplicated")
 			continue
 		}
 		group := groups[key]
 		if group == nil {
-			group = &captured{Count: chunk.Count, Seen: map[int]bool{}, Parts: make([]string, chunk.Count), Hash: chunk.SHA256}
+			group = &captured{Count: chunk.Count, Seen: map[int]bool{}, Parts: make([]string, chunk.Count), Hash: chunk.SHA256, First: failure}
 			groups[key] = group
 		}
 		if chunk.Count != group.Count || chunk.Index < 0 || chunk.Index >= chunk.Count || group.Seen[chunk.Index] {
-			rejectPayload("runtime payload chunks are inconsistent")
+			rejectPayload(failure, "inconsistent_chunks", "runtime payload chunks are inconsistent")
+			continue
+		}
+		group.Bytes += len(chunk.Body)
+		if group.Bytes > modelprovider.MaxProviderDiagnosticBodyBytes {
+			rejectPayload(failure, "body_bytes_exceeded", "runtime payload exceeds capture bounds")
+			delete(groups, key)
 			continue
 		}
 		group.Seen[chunk.Index] = true
@@ -199,28 +231,28 @@ func logReader(ctx context.Context, reader io.Reader, capture *evalharness.Captu
 		if len(group.Seen) == group.Count {
 			body := []byte(strings.Join(group.Parts, ""))
 			if hashBytes(body) != group.Hash {
-				rejectPayload("runtime payload hash mismatch")
+				rejectPayload(failure, "chunk_hash_mismatch", "runtime payload hash mismatch")
 				delete(groups, key)
+				continue
+			}
+			delete(groups, key)
+			if !wire {
 				continue
 			}
 			if record.Exchange == "" {
-				delete(groups, key)
+				rejectPayload(failure, "missing_exchange_id", "runtime provider exchange identity is missing")
 				continue
 			}
-			if transportFailure {
-				diagnostic := map[string]string{"link": "dense_mem_to_provider", "exchange_id": record.Exchange, "invocation_id": record.Invocation, "correlation_id": record.Correlation}
-				if len(body) > observability.MaxOperationMetadataBytes/4 {
-					diagnostic["reason_unavailable"] = "error_text_exceeds_log_limit"
-				} else {
-					diagnostic["error"] = string(body)
-				}
-				if err := capture.EmitContext(ctx, "runtime_transport_failure", diagnostic); err != nil {
-					return err
-				}
+			kind := "runtime_wire_exchange"
+			if record.Direction == "transport_error" {
+				kind = "runtime_transport_failure"
+			}
+			if err := capture.EmitContext(ctx, kind, map[string]any{"identity": identity, "body": string(body)}); err != nil {
+				return errors.Join(payloadErr, err)
 			}
 			item := exchanges[record.Exchange]
 			if item == nil {
-				item = &exchange{}
+				item = &exchange{First: failure}
 				exchanges[record.Exchange] = item
 			}
 			if record.Direction == "request" {
@@ -264,7 +296,6 @@ func logReader(ctx context.Context, reader io.Reader, capture *evalharness.Captu
 				}
 			}
 			finished[key] = true
-			delete(groups, key)
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -276,15 +307,26 @@ func logReader(ctx context.Context, reader io.Reader, capture *evalharness.Captu
 	if payloadErr != nil {
 		return payloadErr
 	}
+	var incomplete evalharness.CaptureFailure
 	for _, group := range groups {
-		if len(group.Seen) != group.Count {
-			return errors.New("runtime payload chunks are incomplete")
+		if incomplete.Sequence == 0 || group.First.Sequence < incomplete.Sequence {
+			incomplete = group.First
 		}
 	}
+	if incomplete.Sequence != 0 {
+		rejectPayload(incomplete, "missing_chunks", "runtime payload chunks are incomplete")
+		return payloadErr
+	}
 	for _, item := range exchanges {
-		if !item.Request || !item.Response {
-			return errors.New("runtime provider exchange is incomplete")
+		if (!item.Request || !item.Response) && (incomplete.Sequence == 0 || item.First.Sequence < incomplete.Sequence) {
+			incomplete = item.First
 		}
+	}
+	if incomplete.Sequence != 0 {
+		rejectPayload(incomplete, "incomplete_exchange", "runtime provider exchange is incomplete")
+		return payloadErr
+	}
+	for _, item := range exchanges {
 		if item.Phase == "" {
 			item.Phase = "other"
 		}

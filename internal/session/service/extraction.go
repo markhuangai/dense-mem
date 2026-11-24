@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"sync"
 
-	"github.com/markhuangai/dense-mem/internal/assessor"
 	remember "github.com/markhuangai/dense-mem/internal/remember/service"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	session "github.com/markhuangai/dense-mem/internal/session/contract"
@@ -117,7 +117,7 @@ func (s *Service) boundedPriorContext(events []session.PriorEvent, tokenizer str
 		if err != nil {
 			return nil, nil, err
 		}
-		count, err := assessor.CountTokens(string(body), tokenizer)
+		count, err := modelprovider.CountTokens(string(body), tokenizer)
 		if err != nil {
 			return nil, nil, err
 		}

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -38,7 +38,7 @@ func TestSecurityBanMiddleware(t *testing.T) {
 	e := echo.New()
 	e.HTTPErrorHandler = httperr.ErrorHandler
 	e.Use(SecurityBanMiddleware(nil))
-	e.GET("/ok", func(c echo.Context) error { return c.String(http.StatusOK, "ok") })
+	e.GET("/ok", func(c *echo.Context) error { return c.String(http.StatusOK, "ok") })
 
 	req := httptest.NewRequest(http.MethodGet, "/ok", nil)
 	rec := httptest.NewRecorder()
@@ -49,7 +49,7 @@ func TestSecurityBanMiddleware(t *testing.T) {
 	e = echo.New()
 	e.HTTPErrorHandler = httperr.ErrorHandler
 	e.Use(SecurityBanMiddleware(svc))
-	e.GET("/ok", func(c echo.Context) error { return c.String(http.StatusOK, "ok") })
+	e.GET("/ok", func(c *echo.Context) error { return c.String(http.StatusOK, "ok") })
 	req = httptest.NewRequest(http.MethodGet, "/ok", nil)
 	req.RemoteAddr = "203.0.113.10:1234"
 	rec = httptest.NewRecorder()
@@ -65,7 +65,7 @@ func TestSecurityBanMiddleware(t *testing.T) {
 	e = echo.New()
 	e.HTTPErrorHandler = httperr.ErrorHandler
 	e.Use(SecurityBanMiddleware(svc))
-	e.GET("/blocked", func(c echo.Context) error { return c.NoContent(http.StatusOK) })
+	e.GET("/blocked", func(c *echo.Context) error { return c.NoContent(http.StatusOK) })
 	req = httptest.NewRequest(http.MethodGet, "/blocked", nil)
 	req.RemoteAddr = "203.0.113.10:1234"
 	rec = httptest.NewRecorder()

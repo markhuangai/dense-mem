@@ -5,7 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/requestctx"
@@ -14,7 +14,7 @@ import (
 func TestRememberInvocationIDMiddlewareInstallsSink(t *testing.T) {
 	e := echo.New()
 	e.Use(RememberInvocationIDMiddleware())
-	e.GET("/", func(c echo.Context) error {
+	e.GET("/", func(c *echo.Context) error {
 		requestctx.SetRememberInvocationID(c.Request().Context(), "invocation-1")
 		return c.NoContent(http.StatusNoContent)
 	})

@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/stretchr/testify/require"
 
 	accesspostgres "github.com/markhuangai/dense-mem/internal/access/postgres"
@@ -48,7 +48,7 @@ func TestAuthMiddlewareAuthenticatesPortalSessionAndSetsAuthMethod(t *testing.T)
 	e.Use(AuthMiddlewareWithOptions(&mockCredentialRepository{}, nil, nil, AuthOptions{
 		UserPortalSessionAuthenticator: stub,
 	}))
-	e.GET("/ui/api/session", func(c echo.Context) error {
+	e.GET("/ui/api/session", func(c *echo.Context) error {
 		principal := GetPrincipal(c.Request().Context())
 		if principal == nil {
 			return httperr.New(httperr.AUTH_MISSING, "missing principal")
@@ -74,7 +74,7 @@ func TestAuthMiddlewareFailsClosedForInvalidPortalSession(t *testing.T) {
 	stub := &userPortalSessionAuthStub{err: accessservice.ErrUserPortalSessionInvalid}
 	var observed context.Context
 	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			err := next(c)
 			observed = c.Request().Context()
 			return err
@@ -84,7 +84,7 @@ func TestAuthMiddlewareFailsClosedForInvalidPortalSession(t *testing.T) {
 		UserPortalSessionAuthenticator: stub,
 		AllowMissingCredentials:        true,
 	}))
-	e.GET("/ui/api/session", func(c echo.Context) error { return c.NoContent(http.StatusOK) })
+	e.GET("/ui/api/session", func(c *echo.Context) error { return c.NoContent(http.StatusOK) })
 
 	req := httptest.NewRequest(http.MethodGet, "/ui/api/session", nil)
 	req.AddCookie(&http.Cookie{Name: accessservice.UserPortalSessionCookieName, Value: "stale-session"})
@@ -103,7 +103,7 @@ func TestAuthMiddlewareRequiresPortalCSRFForUnsafeRequests(t *testing.T) {
 	stub := &userPortalSessionAuthStub{err: accessservice.ErrUserPortalCSRFInvalid}
 	var observed context.Context
 	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			err := next(c)
 			observed = c.Request().Context()
 			return err
@@ -112,7 +112,7 @@ func TestAuthMiddlewareRequiresPortalCSRFForUnsafeRequests(t *testing.T) {
 	e.Use(AuthMiddlewareWithOptions(&mockCredentialRepository{}, nil, nil, AuthOptions{
 		UserPortalSessionAuthenticator: stub,
 	}))
-	e.POST("/ui/api/credential/rotate", func(c echo.Context) error { return c.NoContent(http.StatusOK) })
+	e.POST("/ui/api/credential/rotate", func(c *echo.Context) error { return c.NoContent(http.StatusOK) })
 
 	req := httptest.NewRequest(http.MethodPost, "/ui/api/credential/rotate", nil)
 	req.AddCookie(&http.Cookie{Name: accessservice.UserPortalSessionCookieName, Value: "opaque-session"})

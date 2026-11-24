@@ -48,12 +48,12 @@ func TestConditionReportRejectsInvalidScoringAxes(t *testing.T) {
 		scores     []CaseScore
 	}{
 		{"zero denominator", "invalid expected denominator", 0, nil},
-		{"different condition", "scored condition differs", 1, []CaseScore{{Condition: "off"}}},
-		{"duplicate observation", "duplicate scored observation", 1, []CaseScore{{Condition: "on", Policy: "single", QuestionID: "a"}, {Condition: "on", Policy: "single", QuestionID: "a"}}},
-		{"too many observations", "exceeds public denominator", 1, []CaseScore{{Condition: "on", Policy: "single", QuestionID: "a"}, {Condition: "on", Policy: "single", QuestionID: "b"}}},
+		{"retired condition", "invalid scored condition or policy", 1, []CaseScore{{Condition: "on", Policy: "single"}}},
+		{"duplicate observation", "duplicate scored observation", 1, []CaseScore{{Condition: "off", Policy: "single", QuestionID: "a"}, {Condition: "off", Policy: "single", QuestionID: "a"}}},
+		{"too many observations", "exceeds public denominator", 1, []CaseScore{{Condition: "off", Policy: "single", QuestionID: "a"}, {Condition: "off", Policy: "single", QuestionID: "b"}}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			report := NewReport(Manifest{Condition: "on"}, 1, test.questions)
+			report := NewReport(Manifest{Condition: "off"}, 1, test.questions)
 			report.Scores = test.scores
 			require.ErrorContains(t, FinalizeReport(&report), test.want)
 			require.False(t, report.Complete)
@@ -123,12 +123,12 @@ func TestAnswerNormalizationAndFailureDenominators(t *testing.T) {
 	scores, err := ScoreObservation(q, observation, corpus, mapping, canonical)
 	require.NoError(t, err)
 	require.Zero(t, scores[0].EM)
-	report := NewReport(Manifest{}, 3, 1000)
+	report := NewReport(Manifest{Condition: "off"}, 3, 1000)
 	report.Scores = scores
 	report.CaptureComplete = true
 	report.ImportedRows = 3
 	require.NoError(t, FinalizeReport(&report))
-	require.Equal(t, 4000, report.ExpectedAnswers)
+	require.Equal(t, 2000, report.ExpectedAnswers)
 	require.Equal(t, 1, report.CompletedAnswers)
 	require.False(t, report.Complete)
 	require.Equal(t, 999, report.Matrix[0].Missing)
@@ -140,16 +140,14 @@ func TestAnswerNormalizationAndFailureDenominators(t *testing.T) {
 func TestFinalizeReportIsIndependentOfConcurrentScoreOrder(t *testing.T) {
 	var expected []byte
 	for _, order := range []string{"012", "021", "102", "120", "201", "210"} {
-		report := NewReport(Manifest{}, 3, 3)
-		report.ImportedRows, report.CaptureComplete = 3, true
-		for _, condition := range []string{"off", "on"} {
-			for _, policy := range []string{"single", "multi_turn"} {
-				for _, index := range order {
-					report.Scores = append(report.Scores, CaseScore{
-						QuestionID: string(index), Condition: condition, Policy: policy,
-						Completed: true, F1: []float64{1, 0.1, 0.1}[index-'0'],
-					})
-				}
+		report := NewReport(Manifest{Condition: "off"}, 3, 3)
+		report.ImportedRows, report.CaptureComplete, report.ModelVerified = 3, true, true
+		for _, policy := range []string{"single", "multi_turn"} {
+			for _, index := range order {
+				report.Scores = append(report.Scores, CaseScore{
+					QuestionID: string(index), Condition: "off", Policy: policy,
+					Completed: true, F1: []float64{1, 0.1, 0.1}[index-'0'],
+				})
 			}
 		}
 		require.NoError(t, FinalizeReport(&report))
@@ -165,22 +163,19 @@ func TestFinalizeReportIsIndependentOfConcurrentScoreOrder(t *testing.T) {
 }
 
 func TestAxisPerformanceUsesCapturedHostTimeAndObservedLatency(t *testing.T) {
-	report := NewReport(Manifest{}, 3, 2)
+	report := NewReport(Manifest{Condition: "off"}, 3, 2)
 	report.ElapsedMS = 100000
 	report.Scores = []CaseScore{
 		{QuestionID: "one", Condition: "off", Policy: "single", Completed: true, ElapsedMS: 100},
 		{QuestionID: "two", Condition: "off", Policy: "single", Completed: false, ElapsedMS: 300},
 		{QuestionID: "one", Condition: "off", Policy: "multi_turn", Completed: true, ElapsedMS: 1000},
 		{QuestionID: "two", Condition: "off", Policy: "multi_turn", Completed: true, ElapsedMS: 1000},
-		{QuestionID: "one", Condition: "on", Policy: "single", Completed: true, ElapsedMS: 50},
-		{QuestionID: "two", Condition: "on", Policy: "single", Completed: true, ElapsedMS: 50},
-		{QuestionID: "one", Condition: "on", Policy: "multi_turn", Completed: true, ElapsedMS: 500},
 	}
 	for _, campaignTime := range []float64{100000, 1000000} {
 		report.ElapsedMS = campaignTime
 		require.NoError(t, FinalizeReport(&report))
 		for i, expected := range []struct{ elapsed, mean, throughput float64 }{
-			{400, 200, 2.5}, {2000, 1000, 1}, {100, 50, 20}, {500, 500, 2},
+			{400, 200, 2.5}, {2000, 1000, 1},
 		} {
 			axis := report.Matrix[i]
 			require.Equal(t, expected.elapsed, axis.HostElapsedMS)
@@ -189,9 +184,8 @@ func TestAxisPerformanceUsesCapturedHostTimeAndObservedLatency(t *testing.T) {
 			require.Equal(t, expected.throughput, *axis.ThroughputPerSecond)
 		}
 		require.Equal(t, 1, report.Matrix[0].Failed)
-		require.Equal(t, 1, report.Matrix[3].Missing)
 	}
-	untimed := NewReport(Manifest{}, 3, 2)
+	untimed := NewReport(Manifest{Condition: "off"}, 3, 2)
 	untimed.Scores = []CaseScore{{QuestionID: "one", Condition: "off", Policy: "single", Completed: true}}
 	require.NoError(t, FinalizeReport(&untimed))
 	for _, axis := range untimed.Matrix {

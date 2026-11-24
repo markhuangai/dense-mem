@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	assessmentfixture "github.com/markhuangai/dense-mem/internal/testfixture/assessment"
 	"testing"
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
@@ -15,6 +16,21 @@ import (
 )
 
 func (p *processorAssessmentProviderStub) Complete(_ context.Context, request modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
+	if request.SchemaName != assessor.PartitionSchemaName {
+		if len(request.Messages) > 2 {
+			p.repairCalls++
+			if !p.invalid {
+				return modelprovider.StructuredResult{}, errors.New("unexpected assessment repair")
+			}
+		} else {
+			p.assessCalls++
+		}
+		input, err := assessmentfixture.Request(request)
+		if err != nil {
+			return modelprovider.StructuredResult{}, err
+		}
+		return assessmentfixture.Result(request, p.response(input))
+	}
 	p.partitionCalls++
 	if p.partitionReply != nil {
 		return modelprovider.StructuredResult{Content: p.partitionReply(request)}, nil
@@ -30,9 +46,19 @@ func (p *processorAssessmentProviderStub) Complete(_ context.Context, request mo
 	review := assessor.PartitionSecurityResponse{}
 	for i, item := range input.Items {
 		response.Items[i] = assessor.PartitionResult{ItemID: item.ItemID, CutRefs: []string{}}
-		review.SecurityResults = append(review.SecurityResults, assessor.SemanticAssessmentEvidenceSecurityResult{EvidenceID: item.ItemID, Decision: "pass", Signals: []assessor.SemanticAssessmentSecuritySignal{}})
+		security := assessor.SemanticAssessmentEvidenceSecurityResult{EvidenceID: item.ItemID, Decision: "pass", Signals: []assessor.SemanticAssessmentSecuritySignal{}}
+		if p.rejectPartition {
+			security.Decision = "reject"
+			security.Signals = []assessor.SemanticAssessmentSecuritySignal{{
+				EvidenceID: item.ItemID, Kind: "instruction_override", StartRef: item.StartRef, EndRef: item.EndRef,
+			}}
+		}
+		review.SecurityResults = append(review.SecurityResults, security)
 	}
 	if input.ReviewSecurity {
+		if p.rejectPartition {
+			response.Items = response.Items[:0]
+		}
 		review.PartitionResponse = response
 		body, err := json.Marshal(review)
 		return modelprovider.StructuredResult{Content: string(body)}, err

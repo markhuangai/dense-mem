@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -23,7 +23,7 @@ func TestUsageMetricsMiddleware_RecordsAuthenticatedRouteTemplate(t *testing.T) 
 
 	e := echo.New()
 	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			principal := &Principal{TeamID: teamID, OwnerID: keyID, CredentialID: testUUIDPtr(credentialID)}
 			ctx := context.WithValue(c.Request().Context(), principalContextKey{}, principal)
 			c.SetRequest(c.Request().WithContext(ctx))
@@ -31,7 +31,7 @@ func TestUsageMetricsMiddleware_RecordsAuthenticatedRouteTemplate(t *testing.T) 
 		}
 	})
 	e.Use(UsageMetricsMiddleware(recorder))
-	e.GET("/ui/api/evidence/:id", func(c echo.Context) error {
+	e.GET("/ui/api/evidence/:id", func(c *echo.Context) error {
 		return c.NoContent(http.StatusNoContent)
 	})
 
@@ -53,7 +53,7 @@ func TestUsageMetricsMiddleware_RecordsTypedErrors(t *testing.T) {
 	e := echo.New()
 	e.HTTPErrorHandler = httperr.ErrorHandler
 	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			principal := &Principal{TeamID: uuid.New(), CredentialID: testUUIDPtr(uuid.New())}
 			ctx := context.WithValue(c.Request().Context(), principalContextKey{}, principal)
 			c.SetRequest(c.Request().WithContext(ctx))
@@ -61,7 +61,7 @@ func TestUsageMetricsMiddleware_RecordsTypedErrors(t *testing.T) {
 		}
 	})
 	e.Use(UsageMetricsMiddleware(recorder))
-	e.GET("/ui/api/recall", func(c echo.Context) error {
+	e.GET("/ui/api/recall", func(c *echo.Context) error {
 		return httperr.New(httperr.VALIDATION_ERROR, "bad query")
 	})
 
@@ -77,7 +77,7 @@ func TestUsageMetricsMiddleware_RecordsTypedErrors(t *testing.T) {
 func TestUsageMetricsMiddlewareSkipsMissingRecorderOrPrincipal(t *testing.T) {
 	e := echo.New()
 	e.Use(UsageMetricsMiddleware(nil))
-	e.GET("/nil-recorder", func(c echo.Context) error {
+	e.GET("/nil-recorder", func(c *echo.Context) error {
 		return c.NoContent(http.StatusAccepted)
 	})
 
@@ -89,7 +89,7 @@ func TestUsageMetricsMiddlewareSkipsMissingRecorderOrPrincipal(t *testing.T) {
 	recorder := &captureUsageMetricsRecorder{}
 	e = echo.New()
 	e.Use(UsageMetricsMiddleware(recorder))
-	e.GET("/missing-principal", func(c echo.Context) error {
+	e.GET("/missing-principal", func(c *echo.Context) error {
 		return c.NoContent(http.StatusAccepted)
 	})
 
@@ -104,7 +104,7 @@ func TestUsageMetricsMiddlewareRecordsMCPOutcomesOncePerRequest(t *testing.T) {
 	recorder := &captureUsageMetricsRecorder{}
 	e := echo.New()
 	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			teamID, keyID := uuid.New(), uuid.New()
 			principal := &Principal{TeamID: teamID, OwnerID: keyID, CredentialID: testUUIDPtr(keyID)}
 			ctx := context.WithValue(c.Request().Context(), principalContextKey{}, principal)
@@ -113,7 +113,7 @@ func TestUsageMetricsMiddlewareRecordsMCPOutcomesOncePerRequest(t *testing.T) {
 		}
 	})
 	e.Use(UsageMetricsMiddleware(recorder))
-	e.GET("/mcp", func(c echo.Context) error {
+	e.GET("/mcp", func(c *echo.Context) error {
 		domain.RecordMCPToolCall(c.Request().Context())
 		domain.RecordMCPToolFailure(c.Request().Context())
 		return c.NoContent(http.StatusOK)
@@ -131,7 +131,7 @@ func TestTelemetryHTTPMiddlewareRecordsRouteTemplate(t *testing.T) {
 	e := echo.New()
 	e.HTTPErrorHandler = httperr.ErrorHandler
 	e.Use(TelemetryHTTPMiddleware(recorder))
-	e.GET("/ui/api/evidence/:id", func(c echo.Context) error {
+	e.GET("/ui/api/evidence/:id", func(c *echo.Context) error {
 		return httperr.New(httperr.VALIDATION_ERROR, "bad id")
 	})
 
@@ -155,15 +155,17 @@ func TestUsageStatusCoversFallbackBranches(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, usageStatus(c, nil))
 
-	c.Response().Status = http.StatusCreated
+	response, err := echo.UnwrapResponse(c.Response())
+	require.NoError(t, err)
+	response.Status = http.StatusCreated
 	require.Equal(t, http.StatusCreated, usageStatus(c, nil))
 
-	require.Equal(t, http.StatusNotFound, usageStatus(c, echo.NewHTTPError(http.StatusNotFound, "missing")))
+	require.Equal(t, http.StatusNotFound, usageStatus(c, echo.ErrNotFound))
 
-	c.Response().Status = http.StatusTooManyRequests
+	response.Status = http.StatusTooManyRequests
 	require.Equal(t, http.StatusTooManyRequests, usageStatus(c, context.Canceled))
 
-	c.Response().Status = 0
+	response.Status = 0
 	require.Equal(t, http.StatusInternalServerError, usageStatus(c, context.Canceled))
 }
 

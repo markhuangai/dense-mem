@@ -21,7 +21,7 @@ import (
 	organization "github.com/markhuangai/dense-mem/internal/ontology"
 	"github.com/markhuangai/dense-mem/internal/ontology/assessment"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
-	assessorprovider "github.com/markhuangai/dense-mem/internal/provider/assessor"
+	"github.com/markhuangai/dense-mem/internal/provider/structured"
 	"github.com/stretchr/testify/require"
 )
 
@@ -166,7 +166,7 @@ func TestOntologyMaintenanceAttemptDiagnosticsPersistenceAndFailureBoundaries(t 
 				})
 			}
 			limits := maintenanceFixtureLimits()
-			transport := assessorprovider.NewOpenAIAssessorWithAssessmentLimits(&config.Config{AIVerifierAPIURL: server.URL, AIVerifierModel: "fixture-model"}, client, limits)
+			transport := structured.NewOpenAI(&config.Config{AIVerifierAPIURL: server.URL, AIVerifierModel: "fixture-model"}, client)
 			provider := assessment.NewProviderWithAccounting(transport, "fixture-model", limits, finalizationAccounting{f.store, *x.claim}, int(x.window.Policy.ContextWindowTokens))
 			service := organization.NewService(f.store, provider)
 			ctx, cancel := context.WithCancel(ontology.WithMaintenanceClaim(context.Background(), *x.claim))

@@ -105,15 +105,16 @@ test("local seed cleanup preserves only its owned checkpoint until completion", 
 test("hosted cutoff stops the owned server before capture and preserves verified scores", { timeout: 900_000 }, async (t) => {
   requireRunner(process.env);
   const fixture = fs.mkdtempSync(path.join(process.env.RUNNER_TEMP, "evaluation-deadline-"));
-  const env = { ...process.env, EVAL_MODE: "fixtures", EVAL_DATASET: "hotpotqa", EVAL_CONDITION: "" };
+  const env = { ...process.env, EVAL_MODE: "fixtures", EVAL_DATASET: "hotpotqa" };
   const fixtureEnv = () => ({ ...env, GITHUB_RUN_ID: `${env.GITHUB_RUN_ID}-fixture-${randomUUID()}` });
   const preparedEnv = fixtureEnv();
-  const runEnvs = [fixtureEnv(), fixtureEnv()].map((arm) => ({ ...arm, EVAL_CONDITION: "off" }));
+  const runEnvs = [fixtureEnv(), fixtureEnv()];
   let seed;
   t.after(async () => {
     for (const ownedEnv of [preparedEnv, ...runEnvs]) {
-      const { directory, stateFile } = location(ownedEnv);
-      if (fs.existsSync(stateFile)) await cleanup(ownedEnv);
+      const scoring = ownedEnv !== preparedEnv;
+      const { directory, stateFile } = location(ownedEnv, scoring);
+      if (fs.existsSync(stateFile)) await cleanup(ownedEnv, { scoring });
       fs.rmSync(directory, { recursive: true, force: true });
     }
     if (seed) {
@@ -216,7 +217,9 @@ exec "$EVAL_FIXTURE_RUNNER" "$@" > "$EVAL_FIXTURE_LOG" 2>&1
       });
       assert.ok(decoded.some(({ exchange_id }) => exchange_id === terminal.payload.exchange_id), "wire request and terminal must share an exchange ID");
     }
-    await cleanup(runEnv);
+    await cleanup(runEnv, { scoring: true });
+    const receipt = JSON.parse(fs.readFileSync(path.join(runtime.manifest.output_dir, "cleanup.json"), "utf8"));
+    assert.deepEqual(receipt, { run_id: report.identity.run_id, complete: true });
   }
   assert.equal(docker("container", "inspect", "--format", "{{.State.Running}}", foreign.container), "true");
 });

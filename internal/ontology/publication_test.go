@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"strings"
 	"testing"
 
@@ -183,7 +184,7 @@ func TestOrganizationRequestTrimsParentRefsWithoutChangingStoredHierarchy(t *tes
 			if trim {
 				encoded, err := json.Marshal([]assessment.Definition{{Ref: "d0", Kind: child.Kind, Key: child.Definition.Key, Label: child.Definition.Label, Aliases: []string{}, ParentRef: "d1"}})
 				require.NoError(t, err)
-				limits.MaxCandidateContextTokens, err = assessor.CountTokens(string(encoded), limits.Tokenizer)
+				limits.MaxCandidateContextTokens, err = modelprovider.CountTokens(string(encoded), limits.Tokenizer)
 				require.NoError(t, err)
 			}
 			service := NewService(nil, assessment.NewProvider(nil, "model", limits, 300000))

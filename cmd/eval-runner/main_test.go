@@ -34,7 +34,7 @@ func TestCLIValidatesPinnedFixturesAndRejectsIncompleteSetup(t *testing.T) {
 	}
 	registryHash, err := evalharness.FileHash("tests/eval/fixtures/datasets.json")
 	require.NoError(t, err)
-	manifest := evalharness.Manifest{Version: 1, RunID: "123-hotpotqa", WorkflowRunID: "123", SourceRevision: strings.Repeat("a", 40), Image: "ghcr.io/markhuangai/dense-mem@sha256:" + strings.Repeat("b", 64), RegistryHash: registryHash, Dataset: "hotpotqa", Mode: "fixtures", Operation: "run", SeedDir: "seed", Model: "dense-mem-testing", ContextWindowTokens: 500000, EmbeddingModel: "text-embedding-3-small", EmbeddingDimensions: 1536, ModelDeadline: time.Now().Add(time.Minute), DataDir: filepath.Join(root, "tests/eval/fixtures"), OutputDir: filepath.Join(t.TempDir(), "public")}
+	manifest := evalharness.Manifest{Version: 1, RunID: "123-hotpotqa-off", Condition: "off", SeedImage: "sha256:" + strings.Repeat("d", 64), WorkflowRunID: "123", SourceRevision: strings.Repeat("a", 40), Image: "ghcr.io/markhuangai/dense-mem@sha256:" + strings.Repeat("b", 64), RegistryHash: registryHash, Dataset: "hotpotqa", Mode: "fixtures", Operation: "run", SeedDir: "seed", Model: "dense-mem-testing", ContextWindowTokens: 500000, EmbeddingModel: "text-embedding-3-small", EmbeddingDimensions: 1536, ModelDeadline: time.Now().Add(time.Minute), DataDir: filepath.Join(root, "tests/eval/fixtures"), OutputDir: filepath.Join(t.TempDir(), "public")}
 	path := filepath.Join(t.TempDir(), "manifest.json")
 	writeManifest := func() {
 		body, err := json.Marshal(manifest)
@@ -81,6 +81,7 @@ func TestCLIValidatesPinnedFixturesAndRejectsIncompleteSetup(t *testing.T) {
 
 	manifest.RegistryHash = registryHash
 	manifest.Operation, manifest.Dataset, manifest.RunID = "bootstrap", "bootstrap", "123-bootstrap"
+	manifest.Condition, manifest.SeedImage = "", ""
 	manifest.ImportWorkers, manifest.BaseRelease = 20, "v2.8.1-rc.5"
 	manifest.SeedDir = t.TempDir()
 	writeManifest()
@@ -95,7 +96,8 @@ func TestCLIValidatesPinnedFixturesAndRejectsIncompleteSetup(t *testing.T) {
 	writeManifest()
 	require.ErrorContains(t, execute(t.Context(), []string{"validate", path}, logger, protector), "invalid runner campaign mode")
 
-	manifest.Mode, manifest.Operation, manifest.Dataset, manifest.RunID = "fixtures", "run", "hotpotqa", "123-hotpotqa"
+	manifest.Mode, manifest.Operation, manifest.Dataset, manifest.RunID = "fixtures", "run", "hotpotqa", "123-hotpotqa-off"
+	manifest.Condition, manifest.SeedImage = "off", "sha256:"+strings.Repeat("d", 64)
 	manifest.ImportWorkers = 0
 	writeManifest()
 	logPath := filepath.Join(t.TempDir(), "server.log")
@@ -125,6 +127,7 @@ func TestCLIValidatesPinnedFixturesAndRejectsIncompleteSetup(t *testing.T) {
 	t.Setenv("EVAL_LOCAL_SEED_ID", manifest.SeedBuildID)
 	manifest.RunID, manifest.WorkflowRunID = manifest.SeedBuildID+"-hotpotqa", ""
 	manifest.Mode, manifest.Operation, manifest.ImportWorkers = "live", "prepare", 1
+	manifest.Condition = ""
 	manifest.SeedImage = "ghcr.io/markhuangai/dense-mem-eval-postgres@sha256:" + strings.Repeat("c", 64)
 	manifest.SkipAISecurityReview = true
 	writeManifest()
@@ -147,22 +150,7 @@ func TestCLIValidatesPinnedFixturesAndRejectsIncompleteSetup(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(admission), scope.CredentialID)
 	require.Contains(t, string(admission), "eval:hotpotqa:row:0")
-	bake := manifest
-	bake.Operation, bake.ImportWorkers, bake.SkipAISecurityReview = "bake-ontology", 0, false
-	bake.BakeStateDir = t.TempDir()
-	body, err = json.Marshal(bake)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(path, body, 0600))
-	require.NoError(t, execute(t.Context(), []string{"validate", path}, logger, protector))
-	require.ErrorContains(t, execute(t.Context(), []string{"prepare", path}, logger, protector), "command differs")
-	for name, value := range map[string]string{
-		"DENSE_MEM_EVAL_API_KEY": "synthetic", "DENSE_MEM_EVAL_VERIFIER_URL": "https://fixture.example/v1",
-		"EVAL_API_KEY": "synthetic", "EVAL_CONTROL_TOKEN": "synthetic", "EVAL_DATABASE_URL": "synthetic",
-		"EVAL_TEAM_ID": scope.TeamID, "EVAL_CREDENTIAL_ID": scope.CredentialID,
-	} {
-		t.Setenv(name, value)
-	}
-	require.ErrorContains(t, execute(cancelled, []string{"bake-ontology", path}, logger, protector), "runner container identity cannot be verified")
+	require.ErrorContains(t, execute(t.Context(), []string{"bake-ontology", path}, logger, protector), "workflow-internal")
 
 	manifest.IntakeProof, manifest.Image = true, "sha256:"+strings.Repeat("e", 64)
 	manifest.DataDir = filepath.Join(root, "tests/eval/fixtures")
@@ -282,6 +270,29 @@ func TestRuntimeLogCollectorReportsAnUnavailableOutputSink(t *testing.T) {
 const runtimeLogKeyCanary = "provider-log-key-canary-1739"
 const runtimeLogURLCanary = "https://provider-log-canary.example/v1"
 
+func TestRuntimeLogCollectorKeepsFirstProtectionFailureWhenTheSinkStops(t *testing.T) {
+	read, write := io.Pipe()
+	require.NoError(t, read.Close())
+	defer write.Close()
+	capture := &evalharness.Capture{Logger: slog.New(slog.NewJSONHandler(write, &slog.HandlerOptions{Level: slog.LevelDebug})), Protector: observability.NewCredentialProtector()}
+	exchange := uuid.NewString()
+	reason := observability.CredentialProtectionMatchingBudgetExceeded
+	body, err := json.Marshal(map[string]any{"msg": "ai_exchange_payload", "exchange_id": exchange, "direction": "request",
+		"payload_chunk": observability.DiagnosticBodyChunk{State: "unavailable", Reason: int(reason), ReasonCode: reason.Code(), OriginalBytes: 100}})
+	require.NoError(t, err)
+	logs := string(body) + "\n" + `{"level":"WARN","msg":"a later operator diagnostic"}` + "\n"
+	err = logReader(t.Context(), strings.NewReader(logs), capture, map[string]evalharness.UsageTotals{})
+	require.ErrorContains(t, err, "matching_work_exceeded")
+	require.ErrorContains(t, err, "benchmark console write failed")
+	failure := capture.FirstFailure()
+	require.NotNil(t, failure)
+	require.Equal(t, "server_log", failure.Source)
+	require.Equal(t, "ai_exchange_payload", failure.Kind)
+	require.Equal(t, exchange, failure.ExchangeID)
+	require.Equal(t, 1, failure.Sequence)
+	require.Equal(t, reason.Code(), failure.Reason)
+}
+
 func TestRuntimeLogCollectorReportsProtectedTransportFailure(t *testing.T) {
 	const host = "provider-log-canary.example"
 	const correlationID = "synthetic-correlation"
@@ -320,43 +331,102 @@ func TestRuntimeLogCollectorReportsProtectedTransportFailure(t *testing.T) {
 				require.NoError(t, err)
 				require.EqualValues(t, 1, usage["other"].Unavailable)
 			}
-			var event struct {
-				Kind    string            `json:"kind"`
-				Payload map[string]string `json:"payload"`
+			events := runtimeCaptureEvents(t, output.Bytes())
+			require.Len(t, events, 3)
+			var exchangeID string
+			for index, direction := range []string{"request", "response", "transport_error"} {
+				var payload runtimeWireFixture
+				require.NoError(t, json.Unmarshal(events[index].Payload, &payload))
+				require.Equal(t, direction, payload.Identity.Direction)
+				require.Equal(t, correlationID, payload.Identity.CorrelationID)
+				require.Equal(t, invocationID, payload.Identity.InvocationID)
+				if index == 0 {
+					exchangeID = payload.Identity.ExchangeID
+					require.NotEmpty(t, exchangeID)
+					require.Equal(t, `{"messages":"`+admittedText+`"}`, payload.Body)
+				}
+				require.Equal(t, exchangeID, payload.Identity.ExchangeID)
+				if direction == "response" {
+					require.Equal(t, "no_response", payload.Identity.TransportState)
+					require.Empty(t, payload.Body)
+				}
+				if direction == "transport_error" {
+					require.Equal(t, "runtime_transport_failure", events[index].Kind)
+					require.Contains(t, payload.Body, "no such host")
+				}
 			}
-			require.NoError(t, json.Unmarshal(output.Bytes(), &event))
-			require.Equal(t, "runtime_transport_failure", event.Kind)
-			require.NotEmpty(t, event.Payload["exchange_id"])
-			require.Equal(t, correlationID, event.Payload["correlation_id"])
-			require.Equal(t, invocationID, event.Payload["invocation_id"])
-			require.Contains(t, event.Payload["error"], "no such host")
-			for _, forbidden := range []string{runtimeLogKeyCanary, encodedKey, runtimeLogURLCanary, host, admittedText, "Authorization"} {
+			for _, forbidden := range []string{runtimeLogKeyCanary, encodedKey, runtimeLogURLCanary, host, "Authorization"} {
 				require.NotContains(t, output.String(), forbidden)
 			}
 		})
 	}
 }
 
-func runtimeCapturePayloads(t *testing.T, logs []byte) string {
+type runtimeWireFixture struct {
+	Identity struct {
+		ExchangeID     string `json:"exchange_id"`
+		Direction      string `json:"direction"`
+		InvocationID   string `json:"invocation_id"`
+		CorrelationID  string `json:"correlation_id"`
+		TransportState string `json:"transport_capture_state"`
+	} `json:"identity"`
+	Body string `json:"body"`
+}
+
+func runtimeCaptureEvents(t *testing.T, logs []byte) []evalharness.Event {
 	t.Helper()
-	var protected strings.Builder
+	var events []evalharness.Event
+	var pending []observability.DiagnosticBodyChunk
+	var sequence int
 	for _, line := range bytes.Split(bytes.TrimSpace(logs), []byte("\n")) {
 		if len(line) == 0 {
 			continue
 		}
 		var record struct {
-			Kind    string                             `json:"kind"`
-			Payload json.RawMessage                    `json:"payload"`
-			Chunk   *observability.DiagnosticBodyChunk `json:"payload_chunk"`
+			Kind     string                             `json:"kind"`
+			Sequence int                                `json:"sequence"`
+			Payload  json.RawMessage                    `json:"payload"`
+			Chunk    *observability.DiagnosticBodyChunk `json:"payload_chunk"`
 		}
 		require.NoError(t, json.Unmarshal(line, &record))
-		if record.Chunk != nil {
-			protected.WriteString(record.Chunk.Body)
-		} else {
-			body, err := json.Marshal(evalharness.Event{Kind: record.Kind, Payload: record.Payload})
-			require.NoError(t, err)
-			protected.Write(body)
+		if record.Chunk == nil {
+			require.Empty(t, pending)
+			events = append(events, evalharness.Event{Kind: record.Kind, Payload: record.Payload})
+			continue
 		}
+		if len(pending) == 0 {
+			sequence = record.Sequence
+		}
+		require.Equal(t, sequence, record.Sequence)
+		require.Equal(t, len(pending), record.Chunk.Index)
+		pending = append(pending, *record.Chunk)
+		if len(pending) == pending[0].Count {
+			var protected strings.Builder
+			for _, chunk := range pending {
+				require.Equal(t, "captured", chunk.State)
+				require.Equal(t, pending[0].Count, chunk.Count)
+				require.Equal(t, pending[0].SHA256, chunk.SHA256)
+				protected.WriteString(chunk.Body)
+			}
+			require.Equal(t, pending[0].SHA256, hashBytes([]byte(protected.String())))
+			var event evalharness.Event
+			require.NoError(t, json.Unmarshal([]byte(protected.String()), &event))
+			require.Equal(t, record.Kind, event.Kind)
+			events = append(events, event)
+			pending = nil
+		}
+	}
+	require.Empty(t, pending)
+	return events
+}
+
+func runtimeCapturePayloads(t *testing.T, logs []byte) string {
+	t.Helper()
+	var protected strings.Builder
+	for _, event := range runtimeCaptureEvents(t, logs) {
+		body, err := json.Marshal(event)
+		require.NoError(t, err)
+		protected.Write(body)
 	}
 	return protected.String()
 }
@@ -424,8 +494,32 @@ func TestRuntimeLogCollectorReconstructsProtectedExchangesAndUsage(t *testing.T)
 	protected := runtimeCapturePayloads(t, output.Bytes())
 	require.NotContains(t, protected, runtimeLogKeyCanary)
 	require.NotContains(t, protected, runtimeLogURLCanary)
-	require.NotContains(t, protected, "ordinary benchmark text", "successful provider payloads are parsed for usage without being printed")
-	require.Contains(t, logs, "ordinary benchmark text")
+	require.Contains(t, protected, "ordinary benchmark text")
+	events := runtimeCaptureEvents(t, output.Bytes())
+	require.Len(t, events, 12)
+	pairs := make(map[string]map[string]string)
+	for _, event := range events {
+		require.Equal(t, "runtime_wire_exchange", event.Kind)
+		var payload runtimeWireFixture
+		require.NoError(t, json.Unmarshal(event.Payload, &payload))
+		if pairs[payload.Identity.ExchangeID] == nil {
+			pairs[payload.Identity.ExchangeID] = make(map[string]string)
+		}
+		_, duplicate := pairs[payload.Identity.ExchangeID][payload.Identity.Direction]
+		require.False(t, duplicate)
+		pairs[payload.Identity.ExchangeID][payload.Identity.Direction] = payload.Body
+	}
+	require.Len(t, pairs, 6)
+	require.Equal(t, `{"input":["Exact public Evidence."]}`, pairs["embedding"]["request"])
+	for id, pair := range pairs {
+		require.Len(t, pair, 2, id)
+		require.Contains(t, pair["response"], `"usage":`)
+	}
+	var request struct {
+		PublicText string `json:"public_text"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(pairs["partition"]["request"]), &request))
+	require.Equal(t, strings.Repeat("Exact public Evidence. ", 1500), request.PublicText)
 	path := filepath.Join(t.TempDir(), "server.log")
 	require.NoError(t, os.WriteFile(path, []byte(logs), 0o600))
 	require.NoError(t, logFile(context.Background(), path, capture))

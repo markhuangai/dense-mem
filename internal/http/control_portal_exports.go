@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/markhuangai/dense-mem/internal/audit"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 )
@@ -20,7 +20,7 @@ type DiagnosticBundleReader interface {
 	Bundle(context.Context) ([]byte, error)
 }
 
-func (h *controlPortalHandler) exportAudit(c echo.Context) error {
+func (h *controlPortalHandler) exportAudit(c *echo.Context) error {
 	query := c.QueryParams()
 	for name, values := range query {
 		if (name != "team_id" && name != "cursor" && name != "limit") || len(values) != 1 {
@@ -52,7 +52,7 @@ func (h *controlPortalHandler) exportAudit(c echo.Context) error {
 	return writeControlDownload(c, "application/x-ndjson", "audit.ndjson", raw)
 }
 
-func (h *controlPortalHandler) diagnosticBundle(c echo.Context) error {
+func (h *controlPortalHandler) diagnosticBundle(c *echo.Context) error {
 	if len(c.QueryParams()) != 0 {
 		return httperr.New(httperr.VALIDATION_ERROR, "diagnostic bundle does not accept query parameters")
 	}
@@ -63,11 +63,11 @@ func (h *controlPortalHandler) diagnosticBundle(c echo.Context) error {
 	return writeControlDownload(c, echo.MIMEApplicationJSON, "diagnostics.json", raw)
 }
 
-func writeControlDownload(c echo.Context, contentType, filename string, raw []byte) error {
+func writeControlDownload(c *echo.Context, contentType, filename string, raw []byte) error {
 	if err := c.Request().Context().Err(); err != nil {
 		return err
 	}
-	controller := nethttp.NewResponseController(c.Response().Writer)
+	controller := nethttp.NewResponseController(c.Response())
 	if err := controller.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil && !errors.Is(err, nethttp.ErrNotSupported) {
 		return err
 	}

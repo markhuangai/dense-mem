@@ -32,20 +32,6 @@ func TestDurableUsageUnknownDoesNotBecomeZeroOrAnUnfinishedAttempt(t *testing.T)
 	measurement, err = MeasureAttempts([]NativeAttempt{attempt})
 	require.NoError(t, err)
 	require.Equal(t, 1, measurement.Unfinished)
-	hash, measurement, err := preparedAttempts([]NativeAttempt{attempt})
-	require.ErrorContains(t, err, "unverifiable provider attempts")
-	require.Empty(t, hash)
-	require.Equal(t, 1, measurement.Unfinished)
-}
-
-func TestPreparationRejectsMissingOrMismatchedHistoricalWindows(t *testing.T) {
-	const model, team = "dense-mem-testing", "evaluation-team"
-	require.ErrorContains(t, verifyPreparationWindows(nil, model, 500000, 8, team), "no durable provider window")
-	policy := domain.OntologyMaintenanceConfig{Enabled: true, Model: model, ContextWindowTokens: 500000, MaxConcurrency: 8, TeamMaxConcurrency: 8}
-	window := ontology.MaintenanceWindow{Policy: policy}
-	require.NoError(t, verifyPreparationWindows([]ontology.MaintenanceWindow{window}, model, 500000, 8, team))
-	window.Policy.TeamConcurrencyOverrides = []domain.OntologyTeamConcurrencyOverride{{TeamID: team, MaxConcurrency: 4}}
-	require.ErrorContains(t, verifyPreparationWindows([]ontology.MaintenanceWindow{window}, model, 500000, 8, team), "window policy differs")
 }
 
 func TestRunnerGuardRejectsLocalExecutionAndReruns(t *testing.T) {
@@ -126,7 +112,7 @@ func TestRunnerStartupFailureStillDrainsAndCapturesCompleteDenominators(t *testi
 			collected = true
 			return errors.New("capture unavailable " + key)
 		}}
-	manifest := Manifest{RunID: capture.RunID, ImportWorkers: 20, OutputDir: t.TempDir(), ModelDeadline: time.Now().Add(time.Minute)}
+	manifest := Manifest{RunID: capture.RunID, Condition: "off", ImportWorkers: 20, OutputDir: t.TempDir(), ModelDeadline: time.Now().Add(time.Minute)}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	report, err := Run(ctx, manifest, []CorpusItem{{SourceDocID: "source", Content: "Public text."}}, []Question{{ID: "question", Query: "Public question?"}}, client, nil, native)
@@ -136,7 +122,7 @@ func TestRunnerStartupFailureStillDrainsAndCapturesCompleteDenominators(t *testi
 	require.EqualValues(t, 1, pauses.Load())
 	require.False(t, report.Complete)
 	require.False(t, report.CaptureComplete)
-	require.Equal(t, 4, report.ExpectedAnswers)
+	require.Equal(t, 2, report.ExpectedAnswers)
 	require.Zero(t, report.CompletedAnswers)
 	require.Equal(t, "seed verification incomplete", report.Failure)
 	body, err := os.ReadFile(filepath.Join(manifest.OutputDir, "scores.json"))
@@ -152,7 +138,8 @@ func TestRunnerStartupFailureStillDrainsAndCapturesCompleteDenominators(t *testi
 
 func TestRunnerRejectsInvalidSetupBeforeScoring(t *testing.T) {
 	capture := captureFixture(&bytes.Buffer{})
-	client, native := &HTTPClient{Capture: capture}, &Native{}
+	client := &HTTPClient{Capture: capture, Client: http.DefaultClient}
+	native := &Native{Client: client}
 	manifest := Manifest{Condition: "off", AnswerWorkers: 3}
 	_, err := Run(t.Context(), manifest, nil, nil, nil, nil, native)
 	require.ErrorContains(t, err, "runner dependencies are required")

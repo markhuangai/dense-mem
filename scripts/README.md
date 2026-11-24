@@ -1,8 +1,8 @@
 # Development and test commands
 
 Run commands from the repository root. Scripts own their executable behavior;
-this guide identifies entry points. The wiki's
-[Development And Testing](https://github.com/markhuangai/dense-mem/wiki/Development-And-Testing)
+this guide identifies entry points. The
+[Development And Testing](https://markhuangai.github.io/dense-mem/Development-And-Testing/)
 page explains the test layers and review workflow.
 
 ## Focused local checks
@@ -12,9 +12,11 @@ Select packages and cases for the behavior being changed:
 ```bash
 go test ./internal/remember/... ./internal/recall/... -count=1
 npm test --prefix web
-node scripts/check-architecture.mjs
-node --test tests/uat/architecture_conformance.test.mjs
 ```
+
+For changes to review or coverage policy, use the corresponding focused
+tests in `tests/uat/`. [ADR 0019](../adr/0019-code-ownership-and-design-review.md)
+defines the ownership and dependency rules used in design review.
 
 RLS, migrations, transactions, constraints, idempotency, vector execution, and
 concurrency require real PostgreSQL-backed proof. Provider transport fixtures
@@ -59,7 +61,7 @@ Required final results include `Repository CI`, `CodeQL`, `CodeQL analysis`, and
 
 Fork contributors use their own Cloudflare credentials and the trusted preview
 receipt through the Contributor fork E2E request workflow. Follow its current
-inputs and [development guide](https://github.com/markhuangai/dense-mem/wiki/Development-And-Testing#fork-pull-request-validation).
+inputs and [development guide](https://markhuangai.github.io/dense-mem/Development-And-Testing/#fork-pull-request-validation).
 Never place credentials in inputs, PR comments, or committed files.
 
 ## Evaluation and migrations
@@ -75,8 +77,7 @@ Never place credentials in inputs, PR comments, or committed files.
 
 ## Documentation branches
 
-Feature PRs target `main`; wiki PRs target `wiki`. Link the companion wiki PR,
-or explain why the feature has no documentation impact. Update file-specific
-instructions here or in the owning directory guide. Wiki pages and publication
-recovery are maintained in
-[Documentation Maintenance](https://github.com/markhuangai/dense-mem/wiki/Documentation-Maintenance).
+Feature PRs target `main`. Link an affected documentation PR targeting
+`gh-pages`, or explain why the site needs no update. Update file-specific
+instructions in their owning directory guide. See the
+[documentation delivery policy](../.github/workflows/README.md#publish-documentation).

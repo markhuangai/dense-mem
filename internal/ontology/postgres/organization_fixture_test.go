@@ -16,7 +16,7 @@ import (
 	organization "github.com/markhuangai/dense-mem/internal/ontology"
 	"github.com/markhuangai/dense-mem/internal/ontology/assessment"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
-	assessorprovider "github.com/markhuangai/dense-mem/internal/provider/assessor"
+	"github.com/markhuangai/dense-mem/internal/provider/structured"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -146,7 +146,7 @@ func organizationFixtureServiceWithAccounting(t *testing.T, f *ontologyFixture, 
 	}))
 	t.Cleanup(server.Close)
 	cfg := &config.Config{AIVerifierAPIURL: server.URL, AIVerifierAPIKey: "synthetic-provider-key", AIVerifierModel: model}
-	transport := assessorprovider.NewOpenAIAssessorWithAssessmentLimits(cfg, server.Client(), limits)
+	transport := structured.NewOpenAI(cfg, server.Client())
 	provider := assessment.NewProviderWithAccounting(transport, cfg.AIVerifierModel, limits, accounting, contextWindowTokens)
 	return organization.NewService(f.store, provider), calls
 }
