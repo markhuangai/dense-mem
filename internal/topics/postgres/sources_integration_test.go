@@ -307,22 +307,61 @@ func TestOntologyOrganizationPreservesPerRecordDependencyBounds(t *testing.T) {
 		revision = published.Revision
 		t.Logf("published %d of %d parented Topics in %s", min(offset+ontology.MaxChanges/2, children), children, time.Since(started).Round(time.Millisecond))
 	}
+	finished := observeDependencyFixturePhase(t, f.admin, "read current organization")
 	contextData, err := f.store.ReadOrganization(context.Background(), f.team, []ontology.SourceHandle{handle})
+	finished()
 	require.NoError(t, err)
 	require.Len(t, contextData.Records, children)
 	for _, view := range contextData.Records {
 		require.True(t, view.Current)
 		require.NotEmpty(t, view.Definition.ParentID)
 	}
+	finished = observeDependencyFixturePhase(t, f.admin, "retract shared Evidence")
 	_, err = f.knowledge.RetractEvidence(f.actor(0, "member"), knowledge.RetractEvidenceInput{
 		TeamID: f.team, OwnerProfileID: f.owners[0], EvidenceIDs: []string{handle.ID}, Reason: "source withdrawn",
 		IdempotencyKey: uuid.NewString(), RequestHash: testHash(handle.ID),
 	})
+	finished()
 	require.NoError(t, err)
+	finished = observeDependencyFixturePhase(t, f.admin, "read retracted organization")
 	contextData, err = f.store.ReadOrganization(context.Background(), f.team, []ontology.SourceHandle{handle})
+	finished()
 	require.NoError(t, err)
 	require.Len(t, contextData.Records, children)
 	for _, view := range contextData.Records {
 		require.False(t, view.Current)
+	}
+}
+
+func observeDependencyFixturePhase(t *testing.T, db *gorm.DB, phase string) func() {
+	t.Helper()
+	t.Logf("starting %s", phase)
+	started := time.Now()
+	sampled := make(chan struct{})
+	sample := time.AfterFunc(30*time.Second, func() {
+		defer close(sampled)
+		ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+		defer cancel()
+		var queries []struct{ State, Wait, AgeSeconds, Statement string }
+		err := db.WithContext(ctx).Raw(`SELECT state,COALESCE(wait_event_type||':'||wait_event,'running') AS wait,
+			round(EXTRACT(EPOCH FROM clock_timestamp()-query_start),1)::text AS age_seconds,left(query,384) AS statement
+			FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid()
+			AND state IN ('active','idle in transaction','idle in transaction (aborted)') ORDER BY query_start LIMIT 3`).Scan(&queries).Error
+		if err != nil {
+			t.Logf("PostgreSQL activity during %s was unavailable: %v", phase, err)
+			return
+		}
+		t.Logf("PostgreSQL activity during %s: %v", phase, queries)
+	})
+	stop := func() {
+		if sample.Stop() {
+			close(sampled)
+		}
+		<-sampled
+	}
+	t.Cleanup(stop)
+	return func() {
+		stop()
+		t.Logf("finished %s in %s", phase, time.Since(started).Round(time.Millisecond))
 	}
 }
