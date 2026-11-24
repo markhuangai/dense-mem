@@ -73,7 +73,7 @@ func testMaintenanceAssignmentRepair(t *testing.T) {
 		const text = "PostgreSQL stores records."
 		source := f.organizationEvidence(t, 0, text, nil)
 		dep := f.source(t, source)
-		window := maintenanceWindow(t, f, maintenanceSettings(t, f))
+		window := maintenanceWindow(t, f, concurrencyConfig(t, f, 2, 2))
 		_, claim := maintenanceClaim(t, f, window)
 		require.Equal(t, []ontology.SourceHandle{source}, claim.Sources)
 		ctx := ontology.WithMaintenanceClaim(t.Context(), *claim)

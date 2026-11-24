@@ -119,7 +119,7 @@ test("manager saves a cookie-authenticated draft across sign-out, handles a real
   const published = await request.post(`${userURL}/ui/api/topics/drafts/${draft.id}/publish`, { headers, data: { operation_key: randomUUID(), expected_version: draft.version, expected_revision: draft.base_revision, reason: draft.reason } }); expect(published.status()).toBe(200);
   await page.getByLabel("Audit reason").fill(`${reason} retained`);
   await page.getByRole("button", { name: "Save draft", exact: true }).click();
-  await expect(page.getByRole("alert")).toContainText("refresh the draft");
+  await expect(page.getByRole("alert")).toContainText(/refresh the draft/i);
   await expect(page.getByLabel("Audit reason")).toHaveValue(`${reason} retained`);
   await expect(page.getByRole("button", { name: "Save draft", exact: true })).toBeDisabled();
   await page.getByRole("button", { name: "Refresh draft before resubmitting" }).click();
